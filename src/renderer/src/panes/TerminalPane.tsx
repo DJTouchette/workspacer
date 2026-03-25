@@ -3,7 +3,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { usePTY } from '../hooks/usePTY';
-import { useConfig } from '../hooks/useConfig';
+import { useConfig, Config } from '../hooks/useConfig';
 
 interface TerminalPaneProps {
   paneId: string;
@@ -84,6 +84,38 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
     fitAddonRef.current = fitAddon;
 
     term.open(container);
+
+    // Tell xterm to NOT process keys that the app handles.
+    // Return false = xterm ignores the key, letting our window capture handler take it.
+    term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
+      // Ctrl+T, Ctrl+B, Ctrl+W, Ctrl+/, Ctrl+, — always app-level
+      if (e.ctrlKey && !e.altKey && ['t', 'b', 'w', '/', '?', ','].includes(e.key)) {
+        return false;
+      }
+      // Ctrl+1-9 — jump to pane
+      if (e.ctrlKey && !e.altKey && !e.shiftKey && /^[1-9]$/.test(e.key)) {
+        return false;
+      }
+      // Alt+Arrow — pane navigation
+      if (e.altKey && !e.ctrlKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+        return false;
+      }
+      // Ctrl+Shift combos — resize/move pane
+      if (e.ctrlKey && e.shiftKey) {
+        return false;
+      }
+      // F2 — rename
+      if (e.key === 'F2') {
+        return false;
+      }
+      // Leader key for vim mode (Ctrl+Space or whatever is configured)
+      // Check e.code for Space since e.key is unreliable with Ctrl held
+      if (e.ctrlKey && e.code === 'Space' && !e.altKey && !e.shiftKey && !e.metaKey) {
+        return false;
+      }
+      // Let xterm handle everything else
+      return true;
+    });
 
     requestAnimationFrame(() => {
       try {
