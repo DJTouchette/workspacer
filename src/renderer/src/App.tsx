@@ -53,17 +53,17 @@ function App() {
 
   // On startup: check for saved sessions
   useEffect(() => {
+    // Load defaults immediately, then check for sessions
+    loadFromSession(defaultPanes, defaultPanes[0].id);
+
     window.electronAPI.listSessions().then((sessions) => {
-      if (sessions.length === 0) {
-        // No sessions — start with defaults
-        loadFromSession(defaultPanes, defaultPanes[0].id);
-        setSessionPhase('active');
-      } else {
+      if (sessions.length > 0) {
         setSessionList(sessions);
         setSessionPhase('picker');
+      } else {
+        setSessionPhase('active');
       }
     }).catch(() => {
-      loadFromSession(defaultPanes, defaultPanes[0].id);
       setSessionPhase('active');
     });
   }, [loadFromSession]);
@@ -226,30 +226,7 @@ function App() {
 
   // --- Render ---
 
-  // Show session picker during startup
-  if (sessionPhase === 'loading') {
-    return <div className="app-root" />;
-  }
-
-  // Safety: if we're active but have no panes, load defaults
-  if (sessionPhase === 'active' && panes.length === 0) {
-    loadFromSession(defaultPanes, defaultPanes[0].id);
-    return <div className="app-root" />;
-  }
-
-  if (sessionPhase === 'picker') {
-    return (
-      <div className="app-root">
-        <SessionPicker
-          sessions={sessionList}
-          onNewSession={handleNewSession}
-          onResumeSession={handleResumeSession}
-          onDeleteSession={handleDeleteSession}
-        />
-      </div>
-    );
-  }
-
+  // --- Render ---
   return (
     <div className="app-root">
       <NavBar
@@ -295,6 +272,15 @@ function App() {
         onClose={useCallback(() => setShowCommandPalette(false), [])}
         onLaunchApp={handleLaunchApp}
       />
+
+      {sessionPhase === 'picker' && (
+        <SessionPicker
+          sessions={sessionList}
+          onNewSession={handleNewSession}
+          onResumeSession={handleResumeSession}
+          onDeleteSession={handleDeleteSession}
+        />
+      )}
 
       {chordState === 'waiting' && (
         <div style={{
