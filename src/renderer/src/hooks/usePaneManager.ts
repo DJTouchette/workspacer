@@ -27,7 +27,7 @@ export function usePaneManager() {
     setActivePaneId(activeId || sessionPanes[0]?.id || '');
   }, []);
 
-  const addPane = useCallback((type: PaneType, title?: string, width?: number, insertPosition: string = 'after', shell?: string) => {
+  const addPane = useCallback((type: PaneType, title?: string, width?: number, insertPosition: string = 'after', shell?: string, url?: string) => {
     const id = generateId(type);
     const defaultTitles: Record<PaneType, string> = {
       terminal: 'Terminal',
@@ -42,6 +42,7 @@ export function usePaneManager() {
       title: title ?? defaultTitles[type],
       width: width ?? DEFAULT_PANE_WIDTH,
       shell,
+      url,
     };
     setPanes((prev) => {
       if (insertPosition === 'after') {

@@ -5,6 +5,7 @@ import ScrollContainer, { ScrollContainerRef } from './components/ScrollContaine
 import ScrollIndicator from './components/ScrollIndicator';
 import ShortcutOverlay from './components/ShortcutOverlay';
 import SessionPicker from './components/SessionPicker';
+import CommandPalette from './components/CommandPalette';
 import { usePaneManager, defaultPanes } from './hooks/usePaneManager';
 import type { PaneType } from './types/pane';
 import { useKeyboardNav } from './hooks/useKeyboardNav';
@@ -30,6 +31,7 @@ function App() {
   const [showHelp, setShowHelp] = useState(false);
   const [renameSignal, setRenameSignal] = useState(0);
   const [chordState, setChordState] = useState<'idle' | 'waiting'>('idle');
+  const [showCommandPalette, setShowCommandPalette] = useState(false);
 
   // Session state
   const [sessionPhase, setSessionPhase] = useState<'loading' | 'picker' | 'active'>('loading');
@@ -193,6 +195,7 @@ function App() {
     onChordStateChange: setChordState,
     onOpenSettings: openSettings,
     onSaveSession: saveCurrentSession,
+    onOpenCommandPalette: useCallback(() => setShowCommandPalette(true), []),
   });
 
   const handlePaneClick = useCallback((id: string) => {
@@ -215,6 +218,11 @@ function App() {
       scrollToPane(newId);
     });
   }, [addPaneWithConfig, scrollToPane]);
+
+  const handleLaunchApp = useCallback((app: { name: string; url: string }) => {
+    const newId = addPane('browser', app.name, undefined, insertPosition, undefined, app.url);
+    requestAnimationFrame(() => scrollToPane(newId));
+  }, [addPane, insertPosition, scrollToPane]);
 
   // --- Render ---
 
@@ -273,6 +281,13 @@ function App() {
         onClose={closeHelp}
         mode={kbMode}
         leader={kbLeader}
+      />
+
+      <CommandPalette
+        visible={showCommandPalette}
+        apps={config.apps ?? []}
+        onClose={useCallback(() => setShowCommandPalette(false), [])}
+        onLaunchApp={handleLaunchApp}
       />
 
       {chordState === 'waiting' && (

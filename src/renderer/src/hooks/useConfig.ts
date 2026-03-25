@@ -39,6 +39,12 @@ export interface BrowserConfig {
   bookmarks: Array<{ name: string; url: string }>;
 }
 
+export interface AppEntry {
+  name: string;
+  url: string;
+  icon?: string;
+}
+
 export interface KeybindingsConfig {
   mode: 'default' | 'vim';
   leader: string;
@@ -50,6 +56,7 @@ export interface Config {
   panes: PanesConfig;
   browser: BrowserConfig;
   keybindings: KeybindingsConfig;
+  apps: AppEntry[];
 }
 
 const DEFAULT_CONFIG: Config = {
@@ -86,6 +93,7 @@ const DEFAULT_CONFIG: Config = {
     mode: 'default',
     leader: 'ctrl',
   },
+  apps: [],
 };
 
 let cachedConfig: Config | null = null;

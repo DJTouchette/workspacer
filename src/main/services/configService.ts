@@ -14,6 +14,12 @@ interface Bookmark {
   url: string;
 }
 
+interface AppEntry {
+  name: string;
+  url: string;
+  icon?: string;
+}
+
 interface Config {
   ui: {
     animations: boolean;
@@ -48,6 +54,7 @@ interface Config {
     mode: string;
     leader: string;
   };
+  apps: AppEntry[];
 }
 
 function defaultShells(): ShellOption[] {
@@ -113,6 +120,14 @@ function defaultConfig(): Config {
       mode: 'default',
       leader: 'ctrl',
     },
+    apps: [
+      { name: 'GitHub', url: 'https://github.com', icon: '\u{1F4BB}' },
+      { name: 'ChatGPT', url: 'https://chat.openai.com', icon: '\u{1F916}' },
+      { name: 'Claude', url: 'https://claude.ai', icon: '\u{2728}' },
+      { name: 'Stack Overflow', url: 'https://stackoverflow.com', icon: '\u{1F4DA}' },
+      { name: 'Localhost 3000', url: 'http://localhost:3000', icon: '\u{1F310}' },
+      { name: 'Localhost 8080', url: 'http://localhost:8080', icon: '\u{1F310}' },
+    ],
   };
 }
 
