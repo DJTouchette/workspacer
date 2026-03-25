@@ -50,7 +50,7 @@ function sanitizeFilename(name: string): string {
 
 function getTerminalCwd(ptySessionId: string): string | undefined {
   const pid = terminalService.getTerminalPid(ptySessionId);
-  if (!pid) return undefined;
+  if (!pid) return terminalService.getTerminalCwd(ptySessionId);
 
   try {
     if (process.platform === 'linux') {
@@ -60,16 +60,14 @@ function getTerminalCwd(ptySessionId: string): string | undefined {
       const { execSync } = require('child_process');
       const output = execSync(`lsof -p ${pid} 2>/dev/null | grep cwd`, { encoding: 'utf-8' });
       const match = output.match(/cwd\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+(.*)/);
-      return match?.[1]?.trim();
+      if (match?.[1]?.trim()) return match[1].trim();
     }
-    if (process.platform === 'win32') {
-      // Windows has no simple API for getting a running process's CWD.
-      // Return the initial CWD stored in the terminal service instead.
-      return terminalService.getTerminalCwd(ptySessionId);
-    }
+    // Windows: no /proc or lsof — rely on stored CWD (initial + OSC 7 updates)
   } catch {
-    // CWD detection failed — fall back to stored initial CWD
+    // CWD detection failed
   }
+
+  // Fall back to stored CWD (initial launch dir or last OSC 7 update)
   return terminalService.getTerminalCwd(ptySessionId);
 }
 

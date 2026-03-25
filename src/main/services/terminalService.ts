@@ -41,6 +41,17 @@ class TerminalService {
 
     const env = { ...process.env, TERM: 'xterm-256color' } as Record<string, string>;
 
+    // Set up OSC 7 CWD reporting via environment for bash/zsh
+    // This makes the shell emit its working directory on every prompt
+    const osc7Cmd = 'printf "\\e]7;file://%s%s\\a" "$(hostname)" "$PWD"';
+    if (env.PROMPT_COMMAND) {
+      env.PROMPT_COMMAND = `${osc7Cmd};${env.PROMPT_COMMAND}`;
+    } else {
+      env.PROMPT_COMMAND = osc7Cmd;
+    }
+    // For zsh: set precmd via ZDOTDIR or just rely on PROMPT_COMMAND (zsh 5.9+ supports it)
+    // Alternatively, set the precmd function via zshrc eval — but env var is cleaner
+
     const resolvedCwd = cwd || process.env.HOME || os.homedir();
 
     const ptyProcess = pty.spawn(shell, [], {
@@ -81,6 +92,19 @@ class TerminalService {
         });
       }
     });
+
+    // For PowerShell: inject OSC 7 prompt function after shell starts
+    // (PowerShell doesn't support PROMPT_COMMAND env var)
+    const shellLower = shell.toLowerCase();
+    if (shellLower.includes('powershell') || shellLower.includes('pwsh')) {
+      setTimeout(() => {
+        if (session.closed) return;
+        // Wrap existing prompt to also emit OSC 7 — appends to existing prompt output
+        ptyProcess.write(
+          `$__origPrompt = $function:prompt; function prompt { $loc = $executionContext.SessionState.Path.CurrentLocation.ProviderPath; $null = [System.Console]::Write("\\e]7;file://$($env:COMPUTERNAME)$loc\\a"); & $__origPrompt }\r`
+        );
+      }, 1000);
+    }
 
     // Handle exit
     ptyProcess.onExit(() => {
