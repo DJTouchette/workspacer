@@ -28,22 +28,27 @@ html, body {
   overflow: hidden;
 }
 
-/* Scrollbar styling for the scroll container */
-.scroll-container::-webkit-scrollbar {
+/* Global scrollbar styling — thin and blends with background */
+::-webkit-scrollbar {
+  width: 4px;
   height: 4px;
 }
 
-.scroll-container::-webkit-scrollbar-track {
-  background: rgb(24, 24, 27);
+::-webkit-scrollbar-track {
+  background: transparent;
 }
 
-.scroll-container::-webkit-scrollbar-thumb {
-  background: rgb(55, 55, 65);
-  border-radius: 2px;
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
 }
 
-.scroll-container::-webkit-scrollbar-thumb:hover {
-  background: rgb(75, 75, 85);
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 /* Pane hover effect */
