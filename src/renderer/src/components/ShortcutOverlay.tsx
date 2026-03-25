@@ -3,9 +3,11 @@ import React, { useEffect } from 'react';
 interface ShortcutOverlayProps {
   visible: boolean;
   onClose: () => void;
+  mode?: 'default' | 'vim';
+  leader?: string;
 }
 
-const shortcuts: [string, string][] = [
+const defaultShortcuts: [string, string][] = [
   ['Ctrl+1-9', 'Jump to pane'],
   ['Alt+Left/Right', 'Previous/Next pane'],
   ['Ctrl+T', 'New terminal'],
@@ -18,10 +20,33 @@ const shortcuts: [string, string][] = [
   ['F2', 'Rename active pane'],
   ['Dbl-click title', 'Rename pane'],
   ['Drag header', 'Reorder pane'],
+  ['Ctrl+,', 'Open settings'],
   ['Ctrl+/', 'Toggle this help'],
 ];
 
-const ShortcutOverlay: React.FC<ShortcutOverlayProps> = ({ visible, onClose }) => {
+function vimShortcutList(leader: string): [string, string][] {
+  const l = leader || 'ctrl+space';
+  return [
+    [`${l} \u2192 1-9`, 'Jump to pane'],
+    [`${l} \u2192 h / l`, 'Prev / next pane'],
+    [`${l} \u2192 H / L`, 'Move pane left / right'],
+    [`${l} \u2192 n`, 'New terminal'],
+    [`${l} \u2192 b`, 'New browser'],
+    [`${l} \u2192 q`, 'Close pane'],
+    [`${l} \u2192 r`, 'Rename pane'],
+    [`${l} \u2192 + / -`, 'Grow / shrink pane'],
+    [`${l} \u2192 =`, 'Reset pane width'],
+    [`${l} \u2192 ?`, 'Toggle help'],
+    ['', ''],
+    ['Direct shortcuts:', ''],
+    ['Ctrl+T / Ctrl+B', 'New terminal / browser'],
+    ['Ctrl+W', 'Close pane'],
+    ['Ctrl+,', 'Open settings'],
+    ['Ctrl+/', 'Toggle this help'],
+  ];
+}
+
+const ShortcutOverlay: React.FC<ShortcutOverlayProps> = ({ visible, onClose, mode = 'default', leader = 'ctrl+space' }) => {
   useEffect(() => {
     if (!visible) return;
     const handler = (e: KeyboardEvent) => {
@@ -36,6 +61,9 @@ const ShortcutOverlay: React.FC<ShortcutOverlayProps> = ({ visible, onClose }) =
   }, [visible, onClose]);
 
   if (!visible) return null;
+
+  const entries = mode === 'vim' ? vimShortcutList(leader) : defaultShortcuts;
+  const title = mode === 'vim' ? 'Keyboard Shortcuts (Vim Mode)' : 'Keyboard Shortcuts';
 
   return (
     <div
@@ -60,8 +88,8 @@ const ShortcutOverlay: React.FC<ShortcutOverlayProps> = ({ visible, onClose }) =
           border: '1px solid rgb(55, 55, 60)',
           borderRadius: '6px',
           padding: '12px 16px',
-          minWidth: '260px',
-          maxWidth: '340px',
+          minWidth: '280px',
+          maxWidth: '400px',
           transition: 'none',
         }}
         onClick={(e) => e.stopPropagation()}
@@ -76,7 +104,7 @@ const ShortcutOverlay: React.FC<ShortcutOverlayProps> = ({ visible, onClose }) =
             paddingBottom: '6px',
           }}
         >
-          Keyboard Shortcuts
+          {title}
         </div>
         <table
           style={{
@@ -86,29 +114,50 @@ const ShortcutOverlay: React.FC<ShortcutOverlayProps> = ({ visible, onClose }) =
           }}
         >
           <tbody>
-            {shortcuts.map(([key, desc]) => (
-              <tr key={key}>
-                <td
-                  style={{
-                    padding: '2px 12px 2px 0',
-                    color: 'rgb(170, 170, 185)',
-                    fontFamily: 'monospace',
-                    fontSize: '0.7rem',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {key}
-                </td>
-                <td
-                  style={{
-                    padding: '2px 0',
-                    color: 'rgb(140, 140, 155)',
-                  }}
-                >
-                  {desc}
-                </td>
-              </tr>
-            ))}
+            {entries.map(([key, desc], i) => {
+              // Empty row = spacer
+              if (!key && !desc) {
+                return <tr key={i}><td colSpan={2} style={{ height: '6px' }} /></tr>;
+              }
+              // Label row (no desc)
+              if (!desc) {
+                return (
+                  <tr key={i}>
+                    <td colSpan={2} style={{
+                      padding: '4px 0 2px',
+                      color: 'rgb(120, 120, 135)',
+                      fontSize: '0.6rem',
+                      fontWeight: 600,
+                    }}>
+                      {key}
+                    </td>
+                  </tr>
+                );
+              }
+              return (
+                <tr key={i}>
+                  <td
+                    style={{
+                      padding: '2px 12px 2px 0',
+                      color: 'rgb(170, 170, 185)',
+                      fontFamily: 'monospace',
+                      fontSize: '0.65rem',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {key}
+                  </td>
+                  <td
+                    style={{
+                      padding: '2px 0',
+                      color: 'rgb(140, 140, 155)',
+                    }}
+                  >
+                    {desc}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

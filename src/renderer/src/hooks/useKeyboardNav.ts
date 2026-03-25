@@ -1,7 +1,10 @@
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useRef } from 'react';
 import { PaneConfig, PaneType } from '../types/pane';
 
 const RESIZE_STEP = 80;
+const CHORD_TIMEOUT = 500;
+
+type ChordState = 'idle' | 'waiting';
 
 interface UseKeyboardNavOptions {
   panes: PaneConfig[];
@@ -16,6 +19,33 @@ interface UseKeyboardNavOptions {
   defaultPaneWidth: number;
   onToggleHelp: () => void;
   onRenamePane?: () => void;
+  keybindingsMode?: 'default' | 'vim';
+  leaderKey?: string;
+  onChordStateChange?: (state: ChordState) => void;
+  onOpenSettings?: () => void;
+}
+
+/**
+ * Parse a key combo string like "ctrl+space" into a matcher function.
+ */
+function parseKeyCombo(combo: string): (e: KeyboardEvent) => boolean {
+  const parts = combo.toLowerCase().split('+');
+  const key = parts[parts.length - 1];
+  const needsCtrl = parts.includes('ctrl');
+  const needsAlt = parts.includes('alt');
+  const needsShift = parts.includes('shift');
+  const needsMeta = parts.includes('meta');
+
+  return (e: KeyboardEvent) => {
+    const eventKey = e.key === ' ' ? 'space' : e.key.toLowerCase();
+    return (
+      eventKey === key &&
+      e.ctrlKey === needsCtrl &&
+      e.altKey === needsAlt &&
+      e.shiftKey === needsShift &&
+      e.metaKey === needsMeta
+    );
+  };
 }
 
 export function useKeyboardNav({
@@ -31,7 +61,16 @@ export function useKeyboardNav({
   defaultPaneWidth,
   onToggleHelp,
   onRenamePane,
+  keybindingsMode = 'default',
+  leaderKey = 'ctrl+space',
+  onChordStateChange,
+  onOpenSettings,
 }: UseKeyboardNavOptions) {
+  const chordRef = useRef<{ state: ChordState; timeoutId: ReturnType<typeof setTimeout> | null }>({
+    state: 'idle',
+    timeoutId: null,
+  });
+
   const goToIndex = useCallback(
     (index: number) => {
       if (index >= 0 && index < panes.length) {
@@ -58,15 +97,103 @@ export function useKeyboardNav({
   }, [panes, activePaneId, goToIndex]);
 
   useEffect(() => {
+    const isLeaderKey = parseKeyCombo(leaderKey);
+
+    const cancelChord = () => {
+      if (chordRef.current.timeoutId) {
+        clearTimeout(chordRef.current.timeoutId);
+        chordRef.current.timeoutId = null;
+      }
+      chordRef.current.state = 'idle';
+      onChordStateChange?.('idle');
+    };
+
     const handler = (e: KeyboardEvent) => {
+      // Ctrl+, : open settings (both modes)
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === ',') {
+        e.preventDefault();
+        e.stopPropagation();
+        onOpenSettings?.();
+        return;
+      }
+
+      // --- Vim chord handling ---
+      if (keybindingsMode === 'vim') {
+        // Skip leader detection if typing in an input/textarea (e.g. settings leader capture)
+        const isInput = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+
+        if (chordRef.current.state === 'waiting') {
+          // We're waiting for an action key
+          e.preventDefault();
+          e.stopPropagation();
+          cancelChord();
+
+          // Execute action based on key
+          const key = e.key;
+          const num = parseInt(key, 10);
+
+          if (num >= 1 && num <= 9) {
+            goToIndex(num - 1);
+          } else if (key === 'h') {
+            goToPrev();
+          } else if (key === 'l') {
+            goToNext();
+          } else if (key === 'H') {
+            const idx = panes.findIndex((p) => p.id === activePaneId);
+            if (idx > 0) movePane(activePaneId, idx - 1);
+          } else if (key === 'L') {
+            const idx = panes.findIndex((p) => p.id === activePaneId);
+            if (idx < panes.length - 1) movePane(activePaneId, idx + 1);
+          } else if (key === 'n') {
+            const newId = addPane('terminal');
+            requestAnimationFrame(() => scrollToPane(newId));
+          } else if (key === 'b') {
+            const newId = addPane('browser');
+            requestAnimationFrame(() => scrollToPane(newId));
+          } else if (key === 'q') {
+            removePane(activePaneId);
+          } else if (key === 'r') {
+            onRenamePane?.();
+          } else if (key === '+' || key === '>') {
+            const pane = panes.find((p) => p.id === activePaneId);
+            if (pane) {
+              const current = pane.widthOverride ?? defaultPaneWidth;
+              resizePane(activePaneId, current + RESIZE_STEP);
+            }
+          } else if (key === '-' || key === '<') {
+            const pane = panes.find((p) => p.id === activePaneId);
+            if (pane) {
+              const current = pane.widthOverride ?? defaultPaneWidth;
+              resizePane(activePaneId, Math.max(300, current - RESIZE_STEP));
+            }
+          } else if (key === '=') {
+            resetPaneWidth(activePaneId);
+          } else if (key === '?') {
+            onToggleHelp();
+          }
+          // Unrecognized key — already cancelled above
+          return;
+        }
+
+        // Check for leader key press (start chord)
+        if (!isInput && isLeaderKey(e)) {
+          e.preventDefault();
+          e.stopPropagation();
+          chordRef.current.state = 'waiting';
+          onChordStateChange?.('waiting');
+          chordRef.current.timeoutId = setTimeout(cancelChord, CHORD_TIMEOUT);
+          return;
+        }
+      }
+
+      // --- Direct shortcuts (both modes) ---
+
       // Ctrl+T: new terminal pane
       if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 't') {
         e.preventDefault();
         e.stopPropagation();
         const newId = addPane('terminal');
-        requestAnimationFrame(() => {
-          scrollToPane(newId);
-        });
+        requestAnimationFrame(() => scrollToPane(newId));
         return;
       }
 
@@ -75,9 +202,7 @@ export function useKeyboardNav({
         e.preventDefault();
         e.stopPropagation();
         const newId = addPane('browser');
-        requestAnimationFrame(() => {
-          scrollToPane(newId);
-        });
+        requestAnimationFrame(() => scrollToPane(newId));
         return;
       }
 
@@ -118,7 +243,6 @@ export function useKeyboardNav({
 
       // Ctrl+Shift+1-9: move active pane to position
       if (e.ctrlKey && e.shiftKey && !e.altKey) {
-        // Check for digits — e.key gives the shifted char (!, @, #...) so use e.code
         const digitMatch = e.code?.match(/^Digit(\d)$/);
         if (digitMatch) {
           const num = parseInt(digitMatch[1], 10);
@@ -129,7 +253,6 @@ export function useKeyboardNav({
             return;
           }
           if (num === 0) {
-            // Ctrl+Shift+0: reset active pane width
             e.preventDefault();
             e.stopPropagation();
             resetPaneWidth(activePaneId);
@@ -178,8 +301,11 @@ export function useKeyboardNav({
 
     // Use capture phase so we intercept before xterm.js handles the event
     window.addEventListener('keydown', handler, true);
-    return () => window.removeEventListener('keydown', handler, true);
-  }, [goToIndex, goToPrev, goToNext, addPane, removePane, resizePane, resetPaneWidth, movePane, defaultPaneWidth, panes, activePaneId, scrollToPane, onToggleHelp, onRenamePane]);
+    return () => {
+      window.removeEventListener('keydown', handler, true);
+      cancelChord();
+    };
+  }, [goToIndex, goToPrev, goToNext, addPane, removePane, resizePane, resetPaneWidth, movePane, defaultPaneWidth, panes, activePaneId, scrollToPane, onToggleHelp, onRenamePane, keybindingsMode, leaderKey, onChordStateChange, onOpenSettings]);
 
   return {
     activePaneId,

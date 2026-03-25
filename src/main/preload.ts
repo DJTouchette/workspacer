@@ -43,4 +43,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   getConfigPath: (): Promise<string> =>
     ipcRenderer.invoke('config:getPath'),
+
+  saveConfig: (partial: unknown): Promise<unknown> =>
+    ipcRenderer.invoke('config:save', partial),
 });

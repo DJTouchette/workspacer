@@ -35,4 +35,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle('config:getPath', () => {
     return configService.getConfigPath();
   });
+
+  ipcMain.handle('config:save', (_event, partial: unknown) => {
+    return configService.saveConfig(partial as any);
+  });
 }

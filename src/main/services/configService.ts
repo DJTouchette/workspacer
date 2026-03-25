@@ -44,6 +44,10 @@ interface Config {
     insertPosition: string;
     default: Array<{ id: string; type: string; title: string; width: number; order: number }>;
   };
+  keybindings: {
+    mode: string;
+    leader: string;
+  };
 }
 
 function defaultShells(): ShellOption[] {
@@ -104,6 +108,10 @@ function defaultConfig(): Config {
         { id: 'terminal-3', type: 'terminal', title: 'Terminal 3', width: 800, order: 2 },
         { id: 'notes-1', type: 'notes', title: 'Notes', width: 800, order: 3 },
       ],
+    },
+    keybindings: {
+      mode: 'default',
+      leader: 'ctrl+space',
     },
   };
 }
@@ -183,6 +191,19 @@ class ConfigService {
 
   reloadConfig(): Config {
     this.config = this.loadFromDisk();
+    return this.config;
+  }
+
+  saveConfig(partial: Partial<Config>): Config {
+    this.config = deepMerge(this.config, partial);
+    try {
+      const dir = getConfigDir();
+      fs.mkdirSync(dir, { recursive: true });
+      const data = yaml.dump(this.config, { lineWidth: -1 });
+      fs.writeFileSync(getConfigFilePath(), data, 'utf-8');
+    } catch (err) {
+      console.error('[ConfigService] failed to save config:', err);
+    }
     return this.config;
   }
 

@@ -28,6 +28,7 @@ export function usePaneManager() {
       browser: 'Browser',
       notes: 'Notes',
       agent: 'Agent',
+      settings: 'Settings',
     };
     const newPane: PaneConfig = {
       id,

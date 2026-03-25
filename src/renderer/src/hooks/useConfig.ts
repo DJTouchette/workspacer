@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
 export interface ShellOption {
   name: string;
@@ -39,11 +39,17 @@ export interface BrowserConfig {
   bookmarks: Array<{ name: string; url: string }>;
 }
 
+export interface KeybindingsConfig {
+  mode: 'default' | 'vim';
+  leader: string;
+}
+
 export interface Config {
   ui: UIConfig;
   terminal: TerminalConfig;
   panes: PanesConfig;
   browser: BrowserConfig;
+  keybindings: KeybindingsConfig;
 }
 
 const DEFAULT_CONFIG: Config = {
@@ -76,6 +82,10 @@ const DEFAULT_CONFIG: Config = {
     homepage: 'https://google.com',
     bookmarks: [],
   },
+  keybindings: {
+    mode: 'default',
+    leader: 'ctrl+space',
+  },
 };
 
 let cachedConfig: Config | null = null;
@@ -97,14 +107,36 @@ export function useConfig() {
       });
   }, []);
 
-  const reload = () => {
+  // Listen for config updates from other components
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const cfg = (e as CustomEvent).detail as Config;
+      cachedConfig = cfg;
+      setConfig(cfg);
+    };
+    window.addEventListener('config-updated', handler);
+    return () => window.removeEventListener('config-updated', handler);
+  }, []);
+
+  const reload = useCallback(() => {
     window.electronAPI.reloadConfig()
       .then((cfg) => {
         cachedConfig = cfg as Config;
         setConfig(cfg as Config);
+        window.dispatchEvent(new CustomEvent('config-updated', { detail: cfg }));
       })
       .catch(console.error);
-  };
+  }, []);
 
-  return { config, loaded, reload };
+  const save = useCallback((partial: Partial<Config>) => {
+    return window.electronAPI.saveConfig(partial)
+      .then((cfg) => {
+        cachedConfig = cfg as Config;
+        setConfig(cfg as Config);
+        window.dispatchEvent(new CustomEvent('config-updated', { detail: cfg }));
+        return cfg as Config;
+      });
+  }, []);
+
+  return { config, loaded, reload, save };
 }

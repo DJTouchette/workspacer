@@ -21,6 +21,7 @@ const typeIndicators: Record<PaneType, string> = {
   browser: '\u{1F310}',
   notes: '\u{1F4DD}',
   agent: '\u{1F916}',
+  settings: '\u2699',
 };
 
 const Pane: React.FC<PaneProps> = ({

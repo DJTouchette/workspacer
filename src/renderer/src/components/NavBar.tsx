@@ -14,6 +14,7 @@ const typeLabels: Record<PaneType, string> = {
   browser: '\u{1F310}',
   notes: '\u{1F4DD}',
   agent: '\u{1F916}',
+  settings: '\u2699',
 };
 
 const NavBar: React.FC<NavBarProps> = ({ panes, activePaneId, onPaneClick, onAddPane }) => {

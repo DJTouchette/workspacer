@@ -11,6 +11,7 @@ export interface ElectronAPI {
   getConfig: () => Promise<any>;
   reloadConfig: () => Promise<any>;
   getConfigPath: () => Promise<string>;
+  saveConfig: (partial: any) => Promise<any>;
 }
 
 declare global {

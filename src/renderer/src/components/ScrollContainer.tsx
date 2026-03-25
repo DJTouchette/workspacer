@@ -5,6 +5,7 @@ import TerminalPane from '../panes/TerminalPane';
 import BrowserPane from '../panes/BrowserPane';
 import NotesPane from '../panes/NotesPane';
 import AgentPane from '../panes/AgentPane';
+import SettingsPane from '../panes/SettingsPane';
 import { useConfig } from '../hooks/useConfig';
 
 interface ScrollContainerProps {
@@ -33,6 +34,8 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean) {
       return <NotesPane title={pane.title} />;
     case 'agent':
       return <AgentPane title={pane.title} />;
+    case 'settings':
+      return <SettingsPane title={pane.title} />;
     default:
       return <div>Unknown pane type</div>;
   }
