@@ -234,7 +234,7 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
           height: '100%',
           scrollSnapType: 'x mandatory',
           scrollBehavior: 'auto',
-          padding: '8px 0',
+          padding: '0',
           gap: '0px',
           alignItems: 'stretch',
         }}

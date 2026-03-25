@@ -124,12 +124,12 @@ const Pane: React.FC<PaneProps> = ({
       style={{
         width: `${width}px`,
         minWidth: `${width}px`,
-        height: '100%',
+        height: 'calc(100% - 8px)',
         display: 'flex',
         flexDirection: 'column',
         borderRadius: '8px',
         overflow: 'hidden',
-        margin: '0 8px',
+        margin: '4px 8px',
         border: isActive
           ? '1px solid rgb(80, 120, 200)'
           : '1px solid rgb(50, 50, 55)',
