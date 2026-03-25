@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef } from 'react';
-import { useConfig } from '../hooks/useConfig';
+import { useConfig, AppEntry } from '../hooks/useConfig';
 
 interface SettingsPaneProps {
   title: string;
@@ -86,6 +86,49 @@ const SettingsPane: React.FC<SettingsPaneProps> = ({ title }) => {
     setCapturingLeader(false);
     save({ keybindings: { mode, leader: combo } });
   }, [mode, save]);
+
+  // --- Apps management ---
+  const [apps, setApps] = useState<AppEntry[]>(config.apps ?? []);
+  const [editingAppIndex, setEditingAppIndex] = useState<number | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editUrl, setEditUrl] = useState('');
+  const [editIcon, setEditIcon] = useState('');
+
+  const saveApps = useCallback((newApps: AppEntry[]) => {
+    setApps(newApps);
+    save({ apps: newApps });
+  }, [save]);
+
+  const handleAddApp = useCallback(() => {
+    const newApps = [...apps, { name: 'New App', url: 'https://', icon: '\u{1F310}' }];
+    saveApps(newApps);
+    setEditingAppIndex(newApps.length - 1);
+    setEditName('New App');
+    setEditUrl('https://');
+    setEditIcon('\u{1F310}');
+  }, [apps, saveApps]);
+
+  const handleEditApp = useCallback((index: number) => {
+    const app = apps[index];
+    setEditingAppIndex(index);
+    setEditName(app.name);
+    setEditUrl(app.url);
+    setEditIcon(app.icon || '');
+  }, [apps]);
+
+  const handleSaveApp = useCallback(() => {
+    if (editingAppIndex === null) return;
+    const newApps = [...apps];
+    newApps[editingAppIndex] = { name: editName.trim() || 'App', url: editUrl.trim() || 'https://', icon: editIcon.trim() || undefined };
+    saveApps(newApps);
+    setEditingAppIndex(null);
+  }, [editingAppIndex, editName, editUrl, editIcon, apps, saveApps]);
+
+  const handleDeleteApp = useCallback((index: number) => {
+    const newApps = apps.filter((_, i) => i !== index);
+    saveApps(newApps);
+    if (editingAppIndex === index) setEditingAppIndex(null);
+  }, [apps, saveApps, editingAppIndex]);
 
   const shortcuts = mode === 'vim' ? vimShortcuts(leader) : defaultShortcuts;
 
@@ -191,9 +234,142 @@ const SettingsPane: React.FC<SettingsPaneProps> = ({ title }) => {
           </table>
         </div>
       </Section>
+
+      {/* Apps section */}
+      <Section title="Apps (Ctrl+K)">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+          {apps.map((app, i) => (
+            <div key={i}>
+              {editingAppIndex === i ? (
+                /* Edit mode */
+                <div style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '4px',
+                  padding: '8px',
+                  backgroundColor: 'rgb(30, 30, 35)',
+                  borderRadius: '4px',
+                  border: '1px solid rgb(60, 60, 70)',
+                }}>
+                  <div style={{ display: 'flex', gap: '4px' }}>
+                    <input
+                      value={editIcon}
+                      onChange={(e) => setEditIcon(e.target.value)}
+                      placeholder="Icon"
+                      style={{ ...inputStyle, width: '40px', textAlign: 'center' }}
+                    />
+                    <input
+                      value={editName}
+                      onChange={(e) => setEditName(e.target.value)}
+                      placeholder="Name"
+                      style={{ ...inputStyle, flex: 1 }}
+                      autoFocus
+                    />
+                  </div>
+                  <input
+                    value={editUrl}
+                    onChange={(e) => setEditUrl(e.target.value)}
+                    placeholder="https://..."
+                    style={{ ...inputStyle, fontFamily: 'monospace' }}
+                    onKeyDown={(e) => { if (e.key === 'Enter') handleSaveApp(); }}
+                  />
+                  <div style={{ display: 'flex', gap: '4px', justifyContent: 'flex-end' }}>
+                    <SmallButton label="Cancel" onClick={() => setEditingAppIndex(null)} />
+                    <SmallButton label="Save" onClick={handleSaveApp} primary />
+                  </div>
+                </div>
+              ) : (
+                /* Display mode */
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    padding: '4px 8px',
+                    borderRadius: '4px',
+                  }}
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'rgb(32, 32, 38)'; }}
+                  onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'; }}
+                >
+                  <span style={{ fontSize: '0.85rem', width: '20px', textAlign: 'center' }}>
+                    {app.icon || '\u{1F310}'}
+                  </span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: '0.7rem', color: 'rgb(200, 200, 210)', fontWeight: 500 }}>{app.name}</div>
+                    <div style={{ fontSize: '0.6rem', color: 'rgb(100, 100, 115)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{app.url}</div>
+                  </div>
+                  <SmallButton label="Edit" onClick={() => handleEditApp(i)} />
+                  <SmallButton label="\u2715" onClick={() => handleDeleteApp(i)} danger />
+                </div>
+              )}
+            </div>
+          ))}
+
+          <button
+            onClick={handleAddApp}
+            style={{
+              padding: '6px 12px',
+              fontSize: '0.65rem',
+              fontFamily: 'inherit',
+              fontWeight: 500,
+              backgroundColor: 'rgb(35, 35, 40)',
+              color: 'rgb(160, 160, 175)',
+              border: '1px dashed rgb(55, 55, 65)',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              height: 'auto',
+              lineHeight: '1.4',
+              margin: '4px 0 0',
+              width: '100%',
+            }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.borderColor = 'rgb(80, 120, 200)'; (e.currentTarget as HTMLElement).style.color = 'rgb(200, 200, 210)'; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = 'rgb(55, 55, 65)'; (e.currentTarget as HTMLElement).style.color = 'rgb(160, 160, 175)'; }}
+          >
+            + Add App
+          </button>
+        </div>
+      </Section>
     </div>
   );
 };
+
+const inputStyle: React.CSSProperties = {
+  height: '24px',
+  padding: '0 8px',
+  fontSize: '0.65rem',
+  backgroundColor: 'rgb(18, 18, 20)',
+  color: 'rgb(200, 200, 210)',
+  border: '1px solid rgb(50, 50, 55)',
+  borderRadius: '3px',
+  outline: 'none',
+  fontFamily: 'inherit',
+  boxSizing: 'border-box' as const,
+};
+
+function SmallButton({ label, onClick, primary, danger }: { label: string; onClick: () => void; primary?: boolean; danger?: boolean }) {
+  return (
+    <button
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+      style={{
+        padding: '2px 8px',
+        fontSize: '0.6rem',
+        fontFamily: 'inherit',
+        fontWeight: 500,
+        backgroundColor: primary ? 'rgb(80, 120, 200)' : 'transparent',
+        color: danger ? 'rgb(248, 113, 113)' : primary ? '#fff' : 'rgb(140, 140, 155)',
+        border: primary ? '1px solid rgb(80, 120, 200)' : '1px solid rgb(50, 50, 55)',
+        borderRadius: '3px',
+        cursor: 'pointer',
+        height: 'auto',
+        lineHeight: '1.4',
+        margin: 0,
+        width: 'auto',
+      }}
+    >
+      {label}
+    </button>
+  );
+}
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
