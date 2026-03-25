@@ -48,6 +48,14 @@ function App() {
   const lastVisibleRef = useRef<Record<string, number>>({});
   const hibernateAfter = (config.browser?.hibernateAfter ?? 300) * 1000; // convert to ms
 
+  // Auto-wake hibernated pane when it becomes active (via any navigation method)
+  useEffect(() => {
+    if (!activePaneId) return;
+    const pane = panes.find((p) => p.id === activePaneId);
+    if (pane?.hibernated) wakePane(activePaneId);
+    lastVisibleRef.current[activePaneId] = Date.now();
+  }, [activePaneId, panes, wakePane]);
+
   // Update last-visible timestamp for active pane (and next in split)
   useEffect(() => {
     if (!activePaneId) return;
