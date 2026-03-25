@@ -1,9 +1,7 @@
-.task
-bin
-workspacer
-frontend/dist
-frontend/node_modules
-frontend/bindings
-build/linux/appimage/build
-build/linux/workspacer.desktop
-build/windows/nsis/MicrosoftEdgeWebview2Setup.exe
+node_modules/
+dist/
+release/
+src/renderer/node_modules/
+src/renderer/dist/
+*.js.map
+.DS_Store
