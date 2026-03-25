@@ -59,9 +59,22 @@ class TerminalService {
 
     this.sessions.set(id, session);
 
-    // Forward output to renderer as base64
+    // Forward output to renderer as base64, and track CWD from OSC 7
     ptyProcess.onData((data: string) => {
       if (session.closed) return;
+
+      // Check for OSC 7 escape sequence: \e]7;file:///path\a or \e]7;file://host/path\a
+      // Shells emit this to report current working directory
+      const osc7Match = data.match(/\x1b\]7;file:\/\/[^/]*([^\x07\x1b]*)/);
+      if (osc7Match) {
+        try {
+          const decoded = decodeURIComponent(osc7Match[1]);
+          if (decoded) session.cwd = decoded;
+        } catch {
+          // Malformed URI
+        }
+      }
+
       const encoded = Buffer.from(data, 'binary').toString('base64');
       this.mainWindow?.webContents.send('terminal:output', id, encoded);
     });
