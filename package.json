@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "concurrently -k \"npm run dev:renderer\" \"npm run dev:main\"",
     "dev:renderer": "cd src/renderer && npx vite --port 5173",
-    "dev:main": "npm run build:main && ELECTRON_DEV=1 electron . --no-sandbox --disable-gpu",
+    "dev:main": "npm run build:main && cross-env ELECTRON_DEV=1 electron .",
     "build:main": "tsc -p tsconfig.main.json",
     "build:renderer": "cd src/renderer && npx vite build",
     "build": "npm run build:main && npm run build:renderer",
@@ -14,15 +14,16 @@
     "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
-    "node-pty": "^1.0.0",
-    "js-yaml": "^4.1.0"
+    "js-yaml": "^4.1.0",
+    "node-pty": "^1.0.0"
   },
   "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.0.0",
+    "concurrently": "^9.0.0",
+    "cross-env": "^10.1.0",
     "electron": "^33.0.0",
     "electron-builder": "^25.0.0",
-    "concurrently": "^9.0.0",
-    "typescript": "^5.6.0",
-    "@types/js-yaml": "^4.0.9",
-    "@types/node": "^22.0.0"
+    "typescript": "^5.6.0"
   }
 }
