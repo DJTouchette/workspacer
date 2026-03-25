@@ -20,7 +20,7 @@ interface ScrollContainerProps {
   onPtyReady?: (paneId: string, ptySessionId: string) => void;
   onUrlChange?: (paneId: string, url: string) => void;
   renameSignal?: number;
-  viewMode?: 'carousel' | 'split';
+  viewMode?: 'carousel' | 'split' | 'tiling';
 }
 
 export interface ScrollContainerRef {
@@ -232,6 +232,101 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
       if (idx < 0) return;
       onPaneMove(id, idx + delta);
     }, [panes, onPaneMove]);
+
+    // --- Tiling view mode (Wayland-style auto-tiling) ---
+    // 1 pane: full, 2: 50/50, 3: left 50% + right 2 stacked, 4: 2x2, etc.
+    if (viewMode === 'tiling') {
+      const containerWidth = containerRef.current?.clientWidth ?? 1200;
+      const containerHeight = containerRef.current?.clientHeight ?? 800;
+      const count = panes.length;
+
+      // Calculate grid: cols x rows
+      const cols = count <= 1 ? 1 : count <= 2 ? 2 : count <= 4 ? 2 : count <= 6 ? 3 : Math.ceil(Math.sqrt(count));
+      const rows = Math.ceil(count / cols);
+
+      // Build layout positions for each pane
+      const layouts: Array<{ col: number; row: number; colSpan: number; rowSpan: number }> = [];
+
+      if (count === 1) {
+        layouts.push({ col: 0, row: 0, colSpan: 1, rowSpan: 1 });
+      } else if (count === 2) {
+        layouts.push({ col: 0, row: 0, colSpan: 1, rowSpan: 1 });
+        layouts.push({ col: 1, row: 0, colSpan: 1, rowSpan: 1 });
+      } else if (count === 3) {
+        // Master left, 2 stacked right
+        layouts.push({ col: 0, row: 0, colSpan: 1, rowSpan: 2 });
+        layouts.push({ col: 1, row: 0, colSpan: 1, rowSpan: 1 });
+        layouts.push({ col: 1, row: 1, colSpan: 1, rowSpan: 1 });
+      } else {
+        // Generic grid
+        for (let i = 0; i < count; i++) {
+          const c = i % cols;
+          const r = Math.floor(i / cols);
+          layouts.push({ col: c, row: r, colSpan: 1, rowSpan: 1 });
+        }
+        // If last row isn't full, let the last pane span remaining columns
+        const lastRowStart = Math.floor((count - 1) / cols) * cols;
+        const lastRowCount = count - lastRowStart;
+        if (lastRowCount < cols) {
+          layouts[count - 1].colSpan = cols - lastRowCount + 1;
+        }
+      }
+
+      const cellWidth = containerWidth / cols;
+      const cellHeight = containerHeight / rows;
+      const gap = 2;
+
+      return (
+        <div
+          ref={containerRef}
+          className="scroll-container"
+          style={{
+            position: 'relative',
+            overflow: 'hidden',
+            height: '100%',
+            width: '100%',
+          }}
+        >
+          {panes.map((pane, idx) => {
+            const layout = layouts[idx];
+            if (!layout) return null;
+            const isActive = pane.id === activePaneId;
+            const left = layout.col * cellWidth + gap;
+            const top = layout.row * cellHeight + gap;
+            const width = layout.colSpan * cellWidth - gap * 2;
+            const height = layout.rowSpan * cellHeight - gap * 2;
+
+            return (
+              <div
+                key={pane.id}
+                style={{
+                  position: 'absolute',
+                  left: `${left}px`,
+                  top: `${top}px`,
+                  width: `${width}px`,
+                  height: `${height}px`,
+                }}
+              >
+                <Pane
+                  id={pane.id}
+                  type={pane.type}
+                  title={pane.title}
+                  width={width}
+                  isActive={isActive}
+                  onClose={onPaneClose}
+                  onFocus={onPaneFocus}
+                  onMove={onPaneMove ? handlePaneMove : undefined}
+                  onRename={onPaneRename}
+                  renameSignal={isActive ? renameSignal : undefined}
+                >
+                  {renderPaneContent(pane, isActive, { onPtyReady, onUrlChange })}
+                </Pane>
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
 
     // --- Split view mode ---
     // Renders ALL panes to keep them mounted (preserving terminal state),
