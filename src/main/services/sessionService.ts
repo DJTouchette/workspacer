@@ -62,10 +62,15 @@ function getTerminalCwd(ptySessionId: string): string | undefined {
       const match = output.match(/cwd\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+(.*)/);
       return match?.[1]?.trim();
     }
+    if (process.platform === 'win32') {
+      // Windows has no simple API for getting a running process's CWD.
+      // Return the initial CWD stored in the terminal service instead.
+      return terminalService.getTerminalCwd(ptySessionId);
+    }
   } catch {
-    // CWD detection failed — not critical
+    // CWD detection failed — fall back to stored initial CWD
   }
-  return undefined;
+  return terminalService.getTerminalCwd(ptySessionId);
 }
 
 class SessionService {

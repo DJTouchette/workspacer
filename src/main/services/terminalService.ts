@@ -8,6 +8,7 @@ import * as pty from '@homebridge/node-pty-prebuilt-multiarch';
 interface TerminalSession {
   pty: pty.IPty;
   closed: boolean;
+  cwd: string;
 }
 
 function detectDefaultShell(): string {
@@ -40,17 +41,20 @@ class TerminalService {
 
     const env = { ...process.env, TERM: 'xterm-256color' } as Record<string, string>;
 
+    const resolvedCwd = cwd || process.env.HOME || os.homedir();
+
     const ptyProcess = pty.spawn(shell, [], {
       name: 'xterm-256color',
       cols: 80,
       rows: 24,
-      cwd: cwd || process.env.HOME || os.homedir(),
+      cwd: resolvedCwd,
       env,
     });
 
     const session: TerminalSession = {
       pty: ptyProcess,
       closed: false,
+      cwd: resolvedCwd,
     };
 
     this.sessions.set(id, session);
@@ -101,6 +105,12 @@ class TerminalService {
     const session = this.sessions.get(id);
     if (!session || session.closed) return undefined;
     return session.pty.pid;
+  }
+
+  getTerminalCwd(id: string): string | undefined {
+    const session = this.sessions.get(id);
+    if (!session || session.closed) return undefined;
+    return session.cwd;
   }
 
   closeAll(): void {
