@@ -62,7 +62,17 @@ export function useKeyboardNav({
         e.preventDefault();
         e.stopPropagation();
         const newId = addPane('terminal');
-        // Scroll to the new pane after it renders
+        requestAnimationFrame(() => {
+          scrollToPane(newId);
+        });
+        return;
+      }
+
+      // Ctrl+B: new browser pane
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'b') {
+        e.preventDefault();
+        e.stopPropagation();
+        const newId = addPane('browser');
         requestAnimationFrame(() => {
           scrollToPane(newId);
         });

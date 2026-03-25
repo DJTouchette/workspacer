@@ -1,7 +1,6 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import { useConfig } from '../hooks/useConfig';
-// @ts-ignore — bindings not yet generated
-import { OpenBrowser, CloseBrowser } from '../lib/browserApi';
+import { FetchPage } from '../lib/browserApi';
 
 interface BrowserPaneProps {
   paneId: string;
@@ -14,75 +13,83 @@ interface Bookmark {
   url: string;
 }
 
+function normalizeUrl(input: string): string {
+  const trimmed = input.trim();
+  if (!trimmed) return '';
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return 'https://' + trimmed;
+}
+
 const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive }) => {
   const { config } = useConfig();
   const browserCfg = (config as any).browser ?? { homepage: 'https://google.com', bookmarks: [] };
 
   const [url, setUrl] = useState<string>(browserCfg.homepage || 'https://google.com');
-  const [activeUrl, setActiveUrl] = useState<string | null>(null);
+  const [pageHtml, setPageHtml] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [currentUrl, setCurrentUrl] = useState<string | null>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
 
-  const handleOpen = useCallback(() => {
-    if (!url.trim()) return;
-    let normalizedUrl = url.trim();
-    if (!/^https?:\/\//i.test(normalizedUrl)) {
-      normalizedUrl = 'https://' + normalizedUrl;
-    }
-    setUrl(normalizedUrl);
+  const navigate = useCallback((targetUrl: string) => {
+    const normalized = normalizeUrl(targetUrl);
+    if (!normalized) return;
+    setUrl(normalized);
+    setCurrentUrl(normalized);
+    setLoading(true);
     setError(null);
-    OpenBrowser(paneId, normalizedUrl)
-      .then(() => {
-        setActiveUrl(normalizedUrl);
-      })
-      .catch((err: any) => {
-        setError(String(err));
-      });
-  }, [paneId, url]);
+    setPageHtml(null);
 
-  const handleClose = useCallback(() => {
-    CloseBrowser(paneId)
-      .then(() => {
-        setActiveUrl(null);
-        setError(null);
+    FetchPage(normalized)
+      .then((html) => {
+        setPageHtml(html);
+        setLoading(false);
+        // Scroll content to top
+        if (contentRef.current) contentRef.current.scrollTop = 0;
       })
-      .catch((err: any) => {
+      .catch((err) => {
         setError(String(err));
+        setLoading(false);
       });
-  }, [paneId]);
+  }, []);
+
+  const handleGo = useCallback(() => {
+    navigate(url);
+  }, [url, navigate]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === 'Enter') {
         e.preventDefault();
-        handleOpen();
+        handleGo();
       }
     },
-    [handleOpen],
+    [handleGo],
   );
+
+  const handleRefresh = useCallback(() => {
+    if (currentUrl) navigate(currentUrl);
+  }, [currentUrl, navigate]);
 
   const handleOpenExternal = useCallback(() => {
-    if (!url.trim()) return;
-    let normalizedUrl = url.trim();
-    if (!/^https?:\/\//i.test(normalizedUrl)) {
-      normalizedUrl = 'https://' + normalizedUrl;
-    }
-    window.open(normalizedUrl, '_blank');
+    const normalized = normalizeUrl(url);
+    if (normalized) window.open(normalized, '_blank');
   }, [url]);
 
-  const handleBookmarkClick = useCallback(
-    (bookmark: Bookmark) => {
-      setUrl(bookmark.url);
-      setError(null);
-      OpenBrowser(paneId, bookmark.url)
-        .then(() => {
-          setActiveUrl(bookmark.url);
-        })
-        .catch((err: any) => {
-          setError(String(err));
-        });
-    },
-    [paneId],
-  );
+  // Intercept link clicks inside the rendered content
+  const handleContentClick = useCallback((e: React.MouseEvent) => {
+    const target = e.target as HTMLElement;
+    const anchor = target.closest('a');
+    if (anchor && anchor.href) {
+      e.preventDefault();
+      const href = anchor.href;
+      // Skip javascript: and # links
+      if (href.startsWith('javascript:') || href === '#') return;
+      if (href.startsWith('#')) return;
+      setUrl(href);
+      navigate(href);
+    }
+  }, [navigate]);
 
   const bookmarks: Bookmark[] = browserCfg.bookmarks ?? [];
 
@@ -96,22 +103,20 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive }) =>
         color: '#e4e4e7',
         fontFamily: 'Inter, system-ui, sans-serif',
         fontSize: '12px',
-        transition: 'none',
       }}
     >
       {/* URL bar */}
       <div
         style={{
           display: 'flex',
-          flexDirection: 'row',
           alignItems: 'center',
-          gap: '4px',
-          padding: '4px 6px',
+          gap: '3px',
+          padding: '3px 6px',
           backgroundColor: '#1a1a1e',
           borderBottom: '1px solid #2a2a30',
-          transition: 'none',
         }}
       >
+        <button onClick={handleRefresh} title="Refresh" style={navBtnStyle}>&#x21BB;</button>
         <input
           type="text"
           value={url}
@@ -121,72 +126,21 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive }) =>
           spellCheck={false}
           style={{
             flex: 1,
-            height: '28px',
+            height: '24px',
             padding: '0 8px',
-            fontSize: '12px',
+            fontSize: '11px',
             fontFamily: 'JetBrainsMono NF, JetBrainsMono Nerd Font, monospace',
             backgroundColor: '#0e0e10',
             color: '#e4e4e7',
             border: '1px solid #2a2a30',
             borderRadius: '3px',
             outline: 'none',
-            transition: 'none',
           }}
-          onFocus={(e) => {
-            e.currentTarget.style.borderColor = '#60a5fa';
-          }}
-          onBlur={(e) => {
-            e.currentTarget.style.borderColor = '#2a2a30';
-          }}
+          onFocus={(e) => { e.currentTarget.style.borderColor = '#60a5fa'; }}
+          onBlur={(e) => { e.currentTarget.style.borderColor = '#2a2a30'; }}
         />
-        <button
-          onClick={handleOpen}
-          style={{
-            height: '28px',
-            padding: '0 10px',
-            fontSize: '11px',
-            fontWeight: 600,
-            backgroundColor: '#2563eb',
-            color: '#e4e4e7',
-            border: 'none',
-            borderRadius: '3px',
-            cursor: 'pointer',
-            transition: 'none',
-            whiteSpace: 'nowrap',
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.backgroundColor = '#3b82f6';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.backgroundColor = '#2563eb';
-          }}
-        >
-          Go
-        </button>
-        <button
-          onClick={handleOpenExternal}
-          title="Open in system browser"
-          style={{
-            height: '28px',
-            padding: '0 8px',
-            fontSize: '11px',
-            backgroundColor: '#27272a',
-            color: '#a1a1aa',
-            border: '1px solid #3a3a40',
-            borderRadius: '3px',
-            cursor: 'pointer',
-            transition: 'none',
-            whiteSpace: 'nowrap',
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.backgroundColor = '#3a3a40';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.backgroundColor = '#27272a';
-          }}
-        >
-          External
-        </button>
+        <button onClick={handleGo} title="Navigate" style={{ ...navBtnStyle, backgroundColor: '#2563eb', color: '#e4e4e7', fontWeight: 600, padding: '0 8px', width: 'auto' }}>Go</button>
+        <button onClick={handleOpenExternal} title="Open in system browser" style={navBtnStyle}>&#x2197;</button>
       </div>
 
       {/* Bookmarks bar */}
@@ -194,40 +148,32 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive }) =>
         <div
           style={{
             display: 'flex',
-            flexDirection: 'row',
             flexWrap: 'wrap',
-            gap: '3px',
-            padding: '3px 6px',
+            gap: '2px',
+            padding: '2px 6px',
             backgroundColor: '#16161a',
             borderBottom: '1px solid #2a2a30',
-            transition: 'none',
           }}
         >
           {bookmarks.map((bm, i) => (
             <button
               key={i}
-              onClick={() => handleBookmarkClick(bm)}
+              onClick={() => navigate(bm.url)}
               title={bm.url}
               style={{
-                height: '22px',
-                padding: '0 8px',
-                fontSize: '11px',
+                height: '20px',
+                padding: '0 6px',
+                fontSize: '10px',
                 backgroundColor: '#1e1e22',
                 color: '#a0b4e6',
                 border: '1px solid #2a2a30',
                 borderRadius: '2px',
                 cursor: 'pointer',
-                transition: 'none',
                 whiteSpace: 'nowrap',
+                lineHeight: '1',
               }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = '#2a2a30';
-                e.currentTarget.style.color = '#e4e4e7';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.backgroundColor = '#1e1e22';
-                e.currentTarget.style.color = '#a0b4e6';
-              }}
+              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#2a2a30'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#1e1e22'; }}
             >
               {bm.name}
             </button>
@@ -235,89 +181,97 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive }) =>
         </div>
       )}
 
-      {/* Status area */}
+      {/* Content area */}
       <div
+        ref={contentRef}
+        onClick={handleContentClick}
         style={{
           flex: 1,
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: '8px',
-          padding: '16px',
-          transition: 'none',
+          overflow: 'auto',
+          backgroundColor: '#fff',
+          color: '#1a1a1a',
         }}
       >
-        {error && (
-          <div
-            style={{
-              fontSize: '11px',
-              color: '#f87171',
-              backgroundColor: '#1e1012',
-              border: '1px solid #7f1d1d',
-              borderRadius: '3px',
-              padding: '4px 10px',
-              maxWidth: '400px',
-              wordBreak: 'break-all',
-              transition: 'none',
-            }}
-          >
-            {error}
+        {loading && (
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            height: '100%',
+            color: '#71717a',
+            backgroundColor: '#121214',
+            fontSize: '12px',
+          }}>
+            Loading...
           </div>
         )}
 
-        {activeUrl ? (
-          <>
-            <div
-              style={{
-                fontSize: '12px',
-                color: '#a1a1aa',
-                transition: 'none',
-              }}
-            >
-              Browser open:{' '}
-              <span style={{ color: '#60a5fa', wordBreak: 'break-all' }}>
-                {activeUrl}
-              </span>
-            </div>
+        {error && (
+          <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            height: '100%',
+            backgroundColor: '#121214',
+            gap: '8px',
+            padding: '16px',
+          }}>
+            <div style={{ fontSize: '11px', color: '#f87171' }}>{error}</div>
             <button
-              onClick={handleClose}
+              onClick={handleOpenExternal}
               style={{
-                height: '26px',
-                padding: '0 14px',
+                ...navBtnStyle,
+                width: 'auto',
+                padding: '0 12px',
+                height: '28px',
                 fontSize: '11px',
-                fontWeight: 600,
-                backgroundColor: '#7f1d1d',
-                color: '#fca5a5',
-                border: 'none',
-                borderRadius: '3px',
-                cursor: 'pointer',
-                transition: 'none',
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = '#991b1b';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.backgroundColor = '#7f1d1d';
               }}
             >
-              Close Browser
+              Open in system browser instead
             </button>
-          </>
-        ) : (
+          </div>
+        )}
+
+        {pageHtml && !loading && (
           <div
-            style={{
-              fontSize: '12px',
-              color: '#71717a',
-              transition: 'none',
-            }}
-          >
+            dangerouslySetInnerHTML={{ __html: pageHtml }}
+            style={{ padding: '0', minHeight: '100%' }}
+          />
+        )}
+
+        {!pageHtml && !loading && !error && (
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            height: '100%',
+            color: '#71717a',
+            backgroundColor: '#121214',
+            fontSize: '12px',
+          }}>
             Enter a URL or click a bookmark
           </div>
         )}
       </div>
     </div>
   );
+};
+
+const navBtnStyle: React.CSSProperties = {
+  height: '24px',
+  width: '24px',
+  padding: 0,
+  fontSize: '12px',
+  backgroundColor: '#27272a',
+  color: '#a1a1aa',
+  border: '1px solid #2a2a30',
+  borderRadius: '3px',
+  cursor: 'pointer',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  lineHeight: '1',
 };
 
 export default BrowserPane;

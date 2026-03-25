@@ -9,6 +9,7 @@ const shortcuts: [string, string][] = [
   ['Ctrl+1-9', 'Jump to pane'],
   ['Alt+Left/Right', 'Previous/Next pane'],
   ['Ctrl+T', 'New terminal'],
+  ['Ctrl+B', 'New browser'],
   ['Ctrl+W', 'Close active pane'],
   ['Ctrl+Shift+Left', 'Shrink pane'],
   ['Ctrl+Shift+Right', 'Grow pane'],
