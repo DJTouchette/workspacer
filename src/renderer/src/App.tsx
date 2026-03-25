@@ -245,6 +245,7 @@ function App() {
     onSaveSession: saveCurrentSession,
     onOpenCommandPalette: useCallback(() => setShowCommandPalette(true), []),
     onToggleViewMode: useCallback(() => setViewMode((m) => m === 'carousel' ? 'split' : m === 'split' ? 'tiling' : 'carousel'), []),
+    viewMode,
   });
 
   const handlePaneClick = useCallback((id: string) => {

@@ -26,6 +26,7 @@ interface UseKeyboardNavOptions {
   onSaveSession?: () => void;
   onOpenCommandPalette?: () => void;
   onToggleViewMode?: () => void;
+  viewMode?: 'carousel' | 'split' | 'tiling';
 }
 
 /**
@@ -106,6 +107,7 @@ export function useKeyboardNav({
   onSaveSession,
   onOpenCommandPalette,
   onToggleViewMode,
+  viewMode = 'carousel',
 }: UseKeyboardNavOptions) {
   const chordRef = useRef<{ state: ChordState; timeoutId: ReturnType<typeof setTimeout> | null }>({
     state: 'idle',
@@ -387,7 +389,7 @@ export function useKeyboardNav({
         }
       }
 
-      // Alt+Left / Alt+Right: prev/next pane
+      // Alt+Arrow: navigate between panes
       if (e.altKey && !e.ctrlKey && !e.shiftKey) {
         if (e.key === 'ArrowLeft') {
           e.preventDefault();
@@ -401,6 +403,21 @@ export function useKeyboardNav({
           goToNext();
           return;
         }
+        // Alt+Up / Alt+Down: vertical navigation in tiling mode
+        if (viewMode === 'tiling' && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+          e.preventDefault();
+          e.stopPropagation();
+          const count = panes.length;
+          const cols = count <= 1 ? 1 : count <= 2 ? 2 : count <= 4 ? 2 : count <= 6 ? 3 : Math.ceil(Math.sqrt(count));
+          const currentIdx = panes.findIndex((p) => p.id === activePaneId);
+          const targetIdx = e.key === 'ArrowUp'
+            ? currentIdx - cols
+            : currentIdx + cols;
+          if (targetIdx >= 0 && targetIdx < count) {
+            goToIndex(targetIdx);
+          }
+          return;
+        }
       }
     };
 
@@ -412,7 +429,7 @@ export function useKeyboardNav({
       window.removeEventListener('keyup', handleKeyUp, true);
       cancelChord();
     };
-  }, [goToIndex, goToPrev, goToNext, addPane, removePane, resizePane, resetPaneWidth, movePane, defaultPaneWidth, panes, activePaneId, scrollToPane, onToggleHelp, onRenamePane, keybindingsMode, leaderKey, onChordStateChange, onOpenSettings, onSaveSession, onOpenCommandPalette, onToggleViewMode]);
+  }, [goToIndex, goToPrev, goToNext, addPane, removePane, resizePane, resetPaneWidth, movePane, defaultPaneWidth, panes, activePaneId, scrollToPane, onToggleHelp, onRenamePane, keybindingsMode, leaderKey, onChordStateChange, onOpenSettings, onSaveSession, onOpenCommandPalette, onToggleViewMode, viewMode]);
 
   return {
     activePaneId,
