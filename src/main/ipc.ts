@@ -51,12 +51,18 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   });
 
   ipcMain.handle('session:save', (_event, data: any) => {
-    const enrichedPanes = sessionService.enrichPanesWithCwd(data.panes, data.ptyMapping || {});
+    // Enrich terminal panes with CWD within tabs
+    const ptyMapping = data.ptyMapping || {};
+    const enrichedTabs = (data.tabs || []).map((tab: any) => ({
+      ...tab,
+      panes: sessionService.enrichPanesWithCwd(tab.panes || [], ptyMapping),
+    }));
+
     return sessionService.saveSession({
       name: data.name,
       timestamp: new Date().toISOString(),
-      activePaneId: data.activePaneId,
-      panes: enrichedPanes,
+      activeTabId: data.activeTabId,
+      tabs: enrichedTabs,
     });
   });
 

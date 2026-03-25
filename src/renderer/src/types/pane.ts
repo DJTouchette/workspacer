@@ -4,11 +4,16 @@ export interface PaneConfig {
   id: string;
   type: PaneType;
   title: string;
-  width: number;
-  widthOverride?: number;
   shell?: string;
   cwd?: string;
   url?: string;
   appMode?: boolean;
   hibernated?: boolean;
+}
+
+export interface TabConfig {
+  id: string;
+  title: string;
+  panes: PaneConfig[];
+  activePaneId: string;
 }

@@ -6,7 +6,7 @@ import ScrollIndicator from './components/ScrollIndicator';
 import ShortcutOverlay from './components/ShortcutOverlay';
 import SessionPicker from './components/SessionPicker';
 import CommandPalette from './components/CommandPalette';
-import { usePaneManager, defaultPanes } from './hooks/usePaneManager';
+import { useTabManager, defaultTabs } from './hooks/useTabManager';
 import type { PaneType } from './types/pane';
 import { useKeyboardNav } from './hooks/useKeyboardNav';
 import { useConfig } from './hooks/useConfig';
@@ -14,95 +14,93 @@ import { useConfig } from './hooks/useConfig';
 function App() {
   const { config } = useConfig();
   const {
-    panes,
-    addPane,
+    tabs,
+    activeTabId,
+    setActiveTabId,
+    addTab,
+    splitTab,
+    removeTab,
     removePane,
-    renamePane,
-    resizePane,
-    resetPaneWidth,
-    movePane,
+    renameTab,
+    moveTab,
+    setActivePane,
     hibernatePane,
     wakePane,
     updatePaneUrl,
     loadFromSession,
-    activePaneId,
-    setActivePaneId,
-  } = usePaneManager();
+    getActiveTab,
+  } = useTabManager();
 
   const scrollContainerRef = useRef<ScrollContainerRef>(null);
   const [showHelp, setShowHelp] = useState(false);
   const [renameSignal, setRenameSignal] = useState(0);
   const [chordState, setChordState] = useState<'idle' | 'waiting'>('idle');
   const [showCommandPalette, setShowCommandPalette] = useState(false);
-  const [viewMode, setViewMode] = useState<'carousel' | 'split' | 'tiling'>('carousel');
 
   // Session state
   const [sessionPhase, setSessionPhase] = useState<'loading' | 'picker' | 'active'>('loading');
   const [sessionList, setSessionList] = useState<any[]>([]);
   const [sessionName, setSessionName] = useState('Default');
 
-  // PTY mapping: paneId -> ptySessionId (for CWD lookup on save)
+  // PTY mapping: paneId -> ptySessionId
   const ptyMappingRef = useRef<Record<string, string>>({});
-
-  // Hibernation: track when each pane was last visible
-  const lastVisibleRef = useRef<Record<string, number>>({});
-  const hibernateAfter = (config.browser?.hibernateAfter ?? 300) * 1000; // convert to ms
-
-  // Auto-wake hibernated pane when it becomes active (via any navigation method)
-  useEffect(() => {
-    if (!activePaneId) return;
-    const pane = panes.find((p) => p.id === activePaneId);
-    if (pane?.hibernated) wakePane(activePaneId);
-    lastVisibleRef.current[activePaneId] = Date.now();
-  }, [activePaneId, panes, wakePane]);
-
-  // Update last-visible timestamp for active pane (and next in split)
-  useEffect(() => {
-    if (!activePaneId) return;
-    const now = Date.now();
-    lastVisibleRef.current[activePaneId] = now;
-    // In split mode, the next pane is also visible
-    if (viewMode === 'split') {
-      const activeIdx = panes.findIndex((p) => p.id === activePaneId);
-      const nextIdx = activeIdx + 1 < panes.length ? activeIdx + 1 : (panes.length > 1 ? 0 : -1);
-      if (nextIdx >= 0 && panes[nextIdx]) {
-        lastVisibleRef.current[panes[nextIdx].id] = now;
-      }
-    }
-  }, [activePaneId, panes, viewMode]);
-
-  // Hibernate check timer
-  useEffect(() => {
-    if (hibernateAfter <= 0 || sessionPhase !== 'active') return;
-    const interval = setInterval(() => {
-      const now = Date.now();
-      for (const pane of panes) {
-        if (pane.type !== 'browser' || pane.hibernated) continue;
-        if (pane.id === activePaneId) continue;
-        const lastSeen = lastVisibleRef.current[pane.id] ?? 0;
-        if (lastSeen > 0 && now - lastSeen > hibernateAfter) {
-          hibernatePane(pane.id);
-        }
-      }
-    }, 15000); // check every 15s
-    return () => clearInterval(interval);
-  }, [panes, activePaneId, hibernateAfter, hibernatePane, sessionPhase]);
 
   const handlePtyReady = useCallback((paneId: string, ptySessionId: string) => {
     ptyMappingRef.current[paneId] = ptySessionId;
   }, []);
 
-  const handleUrlChange = useCallback((paneId: string, url: string) => {
-    updatePaneUrl(paneId, url);
+  const handleUrlChange = useCallback((tabId: string, paneId: string, url: string) => {
+    updatePaneUrl(tabId, paneId, url);
   }, [updatePaneUrl]);
 
-  // --- Session lifecycle ---
+  // Hibernation tracking
+  const lastVisibleRef = useRef<Record<string, number>>({});
+  const hibernateAfter = (config.browser?.hibernateAfter ?? 300) * 1000;
 
-  // On startup: check for saved sessions
   useEffect(() => {
-    // Load defaults immediately, then check for sessions
-    loadFromSession(defaultPanes, defaultPanes[0].id);
+    if (!activeTabId) return;
+    const now = Date.now();
+    const tab = tabs.find((t) => t.id === activeTabId);
+    if (tab) {
+      for (const pane of tab.panes) {
+        lastVisibleRef.current[pane.id] = now;
+      }
+    }
+  }, [activeTabId, tabs]);
 
+  // Auto-wake hibernated panes when their tab becomes active
+  useEffect(() => {
+    if (!activeTabId) return;
+    const tab = tabs.find((t) => t.id === activeTabId);
+    if (tab) {
+      for (const pane of tab.panes) {
+        if (pane.hibernated) wakePane(tab.id, pane.id);
+      }
+    }
+  }, [activeTabId, tabs, wakePane]);
+
+  // Hibernate timer
+  useEffect(() => {
+    if (hibernateAfter <= 0 || sessionPhase !== 'active') return;
+    const interval = setInterval(() => {
+      const now = Date.now();
+      for (const tab of tabs) {
+        if (tab.id === activeTabId) continue;
+        for (const pane of tab.panes) {
+          if (pane.type !== 'browser' || pane.hibernated) continue;
+          const lastSeen = lastVisibleRef.current[pane.id] ?? 0;
+          if (lastSeen > 0 && now - lastSeen > hibernateAfter) {
+            hibernatePane(tab.id, pane.id);
+          }
+        }
+      }
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [tabs, activeTabId, hibernateAfter, hibernatePane, sessionPhase]);
+
+  // --- Session lifecycle ---
+  useEffect(() => {
+    loadFromSession(defaultTabs, defaultTabs[0].id);
     window.electronAPI.listSessions().then((sessions) => {
       if (sessions.length > 0) {
         setSessionList(sessions);
@@ -116,7 +114,7 @@ function App() {
   }, [loadFromSession]);
 
   const handleNewSession = useCallback(() => {
-    loadFromSession(defaultPanes, defaultPanes[0].id);
+    loadFromSession(defaultTabs, defaultTabs[0].id);
     setSessionName('Default');
     ptyMappingRef.current = {};
     setSessionPhase('active');
@@ -124,16 +122,26 @@ function App() {
 
   const handleResumeSession = useCallback((filename: string) => {
     window.electronAPI.loadSession(filename).then((data: any) => {
-      if (data && data.panes?.length > 0) {
-        loadFromSession(data.panes, data.activePaneId);
+      if (data && data.tabs?.length > 0) {
+        loadFromSession(data.tabs, data.activeTabId);
+        setSessionName(data.name || 'Default');
+      } else if (data && data.panes?.length > 0) {
+        // Backward compat: old flat pane format → wrap each in a tab
+        const migrated = data.panes.map((p: any) => ({
+          id: `tab-${p.id}`,
+          title: p.title,
+          panes: [p],
+          activePaneId: p.id,
+        }));
+        loadFromSession(migrated, `tab-${data.activePaneId}`);
         setSessionName(data.name || 'Default');
       } else {
-        loadFromSession(defaultPanes, defaultPanes[0].id);
+        loadFromSession(defaultTabs, defaultTabs[0].id);
       }
       ptyMappingRef.current = {};
       setSessionPhase('active');
     }).catch(() => {
-      loadFromSession(defaultPanes, defaultPanes[0].id);
+      loadFromSession(defaultTabs, defaultTabs[0].id);
       setSessionPhase('active');
     });
   }, [loadFromSession]);
@@ -144,177 +152,151 @@ function App() {
     });
   }, []);
 
-  // Save current session
   const saveCurrentSession = useCallback(() => {
-    if (sessionPhase !== 'active' || panes.length === 0) return;
-
-    const paneData = panes.map((p) => ({
-      id: p.id,
-      type: p.type,
-      title: p.title,
-      width: p.width,
-      widthOverride: p.widthOverride,
-      shell: p.shell,
-      url: p.url,
-      appMode: p.appMode,
-    }));
-
+    if (sessionPhase !== 'active' || tabs.length === 0) return;
     window.electronAPI.saveSession({
       name: sessionName,
-      activePaneId,
-      panes: paneData,
+      activeTabId,
+      tabs: tabs.map((t) => ({
+        ...t,
+        panes: t.panes.map((p) => ({ ...p })),
+      })),
       ptyMapping: { ...ptyMappingRef.current },
     }).catch((err: any) => {
       console.error('[Session] save failed:', err);
     });
-  }, [panes, activePaneId, sessionName, sessionPhase]);
+  }, [tabs, activeTabId, sessionName, sessionPhase]);
 
-  // Auto-save every 30s
   useEffect(() => {
     if (sessionPhase !== 'active') return;
     const interval = setInterval(saveCurrentSession, 30000);
     return () => clearInterval(interval);
   }, [sessionPhase, saveCurrentSession]);
 
-  // Save on window close
   useEffect(() => {
     const handler = () => saveCurrentSession();
     window.addEventListener('beforeunload', handler);
     return () => window.removeEventListener('beforeunload', handler);
   }, [saveCurrentSession]);
 
-  // Save on app quit signal from main process
   useEffect(() => {
-    const unsub = window.electronAPI.onBeforeQuit(() => {
-      saveCurrentSession();
-    });
+    const unsub = window.electronAPI.onBeforeQuit(() => saveCurrentSession());
     return unsub;
   }, [saveCurrentSession]);
 
   // --- Normal app logic ---
 
-  const scrollToPane = useCallback((id: string) => {
-    scrollContainerRef.current?.scrollToPane(id);
+  const scrollToTab = useCallback((id: string) => {
+    scrollContainerRef.current?.scrollToTab(id);
   }, []);
 
-  const toggleHelp = useCallback(() => {
-    setShowHelp((prev) => !prev);
-  }, []);
-
-  const closeHelp = useCallback(() => {
-    setShowHelp(false);
-  }, []);
+  const toggleHelp = useCallback(() => setShowHelp((prev) => !prev), []);
+  const closeHelp = useCallback(() => setShowHelp(false), []);
 
   const insertPosition = config.panes.insertPosition || 'after';
 
-  const addPaneWithConfig = useCallback((type: PaneType, title?: string, width?: number, shell?: string) => {
-    return addPane(type, title, width, insertPosition, shell);
-  }, [addPane, insertPosition]);
+  const addTabWithConfig = useCallback((type: PaneType, title?: string, shell?: string, url?: string, appMode?: boolean) => {
+    return addTab(type, title, insertPosition, shell, url, appMode);
+  }, [addTab, insertPosition]);
 
   const openSettings = useCallback(() => {
-    const existing = panes.find((p) => p.type === 'settings');
+    const existing = tabs.find((t) => t.panes.length === 1 && t.panes[0].type === 'settings');
     if (existing) {
-      setActivePaneId(existing.id);
-      scrollToPane(existing.id);
+      setActiveTabId(existing.id);
+      scrollToTab(existing.id);
     } else {
-      const newId = addPaneWithConfig('settings', 'Settings');
-      requestAnimationFrame(() => scrollToPane(newId));
+      const newId = addTabWithConfig('settings', 'Settings');
+      requestAnimationFrame(() => scrollToTab(newId));
     }
-  }, [panes, addPaneWithConfig, setActivePaneId, scrollToPane]);
+  }, [tabs, addTabWithConfig, setActiveTabId, scrollToTab]);
 
   const kbMode = config.keybindings?.mode ?? 'default';
   const kbLeader = config.keybindings?.leader ?? 'ctrl';
 
+  // Get current tab for keyboard nav context
+  const activeTab = getActiveTab();
+
   useKeyboardNav({
-    panes,
-    activePaneId,
-    setActivePaneId,
-    scrollToPane,
-    addPane: addPaneWithConfig,
+    tabs,
+    activeTabId,
+    activeTab,
+    setActiveTabId,
+    scrollToTab,
+    addTab: addTabWithConfig,
+    splitTab,
+    removeTab,
     removePane,
-    resizePane,
-    resetPaneWidth,
-    movePane,
-    defaultPaneWidth: config.panes.defaultWidth || 800,
+    renameTab,
+    moveTab,
+    setActivePane,
     onToggleHelp: toggleHelp,
-    onRenamePane: useCallback(() => setRenameSignal((s) => s + 1), []),
+    onRenameTab: useCallback(() => setRenameSignal((s) => s + 1), []),
     keybindingsMode: kbMode,
     leaderKey: kbLeader,
     onChordStateChange: setChordState,
     onOpenSettings: openSettings,
     onSaveSession: saveCurrentSession,
     onOpenCommandPalette: useCallback(() => setShowCommandPalette(true), []),
-    onToggleViewMode: useCallback(() => setViewMode((m) => m === 'carousel' ? 'split' : m === 'split' ? 'tiling' : 'carousel'), []),
-    viewMode,
   });
 
-  const handlePaneClick = useCallback((id: string) => {
-    // Auto-wake hibernated panes
-    const pane = panes.find((p) => p.id === id);
-    if (pane?.hibernated) wakePane(id);
-    lastVisibleRef.current[id] = Date.now();
-    setActivePaneId(id);
-    scrollToPane(id);
-  }, [panes, wakePane, setActivePaneId, scrollToPane]);
+  const handleTabClick = useCallback((id: string) => {
+    setActiveTabId(id);
+    scrollToTab(id);
+  }, [setActiveTabId, scrollToTab]);
 
-  const handlePaneClose = useCallback((id: string) => {
-    removePane(id);
+  const handleTabFocus = useCallback((id: string) => {
+    setActiveTabId(id);
+  }, [setActiveTabId]);
+
+  const handlePaneClose = useCallback((tabId: string, paneId: string) => {
+    removePane(tabId, paneId);
   }, [removePane]);
 
-  const handlePaneFocus = useCallback((id: string) => {
-    const pane = panes.find((p) => p.id === id);
-    if (pane?.hibernated) wakePane(id);
-    lastVisibleRef.current[id] = Date.now();
-    setActivePaneId(id);
-  }, [panes, wakePane, setActivePaneId]);
+  const handlePaneFocus = useCallback((tabId: string, paneId: string) => {
+    setActiveTabId(tabId);
+    setActivePane(tabId, paneId);
+  }, [setActiveTabId, setActivePane]);
 
-  const handleAddPane = useCallback((type: PaneType, shell?: string, label?: string) => {
-    const title = label ?? undefined;
-    const newId = addPaneWithConfig(type, title, undefined, shell);
-    requestAnimationFrame(() => {
-      scrollToPane(newId);
-    });
-  }, [addPaneWithConfig, scrollToPane]);
+  const handleAddTab = useCallback((type: PaneType, shell?: string, label?: string) => {
+    const newId = addTabWithConfig(type, label, shell);
+    requestAnimationFrame(() => scrollToTab(newId));
+  }, [addTabWithConfig, scrollToTab]);
 
   const handleLaunchApp = useCallback((app: { name: string; url: string }) => {
-    const newId = addPane('browser', app.name, undefined, insertPosition, undefined, app.url, true);
-    requestAnimationFrame(() => scrollToPane(newId));
-  }, [addPane, insertPosition, scrollToPane]);
-
-  // --- Render ---
+    const newId = addTab('browser', app.name, insertPosition, undefined, app.url, true);
+    requestAnimationFrame(() => scrollToTab(newId));
+  }, [addTab, insertPosition, scrollToTab]);
 
   // --- Render ---
   return (
     <div className="app-root">
       <NavBar
-        panes={panes}
-        activePaneId={activePaneId}
-        onPaneClick={handlePaneClick}
-        onAddPane={handleAddPane}
+        tabs={tabs}
+        activeTabId={activeTabId}
+        onTabClick={handleTabClick}
+        onAddTab={handleAddTab}
       />
 
       <div className="app-content" style={{ marginTop: `${config.ui.navBarHeight || 28}px` }}>
         <ScrollContainer
           ref={scrollContainerRef}
-          panes={panes}
-          activePaneId={activePaneId}
-          onPaneFocus={handlePaneFocus}
+          tabs={tabs}
+          activeTabId={activeTabId}
+          onTabFocus={handleTabFocus}
           onPaneClose={handlePaneClose}
-          onPaneResize={resizePane}
-          onPaneResetWidth={resetPaneWidth}
-          onPaneMove={movePane}
-          onPaneRename={renamePane}
+          onPaneFocus={handlePaneFocus}
+          onTabRename={renameTab}
+          onTabMove={moveTab}
           onPtyReady={handlePtyReady}
           onUrlChange={handleUrlChange}
           renameSignal={renameSignal}
-          viewMode={viewMode}
         />
       </div>
 
       <ScrollIndicator
-        panes={panes}
-        activePaneId={activePaneId}
-        onDotClick={handlePaneClick}
+        tabs={tabs}
+        activeTabId={activeTabId}
+        onDotClick={handleTabClick}
       />
 
       <ShortcutOverlay

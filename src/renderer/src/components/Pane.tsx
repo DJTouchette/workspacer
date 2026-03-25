@@ -6,7 +6,6 @@ interface PaneProps {
   id: string;
   type: PaneType;
   title: string;
-  width: number;
   isActive: boolean;
   onClose: (id: string) => void;
   onFocus: (id: string) => void;
@@ -28,7 +27,6 @@ const Pane: React.FC<PaneProps> = ({
   id,
   type,
   title,
-  width,
   isActive,
   onClose,
   onFocus,
@@ -47,7 +45,7 @@ const Pane: React.FC<PaneProps> = ({
   const inputRef = useRef<HTMLInputElement>(null);
   const prevSignalRef = useRef(renameSignal);
 
-  // Trigger rename only when F2 signal actually increments (not on pane switch)
+  // Trigger rename only when F2 signal actually increments
   useEffect(() => {
     if (renameSignal && renameSignal > 0 && renameSignal !== prevSignalRef.current && onRename) {
       setEditValue(title);
@@ -93,7 +91,7 @@ const Pane: React.FC<PaneProps> = ({
     e.stopPropagation();
 
     let lastX = e.clientX;
-    const moveThreshold = 60; // pixels to drag before swapping
+    const moveThreshold = 60;
 
     document.body.style.cursor = 'grabbing';
     document.body.style.userSelect = 'none';
@@ -123,14 +121,13 @@ const Pane: React.FC<PaneProps> = ({
       className="pane-wrapper"
       data-pane-id={id}
       style={{
-        width: `${width}px`,
-        minWidth: `${width}px`,
-        height: 'calc(100% - 8px)',
+        width: '100%',
+        height: '100%',
         display: 'flex',
         flexDirection: 'column',
         borderRadius: '8px',
         overflow: 'hidden',
-        margin: '4px 8px',
+        margin: '0 8px',
         border: isActive
           ? '1px solid rgb(80, 120, 200)'
           : '1px solid rgb(50, 50, 55)',
@@ -143,7 +140,7 @@ const Pane: React.FC<PaneProps> = ({
       }}
       onClick={() => onFocus(id)}
     >
-      {/* Header bar — drag to reorder, double-click title to rename */}
+      {/* Header bar */}
       <div
         className="pane-header"
         onMouseDown={handleHeaderMouseDown}
@@ -242,7 +239,6 @@ const Pane: React.FC<PaneProps> = ({
         </button>
       </div>
 
-      {/* Content area — isolation creates a new stacking context so xterm's z-index stays contained */}
       <div
         className="pane-content"
         style={{

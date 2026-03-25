@@ -1,12 +1,12 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { PaneConfig, PaneType } from '../types/pane';
+import { PaneType, TabConfig } from '../types/pane';
 import { useConfig } from '../hooks/useConfig';
 
 interface NavBarProps {
-  panes: PaneConfig[];
-  activePaneId: string;
-  onPaneClick: (id: string) => void;
-  onAddPane?: (type: PaneType, shell?: string, label?: string) => void;
+  tabs: TabConfig[];
+  activeTabId: string;
+  onTabClick: (id: string) => void;
+  onAddTab?: (type: PaneType, shell?: string, label?: string) => void;
 }
 
 const typeLabels: Record<PaneType, string> = {
@@ -17,14 +17,13 @@ const typeLabels: Record<PaneType, string> = {
   settings: '\u2699',
 };
 
-const NavBar: React.FC<NavBarProps> = ({ panes, activePaneId, onPaneClick, onAddPane }) => {
+const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab }) => {
   const { config } = useConfig();
   const navHeight = config.ui.navBarHeight || 28;
   const shells = config.terminal.shells || [];
   const [showMenu, setShowMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  // Close menu on click outside
   useEffect(() => {
     if (!showMenu) return;
     const handler = (e: MouseEvent) => {
@@ -52,12 +51,11 @@ const NavBar: React.FC<NavBarProps> = ({ panes, activePaneId, onPaneClick, onAdd
         padding: '0 10px',
         zIndex: 100,
         userSelect: 'none',
-        // @ts-ignore — Electron-specific: makes navbar act as window drag handle
+        // @ts-ignore
         WebkitAppRegion: 'drag',
         appRegion: 'drag',
       }}
     >
-      {/* App title */}
       <div
         style={{
           fontWeight: 600,
@@ -69,7 +67,6 @@ const NavBar: React.FC<NavBarProps> = ({ panes, activePaneId, onPaneClick, onAdd
         Workspacer
       </div>
 
-      {/* Pane tabs — no-drag so clicks work */}
       <div
         style={{
           display: 'flex',
@@ -82,12 +79,16 @@ const NavBar: React.FC<NavBarProps> = ({ panes, activePaneId, onPaneClick, onAdd
           overflow: 'hidden',
         }}
       >
-        {panes.map((pane, idx) => {
-          const isActive = pane.id === activePaneId;
+        {tabs.map((tab, idx) => {
+          const isActive = tab.id === activeTabId;
+          const singlePane = tab.panes.length === 1;
+          const firstPaneType = tab.panes[0]?.type ?? 'terminal';
+          const hasHibernated = tab.panes.some((p) => p.hibernated);
+
           return (
             <button
-              key={pane.id}
-              onClick={() => onPaneClick(pane.id)}
+              key={tab.id}
+              onClick={() => onTabClick(tab.id)}
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -109,7 +110,7 @@ const NavBar: React.FC<NavBarProps> = ({ panes, activePaneId, onPaneClick, onAdd
                 color: isActive
                   ? 'rgb(220, 220, 235)'
                   : 'rgb(140, 140, 155)',
-                opacity: pane.hibernated ? 0.4 : 1,
+                opacity: hasHibernated && !isActive ? 0.4 : 1,
                 transition: 'none',
               }}
               onMouseEnter={(e) => {
@@ -124,19 +125,25 @@ const NavBar: React.FC<NavBarProps> = ({ panes, activePaneId, onPaneClick, onAdd
                   (e.currentTarget as HTMLElement).style.color = 'rgb(140, 140, 155)';
                 }
               }}
-              title={`${pane.title} (Ctrl+${idx + 1})`}
+              title={`${tab.title} (Ctrl+${idx + 1})`}
             >
-              <span style={{ fontSize: '0.65rem' }}>{typeLabels[pane.type]}</span>
-              <span>{pane.title}</span>
+              <span style={{ fontSize: '0.65rem' }}>
+                {singlePane ? typeLabels[firstPaneType] : '\u25A3'}
+              </span>
+              <span>{tab.title}</span>
+              {!singlePane && (
+                <span style={{ fontSize: '0.5rem', opacity: 0.6 }}>
+                  {tab.panes.length}
+                </span>
+              )}
             </button>
           );
         })}
 
-        {/* Add pane button — click for new terminal, right-click for picker */}
-        {onAddPane && (
+        {onAddTab && (
           <div ref={menuRef} style={{ position: 'relative', display: 'inline-flex' }}>
             <button
-              onClick={() => onAddPane('terminal')}
+              onClick={() => onAddTab('terminal')}
               onContextMenu={(e) => {
                 e.preventDefault();
                 setShowMenu((v) => !v);
@@ -173,7 +180,6 @@ const NavBar: React.FC<NavBarProps> = ({ panes, activePaneId, onPaneClick, onAdd
               +
             </button>
 
-            {/* Pane type + shell picker dropdown */}
             {showMenu && (
               <div
                 style={{
@@ -188,17 +194,14 @@ const NavBar: React.FC<NavBarProps> = ({ panes, activePaneId, onPaneClick, onAdd
                   boxShadow: '0 4px 12px rgba(0, 0, 0, 0.4)',
                 }}
               >
-                {/* Pane types */}
                 <div style={{ padding: '2px 8px', fontSize: '0.55rem', color: 'rgb(90, 90, 100)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  New Pane
+                  New Tab
                 </div>
-                <MenuButton label="Browser" onClick={() => { setShowMenu(false); onAddPane('browser'); }} />
-                <MenuButton label="Notes" onClick={() => { setShowMenu(false); onAddPane('notes'); }} />
+                <MenuButton label="Browser" onClick={() => { setShowMenu(false); onAddTab('browser'); }} />
+                <MenuButton label="Notes" onClick={() => { setShowMenu(false); onAddTab('notes'); }} />
 
-                {/* Divider */}
                 <div style={{ height: '1px', backgroundColor: 'rgb(50, 50, 55)', margin: '4px 0' }} />
 
-                {/* Terminals with shell options */}
                 <div style={{ padding: '2px 8px', fontSize: '0.55rem', color: 'rgb(90, 90, 100)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                   Terminal
                 </div>
@@ -208,7 +211,7 @@ const NavBar: React.FC<NavBarProps> = ({ panes, activePaneId, onPaneClick, onAdd
                     label={shell.label}
                     onClick={() => {
                       setShowMenu(false);
-                      onAddPane('terminal', shell.path, shell.label);
+                      onAddTab('terminal', shell.path, shell.label);
                     }}
                   />
                 ))}

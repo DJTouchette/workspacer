@@ -1,64 +1,24 @@
 import { useEffect, useCallback, useRef } from 'react';
-import { PaneConfig, PaneType } from '../types/pane';
+import { PaneType, TabConfig } from '../types/pane';
 
-const RESIZE_STEP = 80;
 const CHORD_TIMEOUT = 500;
 
 type ChordState = 'idle' | 'waiting';
 
-interface UseKeyboardNavOptions {
-  panes: PaneConfig[];
-  activePaneId: string;
-  setActivePaneId: (id: string) => void;
-  scrollToPane: (id: string) => void;
-  addPane: (type: PaneType, title?: string, width?: number, shell?: string) => string;
-  removePane: (id: string) => void;
-  resizePane: (id: string, width: number) => void;
-  resetPaneWidth: (id: string) => void;
-  movePane: (id: string, toIndex: number) => void;
-  defaultPaneWidth: number;
-  onToggleHelp: () => void;
-  onRenamePane?: () => void;
-  keybindingsMode?: 'default' | 'vim';
-  leaderKey?: string;
-  onChordStateChange?: (state: ChordState) => void;
-  onOpenSettings?: () => void;
-  onSaveSession?: () => void;
-  onOpenCommandPalette?: () => void;
-  onToggleViewMode?: () => void;
-  viewMode?: 'carousel' | 'split' | 'tiling';
-}
-
-/**
- * Map from key name to e.code values for keys where e.key is unreliable.
- */
-const KEY_TO_CODE: Record<string, string> = {
-  space: 'Space',
-};
-
 const MODIFIER_NAMES = new Set(['ctrl', 'alt', 'shift', 'meta']);
+const KEY_TO_CODE: Record<string, string> = { space: 'Space' };
 
-/**
- * Parse a key combo string into a matcher function.
- * Supports: "ctrl+space", "alt+a", or modifier-only like "ctrl", "alt".
- * A modifier-only leader fires on keydown of that modifier key.
- */
 function parseKeyCombo(combo: string): { match: (e: KeyboardEvent) => boolean; isModifierOnly: boolean } {
   const parts = combo.toLowerCase().split('+');
   const lastPart = parts[parts.length - 1];
   const isModifierOnly = parts.length === 1 && MODIFIER_NAMES.has(lastPart);
 
   if (isModifierOnly) {
-    // Map modifier name to e.key value
     const modKeyMap: Record<string, string> = { ctrl: 'Control', alt: 'Alt', shift: 'Shift', meta: 'Meta' };
     const expectedKey = modKeyMap[lastPart];
-    return {
-      isModifierOnly: true,
-      match: (e: KeyboardEvent) => e.key === expectedKey,
-    };
+    return { isModifierOnly: true, match: (e) => e.key === expectedKey };
   }
 
-  // Regular combo: modifier(s) + key
   const key = lastPart;
   const needsCtrl = parts.includes('ctrl');
   const needsAlt = parts.includes('alt');
@@ -68,89 +28,109 @@ function parseKeyCombo(combo: string): { match: (e: KeyboardEvent) => boolean; i
 
   return {
     isModifierOnly: false,
-    match: (e: KeyboardEvent) => {
-      let keyMatch: boolean;
-      if (expectedCode) {
-        keyMatch = e.code === expectedCode;
-      } else {
-        const eventKey = e.key === ' ' ? 'space' : e.key.toLowerCase();
-        keyMatch = eventKey === key;
-      }
-      return (
-        keyMatch &&
-        e.ctrlKey === needsCtrl &&
-        e.altKey === needsAlt &&
-        e.shiftKey === needsShift &&
-        e.metaKey === needsMeta
-      );
+    match: (e) => {
+      const keyMatch = expectedCode ? e.code === expectedCode : (e.key === ' ' ? 'space' : e.key.toLowerCase()) === key;
+      return keyMatch && e.ctrlKey === needsCtrl && e.altKey === needsAlt && e.shiftKey === needsShift && e.metaKey === needsMeta;
     },
   };
 }
 
+interface UseKeyboardNavOptions {
+  tabs: TabConfig[];
+  activeTabId: string;
+  activeTab?: TabConfig;
+  setActiveTabId: (id: string) => void;
+  scrollToTab: (id: string) => void;
+  addTab: (type: PaneType, title?: string, shell?: string, url?: string, appMode?: boolean) => string;
+  splitTab: (tabId: string, type: PaneType, title?: string) => string;
+  removeTab: (tabId: string) => void;
+  removePane: (tabId: string, paneId: string) => void;
+  renameTab: (tabId: string, title: string) => void;
+  moveTab: (tabId: string, toIndex: number) => void;
+  setActivePane: (tabId: string, paneId: string) => void;
+  onToggleHelp: () => void;
+  onRenameTab?: () => void;
+  keybindingsMode?: 'default' | 'vim';
+  leaderKey?: string;
+  onChordStateChange?: (state: ChordState) => void;
+  onOpenSettings?: () => void;
+  onSaveSession?: () => void;
+  onOpenCommandPalette?: () => void;
+}
+
 export function useKeyboardNav({
-  panes,
-  activePaneId,
-  setActivePaneId,
-  scrollToPane,
-  addPane,
+  tabs,
+  activeTabId,
+  activeTab,
+  setActiveTabId,
+  scrollToTab,
+  addTab,
+  splitTab,
+  removeTab,
   removePane,
-  resizePane,
-  resetPaneWidth,
-  movePane,
-  defaultPaneWidth,
+  renameTab,
+  moveTab,
+  setActivePane,
   onToggleHelp,
-  onRenamePane,
+  onRenameTab,
   keybindingsMode = 'default',
   leaderKey = 'ctrl',
   onChordStateChange,
   onOpenSettings,
   onSaveSession,
   onOpenCommandPalette,
-  onToggleViewMode,
-  viewMode = 'carousel',
 }: UseKeyboardNavOptions) {
   const chordRef = useRef<{ state: ChordState; timeoutId: ReturnType<typeof setTimeout> | null }>({
-    state: 'idle',
-    timeoutId: null,
+    state: 'idle', timeoutId: null,
   });
-
-  const goToIndex = useCallback(
-    (index: number) => {
-      if (index >= 0 && index < panes.length) {
-        const pane = panes[index];
-        setActivePaneId(pane.id);
-        scrollToPane(pane.id);
-      }
-    },
-    [panes, setActivePaneId, scrollToPane]
-  );
-
-  const goToPrev = useCallback(() => {
-    const currentIdx = panes.findIndex((p) => p.id === activePaneId);
-    if (currentIdx > 0) {
-      goToIndex(currentIdx - 1);
-    }
-  }, [panes, activePaneId, goToIndex]);
-
-  const goToNext = useCallback(() => {
-    const currentIdx = panes.findIndex((p) => p.id === activePaneId);
-    if (currentIdx < panes.length - 1) {
-      goToIndex(currentIdx + 1);
-    }
-  }, [panes, activePaneId, goToIndex]);
-
-  // For modifier-only leaders: track whether the modifier was "tapped" (pressed+released without another key)
   const modTapRef = useRef<{ pressed: boolean; usedInCombo: boolean }>({ pressed: false, usedInCombo: false });
+
+  // Tab navigation
+  const goToTab = useCallback((index: number) => {
+    if (index >= 0 && index < tabs.length) {
+      const tab = tabs[index];
+      setActiveTabId(tab.id);
+      scrollToTab(tab.id);
+    }
+  }, [tabs, setActiveTabId, scrollToTab]);
+
+  const goToPrevTab = useCallback(() => {
+    const idx = tabs.findIndex((t) => t.id === activeTabId);
+    if (idx > 0) goToTab(idx - 1);
+  }, [tabs, activeTabId, goToTab]);
+
+  const goToNextTab = useCallback(() => {
+    const idx = tabs.findIndex((t) => t.id === activeTabId);
+    if (idx < tabs.length - 1) goToTab(idx + 1);
+  }, [tabs, activeTabId, goToTab]);
+
+  // Sub-pane navigation within current tab
+  const navigatePane = useCallback((direction: 'left' | 'right' | 'up' | 'down') => {
+    if (!activeTab || activeTab.panes.length <= 1) return;
+    const panes = activeTab.panes;
+    const currentIdx = panes.findIndex((p) => p.id === activeTab.activePaneId);
+    if (currentIdx < 0) return;
+
+    const count = panes.length;
+    const cols = count <= 1 ? 1 : count <= 2 ? 2 : count <= 4 ? 2 : count <= 6 ? 3 : Math.ceil(Math.sqrt(count));
+    let targetIdx = currentIdx;
+
+    if (direction === 'left') targetIdx = currentIdx - 1;
+    else if (direction === 'right') targetIdx = currentIdx + 1;
+    else if (direction === 'up') targetIdx = currentIdx - cols;
+    else if (direction === 'down') targetIdx = currentIdx + cols;
+
+    if (targetIdx >= 0 && targetIdx < count) {
+      setActivePane(activeTab.id, panes[targetIdx].id);
+    }
+  }, [activeTab, setActivePane]);
 
   useEffect(() => {
     const leaderConfig = parseKeyCombo(leaderKey);
 
     const cancelChord = () => {
-      if (chordRef.current.timeoutId) {
-        clearTimeout(chordRef.current.timeoutId);
-        chordRef.current.timeoutId = null;
-      }
-      chordRef.current.state = 'idle';
+      if (chordRef.current.timeoutId) clearTimeout(chordRef.current.timeoutId);
+      chordRef.current = { state: 'idle', timeoutId: null };
       onChordStateChange?.('idle');
     };
 
@@ -162,266 +142,164 @@ export function useKeyboardNav({
 
     const executeChordAction = (key: string) => {
       const num = parseInt(key, 10);
-
-      if (num >= 1 && num <= 9) {
-        goToIndex(num - 1);
-      } else if (key === 'h') {
-        goToPrev();
-      } else if (key === 'l') {
-        goToNext();
-      } else if (key === 'H') {
-        const idx = panes.findIndex((p) => p.id === activePaneId);
-        if (idx > 0) movePane(activePaneId, idx - 1);
-      } else if (key === 'L') {
-        const idx = panes.findIndex((p) => p.id === activePaneId);
-        if (idx < panes.length - 1) movePane(activePaneId, idx + 1);
-      } else if (key === 'n') {
-        const newId = addPane('terminal');
-        requestAnimationFrame(() => scrollToPane(newId));
-      } else if (key === 'b') {
-        const newId = addPane('browser');
-        requestAnimationFrame(() => scrollToPane(newId));
-      } else if (key === 'q') {
-        removePane(activePaneId);
-      } else if (key === 'r') {
-        onRenamePane?.();
-      } else if (key === '+' || key === '>') {
-        const pane = panes.find((p) => p.id === activePaneId);
-        if (pane) {
-          const current = pane.widthOverride ?? defaultPaneWidth;
-          resizePane(activePaneId, current + RESIZE_STEP);
-        }
-      } else if (key === '-' || key === '<') {
-        const pane = panes.find((p) => p.id === activePaneId);
-        if (pane) {
-          const current = pane.widthOverride ?? defaultPaneWidth;
-          resizePane(activePaneId, Math.max(300, current - RESIZE_STEP));
-        }
-      } else if (key === '=') {
-        resetPaneWidth(activePaneId);
-      } else if (key === '?') {
-        onToggleHelp();
-      } else if (key === 's') {
-        onSaveSession?.();
+      if (num >= 1 && num <= 9) { goToTab(num - 1); }
+      else if (key === 'h') goToPrevTab();
+      else if (key === 'l') goToNextTab();
+      else if (key === 'H') {
+        const idx = tabs.findIndex((t) => t.id === activeTabId);
+        if (idx > 0) moveTab(activeTabId, idx - 1);
+      }
+      else if (key === 'L') {
+        const idx = tabs.findIndex((t) => t.id === activeTabId);
+        if (idx < tabs.length - 1) moveTab(activeTabId, idx + 1);
+      }
+      else if (key === 'n') {
+        const newId = addTab('terminal');
+        requestAnimationFrame(() => scrollToTab(newId));
+      }
+      else if (key === 'b') {
+        const newId = addTab('browser');
+        requestAnimationFrame(() => scrollToTab(newId));
+      }
+      else if (key === 'q') removeTab(activeTabId);
+      else if (key === 'r') onRenameTab?.();
+      else if (key === '?') onToggleHelp();
+      else if (key === 's') onSaveSession?.();
+      else if (key === 'd') {
+        if (activeTab) splitTab(activeTab.id, 'terminal');
       }
     };
 
-    // For modifier-only leaders: detect "tap" via keyup
     const handleKeyUp = (e: KeyboardEvent) => {
       if (keybindingsMode !== 'vim' || !leaderConfig.isModifierOnly) return;
-
       if (leaderConfig.match(e) && modTapRef.current.pressed && !modTapRef.current.usedInCombo) {
-        // Modifier was pressed and released without any other key — it's a tap
         modTapRef.current.pressed = false;
-        if (chordRef.current.state === 'idle') {
-          startChord();
-        }
+        if (chordRef.current.state === 'idle') startChord();
       }
       modTapRef.current.pressed = false;
     };
 
     const handler = (e: KeyboardEvent) => {
-      // Ctrl+, : open settings (both modes)
+      // --- Global shortcuts (both modes) ---
+
+      // Ctrl+, : settings
       if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === ',') {
-        e.preventDefault();
-        e.stopPropagation();
-        onOpenSettings?.();
-        return;
+        e.preventDefault(); e.stopPropagation(); onOpenSettings?.(); return;
       }
-
-      // Ctrl+S : save session (both modes)
+      // Ctrl+S : save session
       if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 's') {
-        e.preventDefault();
-        e.stopPropagation();
-        onSaveSession?.();
-        return;
+        e.preventDefault(); e.stopPropagation(); onSaveSession?.(); return;
       }
-
-      // Ctrl+K : open command palette (both modes)
+      // Ctrl+K : command palette
       if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'k') {
-        e.preventDefault();
-        e.stopPropagation();
-        onOpenCommandPalette?.();
-        return;
-      }
-
-      // Ctrl+L : toggle view mode (both modes)
-      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'l') {
-        e.preventDefault();
-        e.stopPropagation();
-        onToggleViewMode?.();
-        return;
+        e.preventDefault(); e.stopPropagation(); onOpenCommandPalette?.(); return;
       }
 
       // --- Vim chord handling ---
       if (keybindingsMode === 'vim') {
         const isLeaderCapture = e.target instanceof HTMLElement && e.target.dataset.leaderCapture === 'true';
 
-        // Track modifier-only leader: on keydown of the modifier, start tracking
         if (leaderConfig.isModifierOnly && !isLeaderCapture) {
           if (leaderConfig.match(e)) {
-            // Modifier key pressed — start tracking for a tap
-            modTapRef.current.pressed = true;
-            modTapRef.current.usedInCombo = false;
-            return; // Let the event pass through (it's just Ctrl down)
+            modTapRef.current = { pressed: true, usedInCombo: false };
+            return;
           } else if (modTapRef.current.pressed) {
-            // Another key pressed while modifier held — this is a combo, not a tap
             modTapRef.current.usedInCombo = true;
           }
         }
 
         if (chordRef.current.state === 'waiting') {
-          // Ignore modifier-only keypresses while waiting for action
-          if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) {
-            return;
-          }
-
-          // We're waiting for an action key
-          e.preventDefault();
-          e.stopPropagation();
+          if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) return;
+          e.preventDefault(); e.stopPropagation();
           cancelChord();
           executeChordAction(e.key);
           return;
         }
 
-        // Non-modifier leader (e.g. ctrl+space): detect on keydown
         if (!leaderConfig.isModifierOnly && !isLeaderCapture && leaderConfig.match(e)) {
-          e.preventDefault();
-          e.stopPropagation();
-          startChord();
-          return;
+          e.preventDefault(); e.stopPropagation(); startChord(); return;
         }
       }
 
-      // --- Direct shortcuts (both modes) ---
+      // --- Direct shortcuts ---
 
-      // Ctrl+T: new terminal pane
+      // Ctrl+T : new terminal tab
       if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 't') {
-        e.preventDefault();
-        e.stopPropagation();
-        const newId = addPane('terminal');
-        requestAnimationFrame(() => scrollToPane(newId));
+        e.preventDefault(); e.stopPropagation();
+        const newId = addTab('terminal');
+        requestAnimationFrame(() => scrollToTab(newId));
         return;
       }
-
-      // Ctrl+B: new browser pane
+      // Ctrl+B : new browser tab
       if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'b') {
-        e.preventDefault();
-        e.stopPropagation();
-        const newId = addPane('browser');
-        requestAnimationFrame(() => scrollToPane(newId));
+        e.preventDefault(); e.stopPropagation();
+        const newId = addTab('browser');
+        requestAnimationFrame(() => scrollToTab(newId));
         return;
       }
-
-      // Ctrl+W: close active pane
+      // Ctrl+D : split current tab
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'd') {
+        e.preventDefault(); e.stopPropagation();
+        if (activeTab) splitTab(activeTab.id, 'terminal');
+        return;
+      }
+      // Ctrl+W : close active pane (or tab if single pane)
       if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'w') {
-        e.preventDefault();
-        e.stopPropagation();
-        removePane(activePaneId);
+        e.preventDefault(); e.stopPropagation();
+        if (activeTab) {
+          if (activeTab.panes.length <= 1) {
+            removeTab(activeTabId);
+          } else {
+            removePane(activeTabId, activeTab.activePaneId);
+          }
+        }
         return;
       }
-
-      // F2: rename active pane
+      // F2 : rename active tab
       if (e.key === 'F2' && !e.ctrlKey && !e.altKey && !e.shiftKey) {
-        e.preventDefault();
-        e.stopPropagation();
-        if (onRenamePane) onRenamePane();
+        e.preventDefault(); e.stopPropagation();
+        if (onRenameTab) onRenameTab();
         return;
       }
-
-      // Ctrl+/ or Ctrl+?: toggle help overlay
+      // Ctrl+/ : help
       if (e.ctrlKey && (e.key === '/' || e.key === '?')) {
-        e.preventDefault();
-        e.stopPropagation();
-        onToggleHelp();
-        return;
+        e.preventDefault(); e.stopPropagation(); onToggleHelp(); return;
       }
-
-      // Ctrl+1 through Ctrl+9: jump to pane by index
+      // Ctrl+1-9 : jump to tab
       if (e.ctrlKey && !e.shiftKey && !e.altKey) {
         const num = parseInt(e.key, 10);
         if (num >= 1 && num <= 9) {
-          e.preventDefault();
-          e.stopPropagation();
-          goToIndex(num - 1);
-          return;
+          e.preventDefault(); e.stopPropagation(); goToTab(num - 1); return;
         }
       }
-
-      // Ctrl+Shift+1-9: move active pane to position
+      // Ctrl+Shift+1-9 : move tab to position
       if (e.ctrlKey && e.shiftKey && !e.altKey) {
         const digitMatch = e.code?.match(/^Digit(\d)$/);
         if (digitMatch) {
           const num = parseInt(digitMatch[1], 10);
           if (num >= 1 && num <= 9) {
-            e.preventDefault();
-            e.stopPropagation();
-            movePane(activePaneId, num - 1);
+            e.preventDefault(); e.stopPropagation();
+            moveTab(activeTabId, num - 1);
             return;
           }
-          if (num === 0) {
-            e.preventDefault();
-            e.stopPropagation();
-            resetPaneWidth(activePaneId);
-            return;
-          }
-        }
-
-        if (e.key === 'ArrowLeft') {
-          e.preventDefault();
-          e.stopPropagation();
-          const pane = panes.find((p) => p.id === activePaneId);
-          if (pane) {
-            const current = pane.widthOverride ?? defaultPaneWidth;
-            resizePane(activePaneId, Math.max(300, current - RESIZE_STEP));
-          }
-          return;
-        }
-        if (e.key === 'ArrowRight') {
-          e.preventDefault();
-          e.stopPropagation();
-          const pane = panes.find((p) => p.id === activePaneId);
-          if (pane) {
-            const current = pane.widthOverride ?? defaultPaneWidth;
-            resizePane(activePaneId, current + RESIZE_STEP);
-          }
-          return;
         }
       }
 
-      // Alt+Arrow: navigate between panes
+      // Alt+Arrow : navigate sub-panes within tab
       if (e.altKey && !e.ctrlKey && !e.shiftKey) {
-        if (e.key === 'ArrowLeft') {
-          e.preventDefault();
-          e.stopPropagation();
-          goToPrev();
-          return;
-        }
-        if (e.key === 'ArrowRight') {
-          e.preventDefault();
-          e.stopPropagation();
-          goToNext();
-          return;
-        }
-        // Alt+Up / Alt+Down: vertical navigation in tiling mode
-        if (viewMode === 'tiling' && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
-          e.preventDefault();
-          e.stopPropagation();
-          const count = panes.length;
-          const cols = count <= 1 ? 1 : count <= 2 ? 2 : count <= 4 ? 2 : count <= 6 ? 3 : Math.ceil(Math.sqrt(count));
-          const currentIdx = panes.findIndex((p) => p.id === activePaneId);
-          const targetIdx = e.key === 'ArrowUp'
-            ? currentIdx - cols
-            : currentIdx + cols;
-          if (targetIdx >= 0 && targetIdx < count) {
-            goToIndex(targetIdx);
-          }
-          return;
-        }
+        if (e.key === 'ArrowLeft') { e.preventDefault(); e.stopPropagation(); navigatePane('left'); return; }
+        if (e.key === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); navigatePane('right'); return; }
+        if (e.key === 'ArrowUp') { e.preventDefault(); e.stopPropagation(); navigatePane('up'); return; }
+        if (e.key === 'ArrowDown') { e.preventDefault(); e.stopPropagation(); navigatePane('down'); return; }
+      }
+
+      // Ctrl+Alt+Left/Right : navigate between tabs
+      if (e.ctrlKey && e.altKey && !e.shiftKey) {
+        if (e.key === 'ArrowLeft') { e.preventDefault(); e.stopPropagation(); goToPrevTab(); return; }
+        if (e.key === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); goToNextTab(); return; }
       }
     };
 
-    // Use capture phase so we intercept before xterm.js handles the event
     window.addEventListener('keydown', handler, true);
     window.addEventListener('keyup', handleKeyUp, true);
     return () => {
@@ -429,12 +307,5 @@ export function useKeyboardNav({
       window.removeEventListener('keyup', handleKeyUp, true);
       cancelChord();
     };
-  }, [goToIndex, goToPrev, goToNext, addPane, removePane, resizePane, resetPaneWidth, movePane, defaultPaneWidth, panes, activePaneId, scrollToPane, onToggleHelp, onRenamePane, keybindingsMode, leaderKey, onChordStateChange, onOpenSettings, onSaveSession, onOpenCommandPalette, onToggleViewMode, viewMode]);
-
-  return {
-    activePaneId,
-    goToIndex,
-    goToPrev,
-    goToNext,
-  };
+  }, [goToTab, goToPrevTab, goToNextTab, navigatePane, addTab, splitTab, removeTab, removePane, moveTab, tabs, activeTabId, activeTab, scrollToTab, onToggleHelp, onRenameTab, keybindingsMode, leaderKey, onChordStateChange, onOpenSettings, onSaveSession, onOpenCommandPalette]);
 }

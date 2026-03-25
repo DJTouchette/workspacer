@@ -15,11 +15,21 @@ interface SessionPaneData {
   url?: string;
 }
 
+interface SessionTabData {
+  id: string;
+  title: string;
+  panes: SessionPaneData[];
+  activePaneId: string;
+}
+
 interface SessionData {
   name: string;
   timestamp: string;
-  activePaneId: string;
-  panes: SessionPaneData[];
+  activeTabId?: string;
+  tabs?: SessionTabData[];
+  // Legacy fields for backward compat
+  activePaneId?: string;
+  panes?: SessionPaneData[];
 }
 
 interface SessionListEntry {

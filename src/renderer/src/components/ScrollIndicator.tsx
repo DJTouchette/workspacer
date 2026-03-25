@@ -1,15 +1,15 @@
 import React from 'react';
-import { PaneConfig } from '../types/pane';
+import { TabConfig } from '../types/pane';
 
 interface ScrollIndicatorProps {
-  panes: PaneConfig[];
-  activePaneId: string;
+  tabs: TabConfig[];
+  activeTabId: string;
   onDotClick: (id: string) => void;
 }
 
 const ScrollIndicator: React.FC<ScrollIndicatorProps> = ({
-  panes,
-  activePaneId,
+  tabs,
+  activeTabId,
   onDotClick,
 }) => {
   return (
@@ -30,12 +30,12 @@ const ScrollIndicator: React.FC<ScrollIndicatorProps> = ({
         padding: '0 16px',
       }}
     >
-      {panes.map((pane) => {
-        const isActive = pane.id === activePaneId;
+      {tabs.map((tab) => {
+        const isActive = tab.id === activeTabId;
         return (
           <div
-            key={pane.id}
-            onClick={() => onDotClick(pane.id)}
+            key={tab.id}
+            onClick={() => onDotClick(tab.id)}
             style={{
               width: isActive ? '16px' : '6px',
               height: '4px',
@@ -46,7 +46,7 @@ const ScrollIndicator: React.FC<ScrollIndicatorProps> = ({
               cursor: 'pointer',
               transition: 'none',
             }}
-            title={pane.title}
+            title={tab.title}
           />
         );
       })}

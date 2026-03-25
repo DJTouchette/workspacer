@@ -1,6 +1,6 @@
 import React, { useRef, useState, useCallback, useEffect, useImperativeHandle, forwardRef } from 'react';
 import Pane from './Pane';
-import { PaneConfig } from '../types/pane';
+import { PaneConfig, TabConfig } from '../types/pane';
 import TerminalPane from '../panes/TerminalPane';
 import BrowserPane from '../panes/BrowserPane';
 import NotesPane from '../panes/NotesPane';
@@ -9,22 +9,20 @@ import SettingsPane from '../panes/SettingsPane';
 import { useConfig } from '../hooks/useConfig';
 
 interface ScrollContainerProps {
-  panes: PaneConfig[];
-  activePaneId: string;
-  onPaneFocus: (id: string) => void;
-  onPaneClose: (id: string) => void;
-  onPaneResize?: (id: string, width: number) => void;
-  onPaneResetWidth?: (id: string) => void;
-  onPaneMove?: (id: string, toIndex: number) => void;
-  onPaneRename?: (id: string, title: string) => void;
+  tabs: TabConfig[];
+  activeTabId: string;
+  onTabFocus: (tabId: string) => void;
+  onPaneClose: (tabId: string, paneId: string) => void;
+  onPaneFocus: (tabId: string, paneId: string) => void;
+  onTabRename?: (tabId: string, title: string) => void;
+  onTabMove?: (tabId: string, toIndex: number) => void;
   onPtyReady?: (paneId: string, ptySessionId: string) => void;
-  onUrlChange?: (paneId: string, url: string) => void;
+  onUrlChange?: (tabId: string, paneId: string, url: string) => void;
   renameSignal?: number;
-  viewMode?: 'carousel' | 'split' | 'tiling';
 }
 
 export interface ScrollContainerRef {
-  scrollToPane: (id: string) => void;
+  scrollToTab: (id: string) => void;
 }
 
 interface PaneCallbacks {
@@ -49,146 +47,134 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
   }
 }
 
-const MIN_PANE_WIDTH = 300;
-
-function ResizeHandle({
-  paneId,
-  paneWidth,
-  onResize,
-  onResetWidth,
-  containerRef,
+// Auto-tiling layout for multiple panes within a tab
+function TilingLayout({
+  panes,
+  activePaneId,
+  containerWidth,
+  containerHeight,
+  onPaneClose,
+  onPaneFocus,
+  callbacks,
 }: {
-  paneId: string;
-  paneWidth: number;
-  onResize: (id: string, width: number) => void;
-  onResetWidth?: (id: string) => void;
-  containerRef: React.RefObject<HTMLDivElement | null>;
+  panes: PaneConfig[];
+  activePaneId: string;
+  containerWidth: number;
+  containerHeight: number;
+  onPaneClose: (paneId: string) => void;
+  onPaneFocus: (paneId: string) => void;
+  callbacks: PaneCallbacks;
 }) {
-  const handleMouseDown = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
+  const count = panes.length;
+  const cols = count <= 1 ? 1 : count <= 2 ? 2 : count <= 4 ? 2 : count <= 6 ? 3 : Math.ceil(Math.sqrt(count));
+  const rows = Math.ceil(count / cols);
 
-      const startX = e.clientX;
-      const startWidth = paneWidth;
-      const maxWidth = containerRef.current
-        ? containerRef.current.clientWidth - 100
-        : window.innerWidth - 100;
+  const layouts: Array<{ col: number; row: number; colSpan: number; rowSpan: number }> = [];
 
-      // Disable scroll-snap during drag
-      const container = containerRef.current;
-      if (container) container.style.scrollSnapType = 'none';
+  if (count === 1) {
+    layouts.push({ col: 0, row: 0, colSpan: 1, rowSpan: 1 });
+  } else if (count === 2) {
+    layouts.push({ col: 0, row: 0, colSpan: 1, rowSpan: 1 });
+    layouts.push({ col: 1, row: 0, colSpan: 1, rowSpan: 1 });
+  } else if (count === 3) {
+    layouts.push({ col: 0, row: 0, colSpan: 1, rowSpan: 2 });
+    layouts.push({ col: 1, row: 0, colSpan: 1, rowSpan: 1 });
+    layouts.push({ col: 1, row: 1, colSpan: 1, rowSpan: 1 });
+  } else {
+    for (let i = 0; i < count; i++) {
+      layouts.push({ col: i % cols, row: Math.floor(i / cols), colSpan: 1, rowSpan: 1 });
+    }
+    const lastRowStart = Math.floor((count - 1) / cols) * cols;
+    const lastRowCount = count - lastRowStart;
+    if (lastRowCount < cols) {
+      layouts[count - 1].colSpan = cols - lastRowCount + 1;
+    }
+  }
 
-      document.body.style.cursor = 'col-resize';
-      document.body.style.userSelect = 'none';
-
-      const handleMouseMove = (moveEvent: MouseEvent) => {
-        const delta = moveEvent.clientX - startX;
-        const newWidth = Math.min(maxWidth, Math.max(MIN_PANE_WIDTH, startWidth + delta));
-        onResize(paneId, newWidth);
-      };
-
-      const handleMouseUp = () => {
-        document.body.style.cursor = '';
-        document.body.style.userSelect = '';
-        if (container) container.style.scrollSnapType = 'x mandatory';
-        document.removeEventListener('mousemove', handleMouseMove);
-        document.removeEventListener('mouseup', handleMouseUp);
-      };
-
-      document.addEventListener('mousemove', handleMouseMove);
-      document.addEventListener('mouseup', handleMouseUp);
-    },
-    [paneId, paneWidth, onResize, containerRef]
-  );
-
-  const handleDoubleClick = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      onResetWidth?.(paneId);
-    },
-    [paneId, onResetWidth]
-  );
+  const cellWidth = containerWidth / cols;
+  const cellHeight = containerHeight / rows;
+  const gap = 2;
 
   return (
-    <div
-      onMouseDown={handleMouseDown}
-      onDoubleClick={handleDoubleClick}
-      style={{
-        width: '8px',
-        minWidth: '8px',
-        cursor: 'col-resize',
-        backgroundColor: 'transparent',
-        transition: 'none',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-      }}
-      onMouseEnter={(e) => {
-        (e.currentTarget as HTMLElement).style.backgroundColor = 'rgb(55, 55, 65)';
-      }}
-      onMouseLeave={(e) => {
-        (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent';
-      }}
-    >
-      <div style={{
-        width: '2px',
-        height: '40px',
-        borderRadius: '1px',
-        backgroundColor: 'inherit',
-      }} />
-    </div>
+    <>
+      {panes.map((pane, idx) => {
+        const layout = layouts[idx];
+        if (!layout) return null;
+        const isActive = pane.id === activePaneId;
+        const left = layout.col * cellWidth + gap;
+        const top = layout.row * cellHeight + gap;
+        const width = layout.colSpan * cellWidth - gap * 2;
+        const height = layout.rowSpan * cellHeight - gap * 2;
+
+        return (
+          <div
+            key={pane.id}
+            style={{
+              position: 'absolute',
+              left: `${left}px`,
+              top: `${top}px`,
+              width: `${width}px`,
+              height: `${height}px`,
+            }}
+          >
+            <Pane
+              id={pane.id}
+              type={pane.type}
+              title={pane.title}
+              isActive={isActive}
+              onClose={() => onPaneClose(pane.id)}
+              onFocus={() => onPaneFocus(pane.id)}
+            >
+              {renderPaneContent(pane, isActive, callbacks)}
+            </Pane>
+          </div>
+        );
+      })}
+    </>
   );
 }
 
 const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
-  ({ panes, activePaneId, onPaneFocus, onPaneClose, onPaneResize, onPaneResetWidth, onPaneMove, onPaneRename, onPtyReady, onUrlChange, renameSignal, viewMode = 'carousel' }, ref) => {
+  ({ tabs, activeTabId, onTabFocus, onPaneClose, onPaneFocus, onTabRename, onTabMove, onPtyReady, onUrlChange, renameSignal }, ref) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const { config } = useConfig();
-    const peek = config.panes.peek ?? 80;
-    const gap = config.panes.gap ?? 16;
+    const peek = config.panes?.peek ?? 80;
+    const gap = config.panes?.gap ?? 16;
 
-    // Compute pane width dynamically: viewport - 2 * peek - 2 * gap(margin)
-    const [paneWidth, setPaneWidth] = useState(800);
+    const [tabWidth, setTabWidth] = useState(800);
+    const [containerHeight, setContainerHeight] = useState(600);
 
     useEffect(() => {
       const container = containerRef.current;
       if (!container) return;
 
-      const updateWidth = () => {
+      const updateSize = () => {
         const w = container.clientWidth - 2 * peek - gap;
-        setPaneWidth(Math.max(400, w));
+        setTabWidth(Math.max(400, w));
+        setContainerHeight(container.clientHeight - 16);
       };
 
-      updateWidth();
-      const observer = new ResizeObserver(updateWidth);
+      updateSize();
+      const observer = new ResizeObserver(updateSize);
       observer.observe(container);
       return () => observer.disconnect();
     }, [peek, gap]);
 
-    const scrollToPane = useCallback((id: string) => {
+    const scrollToTab = useCallback((id: string) => {
       const container = containerRef.current;
       if (!container) return;
-      const paneEl = container.querySelector(`[data-pane-id="${id}"]`) as HTMLElement | null;
-      if (!paneEl) return;
+      const tabEl = container.querySelector(`[data-tab-id="${id}"]`) as HTMLElement | null;
+      if (!tabEl) return;
 
       const containerRect = container.getBoundingClientRect();
-      const paneRect = paneEl.getBoundingClientRect();
-      const scrollLeft =
-        paneEl.offsetLeft - containerRect.width / 2 + paneRect.width / 2;
-
-      container.scrollTo({
-        left: scrollLeft,
-        behavior: 'instant',
-      });
+      const tabRect = tabEl.getBoundingClientRect();
+      const scrollLeft = tabEl.offsetLeft - containerRect.width / 2 + tabRect.width / 2;
+      container.scrollTo({ left: scrollLeft, behavior: 'instant' });
     }, []);
 
-    useImperativeHandle(ref, () => ({
-      scrollToPane,
-    }), [scrollToPane]);
+    useImperativeHandle(ref, () => ({ scrollToTab }), [scrollToTab]);
 
-    // Detect which pane is most visible after scroll ends
+    // Detect which tab is most visible after scroll ends
     useEffect(() => {
       const container = containerRef.current;
       if (!container) return;
@@ -199,22 +185,22 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
         clearTimeout(scrollTimeout);
         scrollTimeout = setTimeout(() => {
           const containerCenter = container.scrollLeft + container.clientWidth / 2;
-          let closestId = panes[0]?.id;
+          let closestId = tabs[0]?.id;
           let closestDist = Infinity;
 
-          for (const pane of panes) {
-            const el = container.querySelector(`[data-pane-id="${pane.id}"]`) as HTMLElement | null;
+          for (const tab of tabs) {
+            const el = container.querySelector(`[data-tab-id="${tab.id}"]`) as HTMLElement | null;
             if (!el) continue;
-            const paneCenter = el.offsetLeft + el.offsetWidth / 2;
-            const dist = Math.abs(containerCenter - paneCenter);
+            const tabCenter = el.offsetLeft + el.offsetWidth / 2;
+            const dist = Math.abs(containerCenter - tabCenter);
             if (dist < closestDist) {
               closestDist = dist;
-              closestId = pane.id;
+              closestId = tab.id;
             }
           }
 
-          if (closestId && closestId !== activePaneId) {
-            onPaneFocus(closestId);
+          if (closestId && closestId !== activeTabId) {
+            onTabFocus(closestId);
           }
         }, 100);
       };
@@ -224,173 +210,15 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
         container.removeEventListener('scroll', handleScrollEnd);
         clearTimeout(scrollTimeout);
       };
-    }, [panes, activePaneId, onPaneFocus]);
+    }, [tabs, activeTabId, onTabFocus]);
 
-    const handlePaneMove = useCallback((id: string, delta: number) => {
-      if (!onPaneMove) return;
-      const idx = panes.findIndex((p) => p.id === id);
+    const handleTabMove = useCallback((tabId: string, delta: number) => {
+      if (!onTabMove) return;
+      const idx = tabs.findIndex((t) => t.id === tabId);
       if (idx < 0) return;
-      onPaneMove(id, idx + delta);
-    }, [panes, onPaneMove]);
+      onTabMove(tabId, idx + delta);
+    }, [tabs, onTabMove]);
 
-    // --- Tiling view mode (Wayland-style auto-tiling) ---
-    // 1 pane: full, 2: 50/50, 3: left 50% + right 2 stacked, 4: 2x2, etc.
-    if (viewMode === 'tiling') {
-      const containerWidth = containerRef.current?.clientWidth ?? 1200;
-      const containerHeight = containerRef.current?.clientHeight ?? 800;
-      const count = panes.length;
-
-      // Calculate grid: cols x rows
-      const cols = count <= 1 ? 1 : count <= 2 ? 2 : count <= 4 ? 2 : count <= 6 ? 3 : Math.ceil(Math.sqrt(count));
-      const rows = Math.ceil(count / cols);
-
-      // Build layout positions for each pane
-      const layouts: Array<{ col: number; row: number; colSpan: number; rowSpan: number }> = [];
-
-      if (count === 1) {
-        layouts.push({ col: 0, row: 0, colSpan: 1, rowSpan: 1 });
-      } else if (count === 2) {
-        layouts.push({ col: 0, row: 0, colSpan: 1, rowSpan: 1 });
-        layouts.push({ col: 1, row: 0, colSpan: 1, rowSpan: 1 });
-      } else if (count === 3) {
-        // Master left, 2 stacked right
-        layouts.push({ col: 0, row: 0, colSpan: 1, rowSpan: 2 });
-        layouts.push({ col: 1, row: 0, colSpan: 1, rowSpan: 1 });
-        layouts.push({ col: 1, row: 1, colSpan: 1, rowSpan: 1 });
-      } else {
-        // Generic grid
-        for (let i = 0; i < count; i++) {
-          const c = i % cols;
-          const r = Math.floor(i / cols);
-          layouts.push({ col: c, row: r, colSpan: 1, rowSpan: 1 });
-        }
-        // If last row isn't full, let the last pane span remaining columns
-        const lastRowStart = Math.floor((count - 1) / cols) * cols;
-        const lastRowCount = count - lastRowStart;
-        if (lastRowCount < cols) {
-          layouts[count - 1].colSpan = cols - lastRowCount + 1;
-        }
-      }
-
-      const cellWidth = containerWidth / cols;
-      const cellHeight = containerHeight / rows;
-      const gap = 2;
-
-      return (
-        <div
-          ref={containerRef}
-          className="scroll-container"
-          style={{
-            position: 'relative',
-            overflow: 'hidden',
-            height: '100%',
-            width: '100%',
-          }}
-        >
-          {panes.map((pane, idx) => {
-            const layout = layouts[idx];
-            if (!layout) return null;
-            const isActive = pane.id === activePaneId;
-            const left = layout.col * cellWidth + gap;
-            const top = layout.row * cellHeight + gap;
-            const width = layout.colSpan * cellWidth - gap * 2;
-            const height = layout.rowSpan * cellHeight - gap * 2;
-
-            return (
-              <div
-                key={pane.id}
-                style={{
-                  position: 'absolute',
-                  left: `${left}px`,
-                  top: `${top}px`,
-                  width: `${width}px`,
-                  height: `${height}px`,
-                }}
-              >
-                <Pane
-                  id={pane.id}
-                  type={pane.type}
-                  title={pane.title}
-                  width={width}
-                  isActive={isActive}
-                  onClose={onPaneClose}
-                  onFocus={onPaneFocus}
-                  onMove={onPaneMove ? handlePaneMove : undefined}
-                  onRename={onPaneRename}
-                  renameSignal={isActive ? renameSignal : undefined}
-                >
-                  {renderPaneContent(pane, isActive, { onPtyReady, onUrlChange })}
-                </Pane>
-              </div>
-            );
-          })}
-        </div>
-      );
-    }
-
-    // --- Split view mode ---
-    // Renders ALL panes to keep them mounted (preserving terminal state),
-    // but only shows the active pane (65%) and next pane (35%).
-    if (viewMode === 'split') {
-      const activeIdx = panes.findIndex((p) => p.id === activePaneId);
-      const nextIdx = activeIdx + 1 < panes.length ? activeIdx + 1 : (panes.length > 1 ? 0 : -1);
-      const containerWidth = containerRef.current?.clientWidth ?? 1200;
-      const hasNext = nextIdx >= 0 && nextIdx !== activeIdx;
-      const mainWidth = hasNext ? Math.floor(containerWidth * 0.63) : containerWidth - 16;
-      const sideWidth = hasNext ? Math.floor(containerWidth * 0.33) : 0;
-
-      return (
-        <div
-          ref={containerRef}
-          className="scroll-container"
-          style={{
-            display: 'flex',
-            flexDirection: 'row',
-            overflow: 'hidden',
-            height: '100%',
-            padding: '0',
-            gap: '0px',
-            alignItems: 'stretch',
-            position: 'relative',
-          }}
-        >
-          {panes.map((pane, idx) => {
-            const isMain = idx === activeIdx;
-            const isSide = idx === nextIdx && hasNext;
-            const visible = isMain || isSide;
-
-            return (
-              <div
-                key={pane.id}
-                style={{
-                  display: visible ? 'flex' : 'none',
-                  flexShrink: 0,
-                  height: '100%',
-                  alignItems: 'stretch',
-                }}
-              >
-                <Pane
-                  id={pane.id}
-                  type={pane.type}
-                  title={pane.title}
-                  width={isMain ? mainWidth : sideWidth}
-                  isActive={isMain}
-                  onClose={onPaneClose}
-                  onFocus={onPaneFocus}
-                  onMove={onPaneMove ? handlePaneMove : undefined}
-                  onRename={onPaneRename}
-                  renameSignal={isMain ? renameSignal : undefined}
-                >
-                  {renderPaneContent(pane, isMain, { onPtyReady, onUrlChange })}
-                </Pane>
-              </div>
-            );
-          })}
-        </div>
-      );
-    }
-
-    // --- Carousel view mode (default) ---
     return (
       <div
         ref={containerRef}
@@ -408,43 +236,78 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
           alignItems: 'stretch',
         }}
       >
-        {panes.map((pane) => (
-          <div
-            key={pane.id}
-            style={{
-              scrollSnapAlign: 'center',
-              flexShrink: 0,
-              height: '100%',
-              display: 'flex',
-              alignItems: 'stretch',
-            }}
-          >
-            <Pane
-              id={pane.id}
-              type={pane.type}
-              title={pane.title}
-              width={pane.widthOverride ?? paneWidth}
-              isActive={pane.id === activePaneId}
-              onClose={onPaneClose}
-              onFocus={onPaneFocus}
-              onMove={onPaneMove ? handlePaneMove : undefined}
-              onRename={onPaneRename}
-              renameSignal={pane.id === activePaneId ? renameSignal : undefined}
+        {tabs.map((tab) => {
+          const isActiveTab = tab.id === activeTabId;
+          const singlePane = tab.panes.length === 1;
+
+          const paneCallbacks: PaneCallbacks = {
+            onPtyReady,
+            onUrlChange: onUrlChange
+              ? (paneId: string, url: string) => onUrlChange(tab.id, paneId, url)
+              : undefined,
+          };
+
+          return (
+            <div
+              key={tab.id}
+              data-tab-id={tab.id}
+              style={{
+                scrollSnapAlign: 'center',
+                flexShrink: 0,
+                height: '100%',
+                display: 'flex',
+                alignItems: 'stretch',
+                width: `${tabWidth}px`,
+                minWidth: `${tabWidth}px`,
+              }}
             >
-              {renderPaneContent(pane, pane.id === activePaneId, { onPtyReady, onUrlChange })}
-            </Pane>
-            {/* Resize handle in the gap between panes */}
-            {onPaneResize && (
-              <ResizeHandle
-                paneId={pane.id}
-                paneWidth={pane.widthOverride ?? paneWidth}
-                onResize={onPaneResize}
-                onResetWidth={onPaneResetWidth}
-                containerRef={containerRef}
-              />
-            )}
-          </div>
-        ))}
+              {singlePane ? (
+                // Single pane tab — render like before
+                <Pane
+                  id={tab.panes[0].id}
+                  type={tab.panes[0].type}
+                  title={tab.title}
+                  isActive={isActiveTab}
+                  onClose={() => onPaneClose(tab.id, tab.panes[0].id)}
+                  onFocus={() => onTabFocus(tab.id)}
+                  onMove={onTabMove ? (_, delta) => handleTabMove(tab.id, delta) : undefined}
+                  onRename={onTabRename ? (_, title) => onTabRename(tab.id, title) : undefined}
+                  renameSignal={isActiveTab ? renameSignal : undefined}
+                >
+                  {renderPaneContent(tab.panes[0], isActiveTab, paneCallbacks)}
+                </Pane>
+              ) : (
+                // Multi-pane tab — tiling layout inside a container
+                <div
+                  style={{
+                    width: '100%',
+                    height: 'calc(100% - 8px)',
+                    margin: '4px 8px',
+                    borderRadius: '8px',
+                    overflow: 'hidden',
+                    border: isActiveTab
+                      ? '1px solid rgb(80, 120, 200)'
+                      : '1px solid rgb(50, 50, 55)',
+                    boxShadow: isActiveTab ? '0 0 12px rgba(80, 120, 200, 0.15)' : 'none',
+                    position: 'relative',
+                    backgroundColor: 'rgb(24, 24, 27)',
+                  }}
+                  onClick={() => onTabFocus(tab.id)}
+                >
+                  <TilingLayout
+                    panes={tab.panes}
+                    activePaneId={tab.activePaneId}
+                    containerWidth={tabWidth - 18}
+                    containerHeight={containerHeight - 8}
+                    onPaneClose={(paneId) => onPaneClose(tab.id, paneId)}
+                    onPaneFocus={(paneId) => onPaneFocus(tab.id, paneId)}
+                    callbacks={paneCallbacks}
+                  />
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     );
   }

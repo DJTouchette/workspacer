@@ -99,15 +99,19 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
     // Return false = xterm ignores the key, letting our window capture handler take it.
     term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
       // Ctrl+T, Ctrl+B, Ctrl+W, Ctrl+/, Ctrl+, — always app-level
-      if (e.ctrlKey && !e.altKey && ['t', 'b', 'w', '/', '?', ',', 's', 'k', 'l'].includes(e.key)) {
+      if (e.ctrlKey && !e.altKey && ['t', 'b', 'w', 'd', '/', '?', ',', 's', 'k'].includes(e.key)) {
         return false;
       }
       // Ctrl+1-9 — jump to pane
       if (e.ctrlKey && !e.altKey && !e.shiftKey && /^[1-9]$/.test(e.key)) {
         return false;
       }
-      // Alt+Arrow — pane navigation
-      if (e.altKey && !e.ctrlKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+      // Alt+Arrow — sub-pane navigation
+      if (e.altKey && !e.ctrlKey && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
+        return false;
+      }
+      // Ctrl+Alt+Arrow — tab navigation
+      if (e.ctrlKey && e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
         return false;
       }
       // Ctrl+Shift combos — resize/move pane
