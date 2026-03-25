@@ -139,6 +139,11 @@ export function useKeyboardNav({
         const isInput = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
 
         if (chordRef.current.state === 'waiting') {
+          // Ignore modifier-only keypresses (Ctrl, Shift, Alt, Meta releasing after leader)
+          if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) {
+            return;
+          }
+
           // We're waiting for an action key
           e.preventDefault();
           e.stopPropagation();
