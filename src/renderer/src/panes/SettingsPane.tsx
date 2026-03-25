@@ -68,8 +68,16 @@ const SettingsPane: React.FC<SettingsPaneProps> = ({ title }) => {
     if (e.metaKey) parts.push('meta');
 
     const key = e.key === ' ' ? 'space' : e.key.toLowerCase();
-    // Skip if only a modifier was pressed
-    if (['control', 'alt', 'shift', 'meta'].includes(key)) return;
+
+    // Allow bare modifier as leader (e.g. just "ctrl")
+    if (['control', 'alt', 'shift', 'meta'].includes(key)) {
+      const modMap: Record<string, string> = { control: 'ctrl', alt: 'alt', shift: 'shift', meta: 'meta' };
+      const combo = modMap[key] || key;
+      setLeader(combo);
+      setCapturingLeader(false);
+      save({ keybindings: { mode, leader: combo } });
+      return;
+    }
 
     parts.push(key);
     const combo = parts.join('+');
