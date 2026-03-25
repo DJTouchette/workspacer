@@ -41,24 +41,12 @@ class TerminalService {
 
     const env = { ...process.env, TERM: 'xterm-256color' } as Record<string, string>;
 
-    // Set up OSC 7 CWD reporting via environment for bash/zsh
-    // This makes the shell emit its working directory on every prompt
-    const osc7Cmd = 'printf "\\e]7;file://%s%s\\a" "$(hostname)" "$PWD"';
-    if (env.PROMPT_COMMAND) {
-      env.PROMPT_COMMAND = `${osc7Cmd};${env.PROMPT_COMMAND}`;
-    } else {
-      env.PROMPT_COMMAND = osc7Cmd;
-    }
-    // For zsh: set precmd via ZDOTDIR or just rely on PROMPT_COMMAND (zsh 5.9+ supports it)
-    // Alternatively, set the precmd function via zshrc eval — but env var is cleaner
-
     const homedir = process.env.HOME || os.homedir();
     let resolvedCwd = cwd || homedir;
 
     // Validate CWD exists — fall back to home if it doesn't (e.g. Linux path on Windows)
     try {
-      const fs = require('fs');
-      if (!fs.existsSync(resolvedCwd)) resolvedCwd = homedir;
+      if (!require('fs').existsSync(resolvedCwd)) resolvedCwd = homedir;
     } catch {
       resolvedCwd = homedir;
     }
@@ -82,24 +70,8 @@ class TerminalService {
     // Forward output to renderer as base64
     ptyProcess.onData((data: string) => {
       if (session.closed) return;
-
       const encoded = Buffer.from(data, 'binary').toString('base64');
       this.mainWindow?.webContents.send('terminal:output', id, encoded);
-
-      // Track CWD from OSC 7 off the hot path — only parse if prefix is present
-      if (data.includes('\x1b]7;')) {
-        setImmediate(() => {
-          const match = data.match(/\x1b\]7;file:\/\/[^/]*([^\x07\x1b]*)/);
-          if (match) {
-            try {
-              const decoded = decodeURIComponent(match[1]);
-              if (decoded) session.cwd = decoded;
-            } catch {
-              // Malformed URI
-            }
-          }
-        });
-      }
     });
 
     // Handle exit
@@ -109,22 +81,6 @@ class TerminalService {
       this.sessions.delete(id);
       this.mainWindow?.webContents.send('terminal:exit', id);
     });
-
-    // Inject OSC 7 shell integration for PowerShell
-    // Must use $([char]27) and $([char]7) — PowerShell doesn't understand \e
-    const shellLower = shell.toLowerCase();
-    if (shellLower.includes('powershell') || shellLower.includes('pwsh')) {
-      setTimeout(() => {
-        if (session.closed) return;
-        // Single line: define prompt that emits OSC 7 then calls original prompt
-        const cmd = `function prompt{[Console]::Write("$([char]27)]7;file://$($env:COMPUTERNAME)/$($executionContext.SessionState.Path.CurrentLocation.ProviderPath)$([char]7)");return "PS $($executionContext.SessionState.Path.CurrentLocation)> "}`;
-        ptyProcess.write(cmd + '\r');
-        // Clear so user doesn't see the injected command
-        setTimeout(() => {
-          if (!session.closed) ptyProcess.write('cls\r');
-        }, 300);
-      }, 800);
-    }
 
     return id;
   }
