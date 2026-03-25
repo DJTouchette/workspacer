@@ -112,13 +112,17 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
       return true;
     });
 
-    requestAnimationFrame(() => {
+    // Fit multiple times during startup — the container needs time to reach final size
+    const fitWithRetry = () => {
       try {
         fitAddon.fit();
       } catch {
-        // Ignore fit errors during init
+        // Ignore fit errors
       }
-    });
+    };
+    requestAnimationFrame(fitWithRetry);
+    setTimeout(fitWithRetry, 100);
+    setTimeout(fitWithRetry, 300);
 
     attachToTerminal(term);
 
@@ -167,16 +171,25 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
     };
   }, [attachToTerminal, write, resize]);
 
-  // Focus/blur terminal when pane becomes active/inactive
+  // Focus/blur terminal when pane becomes active/inactive + re-fit on focus
   useEffect(() => {
     const term = terminalRef.current;
     if (!term) return;
     if (isActive) {
       term.focus();
+      // Re-fit when pane becomes active — size may have changed
+      requestAnimationFrame(() => {
+        try {
+          fitAddonRef.current?.fit();
+          resize(term.cols, term.rows);
+        } catch {
+          // Ignore
+        }
+      });
     } else {
       term.blur();
     }
-  }, [isActive]);
+  }, [isActive, resize]);
 
   // When PTY becomes ready, do an initial fit + resize sync
   useEffect(() => {
