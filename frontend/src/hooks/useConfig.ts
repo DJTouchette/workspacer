@@ -17,6 +17,7 @@ const DEFAULT_CONFIG: Config = {
   },
   terminal: {
     shell: '',
+    shells: [],
     fontFamily: 'JetBrainsMono NF, JetBrainsMono Nerd Font, CaskaydiaMono NF, monospace',
     fontSize: 14,
     scrollback: 5000,

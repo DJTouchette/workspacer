@@ -6,4 +6,5 @@ export interface PaneConfig {
   title: string;
   width: number;
   widthOverride?: number;
+  shell?: string;
 }

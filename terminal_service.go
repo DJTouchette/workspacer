@@ -5,20 +5,20 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
-	"os/exec"
+	"runtime"
 	"sync"
 
-	"github.com/creack/pty"
+	gopty "github.com/aymanbagabas/go-pty"
 	"github.com/google/uuid"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 // terminalSession holds the state for a single PTY session.
 type terminalSession struct {
-	ptyFile *os.File
-	cmd     *exec.Cmd
-	cols    int
-	rows    int
+	pty  gopty.Pty
+	cmd  *gopty.Cmd
+	cols int
+	rows int
 }
 
 // TerminalService manages pseudo-terminal sessions for the frontend.
@@ -42,10 +42,57 @@ func (ts *TerminalService) ServiceShutdown() error {
 		if sess.cmd.Process != nil {
 			_ = sess.cmd.Process.Kill()
 		}
-		_ = sess.ptyFile.Close()
+		_ = sess.pty.Close()
 		delete(ts.sessions, id)
 	}
 	return nil
+}
+
+// defaultShell returns the default shell for the current platform.
+func defaultShell() string {
+	if runtime.GOOS == "windows" {
+		if ps, err := findExecutable("pwsh.exe"); err == nil {
+			return ps
+		}
+		return "powershell.exe"
+	}
+	if shell := os.Getenv("SHELL"); shell != "" {
+		return shell
+	}
+	return "/bin/sh"
+}
+
+// findExecutable checks if a command exists in PATH.
+func findExecutable(name string) (string, error) {
+	// Use LookPath equivalent
+	for _, dir := range filepath_split(os.Getenv("PATH")) {
+		if dir == "" {
+			continue
+		}
+		path := dir + string(os.PathSeparator) + name
+		if _, err := os.Stat(path); err == nil {
+			return path, nil
+		}
+	}
+	return "", fmt.Errorf("not found: %s", name)
+}
+
+// filepath_split splits PATH by the platform separator.
+func filepath_split(path string) []string {
+	sep := ":"
+	if runtime.GOOS == "windows" {
+		sep = ";"
+	}
+	var result []string
+	start := 0
+	for i := 0; i < len(path); i++ {
+		if string(path[i]) == sep {
+			result = append(result, path[start:i])
+			start = i + 1
+		}
+	}
+	result = append(result, path[start:])
+	return result
 }
 
 // CreateTerminal creates a new PTY session running the given shell.
@@ -53,33 +100,36 @@ func (ts *TerminalService) ServiceShutdown() error {
 // Returns the session ID.
 func (ts *TerminalService) CreateTerminal(shell string) (string, error) {
 	if shell == "" {
-		shell = os.Getenv("SHELL")
-		if shell == "" {
-			shell = "/bin/sh"
-		}
+		shell = defaultShell()
 	}
 
 	id := uuid.New().String()
-
-	cmd := exec.Command(shell)
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
-
 	cols := 80
 	rows := 24
 
-	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{
-		Cols: uint16(cols),
-		Rows: uint16(rows),
-	})
+	p, err := gopty.New()
 	if err != nil {
-		return "", fmt.Errorf("failed to start pty: %w", err)
+		return "", fmt.Errorf("failed to create pty: %w", err)
+	}
+
+	if err := p.Resize(cols, rows); err != nil {
+		_ = p.Close()
+		return "", fmt.Errorf("failed to set initial size: %w", err)
+	}
+
+	cmd := p.Command(shell)
+	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+
+	if err := cmd.Start(); err != nil {
+		_ = p.Close()
+		return "", fmt.Errorf("failed to start shell: %w", err)
 	}
 
 	sess := &terminalSession{
-		ptyFile: ptmx,
-		cmd:     cmd,
-		cols:    cols,
-		rows:    rows,
+		pty:  p,
+		cmd:  cmd,
+		cols: cols,
+		rows: rows,
 	}
 
 	ts.mu.Lock()
@@ -87,7 +137,12 @@ func (ts *TerminalService) CreateTerminal(shell string) (string, error) {
 	ts.mu.Unlock()
 
 	// Start goroutine to read PTY output and emit events to the frontend.
-	go ts.readPtyOutput(id, ptmx)
+	go ts.readPtyOutput(id, p)
+
+	// Start goroutine to wait for the process to exit.
+	go func() {
+		_ = cmd.Wait()
+	}()
 
 	return id, nil
 }
@@ -107,7 +162,7 @@ func (ts *TerminalService) WriteTerminal(id string, data string) error {
 		return fmt.Errorf("failed to decode base64 input: %w", err)
 	}
 
-	_, err = sess.ptyFile.Write(decoded)
+	_, err = sess.pty.Write(decoded)
 	if err != nil {
 		return fmt.Errorf("failed to write to pty: %w", err)
 	}
@@ -125,11 +180,7 @@ func (ts *TerminalService) ResizeTerminal(id string, cols int, rows int) error {
 		return fmt.Errorf("terminal session not found: %s", id)
 	}
 
-	err := pty.Setsize(sess.ptyFile, &pty.Winsize{
-		Cols: uint16(cols),
-		Rows: uint16(rows),
-	})
-	if err != nil {
+	if err := sess.pty.Resize(cols, rows); err != nil {
 		return fmt.Errorf("failed to resize pty: %w", err)
 	}
 
@@ -155,10 +206,7 @@ func (ts *TerminalService) CloseTerminal(id string) error {
 	if sess.cmd.Process != nil {
 		_ = sess.cmd.Process.Kill()
 	}
-	_ = sess.ptyFile.Close()
-
-	// Wait for the process to finish to avoid zombies.
-	_ = sess.cmd.Wait()
+	_ = sess.pty.Close()
 
 	app := application.Get()
 	if app != nil {
@@ -169,11 +217,11 @@ func (ts *TerminalService) CloseTerminal(id string) error {
 }
 
 // readPtyOutput reads from the PTY in a loop and emits base64-encoded output events.
-func (ts *TerminalService) readPtyOutput(id string, ptmx *os.File) {
+func (ts *TerminalService) readPtyOutput(id string, p gopty.Pty) {
 	buf := make([]byte, 4096)
 
 	for {
-		n, err := ptmx.Read(buf)
+		n, err := p.Read(buf)
 		if n > 0 {
 			encoded := base64.StdEncoding.EncodeToString(buf[:n])
 			app := application.Get()

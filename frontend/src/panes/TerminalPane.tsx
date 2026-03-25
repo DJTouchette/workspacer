@@ -9,6 +9,7 @@ interface TerminalPaneProps {
   paneId: string;
   title: string;
   isActive: boolean;
+  shell?: string;
 }
 
 const TERMINAL_THEME = {
@@ -36,7 +37,7 @@ const TERMINAL_THEME = {
   brightWhite: '#fafafa',
 };
 
-const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive }) => {
+const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, shell }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -54,7 +55,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive }) 
 
   const { isReady, write, resize, attachToTerminal } = usePTY({
     paneId,
-    shell: termCfg.shell,
+    shell: shell || termCfg.shell,
     onExit: handleExit,
   });
 

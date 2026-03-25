@@ -21,7 +21,7 @@ export function usePaneManager() {
   const [panes, setPanes] = useState<PaneConfig[]>(defaultPanes);
   const [activePaneId, setActivePaneId] = useState<string>(defaultPanes[0].id);
 
-  const addPane = useCallback((type: PaneType, title?: string, width?: number, insertPosition: string = 'after') => {
+  const addPane = useCallback((type: PaneType, title?: string, width?: number, insertPosition: string = 'after', shell?: string) => {
     const id = generateId(type);
     const defaultTitles: Record<PaneType, string> = {
       terminal: 'Terminal',
@@ -34,6 +34,7 @@ export function usePaneManager() {
       type,
       title: title ?? defaultTitles[type],
       width: width ?? DEFAULT_PANE_WIDTH,
+      shell,
     };
     setPanes((prev) => {
       if (insertPosition === 'after') {

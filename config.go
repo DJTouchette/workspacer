@@ -25,13 +25,20 @@ type UIConfig struct {
 	PaneHeaderHeight int `yaml:"pane_header_height" json:"paneHeaderHeight"`
 }
 
+type ShellOption struct {
+	Name  string `yaml:"name" json:"name"`
+	Path  string `yaml:"path" json:"path"`
+	Label string `yaml:"label" json:"label"`
+}
+
 type TerminalConfig struct {
-	Shell       string `yaml:"shell" json:"shell"`
-	FontFamily  string `yaml:"font_family" json:"fontFamily"`
-	FontSize    int    `yaml:"font_size" json:"fontSize"`
-	Scrollback  int    `yaml:"scrollback" json:"scrollback"`
-	CursorBlink bool   `yaml:"cursor_blink" json:"cursorBlink"`
-	CursorStyle string `yaml:"cursor_style" json:"cursorStyle"`
+	Shell       string       `yaml:"shell" json:"shell"`
+	Shells      []ShellOption `yaml:"shells" json:"shells"`
+	FontFamily  string       `yaml:"font_family" json:"fontFamily"`
+	FontSize    int          `yaml:"font_size" json:"fontSize"`
+	Scrollback  int          `yaml:"scrollback" json:"scrollback"`
+	CursorBlink bool         `yaml:"cursor_blink" json:"cursorBlink"`
+	CursorStyle string       `yaml:"cursor_style" json:"cursorStyle"`
 }
 
 type PanesConfig struct {
@@ -56,6 +63,7 @@ func DefaultConfig() Config {
 		},
 		Terminal: TerminalConfig{
 			Shell:       "",
+			Shells:      defaultShells(),
 			FontFamily:  "JetBrainsMono NF, JetBrainsMono Nerd Font, CaskaydiaMono NF, monospace",
 			FontSize:    14,
 			Scrollback:  5000,
@@ -74,6 +82,25 @@ func DefaultConfig() Config {
 				{ID: "notes-1", Type: "notes", Title: "Notes", Width: 800, Order: 3},
 			},
 		},
+	}
+}
+
+// defaultShells returns the available shell options for the current platform.
+func defaultShells() []ShellOption {
+	if runtime.GOOS == "windows" {
+		return []ShellOption{
+			{Name: "powershell", Path: "powershell.exe", Label: "PowerShell"},
+			{Name: "pwsh", Path: "pwsh.exe", Label: "PowerShell 7"},
+			{Name: "cmd", Path: "cmd.exe", Label: "Command Prompt"},
+			{Name: "gitbash", Path: "C:\\Program Files\\Git\\bin\\bash.exe", Label: "Git Bash"},
+			{Name: "wsl", Path: "wsl.exe", Label: "WSL"},
+		}
+	}
+	return []ShellOption{
+		{Name: "default", Path: "", Label: "Default ($SHELL)"},
+		{Name: "bash", Path: "/bin/bash", Label: "Bash"},
+		{Name: "zsh", Path: "/bin/zsh", Label: "Zsh"},
+		{Name: "fish", Path: "/usr/bin/fish", Label: "Fish"},
 	}
 }
 

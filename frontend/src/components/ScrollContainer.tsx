@@ -25,7 +25,7 @@ export interface ScrollContainerRef {
 function renderPaneContent(pane: PaneConfig, isActive: boolean) {
   switch (pane.type) {
     case 'terminal':
-      return <TerminalPane paneId={pane.id} title={pane.title} isActive={isActive} />;
+      return <TerminalPane paneId={pane.id} title={pane.title} isActive={isActive} shell={pane.shell} />;
     case 'browser':
       return <BrowserPane title={pane.title} />;
     case 'notes':

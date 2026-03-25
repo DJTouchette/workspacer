@@ -8,7 +8,7 @@ interface UseKeyboardNavOptions {
   activePaneId: string;
   setActivePaneId: (id: string) => void;
   scrollToPane: (id: string) => void;
-  addPane: (type: PaneType, title?: string, width?: number) => string;
+  addPane: (type: PaneType, title?: string, width?: number, shell?: string) => string;
   removePane: (id: string) => void;
   resizePane: (id: string, width: number) => void;
   resetPaneWidth: (id: string) => void;

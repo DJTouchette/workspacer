@@ -40,8 +40,8 @@ function App() {
 
   const insertPosition = config.panes.insertPosition || 'after';
 
-  const addPaneWithConfig = useCallback((type: PaneType, title?: string, width?: number) => {
-    return addPane(type, title, width, insertPosition);
+  const addPaneWithConfig = useCallback((type: PaneType, title?: string, width?: number, shell?: string) => {
+    return addPane(type, title, width, insertPosition, shell);
   }, [addPane, insertPosition]);
 
   useKeyboardNav({
@@ -79,8 +79,9 @@ function App() {
     []
   );
 
-  const handleAddPane = useCallback(() => {
-    const newId = addPaneWithConfig('terminal');
+  const handleAddPane = useCallback((shell?: string, label?: string) => {
+    const title = label ?? undefined;
+    const newId = addPaneWithConfig('terminal', title, undefined, shell);
     requestAnimationFrame(() => {
       scrollToPane(newId);
     });
