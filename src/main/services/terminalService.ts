@@ -2,8 +2,8 @@ import { BrowserWindow } from 'electron';
 import * as os from 'os';
 import * as crypto from 'crypto';
 
-// node-pty types
-import * as pty from 'node-pty';
+// Prebuilt binaries — no Visual Studio Build Tools needed on Windows
+import * as pty from '@homebridge/node-pty-prebuilt-multiarch';
 
 interface TerminalSession {
   pty: pty.IPty;
