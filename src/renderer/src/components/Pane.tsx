@@ -44,14 +44,16 @@ const Pane: React.FC<PaneProps> = ({
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(title);
   const inputRef = useRef<HTMLInputElement>(null);
+  const prevSignalRef = useRef(renameSignal);
 
-  // Trigger rename when F2 signal arrives for this pane
+  // Trigger rename only when F2 signal actually increments (not on pane switch)
   useEffect(() => {
-    if (renameSignal && renameSignal > 0 && onRename) {
+    if (renameSignal && renameSignal > 0 && renameSignal !== prevSignalRef.current && onRename) {
       setEditValue(title);
       setIsEditing(true);
       setTimeout(() => inputRef.current?.select(), 0);
     }
+    prevSignalRef.current = renameSignal;
   }, [renameSignal]);
 
   const handleStartRename = useCallback(() => {
