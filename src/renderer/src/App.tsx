@@ -231,6 +231,12 @@ function App() {
     return <div className="app-root" />;
   }
 
+  // Safety: if we're active but have no panes, load defaults
+  if (sessionPhase === 'active' && panes.length === 0) {
+    loadFromSession(defaultPanes, defaultPanes[0].id);
+    return <div className="app-root" />;
+  }
+
   if (sessionPhase === 'picker') {
     return (
       <div className="app-root">
