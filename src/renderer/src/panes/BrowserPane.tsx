@@ -80,23 +80,8 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive, init
     };
   }, []);
 
-  // Auto-navigate to initialUrl on mount
-  useEffect(() => {
-    const startUrl = initialUrl || browserCfg.homepage || 'https://google.com';
-    if (startUrl && startUrl !== 'about:blank') {
-      const wv = webviewRef.current as any;
-      if (wv && wv.loadURL) {
-        wv.loadURL(normalizeUrl(startUrl));
-      } else {
-        // Webview not ready yet — try after a short delay
-        const timer = setTimeout(() => {
-          const wv2 = webviewRef.current as any;
-          if (wv2 && wv2.loadURL) wv2.loadURL(normalizeUrl(startUrl));
-        }, 300);
-        return () => clearTimeout(timer);
-      }
-    }
-  }, []); // Only on mount
+  // Compute the start URL once for the webview src attribute
+  const startUrl = normalizeUrl(initialUrl || browserCfg.homepage || 'https://google.com');
 
   const navigate = useCallback((targetUrl: string) => {
     const normalized = normalizeUrl(targetUrl);
@@ -266,7 +251,7 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive, init
       {/* allowpopups needed for OAuth login flows that open popups */}
       <webview
         ref={webviewRef as any}
-        src="about:blank"
+        src={startUrl}
         style={{
           flex: 1,
           width: '100%',
