@@ -82,6 +82,12 @@ export function usePaneManager() {
     );
   }, []);
 
+  const renamePane = useCallback((id: string, title: string) => {
+    setPanes((prev) =>
+      prev.map((p) => (p.id === id ? { ...p, title } : p))
+    );
+  }, []);
+
   const movePane = useCallback((id: string, toIndex: number) => {
     setPanes((prev) => {
       const fromIndex = prev.findIndex((p) => p.id === id);
@@ -99,6 +105,7 @@ export function usePaneManager() {
     panes,
     addPane,
     removePane,
+    renamePane,
     resizePane,
     resetPaneWidth,
     movePane,

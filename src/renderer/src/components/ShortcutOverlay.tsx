@@ -15,6 +15,8 @@ const shortcuts: [string, string][] = [
   ['Ctrl+Shift+Right', 'Grow pane'],
   ['Ctrl+Shift+0', 'Reset pane width'],
   ['Ctrl+Shift+1-9', 'Move pane to position'],
+  ['F2', 'Rename active pane'],
+  ['Dbl-click title', 'Rename pane'],
   ['Drag header', 'Reorder pane'],
   ['Ctrl+/', 'Toggle this help'],
 ];

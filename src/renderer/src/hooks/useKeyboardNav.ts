@@ -15,6 +15,7 @@ interface UseKeyboardNavOptions {
   movePane: (id: string, toIndex: number) => void;
   defaultPaneWidth: number;
   onToggleHelp: () => void;
+  onRenamePane?: () => void;
 }
 
 export function useKeyboardNav({
@@ -29,6 +30,7 @@ export function useKeyboardNav({
   movePane,
   defaultPaneWidth,
   onToggleHelp,
+  onRenamePane,
 }: UseKeyboardNavOptions) {
   const goToIndex = useCallback(
     (index: number) => {
@@ -84,6 +86,14 @@ export function useKeyboardNav({
         e.preventDefault();
         e.stopPropagation();
         removePane(activePaneId);
+        return;
+      }
+
+      // F2: rename active pane
+      if (e.key === 'F2' && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (onRenamePane) onRenamePane();
         return;
       }
 
@@ -169,7 +179,7 @@ export function useKeyboardNav({
     // Use capture phase so we intercept before xterm.js handles the event
     window.addEventListener('keydown', handler, true);
     return () => window.removeEventListener('keydown', handler, true);
-  }, [goToIndex, goToPrev, goToNext, addPane, removePane, resizePane, resetPaneWidth, movePane, defaultPaneWidth, panes, activePaneId, scrollToPane, onToggleHelp]);
+  }, [goToIndex, goToPrev, goToNext, addPane, removePane, resizePane, resetPaneWidth, movePane, defaultPaneWidth, panes, activePaneId, scrollToPane, onToggleHelp, onRenamePane]);
 
   return {
     activePaneId,

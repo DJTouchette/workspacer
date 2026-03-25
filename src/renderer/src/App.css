@@ -16,7 +16,7 @@
 .app-content {
   flex: 1;
   margin-top: 28px; /* NavBar height */
-  margin-bottom: 8px; /* ScrollIndicator height */
+  margin-bottom: 12px; /* ScrollIndicator height + padding */
   overflow: hidden;
 }
 

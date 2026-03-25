@@ -15,6 +15,8 @@ interface ScrollContainerProps {
   onPaneResize?: (id: string, width: number) => void;
   onPaneResetWidth?: (id: string) => void;
   onPaneMove?: (id: string, toIndex: number) => void;
+  onPaneRename?: (id: string, title: string) => void;
+  renameSignal?: number;
 }
 
 export interface ScrollContainerRef {
@@ -130,7 +132,7 @@ function ResizeHandle({
 }
 
 const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
-  ({ panes, activePaneId, onPaneFocus, onPaneClose, onPaneResize, onPaneResetWidth, onPaneMove }, ref) => {
+  ({ panes, activePaneId, onPaneFocus, onPaneClose, onPaneResize, onPaneResetWidth, onPaneMove, onPaneRename, renameSignal }, ref) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const { config } = useConfig();
     const peek = config.panes.peek ?? 80;
@@ -257,6 +259,8 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
               onClose={onPaneClose}
               onFocus={onPaneFocus}
               onMove={onPaneMove ? handlePaneMove : undefined}
+              onRename={onPaneRename}
+              renameSignal={pane.id === activePaneId ? renameSignal : undefined}
             >
               {renderPaneContent(pane, pane.id === activePaneId)}
             </Pane>

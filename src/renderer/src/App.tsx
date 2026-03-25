@@ -15,6 +15,7 @@ function App() {
     panes,
     addPane,
     removePane,
+    renamePane,
     resizePane,
     resetPaneWidth,
     movePane,
@@ -24,6 +25,7 @@ function App() {
 
   const scrollContainerRef = useRef<ScrollContainerRef>(null);
   const [showHelp, setShowHelp] = useState(false);
+  const [renameSignal, setRenameSignal] = useState(0);
 
   const scrollToPane = useCallback((id: string) => {
     scrollContainerRef.current?.scrollToPane(id);
@@ -55,6 +57,7 @@ function App() {
     movePane,
     defaultPaneWidth: config.panes.defaultWidth || 800,
     onToggleHelp: toggleHelp,
+    onRenamePane: useCallback(() => setRenameSignal((s) => s + 1), []),
   });
 
   const handlePaneClick = useCallback((id: string) => {
@@ -70,9 +73,9 @@ function App() {
     setActivePaneId(id);
   }, [setActivePaneId]);
 
-  const handleAddPane = useCallback((shell?: string, label?: string) => {
+  const handleAddPane = useCallback((type: PaneType, shell?: string, label?: string) => {
     const title = label ?? undefined;
-    const newId = addPaneWithConfig('terminal', title, undefined, shell);
+    const newId = addPaneWithConfig(type, title, undefined, shell);
     requestAnimationFrame(() => {
       scrollToPane(newId);
     });
@@ -97,6 +100,8 @@ function App() {
           onPaneResize={resizePane}
           onPaneResetWidth={resetPaneWidth}
           onPaneMove={movePane}
+          onPaneRename={renamePane}
+          renameSignal={renameSignal}
         />
       </div>
 

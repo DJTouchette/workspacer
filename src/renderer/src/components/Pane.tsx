@@ -1,4 +1,4 @@
-import React, { useCallback, useRef } from 'react';
+import React, { useCallback, useRef, useState, useEffect } from 'react';
 import { PaneType } from '../types/pane';
 import { useConfig } from '../hooks/useConfig';
 
@@ -11,6 +11,8 @@ interface PaneProps {
   onClose: (id: string) => void;
   onFocus: (id: string) => void;
   onMove?: (id: string, delta: number) => void;
+  onRename?: (id: string, title: string) => void;
+  renameSignal?: number;
   children: React.ReactNode;
 }
 
@@ -30,6 +32,8 @@ const Pane: React.FC<PaneProps> = ({
   onClose,
   onFocus,
   onMove,
+  onRename,
+  renameSignal,
   children,
 }) => {
   const { config } = useConfig();
@@ -37,10 +41,50 @@ const Pane: React.FC<PaneProps> = ({
   const onMoveRef = useRef(onMove);
   onMoveRef.current = onMove;
 
+  const [isEditing, setIsEditing] = useState(false);
+  const [editValue, setEditValue] = useState(title);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Trigger rename when F2 signal arrives for this pane
+  useEffect(() => {
+    if (renameSignal && renameSignal > 0 && onRename) {
+      setEditValue(title);
+      setIsEditing(true);
+      setTimeout(() => inputRef.current?.select(), 0);
+    }
+  }, [renameSignal]);
+
+  const handleStartRename = useCallback(() => {
+    if (!onRename) return;
+    setEditValue(title);
+    setIsEditing(true);
+    setTimeout(() => inputRef.current?.select(), 0);
+  }, [title, onRename]);
+
+  const handleFinishRename = useCallback(() => {
+    setIsEditing(false);
+    const trimmed = editValue.trim();
+    if (trimmed && trimmed !== title && onRename) {
+      onRename(id, trimmed);
+    }
+  }, [editValue, title, id, onRename]);
+
+  const handleRenameKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleFinishRename();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      setIsEditing(false);
+    }
+    e.stopPropagation();
+  }, [handleFinishRename]);
+
   const handleHeaderMouseDown = useCallback((e: React.MouseEvent) => {
     if (!onMoveRef.current) return;
     if (e.button !== 0) return;
     if ((e.target as HTMLElement).closest('button')) return;
+    if ((e.target as HTMLElement).closest('input')) return;
 
     e.preventDefault();
     e.stopPropagation();
@@ -96,7 +140,7 @@ const Pane: React.FC<PaneProps> = ({
       }}
       onClick={() => onFocus(id)}
     >
-      {/* Header bar — drag to reorder */}
+      {/* Header bar — drag to reorder, double-click title to rename */}
       <div
         className="pane-header"
         onMouseDown={handleHeaderMouseDown}
@@ -117,19 +161,48 @@ const Pane: React.FC<PaneProps> = ({
           zIndex: 1001,
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}>
           <span style={{ fontSize: '0.6rem', opacity: 0.7 }}>
             {typeIndicators[type]}
           </span>
-          <span
-            style={{
-              fontSize: '0.6rem',
-              color: 'rgb(200, 200, 210)',
-              fontWeight: 500,
-            }}
-          >
-            {title}
-          </span>
+          {isEditing ? (
+            <input
+              ref={inputRef}
+              value={editValue}
+              onChange={(e) => setEditValue(e.target.value)}
+              onBlur={handleFinishRename}
+              onKeyDown={handleRenameKeyDown}
+              style={{
+                fontSize: '0.6rem',
+                color: 'rgb(220, 220, 235)',
+                fontWeight: 500,
+                backgroundColor: 'rgb(20, 20, 24)',
+                border: '1px solid rgb(80, 120, 200)',
+                borderRadius: '2px',
+                padding: '0 4px',
+                height: '16px',
+                width: '120px',
+                outline: 'none',
+                fontFamily: 'inherit',
+              }}
+            />
+          ) : (
+            <span
+              onDoubleClick={handleStartRename}
+              style={{
+                fontSize: '0.6rem',
+                color: 'rgb(200, 200, 210)',
+                fontWeight: 500,
+                cursor: onRename ? 'text' : 'default',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+              title="Double-click to rename"
+            >
+              {title}
+            </span>
+          )}
         </div>
         <button
           onClick={(e) => {
