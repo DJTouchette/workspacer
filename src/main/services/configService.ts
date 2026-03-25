@@ -111,7 +111,7 @@ function defaultConfig(): Config {
     },
     keybindings: {
       mode: 'default',
-      leader: 'ctrl+space',
+      leader: 'ctrl',
     },
   };
 }

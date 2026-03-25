@@ -84,7 +84,7 @@ const DEFAULT_CONFIG: Config = {
   },
   keybindings: {
     mode: 'default',
-    leader: 'ctrl+space',
+    leader: 'ctrl',
   },
 };
 

@@ -108,11 +108,6 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
       if (e.key === 'F2') {
         return false;
       }
-      // Leader key for vim mode (Ctrl+Space or whatever is configured)
-      // Check e.code for Space since e.key is unreliable with Ctrl held
-      if (e.ctrlKey && e.code === 'Space' && !e.altKey && !e.shiftKey && !e.metaKey) {
-        return false;
-      }
       // Let xterm handle everything else
       return true;
     });

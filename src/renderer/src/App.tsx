@@ -59,7 +59,7 @@ function App() {
   }, [panes, addPaneWithConfig, setActivePaneId, scrollToPane]);
 
   const kbMode = config.keybindings?.mode ?? 'default';
-  const kbLeader = config.keybindings?.leader ?? 'ctrl+space';
+  const kbLeader = config.keybindings?.leader ?? 'ctrl';
 
   useKeyboardNav({
     panes,

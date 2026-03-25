@@ -25,7 +25,7 @@ const defaultShortcuts: [string, string][] = [
 ];
 
 function vimShortcutList(leader: string): [string, string][] {
-  const l = leader || 'ctrl+space';
+  const l = leader || 'ctrl';
   return [
     [`${l} \u2192 1-9`, 'Jump to pane'],
     [`${l} \u2192 h / l`, 'Prev / next pane'],
@@ -46,7 +46,7 @@ function vimShortcutList(leader: string): [string, string][] {
   ];
 }
 
-const ShortcutOverlay: React.FC<ShortcutOverlayProps> = ({ visible, onClose, mode = 'default', leader = 'ctrl+space' }) => {
+const ShortcutOverlay: React.FC<ShortcutOverlayProps> = ({ visible, onClose, mode = 'default', leader = 'ctrl' }) => {
   useEffect(() => {
     if (!visible) return;
     const handler = (e: KeyboardEvent) => {

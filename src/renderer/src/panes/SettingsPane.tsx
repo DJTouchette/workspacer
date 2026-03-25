@@ -20,7 +20,7 @@ const defaultShortcuts: [string, string][] = [
 ];
 
 function vimShortcuts(leader: string): [string, string][] {
-  const l = leader || 'Ctrl+Space';
+  const l = leader || 'Ctrl';
   return [
     [`${l} then 1-9`, 'Jump to pane'],
     [`${l} then h / l`, 'Prev / next pane'],
@@ -44,7 +44,7 @@ function vimShortcuts(leader: string): [string, string][] {
 
 const SettingsPane: React.FC<SettingsPaneProps> = ({ title }) => {
   const { config, save } = useConfig();
-  const kbConfig = config.keybindings ?? { mode: 'default' as const, leader: 'ctrl+space' };
+  const kbConfig = config.keybindings ?? { mode: 'default' as const, leader: 'ctrl' };
 
   const [mode, setMode] = useState<'default' | 'vim'>(kbConfig.mode);
   const [leader, setLeader] = useState(kbConfig.leader);

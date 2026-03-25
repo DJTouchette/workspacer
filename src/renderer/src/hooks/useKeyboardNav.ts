@@ -26,41 +26,60 @@ interface UseKeyboardNavOptions {
 }
 
 /**
- * Parse a key combo string like "ctrl+space" into a matcher function.
- */
-/**
- * Map from key name to e.code values for keys where e.key is unreliable
- * (e.g. Ctrl+Space produces '\x00' or 'Process' on some platforms).
+ * Map from key name to e.code values for keys where e.key is unreliable.
  */
 const KEY_TO_CODE: Record<string, string> = {
   space: 'Space',
 };
 
-function parseKeyCombo(combo: string): (e: KeyboardEvent) => boolean {
+const MODIFIER_NAMES = new Set(['ctrl', 'alt', 'shift', 'meta']);
+
+/**
+ * Parse a key combo string into a matcher function.
+ * Supports: "ctrl+space", "alt+a", or modifier-only like "ctrl", "alt".
+ * A modifier-only leader fires on keydown of that modifier key.
+ */
+function parseKeyCombo(combo: string): { match: (e: KeyboardEvent) => boolean; isModifierOnly: boolean } {
   const parts = combo.toLowerCase().split('+');
-  const key = parts[parts.length - 1];
+  const lastPart = parts[parts.length - 1];
+  const isModifierOnly = parts.length === 1 && MODIFIER_NAMES.has(lastPart);
+
+  if (isModifierOnly) {
+    // Map modifier name to e.key value
+    const modKeyMap: Record<string, string> = { ctrl: 'Control', alt: 'Alt', shift: 'Shift', meta: 'Meta' };
+    const expectedKey = modKeyMap[lastPart];
+    return {
+      isModifierOnly: true,
+      match: (e: KeyboardEvent) => e.key === expectedKey,
+    };
+  }
+
+  // Regular combo: modifier(s) + key
+  const key = lastPart;
   const needsCtrl = parts.includes('ctrl');
   const needsAlt = parts.includes('alt');
   const needsShift = parts.includes('shift');
   const needsMeta = parts.includes('meta');
   const expectedCode = KEY_TO_CODE[key];
 
-  return (e: KeyboardEvent) => {
-    // Use e.code for keys that have unreliable e.key values
-    let keyMatch: boolean;
-    if (expectedCode) {
-      keyMatch = e.code === expectedCode;
-    } else {
-      const eventKey = e.key === ' ' ? 'space' : e.key.toLowerCase();
-      keyMatch = eventKey === key;
-    }
-    return (
-      keyMatch &&
-      e.ctrlKey === needsCtrl &&
-      e.altKey === needsAlt &&
-      e.shiftKey === needsShift &&
-      e.metaKey === needsMeta
-    );
+  return {
+    isModifierOnly: false,
+    match: (e: KeyboardEvent) => {
+      let keyMatch: boolean;
+      if (expectedCode) {
+        keyMatch = e.code === expectedCode;
+      } else {
+        const eventKey = e.key === ' ' ? 'space' : e.key.toLowerCase();
+        keyMatch = eventKey === key;
+      }
+      return (
+        keyMatch &&
+        e.ctrlKey === needsCtrl &&
+        e.altKey === needsAlt &&
+        e.shiftKey === needsShift &&
+        e.metaKey === needsMeta
+      );
+    },
   };
 }
 
@@ -78,7 +97,7 @@ export function useKeyboardNav({
   onToggleHelp,
   onRenamePane,
   keybindingsMode = 'default',
-  leaderKey = 'ctrl+space',
+  leaderKey = 'ctrl',
   onChordStateChange,
   onOpenSettings,
 }: UseKeyboardNavOptions) {
@@ -112,8 +131,11 @@ export function useKeyboardNav({
     }
   }, [panes, activePaneId, goToIndex]);
 
+  // For modifier-only leaders: track whether the modifier was "tapped" (pressed+released without another key)
+  const modTapRef = useRef<{ pressed: boolean; usedInCombo: boolean }>({ pressed: false, usedInCombo: false });
+
   useEffect(() => {
-    const isLeaderKey = parseKeyCombo(leaderKey);
+    const leaderConfig = parseKeyCombo(leaderKey);
 
     const cancelChord = () => {
       if (chordRef.current.timeoutId) {
@@ -122,6 +144,70 @@ export function useKeyboardNav({
       }
       chordRef.current.state = 'idle';
       onChordStateChange?.('idle');
+    };
+
+    const startChord = () => {
+      chordRef.current.state = 'waiting';
+      onChordStateChange?.('waiting');
+      chordRef.current.timeoutId = setTimeout(cancelChord, CHORD_TIMEOUT);
+    };
+
+    const executeChordAction = (key: string) => {
+      const num = parseInt(key, 10);
+
+      if (num >= 1 && num <= 9) {
+        goToIndex(num - 1);
+      } else if (key === 'h') {
+        goToPrev();
+      } else if (key === 'l') {
+        goToNext();
+      } else if (key === 'H') {
+        const idx = panes.findIndex((p) => p.id === activePaneId);
+        if (idx > 0) movePane(activePaneId, idx - 1);
+      } else if (key === 'L') {
+        const idx = panes.findIndex((p) => p.id === activePaneId);
+        if (idx < panes.length - 1) movePane(activePaneId, idx + 1);
+      } else if (key === 'n') {
+        const newId = addPane('terminal');
+        requestAnimationFrame(() => scrollToPane(newId));
+      } else if (key === 'b') {
+        const newId = addPane('browser');
+        requestAnimationFrame(() => scrollToPane(newId));
+      } else if (key === 'q') {
+        removePane(activePaneId);
+      } else if (key === 'r') {
+        onRenamePane?.();
+      } else if (key === '+' || key === '>') {
+        const pane = panes.find((p) => p.id === activePaneId);
+        if (pane) {
+          const current = pane.widthOverride ?? defaultPaneWidth;
+          resizePane(activePaneId, current + RESIZE_STEP);
+        }
+      } else if (key === '-' || key === '<') {
+        const pane = panes.find((p) => p.id === activePaneId);
+        if (pane) {
+          const current = pane.widthOverride ?? defaultPaneWidth;
+          resizePane(activePaneId, Math.max(300, current - RESIZE_STEP));
+        }
+      } else if (key === '=') {
+        resetPaneWidth(activePaneId);
+      } else if (key === '?') {
+        onToggleHelp();
+      }
+    };
+
+    // For modifier-only leaders: detect "tap" via keyup
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (keybindingsMode !== 'vim' || !leaderConfig.isModifierOnly) return;
+
+      if (leaderConfig.match(e) && modTapRef.current.pressed && !modTapRef.current.usedInCombo) {
+        // Modifier was pressed and released without any other key — it's a tap
+        modTapRef.current.pressed = false;
+        if (chordRef.current.state === 'idle') {
+          startChord();
+        }
+      }
+      modTapRef.current.pressed = false;
     };
 
     const handler = (e: KeyboardEvent) => {
@@ -135,12 +221,23 @@ export function useKeyboardNav({
 
       // --- Vim chord handling ---
       if (keybindingsMode === 'vim') {
-        // Skip leader detection only for inputs explicitly marked as leader-capture
-        // (NOT xterm's hidden textarea, which is also a textarea element)
         const isLeaderCapture = e.target instanceof HTMLElement && e.target.dataset.leaderCapture === 'true';
 
+        // Track modifier-only leader: on keydown of the modifier, start tracking
+        if (leaderConfig.isModifierOnly && !isLeaderCapture) {
+          if (leaderConfig.match(e)) {
+            // Modifier key pressed — start tracking for a tap
+            modTapRef.current.pressed = true;
+            modTapRef.current.usedInCombo = false;
+            return; // Let the event pass through (it's just Ctrl down)
+          } else if (modTapRef.current.pressed) {
+            // Another key pressed while modifier held — this is a combo, not a tap
+            modTapRef.current.usedInCombo = true;
+          }
+        }
+
         if (chordRef.current.state === 'waiting') {
-          // Ignore modifier-only keypresses (Ctrl, Shift, Alt, Meta releasing after leader)
+          // Ignore modifier-only keypresses while waiting for action
           if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) {
             return;
           }
@@ -149,61 +246,15 @@ export function useKeyboardNav({
           e.preventDefault();
           e.stopPropagation();
           cancelChord();
-
-          // Execute action based on key
-          const key = e.key;
-          const num = parseInt(key, 10);
-
-          if (num >= 1 && num <= 9) {
-            goToIndex(num - 1);
-          } else if (key === 'h') {
-            goToPrev();
-          } else if (key === 'l') {
-            goToNext();
-          } else if (key === 'H') {
-            const idx = panes.findIndex((p) => p.id === activePaneId);
-            if (idx > 0) movePane(activePaneId, idx - 1);
-          } else if (key === 'L') {
-            const idx = panes.findIndex((p) => p.id === activePaneId);
-            if (idx < panes.length - 1) movePane(activePaneId, idx + 1);
-          } else if (key === 'n') {
-            const newId = addPane('terminal');
-            requestAnimationFrame(() => scrollToPane(newId));
-          } else if (key === 'b') {
-            const newId = addPane('browser');
-            requestAnimationFrame(() => scrollToPane(newId));
-          } else if (key === 'q') {
-            removePane(activePaneId);
-          } else if (key === 'r') {
-            onRenamePane?.();
-          } else if (key === '+' || key === '>') {
-            const pane = panes.find((p) => p.id === activePaneId);
-            if (pane) {
-              const current = pane.widthOverride ?? defaultPaneWidth;
-              resizePane(activePaneId, current + RESIZE_STEP);
-            }
-          } else if (key === '-' || key === '<') {
-            const pane = panes.find((p) => p.id === activePaneId);
-            if (pane) {
-              const current = pane.widthOverride ?? defaultPaneWidth;
-              resizePane(activePaneId, Math.max(300, current - RESIZE_STEP));
-            }
-          } else if (key === '=') {
-            resetPaneWidth(activePaneId);
-          } else if (key === '?') {
-            onToggleHelp();
-          }
-          // Unrecognized key — already cancelled above
+          executeChordAction(e.key);
           return;
         }
 
-        // Check for leader key press (start chord)
-        if (!isLeaderCapture && isLeaderKey(e)) {
+        // Non-modifier leader (e.g. ctrl+space): detect on keydown
+        if (!leaderConfig.isModifierOnly && !isLeaderCapture && leaderConfig.match(e)) {
           e.preventDefault();
           e.stopPropagation();
-          chordRef.current.state = 'waiting';
-          onChordStateChange?.('waiting');
-          chordRef.current.timeoutId = setTimeout(cancelChord, CHORD_TIMEOUT);
+          startChord();
           return;
         }
       }
@@ -323,8 +374,10 @@ export function useKeyboardNav({
 
     // Use capture phase so we intercept before xterm.js handles the event
     window.addEventListener('keydown', handler, true);
+    window.addEventListener('keyup', handleKeyUp, true);
     return () => {
       window.removeEventListener('keydown', handler, true);
+      window.removeEventListener('keyup', handleKeyUp, true);
       cancelChord();
     };
   }, [goToIndex, goToPrev, goToNext, addPane, removePane, resizePane, resetPaneWidth, movePane, defaultPaneWidth, panes, activePaneId, scrollToPane, onToggleHelp, onRenamePane, keybindingsMode, leaderKey, onChordStateChange, onOpenSettings]);
