@@ -7,6 +7,7 @@ interface BrowserPaneProps {
   isActive: boolean;
   initialUrl?: string;
   appMode?: boolean;
+  hibernated?: boolean;
   onUrlChange?: (url: string) => void;
 }
 
@@ -22,7 +23,7 @@ function normalizeUrl(input: string): string {
   return 'https://' + trimmed;
 }
 
-const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive, initialUrl, appMode, onUrlChange }) => {
+const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive, initialUrl, appMode, hibernated, onUrlChange }) => {
   const { config } = useConfig();
   const browserCfg = config.browser ?? { homepage: 'https://google.com', bookmarks: [] };
 
@@ -277,22 +278,37 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive, init
         }} />
       )}
 
-      {/* Webview content area — real embedded browser */}
-      {/* partition=persist:browser gives a persistent session (cookies survive restarts) */}
-      {/* allowpopups needed for OAuth login flows that open popups */}
-      <webview
-        ref={webviewRef as any}
-        src={startUrl}
-        style={{
+      {/* Content area */}
+      {hibernated ? (
+        <div style={{
           flex: 1,
-          width: '100%',
-          border: 'none',
-        }}
-        // @ts-ignore — webview attributes not in React types
-        partition="persist:browser"
-        // @ts-ignore
-        allowpopups="true"
-      />
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: '#121214',
+          color: 'rgb(100, 100, 115)',
+          gap: '8px',
+        }}>
+          <span style={{ fontSize: '2rem', opacity: 0.5 }}>&#x1F4A4;</span>
+          <span style={{ fontSize: '0.7rem' }}>Hibernated</span>
+          <span style={{ fontSize: '0.6rem', color: 'rgb(70, 70, 80)' }}>{url}</span>
+        </div>
+      ) : (
+        <webview
+          ref={webviewRef as any}
+          src={startUrl}
+          style={{
+            flex: 1,
+            width: '100%',
+            border: 'none',
+          }}
+          // @ts-ignore
+          partition="persist:browser"
+          // @ts-ignore
+          allowpopups="true"
+        />
+      )}
     </div>
   );
 };

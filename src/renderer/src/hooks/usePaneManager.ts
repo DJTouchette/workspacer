@@ -96,6 +96,18 @@ export function usePaneManager() {
     );
   }, []);
 
+  const hibernatePane = useCallback((id: string) => {
+    setPanes((prev) =>
+      prev.map((p) => (p.id === id ? { ...p, hibernated: true } : p))
+    );
+  }, []);
+
+  const wakePane = useCallback((id: string) => {
+    setPanes((prev) =>
+      prev.map((p) => (p.id === id ? { ...p, hibernated: false } : p))
+    );
+  }, []);
+
   const updatePaneUrl = useCallback((id: string, url: string) => {
     setPanes((prev) =>
       prev.map((p) => (p.id === id ? { ...p, url } : p))
@@ -123,6 +135,8 @@ export function usePaneManager() {
     resizePane,
     resetPaneWidth,
     movePane,
+    hibernatePane,
+    wakePane,
     updatePaneUrl,
     loadFromSession,
     activePaneId,

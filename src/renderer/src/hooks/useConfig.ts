@@ -37,6 +37,7 @@ export interface PanesConfig {
 export interface BrowserConfig {
   homepage: string;
   bookmarks: Array<{ name: string; url: string }>;
+  hibernateAfter: number;
 }
 
 export interface AppEntry {
@@ -88,6 +89,7 @@ const DEFAULT_CONFIG: Config = {
   browser: {
     homepage: 'https://google.com',
     bookmarks: [],
+    hibernateAfter: 300,
   },
   keybindings: {
     mode: 'default',

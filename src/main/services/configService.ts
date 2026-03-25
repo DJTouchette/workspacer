@@ -42,6 +42,7 @@ interface Config {
   browser: {
     homepage: string;
     bookmarks: Bookmark[];
+    hibernateAfter: number;
   };
   panes: {
     defaultWidth: number;
@@ -103,6 +104,7 @@ function defaultConfig(): Config {
         { name: 'Localhost 3000', url: 'http://localhost:3000' },
         { name: 'Localhost 8080', url: 'http://localhost:8080' },
       ],
+      hibernateAfter: 300,
     },
     panes: {
       defaultWidth: 800,

@@ -109,6 +109,7 @@ const NavBar: React.FC<NavBarProps> = ({ panes, activePaneId, onPaneClick, onAdd
                 color: isActive
                   ? 'rgb(220, 220, 235)'
                   : 'rgb(140, 140, 155)',
+                opacity: pane.hibernated ? 0.4 : 1,
                 transition: 'none',
               }}
               onMouseEnter={(e) => {

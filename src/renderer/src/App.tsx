@@ -21,6 +21,8 @@ function App() {
     resizePane,
     resetPaneWidth,
     movePane,
+    hibernatePane,
+    wakePane,
     updatePaneUrl,
     loadFromSession,
     activePaneId,
@@ -41,6 +43,42 @@ function App() {
 
   // PTY mapping: paneId -> ptySessionId (for CWD lookup on save)
   const ptyMappingRef = useRef<Record<string, string>>({});
+
+  // Hibernation: track when each pane was last visible
+  const lastVisibleRef = useRef<Record<string, number>>({});
+  const hibernateAfter = (config.browser?.hibernateAfter ?? 300) * 1000; // convert to ms
+
+  // Update last-visible timestamp for active pane (and next in split)
+  useEffect(() => {
+    if (!activePaneId) return;
+    const now = Date.now();
+    lastVisibleRef.current[activePaneId] = now;
+    // In split mode, the next pane is also visible
+    if (viewMode === 'split') {
+      const activeIdx = panes.findIndex((p) => p.id === activePaneId);
+      const nextIdx = activeIdx + 1 < panes.length ? activeIdx + 1 : (panes.length > 1 ? 0 : -1);
+      if (nextIdx >= 0 && panes[nextIdx]) {
+        lastVisibleRef.current[panes[nextIdx].id] = now;
+      }
+    }
+  }, [activePaneId, panes, viewMode]);
+
+  // Hibernate check timer
+  useEffect(() => {
+    if (hibernateAfter <= 0 || sessionPhase !== 'active') return;
+    const interval = setInterval(() => {
+      const now = Date.now();
+      for (const pane of panes) {
+        if (pane.type !== 'browser' || pane.hibernated) continue;
+        if (pane.id === activePaneId) continue;
+        const lastSeen = lastVisibleRef.current[pane.id] ?? 0;
+        if (lastSeen > 0 && now - lastSeen > hibernateAfter) {
+          hibernatePane(pane.id);
+        }
+      }
+    }, 15000); // check every 15s
+    return () => clearInterval(interval);
+  }, [panes, activePaneId, hibernateAfter, hibernatePane, sessionPhase]);
 
   const handlePtyReady = useCallback((paneId: string, ptySessionId: string) => {
     ptyMappingRef.current[paneId] = ptySessionId;
@@ -201,17 +239,24 @@ function App() {
   });
 
   const handlePaneClick = useCallback((id: string) => {
+    // Auto-wake hibernated panes
+    const pane = panes.find((p) => p.id === id);
+    if (pane?.hibernated) wakePane(id);
+    lastVisibleRef.current[id] = Date.now();
     setActivePaneId(id);
     scrollToPane(id);
-  }, [setActivePaneId, scrollToPane]);
+  }, [panes, wakePane, setActivePaneId, scrollToPane]);
 
   const handlePaneClose = useCallback((id: string) => {
     removePane(id);
   }, [removePane]);
 
   const handlePaneFocus = useCallback((id: string) => {
+    const pane = panes.find((p) => p.id === id);
+    if (pane?.hibernated) wakePane(id);
+    lastVisibleRef.current[id] = Date.now();
     setActivePaneId(id);
-  }, [setActivePaneId]);
+  }, [panes, wakePane, setActivePaneId]);
 
   const handleAddPane = useCallback((type: PaneType, shell?: string, label?: string) => {
     const title = label ?? undefined;

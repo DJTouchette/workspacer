@@ -10,4 +10,5 @@ export interface PaneConfig {
   cwd?: string;
   url?: string;
   appMode?: boolean;
+  hibernated?: boolean;
 }

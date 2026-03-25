@@ -235,6 +235,40 @@ const SettingsPane: React.FC<SettingsPaneProps> = ({ title }) => {
         </div>
       </Section>
 
+      {/* Browser section */}
+      <Section title="Browser">
+        <Row label="Hibernate after (seconds)">
+          <input
+            type="number"
+            min={0}
+            step={30}
+            value={config.browser?.hibernateAfter ?? 300}
+            onChange={(e) => {
+              const val = parseInt(e.target.value, 10);
+              if (!isNaN(val) && val >= 0) {
+                save({ browser: { ...config.browser, hibernateAfter: val } });
+              }
+            }}
+            style={{
+              width: '80px',
+              height: '24px',
+              padding: '0 8px',
+              fontSize: '0.65rem',
+              backgroundColor: 'rgb(18, 18, 20)',
+              color: 'rgb(200, 200, 210)',
+              border: '1px solid rgb(50, 50, 55)',
+              borderRadius: '3px',
+              outline: 'none',
+              fontFamily: 'monospace',
+              textAlign: 'right',
+            }}
+          />
+        </Row>
+        <div style={{ fontSize: '0.55rem', color: 'rgb(80, 80, 95)' }}>
+          Browser panes hibernate after being out of view. 0 = disabled.
+        </div>
+      </Section>
+
       {/* Apps section */}
       <Section title="Apps (Ctrl+K)">
         <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
