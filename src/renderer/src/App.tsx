@@ -220,7 +220,7 @@ function App() {
   }, [addPaneWithConfig, scrollToPane]);
 
   const handleLaunchApp = useCallback((app: { name: string; url: string }) => {
-    const newId = addPane('browser', app.name, undefined, insertPosition, undefined, app.url);
+    const newId = addPane('browser', app.name, undefined, insertPosition, undefined, app.url, true);
     requestAnimationFrame(() => scrollToPane(newId));
   }, [addPane, insertPosition, scrollToPane]);
 

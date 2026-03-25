@@ -9,4 +9,5 @@ export interface PaneConfig {
   shell?: string;
   cwd?: string;
   url?: string;
+  appMode?: boolean;
 }

@@ -36,7 +36,7 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
     case 'terminal':
       return <TerminalPane paneId={pane.id} title={pane.title} isActive={isActive} shell={pane.shell} cwd={pane.cwd} onPtyReady={callbacks.onPtyReady} />;
     case 'browser':
-      return <BrowserPane paneId={pane.id} title={pane.title} isActive={isActive} initialUrl={pane.url} onUrlChange={(url) => callbacks.onUrlChange?.(pane.id, url)} />;
+      return <BrowserPane paneId={pane.id} title={pane.title} isActive={isActive} initialUrl={pane.url} appMode={pane.appMode} onUrlChange={(url) => callbacks.onUrlChange?.(pane.id, url)} />;
     case 'notes':
       return <NotesPane title={pane.title} />;
     case 'agent':

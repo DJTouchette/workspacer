@@ -6,6 +6,7 @@ interface BrowserPaneProps {
   title: string;
   isActive: boolean;
   initialUrl?: string;
+  appMode?: boolean;
   onUrlChange?: (url: string) => void;
 }
 
@@ -21,7 +22,7 @@ function normalizeUrl(input: string): string {
   return 'https://' + trimmed;
 }
 
-const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive, initialUrl, onUrlChange }) => {
+const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive, initialUrl, appMode, onUrlChange }) => {
   const { config } = useConfig();
   const browserCfg = config.browser ?? { homepage: 'https://google.com', bookmarks: [] };
 
@@ -78,6 +79,24 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive, init
       wv.removeEventListener('did-navigate-in-page', handleNavigateInPage);
     };
   }, []);
+
+  // Auto-navigate to initialUrl on mount
+  useEffect(() => {
+    const startUrl = initialUrl || browserCfg.homepage || 'https://google.com';
+    if (startUrl && startUrl !== 'about:blank') {
+      const wv = webviewRef.current as any;
+      if (wv && wv.loadURL) {
+        wv.loadURL(normalizeUrl(startUrl));
+      } else {
+        // Webview not ready yet — try after a short delay
+        const timer = setTimeout(() => {
+          const wv2 = webviewRef.current as any;
+          if (wv2 && wv2.loadURL) wv2.loadURL(normalizeUrl(startUrl));
+        }, 300);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, []); // Only on mount
 
   const navigate = useCallback((targetUrl: string) => {
     const normalized = normalizeUrl(targetUrl);
@@ -137,101 +156,102 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive, init
         fontSize: '12px',
       }}
     >
-      {/* URL bar */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '3px',
-          padding: '3px 6px',
-          backgroundColor: '#1a1a1e',
-          borderBottom: '1px solid #2a2a30',
-        }}
-      >
-        <button
-          onClick={handleBack}
-          title="Back"
-          style={{
-            ...navBtnStyle,
-            opacity: canGoBack ? 1 : 0.4,
-          }}
-        >
-          &#x2190;
-        </button>
-        <button
-          onClick={handleForward}
-          title="Forward"
-          style={{
-            ...navBtnStyle,
-            opacity: canGoForward ? 1 : 0.4,
-          }}
-        >
-          &#x2192;
-        </button>
-        <button onClick={handleRefresh} title="Refresh" style={navBtnStyle}>&#x21BB;</button>
-        <input
-          type="text"
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="Enter URL..."
-          spellCheck={false}
-          style={{
-            flex: 1,
-            height: '24px',
-            padding: '0 8px',
-            fontSize: '11px',
-            fontFamily: 'JetBrainsMono NF, JetBrainsMono Nerd Font, monospace',
-            backgroundColor: '#0e0e10',
-            color: '#e4e4e7',
-            border: '1px solid #2a2a30',
-            borderRadius: '3px',
-            outline: 'none',
-          }}
-          onFocus={(e) => { e.currentTarget.style.borderColor = '#60a5fa'; }}
-          onBlur={(e) => { e.currentTarget.style.borderColor = '#2a2a30'; }}
-        />
-        <button onClick={handleGo} title="Navigate" style={{ ...navBtnStyle, backgroundColor: '#2563eb', color: '#e4e4e7', fontWeight: 600, padding: '0 8px', width: 'auto' }}>Go</button>
-        <button onClick={handleOpenExternal} title="Open in system browser" style={navBtnStyle}>&#x2197;</button>
-      </div>
-
-      {/* Bookmarks bar */}
-      {bookmarks.length > 0 && (
+      {/* URL bar + bookmarks — hidden in app mode */}
+      {!appMode && (<>
         <div
           style={{
             display: 'flex',
-            flexWrap: 'wrap',
-            gap: '2px',
-            padding: '2px 6px',
-            backgroundColor: '#16161a',
+            alignItems: 'center',
+            gap: '3px',
+            padding: '3px 6px',
+            backgroundColor: '#1a1a1e',
             borderBottom: '1px solid #2a2a30',
           }}
         >
-          {bookmarks.map((bm, i) => (
-            <button
-              key={i}
-              onClick={() => navigate(bm.url)}
-              title={bm.url}
-              style={{
-                height: '20px',
-                padding: '0 6px',
-                fontSize: '10px',
-                backgroundColor: '#1e1e22',
-                color: '#a0b4e6',
-                border: '1px solid #2a2a30',
-                borderRadius: '2px',
-                cursor: 'pointer',
-                whiteSpace: 'nowrap',
-                lineHeight: '1',
-              }}
-              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#2a2a30'; }}
-              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#1e1e22'; }}
-            >
-              {bm.name}
-            </button>
-          ))}
+          <button
+            onClick={handleBack}
+            title="Back"
+            style={{
+              ...navBtnStyle,
+              opacity: canGoBack ? 1 : 0.4,
+            }}
+          >
+            &#x2190;
+          </button>
+          <button
+            onClick={handleForward}
+            title="Forward"
+            style={{
+              ...navBtnStyle,
+              opacity: canGoForward ? 1 : 0.4,
+            }}
+          >
+            &#x2192;
+          </button>
+          <button onClick={handleRefresh} title="Refresh" style={navBtnStyle}>&#x21BB;</button>
+          <input
+            type="text"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Enter URL..."
+            spellCheck={false}
+            style={{
+              flex: 1,
+              height: '24px',
+              padding: '0 8px',
+              fontSize: '11px',
+              fontFamily: 'JetBrainsMono NF, JetBrainsMono Nerd Font, monospace',
+              backgroundColor: '#0e0e10',
+              color: '#e4e4e7',
+              border: '1px solid #2a2a30',
+              borderRadius: '3px',
+              outline: 'none',
+            }}
+            onFocus={(e) => { e.currentTarget.style.borderColor = '#60a5fa'; }}
+            onBlur={(e) => { e.currentTarget.style.borderColor = '#2a2a30'; }}
+          />
+          <button onClick={handleGo} title="Navigate" style={{ ...navBtnStyle, backgroundColor: '#2563eb', color: '#e4e4e7', fontWeight: 600, padding: '0 8px', width: 'auto' }}>Go</button>
+          <button onClick={handleOpenExternal} title="Open in system browser" style={navBtnStyle}>&#x2197;</button>
         </div>
-      )}
+
+        {bookmarks.length > 0 && (
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: '2px',
+              padding: '2px 6px',
+              backgroundColor: '#16161a',
+              borderBottom: '1px solid #2a2a30',
+            }}
+          >
+            {bookmarks.map((bm, i) => (
+              <button
+                key={i}
+                onClick={() => navigate(bm.url)}
+                title={bm.url}
+                style={{
+                  height: '20px',
+                  padding: '0 6px',
+                  fontSize: '10px',
+                  backgroundColor: '#1e1e22',
+                  color: '#a0b4e6',
+                  border: '1px solid #2a2a30',
+                  borderRadius: '2px',
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                  lineHeight: '1',
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#2a2a30'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#1e1e22'; }}
+              >
+                {bm.name}
+              </button>
+            ))}
+          </div>
+        )}
+      </>)}
 
       {/* Loading indicator */}
       {loading && (
