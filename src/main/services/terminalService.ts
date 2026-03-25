@@ -52,7 +52,16 @@ class TerminalService {
     // For zsh: set precmd via ZDOTDIR or just rely on PROMPT_COMMAND (zsh 5.9+ supports it)
     // Alternatively, set the precmd function via zshrc eval — but env var is cleaner
 
-    const resolvedCwd = cwd || process.env.HOME || os.homedir();
+    const homedir = process.env.HOME || os.homedir();
+    let resolvedCwd = cwd || homedir;
+
+    // Validate CWD exists — fall back to home if it doesn't (e.g. Linux path on Windows)
+    try {
+      const fs = require('fs');
+      if (!fs.existsSync(resolvedCwd)) resolvedCwd = homedir;
+    } catch {
+      resolvedCwd = homedir;
+    }
 
     const ptyProcess = pty.spawn(shell, [], {
       name: 'xterm-256color',
