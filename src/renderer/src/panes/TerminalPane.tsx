@@ -10,6 +10,8 @@ interface TerminalPaneProps {
   title: string;
   isActive: boolean;
   shell?: string;
+  cwd?: string;
+  onPtyReady?: (paneId: string, ptySessionId: string) => void;
 }
 
 const TERMINAL_THEME = {
@@ -37,7 +39,7 @@ const TERMINAL_THEME = {
   brightWhite: '#fafafa',
 };
 
-const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, shell }) => {
+const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, shell, cwd, onPtyReady }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -53,11 +55,19 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
     }
   }, []);
 
-  const { isReady, write, resize, attachToTerminal } = usePTY({
+  const { sessionId, isReady, write, resize, attachToTerminal } = usePTY({
     paneId,
     shell: shell || termCfg.shell,
+    cwd,
     onExit: handleExit,
   });
+
+  // Notify parent of PTY session ID for session save (CWD lookup)
+  useEffect(() => {
+    if (sessionId && onPtyReady) {
+      onPtyReady(paneId, sessionId);
+    }
+  }, [sessionId, paneId, onPtyReady]);
 
   // Initialize xterm.js terminal
   useEffect(() => {
@@ -89,7 +99,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
     // Return false = xterm ignores the key, letting our window capture handler take it.
     term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
       // Ctrl+T, Ctrl+B, Ctrl+W, Ctrl+/, Ctrl+, — always app-level
-      if (e.ctrlKey && !e.altKey && ['t', 'b', 'w', '/', '?', ','].includes(e.key)) {
+      if (e.ctrlKey && !e.altKey && ['t', 'b', 'w', '/', '?', ',', 's'].includes(e.key)) {
         return false;
       }
       // Ctrl+1-9 — jump to pane

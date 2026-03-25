@@ -1,0 +1,214 @@
+import React, { useEffect } from 'react';
+
+interface SessionEntry {
+  name: string;
+  filename: string;
+  timestamp: string;
+  paneCount: number;
+}
+
+interface SessionPickerProps {
+  sessions: SessionEntry[];
+  onNewSession: () => void;
+  onResumeSession: (filename: string) => void;
+  onDeleteSession: (filename: string) => void;
+}
+
+function formatTimestamp(ts: string): string {
+  if (!ts) return '';
+  try {
+    const date = new Date(ts);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMin = Math.floor(diffMs / 60000);
+    if (diffMin < 1) return 'Just now';
+    if (diffMin < 60) return `${diffMin}m ago`;
+    const diffHrs = Math.floor(diffMin / 60);
+    if (diffHrs < 24) return `${diffHrs}h ago`;
+    const diffDays = Math.floor(diffHrs / 24);
+    if (diffDays < 7) return `${diffDays}d ago`;
+    return date.toLocaleDateString();
+  } catch {
+    return ts;
+  }
+}
+
+const SessionPicker: React.FC<SessionPickerProps> = ({ sessions, onNewSession, onResumeSession, onDeleteSession }) => {
+  // Escape or Enter on empty list → new session
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onNewSession();
+      }
+    };
+    window.addEventListener('keydown', handler, true);
+    return () => window.removeEventListener('keydown', handler, true);
+  }, [onNewSession]);
+
+  const lastSession = sessions[0];
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        backgroundColor: 'rgb(20, 20, 24)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 2000,
+      }}
+    >
+      <div
+        style={{
+          backgroundColor: 'rgb(28, 28, 32)',
+          border: '1px solid rgb(50, 50, 55)',
+          borderRadius: '8px',
+          padding: '20px 24px',
+          minWidth: '340px',
+          maxWidth: '450px',
+          maxHeight: '70vh',
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+      >
+        <div style={{ fontSize: '1rem', fontWeight: 600, color: 'rgb(220, 220, 235)', marginBottom: '16px' }}>
+          Workspacer
+        </div>
+
+        {/* Action buttons */}
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+          <ActionButton
+            label="New Session"
+            onClick={onNewSession}
+            primary={!lastSession}
+          />
+          {lastSession && (
+            <ActionButton
+              label="Resume Last"
+              onClick={() => onResumeSession(lastSession.filename)}
+              primary
+            />
+          )}
+        </div>
+
+        {/* Session list */}
+        {sessions.length > 0 && (
+          <>
+            <div style={{
+              fontSize: '0.6rem',
+              color: 'rgb(100, 100, 115)',
+              textTransform: 'uppercase',
+              letterSpacing: '0.05em',
+              marginBottom: '6px',
+            }}>
+              Saved Sessions
+            </div>
+            <div style={{ overflow: 'auto', flex: 1 }}>
+              {sessions.map((session) => (
+                <div
+                  key={session.filename}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '6px 8px',
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                    marginBottom: '2px',
+                  }}
+                  onClick={() => onResumeSession(session.filename)}
+                  onMouseEnter={(e) => {
+                    (e.currentTarget as HTMLElement).style.backgroundColor = 'rgb(38, 38, 44)';
+                  }}
+                  onMouseLeave={(e) => {
+                    (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent';
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: '0.75rem', color: 'rgb(200, 200, 210)', fontWeight: 500 }}>
+                      {session.name}
+                    </div>
+                    <div style={{ fontSize: '0.6rem', color: 'rgb(100, 100, 115)', marginTop: '1px' }}>
+                      {session.paneCount} panes &middot; {formatTimestamp(session.timestamp)}
+                    </div>
+                  </div>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDeleteSession(session.filename);
+                    }}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: 'rgb(100, 100, 115)',
+                      cursor: 'pointer',
+                      fontSize: '0.75rem',
+                      padding: '2px 4px',
+                      margin: 0,
+                      width: 'auto',
+                      height: 'auto',
+                      borderRadius: '3px',
+                      lineHeight: '1',
+                    }}
+                    onMouseEnter={(e) => {
+                      (e.currentTarget as HTMLElement).style.color = 'rgb(248, 113, 113)';
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLElement).style.color = 'rgb(100, 100, 115)';
+                    }}
+                    title="Delete session"
+                  >
+                    &#x2715;
+                  </button>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        <div style={{ fontSize: '0.55rem', color: 'rgb(70, 70, 80)', marginTop: '12px', textAlign: 'center' }}>
+          Press Escape for new session
+        </div>
+      </div>
+    </div>
+  );
+};
+
+function ActionButton({ label, onClick, primary }: { label: string; onClick: () => void; primary?: boolean }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        flex: 1,
+        padding: '8px 16px',
+        fontSize: '0.75rem',
+        fontFamily: 'inherit',
+        fontWeight: 600,
+        backgroundColor: primary ? 'rgb(80, 120, 200)' : 'rgb(40, 40, 45)',
+        color: primary ? '#fff' : 'rgb(180, 180, 195)',
+        border: primary ? '1px solid rgb(80, 120, 200)' : '1px solid rgb(55, 55, 60)',
+        borderRadius: '5px',
+        cursor: 'pointer',
+        height: 'auto',
+        lineHeight: '1.4',
+        margin: 0,
+        width: 'auto',
+      }}
+      onMouseEnter={(e) => {
+        (e.currentTarget as HTMLElement).style.opacity = '0.85';
+      }}
+      onMouseLeave={(e) => {
+        (e.currentTarget as HTMLElement).style.opacity = '1';
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
+export default SessionPicker;

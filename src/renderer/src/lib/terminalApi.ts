@@ -1,5 +1,5 @@
-export function CreateTerminal(shell: string): Promise<string> {
-  return window.electronAPI.createTerminal(shell);
+export function CreateTerminal(shell: string, cwd?: string): Promise<string> {
+  return window.electronAPI.createTerminal(shell, cwd);
 }
 
 export function WriteTerminal(id: string, data: string): Promise<void> {

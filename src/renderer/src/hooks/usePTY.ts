@@ -12,6 +12,8 @@ interface UsePTYOptions {
   paneId: string;
   /** Shell to launch (empty string = system default) */
   shell?: string;
+  /** Initial working directory */
+  cwd?: string;
   /** Called when the PTY process exits */
   onExit?: () => void;
 }
@@ -35,7 +37,7 @@ interface UsePTYReturn {
  * - Provides write/resize functions to interact with the PTY
  * - Cleans up (closes PTY, unsubscribes) on unmount
  */
-export function usePTY({ paneId, shell = '', onExit }: UsePTYOptions): UsePTYReturn {
+export function usePTY({ paneId, shell = '', cwd, onExit }: UsePTYOptions): UsePTYReturn {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [isReady, setIsReady] = useState(false);
 
@@ -49,9 +51,11 @@ export function usePTY({ paneId, shell = '', onExit }: UsePTYOptions): UsePTYRet
 
   // Store sessionId in a ref for use in callbacks that shouldn't retrigger effects
   const sessionIdRef = useRef<string | null>(null);
-  // Store shell in a ref so config changes don't tear down live sessions
+  // Store shell/cwd in refs so config changes don't tear down live sessions
   const shellRef = useRef(shell);
   shellRef.current = shell;
+  const cwdRef = useRef(cwd);
+  cwdRef.current = cwd;
 
   // Output batching: collect chunks and flush once per animation frame
   const pendingOutputRef = useRef<Uint8Array[]>([]);
@@ -88,7 +92,7 @@ export function usePTY({ paneId, shell = '', onExit }: UsePTYOptions): UsePTYRet
 
     const init = async () => {
       try {
-        const id = await CreateTerminal(shellRef.current);
+        const id = await CreateTerminal(shellRef.current, cwdRef.current);
         if (!mountedRef.current) {
           // Component unmounted before we got the session — close it immediately
           CloseTerminal(id).catch(() => {});

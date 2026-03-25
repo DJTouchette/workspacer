@@ -20,6 +20,7 @@ const defaultShortcuts: [string, string][] = [
   ['F2', 'Rename active pane'],
   ['Dbl-click title', 'Rename pane'],
   ['Drag header', 'Reorder pane'],
+  ['Ctrl+S', 'Save session'],
   ['Ctrl+,', 'Open settings'],
   ['Ctrl+/', 'Toggle this help'],
 ];
@@ -37,10 +38,12 @@ function vimShortcutList(leader: string): [string, string][] {
     [`${l} \u2192 + / -`, 'Grow / shrink pane'],
     [`${l} \u2192 =`, 'Reset pane width'],
     [`${l} \u2192 ?`, 'Toggle help'],
+    [`${l} \u2192 s`, 'Save session'],
     ['', ''],
     ['Direct shortcuts:', ''],
     ['Ctrl+T / Ctrl+B', 'New terminal / browser'],
     ['Ctrl+W', 'Close pane'],
+    ['Ctrl+S', 'Save session'],
     ['Ctrl+,', 'Open settings'],
     ['Ctrl+/', 'Toggle this help'],
   ];

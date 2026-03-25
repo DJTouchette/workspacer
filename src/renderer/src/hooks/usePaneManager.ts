@@ -3,7 +3,7 @@ import { PaneConfig, PaneType } from '../types/pane';
 
 const DEFAULT_PANE_WIDTH = 800;
 
-const defaultPanes: PaneConfig[] = [
+export const defaultPanes: PaneConfig[] = [
   { id: 'terminal-1', type: 'terminal', title: 'Terminal 1', width: DEFAULT_PANE_WIDTH },
   { id: 'terminal-2', type: 'terminal', title: 'Terminal 2', width: DEFAULT_PANE_WIDTH },
   { id: 'terminal-3', type: 'terminal', title: 'Terminal 3', width: DEFAULT_PANE_WIDTH },
@@ -18,8 +18,14 @@ function generateId(type: PaneType): string {
 }
 
 export function usePaneManager() {
-  const [panes, setPanes] = useState<PaneConfig[]>(defaultPanes);
-  const [activePaneId, setActivePaneId] = useState<string>(defaultPanes[0].id);
+  // Start empty — App.tsx will call loadFromSession or load defaults
+  const [panes, setPanes] = useState<PaneConfig[]>([]);
+  const [activePaneId, setActivePaneId] = useState<string>('');
+
+  const loadFromSession = useCallback((sessionPanes: PaneConfig[], activeId: string) => {
+    setPanes(sessionPanes);
+    setActivePaneId(activeId || sessionPanes[0]?.id || '');
+  }, []);
 
   const addPane = useCallback((type: PaneType, title?: string, width?: number, insertPosition: string = 'after', shell?: string) => {
     const id = generateId(type);
@@ -57,7 +63,6 @@ export function usePaneManager() {
       const filtered = prev.filter((p) => p.id !== id);
       if (filtered.length === 0) return prev;
 
-      // Update active pane using fresh state
       setActivePaneId((currentActive) => {
         if (currentActive === id) {
           const idx = prev.findIndex((p) => p.id === id);
@@ -89,6 +94,12 @@ export function usePaneManager() {
     );
   }, []);
 
+  const updatePaneUrl = useCallback((id: string, url: string) => {
+    setPanes((prev) =>
+      prev.map((p) => (p.id === id ? { ...p, url } : p))
+    );
+  }, []);
+
   const movePane = useCallback((id: string, toIndex: number) => {
     setPanes((prev) => {
       const fromIndex = prev.findIndex((p) => p.id === id);
@@ -110,6 +121,8 @@ export function usePaneManager() {
     resizePane,
     resetPaneWidth,
     movePane,
+    updatePaneUrl,
+    loadFromSession,
     activePaneId,
     setActivePaneId,
   };

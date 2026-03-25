@@ -1,10 +1,11 @@
-import { useRef, useCallback, useState } from 'react';
+import { useRef, useCallback, useState, useEffect } from 'react';
 import './App.css';
 import NavBar from './components/NavBar';
 import ScrollContainer, { ScrollContainerRef } from './components/ScrollContainer';
 import ScrollIndicator from './components/ScrollIndicator';
 import ShortcutOverlay from './components/ShortcutOverlay';
-import { usePaneManager } from './hooks/usePaneManager';
+import SessionPicker from './components/SessionPicker';
+import { usePaneManager, defaultPanes } from './hooks/usePaneManager';
 import type { PaneType } from './types/pane';
 import { useKeyboardNav } from './hooks/useKeyboardNav';
 import { useConfig } from './hooks/useConfig';
@@ -19,6 +20,8 @@ function App() {
     resizePane,
     resetPaneWidth,
     movePane,
+    updatePaneUrl,
+    loadFromSession,
     activePaneId,
     setActivePaneId,
   } = usePaneManager();
@@ -27,6 +30,118 @@ function App() {
   const [showHelp, setShowHelp] = useState(false);
   const [renameSignal, setRenameSignal] = useState(0);
   const [chordState, setChordState] = useState<'idle' | 'waiting'>('idle');
+
+  // Session state
+  const [sessionPhase, setSessionPhase] = useState<'loading' | 'picker' | 'active'>('loading');
+  const [sessionList, setSessionList] = useState<any[]>([]);
+  const [sessionName, setSessionName] = useState('Default');
+
+  // PTY mapping: paneId -> ptySessionId (for CWD lookup on save)
+  const ptyMappingRef = useRef<Record<string, string>>({});
+
+  const handlePtyReady = useCallback((paneId: string, ptySessionId: string) => {
+    ptyMappingRef.current[paneId] = ptySessionId;
+  }, []);
+
+  const handleUrlChange = useCallback((paneId: string, url: string) => {
+    updatePaneUrl(paneId, url);
+  }, [updatePaneUrl]);
+
+  // --- Session lifecycle ---
+
+  // On startup: check for saved sessions
+  useEffect(() => {
+    window.electronAPI.listSessions().then((sessions) => {
+      if (sessions.length === 0) {
+        // No sessions — start with defaults
+        loadFromSession(defaultPanes, defaultPanes[0].id);
+        setSessionPhase('active');
+      } else {
+        setSessionList(sessions);
+        setSessionPhase('picker');
+      }
+    }).catch(() => {
+      loadFromSession(defaultPanes, defaultPanes[0].id);
+      setSessionPhase('active');
+    });
+  }, [loadFromSession]);
+
+  const handleNewSession = useCallback(() => {
+    loadFromSession(defaultPanes, defaultPanes[0].id);
+    setSessionName('Default');
+    ptyMappingRef.current = {};
+    setSessionPhase('active');
+  }, [loadFromSession]);
+
+  const handleResumeSession = useCallback((filename: string) => {
+    window.electronAPI.loadSession(filename).then((data: any) => {
+      if (data && data.panes?.length > 0) {
+        loadFromSession(data.panes, data.activePaneId);
+        setSessionName(data.name || 'Default');
+      } else {
+        loadFromSession(defaultPanes, defaultPanes[0].id);
+      }
+      ptyMappingRef.current = {};
+      setSessionPhase('active');
+    }).catch(() => {
+      loadFromSession(defaultPanes, defaultPanes[0].id);
+      setSessionPhase('active');
+    });
+  }, [loadFromSession]);
+
+  const handleDeleteSession = useCallback((filename: string) => {
+    window.electronAPI.deleteSession(filename).then(() => {
+      setSessionList((prev) => prev.filter((s) => s.filename !== filename));
+    });
+  }, []);
+
+  // Save current session
+  const saveCurrentSession = useCallback(() => {
+    if (sessionPhase !== 'active' || panes.length === 0) return;
+
+    const paneData = panes.map((p) => ({
+      id: p.id,
+      type: p.type,
+      title: p.title,
+      width: p.width,
+      widthOverride: p.widthOverride,
+      shell: p.shell,
+      url: p.url,
+    }));
+
+    window.electronAPI.saveSession({
+      name: sessionName,
+      activePaneId,
+      panes: paneData,
+      ptyMapping: { ...ptyMappingRef.current },
+    }).catch((err: any) => {
+      console.error('[Session] save failed:', err);
+    });
+  }, [panes, activePaneId, sessionName, sessionPhase]);
+
+  // Auto-save every 30s
+  useEffect(() => {
+    if (sessionPhase !== 'active') return;
+    const interval = setInterval(saveCurrentSession, 30000);
+    return () => clearInterval(interval);
+  }, [sessionPhase, saveCurrentSession]);
+
+  // Save on window close
+  useEffect(() => {
+    const handler = () => saveCurrentSession();
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [saveCurrentSession]);
+
+  // Save on app quit signal from main process
+  useEffect(() => {
+    const unsub = window.electronAPI.onBeforeQuit(() => {
+      saveCurrentSession();
+    });
+    return unsub;
+  }, [saveCurrentSession]);
+
+  // --- Normal app logic ---
 
   const scrollToPane = useCallback((id: string) => {
     scrollContainerRef.current?.scrollToPane(id);
@@ -46,7 +161,6 @@ function App() {
     return addPane(type, title, width, insertPosition, shell);
   }, [addPane, insertPosition]);
 
-  // Open settings — singleton: navigate to existing or create new
   const openSettings = useCallback(() => {
     const existing = panes.find((p) => p.type === 'settings');
     if (existing) {
@@ -78,6 +192,7 @@ function App() {
     leaderKey: kbLeader,
     onChordStateChange: setChordState,
     onOpenSettings: openSettings,
+    onSaveSession: saveCurrentSession,
   });
 
   const handlePaneClick = useCallback((id: string) => {
@@ -101,6 +216,26 @@ function App() {
     });
   }, [addPaneWithConfig, scrollToPane]);
 
+  // --- Render ---
+
+  // Show session picker during startup
+  if (sessionPhase === 'loading') {
+    return <div className="app-root" />;
+  }
+
+  if (sessionPhase === 'picker') {
+    return (
+      <div className="app-root">
+        <SessionPicker
+          sessions={sessionList}
+          onNewSession={handleNewSession}
+          onResumeSession={handleResumeSession}
+          onDeleteSession={handleDeleteSession}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="app-root">
       <NavBar
@@ -121,6 +256,8 @@ function App() {
           onPaneResetWidth={resetPaneWidth}
           onPaneMove={movePane}
           onPaneRename={renamePane}
+          onPtyReady={handlePtyReady}
+          onUrlChange={handleUrlChange}
           renameSignal={renameSignal}
         />
       </div>
@@ -138,7 +275,6 @@ function App() {
         leader={kbLeader}
       />
 
-      {/* Chord mode indicator */}
       {chordState === 'waiting' && (
         <div style={{
           position: 'fixed',

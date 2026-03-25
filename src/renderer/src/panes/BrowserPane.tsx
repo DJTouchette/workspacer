@@ -5,6 +5,8 @@ interface BrowserPaneProps {
   paneId: string;
   title: string;
   isActive: boolean;
+  initialUrl?: string;
+  onUrlChange?: (url: string) => void;
 }
 
 interface Bookmark {
@@ -19,16 +21,18 @@ function normalizeUrl(input: string): string {
   return 'https://' + trimmed;
 }
 
-const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive }) => {
+const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive, initialUrl, onUrlChange }) => {
   const { config } = useConfig();
   const browserCfg = config.browser ?? { homepage: 'https://google.com', bookmarks: [] };
 
-  const [url, setUrl] = useState<string>(browserCfg.homepage || 'https://google.com');
+  const [url, setUrl] = useState<string>(initialUrl || browserCfg.homepage || 'https://google.com');
   const [loading, setLoading] = useState(false);
   const [canGoBack, setCanGoBack] = useState(false);
   const [canGoForward, setCanGoForward] = useState(false);
   const webviewRef = useRef<HTMLElement | null>(null);
   const readyRef = useRef(false);
+  const onUrlChangeRef = useRef(onUrlChange);
+  onUrlChangeRef.current = onUrlChange;
 
   // Attach webview event listeners once the element is ready
   useEffect(() => {
@@ -50,12 +54,14 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive }) =>
       setUrl(e.url);
       setCanGoBack(wv.canGoBack());
       setCanGoForward(wv.canGoForward());
+      onUrlChangeRef.current?.(e.url);
     };
 
     const handleNavigateInPage = (e: any) => {
       setUrl(e.url);
       setCanGoBack(wv.canGoBack());
       setCanGoForward(wv.canGoForward());
+      onUrlChangeRef.current?.(e.url);
     };
 
     wv.addEventListener('dom-ready', handleDomReady);

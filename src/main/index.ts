@@ -45,6 +45,13 @@ function createWindow(): void {
 
 app.whenReady().then(createWindow);
 
+app.on('before-quit', () => {
+  // Signal renderer to save session before quit
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('app:before-quit');
+  }
+});
+
 app.on('window-all-closed', () => {
   terminalService.closeAll();
   app.quit();

@@ -2,8 +2,8 @@ import { contextBridge, ipcRenderer } from 'electron';
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // Terminal
-  createTerminal: (shell: string): Promise<string> =>
-    ipcRenderer.invoke('terminal:create', shell),
+  createTerminal: (shell: string, cwd?: string): Promise<string> =>
+    ipcRenderer.invoke('terminal:create', shell, cwd),
 
   writeTerminal: (id: string, data: string): Promise<void> =>
     ipcRenderer.invoke('terminal:write', id, data),
@@ -46,4 +46,26 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   saveConfig: (partial: unknown): Promise<unknown> =>
     ipcRenderer.invoke('config:save', partial),
+
+  // Session
+  listSessions: (): Promise<unknown[]> =>
+    ipcRenderer.invoke('session:list'),
+
+  loadSession: (filename: string): Promise<unknown> =>
+    ipcRenderer.invoke('session:load', filename),
+
+  saveSession: (data: unknown): Promise<string> =>
+    ipcRenderer.invoke('session:save', data),
+
+  deleteSession: (filename: string): Promise<void> =>
+    ipcRenderer.invoke('session:delete', filename),
+
+  // App lifecycle
+  onBeforeQuit: (callback: () => void): (() => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('app:before-quit', handler);
+    return () => {
+      ipcRenderer.removeListener('app:before-quit', handler);
+    };
+  },
 });

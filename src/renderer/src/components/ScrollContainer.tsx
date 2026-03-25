@@ -17,6 +17,8 @@ interface ScrollContainerProps {
   onPaneResetWidth?: (id: string) => void;
   onPaneMove?: (id: string, toIndex: number) => void;
   onPaneRename?: (id: string, title: string) => void;
+  onPtyReady?: (paneId: string, ptySessionId: string) => void;
+  onUrlChange?: (paneId: string, url: string) => void;
   renameSignal?: number;
 }
 
@@ -24,12 +26,17 @@ export interface ScrollContainerRef {
   scrollToPane: (id: string) => void;
 }
 
-function renderPaneContent(pane: PaneConfig, isActive: boolean) {
+interface PaneCallbacks {
+  onPtyReady?: (paneId: string, ptySessionId: string) => void;
+  onUrlChange?: (paneId: string, url: string) => void;
+}
+
+function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneCallbacks) {
   switch (pane.type) {
     case 'terminal':
-      return <TerminalPane paneId={pane.id} title={pane.title} isActive={isActive} shell={pane.shell} />;
+      return <TerminalPane paneId={pane.id} title={pane.title} isActive={isActive} shell={pane.shell} cwd={pane.cwd} onPtyReady={callbacks.onPtyReady} />;
     case 'browser':
-      return <BrowserPane paneId={pane.id} title={pane.title} isActive={isActive} />;
+      return <BrowserPane paneId={pane.id} title={pane.title} isActive={isActive} initialUrl={pane.url} onUrlChange={(url) => callbacks.onUrlChange?.(pane.id, url)} />;
     case 'notes':
       return <NotesPane title={pane.title} />;
     case 'agent':
@@ -135,7 +142,7 @@ function ResizeHandle({
 }
 
 const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
-  ({ panes, activePaneId, onPaneFocus, onPaneClose, onPaneResize, onPaneResetWidth, onPaneMove, onPaneRename, renameSignal }, ref) => {
+  ({ panes, activePaneId, onPaneFocus, onPaneClose, onPaneResize, onPaneResetWidth, onPaneMove, onPaneRename, onPtyReady, onUrlChange, renameSignal }, ref) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const { config } = useConfig();
     const peek = config.panes.peek ?? 80;
@@ -265,7 +272,7 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
               onRename={onPaneRename}
               renameSignal={pane.id === activePaneId ? renameSignal : undefined}
             >
-              {renderPaneContent(pane, pane.id === activePaneId)}
+              {renderPaneContent(pane, pane.id === activePaneId, { onPtyReady, onUrlChange })}
             </Pane>
             {/* Resize handle in the gap between panes */}
             {onPaneResize && (

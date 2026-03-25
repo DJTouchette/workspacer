@@ -31,7 +31,7 @@ class TerminalService {
     this.mainWindow = win;
   }
 
-  createTerminal(shell: string): string {
+  createTerminal(shell: string, cwd?: string): string {
     if (!shell) {
       shell = detectDefaultShell();
     }
@@ -44,7 +44,7 @@ class TerminalService {
       name: 'xterm-256color',
       cols: 80,
       rows: 24,
-      cwd: process.env.HOME || os.homedir(),
+      cwd: cwd || process.env.HOME || os.homedir(),
       env,
     });
 
@@ -95,6 +95,12 @@ class TerminalService {
     session.closed = true;
     this.sessions.delete(id);
     session.pty.kill();
+  }
+
+  getTerminalPid(id: string): number | undefined {
+    const session = this.sessions.get(id);
+    if (!session || session.closed) return undefined;
+    return session.pty.pid;
   }
 
   closeAll(): void {
