@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "concurrently -k \"npm run dev:renderer\" \"npm run dev:main\"",
     "dev:renderer": "cd src/renderer && npx vite --port 5173",
-    "dev:main": "npm run build:main && cross-env ELECTRON_DEV=1 electron .",
+    "dev:main": "npm run build:main && wait-on http://localhost:5173 && cross-env ELECTRON_DEV=1 electron .",
     "build:main": "tsc -p tsconfig.main.json",
     "build:renderer": "cd src/renderer && npx vite build",
     "build": "npm run build:main && npm run build:renderer",
@@ -14,8 +14,8 @@
     "rebuild": "electron-builder install-app-deps"
   },
   "dependencies": {
-    "js-yaml": "^4.1.0",
-    "@homebridge/node-pty-prebuilt-multiarch": "^0.13.1"
+    "@homebridge/node-pty-prebuilt-multiarch": "^0.13.1",
+    "js-yaml": "^4.1.0"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
@@ -24,6 +24,7 @@
     "cross-env": "^10.1.0",
     "electron": "^33.0.0",
     "electron-builder": "^25.0.0",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "wait-on": "^9.0.4"
   }
 }
