@@ -176,15 +176,15 @@ const NavBar: React.FC<NavBarProps> = ({ panes, activePaneId, onPaneClick, onAdd
             {showMenu && (
               <div
                 style={{
-                  position: 'absolute',
-                  top: '22px',
-                  left: 0,
+                  position: 'fixed',
+                  top: `${config.ui.navBarHeight || 28}px`,
                   backgroundColor: 'rgb(30, 30, 33)',
                   border: '1px solid rgb(55, 55, 60)',
                   borderRadius: '4px',
                   padding: '4px 0',
-                  zIndex: 200,
+                  zIndex: 10000,
                   minWidth: '160px',
+                  boxShadow: '0 4px 12px rgba(0, 0, 0, 0.4)',
                 }}
               >
                 {/* Pane types */}
