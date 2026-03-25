@@ -234,13 +234,15 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
     }, [panes, onPaneMove]);
 
     // --- Split view mode ---
+    // Renders ALL panes to keep them mounted (preserving terminal state),
+    // but only shows the active pane (65%) and next pane (35%).
     if (viewMode === 'split') {
       const activeIdx = panes.findIndex((p) => p.id === activePaneId);
-      const activePane = panes[activeIdx] ?? panes[0];
-      const nextPane = panes[activeIdx + 1] ?? (panes.length > 1 ? panes[0] : null);
+      const nextIdx = activeIdx + 1 < panes.length ? activeIdx + 1 : (panes.length > 1 ? 0 : -1);
       const containerWidth = containerRef.current?.clientWidth ?? 1200;
-      const mainWidth = nextPane ? Math.floor(containerWidth * 0.63) : containerWidth - 16;
-      const sideWidth = nextPane ? Math.floor(containerWidth * 0.33) : 0;
+      const hasNext = nextIdx >= 0 && nextIdx !== activeIdx;
+      const mainWidth = hasNext ? Math.floor(containerWidth * 0.63) : containerWidth - 16;
+      const sideWidth = hasNext ? Math.floor(containerWidth * 0.33) : 0;
 
       return (
         <div
@@ -254,39 +256,41 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
             padding: '0',
             gap: '0px',
             alignItems: 'stretch',
+            position: 'relative',
           }}
         >
-          {activePane && (
-            <Pane
-              id={activePane.id}
-              type={activePane.type}
-              title={activePane.title}
-              width={mainWidth}
-              isActive={true}
-              onClose={onPaneClose}
-              onFocus={onPaneFocus}
-              onMove={onPaneMove ? handlePaneMove : undefined}
-              onRename={onPaneRename}
-              renameSignal={renameSignal}
-            >
-              {renderPaneContent(activePane, true, { onPtyReady, onUrlChange })}
-            </Pane>
-          )}
-          {nextPane && (
-            <Pane
-              id={nextPane.id}
-              type={nextPane.type}
-              title={nextPane.title}
-              width={sideWidth}
-              isActive={false}
-              onClose={onPaneClose}
-              onFocus={onPaneFocus}
-              onMove={onPaneMove ? handlePaneMove : undefined}
-              onRename={onPaneRename}
-            >
-              {renderPaneContent(nextPane, false, { onPtyReady, onUrlChange })}
-            </Pane>
-          )}
+          {panes.map((pane, idx) => {
+            const isMain = idx === activeIdx;
+            const isSide = idx === nextIdx && hasNext;
+            const visible = isMain || isSide;
+
+            return (
+              <div
+                key={pane.id}
+                style={{
+                  display: visible ? 'flex' : 'none',
+                  flexShrink: 0,
+                  height: '100%',
+                  alignItems: 'stretch',
+                }}
+              >
+                <Pane
+                  id={pane.id}
+                  type={pane.type}
+                  title={pane.title}
+                  width={isMain ? mainWidth : sideWidth}
+                  isActive={isMain}
+                  onClose={onPaneClose}
+                  onFocus={onPaneFocus}
+                  onMove={onPaneMove ? handlePaneMove : undefined}
+                  onRename={onPaneRename}
+                  renameSignal={isMain ? renameSignal : undefined}
+                >
+                  {renderPaneContent(pane, isMain, { onPtyReady, onUrlChange })}
+                </Pane>
+              </div>
+            );
+          })}
         </div>
       );
     }
