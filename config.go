@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -141,7 +142,9 @@ func LoadConfig() Config {
 		return cfg
 	}
 
-	_ = yaml.Unmarshal(data, &cfg)
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		log.Printf("warning: failed to parse config %s: %v (using defaults)", ConfigPath(), err)
+	}
 	return cfg
 }
 

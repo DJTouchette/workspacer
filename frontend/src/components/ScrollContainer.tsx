@@ -15,7 +15,6 @@ interface ScrollContainerProps {
   onPaneResize?: (id: string, width: number) => void;
   onPaneResetWidth?: (id: string) => void;
   onPaneMove?: (id: string, toIndex: number) => void;
-  onScrollChange?: (scrollLeft: number, scrollWidth: number, clientWidth: number) => void;
 }
 
 export interface ScrollContainerRef {
@@ -131,7 +130,7 @@ function ResizeHandle({
 }
 
 const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
-  ({ panes, activePaneId, onPaneFocus, onPaneClose, onPaneResize, onPaneResetWidth, onPaneMove, onScrollChange }, ref) => {
+  ({ panes, activePaneId, onPaneFocus, onPaneClose, onPaneResize, onPaneResetWidth, onPaneMove }, ref) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const { config } = useConfig();
     const peek = config.panes.peek ?? 80;
@@ -175,21 +174,6 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
     useImperativeHandle(ref, () => ({
       scrollToPane,
     }), [scrollToPane]);
-
-    // Report scroll position changes
-    useEffect(() => {
-      const container = containerRef.current;
-      if (!container || !onScrollChange) return;
-
-      const handleScroll = () => {
-        onScrollChange(container.scrollLeft, container.scrollWidth, container.clientWidth);
-      };
-
-      container.addEventListener('scroll', handleScroll, { passive: true });
-      handleScroll();
-
-      return () => container.removeEventListener('scroll', handleScroll);
-    }, [onScrollChange]);
 
     // Detect which pane is most visible after scroll ends
     useEffect(() => {

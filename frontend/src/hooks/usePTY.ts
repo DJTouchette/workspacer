@@ -52,6 +52,9 @@ export function usePTY({ paneId, shell = '', onExit }: UsePTYOptions): UsePTYRet
 
   // Store sessionId in a ref for use in callbacks that shouldn't retrigger effects
   const sessionIdRef = useRef<string | null>(null);
+  // Store shell in a ref so config changes don't tear down live sessions
+  const shellRef = useRef(shell);
+  shellRef.current = shell;
 
   // Output batching: collect chunks and flush once per animation frame
   const pendingOutputRef = useRef<Uint8Array[]>([]);
@@ -88,7 +91,7 @@ export function usePTY({ paneId, shell = '', onExit }: UsePTYOptions): UsePTYRet
 
     const init = async () => {
       try {
-        const id = await CreateTerminal(shell);
+        const id = await CreateTerminal(shellRef.current);
         if (!mountedRef.current) {
           // Component unmounted before we got the session — close it immediately
           CloseTerminal(id).catch(() => {});
@@ -174,7 +177,9 @@ export function usePTY({ paneId, shell = '', onExit }: UsePTYOptions): UsePTYRet
 
       sessionIdRef.current = null;
     };
-  }, [paneId, shell]);
+  // Only re-run when paneId changes — shell is read from ref at creation time
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paneId]);
 
   return {
     sessionId,

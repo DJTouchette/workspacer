@@ -23,7 +23,6 @@ function App() {
   } = usePaneManager();
 
   const scrollContainerRef = useRef<ScrollContainerRef>(null);
-  const [scrollFraction, setScrollFraction] = useState(0);
   const [showHelp, setShowHelp] = useState(false);
 
   const scrollToPane = useCallback((id: string) => {
@@ -71,14 +70,6 @@ function App() {
     setActivePaneId(id);
   }, [setActivePaneId]);
 
-  const handleScrollChange = useCallback(
-    (scrollLeft: number, scrollWidth: number, clientWidth: number) => {
-      const maxScroll = scrollWidth - clientWidth;
-      setScrollFraction(maxScroll > 0 ? scrollLeft / maxScroll : 0);
-    },
-    []
-  );
-
   const handleAddPane = useCallback((shell?: string, label?: string) => {
     const title = label ?? undefined;
     const newId = addPaneWithConfig('terminal', title, undefined, shell);
@@ -106,14 +97,12 @@ function App() {
           onPaneResize={resizePane}
           onPaneResetWidth={resetPaneWidth}
           onPaneMove={movePane}
-          onScrollChange={handleScrollChange}
         />
       </div>
 
       <ScrollIndicator
         panes={panes}
         activePaneId={activePaneId}
-        scrollFraction={scrollFraction}
         onDotClick={handlePaneClick}
       />
 

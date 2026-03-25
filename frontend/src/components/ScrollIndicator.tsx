@@ -4,14 +4,12 @@ import { PaneConfig } from '../types/pane';
 interface ScrollIndicatorProps {
   panes: PaneConfig[];
   activePaneId: string;
-  scrollFraction: number; // 0..1
   onDotClick: (id: string) => void;
 }
 
 const ScrollIndicator: React.FC<ScrollIndicatorProps> = ({
   panes,
   activePaneId,
-  scrollFraction,
   onDotClick,
 }) => {
   return (

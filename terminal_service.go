@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
+	"os/exec"
 	"runtime"
 	"sync"
 
@@ -15,10 +16,11 @@ import (
 
 // terminalSession holds the state for a single PTY session.
 type terminalSession struct {
-	pty  gopty.Pty
-	cmd  *gopty.Cmd
-	cols int
-	rows int
+	pty    gopty.Pty
+	cmd    *gopty.Cmd
+	cols   int
+	rows   int
+	closed bool
 }
 
 // TerminalService manages pseudo-terminal sessions for the frontend.
@@ -39,6 +41,7 @@ func (ts *TerminalService) ServiceShutdown() error {
 	defer ts.mu.Unlock()
 
 	for id, sess := range ts.sessions {
+		sess.closed = true
 		if sess.cmd.Process != nil {
 			_ = sess.cmd.Process.Kill()
 		}
@@ -51,8 +54,8 @@ func (ts *TerminalService) ServiceShutdown() error {
 // defaultShell returns the default shell for the current platform.
 func defaultShell() string {
 	if runtime.GOOS == "windows" {
-		if ps, err := findExecutable("pwsh.exe"); err == nil {
-			return ps
+		if _, err := exec.LookPath("pwsh.exe"); err == nil {
+			return "pwsh.exe"
 		}
 		return "powershell.exe"
 	}
@@ -60,39 +63,6 @@ func defaultShell() string {
 		return shell
 	}
 	return "/bin/sh"
-}
-
-// findExecutable checks if a command exists in PATH.
-func findExecutable(name string) (string, error) {
-	// Use LookPath equivalent
-	for _, dir := range filepath_split(os.Getenv("PATH")) {
-		if dir == "" {
-			continue
-		}
-		path := dir + string(os.PathSeparator) + name
-		if _, err := os.Stat(path); err == nil {
-			return path, nil
-		}
-	}
-	return "", fmt.Errorf("not found: %s", name)
-}
-
-// filepath_split splits PATH by the platform separator.
-func filepath_split(path string) []string {
-	sep := ":"
-	if runtime.GOOS == "windows" {
-		sep = ";"
-	}
-	var result []string
-	start := 0
-	for i := 0; i < len(path); i++ {
-		if string(path[i]) == sep {
-			result = append(result, path[start:i])
-			start = i + 1
-		}
-	}
-	result = append(result, path[start:])
-	return result
 }
 
 // CreateTerminal creates a new PTY session running the given shell.
@@ -136,10 +106,8 @@ func (ts *TerminalService) CreateTerminal(shell string) (string, error) {
 	ts.sessions[id] = sess
 	ts.mu.Unlock()
 
-	// Start goroutine to read PTY output and emit events to the frontend.
 	go ts.readPtyOutput(id, p)
 
-	// Start goroutine to wait for the process to exit.
 	go func() {
 		_ = cmd.Wait()
 	}()
@@ -151,22 +119,23 @@ func (ts *TerminalService) CreateTerminal(shell string) (string, error) {
 func (ts *TerminalService) WriteTerminal(id string, data string) error {
 	ts.mu.Lock()
 	sess, ok := ts.sessions[id]
-	ts.mu.Unlock()
-
-	if !ok {
+	if !ok || sess.closed {
+		ts.mu.Unlock()
 		return fmt.Errorf("terminal session not found: %s", id)
 	}
 
 	decoded, err := base64.StdEncoding.DecodeString(data)
 	if err != nil {
+		ts.mu.Unlock()
 		return fmt.Errorf("failed to decode base64 input: %w", err)
 	}
 
 	_, err = sess.pty.Write(decoded)
+	ts.mu.Unlock()
+
 	if err != nil {
 		return fmt.Errorf("failed to write to pty: %w", err)
 	}
-
 	return nil
 }
 
@@ -174,21 +143,21 @@ func (ts *TerminalService) WriteTerminal(id string, data string) error {
 func (ts *TerminalService) ResizeTerminal(id string, cols int, rows int) error {
 	ts.mu.Lock()
 	sess, ok := ts.sessions[id]
-	ts.mu.Unlock()
-
-	if !ok {
+	if !ok || sess.closed {
+		ts.mu.Unlock()
 		return fmt.Errorf("terminal session not found: %s", id)
 	}
 
-	if err := sess.pty.Resize(cols, rows); err != nil {
-		return fmt.Errorf("failed to resize pty: %w", err)
+	err := sess.pty.Resize(cols, rows)
+	if err == nil {
+		sess.cols = cols
+		sess.rows = rows
 	}
-
-	ts.mu.Lock()
-	sess.cols = cols
-	sess.rows = rows
 	ts.mu.Unlock()
 
+	if err != nil {
+		return fmt.Errorf("failed to resize pty: %w", err)
+	}
 	return nil
 }
 
@@ -200,6 +169,7 @@ func (ts *TerminalService) CloseTerminal(id string) error {
 		ts.mu.Unlock()
 		return fmt.Errorf("terminal session not found: %s", id)
 	}
+	sess.closed = true
 	delete(ts.sessions, id)
 	ts.mu.Unlock()
 
@@ -208,10 +178,8 @@ func (ts *TerminalService) CloseTerminal(id string) error {
 	}
 	_ = sess.pty.Close()
 
-	app := application.Get()
-	if app != nil {
-		app.Event.Emit("terminal:"+id+":exit")
-	}
+	// Don't emit exit here — readPtyOutput will emit it when the read loop ends.
+	// This prevents duplicate exit events.
 
 	return nil
 }
@@ -230,7 +198,7 @@ func (ts *TerminalService) readPtyOutput(id string, p gopty.Pty) {
 			}
 		}
 		if err != nil {
-			// PTY closed or process exited.
+			// PTY closed or process exited — clean up and notify frontend.
 			ts.mu.Lock()
 			_, stillExists := ts.sessions[id]
 			if stillExists {

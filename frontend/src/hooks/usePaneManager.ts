@@ -54,19 +54,21 @@ export function usePaneManager() {
   const removePane = useCallback((id: string) => {
     setPanes((prev) => {
       const filtered = prev.filter((p) => p.id !== id);
-      if (filtered.length === 0) return prev; // don't remove the last pane
+      if (filtered.length === 0) return prev;
+
+      // Update active pane using fresh state
+      setActivePaneId((currentActive) => {
+        if (currentActive === id) {
+          const idx = prev.findIndex((p) => p.id === id);
+          const next = prev[idx + 1] ?? prev[idx - 1];
+          return next ? next.id : prev[0].id;
+        }
+        return currentActive;
+      });
+
       return filtered;
     });
-    setActivePaneId((currentActive) => {
-      if (currentActive === id) {
-        // find a neighbor to activate
-        const idx = panes.findIndex((p) => p.id === id);
-        const next = panes[idx + 1] ?? panes[idx - 1];
-        return next ? next.id : panes[0].id;
-      }
-      return currentActive;
-    });
-  }, [panes]);
+  }, []);
 
   const resizePane = useCallback((id: string, width: number) => {
     setPanes((prev) =>
