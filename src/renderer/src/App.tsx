@@ -156,6 +156,7 @@ function App() {
       widthOverride: p.widthOverride,
       shell: p.shell,
       url: p.url,
+      appMode: p.appMode,
     }));
 
     window.electronAPI.saveSession({
