@@ -24,40 +24,48 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive }) =>
   const browserCfg = config.browser ?? { homepage: 'https://google.com', bookmarks: [] };
 
   const [url, setUrl] = useState<string>(browserCfg.homepage || 'https://google.com');
-  const [currentUrl, setCurrentUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [canGoBack, setCanGoBack] = useState(false);
   const [canGoForward, setCanGoForward] = useState(false);
   const webviewRef = useRef<HTMLElement | null>(null);
+  const readyRef = useRef(false);
 
-  // Attach webview event listeners once the element mounts
+  // Attach webview event listeners once the element is ready
   useEffect(() => {
     const wv = webviewRef.current as any;
     if (!wv) return;
 
+    const handleDomReady = () => {
+      readyRef.current = true;
+    };
+
     const handleStartLoading = () => setLoading(true);
-    const handleStopLoading = () => setLoading(false);
+    const handleStopLoading = () => {
+      setLoading(false);
+      setCanGoBack(wv.canGoBack());
+      setCanGoForward(wv.canGoForward());
+    };
 
     const handleNavigate = (e: any) => {
-      setCurrentUrl(e.url);
       setUrl(e.url);
       setCanGoBack(wv.canGoBack());
       setCanGoForward(wv.canGoForward());
     };
 
     const handleNavigateInPage = (e: any) => {
-      setCurrentUrl(e.url);
       setUrl(e.url);
       setCanGoBack(wv.canGoBack());
       setCanGoForward(wv.canGoForward());
     };
 
+    wv.addEventListener('dom-ready', handleDomReady);
     wv.addEventListener('did-start-loading', handleStartLoading);
     wv.addEventListener('did-stop-loading', handleStopLoading);
     wv.addEventListener('did-navigate', handleNavigate);
     wv.addEventListener('did-navigate-in-page', handleNavigateInPage);
 
     return () => {
+      wv.removeEventListener('dom-ready', handleDomReady);
       wv.removeEventListener('did-start-loading', handleStartLoading);
       wv.removeEventListener('did-stop-loading', handleStopLoading);
       wv.removeEventListener('did-navigate', handleNavigate);
@@ -69,7 +77,6 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive }) =>
     const normalized = normalizeUrl(targetUrl);
     if (!normalized) return;
     setUrl(normalized);
-    setCurrentUrl(normalized);
     const wv = webviewRef.current as any;
     if (wv && wv.loadURL) {
       wv.loadURL(normalized);
@@ -225,21 +232,24 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive }) =>
         <div style={{
           height: '2px',
           backgroundColor: '#2563eb',
-          animation: 'none',
         }} />
       )}
 
       {/* Webview content area — real embedded browser */}
+      {/* partition=persist:browser gives a persistent session (cookies survive restarts) */}
+      {/* allowpopups needed for OAuth login flows that open popups */}
       <webview
         ref={webviewRef as any}
-        src={currentUrl || 'about:blank'}
+        src="about:blank"
         style={{
           flex: 1,
           width: '100%',
           border: 'none',
         }}
         // @ts-ignore — webview attributes not in React types
-        allowpopups="false"
+        partition="persist:browser"
+        // @ts-ignore
+        allowpopups="true"
       />
     </div>
   );

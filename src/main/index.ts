@@ -15,6 +15,13 @@ function createWindow(): void {
     minWidth: 800,
     minHeight: 600,
     backgroundColor: '#1b2636',
+    frame: false,
+    titleBarStyle: 'hidden',
+    titleBarOverlay: process.platform === 'win32' ? {
+      color: '#141418',
+      symbolColor: '#c8c8d2',
+      height: 28,
+    } : undefined,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -27,7 +34,6 @@ function createWindow(): void {
 
   if (process.env.ELECTRON_DEV) {
     mainWindow.loadURL('http://localhost:5173');
-    mainWindow.webContents.openDevTools({ mode: 'detach' });
   } else {
     mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
   }

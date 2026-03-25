@@ -51,6 +51,9 @@ const NavBar: React.FC<NavBarProps> = ({ panes, activePaneId, onPaneClick, onAdd
         padding: '0 10px',
         zIndex: 100,
         userSelect: 'none',
+        // @ts-ignore — Electron-specific: makes navbar act as window drag handle
+        WebkitAppRegion: 'drag',
+        appRegion: 'drag',
       }}
     >
       {/* App title */}
@@ -65,13 +68,16 @@ const NavBar: React.FC<NavBarProps> = ({ panes, activePaneId, onPaneClick, onAdd
         Workspacer
       </div>
 
-      {/* Pane tabs */}
+      {/* Pane tabs — no-drag so clicks work */}
       <div
         style={{
           display: 'flex',
           alignItems: 'center',
           gap: '2px',
           flex: 1,
+          // @ts-ignore
+          WebkitAppRegion: 'no-drag',
+          appRegion: 'no-drag',
           overflow: 'hidden',
         }}
       >
