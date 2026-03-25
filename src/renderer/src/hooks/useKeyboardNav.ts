@@ -135,8 +135,9 @@ export function useKeyboardNav({
 
       // --- Vim chord handling ---
       if (keybindingsMode === 'vim') {
-        // Skip leader detection if typing in an input/textarea (e.g. settings leader capture)
-        const isInput = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+        // Skip leader detection only for inputs explicitly marked as leader-capture
+        // (NOT xterm's hidden textarea, which is also a textarea element)
+        const isLeaderCapture = e.target instanceof HTMLElement && e.target.dataset.leaderCapture === 'true';
 
         if (chordRef.current.state === 'waiting') {
           // Ignore modifier-only keypresses (Ctrl, Shift, Alt, Meta releasing after leader)
@@ -197,7 +198,7 @@ export function useKeyboardNav({
         }
 
         // Check for leader key press (start chord)
-        if (!isInput && isLeaderKey(e)) {
+        if (!isLeaderCapture && isLeaderKey(e)) {
           e.preventDefault();
           e.stopPropagation();
           chordRef.current.state = 'waiting';

@@ -121,6 +121,7 @@ const SettingsPane: React.FC<SettingsPaneProps> = ({ title }) => {
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <input
                 ref={leaderInputRef}
+                data-leader-capture="true"
                 readOnly={!capturingLeader}
                 value={capturingLeader ? 'Press key combo...' : leader}
                 onKeyDown={capturingLeader ? handleLeaderCapture : undefined}
