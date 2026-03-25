@@ -54,7 +54,26 @@ class TerminalService {
 
     const resolvedCwd = cwd || process.env.HOME || os.homedir();
 
-    const ptyProcess = pty.spawn(shell, [], {
+    // For PowerShell: spawn with -NoExit -Command to set up OSC 7 prompt invisibly
+    const shellLower = shell.toLowerCase();
+    const isPowerShell = shellLower.includes('powershell') || shellLower.includes('pwsh');
+    let shellArgs: string[] = [];
+
+    if (isPowerShell) {
+      // Set up a prompt function that emits OSC 7 before the normal prompt
+      // Uses $([char]27) and $([char]7) since PowerShell doesn't understand \e
+      const osc7Setup = [
+        '$function:__ws_orig_prompt = $function:prompt',
+        'function prompt {',
+        '  $loc = $executionContext.SessionState.Path.CurrentLocation.ProviderPath',
+        '  [Console]::Write("$([char]27)]7;file://$($env:COMPUTERNAME)$loc$([char]7)")',
+        '  __ws_orig_prompt',
+        '}',
+      ].join('; ');
+      shellArgs = ['-NoExit', '-Command', osc7Setup];
+    }
+
+    const ptyProcess = pty.spawn(shell, shellArgs, {
       name: 'xterm-256color',
       cols: 80,
       rows: 24,
@@ -92,19 +111,6 @@ class TerminalService {
         });
       }
     });
-
-    // For PowerShell: inject OSC 7 prompt function after shell starts
-    // (PowerShell doesn't support PROMPT_COMMAND env var)
-    const shellLower = shell.toLowerCase();
-    if (shellLower.includes('powershell') || shellLower.includes('pwsh')) {
-      setTimeout(() => {
-        if (session.closed) return;
-        // Wrap existing prompt to also emit OSC 7 — appends to existing prompt output
-        ptyProcess.write(
-          `$__origPrompt = $function:prompt; function prompt { $loc = $executionContext.SessionState.Path.CurrentLocation.ProviderPath; $null = [System.Console]::Write("\\e]7;file://$($env:COMPUTERNAME)$loc\\a"); & $__origPrompt }\r`
-        );
-      }, 1000);
-    }
 
     // Handle exit
     ptyProcess.onExit(() => {
