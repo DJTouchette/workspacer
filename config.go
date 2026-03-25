@@ -13,7 +13,18 @@ import (
 type Config struct {
 	UI       UIConfig       `yaml:"ui" json:"ui"`
 	Terminal TerminalConfig `yaml:"terminal" json:"terminal"`
+	Browser  BrowserConfig  `yaml:"browser" json:"browser"`
 	Panes    PanesConfig    `yaml:"panes" json:"panes"`
+}
+
+type BrowserConfig struct {
+	Homepage  string     `yaml:"homepage" json:"homepage"`
+	Bookmarks []Bookmark `yaml:"bookmarks" json:"bookmarks"`
+}
+
+type Bookmark struct {
+	Name string `yaml:"name" json:"name"`
+	URL  string `yaml:"url" json:"url"`
 }
 
 type UIConfig struct {
@@ -61,6 +72,16 @@ func DefaultConfig() Config {
 			BorderRadius: 8,
 			NavBarHeight:     28,
 			PaneHeaderHeight: 22,
+		},
+		Browser: BrowserConfig{
+			Homepage: "https://google.com",
+			Bookmarks: []Bookmark{
+				{Name: "Go Docs", URL: "https://pkg.go.dev"},
+				{Name: "Wails Docs", URL: "https://v3.wails.io"},
+				{Name: "MDN", URL: "https://developer.mozilla.org"},
+				{Name: "Localhost 3000", URL: "http://localhost:3000"},
+				{Name: "Localhost 8080", URL: "http://localhost:8080"},
+			},
 		},
 		Terminal: TerminalConfig{
 			Shell:       "",

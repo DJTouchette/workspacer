@@ -26,7 +26,7 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean) {
     case 'terminal':
       return <TerminalPane paneId={pane.id} title={pane.title} isActive={isActive} shell={pane.shell} />;
     case 'browser':
-      return <BrowserPane title={pane.title} />;
+      return <BrowserPane paneId={pane.id} title={pane.title} isActive={isActive} />;
     case 'notes':
       return <NotesPane title={pane.title} />;
     case 'agent':

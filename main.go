@@ -26,6 +26,7 @@ func main() {
 		Services: []application.Service{
 			application.NewService(&WorkspaceService{}),
 			application.NewService(&TerminalService{}),
+			application.NewService(&BrowserService{}),
 			application.NewService(&ConfigService{}),
 		},
 		Assets: application.AssetOptions{

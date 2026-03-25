@@ -31,6 +31,10 @@ const DEFAULT_CONFIG: Config = {
     insertPosition: 'after',
     default: [],
   },
+  browser: {
+    homepage: 'https://google.com',
+    bookmarks: [],
+  },
 } as Config;
 
 let cachedConfig: Config | null = null;
