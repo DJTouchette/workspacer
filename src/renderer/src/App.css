@@ -24,7 +24,7 @@ html, body {
 .app-content {
   flex: 1;
   margin-top: 28px; /* NavBar height */
-  margin-bottom: 12px; /* ScrollIndicator height + padding */
+  margin-bottom: 16px; /* ScrollIndicator height + room for pane border */
   overflow: hidden;
 }
 
