@@ -20,6 +20,7 @@ interface ScrollContainerProps {
   onPtyReady?: (paneId: string, ptySessionId: string) => void;
   onUrlChange?: (paneId: string, url: string) => void;
   renameSignal?: number;
+  viewMode?: 'carousel' | 'split';
 }
 
 export interface ScrollContainerRef {
@@ -142,7 +143,7 @@ function ResizeHandle({
 }
 
 const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
-  ({ panes, activePaneId, onPaneFocus, onPaneClose, onPaneResize, onPaneResetWidth, onPaneMove, onPaneRename, onPtyReady, onUrlChange, renameSignal }, ref) => {
+  ({ panes, activePaneId, onPaneFocus, onPaneClose, onPaneResize, onPaneResetWidth, onPaneMove, onPaneRename, onPtyReady, onUrlChange, renameSignal, viewMode = 'carousel' }, ref) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const { config } = useConfig();
     const peek = config.panes.peek ?? 80;
@@ -232,6 +233,65 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
       onPaneMove(id, idx + delta);
     }, [panes, onPaneMove]);
 
+    // --- Split view mode ---
+    if (viewMode === 'split') {
+      const activeIdx = panes.findIndex((p) => p.id === activePaneId);
+      const activePane = panes[activeIdx] ?? panes[0];
+      const nextPane = panes[activeIdx + 1] ?? (panes.length > 1 ? panes[0] : null);
+      const containerWidth = containerRef.current?.clientWidth ?? 1200;
+      const mainWidth = nextPane ? Math.floor(containerWidth * 0.63) : containerWidth - 16;
+      const sideWidth = nextPane ? Math.floor(containerWidth * 0.33) : 0;
+
+      return (
+        <div
+          ref={containerRef}
+          className="scroll-container"
+          style={{
+            display: 'flex',
+            flexDirection: 'row',
+            overflow: 'hidden',
+            height: '100%',
+            padding: '0',
+            gap: '0px',
+            alignItems: 'stretch',
+          }}
+        >
+          {activePane && (
+            <Pane
+              id={activePane.id}
+              type={activePane.type}
+              title={activePane.title}
+              width={mainWidth}
+              isActive={true}
+              onClose={onPaneClose}
+              onFocus={onPaneFocus}
+              onMove={onPaneMove ? handlePaneMove : undefined}
+              onRename={onPaneRename}
+              renameSignal={renameSignal}
+            >
+              {renderPaneContent(activePane, true, { onPtyReady, onUrlChange })}
+            </Pane>
+          )}
+          {nextPane && (
+            <Pane
+              id={nextPane.id}
+              type={nextPane.type}
+              title={nextPane.title}
+              width={sideWidth}
+              isActive={false}
+              onClose={onPaneClose}
+              onFocus={onPaneFocus}
+              onMove={onPaneMove ? handlePaneMove : undefined}
+              onRename={onPaneRename}
+            >
+              {renderPaneContent(nextPane, false, { onPtyReady, onUrlChange })}
+            </Pane>
+          )}
+        </div>
+      );
+    }
+
+    // --- Carousel view mode (default) ---
     return (
       <div
         ref={containerRef}

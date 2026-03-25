@@ -32,6 +32,7 @@ function App() {
   const [renameSignal, setRenameSignal] = useState(0);
   const [chordState, setChordState] = useState<'idle' | 'waiting'>('idle');
   const [showCommandPalette, setShowCommandPalette] = useState(false);
+  const [viewMode, setViewMode] = useState<'carousel' | 'split'>('carousel');
 
   // Session state
   const [sessionPhase, setSessionPhase] = useState<'loading' | 'picker' | 'active'>('loading');
@@ -196,6 +197,7 @@ function App() {
     onOpenSettings: openSettings,
     onSaveSession: saveCurrentSession,
     onOpenCommandPalette: useCallback(() => setShowCommandPalette(true), []),
+    onToggleViewMode: useCallback(() => setViewMode((m) => m === 'carousel' ? 'split' : 'carousel'), []),
   });
 
   const handlePaneClick = useCallback((id: string) => {
@@ -250,6 +252,7 @@ function App() {
           onPtyReady={handlePtyReady}
           onUrlChange={handleUrlChange}
           renameSignal={renameSignal}
+          viewMode={viewMode}
         />
       </div>
 

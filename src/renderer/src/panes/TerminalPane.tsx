@@ -99,7 +99,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
     // Return false = xterm ignores the key, letting our window capture handler take it.
     term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
       // Ctrl+T, Ctrl+B, Ctrl+W, Ctrl+/, Ctrl+, — always app-level
-      if (e.ctrlKey && !e.altKey && ['t', 'b', 'w', '/', '?', ',', 's', 'k'].includes(e.key)) {
+      if (e.ctrlKey && !e.altKey && ['t', 'b', 'w', '/', '?', ',', 's', 'k', 'l'].includes(e.key)) {
         return false;
       }
       // Ctrl+1-9 — jump to pane

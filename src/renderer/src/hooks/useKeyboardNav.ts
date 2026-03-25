@@ -25,6 +25,7 @@ interface UseKeyboardNavOptions {
   onOpenSettings?: () => void;
   onSaveSession?: () => void;
   onOpenCommandPalette?: () => void;
+  onToggleViewMode?: () => void;
 }
 
 /**
@@ -104,6 +105,7 @@ export function useKeyboardNav({
   onOpenSettings,
   onSaveSession,
   onOpenCommandPalette,
+  onToggleViewMode,
 }: UseKeyboardNavOptions) {
   const chordRef = useRef<{ state: ChordState; timeoutId: ReturnType<typeof setTimeout> | null }>({
     state: 'idle',
@@ -238,6 +240,14 @@ export function useKeyboardNav({
         e.preventDefault();
         e.stopPropagation();
         onOpenCommandPalette?.();
+        return;
+      }
+
+      // Ctrl+L : toggle view mode (both modes)
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'l') {
+        e.preventDefault();
+        e.stopPropagation();
+        onToggleViewMode?.();
         return;
       }
 
@@ -402,7 +412,7 @@ export function useKeyboardNav({
       window.removeEventListener('keyup', handleKeyUp, true);
       cancelChord();
     };
-  }, [goToIndex, goToPrev, goToNext, addPane, removePane, resizePane, resetPaneWidth, movePane, defaultPaneWidth, panes, activePaneId, scrollToPane, onToggleHelp, onRenamePane, keybindingsMode, leaderKey, onChordStateChange, onOpenSettings, onSaveSession, onOpenCommandPalette]);
+  }, [goToIndex, goToPrev, goToNext, addPane, removePane, resizePane, resetPaneWidth, movePane, defaultPaneWidth, panes, activePaneId, scrollToPane, onToggleHelp, onRenamePane, keybindingsMode, leaderKey, onChordStateChange, onOpenSettings, onSaveSession, onOpenCommandPalette, onToggleViewMode]);
 
   return {
     activePaneId,

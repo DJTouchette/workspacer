@@ -50,7 +50,7 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive, init
       if (input.type !== 'keyDown') return;
 
       const isAppShortcut = (
-        (input.control && !input.alt && /^[1-9tbwsk,/]$/i.test(input.key)) ||
+        (input.control && !input.alt && /^[1-9tbwskl,/]$/i.test(input.key)) ||
         (input.control && input.shift) ||
         (input.alt && !input.control && (input.key === 'ArrowLeft' || input.key === 'ArrowRight')) ||
         input.key === 'F2'
