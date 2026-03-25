@@ -28,6 +28,14 @@ interface UseKeyboardNavOptions {
 /**
  * Parse a key combo string like "ctrl+space" into a matcher function.
  */
+/**
+ * Map from key name to e.code values for keys where e.key is unreliable
+ * (e.g. Ctrl+Space produces '\x00' or 'Process' on some platforms).
+ */
+const KEY_TO_CODE: Record<string, string> = {
+  space: 'Space',
+};
+
 function parseKeyCombo(combo: string): (e: KeyboardEvent) => boolean {
   const parts = combo.toLowerCase().split('+');
   const key = parts[parts.length - 1];
@@ -35,11 +43,19 @@ function parseKeyCombo(combo: string): (e: KeyboardEvent) => boolean {
   const needsAlt = parts.includes('alt');
   const needsShift = parts.includes('shift');
   const needsMeta = parts.includes('meta');
+  const expectedCode = KEY_TO_CODE[key];
 
   return (e: KeyboardEvent) => {
-    const eventKey = e.key === ' ' ? 'space' : e.key.toLowerCase();
+    // Use e.code for keys that have unreliable e.key values
+    let keyMatch: boolean;
+    if (expectedCode) {
+      keyMatch = e.code === expectedCode;
+    } else {
+      const eventKey = e.key === ' ' ? 'space' : e.key.toLowerCase();
+      keyMatch = eventKey === key;
+    }
     return (
-      eventKey === key &&
+      keyMatch &&
       e.ctrlKey === needsCtrl &&
       e.altKey === needsAlt &&
       e.shiftKey === needsShift &&
