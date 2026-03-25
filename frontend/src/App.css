@@ -1,0 +1,44 @@
+/* Workspacer App Styles */
+
+.app-root {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  background-color: rgb(24, 24, 27);
+  color: rgb(228, 228, 231);
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto",
+    "Oxygen", "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue",
+    sans-serif;
+}
+
+.app-content {
+  flex: 1;
+  margin-top: 28px; /* NavBar height */
+  margin-bottom: 8px; /* ScrollIndicator height */
+  overflow: hidden;
+}
+
+/* Scrollbar styling for the scroll container */
+.scroll-container::-webkit-scrollbar {
+  height: 4px;
+}
+
+.scroll-container::-webkit-scrollbar-track {
+  background: rgb(24, 24, 27);
+}
+
+.scroll-container::-webkit-scrollbar-thumb {
+  background: rgb(55, 55, 65);
+  border-radius: 2px;
+}
+
+.scroll-container::-webkit-scrollbar-thumb:hover {
+  background: rgb(75, 75, 85);
+}
+
+/* Pane hover effect */
+.pane-wrapper:hover .pane-header {
+  background-color: rgb(42, 44, 56);
+}

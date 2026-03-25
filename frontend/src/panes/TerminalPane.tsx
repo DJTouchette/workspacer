@@ -1,0 +1,185 @@
+import { useEffect, useRef, useCallback } from 'react';
+import { Terminal } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
+import '@xterm/xterm/css/xterm.css';
+import { usePTY } from '../hooks/usePTY';
+import { useConfig } from '../hooks/useConfig';
+
+interface TerminalPaneProps {
+  paneId: string;
+  title: string;
+  isActive: boolean;
+}
+
+const TERMINAL_THEME = {
+  background: '#121214',
+  foreground: '#e4e4e7',
+  cursor: '#e4e4e7',
+  cursorAccent: '#121214',
+  selectionBackground: 'rgba(128, 160, 255, 0.3)',
+  selectionForeground: undefined,
+  black: '#1e1e21',
+  red: '#f87171',
+  green: '#4ade80',
+  yellow: '#facc15',
+  blue: '#60a5fa',
+  magenta: '#c084fc',
+  cyan: '#22d3ee',
+  white: '#e4e4e7',
+  brightBlack: '#71717a',
+  brightRed: '#fca5a5',
+  brightGreen: '#86efac',
+  brightYellow: '#fde68a',
+  brightBlue: '#93c5fd',
+  brightMagenta: '#d8b4fe',
+  brightCyan: '#67e8f9',
+  brightWhite: '#fafafa',
+};
+
+const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive }) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const terminalRef = useRef<Terminal | null>(null);
+  const fitAddonRef = useRef<FitAddon | null>(null);
+  const resizeObserverRef = useRef<ResizeObserver | null>(null);
+  const initializedRef = useRef(false);
+
+  const { config } = useConfig();
+  const termCfg = config.terminal;
+
+  const handleExit = useCallback(() => {
+    if (terminalRef.current) {
+      terminalRef.current.write('\r\n\x1b[90m[Process exited]\x1b[0m\r\n');
+    }
+  }, []);
+
+  const { isReady, write, resize, attachToTerminal } = usePTY({
+    paneId,
+    shell: termCfg.shell,
+    onExit: handleExit,
+  });
+
+  // Initialize xterm.js terminal
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || initializedRef.current) return;
+    initializedRef.current = true;
+
+    const term = new Terminal({
+      cursorBlink: termCfg.cursorBlink,
+      fontSize: termCfg.fontSize,
+      fontFamily: termCfg.fontFamily,
+      theme: TERMINAL_THEME,
+      allowProposedApi: true,
+      scrollback: termCfg.scrollback,
+      convertEol: false,
+      cursorStyle: termCfg.cursorStyle as 'block' | 'underline' | 'bar',
+      drawBoldTextInBrightColors: true,
+    });
+
+    const fitAddon = new FitAddon();
+    term.loadAddon(fitAddon);
+
+    terminalRef.current = term;
+    fitAddonRef.current = fitAddon;
+
+    term.open(container);
+
+    requestAnimationFrame(() => {
+      try {
+        fitAddon.fit();
+      } catch {
+        // Ignore fit errors during init
+      }
+    });
+
+    attachToTerminal(term);
+
+    const onDataDisposable = term.onData((data) => {
+      write(data);
+    });
+
+    const onBinaryDisposable = term.onBinary((data) => {
+      write(data);
+    });
+
+    const observer = new ResizeObserver(() => {
+      requestAnimationFrame(() => {
+        try {
+          if (fitAddonRef.current) {
+            fitAddonRef.current.fit();
+          }
+        } catch {
+          // Ignore fit errors during resize
+        }
+      });
+    });
+    observer.observe(container);
+    resizeObserverRef.current = observer;
+
+    const onResizeDisposable = term.onResize(({ cols, rows }) => {
+      resize(cols, rows);
+    });
+
+    term.focus();
+
+    return () => {
+      onDataDisposable.dispose();
+      onBinaryDisposable.dispose();
+      onResizeDisposable.dispose();
+
+      if (resizeObserverRef.current) {
+        resizeObserverRef.current.disconnect();
+        resizeObserverRef.current = null;
+      }
+
+      term.dispose();
+      terminalRef.current = null;
+      fitAddonRef.current = null;
+      initializedRef.current = false;
+    };
+  }, [attachToTerminal, write, resize]);
+
+  // Focus/blur terminal when pane becomes active/inactive
+  useEffect(() => {
+    const term = terminalRef.current;
+    if (!term) return;
+    if (isActive) {
+      term.focus();
+    } else {
+      term.blur();
+    }
+  }, [isActive]);
+
+  // When PTY becomes ready, do an initial fit + resize sync
+  useEffect(() => {
+    if (!isReady || !fitAddonRef.current || !terminalRef.current) return;
+
+    const timer = setTimeout(() => {
+      try {
+        fitAddonRef.current?.fit();
+        const term = terminalRef.current;
+        if (term) {
+          resize(term.cols, term.rows);
+        }
+      } catch {
+        // Ignore
+      }
+    }, 50);
+
+    return () => clearTimeout(timer);
+  }, [isReady, resize]);
+
+  return (
+    <div
+      ref={containerRef}
+      style={{
+        width: '100%',
+        height: '100%',
+        overflow: 'hidden',
+        backgroundColor: '#121214',
+      }}
+    />
+  );
+};
+
+export default TerminalPane;
