@@ -44,6 +44,36 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive, init
       readyRef.current = true;
     };
 
+    // Intercept keyboard shortcuts before the webview page handles them
+    const handleBeforeInput = (e: any) => {
+      const input = e as { key: string; type: string; control: boolean; alt: boolean; shift: boolean; meta: boolean };
+      if (input.type !== 'keyDown') return;
+
+      const isAppShortcut = (
+        (input.control && !input.alt && /^[1-9tbwsk,/]$/i.test(input.key)) ||
+        (input.control && input.shift) ||
+        (input.alt && !input.control && (input.key === 'ArrowLeft' || input.key === 'ArrowRight')) ||
+        input.key === 'F2'
+      );
+
+      if (isAppShortcut) {
+        // Blur the webview so the event reaches the parent window's handler
+        wv.blur();
+        // Re-dispatch the key event on the parent window
+        window.dispatchEvent(new KeyboardEvent('keydown', {
+          key: input.key,
+          ctrlKey: input.control,
+          altKey: input.alt,
+          shiftKey: input.shift,
+          metaKey: input.meta,
+          bubbles: true,
+          cancelable: true,
+        }));
+      }
+    };
+
+    wv.addEventListener('before-input-event', handleBeforeInput);
+
     const handleStartLoading = () => setLoading(true);
     const handleStopLoading = () => {
       setLoading(false);
@@ -73,6 +103,7 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive, init
 
     return () => {
       wv.removeEventListener('dom-ready', handleDomReady);
+      wv.removeEventListener('before-input-event', handleBeforeInput);
       wv.removeEventListener('did-start-loading', handleStartLoading);
       wv.removeEventListener('did-stop-loading', handleStopLoading);
       wv.removeEventListener('did-navigate', handleNavigate);
