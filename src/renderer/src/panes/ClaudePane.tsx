@@ -7,6 +7,17 @@ import { useClaudeSession } from '../hooks/useClaudeSession';
 import { useConfig } from '../hooks/useConfig';
 import type { ClaudeSessionSnapshot, ToolCall, ConversationTurn, FileChange, PendingApproval, SubagentInfo } from '../types/claudeSession';
 
+/** Ensure each CSS font-family name with spaces is quoted */
+function quoteFontFamily(ff: string): string {
+  return ff.split(',').map(f => {
+    f = f.trim();
+    if (!f) return f;
+    if (/^["']/.test(f) || /^(monospace|sans-serif|serif|cursive|fantasy|system-ui)$/i.test(f)) return f;
+    if (f.includes(' ')) return `"${f}"`;
+    return f;
+  }).join(', ');
+}
+
 interface ClaudePaneProps {
   paneId: string;
   title: string;
@@ -866,7 +877,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
     const term = new Terminal({
       cursorBlink: termCfg.cursorBlink,
       fontSize: termCfg.fontSize,
-      fontFamily: termCfg.fontFamily,
+      fontFamily: quoteFontFamily(termCfg.fontFamily),
       theme: TERMINAL_THEME,
       allowProposedApi: true,
       scrollback: termCfg.scrollback,

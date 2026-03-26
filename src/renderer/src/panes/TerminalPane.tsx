@@ -5,6 +5,19 @@ import '@xterm/xterm/css/xterm.css';
 import { usePTY } from '../hooks/usePTY';
 import { useConfig, Config } from '../hooks/useConfig';
 
+/** Ensure each CSS font-family name with spaces is quoted */
+function quoteFontFamily(ff: string): string {
+  return ff.split(',').map(f => {
+    f = f.trim();
+    if (!f) return f;
+    // Already quoted or a generic family (monospace, serif, etc.)
+    if (/^["']/.test(f) || /^(monospace|sans-serif|serif|cursive|fantasy|system-ui)$/i.test(f)) return f;
+    // Has spaces — needs quoting
+    if (f.includes(' ')) return `"${f}"`;
+    return f;
+  }).join(', ');
+}
+
 interface TerminalPaneProps {
   paneId: string;
   title: string;
@@ -78,7 +91,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
     const term = new Terminal({
       cursorBlink: termCfg.cursorBlink,
       fontSize: termCfg.fontSize,
-      fontFamily: termCfg.fontFamily,
+      fontFamily: quoteFontFamily(termCfg.fontFamily),
       theme: TERMINAL_THEME,
       allowProposedApi: true,
       scrollback: termCfg.scrollback,
