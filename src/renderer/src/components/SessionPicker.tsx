@@ -56,7 +56,7 @@ const SessionPicker: React.FC<SessionPickerProps> = ({ sessions, onNewSession, o
         left: 0,
         right: 0,
         bottom: 0,
-        backgroundColor: 'rgb(20, 20, 24)',
+        backgroundColor: 'var(--wks-bg-base)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -65,8 +65,8 @@ const SessionPicker: React.FC<SessionPickerProps> = ({ sessions, onNewSession, o
     >
       <div
         style={{
-          backgroundColor: 'rgb(28, 28, 32)',
-          border: '1px solid rgb(50, 50, 55)',
+          backgroundColor: 'var(--wks-bg-raised)',
+          border: '1px solid var(--wks-border)',
           borderRadius: '8px',
           padding: '20px 24px',
           minWidth: '340px',
@@ -76,7 +76,7 @@ const SessionPicker: React.FC<SessionPickerProps> = ({ sessions, onNewSession, o
           flexDirection: 'column',
         }}
       >
-        <div style={{ fontSize: '1rem', fontWeight: 600, color: 'rgb(220, 220, 235)', marginBottom: '16px' }}>
+        <div style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--wks-text-primary)', marginBottom: '16px' }}>
           Workspacer
         </div>
 
@@ -101,7 +101,7 @@ const SessionPicker: React.FC<SessionPickerProps> = ({ sessions, onNewSession, o
           <>
             <div style={{
               fontSize: '0.6rem',
-              color: 'rgb(100, 100, 115)',
+              color: 'var(--wks-text-faint)',
               textTransform: 'uppercase',
               letterSpacing: '0.05em',
               marginBottom: '6px',
@@ -123,17 +123,17 @@ const SessionPicker: React.FC<SessionPickerProps> = ({ sessions, onNewSession, o
                   }}
                   onClick={() => onResumeSession(session.filename)}
                   onMouseEnter={(e) => {
-                    (e.currentTarget as HTMLElement).style.backgroundColor = 'rgb(38, 38, 44)';
+                    (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--wks-bg-hover)';
                   }}
                   onMouseLeave={(e) => {
                     (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent';
                   }}
                 >
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: '0.75rem', color: 'rgb(200, 200, 210)', fontWeight: 500 }}>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--wks-text-secondary)', fontWeight: 500 }}>
                       {session.name}
                     </div>
-                    <div style={{ fontSize: '0.6rem', color: 'rgb(100, 100, 115)', marginTop: '1px' }}>
+                    <div style={{ fontSize: '0.6rem', color: 'var(--wks-text-faint)', marginTop: '1px' }}>
                       {session.paneCount} panes &middot; {formatTimestamp(session.timestamp)}
                     </div>
                   </div>
@@ -145,7 +145,7 @@ const SessionPicker: React.FC<SessionPickerProps> = ({ sessions, onNewSession, o
                     style={{
                       background: 'none',
                       border: 'none',
-                      color: 'rgb(100, 100, 115)',
+                      color: 'var(--wks-text-faint)',
                       cursor: 'pointer',
                       fontSize: '0.75rem',
                       padding: '2px 4px',
@@ -156,10 +156,10 @@ const SessionPicker: React.FC<SessionPickerProps> = ({ sessions, onNewSession, o
                       lineHeight: '1',
                     }}
                     onMouseEnter={(e) => {
-                      (e.currentTarget as HTMLElement).style.color = 'rgb(248, 113, 113)';
+                      (e.currentTarget as HTMLElement).style.color = 'var(--wks-error)';
                     }}
                     onMouseLeave={(e) => {
-                      (e.currentTarget as HTMLElement).style.color = 'rgb(100, 100, 115)';
+                      (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-faint)';
                     }}
                     title="Delete session"
                   >
@@ -171,7 +171,7 @@ const SessionPicker: React.FC<SessionPickerProps> = ({ sessions, onNewSession, o
           </>
         )}
 
-        <div style={{ fontSize: '0.55rem', color: 'rgb(70, 70, 80)', marginTop: '12px', textAlign: 'center' }}>
+        <div style={{ fontSize: '0.55rem', color: 'var(--wks-text-disabled)', marginTop: '12px', textAlign: 'center' }}>
           Press Escape for new session
         </div>
       </div>
@@ -189,9 +189,9 @@ function ActionButton({ label, onClick, primary }: { label: string; onClick: () 
         fontSize: '0.75rem',
         fontFamily: 'inherit',
         fontWeight: 600,
-        backgroundColor: primary ? 'rgb(80, 120, 200)' : 'rgb(40, 40, 45)',
-        color: primary ? '#fff' : 'rgb(180, 180, 195)',
-        border: primary ? '1px solid rgb(80, 120, 200)' : '1px solid rgb(55, 55, 60)',
+        backgroundColor: primary ? 'var(--wks-accent)' : 'var(--wks-bg-elevated)',
+        color: primary ? '#fff' : 'var(--wks-text-tertiary)',
+        border: primary ? '1px solid var(--wks-accent)' : '1px solid var(--wks-border-input)',
         borderRadius: '5px',
         cursor: 'pointer',
         height: 'auto',

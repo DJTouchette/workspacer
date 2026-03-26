@@ -5,6 +5,7 @@ import { WebFontsAddon } from '@xterm/addon-web-fonts';
 import '@xterm/xterm/css/xterm.css';
 import { usePTY } from '../hooks/usePTY';
 import { useConfig, Config } from '../hooks/useConfig';
+import { useTheme } from '../hooks/useTheme';
 
 /** Ensure each CSS font-family name with spaces is quoted */
 function quoteFontFamily(ff: string): string {
@@ -28,31 +29,6 @@ interface TerminalPaneProps {
   onPtyReady?: (paneId: string, ptySessionId: string) => void;
 }
 
-const TERMINAL_THEME = {
-  background: '#121214',
-  foreground: '#e4e4e7',
-  cursor: '#e4e4e7',
-  cursorAccent: '#121214',
-  selectionBackground: 'rgba(128, 160, 255, 0.3)',
-  selectionForeground: undefined,
-  black: '#1e1e21',
-  red: '#f87171',
-  green: '#4ade80',
-  yellow: '#facc15',
-  blue: '#60a5fa',
-  magenta: '#c084fc',
-  cyan: '#22d3ee',
-  white: '#e4e4e7',
-  brightBlack: '#71717a',
-  brightRed: '#fca5a5',
-  brightGreen: '#86efac',
-  brightYellow: '#fde68a',
-  brightBlue: '#93c5fd',
-  brightMagenta: '#d8b4fe',
-  brightCyan: '#67e8f9',
-  brightWhite: '#fafafa',
-};
-
 const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, shell, cwd, onPtyReady }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
@@ -62,6 +38,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
 
   const { config } = useConfig();
   const termCfg = config.terminal;
+  const { terminalTheme } = useTheme();
 
   const handleExit = useCallback(() => {
     if (terminalRef.current) {
@@ -94,7 +71,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
       cursorBlink: termCfg.cursorBlink,
       fontSize: termCfg.fontSize,
       fontFamily: quoteFontFamily(termCfg.fontFamily),
-      theme: TERMINAL_THEME,
+      theme: terminalTheme,
       allowProposedApi: true,
       scrollback: termCfg.scrollback,
       convertEol: false,
@@ -248,6 +225,13 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
     return () => clearTimeout(timer);
   }, [isReady, resize]);
 
+  // Update terminal theme when it changes
+  useEffect(() => {
+    if (terminalRef.current) {
+      terminalRef.current.options.theme = terminalTheme;
+    }
+  }, [terminalTheme]);
+
   return (
     <div
       ref={containerRef}
@@ -255,7 +239,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
         width: '100%',
         height: '100%',
         overflow: 'hidden',
-        backgroundColor: '#121214',
+        backgroundColor: 'var(--wks-bg-terminal)',
       }}
     />
   );

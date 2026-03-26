@@ -77,7 +77,7 @@ const ShortcutOverlay: React.FC<ShortcutOverlayProps> = ({ visible, onClose, mod
         left: 0,
         right: 0,
         bottom: 0,
-        backgroundColor: 'rgba(0, 0, 0, 0.6)',
+        backgroundColor: 'var(--wks-overlay)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -88,8 +88,8 @@ const ShortcutOverlay: React.FC<ShortcutOverlayProps> = ({ visible, onClose, mod
     >
       <div
         style={{
-          backgroundColor: 'rgb(30, 30, 33)',
-          border: '1px solid rgb(55, 55, 60)',
+          backgroundColor: 'var(--wks-bg-surface)',
+          border: '1px solid var(--wks-border-input)',
           borderRadius: '6px',
           padding: '12px 16px',
           minWidth: '280px',
@@ -102,9 +102,9 @@ const ShortcutOverlay: React.FC<ShortcutOverlayProps> = ({ visible, onClose, mod
           style={{
             fontSize: '0.75rem',
             fontWeight: 600,
-            color: 'rgb(200, 200, 210)',
+            color: 'var(--wks-text-secondary)',
             marginBottom: '8px',
-            borderBottom: '1px solid rgb(50, 50, 55)',
+            borderBottom: '1px solid var(--wks-border)',
             paddingBottom: '6px',
           }}
         >
@@ -129,7 +129,7 @@ const ShortcutOverlay: React.FC<ShortcutOverlayProps> = ({ visible, onClose, mod
                   <tr key={i}>
                     <td colSpan={2} style={{
                       padding: '4px 0 2px',
-                      color: 'rgb(120, 120, 135)',
+                      color: 'var(--wks-text-faint)',
                       fontSize: '0.6rem',
                       fontWeight: 600,
                     }}>
@@ -143,7 +143,7 @@ const ShortcutOverlay: React.FC<ShortcutOverlayProps> = ({ visible, onClose, mod
                   <td
                     style={{
                       padding: '2px 12px 2px 0',
-                      color: 'rgb(170, 170, 185)',
+                      color: 'var(--wks-text-tertiary)',
                       fontFamily: 'monospace',
                       fontSize: '0.65rem',
                       whiteSpace: 'nowrap',
@@ -154,7 +154,7 @@ const ShortcutOverlay: React.FC<ShortcutOverlayProps> = ({ visible, onClose, mod
                   <td
                     style={{
                       padding: '2px 0',
-                      color: 'rgb(140, 140, 155)',
+                      color: 'var(--wks-text-muted)',
                     }}
                   >
                     {desc}

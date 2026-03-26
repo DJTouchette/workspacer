@@ -6,6 +6,7 @@ import '@xterm/xterm/css/xterm.css';
 import { usePTY } from '../hooks/usePTY';
 import { useClaudeSession } from '../hooks/useClaudeSession';
 import { useConfig } from '../hooks/useConfig';
+import { useTheme } from '../hooks/useTheme';
 import type { ClaudeSessionSnapshot, ToolCall, ConversationTurn, FileChange, PendingApproval, SubagentInfo } from '../types/claudeSession';
 
 /** Ensure each CSS font-family name with spaces is quoted */
@@ -32,22 +33,22 @@ type ViewMode = 'gui' | 'terminal';
 // ── Color Palette ──
 
 const colors = {
-  bg: '#0d0d10',
-  bgSecondary: 'rgba(255,255,255,0.03)',
-  bgToolbar: 'rgba(13, 13, 16, 0.95)',
-  userBubble: 'rgba(60, 90, 160, 0.15)',
-  userBubbleBorder: 'rgba(60, 90, 160, 0.25)',
-  muted: 'rgb(100, 105, 130)',
-  mutedDim: 'rgb(65, 68, 85)',
-  accent: 'rgb(96, 165, 250)',
-  success: 'rgb(74, 222, 128)',
-  error: 'rgb(248, 113, 113)',
-  warning: '#facc15',
-  text: 'rgb(200, 205, 225)',
-  textBright: 'rgb(230, 230, 245)',
-  border: 'rgba(255, 255, 255, 0.06)',
-  borderSubtle: 'rgba(255, 255, 255, 0.04)',
-  divider: 'rgba(255, 255, 255, 0.05)',
+  bg: 'var(--wks-claude-bg)',
+  bgSecondary: 'var(--wks-bg-hover)',
+  bgToolbar: 'var(--wks-bg-surface)',
+  userBubble: 'var(--wks-claude-user-bubble)',
+  userBubbleBorder: 'var(--wks-claude-user-border)',
+  muted: 'var(--wks-text-faint)',
+  mutedDim: 'var(--wks-text-disabled)',
+  accent: 'var(--wks-accent-text)',
+  success: 'var(--wks-success)',
+  error: 'var(--wks-error)',
+  warning: 'var(--wks-warning)',
+  text: 'var(--wks-text-secondary)',
+  textBright: 'var(--wks-text-primary)',
+  border: 'var(--wks-claude-border)',
+  borderSubtle: 'var(--wks-claude-border-subtle)',
+  divider: 'var(--wks-claude-divider)',
 };
 
 // ── CSS Keyframes (injected once) ──
@@ -797,30 +798,6 @@ const ScrollToBottomButton: React.FC<{ onClick: () => void }> = ({ onClick }) =>
 
 // ── Main component ──
 
-const TERMINAL_THEME = {
-  background: '#121214',
-  foreground: '#e4e4e7',
-  cursor: '#e4e4e7',
-  cursorAccent: '#121214',
-  selectionBackground: 'rgba(128, 160, 255, 0.3)',
-  black: '#1e1e21',
-  red: '#f87171',
-  green: '#4ade80',
-  yellow: '#facc15',
-  blue: '#60a5fa',
-  magenta: '#c084fc',
-  cyan: '#22d3ee',
-  white: '#e4e4e7',
-  brightBlack: '#71717a',
-  brightRed: '#fca5a5',
-  brightGreen: '#86efac',
-  brightYellow: '#fde68a',
-  brightBlue: '#93c5fd',
-  brightMagenta: '#d8b4fe',
-  brightCyan: '#67e8f9',
-  brightWhite: '#fafafa',
-};
-
 const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, onPtyReady }) => {
   const [viewMode, setViewMode] = useState<ViewMode>('terminal');
   const [inputValue, setInputValue] = useState('');
@@ -835,6 +812,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   const { config } = useConfig();
+  const { terminalTheme } = useTheme();
   const termCfg = config.terminal;
 
   // Inject keyframes
@@ -880,7 +858,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
       cursorBlink: termCfg.cursorBlink,
       fontSize: termCfg.fontSize,
       fontFamily: quoteFontFamily(termCfg.fontFamily),
-      theme: TERMINAL_THEME,
+      theme: terminalTheme,
       allowProposedApi: true,
       scrollback: termCfg.scrollback,
       convertEol: false,
@@ -963,6 +941,13 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
       });
     }
   }, [isActive, viewMode, resize]);
+
+  // Update terminal theme when it changes
+  useEffect(() => {
+    if (terminalRef.current) {
+      terminalRef.current.options.theme = terminalTheme;
+    }
+  }, [terminalTheme]);
 
   // Auto-scroll conversation to bottom
   useEffect(() => {
@@ -1130,7 +1115,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
             onClick={() => setViewMode('gui')}
             style={{
               ...toggleBtnStyle,
-              backgroundColor: viewMode === 'gui' ? 'rgba(96, 165, 250, 0.15)' : 'transparent',
+              backgroundColor: viewMode === 'gui' ? 'var(--wks-accent-bg)' : 'transparent',
               color: viewMode === 'gui' ? colors.accent : colors.mutedDim,
             }}
           >
@@ -1140,7 +1125,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
             onClick={() => setViewMode('terminal')}
             style={{
               ...toggleBtnStyle,
-              backgroundColor: viewMode === 'terminal' ? 'rgba(96, 165, 250, 0.15)' : 'transparent',
+              backgroundColor: viewMode === 'terminal' ? 'var(--wks-accent-bg)' : 'transparent',
               color: viewMode === 'terminal' ? colors.accent : colors.mutedDim,
             }}
           >

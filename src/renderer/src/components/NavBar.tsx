@@ -47,8 +47,8 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
         height: `${navHeight}px`,
         display: 'flex',
         alignItems: 'center',
-        backgroundColor: 'rgb(20, 20, 24)',
-        borderBottom: '1px solid rgb(45, 45, 50)',
+        backgroundColor: 'var(--wks-bg-input)',
+        borderBottom: '1px solid var(--wks-border-subtle)',
         padding: '0 10px',
         zIndex: 100,
         userSelect: 'none',
@@ -61,7 +61,7 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
         style={{
           fontWeight: 600,
           fontSize: '0.7rem',
-          color: 'rgb(200, 200, 210)',
+          color: 'var(--wks-text-secondary)',
           marginRight: '16px',
         }}
       >
@@ -106,24 +106,24 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
                 fontFamily: 'inherit',
                 fontWeight: isActive ? 600 : 400,
                 backgroundColor: isActive
-                  ? 'rgb(45, 48, 60)'
+                  ? 'var(--wks-bg-selected)'
                   : 'transparent',
                 color: isActive
-                  ? 'rgb(220, 220, 235)'
-                  : 'rgb(140, 140, 155)',
+                  ? 'var(--wks-text-primary)'
+                  : 'var(--wks-text-muted)',
                 opacity: hasHibernated && !isActive ? 0.4 : 1,
                 transition: 'none',
               }}
               onMouseEnter={(e) => {
                 if (!isActive) {
-                  (e.currentTarget as HTMLElement).style.backgroundColor = 'rgb(38, 38, 44)';
-                  (e.currentTarget as HTMLElement).style.color = 'rgb(180, 180, 195)';
+                  (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--wks-bg-hover)';
+                  (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-tertiary)';
                 }
               }}
               onMouseLeave={(e) => {
                 if (!isActive) {
                   (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent';
-                  (e.currentTarget as HTMLElement).style.color = 'rgb(140, 140, 155)';
+                  (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-muted)';
                 }
               }}
               title={`${tab.title} (Ctrl+${idx + 1})`}
@@ -165,16 +165,16 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
                 fontFamily: 'inherit',
                 fontWeight: 400,
                 backgroundColor: 'transparent',
-                color: 'rgb(120, 120, 135)',
+                color: 'var(--wks-text-faint)',
                 transition: 'none',
               }}
               onMouseEnter={(e) => {
-                (e.currentTarget as HTMLElement).style.backgroundColor = 'rgb(38, 38, 44)';
-                (e.currentTarget as HTMLElement).style.color = 'rgb(200, 200, 210)';
+                (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--wks-bg-hover)';
+                (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-secondary)';
               }}
               onMouseLeave={(e) => {
                 (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent';
-                (e.currentTarget as HTMLElement).style.color = 'rgb(120, 120, 135)';
+                (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-faint)';
               }}
               title="New terminal (Ctrl+T) | Right-click for more"
             >
@@ -186,16 +186,16 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
                 style={{
                   position: 'fixed',
                   top: `${config.ui.navBarHeight || 28}px`,
-                  backgroundColor: 'rgb(30, 30, 33)',
-                  border: '1px solid rgb(55, 55, 60)',
+                  backgroundColor: 'var(--wks-bg-surface)',
+                  border: '1px solid var(--wks-border-input)',
                   borderRadius: '4px',
                   padding: '4px 0',
                   zIndex: 10000,
                   minWidth: '160px',
-                  boxShadow: '0 4px 12px rgba(0, 0, 0, 0.4)',
+                  boxShadow: '0 4px 12px var(--wks-shadow)',
                 }}
               >
-                <div style={{ padding: '2px 8px', fontSize: '0.55rem', color: 'rgb(90, 90, 100)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                <div style={{ padding: '2px 8px', fontSize: '0.55rem', color: 'var(--wks-text-disabled)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                   New Tab
                 </div>
                 <MenuButton label="Claude" onClick={async () => {
@@ -206,9 +206,9 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
                 <MenuButton label="Browser" onClick={() => { setShowMenu(false); onAddTab('browser'); }} />
                 <MenuButton label="Notes" onClick={() => { setShowMenu(false); onAddTab('notes'); }} />
 
-                <div style={{ height: '1px', backgroundColor: 'rgb(50, 50, 55)', margin: '4px 0' }} />
+                <div style={{ height: '1px', backgroundColor: 'var(--wks-border)', margin: '4px 0' }} />
 
-                <div style={{ padding: '2px 8px', fontSize: '0.55rem', color: 'rgb(90, 90, 100)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                <div style={{ padding: '2px 8px', fontSize: '0.55rem', color: 'var(--wks-text-disabled)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                   Terminal
                 </div>
                 {shells.map((shell) => (
@@ -246,19 +246,19 @@ function MenuButton({ label, onClick }: { label: string; onClick: () => void }) 
         fontFamily: 'inherit',
         fontWeight: 400,
         backgroundColor: 'transparent',
-        color: 'rgb(180, 180, 190)',
+        color: 'var(--wks-text-tertiary)',
         textAlign: 'left',
         height: 'auto',
         lineHeight: '1.4',
         transition: 'none',
       }}
       onMouseEnter={(e) => {
-        (e.currentTarget as HTMLElement).style.backgroundColor = 'rgb(45, 48, 60)';
-        (e.currentTarget as HTMLElement).style.color = 'rgb(220, 220, 235)';
+        (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--wks-bg-selected)';
+        (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-primary)';
       }}
       onMouseLeave={(e) => {
         (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent';
-        (e.currentTarget as HTMLElement).style.color = 'rgb(180, 180, 190)';
+        (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-tertiary)';
       }}
     >
       {label}

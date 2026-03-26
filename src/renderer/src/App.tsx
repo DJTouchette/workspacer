@@ -10,9 +10,11 @@ import { useTabManager, defaultTabs } from './hooks/useTabManager';
 import type { PaneType } from './types/pane';
 import { useKeyboardNav } from './hooks/useKeyboardNav';
 import { useConfig } from './hooks/useConfig';
+import { useTheme } from './hooks/useTheme';
 
 function App() {
   const { config } = useConfig();
+  useTheme();
   const {
     tabs,
     activeTabId,
@@ -338,8 +340,8 @@ function App() {
           position: 'fixed',
           bottom: '16px',
           right: '16px',
-          backgroundColor: 'rgb(80, 120, 200)',
-          color: '#fff',
+          backgroundColor: 'var(--wks-accent)',
+          color: 'var(--wks-text-on-accent)',
           fontSize: '0.65rem',
           fontWeight: 700,
           fontFamily: 'monospace',

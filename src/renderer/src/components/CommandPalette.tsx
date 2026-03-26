@@ -64,7 +64,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, onClose,
         left: 0,
         right: 0,
         bottom: 0,
-        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        backgroundColor: 'var(--wks-overlay)',
         display: 'flex',
         justifyContent: 'center',
         paddingTop: '15vh',
@@ -74,15 +74,15 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, onClose,
     >
       <div
         style={{
-          backgroundColor: 'rgb(28, 28, 32)',
-          border: '1px solid rgb(55, 55, 60)',
+          backgroundColor: 'var(--wks-bg-raised)',
+          border: '1px solid var(--wks-border-input)',
           borderRadius: '8px',
           width: '400px',
           maxHeight: '400px',
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
-          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5)',
+          boxShadow: '0 8px 32px var(--wks-shadow)',
         }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -101,22 +101,22 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, onClose,
               padding: '0 12px',
               fontSize: '0.8rem',
               fontFamily: 'inherit',
-              backgroundColor: 'rgb(20, 20, 24)',
-              color: 'rgb(220, 220, 235)',
-              border: '1px solid rgb(60, 60, 70)',
+              backgroundColor: 'var(--wks-bg-input)',
+              color: 'var(--wks-text-primary)',
+              border: '1px solid var(--wks-border-input)',
               borderRadius: '5px',
               outline: 'none',
               boxSizing: 'border-box',
             }}
-            onFocus={(e) => { e.currentTarget.style.borderColor = 'rgb(80, 120, 200)'; }}
-            onBlur={(e) => { e.currentTarget.style.borderColor = 'rgb(60, 60, 70)'; }}
+            onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--wks-accent)'; }}
+            onBlur={(e) => { e.currentTarget.style.borderColor = 'var(--wks-border-input)'; }}
           />
         </div>
 
         {/* Results */}
         <div style={{ overflow: 'auto', padding: '0 4px 8px' }}>
           {filtered.length === 0 && (
-            <div style={{ padding: '12px', fontSize: '0.7rem', color: 'rgb(100, 100, 115)', textAlign: 'center' }}>
+            <div style={{ padding: '12px', fontSize: '0.7rem', color: 'var(--wks-text-faint)', textAlign: 'center' }}>
               No apps found
             </div>
           )}
@@ -135,7 +135,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, onClose,
                 margin: '0 4px',
                 borderRadius: '5px',
                 cursor: 'pointer',
-                backgroundColor: i === selectedIndex ? 'rgb(45, 48, 60)' : 'transparent',
+                backgroundColor: i === selectedIndex ? 'var(--wks-bg-selected)' : 'transparent',
               }}
               onMouseEnter={() => setSelectedIndex(i)}
             >
@@ -143,12 +143,12 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, onClose,
                 {app.icon || '\u{1F310}'}
               </span>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: '0.75rem', color: 'rgb(220, 220, 235)', fontWeight: 500 }}>
+                <div style={{ fontSize: '0.75rem', color: 'var(--wks-text-primary)', fontWeight: 500 }}>
                   {app.name}
                 </div>
                 <div style={{
                   fontSize: '0.6rem',
-                  color: 'rgb(100, 100, 115)',
+                  color: 'var(--wks-text-faint)',
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
                   whiteSpace: 'nowrap',

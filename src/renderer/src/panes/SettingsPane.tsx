@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useRef } from 'react';
 import { useConfig, AppEntry } from '../hooks/useConfig';
+import { themes } from '../themes';
 
 interface SettingsPaneProps {
   title: string;
@@ -138,17 +139,33 @@ const SettingsPane: React.FC<SettingsPaneProps> = ({ title }) => {
         display: 'flex',
         flexDirection: 'column',
         height: '100%',
-        backgroundColor: 'rgb(24, 24, 27)',
-        color: 'rgb(200, 200, 210)',
+        backgroundColor: 'var(--wks-bg-base)',
+        color: 'var(--wks-text-secondary)',
         fontFamily: 'Inter, system-ui, sans-serif',
         fontSize: '12px',
         overflow: 'auto',
         padding: '16px 24px',
       }}
     >
-      <h2 style={{ fontSize: '0.9rem', fontWeight: 600, margin: '0 0 16px 0', color: 'rgb(220, 220, 235)' }}>
+      <h2 style={{ fontSize: '0.9rem', fontWeight: 600, margin: '0 0 16px 0', color: 'var(--wks-text-primary)' }}>
         Settings
       </h2>
+
+      {/* Appearance section */}
+      <Section title="Appearance">
+        <Row label="Theme">
+          <div style={{ display: 'flex', gap: '4px' }}>
+            {Object.keys(themes).map((themeName) => (
+              <ModeButton
+                key={themeName}
+                label={themeName.charAt(0).toUpperCase() + themeName.slice(1)}
+                active={config.ui.theme === themeName}
+                onClick={() => save({ ui: { ...config.ui, theme: themeName } })}
+              />
+            ))}
+          </div>
+        </Row>
+      </Section>
 
       {/* Keybindings section */}
       <Section title="Keybindings">
@@ -187,9 +204,9 @@ const SettingsPane: React.FC<SettingsPaneProps> = ({ title }) => {
                   padding: '0 8px',
                   fontSize: '11px',
                   fontFamily: 'monospace',
-                  backgroundColor: capturingLeader ? 'rgb(40, 50, 70)' : 'rgb(18, 18, 20)',
-                  color: capturingLeader ? 'rgb(147, 197, 253)' : 'rgb(200, 200, 210)',
-                  border: capturingLeader ? '1px solid rgb(80, 120, 200)' : '1px solid rgb(50, 50, 55)',
+                  backgroundColor: capturingLeader ? 'var(--wks-bg-selected)' : 'var(--wks-bg-input)',
+                  color: capturingLeader ? 'var(--wks-accent-text)' : 'var(--wks-text-secondary)',
+                  border: capturingLeader ? '1px solid var(--wks-accent)' : '1px solid var(--wks-border)',
                   borderRadius: '3px',
                   outline: 'none',
                   cursor: 'pointer',
@@ -201,7 +218,7 @@ const SettingsPane: React.FC<SettingsPaneProps> = ({ title }) => {
 
         {/* Binding reference */}
         <div style={{ marginTop: '12px' }}>
-          <div style={{ fontSize: '0.65rem', color: 'rgb(120, 120, 135)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '6px' }}>
+          <div style={{ fontSize: '0.65rem', color: 'var(--wks-text-faint)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '6px' }}>
             {mode === 'vim' ? 'Vim Bindings' : 'Default Bindings'}
           </div>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.7rem' }}>
@@ -213,7 +230,7 @@ const SettingsPane: React.FC<SettingsPaneProps> = ({ title }) => {
                 if (!desc) {
                   return (
                     <tr key={i}>
-                      <td colSpan={2} style={{ padding: '4px 0 2px', color: 'rgb(120, 120, 135)', fontSize: '0.6rem', fontWeight: 600 }}>
+                      <td colSpan={2} style={{ padding: '4px 0 2px', color: 'var(--wks-text-faint)', fontSize: '0.6rem', fontWeight: 600 }}>
                         {key}
                       </td>
                     </tr>
@@ -221,10 +238,10 @@ const SettingsPane: React.FC<SettingsPaneProps> = ({ title }) => {
                 }
                 return (
                   <tr key={i}>
-                    <td style={{ padding: '2px 16px 2px 0', color: 'rgb(170, 170, 185)', fontFamily: 'monospace', fontSize: '0.65rem', whiteSpace: 'nowrap' }}>
+                    <td style={{ padding: '2px 16px 2px 0', color: 'var(--wks-text-tertiary)', fontFamily: 'monospace', fontSize: '0.65rem', whiteSpace: 'nowrap' }}>
                       {key}
                     </td>
-                    <td style={{ padding: '2px 0', color: 'rgb(140, 140, 155)' }}>
+                    <td style={{ padding: '2px 0', color: 'var(--wks-text-muted)' }}>
                       {desc}
                     </td>
                   </tr>
@@ -254,9 +271,9 @@ const SettingsPane: React.FC<SettingsPaneProps> = ({ title }) => {
               height: '24px',
               padding: '0 8px',
               fontSize: '0.65rem',
-              backgroundColor: 'rgb(18, 18, 20)',
-              color: 'rgb(200, 200, 210)',
-              border: '1px solid rgb(50, 50, 55)',
+              backgroundColor: 'var(--wks-bg-input)',
+              color: 'var(--wks-text-secondary)',
+              border: '1px solid var(--wks-border)',
               borderRadius: '3px',
               outline: 'none',
               fontFamily: 'monospace',
@@ -264,7 +281,7 @@ const SettingsPane: React.FC<SettingsPaneProps> = ({ title }) => {
             }}
           />
         </Row>
-        <div style={{ fontSize: '0.55rem', color: 'rgb(80, 80, 95)' }}>
+        <div style={{ fontSize: '0.55rem', color: 'var(--wks-text-disabled)' }}>
           Browser panes hibernate after being out of view. 0 = disabled.
         </div>
       </Section>
@@ -281,9 +298,9 @@ const SettingsPane: React.FC<SettingsPaneProps> = ({ title }) => {
                   flexDirection: 'column',
                   gap: '4px',
                   padding: '8px',
-                  backgroundColor: 'rgb(30, 30, 35)',
+                  backgroundColor: 'var(--wks-bg-surface)',
                   borderRadius: '4px',
-                  border: '1px solid rgb(60, 60, 70)',
+                  border: '1px solid var(--wks-border-input)',
                 }}>
                   <div style={{ display: 'flex', gap: '4px' }}>
                     <input
@@ -322,15 +339,15 @@ const SettingsPane: React.FC<SettingsPaneProps> = ({ title }) => {
                     padding: '4px 8px',
                     borderRadius: '4px',
                   }}
-                  onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'rgb(32, 32, 38)'; }}
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--wks-bg-hover)'; }}
                   onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'; }}
                 >
                   <span style={{ fontSize: '0.85rem', width: '20px', textAlign: 'center' }}>
                     {app.icon || '\u{1F310}'}
                   </span>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: '0.7rem', color: 'rgb(200, 200, 210)', fontWeight: 500 }}>{app.name}</div>
-                    <div style={{ fontSize: '0.6rem', color: 'rgb(100, 100, 115)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{app.url}</div>
+                    <div style={{ fontSize: '0.7rem', color: 'var(--wks-text-secondary)', fontWeight: 500 }}>{app.name}</div>
+                    <div style={{ fontSize: '0.6rem', color: 'var(--wks-text-faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{app.url}</div>
                   </div>
                   <SmallButton label="Edit" onClick={() => handleEditApp(i)} />
                   <SmallButton label="\u2715" onClick={() => handleDeleteApp(i)} danger />
@@ -346,9 +363,9 @@ const SettingsPane: React.FC<SettingsPaneProps> = ({ title }) => {
               fontSize: '0.65rem',
               fontFamily: 'inherit',
               fontWeight: 500,
-              backgroundColor: 'rgb(35, 35, 40)',
-              color: 'rgb(160, 160, 175)',
-              border: '1px dashed rgb(55, 55, 65)',
+              backgroundColor: 'var(--wks-bg-elevated)',
+              color: 'var(--wks-text-muted)',
+              border: '1px dashed var(--wks-border-input)',
               borderRadius: '4px',
               cursor: 'pointer',
               height: 'auto',
@@ -356,8 +373,8 @@ const SettingsPane: React.FC<SettingsPaneProps> = ({ title }) => {
               margin: '4px 0 0',
               width: '100%',
             }}
-            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.borderColor = 'rgb(80, 120, 200)'; (e.currentTarget as HTMLElement).style.color = 'rgb(200, 200, 210)'; }}
-            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = 'rgb(55, 55, 65)'; (e.currentTarget as HTMLElement).style.color = 'rgb(160, 160, 175)'; }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-accent)'; (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-secondary)'; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-border-input)'; (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-muted)'; }}
           >
             + Add App
           </button>
@@ -371,9 +388,9 @@ const inputStyle: React.CSSProperties = {
   height: '24px',
   padding: '0 8px',
   fontSize: '0.65rem',
-  backgroundColor: 'rgb(18, 18, 20)',
-  color: 'rgb(200, 200, 210)',
-  border: '1px solid rgb(50, 50, 55)',
+  backgroundColor: 'var(--wks-bg-input)',
+  color: 'var(--wks-text-secondary)',
+  border: '1px solid var(--wks-border)',
   borderRadius: '3px',
   outline: 'none',
   fontFamily: 'inherit',
@@ -389,9 +406,9 @@ function SmallButton({ label, onClick, primary, danger }: { label: string; onCli
         fontSize: '0.6rem',
         fontFamily: 'inherit',
         fontWeight: 500,
-        backgroundColor: primary ? 'rgb(80, 120, 200)' : 'transparent',
-        color: danger ? 'rgb(248, 113, 113)' : primary ? '#fff' : 'rgb(140, 140, 155)',
-        border: primary ? '1px solid rgb(80, 120, 200)' : '1px solid rgb(50, 50, 55)',
+        backgroundColor: primary ? 'var(--wks-accent)' : 'transparent',
+        color: danger ? 'var(--wks-error)' : primary ? '#fff' : 'var(--wks-text-muted)',
+        border: primary ? '1px solid var(--wks-accent)' : '1px solid var(--wks-border)',
         borderRadius: '3px',
         cursor: 'pointer',
         height: 'auto',
@@ -411,10 +428,10 @@ function Section({ title, children }: { title: string; children: React.ReactNode
       <div style={{
         fontSize: '0.7rem',
         fontWeight: 600,
-        color: 'rgb(180, 180, 195)',
+        color: 'var(--wks-text-tertiary)',
         marginBottom: '8px',
         paddingBottom: '4px',
-        borderBottom: '1px solid rgb(40, 40, 45)',
+        borderBottom: '1px solid var(--wks-border)',
       }}>
         {title}
       </div>
@@ -428,7 +445,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-      <span style={{ fontSize: '0.7rem', color: 'rgb(160, 160, 175)' }}>{label}</span>
+      <span style={{ fontSize: '0.7rem', color: 'var(--wks-text-muted)' }}>{label}</span>
       {children}
     </div>
   );
@@ -443,9 +460,9 @@ function ModeButton({ label, active, onClick }: { label: string; active: boolean
         fontSize: '0.65rem',
         fontFamily: 'inherit',
         fontWeight: active ? 600 : 400,
-        backgroundColor: active ? 'rgb(80, 120, 200)' : 'rgb(35, 35, 40)',
-        color: active ? '#fff' : 'rgb(160, 160, 175)',
-        border: active ? '1px solid rgb(80, 120, 200)' : '1px solid rgb(50, 50, 55)',
+        backgroundColor: active ? 'var(--wks-accent)' : 'var(--wks-bg-elevated)',
+        color: active ? '#fff' : 'var(--wks-text-muted)',
+        border: active ? '1px solid var(--wks-accent)' : '1px solid var(--wks-border)',
         borderRadius: '3px',
         cursor: 'pointer',
         height: '24px',

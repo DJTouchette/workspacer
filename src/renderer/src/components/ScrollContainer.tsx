@@ -290,11 +290,11 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
                     borderRadius: '8px',
                     overflow: 'hidden',
                     border: isActiveTab
-                      ? '1px solid rgb(80, 120, 200)'
-                      : '1px solid rgb(50, 50, 55)',
-                    boxShadow: isActiveTab ? '0 0 12px rgba(80, 120, 200, 0.15)' : 'none',
+                      ? '1px solid var(--wks-accent)'
+                      : '1px solid var(--wks-border)',
+                    boxShadow: isActiveTab ? '0 0 12px var(--wks-accent-glow)' : 'none',
                     position: 'relative',
-                    backgroundColor: 'rgb(24, 24, 27)',
+                    backgroundColor: 'var(--wks-bg-base)',
                   }}
                   onClick={() => onTabFocus(tab.id)}
                 >

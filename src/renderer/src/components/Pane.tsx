@@ -131,10 +131,10 @@ const Pane: React.FC<PaneProps> = ({
         overflow: 'hidden',
         margin: '4px 8px',
         border: isActive
-          ? '1px solid rgb(80, 120, 200)'
-          : '1px solid rgb(50, 50, 55)',
+          ? '1px solid var(--wks-accent)'
+          : '1px solid var(--wks-border)',
         boxShadow: isActive
-          ? '0 0 12px rgba(80, 120, 200, 0.15)'
+          ? '0 0 12px var(--wks-accent-glow)'
           : 'none',
         transition: 'none',
         flexShrink: 0,
@@ -155,9 +155,9 @@ const Pane: React.FC<PaneProps> = ({
           justifyContent: 'space-between',
           padding: '0 8px',
           backgroundColor: isActive
-            ? 'rgb(40, 42, 54)'
-            : 'rgb(32, 32, 36)',
-          borderBottom: '1px solid rgb(50, 50, 55)',
+            ? 'var(--wks-bg-header)'
+            : 'var(--wks-bg-elevated)',
+          borderBottom: '1px solid var(--wks-border)',
           cursor: onMove ? 'grab' : 'default',
           userSelect: 'none',
           position: 'relative',
@@ -177,10 +177,10 @@ const Pane: React.FC<PaneProps> = ({
               onKeyDown={handleRenameKeyDown}
               style={{
                 fontSize: '0.6rem',
-                color: 'rgb(220, 220, 235)',
+                color: 'var(--wks-text-primary)',
                 fontWeight: 500,
-                backgroundColor: 'rgb(20, 20, 24)',
-                border: '1px solid rgb(80, 120, 200)',
+                backgroundColor: 'var(--wks-bg-input)',
+                border: '1px solid var(--wks-accent)',
                 borderRadius: '2px',
                 padding: '0 4px',
                 height: '16px',
@@ -194,7 +194,7 @@ const Pane: React.FC<PaneProps> = ({
               onDoubleClick={handleStartRename}
               style={{
                 fontSize: '0.6rem',
-                color: 'rgb(200, 200, 210)',
+                color: 'var(--wks-text-secondary)',
                 fontWeight: 500,
                 cursor: onRename ? 'text' : 'default',
                 overflow: 'hidden',
@@ -215,7 +215,7 @@ const Pane: React.FC<PaneProps> = ({
           style={{
             background: 'none',
             border: 'none',
-            color: 'rgb(140, 140, 150)',
+            color: 'var(--wks-text-muted)',
             cursor: 'pointer',
             fontSize: '0.85rem',
             padding: '0 4px',
@@ -229,12 +229,12 @@ const Pane: React.FC<PaneProps> = ({
             justifyContent: 'center',
           }}
           onMouseEnter={(e) => {
-            (e.target as HTMLElement).style.backgroundColor = 'rgb(60, 60, 70)';
-            (e.target as HTMLElement).style.color = 'rgb(220, 220, 230)';
+            (e.target as HTMLElement).style.backgroundColor = 'var(--wks-bg-hover)';
+            (e.target as HTMLElement).style.color = 'var(--wks-text-primary)';
           }}
           onMouseLeave={(e) => {
             (e.target as HTMLElement).style.backgroundColor = 'transparent';
-            (e.target as HTMLElement).style.color = 'rgb(140, 140, 150)';
+            (e.target as HTMLElement).style.color = 'var(--wks-text-muted)';
           }}
           title="Close pane"
         >
@@ -247,7 +247,7 @@ const Pane: React.FC<PaneProps> = ({
         style={{
           flex: 1,
           overflow: 'hidden',
-          backgroundColor: 'rgb(30, 30, 33)',
+          backgroundColor: 'var(--wks-bg-surface)',
           isolation: 'isolate',
           position: 'relative',
           zIndex: 0,

@@ -24,7 +24,7 @@ const ScrollIndicator: React.FC<ScrollIndicatorProps> = ({
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: 'rgb(20, 20, 24)',
+        backgroundColor: 'var(--wks-bg-base)',
         zIndex: 100,
         gap: '6px',
         padding: '0 16px',
@@ -41,8 +41,8 @@ const ScrollIndicator: React.FC<ScrollIndicatorProps> = ({
               height: '4px',
               borderRadius: '2px',
               backgroundColor: isActive
-                ? 'rgb(80, 120, 200)'
-                : 'rgb(60, 60, 70)',
+                ? 'var(--wks-accent)'
+                : 'var(--wks-border-input)',
               cursor: 'pointer',
               transition: 'none',
             }}
