@@ -7,31 +7,38 @@ import * as crypto from 'crypto';
 // Prebuilt binaries — no Visual Studio Build Tools needed on Windows
 import * as pty from '@homebridge/node-pty-prebuilt-multiarch';
 
-/** Find claude CLI path on Windows by scanning nvm directories */
-function findClaudePath(): string | null {
+/** Find claude CLI node.exe + cli.js on Windows by scanning nvm directories */
+function findClaudeNodeArgs(): { node: string; script: string } | null {
   if (process.platform !== 'win32') return null;
   const nvmDir = path.join(os.homedir(), 'AppData', 'Local', 'nvm');
   try {
     const versions = fs.readdirSync(nvmDir)
       .filter(d => d.startsWith('v'))
-      .sort((a, b) => b.localeCompare(a, undefined, { numeric: true })); // newest first
+      .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
     for (const v of versions) {
-      for (const name of ['claude.cmd', 'claude-code.cmd']) {
-        const p = path.join(nvmDir, v, name);
-        if (fs.existsSync(p)) return p;
+      const vDir = path.join(nvmDir, v);
+      // Check for claude CLI script
+      for (const pkg of ['@anthropic-ai/claude-code', 'claude-code']) {
+        const script = path.join(vDir, 'node_modules', pkg, 'cli.js');
+        if (fs.existsSync(script)) {
+          const node = path.join(vDir, 'node.exe');
+          if (fs.existsSync(node)) {
+            return { node, script };
+          }
+        }
       }
     }
   } catch {}
   return null;
 }
 
-let _cachedClaudePath: string | null | undefined;
-function getClaudePath(): string | null {
-  if (_cachedClaudePath === undefined) {
-    _cachedClaudePath = findClaudePath();
-    if (_cachedClaudePath) console.log(`[TerminalService] found claude: ${_cachedClaudePath}`);
+let _cachedClaudeArgs: { node: string; script: string } | null | undefined;
+function getClaudeArgs(): { node: string; script: string } | null {
+  if (_cachedClaudeArgs === undefined) {
+    _cachedClaudeArgs = findClaudeNodeArgs();
+    if (_cachedClaudeArgs) console.log(`[TerminalService] found claude: ${_cachedClaudeArgs.node} ${_cachedClaudeArgs.script}`);
   }
-  return _cachedClaudePath;
+  return _cachedClaudeArgs;
 }
 
 import { createHeadlessSession, feedData, resizeHeadless, destroyHeadlessSession, detectAmbientState } from './headlessTerminalManager';
@@ -125,11 +132,17 @@ class TerminalService {
     let spawnArgs: string[];
     if (isClaudeSession) {
       if (process.platform === 'win32') {
-        // Spawn claude via cmd.exe with resolved path — avoids PowerShell
-        // TUI interference and doesn't rely on PATH
-        const claudePath = getClaudePath();
-        spawnShell = 'cmd.exe';
-        spawnArgs = ['/c', claudePath || 'claude'];
+        // Spawn node directly with cli.js — no cmd.exe wrapper that
+        // interferes with TUI escape sequences
+        const args = getClaudeArgs();
+        if (args) {
+          spawnShell = args.node;
+          spawnArgs = [args.script];
+        } else {
+          // Fallback: try cmd.exe /c claude
+          spawnShell = 'cmd.exe';
+          spawnArgs = ['/c', 'claude'];
+        }
       } else {
         spawnShell = 'claude';
         spawnArgs = [];
