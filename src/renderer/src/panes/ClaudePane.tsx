@@ -114,24 +114,312 @@ const ToolCallItem: React.FC<{ tc: ToolCall }> = ({ tc }) => {
   );
 };
 
+// ── Lightweight Markdown Renderer ──
+
+/** Render inline markdown: **bold**, *italic*, `code`, [links](url) */
+function renderInlineMarkdown(text: string): React.ReactNode[] {
+  const nodes: React.ReactNode[] = [];
+  // Pattern: **bold**, *italic*, `code`, [text](url)
+  const regex = /(\*\*(.+?)\*\*|\*(.+?)\*|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\))/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  let key = 0;
+
+  while ((match = regex.exec(text)) !== null) {
+    // Push text before this match
+    if (match.index > lastIndex) {
+      nodes.push(text.slice(lastIndex, match.index));
+    }
+
+    if (match[2]) {
+      // **bold**
+      nodes.push(<strong key={key++} style={{ color: 'rgb(230, 230, 245)', fontWeight: 700 }}>{match[2]}</strong>);
+    } else if (match[3]) {
+      // *italic*
+      nodes.push(<em key={key++} style={{ color: 'rgb(210, 210, 230)', fontStyle: 'italic' }}>{match[3]}</em>);
+    } else if (match[4]) {
+      // `inline code`
+      nodes.push(
+        <code key={key++} style={{
+          backgroundColor: 'rgba(255, 255, 255, 0.07)',
+          padding: '1px 4px',
+          borderRadius: 3,
+          fontSize: '0.92em',
+          fontFamily: "'SF Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace",
+          color: 'rgb(180, 210, 255)',
+        }}>
+          {match[4]}
+        </code>
+      );
+    } else if (match[5] && match[6]) {
+      // [link text](url)
+      nodes.push(
+        <span key={key++} style={{ color: 'rgb(96, 165, 250)', textDecoration: 'underline', cursor: 'default' }} title={match[6]}>
+          {match[5]}
+        </span>
+      );
+    }
+
+    lastIndex = match.index + match[0].length;
+  }
+
+  // Trailing text
+  if (lastIndex < text.length) {
+    nodes.push(text.slice(lastIndex));
+  }
+
+  return nodes.length > 0 ? nodes : [text];
+}
+
+/** Parse a markdown string into structured blocks */
+function parseMarkdownBlocks(text: string): React.ReactNode[] {
+  if (!text) return [];
+
+  const lines = text.split('\n');
+  const blocks: React.ReactNode[] = [];
+  let key = 0;
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // Fenced code block: ```lang ... ```
+    if (line.trimStart().startsWith('```')) {
+      const lang = line.trimStart().slice(3).trim();
+      const codeLines: string[] = [];
+      i++;
+      while (i < lines.length && !lines[i].trimStart().startsWith('```')) {
+        codeLines.push(lines[i]);
+        i++;
+      }
+      i++; // skip closing ```
+      blocks.push(
+        <div key={key++} style={{ margin: '6px 0' }}>
+          {lang && (
+            <div style={{
+              fontSize: '0.55rem',
+              color: 'rgb(100, 110, 140)',
+              backgroundColor: 'rgb(22, 24, 32)',
+              padding: '2px 8px',
+              borderRadius: '4px 4px 0 0',
+              borderBottom: '1px solid rgb(35, 38, 50)',
+              fontFamily: "'SF Mono', Consolas, monospace",
+            }}>
+              {lang}
+            </div>
+          )}
+          <pre style={{
+            margin: 0,
+            padding: '8px 10px',
+            backgroundColor: 'rgb(16, 18, 24)',
+            borderRadius: lang ? '0 0 4px 4px' : '4px',
+            fontSize: '0.6rem',
+            lineHeight: 1.5,
+            color: 'rgb(190, 200, 220)',
+            fontFamily: "'SF Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace",
+            overflowX: 'auto',
+            whiteSpace: 'pre',
+            border: '1px solid rgb(35, 38, 50)',
+            borderTop: lang ? 'none' : undefined,
+          }}>
+            {codeLines.join('\n')}
+          </pre>
+        </div>
+      );
+      continue;
+    }
+
+    // Heading: # ## ### etc.
+    const headingMatch = line.match(/^(#{1,4})\s+(.+)$/);
+    if (headingMatch) {
+      const level = headingMatch[1].length;
+      const sizes: Record<number, string> = { 1: '0.85rem', 2: '0.78rem', 3: '0.72rem', 4: '0.68rem' };
+      blocks.push(
+        <div key={key++} style={{
+          fontSize: sizes[level] ?? '0.68rem',
+          fontWeight: 700,
+          color: 'rgb(230, 230, 245)',
+          margin: `${level === 1 ? 10 : 6}px 0 4px 0`,
+          paddingBottom: level <= 2 ? 3 : 0,
+          borderBottom: level <= 2 ? '1px solid rgb(40, 42, 55)' : 'none',
+        }}>
+          {renderInlineMarkdown(headingMatch[2])}
+        </div>
+      );
+      i++;
+      continue;
+    }
+
+    // Unordered list item: - or * at start
+    if (/^\s*[-*]\s+/.test(line)) {
+      const listItems: { indent: number; content: string }[] = [];
+      while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) {
+        const m = lines[i].match(/^(\s*)[-*]\s+(.+)$/);
+        if (m) {
+          listItems.push({ indent: m[1].length, content: m[2] });
+        }
+        i++;
+      }
+      blocks.push(
+        <div key={key++} style={{ margin: '4px 0' }}>
+          {listItems.map((item, idx) => (
+            <div key={idx} style={{
+              display: 'flex',
+              gap: 6,
+              paddingLeft: Math.min(item.indent, 12) + 4,
+              marginBottom: 2,
+            }}>
+              <span style={{ color: 'rgb(96, 165, 250)', flexShrink: 0, lineHeight: 1.5 }}>{'\u2022'}</span>
+              <span style={{ lineHeight: 1.5 }}>{renderInlineMarkdown(item.content)}</span>
+            </div>
+          ))}
+        </div>
+      );
+      continue;
+    }
+
+    // Ordered list: 1. 2. etc.
+    if (/^\s*\d+[.)]\s+/.test(line)) {
+      const listItems: { num: string; content: string }[] = [];
+      while (i < lines.length && /^\s*\d+[.)]\s+/.test(lines[i])) {
+        const m = lines[i].match(/^\s*(\d+)[.)]\s+(.+)$/);
+        if (m) {
+          listItems.push({ num: m[1], content: m[2] });
+        }
+        i++;
+      }
+      blocks.push(
+        <div key={key++} style={{ margin: '4px 0' }}>
+          {listItems.map((item, idx) => (
+            <div key={idx} style={{
+              display: 'flex',
+              gap: 6,
+              paddingLeft: 4,
+              marginBottom: 2,
+            }}>
+              <span style={{ color: 'rgb(100, 110, 140)', flexShrink: 0, minWidth: 14, textAlign: 'right', lineHeight: 1.5 }}>{item.num}.</span>
+              <span style={{ lineHeight: 1.5 }}>{renderInlineMarkdown(item.content)}</span>
+            </div>
+          ))}
+        </div>
+      );
+      continue;
+    }
+
+    // Horizontal rule: --- or ***
+    if (/^[-*_]{3,}\s*$/.test(line.trim())) {
+      blocks.push(
+        <hr key={key++} style={{
+          border: 'none',
+          borderTop: '1px solid rgb(45, 48, 60)',
+          margin: '8px 0',
+        }} />
+      );
+      i++;
+      continue;
+    }
+
+    // Blockquote: > text
+    if (line.startsWith('>')) {
+      const quoteLines: string[] = [];
+      while (i < lines.length && lines[i].startsWith('>')) {
+        quoteLines.push(lines[i].replace(/^>\s?/, ''));
+        i++;
+      }
+      blocks.push(
+        <div key={key++} style={{
+          borderLeft: '2px solid rgb(80, 90, 120)',
+          paddingLeft: 8,
+          margin: '4px 0',
+          color: 'rgb(160, 165, 185)',
+          fontStyle: 'italic',
+          lineHeight: 1.5,
+        }}>
+          {renderInlineMarkdown(quoteLines.join(' '))}
+        </div>
+      );
+      continue;
+    }
+
+    // Empty line → spacing
+    if (line.trim() === '') {
+      blocks.push(<div key={key++} style={{ height: 4 }} />);
+      i++;
+      continue;
+    }
+
+    // Regular paragraph — collect consecutive non-special lines
+    const paraLines: string[] = [];
+    while (
+      i < lines.length &&
+      lines[i].trim() !== '' &&
+      !lines[i].trimStart().startsWith('```') &&
+      !lines[i].match(/^#{1,4}\s+/) &&
+      !/^\s*[-*]\s+/.test(lines[i]) &&
+      !/^\s*\d+[.)]\s+/.test(lines[i]) &&
+      !lines[i].startsWith('>') &&
+      !/^[-*_]{3,}\s*$/.test(lines[i].trim())
+    ) {
+      paraLines.push(lines[i]);
+      i++;
+    }
+
+    if (paraLines.length > 0) {
+      blocks.push(
+        <p key={key++} style={{ margin: '3px 0', lineHeight: 1.55, wordBreak: 'break-word' }}>
+          {renderInlineMarkdown(paraLines.join('\n'))}
+        </p>
+      );
+    }
+  }
+
+  return blocks;
+}
+
 const ConversationMessage: React.FC<{ turn: ConversationTurn }> = ({ turn }) => {
   const isUser = turn.role === 'user';
   return (
     <div style={{
-      marginBottom: 8,
-      padding: '6px 10px',
+      marginBottom: 10,
+      padding: '8px 12px',
       borderRadius: 6,
-      backgroundColor: isUser ? 'rgba(80, 120, 200, 0.12)' : 'rgba(255, 255, 255, 0.03)',
-      borderLeft: isUser ? '2px solid rgb(80, 120, 200)' : '2px solid rgb(60, 60, 80)',
+      backgroundColor: isUser ? 'rgba(80, 120, 200, 0.08)' : 'rgba(255, 255, 255, 0.02)',
+      borderLeft: isUser ? '2px solid rgb(80, 120, 200)' : '2px solid rgb(50, 55, 75)',
     }}>
-      <div style={{ fontSize: '0.55rem', color: isUser ? 'rgb(120, 160, 240)' : 'rgb(100, 100, 120)', marginBottom: 2, fontWeight: 600 }}>
+      <div style={{
+        fontSize: '0.55rem',
+        color: isUser ? 'rgb(120, 160, 240)' : 'rgb(110, 115, 140)',
+        marginBottom: 4,
+        fontWeight: 600,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+      }}>
+        <span style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 16,
+          height: 16,
+          borderRadius: '50%',
+          backgroundColor: isUser ? 'rgba(80, 120, 200, 0.2)' : 'rgba(140, 100, 220, 0.15)',
+          fontSize: '0.5rem',
+        }}>
+          {isUser ? 'U' : 'C'}
+        </span>
         {isUser ? 'You' : 'Claude'}
-        <span style={{ marginLeft: 8, fontWeight: 400, color: 'rgb(80, 80, 100)' }}>
+        <span style={{ fontWeight: 400, color: 'rgb(70, 72, 90)' }}>
           {new Date(turn.timestamp).toLocaleTimeString()}
         </span>
       </div>
-      <div style={{ fontSize: '0.65rem', color: 'rgb(200, 200, 220)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-        {turn.content || '(empty)'}
+      <div style={{
+        fontSize: '0.65rem',
+        color: 'rgb(200, 205, 225)',
+      }}>
+        {isUser
+          ? <p style={{ margin: 0, lineHeight: 1.55, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{turn.content || '(empty)'}</p>
+          : parseMarkdownBlocks(turn.content || '(empty)')
+        }
       </div>
     </div>
   );
