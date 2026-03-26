@@ -1076,6 +1076,27 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
           </span>
         )}
 
+        {isStreaming && (
+          <button
+            onClick={() => write('\x1b')}
+            style={{
+              fontSize: '0.55rem',
+              fontWeight: 600,
+              padding: '1px 8px',
+              border: `1px solid ${colors.error}`,
+              borderRadius: 4,
+              backgroundColor: 'transparent',
+              color: colors.error,
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+              lineHeight: '1.4',
+            }}
+            title="Cancel current task (Esc)"
+          >
+            Cancel
+          </button>
+        )}
+
         <div style={{ flex: 1 }} />
 
         {/* View mode toggle */}
