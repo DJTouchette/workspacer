@@ -1140,16 +1140,18 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
 
   // Optimistic user messages (shown immediately before JSONL catches up)
   const [optimisticMessages, setOptimisticMessages] = useState<ConversationTurn[]>([]);
+  const [optimisticLoading, setOptimisticLoading] = useState(false);
 
   // Handle send — write text then Enter to Claude's TUI input
   const handleSend = useCallback(() => {
     if (inputValue.trim()) {
-      // Show message immediately in GUI
+      // Show message immediately and set loading state
       setOptimisticMessages(prev => [...prev, {
         role: 'user',
         content: inputValue.trim(),
         timestamp: Date.now(),
       }]);
+      setOptimisticLoading(true);
       // Send text and Enter separately so the TUI processes the input
       write(inputValue);
       setTimeout(() => write('\r'), 50);
@@ -1157,13 +1159,17 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
     }
   }, [inputValue, write]);
 
-  // Clear optimistic messages once session conversation catches up
+  // Clear optimistic state once session conversation catches up
   useEffect(() => {
     if (optimisticMessages.length > 0 && session?.conversation) {
       const sessionTexts = new Set(session.conversation.filter(t => t.role === 'user').map(t => t.content));
       setOptimisticMessages(prev => prev.filter(m => !sessionTexts.has(m.content)));
     }
-  }, [session?.conversation, optimisticMessages.length]);
+    // Clear optimistic loading when server reports idle or we get a response
+    if (optimisticLoading && (session?.ambientState === 'idle' || session?.ambientState === 'streaming')) {
+      setOptimisticLoading(false);
+    }
+  }, [session?.conversation, session?.ambientState, optimisticMessages.length, optimisticLoading]);
 
   // ── Derived data ──
 
@@ -1177,7 +1183,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
   const fileChanges = session?.fileChanges ?? [];
   const subagents = session?.subagents ?? [];
   const pendingApproval = session?.pendingApproval ?? null;
-  const serverStreaming = session?.ambientState === 'thinking' || session?.ambientState === 'streaming';
+  const serverStreaming = optimisticLoading || session?.ambientState === 'thinking' || session?.ambientState === 'streaming';
   // If user cancelled, suppress streaming UI until a new activity cycle begins
   const isStreaming = serverStreaming && (session?.lastActivity ?? 0) > cancelledAt;
 

@@ -179,12 +179,13 @@ class ClaudeSessionStore {
         break;
 
       case 'UserPromptSubmit':
-        session.ambientState = 'thinking';
-        // User message comes from JSONL transcript
+        session.ambientState = 'streaming';
+        // Prevent poller from overriding until Stop
+        this.hookStateTimestamp.set(sessionId, Date.now() + 600000);
         break;
 
       case 'PreToolUse': {
-        // Track active tool calls for live UI display
+        session.ambientState = 'streaming';
         const tc: ToolCall = {
           id: event.tool_use_id ?? `tc-${Date.now()}`,
           name: event.tool_name ?? 'unknown',
@@ -206,13 +207,13 @@ class ClaudeSessionStore {
       }
 
       case 'PostToolUse': {
+        session.ambientState = 'streaming';
         const completed = session.activeToolCalls.find(t => t.id === event.tool_use_id);
         if (completed) {
           completed.status = 'complete';
           completed.completedAt = Date.now();
           session.activeToolCalls = session.activeToolCalls.filter(t => t.id !== event.tool_use_id);
         }
-        // Conversation + tool details come from JSONL transcript
         break;
       }
 
@@ -240,7 +241,8 @@ class ClaudeSessionStore {
       case 'Stop':
         session.ambientState = 'idle';
         session.pendingApproval = null;
-        this.hookStateTimestamp.set(sessionId, Date.now());
+        // Clear the poller lock so idle state sticks
+        this.hookStateTimestamp.delete(sessionId);
         // Clear active tool calls
         session.activeToolCalls = [];
         session.completedToolCalls = [];
