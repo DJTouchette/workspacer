@@ -11,10 +11,17 @@
     "build:renderer": "cd src/renderer && npx vite build",
     "build": "npm run build:main && npm run build:renderer",
     "package": "npm run build && electron-builder",
-    "rebuild": "electron-builder install-app-deps"
+    "rebuild": "electron-builder install-app-deps",
+    "test": "npm run test:main && npm run test:renderer",
+    "test:main": "vitest run",
+    "test:renderer": "cd src/renderer && npx vitest run",
+    "test:e2e": "npm run build && npx playwright test",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@homebridge/node-pty-prebuilt-multiarch": "^0.13.1",
+    "@xterm/addon-serialize": "^0.14.0",
+    "@xterm/headless": "^6.0.0",
     "js-yaml": "^4.1.0"
   },
   "devDependencies": {
@@ -25,6 +32,7 @@
     "electron": "^33.0.0",
     "electron-builder": "^25.0.0",
     "typescript": "^5.6.0",
+    "vitest": "^4.1.1",
     "wait-on": "^9.0.4"
   }
 }

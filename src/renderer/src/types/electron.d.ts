@@ -26,6 +26,12 @@ export interface ElectronAPI {
   saveSession: (data: any) => Promise<string>;
   deleteSession: (filename: string) => Promise<void>;
 
+  // Claude session
+  createClaudeTerminal: (cwd?: string) => Promise<string>;
+  getClaudeSessionByPty: (ptyId: string) => Promise<any>;
+  getAllClaudeSessions: () => Promise<any[]>;
+  onClaudeSessionUpdate: (callback: (ptyId: string, snapshot: any) => void) => () => void;
+
   // App lifecycle
   onBeforeQuit: (callback: () => void) => () => void;
 }

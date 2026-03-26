@@ -60,6 +60,26 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deleteSession: (filename: string): Promise<void> =>
     ipcRenderer.invoke('session:delete', filename),
 
+  // Claude session
+  createClaudeTerminal: (cwd?: string): Promise<string> =>
+    ipcRenderer.invoke('terminal:createClaude', cwd),
+
+  getClaudeSessionByPty: (ptyId: string): Promise<any> =>
+    ipcRenderer.invoke('claude-session:getByPty', ptyId),
+
+  getAllClaudeSessions: (): Promise<any[]> =>
+    ipcRenderer.invoke('claude-session:getAll'),
+
+  onClaudeSessionUpdate: (callback: (ptyId: string, snapshot: any) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, ptyId: string, snapshot: any) => {
+      callback(ptyId, snapshot);
+    };
+    ipcRenderer.on('claude-session:update', handler);
+    return () => {
+      ipcRenderer.removeListener('claude-session:update', handler);
+    };
+  },
+
   // App lifecycle
   onBeforeQuit: (callback: () => void): (() => void) => {
     const handler = () => callback();

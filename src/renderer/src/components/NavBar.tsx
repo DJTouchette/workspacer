@@ -14,6 +14,7 @@ const typeLabels: Record<PaneType, string> = {
   browser: '\u{1F310}',
   notes: '\u{1F4DD}',
   agent: '\u{1F916}',
+  claude: '\u2666',
   settings: '\u2699',
 };
 
@@ -197,6 +198,7 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
                 <div style={{ padding: '2px 8px', fontSize: '0.55rem', color: 'rgb(90, 90, 100)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                   New Tab
                 </div>
+                <MenuButton label="Claude" onClick={() => { setShowMenu(false); onAddTab('claude'); }} />
                 <MenuButton label="Browser" onClick={() => { setShowMenu(false); onAddTab('browser'); }} />
                 <MenuButton label="Notes" onClick={() => { setShowMenu(false); onAddTab('notes'); }} />
 

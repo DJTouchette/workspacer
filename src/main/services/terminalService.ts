@@ -5,10 +5,14 @@ import * as crypto from 'crypto';
 // Prebuilt binaries — no Visual Studio Build Tools needed on Windows
 import * as pty from '@homebridge/node-pty-prebuilt-multiarch';
 
+import { createHeadlessSession, feedData, resizeHeadless, destroyHeadlessSession, detectAmbientState } from './headlessTerminalManager';
+import { claudeSessionStore } from './claudeSessionStore';
+
 interface TerminalSession {
   pty: pty.IPty;
   closed: boolean;
   cwd: string;
+  isClaudeSession: boolean;
 }
 
 function detectDefaultShell(): string {
@@ -27,12 +31,43 @@ function detectDefaultShell(): string {
 class TerminalService {
   private sessions: Map<string, TerminalSession> = new Map();
   private mainWindow: BrowserWindow | null = null;
+  private ambientPollers = new Map<string, ReturnType<typeof setInterval>>();
 
   setMainWindow(win: BrowserWindow): void {
     this.mainWindow = win;
   }
 
+  /** Create a terminal that runs Claude Code CLI with headless mirroring + hook integration */
+  createClaudeTerminal(cwd?: string): string {
+    const id = this.createTerminalInternal('claude', cwd, true);
+
+    // Create a headless terminal mirror
+    createHeadlessSession(id, 80, 24);
+
+    // Register this PTY as pending — the SessionStart hook will bind it by cwd
+    const session = this.sessions.get(id);
+    const resolvedCwd = session?.cwd ?? cwd ?? '';
+    claudeSessionStore.registerPendingPty(id, resolvedCwd);
+
+    // Start ambient state polling (routes by ptyId, works once binding is established)
+    const poller = setInterval(() => {
+      const state = detectAmbientState(id);
+      claudeSessionStore.updateAmbientStateByPty(id, state);
+    }, 300);
+    this.ambientPollers.set(id, poller);
+
+    return id;
+  }
+
   createTerminal(shell: string, cwd?: string): string {
+    // Intercept sentinel value from ClaudePane
+    if (shell === '__claude__') {
+      return this.createClaudeTerminal(cwd);
+    }
+    return this.createTerminalInternal(shell, cwd, false);
+  }
+
+  private createTerminalInternal(shell: string, cwd: string | undefined, isClaudeSession: boolean): string {
     if (!shell) {
       shell = detectDefaultShell();
     }
@@ -51,7 +86,11 @@ class TerminalService {
       resolvedCwd = homedir;
     }
 
-    const ptyProcess = pty.spawn(shell, [], {
+    // For Claude sessions, launch the claude CLI
+    const spawnShell = isClaudeSession ? 'claude' : shell;
+    const spawnArgs = isClaudeSession ? [] : [];
+
+    const ptyProcess = pty.spawn(spawnShell, spawnArgs, {
       name: 'xterm-256color',
       cols: 80,
       rows: 24,
@@ -63,15 +102,21 @@ class TerminalService {
       pty: ptyProcess,
       closed: false,
       cwd: resolvedCwd,
+      isClaudeSession,
     };
 
     this.sessions.set(id, session);
 
-    // Forward output to renderer as base64
+    // Forward output to renderer as base64, and tee to headless terminal for Claude sessions
     ptyProcess.onData((data: string) => {
       if (session.closed) return;
       const encoded = Buffer.from(data, 'binary').toString('base64');
       this.mainWindow?.webContents.send('terminal:output', id, encoded);
+
+      // Tee to headless terminal for Claude sessions
+      if (session.isClaudeSession) {
+        feedData(id, data);
+      }
     });
 
     // Handle exit
@@ -98,6 +143,10 @@ class TerminalService {
     if (!session || session.closed) return;
 
     session.pty.resize(cols, rows);
+
+    if (session.isClaudeSession) {
+      resizeHeadless(id, cols, rows);
+    }
   }
 
   closeTerminal(id: string): void {
@@ -107,6 +156,17 @@ class TerminalService {
     session.closed = true;
     this.sessions.delete(id);
     session.pty.kill();
+
+    // Cleanup headless terminal + poller + store binding for Claude sessions
+    if (session.isClaudeSession) {
+      destroyHeadlessSession(id);
+      claudeSessionStore.unregisterPty(id);
+      const poller = this.ambientPollers.get(id);
+      if (poller) {
+        clearInterval(poller);
+        this.ambientPollers.delete(id);
+      }
+    }
   }
 
   getTerminalPid(id: string): number | undefined {

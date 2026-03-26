@@ -5,6 +5,7 @@ import TerminalPane from '../panes/TerminalPane';
 import BrowserPane from '../panes/BrowserPane';
 import NotesPane from '../panes/NotesPane';
 import AgentPane from '../panes/AgentPane';
+import ClaudePane from '../panes/ClaudePane';
 import SettingsPane from '../panes/SettingsPane';
 import { useConfig } from '../hooks/useConfig';
 
@@ -40,6 +41,8 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
       return <NotesPane title={pane.title} />;
     case 'agent':
       return <AgentPane title={pane.title} />;
+    case 'claude':
+      return <ClaudePane paneId={pane.id} title={pane.title} isActive={isActive} cwd={pane.cwd} onPtyReady={callbacks.onPtyReady} />;
     case 'settings':
       return <SettingsPane title={pane.title} />;
     default:
