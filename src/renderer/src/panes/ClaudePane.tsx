@@ -964,11 +964,18 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
     conversationEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, []);
 
-  // Send approval response to Claude Code's [Y/n] prompt
+  // Send approval response to Claude Code's interactive select menu.
+  // The menu highlights "Yes" by default — Enter selects it.
+  // For deny, arrow down to "No" (3rd item) then Enter.
   const handleApprovalRespond = useCallback((response: string) => {
     console.log(`[ClaudePane] sending approval: "${response}"`);
-    // Send character + carriage return (Enter) — needed on Windows ConPTY
-    write(response + '\r');
+    if (response === 'y') {
+      // "Yes" is already highlighted — just press Enter
+      write('\r');
+    } else {
+      // Navigate down to "No" (skip "Yes, and don't ask again") then Enter
+      write('\x1b[B\x1b[B\r');
+    }
   }, [write]);
 
   // Handle send
