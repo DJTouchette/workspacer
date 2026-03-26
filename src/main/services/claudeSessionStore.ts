@@ -47,6 +47,7 @@ export interface ClaudeSessionState {
   sessionId: string;
   cwd: string;
   ptyId: string; // workspacer PTY id this session is bound to
+  transcriptPath: string; // path to JSONL transcript file
 
   status: 'starting' | 'active' | 'ended';
   conversation: ConversationTurn[];
@@ -59,6 +60,7 @@ export interface ClaudeSessionState {
   ambientState: SessionAmbientState;
   lastActivity: number;
   totalToolCalls: number;
+  lastTranscriptLine: number; // track how far we've read in JSONL
 }
 
 // Serialisable snapshot sent over IPC
@@ -160,23 +162,29 @@ class ClaudeSessionStore {
       return;
     }
 
+    // Capture transcript path from first event that has it
+    if (event.transcript_path && !session.transcriptPath) {
+      session.transcriptPath = event.transcript_path;
+      console.log(`[SessionStore] transcript: ${session.transcriptPath}`);
+    }
+
+    // Refresh conversation from JSONL transcript on every hook event
+    if (session.transcriptPath) {
+      this.refreshFromTranscript(session);
+    }
+
     switch (hookName) {
       case 'SessionStart':
         session.status = 'active';
         break;
 
       case 'UserPromptSubmit':
-        session.conversation.push({
-          role: 'user',
-          content: event.prompt ?? event.user_prompt ?? '',
-          timestamp: Date.now(),
-        });
         session.ambientState = 'thinking';
-        // Mark terminal buffer position so we can extract the response later
-        if (session.ptyId) markBufferPosition(session.ptyId);
+        // User message comes from JSONL transcript
         break;
 
       case 'PreToolUse': {
+        // Track active tool calls for live UI display
         const tc: ToolCall = {
           id: event.tool_use_id ?? `tc-${Date.now()}`,
           name: event.tool_name ?? 'unknown',
@@ -184,14 +192,6 @@ class ClaudeSessionStore {
           status: 'running',
           startedAt: Date.now(),
         };
-        if (tc.name === 'Edit' || tc.name === 'MultiEdit') {
-          console.log(`[SessionStore] ${tc.name}: old_string=${tc.input?.old_string ? tc.input.old_string.length + ' chars' : 'MISSING'}, new_string=${tc.input?.new_string ? tc.input.new_string.length + ' chars' : 'MISSING'}`);
-        }
-
-        // Note: buffer extraction on PreToolUse doesn't work reliably
-        // (terminal output arrives async, buffer is empty when hook fires).
-        // Text extraction happens on Stop via extractLastResponse().
-
         session.activeToolCalls.push(tc);
 
         if (['Edit', 'MultiEdit', 'Write'].includes(tc.name)) {
@@ -209,48 +209,10 @@ class ClaudeSessionStore {
         const completed = session.activeToolCalls.find(t => t.id === event.tool_use_id);
         if (completed) {
           completed.status = 'complete';
-          // Extract response — tool_response can be string or structured object
-          const rawResp = event.tool_response;
-          if (typeof rawResp === 'string') {
-            completed.response = rawResp;
-          } else if (Array.isArray(rawResp)) {
-            // Array of content blocks: [{ type: "text", text: "..." }, ...]
-            completed.response = rawResp
-              .map((b: any) => b.text ?? b.content ?? '')
-              .filter(Boolean)
-              .join('\n');
-          } else if (rawResp && typeof rawResp === 'object') {
-            completed.response = rawResp.text ?? rawResp.content ?? rawResp.result ?? rawResp.output ?? '';
-          }
-          console.log(`[SessionStore] PostToolUse ${completed.name}: response=${typeof completed.response === 'string' ? completed.response.split('\n').length + ' lines' : 'none'}, tool_response type=${Array.isArray(rawResp) ? 'array' : typeof rawResp}, keys=${rawResp && typeof rawResp === 'object' ? Object.keys(rawResp).join(',') : 'n/a'}`);
           completed.completedAt = Date.now();
           session.activeToolCalls = session.activeToolCalls.filter(t => t.id !== event.tool_use_id);
-          session.completedToolCalls.push(completed);
         }
-        session.totalToolCalls++;
-        // After tool completes, wait for terminal output to catch up,
-        // then extract any Claude text that appeared
-        if (session.ptyId) {
-          const ptyId = session.ptyId;
-          setTimeout(() => {
-            const rawText = getNewBufferContent(ptyId);
-            if (rawText) {
-              const cleaned = this.cleanTerminalText(rawText);
-              if (cleaned && cleaned.length > 3 && !this.isDuplicateMessage(session, 'assistant', cleaned)) {
-                session.conversation.push({
-                  role: 'assistant',
-                  content: cleaned,
-                  timestamp: Date.now(),
-                  toolCalls: session.completedToolCalls.length > 0
-                    ? [...session.completedToolCalls]
-                    : undefined,
-                });
-                session.completedToolCalls = [];
-                this.pushUpdate(session);
-              }
-            }
-          }, 500);
-        }
+        // Conversation + tool details come from JSONL transcript
         break;
       }
 
@@ -278,41 +240,11 @@ class ClaudeSessionStore {
       case 'Stop':
         session.ambientState = 'idle';
         session.pendingApproval = null;
-        // Prevent poller from overriding this state briefly
         this.hookStateTimestamp.set(sessionId, Date.now());
-        // Move any remaining active tool calls to completed
-        for (const tc of session.activeToolCalls) {
-          tc.status = 'complete';
-          tc.completedAt = Date.now();
-          session.completedToolCalls.push(tc);
-        }
+        // Clear active tool calls
         session.activeToolCalls = [];
-        // Extract assistant response from terminal buffer
-        if (session.ptyId) {
-          const lines = getFullBuffer(session.ptyId);
-          const response = this.extractLastResponse(lines);
-          if (response && !this.isDuplicateMessage(session, 'assistant', response)) {
-            console.log(`[SessionStore] extracted response: "${response.slice(0, 120)}"`);
-            session.conversation.push({
-              role: 'assistant',
-              content: response,
-              timestamp: Date.now(),
-              toolCalls: session.completedToolCalls.length > 0
-                ? [...session.completedToolCalls]
-                : undefined,
-            });
-          } else if (session.completedToolCalls.length > 0) {
-            // No new response text but we have tool calls — attach to last assistant turn
-            const lastAssistant = [...session.conversation].reverse().find(t => t.role === 'assistant');
-            if (lastAssistant) {
-              lastAssistant.toolCalls = [
-                ...(lastAssistant.toolCalls ?? []),
-                ...session.completedToolCalls,
-              ];
-            }
-          }
-        }
         session.completedToolCalls = [];
+        // Conversation is now driven by JSONL transcript (refreshed above)
         break;
 
       case 'SubagentStart':
@@ -595,6 +527,7 @@ class ClaudeSessionStore {
       sessionId,
       cwd,
       ptyId,
+      transcriptPath: '',
       status: 'active',
       conversation: [],
       activeToolCalls: [],
@@ -605,9 +538,113 @@ class ClaudeSessionStore {
       ambientState: 'idle',
       lastActivity: Date.now(),
       totalToolCalls: 0,
+      lastTranscriptLine: 0,
     };
     this.sessions.set(sessionId, session);
     return session;
+  }
+
+  /** Read new lines from JSONL transcript and update conversation */
+  private refreshFromTranscript(session: ClaudeSessionState): void {
+    if (!session.transcriptPath) return;
+    const fs = require('fs');
+    try {
+      if (!fs.existsSync(session.transcriptPath)) return;
+      const content = fs.readFileSync(session.transcriptPath, 'utf-8');
+      const lines = content.split('\n').filter((l: string) => l.trim());
+
+      if (lines.length <= session.lastTranscriptLine) return;
+
+      const newLines = lines.slice(session.lastTranscriptLine);
+      session.lastTranscriptLine = lines.length;
+
+      for (const line of newLines) {
+        try {
+          const entry = JSON.parse(line);
+          this.processTranscriptEntry(session, entry);
+        } catch {}
+      }
+    } catch (err) {
+      console.error('[SessionStore] transcript read error:', err);
+    }
+  }
+
+  private processTranscriptEntry(session: ClaudeSessionState, entry: any): void {
+    const type = entry.type;
+    const msg = entry.message;
+    if (!msg) return;
+
+    if (type === 'user') {
+      const content = typeof msg.content === 'string'
+        ? msg.content
+        : Array.isArray(msg.content)
+          ? msg.content.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('\n')
+          : '';
+      if (content && !this.isDuplicateMessage(session, 'user', content)) {
+        session.conversation.push({ role: 'user', content, timestamp: Date.now() });
+      }
+    } else if (type === 'assistant') {
+      const blocks = Array.isArray(msg.content) ? msg.content : [];
+      const textParts: string[] = [];
+      const toolCalls: ToolCall[] = [];
+
+      for (const block of blocks) {
+        if (block.type === 'text' && block.text) {
+          textParts.push(block.text);
+        } else if (block.type === 'tool_use') {
+          toolCalls.push({
+            id: block.id ?? `tc-${Date.now()}`,
+            name: block.name ?? 'unknown',
+            input: block.input ?? {},
+            status: 'complete',
+            startedAt: Date.now(),
+            completedAt: Date.now(),
+          });
+          session.totalToolCalls++;
+        }
+      }
+
+      const text = textParts.join('\n').trim();
+      if (text && !this.isDuplicateMessage(session, 'assistant', text)) {
+        session.conversation.push({
+          role: 'assistant',
+          content: text,
+          timestamp: Date.now(),
+          toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+        });
+      } else if (toolCalls.length > 0) {
+        // Tool calls without text — attach to last assistant message or create empty
+        const lastAssistant = [...session.conversation].reverse().find(t => t.role === 'assistant');
+        if (lastAssistant) {
+          lastAssistant.toolCalls = [...(lastAssistant.toolCalls ?? []), ...toolCalls];
+        } else {
+          session.conversation.push({
+            role: 'assistant',
+            content: '',
+            timestamp: Date.now(),
+            toolCalls,
+          });
+        }
+      }
+    } else if (type === 'result') {
+      // Tool result — could update the last tool call's response
+      const result = entry.result;
+      if (result && Array.isArray(result)) {
+        const text = result.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('\n');
+        // Find the last tool call and set its response
+        const allTurns = session.conversation;
+        for (let i = allTurns.length - 1; i >= 0; i--) {
+          const tcs = allTurns[i].toolCalls;
+          if (tcs && tcs.length > 0) {
+            const lastTc = tcs[tcs.length - 1];
+            if (!lastTc.response) {
+              lastTc.response = text;
+            }
+            break;
+          }
+        }
+      }
+    }
   }
 
   private pushUpdate(session: ClaudeSessionState): void {
