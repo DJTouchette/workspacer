@@ -966,19 +966,6 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
     conversationEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, []);
 
-  // Escape key cancels in GUI mode
-  useEffect(() => {
-    if (viewMode !== 'gui' || !isActive) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isStreaming) {
-        e.preventDefault();
-        cancelTask();
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [viewMode, isActive, isStreaming, cancelTask]);
-
   // Send approval response to Claude Code's interactive select menu.
   // The menu highlights "Yes" by default — Enter selects it.
   // For deny, arrow down to "No" (3rd item) then Enter.
@@ -1019,6 +1006,19 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
     write('\x1b');
     setCancelledAt(Date.now());
   }, [write]);
+
+  // Escape key cancels in GUI mode (must be after cancelTask/isStreaming declarations)
+  useEffect(() => {
+    if (viewMode !== 'gui' || !isActive) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isStreaming) {
+        e.preventDefault();
+        cancelTask();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [viewMode, isActive, isStreaming, cancelTask]);
 
   // Only show in-progress tool calls globally — completed ones are per-turn
   const liveToolCalls = useMemo(() => {
