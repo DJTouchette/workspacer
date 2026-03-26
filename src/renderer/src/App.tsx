@@ -43,36 +43,8 @@ function App() {
     window.electronAPI.getCwd().then((cwd) => { appCwdRef.current = cwd; }).catch(() => {});
   }, []);
 
-  // Load Nerd Fonts via FontFace API — Chromium can't see user-installed Windows fonts
-  // Expose the promise globally so terminal panes can await it before term.open()
-  useEffect(() => {
-    (window as any).__fontsReady = (async () => {
-      try {
-        const fonts = await window.electronAPI.getNerdFonts?.();
-        if (!fonts?.length) return;
-        for (const f of fonts) {
-          // FontFace accepts ArrayBuffer directly — no base64/data URL needed
-          const buf = f.data instanceof ArrayBuffer ? f.data : (f.data as any).buffer ?? f.data;
-          const names = [f.family];
-          // Also register without "NL" so config "JetBrainsMono Nerd Font Mono" matches
-          const generic = f.family.replace(/NL\s*/g, '');
-          if (generic !== f.family) names.push(generic);
-          for (const name of names) {
-            try {
-              const face = new FontFace(name, buf);
-              await face.load();
-              document.fonts.add(face);
-              console.log(`[Fonts] loaded: "${name}"`);
-            } catch (err) {
-              console.warn(`[Fonts] failed "${name}":`, err);
-            }
-          }
-        }
-      } catch (err) {
-        console.warn('[Fonts] discovery failed:', err);
-      }
-    })();
-  }, []);
+  // Font loading happens in main.tsx at module level (before React mounts)
+  // Terminal panes await window.__fontsReady before calling term.open()
 
   // Session state
   const [sessionPhase, setSessionPhase] = useState<'loading' | 'picker' | 'active'>('loading');
