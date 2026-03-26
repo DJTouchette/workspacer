@@ -2,6 +2,8 @@ import { app, BrowserWindow, Menu } from 'electron';
 import * as path from 'path';
 import { registerIpcHandlers } from './ipc';
 import { terminalService } from './services/terminalService';
+import { claudeSessionStore } from './services/claudeSessionStore';
+import { startHookServer } from './services/hookServer';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -31,6 +33,8 @@ function createWindow(): void {
   });
 
   registerIpcHandlers(mainWindow);
+  claudeSessionStore.setMainWindow(mainWindow);
+  startHookServer();
 
   if (process.env.ELECTRON_DEV) {
     mainWindow.loadURL('http://localhost:5173');

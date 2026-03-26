@@ -2,6 +2,7 @@ import { ipcMain, BrowserWindow } from 'electron';
 import { terminalService } from './services/terminalService';
 import { configService } from './services/configService';
 import { sessionService } from './services/sessionService';
+import { claudeSessionStore } from './services/claudeSessionStore';
 
 export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // Wire terminal service to use this window for push events
@@ -10,6 +11,20 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // Terminal handlers
   ipcMain.handle('terminal:create', (_event, shell: string, cwd?: string) => {
     return terminalService.createTerminal(shell, cwd);
+  });
+
+  // Claude terminal — spawns claude CLI with headless mirroring
+  ipcMain.handle('terminal:createClaude', (_event, cwd?: string) => {
+    return terminalService.createClaudeTerminal(cwd);
+  });
+
+  // Claude session state queries
+  ipcMain.handle('claude-session:getByPty', (_event, ptyId: string) => {
+    return claudeSessionStore.getSnapshotByPty(ptyId);
+  });
+
+  ipcMain.handle('claude-session:getAll', () => {
+    return claudeSessionStore.getAllSnapshots();
   });
 
   ipcMain.handle('terminal:write', (_event, id: string, data: string) => {

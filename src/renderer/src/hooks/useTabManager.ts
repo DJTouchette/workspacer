@@ -13,6 +13,7 @@ const defaultTitles: Record<PaneType, string> = {
   browser: 'Browser',
   notes: 'Notes',
   agent: 'Agent',
+  claude: 'Claude',
   settings: 'Settings',
 };
 

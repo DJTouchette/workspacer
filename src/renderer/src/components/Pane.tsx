@@ -20,6 +20,7 @@ const typeIndicators: Record<PaneType, string> = {
   browser: '\u{1F310}',
   notes: '\u{1F4DD}',
   agent: '\u{1F916}',
+  claude: '\u2666',
   settings: '\u2699',
 };
 
