@@ -87,8 +87,21 @@ class TerminalService {
     }
 
     // For Claude sessions, launch the claude CLI
-    const spawnShell = isClaudeSession ? 'claude' : shell;
-    const spawnArgs = isClaudeSession ? [] : [];
+    // On Windows, node-pty can't resolve .cmd shims — go through cmd.exe
+    let spawnShell: string;
+    let spawnArgs: string[];
+    if (isClaudeSession) {
+      if (process.platform === 'win32') {
+        spawnShell = 'cmd.exe';
+        spawnArgs = ['/c', 'claude'];
+      } else {
+        spawnShell = 'claude';
+        spawnArgs = [];
+      }
+    } else {
+      spawnShell = shell;
+      spawnArgs = [];
+    }
 
     const ptyProcess = pty.spawn(spawnShell, spawnArgs, {
       name: 'xterm-256color',
