@@ -11,11 +11,13 @@ import * as path from 'path';
 import * as os from 'os';
 
 const HOOK_PORT = 7890;
-const HOOK_COMMAND = `curl -s -X POST http://localhost:${HOOK_PORT}/hook -H 'Content-Type: application/json' -d @-`;
+// Double quotes work in both bash/sh and Windows cmd/powershell
+const HOOK_COMMAND = `curl -s -X POST http://localhost:${HOOK_PORT}/hook -H "Content-Type: application/json" -d @-`;
 
-// Marker so we can identify hooks we installed vs user-created ones
-const WORKSPACER_MARKER = '# workspacer-managed';
-const MARKED_COMMAND = `${HOOK_COMMAND} ${WORKSPACER_MARKER}`;
+// Identify our hooks by the unique URL pattern (works regardless of quoting/comment style)
+const WORKSPACER_MARKER = `localhost:${HOOK_PORT}/hook`;
+// Also detect old-style hooks that used a bash comment marker
+const OLD_MARKER = '# workspacer-managed';
 
 const HOOK_EVENTS = [
   'SessionStart',
@@ -60,7 +62,7 @@ function writeSettings(settings: any): void {
 function makeHookEntry() {
   return {
     type: 'command' as const,
-    command: MARKED_COMMAND,
+    command: HOOK_COMMAND,
   };
 }
 
@@ -70,7 +72,7 @@ function makeHookEntry() {
  */
 function hasWorkspacerHook(hooks: any[]): boolean {
   return hooks.some(
-    (h: any) => typeof h.command === 'string' && h.command === MARKED_COMMAND,
+    (h: any) => typeof h.command === 'string' && h.command === HOOK_COMMAND,
   );
 }
 
@@ -79,7 +81,9 @@ function hasWorkspacerHook(hooks: any[]): boolean {
  */
 function hasAnyWorkspacerHook(hooks: any[]): boolean {
   return hooks.some(
-    (h: any) => typeof h.command === 'string' && h.command.includes(WORKSPACER_MARKER),
+    (h: any) =>
+      typeof h.command === 'string' &&
+      (h.command.includes(WORKSPACER_MARKER) || h.command.includes(OLD_MARKER)),
   );
 }
 
@@ -118,7 +122,9 @@ export function installHooks(): boolean {
         for (const matcher of matchers) {
           if (Array.isArray(matcher.hooks) && hasAnyWorkspacerHook(matcher.hooks)) {
             matcher.hooks = matcher.hooks.filter(
-              (h: any) => !(typeof h.command === 'string' && h.command.includes(WORKSPACER_MARKER)),
+              (h: any) =>
+                !(typeof h.command === 'string' &&
+                  (h.command.includes(WORKSPACER_MARKER) || h.command.includes(OLD_MARKER))),
             );
           }
         }
@@ -167,7 +173,9 @@ export function uninstallHooks(): boolean {
 
       const before = matcher.hooks.length;
       matcher.hooks = matcher.hooks.filter(
-        (h: any) => !(typeof h.command === 'string' && h.command.includes(WORKSPACER_MARKER)),
+        (h: any) =>
+          !(typeof h.command === 'string' &&
+            (h.command.includes(WORKSPACER_MARKER) || h.command.includes(OLD_MARKER))),
       );
 
       if (matcher.hooks.length < before) {
