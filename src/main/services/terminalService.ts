@@ -96,9 +96,10 @@ class TerminalService {
     let spawnArgs: string[];
     if (isClaudeSession) {
       if (process.platform === 'win32') {
-        // Use the user's PowerShell so its profile loads (adds nvm/node to PATH)
-        spawnShell = detectDefaultShell();
-        spawnArgs = ['-NoLogo', '-Command', 'claude'];
+        // Use cmd.exe /c for minimal overhead — avoids PowerShell console
+        // interference with Claude's TUI. PATH is inherited from Electron.
+        spawnShell = 'cmd.exe';
+        spawnArgs = ['/c', 'claude'];
       } else {
         spawnShell = 'claude';
         spawnArgs = [];
