@@ -572,18 +572,43 @@ class ClaudeSessionStore {
   private processTranscriptEntry(session: ClaudeSessionState, entry: any): void {
     const type = entry.type;
     const msg = entry.message;
-    if (!msg) return;
 
-    if (type === 'user') {
+    if (type === 'user' && msg) {
+      const contentBlocks = Array.isArray(msg.content) ? msg.content : [];
+      // Skip tool_result entries — they're API plumbing, not user messages
+      const hasToolResult = contentBlocks.some((b: any) => b.type === 'tool_result');
+      if (hasToolResult) {
+        // Extract tool results and attach to the corresponding tool calls
+        for (const block of contentBlocks) {
+          if (block.type === 'tool_result' && block.tool_use_id) {
+            const resultText = typeof block.content === 'string'
+              ? block.content
+              : Array.isArray(block.content)
+                ? block.content.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('\n')
+                : '';
+            // Find the matching tool call and set its response
+            for (let i = session.conversation.length - 1; i >= 0; i--) {
+              const tcs = session.conversation[i].toolCalls;
+              if (!tcs) continue;
+              const tc = tcs.find(t => t.id === block.tool_use_id);
+              if (tc) {
+                tc.response = resultText;
+                break;
+              }
+            }
+          }
+        }
+        return;
+      }
+
+      // Real user message
       const content = typeof msg.content === 'string'
         ? msg.content
-        : Array.isArray(msg.content)
-          ? msg.content.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('\n')
-          : '';
+        : contentBlocks.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('\n');
       if (content && !this.isDuplicateMessage(session, 'user', content)) {
         session.conversation.push({ role: 'user', content, timestamp: Date.now() });
       }
-    } else if (type === 'assistant') {
+    } else if (type === 'assistant' && msg) {
       const blocks = Array.isArray(msg.content) ? msg.content : [];
       const textParts: string[] = [];
       const toolCalls: ToolCall[] = [];
@@ -613,7 +638,6 @@ class ClaudeSessionStore {
           toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
         });
       } else if (toolCalls.length > 0) {
-        // Tool calls without text — attach to last assistant message or create empty
         const lastAssistant = [...session.conversation].reverse().find(t => t.role === 'assistant');
         if (lastAssistant) {
           lastAssistant.toolCalls = [...(lastAssistant.toolCalls ?? []), ...toolCalls];
@@ -626,25 +650,8 @@ class ClaudeSessionStore {
           });
         }
       }
-    } else if (type === 'result') {
-      // Tool result — could update the last tool call's response
-      const result = entry.result;
-      if (result && Array.isArray(result)) {
-        const text = result.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('\n');
-        // Find the last tool call and set its response
-        const allTurns = session.conversation;
-        for (let i = allTurns.length - 1; i >= 0; i--) {
-          const tcs = allTurns[i].toolCalls;
-          if (tcs && tcs.length > 0) {
-            const lastTc = tcs[tcs.length - 1];
-            if (!lastTc.response) {
-              lastTc.response = text;
-            }
-            break;
-          }
-        }
-      }
     }
+    // 'result' entries are handled via tool_result blocks in user entries above
   }
 
   private pushUpdate(session: ClaudeSessionState): void {

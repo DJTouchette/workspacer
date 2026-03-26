@@ -350,7 +350,8 @@ function formatToolSummary(tc: ToolCall): { call: string; result: string } {
   switch (tc.name) {
     case 'Read': {
       const file = fp(tc.input?.file_path ?? '');
-      return { call: `Read(${file})`, result: '' };
+      const lines = tc.response ? String(tc.response).split('\n').length : 0;
+      return { call: `Read(${file})`, result: lines > 0 ? `Read ${lines} lines` : '' };
     }
     case 'Edit':
     case 'MultiEdit': {
@@ -1137,22 +1138,42 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
     setApprovalDismissedAt(Date.now());
   }, [write]);
 
+  // Optimistic user messages (shown immediately before JSONL catches up)
+  const [optimisticMessages, setOptimisticMessages] = useState<ConversationTurn[]>([]);
+
   // Handle send — write text then Enter to Claude's TUI input
   const handleSend = useCallback(() => {
     if (inputValue.trim()) {
+      // Show message immediately in GUI
+      setOptimisticMessages(prev => [...prev, {
+        role: 'user',
+        content: inputValue.trim(),
+        timestamp: Date.now(),
+      }]);
       // Send text and Enter separately so the TUI processes the input
-      // before seeing the submit keypress
       write(inputValue);
       setTimeout(() => write('\r'), 50);
       setInputValue('');
     }
   }, [inputValue, write]);
 
+  // Clear optimistic messages once session conversation catches up
+  useEffect(() => {
+    if (optimisticMessages.length > 0 && session?.conversation) {
+      const sessionTexts = new Set(session.conversation.filter(t => t.role === 'user').map(t => t.content));
+      setOptimisticMessages(prev => prev.filter(m => !sessionTexts.has(m.content)));
+    }
+  }, [session?.conversation, optimisticMessages.length]);
+
   // ── Derived data ──
 
   const activeToolCalls = session?.activeToolCalls ?? [];
   const completedToolCalls = session?.completedToolCalls ?? [];
-  const conversation = session?.conversation ?? [];
+  const conversation = useMemo(() => {
+    const base = session?.conversation ?? [];
+    if (optimisticMessages.length === 0) return base;
+    return [...base, ...optimisticMessages];
+  }, [session?.conversation, optimisticMessages]);
   const fileChanges = session?.fileChanges ?? [];
   const subagents = session?.subagents ?? [];
   const pendingApproval = session?.pendingApproval ?? null;
