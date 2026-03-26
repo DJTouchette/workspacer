@@ -4,6 +4,7 @@ import { registerIpcHandlers } from './ipc';
 import { terminalService } from './services/terminalService';
 import { claudeSessionStore } from './services/claudeSessionStore';
 import { startHookServer } from './services/hookServer';
+import { installHooks, uninstallHooks } from './services/claudeHooksConfig';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -35,6 +36,7 @@ function createWindow(): void {
   registerIpcHandlers(mainWindow);
   claudeSessionStore.setMainWindow(mainWindow);
   startHookServer();
+  installHooks();
 
   if (process.env.ELECTRON_DEV) {
     mainWindow.loadURL('http://localhost:5173');
@@ -58,6 +60,7 @@ app.on('before-quit', () => {
 
 app.on('window-all-closed', () => {
   terminalService.closeAll();
+  uninstallHooks();
   app.quit();
 });
 
