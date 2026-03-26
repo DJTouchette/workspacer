@@ -767,15 +767,66 @@ const ConversationMessage: React.FC<{ turn: ConversationTurn; isLast?: boolean }
   }
 
   // Assistant message
+  const diffCalls = (turn.toolCalls ?? []).filter(tc => hasDiff(tc));
+  const writeCalls = (turn.toolCalls ?? []).filter(tc => tc.name === 'Write' && tc.input?.content);
+
   return (
     <div style={{
       marginBottom: 12,
       animation: 'claudeFadeIn 0.2s ease-out',
     }}>
-      {/* Inline tool calls for this turn */}
+      {/* Collapsible tool call summary */}
       {turn.toolCalls && turn.toolCalls.length > 0 && (
         <InlineWorkLog toolCalls={turn.toolCalls} />
       )}
+
+      {/* Inline diffs for Edit/MultiEdit — shown directly in chat */}
+      {diffCalls.map(tc => (
+        <DiffView
+          key={tc.id}
+          oldStr={tc.input?.old_string ?? ''}
+          newStr={tc.input?.new_string ?? ''}
+          filePath={tc.input?.file_path}
+        />
+      ))}
+
+      {/* Inline file content for Write — shown directly in chat */}
+      {writeCalls.map(tc => (
+        <div key={tc.id} style={{
+          margin: '6px 0',
+          borderRadius: 6,
+          overflow: 'hidden',
+          border: `1px solid ${colors.borderSubtle}`,
+          maxHeight: 300,
+          overflowY: 'auto',
+        }}>
+          <div style={{
+            padding: '4px 10px',
+            backgroundColor: 'rgba(255,255,255,0.03)',
+            color: colors.muted,
+            fontSize: '0.65rem',
+            borderBottom: `1px solid ${colors.borderSubtle}`,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+          }}>
+            <span style={{ color: colors.success }}>+</span>
+            {tc.input?.file_path?.split(/[/\\]/).pop() ?? 'new file'}
+          </div>
+          <pre style={{
+            margin: 0,
+            padding: '6px 10px',
+            fontSize: '0.7rem',
+            fontFamily: 'var(--claude-mono-font, monospace)',
+            color: 'rgb(150, 230, 170)',
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-all',
+          }}>
+            {tc.input.content.slice(0, 2000)}{tc.input.content.length > 2000 ? '\n...' : ''}
+          </pre>
+        </div>
+      ))}
+
       <div style={{
         paddingLeft: 4,
         fontSize: '0.8rem',
