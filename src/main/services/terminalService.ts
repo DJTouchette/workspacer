@@ -87,13 +87,13 @@ class TerminalService {
     }
 
     // For Claude sessions, launch the claude CLI
-    // On Windows, node-pty can't resolve .cmd shims — go through cmd.exe
     let spawnShell: string;
     let spawnArgs: string[];
     if (isClaudeSession) {
       if (process.platform === 'win32') {
-        spawnShell = 'cmd.exe';
-        spawnArgs = ['/c', 'claude'];
+        // Use the user's PowerShell so its profile loads (adds nvm/node to PATH)
+        spawnShell = detectDefaultShell();
+        spawnArgs = ['-NoLogo', '-Command', 'claude'];
       } else {
         spawnShell = 'claude';
         spawnArgs = [];
