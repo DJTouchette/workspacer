@@ -7,9 +7,11 @@ import * as crypto from 'crypto';
 // Prebuilt binaries — no Visual Studio Build Tools needed on Windows
 import * as pty from '@homebridge/node-pty-prebuilt-multiarch';
 
-/** Find claude CLI node.exe + cli.js on Windows by scanning nvm directories */
-function findClaudeNodeArgs(): { node: string; script: string } | null {
+/** Find the best way to launch Claude CLI on Windows */
+function findClaudeSpawn(): { shell: string; args: string[] } | null {
   if (process.platform !== 'win32') return null;
+
+  // Find node.exe + cli.js from nvm — spawn node directly (no cmd.exe wrapper)
   const nvmDir = path.join(os.homedir(), 'AppData', 'Local', 'nvm');
   try {
     const versions = fs.readdirSync(nvmDir)
@@ -17,28 +19,26 @@ function findClaudeNodeArgs(): { node: string; script: string } | null {
       .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
     for (const v of versions) {
       const vDir = path.join(nvmDir, v);
-      // Check for claude CLI script
       for (const pkg of ['@anthropic-ai/claude-code', 'claude-code']) {
         const script = path.join(vDir, 'node_modules', pkg, 'cli.js');
         if (fs.existsSync(script)) {
           const node = path.join(vDir, 'node.exe');
-          if (fs.existsSync(node)) {
-            return { node, script };
-          }
+          if (fs.existsSync(node)) return { shell: node, args: [script] };
         }
       }
     }
   } catch {}
+
   return null;
 }
 
-let _cachedClaudeArgs: { node: string; script: string } | null | undefined;
-function getClaudeArgs(): { node: string; script: string } | null {
-  if (_cachedClaudeArgs === undefined) {
-    _cachedClaudeArgs = findClaudeNodeArgs();
-    if (_cachedClaudeArgs) console.log(`[TerminalService] found claude: ${_cachedClaudeArgs.node} ${_cachedClaudeArgs.script}`);
+let _cachedClaudeSpawn: { shell: string; args: string[] } | null | undefined;
+function getClaudeSpawn(): { shell: string; args: string[] } | null {
+  if (_cachedClaudeSpawn === undefined) {
+    _cachedClaudeSpawn = findClaudeSpawn();
+    if (_cachedClaudeSpawn) console.log(`[TerminalService] found claude: ${_cachedClaudeSpawn.shell} ${_cachedClaudeSpawn.args.join(' ')}`);
   }
-  return _cachedClaudeArgs;
+  return _cachedClaudeSpawn;
 }
 
 import { createHeadlessSession, feedData, resizeHeadless, destroyHeadlessSession, detectAmbientState } from './headlessTerminalManager';
@@ -132,14 +132,12 @@ class TerminalService {
     let spawnArgs: string[];
     if (isClaudeSession) {
       if (process.platform === 'win32') {
-        // Spawn node directly with cli.js — no cmd.exe wrapper that
-        // interferes with TUI escape sequences
-        const args = getClaudeArgs();
-        if (args) {
-          spawnShell = args.node;
-          spawnArgs = [args.script];
+        // Prefer native binary, fall back to node+cli.js, then cmd.exe
+        const claude = getClaudeSpawn();
+        if (claude) {
+          spawnShell = claude.shell;
+          spawnArgs = claude.args;
         } else {
-          // Fallback: try cmd.exe /c claude
           spawnShell = 'cmd.exe';
           spawnArgs = ['/c', 'claude'];
         }
