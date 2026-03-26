@@ -158,6 +158,7 @@ class TerminalService {
       rows: rows || 24,
       cwd: resolvedCwd,
       env,
+      useConptyDll: true,
     });
 
     const session: TerminalSession = {
