@@ -85,7 +85,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('app:getCwd'),
 
   // Fonts
-  getNerdFonts: (): Promise<{ family: string; path: string }[]> =>
+  getNerdFonts: (): Promise<{ family: string; dataUrl: string }[]> =>
     ipcRenderer.invoke('fonts:getNerdFonts'),
 
   // Dialog

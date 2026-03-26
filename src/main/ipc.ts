@@ -100,12 +100,13 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     return process.cwd();
   });
 
-  // Font discovery — find Nerd Font files for @font-face registration
+  // Font discovery — find Nerd Font files and return as base64 data URLs
+  // (file:// URLs are blocked by CORS in dev mode)
   ipcMain.handle('fonts:getNerdFonts', () => {
     const fs = require('fs');
     const path = require('path');
     const os = require('os');
-    const results: { family: string; path: string }[] = [];
+    const results: { family: string; dataUrl: string }[] = [];
 
     const fontDirs = process.platform === 'win32'
       ? [
@@ -119,22 +120,29 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
           '/usr/local/share/fonts',
         ];
 
-    const nerdFontPatterns = [
-      { pattern: /NerdFontMono-Regular\.ttf$/i, family: null },
-      { pattern: /NerdFont-Regular\.ttf$/i, family: null },
-    ];
-
     for (const dir of fontDirs) {
       try {
         if (!fs.existsSync(dir)) continue;
         const files: string[] = fs.readdirSync(dir);
         for (const file of files) {
           if (!file.endsWith('.ttf') && !file.endsWith('.otf')) continue;
-          if (!/[Nn]erd[Ff]ont/.test(file)) continue;
-          if (!/Regular/i.test(file)) continue;
-          // Extract family name from filename: e.g. JetBrainsMonoNLNerdFontMono-Regular.ttf
+          if (!/NerdFontMono-Regular/i.test(file)) continue;
           const fullPath = path.join(dir, file);
-          results.push({ family: file, path: fullPath });
+          // Derive CSS family name from filename
+          // e.g. JetBrainsMonoNLNerdFontMono-Regular.ttf → "JetBrainsMonoNL Nerd Font Mono"
+          const family = file
+            .replace(/-Regular\.(ttf|otf)$/i, '')
+            .replace(/NerdFontMono/, ' Nerd Font Mono')
+            .replace(/([a-z])([A-Z])/g, '$1 $2')  // camelCase to spaces
+            .replace(/  +/g, ' ')
+            .trim();
+          try {
+            const data = fs.readFileSync(fullPath);
+            const mime = file.endsWith('.otf') ? 'font/otf' : 'font/ttf';
+            const dataUrl = `data:${mime};base64,${data.toString('base64')}`;
+            results.push({ family, dataUrl });
+            console.log(`[Fonts] found: "${family}" from ${file}`);
+          } catch {}
         }
       } catch {}
     }

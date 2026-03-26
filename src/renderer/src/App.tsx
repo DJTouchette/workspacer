@@ -43,21 +43,17 @@ function App() {
     window.electronAPI.getCwd().then((cwd) => { appCwdRef.current = cwd; }).catch(() => {});
   }, []);
 
-  // Load Nerd Fonts via @font-face so xterm.js canvas/WebGL can use them
+  // Load Nerd Fonts via FontFace API so xterm.js canvas/WebGL can use them
   useEffect(() => {
     window.electronAPI.getNerdFonts?.().then((fonts) => {
       for (const f of fonts) {
-        const fileUrl = `file:///${f.path.replace(/\\/g, '/')}`;
-        const face = new FontFace(
-          // Use the standard Nerd Font family name derived from filename
-          f.family.replace(/NerdFontMono-Regular\.(ttf|otf)$/i, ' Nerd Font Mono')
-                   .replace(/NerdFont-Regular\.(ttf|otf)$/i, ' Nerd Font')
-                   .replace(/NL/g, 'NL ').replace(/  +/g, ' ').trim(),
-          `url("${fileUrl}")`,
-        );
+        const face = new FontFace(f.family, `url("${f.dataUrl}")`);
         face.load().then((loaded) => {
           document.fonts.add(loaded);
-        }).catch(() => {});
+          console.log(`[Fonts] loaded: "${f.family}"`);
+        }).catch((err) => {
+          console.warn(`[Fonts] failed to load "${f.family}":`, err);
+        });
       }
     }).catch(() => {});
   }, []);
