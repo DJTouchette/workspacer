@@ -82,8 +82,13 @@ function ensureKeyframes() {
 
 // ── Sub-components ──
 
-const StatusBadge: React.FC<{ session: ClaudeSessionSnapshot | null }> = ({ session }) => {
+const StatusBadge: React.FC<{ session: ClaudeSessionSnapshot | null; approvalDismissed?: boolean }> = ({ session, approvalDismissed }) => {
   if (!session) return <span style={badgeStyle('#555')}>no session</span>;
+
+  // If user already responded to approval, show as thinking instead
+  const state = (session.ambientState === 'waiting_approval' && approvalDismissed)
+    ? 'thinking'
+    : session.ambientState;
 
   const badgeColors: Record<string, string> = {
     idle: colors.success,
@@ -101,8 +106,8 @@ const StatusBadge: React.FC<{ session: ClaudeSessionSnapshot | null }> = ({ sess
     waiting_approval: 'Needs approval',
   };
 
-  const color = badgeColors[session.ambientState] ?? '#555';
-  const label = labels[session.ambientState] ?? session.ambientState;
+  const color = badgeColors[state] ?? '#555';
+  const label = labels[state] ?? state;
 
   return (
     <span style={badgeStyle(color)}>
@@ -1222,7 +1227,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
         minHeight: 26,
         flexShrink: 0,
       }}>
-        <StatusBadge session={session} />
+        <StatusBadge session={session} approvalDismissed={!!(pendingApproval && pendingApproval.timestamp <= approvalDismissedAt)} />
         <WorkingTimer session={session} />
 
         {cwd && (
