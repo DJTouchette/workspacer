@@ -188,17 +188,22 @@ class ClaudeSessionStore {
           console.log(`[SessionStore] ${tc.name}: old_string=${tc.input?.old_string ? tc.input.old_string.length + ' chars' : 'MISSING'}, new_string=${tc.input?.new_string ? tc.input.new_string.length + ' chars' : 'MISSING'}`);
         }
 
-        // On first tool call of a turn, extract any text Claude said before using tools
-        if (session.activeToolCalls.length === 0 && session.ptyId) {
+        // Extract any text Claude said before this tool call
+        // (e.g. "I'll read the readme now" before Read, or text between tool calls)
+        if (session.ptyId) {
           const rawText = getNewBufferContent(session.ptyId);
           if (rawText) {
             const cleaned = this.cleanTerminalText(rawText);
-            if (cleaned && !this.isDuplicateMessage(session, 'assistant', cleaned)) {
+            if (cleaned && cleaned.length > 3 && !this.isDuplicateMessage(session, 'assistant', cleaned)) {
               session.conversation.push({
                 role: 'assistant',
                 content: cleaned,
                 timestamp: Date.now(),
+                toolCalls: session.completedToolCalls.length > 0
+                  ? [...session.completedToolCalls]
+                  : undefined,
               });
+              session.completedToolCalls = [];
             }
           }
         }
@@ -226,6 +231,8 @@ class ClaudeSessionStore {
           session.completedToolCalls.push(completed);
         }
         session.totalToolCalls++;
+        // Mark buffer so next PreToolUse extraction starts fresh
+        if (session.ptyId) markBufferPosition(session.ptyId);
         break;
       }
 
