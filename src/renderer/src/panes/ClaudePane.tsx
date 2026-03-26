@@ -898,9 +898,15 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
 
     webFontsAddon.loadFonts().then(() => {
       term.open(container);
-      const fitRetry = () => { try { fitAddon.fit(); } catch {} };
-      requestAnimationFrame(fitRetry);
-      setTimeout(fitRetry, 200);
+      const fitAndResize = () => {
+        try {
+          fitAddon.fit();
+          resize(term.cols, term.rows);
+        } catch {}
+      };
+      requestAnimationFrame(fitAndResize);
+      setTimeout(fitAndResize, 200);
+      setTimeout(fitAndResize, 500);
     });
 
     term.attachCustomKeyEventHandler((e: KeyboardEvent) => {

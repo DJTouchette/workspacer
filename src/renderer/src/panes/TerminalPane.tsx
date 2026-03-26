@@ -113,9 +113,17 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
 
     webFontsAddon.loadFonts().then(() => {
       term.open(container);
-      const fitRetry = () => { try { fitAddon.fit(); } catch {} };
-      requestAnimationFrame(fitRetry);
-      setTimeout(fitRetry, 200);
+      // Fit and force resize to PTY so TUI apps render at correct dimensions
+      const fitAndResize = () => {
+        try {
+          fitAddon.fit();
+          // Force resize to PTY even if size appears unchanged
+          resize(term.cols, term.rows);
+        } catch {}
+      };
+      requestAnimationFrame(fitAndResize);
+      setTimeout(fitAndResize, 200);
+      setTimeout(fitAndResize, 500);
     });
 
     // Tell xterm to NOT process keys that the app handles.
