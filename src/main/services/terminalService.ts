@@ -44,16 +44,15 @@ class TerminalService {
     // Create a headless terminal mirror
     createHeadlessSession(id, 80, 24);
 
-    // Bind PTY → Claude session store so hook events can be correlated
-    claudeSessionStore.bindPty(id, ''); // session id will be set when SessionStart hook fires
+    // Register this PTY as pending — the SessionStart hook will bind it by cwd
+    const session = this.sessions.get(id);
+    const resolvedCwd = session?.cwd ?? cwd ?? '';
+    claudeSessionStore.registerPendingPty(id, resolvedCwd);
 
-    // Start ambient state polling
+    // Start ambient state polling (routes by ptyId, works once binding is established)
     const poller = setInterval(() => {
       const state = detectAmbientState(id);
-      const snapshot = claudeSessionStore.getSnapshotByPty(id);
-      if (snapshot) {
-        claudeSessionStore.updateAmbientState(snapshot.sessionId, state);
-      }
+      claudeSessionStore.updateAmbientStateByPty(id, state);
     }, 300);
     this.ambientPollers.set(id, poller);
 
@@ -158,9 +157,10 @@ class TerminalService {
     this.sessions.delete(id);
     session.pty.kill();
 
-    // Cleanup headless terminal + poller for Claude sessions
+    // Cleanup headless terminal + poller + store binding for Claude sessions
     if (session.isClaudeSession) {
       destroyHeadlessSession(id);
+      claudeSessionStore.unregisterPty(id);
       const poller = this.ambientPollers.get(id);
       if (poller) {
         clearInterval(poller);

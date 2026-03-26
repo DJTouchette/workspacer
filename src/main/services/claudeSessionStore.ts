@@ -68,16 +68,47 @@ export type ClaudeSessionSnapshot = Omit<ClaudeSessionState, never>;
 class ClaudeSessionStore {
   private sessions = new Map<string, ClaudeSessionState>();
   private mainWindow: BrowserWindow | null = null;
-  // Map PTY id → claude session id for routing terminal data
-  private ptyToSession = new Map<string, string>();
+
+  // Bidirectional maps for PTY ↔ Claude session binding
+  private ptyToSession = new Map<string, string>();  // ptyId → sessionId
+  private sessionToPty = new Map<string, string>();   // sessionId → ptyId
+
+  // Queue of unbound PTYs waiting for a SessionStart hook, keyed by resolved cwd.
+  // Multiple PTYs with the same cwd are queued in order (FIFO).
+  private unboundPtys = new Map<string, string[]>();  // cwd → [ptyId, ...]
 
   setMainWindow(win: BrowserWindow): void {
     this.mainWindow = win;
   }
 
-  /** Register a PTY as belonging to a Claude session */
-  bindPty(ptyId: string, claudeSessionId: string): void {
-    this.ptyToSession.set(ptyId, claudeSessionId);
+  /**
+   * Register a PTY as a pending Claude session.
+   * Called when a Claude terminal is spawned, before the SessionStart hook fires.
+   * The cwd is used to match the incoming SessionStart event to this PTY.
+   */
+  registerPendingPty(ptyId: string, cwd: string): void {
+    const queue = this.unboundPtys.get(cwd) ?? [];
+    queue.push(ptyId);
+    this.unboundPtys.set(cwd, queue);
+  }
+
+  /** Remove a PTY from pending + bound maps (called on close) */
+  unregisterPty(ptyId: string): void {
+    // Remove from unbound queue
+    for (const [cwd, queue] of this.unboundPtys) {
+      const idx = queue.indexOf(ptyId);
+      if (idx >= 0) {
+        queue.splice(idx, 1);
+        if (queue.length === 0) this.unboundPtys.delete(cwd);
+        break;
+      }
+    }
+    // Remove from bound maps
+    const sid = this.ptyToSession.get(ptyId);
+    if (sid) {
+      this.ptyToSession.delete(ptyId);
+      this.sessionToPty.delete(sid);
+    }
   }
 
   getSessionIdForPty(ptyId: string): string | undefined {
@@ -94,10 +125,19 @@ class ClaudeSessionStore {
     let session = this.sessions.get(sessionId);
 
     if (!session && hookName === 'SessionStart') {
-      session = this.createSession(sessionId, cwd);
+      // Bind to an unbound PTY by matching cwd (FIFO)
+      const ptyId = this.claimPendingPty(cwd);
+      session = this.createSession(sessionId, cwd, ptyId);
+
+      if (ptyId) {
+        this.ptyToSession.set(ptyId, sessionId);
+        this.sessionToPty.set(sessionId, ptyId);
+      }
     }
+
     if (!session) {
-      // Try to find session by cwd (fallback routing)
+      // Try to find by session_id already bound
+      // (session_id may differ from initial if Claude resumes — match by cwd as fallback)
       for (const s of this.sessions.values()) {
         if (s.cwd === cwd && s.status !== 'ended') {
           session = s;
@@ -200,7 +240,6 @@ class ClaudeSessionStore {
       }
 
       case 'Notification':
-        // Push as an assistant message
         session.conversation.push({
           role: 'assistant',
           content: event.message ?? event.notification ?? '[notification]',
@@ -219,7 +258,10 @@ class ClaudeSessionStore {
 
   // ── Ambient state (from headless terminal polling) ──
 
-  updateAmbientState(sessionId: string, state: SessionAmbientState): void {
+  /** Update ambient state by PTY id (doesn't require session binding) */
+  updateAmbientStateByPty(ptyId: string, state: SessionAmbientState): void {
+    const sessionId = this.ptyToSession.get(ptyId);
+    if (!sessionId) return;
     const session = this.sessions.get(sessionId);
     if (!session) return;
     // Don't override hook-driven states
@@ -250,11 +292,20 @@ class ClaudeSessionStore {
 
   // ── Internals ──
 
-  private createSession(sessionId: string, cwd: string): ClaudeSessionState {
+  /** Claim the oldest unbound PTY for a given cwd (FIFO) */
+  private claimPendingPty(cwd: string): string {
+    const queue = this.unboundPtys.get(cwd);
+    if (!queue || queue.length === 0) return '';
+    const ptyId = queue.shift()!;
+    if (queue.length === 0) this.unboundPtys.delete(cwd);
+    return ptyId;
+  }
+
+  private createSession(sessionId: string, cwd: string, ptyId: string): ClaudeSessionState {
     const session: ClaudeSessionState = {
       sessionId,
       cwd,
-      ptyId: '',
+      ptyId,
       status: 'active',
       conversation: [],
       activeToolCalls: [],
@@ -272,6 +323,7 @@ class ClaudeSessionStore {
 
   private pushUpdate(session: ClaudeSessionState): void {
     if (!this.mainWindow || this.mainWindow.isDestroyed()) return;
+    if (!session.ptyId) return; // Can't route to renderer without a PTY binding
     this.mainWindow.webContents.send('claude-session:update', session.ptyId, { ...session });
   }
 }
