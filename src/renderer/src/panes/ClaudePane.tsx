@@ -176,18 +176,20 @@ const StreamingDots: React.FC = () => (
   </div>
 );
 
-// ── Inline Work Log (collapsed tool calls) ──
+// ── Inline Work Log (tool calls + subagents) ──
 
-const InlineWorkLog: React.FC<{ toolCalls: ToolCall[] }> = ({ toolCalls }) => {
-  const [expanded, setExpanded] = useState(false);
+const InlineWorkLog: React.FC<{ toolCalls: ToolCall[]; subagents?: SubagentInfo[] }> = ({ toolCalls, subagents }) => {
+  const [expanded, setExpanded] = useState(true);
 
-  if (toolCalls.length === 0) return null;
+  if (toolCalls.length === 0 && (!subagents || subagents.length === 0)) return null;
 
   const runningCount = toolCalls.filter(tc => tc.status === 'running').length;
+  const runningAgents = subagents?.filter(s => s.status === 'running').length ?? 0;
+  const totalItems = toolCalls.length + (subagents?.length ?? 0);
 
   return (
     <div style={{
-      margin: '4px 0 8px 0',
+      margin: '6px 0 10px 0',
       borderRadius: 8,
       border: `1px solid ${colors.borderSubtle}`,
       backgroundColor: 'rgba(255,255,255,0.02)',
@@ -198,29 +200,32 @@ const InlineWorkLog: React.FC<{ toolCalls: ToolCall[] }> = ({ toolCalls }) => {
         style={{
           display: 'flex',
           alignItems: 'center',
-          gap: 6,
-          padding: '5px 10px',
+          gap: 8,
+          padding: '6px 12px',
           cursor: 'pointer',
-          fontSize: '0.7rem',
+          fontSize: '0.75rem',
           color: colors.muted,
           userSelect: 'none',
         }}
       >
         <span style={{
           display: 'inline-block',
-          width: 10,
-          fontSize: '0.55rem',
+          width: 12,
+          fontSize: '0.6rem',
           transition: 'transform 0.15s',
           transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)',
         }}>
           {'\u25B6'}
         </span>
-        <span>{toolCalls.length} tool call{toolCalls.length !== 1 ? 's' : ''}</span>
-        {runningCount > 0 && (
+        <span style={{ fontWeight: 500 }}>
+          {toolCalls.length} tool call{toolCalls.length !== 1 ? 's' : ''}
+          {subagents && subagents.length > 0 && ` \u00B7 ${subagents.length} agent${subagents.length !== 1 ? 's' : ''}`}
+        </span>
+        {(runningCount > 0 || runningAgents > 0) && (
           <span style={{
             display: 'inline-block',
-            width: 10,
-            height: 10,
+            width: 12,
+            height: 12,
             border: `1.5px solid ${colors.accent}`,
             borderTopColor: 'transparent',
             borderRadius: '50%',
@@ -229,7 +234,34 @@ const InlineWorkLog: React.FC<{ toolCalls: ToolCall[] }> = ({ toolCalls }) => {
         )}
       </div>
       {expanded && (
-        <div style={{ padding: '0 10px 6px 10px' }}>
+        <div style={{ padding: '0 12px 8px 12px' }}>
+          {subagents && subagents.length > 0 && subagents.map(sub => (
+            <div key={sub.id} style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '3px 0',
+              fontSize: '0.75rem',
+            }}>
+              {sub.status === 'running' ? (
+                <span style={{
+                  display: 'inline-block',
+                  width: 12,
+                  height: 12,
+                  border: `1.5px solid #c084fc`,
+                  borderTopColor: 'transparent',
+                  borderRadius: '50%',
+                  animation: 'claudeSpinner 0.8s linear infinite',
+                  flexShrink: 0,
+                }} />
+              ) : (
+                <span style={{ color: colors.success, fontSize: '0.7rem', width: 12, textAlign: 'center', flexShrink: 0 }}>{'\u2713'}</span>
+              )}
+              <span style={{ color: '#c084fc', fontWeight: 600 }}>Agent</span>
+              <span style={{ color: colors.text, fontWeight: 500 }}>{sub.type}</span>
+              <span style={{ color: colors.mutedDim, fontSize: '0.65rem' }}>{sub.id.slice(0, 8)}</span>
+            </div>
+          ))}
           {toolCalls.map(tc => <WorkLogEntry key={tc.id} tc={tc} />)}
         </div>
       )}
@@ -244,30 +276,46 @@ const WorkLogEntry: React.FC<{ tc: ToolCall }> = ({ tc }) => {
   const icon = isRunning ? null : isFailed ? '\u2717' : '\u2713';
   const iconColor = isRunning ? colors.accent : isFailed ? colors.error : colors.success;
 
+  // Build detail string based on tool type
   let detail = '';
+  let detailSecondary = '';
   if (tc.name === 'Edit' || tc.name === 'Write' || tc.name === 'MultiEdit') {
-    detail = tc.input?.file_path?.split('/').pop() ?? '';
+    const fp = tc.input?.file_path ?? '';
+    detail = fp.split(/[/\\]/).pop() ?? '';
+    detailSecondary = fp.split(/[/\\]/).slice(-3, -1).join('/');
   } else if (tc.name === 'Bash') {
-    detail = (tc.input?.command ?? '').slice(0, 50);
+    detail = (tc.input?.command ?? '').slice(0, 80);
   } else if (tc.name === 'Read') {
-    detail = tc.input?.file_path?.split('/').pop() ?? '';
+    const fp = tc.input?.file_path ?? '';
+    detail = fp.split(/[/\\]/).pop() ?? '';
+    detailSecondary = fp.split(/[/\\]/).slice(-3, -1).join('/');
   } else if (tc.name === 'Grep') {
     detail = tc.input?.pattern ?? '';
+    detailSecondary = tc.input?.path?.split(/[/\\]/).pop() ?? '';
+  } else if (tc.name === 'Glob') {
+    detail = tc.input?.pattern ?? '';
+  } else if (tc.name === 'Agent') {
+    detail = tc.input?.description ?? tc.input?.prompt?.slice(0, 60) ?? '';
+  } else {
+    // Generic: show first string input value
+    const vals = Object.values(tc.input ?? {});
+    const firstStr = vals.find(v => typeof v === 'string') as string | undefined;
+    if (firstStr) detail = firstStr.slice(0, 60);
   }
 
   return (
     <div style={{
       display: 'flex',
       alignItems: 'center',
-      gap: 6,
-      padding: '2px 0',
-      fontSize: '0.7rem',
+      gap: 8,
+      padding: '3px 0',
+      fontSize: '0.75rem',
     }}>
       {isRunning ? (
         <span style={{
           display: 'inline-block',
-          width: 10,
-          height: 10,
+          width: 12,
+          height: 12,
           border: `1.5px solid ${colors.accent}`,
           borderTopColor: 'transparent',
           borderRadius: '50%',
@@ -275,20 +323,31 @@ const WorkLogEntry: React.FC<{ tc: ToolCall }> = ({ tc }) => {
           flexShrink: 0,
         }} />
       ) : (
-        <span style={{ color: iconColor, fontSize: '0.65rem', width: 10, textAlign: 'center', flexShrink: 0 }}>{icon}</span>
+        <span style={{ color: iconColor, fontSize: '0.7rem', width: 12, textAlign: 'center', flexShrink: 0 }}>{icon}</span>
       )}
-      <span style={{ color: colors.accent, fontWeight: 600 }}>{tc.name}</span>
+      <span style={{ color: colors.accent, fontWeight: 600, flexShrink: 0 }}>{tc.name}</span>
       {detail && (
         <span style={{
+          color: colors.text,
+          fontFamily: 'var(--claude-mono-font, monospace)',
+          fontSize: '0.7rem',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}>
+          {detail}
+        </span>
+      )}
+      {detailSecondary && (
+        <span style={{
           color: colors.mutedDim,
-          fontFamily: 'monospace',
           fontSize: '0.65rem',
           overflow: 'hidden',
           textOverflow: 'ellipsis',
           whiteSpace: 'nowrap',
-          maxWidth: 300,
+          flexShrink: 1,
         }}>
-          {detail}
+          {detailSecondary}
         </span>
       )}
     </div>
@@ -711,56 +770,7 @@ const InlineFilesSection: React.FC<{ fileChanges: FileChange[] }> = ({ fileChang
   );
 };
 
-const InlineSubagentsSection: React.FC<{ subagents: SubagentInfo[] }> = ({ subagents }) => {
-  const [expanded, setExpanded] = useState(false);
-  if (subagents.length === 0) return null;
-
-  return (
-    <div style={{
-      margin: '4px 0 8px 0',
-      borderRadius: 8,
-      border: `1px solid ${colors.borderSubtle}`,
-      backgroundColor: 'rgba(255,255,255,0.02)',
-      overflow: 'hidden',
-    }}>
-      <div
-        onClick={() => setExpanded(!expanded)}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 6,
-          padding: '5px 10px',
-          cursor: 'pointer',
-          fontSize: '0.7rem',
-          color: colors.muted,
-          userSelect: 'none',
-        }}
-      >
-        <span style={{
-          display: 'inline-block',
-          width: 10,
-          fontSize: '0.55rem',
-          transition: 'transform 0.15s',
-          transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)',
-        }}>
-          {'\u25B6'}
-        </span>
-        <span>{subagents.length} subagent{subagents.length !== 1 ? 's' : ''}</span>
-      </div>
-      {expanded && (
-        <div style={{ padding: '0 10px 6px 10px' }}>
-          {subagents.map(sub => (
-            <div key={sub.id} style={{ fontSize: '0.7rem', color: colors.text, display: 'flex', gap: 6, alignItems: 'center', padding: '1px 0' }}>
-              <span>{sub.status === 'running' ? '\u23F3' : '\u2713'}</span>
-              <span style={{ fontWeight: 600, color: '#c084fc' }}>{sub.type}</span>
-              <span style={{ color: colors.mutedDim }}>{sub.id.slice(0, 8)}</span>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-};
+// InlineSubagentsSection removed — subagents are now shown inside InlineWorkLog
 
 // ── Scroll to Bottom Button ──
 
@@ -1194,16 +1204,13 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
                 {/* Rendered conversation messages with dividers */}
                 {renderedConversation}
 
-                {/* Active tool calls as inline work log */}
-                {liveToolCalls.length > 0 && (
-                  <InlineWorkLog toolCalls={liveToolCalls} />
+                {/* Active tool calls + subagents as inline work log */}
+                {(liveToolCalls.length > 0 || subagents.length > 0) && (
+                  <InlineWorkLog toolCalls={liveToolCalls} subagents={subagents} />
                 )}
 
                 {/* Inline file changes */}
                 <InlineFilesSection fileChanges={fileChanges} />
-
-                {/* Inline subagents */}
-                <InlineSubagentsSection subagents={subagents} />
 
                 {/* Pending approval — hide after user responds, show again for new approvals */}
                 {pendingApproval && pendingApproval.timestamp > approvalDismissedAt && (
