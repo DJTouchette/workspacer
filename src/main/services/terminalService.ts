@@ -39,22 +39,27 @@ class TerminalService {
 
   /** Create a terminal that runs Claude Code CLI with headless mirroring + hook integration */
   createClaudeTerminal(cwd?: string): string {
+    // Spawn PTY first — if this throws, don't set up headless/poller
     const id = this.createTerminalInternal('claude', cwd, true);
 
-    // Create a headless terminal mirror
-    createHeadlessSession(id, 80, 24);
+    try {
+      // Create a headless terminal mirror
+      createHeadlessSession(id, 80, 24);
 
-    // Register this PTY as pending — the SessionStart hook will bind it by cwd
-    const session = this.sessions.get(id);
-    const resolvedCwd = session?.cwd ?? cwd ?? '';
-    claudeSessionStore.registerPendingPty(id, resolvedCwd);
+      // Register this PTY as pending — the SessionStart hook will bind it by cwd
+      const session = this.sessions.get(id);
+      const resolvedCwd = session?.cwd ?? cwd ?? '';
+      claudeSessionStore.registerPendingPty(id, resolvedCwd);
 
-    // Start ambient state polling (routes by ptyId, works once binding is established)
-    const poller = setInterval(() => {
-      const state = detectAmbientState(id);
-      claudeSessionStore.updateAmbientStateByPty(id, state);
-    }, 300);
-    this.ambientPollers.set(id, poller);
+      // Start ambient state polling (routes by ptyId, works once binding is established)
+      const poller = setInterval(() => {
+        const state = detectAmbientState(id);
+        claudeSessionStore.updateAmbientStateByPty(id, state);
+      }, 300);
+      this.ambientPollers.set(id, poller);
+    } catch (err) {
+      console.error('[TerminalService] Claude session setup failed:', err);
+    }
 
     return id;
   }

@@ -10,12 +10,22 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   // Terminal handlers
   ipcMain.handle('terminal:create', (_event, shell: string, cwd?: string) => {
-    return terminalService.createTerminal(shell, cwd);
+    try {
+      return terminalService.createTerminal(shell, cwd);
+    } catch (err: any) {
+      console.error('[IPC] terminal:create failed:', err?.message);
+      throw err;
+    }
   });
 
   // Claude terminal — spawns claude CLI with headless mirroring
   ipcMain.handle('terminal:createClaude', (_event, cwd?: string) => {
-    return terminalService.createClaudeTerminal(cwd);
+    try {
+      return terminalService.createClaudeTerminal(cwd);
+    } catch (err: any) {
+      console.error('[IPC] terminal:createClaude failed:', err?.message);
+      throw err;
+    }
   });
 
   // Claude session state queries
