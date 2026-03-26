@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu } from 'electron';
+import { app, BrowserWindow, Menu, protocol, net } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -8,9 +8,11 @@ import { claudeSessionStore } from './services/claudeSessionStore';
 import { startHookServer } from './services/hookServer';
 import { installHooks, uninstallHooks } from './services/claudeHooksConfig';
 
-/** Discover Nerd Font Mono files and inject @font-face CSS into the renderer */
-function injectNerdFonts(win: BrowserWindow): void {
-  const fontDirs = process.platform === 'win32'
+// Font file registry: filename → absolute path (populated during discovery)
+const fontFileMap = new Map<string, string>();
+
+function discoverFontDirs(): string[] {
+  return process.platform === 'win32'
     ? [
         path.join(os.homedir(), 'AppData', 'Local', 'Microsoft', 'Windows', 'Fonts'),
         'C:\\Windows\\Fonts',
@@ -21,14 +23,18 @@ function injectNerdFonts(win: BrowserWindow): void {
         '/usr/share/fonts',
         '/usr/local/share/fonts',
       ];
+}
 
+/** Discover Nerd Font files and inject @font-face CSS using workspacer-font:// protocol */
+function injectNerdFonts(win: BrowserWindow): void {
   let css = '';
-  for (const dir of fontDirs) {
+  for (const dir of discoverFontDirs()) {
     try {
       if (!fs.existsSync(dir)) continue;
       for (const file of fs.readdirSync(dir)) {
         if (!/NerdFont.*-Regular\.(ttf|otf)$/i.test(file)) continue;
         const fullPath = path.join(dir, file);
+        fontFileMap.set(file, fullPath);
         const family = file
           .replace(/-Regular\.(ttf|otf)$/i, '')
           .replace(/NerdFontMono/, ' Nerd Font Mono')
@@ -36,18 +42,13 @@ function injectNerdFonts(win: BrowserWindow): void {
           .replace(/NerdFont/, ' Nerd Font')
           .replace(/  +/g, ' ')
           .trim();
-        try {
-          const data = fs.readFileSync(fullPath);
-          const b64 = data.toString('base64');
-          const mime = file.endsWith('.otf') ? 'font/otf' : 'font/ttf';
-          css += `@font-face { font-family: "${family}"; src: url(data:${mime};base64,${b64}) format('${file.endsWith('.otf') ? 'opentype' : 'truetype'}'); }\n`;
-          // Also register without "NL" so "JetBrainsMono Nerd Font Mono" matches NL variant
-          const generic = family.replace(/NL\s*/g, '');
-          if (generic !== family) {
-            css += `@font-face { font-family: "${generic}"; src: url(data:${mime};base64,${b64}) format('${file.endsWith('.otf') ? 'opentype' : 'truetype'}'); }\n`;
-          }
-          console.log(`[Fonts] registered: "${family}"`);
-        } catch {}
+        const fmt = file.endsWith('.otf') ? 'opentype' : 'truetype';
+        css += `@font-face { font-family: "${family}"; src: url("workspacer-font://${encodeURIComponent(file)}") format('${fmt}'); font-display: block; }\n`;
+        const generic = family.replace(/NL\s*/g, '');
+        if (generic !== family) {
+          css += `@font-face { font-family: "${generic}"; src: url("workspacer-font://${encodeURIComponent(file)}") format('${fmt}'); font-display: block; }\n`;
+        }
+        console.log(`[Fonts] registered: "${family}" → ${file}`);
       }
     } catch {}
   }
@@ -60,6 +61,11 @@ function injectNerdFonts(win: BrowserWindow): void {
 }
 
 let mainWindow: BrowserWindow | null = null;
+
+// Register custom protocol to serve local font files to the renderer
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'workspacer-font', privileges: { standard: false, supportFetchAPI: true, corsEnabled: true, bypassCSP: true } },
+]);
 
 function createWindow(): void {
   // Remove default menu to prevent Ctrl+T/W conflicts
@@ -109,7 +115,20 @@ function createWindow(): void {
   });
 }
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  // Register protocol handler to serve local font files
+  protocol.handle('workspacer-font', (request) => {
+    const filename = decodeURIComponent(request.url.replace('workspacer-font://', ''));
+    const filePath = fontFileMap.get(filename);
+    if (filePath && fs.existsSync(filePath)) {
+      const data = fs.readFileSync(filePath);
+      const mime = filename.endsWith('.otf') ? 'font/otf' : 'font/ttf';
+      return new Response(data, { headers: { 'Content-Type': mime, 'Access-Control-Allow-Origin': '*' } });
+    }
+    return new Response('Not found', { status: 404 });
+  });
+  createWindow();
+});
 
 app.on('before-quit', () => {
   // Signal renderer to save session before quit
