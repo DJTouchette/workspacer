@@ -281,6 +281,8 @@ function App() {
   // --- Render ---
   return (
     <div className="app-root">
+      {/* Font diagnostic — if you see ◆☁→ as icons below, font is loaded. If boxes/?, font failed */}
+      <span className="font-diag">◆☁→ NF</span>
       <NavBar
         tabs={tabs}
         activeTabId={activeTabId}
