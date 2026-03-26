@@ -283,7 +283,8 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
                 // Multi-pane tab — tiling layout inside a container
                 <div
                   style={{
-                    width: '100%',
+                    flex: 1,
+                    minWidth: 0,
                     height: 'calc(100% - 8px)',
                     margin: '4px 8px',
                     borderRadius: '8px',

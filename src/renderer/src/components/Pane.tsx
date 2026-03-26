@@ -122,7 +122,8 @@ const Pane: React.FC<PaneProps> = ({
       className="pane-wrapper"
       data-pane-id={id}
       style={{
-        width: '100%',
+        flex: 1,
+        minWidth: 0,
         height: 'calc(100% - 8px)',
         display: 'flex',
         flexDirection: 'column',
