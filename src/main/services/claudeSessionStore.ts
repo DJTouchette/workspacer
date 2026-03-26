@@ -188,27 +188,9 @@ class ClaudeSessionStore {
           console.log(`[SessionStore] ${tc.name}: old_string=${tc.input?.old_string ? tc.input.old_string.length + ' chars' : 'MISSING'}, new_string=${tc.input?.new_string ? tc.input.new_string.length + ' chars' : 'MISSING'}`);
         }
 
-        // Extract any text Claude said before this tool call
-        if (session.ptyId) {
-          const rawText = getNewBufferContent(session.ptyId);
-          if (rawText) {
-            const cleaned = this.cleanTerminalText(rawText);
-            console.log(`[SessionStore] PreToolUse text extraction: raw=${rawText.length} chars, cleaned=${cleaned?.length ?? 0} chars, first80="${(cleaned ?? '').slice(0, 80)}"`);
-            if (cleaned && cleaned.length > 3 && !this.isDuplicateMessage(session, 'assistant', cleaned)) {
-              session.conversation.push({
-                role: 'assistant',
-                content: cleaned,
-                timestamp: Date.now(),
-                toolCalls: session.completedToolCalls.length > 0
-                  ? [...session.completedToolCalls]
-                  : undefined,
-              });
-              session.completedToolCalls = [];
-            }
-          } else {
-            console.log(`[SessionStore] PreToolUse text extraction: no new buffer content`);
-          }
-        }
+        // Note: buffer extraction on PreToolUse doesn't work reliably
+        // (terminal output arrives async, buffer is empty when hook fires).
+        // Text extraction happens on Stop via extractLastResponse().
 
         session.activeToolCalls.push(tc);
 
@@ -227,10 +209,15 @@ class ClaudeSessionStore {
         const completed = session.activeToolCalls.find(t => t.id === event.tool_use_id);
         if (completed) {
           completed.status = 'complete';
-          // tool_response may be truncated or a summary — store what we get
-          completed.response = event.tool_result ?? event.tool_response;
+          // Extract the actual response content from the hook event
+          const rawResp = event.tool_response;
+          if (typeof rawResp === 'string') {
+            completed.response = rawResp;
+          } else if (rawResp && typeof rawResp === 'object') {
+            // tool_response may be { content: "..." } or have nested structure
+            completed.response = rawResp.content ?? rawResp.result ?? rawResp.output ?? JSON.stringify(rawResp);
+          }
           completed.completedAt = Date.now();
-          console.log(`[SessionStore] PostToolUse: ${completed.name} response type=${typeof completed.response}, keys=${Object.keys(event).join(',')}`);
           session.activeToolCalls = session.activeToolCalls.filter(t => t.id !== event.tool_use_id);
           session.completedToolCalls.push(completed);
         }
@@ -434,6 +421,10 @@ class ClaudeSessionStore {
       .replace(/^.*running \w+ hook.*$/gmi, '')
       .replace(/^.*Cultivating.*$/gm, '')
       .replace(/^.*Thinking.*$/gm, '')
+      // Remove Claude Code tool call display formatting from terminal
+      .replace(/^\s*(Read|Edit|Write|Bash|Grep|Glob|Search|MultiEdit|Agent|TodoRead|TodoWrite)\(.*\)\s*$/gm, '')
+      .replace(/^\s*[⎿┃│]\s+.*$/gm, '')  // indented result lines with box-drawing chars
+      .replace(/^\s*⎿\s.*$/gm, '')
       // Remove horizontal rules (lines of ─, ━, —, - only)
       .replace(/^[\s─━—\-]{3,}$/gm, '')
       // Remove prompt markers (◆, >, ❯ at start of line)
