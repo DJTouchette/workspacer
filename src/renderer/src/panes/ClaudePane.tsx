@@ -853,11 +853,12 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
     }
   }, []);
 
-  const { sessionId, isReady, write, resize, attachToTerminal } = usePTY({
+  const { sessionId, isReady, write, resize, attachToTerminal, startPTY } = usePTY({
     paneId,
     shell: '__claude__',
     cwd,
     onExit: handleExit,
+    defer: true,
   });
 
   const { session } = useClaudeSession({ ptySessionId: sessionId });
@@ -898,15 +899,8 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
 
     webFontsAddon.loadFonts().then(() => {
       term.open(container);
-      const fitAndResize = () => {
-        try {
-          fitAddon.fit();
-          resize(term.cols, term.rows);
-        } catch {}
-      };
-      requestAnimationFrame(fitAndResize);
-      setTimeout(fitAndResize, 200);
-      setTimeout(fitAndResize, 500);
+      try { fitAddon.fit(); } catch {}
+      startPTY(term.cols, term.rows);
     });
 
     term.attachCustomKeyEventHandler((e: KeyboardEvent) => {

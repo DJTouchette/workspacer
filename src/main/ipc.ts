@@ -9,9 +9,9 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   terminalService.setMainWindow(mainWindow);
 
   // Terminal handlers
-  ipcMain.handle('terminal:create', (_event, shell: string, cwd?: string) => {
+  ipcMain.handle('terminal:create', (_event, shell: string, cwd?: string, cols?: number, rows?: number) => {
     try {
-      return terminalService.createTerminal(shell, cwd);
+      return terminalService.createTerminal(shell, cwd, cols, rows);
     } catch (err: any) {
       console.error('[IPC] terminal:create failed:', err?.message);
       throw err;

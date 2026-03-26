@@ -67,13 +67,13 @@ class TerminalService {
   }
 
   /** Create a terminal that runs Claude Code CLI with headless mirroring + hook integration */
-  createClaudeTerminal(cwd?: string): string {
+  createClaudeTerminal(cwd?: string, cols?: number, rows?: number): string {
     // Spawn PTY first — if this throws, don't set up headless/poller
-    const id = this.createTerminalInternal('claude', cwd, true);
+    const id = this.createTerminalInternal('claude', cwd, true, cols, rows);
 
     try {
       // Create a headless terminal mirror
-      createHeadlessSession(id, 80, 24);
+      createHeadlessSession(id, cols || 80, rows || 24);
 
       // Register this PTY as pending — the SessionStart hook will bind it by cwd
       const session = this.sessions.get(id);
@@ -93,15 +93,15 @@ class TerminalService {
     return id;
   }
 
-  createTerminal(shell: string, cwd?: string): string {
+  createTerminal(shell: string, cwd?: string, cols?: number, rows?: number): string {
     // Intercept sentinel value from ClaudePane
     if (shell === '__claude__') {
-      return this.createClaudeTerminal(cwd);
+      return this.createClaudeTerminal(cwd, cols, rows);
     }
-    return this.createTerminalInternal(shell, cwd, false);
+    return this.createTerminalInternal(shell, cwd, false, cols, rows);
   }
 
-  private createTerminalInternal(shell: string, cwd: string | undefined, isClaudeSession: boolean): string {
+  private createTerminalInternal(shell: string, cwd: string | undefined, isClaudeSession: boolean, cols?: number, rows?: number): string {
     if (!shell) {
       shell = detectDefaultShell();
     }
@@ -141,8 +141,8 @@ class TerminalService {
 
     const ptyProcess = pty.spawn(spawnShell, spawnArgs, {
       name: 'xterm-256color',
-      cols: 80,
-      rows: 24,
+      cols: cols || 80,
+      rows: rows || 24,
       cwd: resolvedCwd,
       env,
     });

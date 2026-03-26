@@ -69,11 +69,12 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
     }
   }, []);
 
-  const { sessionId, isReady, write, resize, attachToTerminal } = usePTY({
+  const { sessionId, isReady, write, resize, attachToTerminal, startPTY } = usePTY({
     paneId,
     shell: shell || termCfg.shell,
     cwd,
     onExit: handleExit,
+    defer: true, // Don't create PTY until terminal is open and fitted
   });
 
   // Notify parent of PTY session ID for session save (CWD lookup)
@@ -113,17 +114,9 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
 
     webFontsAddon.loadFonts().then(() => {
       term.open(container);
-      // Fit and force resize to PTY so TUI apps render at correct dimensions
-      const fitAndResize = () => {
-        try {
-          fitAddon.fit();
-          // Force resize to PTY even if size appears unchanged
-          resize(term.cols, term.rows);
-        } catch {}
-      };
-      requestAnimationFrame(fitAndResize);
-      setTimeout(fitAndResize, 200);
-      setTimeout(fitAndResize, 500);
+      try { fitAddon.fit(); } catch {}
+      // NOW create the PTY with the correct dimensions
+      startPTY(term.cols, term.rows);
     });
 
     // Tell xterm to NOT process keys that the app handles.

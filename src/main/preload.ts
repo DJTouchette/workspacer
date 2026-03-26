@@ -2,8 +2,8 @@ import { contextBridge, ipcRenderer } from 'electron';
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // Terminal
-  createTerminal: (shell: string, cwd?: string): Promise<string> =>
-    ipcRenderer.invoke('terminal:create', shell, cwd),
+  createTerminal: (shell: string, cwd?: string, cols?: number, rows?: number): Promise<string> =>
+    ipcRenderer.invoke('terminal:create', shell, cwd, cols, rows),
 
   writeTerminal: (id: string, data: string): Promise<void> =>
     ipcRenderer.invoke('terminal:write', id, data),
