@@ -45,15 +45,29 @@ function App() {
 
   // Load Nerd Fonts via FontFace API so xterm.js canvas/WebGL can use them
   useEffect(() => {
-    window.electronAPI.getNerdFonts?.().then((fonts) => {
+    window.electronAPI.getNerdFonts?.().then(async (fonts) => {
       for (const f of fonts) {
-        const face = new FontFace(f.family, `url("${f.dataUrl}")`);
-        face.load().then((loaded) => {
+        const src = `url("${f.dataUrl}")`;
+        // Register under the exact derived name
+        try {
+          const face = new FontFace(f.family, src);
+          const loaded = await face.load();
           document.fonts.add(loaded);
           console.log(`[Fonts] loaded: "${f.family}"`);
-        }).catch((err) => {
-          console.warn(`[Fonts] failed to load "${f.family}":`, err);
-        });
+        } catch (err) {
+          console.warn(`[Fonts] failed: "${f.family}":`, err);
+        }
+        // Also register under generic base name without NL/NF prefix variations
+        // so "JetBrainsMono Nerd Font Mono" in config matches "JetBrainsMonoNL Nerd Font Mono" file
+        const genericName = f.family.replace(/NL\s*/g, '');
+        if (genericName !== f.family) {
+          try {
+            const face2 = new FontFace(genericName, src);
+            const loaded2 = await face2.load();
+            document.fonts.add(loaded2);
+            console.log(`[Fonts] loaded alias: "${genericName}"`);
+          } catch {}
+        }
       }
     }).catch(() => {});
   }, []);

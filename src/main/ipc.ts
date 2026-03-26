@@ -133,7 +133,6 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
           const family = file
             .replace(/-Regular\.(ttf|otf)$/i, '')
             .replace(/NerdFontMono/, ' Nerd Font Mono')
-            .replace(/([a-z])([A-Z])/g, '$1 $2')  // camelCase to spaces
             .replace(/  +/g, ' ')
             .trim();
           try {
