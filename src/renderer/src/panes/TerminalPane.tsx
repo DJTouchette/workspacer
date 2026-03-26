@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { WebglAddon } from '@xterm/addon-webgl';
 import '@xterm/xterm/css/xterm.css';
 import { usePTY } from '../hooks/usePTY';
 import { useConfig, Config } from '../hooks/useConfig';
@@ -98,6 +99,15 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
     fitAddonRef.current = fitAddon;
 
     term.open(container);
+
+    // Use GPU-accelerated WebGL renderer for better font/glyph support
+    try {
+      const webgl = new WebglAddon();
+      webgl.onContextLoss(() => { webgl.dispose(); });
+      term.loadAddon(webgl);
+    } catch (e) {
+      console.warn('[TerminalPane] WebGL init failed, using canvas fallback:', e);
+    }
 
     // Tell xterm to NOT process keys that the app handles.
     // Return false = xterm ignores the key, letting our window capture handler take it.

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useCallback, useState, useMemo } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { WebglAddon } from '@xterm/addon-webgl';
 import '@xterm/xterm/css/xterm.css';
 import { usePTY } from '../hooks/usePTY';
 import { useClaudeSession } from '../hooks/useClaudeSession';
@@ -885,6 +886,15 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
     fitAddonRef.current = fitAddon;
 
     term.open(container);
+
+    // Use GPU-accelerated WebGL renderer for better font/glyph support
+    try {
+      const webgl = new WebglAddon();
+      webgl.onContextLoss(() => { webgl.dispose(); });
+      term.loadAddon(webgl);
+    } catch (e) {
+      console.warn('[ClaudePane] WebGL init failed, using canvas fallback:', e);
+    }
 
     term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
       if (e.ctrlKey && !e.altKey && ['t', 'b', 'w', 'd', '/', '?', ',', 's', 'k'].includes(e.key)) return false;
