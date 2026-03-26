@@ -43,6 +43,25 @@ function App() {
     window.electronAPI.getCwd().then((cwd) => { appCwdRef.current = cwd; }).catch(() => {});
   }, []);
 
+  // Load Nerd Fonts via @font-face so xterm.js canvas/WebGL can use them
+  useEffect(() => {
+    window.electronAPI.getNerdFonts?.().then((fonts) => {
+      for (const f of fonts) {
+        const fileUrl = `file:///${f.path.replace(/\\/g, '/')}`;
+        const face = new FontFace(
+          // Use the standard Nerd Font family name derived from filename
+          f.family.replace(/NerdFontMono-Regular\.(ttf|otf)$/i, ' Nerd Font Mono')
+                   .replace(/NerdFont-Regular\.(ttf|otf)$/i, ' Nerd Font')
+                   .replace(/NL/g, 'NL ').replace(/  +/g, ' ').trim(),
+          `url("${fileUrl}")`,
+        );
+        face.load().then((loaded) => {
+          document.fonts.add(loaded);
+        }).catch(() => {});
+      }
+    }).catch(() => {});
+  }, []);
+
   // Session state
   const [sessionPhase, setSessionPhase] = useState<'loading' | 'picker' | 'active'>('loading');
   const [sessionList, setSessionList] = useState<any[]>([]);

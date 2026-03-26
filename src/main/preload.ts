@@ -84,6 +84,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getCwd: (): Promise<string> =>
     ipcRenderer.invoke('app:getCwd'),
 
+  // Fonts
+  getNerdFonts: (): Promise<{ family: string; path: string }[]> =>
+    ipcRenderer.invoke('fonts:getNerdFonts'),
+
   // Dialog
   pickFolder: (defaultPath?: string): Promise<string | null> =>
     ipcRenderer.invoke('dialog:pickFolder', defaultPath),

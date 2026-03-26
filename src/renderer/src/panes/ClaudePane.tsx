@@ -865,9 +865,6 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
     termInitRef.current = true;
 
     // Ensure Nerd Fonts are loaded before canvas rendering
-    const primaryFont = termCfg.fontFamily.split(',')[0].trim().replace(/"/g, '');
-    document.fonts.load(`${termCfg.fontSize}px "${primaryFont}"`).catch(() => {});
-
     const term = new Terminal({
       cursorBlink: termCfg.cursorBlink,
       fontSize: termCfg.fontSize,
@@ -895,6 +892,11 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
     } catch (e) {
       console.warn('[ClaudePane] WebGL init failed, using canvas fallback:', e);
     }
+
+    // Re-fit after fonts load so column count matches actual glyph width
+    document.fonts.ready.then(() => {
+      requestAnimationFrame(() => { try { fitAddon.fit(); } catch {} });
+    });
 
     term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
       if (e.ctrlKey && !e.altKey && ['t', 'b', 'w', 'd', '/', '?', ',', 's', 'k'].includes(e.key)) return false;

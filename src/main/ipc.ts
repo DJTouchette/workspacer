@@ -100,6 +100,47 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     return process.cwd();
   });
 
+  // Font discovery — find Nerd Font files for @font-face registration
+  ipcMain.handle('fonts:getNerdFonts', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const os = require('os');
+    const results: { family: string; path: string }[] = [];
+
+    const fontDirs = process.platform === 'win32'
+      ? [
+          path.join(os.homedir(), 'AppData', 'Local', 'Microsoft', 'Windows', 'Fonts'),
+          'C:\\Windows\\Fonts',
+        ]
+      : [
+          path.join(os.homedir(), '.local', 'share', 'fonts'),
+          path.join(os.homedir(), '.fonts'),
+          '/usr/share/fonts',
+          '/usr/local/share/fonts',
+        ];
+
+    const nerdFontPatterns = [
+      { pattern: /NerdFontMono-Regular\.ttf$/i, family: null },
+      { pattern: /NerdFont-Regular\.ttf$/i, family: null },
+    ];
+
+    for (const dir of fontDirs) {
+      try {
+        if (!fs.existsSync(dir)) continue;
+        const files: string[] = fs.readdirSync(dir);
+        for (const file of files) {
+          if (!file.endsWith('.ttf') && !file.endsWith('.otf')) continue;
+          if (!/[Nn]erd[Ff]ont/.test(file)) continue;
+          if (!/Regular/i.test(file)) continue;
+          // Extract family name from filename: e.g. JetBrainsMonoNLNerdFontMono-Regular.ttf
+          const fullPath = path.join(dir, file);
+          results.push({ family: file, path: fullPath });
+        }
+      } catch {}
+    }
+    return results;
+  });
+
   // Dialog
   ipcMain.handle('dialog:pickFolder', async (_event, defaultPath?: string) => {
     const result = await dialog.showOpenDialog(mainWindow, {
