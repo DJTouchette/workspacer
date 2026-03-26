@@ -998,10 +998,9 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
   const pendingApproval = session?.pendingApproval ?? null;
   const isStreaming = session?.ambientState === 'thinking' || session?.ambientState === 'streaming';
 
-  // Group all tool calls for inline display
-  const allToolCalls = useMemo(() => {
-    const tc = [...completedToolCalls, ...activeToolCalls];
-    return tc;
+  // Only show in-progress tool calls globally — completed ones are per-turn
+  const liveToolCalls = useMemo(() => {
+    return [...completedToolCalls, ...activeToolCalls];
   }, [completedToolCalls, activeToolCalls]);
 
   // Build rendered conversation with dividers
@@ -1165,8 +1164,8 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
                 {renderedConversation}
 
                 {/* Active tool calls as inline work log */}
-                {allToolCalls.length > 0 && (
-                  <InlineWorkLog toolCalls={allToolCalls} />
+                {liveToolCalls.length > 0 && (
+                  <InlineWorkLog toolCalls={liveToolCalls} />
                 )}
 
                 {/* Inline file changes */}

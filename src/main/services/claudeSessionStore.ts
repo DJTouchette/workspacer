@@ -253,9 +253,22 @@ class ClaudeSessionStore {
               role: 'assistant',
               content: response,
               timestamp: Date.now(),
+              toolCalls: session.completedToolCalls.length > 0
+                ? [...session.completedToolCalls]
+                : undefined,
             });
+          } else if (session.completedToolCalls.length > 0) {
+            // No new response text but we have tool calls — attach to last assistant turn
+            const lastAssistant = [...session.conversation].reverse().find(t => t.role === 'assistant');
+            if (lastAssistant) {
+              lastAssistant.toolCalls = [
+                ...(lastAssistant.toolCalls ?? []),
+                ...session.completedToolCalls,
+              ];
+            }
           }
         }
+        session.completedToolCalls = [];
         break;
 
       case 'SubagentStart':
