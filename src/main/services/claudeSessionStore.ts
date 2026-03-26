@@ -184,6 +184,25 @@ class ClaudeSessionStore {
           status: 'running',
           startedAt: Date.now(),
         };
+        if (tc.name === 'Edit' || tc.name === 'MultiEdit') {
+          console.log(`[SessionStore] ${tc.name}: old_string=${tc.input?.old_string ? tc.input.old_string.length + ' chars' : 'MISSING'}, new_string=${tc.input?.new_string ? tc.input.new_string.length + ' chars' : 'MISSING'}`);
+        }
+
+        // On first tool call of a turn, extract any text Claude said before using tools
+        if (session.activeToolCalls.length === 0 && session.ptyId) {
+          const rawText = getNewBufferContent(session.ptyId);
+          if (rawText) {
+            const cleaned = this.cleanTerminalText(rawText);
+            if (cleaned && !this.isDuplicateMessage(session, 'assistant', cleaned)) {
+              session.conversation.push({
+                role: 'assistant',
+                content: cleaned,
+                timestamp: Date.now(),
+              });
+            }
+          }
+        }
+
         session.activeToolCalls.push(tc);
 
         if (['Edit', 'MultiEdit', 'Write'].includes(tc.name)) {
