@@ -209,21 +209,48 @@ class ClaudeSessionStore {
         const completed = session.activeToolCalls.find(t => t.id === event.tool_use_id);
         if (completed) {
           completed.status = 'complete';
-          // Extract the actual response content from the hook event
+          // Extract response — tool_response can be string or structured object
           const rawResp = event.tool_response;
           if (typeof rawResp === 'string') {
             completed.response = rawResp;
+          } else if (Array.isArray(rawResp)) {
+            // Array of content blocks: [{ type: "text", text: "..." }, ...]
+            completed.response = rawResp
+              .map((b: any) => b.text ?? b.content ?? '')
+              .filter(Boolean)
+              .join('\n');
           } else if (rawResp && typeof rawResp === 'object') {
-            // tool_response may be { content: "..." } or have nested structure
-            completed.response = rawResp.content ?? rawResp.result ?? rawResp.output ?? JSON.stringify(rawResp);
+            completed.response = rawResp.text ?? rawResp.content ?? rawResp.result ?? rawResp.output ?? '';
           }
+          console.log(`[SessionStore] PostToolUse ${completed.name}: response=${typeof completed.response === 'string' ? completed.response.split('\n').length + ' lines' : 'none'}, tool_response type=${Array.isArray(rawResp) ? 'array' : typeof rawResp}, keys=${rawResp && typeof rawResp === 'object' ? Object.keys(rawResp).join(',') : 'n/a'}`);
           completed.completedAt = Date.now();
           session.activeToolCalls = session.activeToolCalls.filter(t => t.id !== event.tool_use_id);
           session.completedToolCalls.push(completed);
         }
         session.totalToolCalls++;
-        // Mark buffer so next PreToolUse extraction starts fresh
-        if (session.ptyId) markBufferPosition(session.ptyId);
+        // After tool completes, wait for terminal output to catch up,
+        // then extract any Claude text that appeared
+        if (session.ptyId) {
+          const ptyId = session.ptyId;
+          setTimeout(() => {
+            const rawText = getNewBufferContent(ptyId);
+            if (rawText) {
+              const cleaned = this.cleanTerminalText(rawText);
+              if (cleaned && cleaned.length > 3 && !this.isDuplicateMessage(session, 'assistant', cleaned)) {
+                session.conversation.push({
+                  role: 'assistant',
+                  content: cleaned,
+                  timestamp: Date.now(),
+                  toolCalls: session.completedToolCalls.length > 0
+                    ? [...session.completedToolCalls]
+                    : undefined,
+                });
+                session.completedToolCalls = [];
+                this.pushUpdate(session);
+              }
+            }
+          }, 500);
+        }
         break;
       }
 
