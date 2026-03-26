@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useCallback, useState, useMemo } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { WebFontsAddon } from '@xterm/addon-web-fonts';
 import '@xterm/xterm/css/xterm.css';
 import { usePTY } from '../hooks/usePTY';
 import { useClaudeSession } from '../hooks/useClaudeSession';
@@ -891,10 +892,12 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
     terminalRef.current = term;
     fitAddonRef.current = fitAddon;
 
-    // Wait for @font-face fonts to load, then open terminal
-    document.fonts.ready.then(() => {
-      term.open(container);
+    // Use web-fonts addon to ensure @font-face fonts are loaded before canvas renders
+    const webFontsAddon = new WebFontsAddon();
+    term.loadAddon(webFontsAddon);
 
+    webFontsAddon.loadFonts().then(() => {
+      term.open(container);
       const fitRetry = () => { try { fitAddon.fit(); } catch {} };
       requestAnimationFrame(fitRetry);
       setTimeout(fitRetry, 200);

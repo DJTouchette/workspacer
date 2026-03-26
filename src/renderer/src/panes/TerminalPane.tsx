@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { WebFontsAddon } from '@xterm/addon-web-fonts';
 import '@xterm/xterm/css/xterm.css';
 import { usePTY } from '../hooks/usePTY';
 import { useConfig, Config } from '../hooks/useConfig';
@@ -106,11 +107,12 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
     terminalRef.current = term;
     fitAddonRef.current = fitAddon;
 
-    // Wait for @font-face fonts (injected by main process) to load,
-    // then open terminal so canvas renders with the correct font
-    document.fonts.ready.then(() => {
-      term.open(container);
+    // Use web-fonts addon to ensure @font-face fonts are loaded before canvas renders
+    const webFontsAddon = new WebFontsAddon();
+    term.loadAddon(webFontsAddon);
 
+    webFontsAddon.loadFonts().then(() => {
+      term.open(container);
       const fitRetry = () => { try { fitAddon.fit(); } catch {} };
       requestAnimationFrame(fitRetry);
       setTimeout(fitRetry, 200);
