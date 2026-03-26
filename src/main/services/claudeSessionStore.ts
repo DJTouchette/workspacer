@@ -449,7 +449,7 @@ class ClaudeSessionStore {
       .replace(/^.*Cultivating.*$/gm, '')
       .replace(/^.*Thinking.*$/gm, '')
       // Remove Claude Code tool call display formatting from terminal
-      .replace(/^\s*(Read|Edit|Write|Bash|Grep|Glob|Search|MultiEdit|Agent|TodoRead|TodoWrite)\(.*\)\s*$/gm, '')
+      .replace(/^\s*(Read|Edit|Write|Bash|Grep|Glob|Search|MultiEdit|Agent|TodoRead|TodoWrite)\(.*\).*$/gm, '')
       .replace(/^\s*[⎿┃│]\s+.*$/gm, '')  // indented result lines with box-drawing chars
       .replace(/^\s*⎿\s.*$/gm, '')
       // Remove horizontal rules (lines of ─, ━, —, - only)
@@ -535,7 +535,7 @@ class ClaudeSessionStore {
 
     const response = responseLines.join('\n').trim();
 
-    // Filter out noise: prompt markers, cost lines, token info, status bars, spinners
+    // Filter out noise: prompt markers, cost lines, token info, status bars, spinners, tool calls
     return response
       .replace(/^[●◆❯>]\s*/gm, '')
       .replace(/^.*\d+\.\d+[kK]? tokens.*$/gm, '')
@@ -543,6 +543,9 @@ class ClaudeSessionStore {
       .replace(/^.*\? for shortcuts.*$/gm, '')
       .replace(/^.*[✱⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏].*$/gm, '')
       .replace(/^.*running \w+ hook.*$/gmi, '')
+      // Remove tool call display lines
+      .replace(/^\s*(Read|Edit|Write|Bash|Grep|Glob|Search|MultiEdit|Agent|TodoRead|TodoWrite)\(.*\).*$/gm, '')
+      .replace(/^\s*[⎿┃│]\s+.*$/gm, '')
       .replace(/^.*Cultivating.*$/gm, '')
       .replace(/^[\s─━—\-]{3,}$/gm, '')
       .replace(/\n{3,}/g, '\n\n')

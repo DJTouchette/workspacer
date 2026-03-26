@@ -343,27 +343,14 @@ const DiffView: React.FC<{ oldStr: string; newStr: string; filePath?: string }> 
   );
 };
 
-/** Count response lines reliably — tool_response can be string, object, or truncated */
-function countResponseLines(resp: any): number {
-  if (!resp) return 0;
-  if (typeof resp === 'string') return resp.split('\n').length;
-  // Could be an object with content or result field
-  const text = resp.content ?? resp.result ?? resp.output ?? '';
-  if (typeof text === 'string') return text.split('\n').length;
-  return 0;
-}
-
-/** Format tool call as Claude Code style one-liner: Tool(args) ⎿ result */
+/** Format tool call as Claude Code style one-liner */
 function formatToolSummary(tc: ToolCall): { call: string; result: string } {
   const fp = (p: string) => p?.split(/[/\\]/).pop() ?? '';
 
   switch (tc.name) {
     case 'Read': {
       const file = fp(tc.input?.file_path ?? '');
-      const limit = tc.input?.limit;
-      const lines = countResponseLines(tc.response);
-      const desc = lines > 0 ? `Read ${lines} lines` : limit ? `Read ${limit} lines` : tc.status === 'complete' ? 'Read' : '';
-      return { call: `Read(${file})`, result: desc };
+      return { call: `Read(${file})`, result: '' };
     }
     case 'Edit':
     case 'MultiEdit': {
@@ -372,24 +359,23 @@ function formatToolSummary(tc: ToolCall): { call: string; result: string } {
       const nw = tc.input?.new_string ?? '';
       const added = nw ? nw.split('\n').length : 0;
       const removed = old ? old.split('\n').length : 0;
-      return { call: `Edit(${file})`, result: `${removed > 0 ? `-${removed}` : ''} ${added > 0 ? `+${added}` : ''} lines`.trim() };
+      const parts: string[] = [];
+      if (removed > 0) parts.push(`-${removed}`);
+      if (added > 0) parts.push(`+${added}`);
+      return { call: `Edit(${file})`, result: parts.length ? parts.join(' ') + ' lines' : '' };
     }
     case 'Write': {
       const file = fp(tc.input?.file_path ?? '');
       const lines = tc.input?.content ? tc.input.content.split('\n').length : 0;
-      return { call: `Write(${file})`, result: `${lines} lines` };
+      return { call: `Write(${file})`, result: lines > 0 ? `${lines} lines` : '' };
     }
     case 'Bash': {
       const cmd = (tc.input?.command ?? '').split('\n')[0].slice(0, 60);
-      const lines = countResponseLines(tc.response);
-      const desc = lines > 0 ? `${lines} lines output` : '';
-      return { call: `Bash(${cmd})`, result: desc };
+      return { call: `Bash(${cmd})`, result: '' };
     }
     case 'Grep': {
       const pat = tc.input?.pattern ?? '';
-      const lines = countResponseLines(tc.response);
-      const desc = lines > 0 ? `Found ${lines} results` : '';
-      return { call: `Search(pattern: "${pat}")`, result: desc };
+      return { call: `Search(pattern: "${pat}")`, result: '' };
     }
     case 'Glob': {
       const pat = tc.input?.pattern ?? '';
