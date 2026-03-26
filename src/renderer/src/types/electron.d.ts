@@ -32,6 +32,12 @@ export interface ElectronAPI {
   getAllClaudeSessions: () => Promise<any[]>;
   onClaudeSessionUpdate: (callback: (ptyId: string, snapshot: any) => void) => () => void;
 
+  // App info
+  getCwd: () => Promise<string>;
+
+  // Dialog
+  pickFolder: (defaultPath?: string) => Promise<string | null>;
+
   // App lifecycle
   onBeforeQuit: (callback: () => void) => () => void;
 }

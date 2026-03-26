@@ -17,10 +17,13 @@ export function startHookServer(): http.Server {
       req.on('end', () => {
         try {
           const event = JSON.parse(body);
+          const hookName = event.hook_event_name ?? event.type ?? 'unknown';
+          console.log(`[HookServer] received: ${hookName} session=${event.session_id ?? '?'} cwd=${event.cwd ?? '?'}`);
           claudeSessionStore.handleHookEvent(event);
           res.writeHead(200);
           res.end('ok');
-        } catch {
+        } catch (err) {
+          console.error('[HookServer] bad json:', err);
           res.writeHead(400);
           res.end('bad json');
         }

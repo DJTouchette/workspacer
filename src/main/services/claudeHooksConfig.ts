@@ -11,7 +11,7 @@ import * as path from 'path';
 import * as os from 'os';
 
 const HOOK_PORT = 7890;
-const HOOK_COMMAND = `curl -s -X POST http://localhost:${HOOK_PORT}/hook -H 'Content-Type: application/json' -d "$(cat)"`;
+const HOOK_COMMAND = `curl -s -X POST http://localhost:${HOOK_PORT}/hook -H 'Content-Type: application/json' -d @-`;
 
 // Marker so we can identify hooks we installed vs user-created ones
 const WORKSPACER_MARKER = '# workspacer-managed';
@@ -65,9 +65,19 @@ function makeHookEntry() {
 }
 
 /**
- * Check if a hook array already contains a Workspacer-managed hook.
+ * Check if a hook array already contains a Workspacer-managed hook
+ * with the CURRENT command format (not a stale one).
  */
 function hasWorkspacerHook(hooks: any[]): boolean {
+  return hooks.some(
+    (h: any) => typeof h.command === 'string' && h.command === MARKED_COMMAND,
+  );
+}
+
+/**
+ * Check if a hook array contains any Workspacer-managed hook (current or stale).
+ */
+function hasAnyWorkspacerHook(hooks: any[]): boolean {
   return hooks.some(
     (h: any) => typeof h.command === 'string' && h.command.includes(WORKSPACER_MARKER),
   );
@@ -104,6 +114,15 @@ export function installHooks(): boolean {
       );
 
       if (!alreadyInstalled) {
+        // Remove any stale workspacer hooks first
+        for (const matcher of matchers) {
+          if (Array.isArray(matcher.hooks) && hasAnyWorkspacerHook(matcher.hooks)) {
+            matcher.hooks = matcher.hooks.filter(
+              (h: any) => !(typeof h.command === 'string' && h.command.includes(WORKSPACER_MARKER)),
+            );
+          }
+        }
+
         // Find a matcher without a tool_name filter (catch-all) or create one
         let catchAll = matchers.find((m: any) => !m.matcher);
         if (!catchAll) {
@@ -192,6 +211,6 @@ export function hooksInstalled(): boolean {
   if (!Array.isArray(sessionStart)) return false;
 
   return sessionStart.some(
-    (matcher: any) => Array.isArray(matcher.hooks) && hasWorkspacerHook(matcher.hooks),
+    (matcher: any) => Array.isArray(matcher.hooks) && hasAnyWorkspacerHook(matcher.hooks),
   );
 }

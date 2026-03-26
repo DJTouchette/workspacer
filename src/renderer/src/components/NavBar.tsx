@@ -6,7 +6,7 @@ interface NavBarProps {
   tabs: TabConfig[];
   activeTabId: string;
   onTabClick: (id: string) => void;
-  onAddTab?: (type: PaneType, shell?: string, label?: string) => void;
+  onAddTab?: (type: PaneType, shell?: string, label?: string, cwd?: string) => void;
 }
 
 const typeLabels: Record<PaneType, string> = {
@@ -198,7 +198,11 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
                 <div style={{ padding: '2px 8px', fontSize: '0.55rem', color: 'rgb(90, 90, 100)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                   New Tab
                 </div>
-                <MenuButton label="Claude" onClick={() => { setShowMenu(false); onAddTab('claude'); }} />
+                <MenuButton label="Claude" onClick={async () => {
+                  setShowMenu(false);
+                  const folder = await window.electronAPI.pickFolder();
+                  if (folder) onAddTab('claude', undefined, undefined, folder);
+                }} />
                 <MenuButton label="Browser" onClick={() => { setShowMenu(false); onAddTab('browser'); }} />
                 <MenuButton label="Notes" onClick={() => { setShowMenu(false); onAddTab('notes'); }} />
 

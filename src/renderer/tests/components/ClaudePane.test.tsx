@@ -99,6 +99,11 @@ function makeSnapshot(overrides: Partial<ClaudeSessionSnapshot> = {}): ClaudeSes
   };
 }
 
+/** Switch to GUI view mode by clicking the GUI toggle button */
+function switchToGui() {
+  fireEvent.click(screen.getByText('GUI'));
+}
+
 describe('ClaudePane', () => {
   beforeEach(() => {
     mockSession = null;
@@ -109,6 +114,7 @@ describe('ClaudePane', () => {
     it('should show waiting message when no session exists', () => {
       mockSession = null;
       render(<ClaudePane paneId="p1" title="Claude" isActive={true} />);
+      switchToGui();
 
       expect(screen.getByText('Claude Code session starting...')).toBeInTheDocument();
       expect(screen.getByText(/Waiting for hook events/)).toBeInTheDocument();
@@ -117,6 +123,7 @@ describe('ClaudePane', () => {
     it('should show connected message when session exists but no conversation', () => {
       mockSession = makeSnapshot();
       render(<ClaudePane paneId="p2" title="Claude" isActive={true} />);
+      switchToGui();
 
       expect(screen.getByText('Session connected')).toBeInTheDocument();
     });
@@ -163,42 +170,47 @@ describe('ClaudePane', () => {
         ],
       });
       render(<ClaudePane paneId="p8" title="Claude" isActive={true} />);
+      switchToGui();
 
       expect(screen.getByText('Fix the bug in app.ts')).toBeInTheDocument();
       expect(screen.getByText('I found the issue. Let me fix it.')).toBeInTheDocument();
-      expect(screen.getByText('You')).toBeInTheDocument();
-      expect(screen.getByText('Claude')).toBeInTheDocument();
     });
   });
 
   describe('tool calls', () => {
-    it('should show active tool calls with running status', () => {
+    it('should show active tool calls in inline work log', () => {
       mockSession = makeSnapshot({
         activeToolCalls: [
           { id: 'tc-1', name: 'Read', input: { file_path: '/src/app.ts' }, status: 'running', startedAt: Date.now() },
         ],
       });
       render(<ClaudePane paneId="p9" title="Claude" isActive={true} />);
+      switchToGui();
 
-      expect(screen.getByText('Running')).toBeInTheDocument();
+      expect(screen.getByText('1 tool call')).toBeInTheDocument();
+      // Expand the work log to see tool name
+      fireEvent.click(screen.getByText('1 tool call'));
       expect(screen.getByText('Read')).toBeInTheDocument();
     });
 
-    it('should show completed tool calls in the side panel', () => {
+    it('should show completed tool calls in inline work log', () => {
       mockSession = makeSnapshot({
         completedToolCalls: [
           { id: 'tc-2', name: 'Bash', input: { command: 'npm test' }, response: 'all passed', status: 'complete', startedAt: Date.now() - 2000, completedAt: Date.now() },
         ],
       });
       render(<ClaudePane paneId="p10" title="Claude" isActive={true} />);
+      switchToGui();
 
-      expect(screen.getByText('Tool History (1)')).toBeInTheDocument();
+      expect(screen.getByText('1 tool call')).toBeInTheDocument();
+      // Expand to see tool name
+      fireEvent.click(screen.getByText('1 tool call'));
       expect(screen.getByText('Bash')).toBeInTheDocument();
     });
   });
 
   describe('file changes', () => {
-    it('should show file changes in the side panel', () => {
+    it('should show file changes in inline collapsed section', () => {
       mockSession = makeSnapshot({
         fileChanges: [
           { path: '/src/components/App.tsx', toolName: 'Edit', input: {}, timestamp: Date.now() },
@@ -206,8 +218,11 @@ describe('ClaudePane', () => {
         ],
       });
       render(<ClaudePane paneId="p11" title="Claude" isActive={true} />);
+      switchToGui();
 
-      expect(screen.getByText('Files (2)')).toBeInTheDocument();
+      expect(screen.getByText('2 files changed')).toBeInTheDocument();
+      // Expand to see file names
+      fireEvent.click(screen.getByText('2 files changed'));
       expect(screen.getByText('App.tsx')).toBeInTheDocument();
       expect(screen.getByText('new.ts')).toBeInTheDocument();
     });
@@ -225,6 +240,7 @@ describe('ClaudePane', () => {
         ambientState: 'waiting_approval',
       });
       render(<ClaudePane paneId="p12" title="Claude" isActive={true} />);
+      switchToGui();
 
       expect(screen.getByText('Permission Required: Bash')).toBeInTheDocument();
       expect(screen.getByText('Allow')).toBeInTheDocument();
@@ -241,9 +257,10 @@ describe('ClaudePane', () => {
         ambientState: 'waiting_approval',
       });
       render(<ClaudePane paneId="p13" title="Claude" isActive={true} />);
+      switchToGui();
 
       fireEvent.click(screen.getByText('Allow'));
-      expect(mockWrite).toHaveBeenCalledWith('y\n');
+      expect(mockWrite).toHaveBeenCalledWith('y');
     });
 
     it('should send "n" to PTY when Deny is clicked', () => {
@@ -256,9 +273,10 @@ describe('ClaudePane', () => {
         ambientState: 'waiting_approval',
       });
       render(<ClaudePane paneId="p14" title="Claude" isActive={true} />);
+      switchToGui();
 
       fireEvent.click(screen.getByText('Deny'));
-      expect(mockWrite).toHaveBeenCalledWith('n\n');
+      expect(mockWrite).toHaveBeenCalledWith('n');
     });
   });
 
@@ -275,15 +293,18 @@ describe('ClaudePane', () => {
       expect(screen.getByText('1 subagent(s)')).toBeInTheDocument();
     });
 
-    it('should show subagents in side panel', () => {
+    it('should show subagents in inline collapsed section', () => {
       mockSession = makeSnapshot({
         subagents: [
           { id: 'sa-3', type: 'Explore', status: 'running', startedAt: Date.now() },
         ],
       });
       render(<ClaudePane paneId="p16" title="Claude" isActive={true} />);
+      switchToGui();
 
-      expect(screen.getByText('Subagents (1)')).toBeInTheDocument();
+      expect(screen.getByText('1 subagent')).toBeInTheDocument();
+      // Expand to see subagent type
+      fireEvent.click(screen.getByText('1 subagent'));
       expect(screen.getByText('Explore')).toBeInTheDocument();
     });
   });
@@ -302,19 +323,21 @@ describe('ClaudePane', () => {
     it('should send input to PTY on Enter', () => {
       mockSession = makeSnapshot();
       render(<ClaudePane paneId="p18" title="Claude" isActive={true} />);
+      switchToGui();
 
-      const input = screen.getByPlaceholderText('Type a message... (sent to Claude terminal)');
+      const input = screen.getByPlaceholderText('Message Claude...');
       fireEvent.change(input, { target: { value: 'fix the tests' } });
       fireEvent.keyDown(input, { key: 'Enter' });
 
-      expect(mockWrite).toHaveBeenCalledWith('fix the tests\n');
+      expect(mockWrite).toHaveBeenCalledWith('fix the tests\r');
     });
 
     it('should clear input after sending', () => {
       mockSession = makeSnapshot();
       render(<ClaudePane paneId="p19" title="Claude" isActive={true} />);
+      switchToGui();
 
-      const input = screen.getByPlaceholderText('Type a message... (sent to Claude terminal)') as HTMLInputElement;
+      const input = screen.getByPlaceholderText('Message Claude...') as HTMLInputElement;
       fireEvent.change(input, { target: { value: 'hello' } });
       fireEvent.keyDown(input, { key: 'Enter' });
 
@@ -324,8 +347,9 @@ describe('ClaudePane', () => {
     it('should not send empty input', () => {
       mockSession = makeSnapshot();
       render(<ClaudePane paneId="p20" title="Claude" isActive={true} />);
+      switchToGui();
 
-      const input = screen.getByPlaceholderText('Type a message... (sent to Claude terminal)');
+      const input = screen.getByPlaceholderText('Message Claude...');
       fireEvent.keyDown(input, { key: 'Enter' });
 
       expect(mockWrite).not.toHaveBeenCalled();

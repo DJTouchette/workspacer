@@ -61,6 +61,7 @@ export function useTabManager() {
     shell?: string,
     url?: string,
     appMode?: boolean,
+    cwd?: string,
   ) => {
     const paneId = generateId(type);
     const tabId = generateId('tab');
@@ -73,6 +74,7 @@ export function useTabManager() {
       shell,
       url,
       appMode,
+      cwd,
     };
 
     const tab: TabConfig = {
@@ -105,6 +107,7 @@ export function useTabManager() {
     shell?: string,
     url?: string,
     appMode?: boolean,
+    cwd?: string,
   ) => {
     const paneId = generateId(type);
     const paneTitle = title ?? defaultTitles[type];
@@ -116,6 +119,7 @@ export function useTabManager() {
       shell,
       url,
       appMode,
+      cwd,
     };
 
     setTabs((prev) =>

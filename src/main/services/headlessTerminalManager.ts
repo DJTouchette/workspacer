@@ -5,6 +5,8 @@ interface HeadlessSession {
   terminal: HeadlessTerminal;
   serialize: SerializeAddon;
   lastActivity: number;
+  /** Line index marking where we last read — used for buffer diffing */
+  lastReadLine: number;
 }
 
 const sessions = new Map<string, HeadlessSession>();
@@ -18,6 +20,7 @@ export function createHeadlessSession(sessionId: string, cols: number, rows: num
     terminal,
     serialize,
     lastActivity: Date.now(),
+    lastReadLine: 0,
   });
 
   return terminal;
@@ -63,6 +66,40 @@ export function getFullBuffer(sessionId: string): string[] {
   }
 
   return lines;
+}
+
+/**
+ * Get new buffer content since the last snapshot and advance the read cursor.
+ * Returns the new lines as a single string (empty lines trimmed from edges).
+ */
+export function getNewBufferContent(sessionId: string): string {
+  const session = sessions.get(sessionId);
+  if (!session) return '';
+
+  const buffer = session.terminal.buffer.active;
+  const lines: string[] = [];
+
+  for (let i = session.lastReadLine; i < buffer.length; i++) {
+    const line = buffer.getLine(i);
+    if (line) {
+      lines.push(line.translateToString(true));
+    }
+  }
+
+  session.lastReadLine = buffer.length;
+
+  // Trim empty lines from both ends
+  while (lines.length > 0 && lines[0].trim() === '') lines.shift();
+  while (lines.length > 0 && lines[lines.length - 1].trim() === '') lines.pop();
+
+  return lines.join('\n');
+}
+
+/** Mark the current buffer position so getNewBufferContent starts from here */
+export function markBufferPosition(sessionId: string): void {
+  const session = sessions.get(sessionId);
+  if (!session) return;
+  session.lastReadLine = session.terminal.buffer.active.length;
 }
 
 export function getLastActivity(sessionId: string): number {

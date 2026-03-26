@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useCallback, useState } from 'react';
+import React, { useEffect, useRef, useCallback, useState, useMemo } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
@@ -17,17 +17,67 @@ interface ClaudePaneProps {
 
 type ViewMode = 'gui' | 'terminal';
 
+// ── Color Palette ──
+
+const colors = {
+  bg: '#0d0d10',
+  bgSecondary: 'rgba(255,255,255,0.03)',
+  bgToolbar: 'rgba(13, 13, 16, 0.95)',
+  userBubble: 'rgba(60, 90, 160, 0.15)',
+  userBubbleBorder: 'rgba(60, 90, 160, 0.25)',
+  muted: 'rgb(100, 105, 130)',
+  mutedDim: 'rgb(65, 68, 85)',
+  accent: 'rgb(96, 165, 250)',
+  success: 'rgb(74, 222, 128)',
+  error: 'rgb(248, 113, 113)',
+  warning: '#facc15',
+  text: 'rgb(200, 205, 225)',
+  textBright: 'rgb(230, 230, 245)',
+  border: 'rgba(255, 255, 255, 0.06)',
+  borderSubtle: 'rgba(255, 255, 255, 0.04)',
+  divider: 'rgba(255, 255, 255, 0.05)',
+};
+
+// ── CSS Keyframes (injected once) ──
+
+const STYLE_ID = 'claude-pane-keyframes';
+
+function ensureKeyframes() {
+  if (typeof document === 'undefined') return;
+  if (document.getElementById(STYLE_ID)) return;
+  const style = document.createElement('style');
+  style.id = STYLE_ID;
+  style.textContent = `
+    @keyframes claudePulseDot {
+      0%, 80%, 100% { opacity: 0.2; transform: scale(0.85); }
+      40% { opacity: 1; transform: scale(1); }
+    }
+    @keyframes claudeSpinner {
+      to { transform: rotate(360deg); }
+    }
+    @keyframes claudeFadeIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes claudeScrollBtn {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  `;
+  document.head.appendChild(style);
+}
+
 // ── Sub-components ──
 
 const StatusBadge: React.FC<{ session: ClaudeSessionSnapshot | null }> = ({ session }) => {
   if (!session) return <span style={badgeStyle('#555')}>no session</span>;
 
-  const colors: Record<string, string> = {
-    idle: '#4ade80',
-    thinking: '#facc15',
-    streaming: '#60a5fa',
+  const badgeColors: Record<string, string> = {
+    idle: colors.success,
+    thinking: colors.warning,
+    streaming: colors.accent,
     waiting_input: '#c084fc',
-    waiting_approval: '#f87171',
+    waiting_approval: colors.error,
   };
 
   const labels: Record<string, string> = {
@@ -38,7 +88,7 @@ const StatusBadge: React.FC<{ session: ClaudeSessionSnapshot | null }> = ({ sess
     waiting_approval: 'Needs approval',
   };
 
-  const color = colors[session.ambientState] ?? '#555';
+  const color = badgeColors[session.ambientState] ?? '#555';
   const label = labels[session.ambientState] ?? session.ambientState;
 
   return (
@@ -63,52 +113,170 @@ function badgeStyle(color: string): React.CSSProperties {
   };
 }
 
-const ToolCallItem: React.FC<{ tc: ToolCall }> = ({ tc }) => {
-  const [expanded, setExpanded] = useState(false);
-  const statusIcon = tc.status === 'running' ? '\u23F3' : tc.status === 'complete' ? '\u2705' : '\u274C';
-  const duration = tc.completedAt ? `${((tc.completedAt - tc.startedAt) / 1000).toFixed(1)}s` : 'running';
+// ── Working Timer ──
+
+const WorkingTimer: React.FC<{ session: ClaudeSessionSnapshot | null }> = ({ session }) => {
+  const [elapsed, setElapsed] = useState(0);
+  const isWorking = session?.ambientState === 'thinking' || session?.ambientState === 'streaming';
+
+  useEffect(() => {
+    if (!isWorking || !session) {
+      setElapsed(0);
+      return;
+    }
+    const start = session.lastActivity;
+    const tick = () => setElapsed(Math.floor((Date.now() - start) / 1000));
+    tick();
+    const iv = setInterval(tick, 1000);
+    return () => clearInterval(iv);
+  }, [isWorking, session?.lastActivity]);
+
+  if (!isWorking) return null;
+
+  const fmt = elapsed < 60 ? `${elapsed}s` : `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`;
 
   return (
-    <div style={{ marginBottom: 4, fontSize: '0.65rem' }}>
+    <span style={{ fontSize: '0.55rem', color: colors.muted, fontVariantNumeric: 'tabular-nums' }}>
+      Working... {fmt}
+    </span>
+  );
+};
+
+// ── Streaming Dots ──
+
+const StreamingDots: React.FC = () => (
+  <div style={{ display: 'flex', gap: 4, padding: '8px 0 4px 4px', alignItems: 'center' }}>
+    {[0, 200, 400].map((delay) => (
+      <span
+        key={delay}
+        style={{
+          display: 'inline-block',
+          width: 6,
+          height: 6,
+          borderRadius: '50%',
+          backgroundColor: colors.muted,
+          animation: `claudePulseDot 1.4s ease-in-out infinite`,
+          animationDelay: `${delay}ms`,
+        }}
+      />
+    ))}
+  </div>
+);
+
+// ── Inline Work Log (collapsed tool calls) ──
+
+const InlineWorkLog: React.FC<{ toolCalls: ToolCall[] }> = ({ toolCalls }) => {
+  const [expanded, setExpanded] = useState(false);
+
+  if (toolCalls.length === 0) return null;
+
+  const runningCount = toolCalls.filter(tc => tc.status === 'running').length;
+
+  return (
+    <div style={{
+      margin: '4px 0 8px 0',
+      borderRadius: 8,
+      border: `1px solid ${colors.borderSubtle}`,
+      backgroundColor: 'rgba(255,255,255,0.02)',
+      overflow: 'hidden',
+    }}>
       <div
-        style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, color: 'rgb(180, 190, 220)' }}
         onClick={() => setExpanded(!expanded)}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          padding: '5px 10px',
+          cursor: 'pointer',
+          fontSize: '0.7rem',
+          color: colors.muted,
+          userSelect: 'none',
+        }}
       >
-        <span>{statusIcon}</span>
-        <span style={{ fontWeight: 600, color: 'rgb(140, 180, 255)' }}>{tc.name}</span>
-        <span style={{ color: 'rgb(120, 120, 140)' }}>{duration}</span>
-        {tc.name === 'Edit' || tc.name === 'Write' || tc.name === 'MultiEdit' ? (
-          <span style={{ color: 'rgb(100, 100, 120)', fontFamily: 'monospace' }}>
-            {tc.input?.file_path?.split('/').pop() ?? ''}
-          </span>
-        ) : tc.name === 'Bash' ? (
-          <span style={{ color: 'rgb(100, 100, 120)', fontFamily: 'monospace' }}>
-            {(tc.input?.command ?? '').slice(0, 60)}
-          </span>
-        ) : null}
-        <span style={{ color: 'rgb(80, 80, 100)', marginLeft: 'auto' }}>{expanded ? '\u25B2' : '\u25BC'}</span>
+        <span style={{
+          display: 'inline-block',
+          width: 10,
+          fontSize: '0.55rem',
+          transition: 'transform 0.15s',
+          transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)',
+        }}>
+          {'\u25B6'}
+        </span>
+        <span>{toolCalls.length} tool call{toolCalls.length !== 1 ? 's' : ''}</span>
+        {runningCount > 0 && (
+          <span style={{
+            display: 'inline-block',
+            width: 10,
+            height: 10,
+            border: `1.5px solid ${colors.accent}`,
+            borderTopColor: 'transparent',
+            borderRadius: '50%',
+            animation: 'claudeSpinner 0.8s linear infinite',
+          }} />
+        )}
       </div>
       {expanded && (
-        <pre style={{
-          margin: '2px 0 0 16px',
-          padding: 6,
-          backgroundColor: 'rgb(18, 18, 22)',
-          borderRadius: 4,
-          fontSize: '0.6rem',
-          color: 'rgb(160, 160, 180)',
-          overflowX: 'auto',
-          maxHeight: 200,
-          whiteSpace: 'pre-wrap',
-          wordBreak: 'break-word',
+        <div style={{ padding: '0 10px 6px 10px' }}>
+          {toolCalls.map(tc => <WorkLogEntry key={tc.id} tc={tc} />)}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const WorkLogEntry: React.FC<{ tc: ToolCall }> = ({ tc }) => {
+  const isRunning = tc.status === 'running';
+  const isFailed = tc.status === 'failed';
+
+  const icon = isRunning ? null : isFailed ? '\u2717' : '\u2713';
+  const iconColor = isRunning ? colors.accent : isFailed ? colors.error : colors.success;
+
+  let detail = '';
+  if (tc.name === 'Edit' || tc.name === 'Write' || tc.name === 'MultiEdit') {
+    detail = tc.input?.file_path?.split('/').pop() ?? '';
+  } else if (tc.name === 'Bash') {
+    detail = (tc.input?.command ?? '').slice(0, 50);
+  } else if (tc.name === 'Read') {
+    detail = tc.input?.file_path?.split('/').pop() ?? '';
+  } else if (tc.name === 'Grep') {
+    detail = tc.input?.pattern ?? '';
+  }
+
+  return (
+    <div style={{
+      display: 'flex',
+      alignItems: 'center',
+      gap: 6,
+      padding: '2px 0',
+      fontSize: '0.7rem',
+    }}>
+      {isRunning ? (
+        <span style={{
+          display: 'inline-block',
+          width: 10,
+          height: 10,
+          border: `1.5px solid ${colors.accent}`,
+          borderTopColor: 'transparent',
+          borderRadius: '50%',
+          animation: 'claudeSpinner 0.8s linear infinite',
+          flexShrink: 0,
+        }} />
+      ) : (
+        <span style={{ color: iconColor, fontSize: '0.65rem', width: 10, textAlign: 'center', flexShrink: 0 }}>{icon}</span>
+      )}
+      <span style={{ color: colors.accent, fontWeight: 600 }}>{tc.name}</span>
+      {detail && (
+        <span style={{
+          color: colors.mutedDim,
+          fontFamily: 'monospace',
+          fontSize: '0.65rem',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          maxWidth: 300,
         }}>
-          {JSON.stringify(tc.input, null, 2)}
-          {tc.response && (
-            <>
-              {'\n--- response ---\n'}
-              {typeof tc.response === 'string' ? tc.response : JSON.stringify(tc.response, null, 2)}
-            </>
-          )}
-        </pre>
+          {detail}
+        </span>
       )}
     </div>
   );
@@ -119,42 +287,36 @@ const ToolCallItem: React.FC<{ tc: ToolCall }> = ({ tc }) => {
 /** Render inline markdown: **bold**, *italic*, `code`, [links](url) */
 function renderInlineMarkdown(text: string): React.ReactNode[] {
   const nodes: React.ReactNode[] = [];
-  // Pattern: **bold**, *italic*, `code`, [text](url)
   const regex = /(\*\*(.+?)\*\*|\*(.+?)\*|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\))/g;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
   let key = 0;
 
   while ((match = regex.exec(text)) !== null) {
-    // Push text before this match
     if (match.index > lastIndex) {
       nodes.push(text.slice(lastIndex, match.index));
     }
 
     if (match[2]) {
-      // **bold**
-      nodes.push(<strong key={key++} style={{ color: 'rgb(230, 230, 245)', fontWeight: 700 }}>{match[2]}</strong>);
+      nodes.push(<strong key={key++} style={{ color: colors.textBright, fontWeight: 700 }}>{match[2]}</strong>);
     } else if (match[3]) {
-      // *italic*
       nodes.push(<em key={key++} style={{ color: 'rgb(210, 210, 230)', fontStyle: 'italic' }}>{match[3]}</em>);
     } else if (match[4]) {
-      // `inline code`
       nodes.push(
         <code key={key++} style={{
           backgroundColor: 'rgba(255, 255, 255, 0.07)',
-          padding: '1px 4px',
+          padding: '1px 5px',
           borderRadius: 3,
-          fontSize: '0.92em',
-          fontFamily: "'SF Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace",
+          fontSize: '0.9em',
+          fontFamily: 'var(--claude-mono-font, monospace)',
           color: 'rgb(180, 210, 255)',
         }}>
           {match[4]}
         </code>
       );
     } else if (match[5] && match[6]) {
-      // [link text](url)
       nodes.push(
-        <span key={key++} style={{ color: 'rgb(96, 165, 250)', textDecoration: 'underline', cursor: 'default' }} title={match[6]}>
+        <span key={key++} style={{ color: colors.accent, textDecoration: 'underline', cursor: 'default' }} title={match[6]}>
           {match[5]}
         </span>
       );
@@ -163,7 +325,6 @@ function renderInlineMarkdown(text: string): React.ReactNode[] {
     lastIndex = match.index + match[0].length;
   }
 
-  // Trailing text
   if (lastIndex < text.length) {
     nodes.push(text.slice(lastIndex));
   }
@@ -183,7 +344,7 @@ function parseMarkdownBlocks(text: string): React.ReactNode[] {
   while (i < lines.length) {
     const line = lines[i];
 
-    // Fenced code block: ```lang ... ```
+    // Fenced code block
     if (line.trimStart().startsWith('```')) {
       const lang = line.trimStart().slice(3).trim();
       const codeLines: string[] = [];
@@ -192,34 +353,34 @@ function parseMarkdownBlocks(text: string): React.ReactNode[] {
         codeLines.push(lines[i]);
         i++;
       }
-      i++; // skip closing ```
+      i++;
       blocks.push(
         <div key={key++} style={{ margin: '6px 0' }}>
           {lang && (
             <div style={{
-              fontSize: '0.55rem',
-              color: 'rgb(100, 110, 140)',
-              backgroundColor: 'rgb(22, 24, 32)',
-              padding: '2px 8px',
-              borderRadius: '4px 4px 0 0',
-              borderBottom: '1px solid rgb(35, 38, 50)',
-              fontFamily: "'SF Mono', Consolas, monospace",
+              fontSize: '0.6rem',
+              color: colors.muted,
+              backgroundColor: 'rgba(255,255,255,0.04)',
+              padding: '2px 10px',
+              borderRadius: '6px 6px 0 0',
+              borderBottom: `1px solid ${colors.border}`,
+              fontFamily: 'var(--claude-mono-font, monospace)',
             }}>
               {lang}
             </div>
           )}
           <pre style={{
             margin: 0,
-            padding: '8px 10px',
-            backgroundColor: 'rgb(16, 18, 24)',
-            borderRadius: lang ? '0 0 4px 4px' : '4px',
-            fontSize: '0.6rem',
+            padding: '10px 12px',
+            backgroundColor: 'rgba(0, 0, 0, 0.3)',
+            borderRadius: lang ? '0 0 6px 6px' : '6px',
+            fontSize: '0.75rem',
             lineHeight: 1.5,
             color: 'rgb(190, 200, 220)',
-            fontFamily: "'SF Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace",
+            fontFamily: 'var(--claude-mono-font, monospace)',
             overflowX: 'auto',
             whiteSpace: 'pre',
-            border: '1px solid rgb(35, 38, 50)',
+            border: `1px solid ${colors.border}`,
             borderTop: lang ? 'none' : undefined,
           }}>
             {codeLines.join('\n')}
@@ -229,19 +390,19 @@ function parseMarkdownBlocks(text: string): React.ReactNode[] {
       continue;
     }
 
-    // Heading: # ## ### etc.
+    // Heading
     const headingMatch = line.match(/^(#{1,4})\s+(.+)$/);
     if (headingMatch) {
       const level = headingMatch[1].length;
-      const sizes: Record<number, string> = { 1: '0.85rem', 2: '0.78rem', 3: '0.72rem', 4: '0.68rem' };
+      const sizes: Record<number, string> = { 1: '0.95rem', 2: '0.88rem', 3: '0.82rem', 4: '0.78rem' };
       blocks.push(
         <div key={key++} style={{
-          fontSize: sizes[level] ?? '0.68rem',
+          fontSize: sizes[level] ?? '0.78rem',
           fontWeight: 700,
-          color: 'rgb(230, 230, 245)',
-          margin: `${level === 1 ? 10 : 6}px 0 4px 0`,
-          paddingBottom: level <= 2 ? 3 : 0,
-          borderBottom: level <= 2 ? '1px solid rgb(40, 42, 55)' : 'none',
+          color: colors.textBright,
+          margin: `${level === 1 ? 12 : 8}px 0 4px 0`,
+          paddingBottom: level <= 2 ? 4 : 0,
+          borderBottom: level <= 2 ? `1px solid ${colors.divider}` : 'none',
         }}>
           {renderInlineMarkdown(headingMatch[2])}
         </div>
@@ -250,27 +411,20 @@ function parseMarkdownBlocks(text: string): React.ReactNode[] {
       continue;
     }
 
-    // Unordered list item: - or * at start
+    // Unordered list
     if (/^\s*[-*]\s+/.test(line)) {
       const listItems: { indent: number; content: string }[] = [];
       while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) {
         const m = lines[i].match(/^(\s*)[-*]\s+(.+)$/);
-        if (m) {
-          listItems.push({ indent: m[1].length, content: m[2] });
-        }
+        if (m) listItems.push({ indent: m[1].length, content: m[2] });
         i++;
       }
       blocks.push(
         <div key={key++} style={{ margin: '4px 0' }}>
           {listItems.map((item, idx) => (
-            <div key={idx} style={{
-              display: 'flex',
-              gap: 6,
-              paddingLeft: Math.min(item.indent, 12) + 4,
-              marginBottom: 2,
-            }}>
-              <span style={{ color: 'rgb(96, 165, 250)', flexShrink: 0, lineHeight: 1.5 }}>{'\u2022'}</span>
-              <span style={{ lineHeight: 1.5 }}>{renderInlineMarkdown(item.content)}</span>
+            <div key={idx} style={{ display: 'flex', gap: 6, paddingLeft: Math.min(item.indent, 12) + 4, marginBottom: 2 }}>
+              <span style={{ color: colors.accent, flexShrink: 0, lineHeight: 1.6 }}>{'\u2022'}</span>
+              <span style={{ lineHeight: 1.6 }}>{renderInlineMarkdown(item.content)}</span>
             </div>
           ))}
         </div>
@@ -278,27 +432,20 @@ function parseMarkdownBlocks(text: string): React.ReactNode[] {
       continue;
     }
 
-    // Ordered list: 1. 2. etc.
+    // Ordered list
     if (/^\s*\d+[.)]\s+/.test(line)) {
       const listItems: { num: string; content: string }[] = [];
       while (i < lines.length && /^\s*\d+[.)]\s+/.test(lines[i])) {
         const m = lines[i].match(/^\s*(\d+)[.)]\s+(.+)$/);
-        if (m) {
-          listItems.push({ num: m[1], content: m[2] });
-        }
+        if (m) listItems.push({ num: m[1], content: m[2] });
         i++;
       }
       blocks.push(
         <div key={key++} style={{ margin: '4px 0' }}>
           {listItems.map((item, idx) => (
-            <div key={idx} style={{
-              display: 'flex',
-              gap: 6,
-              paddingLeft: 4,
-              marginBottom: 2,
-            }}>
-              <span style={{ color: 'rgb(100, 110, 140)', flexShrink: 0, minWidth: 14, textAlign: 'right', lineHeight: 1.5 }}>{item.num}.</span>
-              <span style={{ lineHeight: 1.5 }}>{renderInlineMarkdown(item.content)}</span>
+            <div key={idx} style={{ display: 'flex', gap: 6, paddingLeft: 4, marginBottom: 2 }}>
+              <span style={{ color: colors.muted, flexShrink: 0, minWidth: 14, textAlign: 'right', lineHeight: 1.6 }}>{item.num}.</span>
+              <span style={{ lineHeight: 1.6 }}>{renderInlineMarkdown(item.content)}</span>
             </div>
           ))}
         </div>
@@ -306,20 +453,14 @@ function parseMarkdownBlocks(text: string): React.ReactNode[] {
       continue;
     }
 
-    // Horizontal rule: --- or ***
+    // Horizontal rule
     if (/^[-*_]{3,}\s*$/.test(line.trim())) {
-      blocks.push(
-        <hr key={key++} style={{
-          border: 'none',
-          borderTop: '1px solid rgb(45, 48, 60)',
-          margin: '8px 0',
-        }} />
-      );
+      blocks.push(<hr key={key++} style={{ border: 'none', borderTop: `1px solid ${colors.divider}`, margin: '8px 0' }} />);
       i++;
       continue;
     }
 
-    // Blockquote: > text
+    // Blockquote
     if (line.startsWith('>')) {
       const quoteLines: string[] = [];
       while (i < lines.length && lines[i].startsWith('>')) {
@@ -328,12 +469,12 @@ function parseMarkdownBlocks(text: string): React.ReactNode[] {
       }
       blocks.push(
         <div key={key++} style={{
-          borderLeft: '2px solid rgb(80, 90, 120)',
-          paddingLeft: 8,
+          borderLeft: `2px solid ${colors.muted}`,
+          paddingLeft: 10,
           margin: '4px 0',
           color: 'rgb(160, 165, 185)',
           fontStyle: 'italic',
-          lineHeight: 1.5,
+          lineHeight: 1.6,
         }}>
           {renderInlineMarkdown(quoteLines.join(' '))}
         </div>
@@ -341,14 +482,14 @@ function parseMarkdownBlocks(text: string): React.ReactNode[] {
       continue;
     }
 
-    // Empty line → spacing
+    // Empty line
     if (line.trim() === '') {
       blocks.push(<div key={key++} style={{ height: 4 }} />);
       i++;
       continue;
     }
 
-    // Regular paragraph — collect consecutive non-special lines
+    // Regular paragraph
     const paraLines: string[] = [];
     while (
       i < lines.length &&
@@ -366,7 +507,7 @@ function parseMarkdownBlocks(text: string): React.ReactNode[] {
 
     if (paraLines.length > 0) {
       blocks.push(
-        <p key={key++} style={{ margin: '3px 0', lineHeight: 1.55, wordBreak: 'break-word' }}>
+        <p key={key++} style={{ margin: '3px 0', lineHeight: 1.6, wordBreak: 'break-word' }}>
           {renderInlineMarkdown(paraLines.join('\n'))}
         </p>
       );
@@ -376,106 +517,123 @@ function parseMarkdownBlocks(text: string): React.ReactNode[] {
   return blocks;
 }
 
-const ConversationMessage: React.FC<{ turn: ConversationTurn }> = ({ turn }) => {
+// ── Conversation Message ──
+
+const ConversationMessage: React.FC<{ turn: ConversationTurn; isLast?: boolean }> = ({ turn, isLast }) => {
   const isUser = turn.role === 'user';
+
+  if (isUser) {
+    return (
+      <div style={{
+        display: 'flex',
+        justifyContent: 'flex-end',
+        marginBottom: 12,
+        animation: 'claudeFadeIn 0.2s ease-out',
+      }}>
+        <div style={{
+          maxWidth: '80%',
+          padding: '8px 14px',
+          borderRadius: '16px 16px 4px 16px',
+          backgroundColor: colors.userBubble,
+          border: `1px solid ${colors.userBubbleBorder}`,
+        }}>
+          <pre style={{
+            margin: 0,
+            fontSize: '0.8rem',
+            lineHeight: 1.6,
+            color: colors.text,
+            fontFamily: 'var(--claude-mono-font, monospace)',
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+          }}>
+            {turn.content || '(empty)'}
+          </pre>
+        </div>
+      </div>
+    );
+  }
+
+  // Assistant message
   return (
     <div style={{
-      marginBottom: 10,
-      padding: '8px 12px',
-      borderRadius: 6,
-      backgroundColor: isUser ? 'rgba(80, 120, 200, 0.08)' : 'rgba(255, 255, 255, 0.02)',
-      borderLeft: isUser ? '2px solid rgb(80, 120, 200)' : '2px solid rgb(50, 55, 75)',
+      marginBottom: 12,
+      animation: 'claudeFadeIn 0.2s ease-out',
     }}>
+      {/* Inline tool calls for this turn */}
+      {turn.toolCalls && turn.toolCalls.length > 0 && (
+        <InlineWorkLog toolCalls={turn.toolCalls} />
+      )}
       <div style={{
-        fontSize: '0.55rem',
-        color: isUser ? 'rgb(120, 160, 240)' : 'rgb(110, 115, 140)',
-        marginBottom: 4,
-        fontWeight: 600,
-        display: 'flex',
-        alignItems: 'center',
-        gap: 6,
+        paddingLeft: 4,
+        fontSize: '0.8rem',
+        lineHeight: 1.6,
+        color: colors.text,
       }}>
-        <span style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          width: 16,
-          height: 16,
-          borderRadius: '50%',
-          backgroundColor: isUser ? 'rgba(80, 120, 200, 0.2)' : 'rgba(140, 100, 220, 0.15)',
-          fontSize: '0.5rem',
-        }}>
-          {isUser ? 'U' : 'C'}
-        </span>
-        {isUser ? 'You' : 'Claude'}
-        <span style={{ fontWeight: 400, color: 'rgb(70, 72, 90)' }}>
-          {new Date(turn.timestamp).toLocaleTimeString()}
-        </span>
-      </div>
-      <div style={{
-        fontSize: '0.65rem',
-        color: 'rgb(200, 205, 225)',
-      }}>
-        {isUser
-          ? <p style={{ margin: 0, lineHeight: 1.55, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{turn.content || '(empty)'}</p>
-          : parseMarkdownBlocks(turn.content || '(empty)')
-        }
+        {parseMarkdownBlocks(turn.content || '(empty)')}
       </div>
     </div>
   );
 };
 
-const FileChangeItem: React.FC<{ fc: FileChange }> = ({ fc }) => {
-  const filename = fc.path.split('/').pop() ?? fc.path;
-  const dir = fc.path.split('/').slice(0, -1).join('/');
-  return (
-    <div style={{ fontSize: '0.6rem', padding: '2px 0', display: 'flex', gap: 6, alignItems: 'center' }}>
-      <span style={{ color: fc.toolName === 'Write' ? 'rgb(74, 222, 128)' : 'rgb(250, 204, 21)', fontWeight: 600 }}>
-        {fc.toolName === 'Write' ? '+' : '~'}
-      </span>
-      <span style={{ color: 'rgb(180, 190, 220)', fontFamily: 'monospace' }}>{filename}</span>
-      <span style={{ color: 'rgb(80, 80, 100)', fontFamily: 'monospace' }}>{dir}</span>
-    </div>
-  );
-};
+// ── Turn Divider ──
+
+const TurnDivider: React.FC<{ label?: string }> = ({ label = 'Response' }) => (
+  <div style={{
+    display: 'flex',
+    alignItems: 'center',
+    gap: 10,
+    margin: '16px 0 12px 0',
+  }}>
+    <div style={{ flex: 1, height: 1, backgroundColor: colors.divider }} />
+    <span style={{ fontSize: '0.6rem', color: colors.mutedDim, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+      {label}
+    </span>
+    <div style={{ flex: 1, height: 1, backgroundColor: colors.divider }} />
+  </div>
+);
+
+// ── Approval Prompt ──
 
 const ApprovalPrompt: React.FC<{ approval: PendingApproval; onRespond: (response: string) => void }> = ({ approval, onRespond }) => (
   <div style={{
-    padding: 10,
+    padding: '12px 14px',
     margin: '8px 0',
-    borderRadius: 6,
-    backgroundColor: 'rgba(248, 113, 113, 0.1)',
-    border: '1px solid rgba(248, 113, 113, 0.3)',
+    borderRadius: 10,
+    backgroundColor: 'rgba(248, 113, 113, 0.06)',
+    border: `1px solid rgba(248, 113, 113, 0.2)`,
+    animation: 'claudeFadeIn 0.2s ease-out',
   }}>
-    <div style={{ fontSize: '0.65rem', color: 'rgb(248, 113, 113)', fontWeight: 600, marginBottom: 4 }}>
+    <div style={{ fontSize: '0.75rem', color: colors.error, fontWeight: 600, marginBottom: 6 }}>
       Permission Required: {approval.toolName}
     </div>
     <pre style={{
-      fontSize: '0.6rem',
+      fontSize: '0.7rem',
       color: 'rgb(180, 180, 200)',
-      margin: '4px 0',
-      padding: 6,
-      backgroundColor: 'rgb(18, 18, 22)',
-      borderRadius: 4,
+      margin: '4px 0 8px 0',
+      padding: 8,
+      backgroundColor: 'rgba(0, 0, 0, 0.3)',
+      borderRadius: 6,
       maxHeight: 120,
       overflow: 'auto',
       whiteSpace: 'pre-wrap',
+      fontFamily: 'var(--claude-mono-font, monospace)',
+      border: `1px solid ${colors.border}`,
     }}>
       {JSON.stringify(approval.toolInput, null, 2)}
     </pre>
-    <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-      <button style={approvalBtnStyle('rgb(74, 222, 128)')} onClick={() => onRespond('y')}>Allow</button>
-      <button style={approvalBtnStyle('rgb(248, 113, 113)')} onClick={() => onRespond('n')}>Deny</button>
+    <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+      <button style={{...approvalBtnStyle(colors.success), position: 'relative', zIndex: 10}} onClick={(e) => { e.stopPropagation(); console.log('[ApprovalBtn] Allow clicked'); onRespond('y'); }}>Allow</button>
+      <button style={{...approvalBtnStyle(colors.error), position: 'relative', zIndex: 10}} onClick={(e) => { e.stopPropagation(); console.log('[ApprovalBtn] Deny clicked'); onRespond('n'); }}>Deny</button>
     </div>
   </div>
 );
 
 function approvalBtnStyle(color: string): React.CSSProperties {
   return {
-    fontSize: '0.6rem',
+    fontSize: '0.7rem',
     fontWeight: 600,
-    padding: '3px 12px',
-    borderRadius: 4,
+    padding: '4px 16px',
+    borderRadius: 6,
     border: `1px solid ${color}`,
     backgroundColor: 'transparent',
     color,
@@ -483,11 +641,145 @@ function approvalBtnStyle(color: string): React.CSSProperties {
   };
 }
 
-const SubagentItem: React.FC<{ sub: SubagentInfo }> = ({ sub }) => (
-  <div style={{ fontSize: '0.6rem', color: 'rgb(160, 160, 180)', display: 'flex', gap: 4, alignItems: 'center', padding: '1px 0' }}>
-    <span>{sub.status === 'running' ? '\u23F3' : '\u2705'}</span>
-    <span style={{ fontWeight: 600, color: 'rgb(192, 132, 252)' }}>{sub.type}</span>
-    <span style={{ color: 'rgb(80, 80, 100)' }}>{sub.id.slice(0, 8)}</span>
+// ── Inline context sections (files, subagents) ──
+
+const InlineFilesSection: React.FC<{ fileChanges: FileChange[] }> = ({ fileChanges }) => {
+  const [expanded, setExpanded] = useState(false);
+  if (fileChanges.length === 0) return null;
+
+  return (
+    <div style={{
+      margin: '4px 0 8px 0',
+      borderRadius: 8,
+      border: `1px solid ${colors.borderSubtle}`,
+      backgroundColor: 'rgba(255,255,255,0.02)',
+      overflow: 'hidden',
+    }}>
+      <div
+        onClick={() => setExpanded(!expanded)}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          padding: '5px 10px',
+          cursor: 'pointer',
+          fontSize: '0.7rem',
+          color: colors.muted,
+          userSelect: 'none',
+        }}
+      >
+        <span style={{
+          display: 'inline-block',
+          width: 10,
+          fontSize: '0.55rem',
+          transition: 'transform 0.15s',
+          transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)',
+        }}>
+          {'\u25B6'}
+        </span>
+        <span>{fileChanges.length} file{fileChanges.length !== 1 ? 's' : ''} changed</span>
+      </div>
+      {expanded && (
+        <div style={{ padding: '0 10px 6px 10px' }}>
+          {fileChanges.slice(-20).map((fc, i) => {
+            const filename = fc.path.split('/').pop() ?? fc.path;
+            return (
+              <div key={i} style={{ fontSize: '0.7rem', padding: '1px 0', display: 'flex', gap: 6, alignItems: 'center' }}>
+                <span style={{ color: fc.toolName === 'Write' ? colors.success : colors.warning, fontWeight: 600, width: 10, textAlign: 'center' }}>
+                  {fc.toolName === 'Write' ? '+' : '~'}
+                </span>
+                <span style={{ color: colors.text, fontFamily: 'monospace' }}>{filename}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const InlineSubagentsSection: React.FC<{ subagents: SubagentInfo[] }> = ({ subagents }) => {
+  const [expanded, setExpanded] = useState(false);
+  if (subagents.length === 0) return null;
+
+  return (
+    <div style={{
+      margin: '4px 0 8px 0',
+      borderRadius: 8,
+      border: `1px solid ${colors.borderSubtle}`,
+      backgroundColor: 'rgba(255,255,255,0.02)',
+      overflow: 'hidden',
+    }}>
+      <div
+        onClick={() => setExpanded(!expanded)}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          padding: '5px 10px',
+          cursor: 'pointer',
+          fontSize: '0.7rem',
+          color: colors.muted,
+          userSelect: 'none',
+        }}
+      >
+        <span style={{
+          display: 'inline-block',
+          width: 10,
+          fontSize: '0.55rem',
+          transition: 'transform 0.15s',
+          transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)',
+        }}>
+          {'\u25B6'}
+        </span>
+        <span>{subagents.length} subagent{subagents.length !== 1 ? 's' : ''}</span>
+      </div>
+      {expanded && (
+        <div style={{ padding: '0 10px 6px 10px' }}>
+          {subagents.map(sub => (
+            <div key={sub.id} style={{ fontSize: '0.7rem', color: colors.text, display: 'flex', gap: 6, alignItems: 'center', padding: '1px 0' }}>
+              <span>{sub.status === 'running' ? '\u23F3' : '\u2713'}</span>
+              <span style={{ fontWeight: 600, color: '#c084fc' }}>{sub.type}</span>
+              <span style={{ color: colors.mutedDim }}>{sub.id.slice(0, 8)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ── Scroll to Bottom Button ──
+
+const ScrollToBottomButton: React.FC<{ onClick: () => void }> = ({ onClick }) => (
+  <div style={{
+    position: 'absolute',
+    bottom: 12,
+    left: '50%',
+    transform: 'translateX(-50%)',
+    animation: 'claudeScrollBtn 0.2s ease-out',
+    zIndex: 10,
+  }}>
+    <button
+      onClick={onClick}
+      style={{
+        fontSize: '0.65rem',
+        fontWeight: 500,
+        padding: '4px 14px',
+        borderRadius: 20,
+        border: `1px solid ${colors.border}`,
+        backgroundColor: 'rgba(13, 13, 16, 0.9)',
+        color: colors.muted,
+        cursor: 'pointer',
+        backdropFilter: 'blur(8px)',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 4,
+      }}
+    >
+      <span style={{ fontSize: '0.7rem' }}>{'\u2193'}</span>
+      Scroll to bottom
+    </button>
   </div>
 );
 
@@ -518,15 +810,28 @@ const TERMINAL_THEME = {
 };
 
 const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, onPtyReady }) => {
-  const [viewMode, setViewMode] = useState<ViewMode>('gui');
+  const [viewMode, setViewMode] = useState<ViewMode>('terminal');
+  const [inputValue, setInputValue] = useState('');
+  const [showScrollBtn, setShowScrollBtn] = useState(false);
   const termContainerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const termInitRef = useRef(false);
   const conversationEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   const { config } = useConfig();
   const termCfg = config.terminal;
+
+  // Inject keyframes
+  useEffect(() => { ensureKeyframes(); }, []);
+
+  // Set CSS variable for mono font
+  useEffect(() => {
+    if (typeof document !== 'undefined') {
+      document.documentElement.style.setProperty('--claude-mono-font', termCfg.fontFamily || 'monospace');
+    }
+  }, [termCfg.fontFamily]);
 
   const handleExit = useCallback(() => {
     if (terminalRef.current) {
@@ -534,10 +839,9 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
     }
   }, []);
 
-  // Use a special 'claude' shell marker — the PTY hook in main process handles this
   const { sessionId, isReady, write, resize, attachToTerminal } = usePTY({
     paneId,
-    shell: '__claude__', // sentinel value intercepted by createTerminal
+    shell: '__claude__',
     cwd,
     onExit: handleExit,
   });
@@ -551,7 +855,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
     }
   }, [sessionId, paneId, onPtyReady]);
 
-  // Initialize xterm.js for the terminal view (hidden when in GUI mode)
+  // Initialize xterm.js
   useEffect(() => {
     const container = termContainerRef.current;
     if (!container || termInitRef.current) return;
@@ -576,7 +880,6 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
 
     term.open(container);
 
-    // Forward app-level keys
     term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
       if (e.ctrlKey && !e.altKey && ['t', 'b', 'w', 'd', '/', '?', ',', 's', 'k'].includes(e.key)) return false;
       if (e.ctrlKey && !e.altKey && !e.shiftKey && /^[1-9]$/.test(e.key)) return false;
@@ -622,7 +925,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
       terminalRef.current.focus();
       requestAnimationFrame(() => { try { fitAddonRef.current?.fit(); } catch {} });
     }
-  }, [viewMode, isActive]);
+  }, [viewMode, isActive, isReady]);
 
   // Re-fit terminal on active change
   useEffect(() => {
@@ -640,15 +943,42 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
 
   // Auto-scroll conversation to bottom
   useEffect(() => {
-    conversationEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    // Only auto-scroll if user is near the bottom
+    const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
+    if (isNearBottom) {
+      conversationEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [session?.conversation?.length, session?.activeToolCalls?.length]);
 
-  // Send approval response by typing into the PTY
+  // Track scroll position for "scroll to bottom" button
+  const handleScroll = useCallback(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const distFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    setShowScrollBtn(distFromBottom > 150);
+  }, []);
+
+  const scrollToBottom = useCallback(() => {
+    conversationEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, []);
+
+  // Send approval response — Claude Code reads raw keypresses for [Y/n] prompts
   const handleApprovalRespond = useCallback((response: string) => {
-    write(response + '\n');
+    console.log(`[ClaudePane] sending approval: "${response}"`);
+    write(response);
   }, [write]);
 
-  // ── Render ──
+  // Handle send
+  const handleSend = useCallback(() => {
+    if (inputValue.trim()) {
+      write(inputValue + '\r');
+      setInputValue('');
+    }
+  }, [inputValue, write]);
+
+  // ── Derived data ──
 
   const activeToolCalls = session?.activeToolCalls ?? [];
   const completedToolCalls = session?.completedToolCalls ?? [];
@@ -656,6 +986,36 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
   const fileChanges = session?.fileChanges ?? [];
   const subagents = session?.subagents ?? [];
   const pendingApproval = session?.pendingApproval ?? null;
+  const isStreaming = session?.ambientState === 'thinking' || session?.ambientState === 'streaming';
+
+  // Group all tool calls for inline display
+  const allToolCalls = useMemo(() => {
+    const tc = [...completedToolCalls, ...activeToolCalls];
+    return tc;
+  }, [completedToolCalls, activeToolCalls]);
+
+  // Build rendered conversation with dividers
+  const renderedConversation = useMemo(() => {
+    const items: React.ReactNode[] = [];
+    let prevRole: string | null = null;
+
+    conversation.forEach((turn, i) => {
+      // Add divider when switching from user to assistant
+      if (turn.role === 'assistant' && prevRole === 'user' && i > 0) {
+        items.push(<TurnDivider key={`div-${i}`} />);
+      }
+      items.push(
+        <ConversationMessage
+          key={`msg-${i}`}
+          turn={turn}
+          isLast={i === conversation.length - 1}
+        />
+      );
+      prevRole = turn.role;
+    });
+
+    return items;
+  }, [conversation]);
 
   return (
     <div style={{
@@ -663,29 +1023,46 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
       height: '100%',
       display: 'flex',
       flexDirection: 'column',
-      backgroundColor: '#121214',
-      color: 'rgb(200, 200, 220)',
+      backgroundColor: colors.bg,
+      color: colors.text,
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
     }}>
       {/* Toolbar */}
       <div style={{
         display: 'flex',
         alignItems: 'center',
         gap: 8,
-        padding: '3px 8px',
-        backgroundColor: 'rgb(24, 24, 30)',
-        borderBottom: '1px solid rgb(40, 40, 50)',
-        minHeight: 24,
+        padding: '3px 10px',
+        backgroundColor: colors.bgToolbar,
+        borderBottom: `1px solid ${colors.border}`,
+        minHeight: 26,
+        flexShrink: 0,
       }}>
         <StatusBadge session={session} />
+        <WorkingTimer session={session} />
+
+        {cwd && (
+          <span style={{
+            fontSize: '0.55rem',
+            color: colors.mutedDim,
+            fontFamily: 'monospace',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            maxWidth: 200,
+          }} title={cwd}>
+            {cwd.split('/').pop() || cwd}
+          </span>
+        )}
 
         {session && (
-          <span style={{ fontSize: '0.55rem', color: 'rgb(80, 80, 100)' }}>
+          <span style={{ fontSize: '0.55rem', color: colors.mutedDim }}>
             {session.totalToolCalls} tools
           </span>
         )}
 
         {subagents.filter(s => s.status === 'running').length > 0 && (
-          <span style={{ fontSize: '0.55rem', color: 'rgb(192, 132, 252)' }}>
+          <span style={{ fontSize: '0.55rem', color: '#c084fc' }}>
             {subagents.filter(s => s.status === 'running').length} subagent(s)
           </span>
         )}
@@ -698,8 +1075,8 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
             onClick={() => setViewMode('gui')}
             style={{
               ...toggleBtnStyle,
-              backgroundColor: viewMode === 'gui' ? 'rgb(60, 70, 100)' : 'transparent',
-              color: viewMode === 'gui' ? 'rgb(180, 200, 255)' : 'rgb(100, 100, 120)',
+              backgroundColor: viewMode === 'gui' ? 'rgba(96, 165, 250, 0.15)' : 'transparent',
+              color: viewMode === 'gui' ? colors.accent : colors.mutedDim,
             }}
           >
             GUI
@@ -708,8 +1085,8 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
             onClick={() => setViewMode('terminal')}
             style={{
               ...toggleBtnStyle,
-              backgroundColor: viewMode === 'terminal' ? 'rgb(60, 70, 100)' : 'transparent',
-              color: viewMode === 'terminal' ? 'rgb(180, 200, 255)' : 'rgb(100, 100, 120)',
+              backgroundColor: viewMode === 'terminal' ? 'rgba(96, 165, 250, 0.15)' : 'transparent',
+              color: viewMode === 'terminal' ? colors.accent : colors.mutedDim,
             }}
           >
             Term
@@ -734,140 +1111,137 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
           <div style={{
             height: '100%',
             display: 'flex',
-            flexDirection: 'row',
+            flexDirection: 'column',
             overflow: 'hidden',
           }}>
-            {/* Main conversation panel */}
-            <div style={{
-              flex: 1,
-              display: 'flex',
-              flexDirection: 'column',
-              overflow: 'hidden',
-            }}>
-              {/* Conversation scroll area */}
-              <div style={{
+            {/* Conversation scroll area */}
+            <div
+              ref={scrollContainerRef}
+              onScroll={handleScroll}
+              style={{
                 flex: 1,
                 overflowY: 'auto',
-                padding: '8px 12px',
+                padding: '12px 16px',
+                position: 'relative',
+              }}
+            >
+              {/* Centered content container */}
+              <div style={{
+                maxWidth: 720,
+                margin: '0 auto',
               }}>
+                {/* Empty states */}
                 {conversation.length === 0 && !session && (
-                  <div style={{ textAlign: 'center', marginTop: 40, color: 'rgb(80, 80, 100)' }}>
-                    <div style={{ fontSize: '1.5rem', marginBottom: 8 }}>&#9670;</div>
-                    <div style={{ fontSize: '0.7rem' }}>Claude Code session starting...</div>
-                    <div style={{ fontSize: '0.6rem', marginTop: 4 }}>
+                  <div style={{ textAlign: 'center', marginTop: 60, color: colors.mutedDim }}>
+                    <div style={{ fontSize: '2rem', marginBottom: 12, opacity: 0.4 }}>{'\u25C6'}</div>
+                    <div style={{ fontSize: '0.8rem', color: colors.muted }}>Claude Code session starting...</div>
+                    <div style={{ fontSize: '0.7rem', marginTop: 6, color: colors.mutedDim }}>
                       Waiting for hook events. Make sure hooks are configured in ~/.claude/settings.json
                     </div>
                   </div>
                 )}
 
                 {conversation.length === 0 && session && (
-                  <div style={{ textAlign: 'center', marginTop: 40, color: 'rgb(80, 80, 100)' }}>
-                    <div style={{ fontSize: '1.5rem', marginBottom: 8 }}>&#9670;</div>
-                    <div style={{ fontSize: '0.7rem' }}>Session connected</div>
-                    <div style={{ fontSize: '0.6rem', marginTop: 4 }}>
+                  <div style={{ textAlign: 'center', marginTop: 60, color: colors.mutedDim }}>
+                    <div style={{ fontSize: '2rem', marginBottom: 12, opacity: 0.4 }}>{'\u25C6'}</div>
+                    <div style={{ fontSize: '0.8rem', color: colors.muted }}>Session connected</div>
+                    <div style={{ fontSize: '0.7rem', marginTop: 6, color: colors.mutedDim }}>
                       Waiting for conversation activity...
                     </div>
                   </div>
                 )}
 
-                {conversation.map((turn, i) => (
-                  <ConversationMessage key={i} turn={turn} />
-                ))}
+                {/* Rendered conversation messages with dividers */}
+                {renderedConversation}
 
-                {/* Active tool calls */}
-                {activeToolCalls.length > 0 && (
-                  <div style={{ margin: '8px 0', padding: '6px 10px', borderRadius: 6, backgroundColor: 'rgba(96, 165, 250, 0.08)', borderLeft: '2px solid rgb(96, 165, 250)' }}>
-                    <div style={{ fontSize: '0.55rem', color: 'rgb(96, 165, 250)', fontWeight: 600, marginBottom: 4 }}>Running</div>
-                    {activeToolCalls.map(tc => <ToolCallItem key={tc.id} tc={tc} />)}
-                  </div>
+                {/* Active tool calls as inline work log */}
+                {allToolCalls.length > 0 && (
+                  <InlineWorkLog toolCalls={allToolCalls} />
                 )}
+
+                {/* Inline file changes */}
+                <InlineFilesSection fileChanges={fileChanges} />
+
+                {/* Inline subagents */}
+                <InlineSubagentsSection subagents={subagents} />
 
                 {/* Pending approval */}
                 {pendingApproval && (
                   <ApprovalPrompt approval={pendingApproval} onRespond={handleApprovalRespond} />
                 )}
 
+                {/* Streaming indicator */}
+                {isStreaming && <StreamingDots />}
+
                 <div ref={conversationEndRef} />
               </div>
+            </div>
 
-              {/* Input area — type directly into PTY */}
+            {/* Scroll to bottom button */}
+            {showScrollBtn && <ScrollToBottomButton onClick={scrollToBottom} />}
+
+            {/* Composer / Input area */}
+            <div style={{
+              borderTop: `1px solid ${colors.border}`,
+              padding: '8px 16px 10px 16px',
+              flexShrink: 0,
+            }}>
               <div style={{
-                borderTop: '1px solid rgb(40, 40, 50)',
-                padding: '6px 8px',
+                maxWidth: 720,
+                margin: '0 auto',
                 display: 'flex',
-                gap: 6,
+                alignItems: 'center',
+                gap: 8,
+                padding: '6px 6px 6px 16px',
+                borderRadius: 20,
+                border: `1px solid ${colors.border}`,
+                backgroundColor: 'rgba(255, 255, 255, 0.03)',
               }}>
                 <input
-                  placeholder="Type a message... (sent to Claude terminal)"
+                  placeholder="Message Claude..."
+                  value={inputValue}
+                  onChange={(e) => setInputValue(e.target.value)}
                   style={{
                     flex: 1,
-                    fontSize: '0.65rem',
-                    padding: '4px 8px',
-                    borderRadius: 4,
-                    border: '1px solid rgb(50, 50, 65)',
-                    backgroundColor: 'rgb(18, 18, 22)',
-                    color: 'rgb(200, 200, 220)',
+                    fontSize: '0.8rem',
+                    padding: '4px 0',
+                    border: 'none',
+                    backgroundColor: 'transparent',
+                    color: colors.text,
                     outline: 'none',
                     fontFamily: 'inherit',
+                    lineHeight: 1.4,
                   }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && !e.shiftKey) {
                       e.preventDefault();
-                      const val = (e.target as HTMLInputElement).value;
-                      if (val.trim()) {
-                        write(val + '\n');
-                        (e.target as HTMLInputElement).value = '';
-                      }
+                      handleSend();
                     }
                   }}
                 />
+                <button
+                  onClick={handleSend}
+                  style={{
+                    width: 28,
+                    height: 28,
+                    borderRadius: '50%',
+                    border: 'none',
+                    backgroundColor: inputValue.trim() ? colors.accent : 'rgba(255,255,255,0.06)',
+                    color: inputValue.trim() ? '#0d0d10' : colors.mutedDim,
+                    cursor: inputValue.trim() ? 'pointer' : 'default',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '0.85rem',
+                    fontWeight: 700,
+                    flexShrink: 0,
+                    transition: 'background-color 0.15s, color 0.15s',
+                  }}
+                  aria-label="Send message"
+                >
+                  {'\u2191'}
+                </button>
               </div>
-            </div>
-
-            {/* Side panel: tool calls + file changes */}
-            <div style={{
-              width: 220,
-              minWidth: 220,
-              borderLeft: '1px solid rgb(40, 40, 50)',
-              overflowY: 'auto',
-              padding: '6px 8px',
-              backgroundColor: 'rgb(16, 16, 20)',
-            }}>
-              {/* File changes */}
-              {fileChanges.length > 0 && (
-                <div style={{ marginBottom: 12 }}>
-                  <div style={{ fontSize: '0.55rem', color: 'rgb(100, 100, 120)', fontWeight: 600, marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                    Files ({fileChanges.length})
-                  </div>
-                  {fileChanges.slice(-20).map((fc, i) => <FileChangeItem key={i} fc={fc} />)}
-                </div>
-              )}
-
-              {/* Subagents */}
-              {subagents.length > 0 && (
-                <div style={{ marginBottom: 12 }}>
-                  <div style={{ fontSize: '0.55rem', color: 'rgb(100, 100, 120)', fontWeight: 600, marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                    Subagents ({subagents.length})
-                  </div>
-                  {subagents.map(sub => <SubagentItem key={sub.id} sub={sub} />)}
-                </div>
-              )}
-
-              {/* Recent completed tool calls */}
-              {completedToolCalls.length > 0 && (
-                <div>
-                  <div style={{ fontSize: '0.55rem', color: 'rgb(100, 100, 120)', fontWeight: 600, marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                    Tool History ({completedToolCalls.length})
-                  </div>
-                  {completedToolCalls.slice(-30).map(tc => <ToolCallItem key={tc.id} tc={tc} />)}
-                </div>
-              )}
-
-              {completedToolCalls.length === 0 && fileChanges.length === 0 && subagents.length === 0 && (
-                <div style={{ textAlign: 'center', marginTop: 20, fontSize: '0.6rem', color: 'rgb(60, 60, 80)' }}>
-                  No activity yet
-                </div>
-              )}
             </div>
           </div>
         )}
@@ -880,7 +1254,7 @@ const toggleBtnStyle: React.CSSProperties = {
   fontSize: '0.55rem',
   fontWeight: 600,
   padding: '2px 8px',
-  borderRadius: 3,
+  borderRadius: 4,
   border: 'none',
   cursor: 'pointer',
 };

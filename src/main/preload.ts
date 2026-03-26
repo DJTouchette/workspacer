@@ -80,6 +80,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     };
   },
 
+  // App info
+  getCwd: (): Promise<string> =>
+    ipcRenderer.invoke('app:getCwd'),
+
+  // Dialog
+  pickFolder: (defaultPath?: string): Promise<string | null> =>
+    ipcRenderer.invoke('dialog:pickFolder', defaultPath),
+
   // App lifecycle
   onBeforeQuit: (callback: () => void): (() => void) => {
     const handler = () => callback();

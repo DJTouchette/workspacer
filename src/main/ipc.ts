@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow } from 'electron';
+import { ipcMain, BrowserWindow, dialog } from 'electron';
 import { terminalService } from './services/terminalService';
 import { configService } from './services/configService';
 import { sessionService } from './services/sessionService';
@@ -83,5 +83,21 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   ipcMain.handle('session:delete', (_event, filename: string) => {
     sessionService.deleteSession(filename);
+  });
+
+  // App info
+  ipcMain.handle('app:getCwd', () => {
+    return process.cwd();
+  });
+
+  // Dialog
+  ipcMain.handle('dialog:pickFolder', async (_event, defaultPath?: string) => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Choose working directory for Claude',
+      defaultPath: defaultPath || process.cwd(),
+      properties: ['openDirectory'],
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return result.filePaths[0];
   });
 }

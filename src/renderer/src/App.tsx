@@ -37,6 +37,12 @@ function App() {
   const [chordState, setChordState] = useState<'idle' | 'waiting'>('idle');
   const [showCommandPalette, setShowCommandPalette] = useState(false);
 
+  // App working directory (used as default cwd for Claude panes)
+  const appCwdRef = useRef<string>('');
+  useEffect(() => {
+    window.electronAPI.getCwd().then((cwd) => { appCwdRef.current = cwd; }).catch(() => {});
+  }, []);
+
   // Session state
   const [sessionPhase, setSessionPhase] = useState<'loading' | 'picker' | 'active'>('loading');
   const [sessionList, setSessionList] = useState<any[]>([]);
@@ -195,8 +201,8 @@ function App() {
 
   const insertPosition = config.panes.insertPosition || 'after';
 
-  const addTabWithConfig = useCallback((type: PaneType, title?: string, shell?: string, url?: string, appMode?: boolean) => {
-    return addTab(type, title, insertPosition, shell, url, appMode);
+  const addTabWithConfig = useCallback((type: PaneType, title?: string, shell?: string, url?: string, appMode?: boolean, cwd?: string) => {
+    return addTab(type, title, insertPosition, shell, url, appMode, cwd);
   }, [addTab, insertPosition]);
 
   const openSettings = useCallback(() => {
@@ -257,8 +263,10 @@ function App() {
     setActivePane(tabId, paneId);
   }, [setActiveTabId, setActivePane]);
 
-  const handleAddTab = useCallback((type: PaneType, shell?: string, label?: string) => {
-    const newId = addTabWithConfig(type, label, shell);
+  const handleAddTab = useCallback((type: PaneType, shell?: string, label?: string, cwd?: string) => {
+    // Default Claude panes to the app's working directory
+    const resolvedCwd = cwd || (type === 'claude' ? appCwdRef.current : undefined);
+    const newId = addTabWithConfig(type, label, shell, undefined, undefined, resolvedCwd);
     requestAnimationFrame(() => scrollToTab(newId));
   }, [addTabWithConfig, scrollToTab]);
 

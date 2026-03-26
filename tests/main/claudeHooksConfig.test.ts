@@ -81,11 +81,13 @@ describe('claudeHooksConfig', () => {
     });
 
     it('should not duplicate hooks if already installed', () => {
-      // Build a full settings with our marker in every event
+      // Build a full settings with the exact current command in every event
       const hooks: any = {};
       const events = ['SessionStart', 'SessionEnd', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Notification', 'Stop', 'SubagentStart', 'SubagentStop', 'PermissionRequest'];
+      // Use the exact command format that installHooks produces
+      const exactCmd = "curl -s -X POST http://localhost:7890/hook -H 'Content-Type: application/json' -d @- # workspacer-managed";
       for (const event of events) {
-        hooks[event] = [{ hooks: [{ type: 'command', command: 'curl -s http://localhost:7890/hook # workspacer-managed' }] }];
+        hooks[event] = [{ hooks: [{ type: 'command', command: exactCmd }] }];
       }
       vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({ hooks }));
 
