@@ -813,6 +813,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
   const [viewMode, setViewMode] = useState<ViewMode>('terminal');
   const [inputValue, setInputValue] = useState('');
   const [showScrollBtn, setShowScrollBtn] = useState(false);
+  const [approvalDismissedAt, setApprovalDismissedAt] = useState(0);
   const termContainerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -976,6 +977,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
       // Navigate down to "No" (skip "Yes, and don't ask again") then Enter
       write('\x1b[B\x1b[B\r');
     }
+    setApprovalDismissedAt(Date.now());
   }, [write]);
 
   // Handle send
@@ -1173,8 +1175,8 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
                 {/* Inline subagents */}
                 <InlineSubagentsSection subagents={subagents} />
 
-                {/* Pending approval */}
-                {pendingApproval && (
+                {/* Pending approval — hide after user responds, show again for new approvals */}
+                {pendingApproval && pendingApproval.timestamp > approvalDismissedAt && (
                   <ApprovalPrompt approval={pendingApproval} onRespond={handleApprovalRespond} />
                 )}
 
