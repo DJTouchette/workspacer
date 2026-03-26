@@ -864,7 +864,6 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
     if (!container || termInitRef.current) return;
     termInitRef.current = true;
 
-    // Ensure Nerd Fonts are loaded before canvas rendering
     const term = new Terminal({
       cursorBlink: termCfg.cursorBlink,
       fontSize: termCfg.fontSize,
@@ -882,20 +881,27 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
     terminalRef.current = term;
     fitAddonRef.current = fitAddon;
 
-    term.open(container);
+    // Wait for Nerd Fonts to load before opening terminal
+    const fontsReady = (window as any).__fontsReady ?? Promise.resolve();
+    fontsReady.then(() => {
+      term.open(container);
 
-    // Use GPU-accelerated WebGL renderer for better font/glyph support
-    try {
-      const webgl = new WebglAddon();
-      webgl.onContextLoss(() => { webgl.dispose(); });
-      term.loadAddon(webgl);
-    } catch (e) {
-      console.warn('[ClaudePane] WebGL init failed, using canvas fallback:', e);
-    }
+      try {
+        const webgl = new WebglAddon();
+        webgl.onContextLoss(() => { webgl.dispose(); });
+        term.loadAddon(webgl);
+      } catch (e) {
+        console.warn('[ClaudePane] WebGL init failed, using canvas fallback:', e);
+      }
 
-    // Re-fit after fonts load so column count matches actual glyph width
-    document.fonts.ready.then(() => {
-      requestAnimationFrame(() => { try { fitAddon.fit(); } catch {} });
+      const currentFont = term.options.fontFamily;
+      term.options.fontFamily = 'monospace';
+      term.options.fontFamily = currentFont;
+
+      const fitRetry = () => { try { fitAddon.fit(); } catch {} };
+      requestAnimationFrame(fitRetry);
+      setTimeout(fitRetry, 100);
+      setTimeout(fitRetry, 300);
     });
 
     term.attachCustomKeyEventHandler((e: KeyboardEvent) => {

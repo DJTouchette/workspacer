@@ -94,20 +94,30 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
     terminalRef.current = term;
     fitAddonRef.current = fitAddon;
 
-    term.open(container);
+    // Wait for Nerd Fonts to load before opening terminal
+    // (canvas/WebGL won't re-render glyphs after initial draw)
+    const fontsReady = (window as any).__fontsReady ?? Promise.resolve();
+    fontsReady.then(() => {
+      term.open(container);
 
-    // Use GPU-accelerated WebGL renderer for better font/glyph support
-    try {
-      const webgl = new WebglAddon();
-      webgl.onContextLoss(() => { webgl.dispose(); });
-      term.loadAddon(webgl);
-    } catch (e) {
-      console.warn('[TerminalPane] WebGL init failed, using canvas fallback:', e);
-    }
+      // Use GPU-accelerated WebGL renderer
+      try {
+        const webgl = new WebglAddon();
+        webgl.onContextLoss(() => { webgl.dispose(); });
+        term.loadAddon(webgl);
+      } catch (e) {
+        console.warn('[TerminalPane] WebGL init failed, using canvas fallback:', e);
+      }
 
-    // Re-fit after fonts load so column count matches actual glyph width
-    document.fonts.ready.then(() => {
-      requestAnimationFrame(() => { try { fitAddon.fit(); } catch {} });
+      // Force xterm to re-measure glyphs with the loaded font
+      const currentFont = term.options.fontFamily;
+      term.options.fontFamily = 'monospace';
+      term.options.fontFamily = currentFont;
+
+      const fitRetry = () => { try { fitAddon.fit(); } catch {} };
+      requestAnimationFrame(fitRetry);
+      setTimeout(fitRetry, 100);
+      setTimeout(fitRetry, 300);
     });
 
     // Tell xterm to NOT process keys that the app handles.

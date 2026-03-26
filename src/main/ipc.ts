@@ -100,13 +100,14 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     return process.cwd();
   });
 
-  // Font discovery — find Nerd Font files and return as base64 data URLs
-  // (file:// URLs are blocked by CORS in dev mode)
+  // Font discovery — find Nerd Font files and return raw binary data
+  // Chromium can't see user-installed Windows fonts (confirmed Chromium bug)
+  // so we read font files and register them via FontFace API in the renderer
   ipcMain.handle('fonts:getNerdFonts', () => {
     const fs = require('fs');
     const path = require('path');
     const os = require('os');
-    const results: { family: string; dataUrl: string }[] = [];
+    const results: { family: string; data: Buffer }[] = [];
 
     const fontDirs = process.platform === 'win32'
       ? [
@@ -129,7 +130,6 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
           if (!/NerdFontMono-Regular/i.test(file)) continue;
           const fullPath = path.join(dir, file);
           // Derive CSS family name from filename
-          // e.g. JetBrainsMonoNLNerdFontMono-Regular.ttf → "JetBrainsMonoNL Nerd Font Mono"
           const family = file
             .replace(/-Regular\.(ttf|otf)$/i, '')
             .replace(/NerdFontMono/, ' Nerd Font Mono')
@@ -137,10 +137,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
             .trim();
           try {
             const data = fs.readFileSync(fullPath);
-            const mime = file.endsWith('.otf') ? 'font/otf' : 'font/ttf';
-            const dataUrl = `data:${mime};base64,${data.toString('base64')}`;
-            results.push({ family, dataUrl });
-            console.log(`[Fonts] found: "${family}" from ${file}`);
+            results.push({ family, data });
+            console.log(`[Fonts] found: "${family}" (${(data.length / 1024).toFixed(0)}KB) from ${file}`);
           } catch {}
         }
       } catch {}

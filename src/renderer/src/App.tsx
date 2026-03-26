@@ -43,33 +43,35 @@ function App() {
     window.electronAPI.getCwd().then((cwd) => { appCwdRef.current = cwd; }).catch(() => {});
   }, []);
 
-  // Load Nerd Fonts via FontFace API so xterm.js canvas/WebGL can use them
+  // Load Nerd Fonts via FontFace API — Chromium can't see user-installed Windows fonts
+  // Expose the promise globally so terminal panes can await it before term.open()
   useEffect(() => {
-    window.electronAPI.getNerdFonts?.().then(async (fonts) => {
-      for (const f of fonts) {
-        const src = `url("${f.dataUrl}")`;
-        // Register under the exact derived name
-        try {
-          const face = new FontFace(f.family, src);
-          const loaded = await face.load();
-          document.fonts.add(loaded);
-          console.log(`[Fonts] loaded: "${f.family}"`);
-        } catch (err) {
-          console.warn(`[Fonts] failed: "${f.family}":`, err);
+    (window as any).__fontsReady = (async () => {
+      try {
+        const fonts = await window.electronAPI.getNerdFonts?.();
+        if (!fonts?.length) return;
+        for (const f of fonts) {
+          // FontFace accepts ArrayBuffer directly — no base64/data URL needed
+          const buf = f.data instanceof ArrayBuffer ? f.data : (f.data as any).buffer ?? f.data;
+          const names = [f.family];
+          // Also register without "NL" so config "JetBrainsMono Nerd Font Mono" matches
+          const generic = f.family.replace(/NL\s*/g, '');
+          if (generic !== f.family) names.push(generic);
+          for (const name of names) {
+            try {
+              const face = new FontFace(name, buf);
+              await face.load();
+              document.fonts.add(face);
+              console.log(`[Fonts] loaded: "${name}"`);
+            } catch (err) {
+              console.warn(`[Fonts] failed "${name}":`, err);
+            }
+          }
         }
-        // Also register under generic base name without NL/NF prefix variations
-        // so "JetBrainsMono Nerd Font Mono" in config matches "JetBrainsMonoNL Nerd Font Mono" file
-        const genericName = f.family.replace(/NL\s*/g, '');
-        if (genericName !== f.family) {
-          try {
-            const face2 = new FontFace(genericName, src);
-            const loaded2 = await face2.load();
-            document.fonts.add(loaded2);
-            console.log(`[Fonts] loaded alias: "${genericName}"`);
-          } catch {}
-        }
+      } catch (err) {
+        console.warn('[Fonts] discovery failed:', err);
       }
-    }).catch(() => {});
+    })();
   }, []);
 
   // Session state
