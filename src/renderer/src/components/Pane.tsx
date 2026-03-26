@@ -123,12 +123,12 @@ const Pane: React.FC<PaneProps> = ({
       data-pane-id={id}
       style={{
         width: '100%',
-        height: '100%',
+        height: 'calc(100% - 8px)',
         display: 'flex',
         flexDirection: 'column',
         borderRadius: '8px',
         overflow: 'hidden',
-        margin: '0 8px',
+        margin: '4px 8px',
         border: isActive
           ? '1px solid rgb(80, 120, 200)'
           : '1px solid rgb(50, 50, 55)',
@@ -138,6 +138,7 @@ const Pane: React.FC<PaneProps> = ({
         transition: 'none',
         flexShrink: 0,
         position: 'relative',
+        zIndex: 0,
       }}
       onClick={() => onFocus(id)}
     >
