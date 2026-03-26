@@ -78,6 +78,9 @@ class ClaudeSessionStore {
   // Multiple PTYs with the same cwd are queued in order (FIFO).
   private unboundPtys = new Map<string, string[]>();  // cwd → [ptyId, ...]
 
+  // Timestamp of last hook-driven state change — poller defers briefly after hooks fire
+  private hookStateTimestamp = new Map<string, number>(); // sessionId → timestamp
+
   setMainWindow(win: BrowserWindow): void {
     this.mainWindow = win;
   }
@@ -231,6 +234,15 @@ class ClaudeSessionStore {
       case 'Stop':
         session.ambientState = 'idle';
         session.pendingApproval = null;
+        // Prevent poller from overriding this state briefly
+        this.hookStateTimestamp.set(sessionId, Date.now());
+        // Move any remaining active tool calls to completed
+        for (const tc of session.activeToolCalls) {
+          tc.status = 'complete';
+          tc.completedAt = Date.now();
+          session.completedToolCalls.push(tc);
+        }
+        session.activeToolCalls = [];
         // Extract assistant response from terminal buffer
         if (session.ptyId) {
           const lines = getFullBuffer(session.ptyId);
@@ -291,6 +303,10 @@ class ClaudeSessionStore {
     if (!session) return;
     // Don't override hook-driven states
     if (session.pendingApproval && state !== 'waiting_approval') return;
+    // Defer to hook-driven state for 2s after a hook fires (e.g. Stop sets idle,
+    // don't let poller flip it back to streaming while terminal settles)
+    const hookTs = this.hookStateTimestamp.get(sessionId);
+    if (hookTs && Date.now() - hookTs < 2000) return;
     // Skip if state hasn't changed (reduces IPC chatter)
     if (session.ambientState === state) return;
 
@@ -370,6 +386,13 @@ class ClaudeSessionStore {
       .replace(/^.*Organization.*$/gm, '')
       .replace(/^.*Claude Max.*$/gm, '')
       .replace(/^.*@.*\.com.*$/gm, '')
+      // Remove Claude Code status spinners and hook messages
+      .replace(/^.*[✱⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏].*$/gm, '')
+      .replace(/^.*running \w+ hook.*$/gmi, '')
+      .replace(/^.*Cultivating.*$/gm, '')
+      .replace(/^.*Thinking.*$/gm, '')
+      // Remove horizontal rules (lines of ─, ━, —, - only)
+      .replace(/^[\s─━—\-]{3,}$/gm, '')
       // Remove prompt markers (◆, >, ❯ at start of line)
       .replace(/^[◆❯>]\s*/gm, '')
       // Remove cost/token info lines
@@ -451,12 +474,16 @@ class ClaudeSessionStore {
 
     const response = responseLines.join('\n').trim();
 
-    // Filter out noise: prompt markers, cost lines, token info, status bars
+    // Filter out noise: prompt markers, cost lines, token info, status bars, spinners
     return response
       .replace(/^[●◆❯>]\s*/gm, '')
       .replace(/^.*\d+\.\d+[kK]? tokens.*$/gm, '')
       .replace(/^.*\$\d+\.\d+.*$/gm, '')
       .replace(/^.*\? for shortcuts.*$/gm, '')
+      .replace(/^.*[✱⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏].*$/gm, '')
+      .replace(/^.*running \w+ hook.*$/gmi, '')
+      .replace(/^.*Cultivating.*$/gm, '')
+      .replace(/^[\s─━—\-]{3,}$/gm, '')
       .replace(/\n{3,}/g, '\n\n')
       .trim();
   }
