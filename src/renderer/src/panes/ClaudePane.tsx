@@ -145,7 +145,7 @@ const WorkingTimer: React.FC<{ session: ClaudeSessionSnapshot | null }> = ({ ses
 // ── Streaming Dots ──
 
 const StreamingDots: React.FC = () => (
-  <div style={{ display: 'flex', gap: 4, padding: '8px 0 4px 4px', alignItems: 'center' }}>
+  <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
     {[0, 200, 400].map((delay) => (
       <span
         key={delay}
@@ -814,6 +814,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
   const [inputValue, setInputValue] = useState('');
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   const [approvalDismissedAt, setApprovalDismissedAt] = useState(0);
+  const [cancelledAt, setCancelledAt] = useState(0);
   const termContainerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -965,6 +966,19 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
     conversationEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, []);
 
+  // Escape key cancels in GUI mode
+  useEffect(() => {
+    if (viewMode !== 'gui' || !isActive) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isStreaming) {
+        e.preventDefault();
+        cancelTask();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [viewMode, isActive, isStreaming, cancelTask]);
+
   // Send approval response to Claude Code's interactive select menu.
   // The menu highlights "Yes" by default — Enter selects it.
   // For deny, arrow down to "No" (3rd item) then Enter.
@@ -996,7 +1010,15 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
   const fileChanges = session?.fileChanges ?? [];
   const subagents = session?.subagents ?? [];
   const pendingApproval = session?.pendingApproval ?? null;
-  const isStreaming = session?.ambientState === 'thinking' || session?.ambientState === 'streaming';
+  const serverStreaming = session?.ambientState === 'thinking' || session?.ambientState === 'streaming';
+  // If user cancelled, suppress streaming UI until a new activity cycle begins
+  const isStreaming = serverStreaming && (session?.lastActivity ?? 0) > cancelledAt;
+
+  // Cancel the current task — send Escape and suppress streaming UI
+  const cancelTask = useCallback(() => {
+    write('\x1b');
+    setCancelledAt(Date.now());
+  }, [write]);
 
   // Only show in-progress tool calls globally — completed ones are per-turn
   const liveToolCalls = useMemo(() => {
@@ -1074,27 +1096,6 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
           <span style={{ fontSize: '0.55rem', color: '#c084fc' }}>
             {subagents.filter(s => s.status === 'running').length} subagent(s)
           </span>
-        )}
-
-        {isStreaming && (
-          <button
-            onClick={() => write('\x1b')}
-            style={{
-              fontSize: '0.55rem',
-              fontWeight: 600,
-              padding: '1px 8px',
-              border: `1px solid ${colors.error}`,
-              borderRadius: 4,
-              backgroundColor: 'transparent',
-              color: colors.error,
-              cursor: 'pointer',
-              fontFamily: 'inherit',
-              lineHeight: '1.4',
-            }}
-            title="Cancel current task (Esc)"
-          >
-            Cancel
-          </button>
         )}
 
         <div style={{ flex: 1 }} />
@@ -1200,8 +1201,34 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
                   <ApprovalPrompt approval={pendingApproval} onRespond={handleApprovalRespond} />
                 )}
 
-                {/* Streaming indicator */}
-                {isStreaming && <StreamingDots />}
+                {/* Streaming indicator with cancel */}
+                {isStreaming && (
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 10,
+                    padding: '8px 0 4px 0',
+                  }}>
+                    <StreamingDots />
+                    <button
+                      onClick={cancelTask}
+                      style={{
+                        fontSize: '0.65rem',
+                        fontWeight: 500,
+                        padding: '2px 10px',
+                        border: `1px solid ${colors.muted}`,
+                        borderRadius: 4,
+                        backgroundColor: 'transparent',
+                        color: colors.muted,
+                        cursor: 'pointer',
+                        fontFamily: 'inherit',
+                      }}
+                      title="Cancel (Esc)"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
 
                 <div ref={conversationEndRef} />
               </div>
