@@ -281,10 +281,6 @@ function App() {
   // --- Render ---
   return (
     <div className="app-root">
-      {/* Font diagnostic — remove after debugging */}
-      <span style={{ position: 'fixed', bottom: 4, right: 4, fontFamily: '"JetBrainsMono Nerd Font Mono", "JetBrainsMonoNL Nerd Font Mono", monospace', fontSize: 16, color: 'lime', background: 'black', padding: '2px 8px', zIndex: 99999, pointerEvents: 'none' }}>
-        {'\ue0b0'}{'\ue0b2'}{'\uf418'}{'\uf1d3'} NF?
-      </span>
       <NavBar
         tabs={tabs}
         activeTabId={activeTabId}

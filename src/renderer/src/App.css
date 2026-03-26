@@ -1,18 +1,5 @@
 /* Workspacer App Styles */
 
-/* Font diagnostic — shows in bottom-right corner, remove after debugging */
-.font-diag {
-  position: fixed;
-  bottom: 2px;
-  right: 2px;
-  font-family: "JetBrainsMono Nerd Font Mono", "JetBrainsMonoNL Nerd Font Mono", monospace;
-  font-size: 14px;
-  color: lime;
-  background: black;
-  padding: 2px 6px;
-  z-index: 99999;
-  pointer-events: none;
-}
 
 html, body {
   margin: 0;
