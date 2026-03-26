@@ -1,8 +1,8 @@
 /* Workspacer App Styles */
 
-/* Preload Nerd Fonts for xterm.js canvas rendering */
+/* Preload Nerd Fonts for xterm.js canvas/WebGL rendering */
 .font-preload {
-  font-family: "JetBrainsMono Nerd Font Mono", "JetBrainsMono NF", "CaskaydiaMono Nerd Font Mono", "CaskaydiaMono NF", monospace;
+  font-family: "JetBrainsMono Nerd Font Mono", "JetBrainsMonoNL Nerd Font Mono", "JetBrainsMono NFM", "JetBrainsMonoNL NFM", "JetBrainsMono NF", "CaskaydiaMono Nerd Font Mono", "CaskaydiaCove Nerd Font Mono", monospace;
   position: absolute;
   visibility: hidden;
   pointer-events: none;

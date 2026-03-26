@@ -90,7 +90,7 @@ function defaultConfig(): Config {
     terminal: {
       shell: '',
       shells: defaultShells(),
-      fontFamily: '"JetBrainsMono Nerd Font Mono", "JetBrainsMono NF", "CaskaydiaMono Nerd Font Mono", "CaskaydiaMono NF", monospace',
+      fontFamily: '"JetBrainsMono Nerd Font Mono", "JetBrainsMonoNL Nerd Font Mono", "JetBrainsMono NFM", "JetBrainsMonoNL NFM", "JetBrainsMono NF", "CaskaydiaMono Nerd Font Mono", "CaskaydiaCove Nerd Font Mono", "CaskaydiaMono NF", "Cascadia Mono", monospace',
       fontSize: 14,
       scrollback: 5000,
       cursorBlink: true,
