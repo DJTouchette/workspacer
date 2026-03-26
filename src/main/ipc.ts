@@ -100,52 +100,6 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     return process.cwd();
   });
 
-  // Font discovery — find Nerd Font files and return raw binary data
-  // Chromium can't see user-installed Windows fonts (confirmed Chromium bug)
-  // so we read font files and register them via FontFace API in the renderer
-  ipcMain.handle('fonts:getNerdFonts', () => {
-    const fs = require('fs');
-    const path = require('path');
-    const os = require('os');
-    const results: { family: string; data: Buffer }[] = [];
-
-    const fontDirs = process.platform === 'win32'
-      ? [
-          path.join(os.homedir(), 'AppData', 'Local', 'Microsoft', 'Windows', 'Fonts'),
-          'C:\\Windows\\Fonts',
-        ]
-      : [
-          path.join(os.homedir(), '.local', 'share', 'fonts'),
-          path.join(os.homedir(), '.fonts'),
-          '/usr/share/fonts',
-          '/usr/local/share/fonts',
-        ];
-
-    for (const dir of fontDirs) {
-      try {
-        if (!fs.existsSync(dir)) continue;
-        const files: string[] = fs.readdirSync(dir);
-        for (const file of files) {
-          if (!file.endsWith('.ttf') && !file.endsWith('.otf')) continue;
-          if (!/NerdFontMono-Regular/i.test(file)) continue;
-          const fullPath = path.join(dir, file);
-          // Derive CSS family name from filename
-          const family = file
-            .replace(/-Regular\.(ttf|otf)$/i, '')
-            .replace(/NerdFontMono/, ' Nerd Font Mono')
-            .replace(/  +/g, ' ')
-            .trim();
-          try {
-            const data = fs.readFileSync(fullPath);
-            results.push({ family, data });
-            console.log(`[Fonts] found: "${family}" (${(data.length / 1024).toFixed(0)}KB) from ${file}`);
-          } catch {}
-        }
-      } catch {}
-    }
-    return results;
-  });
-
   // Dialog
   ipcMain.handle('dialog:pickFolder', async (_event, defaultPath?: string) => {
     const result = await dialog.showOpenDialog(mainWindow, {

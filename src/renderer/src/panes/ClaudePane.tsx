@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useCallback, useState, useMemo } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import { WebglAddon } from '@xterm/addon-webgl';
 import '@xterm/xterm/css/xterm.css';
 import { usePTY } from '../hooks/usePTY';
 import { useClaudeSession } from '../hooks/useClaudeSession';
@@ -881,27 +880,13 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
     terminalRef.current = term;
     fitAddonRef.current = fitAddon;
 
-    // Wait for Nerd Fonts to load before opening terminal
-    const fontsReady = (window as any).__fontsReady ?? Promise.resolve();
-    fontsReady.then(() => {
+    // Wait for @font-face fonts to load, then open terminal
+    document.fonts.ready.then(() => {
       term.open(container);
-
-      try {
-        const webgl = new WebglAddon();
-        webgl.onContextLoss(() => { webgl.dispose(); });
-        term.loadAddon(webgl);
-      } catch (e) {
-        console.warn('[ClaudePane] WebGL init failed, using canvas fallback:', e);
-      }
-
-      const currentFont = term.options.fontFamily;
-      term.options.fontFamily = 'monospace';
-      term.options.fontFamily = currentFont;
 
       const fitRetry = () => { try { fitAddon.fit(); } catch {} };
       requestAnimationFrame(fitRetry);
-      setTimeout(fitRetry, 100);
-      setTimeout(fitRetry, 300);
+      setTimeout(fitRetry, 200);
     });
 
     term.attachCustomKeyEventHandler((e: KeyboardEvent) => {

@@ -281,7 +281,6 @@ function App() {
   // --- Render ---
   return (
     <div className="app-root">
-      <span className="font-preload" aria-hidden="true" />
       <NavBar
         tabs={tabs}
         activeTabId={activeTabId}
