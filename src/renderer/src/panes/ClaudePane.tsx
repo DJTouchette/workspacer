@@ -964,10 +964,11 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
     conversationEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, []);
 
-  // Send approval response — Claude Code reads raw keypresses for [Y/n] prompts
+  // Send approval response to Claude Code's [Y/n] prompt
   const handleApprovalRespond = useCallback((response: string) => {
     console.log(`[ClaudePane] sending approval: "${response}"`);
-    write(response);
+    // Send character + carriage return (Enter) — needed on Windows ConPTY
+    write(response + '\r');
   }, [write]);
 
   // Handle send
