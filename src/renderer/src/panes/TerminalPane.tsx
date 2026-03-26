@@ -75,6 +75,10 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
     if (!container || initializedRef.current) return;
     initializedRef.current = true;
 
+    // Ensure Nerd Fonts are loaded before canvas rendering
+    const primaryFont = termCfg.fontFamily.split(',')[0].trim().replace(/"/g, '');
+    document.fonts.load(`${termCfg.fontSize}px "${primaryFont}"`).catch(() => {});
+
     const term = new Terminal({
       cursorBlink: termCfg.cursorBlink,
       fontSize: termCfg.fontSize,

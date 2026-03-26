@@ -863,6 +863,10 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
     if (!container || termInitRef.current) return;
     termInitRef.current = true;
 
+    // Ensure Nerd Fonts are loaded before canvas rendering
+    const primaryFont = termCfg.fontFamily.split(',')[0].trim().replace(/"/g, '');
+    document.fonts.load(`${termCfg.fontSize}px "${primaryFont}"`).catch(() => {});
+
     const term = new Terminal({
       cursorBlink: termCfg.cursorBlink,
       fontSize: termCfg.fontSize,
