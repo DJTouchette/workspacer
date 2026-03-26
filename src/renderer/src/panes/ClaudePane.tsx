@@ -269,9 +269,75 @@ const InlineWorkLog: React.FC<{ toolCalls: ToolCall[]; subagents?: SubagentInfo[
   );
 };
 
+/** Check if a tool call has diff-able content */
+function hasDiff(tc: ToolCall): boolean {
+  return (tc.name === 'Edit' || tc.name === 'MultiEdit') && (tc.input?.old_string || tc.input?.new_string);
+}
+
+/** Check if a tool call has expandable content */
+function hasExpandableContent(tc: ToolCall): boolean {
+  return hasDiff(tc) || tc.name === 'Write' || tc.name === 'Bash';
+}
+
+/** Render a unified diff view */
+const DiffView: React.FC<{ oldStr: string; newStr: string; filePath?: string }> = ({ oldStr, newStr, filePath }) => {
+  const fileName = filePath?.split(/[/\\]/).pop() ?? '';
+  const oldLines = oldStr ? oldStr.split('\n') : [];
+  const newLines = newStr ? newStr.split('\n') : [];
+
+  return (
+    <div style={{
+      margin: '4px 0 2px 20px',
+      borderRadius: 6,
+      overflow: 'hidden',
+      border: `1px solid ${colors.borderSubtle}`,
+      fontSize: '0.72rem',
+      fontFamily: 'var(--claude-mono-font, monospace)',
+    }}>
+      {fileName && (
+        <div style={{
+          padding: '4px 10px',
+          backgroundColor: 'rgba(255,255,255,0.03)',
+          color: colors.muted,
+          fontSize: '0.65rem',
+          borderBottom: `1px solid ${colors.borderSubtle}`,
+        }}>
+          {fileName}
+        </div>
+      )}
+      <div style={{ maxHeight: 300, overflow: 'auto' }}>
+        {oldLines.map((line, i) => (
+          <div key={`old-${i}`} style={{
+            padding: '1px 10px',
+            backgroundColor: 'rgba(248, 113, 113, 0.08)',
+            color: 'rgb(248, 150, 150)',
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-all',
+          }}>
+            <span style={{ color: colors.error, userSelect: 'none', marginRight: 8 }}>-</span>{line}
+          </div>
+        ))}
+        {newLines.map((line, i) => (
+          <div key={`new-${i}`} style={{
+            padding: '1px 10px',
+            backgroundColor: 'rgba(74, 222, 128, 0.08)',
+            color: 'rgb(150, 230, 170)',
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-all',
+          }}>
+            <span style={{ color: colors.success, userSelect: 'none', marginRight: 8 }}>+</span>{line}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
 const WorkLogEntry: React.FC<{ tc: ToolCall }> = ({ tc }) => {
+  const [expanded, setExpanded] = useState(false);
   const isRunning = tc.status === 'running';
   const isFailed = tc.status === 'failed';
+  const expandable = hasExpandableContent(tc);
 
   const icon = isRunning ? null : isFailed ? '\u2717' : '\u2713';
   const iconColor = isRunning ? colors.accent : isFailed ? colors.error : colors.success;
@@ -297,58 +363,133 @@ const WorkLogEntry: React.FC<{ tc: ToolCall }> = ({ tc }) => {
   } else if (tc.name === 'Agent') {
     detail = tc.input?.description ?? tc.input?.prompt?.slice(0, 60) ?? '';
   } else {
-    // Generic: show first string input value
     const vals = Object.values(tc.input ?? {});
     const firstStr = vals.find(v => typeof v === 'string') as string | undefined;
     if (firstStr) detail = firstStr.slice(0, 60);
   }
 
   return (
-    <div style={{
-      display: 'flex',
-      alignItems: 'center',
-      gap: 8,
-      padding: '3px 0',
-      fontSize: '0.75rem',
-    }}>
-      {isRunning ? (
-        <span style={{
-          display: 'inline-block',
-          width: 12,
-          height: 12,
-          border: `1.5px solid ${colors.accent}`,
-          borderTopColor: 'transparent',
-          borderRadius: '50%',
-          animation: 'claudeSpinner 0.8s linear infinite',
-          flexShrink: 0,
-        }} />
-      ) : (
-        <span style={{ color: iconColor, fontSize: '0.7rem', width: 12, textAlign: 'center', flexShrink: 0 }}>{icon}</span>
+    <div>
+      <div
+        onClick={expandable ? () => setExpanded(!expanded) : undefined}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          padding: '3px 0',
+          fontSize: '0.75rem',
+          cursor: expandable ? 'pointer' : 'default',
+        }}
+      >
+        {isRunning ? (
+          <span style={{
+            display: 'inline-block',
+            width: 12,
+            height: 12,
+            border: `1.5px solid ${colors.accent}`,
+            borderTopColor: 'transparent',
+            borderRadius: '50%',
+            animation: 'claudeSpinner 0.8s linear infinite',
+            flexShrink: 0,
+          }} />
+        ) : (
+          <span style={{ color: iconColor, fontSize: '0.7rem', width: 12, textAlign: 'center', flexShrink: 0 }}>{icon}</span>
+        )}
+        <span style={{ color: colors.accent, fontWeight: 600, flexShrink: 0 }}>{tc.name}</span>
+        {detail && (
+          <span style={{
+            color: colors.text,
+            fontFamily: 'var(--claude-mono-font, monospace)',
+            fontSize: '0.7rem',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}>
+            {detail}
+          </span>
+        )}
+        {detailSecondary && (
+          <span style={{
+            color: colors.mutedDim,
+            fontSize: '0.65rem',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            flexShrink: 1,
+          }}>
+            {detailSecondary}
+          </span>
+        )}
+        {expandable && (
+          <span style={{
+            color: colors.mutedDim,
+            fontSize: '0.55rem',
+            marginLeft: 'auto',
+            flexShrink: 0,
+            transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)',
+            transition: 'transform 0.15s',
+          }}>
+            {'\u25B6'}
+          </span>
+        )}
+      </div>
+      {expanded && hasDiff(tc) && (
+        <DiffView
+          oldStr={tc.input?.old_string ?? ''}
+          newStr={tc.input?.new_string ?? ''}
+          filePath={tc.input?.file_path}
+        />
       )}
-      <span style={{ color: colors.accent, fontWeight: 600, flexShrink: 0 }}>{tc.name}</span>
-      {detail && (
-        <span style={{
-          color: colors.text,
-          fontFamily: 'var(--claude-mono-font, monospace)',
-          fontSize: '0.7rem',
+      {expanded && tc.name === 'Write' && tc.input?.content && (
+        <div style={{
+          margin: '4px 0 2px 20px',
+          borderRadius: 6,
           overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
+          border: `1px solid ${colors.borderSubtle}`,
+          maxHeight: 300,
+          overflowY: 'auto',
         }}>
-          {detail}
-        </span>
+          <div style={{
+            padding: '4px 10px',
+            backgroundColor: 'rgba(255,255,255,0.03)',
+            color: colors.muted,
+            fontSize: '0.65rem',
+            borderBottom: `1px solid ${colors.borderSubtle}`,
+          }}>
+            {tc.input?.file_path?.split(/[/\\]/).pop() ?? 'new file'}
+          </div>
+          <pre style={{
+            margin: 0,
+            padding: '6px 10px',
+            fontSize: '0.7rem',
+            fontFamily: 'var(--claude-mono-font, monospace)',
+            color: 'rgb(150, 230, 170)',
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-all',
+          }}>
+            {tc.input.content.slice(0, 2000)}{tc.input.content.length > 2000 ? '\n...' : ''}
+          </pre>
+        </div>
       )}
-      {detailSecondary && (
-        <span style={{
-          color: colors.mutedDim,
-          fontSize: '0.65rem',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-          flexShrink: 1,
+      {expanded && tc.name === 'Bash' && tc.input?.command && (
+        <div style={{
+          margin: '4px 0 2px 20px',
+          padding: '6px 10px',
+          borderRadius: 6,
+          border: `1px solid ${colors.borderSubtle}`,
+          backgroundColor: 'rgba(255,255,255,0.03)',
         }}>
-          {detailSecondary}
-        </span>
+          <pre style={{
+            margin: 0,
+            fontSize: '0.7rem',
+            fontFamily: 'var(--claude-mono-font, monospace)',
+            color: colors.text,
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-all',
+          }}>
+            $ {tc.input.command}
+          </pre>
+        </div>
       )}
     </div>
   );
