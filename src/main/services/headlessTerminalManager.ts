@@ -10,7 +10,7 @@ interface HeadlessSession {
 const sessions = new Map<string, HeadlessSession>();
 
 export function createHeadlessSession(sessionId: string, cols: number, rows: number): HeadlessTerminal {
-  const terminal = new HeadlessTerminal({ cols, rows, scrollback: 1000 });
+  const terminal = new HeadlessTerminal({ cols, rows, scrollback: 1000, allowProposedApi: true });
   const serialize = new SerializeAddon();
   terminal.loadAddon(serialize);
 
