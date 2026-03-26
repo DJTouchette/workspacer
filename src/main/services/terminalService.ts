@@ -120,6 +120,9 @@ class TerminalService {
 
     this.sessions.set(id, session);
 
+    // Swallow PTY errors (Windows ConPTY can throw on cleanup)
+    (ptyProcess as any).on?.('error', () => {});
+
     // Forward output to renderer as base64, and tee to headless terminal for Claude sessions
     ptyProcess.onData((data: string) => {
       if (session.closed) return;

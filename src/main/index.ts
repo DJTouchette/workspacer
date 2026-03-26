@@ -6,6 +6,12 @@ import { claudeSessionStore } from './services/claudeSessionStore';
 import { startHookServer } from './services/hookServer';
 import { installHooks, uninstallHooks } from './services/claudeHooksConfig';
 
+// Suppress Windows ConPTY AttachConsole errors from forked child processes
+process.on('uncaughtException', (err) => {
+  if (err?.message?.includes('AttachConsole')) return;
+  console.error('[uncaughtException]', err);
+});
+
 let mainWindow: BrowserWindow | null = null;
 
 function createWindow(): void {
