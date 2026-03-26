@@ -1,9 +1,38 @@
 import { BrowserWindow } from 'electron';
 import * as os from 'os';
+import * as path from 'path';
+import * as fs from 'fs';
 import * as crypto from 'crypto';
 
 // Prebuilt binaries — no Visual Studio Build Tools needed on Windows
 import * as pty from '@homebridge/node-pty-prebuilt-multiarch';
+
+/** Find claude CLI path on Windows by scanning nvm directories */
+function findClaudePath(): string | null {
+  if (process.platform !== 'win32') return null;
+  const nvmDir = path.join(os.homedir(), 'AppData', 'Local', 'nvm');
+  try {
+    const versions = fs.readdirSync(nvmDir)
+      .filter(d => d.startsWith('v'))
+      .sort((a, b) => b.localeCompare(a, undefined, { numeric: true })); // newest first
+    for (const v of versions) {
+      for (const name of ['claude.cmd', 'claude-code.cmd']) {
+        const p = path.join(nvmDir, v, name);
+        if (fs.existsSync(p)) return p;
+      }
+    }
+  } catch {}
+  return null;
+}
+
+let _cachedClaudePath: string | null | undefined;
+function getClaudePath(): string | null {
+  if (_cachedClaudePath === undefined) {
+    _cachedClaudePath = findClaudePath();
+    if (_cachedClaudePath) console.log(`[TerminalService] found claude: ${_cachedClaudePath}`);
+  }
+  return _cachedClaudePath;
+}
 
 import { createHeadlessSession, feedData, resizeHeadless, destroyHeadlessSession, detectAmbientState } from './headlessTerminalManager';
 import { claudeSessionStore } from './claudeSessionStore';
@@ -96,10 +125,11 @@ class TerminalService {
     let spawnArgs: string[];
     if (isClaudeSession) {
       if (process.platform === 'win32') {
-        // Use cmd.exe /c for minimal overhead — avoids PowerShell console
-        // interference with Claude's TUI. PATH is inherited from Electron.
+        // Spawn claude via cmd.exe with resolved path — avoids PowerShell
+        // TUI interference and doesn't rely on PATH
+        const claudePath = getClaudePath();
         spawnShell = 'cmd.exe';
-        spawnArgs = ['/c', 'claude'];
+        spawnArgs = ['/c', claudePath || 'claude'];
       } else {
         spawnShell = 'claude';
         spawnArgs = [];
