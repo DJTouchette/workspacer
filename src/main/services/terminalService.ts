@@ -137,7 +137,7 @@ class TerminalService {
       if (session.closed) return;
       session.closed = true;
       this.sessions.delete(id);
-      this.mainWindow?.webContents.send('terminal:exit', id);
+      try { this.mainWindow?.webContents.send('terminal:exit', id); } catch {};
     });
 
     return id;
@@ -168,7 +168,7 @@ class TerminalService {
 
     session.closed = true;
     this.sessions.delete(id);
-    session.pty.kill();
+    try { session.pty.kill(); } catch {};
 
     // Cleanup headless terminal + poller + store binding for Claude sessions
     if (session.isClaudeSession) {
@@ -197,7 +197,7 @@ class TerminalService {
   closeAll(): void {
     for (const [id, session] of this.sessions) {
       session.closed = true;
-      session.pty.kill();
+      try { session.pty.kill(); } catch {};
     }
     this.sessions.clear();
   }
