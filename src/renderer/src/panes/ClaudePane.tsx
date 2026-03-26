@@ -274,58 +274,63 @@ function hasDiff(tc: ToolCall): boolean {
   return (tc.name === 'Edit' || tc.name === 'MultiEdit') && (tc.input?.old_string || tc.input?.new_string);
 }
 
-/** Check if a tool call has expandable content */
-function hasExpandableContent(tc: ToolCall): boolean {
-  return hasDiff(tc) || tc.name === 'Write' || tc.name === 'Bash';
-}
-
-/** Render a unified diff view */
+/** Render a unified diff view with both old and new lines */
 const DiffView: React.FC<{ oldStr: string; newStr: string; filePath?: string }> = ({ oldStr, newStr, filePath }) => {
   const fileName = filePath?.split(/[/\\]/).pop() ?? '';
   const oldLines = oldStr ? oldStr.split('\n') : [];
   const newLines = newStr ? newStr.split('\n') : [];
+  const addedCount = newLines.length;
+  const removedCount = oldLines.length;
 
   return (
     <div style={{
-      margin: '4px 0 2px 20px',
+      margin: '6px 0',
       borderRadius: 6,
       overflow: 'hidden',
       border: `1px solid ${colors.borderSubtle}`,
-      fontSize: '0.72rem',
+      fontSize: '0.75rem',
       fontFamily: 'var(--claude-mono-font, monospace)',
     }}>
       {fileName && (
         <div style={{
-          padding: '4px 10px',
+          padding: '5px 12px',
           backgroundColor: 'rgba(255,255,255,0.03)',
-          color: colors.muted,
-          fontSize: '0.65rem',
+          color: colors.text,
+          fontSize: '0.72rem',
+          fontWeight: 600,
           borderBottom: `1px solid ${colors.borderSubtle}`,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
         }}>
-          {fileName}
+          <span>{fileName}</span>
+          {removedCount > 0 && <span style={{ color: colors.error, fontSize: '0.65rem', fontWeight: 400 }}>-{removedCount}</span>}
+          {addedCount > 0 && <span style={{ color: colors.success, fontSize: '0.65rem', fontWeight: 400 }}>+{addedCount}</span>}
         </div>
       )}
       <div style={{ maxHeight: 300, overflow: 'auto' }}>
         {oldLines.map((line, i) => (
           <div key={`old-${i}`} style={{
-            padding: '1px 10px',
+            padding: '1px 12px',
             backgroundColor: 'rgba(248, 113, 113, 0.08)',
             color: 'rgb(248, 150, 150)',
             whiteSpace: 'pre-wrap',
             wordBreak: 'break-all',
+            lineHeight: 1.5,
           }}>
-            <span style={{ color: colors.error, userSelect: 'none', marginRight: 8 }}>-</span>{line}
+            <span style={{ color: colors.error, userSelect: 'none', display: 'inline-block', width: 16 }}>-</span>{line}
           </div>
         ))}
         {newLines.map((line, i) => (
           <div key={`new-${i}`} style={{
-            padding: '1px 10px',
+            padding: '1px 12px',
             backgroundColor: 'rgba(74, 222, 128, 0.08)',
             color: 'rgb(150, 230, 170)',
             whiteSpace: 'pre-wrap',
             wordBreak: 'break-all',
+            lineHeight: 1.5,
           }}>
-            <span style={{ color: colors.success, userSelect: 'none', marginRight: 8 }}>+</span>{line}
+            <span style={{ color: colors.success, userSelect: 'none', display: 'inline-block', width: 16 }}>+</span>{line}
           </div>
         ))}
       </div>
@@ -333,164 +338,101 @@ const DiffView: React.FC<{ oldStr: string; newStr: string; filePath?: string }> 
   );
 };
 
+/** Format tool call as Claude Code style one-liner: Tool(args) ⎿ result */
+function formatToolSummary(tc: ToolCall): { call: string; result: string } {
+  const fp = (p: string) => p?.split(/[/\\]/).pop() ?? '';
+
+  switch (tc.name) {
+    case 'Read': {
+      const file = fp(tc.input?.file_path ?? '');
+      const lines = tc.response ? `Read ${String(tc.response).split('\n').length} lines` : '';
+      return { call: `Read(${file})`, result: lines };
+    }
+    case 'Edit':
+    case 'MultiEdit': {
+      const file = fp(tc.input?.file_path ?? '');
+      const old = tc.input?.old_string ?? '';
+      const nw = tc.input?.new_string ?? '';
+      const added = nw ? nw.split('\n').length : 0;
+      const removed = old ? old.split('\n').length : 0;
+      return { call: `Edit(${file})`, result: `${removed > 0 ? `-${removed}` : ''} ${added > 0 ? `+${added}` : ''} lines`.trim() };
+    }
+    case 'Write': {
+      const file = fp(tc.input?.file_path ?? '');
+      const lines = tc.input?.content ? tc.input.content.split('\n').length : 0;
+      return { call: `Write(${file})`, result: `${lines} lines` };
+    }
+    case 'Bash': {
+      const cmd = (tc.input?.command ?? '').split('\n')[0].slice(0, 60);
+      const resp = tc.response ? String(tc.response).split('\n').length + ' lines output' : '';
+      return { call: `Bash(${cmd})`, result: resp };
+    }
+    case 'Grep': {
+      const pat = tc.input?.pattern ?? '';
+      return { call: `Search(pattern: "${pat}")`, result: '' };
+    }
+    case 'Glob': {
+      const pat = tc.input?.pattern ?? '';
+      return { call: `Search(pattern: "${pat}")`, result: '' };
+    }
+    case 'Agent': {
+      const desc = tc.input?.description ?? 'subagent';
+      return { call: `Agent(${desc})`, result: '' };
+    }
+    default: {
+      const vals = Object.values(tc.input ?? {});
+      const firstStr = vals.find(v => typeof v === 'string') as string | undefined;
+      return { call: `${tc.name}(${firstStr?.slice(0, 40) ?? ''})`, result: '' };
+    }
+  }
+}
+
 const WorkLogEntry: React.FC<{ tc: ToolCall }> = ({ tc }) => {
-  const [expanded, setExpanded] = useState(false);
   const isRunning = tc.status === 'running';
   const isFailed = tc.status === 'failed';
-  const expandable = hasExpandableContent(tc);
 
-  const icon = isRunning ? null : isFailed ? '\u2717' : '\u2713';
   const iconColor = isRunning ? colors.accent : isFailed ? colors.error : colors.success;
-
-  // Build detail string based on tool type
-  let detail = '';
-  let detailSecondary = '';
-  if (tc.name === 'Edit' || tc.name === 'Write' || tc.name === 'MultiEdit') {
-    const fp = tc.input?.file_path ?? '';
-    detail = fp.split(/[/\\]/).pop() ?? '';
-    detailSecondary = fp.split(/[/\\]/).slice(-3, -1).join('/');
-  } else if (tc.name === 'Bash') {
-    detail = (tc.input?.command ?? '').slice(0, 80);
-  } else if (tc.name === 'Read') {
-    const fp = tc.input?.file_path ?? '';
-    detail = fp.split(/[/\\]/).pop() ?? '';
-    detailSecondary = fp.split(/[/\\]/).slice(-3, -1).join('/');
-  } else if (tc.name === 'Grep') {
-    detail = tc.input?.pattern ?? '';
-    detailSecondary = tc.input?.path?.split(/[/\\]/).pop() ?? '';
-  } else if (tc.name === 'Glob') {
-    detail = tc.input?.pattern ?? '';
-  } else if (tc.name === 'Agent') {
-    detail = tc.input?.description ?? tc.input?.prompt?.slice(0, 60) ?? '';
-  } else {
-    const vals = Object.values(tc.input ?? {});
-    const firstStr = vals.find(v => typeof v === 'string') as string | undefined;
-    if (firstStr) detail = firstStr.slice(0, 60);
-  }
+  const { call, result } = formatToolSummary(tc);
 
   return (
-    <div>
-      <div
-        onClick={expandable ? () => setExpanded(!expanded) : undefined}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          padding: '3px 0',
-          fontSize: '0.75rem',
-          cursor: expandable ? 'pointer' : 'default',
-        }}
-      >
-        {isRunning ? (
-          <span style={{
-            display: 'inline-block',
-            width: 12,
-            height: 12,
-            border: `1.5px solid ${colors.accent}`,
-            borderTopColor: 'transparent',
-            borderRadius: '50%',
-            animation: 'claudeSpinner 0.8s linear infinite',
-            flexShrink: 0,
-          }} />
-        ) : (
-          <span style={{ color: iconColor, fontSize: '0.7rem', width: 12, textAlign: 'center', flexShrink: 0 }}>{icon}</span>
-        )}
-        <span style={{ color: colors.accent, fontWeight: 600, flexShrink: 0 }}>{tc.name}</span>
-        {detail && (
-          <span style={{
-            color: colors.text,
-            fontFamily: 'var(--claude-mono-font, monospace)',
-            fontSize: '0.7rem',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}>
-            {detail}
-          </span>
-        )}
-        {detailSecondary && (
-          <span style={{
-            color: colors.mutedDim,
-            fontSize: '0.65rem',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-            flexShrink: 1,
-          }}>
-            {detailSecondary}
-          </span>
-        )}
-        {expandable && (
-          <span style={{
-            color: colors.mutedDim,
-            fontSize: '0.55rem',
-            marginLeft: 'auto',
-            flexShrink: 0,
-            transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)',
-            transition: 'transform 0.15s',
-          }}>
-            {'\u25B6'}
-          </span>
+    <div style={{
+      display: 'flex',
+      alignItems: 'flex-start',
+      gap: 8,
+      padding: '2px 0',
+      fontSize: '0.75rem',
+      lineHeight: 1.5,
+    }}>
+      {isRunning ? (
+        <span style={{
+          display: 'inline-block',
+          width: 12,
+          height: 12,
+          marginTop: 3,
+          border: `1.5px solid ${colors.accent}`,
+          borderTopColor: 'transparent',
+          borderRadius: '50%',
+          animation: 'claudeSpinner 0.8s linear infinite',
+          flexShrink: 0,
+        }} />
+      ) : (
+        <span style={{ color: iconColor, fontSize: '0.7rem', width: 12, textAlign: 'center', flexShrink: 0, marginTop: 2 }}>
+          {isFailed ? '\u2717' : '\u2713'}
+        </span>
+      )}
+      <div style={{ minWidth: 0 }}>
+        <span style={{ color: colors.accent, fontWeight: 600, fontFamily: 'var(--claude-mono-font, monospace)', fontSize: '0.72rem' }}>
+          {call}
+        </span>
+        {result && (
+          <>
+            <br />
+            <span style={{ color: colors.muted, fontSize: '0.68rem' }}>
+              {'\u23BF'}&nbsp;&nbsp;{result}
+            </span>
+          </>
         )}
       </div>
-      {expanded && hasDiff(tc) && (
-        <DiffView
-          oldStr={tc.input?.old_string ?? ''}
-          newStr={tc.input?.new_string ?? ''}
-          filePath={tc.input?.file_path}
-        />
-      )}
-      {expanded && tc.name === 'Write' && tc.input?.content && (
-        <div style={{
-          margin: '4px 0 2px 20px',
-          borderRadius: 6,
-          overflow: 'hidden',
-          border: `1px solid ${colors.borderSubtle}`,
-          maxHeight: 300,
-          overflowY: 'auto',
-        }}>
-          <div style={{
-            padding: '4px 10px',
-            backgroundColor: 'rgba(255,255,255,0.03)',
-            color: colors.muted,
-            fontSize: '0.65rem',
-            borderBottom: `1px solid ${colors.borderSubtle}`,
-          }}>
-            {tc.input?.file_path?.split(/[/\\]/).pop() ?? 'new file'}
-          </div>
-          <pre style={{
-            margin: 0,
-            padding: '6px 10px',
-            fontSize: '0.7rem',
-            fontFamily: 'var(--claude-mono-font, monospace)',
-            color: 'rgb(150, 230, 170)',
-            whiteSpace: 'pre-wrap',
-            wordBreak: 'break-all',
-          }}>
-            {tc.input.content.slice(0, 2000)}{tc.input.content.length > 2000 ? '\n...' : ''}
-          </pre>
-        </div>
-      )}
-      {expanded && tc.name === 'Bash' && tc.input?.command && (
-        <div style={{
-          margin: '4px 0 2px 20px',
-          padding: '6px 10px',
-          borderRadius: 6,
-          border: `1px solid ${colors.borderSubtle}`,
-          backgroundColor: 'rgba(255,255,255,0.03)',
-        }}>
-          <pre style={{
-            margin: 0,
-            fontSize: '0.7rem',
-            fontFamily: 'var(--claude-mono-font, monospace)',
-            color: colors.text,
-            whiteSpace: 'pre-wrap',
-            wordBreak: 'break-all',
-          }}>
-            $ {tc.input.command}
-          </pre>
-        </div>
-      )}
     </div>
   );
 };
