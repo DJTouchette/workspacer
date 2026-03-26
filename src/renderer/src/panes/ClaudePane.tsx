@@ -1002,10 +1002,13 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
     setApprovalDismissedAt(Date.now());
   }, [write]);
 
-  // Handle send
+  // Handle send — write text then Enter to Claude's TUI input
   const handleSend = useCallback(() => {
     if (inputValue.trim()) {
-      write(inputValue + '\r');
+      // Send text and Enter separately so the TUI processes the input
+      // before seeing the submit keypress
+      write(inputValue);
+      setTimeout(() => write('\r'), 50);
       setInputValue('');
     }
   }, [inputValue, write]);
