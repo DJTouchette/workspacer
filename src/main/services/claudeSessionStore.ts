@@ -189,11 +189,11 @@ class ClaudeSessionStore {
         }
 
         // Extract any text Claude said before this tool call
-        // (e.g. "I'll read the readme now" before Read, or text between tool calls)
         if (session.ptyId) {
           const rawText = getNewBufferContent(session.ptyId);
           if (rawText) {
             const cleaned = this.cleanTerminalText(rawText);
+            console.log(`[SessionStore] PreToolUse text extraction: raw=${rawText.length} chars, cleaned=${cleaned?.length ?? 0} chars, first80="${(cleaned ?? '').slice(0, 80)}"`);
             if (cleaned && cleaned.length > 3 && !this.isDuplicateMessage(session, 'assistant', cleaned)) {
               session.conversation.push({
                 role: 'assistant',
@@ -205,6 +205,8 @@ class ClaudeSessionStore {
               });
               session.completedToolCalls = [];
             }
+          } else {
+            console.log(`[SessionStore] PreToolUse text extraction: no new buffer content`);
           }
         }
 
@@ -225,8 +227,10 @@ class ClaudeSessionStore {
         const completed = session.activeToolCalls.find(t => t.id === event.tool_use_id);
         if (completed) {
           completed.status = 'complete';
-          completed.response = event.tool_response;
+          // tool_response may be truncated or a summary — store what we get
+          completed.response = event.tool_result ?? event.tool_response;
           completed.completedAt = Date.now();
+          console.log(`[SessionStore] PostToolUse: ${completed.name} response type=${typeof completed.response}, keys=${Object.keys(event).join(',')}`);
           session.activeToolCalls = session.activeToolCalls.filter(t => t.id !== event.tool_use_id);
           session.completedToolCalls.push(completed);
         }

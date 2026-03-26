@@ -343,6 +343,16 @@ const DiffView: React.FC<{ oldStr: string; newStr: string; filePath?: string }> 
   );
 };
 
+/** Count response lines reliably — tool_response can be string, object, or truncated */
+function countResponseLines(resp: any): number {
+  if (!resp) return 0;
+  if (typeof resp === 'string') return resp.split('\n').length;
+  // Could be an object with content or result field
+  const text = resp.content ?? resp.result ?? resp.output ?? '';
+  if (typeof text === 'string') return text.split('\n').length;
+  return 0;
+}
+
 /** Format tool call as Claude Code style one-liner: Tool(args) ⎿ result */
 function formatToolSummary(tc: ToolCall): { call: string; result: string } {
   const fp = (p: string) => p?.split(/[/\\]/).pop() ?? '';
@@ -350,8 +360,10 @@ function formatToolSummary(tc: ToolCall): { call: string; result: string } {
   switch (tc.name) {
     case 'Read': {
       const file = fp(tc.input?.file_path ?? '');
-      const lines = tc.response ? `Read ${String(tc.response).split('\n').length} lines` : '';
-      return { call: `Read(${file})`, result: lines };
+      const limit = tc.input?.limit;
+      const lines = countResponseLines(tc.response);
+      const desc = lines > 0 ? `Read ${lines} lines` : limit ? `Read ${limit} lines` : tc.status === 'complete' ? 'Read' : '';
+      return { call: `Read(${file})`, result: desc };
     }
     case 'Edit':
     case 'MultiEdit': {
@@ -369,12 +381,15 @@ function formatToolSummary(tc: ToolCall): { call: string; result: string } {
     }
     case 'Bash': {
       const cmd = (tc.input?.command ?? '').split('\n')[0].slice(0, 60);
-      const resp = tc.response ? String(tc.response).split('\n').length + ' lines output' : '';
-      return { call: `Bash(${cmd})`, result: resp };
+      const lines = countResponseLines(tc.response);
+      const desc = lines > 0 ? `${lines} lines output` : '';
+      return { call: `Bash(${cmd})`, result: desc };
     }
     case 'Grep': {
       const pat = tc.input?.pattern ?? '';
-      return { call: `Search(pattern: "${pat}")`, result: '' };
+      const lines = countResponseLines(tc.response);
+      const desc = lines > 0 ? `Found ${lines} results` : '';
+      return { call: `Search(pattern: "${pat}")`, result: desc };
     }
     case 'Glob': {
       const pat = tc.input?.pattern ?? '';
