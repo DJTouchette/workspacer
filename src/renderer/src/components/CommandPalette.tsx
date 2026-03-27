@@ -1,17 +1,64 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { AppEntry } from '../hooks/useConfig';
+import type { PaneType } from '../types/pane';
+
+// ── Unified palette item ──
+
+export interface PaletteItem {
+  id: string;
+  name: string;
+  description?: string;
+  icon: string;
+  category: 'action' | 'app';
+  /** For actions: the pane type to create */
+  paneType?: PaneType;
+  /** For actions: whether to prompt for folder (Claude) */
+  pickFolder?: boolean;
+  /** For apps: the URL to open */
+  url?: string;
+  /** For apps: the original AppEntry */
+  app?: AppEntry;
+}
+
+// ── Built-in actions ──
+
+export const builtInActions: PaletteItem[] = [
+  { id: 'new-claude', name: 'New Claude Code', description: 'AI-powered coding assistant', icon: '\u2666', category: 'action', paneType: 'claude', pickFolder: true },
+  { id: 'new-terminal', name: 'New Terminal', description: 'Shell terminal', icon: '>_', category: 'action', paneType: 'terminal' },
+  { id: 'new-browser', name: 'New Browser', description: 'Web browser tab', icon: '\u{1F310}', category: 'action', paneType: 'browser' },
+  { id: 'new-tracker', name: 'Issue Tracker', description: 'Jira, Linear, Trello', icon: '\u{1F4CB}', category: 'action', paneType: 'tracker' },
+  { id: 'new-notes', name: 'Notes', description: 'Markdown scratchpad', icon: '\u{1F4DD}', category: 'action', paneType: 'notes' },
+  { id: 'new-dashboard', name: 'Dashboard', description: 'Session overview', icon: '\u{1F4CA}', category: 'action', paneType: 'dashboard' },
+];
+
+// ── Props ──
 
 interface CommandPaletteProps {
   visible: boolean;
   apps: AppEntry[];
   onClose: () => void;
   onLaunchApp: (app: AppEntry) => void;
+  onAddTab: (type: PaneType, shell?: string, label?: string, cwd?: string) => void;
 }
 
-const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, onClose, onLaunchApp }) => {
+const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, onClose, onLaunchApp, onAddTab }) => {
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Build unified item list: actions first, then apps
+  const items: PaletteItem[] = useMemo(() => [
+    ...builtInActions,
+    ...apps.map((app, i) => ({
+      id: `app-${i}`,
+      name: app.name,
+      description: app.url,
+      icon: app.icon || '\u{1F310}',
+      category: 'app' as const,
+      url: app.url,
+      app,
+    })),
+  ], [apps]);
 
   // Focus input and reset state when opening
   useEffect(() => {
@@ -22,9 +69,10 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, onClose,
     }
   }, [visible]);
 
-  const filtered = apps.filter((app) =>
-    app.name.toLowerCase().includes(query.toLowerCase()) ||
-    app.url.toLowerCase().includes(query.toLowerCase())
+  const q = query.toLowerCase();
+  const filtered = items.filter(item =>
+    item.name.toLowerCase().includes(q) ||
+    (item.description ?? '').toLowerCase().includes(q)
   );
 
   // Clamp selected index when results change
@@ -33,6 +81,21 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, onClose,
       setSelectedIndex(Math.max(0, filtered.length - 1));
     }
   }, [filtered.length, selectedIndex]);
+
+  const activateItem = useCallback(async (item: PaletteItem) => {
+    if (item.category === 'app' && item.app) {
+      onLaunchApp(item.app);
+    } else if (item.paneType) {
+      if (item.pickFolder) {
+        const folder = await window.electronAPI.pickFolder();
+        if (folder) onAddTab(item.paneType, undefined, undefined, folder);
+        else return; // cancelled
+      } else {
+        onAddTab(item.paneType);
+      }
+    }
+    onClose();
+  }, [onLaunchApp, onAddTab, onClose]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Escape') {
@@ -48,22 +111,22 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, onClose,
     } else if (e.key === 'Enter') {
       e.preventDefault();
       if (filtered[selectedIndex]) {
-        onLaunchApp(filtered[selectedIndex]);
-        onClose();
+        activateItem(filtered[selectedIndex]);
       }
     }
-  }, [filtered, selectedIndex, onClose, onLaunchApp]);
+  }, [filtered, selectedIndex, onClose, activateItem]);
 
   if (!visible) return null;
+
+  // Group filtered items by category for visual separation
+  const actions = filtered.filter(i => i.category === 'action');
+  const appItems = filtered.filter(i => i.category === 'app');
 
   return (
     <div
       style={{
         position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
+        top: 0, left: 0, right: 0, bottom: 0,
         backgroundColor: 'var(--wks-overlay)',
         display: 'flex',
         justifyContent: 'center',
@@ -77,8 +140,8 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, onClose,
           backgroundColor: 'var(--wks-bg-raised)',
           border: '1px solid var(--wks-border-input)',
           borderRadius: '8px',
-          width: '400px',
-          maxHeight: '400px',
+          width: '440px',
+          maxHeight: '420px',
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
@@ -93,7 +156,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, onClose,
             value={query}
             onChange={(e) => { setQuery(e.target.value); setSelectedIndex(0); }}
             onKeyDown={handleKeyDown}
-            placeholder="Launch app..."
+            placeholder="Search actions and apps..."
             spellCheck={false}
             style={{
               width: '100%',
@@ -117,51 +180,95 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, onClose,
         <div style={{ overflow: 'auto', padding: '0 4px 8px' }}>
           {filtered.length === 0 && (
             <div style={{ padding: '12px', fontSize: '0.7rem', color: 'var(--wks-text-faint)', textAlign: 'center' }}>
-              No apps found
+              No results found
             </div>
           )}
-          {filtered.map((app, i) => (
-            <div
-              key={`${app.name}-${app.url}`}
-              onClick={() => {
-                onLaunchApp(app);
-                onClose();
-              }}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '10px',
-                padding: '8px 12px',
-                margin: '0 4px',
-                borderRadius: '5px',
-                cursor: 'pointer',
-                backgroundColor: i === selectedIndex ? 'var(--wks-bg-selected)' : 'transparent',
-              }}
-              onMouseEnter={() => setSelectedIndex(i)}
-            >
-              <span style={{ fontSize: '1rem', width: '20px', textAlign: 'center' }}>
-                {app.icon || '\u{1F310}'}
-              </span>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: '0.75rem', color: 'var(--wks-text-primary)', fontWeight: 500 }}>
-                  {app.name}
-                </div>
-                <div style={{
-                  fontSize: '0.6rem',
-                  color: 'var(--wks-text-faint)',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}>
-                  {app.url}
-                </div>
-              </div>
+
+          {actions.length > 0 && appItems.length > 0 && (
+            <div style={{ padding: '4px 12px 2px', fontSize: '0.55rem', color: 'var(--wks-text-disabled)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              Panes
             </div>
-          ))}
+          )}
+
+          {actions.map(item => {
+            const globalIdx = filtered.indexOf(item);
+            return (
+              <PaletteRow
+                key={item.id}
+                item={item}
+                selected={globalIdx === selectedIndex}
+                onActivate={() => activateItem(item)}
+                onHover={() => setSelectedIndex(globalIdx)}
+              />
+            );
+          })}
+
+          {appItems.length > 0 && (
+            <div style={{ padding: '6px 12px 2px', fontSize: '0.55rem', color: 'var(--wks-text-disabled)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              Apps
+            </div>
+          )}
+
+          {appItems.map(item => {
+            const globalIdx = filtered.indexOf(item);
+            return (
+              <PaletteRow
+                key={item.id}
+                item={item}
+                selected={globalIdx === selectedIndex}
+                onActivate={() => activateItem(item)}
+                onHover={() => setSelectedIndex(globalIdx)}
+              />
+            );
+          })}
         </div>
       </div>
     </div>
   );
 };
+
+// ── Row component ──
+
+const PaletteRow: React.FC<{
+  item: PaletteItem;
+  selected: boolean;
+  onActivate: () => void;
+  onHover: () => void;
+}> = ({ item, selected, onActivate, onHover }) => (
+  <div
+    onClick={onActivate}
+    onMouseEnter={onHover}
+    style={{
+      display: 'flex',
+      alignItems: 'center',
+      gap: '10px',
+      padding: '7px 12px',
+      margin: '0 4px',
+      borderRadius: '5px',
+      cursor: 'pointer',
+      backgroundColor: selected ? 'var(--wks-bg-selected)' : 'transparent',
+    }}
+  >
+    <span style={{ fontSize: '0.85rem', width: '20px', textAlign: 'center', flexShrink: 0 }}>
+      {item.icon}
+    </span>
+    <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ fontSize: '0.75rem', color: 'var(--wks-text-primary)', fontWeight: 500 }}>
+        {item.name}
+      </div>
+      {item.description && (
+        <div style={{
+          fontSize: '0.6rem',
+          color: 'var(--wks-text-faint)',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}>
+          {item.description}
+        </div>
+      )}
+    </div>
+  </div>
+);
 
 export default CommandPalette;

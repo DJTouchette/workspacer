@@ -332,6 +332,7 @@ function App() {
         apps={config.apps ?? []}
         onClose={useCallback(() => setShowCommandPalette(false), [])}
         onLaunchApp={handleLaunchApp}
+        onAddTab={handleAddTab}
       />
 
       {sessionPhase === 'picker' && (
