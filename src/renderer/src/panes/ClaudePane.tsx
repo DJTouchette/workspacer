@@ -908,6 +908,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
   const termInitRef = useRef(false);
   const conversationEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const { config } = useConfig();
   const { terminalTheme } = useTheme();
@@ -1024,11 +1025,14 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
     };
   }, [attachToTerminal, write, resize]);
 
-  // Focus terminal when switching to terminal mode
+  // Focus terminal or GUI input when pane becomes active
   useEffect(() => {
-    if (viewMode === 'terminal' && isActive && terminalRef.current) {
+    if (!isActive) return;
+    if (viewMode === 'terminal' && terminalRef.current) {
       terminalRef.current.focus();
       requestAnimationFrame(() => { try { fitAddonRef.current?.fit(); } catch {} });
+    } else if (viewMode === 'gui') {
+      requestAnimationFrame(() => inputRef.current?.focus());
     }
   }, [viewMode, isActive, isReady]);
 
@@ -1583,6 +1587,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
                     +
                   </button>
                   <input
+                    ref={inputRef}
                     placeholder={attachedFiles.length > 0 ? 'What should Claude do with these files?' : 'Message Claude...'}
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
