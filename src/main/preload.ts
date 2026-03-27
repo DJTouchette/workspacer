@@ -87,6 +87,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Dialog
   pickFolder: (defaultPath?: string): Promise<string | null> =>
     ipcRenderer.invoke('dialog:pickFolder', defaultPath),
+  pickFiles: (defaultPath?: string): Promise<string[]> =>
+    ipcRenderer.invoke('dialog:pickFiles', defaultPath),
 
   // App lifecycle
   onBeforeQuit: (callback: () => void): (() => void) => {

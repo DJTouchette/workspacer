@@ -110,4 +110,14 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     if (result.canceled || result.filePaths.length === 0) return null;
     return result.filePaths[0];
   });
+
+  ipcMain.handle('dialog:pickFiles', async (_event, defaultPath?: string) => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Attach files',
+      defaultPath: defaultPath || process.cwd(),
+      properties: ['openFile', 'multiSelections'],
+    });
+    if (result.canceled) return [];
+    return result.filePaths;
+  });
 }

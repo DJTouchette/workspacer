@@ -37,6 +37,7 @@ export interface ElectronAPI {
 
   // Dialog
   pickFolder: (defaultPath?: string) => Promise<string | null>;
+  pickFiles: (defaultPath?: string) => Promise<string[]>;
 
   // App lifecycle
   onBeforeQuit: (callback: () => void) => () => void;

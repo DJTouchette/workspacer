@@ -1260,6 +1260,8 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
     const paths = extractFilePaths(e.dataTransfer);
     if (paths.length > 0) {
       setAttachedFiles(prev => [...prev, ...paths.map(classifyFile)]);
+      // Switch to GUI mode so user can see chips and compose a message
+      setViewMode('gui');
     }
   }, []);
 
@@ -1274,6 +1276,14 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
   const removeAttachedFile = useCallback((idx: number) => {
     setAttachedFiles(prev => prev.filter((_, i) => i !== idx));
   }, []);
+
+  const openFilePicker = useCallback(async () => {
+    const paths = await window.electronAPI.pickFiles(cwd);
+    if (paths.length > 0) {
+      setAttachedFiles(prev => [...prev, ...paths.map(classifyFile)]);
+      if (viewMode === 'terminal') setViewMode('gui');
+    }
+  }, [cwd, viewMode]);
 
   // Send approval response to Claude Code's interactive select menu.
   // The menu highlights "Yes" by default — Enter selects it.
@@ -1483,7 +1493,27 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
           </span>
         )}
 
+        {attachedFiles.length > 0 && (
+          <span style={{ fontSize: '0.55rem', color: colors.accent }}>
+            {attachedFiles.length} file{attachedFiles.length !== 1 ? 's' : ''} attached
+          </span>
+        )}
+
         <div style={{ flex: 1 }} />
+
+        {/* Attach files */}
+        <button
+          onClick={openFilePicker}
+          title="Attach files"
+          style={{
+            ...toggleBtnStyle,
+            backgroundColor: 'transparent',
+            color: colors.mutedDim,
+            fontSize: '0.7rem',
+          }}
+        >
+          +
+        </button>
 
         {/* View mode toggle */}
         <div style={{ display: 'flex', gap: 2 }}>
@@ -1511,7 +1541,15 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
       </div>
 
       {/* Content area */}
-      <div style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
+      <div
+        onDragEnter={handleDragEnter}
+        onDragLeave={handleDragLeave}
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
+        style={{ flex: 1, overflow: 'hidden', position: 'relative' }}
+      >
+        {isDragOver && <DropOverlay />}
+
         {/* Terminal view (always mounted, visibility toggled) */}
         <div
           ref={termContainerRef}
@@ -1524,20 +1562,12 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
 
         {/* GUI view */}
         {viewMode === 'gui' && (
-          <div
-            onDragEnter={handleDragEnter}
-            onDragLeave={handleDragLeave}
-            onDragOver={handleDragOver}
-            onDrop={handleDrop}
-            style={{
-              height: '100%',
-              display: 'flex',
-              flexDirection: 'column',
-              overflow: 'hidden',
-              position: 'relative',
-            }}
-          >
-            {isDragOver && <DropOverlay />}
+          <div style={{
+            height: '100%',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+          }}>
             {/* Conversation scroll area */}
             <div
               ref={scrollContainerRef}
@@ -1661,13 +1691,34 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
                 <div style={{
                   display: 'flex',
                   alignItems: 'center',
-                  gap: 8,
-                  padding: '6px 6px 6px 16px',
+                  gap: 6,
+                  padding: '6px 6px 6px 10px',
                   borderRadius: 20,
                   border: `1px solid ${attachedFiles.length > 0 ? colors.accent : colors.border}`,
                   backgroundColor: 'rgba(255, 255, 255, 0.03)',
                   transition: 'border-color 0.15s',
                 }}>
+                  <button
+                    onClick={openFilePicker}
+                    title="Attach files"
+                    style={{
+                      width: 24,
+                      height: 24,
+                      borderRadius: '50%',
+                      border: 'none',
+                      backgroundColor: 'transparent',
+                      color: colors.muted,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: '1rem',
+                      flexShrink: 0,
+                      padding: 0,
+                    }}
+                  >
+                    +
+                  </button>
                   <input
                     placeholder={attachedFiles.length > 0 ? 'What should Claude do with these files?' : 'Message Claude...'}
                     value={inputValue}
