@@ -119,7 +119,7 @@ class TerminalService {
     // Apply Claude profile env vars
     const profile = isClaudeSession && profileId ? claudeProfiles.getProfile(profileId) : undefined;
     if (profile?.configDir) {
-      env.CLAUDE_CONFIG_DIR = profile.configDir;
+      env.CLAUDE_CONFIG_DIR = profile.configDir.replace(/^~/, os.homedir());
     }
 
     const homedir = process.env.HOME || os.homedir();
