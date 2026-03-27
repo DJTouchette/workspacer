@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import type { ClaudeSessionSnapshot } from '../types/claudeSession';
+import type { TrackerIssue, TrackerAccount } from '../types/tracker';
 import type { TabConfig } from '../types/pane';
 import { WriteTerminal } from '../lib/terminalApi';
 import {
@@ -279,6 +280,184 @@ const SessionCard: React.FC<{
   );
 };
 
+// ── Status pill color ──
+
+function statusColor(cat: string): string {
+  if (cat === 'done') return colors.success;
+  if (cat === 'in_progress') return colors.accent;
+  return colors.muted;
+}
+
+// ── My Issues Card ──
+
+const MyIssuesCard: React.FC = () => {
+  const [issues, setIssues] = useState<TrackerIssue[]>([]);
+  const [accounts, setAccounts] = useState<TrackerAccount[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState(true);
+
+  const loadIssues = useCallback(async () => {
+    setLoading(true);
+    try {
+      const accts = await window.electronAPI.trackerGetAccounts() as TrackerAccount[];
+      setAccounts(accts);
+      const allIssues: TrackerIssue[] = [];
+      for (const acct of accts) {
+        try {
+          const issues = await window.electronAPI.trackerListIssues(acct.id, {
+            assignedToMe: true,
+            maxResults: 20,
+          }) as TrackerIssue[];
+          allIssues.push(...issues);
+        } catch { /* skip failing accounts */ }
+      }
+      setIssues(allIssues);
+    } catch {} finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadIssues(); }, [loadIssues]);
+
+  if (accounts.length === 0 && !loading) return null;
+
+  const todoIssues = issues.filter(i => i.statusCategory !== 'done');
+  const grouped = new Map<string, TrackerIssue[]>();
+  for (const issue of todoIssues) {
+    const key = issue.projectKey;
+    const list = grouped.get(key) ?? [];
+    list.push(issue);
+    grouped.set(key, list);
+  }
+
+  return (
+    <div style={{
+      borderRadius: 10,
+      border: `1px solid ${colors.borderSubtle}`,
+      backgroundColor: 'rgba(255,255,255,0.02)',
+      overflow: 'hidden',
+    }}>
+      <div
+        onClick={() => setExpanded(!expanded)}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '10px 14px',
+          borderBottom: expanded ? `1px solid ${colors.borderSubtle}` : 'none',
+          cursor: 'pointer',
+          userSelect: 'none',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: '0.82rem' }}>{'\u{1F4CB}'}</span>
+          <span style={{ color: colors.textBright, fontWeight: 600, fontSize: '0.82rem' }}>
+            My Issues
+          </span>
+          <span style={{ color: colors.muted, fontSize: '0.65rem' }}>
+            {todoIssues.length}
+          </span>
+        </div>
+        <span style={{
+          fontSize: '0.6rem',
+          color: colors.muted,
+          transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)',
+          transition: 'transform 0.15s',
+        }}>
+          {'\u25B6'}
+        </span>
+      </div>
+
+      {expanded && (
+        <div style={{ maxHeight: 350, overflow: 'auto' }}>
+          {loading && (
+            <div style={{ padding: '12px 14px', color: colors.muted, fontSize: '0.72rem' }}>Loading...</div>
+          )}
+          {!loading && todoIssues.length === 0 && (
+            <div style={{ padding: '12px 14px', color: colors.muted, fontSize: '0.72rem' }}>
+              No issues assigned to you
+            </div>
+          )}
+          {[...grouped.entries()].map(([projectKey, projectIssues]) => (
+            <div key={projectKey}>
+              <div style={{
+                padding: '6px 14px 2px',
+                fontSize: '0.6rem',
+                fontWeight: 600,
+                color: colors.muted,
+                fontFamily: 'monospace',
+                letterSpacing: '0.03em',
+              }}>
+                {projectKey}
+              </div>
+              {projectIssues.map(issue => (
+                <div
+                  key={issue.id}
+                  style={{
+                    padding: '5px 14px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    fontSize: '0.72rem',
+                  }}
+                >
+                  <span style={{
+                    width: 6, height: 6, borderRadius: '50%',
+                    backgroundColor: statusColor(issue.statusCategory),
+                    flexShrink: 0,
+                  }} />
+                  <span style={{
+                    color: colors.accent,
+                    fontWeight: 600,
+                    fontFamily: 'monospace',
+                    fontSize: '0.65rem',
+                    flexShrink: 0,
+                    minWidth: 55,
+                  }}>
+                    {issue.key}
+                  </span>
+                  <span style={{
+                    color: colors.text,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    flex: 1,
+                  }}>
+                    {issue.title}
+                  </span>
+                  <span style={{
+                    fontSize: '0.58rem',
+                    color: statusColor(issue.statusCategory),
+                    fontWeight: 500,
+                    flexShrink: 0,
+                    whiteSpace: 'nowrap',
+                  }}>
+                    {issue.status}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ))}
+          {!loading && (
+            <div
+              onClick={loadIssues}
+              style={{
+                padding: '6px 14px 8px',
+                fontSize: '0.62rem',
+                color: colors.accent,
+                cursor: 'pointer',
+                textAlign: 'center',
+              }}
+            >
+              Refresh
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 // ── Dashboard Pane ──
 
 const DashboardPane: React.FC<DashboardPaneProps> = ({ title, tabs, onNavigateToTab }) => {
@@ -328,25 +507,20 @@ const DashboardPane: React.FC<DashboardPaneProps> = ({ title, tabs, onNavigateTo
       padding: '20px 24px',
       backgroundColor: colors.bg,
     }}>
+      {/* My Issues */}
+      <div style={{ marginBottom: 20 }}>
+        <MyIssuesCard />
+      </div>
+
+      {/* Claude Sessions */}
       <div style={{
         fontSize: '0.75rem',
         color: colors.muted,
-        marginBottom: 16,
+        marginBottom: 12,
         fontWeight: 500,
       }}>
         {sorted.length} active session{sorted.length !== 1 ? 's' : ''}
       </div>
-
-      {sorted.length === 0 && (
-        <div style={{
-          textAlign: 'center',
-          color: colors.muted,
-          fontSize: '0.8rem',
-          marginTop: 60,
-        }}>
-          No active Claude sessions. Open a Claude pane to get started.
-        </div>
-      )}
 
       <div style={{
         display: 'grid',
