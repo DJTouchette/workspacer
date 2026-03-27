@@ -209,26 +209,26 @@ const DiffView: React.FC<{ oldStr: string; newStr: string; filePath?: string }> 
       <div style={{ maxHeight: 600, overflow: 'auto' }}>
         {oldLines.map((line, i) => (
           <div key={`old-${i}`} style={{
-            padding: '1px 12px',
+            display: 'flex',
             backgroundColor: 'rgba(248, 113, 113, 0.08)',
             color: 'rgb(248, 150, 150)',
-            whiteSpace: 'pre-wrap',
-            wordBreak: 'break-all',
             lineHeight: 1.5,
           }}>
-            <span style={{ color: colors.error, userSelect: 'none', display: 'inline-block', width: 16 }}>-</span>{line}
+            <span style={{ color: 'rgba(248,150,150,0.4)', userSelect: 'none', width: 36, minWidth: 36, textAlign: 'right', padding: '1px 6px 1px 0', fontSize: '0.65rem', borderRight: '1px solid rgba(248,113,113,0.15)' }}>{i + 1}</span>
+            <span style={{ color: colors.error, userSelect: 'none', width: 16, minWidth: 16, textAlign: 'center', padding: '1px 0' }}>-</span>
+            <span style={{ padding: '1px 8px 1px 0', whiteSpace: 'pre-wrap', wordBreak: 'break-all', flex: 1 }}>{line}</span>
           </div>
         ))}
         {newLines.map((line, i) => (
           <div key={`new-${i}`} style={{
-            padding: '1px 12px',
+            display: 'flex',
             backgroundColor: 'rgba(74, 222, 128, 0.08)',
             color: 'rgb(150, 230, 170)',
-            whiteSpace: 'pre-wrap',
-            wordBreak: 'break-all',
             lineHeight: 1.5,
           }}>
-            <span style={{ color: colors.success, userSelect: 'none', display: 'inline-block', width: 16 }}>+</span>{line}
+            <span style={{ color: 'rgba(150,230,170,0.4)', userSelect: 'none', width: 36, minWidth: 36, textAlign: 'right', padding: '1px 6px 1px 0', fontSize: '0.65rem', borderRight: '1px solid rgba(74,222,128,0.15)' }}>{i + 1}</span>
+            <span style={{ color: colors.success, userSelect: 'none', width: 16, minWidth: 16, textAlign: 'center', padding: '1px 0' }}>+</span>
+            <span style={{ padding: '1px 8px 1px 0', whiteSpace: 'pre-wrap', wordBreak: 'break-all', flex: 1 }}>{line}</span>
           </div>
         ))}
       </div>
@@ -554,17 +554,17 @@ const ConversationMessage: React.FC<{ turn: ConversationTurn; isLast?: boolean }
             <span style={{ color: colors.success }}>+</span>
             {tc.input?.file_path?.split(/[/\\]/).pop() ?? 'new file'}
           </div>
-          <pre style={{
-            margin: 0,
-            padding: '6px 10px',
-            fontSize: '0.7rem',
-            fontFamily: 'var(--claude-mono-font, monospace)',
-            color: 'rgb(150, 230, 170)',
-            whiteSpace: 'pre-wrap',
-            wordBreak: 'break-all',
-          }}>
-            {tc.input.content.slice(0, 2000)}{tc.input.content.length > 2000 ? '\n...' : ''}
-          </pre>
+          <div style={{ margin: 0, fontSize: '0.7rem', fontFamily: 'var(--claude-mono-font, monospace)' }}>
+            {tc.input.content.slice(0, 2000).split('\n').map((line: string, i: number) => (
+              <div key={i} style={{ display: 'flex', lineHeight: 1.5 }}>
+                <span style={{ color: 'rgba(150,230,170,0.35)', userSelect: 'none', width: 36, minWidth: 36, textAlign: 'right', padding: '0 6px 0 0', fontSize: '0.6rem', borderRight: '1px solid rgba(74,222,128,0.1)' }}>{i + 1}</span>
+                <span style={{ color: 'rgb(150, 230, 170)', padding: '0 8px', whiteSpace: 'pre-wrap', wordBreak: 'break-all', flex: 1 }}>{line}</span>
+              </div>
+            ))}
+            {tc.input.content.length > 2000 && (
+              <div style={{ padding: '2px 8px 2px 44px', color: colors.muted, fontSize: '0.65rem' }}>...</div>
+            )}
+          </div>
         </div>
       ))}
 
