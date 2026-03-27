@@ -20,6 +20,7 @@ import type {
   TokenField,
 } from './types';
 import { JiraProvider, jiraTokenField } from './jiraProvider';
+import { AzureDevOpsProvider, azureDevOpsTokenField } from './azureDevOpsProvider';
 
 // ── Persistence paths ──
 
@@ -47,6 +48,7 @@ class TrackerService {
 
   constructor() {
     this.registerProvider(new JiraProvider());
+    this.registerProvider(new AzureDevOpsProvider());
     this.load();
   }
 
@@ -67,6 +69,7 @@ class TrackerService {
 
   private getTokenField(providerId: string): TokenField {
     if (providerId === 'jira') return jiraTokenField;
+    if (providerId === 'azure-devops') return azureDevOpsTokenField;
     return { label: 'API Token', placeholder: 'Paste your API token' };
   }
 

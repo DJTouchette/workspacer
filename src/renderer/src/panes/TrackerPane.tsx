@@ -368,6 +368,18 @@ const IssueDetail: React.FC<{
   const [currentCategory, setCurrentCategory] = useState(issue.statusCategory);
   const [transitioning, setTransitioning] = useState(false);
   const [showTransitions, setShowTransitions] = useState(false);
+  const [childIssues, setChildIssues] = useState<TrackerIssue[]>([]);
+  const [issueLinks, setIssueLinks] = useState<Array<{ issue_key: string; link_type: string; link_id: string; link_label: string }>>([]);
+
+  // Load links + children from cache
+  useEffect(() => {
+    window.electronAPI.cacheGetIssueLinks(issue.key)
+      .then(links => setIssueLinks(links.filter((l: any) => l.link_type !== 'parent' && l.link_type !== 'child')))
+      .catch(() => {});
+    window.electronAPI.cacheGetChildIssues(issue.key)
+      .then(children => setChildIssues(children as TrackerIssue[]))
+      .catch(() => {});
+  }, [issue.key]);
 
   useEffect(() => {
     window.electronAPI.trackerGetTransitions(issue.accountId, issue.key)
@@ -498,6 +510,48 @@ const IssueDetail: React.FC<{
           overflow: 'auto',
         }}>
           {issue.description}
+        </div>
+      )}
+
+      {/* Parent issue */}
+      {issue.parentKey && (
+        <div style={{ marginTop: 14, fontSize: '0.68rem', color: colors.muted }}>
+          Parent: <span style={{ color: colors.accent, fontFamily: 'monospace', fontWeight: 600 }}>{issue.parentKey}</span>
+        </div>
+      )}
+
+      {/* Child issues */}
+      {childIssues.length > 0 && (
+        <div style={{ marginTop: 14 }}>
+          <div style={{ fontSize: '0.62rem', color: colors.muted, fontWeight: 600, marginBottom: 4 }}>
+            Subtasks ({childIssues.length})
+          </div>
+          {childIssues.map(child => (
+            <div key={child.key} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0', fontSize: '0.7rem' }}>
+              <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: statusColor(child.status_category ?? child.statusCategory ?? 'todo'), flexShrink: 0 }} />
+              <span style={{ color: colors.accent, fontFamily: 'monospace', fontWeight: 600, fontSize: '0.65rem' }}>{child.key}</span>
+              <span style={{ color: colors.text }}>{child.title}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Linked branches, PRs, pipelines */}
+      {issueLinks.length > 0 && (
+        <div style={{ marginTop: 14 }}>
+          <div style={{ fontSize: '0.62rem', color: colors.muted, fontWeight: 600, marginBottom: 4 }}>
+            Links ({issueLinks.length})
+          </div>
+          {issueLinks.map((link, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0', fontSize: '0.68rem' }}>
+              <span style={{ color: link.link_type === 'pr' ? '#c084fc' : link.link_type === 'pipeline' ? colors.warning : colors.accent, fontWeight: 600, fontSize: '0.6rem', minWidth: 50 }}>
+                {link.link_type === 'pr' ? 'PR' : link.link_type === 'pipeline' ? 'Build' : 'Branch'}
+              </span>
+              <span style={{ color: colors.text, fontFamily: 'monospace', fontSize: '0.65rem' }}>
+                {link.link_label}
+              </span>
+            </div>
+          ))}
         </div>
       )}
 

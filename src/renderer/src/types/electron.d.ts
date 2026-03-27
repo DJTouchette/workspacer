@@ -53,6 +53,13 @@ export interface ElectronAPI {
   trackerGetTransitions: (accountId: string, issueKey: string) => Promise<any[]>;
   trackerTransitionIssue: (accountId: string, issueKey: string, transitionId: string) => Promise<void>;
 
+  // Cached queries (SQLite)
+  cacheGetIssueLinks: (issueKey: string) => Promise<any[]>;
+  cacheGetChildIssues: (parentKey: string) => Promise<any[]>;
+  cacheSearchIssues: (query: string) => Promise<any[]>;
+  cacheSyncNow: () => Promise<void>;
+  cacheWatchRepo: (repoPath: string) => Promise<void>;
+
   // App lifecycle
   onBeforeQuit: (callback: () => void) => () => void;
 }

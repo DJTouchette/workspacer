@@ -162,6 +162,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
   trackerTransitionIssue: (accountId: string, issueKey: string, transitionId: string): Promise<void> =>
     ipcRenderer.invoke('tracker:transitionIssue', accountId, issueKey, transitionId),
 
+  // Cached queries (SQLite)
+  cacheGetIssueLinks: (issueKey: string): Promise<any[]> =>
+    ipcRenderer.invoke('cache:getIssueLinks', issueKey),
+  cacheGetChildIssues: (parentKey: string): Promise<any[]> =>
+    ipcRenderer.invoke('cache:getChildIssues', parentKey),
+  cacheSearchIssues: (query: string): Promise<any[]> =>
+    ipcRenderer.invoke('cache:searchIssues', query),
+  cacheSyncNow: (): Promise<void> =>
+    ipcRenderer.invoke('cache:syncNow'),
+  cacheWatchRepo: (repoPath: string): Promise<void> =>
+    ipcRenderer.invoke('cache:watchRepo', repoPath),
+
   // App lifecycle
   onBeforeQuit: (callback: () => void): (() => void) => {
     const handler = () => callback();

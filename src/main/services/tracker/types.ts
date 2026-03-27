@@ -26,6 +26,7 @@ export interface TrackerIssue {
   type: string;          // bug, story, task, epic, etc.
   labels: string[];
   parentKey?: string;
+  children?: string[];
   provider: string;
   accountId: string;
   projectKey: string;
@@ -44,6 +45,35 @@ export interface TrackerTransition {
   id: string;
   name: string;
   to: TrackerStatus;
+}
+
+export interface TrackerPullRequest {
+  id: string;
+  accountId: string;
+  provider: string;
+  number: number;
+  title: string;
+  description: string;
+  status: 'open' | 'closed' | 'merged' | 'abandoned';
+  sourceBranch: string;
+  targetBranch: string;
+  author: string;
+  url: string;
+  created: string;
+  updated: string;
+}
+
+export interface TrackerPipeline {
+  id: string;
+  accountId: string;
+  provider: string;
+  name: string;
+  status: 'running' | 'succeeded' | 'failed' | 'cancelled' | 'queued';
+  sourceBranch: string;
+  commitSha: string;
+  url: string;
+  startedAt: string;
+  finishedAt: string;
 }
 
 // ── Account configuration ──
@@ -102,6 +132,12 @@ export interface TrackerProvider {
 
   /** Transition an issue to a new status */
   transitionIssue(account: TrackerAccount, token: string, issueKey: string, transitionId: string): Promise<void>;
+
+  /** List pull requests (optional — not all providers support this) */
+  listPullRequests?(account: TrackerAccount, token: string, options?: { status?: string; projectKey?: string }): Promise<TrackerPullRequest[]>;
+
+  /** List pipeline/build runs (optional) */
+  listPipelines?(account: TrackerAccount, token: string, options?: { projectKey?: string; maxResults?: number }): Promise<TrackerPipeline[]>;
 }
 
 // ── Config field descriptor (drives the onboarding form) ──

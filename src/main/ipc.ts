@@ -4,6 +4,8 @@ import { configService } from './services/configService';
 import { sessionService } from './services/sessionService';
 import { claudeSessionStore } from './services/claudeSessionStore';
 import { trackerService } from './services/tracker/trackerService';
+import { issueCache } from './services/db';
+import { backgroundSync } from './services/tracker/backgroundSync';
 
 export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // Wire terminal service to use this window for push events
@@ -165,4 +167,26 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle('tracker:transitionIssue', async (_event, accountId: string, issueKey: string, transitionId: string) =>
     trackerService.transitionIssue(accountId, issueKey, transitionId),
   );
+
+  // ── Cached queries (SQLite) ──
+
+  ipcMain.handle('cache:getIssueLinks', (_event, issueKey: string) =>
+    issueCache.getIssueLinks(issueKey),
+  );
+
+  ipcMain.handle('cache:getChildIssues', (_event, parentKey: string) =>
+    issueCache.getChildIssues(parentKey),
+  );
+
+  ipcMain.handle('cache:searchIssues', (_event, query: string) =>
+    issueCache.searchIssues(query),
+  );
+
+  ipcMain.handle('cache:syncNow', async () => {
+    await backgroundSync.syncAll();
+  });
+
+  ipcMain.handle('cache:watchRepo', (_event, repoPath: string) => {
+    backgroundSync.watchRepo(repoPath);
+  });
 }

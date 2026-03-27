@@ -7,6 +7,8 @@ import { terminalService } from './services/terminalService';
 import { claudeSessionStore } from './services/claudeSessionStore';
 import { startHookServer } from './services/hookServer';
 import { installHooks, uninstallHooks } from './services/claudeHooksConfig';
+import { backgroundSync } from './services/tracker/backgroundSync';
+import { database } from './services/db';
 
 // Font file registry: filename → absolute path (populated during discovery)
 const fontFileMap = new Map<string, string>();
@@ -157,6 +159,9 @@ function createWindow(): void {
   // Prevent Electron from navigating to dropped files
   mainWindow.webContents.on('will-navigate', (event) => { event.preventDefault(); });
 
+  // Start background sync for issue tracker cache
+  backgroundSync.start();
+
   if (process.env.ELECTRON_DEV) {
     mainWindow.loadURL('http://localhost:5173');
   } else {
@@ -195,6 +200,8 @@ app.on('before-quit', () => {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('app:before-quit');
   }
+  backgroundSync.stop();
+  database.close();
 });
 
 app.on('window-all-closed', () => {

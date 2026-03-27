@@ -22,6 +22,7 @@
     "@homebridge/node-pty-prebuilt-multiarch": "^0.13.1",
     "@xterm/addon-serialize": "^0.14.0",
     "@xterm/headless": "^6.0.0",
+    "better-sqlite3": "^11.0.0",
     "js-yaml": "^4.1.0"
   },
   "build": {
@@ -40,7 +41,8 @@
       "!**/*.d.ts"
     ],
     "asarUnpack": [
-      "node_modules/@homebridge/node-pty-prebuilt-multiarch/**"
+      "node_modules/@homebridge/node-pty-prebuilt-multiarch/**",
+      "node_modules/better-sqlite3/**"
     ],
     "electronLanguages": ["en-US"],
     "win": {
@@ -63,6 +65,7 @@
     }
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.0",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.0.0",
     "concurrently": "^9.0.0",
