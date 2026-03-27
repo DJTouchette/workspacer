@@ -11,6 +11,7 @@ const NotesPane = React.lazy(() => import('../panes/NotesPane'));
 const AgentPane = React.lazy(() => import('../panes/AgentPane'));
 const SettingsPane = React.lazy(() => import('../panes/SettingsPane'));
 const DashboardPane = React.lazy(() => import('../panes/DashboardPane'));
+const TrackerPane = React.lazy(() => import('../panes/TrackerPane'));
 
 const PaneFallback = () => (
   <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--wks-bg-base)', color: 'var(--wks-text-muted)', fontSize: '0.8rem' }}>
@@ -65,6 +66,12 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
       return (
         <Suspense fallback={<PaneFallback />}>
           <DashboardPane title={pane.title} tabs={callbacks.tabs ?? []} onNavigateToTab={callbacks.onNavigateToTab ?? (() => {})} />
+        </Suspense>
+      );
+    case 'tracker':
+      return (
+        <Suspense fallback={<PaneFallback />}>
+          <TrackerPane paneId={pane.id} title={pane.title} isActive={isActive} />
         </Suspense>
       );
     default:

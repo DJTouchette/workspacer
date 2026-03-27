@@ -3,6 +3,7 @@ import { terminalService } from './services/terminalService';
 import { configService } from './services/configService';
 import { sessionService } from './services/sessionService';
 import { claudeSessionStore } from './services/claudeSessionStore';
+import { trackerService } from './services/tracker/trackerService';
 
 export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // Wire terminal service to use this window for push events
@@ -118,4 +119,42 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     if (result.canceled) return [];
     return result.filePaths;
   });
+
+  // ── Issue Tracker ──
+
+  ipcMain.handle('tracker:getProviders', () => trackerService.getProviderList());
+
+  ipcMain.handle('tracker:getAccounts', () => trackerService.getAccounts());
+
+  ipcMain.handle('tracker:addAccount', async (_event, provider: string, label: string, config: Record<string, string>, token: string) =>
+    trackerService.addAccount(provider, label, config, token),
+  );
+
+  ipcMain.handle('tracker:updateAccount', async (_event, accountId: string, updates: any) =>
+    trackerService.updateAccount(accountId, updates),
+  );
+
+  ipcMain.handle('tracker:removeAccount', (_event, accountId: string) => {
+    trackerService.removeAccount(accountId);
+  });
+
+  ipcMain.handle('tracker:listProjects', async (_event, accountId: string) =>
+    trackerService.listProjects(accountId),
+  );
+
+  ipcMain.handle('tracker:listIssues', async (_event, accountId: string, options: any) =>
+    trackerService.listIssues(accountId, options),
+  );
+
+  ipcMain.handle('tracker:getIssue', async (_event, accountId: string, issueKey: string) =>
+    trackerService.getIssue(accountId, issueKey),
+  );
+
+  ipcMain.handle('tracker:searchIssues', async (_event, accountId: string, query: string) =>
+    trackerService.searchIssues(accountId, query),
+  );
+
+  ipcMain.handle('tracker:resolveIssueKey', async (_event, issueKey: string) =>
+    trackerService.resolveIssueKey(issueKey),
+  );
 }

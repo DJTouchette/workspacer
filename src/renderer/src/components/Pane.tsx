@@ -22,6 +22,8 @@ const typeIndicators: Record<PaneType, string> = {
   agent: '\u{1F916}',
   claude: '\u2666',
   settings: '\u2699',
+  dashboard: '\u{1F4CA}',
+  tracker: '\u{1F4CB}',
 };
 
 const Pane: React.FC<PaneProps> = ({

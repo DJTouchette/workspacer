@@ -17,6 +17,7 @@ const typeLabels: Record<PaneType, string> = {
   claude: '\u2666',
   settings: '\u2699',
   dashboard: '\u{1F4CA}',
+  tracker: '\u{1F4CB}',
 };
 
 const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab }) => {
@@ -205,6 +206,7 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
                   if (folder) onAddTab('claude', undefined, undefined, folder);
                 }} />
                 <MenuButton label="Dashboard" onClick={() => { setShowMenu(false); onAddTab('dashboard'); }} />
+                <MenuButton label="Tracker" onClick={() => { setShowMenu(false); onAddTab('tracker'); }} />
                 <MenuButton label="Browser" onClick={() => { setShowMenu(false); onAddTab('browser'); }} />
                 <MenuButton label="Notes" onClick={() => { setShowMenu(false); onAddTab('notes'); }} />
 

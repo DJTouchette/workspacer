@@ -1,4 +1,4 @@
-export type PaneType = 'terminal' | 'browser' | 'notes' | 'agent' | 'claude' | 'settings' | 'dashboard';
+export type PaneType = 'terminal' | 'browser' | 'notes' | 'agent' | 'claude' | 'settings' | 'dashboard' | 'tracker';
 
 export interface PaneConfig {
   id: string;

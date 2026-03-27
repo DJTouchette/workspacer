@@ -136,6 +136,28 @@ contextBridge.exposeInMainWorld('electronAPI', {
   pickFiles: (defaultPath?: string): Promise<string[]> =>
     ipcRenderer.invoke('dialog:pickFiles', defaultPath),
 
+  // Issue Tracker
+  trackerGetProviders: (): Promise<any[]> =>
+    ipcRenderer.invoke('tracker:getProviders'),
+  trackerGetAccounts: (): Promise<any[]> =>
+    ipcRenderer.invoke('tracker:getAccounts'),
+  trackerAddAccount: (provider: string, label: string, config: Record<string, string>, token: string): Promise<any> =>
+    ipcRenderer.invoke('tracker:addAccount', provider, label, config, token),
+  trackerUpdateAccount: (accountId: string, updates: any): Promise<any> =>
+    ipcRenderer.invoke('tracker:updateAccount', accountId, updates),
+  trackerRemoveAccount: (accountId: string): Promise<void> =>
+    ipcRenderer.invoke('tracker:removeAccount', accountId),
+  trackerListProjects: (accountId: string): Promise<any[]> =>
+    ipcRenderer.invoke('tracker:listProjects', accountId),
+  trackerListIssues: (accountId: string, options?: any): Promise<any[]> =>
+    ipcRenderer.invoke('tracker:listIssues', accountId, options),
+  trackerGetIssue: (accountId: string, issueKey: string): Promise<any> =>
+    ipcRenderer.invoke('tracker:getIssue', accountId, issueKey),
+  trackerSearchIssues: (accountId: string, query: string): Promise<any[]> =>
+    ipcRenderer.invoke('tracker:searchIssues', accountId, query),
+  trackerResolveIssueKey: (issueKey: string): Promise<any> =>
+    ipcRenderer.invoke('tracker:resolveIssueKey', issueKey),
+
   // App lifecycle
   onBeforeQuit: (callback: () => void): (() => void) => {
     const handler = () => callback();
