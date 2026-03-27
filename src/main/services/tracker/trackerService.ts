@@ -14,6 +14,7 @@ import type {
   TrackerProject,
   TrackerIssue,
   TrackerStatus,
+  TrackerTransition,
   ListIssuesOptions,
   ConfigField,
   TokenField,
@@ -168,6 +169,16 @@ class TrackerService {
   async listStatuses(accountId: string, projectKey: string): Promise<TrackerStatus[]> {
     const { provider, account, token } = this.resolve(accountId);
     return provider.listStatuses(account, token, projectKey);
+  }
+
+  async getTransitions(accountId: string, issueKey: string): Promise<TrackerTransition[]> {
+    const { provider, account, token } = this.resolve(accountId);
+    return provider.getTransitions(account, token, issueKey);
+  }
+
+  async transitionIssue(accountId: string, issueKey: string, transitionId: string): Promise<void> {
+    const { provider, account, token } = this.resolve(accountId);
+    return provider.transitionIssue(account, token, issueKey, transitionId);
   }
 
   /** Resolve an issue key across all accounts (tries each until one returns a result) */

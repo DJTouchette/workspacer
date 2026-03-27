@@ -157,6 +157,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('tracker:searchIssues', accountId, query),
   trackerResolveIssueKey: (issueKey: string): Promise<any> =>
     ipcRenderer.invoke('tracker:resolveIssueKey', issueKey),
+  trackerGetTransitions: (accountId: string, issueKey: string): Promise<any[]> =>
+    ipcRenderer.invoke('tracker:getTransitions', accountId, issueKey),
+  trackerTransitionIssue: (accountId: string, issueKey: string, transitionId: string): Promise<void> =>
+    ipcRenderer.invoke('tracker:transitionIssue', accountId, issueKey, transitionId),
 
   // App lifecycle
   onBeforeQuit: (callback: () => void): (() => void) => {

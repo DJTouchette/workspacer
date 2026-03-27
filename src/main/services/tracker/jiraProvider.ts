@@ -8,6 +8,7 @@ import type {
   TrackerProject,
   TrackerIssue,
   TrackerStatus,
+  TrackerTransition,
   ListIssuesOptions,
   ConfigField,
   TokenField,
@@ -38,6 +39,22 @@ async function jiraFetch(account: TrackerAccount, token: string, path: string): 
     throw new Error(`Jira API ${res.status}: ${body.slice(0, 200)}`);
   }
   return res.json();
+}
+
+async function jiraPost(account: TrackerAccount, token: string, path: string, body: any): Promise<any> {
+  const url = `${baseUrl(account)}/rest/api/3${path}`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: headers(account, token),
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Jira API ${res.status}: ${text.slice(0, 200)}`);
+  }
+  // Transitions return 204 No Content
+  if (res.status === 204) return null;
+  return res.json().catch(() => null);
 }
 
 function mapStatusCategory(cat: any): 'todo' | 'in_progress' | 'done' {
@@ -197,5 +214,24 @@ export class JiraProvider implements TrackerProvider {
       }
     }
     return statuses;
+  }
+
+  async getTransitions(account: TrackerAccount, token: string, issueKey: string): Promise<TrackerTransition[]> {
+    const data = await jiraFetch(account, token, `/issue/${encodeURIComponent(issueKey)}/transitions`);
+    return (data.transitions ?? []).map((t: any) => ({
+      id: t.id,
+      name: t.name,
+      to: {
+        id: t.to?.id ?? '',
+        name: t.to?.name ?? t.name,
+        category: mapStatusCategory(t.to?.statusCategory),
+      },
+    }));
+  }
+
+  async transitionIssue(account: TrackerAccount, token: string, issueKey: string, transitionId: string): Promise<void> {
+    await jiraPost(account, token, `/issue/${encodeURIComponent(issueKey)}/transitions`, {
+      transition: { id: transitionId },
+    });
   }
 }

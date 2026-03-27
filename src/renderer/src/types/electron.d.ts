@@ -50,6 +50,8 @@ export interface ElectronAPI {
   trackerGetIssue: (accountId: string, issueKey: string) => Promise<any>;
   trackerSearchIssues: (accountId: string, query: string) => Promise<any[]>;
   trackerResolveIssueKey: (issueKey: string) => Promise<any>;
+  trackerGetTransitions: (accountId: string, issueKey: string) => Promise<any[]>;
+  trackerTransitionIssue: (accountId: string, issueKey: string, transitionId: string) => Promise<void>;
 
   // App lifecycle
   onBeforeQuit: (callback: () => void) => () => void;

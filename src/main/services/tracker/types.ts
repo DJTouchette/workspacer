@@ -39,6 +39,12 @@ export interface TrackerStatus {
   category: 'todo' | 'in_progress' | 'done';
 }
 
+export interface TrackerTransition {
+  id: string;
+  name: string;
+  to: TrackerStatus;
+}
+
 // ── Account configuration ──
 
 export interface TrackerAccount {
@@ -89,6 +95,12 @@ export interface TrackerProvider {
 
   /** List available statuses for a project */
   listStatuses(account: TrackerAccount, token: string, projectKey: string): Promise<TrackerStatus[]>;
+
+  /** Get available transitions for a specific issue */
+  getTransitions(account: TrackerAccount, token: string, issueKey: string): Promise<TrackerTransition[]>;
+
+  /** Transition an issue to a new status */
+  transitionIssue(account: TrackerAccount, token: string, issueKey: string, transitionId: string): Promise<void>;
 }
 
 // ── Config field descriptor (drives the onboarding form) ──

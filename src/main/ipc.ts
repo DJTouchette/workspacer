@@ -157,4 +157,12 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle('tracker:resolveIssueKey', async (_event, issueKey: string) =>
     trackerService.resolveIssueKey(issueKey),
   );
+
+  ipcMain.handle('tracker:getTransitions', async (_event, accountId: string, issueKey: string) =>
+    trackerService.getTransitions(accountId, issueKey),
+  );
+
+  ipcMain.handle('tracker:transitionIssue', async (_event, accountId: string, issueKey: string, transitionId: string) =>
+    trackerService.transitionIssue(accountId, issueKey, transitionId),
+  );
 }

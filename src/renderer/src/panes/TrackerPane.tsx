@@ -356,81 +356,157 @@ const IssueList: React.FC<{
 
 // ── Issue Detail ──
 
+interface Transition { id: string; name: string; to: { id: string; name: string; category: string } }
+
 const IssueDetail: React.FC<{
   issue: TrackerIssue;
   onBack: () => void;
-}> = ({ issue, onBack }) => (
-  <div style={{ padding: '20px 24px', maxWidth: 700 }}>
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-      <button onClick={onBack} style={backBtnStyle}>{'\u2190'}</button>
-      <span style={{
-        color: colors.accent,
-        fontWeight: 700,
-        fontFamily: 'monospace',
-        fontSize: '0.8rem',
-      }}>
-        {issue.key}
-      </span>
-      <span style={{
-        fontSize: '0.6rem',
-        fontWeight: 600,
-        padding: '2px 8px',
-        borderRadius: 10,
-        backgroundColor: 'rgba(255,255,255,0.05)',
-        color: statusColor(issue.statusCategory),
-      }}>
-        {issue.status}
-      </span>
-    </div>
+  onStatusChanged?: () => void;
+}> = ({ issue, onBack, onStatusChanged }) => {
+  const [transitions, setTransitions] = useState<Transition[]>([]);
+  const [currentStatus, setCurrentStatus] = useState(issue.status);
+  const [currentCategory, setCurrentCategory] = useState(issue.statusCategory);
+  const [transitioning, setTransitioning] = useState(false);
+  const [showTransitions, setShowTransitions] = useState(false);
 
-    <div style={{ fontSize: '0.9rem', fontWeight: 700, color: colors.textBright, marginBottom: 12 }}>
-      {issue.title}
-    </div>
+  useEffect(() => {
+    window.electronAPI.trackerGetTransitions(issue.accountId, issue.key)
+      .then(t => setTransitions(t))
+      .catch(() => {});
+  }, [issue.accountId, issue.key]);
 
-    <div style={{ display: 'flex', gap: 16, marginBottom: 16, fontSize: '0.68rem', color: colors.muted }}>
-      <span>Type: <span style={{ color: colors.text }}>{issue.type}</span></span>
-      {issue.priority && <span>Priority: <span style={{ color: colors.text }}>{issue.priority}</span></span>}
-      {issue.assignee && <span>Assignee: <span style={{ color: colors.text }}>{issue.assignee}</span></span>}
-    </div>
+  const handleTransition = async (t: Transition) => {
+    setTransitioning(true);
+    try {
+      await window.electronAPI.trackerTransitionIssue(issue.accountId, issue.key, t.id);
+      setCurrentStatus(t.to.name);
+      setCurrentCategory(t.to.category as any);
+      setShowTransitions(false);
+      onStatusChanged?.();
+    } catch (e: any) {
+      console.error('[TrackerPane] transition failed:', e);
+    } finally {
+      setTransitioning(false);
+    }
+  };
 
-    {issue.labels.length > 0 && (
-      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 16 }}>
-        {issue.labels.map(l => (
-          <span key={l} style={{
+  return (
+    <div style={{ padding: '20px 24px', maxWidth: 700 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+        <button onClick={onBack} style={backBtnStyle}>{'\u2190'}</button>
+        <span style={{
+          color: colors.accent,
+          fontWeight: 700,
+          fontFamily: 'monospace',
+          fontSize: '0.8rem',
+        }}>
+          {issue.key}
+        </span>
+        <span
+          onClick={() => setShowTransitions(!showTransitions)}
+          style={{
             fontSize: '0.6rem',
-            padding: '1px 6px',
-            borderRadius: 8,
-            backgroundColor: 'rgba(255,255,255,0.06)',
-            color: colors.text,
-          }}>
-            {l}
-          </span>
-        ))}
+            fontWeight: 600,
+            padding: '2px 8px',
+            borderRadius: 10,
+            backgroundColor: 'rgba(255,255,255,0.05)',
+            color: statusColor(currentCategory),
+            cursor: transitions.length > 0 ? 'pointer' : 'default',
+          }}
+          title={transitions.length > 0 ? 'Click to change status' : undefined}
+        >
+          {currentStatus} {transitions.length > 0 ? '\u25BE' : ''}
+        </span>
       </div>
-    )}
 
-    {issue.description && (
-      <div style={{
-        fontSize: '0.78rem',
-        lineHeight: 1.6,
-        color: colors.text,
-        whiteSpace: 'pre-wrap',
-        padding: '12px 14px',
-        borderRadius: 8,
-        border: `1px solid ${colors.borderSubtle}`,
-        backgroundColor: 'rgba(255,255,255,0.02)',
-        maxHeight: 400,
-        overflow: 'auto',
-      }}>
-        {issue.description}
+      {/* Transition dropdown */}
+      {showTransitions && transitions.length > 0 && (
+        <div style={{
+          marginBottom: 14,
+          padding: '8px 0',
+          borderRadius: 8,
+          border: `1px solid ${colors.borderSubtle}`,
+          backgroundColor: 'rgba(255,255,255,0.03)',
+        }}>
+          <div style={{ fontSize: '0.62rem', color: colors.muted, padding: '0 12px 6px', fontWeight: 500 }}>
+            Move to:
+          </div>
+          {transitions.map(t => (
+            <div
+              key={t.id}
+              onClick={() => !transitioning && handleTransition(t)}
+              style={{
+                padding: '6px 12px',
+                fontSize: '0.72rem',
+                color: colors.text,
+                cursor: transitioning ? 'wait' : 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                opacity: transitioning ? 0.5 : 1,
+              }}
+            >
+              <span style={{
+                width: 6, height: 6, borderRadius: '50%',
+                backgroundColor: statusColor(t.to.category),
+                flexShrink: 0,
+              }} />
+              {t.name}
+              <span style={{ fontSize: '0.6rem', color: colors.muted }}>{'\u2192'} {t.to.name}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{ fontSize: '0.9rem', fontWeight: 700, color: colors.textBright, marginBottom: 12 }}>
+        {issue.title}
       </div>
-    )}
 
-    <div style={{ marginTop: 12, fontSize: '0.62rem', color: colors.muted }}>
-      Updated {new Date(issue.updated).toLocaleString()}
+      <div style={{ display: 'flex', gap: 16, marginBottom: 16, fontSize: '0.68rem', color: colors.muted }}>
+        <span>Type: <span style={{ color: colors.text }}>{issue.type}</span></span>
+        {issue.priority && <span>Priority: <span style={{ color: colors.text }}>{issue.priority}</span></span>}
+        {issue.assignee && <span>Assignee: <span style={{ color: colors.text }}>{issue.assignee}</span></span>}
+      </div>
+
+      {issue.labels.length > 0 && (
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 16 }}>
+          {issue.labels.map(l => (
+            <span key={l} style={{
+              fontSize: '0.6rem',
+              padding: '1px 6px',
+              borderRadius: 8,
+              backgroundColor: 'rgba(255,255,255,0.06)',
+              color: colors.text,
+            }}>
+              {l}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {issue.description && (
+        <div style={{
+          fontSize: '0.78rem',
+          lineHeight: 1.6,
+          color: colors.text,
+          whiteSpace: 'pre-wrap',
+          padding: '12px 14px',
+          borderRadius: 8,
+          border: `1px solid ${colors.borderSubtle}`,
+          backgroundColor: 'rgba(255,255,255,0.02)',
+          maxHeight: 400,
+          overflow: 'auto',
+        }}>
+          {issue.description}
+        </div>
+      )}
+
+      <div style={{ marginTop: 12, fontSize: '0.62rem', color: colors.muted }}>
+        Updated {new Date(issue.updated).toLocaleString()}
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
 // ── Shared styles ──
 
