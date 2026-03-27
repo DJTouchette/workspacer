@@ -27,6 +27,7 @@ export const builtInActions: PaletteItem[] = [
   { id: 'new-terminal', name: 'New Terminal', description: 'Shell terminal', icon: '>_', category: 'action', paneType: 'terminal' },
   { id: 'new-browser', name: 'New Browser', description: 'Web browser tab', icon: '\u{1F310}', category: 'action', paneType: 'browser' },
   { id: 'new-tracker', name: 'Issue Tracker', description: 'Jira, Linear, Trello', icon: '\u{1F4CB}', category: 'action', paneType: 'tracker' },
+  { id: 'new-devops', name: 'Git & Pipelines', description: 'Azure DevOps, GitHub PRs + CI/CD', icon: '\u{1F527}', category: 'action', paneType: 'devops' },
   { id: 'new-notes', name: 'Notes', description: 'Markdown scratchpad', icon: '\u{1F4DD}', category: 'action', paneType: 'notes' },
   { id: 'new-dashboard', name: 'Dashboard', description: 'Session overview', icon: '\u{1F4CA}', category: 'action', paneType: 'dashboard' },
 ];

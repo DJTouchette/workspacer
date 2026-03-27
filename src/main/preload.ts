@@ -174,6 +174,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   cacheWatchRepo: (repoPath: string): Promise<void> =>
     ipcRenderer.invoke('cache:watchRepo', repoPath),
 
+  // DevOps (Git + CI/CD)
+  devopsGetProviders: (): Promise<any[]> => ipcRenderer.invoke('devops:getProviders'),
+  devopsGetAccounts: (): Promise<any[]> => ipcRenderer.invoke('devops:getAccounts'),
+  devopsAddAccount: (provider: string, label: string, config: Record<string, string>, token: string): Promise<any> =>
+    ipcRenderer.invoke('devops:addAccount', provider, label, config, token),
+  devopsRemoveAccount: (accountId: string): Promise<void> => ipcRenderer.invoke('devops:removeAccount', accountId),
+  devopsListRepos: (accountId: string): Promise<any[]> => ipcRenderer.invoke('devops:listRepos', accountId),
+  devopsListPRs: (accountId: string, options?: any): Promise<any[]> => ipcRenderer.invoke('devops:listPRs', accountId, options),
+  devopsListPipelines: (accountId: string, options?: any): Promise<any[]> => ipcRenderer.invoke('devops:listPipelines', accountId, options),
+
   // App lifecycle
   onBeforeQuit: (callback: () => void): (() => void) => {
     const handler = () => callback();

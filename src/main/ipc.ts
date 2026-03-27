@@ -6,6 +6,7 @@ import { claudeSessionStore } from './services/claudeSessionStore';
 import { trackerService } from './services/tracker/trackerService';
 import { issueCache } from './services/db';
 import { backgroundSync } from './services/tracker/backgroundSync';
+import { devopsService } from './services/devops/devopsService';
 
 export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // Wire terminal service to use this window for push events
@@ -189,4 +190,15 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle('cache:watchRepo', (_event, repoPath: string) => {
     backgroundSync.watchRepo(repoPath);
   });
+
+  // ── DevOps (Git + CI/CD) ──
+
+  ipcMain.handle('devops:getProviders', () => devopsService.getProviderList());
+  ipcMain.handle('devops:getAccounts', () => devopsService.getAccounts());
+  ipcMain.handle('devops:addAccount', async (_event, provider: string, label: string, config: Record<string, string>, token: string) =>
+    devopsService.addAccount(provider, label, config, token));
+  ipcMain.handle('devops:removeAccount', (_event, accountId: string) => devopsService.removeAccount(accountId));
+  ipcMain.handle('devops:listRepos', async (_event, accountId: string) => devopsService.listRepos(accountId));
+  ipcMain.handle('devops:listPRs', async (_event, accountId: string, options?: any) => devopsService.listPullRequests(accountId, options));
+  ipcMain.handle('devops:listPipelines', async (_event, accountId: string, options?: any) => devopsService.listPipelines(accountId, options));
 }

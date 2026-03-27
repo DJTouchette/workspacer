@@ -53,6 +53,15 @@ export interface ElectronAPI {
   trackerGetTransitions: (accountId: string, issueKey: string) => Promise<any[]>;
   trackerTransitionIssue: (accountId: string, issueKey: string, transitionId: string) => Promise<void>;
 
+  // DevOps (Git + CI/CD)
+  devopsGetProviders: () => Promise<any[]>;
+  devopsGetAccounts: () => Promise<any[]>;
+  devopsAddAccount: (provider: string, label: string, config: Record<string, string>, token: string) => Promise<any>;
+  devopsRemoveAccount: (accountId: string) => Promise<void>;
+  devopsListRepos: (accountId: string) => Promise<any[]>;
+  devopsListPRs: (accountId: string, options?: any) => Promise<any[]>;
+  devopsListPipelines: (accountId: string, options?: any) => Promise<any[]>;
+
   // Cached queries (SQLite)
   cacheGetIssueLinks: (issueKey: string) => Promise<any[]>;
   cacheGetChildIssues: (parentKey: string) => Promise<any[]>;

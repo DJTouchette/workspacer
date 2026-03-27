@@ -18,6 +18,7 @@ const typeLabels: Record<PaneType, string> = {
   settings: '\u2699',
   dashboard: '\u{1F4CA}',
   tracker: '\u{1F4CB}',
+  devops: '\u{1F527}',
 };
 
 const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab }) => {
@@ -207,6 +208,7 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
                 }} />
                 <MenuButton label="Dashboard" onClick={() => { setShowMenu(false); onAddTab('dashboard'); }} />
                 <MenuButton label="Tracker" onClick={() => { setShowMenu(false); onAddTab('tracker'); }} />
+                <MenuButton label="Git & Pipelines" onClick={() => { setShowMenu(false); onAddTab('devops'); }} />
                 <MenuButton label="Browser" onClick={() => { setShowMenu(false); onAddTab('browser'); }} />
                 <MenuButton label="Notes" onClick={() => { setShowMenu(false); onAddTab('notes'); }} />
 
