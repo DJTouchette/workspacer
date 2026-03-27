@@ -102,8 +102,38 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
     // Tell xterm to NOT process keys that the app handles.
     // Return false = xterm ignores the key, letting our window capture handler take it.
     term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
+      // Ctrl+Shift+C — copy from terminal
+      if (e.ctrlKey && e.shiftKey && e.key === 'C') {
+        e.preventDefault();
+        const sel = term.getSelection();
+        if (sel) navigator.clipboard.writeText(sel);
+        return false;
+      }
+      // Ctrl+Shift+V — paste into terminal
+      if (e.ctrlKey && e.shiftKey && e.key === 'V') {
+        e.preventDefault();
+        navigator.clipboard.readText().then(text => { if (text) write(text); });
+        return false;
+      }
+      // Ctrl+C — copy if there's a selection, otherwise let xterm send SIGINT
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'c') {
+        const sel = term.getSelection();
+        if (sel) {
+          e.preventDefault();
+          navigator.clipboard.writeText(sel);
+          term.clearSelection();
+          return false;
+        }
+        return true; // no selection — let xterm send ^C
+      }
+      // Ctrl+V — paste
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'v') {
+        e.preventDefault();
+        navigator.clipboard.readText().then(text => { if (text) write(text); });
+        return false;
+      }
       // Ctrl+T, Ctrl+B, Ctrl+W, Ctrl+/, Ctrl+, — always app-level
-      if (e.ctrlKey && !e.altKey && ['t', 'b', 'w', 'd', '/', '?', ',', 's', 'k'].includes(e.key)) {
+      if (e.ctrlKey && !e.altKey && !e.shiftKey && ['t', 'b', 'w', 'd', '/', '?', ',', 's', 'k'].includes(e.key)) {
         return false;
       }
       // Ctrl+1-9 — jump to pane
@@ -118,7 +148,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
       if (e.ctrlKey && e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
         return false;
       }
-      // Ctrl+Shift combos — resize/move pane
+      // Ctrl+Shift combos (other than C/V above) — resize/move pane
       if (e.ctrlKey && e.shiftKey) {
         return false;
       }

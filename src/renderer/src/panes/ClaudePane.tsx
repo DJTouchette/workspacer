@@ -917,7 +917,32 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
     });
 
     term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
-      if (e.ctrlKey && !e.altKey && ['t', 'b', 'w', 'd', '/', '?', ',', 's', 'k'].includes(e.key)) return false;
+      // Ctrl+Shift+C — copy from terminal
+      if (e.ctrlKey && e.shiftKey && e.key === 'C') {
+        e.preventDefault();
+        const sel = term.getSelection();
+        if (sel) navigator.clipboard.writeText(sel);
+        return false;
+      }
+      // Ctrl+Shift+V — paste
+      if (e.ctrlKey && e.shiftKey && e.key === 'V') {
+        e.preventDefault();
+        navigator.clipboard.readText().then(text => { if (text) write(text); });
+        return false;
+      }
+      // Ctrl+C — copy if selection, SIGINT if not
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'c') {
+        const sel = term.getSelection();
+        if (sel) { e.preventDefault(); navigator.clipboard.writeText(sel); term.clearSelection(); return false; }
+        return true;
+      }
+      // Ctrl+V — paste
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'v') {
+        e.preventDefault();
+        navigator.clipboard.readText().then(text => { if (text) write(text); });
+        return false;
+      }
+      if (e.ctrlKey && !e.altKey && !e.shiftKey && ['t', 'b', 'w', 'd', '/', '?', ',', 's', 'k'].includes(e.key)) return false;
       if (e.ctrlKey && !e.altKey && !e.shiftKey && /^[1-9]$/.test(e.key)) return false;
       if (e.altKey && !e.ctrlKey && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return false;
       if (e.ctrlKey && e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) return false;
