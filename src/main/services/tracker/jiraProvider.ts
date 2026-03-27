@@ -47,13 +47,32 @@ function mapStatusCategory(cat: any): 'todo' | 'in_progress' | 'done' {
   return 'todo';
 }
 
+/** Extract plain text from Atlassian Document Format (v3 API) */
+function adfToText(node: any): string {
+  if (!node) return '';
+  if (typeof node === 'string') return node;
+  if (node.type === 'text') return node.text ?? '';
+  if (node.type === 'hardBreak') return '\n';
+  if (Array.isArray(node.content)) {
+    const inner = node.content.map(adfToText).join('');
+    // Add newlines after block-level nodes
+    if (['paragraph', 'heading', 'bulletList', 'orderedList', 'listItem', 'blockquote', 'codeBlock', 'rule'].includes(node.type)) {
+      return inner + '\n';
+    }
+    return inner;
+  }
+  return '';
+}
+
 function mapIssue(account: TrackerAccount, raw: any): TrackerIssue {
   const fields = raw.fields ?? {};
+  const desc = fields.description;
+  const descText = typeof desc === 'string' ? desc : adfToText(desc).trim();
   return {
     id: raw.id,
     key: raw.key,
     title: fields.summary ?? '',
-    description: fields.description ?? '',
+    description: descText,
     status: fields.status?.name ?? 'Unknown',
     statusCategory: mapStatusCategory(fields.status?.statusCategory),
     assignee: fields.assignee?.displayName,
