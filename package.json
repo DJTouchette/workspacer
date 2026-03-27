@@ -24,6 +24,44 @@
     "@xterm/headless": "^6.0.0",
     "js-yaml": "^4.1.0"
   },
+  "build": {
+    "appId": "com.workspacer.app",
+    "productName": "Workspacer",
+    "asar": true,
+    "files": [
+      "dist/**/*",
+      "node_modules/**/*",
+      "!node_modules/**/*.{md,map,ts}",
+      "!node_modules/**/test/**",
+      "!node_modules/**/tests/**",
+      "!node_modules/**/__tests__/**",
+      "!node_modules/**/docs/**",
+      "!node_modules/**/.github/**",
+      "!**/*.d.ts"
+    ],
+    "asarUnpack": [
+      "node_modules/@homebridge/node-pty-prebuilt-multiarch/**"
+    ],
+    "electronLanguages": ["en-US"],
+    "win": {
+      "target": ["nsis"],
+      "icon": "assets/icon.ico"
+    },
+    "mac": {
+      "target": ["dmg"],
+      "icon": "assets/icon.icns",
+      "category": "public.app-category.developer-tools"
+    },
+    "linux": {
+      "target": ["AppImage"],
+      "icon": "assets/icon.png",
+      "category": "Development"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.0.0",

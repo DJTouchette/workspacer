@@ -111,6 +111,19 @@ protocol.registerSchemesAsPrivileged([
   { scheme: 'workspacer-font', privileges: { standard: false, supportFetchAPI: true, corsEnabled: true, bypassCSP: true } },
 ]);
 
+// ── Chromium performance flags (must be set before app.whenReady) ──
+
+// Cap renderer heap to avoid runaway memory (512 MB per renderer)
+app.commandLine.appendSwitch('js-flags', '--max-old-space-size=512');
+// Keep timers running when window is backgrounded (terminals/streaming need this)
+app.commandLine.appendSwitch('disable-background-timer-throttling');
+// Disable renderer code integrity checks for faster startup on Windows
+if (process.platform === 'win32') {
+  app.commandLine.appendSwitch('disable-features', 'RendererCodeIntegrity');
+}
+// Enable V8 code caching for faster subsequent launches
+app.commandLine.appendSwitch('v8-cache-options', 'code');
+
 function createWindow(): void {
   // Remove default menu to prevent Ctrl+T/W conflicts
   Menu.setApplicationMenu(null);
