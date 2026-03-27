@@ -75,95 +75,29 @@ const WorkingTimer: React.FC<{ session: ClaudeSessionSnapshot | null }> = ({ ses
   );
 };
 
-// ── Inline Work Log (tool calls + subagents) ──
+// ── Inline Work Log (Claude Code style — flat list, no card) ──
 
 const InlineWorkLog: React.FC<{ toolCalls: ToolCall[]; subagents?: SubagentInfo[] }> = ({ toolCalls, subagents }) => {
-  const [expanded, setExpanded] = useState(true);
-
   if (toolCalls.length === 0 && (!subagents || subagents.length === 0)) return null;
 
-  const runningCount = toolCalls.filter(tc => tc.status === 'running').length;
-  const runningAgents = subagents?.filter(s => s.status === 'running').length ?? 0;
-  const totalItems = toolCalls.length + (subagents?.length ?? 0);
-
   return (
-    <div style={{
-      margin: '6px 0 10px 0',
-      borderRadius: 8,
-      border: `1px solid ${colors.borderSubtle}`,
-      backgroundColor: 'rgba(255,255,255,0.02)',
-      overflow: 'hidden',
-    }}>
-      <div
-        onClick={() => setExpanded(!expanded)}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          padding: '6px 12px',
-          cursor: 'pointer',
-          fontSize: '0.75rem',
-          color: colors.muted,
-          userSelect: 'none',
-        }}
-      >
-        <span style={{
-          display: 'inline-block',
-          width: 12,
-          fontSize: '0.6rem',
-          transition: 'transform 0.15s',
-          transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)',
-        }}>
-          {'\u25B6'}
-        </span>
-        <span style={{ fontWeight: 500 }}>
-          {toolCalls.length} tool call{toolCalls.length !== 1 ? 's' : ''}
-          {subagents && subagents.length > 0 && ` \u00B7 ${subagents.length} agent${subagents.length !== 1 ? 's' : ''}`}
-        </span>
-        {(runningCount > 0 || runningAgents > 0) && (
-          <span style={{
-            display: 'inline-block',
-            width: 12,
-            height: 12,
-            border: `1.5px solid ${colors.accent}`,
-            borderTopColor: 'transparent',
-            borderRadius: '50%',
-            animation: 'claudeSpinner 0.8s linear infinite',
-          }} />
-        )}
-      </div>
-      {expanded && (
-        <div style={{ padding: '0 12px 8px 12px' }}>
-          {subagents && subagents.length > 0 && subagents.map(sub => (
-            <div key={sub.id} style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              padding: '3px 0',
-              fontSize: '0.75rem',
-            }}>
-              {sub.status === 'running' ? (
-                <span style={{
-                  display: 'inline-block',
-                  width: 12,
-                  height: 12,
-                  border: `1.5px solid #c084fc`,
-                  borderTopColor: 'transparent',
-                  borderRadius: '50%',
-                  animation: 'claudeSpinner 0.8s linear infinite',
-                  flexShrink: 0,
-                }} />
-              ) : (
-                <span style={{ color: colors.success, fontSize: '0.7rem', width: 12, textAlign: 'center', flexShrink: 0 }}>{'\u2713'}</span>
-              )}
-              <span style={{ color: '#c084fc', fontWeight: 600 }}>Agent</span>
-              <span style={{ color: colors.text, fontWeight: 500 }}>{sub.type}</span>
-              <span style={{ color: colors.mutedDim, fontSize: '0.65rem' }}>{sub.id.slice(0, 8)}</span>
-            </div>
-          ))}
-          {toolCalls.map(tc => <WorkLogEntry key={tc.id} tc={tc} />)}
+    <div style={{ margin: '4px 0 6px 0', padding: '0 2px' }}>
+      {subagents && subagents.length > 0 && subagents.map(sub => (
+        <div key={sub.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '1px 0', fontSize: '0.75rem' }}>
+          {sub.status === 'running' ? (
+            <span style={{
+              display: 'inline-block', width: 12, height: 12,
+              border: `1.5px solid #c084fc`, borderTopColor: 'transparent',
+              borderRadius: '50%', animation: 'claudeSpinner 0.8s linear infinite', flexShrink: 0,
+            }} />
+          ) : (
+            <span style={{ color: colors.success, fontSize: '0.7rem', width: 12, textAlign: 'center', flexShrink: 0 }}>{'\u2713'}</span>
+          )}
+          <span style={{ color: '#c084fc', fontWeight: 600 }}>Agent</span>
+          <span style={{ color: colors.text }}>{sub.type}</span>
         </div>
-      )}
+      ))}
+      {toolCalls.map(tc => <WorkLogEntry key={tc.id} tc={tc} />)}
     </div>
   );
 };

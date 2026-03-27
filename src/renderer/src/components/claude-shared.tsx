@@ -168,44 +168,28 @@ export const WorkLogEntry: React.FC<{ tc: ToolCall }> = ({ tc }) => {
   const { call, result } = formatToolSummary(tc);
 
   return (
-    <div style={{
-      display: 'flex',
-      alignItems: 'flex-start',
-      gap: 8,
-      padding: '2px 0',
-      fontSize: '0.75rem',
-      lineHeight: 1.5,
-    }}>
-      {isRunning ? (
-        <span style={{
-          display: 'inline-block',
-          width: 12,
-          height: 12,
-          marginTop: 3,
-          border: `1.5px solid ${claudeColors.accent}`,
-          borderTopColor: 'transparent',
-          borderRadius: '50%',
-          animation: 'claudeSpinner 0.8s linear infinite',
-          flexShrink: 0,
-        }} />
-      ) : (
-        <span style={{ color: iconColor, fontSize: '0.7rem', width: 12, textAlign: 'center', flexShrink: 0, marginTop: 2 }}>
-          {isFailed ? '\u2717' : '\u2713'}
-        </span>
-      )}
-      <div style={{ minWidth: 0 }}>
-        <span style={{ color: claudeColors.accent, fontWeight: 600, fontFamily: 'var(--claude-mono-font, monospace)', fontSize: '0.72rem' }}>
+    <div style={{ padding: '1px 0' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem', lineHeight: 1.4 }}>
+        {isRunning ? (
+          <span style={{
+            display: 'inline-block', width: 12, height: 12,
+            border: `1.5px solid ${claudeColors.accent}`, borderTopColor: 'transparent',
+            borderRadius: '50%', animation: 'claudeSpinner 0.8s linear infinite', flexShrink: 0,
+          }} />
+        ) : (
+          <span style={{ color: iconColor, fontSize: '0.72rem', width: 12, textAlign: 'center', flexShrink: 0 }}>
+            {isFailed ? '\u2717' : '\u2713'}
+          </span>
+        )}
+        <span style={{ color: claudeColors.accent, fontFamily: 'var(--claude-mono-font, monospace)', fontSize: '0.72rem' }}>
           {call}
         </span>
-        {result && (
-          <>
-            <br />
-            <span style={{ color: claudeColors.text, fontSize: '0.72rem' }}>
-              {'\u23BF'}&nbsp;&nbsp;{result}
-            </span>
-          </>
-        )}
       </div>
+      {result && (
+        <div style={{ paddingLeft: 18, fontSize: '0.68rem', color: claudeColors.muted, lineHeight: 1.3 }}>
+          {'\u23BF'} {result}
+        </div>
+      )}
     </div>
   );
 };
