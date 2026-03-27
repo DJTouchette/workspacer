@@ -1128,7 +1128,6 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
     setShowScrollBtn(distFromBottom > 150);
   }, []);
 
-  const hasOlderMessages = conversation.length > visibleCount;
   const loadOlderMessages = useCallback(() => {
     const container = scrollContainerRef.current;
     const prevHeight = container?.scrollHeight ?? 0;
@@ -1203,6 +1202,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
     if (optimisticMessages.length === 0) return base;
     return [...base, ...optimisticMessages];
   }, [session?.conversation, optimisticMessages]);
+  const hasOlderMessages = conversation.length > visibleCount;
   const fileChanges = session?.fileChanges ?? [];
   const subagents = session?.subagents ?? [];
   const pendingApproval = session?.pendingApproval ?? null;
