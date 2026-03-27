@@ -918,6 +918,103 @@ const InlineFilesSection: React.FC<{ fileChanges: FileChange[] }> = ({ fileChang
 
 // InlineSubagentsSection removed — subagents are now shown inside InlineWorkLog
 
+// ── File Attachment Helpers ──
+
+const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico', 'tiff']);
+const PDF_EXTS = new Set(['pdf']);
+
+interface AttachedFile {
+  path: string;
+  label: string; // "Image" | "PDF" | "File"
+  name: string;  // basename
+}
+
+function classifyFile(filePath: string): AttachedFile {
+  const name = filePath.split(/[/\\]/).pop() ?? filePath;
+  const ext = name.split('.').pop()?.toLowerCase() ?? '';
+  const label = IMAGE_EXTS.has(ext) ? 'Image' : PDF_EXTS.has(ext) ? 'PDF' : 'File';
+  return { path: filePath, label, name };
+}
+
+function buildPromptPrefix(files: AttachedFile[]): string {
+  return files.map(f => `[${f.label}: ${f.path}]`).join(' ') + ' ';
+}
+
+/** Extract file paths from a drop or paste event */
+function extractFilePaths(dataTransfer: DataTransfer): string[] {
+  const paths: string[] = [];
+  if (dataTransfer.files) {
+    for (let i = 0; i < dataTransfer.files.length; i++) {
+      const f = dataTransfer.files[i] as File & { path?: string };
+      if (f.path) paths.push(f.path);
+    }
+  }
+  return paths;
+}
+
+// ── File Chips (shown above input when files are attached) ──
+
+const FileChips: React.FC<{ files: AttachedFile[]; onRemove: (idx: number) => void }> = ({ files, onRemove }) => {
+  if (files.length === 0) return null;
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, padding: '0 0 4px 0' }}>
+      {files.map((f, i) => (
+        <span key={i} style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 4,
+          fontSize: '0.65rem',
+          padding: '2px 8px',
+          borderRadius: 10,
+          backgroundColor: 'rgba(255,255,255,0.06)',
+          border: `1px solid ${colors.borderSubtle}`,
+          color: colors.text,
+          maxWidth: 220,
+        }}>
+          <span style={{ color: f.label === 'Image' ? '#c084fc' : f.label === 'PDF' ? colors.error : colors.accent, fontWeight: 600 }}>
+            {f.label === 'Image' ? '\u{1F5BC}' : f.label === 'PDF' ? '\u{1F4C4}' : '\u{1F4CE}'}
+          </span>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={f.path}>
+            {f.name}
+          </span>
+          <span
+            onClick={() => onRemove(i)}
+            style={{ cursor: 'pointer', color: colors.muted, fontWeight: 700, fontSize: '0.7rem', marginLeft: 2 }}
+          >
+            {'\u00D7'}
+          </span>
+        </span>
+      ))}
+    </div>
+  );
+};
+
+// ── Drop Overlay ──
+
+const DropOverlay: React.FC = () => (
+  <div style={{
+    position: 'absolute',
+    inset: 0,
+    zIndex: 50,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    backdropFilter: 'blur(4px)',
+    border: `2px dashed ${colors.accent}`,
+    borderRadius: 8,
+    pointerEvents: 'none',
+  }}>
+    <div style={{ textAlign: 'center' }}>
+      <div style={{ fontSize: '1.5rem', marginBottom: 8, opacity: 0.7 }}>{'\u{1F4CE}'}</div>
+      <div style={{ fontSize: '0.8rem', color: colors.accent, fontWeight: 600 }}>Drop files here</div>
+      <div style={{ fontSize: '0.65rem', color: colors.muted, marginTop: 4 }}>
+        Images, code, PDFs — any file Claude can read
+      </div>
+    </div>
+  </div>
+);
+
 // ── Scroll to Bottom Button ──
 
 const ScrollToBottomButton: React.FC<{ onClick: () => void }> = ({ onClick }) => (
@@ -961,6 +1058,9 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
   const [approvalDismissedAt, setApprovalDismissedAt] = useState(0);
   const [cancelledAt, setCancelledAt] = useState(0);
   const [visibleCount, setVisibleCount] = useState(CONVERSATION_PAGE_SIZE);
+  const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const dragCounterRef = useRef(0);
   const termContainerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -1131,6 +1231,50 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
     conversationEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, []);
 
+  // ── File drag & drop ──
+
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current++;
+    if (e.dataTransfer.types.includes('Files')) setIsDragOver(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current--;
+    if (dragCounterRef.current === 0) setIsDragOver(false);
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current = 0;
+    setIsDragOver(false);
+    const paths = extractFilePaths(e.dataTransfer);
+    if (paths.length > 0) {
+      setAttachedFiles(prev => [...prev, ...paths.map(classifyFile)]);
+    }
+  }, []);
+
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    const paths = extractFilePaths(e.clipboardData);
+    if (paths.length > 0) {
+      e.preventDefault();
+      setAttachedFiles(prev => [...prev, ...paths.map(classifyFile)]);
+    }
+  }, []);
+
+  const removeAttachedFile = useCallback((idx: number) => {
+    setAttachedFiles(prev => prev.filter((_, i) => i !== idx));
+  }, []);
+
   // Send approval response to Claude Code's interactive select menu.
   // The menu highlights "Yes" by default — Enter selects it.
   // For deny, arrow down to "No" (3rd item) then Enter.
@@ -1152,20 +1296,27 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
 
   // Handle send — write text then Enter to Claude's TUI input
   const handleSend = useCallback(() => {
-    if (inputValue.trim()) {
-      // Show message immediately and set loading state
-      setOptimisticMessages(prev => [...prev, {
-        role: 'user',
-        content: inputValue.trim(),
-        timestamp: Date.now(),
-      }]);
-      setOptimisticLoading(true);
-      // Send text and Enter separately so the TUI processes the input
-      write(inputValue);
-      setTimeout(() => write('\r'), 50);
-      setInputValue('');
-    }
-  }, [inputValue, write]);
+    const hasFiles = attachedFiles.length > 0;
+    const hasText = inputValue.trim().length > 0;
+    if (!hasFiles && !hasText) return;
+
+    // Build the full message: file prefixes + user text
+    const prefix = hasFiles ? buildPromptPrefix(attachedFiles) : '';
+    const fullMessage = prefix + inputValue.trim();
+
+    // Show message immediately and set loading state
+    setOptimisticMessages(prev => [...prev, {
+      role: 'user',
+      content: fullMessage,
+      timestamp: Date.now(),
+    }]);
+    setOptimisticLoading(true);
+    // Send text and Enter separately so the TUI processes the input
+    write(fullMessage);
+    setTimeout(() => write('\r'), 50);
+    setInputValue('');
+    setAttachedFiles([]);
+  }, [inputValue, write, attachedFiles]);
 
   // Clear optimistic state once session conversation catches up
   useEffect(() => {
@@ -1373,12 +1524,20 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
 
         {/* GUI view */}
         {viewMode === 'gui' && (
-          <div style={{
-            height: '100%',
-            display: 'flex',
-            flexDirection: 'column',
-            overflow: 'hidden',
-          }}>
+          <div
+            onDragEnter={handleDragEnter}
+            onDragLeave={handleDragLeave}
+            onDragOver={handleDragOver}
+            onDrop={handleDrop}
+            style={{
+              height: '100%',
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+              position: 'relative',
+            }}
+          >
+            {isDragOver && <DropOverlay />}
             {/* Conversation scroll area */}
             <div
               ref={scrollContainerRef}
@@ -1497,39 +1656,41 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
               padding: '8px 16px 10px 16px',
               flexShrink: 0,
             }}>
-              <div style={{
-                maxWidth: 720,
-                margin: '0 auto',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                padding: '6px 6px 6px 16px',
-                borderRadius: 20,
-                border: `1px solid ${colors.border}`,
-                backgroundColor: 'rgba(255, 255, 255, 0.03)',
-              }}>
-                <input
-                  placeholder="Message Claude..."
-                  value={inputValue}
-                  onChange={(e) => setInputValue(e.target.value)}
-                  style={{
-                    flex: 1,
-                    fontSize: '0.8rem',
-                    padding: '4px 0',
-                    border: 'none',
-                    backgroundColor: 'transparent',
-                    color: colors.text,
-                    outline: 'none',
-                    fontFamily: 'inherit',
-                    lineHeight: 1.4,
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault();
-                      handleSend();
-                    }
-                  }}
-                />
+              <div style={{ maxWidth: 720, margin: '0 auto' }}>
+                <FileChips files={attachedFiles} onRemove={removeAttachedFile} />
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '6px 6px 6px 16px',
+                  borderRadius: 20,
+                  border: `1px solid ${attachedFiles.length > 0 ? colors.accent : colors.border}`,
+                  backgroundColor: 'rgba(255, 255, 255, 0.03)',
+                  transition: 'border-color 0.15s',
+                }}>
+                  <input
+                    placeholder={attachedFiles.length > 0 ? 'What should Claude do with these files?' : 'Message Claude...'}
+                    value={inputValue}
+                    onChange={(e) => setInputValue(e.target.value)}
+                    onPaste={handlePaste}
+                    style={{
+                      flex: 1,
+                      fontSize: '0.8rem',
+                      padding: '4px 0',
+                      border: 'none',
+                      backgroundColor: 'transparent',
+                      color: colors.text,
+                      outline: 'none',
+                      fontFamily: 'inherit',
+                      lineHeight: 1.4,
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        handleSend();
+                      }
+                    }}
+                  />
                 <button
                   onClick={handleSend}
                   style={{
@@ -1537,9 +1698,9 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
                     height: 28,
                     borderRadius: '50%',
                     border: 'none',
-                    backgroundColor: inputValue.trim() ? colors.accent : 'rgba(255,255,255,0.06)',
-                    color: inputValue.trim() ? '#0d0d10' : colors.mutedDim,
-                    cursor: inputValue.trim() ? 'pointer' : 'default',
+                    backgroundColor: (inputValue.trim() || attachedFiles.length > 0) ? colors.accent : 'rgba(255,255,255,0.06)',
+                    color: (inputValue.trim() || attachedFiles.length > 0) ? '#0d0d10' : colors.mutedDim,
+                    cursor: (inputValue.trim() || attachedFiles.length > 0) ? 'pointer' : 'default',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
@@ -1552,6 +1713,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
                 >
                   {'\u2191'}
                 </button>
+                </div>
               </div>
             </div>
           </div>
