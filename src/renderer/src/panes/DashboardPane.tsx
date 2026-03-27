@@ -51,9 +51,13 @@ const SessionCard: React.FC<{
   onNavigateToTab: (tabId: string) => void;
 }> = ({ session, tabs, onNavigateToTab }) => {
   const [inputValue, setInputValue] = useState('');
+  const [approvalDismissedAt, setApprovalDismissedAt] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const projectName = session.cwd.split('/').pop() || session.cwd;
+  const projectName = session.cwd.split(/[/\\]/).pop() || session.cwd;
+  const cwdShort = session.cwd.length > 50
+    ? '...' + session.cwd.slice(-47)
+    : session.cwd;
   const state = session.ambientState;
   const badgeColor = badgeColors[state] ?? '#555';
   const badgeLabel = badgeLabels[state] ?? state;
@@ -74,10 +78,16 @@ const SessionCard: React.FC<{
     setInputValue('');
   };
 
+  // Claude Code uses an interactive select menu — Enter selects "Yes",
+  // arrow-down twice then Enter selects "No"
   const handleApproval = (approve: boolean) => {
     if (!session.ptyId) return;
-    WriteTerminal(session.ptyId, approve ? 'y' : 'n');
-    setTimeout(() => WriteTerminal(session.ptyId, '\r'), 50);
+    if (approve) {
+      WriteTerminal(session.ptyId, '\r');
+    } else {
+      WriteTerminal(session.ptyId, '\x1b[B\x1b[B\r');
+    }
+    setApprovalDismissedAt(Date.now());
   };
 
   return (
@@ -90,29 +100,59 @@ const SessionCard: React.FC<{
     }}>
       {/* Header */}
       <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
         padding: '10px 14px',
         borderBottom: `1px solid ${colors.borderSubtle}`,
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{ color: colors.accent, fontSize: '0.85rem' }}>{'\u2666'}</span>
-          <span style={{ color: colors.textBright, fontWeight: 600, fontSize: '0.8rem' }}>
-            {projectName}
-          </span>
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginBottom: 4,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+            <span style={{ color: colors.accent, fontSize: '0.85rem', flexShrink: 0 }}>{'\u2666'}</span>
+            <span style={{
+              color: colors.textBright,
+              fontWeight: 600,
+              fontSize: '0.82rem',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}>
+              {projectName}
+            </span>
+          </div>
+          <div style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: '2px 8px',
+            borderRadius: 10,
+            backgroundColor: 'rgba(255,255,255,0.05)',
+            flexShrink: 0,
+            marginLeft: 10,
+          }}>
+            <span style={{
+              display: 'inline-block',
+              width: 6,
+              height: 6,
+              borderRadius: '50%',
+              backgroundColor: badgeColor,
+            }} />
+            <span style={{ color: badgeColor, fontSize: '0.65rem', fontWeight: 600, whiteSpace: 'nowrap' }}>
+              {badgeLabel}
+            </span>
+          </div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{
-            display: 'inline-block',
-            width: 7,
-            height: 7,
-            borderRadius: '50%',
-            backgroundColor: badgeColor,
-          }} />
-          <span style={{ color: badgeColor, fontSize: '0.68rem', fontWeight: 500 }}>
-            {badgeLabel}
-          </span>
+        <div style={{
+          fontSize: '0.6rem',
+          color: colors.muted,
+          fontFamily: 'monospace',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }} title={session.cwd}>
+          {cwdShort}
         </div>
       </div>
 
@@ -135,7 +175,7 @@ const SessionCard: React.FC<{
       )}
 
       {/* Approval prompt */}
-      {state === 'waiting_approval' && session.pendingApproval && (
+      {state === 'waiting_approval' && session.pendingApproval && session.pendingApproval.timestamp > approvalDismissedAt && (
         <div style={{
           padding: '10px 14px',
           borderBottom: `1px solid ${colors.borderSubtle}`,
