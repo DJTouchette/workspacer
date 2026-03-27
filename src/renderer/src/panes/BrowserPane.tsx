@@ -43,31 +43,35 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive, init
 
     const handleDomReady = () => {
       readyRef.current = true;
+      // Inject key forwarder once DOM is ready
+      setTimeout(() => injectKeyForwarder(), 100);
     };
 
-    // Intercept keyboard shortcuts before the webview page handles them
+    // Intercept keyboard shortcuts before the webview page handles them.
+    // Electron <webview> fires before-input-event with (event) where
+    // event has .key, .type, .control, .alt, .shift, .meta properties.
     const handleBeforeInput = (e: any) => {
-      const input = e as { key: string; type: string; control: boolean; alt: boolean; shift: boolean; meta: boolean };
-      if (input.type !== 'keyDown') return;
+      const inp = e;
+      if (!inp || inp.type !== 'keyDown') return;
 
       const isAppShortcut = (
-        (input.control && !input.alt && /^[1-9tbwdsk,/]$/i.test(input.key)) ||
-        (input.control && input.alt && (input.key === 'ArrowLeft' || input.key === 'ArrowRight')) ||
-        (input.control && input.shift) ||
-        (input.alt && !input.control && (input.key === 'ArrowLeft' || input.key === 'ArrowRight')) ||
-        input.key === 'F2'
+        (inp.control && !inp.alt && /^[1-9tbwdsk,/?]$/i.test(inp.key)) ||
+        (inp.control && inp.alt && (inp.key === 'ArrowLeft' || inp.key === 'ArrowRight')) ||
+        (inp.control && inp.shift) ||
+        (inp.alt && !inp.control && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(inp.key)) ||
+        inp.key === 'F2'
       );
 
       if (isAppShortcut) {
-        // Blur the webview so the event reaches the parent window's handler
+        if (e?.preventDefault) e.preventDefault();
         wv.blur();
-        // Re-dispatch the key event on the parent window
         window.dispatchEvent(new KeyboardEvent('keydown', {
-          key: input.key,
-          ctrlKey: input.control,
-          altKey: input.alt,
-          shiftKey: input.shift,
-          metaKey: input.meta,
+          key: inp.key,
+          code: /^[1-9]$/.test(inp.key) ? `Digit${inp.key}` : inp.key,
+          ctrlKey: inp.control ?? false,
+          altKey: inp.alt ?? false,
+          shiftKey: inp.shift ?? false,
+          metaKey: inp.meta ?? false,
           bubbles: true,
           cancelable: true,
         }));
@@ -75,6 +79,57 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive, init
     };
 
     wv.addEventListener('before-input-event', handleBeforeInput);
+
+    // Fallback: inject a key forwarder into the webview content.
+    // Some Electron versions don't fire before-input-event reliably on <webview>.
+    const injectKeyForwarder = () => {
+      try {
+        wv.executeJavaScript(`
+          if (!window.__wksKeyForwarder) {
+            window.__wksKeyForwarder = true;
+            document.addEventListener('keydown', (e) => {
+              const isApp = (
+                (e.ctrlKey && !e.altKey && /^[1-9tbwdsk,/?]$/i.test(e.key)) ||
+                (e.ctrlKey && e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) ||
+                (e.ctrlKey && e.shiftKey) ||
+                (e.altKey && !e.ctrlKey && ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)) ||
+                e.key === 'F2'
+              );
+              if (isApp) {
+                e.preventDefault();
+                e.stopPropagation();
+                // Send via console with a special prefix so the host can intercept
+                console.log('__WKS_KEY__' + JSON.stringify({
+                  key: e.key, ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, meta: e.metaKey
+                }));
+              }
+            }, true);
+          }
+        `);
+      } catch {}
+    };
+
+    // Listen for forwarded keys via console-message
+    const handleConsoleMessage = (e: any) => {
+      const msg = e?.message ?? '';
+      if (!msg.startsWith('__WKS_KEY__')) return;
+      try {
+        const data = JSON.parse(msg.slice('__WKS_KEY__'.length));
+        wv.blur();
+        window.dispatchEvent(new KeyboardEvent('keydown', {
+          key: data.key,
+          code: /^[1-9]$/.test(data.key) ? `Digit${data.key}` : data.key,
+          ctrlKey: data.ctrl ?? false,
+          altKey: data.alt ?? false,
+          shiftKey: data.shift ?? false,
+          metaKey: data.meta ?? false,
+          bubbles: true,
+          cancelable: true,
+        }));
+      } catch {}
+    };
+
+    wv.addEventListener('console-message', handleConsoleMessage);
 
     const handleStartLoading = () => setLoading(true);
     const handleStopLoading = () => {
@@ -106,6 +161,7 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive, init
     return () => {
       wv.removeEventListener('dom-ready', handleDomReady);
       wv.removeEventListener('before-input-event', handleBeforeInput);
+      wv.removeEventListener('console-message', handleConsoleMessage);
       wv.removeEventListener('did-start-loading', handleStartLoading);
       wv.removeEventListener('did-stop-loading', handleStopLoading);
       wv.removeEventListener('did-navigate', handleNavigate);
