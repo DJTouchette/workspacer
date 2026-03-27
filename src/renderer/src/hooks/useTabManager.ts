@@ -24,30 +24,6 @@ export const defaultTabs: TabConfig[] = [
     panes: [{ id: 'dashboard-1', type: 'dashboard', title: 'Dashboard' }],
     activePaneId: 'dashboard-1',
   },
-  {
-    id: 'tab-1',
-    title: 'Terminal 1',
-    panes: [{ id: 'terminal-1', type: 'terminal', title: 'Terminal 1' }],
-    activePaneId: 'terminal-1',
-  },
-  {
-    id: 'tab-2',
-    title: 'Terminal 2',
-    panes: [{ id: 'terminal-2', type: 'terminal', title: 'Terminal 2' }],
-    activePaneId: 'terminal-2',
-  },
-  {
-    id: 'tab-3',
-    title: 'Terminal 3',
-    panes: [{ id: 'terminal-3', type: 'terminal', title: 'Terminal 3' }],
-    activePaneId: 'terminal-3',
-  },
-  {
-    id: 'tab-4',
-    title: 'Notes',
-    panes: [{ id: 'notes-1', type: 'notes', title: 'Notes' }],
-    activePaneId: 'notes-1',
-  },
 ];
 
 export function useTabManager() {
