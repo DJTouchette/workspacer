@@ -8,6 +8,17 @@ import { useClaudeSession } from '../hooks/useClaudeSession';
 import { useConfig } from '../hooks/useConfig';
 import { useTheme } from '../hooks/useTheme';
 import type { ClaudeSessionSnapshot, ToolCall, ConversationTurn, FileChange, PendingApproval, SubagentInfo } from '../types/claudeSession';
+import {
+  claudeColors as colors,
+  ensureKeyframes,
+  StatusBadge,
+  statusBadgeStyle as badgeStyle,
+  formatToolSummary,
+  WorkLogEntry,
+  approvalBtnStyle,
+  StreamingDots,
+  sendApproval,
+} from '../components/claude-shared';
 
 /** Ensure each CSS font-family name with spaces is quoted */
 function quoteFontFamily(ff: string): string {
@@ -32,107 +43,6 @@ type ViewMode = 'gui' | 'terminal';
 
 /** Number of conversation turns rendered per page (oldest load on scroll-up) */
 const CONVERSATION_PAGE_SIZE = 60;
-
-// ── Color Palette ──
-
-const colors = {
-  bg: 'var(--wks-claude-bg)',
-  bgSecondary: 'var(--wks-bg-hover)',
-  bgToolbar: 'var(--wks-bg-surface)',
-  userBubble: 'var(--wks-claude-user-bubble)',
-  userBubbleBorder: 'var(--wks-claude-user-border)',
-  muted: 'var(--wks-text-faint)',
-  mutedDim: 'var(--wks-text-disabled)',
-  accent: 'var(--wks-accent-text)',
-  success: 'var(--wks-success)',
-  error: 'var(--wks-error)',
-  warning: 'var(--wks-warning)',
-  text: 'var(--wks-text-secondary)',
-  textBright: 'var(--wks-text-primary)',
-  border: 'var(--wks-claude-border)',
-  borderSubtle: 'var(--wks-claude-border-subtle)',
-  divider: 'var(--wks-claude-divider)',
-};
-
-// ── CSS Keyframes (injected once) ──
-
-const STYLE_ID = 'claude-pane-keyframes';
-
-function ensureKeyframes() {
-  if (typeof document === 'undefined') return;
-  if (document.getElementById(STYLE_ID)) return;
-  const style = document.createElement('style');
-  style.id = STYLE_ID;
-  style.textContent = `
-    @keyframes claudePulseDot {
-      0%, 80%, 100% { opacity: 0.2; transform: scale(0.85); }
-      40% { opacity: 1; transform: scale(1); }
-    }
-    @keyframes claudeSpinner {
-      to { transform: rotate(360deg); }
-    }
-    @keyframes claudeFadeIn {
-      from { opacity: 0; transform: translateY(4px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-    @keyframes claudeScrollBtn {
-      from { opacity: 0; transform: translateY(8px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-  `;
-  document.head.appendChild(style);
-}
-
-// ── Sub-components ──
-
-const StatusBadge: React.FC<{ session: ClaudeSessionSnapshot | null; approvalDismissed?: boolean }> = ({ session, approvalDismissed }) => {
-  if (!session) return <span style={badgeStyle('#555')}>no session</span>;
-
-  // If user already responded to approval, show as thinking instead
-  const state = (session.ambientState === 'waiting_approval' && approvalDismissed)
-    ? 'thinking'
-    : session.ambientState;
-
-  const badgeColors: Record<string, string> = {
-    idle: colors.success,
-    thinking: colors.warning,
-    streaming: colors.accent,
-    waiting_input: '#c084fc',
-    waiting_approval: colors.error,
-  };
-
-  const labels: Record<string, string> = {
-    idle: 'Idle',
-    thinking: 'Thinking...',
-    streaming: 'Streaming',
-    waiting_input: 'Waiting for input',
-    waiting_approval: 'Needs approval',
-  };
-
-  const color = badgeColors[state] ?? '#555';
-  const label = labels[state] ?? state;
-
-  return (
-    <span style={badgeStyle(color)}>
-      <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', backgroundColor: color, marginRight: 4 }} />
-      {label}
-    </span>
-  );
-};
-
-function badgeStyle(color: string): React.CSSProperties {
-  return {
-    display: 'inline-flex',
-    alignItems: 'center',
-    fontSize: '0.6rem',
-    fontWeight: 600,
-    color: color,
-    padding: '1px 6px',
-    borderRadius: 3,
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    whiteSpace: 'nowrap',
-  };
-}
 
 // ── Working Timer ──
 
@@ -162,27 +72,6 @@ const WorkingTimer: React.FC<{ session: ClaudeSessionSnapshot | null }> = ({ ses
     </span>
   );
 };
-
-// ── Streaming Dots ──
-
-const StreamingDots: React.FC = () => (
-  <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-    {[0, 200, 400].map((delay) => (
-      <span
-        key={delay}
-        style={{
-          display: 'inline-block',
-          width: 6,
-          height: 6,
-          borderRadius: '50%',
-          backgroundColor: colors.muted,
-          animation: `claudePulseDot 1.4s ease-in-out infinite`,
-          animationDelay: `${delay}ms`,
-        }}
-      />
-    ))}
-  </div>
-);
 
 // ── Inline Work Log (tool calls + subagents) ──
 
@@ -341,107 +230,6 @@ const DiffView: React.FC<{ oldStr: string; newStr: string; filePath?: string }> 
             <span style={{ color: colors.success, userSelect: 'none', display: 'inline-block', width: 16 }}>+</span>{line}
           </div>
         ))}
-      </div>
-    </div>
-  );
-};
-
-/** Format tool call as Claude Code style one-liner */
-function formatToolSummary(tc: ToolCall): { call: string; result: string } {
-  const fp = (p: string) => p?.split(/[/\\]/).pop() ?? '';
-
-  switch (tc.name) {
-    case 'Read': {
-      const file = fp(tc.input?.file_path ?? '');
-      const lines = tc.response ? String(tc.response).split('\n').length : 0;
-      return { call: `Read(${file})`, result: lines > 0 ? `Read ${lines} lines` : '' };
-    }
-    case 'Edit':
-    case 'MultiEdit': {
-      const file = fp(tc.input?.file_path ?? '');
-      const old = tc.input?.old_string ?? '';
-      const nw = tc.input?.new_string ?? '';
-      const added = nw ? nw.split('\n').length : 0;
-      const removed = old ? old.split('\n').length : 0;
-      const parts: string[] = [];
-      if (removed > 0) parts.push(`-${removed}`);
-      if (added > 0) parts.push(`+${added}`);
-      return { call: `Edit(${file})`, result: parts.length ? parts.join(' ') + ' lines' : '' };
-    }
-    case 'Write': {
-      const file = fp(tc.input?.file_path ?? '');
-      const lines = tc.input?.content ? tc.input.content.split('\n').length : 0;
-      return { call: `Write(${file})`, result: lines > 0 ? `${lines} lines` : '' };
-    }
-    case 'Bash': {
-      const cmd = (tc.input?.command ?? '').split('\n')[0].slice(0, 60);
-      return { call: `Bash(${cmd})`, result: '' };
-    }
-    case 'Grep': {
-      const pat = tc.input?.pattern ?? '';
-      return { call: `Search(pattern: "${pat}")`, result: '' };
-    }
-    case 'Glob': {
-      const pat = tc.input?.pattern ?? '';
-      return { call: `Search(pattern: "${pat}")`, result: '' };
-    }
-    case 'Agent': {
-      const desc = tc.input?.description ?? 'subagent';
-      return { call: `Agent(${desc})`, result: '' };
-    }
-    default: {
-      const vals = Object.values(tc.input ?? {});
-      const firstStr = vals.find(v => typeof v === 'string') as string | undefined;
-      return { call: `${tc.name}(${firstStr?.slice(0, 40) ?? ''})`, result: '' };
-    }
-  }
-}
-
-const WorkLogEntry: React.FC<{ tc: ToolCall }> = ({ tc }) => {
-  const isRunning = tc.status === 'running';
-  const isFailed = tc.status === 'failed';
-
-  const iconColor = isRunning ? colors.accent : isFailed ? colors.error : colors.success;
-  const { call, result } = formatToolSummary(tc);
-
-  return (
-    <div style={{
-      display: 'flex',
-      alignItems: 'flex-start',
-      gap: 8,
-      padding: '2px 0',
-      fontSize: '0.75rem',
-      lineHeight: 1.5,
-    }}>
-      {isRunning ? (
-        <span style={{
-          display: 'inline-block',
-          width: 12,
-          height: 12,
-          marginTop: 3,
-          border: `1.5px solid ${colors.accent}`,
-          borderTopColor: 'transparent',
-          borderRadius: '50%',
-          animation: 'claudeSpinner 0.8s linear infinite',
-          flexShrink: 0,
-        }} />
-      ) : (
-        <span style={{ color: iconColor, fontSize: '0.7rem', width: 12, textAlign: 'center', flexShrink: 0, marginTop: 2 }}>
-          {isFailed ? '\u2717' : '\u2713'}
-        </span>
-      )}
-      <div style={{ minWidth: 0 }}>
-        <span style={{ color: colors.accent, fontWeight: 600, fontFamily: 'var(--claude-mono-font, monospace)', fontSize: '0.72rem' }}>
-          {call}
-        </span>
-        {result && (
-          <>
-            <br />
-            <span style={{ color: colors.text, fontSize: '0.72rem' }}>
-              {'\u23BF'}&nbsp;&nbsp;{result}
-            </span>
-          </>
-        )}
       </div>
     </div>
   );
@@ -846,18 +634,6 @@ const ApprovalPrompt: React.FC<{ approval: PendingApproval; onRespond: (response
   </div>
 );
 
-function approvalBtnStyle(color: string): React.CSSProperties {
-  return {
-    fontSize: '0.7rem',
-    fontWeight: 600,
-    padding: '4px 16px',
-    borderRadius: 6,
-    border: `1px solid ${color}`,
-    backgroundColor: 'transparent',
-    color,
-    cursor: 'pointer',
-  };
-}
 
 // ── Inline context sections (files, subagents) ──
 
@@ -1306,18 +1082,9 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
     }
   }, [cwd, viewMode]);
 
-  // Send approval response to Claude Code's interactive select menu.
-  // The menu highlights "Yes" by default — Enter selects it.
-  // For deny, arrow down to "No" (3rd item) then Enter.
   const handleApprovalRespond = useCallback((response: string) => {
     console.log(`[ClaudePane] sending approval: "${response}"`);
-    if (response === 'y') {
-      // "Yes" is already highlighted — just press Enter
-      write('\r');
-    } else {
-      // Navigate down to "No" (skip "Yes, and don't ask again") then Enter
-      write('\x1b[B\x1b[B\r');
-    }
+    sendApproval('', response === 'y', write);
     setApprovalDismissedAt(Date.now());
   }, [write]);
 

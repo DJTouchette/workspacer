@@ -2,38 +2,13 @@ import React, { useState, useEffect, useRef } from 'react';
 import type { ClaudeSessionSnapshot } from '../types/claudeSession';
 import type { TabConfig } from '../types/pane';
 import { WriteTerminal } from '../lib/terminalApi';
-
-// ── Colors (shared with ClaudePane) ──
-
-const colors = {
-  bg: 'var(--wks-claude-bg)',
-  bgSecondary: 'var(--wks-bg-hover)',
-  text: 'var(--wks-text-secondary)',
-  textBright: 'var(--wks-text-primary)',
-  muted: 'var(--wks-text-faint)',
-  accent: 'var(--wks-accent-text)',
-  success: 'var(--wks-success)',
-  error: 'var(--wks-error)',
-  warning: 'var(--wks-warning)',
-  border: 'var(--wks-claude-border)',
-  borderSubtle: 'var(--wks-claude-border-subtle)',
-};
-
-const badgeColors: Record<string, string> = {
-  idle: colors.success,
-  thinking: colors.warning,
-  streaming: colors.accent,
-  waiting_input: '#c084fc',
-  waiting_approval: colors.error,
-};
-
-const badgeLabels: Record<string, string> = {
-  idle: 'Idle',
-  thinking: 'Thinking...',
-  streaming: 'Streaming',
-  waiting_input: 'Waiting for input',
-  waiting_approval: 'Needs approval',
-};
+import {
+  claudeColors as colors,
+  badgeColors,
+  badgeLabels,
+  ensureKeyframes,
+  sendApproval,
+} from '../components/claude-shared';
 
 // ── Props ──
 
@@ -78,15 +53,9 @@ const SessionCard: React.FC<{
     setInputValue('');
   };
 
-  // Claude Code uses an interactive select menu — Enter selects "Yes",
-  // arrow-down twice then Enter selects "No"
   const handleApproval = (approve: boolean) => {
     if (!session.ptyId) return;
-    if (approve) {
-      WriteTerminal(session.ptyId, '\r');
-    } else {
-      WriteTerminal(session.ptyId, '\x1b[B\x1b[B\r');
-    }
+    sendApproval(session.ptyId, approve, (data) => WriteTerminal(session.ptyId, data));
     setApprovalDismissedAt(Date.now());
   };
 
@@ -314,6 +283,8 @@ const SessionCard: React.FC<{
 
 const DashboardPane: React.FC<DashboardPaneProps> = ({ title, tabs, onNavigateToTab }) => {
   const [sessions, setSessions] = useState<ClaudeSessionSnapshot[]>([]);
+
+  useEffect(() => { ensureKeyframes(); }, []);
 
   // Initial load + live updates
   useEffect(() => {
