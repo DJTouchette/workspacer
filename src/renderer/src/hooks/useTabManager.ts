@@ -19,6 +19,12 @@ const defaultTitles: Record<PaneType, string> = {
 
 export const defaultTabs: TabConfig[] = [
   {
+    id: 'tab-0',
+    title: 'Dashboard',
+    panes: [{ id: 'dashboard-1', type: 'dashboard', title: 'Dashboard' }],
+    activePaneId: 'dashboard-1',
+  },
+  {
     id: 'tab-1',
     title: 'Terminal 1',
     panes: [{ id: 'terminal-1', type: 'terminal', title: 'Terminal 1' }],

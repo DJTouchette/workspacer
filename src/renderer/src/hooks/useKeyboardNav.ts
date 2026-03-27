@@ -96,12 +96,12 @@ export function useKeyboardNav({
 
   const goToPrevTab = useCallback(() => {
     const idx = tabs.findIndex((t) => t.id === activeTabId);
-    if (idx > 0) goToTab(idx - 1);
+    goToTab(idx > 0 ? idx - 1 : tabs.length - 1);
   }, [tabs, activeTabId, goToTab]);
 
   const goToNextTab = useCallback(() => {
     const idx = tabs.findIndex((t) => t.id === activeTabId);
-    if (idx < tabs.length - 1) goToTab(idx + 1);
+    goToTab(idx < tabs.length - 1 ? idx + 1 : 0);
   }, [tabs, activeTabId, goToTab]);
 
   // Sub-pane navigation within current tab
