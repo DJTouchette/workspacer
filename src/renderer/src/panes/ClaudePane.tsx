@@ -206,7 +206,7 @@ const DiffView: React.FC<{ oldStr: string; newStr: string; filePath?: string }> 
           {addedCount > 0 && <span style={{ color: colors.success, fontSize: '0.65rem', fontWeight: 400 }}>+{addedCount}</span>}
         </div>
       )}
-      <div style={{ maxHeight: 300, overflow: 'auto' }}>
+      <div style={{ maxHeight: 600, overflow: 'auto' }}>
         {oldLines.map((line, i) => (
           <div key={`old-${i}`} style={{
             padding: '1px 12px',
@@ -538,7 +538,7 @@ const ConversationMessage: React.FC<{ turn: ConversationTurn; isLast?: boolean }
           borderRadius: 6,
           overflow: 'hidden',
           border: `1px solid ${colors.borderSubtle}`,
-          maxHeight: 300,
+          maxHeight: 600,
           overflowY: 'auto',
         }}>
           <div style={{
