@@ -8,21 +8,25 @@ interface ShortcutOverlayProps {
 }
 
 const defaultShortcuts: [string, string][] = [
+  ['', 'Navigation'],
   ['Ctrl+1-9', 'Jump to tab'],
-  ['Ctrl+Alt+Left/Right', 'Previous/Next tab'],
-  ['Alt+Arrow', 'Navigate sub-panes'],
+  ['Ctrl+Alt+Left/Right', 'Previous / next tab (wraps)'],
+  ['Alt+Arrow', 'Navigate split panes'],
+  ['', ''],
+  ['', 'Tabs & Panes'],
   ['Ctrl+T', 'New terminal tab'],
   ['Ctrl+B', 'New browser tab'],
   ['Ctrl+D', 'Split current tab'],
   ['Ctrl+W', 'Close pane / tab'],
   ['Ctrl+Shift+1-9', 'Move tab to position'],
   ['F2', 'Rename tab'],
-  ['Dbl-click title', 'Rename'],
-  ['Drag header', 'Reorder tab'],
-  ['Ctrl+K', 'Launch app'],
+  ['', ''],
+  ['', 'Tools'],
+  ['Ctrl+K', 'Command palette (apps + panes)'],
   ['Ctrl+S', 'Save session'],
   ['Ctrl+,', 'Open settings'],
   ['Ctrl+/', 'Toggle this help'],
+  ['Esc', 'Cancel (in Claude GUI mode)'],
 ];
 
 function vimShortcutList(leader: string): [string, string][] {
