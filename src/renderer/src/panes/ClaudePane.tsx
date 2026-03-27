@@ -37,6 +37,7 @@ interface ClaudePaneProps {
   title: string;
   isActive: boolean;
   cwd?: string;
+  profileId?: string;
   onPtyReady?: (paneId: string, ptySessionId: string) => void;
 }
 
@@ -891,7 +892,7 @@ const IssuePeekPopup: React.FC<{ data: IssuePeekData; onClose: () => void }> = (
 
 // ── Main component ──
 
-const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, onPtyReady }) => {
+const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, profileId, onPtyReady }) => {
   const [viewMode, setViewMode] = useState<ViewMode>('terminal');
   const [inputValue, setInputValue] = useState('');
   const [showScrollBtn, setShowScrollBtn] = useState(false);
@@ -934,6 +935,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
     paneId,
     shell: '__claude__',
     cwd,
+    profileId,
     onExit: handleExit,
     defer: true,
   });

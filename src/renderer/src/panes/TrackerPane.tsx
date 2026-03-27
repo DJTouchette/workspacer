@@ -528,7 +528,7 @@ const IssueDetail: React.FC<{
           </div>
           {childIssues.map(child => (
             <div key={child.key} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0', fontSize: '0.7rem' }}>
-              <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: statusColor(child.status_category ?? child.statusCategory ?? 'todo'), flexShrink: 0 }} />
+              <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: statusColor((child as any).status_category ?? child.statusCategory ?? 'todo'), flexShrink: 0 }} />
               <span style={{ color: colors.accent, fontFamily: 'monospace', fontWeight: 600, fontSize: '0.65rem' }}>{child.key}</span>
               <span style={{ color: colors.text }}>{child.title}</span>
             </div>

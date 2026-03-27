@@ -39,8 +39,8 @@ function getPort(id: string): Promise<IPort> {
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // Terminal — control messages stay on IPC, I/O goes through MessagePort
-  createTerminal: (shell: string, cwd?: string, cols?: number, rows?: number): Promise<string> =>
-    ipcRenderer.invoke('terminal:create', shell, cwd, cols, rows),
+  createTerminal: (shell: string, cwd?: string, cols?: number, rows?: number, profileId?: string): Promise<string> =>
+    ipcRenderer.invoke('terminal:create', shell, cwd, cols, rows, profileId),
 
   writeTerminal: (id: string, data: string): void => {
     const port = terminalPorts.get(id);
@@ -107,8 +107,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('session:delete', filename),
 
   // Claude session
-  createClaudeTerminal: (cwd?: string): Promise<string> =>
-    ipcRenderer.invoke('terminal:createClaude', cwd),
+  createClaudeTerminal: (cwd?: string, profileId?: string): Promise<string> =>
+    ipcRenderer.invoke('terminal:createClaude', cwd, profileId),
+
+  // Claude profiles
+  claudeProfilesList: (): Promise<any[]> => ipcRenderer.invoke('claude-profiles:list'),
+  claudeProfilesAdd: (name: string, configDir: string, extraArgs: string[]): Promise<any> =>
+    ipcRenderer.invoke('claude-profiles:add', name, configDir, extraArgs),
+  claudeProfilesUpdate: (id: string, updates: any): Promise<any> =>
+    ipcRenderer.invoke('claude-profiles:update', id, updates),
+  claudeProfilesRemove: (id: string): Promise<void> =>
+    ipcRenderer.invoke('claude-profiles:remove', id),
 
   getClaudeSessionByPty: (ptyId: string): Promise<any> =>
     ipcRenderer.invoke('claude-session:getByPty', ptyId),

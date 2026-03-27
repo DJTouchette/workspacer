@@ -44,6 +44,7 @@ export function useTabManager() {
     url?: string,
     appMode?: boolean,
     cwd?: string,
+    profileId?: string,
   ) => {
     const paneId = generateId(type);
     const tabId = generateId('tab');
@@ -57,6 +58,7 @@ export function useTabManager() {
       url,
       appMode,
       cwd,
+      profileId,
     };
 
     const tab: TabConfig = {

@@ -39,7 +39,7 @@ interface CommandPaletteProps {
   apps: AppEntry[];
   onClose: () => void;
   onLaunchApp: (app: AppEntry) => void;
-  onAddTab: (type: PaneType, shell?: string, label?: string, cwd?: string) => void;
+  onAddTab: (type: PaneType, shell?: string, label?: string, cwd?: string, profileId?: string) => void;
 }
 
 const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, onClose, onLaunchApp, onAddTab }) => {
@@ -89,8 +89,22 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, onClose,
     } else if (item.paneType) {
       if (item.pickFolder) {
         const folder = await window.electronAPI.pickFolder();
-        if (folder) onAddTab(item.paneType, undefined, undefined, folder);
-        else return; // cancelled
+        if (!folder) return; // cancelled
+        // If Claude, check for profiles
+        let selectedProfileId: string | undefined;
+        try {
+          const profiles = await window.electronAPI.claudeProfilesList();
+          if (profiles.length > 1) {
+            // Show quick profile picker via prompt (simple MVP)
+            const names = profiles.map((p: any) => p.name);
+            const choice = window.prompt(`Select profile:\n${names.map((n: string, i: number) => `${i + 1}. ${n}`).join('\n')}\n\nEnter number:`);
+            if (choice) {
+              const idx = parseInt(choice, 10) - 1;
+              if (idx >= 0 && idx < profiles.length) selectedProfileId = profiles[idx].id;
+            }
+          }
+        } catch {}
+        onAddTab(item.paneType, undefined, undefined, folder, selectedProfileId);
       } else {
         onAddTab(item.paneType);
       }

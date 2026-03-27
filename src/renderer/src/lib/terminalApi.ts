@@ -1,5 +1,5 @@
-export function CreateTerminal(shell: string, cwd?: string, cols?: number, rows?: number): Promise<string> {
-  return window.electronAPI.createTerminal(shell, cwd, cols, rows);
+export function CreateTerminal(shell: string, cwd?: string, cols?: number, rows?: number, profileId?: string): Promise<string> {
+  return window.electronAPI.createTerminal(shell, cwd, cols, rows, profileId);
 }
 
 /** Send input to terminal via MessagePort (fire-and-forget, no IPC round-trip) */

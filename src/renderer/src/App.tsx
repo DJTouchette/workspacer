@@ -213,8 +213,8 @@ function App() {
 
   const insertPosition = config.panes.insertPosition || 'after';
 
-  const addTabWithConfig = useCallback((type: PaneType, title?: string, shell?: string, url?: string, appMode?: boolean, cwd?: string) => {
-    return addTab(type, title, insertPosition, shell, url, appMode, cwd);
+  const addTabWithConfig = useCallback((type: PaneType, title?: string, shell?: string, url?: string, appMode?: boolean, cwd?: string, profileId?: string) => {
+    return addTab(type, title, insertPosition, shell, url, appMode, cwd, profileId);
   }, [addTab, insertPosition]);
 
   const openSettings = useCallback(() => {
@@ -275,10 +275,10 @@ function App() {
     setActivePane(tabId, paneId);
   }, [setActiveTabId, setActivePane]);
 
-  const handleAddTab = useCallback((type: PaneType, shell?: string, label?: string, cwd?: string) => {
+  const handleAddTab = useCallback((type: PaneType, shell?: string, label?: string, cwd?: string, profileId?: string) => {
     // Default Claude panes to the app's working directory
     const resolvedCwd = cwd || (type === 'claude' ? appCwdRef.current : undefined);
-    const newId = addTabWithConfig(type, label, shell, undefined, undefined, resolvedCwd);
+    const newId = addTabWithConfig(type, label, shell, undefined, undefined, resolvedCwd, profileId);
     requestAnimationFrame(() => scrollToTab(newId));
   }, [addTabWithConfig, scrollToTab]);
 

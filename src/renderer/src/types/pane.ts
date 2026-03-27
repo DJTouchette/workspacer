@@ -9,6 +9,7 @@ export interface PaneConfig {
   url?: string;
   appMode?: boolean;
   hibernated?: boolean;
+  profileId?: string;
 }
 
 export interface TabConfig {

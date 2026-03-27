@@ -43,6 +43,7 @@ function getClaudeSpawn(): { shell: string; args: string[] } | null {
 
 import { createHeadlessSession, feedData, resizeHeadless, destroyHeadlessSession, detectAmbientState } from './headlessTerminalManager';
 import { claudeSessionStore } from './claudeSessionStore';
+import { claudeProfiles } from './claudeProfiles';
 
 interface TerminalSession {
   pty: pty.IPty;
@@ -75,9 +76,9 @@ class TerminalService {
   }
 
   /** Create a terminal that runs Claude Code CLI with headless mirroring + hook integration */
-  createClaudeTerminal(cwd?: string, cols?: number, rows?: number): string {
+  createClaudeTerminal(cwd?: string, cols?: number, rows?: number, profileId?: string): string {
     // Spawn PTY first — if this throws, don't set up headless/poller
-    const id = this.createTerminalInternal('claude', cwd, true, cols, rows);
+    const id = this.createTerminalInternal('claude', cwd, true, cols, rows, profileId);
 
     try {
       // Create a headless terminal mirror
@@ -98,15 +99,15 @@ class TerminalService {
     return id;
   }
 
-  createTerminal(shell: string, cwd?: string, cols?: number, rows?: number): string {
+  createTerminal(shell: string, cwd?: string, cols?: number, rows?: number, profileId?: string): string {
     // Intercept sentinel value from ClaudePane
     if (shell === '__claude__') {
-      return this.createClaudeTerminal(cwd, cols, rows);
+      return this.createClaudeTerminal(cwd, cols, rows, profileId);
     }
     return this.createTerminalInternal(shell, cwd, false, cols, rows);
   }
 
-  private createTerminalInternal(shell: string, cwd: string | undefined, isClaudeSession: boolean, cols?: number, rows?: number): string {
+  private createTerminalInternal(shell: string, cwd: string | undefined, isClaudeSession: boolean, cols?: number, rows?: number, profileId?: string): string {
     if (!shell) {
       shell = detectDefaultShell();
     }
@@ -114,6 +115,12 @@ class TerminalService {
     const id = crypto.randomUUID();
 
     const env = { ...process.env, TERM: 'xterm-256color' } as Record<string, string>;
+
+    // Apply Claude profile env vars
+    const profile = isClaudeSession && profileId ? claudeProfiles.getProfile(profileId) : undefined;
+    if (profile?.configDir) {
+      env.CLAUDE_CONFIG_DIR = profile.configDir;
+    }
 
     const homedir = process.env.HOME || os.homedir();
     let resolvedCwd = cwd || homedir;
@@ -128,20 +135,21 @@ class TerminalService {
     // For Claude sessions, launch the claude CLI
     let spawnShell: string;
     let spawnArgs: string[];
+    const profileArgs = profile?.extraArgs ?? [];
     if (isClaudeSession) {
       if (process.platform === 'win32') {
         // Prefer native binary, fall back to node+cli.js, then cmd.exe
         const claude = getClaudeSpawn();
         if (claude) {
           spawnShell = claude.shell;
-          spawnArgs = claude.args;
+          spawnArgs = [...claude.args, ...profileArgs];
         } else {
           spawnShell = 'cmd.exe';
-          spawnArgs = ['/c', 'claude'];
+          spawnArgs = ['/c', 'claude', ...profileArgs];
         }
       } else {
         spawnShell = 'claude';
-        spawnArgs = [];
+        spawnArgs = [...profileArgs];
       }
     } else {
       spawnShell = shell;

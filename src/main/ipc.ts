@@ -7,15 +7,16 @@ import { trackerService } from './services/tracker/trackerService';
 import { issueCache } from './services/db';
 import { backgroundSync } from './services/tracker/backgroundSync';
 import { devopsService } from './services/devops/devopsService';
+import { claudeProfiles } from './services/claudeProfiles';
 
 export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // Wire terminal service to use this window for push events
   terminalService.setMainWindow(mainWindow);
 
   // Terminal handlers
-  ipcMain.handle('terminal:create', (_event, shell: string, cwd?: string, cols?: number, rows?: number) => {
+  ipcMain.handle('terminal:create', (_event, shell: string, cwd?: string, cols?: number, rows?: number, profileId?: string) => {
     try {
-      return terminalService.createTerminal(shell, cwd, cols, rows);
+      return terminalService.createTerminal(shell, cwd, cols, rows, profileId);
     } catch (err: any) {
       console.error('[IPC] terminal:create failed:', err?.message);
       throw err;
@@ -23,9 +24,9 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   });
 
   // Claude terminal — spawns claude CLI with headless mirroring
-  ipcMain.handle('terminal:createClaude', (_event, cwd?: string) => {
+  ipcMain.handle('terminal:createClaude', (_event, cwd?: string, profileId?: string) => {
     try {
-      return terminalService.createClaudeTerminal(cwd);
+      return terminalService.createClaudeTerminal(cwd, undefined, undefined, profileId);
     } catch (err: any) {
       console.error('[IPC] terminal:createClaude failed:', err?.message);
       throw err;
@@ -122,6 +123,16 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     if (result.canceled) return [];
     return result.filePaths;
   });
+
+  // ── Claude Profiles ──
+
+  ipcMain.handle('claude-profiles:list', () => claudeProfiles.getProfiles());
+  ipcMain.handle('claude-profiles:add', (_event, name: string, configDir: string, extraArgs: string[]) =>
+    claudeProfiles.addProfile(name, configDir, extraArgs));
+  ipcMain.handle('claude-profiles:update', (_event, id: string, updates: any) =>
+    claudeProfiles.updateProfile(id, updates));
+  ipcMain.handle('claude-profiles:remove', (_event, id: string) =>
+    claudeProfiles.removeProfile(id));
 
   // ── Issue Tracker ──
 
