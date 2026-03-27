@@ -19,7 +19,10 @@ import type {
 // ── Helpers ──
 
 function org(account: TrackerAccount): string {
-  return account.config.org ?? '';
+  let o = account.config.org ?? '';
+  // Strip URL prefix if user pasted the full URL
+  o = o.replace(/^https?:\/\/dev\.azure\.com\/?/i, '').replace(/\/$/, '');
+  return o;
 }
 
 function project(account: TrackerAccount): string {
@@ -249,10 +252,12 @@ export class AzureDevOpsProvider implements TrackerProvider {
 
   async validateCredentials(account: TrackerAccount, token: string): Promise<boolean> {
     try {
-      const url = `${orgBaseUrl(account)}/connectionData`;
+      // Use projects endpoint — more reliable than connectionData
+      const url = `${orgBaseUrl(account)}/projects`;
       await adoGet(url, token);
       return true;
-    } catch {
+    } catch (err) {
+      console.error('[AzureDevOps] validateCredentials failed:', err);
       return false;
     }
   }
