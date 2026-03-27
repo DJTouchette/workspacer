@@ -633,7 +633,7 @@ const RecentPipelinesCard: React.FC = () => {
               : null;
             const durStr = dur ? (dur < 60 ? `${dur}s` : `${Math.floor(dur / 60)}m ${dur % 60}s`) : '';
             return (
-              <div key={p.id} onClick={() => setSelected(p)} style={{ padding: '5px 14px', display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.72rem', cursor: 'pointer' }}>
+              <div key={p.id} onClick={() => setSelected(p)} style={{ padding: '5px 14px', display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.72rem', cursor: 'pointer', minWidth: 0 }}>
                 {p.status === 'running' ? (
                   <span style={{ width: 10, height: 10, border: `1.5px solid ${colors.accent}`, borderTopColor: 'transparent', borderRadius: '50%', animation: 'claudeSpinner 0.8s linear infinite', flexShrink: 0 }} />
                 ) : (
@@ -642,13 +642,13 @@ const RecentPipelinesCard: React.FC = () => {
                 <span style={{ color: colors.text, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
                   {p.name}
                 </span>
-                <span style={{ fontSize: '0.58rem', color: colors.muted, fontFamily: 'monospace', flexShrink: 0 }}>
+                <span style={{ fontSize: '0.55rem', color: colors.muted, fontFamily: 'monospace', flexShrink: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 150 }}>
                   {p.sourceBranch}
                 </span>
-                {durStr && <span style={{ fontSize: '0.55rem', color: colors.muted, flexShrink: 0 }}>{durStr}</span>}
+                {durStr && <span style={{ fontSize: '0.55rem', color: colors.muted, flexShrink: 0, whiteSpace: 'nowrap' }}>{durStr}</span>}
                 <span style={{
                   fontSize: '0.55rem', fontWeight: 600, padding: '1px 5px', borderRadius: 6,
-                  backgroundColor: 'rgba(255,255,255,0.05)', color: pipelineColor(p.status), flexShrink: 0,
+                  backgroundColor: 'rgba(255,255,255,0.05)', color: pipelineColor(p.status), flexShrink: 0, whiteSpace: 'nowrap',
                 }}>
                   {p.status}
                 </span>
