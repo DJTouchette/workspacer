@@ -30,6 +30,9 @@ interface ClaudePaneProps {
 
 type ViewMode = 'gui' | 'terminal';
 
+/** Number of conversation turns rendered per page (oldest load on scroll-up) */
+const CONVERSATION_PAGE_SIZE = 60;
+
 // ── Color Palette ──
 
 const colors = {
@@ -957,6 +960,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   const [approvalDismissedAt, setApprovalDismissedAt] = useState(0);
   const [cancelledAt, setCancelledAt] = useState(0);
+  const [visibleCount, setVisibleCount] = useState(CONVERSATION_PAGE_SIZE);
   const termContainerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -1114,14 +1118,28 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
     if (isNearBottom) {
       conversationEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [isActive, session?.conversation?.length, session?.activeToolCalls?.length]);
+  }, [isActive, session?.conversation?.length, session?.activeToolCalls?.length, session?.completedToolCalls?.length]);
 
-  // Track scroll position for "scroll to bottom" button
+  // Track scroll position for "scroll to bottom" button + lazy load older messages
   const handleScroll = useCallback(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
     const distFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
     setShowScrollBtn(distFromBottom > 150);
+  }, []);
+
+  const hasOlderMessages = conversation.length > visibleCount;
+  const loadOlderMessages = useCallback(() => {
+    const container = scrollContainerRef.current;
+    const prevHeight = container?.scrollHeight ?? 0;
+    setVisibleCount(prev => prev + CONVERSATION_PAGE_SIZE);
+    // Preserve scroll position after DOM grows upward
+    requestAnimationFrame(() => {
+      if (container) {
+        const newHeight = container.scrollHeight;
+        container.scrollTop += newHeight - prevHeight;
+      }
+    });
   }, []);
 
   const scrollToBottom = useCallback(() => {
@@ -1211,34 +1229,46 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [viewMode, isActive, isStreaming, cancelTask]);
 
-  // Only show currently-running tool calls — completed ones come from the
-  // JSONL transcript inside conversation turns (avoids flicker/duplication)
+  // Show active + completed tool calls, excluding any already in conversation
+  // turns (from JSONL transcript) to avoid duplication while keeping history
   const liveToolCalls = useMemo(() => {
-    return [...activeToolCalls];
-  }, [activeToolCalls]);
+    const conversationToolIds = new Set<string>();
+    for (const turn of conversation) {
+      if (turn.toolCalls) {
+        for (const tc of turn.toolCalls) {
+          conversationToolIds.add(tc.id);
+        }
+      }
+    }
+    return [...activeToolCalls, ...completedToolCalls]
+      .filter(tc => !conversationToolIds.has(tc.id));
+  }, [activeToolCalls, completedToolCalls, conversation]);
 
-  // Build rendered conversation with dividers
+  // Build rendered conversation with dividers (windowed to last visibleCount turns)
   const renderedConversation = useMemo(() => {
     const items: React.ReactNode[] = [];
-    let prevRole: string | null = null;
+    const startIdx = Math.max(0, conversation.length - visibleCount);
+    const visibleTurns = conversation.slice(startIdx);
+    // Seed prevRole from turn before the window so the first divider renders correctly
+    let prevRole: string | null = startIdx > 0 ? conversation[startIdx - 1].role : null;
 
-    conversation.forEach((turn, i) => {
-      // Add divider when switching from user to assistant
-      if (turn.role === 'assistant' && prevRole === 'user' && i > 0) {
-        items.push(<TurnDivider key={`div-${i}`} />);
+    visibleTurns.forEach((turn, vi) => {
+      const gi = startIdx + vi; // global index for stable keys
+      if (turn.role === 'assistant' && prevRole === 'user' && gi > 0) {
+        items.push(<TurnDivider key={`div-${gi}`} />);
       }
       items.push(
         <ConversationMessage
-          key={`msg-${i}`}
+          key={`msg-${gi}`}
           turn={turn}
-          isLast={i === conversation.length - 1}
+          isLast={gi === conversation.length - 1}
         />
       );
       prevRole = turn.role;
     });
 
     return items;
-  }, [conversation]);
+  }, [conversation, visibleCount]);
 
   return (
     <div style={{
@@ -1371,6 +1401,29 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
                     <div style={{ fontSize: '0.7rem', marginTop: 6, color: colors.mutedDim }}>
                       Waiting for conversation activity...
                     </div>
+                  </div>
+                )}
+
+                {/* Load older messages */}
+                {hasOlderMessages && (
+                  <div style={{ textAlign: 'center', padding: '8px 0 12px 0' }}>
+                    <button
+                      onClick={loadOlderMessages}
+                      style={{
+                        fontSize: '0.65rem',
+                        fontWeight: 500,
+                        padding: '4px 16px',
+                        borderRadius: 12,
+                        border: `1px solid ${colors.border}`,
+                        backgroundColor: 'rgba(255,255,255,0.03)',
+                        color: colors.muted,
+                        cursor: 'pointer',
+                        fontFamily: 'inherit',
+                      }}
+                    >
+                      Load {Math.min(CONVERSATION_PAGE_SIZE, conversation.length - visibleCount)} earlier messages
+                      {' '}({conversation.length - visibleCount} hidden)
+                    </button>
                   </div>
                 )}
 

@@ -215,6 +215,7 @@ class ClaudeSessionStore {
           completed.status = 'complete';
           completed.completedAt = Date.now();
           session.activeToolCalls = session.activeToolCalls.filter(t => t.id !== event.tool_use_id);
+          session.completedToolCalls.push(completed);
         }
         break;
       }
@@ -246,9 +247,8 @@ class ClaudeSessionStore {
         // Suppress poller briefly — terminal still has recent activity from
         // the response that just finished, which causes false thinking flicker
         this.hookStateTimestamp.set(sessionId, Date.now() + 2000);
-        // Clear active tool calls
+        // Clear active tool calls (completed ones persist as history until next prompt)
         session.activeToolCalls = [];
-        session.completedToolCalls = [];
         // Delayed re-read: final assistant message may still be flushing
         if (session.transcriptPath) {
           setTimeout(() => { this.refreshFromTranscript(session); this.pushUpdate(session); }, 500);
@@ -429,6 +429,15 @@ class ClaudeSessionStore {
         }
       }
       session.lastTranscriptLine += parsed;
+
+      // Housekeeping: drop completedToolCalls already absorbed into conversation
+      if (parsed > 0 && session.completedToolCalls.length > 0) {
+        const convToolIds = new Set<string>();
+        for (const turn of session.conversation) {
+          if (turn.toolCalls) for (const tc of turn.toolCalls) convToolIds.add(tc.id);
+        }
+        session.completedToolCalls = session.completedToolCalls.filter(tc => !convToolIds.has(tc.id));
+      }
     } catch (err) {
       console.error('[SessionStore] transcript read error:', err);
     }
