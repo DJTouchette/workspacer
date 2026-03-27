@@ -1,6 +1,5 @@
 import { BrowserWindow } from 'electron';
 import type { SessionAmbientState } from './headlessTerminalManager';
-import { getNewBufferContent, markBufferPosition, getFullBuffer } from './headlessTerminalManager';
 
 // ── Types ──
 
@@ -176,6 +175,9 @@ class ClaudeSessionStore {
     switch (hookName) {
       case 'SessionStart':
         session.status = 'active';
+        // Suppress poller during startup — CLI prints welcome banner before
+        // showing the > prompt, which causes false thinking/streaming flickers
+        this.hookStateTimestamp.set(sessionId, Date.now() + 3000);
         break;
 
       case 'UserPromptSubmit':
@@ -246,7 +248,12 @@ class ClaudeSessionStore {
         // Clear active tool calls
         session.activeToolCalls = [];
         session.completedToolCalls = [];
-        // Conversation is now driven by JSONL transcript (refreshed above)
+        // Delayed re-reads: the final assistant message may still be flushing
+        // to the transcript when Stop fires. Read again after short delays.
+        if (session.transcriptPath) {
+          setTimeout(() => { this.refreshFromTranscript(session); this.pushUpdate(session); }, 300);
+          setTimeout(() => { this.refreshFromTranscript(session); this.pushUpdate(session); }, 1500);
+        }
         break;
 
       case 'SubagentStart':
@@ -327,170 +334,21 @@ class ClaudeSessionStore {
     const nowIdle = newState === 'idle' || newState === 'waiting_input';
 
     if (wasActive && nowIdle) {
-      // Claude just finished responding — grab terminal output
-      const rawText = getNewBufferContent(ptyId);
-      console.log(`[SessionStore] extraction: raw=${rawText.length} chars`);
-      if (!rawText) return;
-
-      // Clean up terminal artifacts
-      const cleaned = this.cleanTerminalText(rawText);
-      if (!cleaned) return;
-
-      // Try to split into user prompt + assistant response
-      const { userText, assistantText } = this.parseExchange(cleaned);
-
-      if (userText && !this.isDuplicateMessage(session, 'user', userText)) {
-        console.log(`[SessionStore] extracted user message: "${userText.slice(0, 80)}"`);
-        session.conversation.push({
-          role: 'user',
-          content: userText,
-          timestamp: Date.now() - 1000, // slightly before response
-        });
-      }
-
-      if (assistantText && !this.isDuplicateMessage(session, 'assistant', assistantText)) {
-        console.log(`[SessionStore] extracted assistant message: "${assistantText.slice(0, 80)}..."`);
-        session.conversation.push({
-          role: 'assistant',
-          content: assistantText,
-          timestamp: Date.now(),
-        });
-      }
-    } else if (!wasActive && (newState === 'thinking' || newState === 'streaming')) {
-      // Claude starting to think — mark buffer position so we capture from here
-      markBufferPosition(ptyId);
-    }
-  }
-
-  /** Remove terminal control artifacts from text */
-  private cleanTerminalText(text: string): string {
-    return text
-      // Remove common Claude Code UI elements
-      .replace(/^.*Claude Code v[\d.]+.*$/gm, '')
-      .replace(/^.*Tips for getting started.*$/gm, '')
-      .replace(/^.*Welcome back.*$/gm, '')
-      .replace(/^.*Recent activity.*$/gm, '')
-      .replace(/^.*No recent activity.*$/gm, '')
-      .replace(/^.*Run \/init.*$/gm, '')
-      .replace(/^.*\? for shortcuts.*$/gm, '')
-      .replace(/^.*Opus.*context.*$/gm, '')
-      .replace(/^.*Organization.*$/gm, '')
-      .replace(/^.*Claude Max.*$/gm, '')
-      .replace(/^.*@.*\.com.*$/gm, '')
-      // Remove Claude Code status spinners and hook messages
-      .replace(/^.*[✱⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏].*$/gm, '')
-      .replace(/^.*running \w+ hook.*$/gmi, '')
-      .replace(/^.*Cultivating.*$/gm, '')
-      .replace(/^.*Thinking.*$/gm, '')
-      // Remove Claude Code tool call display formatting from terminal
-      .replace(/^\s*(Read|Edit|Write|Bash|Grep|Glob|Search|MultiEdit|Agent|TodoRead|TodoWrite)\(.*\).*$/gm, '')
-      .replace(/^\s*[⎿┃│]\s+.*$/gm, '')  // indented result lines with box-drawing chars
-      .replace(/^\s*⎿\s.*$/gm, '')
-      // Remove horizontal rules (lines of ─, ━, —, - only)
-      .replace(/^[\s─━—\-]{3,}$/gm, '')
-      // Remove prompt markers (◆, >, ❯ at start of line)
-      .replace(/^[◆❯>]\s*/gm, '')
-      // Remove cost/token info lines
-      .replace(/^.*\d+\.\d+[kK]? tokens.*$/gm, '')
-      .replace(/^.*\$\d+\.\d+.*cost.*$/gm, '')
-      // Collapse multiple blank lines
-      .replace(/\n{3,}/g, '\n\n')
-      .trim();
-  }
-
-  /** Try to split terminal output into user input + assistant response */
-  private parseExchange(text: string): { userText: string; assistantText: string } {
-    // Claude Code typically shows: [prompt marker] user text \n\n assistant response \n\n [prompt marker]
-    // After cleaning, we have: user text \n\n assistant response
-    // The first non-empty block is likely the user input, the rest is the response
-
-    const blocks = text.split(/\n\n+/).filter(b => b.trim());
-
-    if (blocks.length === 0) return { userText: '', assistantText: '' };
-    if (blocks.length === 1) {
-      // Single block — treat as assistant response (user input was likely on same line as prompt)
-      return { userText: '', assistantText: blocks[0].trim() };
-    }
-
-    // First block = user input, rest = assistant response
-    const userText = blocks[0].trim();
-    const assistantText = blocks.slice(1).join('\n\n').trim();
-
-    // If user text is very long, it's probably part of the response
-    if (userText.length > 200) {
-      return { userText: '', assistantText: text.trim() };
-    }
-
-    return { userText, assistantText };
-  }
-
-  /**
-   * Parse the full terminal buffer and extract the last assistant response.
-   * Claude Code terminal format:
-   *   ◆ user prompt text
-   *
-   *   assistant response text
-   *
-   *   ◆ (next prompt)
-   *
-   * We find the last response block between prompt markers.
-   */
-  private extractLastResponse(lines: string[]): string {
-    // Find prompt markers: lines starting with ◆, ❯, or > followed by space
-    // Also detect the input prompt (line with just ◆ or > and maybe whitespace)
-    const promptPattern = /^[◆❯>]\s*/;
-    const promptIndices: number[] = [];
-
-    for (let i = 0; i < lines.length; i++) {
-      const trimmed = lines[i].trim();
-      if (promptPattern.test(trimmed)) {
-        promptIndices.push(i);
+      // Conversation data comes exclusively from the JSONL transcript now —
+      // terminal buffer extraction was the old approach and conflicts with
+      // transcript entries via isDuplicateMessage's startsWith logic.
+      if (session.transcriptPath) {
+        this.refreshFromTranscript(session);
       }
     }
-
-    if (promptIndices.length < 2) return '';
-
-    // The last prompt marker is the current input prompt (empty)
-    // The second-to-last is where the user typed their message
-    // The response is between the user's prompt line and the current prompt
-    const userPromptIdx = promptIndices[promptIndices.length - 2];
-    const currentPromptIdx = promptIndices[promptIndices.length - 1];
-
-    // User prompt is on the line with the marker
-    // Response starts on the next line
-    const responseLines: string[] = [];
-    for (let i = userPromptIdx + 1; i < currentPromptIdx; i++) {
-      responseLines.push(lines[i]);
-    }
-
-    // Trim empty lines from edges
-    while (responseLines.length > 0 && responseLines[0].trim() === '') responseLines.shift();
-    while (responseLines.length > 0 && responseLines[responseLines.length - 1].trim() === '') responseLines.pop();
-
-    const response = responseLines.join('\n').trim();
-
-    // Filter out noise: prompt markers, cost lines, token info, status bars, spinners, tool calls
-    return response
-      .replace(/^[●◆❯>]\s*/gm, '')
-      .replace(/^.*\d+\.\d+[kK]? tokens.*$/gm, '')
-      .replace(/^.*\$\d+\.\d+.*$/gm, '')
-      .replace(/^.*\? for shortcuts.*$/gm, '')
-      .replace(/^.*[✱⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏].*$/gm, '')
-      .replace(/^.*running \w+ hook.*$/gmi, '')
-      // Remove tool call display lines
-      .replace(/^\s*(Read|Edit|Write|Bash|Grep|Glob|Search|MultiEdit|Agent|TodoRead|TodoWrite)\(.*\).*$/gm, '')
-      .replace(/^\s*[⎿┃│]\s+.*$/gm, '')
-      .replace(/^.*Cultivating.*$/gm, '')
-      .replace(/^[\s─━—\-]{3,}$/gm, '')
-      .replace(/\n{3,}/g, '\n\n')
-      .trim();
   }
 
   /** Check if a message was already added to avoid duplicates */
   private isDuplicateMessage(session: ClaudeSessionState, role: string, content: string): boolean {
+    if (!content) return false;
     const recent = session.conversation.slice(-5);
     return recent.some(
-      (t) => t.role === role && (t.content === content || content.startsWith(t.content) || t.content.startsWith(content)),
+      (t) => t.role === role && t.content && t.content === content,
     );
   }
 
@@ -558,14 +416,20 @@ class ClaudeSessionStore {
       if (lines.length <= session.lastTranscriptLine) return;
 
       const newLines = lines.slice(session.lastTranscriptLine);
-      session.lastTranscriptLine = lines.length;
 
+      let parsed = 0;
       for (const line of newLines) {
         try {
           const entry = JSON.parse(line);
           this.processTranscriptEntry(session, entry);
-        } catch {}
+          parsed++;
+        } catch {
+          // Stop at first unparseable line — likely a partial write at EOF.
+          // It will be re-read (now complete) on the next hook event.
+          break;
+        }
       }
+      session.lastTranscriptLine += parsed;
     } catch (err) {
       console.error('[SessionStore] transcript read error:', err);
     }
@@ -611,49 +475,45 @@ class ClaudeSessionStore {
         session.conversation.push({ role: 'user', content, timestamp: Date.now() });
       }
     } else if (type === 'assistant' && msg) {
+      // The JSONL transcript streams each content block as a separate entry.
+      // Keep each block as its own conversation turn so text and tool calls
+      // render interlaced in timeline order.
       const blocks = Array.isArray(msg.content) ? msg.content : [];
-      const textParts: string[] = [];
-      const toolCalls: ToolCall[] = [];
 
       for (const block of blocks) {
+        if (block.type === 'thinking') continue;
+
         if (block.type === 'text' && block.text) {
-          textParts.push(block.text);
+          const text = block.text.trim();
+          if (!text) continue;
+          if (!this.isDuplicateMessage(session, 'assistant', text)) {
+            session.conversation.push({
+              role: 'assistant',
+              content: text,
+              timestamp: Date.now(),
+            });
+          }
         } else if (block.type === 'tool_use') {
-          toolCalls.push({
-            id: block.id ?? `tc-${Date.now()}`,
+          const tc: ToolCall = {
+            id: block.id ?? `tc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
             name: block.name ?? 'unknown',
             input: block.input ?? {},
             status: 'complete',
             startedAt: Date.now(),
             completedAt: Date.now(),
-          });
+          };
           session.totalToolCalls++;
-        }
-      }
 
-      const text = textParts.join('\n').trim();
-      if (text && !this.isDuplicateMessage(session, 'assistant', text)) {
-        session.conversation.push({
-          role: 'assistant',
-          content: text,
-          timestamp: Date.now(),
-          toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-        });
-      } else if (toolCalls.length > 0) {
-        const lastAssistant = [...session.conversation].reverse().find(t => t.role === 'assistant');
-        if (lastAssistant) {
-          lastAssistant.toolCalls = [...(lastAssistant.toolCalls ?? []), ...toolCalls];
-        } else {
+          // Each tool call is its own turn — interlaced with text
           session.conversation.push({
             role: 'assistant',
             content: '',
             timestamp: Date.now(),
-            toolCalls,
+            toolCalls: [tc],
           });
         }
       }
     }
-    // 'result' entries are handled via tool_result blocks in user entries above
   }
 
   private pushUpdate(session: ClaudeSessionState): void {

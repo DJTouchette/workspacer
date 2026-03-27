@@ -434,7 +434,7 @@ const WorkLogEntry: React.FC<{ tc: ToolCall }> = ({ tc }) => {
         {result && (
           <>
             <br />
-            <span style={{ color: colors.muted, fontSize: '0.68rem' }}>
+            <span style={{ color: colors.text, fontSize: '0.72rem' }}>
               {'\u23BF'}&nbsp;&nbsp;{result}
             </span>
           </>
@@ -776,14 +776,16 @@ const ConversationMessage: React.FC<{ turn: ConversationTurn; isLast?: boolean }
         </div>
       ))}
 
-      <div style={{
-        paddingLeft: 4,
-        fontSize: '0.8rem',
-        lineHeight: 1.6,
-        color: colors.text,
-      }}>
-        {parseMarkdownBlocks(turn.content || '(empty)')}
-      </div>
+      {turn.content ? (
+        <div style={{
+          paddingLeft: 4,
+          fontSize: '0.8rem',
+          lineHeight: 1.6,
+          color: colors.text,
+        }}>
+          {parseMarkdownBlocks(turn.content)}
+        </div>
+      ) : null}
     </div>
   );
 };
@@ -1206,10 +1208,11 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [viewMode, isActive, isStreaming, cancelTask]);
 
-  // Only show in-progress tool calls globally — completed ones are per-turn
+  // Only show currently-running tool calls — completed ones come from the
+  // JSONL transcript inside conversation turns (avoids flicker/duplication)
   const liveToolCalls = useMemo(() => {
-    return [...completedToolCalls, ...activeToolCalls];
-  }, [completedToolCalls, activeToolCalls]);
+    return [...activeToolCalls];
+  }, [activeToolCalls]);
 
   // Build rendered conversation with dividers
   const renderedConversation = useMemo(() => {
