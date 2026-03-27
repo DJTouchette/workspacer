@@ -1233,12 +1233,18 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
 
   // ── File drag & drop ──
 
-  // Window-level drag & drop — must be on window to prevent Electron's
-  // default file-navigation and to bypass xterm.js canvas event handling
+  // Global drag & drop — document + window level with dropEffect to tell
+  // Electron/Chromium this is a valid drop target (prevents 🚫 cursor)
   useEffect(() => {
-    const onDragOver = (e: DragEvent) => { e.preventDefault(); };
+    const onDragOver = (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    };
     const onDragEnter = (e: DragEvent) => {
       e.preventDefault();
+      e.stopPropagation();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
       dragCounterRef.current++;
       if (e.dataTransfer?.types.includes('Files')) setIsDragOver(true);
     };
@@ -1249,10 +1255,12 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
     };
     const onDrop = (e: DragEvent) => {
       e.preventDefault();
+      e.stopPropagation();
       dragCounterRef.current = 0;
       setIsDragOver(false);
       if (e.dataTransfer) {
         const paths = extractFilePaths(e.dataTransfer);
+        console.log('[ClaudePane] drop paths:', paths);
         if (paths.length > 0) {
           setAttachedFiles(prev => [...prev, ...paths.map(classifyFile)]);
           setViewMode('gui');
@@ -1260,15 +1268,20 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
       }
     };
 
+    // Register on both document and window for maximum coverage
+    document.addEventListener('dragover', onDragOver, true);
+    document.addEventListener('dragenter', onDragEnter, true);
+    document.addEventListener('dragleave', onDragLeave, true);
+    document.addEventListener('drop', onDrop, true);
     window.addEventListener('dragover', onDragOver);
-    window.addEventListener('dragenter', onDragEnter);
-    window.addEventListener('dragleave', onDragLeave);
     window.addEventListener('drop', onDrop);
 
     return () => {
+      document.removeEventListener('dragover', onDragOver, true);
+      document.removeEventListener('dragenter', onDragEnter, true);
+      document.removeEventListener('dragleave', onDragLeave, true);
+      document.removeEventListener('drop', onDrop, true);
       window.removeEventListener('dragover', onDragOver);
-      window.removeEventListener('dragenter', onDragEnter);
-      window.removeEventListener('dragleave', onDragLeave);
       window.removeEventListener('drop', onDrop);
     };
   }, []);

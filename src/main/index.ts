@@ -141,6 +141,9 @@ function createWindow(): void {
   startHookServer();
   installHooks();
 
+  // Prevent Electron from navigating to dropped files
+  mainWindow.webContents.on('will-navigate', (event) => { event.preventDefault(); });
+
   if (process.env.ELECTRON_DEV) {
     mainWindow.loadURL('http://localhost:5173');
   } else {
