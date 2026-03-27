@@ -295,6 +295,7 @@ const MyIssuesCard: React.FC = () => {
   const [accounts, setAccounts] = useState<TrackerAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState(true);
+  const [selectedIssue, setSelectedIssue] = useState<TrackerIssue | null>(null);
 
   const loadIssues = useCallback(async () => {
     setLoading(true);
@@ -393,12 +394,15 @@ const MyIssuesCard: React.FC = () => {
               {projectIssues.map(issue => (
                 <div
                   key={issue.id}
+                  onClick={() => setSelectedIssue(issue)}
                   style={{
                     padding: '5px 14px',
                     display: 'flex',
                     alignItems: 'center',
                     gap: 8,
                     fontSize: '0.72rem',
+                    cursor: 'pointer',
+                    minWidth: 0,
                   }}
                 >
                   <span style={{
@@ -412,7 +416,6 @@ const MyIssuesCard: React.FC = () => {
                     fontFamily: 'monospace',
                     fontSize: '0.65rem',
                     flexShrink: 0,
-                    minWidth: 55,
                   }}>
                     {issue.key}
                   </span>
@@ -422,11 +425,15 @@ const MyIssuesCard: React.FC = () => {
                     textOverflow: 'ellipsis',
                     whiteSpace: 'nowrap',
                     flex: 1,
+                    minWidth: 0,
                   }}>
                     {issue.title}
                   </span>
                   <span style={{
                     fontSize: '0.58rem',
+                    padding: '1px 6px',
+                    borderRadius: 8,
+                    backgroundColor: 'rgba(255,255,255,0.05)',
                     color: statusColor(issue.statusCategory),
                     fontWeight: 500,
                     flexShrink: 0,
@@ -452,6 +459,67 @@ const MyIssuesCard: React.FC = () => {
               Refresh
             </div>
           )}
+        </div>
+      )}
+
+      {/* Issue detail popup */}
+      {selectedIssue && (
+        <div
+          onClick={() => setSelectedIssue(null)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 200,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            backgroundColor: 'rgba(0,0,0,0.5)',
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              width: 480, maxHeight: '70vh', overflow: 'auto',
+              borderRadius: 10, border: `1px solid ${colors.border}`,
+              backgroundColor: 'var(--wks-bg-surface)', padding: '16px 20px',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+              <span style={{ color: colors.accent, fontWeight: 700, fontFamily: 'monospace', fontSize: '0.82rem' }}>
+                {selectedIssue.key}
+              </span>
+              <span style={{
+                fontSize: '0.6rem', fontWeight: 600, padding: '2px 8px', borderRadius: 10,
+                backgroundColor: 'rgba(255,255,255,0.05)',
+                color: statusColor(selectedIssue.statusCategory),
+              }}>
+                {selectedIssue.status}
+              </span>
+              <div style={{ flex: 1 }} />
+              <span onClick={() => setSelectedIssue(null)} style={{ cursor: 'pointer', color: colors.muted, fontSize: '0.85rem' }}>{'\u00D7'}</span>
+            </div>
+            <div style={{ fontSize: '0.85rem', fontWeight: 600, color: colors.textBright, marginBottom: 8 }}>
+              {selectedIssue.title}
+            </div>
+            <div style={{ fontSize: '0.65rem', color: colors.muted, marginBottom: 10, display: 'flex', gap: 12 }}>
+              <span>Type: {selectedIssue.type}</span>
+              {selectedIssue.priority && <span>Priority: {selectedIssue.priority}</span>}
+              {selectedIssue.assignee && <span>Assignee: {selectedIssue.assignee}</span>}
+            </div>
+            {selectedIssue.labels.length > 0 && (
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 10 }}>
+                {selectedIssue.labels.map(l => (
+                  <span key={l} style={{ fontSize: '0.58rem', padding: '1px 6px', borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.06)', color: colors.text }}>{l}</span>
+                ))}
+              </div>
+            )}
+            {selectedIssue.description && (
+              <div style={{
+                fontSize: '0.72rem', lineHeight: 1.5, color: colors.text,
+                whiteSpace: 'pre-wrap', padding: '10px 12px', borderRadius: 6,
+                border: `1px solid ${colors.borderSubtle}`, backgroundColor: 'rgba(255,255,255,0.02)',
+                maxHeight: 250, overflow: 'auto',
+              }}>
+                {selectedIssue.description}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
