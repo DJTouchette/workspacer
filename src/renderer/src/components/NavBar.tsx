@@ -6,7 +6,7 @@ interface NavBarProps {
   tabs: TabConfig[];
   activeTabId: string;
   onTabClick: (id: string) => void;
-  onAddTab?: (type: PaneType, shell?: string, label?: string, cwd?: string) => void;
+  onAddTab?: (type: PaneType, shell?: string, label?: string, cwd?: string, profileId?: string) => void;
 }
 
 const typeLabels: Record<PaneType, string> = {
@@ -26,6 +26,7 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
   const navHeight = config.ui.navBarHeight || 28;
   const shells = config.terminal.shells || [];
   const [showMenu, setShowMenu] = useState(false);
+  const [profilePickerState, setProfilePickerState] = useState<{ folder: string; profiles: any[] } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -204,7 +205,16 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
                 <MenuButton label="Claude" onClick={async () => {
                   setShowMenu(false);
                   const folder = await window.electronAPI.pickFolder();
-                  if (folder) onAddTab('claude', undefined, undefined, folder);
+                  if (!folder) return;
+                  // Check for profiles — show picker if more than 1
+                  try {
+                    const profiles = await window.electronAPI.claudeProfilesList();
+                    if (profiles.length > 1) {
+                      setProfilePickerState({ folder, profiles });
+                      return;
+                    }
+                  } catch {}
+                  onAddTab('claude', undefined, undefined, folder);
                 }} />
                 <MenuButton label="Dashboard" onClick={() => { setShowMenu(false); onAddTab('dashboard'); }} />
                 <MenuButton label="Tracker" onClick={() => { setShowMenu(false); onAddTab('tracker'); }} />
@@ -232,6 +242,56 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
           </div>
         )}
       </div>
+      {/* Profile Picker Modal */}
+      {profilePickerState && (
+        <div
+          onClick={() => setProfilePickerState(null)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 3000,
+            display: 'flex', justifyContent: 'center', paddingTop: '20vh',
+            backgroundColor: 'rgba(0,0,0,0.4)',
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              backgroundColor: 'var(--wks-bg-raised)', border: '1px solid var(--wks-border-input)',
+              borderRadius: 8, width: 320, padding: '12px 0', maxHeight: 300,
+              boxShadow: '0 8px 32px var(--wks-shadow)',
+            }}
+          >
+            <div style={{ padding: '0 16px 8px', fontSize: '0.75rem', fontWeight: 600, color: 'var(--wks-text-secondary)', borderBottom: '1px solid var(--wks-border)' }}>
+              Select Claude Profile
+            </div>
+            {profilePickerState.profiles.map((p: any) => (
+              <div
+                key={p.id}
+                onClick={() => {
+                  const { folder } = profilePickerState;
+                  setProfilePickerState(null);
+                  onAddTab?.('claude', undefined, undefined, folder, p.id);
+                }}
+                style={{
+                  padding: '8px 16px', cursor: 'pointer', fontSize: '0.72rem',
+                  display: 'flex', alignItems: 'center', gap: 8,
+                }}
+                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--wks-bg-selected)'; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'; }}
+              >
+                <span style={{ color: p.isDefault ? 'var(--wks-accent)' : 'var(--wks-text-disabled)', fontSize: '0.7rem' }}>
+                  {p.isDefault ? '\u2666' : '\u25CB'}
+                </span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ color: 'var(--wks-text-primary)', fontWeight: 500 }}>{p.name}</div>
+                  {p.extraArgs.length > 0 && (
+                    <div style={{ fontSize: '0.58rem', color: 'var(--wks-text-faint)', fontFamily: 'monospace' }}>{p.extraArgs.join(' ')}</div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </nav>
   );
 };

@@ -45,6 +45,7 @@ interface CommandPaletteProps {
 const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, onClose, onLaunchApp, onAddTab }) => {
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [profilePicker, setProfilePicker] = useState<{ folder: string; profiles: any[]; paneType: PaneType } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Build unified item list: actions first, then apps
@@ -66,6 +67,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, onClose,
     if (visible) {
       setQuery('');
       setSelectedIndex(0);
+      setProfilePicker(null);
       setTimeout(() => inputRef.current?.focus(), 0);
     }
   }, [visible]);
@@ -89,22 +91,16 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, onClose,
     } else if (item.paneType) {
       if (item.pickFolder) {
         const folder = await window.electronAPI.pickFolder();
-        if (!folder) return; // cancelled
-        // If Claude, check for profiles
-        let selectedProfileId: string | undefined;
+        if (!folder) return;
+        // Check for profiles — show picker inline if multiple
         try {
           const profiles = await window.electronAPI.claudeProfilesList();
           if (profiles.length > 1) {
-            // Show quick profile picker via prompt (simple MVP)
-            const names = profiles.map((p: any) => p.name);
-            const choice = window.prompt(`Select profile:\n${names.map((n: string, i: number) => `${i + 1}. ${n}`).join('\n')}\n\nEnter number:`);
-            if (choice) {
-              const idx = parseInt(choice, 10) - 1;
-              if (idx >= 0 && idx < profiles.length) selectedProfileId = profiles[idx].id;
-            }
+            setProfilePicker({ folder, profiles, paneType: item.paneType });
+            return;
           }
         } catch {}
-        onAddTab(item.paneType, undefined, undefined, folder, selectedProfileId);
+        onAddTab(item.paneType, undefined, undefined, folder);
       } else {
         onAddTab(item.paneType);
       }
@@ -132,6 +128,51 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, onClose,
   }, [filtered, selectedIndex, onClose, activateItem]);
 
   if (!visible) return null;
+
+  // Profile picker sub-view
+  if (profilePicker) {
+    return (
+      <div
+        style={{ position: 'fixed', inset: 0, backgroundColor: 'var(--wks-overlay)', display: 'flex', justifyContent: 'center', paddingTop: '15vh', zIndex: 2000 }}
+        onClick={() => { setProfilePicker(null); onClose(); }}
+      >
+        <div
+          style={{ backgroundColor: 'var(--wks-bg-raised)', border: '1px solid var(--wks-border-input)', borderRadius: 8, width: 340, maxHeight: 320, overflow: 'hidden', boxShadow: '0 8px 32px var(--wks-shadow)', display: 'flex', flexDirection: 'column' }}
+          onClick={e => e.stopPropagation()}
+        >
+          <div style={{ padding: '12px 16px 8px', fontSize: '0.75rem', fontWeight: 600, color: 'var(--wks-text-secondary)', borderBottom: '1px solid var(--wks-border)' }}>
+            Select Claude Profile
+          </div>
+          <div style={{ overflow: 'auto', padding: '4px 0' }}>
+            {profilePicker.profiles.map((p: any) => (
+              <div
+                key={p.id}
+                onClick={() => {
+                  const { folder, paneType } = profilePicker;
+                  setProfilePicker(null);
+                  onAddTab(paneType, undefined, undefined, folder, p.id);
+                  onClose();
+                }}
+                style={{ padding: '8px 16px', cursor: 'pointer', fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: 8 }}
+                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--wks-bg-selected)'; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'; }}
+              >
+                <span style={{ color: p.isDefault ? 'var(--wks-accent)' : 'var(--wks-text-disabled)', fontSize: '0.7rem' }}>
+                  {p.isDefault ? '\u2666' : '\u25CB'}
+                </span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ color: 'var(--wks-text-primary)', fontWeight: 500 }}>{p.name}</div>
+                  {p.extraArgs?.length > 0 && (
+                    <div style={{ fontSize: '0.55rem', color: 'var(--wks-text-faint)', fontFamily: 'monospace' }}>{p.extraArgs.join(' ')}</div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // Group filtered items by category for visual separation
   const actions = filtered.filter(i => i.category === 'action');
