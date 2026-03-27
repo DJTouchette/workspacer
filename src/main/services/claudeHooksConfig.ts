@@ -37,6 +37,25 @@ function getClaudeSettingsPath(): string {
   return path.join(os.homedir(), '.claude', 'settings.json');
 }
 
+/** Get settings paths for all Claude profile config dirs */
+function getAllSettingsPaths(): string[] {
+  const paths = [getClaudeSettingsPath()];
+  try {
+    const profilesFile = path.join(os.homedir(), '.config', 'workspacer', 'claude-profiles.json');
+    if (fs.existsSync(profilesFile)) {
+      const data = JSON.parse(fs.readFileSync(profilesFile, 'utf-8'));
+      for (const profile of data.profiles ?? []) {
+        if (profile.configDir) {
+          const resolved = profile.configDir.replace(/^~/, os.homedir());
+          const settingsPath = path.join(resolved, 'settings.json');
+          if (!paths.includes(settingsPath)) paths.push(settingsPath);
+        }
+      }
+    }
+  } catch {}
+  return paths;
+}
+
 function readSettings(): any {
   const settingsPath = getClaudeSettingsPath();
   try {
@@ -151,7 +170,53 @@ export function installHooks(): boolean {
     console.log('[ClaudeHooks] hooks already configured');
   }
 
+  // Also install hooks in all profile config dirs
+  installHooksToProfiles();
+
   return changed;
+}
+
+/** Ensure hooks exist in all Claude profile settings files */
+function installHooksToProfiles(): void {
+  for (const settingsPath of getAllSettingsPaths()) {
+    if (settingsPath === getClaudeSettingsPath()) continue; // already handled above
+    try {
+      const dir = path.dirname(settingsPath);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
+      let profileSettings: any = {};
+      if (fs.existsSync(settingsPath)) {
+        profileSettings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+      }
+
+      if (!profileSettings.hooks) profileSettings.hooks = {};
+      let changed = false;
+
+      for (const event of HOOK_EVENTS) {
+        if (!profileSettings.hooks[event]) {
+          profileSettings.hooks[event] = [{ hooks: [makeHookEntry()] }];
+          changed = true;
+        } else {
+          const matchers: any[] = profileSettings.hooks[event];
+          const hasIt = matchers.some((m: any) => Array.isArray(m.hooks) && hasWorkspacerHook(m.hooks));
+          if (!hasIt) {
+            let catchAll = matchers.find((m: any) => !m.matcher);
+            if (!catchAll) { catchAll = { hooks: [] }; matchers.push(catchAll); }
+            if (!Array.isArray(catchAll.hooks)) catchAll.hooks = [];
+            catchAll.hooks.push(makeHookEntry());
+            changed = true;
+          }
+        }
+      }
+
+      if (changed) {
+        fs.writeFileSync(settingsPath, JSON.stringify(profileSettings, null, 2) + '\n', 'utf-8');
+        console.log(`[ClaudeHooks] installed hooks into ${settingsPath}`);
+      }
+    } catch (err) {
+      console.error(`[ClaudeHooks] failed to install hooks in ${settingsPath}:`, err);
+    }
+  }
 }
 
 /**
