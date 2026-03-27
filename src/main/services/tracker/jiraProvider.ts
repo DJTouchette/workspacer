@@ -31,7 +31,7 @@ function headers(account: TrackerAccount, token: string): Record<string, string>
 }
 
 async function jiraFetch(account: TrackerAccount, token: string, path: string): Promise<any> {
-  const url = `${baseUrl(account)}/rest/api/2${path}`;
+  const url = `${baseUrl(account)}/rest/api/3${path}`;
   const res = await fetch(url, { headers: headers(account, token) });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
@@ -135,7 +135,7 @@ export class JiraProvider implements TrackerProvider {
     const data = await jiraFetch(
       account,
       token,
-      `/search?jql=${encodeURIComponent(jql)}&maxResults=${maxResults}&startAt=${startAt}&fields=summary,status,assignee,priority,issuetype,project,labels,created,updated,description`,
+      `/search/jql?jql=${encodeURIComponent(jql)}&maxResults=${maxResults}&startAt=${startAt}&fields=summary,status,assignee,priority,issuetype,project,labels,created,updated,description`,
     );
 
     return (data.issues ?? []).map((raw: any) => mapIssue(account, raw));
