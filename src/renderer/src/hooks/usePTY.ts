@@ -81,12 +81,18 @@ export function usePTY({ paneId, shell = '', cwd, onExit, defer = false }: UsePT
     });
   }, []);
 
+  // Debounce resize to avoid flooding IPC during window drag
+  const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const resize = useCallback((cols: number, rows: number) => {
     const id = sessionIdRef.current;
     if (!id) return;
-    ResizeTerminal(id, cols, rows).catch((err) => {
-      console.error('[usePTY] resize error:', err);
-    });
+    if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current);
+    resizeTimerRef.current = setTimeout(() => {
+      resizeTimerRef.current = null;
+      ResizeTerminal(id, cols, rows).catch((err) => {
+        console.error('[usePTY] resize error:', err);
+      });
+    }, 50);
   }, []);
 
   // Core init logic shared by auto and deferred modes
@@ -162,6 +168,10 @@ export function usePTY({ paneId, shell = '', cwd, onExit, defer = false }: UsePT
       if (rafRef.current !== null) {
         cancelAnimationFrame(rafRef.current);
         rafRef.current = null;
+      }
+      if (resizeTimerRef.current !== null) {
+        clearTimeout(resizeTimerRef.current);
+        resizeTimerRef.current = null;
       }
       pendingOutputRef.current = [];
 

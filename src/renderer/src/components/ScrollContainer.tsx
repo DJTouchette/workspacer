@@ -1,14 +1,22 @@
-import React, { useRef, useState, useCallback, useEffect, useImperativeHandle, forwardRef } from 'react';
+import React, { useRef, useState, useCallback, useEffect, useImperativeHandle, forwardRef, Suspense } from 'react';
 import Pane from './Pane';
 import { PaneConfig, TabConfig } from '../types/pane';
 import TerminalPane from '../panes/TerminalPane';
-import BrowserPane from '../panes/BrowserPane';
-import NotesPane from '../panes/NotesPane';
-import AgentPane from '../panes/AgentPane';
 import ClaudePane from '../panes/ClaudePane';
-import SettingsPane from '../panes/SettingsPane';
-import DashboardPane from '../panes/DashboardPane';
 import { useConfig } from '../hooks/useConfig';
+
+// Lazy-load pane types that aren't needed on initial render
+const BrowserPane = React.lazy(() => import('../panes/BrowserPane'));
+const NotesPane = React.lazy(() => import('../panes/NotesPane'));
+const AgentPane = React.lazy(() => import('../panes/AgentPane'));
+const SettingsPane = React.lazy(() => import('../panes/SettingsPane'));
+const DashboardPane = React.lazy(() => import('../panes/DashboardPane'));
+
+const PaneFallback = () => (
+  <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--wks-bg-base)', color: 'var(--wks-text-muted)', fontSize: '0.8rem' }}>
+    Loading…
+  </div>
+);
 
 interface ScrollContainerProps {
   tabs: TabConfig[];
@@ -39,18 +47,26 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
   switch (pane.type) {
     case 'terminal':
       return <TerminalPane paneId={pane.id} title={pane.title} isActive={isActive} shell={pane.shell} cwd={pane.cwd} onPtyReady={callbacks.onPtyReady} />;
-    case 'browser':
-      return <BrowserPane paneId={pane.id} title={pane.title} isActive={isActive} initialUrl={pane.url} appMode={pane.appMode} hibernated={pane.hibernated} onUrlChange={(url) => callbacks.onUrlChange?.(pane.id, url)} />;
-    case 'notes':
-      return <NotesPane title={pane.title} />;
-    case 'agent':
-      return <AgentPane title={pane.title} />;
     case 'claude':
       return <ClaudePane paneId={pane.id} title={pane.title} isActive={isActive} cwd={pane.cwd} onPtyReady={callbacks.onPtyReady} />;
+    case 'browser':
+      return (
+        <Suspense fallback={<PaneFallback />}>
+          <BrowserPane paneId={pane.id} title={pane.title} isActive={isActive} initialUrl={pane.url} appMode={pane.appMode} hibernated={pane.hibernated} onUrlChange={(url) => callbacks.onUrlChange?.(pane.id, url)} />
+        </Suspense>
+      );
+    case 'notes':
+      return <Suspense fallback={<PaneFallback />}><NotesPane title={pane.title} /></Suspense>;
+    case 'agent':
+      return <Suspense fallback={<PaneFallback />}><AgentPane title={pane.title} /></Suspense>;
     case 'settings':
-      return <SettingsPane title={pane.title} />;
+      return <Suspense fallback={<PaneFallback />}><SettingsPane title={pane.title} /></Suspense>;
     case 'dashboard':
-      return <DashboardPane title={pane.title} tabs={callbacks.tabs ?? []} onNavigateToTab={callbacks.onNavigateToTab ?? (() => {})} />;
+      return (
+        <Suspense fallback={<PaneFallback />}>
+          <DashboardPane title={pane.title} tabs={callbacks.tabs ?? []} onNavigateToTab={callbacks.onNavigateToTab ?? (() => {})} />
+        </Suspense>
+      );
     default:
       return <div>Unknown pane type</div>;
   }

@@ -67,7 +67,7 @@ function detectDefaultShell(): string {
 class TerminalService {
   private sessions: Map<string, TerminalSession> = new Map();
   private mainWindow: BrowserWindow | null = null;
-  private ambientPollers = new Map<string, ReturnType<typeof setInterval>>();
+  private ambientPollers = new Map<string, ReturnType<typeof setTimeout>>();
 
   setMainWindow(win: BrowserWindow): void {
     this.mainWindow = win;
@@ -87,12 +87,9 @@ class TerminalService {
       const resolvedCwd = session?.cwd ?? cwd ?? '';
       claudeSessionStore.registerPendingPty(id, resolvedCwd);
 
-      // Start ambient state polling (routes by ptyId, works once binding is established)
-      const poller = setInterval(() => {
-        const state = detectAmbientState(id);
-        claudeSessionStore.updateAmbientStateByPty(id, state);
-      }, 300);
-      this.ambientPollers.set(id, poller);
+      // Start adaptive ambient state polling — polls faster during activity,
+      // backs off when idle to reduce CPU usage.
+      this.startAdaptivePoller(id);
     } catch (err) {
       console.error('[TerminalService] Claude session setup failed:', err);
     }
@@ -224,10 +221,42 @@ class TerminalService {
       claudeSessionStore.unregisterPty(id);
       const poller = this.ambientPollers.get(id);
       if (poller) {
-        clearInterval(poller);
+        clearTimeout(poller);
         this.ambientPollers.delete(id);
       }
     }
+  }
+
+  /** Adaptive poller: 300ms when active/streaming, 2000ms when idle */
+  private startAdaptivePoller(id: string): void {
+    let currentInterval = 300;
+    const FAST_INTERVAL = 300;
+    const SLOW_INTERVAL = 2000;
+
+    const poll = () => {
+      const session = this.sessions.get(id);
+      if (!session || session.closed) {
+        const timer = this.ambientPollers.get(id);
+        if (timer) clearTimeout(timer);
+        this.ambientPollers.delete(id);
+        return;
+      }
+
+      const state = detectAmbientState(id);
+      claudeSessionStore.updateAmbientStateByPty(id, state);
+
+      // Pick interval based on current state
+      const isActive = state === 'streaming' || state === 'thinking';
+      const desiredInterval = isActive ? FAST_INTERVAL : SLOW_INTERVAL;
+      currentInterval = desiredInterval;
+
+      const timer = setTimeout(poll, currentInterval);
+      this.ambientPollers.set(id, timer);
+    };
+
+    // Kick off with fast interval
+    const timer = setTimeout(poll, FAST_INTERVAL);
+    this.ambientPollers.set(id, timer);
   }
 
   getTerminalPid(id: string): number | undefined {
