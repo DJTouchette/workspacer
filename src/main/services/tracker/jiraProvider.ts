@@ -127,9 +127,8 @@ export class JiraProvider implements TrackerProvider {
     if (options.status) clauses.push(`status = "${options.status}"`);
     if (options.assignedToMe) clauses.push('assignee = currentUser()');
     if (options.query) clauses.push(`text ~ "${options.query.replace(/"/g, '\\"')}"`);
-    if (clauses.length === 0) clauses.push('ORDER BY updated DESC');
 
-    const jql = clauses.join(' AND ') + ' ORDER BY updated DESC';
+    const jql = (clauses.length > 0 ? clauses.join(' AND ') + ' ' : '') + 'ORDER BY updated DESC';
     const maxResults = options.maxResults ?? 50;
     const startAt = options.startAt ?? 0;
 

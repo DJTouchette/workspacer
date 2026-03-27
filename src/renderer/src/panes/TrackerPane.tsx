@@ -252,15 +252,18 @@ const IssueList: React.FC<{
 }> = ({ accountId, projectKey, projectName, onSelect, onBack }) => {
   const [issues, setIssues] = useState<TrackerIssue[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [search, setSearch] = useState('');
 
   const load = useCallback((query?: string) => {
     setLoading(true);
+    setError('');
     const opts = query
       ? { projectKey, query, maxResults: 30 }
       : { projectKey, maxResults: 50 };
     window.electronAPI.trackerListIssues(accountId, opts)
       .then(i => setIssues(i))
+      .catch(e => setError(e?.message ?? 'Failed to load issues'))
       .finally(() => setLoading(false));
   }, [accountId, projectKey]);
 
@@ -291,6 +294,10 @@ const IssueList: React.FC<{
       </div>
 
       {loading && <div style={{ color: colors.muted, fontSize: '0.75rem' }}>Loading...</div>}
+      {error && <div style={{ color: colors.error, fontSize: '0.75rem', marginBottom: 8 }}>{error}</div>}
+      {!loading && !error && issues.length === 0 && (
+        <div style={{ color: colors.muted, fontSize: '0.75rem', marginTop: 12 }}>No issues found</div>
+      )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
         {issues.map(issue => (
