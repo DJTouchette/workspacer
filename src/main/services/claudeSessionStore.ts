@@ -243,16 +243,15 @@ class ClaudeSessionStore {
       case 'Stop':
         session.ambientState = 'idle';
         session.pendingApproval = null;
-        // Clear the poller lock so idle state sticks
-        this.hookStateTimestamp.delete(sessionId);
+        // Suppress poller briefly — terminal still has recent activity from
+        // the response that just finished, which causes false thinking flicker
+        this.hookStateTimestamp.set(sessionId, Date.now() + 2000);
         // Clear active tool calls
         session.activeToolCalls = [];
         session.completedToolCalls = [];
-        // Delayed re-reads: the final assistant message may still be flushing
-        // to the transcript when Stop fires. Read again after short delays.
+        // Delayed re-read: final assistant message may still be flushing
         if (session.transcriptPath) {
-          setTimeout(() => { this.refreshFromTranscript(session); this.pushUpdate(session); }, 300);
-          setTimeout(() => { this.refreshFromTranscript(session); this.pushUpdate(session); }, 1500);
+          setTimeout(() => { this.refreshFromTranscript(session); this.pushUpdate(session); }, 500);
         }
         break;
 
