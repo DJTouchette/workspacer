@@ -1102,8 +1102,11 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
     }
   }, [terminalTheme]);
 
-  // Auto-scroll conversation to bottom
+  // Auto-scroll conversation to bottom (only when this pane is active —
+  // scrollIntoView scrolls all ancestors, which would yank the outer
+  // ScrollContainer back to this tab even when viewing another tab)
   useEffect(() => {
+    if (!isActive) return;
     const container = scrollContainerRef.current;
     if (!container) return;
     // Only auto-scroll if user is near the bottom
@@ -1111,7 +1114,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
     if (isNearBottom) {
       conversationEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [session?.conversation?.length, session?.activeToolCalls?.length]);
+  }, [isActive, session?.conversation?.length, session?.activeToolCalls?.length]);
 
   // Track scroll position for "scroll to bottom" button
   const handleScroll = useCallback(() => {

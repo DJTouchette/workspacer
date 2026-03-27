@@ -7,6 +7,7 @@ import NotesPane from '../panes/NotesPane';
 import AgentPane from '../panes/AgentPane';
 import ClaudePane from '../panes/ClaudePane';
 import SettingsPane from '../panes/SettingsPane';
+import DashboardPane from '../panes/DashboardPane';
 import { useConfig } from '../hooks/useConfig';
 
 interface ScrollContainerProps {
@@ -19,6 +20,7 @@ interface ScrollContainerProps {
   onTabMove?: (tabId: string, toIndex: number) => void;
   onPtyReady?: (paneId: string, ptySessionId: string) => void;
   onUrlChange?: (tabId: string, paneId: string, url: string) => void;
+  onNavigateToTab?: (tabId: string) => void;
   renameSignal?: number;
 }
 
@@ -29,6 +31,8 @@ export interface ScrollContainerRef {
 interface PaneCallbacks {
   onPtyReady?: (paneId: string, ptySessionId: string) => void;
   onUrlChange?: (paneId: string, url: string) => void;
+  tabs?: TabConfig[];
+  onNavigateToTab?: (tabId: string) => void;
 }
 
 function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneCallbacks) {
@@ -45,6 +49,8 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
       return <ClaudePane paneId={pane.id} title={pane.title} isActive={isActive} cwd={pane.cwd} onPtyReady={callbacks.onPtyReady} />;
     case 'settings':
       return <SettingsPane title={pane.title} />;
+    case 'dashboard':
+      return <DashboardPane title={pane.title} tabs={callbacks.tabs ?? []} onNavigateToTab={callbacks.onNavigateToTab ?? (() => {})} />;
     default:
       return <div>Unknown pane type</div>;
   }
@@ -138,7 +144,7 @@ function TilingLayout({
 }
 
 const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
-  ({ tabs, activeTabId, onTabFocus, onPaneClose, onPaneFocus, onTabRename, onTabMove, onPtyReady, onUrlChange, renameSignal }, ref) => {
+  ({ tabs, activeTabId, onTabFocus, onPaneClose, onPaneFocus, onTabRename, onTabMove, onPtyReady, onUrlChange, onNavigateToTab, renameSignal }, ref) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const { config } = useConfig();
     const peek = config.panes?.peek ?? 80;
@@ -248,6 +254,8 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
             onUrlChange: onUrlChange
               ? (paneId: string, url: string) => onUrlChange(tab.id, paneId, url)
               : undefined,
+            tabs,
+            onNavigateToTab: onNavigateToTab ?? onTabFocus,
           };
 
           return (

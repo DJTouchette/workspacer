@@ -16,6 +16,7 @@ const typeLabels: Record<PaneType, string> = {
   agent: '\u{1F916}',
   claude: '\u2666',
   settings: '\u2699',
+  dashboard: '\u{1F4CA}',
 };
 
 const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab }) => {
@@ -203,6 +204,7 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
                   const folder = await window.electronAPI.pickFolder();
                   if (folder) onAddTab('claude', undefined, undefined, folder);
                 }} />
+                <MenuButton label="Dashboard" onClick={() => { setShowMenu(false); onAddTab('dashboard'); }} />
                 <MenuButton label="Browser" onClick={() => { setShowMenu(false); onAddTab('browser'); }} />
                 <MenuButton label="Notes" onClick={() => { setShowMenu(false); onAddTab('notes'); }} />
 

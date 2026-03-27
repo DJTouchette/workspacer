@@ -302,6 +302,7 @@ function App() {
           onTabMove={moveTab}
           onPtyReady={handlePtyReady}
           onUrlChange={handleUrlChange}
+          onNavigateToTab={handleTabClick}
           renameSignal={renameSignal}
         />
       </div>
