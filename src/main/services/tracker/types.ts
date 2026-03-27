@@ -25,6 +25,7 @@ export interface TrackerIssue {
   priority?: string;
   type: string;          // bug, story, task, epic, etc.
   labels: string[];
+  parentKey?: string;
   provider: string;
   accountId: string;
   projectKey: string;

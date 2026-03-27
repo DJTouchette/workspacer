@@ -96,6 +96,7 @@ function mapIssue(account: TrackerAccount, raw: any): TrackerIssue {
     priority: fields.priority?.name,
     type: fields.issuetype?.name ?? 'Task',
     labels: fields.labels ?? [],
+    parentKey: fields.parent?.key ?? undefined,
     provider: 'jira',
     accountId: account.id,
     projectKey: fields.project?.key ?? raw.key?.split('-')[0] ?? '',
@@ -179,7 +180,7 @@ export class JiraProvider implements TrackerProvider {
     const data = await jiraFetch(
       account,
       token,
-      `/search/jql?jql=${encodeURIComponent(jql)}&maxResults=${maxResults}&startAt=${startAt}&fields=summary,status,assignee,priority,issuetype,project,labels,created,updated,description`,
+      `/search/jql?jql=${encodeURIComponent(jql)}&maxResults=${maxResults}&startAt=${startAt}&fields=summary,status,assignee,priority,issuetype,project,labels,created,updated,description,parent`,
     );
 
     return (data.issues ?? []).map((raw: any) => mapIssue(account, raw));
@@ -187,7 +188,7 @@ export class JiraProvider implements TrackerProvider {
 
   async getIssue(account: TrackerAccount, token: string, issueKey: string): Promise<TrackerIssue | null> {
     try {
-      const raw = await jiraFetch(account, token, `/issue/${encodeURIComponent(issueKey)}?fields=summary,status,assignee,priority,issuetype,project,labels,created,updated,description`);
+      const raw = await jiraFetch(account, token, `/issue/${encodeURIComponent(issueKey)}?fields=summary,status,assignee,priority,issuetype,project,labels,created,updated,description,parent`);
       return mapIssue(account, raw);
     } catch {
       return null;

@@ -20,6 +20,7 @@ export interface TrackerIssue {
   priority?: string;
   type: string;
   labels: string[];
+  parentKey?: string;
   provider: string;
   accountId: string;
   projectKey: string;
@@ -55,4 +56,40 @@ export interface ProviderInfo {
   name: string;
   configFields: ConfigField[];
   tokenField: TokenField;
+}
+
+export interface TrackerPullRequest {
+  id: string;
+  accountId: string;
+  provider: string;
+  number: number;
+  title: string;
+  description: string;
+  status: 'open' | 'closed' | 'merged' | 'abandoned';
+  sourceBranch: string;
+  targetBranch: string;
+  author: string;
+  url: string;
+  created: string;
+  updated: string;
+}
+
+export interface TrackerPipeline {
+  id: string;
+  accountId: string;
+  provider: string;
+  name: string;
+  status: 'running' | 'succeeded' | 'failed' | 'cancelled' | 'queued';
+  sourceBranch: string;
+  commitSha: string;
+  url: string;
+  startedAt: string;
+  finishedAt: string;
+}
+
+export interface IssueLink {
+  issueKey: string;
+  linkType: 'branch' | 'pr' | 'pipeline' | 'parent' | 'child';
+  linkId: string;
+  linkLabel: string;
 }
