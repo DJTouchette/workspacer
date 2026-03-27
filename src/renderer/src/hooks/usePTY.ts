@@ -75,10 +75,7 @@ export function usePTY({ paneId, shell = '', cwd, onExit, defer = false }: UsePT
   const write = useCallback((data: string) => {
     const id = sessionIdRef.current;
     if (!id) return;
-    const encoded = btoa(data);
-    WriteTerminal(id, encoded).catch((err) => {
-      console.error('[usePTY] write error:', err);
-    });
+    WriteTerminal(id, data);
   }, []);
 
   // Debounce resize to avoid flooding IPC during window drag
@@ -107,31 +104,27 @@ export function usePTY({ paneId, shell = '', cwd, onExit, defer = false }: UsePT
       sessionIdRef.current = id;
       setSessionId(id);
 
-      unsubOutputRef.current = window.electronAPI.onTerminalOutput((eventId, base64Data) => {
-        if (eventId !== id) return;
-        if (!base64Data || !termRef.current) return;
+      // Subscribe to PTY output via MessagePort (no base64, no IPC dispatch)
+      unsubOutputRef.current = window.electronAPI.onTerminalOutput(id, (data: string) => {
+        if (!data || !termRef.current) return;
 
-        try {
-          const raw = atob(base64Data);
-          const bytes = new Uint8Array(raw.length);
-          for (let i = 0; i < raw.length; i++) {
-            bytes[i] = raw.charCodeAt(i);
-          }
-          pendingOutputRef.current.push(bytes);
-          if (rafRef.current === null) {
-            rafRef.current = requestAnimationFrame(() => {
-              rafRef.current = null;
-              const term = termRef.current;
-              if (!term) return;
-              const chunks = pendingOutputRef.current;
-              pendingOutputRef.current = [];
-              for (const chunk of chunks) {
-                term.write(chunk);
-              }
-            });
-          }
-        } catch (err) {
-          console.error('[usePTY] output decode error:', err);
+        // Convert binary string to Uint8Array for xterm
+        const bytes = new Uint8Array(data.length);
+        for (let i = 0; i < data.length; i++) {
+          bytes[i] = data.charCodeAt(i);
+        }
+        pendingOutputRef.current.push(bytes);
+        if (rafRef.current === null) {
+          rafRef.current = requestAnimationFrame(() => {
+            rafRef.current = null;
+            const term = termRef.current;
+            if (!term) return;
+            const chunks = pendingOutputRef.current;
+            pendingOutputRef.current = [];
+            for (const chunk of chunks) {
+              term.write(chunk);
+            }
+          });
         }
       });
 

@@ -6,12 +6,12 @@ export interface SessionListEntry {
 }
 
 export interface ElectronAPI {
-  // Terminal
-  createTerminal: (shell: string, cwd?: string) => Promise<string>;
-  writeTerminal: (id: string, data: string) => Promise<void>;
+  // Terminal — control on IPC, I/O on MessagePort
+  createTerminal: (shell: string, cwd?: string, cols?: number, rows?: number) => Promise<string>;
+  writeTerminal: (id: string, data: string) => void;
   resizeTerminal: (id: string, cols: number, rows: number) => Promise<void>;
   closeTerminal: (id: string) => Promise<void>;
-  onTerminalOutput: (callback: (id: string, data: string) => void) => () => void;
+  onTerminalOutput: (id: string, callback: (data: string) => void) => () => void;
   onTerminalExit: (callback: (id: string) => void) => () => void;
 
   // Config

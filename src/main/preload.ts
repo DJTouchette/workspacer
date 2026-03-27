@@ -1,26 +1,72 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
+// ── MessagePort storage (preload isolated world) ──
+// Minimal type for the DOM MessagePort (main tsconfig lacks DOM lib)
+interface IPort {
+  start(): void;
+  close(): void;
+  postMessage(data: any): void;
+  addEventListener(type: string, listener: (event: any) => void): void;
+  removeEventListener(type: string, listener: (event: any) => void): void;
+}
+
+const terminalPorts = new Map<string, IPort>();
+const portWaiters = new Map<string, Array<(port: IPort) => void>>();
+
+// Receive ports sent by main process after terminal creation
+ipcRenderer.on('terminal:port', (event, { id }: { id: string }) => {
+  const port = event.ports[0] as unknown as IPort;
+  if (!port) return;
+  terminalPorts.set(id, port);
+  port.start();
+  // Resolve anyone waiting for this port
+  const waiters = portWaiters.get(id);
+  if (waiters) {
+    for (const resolve of waiters) resolve(port);
+    portWaiters.delete(id);
+  }
+});
+
+function getPort(id: string): Promise<IPort> {
+  const existing = terminalPorts.get(id);
+  if (existing) return Promise.resolve(existing);
+  return new Promise((resolve) => {
+    const list = portWaiters.get(id) ?? [];
+    list.push(resolve);
+    portWaiters.set(id, list);
+  });
+}
+
 contextBridge.exposeInMainWorld('electronAPI', {
-  // Terminal
+  // Terminal — control messages stay on IPC, I/O goes through MessagePort
   createTerminal: (shell: string, cwd?: string, cols?: number, rows?: number): Promise<string> =>
     ipcRenderer.invoke('terminal:create', shell, cwd, cols, rows),
 
-  writeTerminal: (id: string, data: string): Promise<void> =>
-    ipcRenderer.invoke('terminal:write', id, data),
+  writeTerminal: (id: string, data: string): void => {
+    const port = terminalPorts.get(id);
+    if (port) port.postMessage(data);
+  },
 
   resizeTerminal: (id: string, cols: number, rows: number): Promise<void> =>
     ipcRenderer.invoke('terminal:resize', id, cols, rows),
 
   closeTerminal: (id: string): Promise<void> =>
-    ipcRenderer.invoke('terminal:close', id),
+    ipcRenderer.invoke('terminal:close', id).then(() => {
+      const port = terminalPorts.get(id);
+      if (port) { port.close(); terminalPorts.delete(id); }
+    }),
 
-  onTerminalOutput: (callback: (id: string, data: string) => void): (() => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, id: string, data: string) => {
-      callback(id, data);
-    };
-    ipcRenderer.on('terminal:output', handler);
+  // Per-terminal output via MessagePort — waits for port, then connects callback
+  onTerminalOutput: (id: string, callback: (data: string) => void): (() => void) => {
+    let handler: ((event: any) => void) | null = null;
+    let portRef: IPort | null = null;
+    getPort(id).then((port) => {
+      portRef = port;
+      handler = (event: any) => callback(event.data);
+      port.addEventListener('message', handler);
+    });
     return () => {
-      ipcRenderer.removeListener('terminal:output', handler);
+      if (portRef && handler) portRef.removeEventListener('message', handler);
     };
   },
 

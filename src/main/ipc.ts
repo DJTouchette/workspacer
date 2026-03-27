@@ -37,9 +37,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     return claudeSessionStore.getAllSnapshots();
   });
 
-  ipcMain.handle('terminal:write', (_event, id: string, data: string) => {
-    terminalService.writeTerminal(id, data);
-  });
+  // terminal:write removed — writes go through MessagePort now
 
   ipcMain.handle('terminal:resize', (_event, id: string, cols: number, rows: number) => {
     terminalService.resizeTerminal(id, cols, rows);

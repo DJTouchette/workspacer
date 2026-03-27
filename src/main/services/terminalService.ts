@@ -1,4 +1,4 @@
-import { BrowserWindow } from 'electron';
+import { BrowserWindow, MessageChannelMain } from 'electron';
 import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -49,6 +49,7 @@ interface TerminalSession {
   closed: boolean;
   cwd: string;
   isClaudeSession: boolean;
+  port?: Electron.MessagePortMain;
 }
 
 function detectDefaultShell(): string {
@@ -165,11 +166,28 @@ class TerminalService {
 
     this.sessions.set(id, session);
 
-    // Forward output to renderer as base64, and tee to headless terminal for Claude sessions
+    // Create MessagePort channel for direct I/O (bypasses IPC dispatch + base64)
+    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+      const { port1, port2 } = new MessageChannelMain();
+      session.port = port1;
+
+      // Receive writes from renderer via port
+      port1.on('message', (event) => {
+        if (session.closed) return;
+        session.pty.write(event.data);
+      });
+      port1.start();
+
+      // Send port2 to renderer
+      this.mainWindow.webContents.postMessage('terminal:port', { id }, [port2]);
+    }
+
+    // Forward PTY output to renderer via MessagePort (no base64 encoding)
     ptyProcess.onData((data: string) => {
       if (session.closed) return;
-      const encoded = Buffer.from(data, 'binary').toString('base64');
-      this.mainWindow?.webContents.send('terminal:output', id, encoded);
+      if (session.port) {
+        session.port.postMessage(data);
+      }
 
       // Tee to headless terminal for Claude sessions
       if (session.isClaudeSession) {
@@ -177,7 +195,7 @@ class TerminalService {
       }
     });
 
-    // Handle exit
+    // Handle exit (stays on regular IPC — low frequency)
     ptyProcess.onExit(() => {
       if (session.closed) return;
       session.closed = true;
@@ -214,6 +232,7 @@ class TerminalService {
     session.closed = true;
     this.sessions.delete(id);
     try { session.pty.kill(); } catch {};
+    if (session.port) { try { session.port.close(); } catch {} }
 
     // Cleanup headless terminal + poller + store binding for Claude sessions
     if (session.isClaudeSession) {
