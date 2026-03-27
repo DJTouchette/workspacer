@@ -542,18 +542,51 @@ const RecentPipelinesCard: React.FC = () => {
   const [pipelines, setPipelines] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState(true);
+  const [selected, setSelected] = useState<any | null>(null);
 
-  useEffect(() => {
-    window.electronAPI.cacheRecentPipelines(10)
-      .then(pl => setPipelines(pl))
-      .catch(() => {})
-      .finally(() => setLoading(false));
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      // Try cache first
+      let pl = await window.electronAPI.cacheRecentPipelines(15);
+      // If cache empty, fetch directly from DevOps accounts
+      if (!pl || pl.length === 0) {
+        const accounts = await window.electronAPI.devopsGetAccounts();
+        const all: any[] = [];
+        for (const acct of accounts) {
+          try {
+            const runs = await window.electronAPI.devopsListPipelines(acct.id, { maxResults: 15 });
+            all.push(...runs);
+          } catch {}
+        }
+        // Sort by start time descending
+        all.sort((a, b) => (b.startedAt ?? '').localeCompare(a.startedAt ?? ''));
+        pl = all.slice(0, 15);
+      }
+      setPipelines(pl);
+    } catch {}
+    setLoading(false);
   }, []);
+
+  useEffect(() => { load(); }, [load]);
 
   if (!loading && pipelines.length === 0) return null;
 
-  const running = pipelines.filter(p => p.status === 'running').length;
-  const failed = pipelines.filter(p => p.status === 'failed').length;
+  const running = pipelines.filter(p => (p.status ?? p.status) === 'running').length;
+  const failed = pipelines.filter(p => (p.status ?? p.status) === 'failed').length;
+
+  // Normalize field names (cache uses snake_case, live API uses camelCase)
+  const norm = (p: any) => ({
+    id: p.id,
+    name: p.name,
+    status: p.status,
+    sourceBranch: p.source_branch ?? p.sourceBranch ?? '',
+    commitSha: p.commit_sha ?? p.commitSha ?? '',
+    author: p.author ?? '',
+    url: p.url ?? '',
+    startedAt: p.started_at ?? p.startedAt ?? '',
+    finishedAt: p.finished_at ?? p.finishedAt ?? '',
+  });
 
   return (
     <div style={{
@@ -584,13 +617,14 @@ const RecentPipelinesCard: React.FC = () => {
       {expanded && (
         <div style={{ maxHeight: 300, overflow: 'auto' }}>
           {loading && <div style={{ padding: '12px 14px', color: colors.muted, fontSize: '0.72rem' }}>Loading...</div>}
-          {pipelines.map(p => {
-            const dur = p.started_at && p.finished_at
-              ? Math.round((new Date(p.finished_at).getTime() - new Date(p.started_at).getTime()) / 1000)
+          {pipelines.map(raw => {
+            const p = norm(raw);
+            const dur = p.startedAt && p.finishedAt
+              ? Math.round((new Date(p.finishedAt).getTime() - new Date(p.startedAt).getTime()) / 1000)
               : null;
             const durStr = dur ? (dur < 60 ? `${dur}s` : `${Math.floor(dur / 60)}m ${dur % 60}s`) : '';
             return (
-              <div key={p.id} style={{ padding: '5px 14px', display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.72rem' }}>
+              <div key={p.id} onClick={() => setSelected(p)} style={{ padding: '5px 14px', display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.72rem', cursor: 'pointer' }}>
                 {p.status === 'running' ? (
                   <span style={{ width: 10, height: 10, border: `1.5px solid ${colors.accent}`, borderTopColor: 'transparent', borderRadius: '50%', animation: 'claudeSpinner 0.8s linear infinite', flexShrink: 0 }} />
                 ) : (
@@ -600,7 +634,7 @@ const RecentPipelinesCard: React.FC = () => {
                   {p.name}
                 </span>
                 <span style={{ fontSize: '0.58rem', color: colors.muted, fontFamily: 'monospace', flexShrink: 0 }}>
-                  {p.source_branch}
+                  {p.sourceBranch}
                 </span>
                 {durStr && <span style={{ fontSize: '0.55rem', color: colors.muted, flexShrink: 0 }}>{durStr}</span>}
                 <span style={{
@@ -612,6 +646,68 @@ const RecentPipelinesCard: React.FC = () => {
               </div>
             );
           })}
+          {!loading && (
+            <div onClick={load} style={{ padding: '6px 14px 8px', fontSize: '0.62rem', color: colors.accent, cursor: 'pointer', textAlign: 'center' }}>
+              Refresh
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Pipeline detail popup */}
+      {selected && (
+        <div
+          onClick={() => setSelected(null)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 200,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            backgroundColor: 'rgba(0,0,0,0.5)',
+          }}
+        >
+          <div onClick={e => e.stopPropagation()} style={{
+            width: 460, maxHeight: '70vh', overflow: 'auto',
+            borderRadius: 10, border: `1px solid ${colors.border}`,
+            backgroundColor: 'var(--wks-bg-surface)', padding: '16px 20px',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+              <span style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: pipelineColor(selected.status) }} />
+              <span style={{ fontSize: '0.82rem', fontWeight: 600, color: colors.textBright, flex: 1 }}>{selected.name}</span>
+              <span style={{
+                fontSize: '0.6rem', fontWeight: 600, padding: '2px 8px', borderRadius: 10,
+                backgroundColor: 'rgba(255,255,255,0.05)', color: pipelineColor(selected.status),
+              }}>
+                {selected.status}
+              </span>
+              <span onClick={() => setSelected(null)} style={{ cursor: 'pointer', color: colors.muted, fontSize: '0.85rem' }}>{'\u00D7'}</span>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 16px', fontSize: '0.68rem', marginBottom: 14 }}>
+              <div><span style={{ color: colors.muted }}>Branch: </span><span style={{ color: colors.text, fontFamily: 'monospace' }}>{selected.sourceBranch}</span></div>
+              {selected.commitSha && <div><span style={{ color: colors.muted }}>Commit: </span><span style={{ color: colors.text, fontFamily: 'monospace' }}>{selected.commitSha}</span></div>}
+              {selected.author && <div><span style={{ color: colors.muted }}>Author: </span><span style={{ color: colors.text }}>{selected.author}</span></div>}
+              {selected.startedAt && <div><span style={{ color: colors.muted }}>Started: </span><span style={{ color: colors.text }}>{new Date(selected.startedAt).toLocaleString()}</span></div>}
+              {selected.finishedAt && <div><span style={{ color: colors.muted }}>Finished: </span><span style={{ color: colors.text }}>{new Date(selected.finishedAt).toLocaleString()}</span></div>}
+              {selected.startedAt && selected.finishedAt && (() => {
+                const dur = Math.round((new Date(selected.finishedAt).getTime() - new Date(selected.startedAt).getTime()) / 1000);
+                return <div><span style={{ color: colors.muted }}>Duration: </span><span style={{ color: colors.text }}>{dur < 60 ? `${dur}s` : `${Math.floor(dur / 60)}m ${dur % 60}s`}</span></div>;
+              })()}
+            </div>
+
+            {selected.url && (
+              <div
+                onClick={() => { /* Can't open external URLs from renderer — copy to clipboard instead */ navigator.clipboard.writeText(selected.url); }}
+                style={{
+                  padding: '8px 12px', borderRadius: 6,
+                  border: `1px solid ${colors.borderSubtle}`, backgroundColor: 'rgba(255,255,255,0.02)',
+                  fontSize: '0.65rem', color: colors.accent, fontFamily: 'monospace',
+                  cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }}
+                title="Click to copy URL"
+              >
+                {selected.url}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
