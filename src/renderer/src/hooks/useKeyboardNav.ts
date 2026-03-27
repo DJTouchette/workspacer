@@ -42,7 +42,7 @@ interface UseKeyboardNavOptions {
   setActiveTabId: (id: string) => void;
   scrollToTab: (id: string) => void;
   addTab: (type: PaneType, title?: string, shell?: string, url?: string, appMode?: boolean) => string;
-  splitTab: (tabId: string, type: PaneType, title?: string) => string;
+  splitTab: (tabId: string, type: PaneType, title?: string, shell?: string, url?: string, appMode?: boolean, cwd?: string) => string;
   removeTab: (tabId: string) => void;
   removePane: (tabId: string, paneId: string) => void;
   renameTab: (tabId: string, title: string) => void;
@@ -166,7 +166,11 @@ export function useKeyboardNav({
       else if (key === '?') onToggleHelp();
       else if (key === 's') onSaveSession?.();
       else if (key === 'd') {
-        if (activeTab) splitTab(activeTab.id, 'terminal');
+        if (activeTab) {
+          const activePane = activeTab.panes.find(p => p.id === activeTab.activePaneId);
+          const splitType = activePane?.type ?? 'terminal';
+          splitTab(activeTab.id, splitType, undefined, activePane?.shell, undefined, undefined, activePane?.cwd);
+        }
       }
     };
 
@@ -237,10 +241,14 @@ export function useKeyboardNav({
         requestAnimationFrame(() => scrollToTab(newId));
         return;
       }
-      // Ctrl+D : split current tab
+      // Ctrl+D : split current tab (matches active pane type)
       if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'd') {
         e.preventDefault(); e.stopPropagation();
-        if (activeTab) splitTab(activeTab.id, 'terminal');
+        if (activeTab) {
+          const activePane = activeTab.panes.find(p => p.id === activeTab.activePaneId);
+          const splitType = activePane?.type ?? 'terminal';
+          splitTab(activeTab.id, splitType, undefined, activePane?.shell, undefined, undefined, activePane?.cwd);
+        }
         return;
       }
       // Ctrl+W : close active pane (or tab if single pane)
