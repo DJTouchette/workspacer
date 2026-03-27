@@ -142,14 +142,45 @@ const PRCard: React.FC<{ pr: PR }> = ({ pr }) => (
 
 // ── Pipeline Card ──
 
+function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+  return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+}
+
+function formatTimeAgo(isoDate: string): string {
+  const diff = Math.floor((Date.now() - new Date(isoDate).getTime()) / 1000);
+  if (diff < 60) return `${diff}s ago`;
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+}
+
 const PipelineCard: React.FC<{ p: Pipeline }> = ({ p }) => {
-  const dur = p.duration ? (p.duration < 60 ? `${p.duration}s` : `${Math.floor(p.duration / 60)}m ${p.duration % 60}s`) : '';
+  // For finished: show duration. For running: show elapsed since start.
+  const [elapsed, setElapsed] = useState(0);
+  const isRunning = p.status === 'running' || p.status === 'queued';
+
+  useEffect(() => {
+    if (!isRunning || !p.startedAt) return;
+    const tick = () => setElapsed(Math.floor((Date.now() - new Date(p.startedAt).getTime()) / 1000));
+    tick();
+    const iv = setInterval(tick, 1000);
+    return () => clearInterval(iv);
+  }, [isRunning, p.startedAt]);
+
+  const durStr = isRunning && p.startedAt
+    ? formatDuration(elapsed)
+    : p.duration
+      ? formatDuration(p.duration)
+      : p.startedAt ? formatTimeAgo(p.startedAt) : '';
+
   return (
     <div style={{
       padding: '6px 12px', borderRadius: 6, border: `1px solid ${colors.borderSubtle}`,
       backgroundColor: 'rgba(255,255,255,0.02)', display: 'flex', alignItems: 'center', gap: 8,
     }}>
-      {p.status === 'running' ? (
+      {isRunning ? (
         <span style={{ width: 12, height: 12, border: `1.5px solid ${colors.accent}`, borderTopColor: 'transparent', borderRadius: '50%', animation: 'claudeSpinner 0.8s linear infinite', flexShrink: 0 }} />
       ) : (
         <span style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: pipelineColor(p.status), flexShrink: 0 }} />
@@ -164,7 +195,7 @@ const PipelineCard: React.FC<{ p: Pipeline }> = ({ p }) => {
       </div>
       <div style={{ textAlign: 'right', flexShrink: 0 }}>
         <div style={{ fontSize: '0.6rem', color: pipelineColor(p.status), fontWeight: 600 }}>{p.status}</div>
-        {dur && <div style={{ fontSize: '0.55rem', color: colors.muted }}>{dur}</div>}
+        {durStr && <div style={{ fontSize: '0.55rem', color: isRunning ? colors.accent : colors.muted, fontVariantNumeric: 'tabular-nums' }}>{durStr}</div>}
       </div>
     </div>
   );
