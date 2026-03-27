@@ -6,6 +6,7 @@
 import { execSync } from 'child_process';
 import { issueCache } from '../db';
 import { trackerService } from './trackerService';
+import { devopsService } from '../devops/devopsService';
 import type { TrackerIssue, TrackerPullRequest, TrackerPipeline } from './types';
 
 const ISSUE_KEY_REGEX = /\b[A-Z][A-Z0-9]+-\d+\b/g;
@@ -77,13 +78,24 @@ class BackgroundSyncService {
     const start = Date.now();
 
     try {
-      const accounts = trackerService.getAccounts();
-      for (const account of accounts) {
+      // Sync tracker accounts (Jira, etc.)
+      const trackerAccounts = trackerService.getAccounts();
+      for (const account of trackerAccounts) {
         await this.syncAccount(account.id).catch(err => {
-          console.error(`[BackgroundSync] failed to sync account ${account.label}:`, err?.message);
+          console.error(`[BackgroundSync] tracker sync failed ${account.label}:`, err?.message);
         });
       }
-      console.log(`[BackgroundSync] sync complete (${Date.now() - start}ms, ${accounts.length} accounts)`);
+
+      // Sync DevOps accounts (Azure DevOps PRs + pipelines)
+      const devopsAccounts = devopsService.getAccounts();
+      for (const account of devopsAccounts) {
+        await this.syncDevOpsAccount(account.id).catch(err => {
+          console.error(`[BackgroundSync] devops sync failed ${account.label}:`, err?.message);
+        });
+      }
+
+      const total = trackerAccounts.length + devopsAccounts.length;
+      console.log(`[BackgroundSync] sync complete (${Date.now() - start}ms, ${total} accounts)`);
     } finally {
       this.isSyncing = false;
     }
@@ -195,6 +207,65 @@ class BackgroundSyncService {
   }
 
   /** Scan watched git repos for branches and auto-link to issues */
+  /** Sync PRs + pipelines from a DevOps account into SQLite */
+  private async syncDevOpsAccount(accountId: string): Promise<void> {
+    const syncedAt = new Date().toISOString();
+
+    try {
+      const prs = await devopsService.listPullRequests(accountId, { status: 'open' });
+      for (const pr of prs) {
+        issueCache.upsertPullRequest({
+          id: pr.id,
+          account_id: pr.accountId,
+          provider: pr.provider,
+          number: pr.number,
+          title: pr.title,
+          description: pr.description,
+          status: pr.status,
+          source_branch: pr.sourceBranch,
+          target_branch: pr.targetBranch,
+          author: pr.author,
+          url: pr.url,
+          created: pr.created,
+          updated: pr.updated,
+          synced_at: syncedAt,
+        });
+        // Auto-link PRs to issues
+        const keys = extractIssueKeys(pr.title + ' ' + pr.sourceBranch);
+        for (const key of keys) {
+          issueCache.createIssueLink(key, 'pr', pr.id, `PR #${pr.number}: ${pr.title.slice(0, 60)}`);
+        }
+      }
+    } catch (err: any) {
+      console.error(`[BackgroundSync] devops PR sync failed:`, err?.message);
+    }
+
+    try {
+      const pipelines = await devopsService.listPipelines(accountId, { maxResults: 30 });
+      for (const pl of pipelines) {
+        issueCache.upsertPipeline({
+          id: pl.id,
+          account_id: pl.accountId,
+          provider: pl.provider,
+          name: pl.name,
+          status: pl.status,
+          source_branch: pl.sourceBranch,
+          commit_sha: pl.commitSha,
+          url: pl.url,
+          started_at: pl.startedAt,
+          finished_at: pl.finishedAt,
+          synced_at: syncedAt,
+        });
+        const keys = extractIssueKeys(pl.sourceBranch);
+        for (const key of keys) {
+          issueCache.createIssueLink(key, 'pipeline', pl.id, `${pl.name}: ${pl.status}`);
+        }
+      }
+    } catch (err: any) {
+      console.error(`[BackgroundSync] devops pipeline sync failed:`, err?.message);
+    }
+  }
+
   private scanGitBranches(): void {
     for (const repoPath of this.watchedRepoPaths) {
       try {

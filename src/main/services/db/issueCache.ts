@@ -281,6 +281,20 @@ export class IssueCache {
     const pattern = `%${query}%`;
     return this.stmts.searchIssues.all(pattern, pattern) as CachedIssue[];
   }
+
+  // ── Pipeline + PR queries ──
+
+  getRecentPipelines(limit = 20): CachedPipeline[] {
+    return this.db.prepare(
+      'SELECT * FROM pipelines ORDER BY started_at DESC LIMIT ?'
+    ).all(limit) as CachedPipeline[];
+  }
+
+  getRecentPullRequests(limit = 20): CachedPullRequest[] {
+    return this.db.prepare(
+      'SELECT * FROM pull_requests ORDER BY updated DESC LIMIT ?'
+    ).all(limit) as CachedPullRequest[];
+  }
 }
 
 export const issueCache = new IssueCache(database);

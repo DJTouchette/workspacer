@@ -169,6 +169,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('cache:getChildIssues', parentKey),
   cacheSearchIssues: (query: string): Promise<any[]> =>
     ipcRenderer.invoke('cache:searchIssues', query),
+  cacheRecentPipelines: (limit?: number): Promise<any[]> =>
+    ipcRenderer.invoke('cache:recentPipelines', limit),
+  cacheRecentPRs: (limit?: number): Promise<any[]> =>
+    ipcRenderer.invoke('cache:recentPRs', limit),
   cacheSyncNow: (): Promise<void> =>
     ipcRenderer.invoke('cache:syncNow'),
   cacheWatchRepo: (repoPath: string): Promise<void> =>

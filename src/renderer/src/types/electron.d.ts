@@ -66,6 +66,8 @@ export interface ElectronAPI {
   cacheGetIssueLinks: (issueKey: string) => Promise<any[]>;
   cacheGetChildIssues: (parentKey: string) => Promise<any[]>;
   cacheSearchIssues: (query: string) => Promise<any[]>;
+  cacheRecentPipelines: (limit?: number) => Promise<any[]>;
+  cacheRecentPRs: (limit?: number) => Promise<any[]>;
   cacheSyncNow: () => Promise<void>;
   cacheWatchRepo: (repoPath: string) => Promise<void>;
 

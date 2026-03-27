@@ -526,6 +526,98 @@ const MyIssuesCard: React.FC = () => {
   );
 };
 
+// ── Pipeline status colors ──
+
+function pipelineColor(s: string): string {
+  if (s === 'succeeded') return colors.success;
+  if (s === 'failed') return colors.error;
+  if (s === 'running') return colors.accent;
+  if (s === 'queued') return colors.warning;
+  return colors.muted;
+}
+
+// ── Recent Pipelines Card ──
+
+const RecentPipelinesCard: React.FC = () => {
+  const [pipelines, setPipelines] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState(true);
+
+  useEffect(() => {
+    window.electronAPI.cacheRecentPipelines(10)
+      .then(pl => setPipelines(pl))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (!loading && pipelines.length === 0) return null;
+
+  const running = pipelines.filter(p => p.status === 'running').length;
+  const failed = pipelines.filter(p => p.status === 'failed').length;
+
+  return (
+    <div style={{
+      borderRadius: 10,
+      border: `1px solid ${failed > 0 ? colors.error : colors.borderSubtle}`,
+      backgroundColor: 'rgba(255,255,255,0.02)',
+      overflow: 'hidden',
+      transition: 'border-color 0.2s',
+    }}>
+      <div
+        onClick={() => setExpanded(!expanded)}
+        style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '10px 14px', cursor: 'pointer', userSelect: 'none',
+          borderBottom: expanded ? `1px solid ${colors.borderSubtle}` : 'none',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: '0.82rem' }}>{'\u{1F527}'}</span>
+          <span style={{ color: colors.textBright, fontWeight: 600, fontSize: '0.82rem' }}>Pipelines</span>
+          {running > 0 && <span style={{ fontSize: '0.6rem', color: colors.accent, fontWeight: 600 }}>{running} running</span>}
+          {failed > 0 && <span style={{ fontSize: '0.6rem', color: colors.error, fontWeight: 600 }}>{failed} failed</span>}
+        </div>
+        <span style={{ fontSize: '0.6rem', color: colors.muted, transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>
+          {'\u25B6'}
+        </span>
+      </div>
+      {expanded && (
+        <div style={{ maxHeight: 300, overflow: 'auto' }}>
+          {loading && <div style={{ padding: '12px 14px', color: colors.muted, fontSize: '0.72rem' }}>Loading...</div>}
+          {pipelines.map(p => {
+            const dur = p.started_at && p.finished_at
+              ? Math.round((new Date(p.finished_at).getTime() - new Date(p.started_at).getTime()) / 1000)
+              : null;
+            const durStr = dur ? (dur < 60 ? `${dur}s` : `${Math.floor(dur / 60)}m ${dur % 60}s`) : '';
+            return (
+              <div key={p.id} style={{ padding: '5px 14px', display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.72rem' }}>
+                {p.status === 'running' ? (
+                  <span style={{ width: 10, height: 10, border: `1.5px solid ${colors.accent}`, borderTopColor: 'transparent', borderRadius: '50%', animation: 'claudeSpinner 0.8s linear infinite', flexShrink: 0 }} />
+                ) : (
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: pipelineColor(p.status), flexShrink: 0 }} />
+                )}
+                <span style={{ color: colors.text, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
+                  {p.name}
+                </span>
+                <span style={{ fontSize: '0.58rem', color: colors.muted, fontFamily: 'monospace', flexShrink: 0 }}>
+                  {p.source_branch}
+                </span>
+                {durStr && <span style={{ fontSize: '0.55rem', color: colors.muted, flexShrink: 0 }}>{durStr}</span>}
+                <span style={{
+                  fontSize: '0.55rem', fontWeight: 600, padding: '1px 5px', borderRadius: 6,
+                  backgroundColor: 'rgba(255,255,255,0.05)', color: pipelineColor(p.status), flexShrink: 0,
+                }}>
+                  {p.status}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+
 // ── Dashboard Pane ──
 
 const DashboardPane: React.FC<DashboardPaneProps> = ({ title, tabs, onNavigateToTab }) => {
@@ -576,8 +668,13 @@ const DashboardPane: React.FC<DashboardPaneProps> = ({ title, tabs, onNavigateTo
       backgroundColor: colors.bg,
     }}>
       {/* My Issues */}
-      <div style={{ marginBottom: 20 }}>
+      <div style={{ marginBottom: 14 }}>
         <MyIssuesCard />
+      </div>
+
+      {/* Recent Pipelines */}
+      <div style={{ marginBottom: 20 }}>
+        <RecentPipelinesCard />
       </div>
 
       {/* Claude Sessions */}

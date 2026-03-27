@@ -183,6 +183,14 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     issueCache.searchIssues(query),
   );
 
+  ipcMain.handle('cache:recentPipelines', (_event, limit?: number) =>
+    issueCache.getRecentPipelines(limit),
+  );
+
+  ipcMain.handle('cache:recentPRs', (_event, limit?: number) =>
+    issueCache.getRecentPullRequests(limit),
+  );
+
   ipcMain.handle('cache:syncNow', async () => {
     await backgroundSync.syncAll();
   });
