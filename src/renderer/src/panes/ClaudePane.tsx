@@ -1233,20 +1233,15 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
 
   // ── File drag & drop ──
 
-  // Native document-level drag & drop — captures events before xterm.js
-  // can swallow them and prevents Electron's default file navigation
-  const paneRootRef = useRef<HTMLDivElement>(null);
-
+  // Window-level drag & drop — must be on window to prevent Electron's
+  // default file-navigation and to bypass xterm.js canvas event handling
   useEffect(() => {
-    const root = paneRootRef.current;
-    if (!root) return;
-
+    const onDragOver = (e: DragEvent) => { e.preventDefault(); };
     const onDragEnter = (e: DragEvent) => {
       e.preventDefault();
       dragCounterRef.current++;
       if (e.dataTransfer?.types.includes('Files')) setIsDragOver(true);
     };
-    const onDragOver = (e: DragEvent) => { e.preventDefault(); };
     const onDragLeave = (e: DragEvent) => {
       e.preventDefault();
       dragCounterRef.current--;
@@ -1265,24 +1260,16 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
       }
     };
 
-    // Capture phase so we fire before any child (xterm canvas) handlers
-    root.addEventListener('dragenter', onDragEnter, true);
-    root.addEventListener('dragover', onDragOver, true);
-    root.addEventListener('dragleave', onDragLeave, true);
-    root.addEventListener('drop', onDrop, true);
-
-    // Also prevent Electron's default file-navigation on the whole document
-    const preventNav = (e: DragEvent) => { e.preventDefault(); };
-    document.addEventListener('dragover', preventNav);
-    document.addEventListener('drop', preventNav);
+    window.addEventListener('dragover', onDragOver);
+    window.addEventListener('dragenter', onDragEnter);
+    window.addEventListener('dragleave', onDragLeave);
+    window.addEventListener('drop', onDrop);
 
     return () => {
-      root.removeEventListener('dragenter', onDragEnter, true);
-      root.removeEventListener('dragover', onDragOver, true);
-      root.removeEventListener('dragleave', onDragLeave, true);
-      root.removeEventListener('drop', onDrop, true);
-      document.removeEventListener('dragover', preventNav);
-      document.removeEventListener('drop', preventNav);
+      window.removeEventListener('dragover', onDragOver);
+      window.removeEventListener('dragenter', onDragEnter);
+      window.removeEventListener('dragleave', onDragLeave);
+      window.removeEventListener('drop', onDrop);
     };
   }, []);
 
@@ -1465,7 +1452,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
   }, [conversation, visibleCount]);
 
   return (
-    <div ref={paneRootRef} style={{
+    <div style={{
       width: '100%',
       height: '100%',
       display: 'flex',
