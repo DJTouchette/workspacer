@@ -55,6 +55,8 @@ function App() {
 
   // PTY mapping: paneId -> ptySessionId
   const ptyMappingRef = useRef<Record<string, string>>({});
+  // Dirty tracking for session auto-save — hash of last saved state
+  const lastSaveHashRef = useRef<string>('');
 
   const handlePtyReady = useCallback((paneId: string, ptySessionId: string) => {
     ptyMappingRef.current[paneId] = ptySessionId;
@@ -163,9 +165,9 @@ function App() {
     });
   }, []);
 
-  const saveCurrentSession = useCallback(() => {
+  const saveCurrentSession = useCallback((force?: boolean) => {
     if (sessionPhase !== 'active' || tabs.length === 0) return;
-    window.electronAPI.saveSession({
+    const payload = {
       name: sessionName,
       activeTabId,
       tabs: tabs.map((t) => ({
@@ -173,7 +175,12 @@ function App() {
         panes: t.panes.map((p) => ({ ...p })),
       })),
       ptyMapping: { ...ptyMappingRef.current },
-    }).catch((err: any) => {
+    };
+    // Quick hash to skip saves when nothing changed
+    const hash = JSON.stringify({ n: payload.name, a: payload.activeTabId, t: payload.tabs.map(t => t.id + t.title + t.panes.map(p => p.id + p.type + (p.url || '')).join()) });
+    if (!force && hash === lastSaveHashRef.current) return;
+    lastSaveHashRef.current = hash;
+    window.electronAPI.saveSession(payload).catch((err: any) => {
       console.error('[Session] save failed:', err);
     });
   }, [tabs, activeTabId, sessionName, sessionPhase]);
@@ -191,7 +198,7 @@ function App() {
   }, [saveCurrentSession]);
 
   useEffect(() => {
-    const unsub = window.electronAPI.onBeforeQuit(() => saveCurrentSession());
+    const unsub = window.electronAPI.onBeforeQuit(() => saveCurrentSession(true));
     return unsub;
   }, [saveCurrentSession]);
 

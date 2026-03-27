@@ -7,6 +7,15 @@ export default defineConfig({
   build: {
     outDir: '../../dist/renderer',
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // Split heavy dependencies into separate chunks for better caching
+          react: ['react', 'react-dom'],
+          xterm: ['@xterm/xterm', '@xterm/addon-fit', '@xterm/addon-web-fonts', '@xterm/addon-webgl'],
+        },
+      },
+    },
   },
   server: {
     port: 5173,

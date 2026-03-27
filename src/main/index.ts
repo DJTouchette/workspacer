@@ -25,32 +25,76 @@ function discoverFontDirs(): string[] {
       ];
 }
 
-/** Discover Nerd Font files and inject @font-face CSS using workspacer-font:// protocol */
+// Font cache: persists discovered font file→path mappings so we skip
+// filesystem scanning on subsequent launches.
+const fontCachePath = path.join(os.homedir(), '.config', 'workspacer', '.font-cache.json');
+
+interface FontCacheEntry { file: string; fullPath: string; mtime: number }
+
+function loadFontCache(): FontCacheEntry[] | null {
+  try {
+    if (!fs.existsSync(fontCachePath)) return null;
+    const data = JSON.parse(fs.readFileSync(fontCachePath, 'utf-8'));
+    if (!Array.isArray(data.fonts)) return null;
+    // Validate that cached paths still exist (quick stat check on first entry)
+    if (data.fonts.length > 0 && !fs.existsSync(data.fonts[0].fullPath)) return null;
+    return data.fonts as FontCacheEntry[];
+  } catch {
+    return null;
+  }
+}
+
+function saveFontCache(entries: FontCacheEntry[]): void {
+  try {
+    const dir = path.dirname(fontCachePath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(fontCachePath, JSON.stringify({ fonts: entries }, null, 2));
+  } catch {}
+}
+
+/** Discover Nerd Font files (with disk cache) and inject @font-face CSS */
 function injectNerdFonts(win: BrowserWindow): void {
-  let css = '';
-  for (const dir of discoverFontDirs()) {
-    try {
-      if (!fs.existsSync(dir)) continue;
-      for (const file of fs.readdirSync(dir)) {
-        if (!/NerdFont.*-Regular\.(ttf|otf)$/i.test(file)) continue;
-        const fullPath = path.join(dir, file);
-        fontFileMap.set(file, fullPath);
-        const family = file
-          .replace(/-Regular\.(ttf|otf)$/i, '')
-          .replace(/NerdFontMono/, ' Nerd Font Mono')
-          .replace(/NerdFontPropo/, ' Nerd Font Propo')
-          .replace(/NerdFont/, ' Nerd Font')
-          .replace(/  +/g, ' ')
-          .trim();
-        const fmt = file.endsWith('.otf') ? 'opentype' : 'truetype';
-        css += `@font-face { font-family: "${family}"; src: url("workspacer-font://${encodeURIComponent(file)}") format('${fmt}'); font-display: block; }\n`;
-        const generic = family.replace(/NL\s*/g, '');
-        if (generic !== family) {
-          css += `@font-face { font-family: "${generic}"; src: url("workspacer-font://${encodeURIComponent(file)}") format('${fmt}'); font-display: block; }\n`;
+  let entries: FontCacheEntry[];
+  const cached = loadFontCache();
+
+  if (cached) {
+    entries = cached;
+    console.log(`[Fonts] loaded ${entries.length} fonts from cache`);
+  } else {
+    entries = [];
+    for (const dir of discoverFontDirs()) {
+      try {
+        if (!fs.existsSync(dir)) continue;
+        for (const file of fs.readdirSync(dir)) {
+          if (!/NerdFont.*-Regular\.(ttf|otf)$/i.test(file)) continue;
+          const fullPath = path.join(dir, file);
+          try {
+            const stat = fs.statSync(fullPath);
+            entries.push({ file, fullPath, mtime: stat.mtimeMs });
+          } catch {}
         }
-        console.log(`[Fonts] registered: "${family}" → ${file}`);
-      }
-    } catch {}
+      } catch {}
+    }
+    saveFontCache(entries);
+    console.log(`[Fonts] discovered ${entries.length} fonts, cached to disk`);
+  }
+
+  let css = '';
+  for (const { file, fullPath } of entries) {
+    fontFileMap.set(file, fullPath);
+    const family = file
+      .replace(/-Regular\.(ttf|otf)$/i, '')
+      .replace(/NerdFontMono/, ' Nerd Font Mono')
+      .replace(/NerdFontPropo/, ' Nerd Font Propo')
+      .replace(/NerdFont/, ' Nerd Font')
+      .replace(/  +/g, ' ')
+      .trim();
+    const fmt = file.endsWith('.otf') ? 'opentype' : 'truetype';
+    css += `@font-face { font-family: "${family}"; src: url("workspacer-font://${encodeURIComponent(file)}") format('${fmt}'); font-display: block; }\n`;
+    const generic = family.replace(/NL\s*/g, '');
+    if (generic !== family) {
+      css += `@font-face { font-family: "${generic}"; src: url("workspacer-font://${encodeURIComponent(file)}") format('${fmt}'); font-display: block; }\n`;
+    }
   }
 
   if (css) {
