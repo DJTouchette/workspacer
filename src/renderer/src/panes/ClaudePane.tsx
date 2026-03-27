@@ -1233,36 +1233,57 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
 
   // ── File drag & drop ──
 
-  const handleDragEnter = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    dragCounterRef.current++;
-    if (e.dataTransfer.types.includes('Files')) setIsDragOver(true);
-  }, []);
+  // Native document-level drag & drop — captures events before xterm.js
+  // can swallow them and prevents Electron's default file navigation
+  const paneRootRef = useRef<HTMLDivElement>(null);
 
-  const handleDragLeave = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    dragCounterRef.current--;
-    if (dragCounterRef.current === 0) setIsDragOver(false);
-  }, []);
+  useEffect(() => {
+    const root = paneRootRef.current;
+    if (!root) return;
 
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-  }, []);
+    const onDragEnter = (e: DragEvent) => {
+      e.preventDefault();
+      dragCounterRef.current++;
+      if (e.dataTransfer?.types.includes('Files')) setIsDragOver(true);
+    };
+    const onDragOver = (e: DragEvent) => { e.preventDefault(); };
+    const onDragLeave = (e: DragEvent) => {
+      e.preventDefault();
+      dragCounterRef.current--;
+      if (dragCounterRef.current === 0) setIsDragOver(false);
+    };
+    const onDrop = (e: DragEvent) => {
+      e.preventDefault();
+      dragCounterRef.current = 0;
+      setIsDragOver(false);
+      if (e.dataTransfer) {
+        const paths = extractFilePaths(e.dataTransfer);
+        if (paths.length > 0) {
+          setAttachedFiles(prev => [...prev, ...paths.map(classifyFile)]);
+          setViewMode('gui');
+        }
+      }
+    };
 
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    dragCounterRef.current = 0;
-    setIsDragOver(false);
-    const paths = extractFilePaths(e.dataTransfer);
-    if (paths.length > 0) {
-      setAttachedFiles(prev => [...prev, ...paths.map(classifyFile)]);
-      // Switch to GUI mode so user can see chips and compose a message
-      setViewMode('gui');
-    }
+    // Capture phase so we fire before any child (xterm canvas) handlers
+    root.addEventListener('dragenter', onDragEnter, true);
+    root.addEventListener('dragover', onDragOver, true);
+    root.addEventListener('dragleave', onDragLeave, true);
+    root.addEventListener('drop', onDrop, true);
+
+    // Also prevent Electron's default file-navigation on the whole document
+    const preventNav = (e: DragEvent) => { e.preventDefault(); };
+    document.addEventListener('dragover', preventNav);
+    document.addEventListener('drop', preventNav);
+
+    return () => {
+      root.removeEventListener('dragenter', onDragEnter, true);
+      root.removeEventListener('dragover', onDragOver, true);
+      root.removeEventListener('dragleave', onDragLeave, true);
+      root.removeEventListener('drop', onDrop, true);
+      document.removeEventListener('dragover', preventNav);
+      document.removeEventListener('drop', preventNav);
+    };
   }, []);
 
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
@@ -1444,7 +1465,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
   }, [conversation, visibleCount]);
 
   return (
-    <div style={{
+    <div ref={paneRootRef} style={{
       width: '100%',
       height: '100%',
       display: 'flex',
@@ -1541,13 +1562,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
       </div>
 
       {/* Content area */}
-      <div
-        onDragEnter={handleDragEnter}
-        onDragLeave={handleDragLeave}
-        onDragOver={handleDragOver}
-        onDrop={handleDrop}
-        style={{ flex: 1, overflow: 'hidden', position: 'relative' }}
-      >
+      <div style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
         {isDragOver && <DropOverlay />}
 
         {/* Terminal view (always mounted, visibility toggled) */}
