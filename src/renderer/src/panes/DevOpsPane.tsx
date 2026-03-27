@@ -203,6 +203,9 @@ const PipelineCard: React.FC<{ p: Pipeline }> = ({ p }) => {
 
 // ── Home view (PRs + Pipelines for an account) ──
 
+const POLL_FAST = 15_000;  // 15s when pipelines running
+const POLL_SLOW = 60_000; // 60s otherwise
+
 const HomeView: React.FC<{ accountId: string; onBack: () => void }> = ({ accountId, onBack }) => {
   const [prs, setPrs] = useState<PR[]>([]);
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
@@ -211,15 +214,32 @@ const HomeView: React.FC<{ accountId: string; onBack: () => void }> = ({ account
   const [selectedPR, setSelectedPR] = useState<PR | null>(null);
   const [selectedPipeline, setSelectedPipeline] = useState<Pipeline | null>(null);
 
-  useEffect(() => {
-    setLoading(true);
-    Promise.all([
-      window.electronAPI.devopsListPRs(accountId, { status: 'open' }),
-      window.electronAPI.devopsListPipelines(accountId, { maxResults: 30 }),
-    ]).then(([p, pl]) => { setPrs(p); setPipelines(pl); })
-      .catch(e => console.error('[DevOpsPane] load failed:', e))
-      .finally(() => setLoading(false));
+  const loadData = useCallback(async (showLoading = false) => {
+    if (showLoading) setLoading(true);
+    try {
+      const [p, pl] = await Promise.all([
+        window.electronAPI.devopsListPRs(accountId, { status: 'open' }),
+        window.electronAPI.devopsListPipelines(accountId, { maxResults: 30 }),
+      ]);
+      setPrs(p);
+      setPipelines(pl);
+    } catch (e) {
+      console.error('[DevOpsPane] load failed:', e);
+    }
+    if (showLoading) setLoading(false);
   }, [accountId]);
+
+  // Initial load
+  useEffect(() => { loadData(true); }, [loadData]);
+
+  // Adaptive polling — fast when pipelines are running, slow otherwise
+  const hasRunning = pipelines.some(p => p.status === 'running' || p.status === 'queued');
+
+  useEffect(() => {
+    const interval = hasRunning ? POLL_FAST : POLL_SLOW;
+    const timer = setInterval(() => loadData(false), interval);
+    return () => clearInterval(timer);
+  }, [hasRunning, loadData]);
 
   return (
     <div style={{ padding: '20px 24px' }}>
