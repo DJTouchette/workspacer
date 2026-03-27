@@ -543,34 +543,43 @@ const RecentPipelinesCard: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState(true);
   const [selected, setSelected] = useState<any | null>(null);
+  const [hasAccounts, setHasAccounts] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
+      const accounts = await window.electronAPI.devopsGetAccounts();
+      setHasAccounts(accounts.length > 0);
+      if (accounts.length === 0) { setLoading(false); return; }
+
       // Try cache first
-      let pl = await window.electronAPI.cacheRecentPipelines(15);
+      let pl = await window.electronAPI.cacheRecentPipelines(15).catch(() => [] as any[]);
+
       // If cache empty, fetch directly from DevOps accounts
       if (!pl || pl.length === 0) {
-        const accounts = await window.electronAPI.devopsGetAccounts();
         const all: any[] = [];
         for (const acct of accounts) {
           try {
             const runs = await window.electronAPI.devopsListPipelines(acct.id, { maxResults: 15 });
             all.push(...runs);
-          } catch {}
+          } catch (e) {
+            console.error('[Dashboard] pipeline fetch failed:', e);
+          }
         }
-        // Sort by start time descending
-        all.sort((a, b) => (b.startedAt ?? '').localeCompare(a.startedAt ?? ''));
+        all.sort((a: any, b: any) => (b.startedAt ?? '').localeCompare(a.startedAt ?? ''));
         pl = all.slice(0, 15);
       }
       setPipelines(pl);
-    } catch {}
+    } catch (e) {
+      console.error('[Dashboard] pipeline load failed:', e);
+    }
     setLoading(false);
   }, []);
 
   useEffect(() => { load(); }, [load]);
 
-  if (!loading && pipelines.length === 0) return null;
+  // Hide entirely if no DevOps accounts connected
+  if (!loading && !hasAccounts) return null;
 
   const running = pipelines.filter(p => (p.status ?? p.status) === 'running').length;
   const failed = pipelines.filter(p => (p.status ?? p.status) === 'failed').length;

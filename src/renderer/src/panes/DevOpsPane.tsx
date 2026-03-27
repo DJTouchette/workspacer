@@ -5,7 +5,7 @@ import { claudeColors as colors, ensureKeyframes } from '../components/claude-sh
 
 interface Account { id: string; provider: string; label: string; config: Record<string, string> }
 interface ProviderInfo { id: string; name: string; configFields: Array<{ key: string; label: string; placeholder: string; type: string; required: boolean }>; tokenField: { label: string; placeholder: string; helpText?: string } }
-interface PR { id: string; number: number; title: string; status: string; sourceBranch: string; targetBranch: string; author: string; reviewers: Array<{ name: string; vote: string }>; url: string; isDraft: boolean; mergeConflicts: boolean; created: string }
+interface PR { id: string; number: number; title: string; description: string; status: string; sourceBranch: string; targetBranch: string; author: string; reviewers: Array<{ name: string; vote: string }>; url: string; isDraft: boolean; mergeConflicts: boolean; created: string }
 interface Pipeline { id: string; name: string; status: string; sourceBranch: string; commitSha: string; author: string; url: string; startedAt: string; finishedAt: string; duration?: number }
 interface Repo { id: string; name: string; defaultBranch: string; url: string }
 
@@ -177,6 +177,8 @@ const HomeView: React.FC<{ accountId: string; onBack: () => void }> = ({ account
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<'prs' | 'pipelines'>('prs');
+  const [selectedPR, setSelectedPR] = useState<PR | null>(null);
+  const [selectedPipeline, setSelectedPipeline] = useState<Pipeline | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -184,7 +186,7 @@ const HomeView: React.FC<{ accountId: string; onBack: () => void }> = ({ account
       window.electronAPI.devopsListPRs(accountId, { status: 'open' }),
       window.electronAPI.devopsListPipelines(accountId, { maxResults: 30 }),
     ]).then(([p, pl]) => { setPrs(p); setPipelines(pl); })
-      .catch(() => {})
+      .catch(e => console.error('[DevOpsPane] load failed:', e))
       .finally(() => setLoading(false));
   }, [accountId]);
 
@@ -213,14 +215,89 @@ const HomeView: React.FC<{ accountId: string; onBack: () => void }> = ({ account
       {!loading && tab === 'prs' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {prs.length === 0 && <div style={{ color: colors.muted, fontSize: '0.75rem' }}>No open pull requests</div>}
-          {prs.map(pr => <PRCard key={pr.id} pr={pr} />)}
+          {prs.map(pr => <div key={pr.id} onClick={() => setSelectedPR(pr)} style={{ cursor: 'pointer' }}><PRCard pr={pr} /></div>)}
         </div>
       )}
 
       {!loading && tab === 'pipelines' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           {pipelines.length === 0 && <div style={{ color: colors.muted, fontSize: '0.75rem' }}>No recent pipelines</div>}
-          {pipelines.map(p => <PipelineCard key={p.id} p={p} />)}
+          {pipelines.map(p => <div key={p.id} onClick={() => setSelectedPipeline(p)} style={{ cursor: 'pointer' }}><PipelineCard p={p} /></div>)}
+        </div>
+      )}
+
+      {/* PR Detail Popup */}
+      {selectedPR && (
+        <div onClick={() => setSelectedPR(null)} style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <div onClick={e => e.stopPropagation()} style={{ width: 500, maxHeight: '75vh', overflow: 'auto', borderRadius: 10, border: `1px solid ${colors.border}`, backgroundColor: 'var(--wks-bg-surface)', padding: '16px 20px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+              <span style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: prStatusColor(selectedPR.status) }} />
+              <span style={{ fontSize: '0.82rem', fontWeight: 600, color: colors.textBright, flex: 1 }}>
+                {selectedPR.isDraft && <span style={{ color: colors.muted, fontWeight: 400 }}>[Draft] </span>}
+                #{selectedPR.number} {selectedPR.title}
+              </span>
+              <span onClick={() => setSelectedPR(null)} style={{ cursor: 'pointer', color: colors.muted, fontSize: '0.85rem' }}>{'\u00D7'}</span>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 16px', fontSize: '0.68rem', marginBottom: 12 }}>
+              <div><span style={{ color: colors.muted }}>From: </span><span style={{ color: colors.text, fontFamily: 'monospace' }}>{selectedPR.sourceBranch}</span></div>
+              <div><span style={{ color: colors.muted }}>To: </span><span style={{ color: colors.text, fontFamily: 'monospace' }}>{selectedPR.targetBranch}</span></div>
+              <div><span style={{ color: colors.muted }}>Author: </span><span style={{ color: colors.text }}>{selectedPR.author}</span></div>
+              <div><span style={{ color: colors.muted }}>Status: </span><span style={{ color: prStatusColor(selectedPR.status), fontWeight: 600 }}>{selectedPR.status}</span></div>
+              {selectedPR.mergeConflicts && <div style={{ color: colors.error, fontWeight: 600, gridColumn: 'span 2' }}>Has merge conflicts</div>}
+              <div><span style={{ color: colors.muted }}>Created: </span><span style={{ color: colors.text }}>{new Date(selectedPR.created).toLocaleString()}</span></div>
+            </div>
+            {selectedPR.reviewers.length > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: '0.62rem', color: colors.muted, fontWeight: 600, marginBottom: 4 }}>Reviewers</div>
+                {selectedPR.reviewers.map((r, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '2px 0', fontSize: '0.68rem' }}>
+                    <span style={{ width: 14, height: 14, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.5rem', fontWeight: 700, border: `1.5px solid ${reviewColor(r.vote)}`, color: reviewColor(r.vote) }}>
+                      {r.vote === 'approved' ? '\u2713' : r.vote === 'rejected' ? '\u2717' : '\u2022'}
+                    </span>
+                    <span style={{ color: colors.text }}>{r.name}</span>
+                    <span style={{ color: reviewColor(r.vote), fontSize: '0.6rem' }}>{r.vote}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {selectedPR.description && (
+              <div style={{ fontSize: '0.72rem', lineHeight: 1.5, color: colors.text, whiteSpace: 'pre-wrap', padding: '10px 12px', borderRadius: 6, border: `1px solid ${colors.borderSubtle}`, backgroundColor: 'rgba(255,255,255,0.02)', maxHeight: 200, overflow: 'auto', marginBottom: 12 }}>
+                {selectedPR.description}
+              </div>
+            )}
+            {selectedPR.url && (
+              <div onClick={() => navigator.clipboard.writeText(selectedPR.url)} style={{ padding: '6px 10px', borderRadius: 6, border: `1px solid ${colors.borderSubtle}`, backgroundColor: 'rgba(255,255,255,0.02)', fontSize: '0.62rem', color: colors.accent, fontFamily: 'monospace', cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title="Click to copy URL">
+                {selectedPR.url}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Pipeline Detail Popup */}
+      {selectedPipeline && (
+        <div onClick={() => setSelectedPipeline(null)} style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <div onClick={e => e.stopPropagation()} style={{ width: 460, maxHeight: '70vh', overflow: 'auto', borderRadius: 10, border: `1px solid ${colors.border}`, backgroundColor: 'var(--wks-bg-surface)', padding: '16px 20px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+              <span style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: pipelineColor(selectedPipeline.status) }} />
+              <span style={{ fontSize: '0.82rem', fontWeight: 600, color: colors.textBright, flex: 1 }}>{selectedPipeline.name}</span>
+              <span style={{ fontSize: '0.6rem', fontWeight: 600, padding: '2px 8px', borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.05)', color: pipelineColor(selectedPipeline.status) }}>{selectedPipeline.status}</span>
+              <span onClick={() => setSelectedPipeline(null)} style={{ cursor: 'pointer', color: colors.muted, fontSize: '0.85rem' }}>{'\u00D7'}</span>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 16px', fontSize: '0.68rem', marginBottom: 14 }}>
+              <div><span style={{ color: colors.muted }}>Branch: </span><span style={{ color: colors.text, fontFamily: 'monospace' }}>{selectedPipeline.sourceBranch}</span></div>
+              {selectedPipeline.commitSha && <div><span style={{ color: colors.muted }}>Commit: </span><span style={{ color: colors.text, fontFamily: 'monospace' }}>{selectedPipeline.commitSha}</span></div>}
+              {selectedPipeline.author && <div><span style={{ color: colors.muted }}>Author: </span><span style={{ color: colors.text }}>{selectedPipeline.author}</span></div>}
+              {selectedPipeline.startedAt && <div><span style={{ color: colors.muted }}>Started: </span><span style={{ color: colors.text }}>{new Date(selectedPipeline.startedAt).toLocaleString()}</span></div>}
+              {selectedPipeline.finishedAt && <div><span style={{ color: colors.muted }}>Finished: </span><span style={{ color: colors.text }}>{new Date(selectedPipeline.finishedAt).toLocaleString()}</span></div>}
+              {selectedPipeline.duration && <div><span style={{ color: colors.muted }}>Duration: </span><span style={{ color: colors.text }}>{selectedPipeline.duration < 60 ? `${selectedPipeline.duration}s` : `${Math.floor(selectedPipeline.duration / 60)}m ${selectedPipeline.duration % 60}s`}</span></div>}
+            </div>
+            {selectedPipeline.url && (
+              <div onClick={() => navigator.clipboard.writeText(selectedPipeline.url)} style={{ padding: '6px 10px', borderRadius: 6, border: `1px solid ${colors.borderSubtle}`, backgroundColor: 'rgba(255,255,255,0.02)', fontSize: '0.62rem', color: colors.accent, fontFamily: 'monospace', cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title="Click to copy URL">
+                {selectedPipeline.url}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
