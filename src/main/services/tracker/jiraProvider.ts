@@ -126,7 +126,15 @@ export class JiraProvider implements TrackerProvider {
     if (options.projectKey) clauses.push(`project = "${options.projectKey}"`);
     if (options.status) clauses.push(`status = "${options.status}"`);
     if (options.assignedToMe) clauses.push('assignee = currentUser()');
-    if (options.query) clauses.push(`text ~ "${options.query.replace(/"/g, '\\"')}"`);
+    if (options.query) {
+      // Detect issue key pattern (e.g. PL-43, PROJ-123)
+      const isIssueKey = /^[A-Z][A-Z0-9]+-\d+$/i.test(options.query.trim());
+      if (isIssueKey) {
+        clauses.push(`key = "${options.query.trim().toUpperCase()}"`);
+      } else {
+        clauses.push(`text ~ "${options.query.replace(/"/g, '\\"')}"`);
+      }
+    }
 
     const jql = (clauses.length > 0 ? clauses.join(' AND ') + ' ' : '') + 'ORDER BY updated DESC';
     const maxResults = options.maxResults ?? 50;
