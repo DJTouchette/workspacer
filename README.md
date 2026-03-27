@@ -1,59 +1,99 @@
-# Welcome to Your New Wails3 Project!
+# Workspacer
 
-Congratulations on generating your Wails3 application! This README will guide you through the next steps to get your project up and running.
+An Electron desktop application providing a horizontal-scroll workspace for agent-driven development. Built with React and TypeScript.
+
+## Features
+
+- **Horizontal pane layout** - Navigate between panes with keyboard shortcuts or scroll
+- **Multiple pane types** - Terminal, browser, notes, Claude Code, and settings
+- **Claude Code integration** - Built-in Claude CLI panes with headless terminal mirroring and hook support
+- **Session persistence** - Auto-save and resume workspaces across restarts
+- **Browser hibernation** - Inactive browser panes hibernate to save resources
+- **Nerd Font support** - Auto-discovers and injects local Nerd Fonts
+- **Configurable keybindings** - Default and Vim-style modes with leader key support
+- **Command palette** - Quick access to apps and actions
 
 ## Getting Started
 
-1. Navigate to your project directory in the terminal.
+### Prerequisites
 
-2. To run your application in development mode, use the following command:
+- Node.js 18+
+- npm
+- Electron (installed via npm)
 
-   ```
-   wails3 dev
-   ```
+### Install dependencies
 
-   This will start your application and enable hot-reloading for both frontend and backend changes.
+```bash
+npm install
+cd src/renderer && npm install
+```
 
-3. To build your application for production, use:
+### Development
 
-   ```
-   wails3 build
-   ```
+```bash
+npm run dev
+```
 
-   This will create a production-ready executable in the `build` directory.
+This starts both the Vite dev server (frontend) and Electron with hot reload.
 
-## Exploring Wails3 Features
+### Build
 
-Now that you have your project set up, it's time to explore the features that Wails3 offers:
+```bash
+npm run build
+```
 
-1. **Check out the examples**: The best way to learn is by example. Visit the `examples` directory in the `v3/examples` directory to see various sample applications.
+### Package for distribution
 
-2. **Run an example**: To run any of the examples, navigate to the example's directory and use:
+```bash
+npm run package
+```
 
-   ```
-   go run .
-   ```
+Uses electron-builder to create platform-specific installers. Outputs to `release/` directory:
+- **Windows** - NSIS installer, portable executable
+- **macOS** - DMG
+- **Linux** - AppImage, deb
 
-   Note: Some examples may be under development during the alpha phase.
+## Architecture
 
-3. **Explore the documentation**: Visit the [Wails3 documentation](https://v3.wails.io/) for in-depth guides and API references.
+This is an Electron app with a two-process architecture:
 
-4. **Join the community**: Have questions or want to share your progress? Join the [Wails Discord](https://discord.gg/JDdSxwjhGf) or visit the [Wails discussions on GitHub](https://github.com/wailsapp/wails/discussions).
+- **Main process** (`src/main/`) - Node.js backend handling window management, IPC, and system services
+- **Renderer process** (`src/renderer/`) - React frontend bundled with Vite
 
 ## Project Structure
 
-Take a moment to familiarize yourself with your project structure:
+```
+src/
+  main/           # Electron main process
+    index.ts      # App entry point, window creation
+    ipc.ts        # IPC handlers
+    services/     # Terminal, session, config services
+  renderer/       # React frontend (Vite)
+    src/
+      App.tsx     # Main app component
+      components/ # UI components (NavBar, ScrollContainer, etc.)
+      panes/      # Pane implementations (Terminal, Browser, Claude, etc.)
+      hooks/      # React hooks (useTabManager, useKeyboardNav, etc.)
+```
 
-- `frontend/`: Contains your frontend code (HTML, CSS, JavaScript/TypeScript)
-- `main.go`: The entry point of your Go backend
-- `app.go`: Define your application structure and methods here
-- `wails.json`: Configuration file for your Wails project
+## Keyboard Shortcuts
 
-## Next Steps
+Press `?` to view the shortcut overlay. Default bindings include:
 
-1. Modify the frontend in the `frontend/` directory to create your desired UI.
-2. Add backend functionality in `main.go`.
-3. Use `wails3 dev` to see your changes in real-time.
-4. When ready, build your application with `wails3 build`.
+- `Ctrl+T` - New terminal tab
+- `Ctrl+W` - Close current tab
+- `Ctrl+[1-9]` - Jump to tab by number
+- `Ctrl+Shift+Left/Right` - Move tab
 
-Happy coding with Wails3! If you encounter any issues or have questions, don't hesitate to consult the documentation or reach out to the Wails community.
+## Testing
+
+```bash
+npm run test           # Run all tests
+npm run test:main      # Main process tests
+npm run test:renderer  # Renderer tests
+npm run test:e2e       # End-to-end tests (Playwright)
+```
+
+## License
+
+MIT

@@ -1106,20 +1106,6 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
     }
   }, [terminalTheme]);
 
-  // Auto-scroll conversation to bottom (only when this pane is active —
-  // scrollIntoView scrolls all ancestors, which would yank the outer
-  // ScrollContainer back to this tab even when viewing another tab)
-  useEffect(() => {
-    if (!isActive) return;
-    const container = scrollContainerRef.current;
-    if (!container) return;
-    // Only auto-scroll if user is near the bottom
-    const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
-    if (isNearBottom) {
-      conversationEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [isActive, session?.conversation?.length, session?.activeToolCalls?.length, session?.completedToolCalls?.length]);
-
   // Track scroll position for "scroll to bottom" button + lazy load older messages
   const handleScroll = useCallback(() => {
     const container = scrollContainerRef.current;
@@ -1243,6 +1229,32 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, o
     return [...activeToolCalls, ...completedToolCalls]
       .filter(tc => !conversationToolIds.has(tc.id));
   }, [activeToolCalls, completedToolCalls, conversation]);
+
+  // Auto-scroll conversation to bottom (only when this pane is active —
+  // scrollIntoView scrolls all ancestors, which would yank the outer
+  // ScrollContainer back to this tab even when viewing another tab)
+  useEffect(() => {
+    if (!isActive) return;
+    if (viewMode !== 'gui') return;
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    // Only auto-scroll if user is near the bottom
+    const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
+    if (isNearBottom) {
+      conversationEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [
+    isActive,
+    viewMode,
+    session?.conversation?.length,
+    session?.activeToolCalls?.length,
+    session?.completedToolCalls?.length,
+    session?.lastActivity,
+    session?.subagents?.length,
+    liveToolCalls.length,
+    optimisticMessages.length,
+    isStreaming,
+  ]);
 
   // Build rendered conversation with dividers (windowed to last visibleCount turns)
   const renderedConversation = useMemo(() => {
