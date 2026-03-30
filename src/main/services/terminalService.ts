@@ -55,12 +55,18 @@ interface TerminalSession {
 
 function detectDefaultShell(): string {
   if (process.platform === 'win32') {
-    // Try pwsh first, fall back to powershell
+    // Prefer Git Bash, then pwsh, then powershell
+    const gitBashPath = 'C:\\Program Files\\Git\\bin\\bash.exe';
     try {
-      require('child_process').execSync('where pwsh.exe', { stdio: 'ignore' });
-      return 'pwsh.exe';
+      require('fs').accessSync(gitBashPath);
+      return gitBashPath;
     } catch {
-      return 'powershell.exe';
+      try {
+        require('child_process').execSync('where pwsh.exe', { stdio: 'ignore' });
+        return 'pwsh.exe';
+      } catch {
+        return 'powershell.exe';
+      }
     }
   }
   return process.env.SHELL || '/bin/sh';

@@ -61,10 +61,10 @@ interface Config {
 function defaultShells(): ShellOption[] {
   if (process.platform === 'win32') {
     return [
+      { name: 'gitbash', path: 'C:\\Program Files\\Git\\bin\\bash.exe', label: 'Git Bash' },
       { name: 'powershell', path: 'powershell.exe', label: 'PowerShell' },
       { name: 'pwsh', path: 'pwsh.exe', label: 'PowerShell 7' },
       { name: 'cmd', path: 'cmd.exe', label: 'Command Prompt' },
-      { name: 'gitbash', path: 'C:\\Program Files\\Git\\bin\\bash.exe', label: 'Git Bash' },
       { name: 'wsl', path: 'wsl.exe', label: 'WSL' },
     ];
   }
