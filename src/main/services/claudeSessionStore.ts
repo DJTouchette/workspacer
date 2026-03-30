@@ -1,5 +1,16 @@
+import * as path from 'path';
 import { BrowserWindow } from 'electron';
 import type { SessionAmbientState } from './headlessTerminalManager';
+
+/** Normalize a path for consistent map-key matching on Windows (backslash vs forward slash, case) */
+function normalizeCwd(cwd: string): string {
+  if (!cwd) return cwd;
+  let normalized = path.resolve(cwd);
+  if (process.platform === 'win32') {
+    normalized = normalized.toLowerCase();
+  }
+  return normalized;
+}
 
 // ── Types ──
 
@@ -92,10 +103,11 @@ class ClaudeSessionStore {
    * The cwd is used to match the incoming SessionStart event to this PTY.
    */
   registerPendingPty(ptyId: string, cwd: string): void {
-    console.log(`[SessionStore] registerPendingPty ptyId=${ptyId} cwd="${cwd}"`);
-    const queue = this.unboundPtys.get(cwd) ?? [];
+    const key = normalizeCwd(cwd);
+    console.log(`[SessionStore] registerPendingPty ptyId=${ptyId} cwd="${cwd}" key="${key}"`);
+    const queue = this.unboundPtys.get(key) ?? [];
     queue.push(ptyId);
-    this.unboundPtys.set(cwd, queue);
+    this.unboundPtys.set(key, queue);
   }
 
   /** Remove a PTY from pending + bound maps (called on close) */
@@ -126,7 +138,7 @@ class ClaudeSessionStore {
   handleHookEvent(event: any): void {
     const hookName: string = event.hook_event_name ?? event.type ?? '';
     const sessionId: string = event.session_id ?? '';
-    const cwd: string = event.cwd ?? '';
+    const cwd: string = normalizeCwd(event.cwd ?? '');
 
     let session = this.sessions.get(sessionId);
 
