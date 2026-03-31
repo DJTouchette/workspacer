@@ -82,9 +82,9 @@ class TerminalService {
   }
 
   /** Create a terminal that runs Claude Code CLI with headless mirroring + hook integration */
-  createClaudeTerminal(cwd?: string, cols?: number, rows?: number, profileId?: string): string {
+  createClaudeTerminal(cwd?: string, cols?: number, rows?: number, profileId?: string, resumeSessionId?: string): string {
     // Spawn PTY first — if this throws, don't set up headless/poller
-    const id = this.createTerminalInternal('claude', cwd, true, cols, rows, profileId);
+    const id = this.createTerminalInternal('claude', cwd, true, cols, rows, profileId, resumeSessionId);
 
     try {
       // Create a headless terminal mirror
@@ -105,15 +105,15 @@ class TerminalService {
     return id;
   }
 
-  createTerminal(shell: string, cwd?: string, cols?: number, rows?: number, profileId?: string): string {
+  createTerminal(shell: string, cwd?: string, cols?: number, rows?: number, profileId?: string, resumeSessionId?: string): string {
     // Intercept sentinel value from ClaudePane
     if (shell === '__claude__') {
-      return this.createClaudeTerminal(cwd, cols, rows, profileId);
+      return this.createClaudeTerminal(cwd, cols, rows, profileId, resumeSessionId);
     }
     return this.createTerminalInternal(shell, cwd, false, cols, rows);
   }
 
-  private createTerminalInternal(shell: string, cwd: string | undefined, isClaudeSession: boolean, cols?: number, rows?: number, profileId?: string): string {
+  private createTerminalInternal(shell: string, cwd: string | undefined, isClaudeSession: boolean, cols?: number, rows?: number, profileId?: string, resumeSessionId?: string): string {
     if (!shell) {
       shell = detectDefaultShell();
     }
@@ -142,20 +142,21 @@ class TerminalService {
     let spawnShell: string;
     let spawnArgs: string[];
     const profileArgs = profile?.extraArgs ?? [];
+    const resumeArgs = isClaudeSession && resumeSessionId ? ['--resume', resumeSessionId] : [];
     if (isClaudeSession) {
       if (process.platform === 'win32') {
         // Prefer native binary, fall back to node+cli.js, then cmd.exe
         const claude = getClaudeSpawn();
         if (claude) {
           spawnShell = claude.shell;
-          spawnArgs = [...claude.args, ...profileArgs];
+          spawnArgs = [...claude.args, ...profileArgs, ...resumeArgs];
         } else {
           spawnShell = 'cmd.exe';
-          spawnArgs = ['/c', 'claude', ...profileArgs];
+          spawnArgs = ['/c', 'claude', ...profileArgs, ...resumeArgs];
         }
       } else {
         spawnShell = 'claude';
-        spawnArgs = [...profileArgs];
+        spawnArgs = [...profileArgs, ...resumeArgs];
       }
     } else {
       spawnShell = shell;

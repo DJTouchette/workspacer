@@ -6,7 +6,7 @@ interface NavBarProps {
   tabs: TabConfig[];
   activeTabId: string;
   onTabClick: (id: string) => void;
-  onAddTab?: (type: PaneType, shell?: string, label?: string, cwd?: string, profileId?: string) => void;
+  onAddTab?: (type: PaneType, shell?: string, label?: string, cwd?: string, profileId?: string, resumeSessionId?: string) => void;
 }
 
 const typeLabels: Record<PaneType, string> = {
@@ -21,12 +21,19 @@ const typeLabels: Record<PaneType, string> = {
   devops: '\u{1F527}',
 };
 
+interface SessionPickerState {
+  folder: string;
+  profileId?: string;
+  sessions: { sessionId: string; timestamp: string; summary: string }[];
+}
+
 const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab }) => {
   const { config } = useConfig();
   const navHeight = config.ui.navBarHeight || 28;
   const shells = config.terminal.shells || [];
   const [showMenu, setShowMenu] = useState(false);
   const [profilePickerState, setProfilePickerState] = useState<{ folder: string; profiles: any[] } | null>(null);
+  const [sessionPickerState, setSessionPickerState] = useState<SessionPickerState | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -207,10 +214,19 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
                   const folder = await window.electronAPI.pickFolder();
                   if (!folder) return;
                   // Check for profiles — show picker if more than 1
+                  let profileId: string | undefined;
                   try {
                     const profiles = await window.electronAPI.claudeProfilesList();
                     if (profiles.length > 1) {
                       setProfilePickerState({ folder, profiles });
+                      return;
+                    }
+                  } catch {}
+                  // Check for existing sessions
+                  try {
+                    const sessions = await window.electronAPI.claudeListSessionsForDir(folder);
+                    if (sessions.length > 0) {
+                      setSessionPickerState({ folder, profileId, sessions });
                       return;
                     }
                   } catch {}
@@ -266,9 +282,17 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
             {profilePickerState.profiles.map((p: any) => (
               <div
                 key={p.id}
-                onClick={() => {
+                onClick={async () => {
                   const { folder } = profilePickerState;
                   setProfilePickerState(null);
+                  // Check for existing sessions before launching
+                  try {
+                    const sessions = await window.electronAPI.claudeListSessionsForDir(folder);
+                    if (sessions.length > 0) {
+                      setSessionPickerState({ folder, profileId: p.id, sessions });
+                      return;
+                    }
+                  } catch {}
                   onAddTab?.('claude', undefined, undefined, folder, p.id);
                 }}
                 style={{
@@ -292,9 +316,106 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
           </div>
         </div>
       )}
+      {/* Session Picker Modal */}
+      {sessionPickerState && (
+        <div
+          onClick={() => setSessionPickerState(null)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 3000,
+            display: 'flex', justifyContent: 'center', paddingTop: '15vh',
+            backgroundColor: 'rgba(0,0,0,0.4)',
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              backgroundColor: 'var(--wks-bg-raised)', border: '1px solid var(--wks-border-input)',
+              borderRadius: 8, width: 400, padding: '12px 0', maxHeight: 420,
+              boxShadow: '0 8px 32px var(--wks-shadow)',
+              display: 'flex', flexDirection: 'column',
+            }}
+          >
+            <div style={{ padding: '0 16px 8px', fontSize: '0.75rem', fontWeight: 600, color: 'var(--wks-text-secondary)', borderBottom: '1px solid var(--wks-border)' }}>
+              Claude Session
+            </div>
+            <div style={{ overflowY: 'auto', flex: 1 }}>
+              {/* New session option */}
+              <div
+                onClick={() => {
+                  const { folder, profileId } = sessionPickerState;
+                  setSessionPickerState(null);
+                  onAddTab?.('claude', undefined, undefined, folder, profileId);
+                }}
+                style={{
+                  padding: '10px 16px', cursor: 'pointer', fontSize: '0.72rem',
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  borderBottom: '1px solid var(--wks-border)',
+                }}
+                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--wks-bg-selected)'; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'; }}
+              >
+                <span style={{ color: 'var(--wks-accent)', fontSize: '0.8rem' }}>+</span>
+                <div>
+                  <div style={{ color: 'var(--wks-text-primary)', fontWeight: 600 }}>New Session</div>
+                  <div style={{ fontSize: '0.58rem', color: 'var(--wks-text-faint)' }}>Start a fresh conversation</div>
+                </div>
+              </div>
+
+              {/* Existing sessions */}
+              <div style={{ padding: '6px 16px 2px', fontSize: '0.55rem', color: 'var(--wks-text-disabled)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Resume Session
+              </div>
+              {sessionPickerState.sessions.map((s) => (
+                <div
+                  key={s.sessionId}
+                  onClick={() => {
+                    const { folder, profileId } = sessionPickerState;
+                    setSessionPickerState(null);
+                    onAddTab?.('claude', undefined, undefined, folder, profileId, s.sessionId);
+                  }}
+                  style={{
+                    padding: '8px 16px', cursor: 'pointer', fontSize: '0.72rem',
+                    display: 'flex', alignItems: 'center', gap: 8,
+                  }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--wks-bg-selected)'; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'; }}
+                >
+                  <span style={{ color: 'var(--wks-text-disabled)', fontSize: '0.7rem' }}>{'\u25B6'}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ color: 'var(--wks-text-primary)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {s.summary}
+                    </div>
+                    <div style={{ fontSize: '0.58rem', color: 'var(--wks-text-faint)', fontFamily: 'monospace' }}>
+                      {formatSessionDate(s.timestamp)}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </nav>
   );
 };
+
+function formatSessionDate(iso: string): string {
+  try {
+    const d = new Date(iso);
+    const now = new Date();
+    const diff = now.getTime() - d.getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return `${mins}m ago`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    if (days < 7) return `${days}d ago`;
+    return d.toLocaleDateString();
+  } catch {
+    return iso;
+  }
+}
 
 function MenuButton({ label, onClick }: { label: string; onClick: () => void }) {
   return (

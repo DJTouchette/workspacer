@@ -16,6 +16,8 @@ interface UsePTYOptions {
   cwd?: string;
   /** Claude profile ID (sets CLAUDE_CONFIG_DIR + extra args) */
   profileId?: string;
+  /** Claude session ID to resume (--resume flag) */
+  resumeSessionId?: string;
   /** Called when the PTY process exits */
   onExit?: () => void;
   /** If true, don't create PTY on mount — call startPTY() manually */
@@ -43,7 +45,7 @@ interface UsePTYReturn {
  * - Provides write/resize functions to interact with the PTY
  * - Cleans up (closes PTY, unsubscribes) on unmount
  */
-export function usePTY({ paneId, shell = '', cwd, profileId, onExit, defer = false }: UsePTYOptions): UsePTYReturn {
+export function usePTY({ paneId, shell = '', cwd, profileId, resumeSessionId, onExit, defer = false }: UsePTYOptions): UsePTYReturn {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [isReady, setIsReady] = useState(false);
 
@@ -64,6 +66,8 @@ export function usePTY({ paneId, shell = '', cwd, profileId, onExit, defer = fal
   cwdRef.current = cwd;
   const profileIdRef = useRef(profileId);
   profileIdRef.current = profileId;
+  const resumeSessionIdRef = useRef(resumeSessionId);
+  resumeSessionIdRef.current = resumeSessionId;
 
   // Output batching: collect chunks and flush once per animation frame
   const pendingOutputRef = useRef<Uint8Array[]>([]);
@@ -99,7 +103,7 @@ export function usePTY({ paneId, shell = '', cwd, profileId, onExit, defer = fal
   // Core init logic shared by auto and deferred modes
   const initPTY = useCallback(async (cols?: number, rows?: number) => {
     try {
-      const id = await CreateTerminal(shellRef.current, cwdRef.current, cols, rows, profileIdRef.current);
+      const id = await CreateTerminal(shellRef.current, cwdRef.current, cols, rows, profileIdRef.current, resumeSessionIdRef.current);
       if (!mountedRef.current) {
         CloseTerminal(id).catch(() => {});
         return;

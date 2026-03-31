@@ -8,15 +8,16 @@ import { issueCache } from './services/db';
 import { backgroundSync } from './services/tracker/backgroundSync';
 import { devopsService } from './services/devops/devopsService';
 import { claudeProfiles } from './services/claudeProfiles';
+import { listClaudeSessionsForDir } from './services/claudeSessionList';
 
 export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // Wire terminal service to use this window for push events
   terminalService.setMainWindow(mainWindow);
 
   // Terminal handlers
-  ipcMain.handle('terminal:create', (_event, shell: string, cwd?: string, cols?: number, rows?: number, profileId?: string) => {
+  ipcMain.handle('terminal:create', (_event, shell: string, cwd?: string, cols?: number, rows?: number, profileId?: string, resumeSessionId?: string) => {
     try {
-      return terminalService.createTerminal(shell, cwd, cols, rows, profileId);
+      return terminalService.createTerminal(shell, cwd, cols, rows, profileId, resumeSessionId);
     } catch (err: any) {
       console.error('[IPC] terminal:create failed:', err?.message);
       throw err;
@@ -125,6 +126,11 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   });
 
   // ── Claude Profiles ──
+
+  // ── Claude Session Discovery ──
+
+  ipcMain.handle('claude-sessions:listForDir', (_event, cwd: string) =>
+    listClaudeSessionsForDir(cwd));
 
   ipcMain.handle('claude-profiles:list', () => claudeProfiles.getProfiles());
   ipcMain.handle('claude-profiles:add', (_event, name: string, configDir: string, extraArgs: string[]) =>

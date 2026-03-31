@@ -10,6 +10,8 @@ export interface PaneConfig {
   appMode?: boolean;
   hibernated?: boolean;
   profileId?: string;
+  /** Claude session ID to resume (passed as --resume <id> to CLI) */
+  resumeSessionId?: string;
 }
 
 export interface TabConfig {

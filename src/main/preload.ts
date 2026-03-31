@@ -39,8 +39,8 @@ function getPort(id: string): Promise<IPort> {
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // Terminal — control messages stay on IPC, I/O goes through MessagePort
-  createTerminal: (shell: string, cwd?: string, cols?: number, rows?: number, profileId?: string): Promise<string> =>
-    ipcRenderer.invoke('terminal:create', shell, cwd, cols, rows, profileId),
+  createTerminal: (shell: string, cwd?: string, cols?: number, rows?: number, profileId?: string, resumeSessionId?: string): Promise<string> =>
+    ipcRenderer.invoke('terminal:create', shell, cwd, cols, rows, profileId, resumeSessionId),
 
   writeTerminal: (id: string, data: string): void => {
     const port = terminalPorts.get(id);
@@ -109,6 +109,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Claude session
   createClaudeTerminal: (cwd?: string, profileId?: string): Promise<string> =>
     ipcRenderer.invoke('terminal:createClaude', cwd, profileId),
+
+  // Claude session discovery
+  claudeListSessionsForDir: (cwd: string): Promise<any[]> =>
+    ipcRenderer.invoke('claude-sessions:listForDir', cwd),
 
   // Claude profiles
   claudeProfilesList: (): Promise<any[]> => ipcRenderer.invoke('claude-profiles:list'),

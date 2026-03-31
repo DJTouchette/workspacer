@@ -259,8 +259,10 @@ class ClaudeSessionStore {
         // Suppress poller briefly — terminal still has recent activity from
         // the response that just finished, which causes false thinking flicker
         this.hookStateTimestamp.set(sessionId, Date.now() + 2000);
-        // Clear active tool calls (completed ones persist as history until next prompt)
+        // Clear tool calls — they're already shown inline in conversation via transcript
         session.activeToolCalls = [];
+        session.completedToolCalls = [];
+        session.subagents = session.subagents.filter(s => s.status === 'running');
         // Delayed re-read: final assistant message may still be flushing
         if (session.transcriptPath) {
           setTimeout(() => { this.refreshFromTranscript(session); this.pushUpdate(session); }, 500);

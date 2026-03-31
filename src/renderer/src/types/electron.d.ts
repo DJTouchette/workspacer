@@ -7,7 +7,7 @@ export interface SessionListEntry {
 
 export interface ElectronAPI {
   // Terminal — control on IPC, I/O on MessagePort
-  createTerminal: (shell: string, cwd?: string, cols?: number, rows?: number, profileId?: string) => Promise<string>;
+  createTerminal: (shell: string, cwd?: string, cols?: number, rows?: number, profileId?: string, resumeSessionId?: string) => Promise<string>;
   writeTerminal: (id: string, data: string) => void;
   resizeTerminal: (id: string, cols: number, rows: number) => Promise<void>;
   closeTerminal: (id: string) => Promise<void>;
@@ -28,6 +28,9 @@ export interface ElectronAPI {
 
   // Claude session
   createClaudeTerminal: (cwd?: string, profileId?: string) => Promise<string>;
+
+  // Claude session discovery
+  claudeListSessionsForDir: (cwd: string) => Promise<{ sessionId: string; timestamp: string; summary: string }[]>;
 
   // Claude profiles
   claudeProfilesList: () => Promise<any[]>;
