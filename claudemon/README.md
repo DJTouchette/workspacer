@@ -4,9 +4,10 @@ Standalone observability daemon for Claude Code sessions. Ingests hook events,
 keeps live session state in memory, and exposes it over HTTP + Server-Sent
 Events so any UI (TUI, web, mobile, tray app) can be a thin client.
 
-This is **v0.1, a working scaffold** — hook ingestion, session state, and the
-REST/SSE API are real; the PTY wrapper (`claudemon wrap`) and settings.json
-auto-merge (`claudemon init`) are stubbed.
+v0.2: hook ingestion, session state, REST/SSE API, and the **PTY wrapper
+with bidirectional input + transcript reading** are all real. Settings.json
+auto-merge (`claudemon init`) and the TUI client (`claudemon watch`) are
+still stubs.
 
 ## Why
 
@@ -72,11 +73,13 @@ is the next thing to land.)
 
 ## Try it
 
+### Hook-only mode (observe Claude Code without changing how you launch it)
+
 ```
-# In one shell:
+# Terminal 1:
 claudemon serve
 
-# In another:
+# Terminal 2:
 curl -X POST http://127.0.0.1:7890/hook \
   -H 'content-type: application/json' \
   -d '{"event":"SessionStart","session_id":"demo","cwd":"/tmp"}'
@@ -84,28 +87,55 @@ curl -X POST http://127.0.0.1:7890/hook \
 curl http://127.0.0.1:7891/sessions
 # [{"session_id":"demo","status":"active",...}]
 
-# Live updates:
-curl -N http://127.0.0.1:7891/events
+curl -N http://127.0.0.1:7891/events    # live updates
 ```
 
-## API surface (v0.1)
+### Wrapped mode (send messages and stream output)
 
-| Method | Path                | Purpose                              |
-|--------|---------------------|--------------------------------------|
-| POST   | `/hook` (7890)      | Hook ingress from Claude Code        |
-| GET    | `/sessions`         | List all known sessions              |
-| GET    | `/sessions/:id`     | Single session state                 |
-| GET    | `/events`           | SSE stream of session updates        |
-| GET    | `/health`           | Liveness                             |
+```
+# Terminal 1:
+claudemon serve
 
-Planned (require `claudemon wrap`):
+# Terminal 2 — wrap any interactive program (claude, bash, cat, etc.):
+claudemon wrap -- claude
 
-| Method | Path                       | Purpose                       |
-|--------|----------------------------|-------------------------------|
-| POST   | `/sessions/:id/input`      | Write bytes to claude stdin   |
-| POST   | `/sessions/:id/signal`     | Send a signal (SIGINT, etc.)  |
-| POST   | `/sessions/:id/resize`     | Resize the PTY                |
-| GET    | `/sessions/:id/stream`     | SSE byte stream from the PTY  |
+# Terminal 3 — drive it from anywhere:
+SID=$(curl -s http://127.0.0.1:7891/sessions | jq -r '.[0].session_id')
+
+# Send a message:
+curl -X POST http://127.0.0.1:7891/sessions/$SID/input \
+  -H 'content-type: application/json' \
+  -d '{"text":"refactor this for me"}'
+
+# Read everything the session has produced:
+curl http://127.0.0.1:7891/sessions/$SID/output
+
+# Stream new bytes live (each SSE frame is base64-encoded PTY bytes):
+curl -N http://127.0.0.1:7891/sessions/$SID/stream
+
+# Pull the parsed conversation from Claude's JSONL transcript on disk:
+curl http://127.0.0.1:7891/sessions/$SID/transcript
+
+# Send Ctrl-C:
+curl -X POST http://127.0.0.1:7891/sessions/$SID/signal \
+  -H 'content-type: application/json' -d '{"signal":"SIGINT"}'
+```
+
+## API surface
+
+| Method | Path                          | Purpose                                          |
+|--------|-------------------------------|--------------------------------------------------|
+| POST   | `/hook` (7890)                | Hook ingress from Claude Code                    |
+| GET    | `/sessions`                   | List all known sessions                          |
+| GET    | `/sessions/:id`               | Single session state                             |
+| POST   | `/sessions/:id/input`         | Write bytes (`text` or `bytes_b64`) to child stdin |
+| POST   | `/sessions/:id/signal`        | Deliver a signal (`{"signal":"SIGINT"}`)         |
+| GET    | `/sessions/:id/output`        | Snapshot of buffered PTY output                  |
+| GET    | `/sessions/:id/stream`        | SSE of live PTY bytes (base64-encoded frames)    |
+| GET    | `/sessions/:id/transcript`    | Parsed conversation from `~/.claude/projects/.../*.jsonl` |
+| GET    | `/events`                     | SSE stream of session state updates              |
+| WS     | `/wrapper/:id`                | Wrapper registration + bidirectional control     |
+| GET    | `/health`                     | Liveness                                         |
 
 ## Layout
 
@@ -113,17 +143,20 @@ Planned (require `claudemon wrap`):
 src/
   main.rs                 CLI entry
   cli.rs                  clap subcommands
+  protocol.rs             Shared wrapper<->daemon WS message enum
   daemon/
     mod.rs                axum servers, lifecycle
     hook.rs               POST /hook
-    api.rs                /sessions, /events
+    api.rs                Session REST + SSE endpoints
+    wrapper_ws.rs         WebSocket endpoint for wrappers
     init.rs               `claudemon init` (stub)
   session/
     state.rs              SessionState, HookEvent, status machine
-    store.rs              In-memory store + broadcast channel
-    transcript.rs         JSONL transcript reader (stub)
+    store.rs              In-memory store + wrapper handles + byte buffers
+    transcript.rs         JSONL transcript reader
   wrapper/
-    mod.rs                PTY wrapper (stub)
+    mod.rs                PTY wrapper orchestration
+    pty.rs                PTY spawn + blocking I/O bridges
 ```
 
 ## Roadmap

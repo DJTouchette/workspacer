@@ -11,7 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-axum = "0.7"
+axum = { version = "0.7", features = ["ws"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["trace", "cors"] }
 serde = { version = "1", features = ["derive"] }
@@ -25,8 +25,15 @@ directories = "5"
 time = { version = "0.3", features = ["serde", "formatting", "parsing", "macros"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
+tokio-tungstenite = "0.24"
 futures = "0.3"
+futures-util = "0.3"
 dashmap = "6"
+portable-pty = "0.8"
+crossterm = "0.28"
+base64 = "0.22"
+bytes = "1"
+async-stream = "0.3"
 
 [profile.release]
 lto = "thin"

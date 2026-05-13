@@ -4,6 +4,7 @@ use tracing_subscriber::EnvFilter;
 
 mod cli;
 mod daemon;
+mod protocol;
 mod session;
 mod wrapper;
 

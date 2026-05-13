@@ -1,6 +1,7 @@
 pub mod api;
 pub mod hook;
 pub mod init;
+pub mod wrapper_ws;
 
 use std::net::SocketAddr;
 

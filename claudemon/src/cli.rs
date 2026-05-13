@@ -24,8 +24,11 @@ pub enum Command {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Run `claude` under a PTY wrapper so the daemon can relay input (stub).
+    /// Run a command under a PTY wrapper so the daemon can relay input.
     Wrap {
+        /// WebSocket base URL of the daemon's wrapper endpoint.
+        #[arg(long, default_value = "ws://127.0.0.1:7891/wrapper")]
+        daemon: String,
         #[arg(trailing_var_arg = true)]
         argv: Vec<String>,
     },
@@ -42,7 +45,9 @@ pub async fn dispatch(cli: Cli) -> Result<()> {
             crate::daemon::run(&host, hook_port, api_port).await
         }
         Command::Init { dry_run } => crate::daemon::init::run(dry_run).await,
-        Command::Wrap { argv } => crate::wrapper::run(argv).await,
+        Command::Wrap { daemon, argv } => {
+            crate::wrapper::run_with_daemon(argv, &daemon).await
+        }
         Command::Watch { api } => {
             tracing::info!(api, "claudemon watch is not implemented yet");
             println!("TUI not implemented yet. For now, try: curl {api}/sessions");
