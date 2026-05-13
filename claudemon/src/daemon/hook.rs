@@ -20,5 +20,5 @@ async fn receive(
 ) -> impl IntoResponse {
     tracing::debug!(event = %event.event, session = %event.session_id, "hook received");
     let state = store.ingest(event);
-    (StatusCode::OK, Json(json!({ "ok": true, "status": state.status })))
+    (StatusCode::OK, Json(json!({ "ok": true, "mode": state.mode })))
 }

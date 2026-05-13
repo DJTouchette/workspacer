@@ -18,13 +18,15 @@ use tokio_stream::{wrappers::BroadcastStream, StreamExt};
 use tower_http::cors::CorsLayer;
 
 use crate::protocol::WrapperMessage;
-use crate::session::{transcript, SessionStore};
+use crate::session::{transcript, SessionMode, SessionStore};
 
 pub fn router(store: SessionStore) -> Router {
     Router::new()
         .route("/sessions", get(list_sessions))
         .route("/sessions/:id", get(get_session))
         .route("/sessions/:id/input", post(post_input))
+        .route("/sessions/:id/message", post(post_message))
+        .route("/sessions/:id/approve", post(post_approve))
         .route("/sessions/:id/signal", post(post_signal))
         .route("/sessions/:id/output", get(get_output))
         .route("/sessions/:id/stream", get(stream_bytes))
@@ -96,6 +98,111 @@ async fn post_input(
         return (StatusCode::GONE, "wrapper disconnected").into_response();
     }
     Json(json!({ "ok": true, "bytes": raw.len() })).into_response()
+}
+
+#[derive(Debug, Deserialize)]
+struct MessagePayload {
+    text: String,
+}
+
+async fn post_message(
+    State(store): State<SessionStore>,
+    Path(id): Path<String>,
+    Json(payload): Json<MessagePayload>,
+) -> impl IntoResponse {
+    let Some(state) = store.get(&id) else {
+        return (StatusCode::NOT_FOUND, "session not found").into_response();
+    };
+    if state.mode != SessionMode::Input {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({
+                "error": "session is not accepting chat input",
+                "mode": state.mode,
+                "expected": "input",
+            })),
+        )
+            .into_response();
+    }
+    let Some(handle) = store.wrapper(&id) else {
+        return (StatusCode::NOT_FOUND, "no wrapper attached to that session").into_response();
+    };
+
+    // Carriage return is what Claude Code's input field treats as submit.
+    let mut bytes = payload.text.into_bytes();
+    if !bytes.last().is_some_and(|b| *b == b'\r' || *b == b'\n') {
+        bytes.push(b'\r');
+    }
+    if handle
+        .tx
+        .send(WrapperMessage::Input { bytes: B64.encode(&bytes) })
+        .is_err()
+    {
+        return (StatusCode::GONE, "wrapper disconnected").into_response();
+    }
+    Json(json!({ "ok": true, "bytes": bytes.len() })).into_response()
+}
+
+#[derive(Debug, Deserialize)]
+struct ApprovePayload {
+    /// `"yes"`, `"no"`, or `"always"`. Maps to picker option 1/3/2 by default.
+    decision: Option<String>,
+    /// 1-indexed picker option, overrides `decision` if both are set.
+    option: Option<u8>,
+}
+
+async fn post_approve(
+    State(store): State<SessionStore>,
+    Path(id): Path<String>,
+    Json(payload): Json<ApprovePayload>,
+) -> impl IntoResponse {
+    let Some(state) = store.get(&id) else {
+        return (StatusCode::NOT_FOUND, "session not found").into_response();
+    };
+    if state.mode != SessionMode::Approval {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({
+                "error": "session is not awaiting approval",
+                "mode": state.mode,
+                "expected": "approval",
+            })),
+        )
+            .into_response();
+    }
+    let Some(handle) = store.wrapper(&id) else {
+        return (StatusCode::NOT_FOUND, "no wrapper attached").into_response();
+    };
+
+    // Claude Code's permission picker uses digit shortcuts. The exact label
+    // for each option drifts (e.g. "1. Yes" / "2. Yes, don't ask again" /
+    // "3. No"), so we expose `option` for explicit control and treat
+    // `decision` as an opinionated convenience.
+    let option = match (payload.option, payload.decision.as_deref()) {
+        (Some(n), _) if (1..=9).contains(&n) => n,
+        (_, Some("yes")) => 1,
+        (_, Some("always")) => 2,
+        (_, Some("no")) => 3,
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                "expected `option` (1-9) or `decision` (yes|no|always)",
+            )
+                .into_response();
+        }
+    };
+
+    let keystroke = format!("{option}\r");
+    if handle
+        .tx
+        .send(WrapperMessage::Input {
+            bytes: B64.encode(keystroke.as_bytes()),
+        })
+        .is_err()
+    {
+        return (StatusCode::GONE, "wrapper disconnected").into_response();
+    }
+    Json(json!({ "ok": true, "option": option })).into_response()
 }
 
 #[derive(Debug, Deserialize)]

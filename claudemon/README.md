@@ -121,14 +121,32 @@ curl -X POST http://127.0.0.1:7891/sessions/$SID/signal \
   -H 'content-type: application/json' -d '{"signal":"SIGINT"}'
 ```
 
+## Session modes
+
+The daemon tracks what Claude is doing as a single `mode` field, driven by
+hook events. Clients pick the right API based on this.
+
+| Mode         | Set by                              | Meaning                                              |
+|--------------|-------------------------------------|------------------------------------------------------|
+| `unknown`    | initial / wrapper-only registration | Before any hook fires (first-run pickers, OAuth, etc.) |
+| `input`      | `SessionStart`, `Stop`              | Chat prompt is open, accepting a user message        |
+| `responding` | `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, subagents | Claude is working — streaming, thinking, or running a tool |
+| `approval`   | `PermissionRequest`                 | Picker is up. Claude paused. Overrides `responding`. |
+| `stopped`    | `SessionEnd`                        | Session ended                                        |
+
+Mode appears in `/sessions`, `/sessions/:id`, and every `session.update` SSE
+frame, so a client can react to transitions without polling.
+
 ## API surface
 
 | Method | Path                          | Purpose                                          |
 |--------|-------------------------------|--------------------------------------------------|
 | POST   | `/hook` (7890)                | Hook ingress from Claude Code                    |
 | GET    | `/sessions`                   | List all known sessions                          |
-| GET    | `/sessions/:id`               | Single session state                             |
-| POST   | `/sessions/:id/input`         | Write bytes (`text` or `bytes_b64`) to child stdin |
+| GET    | `/sessions/:id`               | Single session state (includes `mode`)           |
+| POST   | `/sessions/:id/message`       | **Send chat message — requires mode=`input`**    |
+| POST   | `/sessions/:id/approve`       | **Resolve picker — requires mode=`approval`**    |
+| POST   | `/sessions/:id/input`         | Raw escape hatch: bytes (`text` or `bytes_b64`)  |
 | POST   | `/sessions/:id/signal`        | Deliver a signal (`{"signal":"SIGINT"}`)         |
 | GET    | `/sessions/:id/output`        | Snapshot of buffered PTY output                  |
 | GET    | `/sessions/:id/stream`        | SSE of live PTY bytes (base64-encoded frames)    |
@@ -136,6 +154,38 @@ curl -X POST http://127.0.0.1:7891/sessions/$SID/signal \
 | GET    | `/events`                     | SSE stream of session state updates              |
 | WS     | `/wrapper/:id`                | Wrapper registration + bidirectional control     |
 | GET    | `/health`                     | Liveness                                         |
+
+Mode-gated endpoints return HTTP **409 Conflict** with the current mode in
+the body when called at the wrong time:
+
+```
+$ curl -X POST .../sessions/$SID/message -d '{"text":"hi"}'
+HTTP 409
+{"error":"session is not accepting chat input","mode":"responding","expected":"input"}
+```
+
+### `/message`
+
+```
+POST /sessions/:id/message
+{ "text": "refactor this for me" }
+```
+
+Appends `\r` automatically if the text doesn't already end in a line
+terminator. Only succeeds when `mode == input`.
+
+### `/approve`
+
+```
+POST /sessions/:id/approve
+{ "decision": "yes" }   // → sends "1\r"  (first picker option)
+{ "decision": "always" }// → sends "2\r"
+{ "decision": "no" }    // → sends "3\r"
+{ "option": 2 }         // explicit option override (1–9)
+```
+
+The picker layout varies between Claude releases — `option` is the escape
+hatch when the convention drifts.
 
 ## Layout
 

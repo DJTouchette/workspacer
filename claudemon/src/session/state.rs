@@ -1,24 +1,31 @@
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
-/// Lifecycle status of a Claude Code session as far as the daemon can tell.
+/// What Claude Code is doing right now, as far as the daemon can tell.
 ///
-/// The daemon infers transitions from hook events. `WaitingForApproval` is
-/// driven by `PermissionRequest` and the absence of a subsequent `Stop` or
-/// `PostToolUse`.
+/// Driven by hook events. `Approval` overrides `Responding` because while
+/// a permission picker is up, Claude is paused — it's not actively working.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum SessionStatus {
-    Starting,
-    Active,
-    WaitingForApproval,
-    Idle,
+pub enum SessionMode {
+    /// No hook has fired yet. We're in early TUI startup, OAuth, or
+    /// first-run setup screens. The wrapper can read/write bytes, but
+    /// mode-specific endpoints don't know what to do.
+    Unknown,
+    /// Chat prompt is up. Ready to receive a user message.
+    Input,
+    /// Claude is producing a turn — streaming, thinking, or running a
+    /// tool that didn't need approval.
+    Responding,
+    /// A `PermissionRequest` was received. Claude is paused at a picker.
+    Approval,
+    /// Session has ended.
     Stopped,
 }
 
-impl Default for SessionStatus {
+impl Default for SessionMode {
     fn default() -> Self {
-        SessionStatus::Starting
+        SessionMode::Unknown
     }
 }
 
@@ -26,7 +33,7 @@ impl Default for SessionStatus {
 pub struct SessionState {
     pub session_id: String,
     pub cwd: Option<String>,
-    pub status: SessionStatus,
+    pub mode: SessionMode,
     #[serde(with = "time::serde::rfc3339")]
     pub started_at: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
@@ -41,7 +48,7 @@ impl SessionState {
         Self {
             session_id,
             cwd,
-            status: SessionStatus::Starting,
+            mode: SessionMode::Unknown,
             started_at: now,
             updated_at: now,
             tool_calls: 0,
@@ -57,28 +64,51 @@ impl SessionState {
         }
 
         match event.event.as_str() {
-            "SessionStart" => self.status = SessionStatus::Active,
-            "SessionEnd" | "Stop" => self.status = SessionStatus::Stopped,
-            "PermissionRequest" => self.status = SessionStatus::WaitingForApproval,
+            // Lifecycle: SessionStart drops us at the chat prompt.
+            "SessionStart" => self.mode = SessionMode::Input,
+            "SessionEnd" => self.mode = SessionMode::Stopped,
+
+            // User submitted a turn — Claude is now working.
+            "UserPromptSubmit" => self.mode = SessionMode::Responding,
+
+            // Tool calls. Don't downgrade Approval back to Responding here —
+            // PermissionRequest may have fired before PreToolUse arrives via
+            // a different code path, and we want Approval to be sticky until
+            // the picker resolves (PostToolUse / Stop).
             "PreToolUse" => {
                 self.tool_calls = self.tool_calls.saturating_add(1);
-                self.status = SessionStatus::Active;
-            }
-            "PostToolUse" | "PostToolUseFailure" => {
-                if self.status == SessionStatus::WaitingForApproval {
-                    self.status = SessionStatus::Active;
+                if self.mode != SessionMode::Approval {
+                    self.mode = SessionMode::Responding;
                 }
             }
-            "Notification" => {
-                // Notifications don't change status by themselves.
+            "PostToolUse" | "PostToolUseFailure" => {
+                // Tool resolved. Back to assistant streaming.
+                self.mode = SessionMode::Responding;
             }
+
+            // Permission picker is up.
+            "PermissionRequest" => self.mode = SessionMode::Approval,
+
+            // Subagent activity keeps us in Responding.
+            "SubagentStart" | "SubagentStop" => {
+                if self.mode != SessionMode::Approval {
+                    self.mode = SessionMode::Responding;
+                }
+            }
+
+            // Stop = the assistant turn is done. Back to the chat prompt.
+            "Stop" => self.mode = SessionMode::Input,
+
+            // Notifications surface info but don't change mode.
+            "Notification" => {}
+
             _ => {}
         }
     }
 }
 
-/// Raw inbound hook event. Fields beyond the common ones are kept in `payload`
-/// so we don't have to track Claude Code's hook schema lock-step.
+/// Raw inbound hook event. Common fields are typed; everything else lives
+/// in `payload` so we don't have to track Claude Code's hook schema lock-step.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HookEvent {
     pub event: String,

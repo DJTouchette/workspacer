@@ -3,5 +3,5 @@ pub mod store;
 pub mod transcript;
 
 #[allow(unused_imports)]
-pub use state::{HookEvent, SessionState, SessionStatus};
+pub use state::{HookEvent, SessionMode, SessionState};
 pub use store::SessionStore;
