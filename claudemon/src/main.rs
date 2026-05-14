@@ -6,6 +6,7 @@ mod cli;
 mod daemon;
 mod protocol;
 mod session;
+mod tui;
 mod wrapper;
 
 #[tokio::main]

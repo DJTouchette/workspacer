@@ -286,12 +286,33 @@ src/
     pty.rs                PTY spawn + blocking I/O bridges
 ```
 
+## `claudemon watch` — terminal UI
+
+```
+claudemon watch                              # default: http://127.0.0.1:7891
+claudemon watch --api http://dev-box:7891    # remote daemon
+```
+
+Shows every session live, with a mode badge per row. Selected session
+gets a details panel with `pending` payload spelled out. Keys:
+
+```
+↑↓ / j k    navigate sessions
+a           approve selected session's parked decision  (mode=approval)
+d           deny the parked decision
+1-9         answer Claude's question with option N      (mode=question)
+g           toggle the deferred-hook gate on this session
+r           refresh from the daemon
+q / Esc     quit
+```
+
+Connects to `/sessions` once, then subscribes to `/events` for live
+updates. Reconnects automatically if the daemon restarts.
+
 ## Roadmap
 
-- [ ] `claudemon init` actually merges into `~/.claude/settings.json`
-- [ ] `claudemon wrap` — PTY wrapper, byte mirroring, input relay
 - [ ] JSONL transcript ingestion (replay past sessions on startup)
-- [ ] `claudemon watch` TUI
+- [ ] Message input box in the TUI (currently approve/answer only)
 - [ ] Auth token for non-loopback API binds
 - [ ] systemd / launchd unit files
 

@@ -55,10 +55,6 @@ pub async fn dispatch(cli: Cli) -> Result<()> {
         Command::Wrap { daemon, argv } => {
             crate::wrapper::run_with_daemon(argv, &daemon).await
         }
-        Command::Watch { api } => {
-            tracing::info!(api, "claudemon watch is not implemented yet");
-            println!("TUI not implemented yet. For now, try: curl {api}/sessions");
-            Ok(())
-        }
+        Command::Watch { api } => crate::tui::run(api).await,
     }
 }
