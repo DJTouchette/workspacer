@@ -2,13 +2,6 @@ use anyhow::Result;
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
-mod cli;
-mod daemon;
-mod protocol;
-mod session;
-mod tui;
-mod wrapper;
-
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -17,6 +10,6 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    let cli = cli::Cli::parse();
-    cli::dispatch(cli).await
+    let cli = claudemon::cli::Cli::parse();
+    claudemon::cli::dispatch(cli).await
 }

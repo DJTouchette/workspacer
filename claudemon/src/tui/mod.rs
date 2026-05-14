@@ -11,10 +11,11 @@
 //! That means the TUI works against any compatible daemon (remote, future
 //! re-impl in another language, etc.).
 
-mod app;
-mod editor;
+pub mod app;
+pub mod editor;
+pub mod preview;
 mod sse;
-mod view;
+pub mod view;
 
 use std::time::Duration;
 
