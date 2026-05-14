@@ -1,0 +1,43 @@
+[package]
+name = "claudemon"
+version = "0.1.0"
+edition = "2021"
+description = "Observability and remote-control daemon for Claude Code sessions"
+license = "MIT"
+
+[[bin]]
+name = "claudemon"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+axum = { version = "0.7", features = ["ws"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace", "cors"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1"
+thiserror = "1"
+directories = "5"
+time = { version = "0.3", features = ["serde", "formatting", "parsing", "macros"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+tokio-tungstenite = "0.24"
+futures = "0.3"
+futures-util = "0.3"
+dashmap = "6"
+portable-pty = "0.8"
+crossterm = { version = "0.28", features = ["event-stream"] }
+base64 = "0.22"
+bytes = "1"
+async-stream = "0.3"
+ratatui = "0.29"
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
