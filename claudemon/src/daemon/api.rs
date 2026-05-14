@@ -13,7 +13,7 @@ use axum::{
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use futures::Stream;
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{json, Value};
 use tokio_stream::{wrappers::BroadcastStream, StreamExt};
 use tower_http::cors::CorsLayer;
 
@@ -28,6 +28,8 @@ pub fn router(store: SessionStore) -> Router {
         .route("/sessions/:id/message", post(post_message))
         .route("/sessions/:id/approve", post(post_approve))
         .route("/sessions/:id/answer", post(post_answer))
+        .route("/sessions/:id/decide", post(post_decide))
+        .route("/sessions/:id/gate", post(post_gate))
         .route("/sessions/:id/signal", post(post_signal))
         .route("/sessions/:id/output", get(get_output))
         .route("/sessions/:id/stream", get(stream_bytes))
@@ -146,10 +148,13 @@ async fn post_message(
 
 #[derive(Debug, Deserialize)]
 struct ApprovePayload {
-    /// `"yes"`, `"no"`, or `"always"`. Maps to picker option 1/3/2 by default.
+    /// `"yes"` → `{decision:"approve"}`, `"no"` → `{decision:"block"}`.
+    /// `"always"` is treated as `"yes"` for hook purposes — hooks don't
+    /// have a "remember this" channel; persistence is a TUI-only concept.
     decision: Option<String>,
-    /// 1-indexed picker option, overrides `decision` if both are set.
-    option: Option<u8>,
+    /// Optional reason returned to Claude with a block (shows up in the
+    /// assistant's context as "the tool was blocked because ...").
+    reason: Option<String>,
 }
 
 async fn post_approve(
@@ -171,39 +176,83 @@ async fn post_approve(
         )
             .into_response();
     }
-    let Some(handle) = store.wrapper(&id) else {
-        return (StatusCode::NOT_FOUND, "no wrapper attached").into_response();
-    };
-
-    // Claude Code's permission picker uses digit shortcuts. The exact label
-    // for each option drifts (e.g. "1. Yes" / "2. Yes, don't ask again" /
-    // "3. No"), so we expose `option` for explicit control and treat
-    // `decision` as an opinionated convenience.
-    let option = match (payload.option, payload.decision.as_deref()) {
-        (Some(n), _) if (1..=9).contains(&n) => n,
-        (_, Some("yes")) => 1,
-        (_, Some("always")) => 2,
-        (_, Some("no")) => 3,
+    let hook_decision = match payload.decision.as_deref() {
+        Some("yes") | Some("always") => json!({"decision": "approve"}),
+        Some("no") => {
+            let mut obj = json!({"decision": "block"});
+            if let Some(reason) = payload.reason {
+                obj["reason"] = json!(reason);
+            }
+            obj
+        }
         _ => {
             return (
                 StatusCode::BAD_REQUEST,
-                "expected `option` (1-9) or `decision` (yes|no|always)",
+                "expected `decision` (yes|no|always)",
             )
                 .into_response();
         }
     };
-
-    let keystroke = format!("{option}\r");
-    if handle
-        .tx
-        .send(WrapperMessage::Input {
-            bytes: B64.encode(keystroke.as_bytes()),
-        })
-        .is_err()
-    {
-        return (StatusCode::GONE, "wrapper disconnected").into_response();
+    if !store.resolve_decision(&id, hook_decision.clone()) {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({
+                "error": "no parked decision to resolve",
+                "hint": "enable the gate first: POST /sessions/:id/gate {\"on\":true}",
+            })),
+        )
+            .into_response();
     }
-    Json(json!({ "ok": true, "option": option })).into_response()
+    Json(json!({ "ok": true, "decision": hook_decision })).into_response()
+}
+
+#[derive(Debug, Deserialize)]
+struct DecidePayload {
+    /// Raw hook decision body returned to Claude Code verbatim, e.g.
+    /// `{"decision":"approve"}` or `{"continue":false,"reason":"..."}`.
+    /// Bypasses /approve's opinionated mapping for callers that need
+    /// fine-grained control.
+    body: Value,
+}
+
+async fn post_decide(
+    State(store): State<SessionStore>,
+    Path(id): Path<String>,
+    Json(payload): Json<DecidePayload>,
+) -> impl IntoResponse {
+    if !store.resolve_decision(&id, payload.body.clone()) {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({
+                "error": "no parked decision to resolve",
+                "hint": "the gate must be on for this session AND a PreToolUse hook must have arrived",
+            })),
+        )
+            .into_response();
+    }
+    Json(json!({ "ok": true, "body": payload.body })).into_response()
+}
+
+#[derive(Debug, Deserialize)]
+struct GatePayload {
+    on: bool,
+}
+
+async fn post_gate(
+    State(store): State<SessionStore>,
+    Path(id): Path<String>,
+    Json(payload): Json<GatePayload>,
+) -> impl IntoResponse {
+    if store.get(&id).is_none() {
+        return (StatusCode::NOT_FOUND, "session not found").into_response();
+    }
+    store.set_gate(&id, payload.on);
+    Json(json!({
+        "ok": true,
+        "session_id": id,
+        "gate_enabled": payload.on,
+    }))
+    .into_response()
 }
 
 #[derive(Debug, Deserialize)]

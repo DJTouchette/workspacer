@@ -2,9 +2,10 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 
 use dashmap::DashMap;
-use tokio::sync::{broadcast, mpsc, Mutex};
+use serde_json::Value;
+use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 
-use super::state::{HookEvent, SessionState};
+use super::state::{HookEvent, Pending, SessionMode, SessionState};
 use crate::protocol::WrapperMessage;
 
 const BROADCAST_CAPACITY: usize = 256;
@@ -63,6 +64,13 @@ pub struct SessionStore {
     buffers: Arc<DashMap<String, Arc<Mutex<OutputBuffer>>>>,
     bytes_tx: Arc<DashMap<String, broadcast::Sender<Vec<u8>>>>,
     update_tx: broadcast::Sender<SessionUpdate>,
+    /// Per-session opt-in for the deferred-hook gateway. When `true`,
+    /// PreToolUse hook responses are parked until a client decides
+    /// (or until the daemon's timeout fires).
+    gates: Arc<DashMap<String, bool>>,
+    /// Currently-parked decision for a session, keyed by session_id.
+    /// At most one is outstanding because Claude Code is blocked on it.
+    decisions: Arc<DashMap<String, oneshot::Sender<Value>>>,
 }
 
 impl SessionStore {
@@ -74,7 +82,86 @@ impl SessionStore {
             buffers: Arc::new(DashMap::new()),
             bytes_tx: Arc::new(DashMap::new()),
             update_tx,
+            gates: Arc::new(DashMap::new()),
+            decisions: Arc::new(DashMap::new()),
         }
+    }
+
+    // --- deferred-hook gateway ----------------------------------------------
+
+    pub fn set_gate(&self, session_id: &str, on: bool) {
+        if on {
+            self.gates.insert(session_id.to_string(), true);
+        } else {
+            self.gates.remove(session_id);
+            // If we're disabling the gate while a decision is parked, drop the
+            // sender so the hook handler falls through to passthrough.
+            self.decisions.remove(session_id);
+        }
+    }
+
+    pub fn gate_enabled(&self, session_id: &str) -> bool {
+        self.gates.get(session_id).map(|e| *e).unwrap_or(false)
+    }
+
+    /// Park a decision channel for this session and flip mode to Approval.
+    /// Returns a receiver the caller awaits; another caller (typically
+    /// `/decide` or `/approve`) resolves it via `resolve_decision`.
+    pub fn park_decision(
+        &self,
+        session_id: &str,
+        tool: Option<String>,
+        raw: Value,
+    ) -> oneshot::Receiver<Value> {
+        let (tx, rx) = oneshot::channel();
+        // If there's already a pending decision, drop the old sender so
+        // its waiter falls through. Shouldn't happen in practice because
+        // Claude blocks on the hook, but keeps us safe under re-entrancy.
+        self.decisions.insert(session_id.to_string(), tx);
+
+        // Flip the observable state to Approval and surface the tool info
+        // in `pending` so clients can render the right picker.
+        let updated = {
+            if let Some(mut state) = self.states.get_mut(session_id) {
+                state.mode = SessionMode::Approval;
+                let summary = raw
+                    .get("tool_input")
+                    .and_then(|ti| ti.get("command").or_else(|| ti.get("description")))
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                state.pending = Some(Pending::Approval {
+                    tool: tool.clone(),
+                    summary,
+                    raw,
+                });
+                Some(state.clone())
+            } else {
+                None
+            }
+        };
+        if let Some(state) = updated {
+            let _ = self.update_tx.send(SessionUpdate {
+                session_id: session_id.to_string(),
+                event: "PreToolUse".to_string(),
+                state,
+            });
+        }
+        rx
+    }
+
+    pub fn resolve_decision(&self, session_id: &str, decision: Value) -> bool {
+        match self.decisions.remove(session_id) {
+            Some((_, tx)) => tx.send(decision).is_ok(),
+            None => false,
+        }
+    }
+
+    pub fn has_pending_decision(&self, session_id: &str) -> bool {
+        self.decisions.contains_key(session_id)
+    }
+
+    pub fn clear_pending_decision(&self, session_id: &str) {
+        self.decisions.remove(session_id);
     }
 
     pub fn ingest(&self, event: HookEvent) -> SessionState {

@@ -19,10 +19,15 @@ pub enum Command {
         #[arg(long, default_value_t = 7891)]
         api_port: u16,
     },
-    /// Merge claudemon's hook configuration into ~/.claude/settings.json (stub).
+    /// Merge claudemon's hook configuration into ~/.claude/settings.json.
     Init {
+        /// Print the merged document instead of writing it.
         #[arg(long)]
         dry_run: bool,
+        /// Port the daemon's hook listener is bound to. Used to build the
+        /// curl command we install.
+        #[arg(long, default_value_t = 7890)]
+        hook_port: u16,
     },
     /// Run a command under a PTY wrapper so the daemon can relay input.
     Wrap {
@@ -44,7 +49,9 @@ pub async fn dispatch(cli: Cli) -> Result<()> {
         Command::Serve { host, hook_port, api_port } => {
             crate::daemon::run(&host, hook_port, api_port).await
         }
-        Command::Init { dry_run } => crate::daemon::init::run(dry_run).await,
+        Command::Init { dry_run, hook_port } => {
+            crate::daemon::init::run_with_port(dry_run, hook_port).await
+        }
         Command::Wrap { daemon, argv } => {
             crate::wrapper::run_with_daemon(argv, &daemon).await
         }

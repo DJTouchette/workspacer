@@ -65,11 +65,14 @@ Override with `--hook-port` / `--api-port` / `--host`.
 ## Wire up Claude Code
 
 ```
-claudemon init
+claudemon init                  # merge our hooks into ~/.claude/settings.json
+claudemon init --dry-run        # show what would change without writing
+claudemon init --hook-port 8888 # match a non-default daemon port
 ```
 
-Prints the JSON snippet to merge into `~/.claude/settings.json`. (Auto-merge
-is the next thing to land.)
+The merge is idempotent (re-running is a no-op), atomic (tmpfile +
+rename), preserves any hooks you already have, and tags its entries so
+future runs can update the command without trampling user additions.
 
 ## Try it
 
@@ -183,6 +186,8 @@ polling.
 | POST   | `/sessions/:id/message`       | **Send chat message — requires mode=`input`**    |
 | POST   | `/sessions/:id/approve`       | **Resolve permission picker — requires mode=`approval`** |
 | POST   | `/sessions/:id/answer`        | **Answer Claude's question — requires mode=`question`** |
+| POST   | `/sessions/:id/decide`        | Resolve a parked hook with a custom body (advanced)  |
+| POST   | `/sessions/:id/gate`          | Enable/disable PreToolUse deferral for this session  |
 | POST   | `/sessions/:id/input`         | Raw escape hatch: bytes (`text` or `bytes_b64`)  |
 | POST   | `/sessions/:id/signal`        | Deliver a signal (`{"signal":"SIGINT"}`)         |
 | GET    | `/sessions/:id/output`        | Snapshot of buffered PTY output                  |
@@ -211,18 +216,40 @@ POST /sessions/:id/message
 Appends `\r` automatically if the text doesn't already end in a line
 terminator. Only succeeds when `mode == input`.
 
-### `/approve`
+### Approval gateway (`/gate`, `/approve`, `/decide`)
+
+Claude Code's hooks are blocking: when `PreToolUse` fires, Claude pauses
+and uses the hook's response to decide whether the tool runs.
+
+```
+POST /sessions/:id/gate
+{ "on": true }
+```
+
+While the gate is on, every `PreToolUse` parks for up to 30 seconds.
+During the park, the session's mode is `approval` and `pending` carries
+the tool + summary so the client knows what's being asked.
 
 ```
 POST /sessions/:id/approve
-{ "decision": "yes" }   // → sends "1\r"  (first picker option)
-{ "decision": "always" }// → sends "2\r"
-{ "decision": "no" }    // → sends "3\r"
-{ "option": 2 }         // explicit option override (1–9)
+{ "decision": "yes" }                       // → {"decision":"approve"}
+{ "decision": "no", "reason": "too risky" } // → {"decision":"block","reason":"..."}
+{ "decision": "always" }                    // treated like "yes"
+                                            //   (hooks don't have "remember this")
 ```
 
-The picker layout varies between Claude releases — `option` is the escape
-hatch when the convention drifts.
+For full control over the hook response body — e.g.
+`{"continue":false,"stopReason":"…"}` to halt Claude entirely — use:
+
+```
+POST /sessions/:id/decide
+{ "body": { "continue": false, "stopReason": "user revoked permission" } }
+```
+
+If nobody decides within the timeout, the gateway falls through with an
+empty body and Claude prompts the user via its own TUI as if no daemon
+were involved. AskUserQuestion is exempt — it's a tool that *asks* the
+user, not one that needs permission, so it's never parked.
 
 ### `/answer`
 
