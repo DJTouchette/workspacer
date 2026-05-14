@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use directories::BaseDirs;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 pub fn projects_dir() -> Option<PathBuf> {
     let base = BaseDirs::new()?;
@@ -18,17 +18,21 @@ pub fn encoded_cwd(cwd: &str) -> String {
     cwd.replace(['/', '\\'], "-")
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TranscriptMessage {
     pub role: String,
+    #[serde(default)]
     pub text: Option<String>,
     /// Tool calls or other structured payloads, kept as raw JSON.
+    #[serde(default)]
     pub raw: serde_json::Value,
 }
 
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Transcript {
+    #[serde(default)]
     pub path: Option<String>,
+    #[serde(default)]
     pub messages: Vec<TranscriptMessage>,
 }
 

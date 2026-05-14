@@ -293,26 +293,51 @@ claudemon watch                              # default: http://127.0.0.1:7891
 claudemon watch --api http://dev-box:7891    # remote daemon
 ```
 
-Shows every session live, with a mode badge per row. Selected session
-gets a details panel with `pending` payload spelled out. Keys:
+Two screens:
+
+### Dashboard
+
+Fleet view. Every session as one row with a mode badge; selected row
+gets a details panel with the structured `pending` payload spelled out.
 
 ```
 ↑↓ / j k    navigate sessions
-a           approve selected session's parked decision  (mode=approval)
-d           deny the parked decision
-1-9         answer Claude's question with option N      (mode=question)
+Enter       open the chat view for the selected session
+a / d       approve / deny a parked decision (mode=approval)
+1-9         answer a question by option N    (mode=question)
 g           toggle the deferred-hook gate on this session
 r           refresh from the daemon
-q / Esc     quit
+q           quit
 ```
 
-Connects to `/sessions` once, then subscribes to `/events` for live
-updates. Reconnects automatically if the daemon restarts.
+### Chat
+
+Focused conversation with one session. Shows the parsed JSONL transcript
+above an input box. While in chat, the pending banner exposes approvals
+and questions inline — you don't have to return to the dashboard to
+respond. Type into the input box and hit Enter to send.
+
+```
+type        compose a message in the input box
+Enter       send (POST /sessions/:id/message)
+Backspace   edit the input
+PgUp/PgDn   scroll the transcript
+Esc         back to dashboard
+r           refresh transcript (only when input is empty)
+a / d       quick-approve / -deny (only when input is empty + mode=approval)
+1-9         pick option N        (only when input is empty + mode=question)
+q           quit (only when input is empty)
+```
+
+The transcript auto-refreshes when the session transitions back to
+`input` (i.e. the assistant just finished a turn). Connects to
+`/sessions` once, then subscribes to `/events` for live updates;
+reconnects automatically if the daemon restarts.
 
 ## Roadmap
 
-- [ ] JSONL transcript ingestion (replay past sessions on startup)
-- [ ] Message input box in the TUI (currently approve/answer only)
+- [ ] Tool-call rendering in the transcript (currently text-only)
+- [ ] Multi-line message composer (Shift+Enter for newline)
 - [ ] Auth token for non-loopback API binds
 - [ ] systemd / launchd unit files
 
