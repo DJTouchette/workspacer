@@ -12,6 +12,7 @@
 //! re-impl in another language, etc.).
 
 mod app;
+mod editor;
 mod sse;
 mod view;
 
@@ -50,6 +51,17 @@ pub async fn run(api_url: String) -> Result<()> {
     let mut terminal = ratatui::init();
     let _restore_on_drop = TerminalGuard;
 
+    // Best-effort: ask the terminal to disambiguate Shift/Ctrl/Alt+Enter
+    // from plain Enter via the kitty keyboard protocol. Terminals that
+    // don't support it ignore the request and we silently fall back to
+    // Alt+Enter / Ctrl+J for newlines.
+    let _ = crossterm::execute!(
+        std::io::stdout(),
+        crossterm::event::PushKeyboardEnhancementFlags(
+            crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+        )
+    );
+
     // Keyboard event stream from crossterm, polled in the same select.
     let mut keys = EventStream::new();
 
@@ -77,7 +89,7 @@ pub async fn run(api_url: String) -> Result<()> {
                     if key.modifiers.contains(KeyModifiers::CONTROL) { break }
                 }
                 let cont = if app.in_chat() {
-                    handle_chat_key(&mut app, key.code).await
+                    handle_chat_key(&mut app, key).await
                 } else {
                     handle_dashboard_key(&mut app, key.code).await
                 };
@@ -120,67 +132,89 @@ async fn handle_dashboard_key(app: &mut App, code: KeyCode) -> bool {
     true
 }
 
-async fn handle_chat_key(app: &mut App, code: KeyCode) -> bool {
-    // In chat view, plain text keys feed the input box. Action keys
-    // (Enter, Esc, arrows, PgUp/PgDn, Backspace) take priority. We also
-    // surface a few quick-actions for the pending-state row that fire on
-    // the standalone keypress when the input buffer is empty — that way
-    // typing "approve allow this" isn't accidentally triggering /approve.
-    use crate::tui::app::View;
+async fn handle_chat_key(app: &mut App, key: crossterm::event::KeyEvent) -> bool {
+    // In chat view, plain text keys feed the editor. Quick-actions for
+    // pending state (a/d/1-9/r/q) fire only when the input buffer is
+    // empty so typing "approve allow this" doesn't accidentally trigger
+    // /approve.
+    use crossterm::event::KeyModifiers;
+
+    let code = key.code;
+    let mods = key.modifiers;
+    let input_empty = app.editor_is_empty();
+    let mode = app
+        .chat_session_id()
+        .and_then(|id| app.sessions.get(&id))
+        .map(|s| s.mode);
+
     match code {
         KeyCode::Esc => app.leave_chat(),
+
+        // Enter behavior depends on modifiers: Alt/Shift/Ctrl+Enter → newline,
+        // plain Enter → send. We also accept Ctrl+J as a universal newline
+        // (Ctrl+J is the LF byte; terminals that don't disambiguate Enter
+        // can still produce it via Ctrl+J).
+        KeyCode::Enter if mods.contains(KeyModifiers::ALT)
+            || mods.contains(KeyModifiers::SHIFT)
+            || mods.contains(KeyModifiers::CONTROL) =>
+        {
+            app.with_editor(|e| e.insert_newline());
+        }
         KeyCode::Enter => app.act_send_message().await,
-        KeyCode::Backspace => app.input_backspace(),
+        KeyCode::Char('j') if mods.contains(KeyModifiers::CONTROL) => {
+            app.with_editor(|e| e.insert_newline());
+        }
+
+        // History + cursor navigation
+        KeyCode::Up => app.with_editor(|e| e.history_prev()),
+        KeyCode::Down => app.with_editor(|e| e.history_next()),
+        KeyCode::Left => app.with_editor(|e| e.move_left()),
+        KeyCode::Right => app.with_editor(|e| e.move_right()),
+        KeyCode::Home => app.with_editor(|e| e.move_home()),
+        KeyCode::End => app.with_editor(|e| e.move_end()),
+
+        // Editing
+        KeyCode::Backspace => app.with_editor(|e| e.backspace()),
+        KeyCode::Delete => app.with_editor(|e| e.delete_forward()),
+        KeyCode::Char('w') if mods.contains(KeyModifiers::CONTROL) => {
+            app.with_editor(|e| e.delete_word_back())
+        }
+        KeyCode::Char('u') if mods.contains(KeyModifiers::CONTROL) => {
+            app.with_editor(|e| e.clear())
+        }
+
+        // Scroll the transcript
         KeyCode::PageUp => app.chat_scroll(-5),
         KeyCode::PageDown => app.chat_scroll(5),
-        KeyCode::Char('r')
-            if matches!(&app.view, View::Chat(c) if c.input.is_empty()) =>
-        {
+
+        // Mode-aware quick-actions (only when the input is empty)
+        KeyCode::Char('r') if input_empty => {
             app.fetch_transcript_for_chat().await;
         }
-        KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
-            // 1-9 answers a Question when the input box is empty; otherwise
-            // it's just a digit being typed.
-            let chat_input_empty = matches!(&app.view, View::Chat(c) if c.input.is_empty());
-            let mode = app
-                .chat_session_id()
-                .and_then(|id| app.sessions.get(&id))
-                .map(|s| s.mode);
-            if chat_input_empty
-                && matches!(mode, Some(crate::session::SessionMode::Question))
-            {
-                let option = c.to_digit(10).unwrap() as u8;
-                app.act_answer(option).await;
-            } else {
-                app.input_push(c);
-            }
+        KeyCode::Char(c)
+            if c.is_ascii_digit()
+                && c != '0'
+                && input_empty
+                && mode == Some(crate::session::SessionMode::Question) =>
+        {
+            let option = c.to_digit(10).unwrap() as u8;
+            app.act_answer(option).await;
         }
         KeyCode::Char('a')
-            if matches!(&app.view, View::Chat(c) if c.input.is_empty())
-                && app
-                    .chat_session_id()
-                    .and_then(|id| app.sessions.get(&id))
-                    .map(|s| s.mode)
-                    == Some(crate::session::SessionMode::Approval) =>
+            if input_empty && mode == Some(crate::session::SessionMode::Approval) =>
         {
             app.act_approve(true).await;
         }
         KeyCode::Char('d')
-            if matches!(&app.view, View::Chat(c) if c.input.is_empty())
-                && app
-                    .chat_session_id()
-                    .and_then(|id| app.sessions.get(&id))
-                    .map(|s| s.mode)
-                    == Some(crate::session::SessionMode::Approval) =>
+            if input_empty && mode == Some(crate::session::SessionMode::Approval) =>
         {
             app.act_approve(false).await;
         }
-        KeyCode::Char('q')
-            if matches!(&app.view, View::Chat(c) if c.input.is_empty()) =>
-        {
-            return false
-        }
-        KeyCode::Char(c) => app.input_push(c),
+        KeyCode::Char('q') if input_empty => return false,
+
+        // Default: insert the character into the editor.
+        KeyCode::Char(c) => app.with_editor(|e| e.insert(c)),
+
         _ => {}
     }
     true

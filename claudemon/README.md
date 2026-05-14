@@ -313,31 +313,58 @@ q           quit
 ### Chat
 
 Focused conversation with one session. Shows the parsed JSONL transcript
-above an input box. While in chat, the pending banner exposes approvals
+above a multi-line input box. The pending banner exposes approvals
 and questions inline — you don't have to return to the dashboard to
-respond. Type into the input box and hit Enter to send.
+respond.
+
+**Transcript rendering:** text, tool calls, and tool results all render
+distinctly. Each `Bash`/`Read`/`Edit`/etc. tool call shows a one-line
+summary (the command, file path, regex, etc.). Tool results are
+indented and truncated to 4 lines with a `+N more` indicator.
+
+**Input box:** grows with content (up to 10 lines), real cursor you can
+move around with the arrow keys, history with ↑/↓.
 
 ```
-type        compose a message in the input box
-Enter       send (POST /sessions/:id/message)
-Backspace   edit the input
-PgUp/PgDn   scroll the transcript
-Esc         back to dashboard
-r           refresh transcript (only when input is empty)
-a / d       quick-approve / -deny (only when input is empty + mode=approval)
-1-9         pick option N        (only when input is empty + mode=question)
-q           quit (only when input is empty)
+Composition
+  type           compose a message
+  Enter          send (POST /sessions/:id/message)
+  Alt+Enter      newline (also: Shift+Enter where supported, Ctrl+J)
+  Backspace      delete char before cursor
+  Delete         delete char after cursor
+  ← →            move cursor by char
+  Home / End     start / end of line
+  Ctrl+W         delete previous word
+  Ctrl+U         clear the input
+
+History
+  ↑              previous message (saves your draft on first press)
+  ↓              next message / back to your draft
+
+View
+  PgUp/PgDn      scroll the transcript
+  Esc            back to dashboard
+  r              refresh transcript (only when input is empty)
+
+Pending (only when input is empty)
+  a / d          approve / deny     (mode=approval)
+  1-9            pick option N      (mode=question)
+  q              quit
 ```
 
 The transcript auto-refreshes when the session transitions back to
-`input` (i.e. the assistant just finished a turn). Connects to
-`/sessions` once, then subscribes to `/events` for live updates;
-reconnects automatically if the daemon restarts.
+`input` (the assistant just finished a turn). Connects to `/sessions`
+once, then subscribes to `/events`; reconnects automatically if the
+daemon restarts.
+
+On terminals that support the kitty keyboard protocol (Kitty, WezTerm,
+Ghostty, foot), Shift+Enter is also recognized as newline. Plain
+terminals fall back to Alt+Enter or Ctrl+J.
 
 ## Roadmap
 
-- [ ] Tool-call rendering in the transcript (currently text-only)
-- [ ] Multi-line message composer (Shift+Enter for newline)
+- [ ] Tool-call drill-down (expand to show full result)
+- [ ] Vertical cursor movement (Shift+↑/↓ within multi-line input)
 - [ ] Auth token for non-loopback API binds
 - [ ] systemd / launchd unit files
 

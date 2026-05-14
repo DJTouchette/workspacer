@@ -8,6 +8,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::session::{transcript::Transcript, SessionMode, SessionState};
+use crate::tui::editor::Editor;
 
 #[derive(Clone, Debug)]
 pub enum AppEvent {
@@ -39,7 +40,7 @@ pub enum View {
 pub struct ChatState {
     pub session_id: String,
     pub transcript: Transcript,
-    pub input: String,
+    pub editor: Editor,
     /// Number of lines scrolled up from the bottom. 0 = follow tail.
     pub scroll_offset: u16,
     /// Last mode we observed for this session — used to detect mode→input
@@ -100,7 +101,7 @@ impl App {
         self.view = View::Chat(ChatState {
             session_id: id.clone(),
             transcript: Transcript::default(),
-            input: String::new(),
+            editor: Editor::new(),
             scroll_offset: 0,
             last_seen_mode: last_mode,
         });
@@ -131,11 +132,8 @@ impl App {
 
     pub async fn act_send_message(&mut self) {
         let View::Chat(chat) = &mut self.view else { return };
-        if chat.input.is_empty() {
-            return;
-        }
+        let Some(text) = chat.editor.take_and_remember() else { return };
         let session_id = chat.session_id.clone();
-        let text = std::mem::take(&mut chat.input);
 
         // Decide the right endpoint based on mode. /message requires
         // mode=input; if Claude is responding the daemon would 409. Fall
@@ -164,29 +162,31 @@ impl App {
                 let status = r.status();
                 let body = r.text().await.unwrap_or_default();
                 self.toast(format!("{status}: {}", truncate(&body, 80)));
-                // Restore the input on failure so the user can edit + retry.
                 if let View::Chat(chat) = &mut self.view {
-                    chat.input = text;
+                    chat.editor.restore(text);
                 }
             }
             Err(err) => {
                 self.toast(format!("send failed: {err}"));
                 if let View::Chat(chat) = &mut self.view {
-                    chat.input = text;
+                    chat.editor.restore(text);
                 }
             }
         }
     }
 
-    pub fn input_push(&mut self, ch: char) {
+    /// Forward an editor mutation to the active chat editor. The closure
+    /// runs only when we're in chat view.
+    pub fn with_editor<F: FnOnce(&mut Editor)>(&mut self, f: F) {
         if let View::Chat(chat) = &mut self.view {
-            chat.input.push(ch);
+            f(&mut chat.editor);
         }
     }
 
-    pub fn input_backspace(&mut self) {
-        if let View::Chat(chat) = &mut self.view {
-            chat.input.pop();
+    pub fn editor_is_empty(&self) -> bool {
+        match &self.view {
+            View::Chat(c) => c.editor.is_empty(),
+            _ => true,
         }
     }
 
