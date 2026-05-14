@@ -124,18 +124,54 @@ curl -X POST http://127.0.0.1:7891/sessions/$SID/signal \
 ## Session modes
 
 The daemon tracks what Claude is doing as a single `mode` field, driven by
-hook events. Clients pick the right API based on this.
+hook events. When Claude is paused waiting on the user, the session state
+also carries a `pending` payload with the structured content the client
+needs to render a picker.
 
 | Mode         | Set by                              | Meaning                                              |
 |--------------|-------------------------------------|------------------------------------------------------|
 | `unknown`    | initial / wrapper-only registration | Before any hook fires (first-run pickers, OAuth, etc.) |
 | `input`      | `SessionStart`, `Stop`              | Chat prompt is open, accepting a user message        |
 | `responding` | `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, subagents | Claude is working — streaming, thinking, or running a tool |
-| `approval`   | `PermissionRequest`                 | Picker is up. Claude paused. Overrides `responding`. |
+| `approval`   | `PermissionRequest`                 | Permission picker up. `pending.kind == "approval"`.  |
+| `question`   | `PreToolUse` for `AskUserQuestion`  | Assistant is asking the user. `pending.kind == "question"` with the questions array. |
 | `stopped`    | `SessionEnd`                        | Session ended                                        |
 
-Mode appears in `/sessions`, `/sessions/:id`, and every `session.update` SSE
-frame, so a client can react to transitions without polling.
+`approval` and `question` both override `responding` and stick until a
+resolving event (`PostToolUse`, `Stop`, `SessionEnd`) clears `pending`.
+
+Mode + pending appear in `/sessions`, `/sessions/:id`, and every
+`session.update` SSE frame, so a client can react to transitions without
+polling.
+
+### `pending` shapes
+
+```jsonc
+// mode == "approval"
+"pending": {
+  "kind": "approval",
+  "tool": "Bash",
+  "summary": "Run `rm -rf /tmp/scratch`?",
+  "raw": { ... full hook payload ... }
+}
+
+// mode == "question"
+"pending": {
+  "kind": "question",
+  "questions": [
+    {
+      "question": "Which library should we use for dates?",
+      "header": "Library",
+      "multi_select": false,
+      "options": [
+        { "label": "date-fns", "description": "Functional, tree-shakeable" },
+        { "label": "dayjs",    "description": "..." }
+      ]
+    }
+  ],
+  "raw": { ... }
+}
+```
 
 ## API surface
 
@@ -145,7 +181,8 @@ frame, so a client can react to transitions without polling.
 | GET    | `/sessions`                   | List all known sessions                          |
 | GET    | `/sessions/:id`               | Single session state (includes `mode`)           |
 | POST   | `/sessions/:id/message`       | **Send chat message — requires mode=`input`**    |
-| POST   | `/sessions/:id/approve`       | **Resolve picker — requires mode=`approval`**    |
+| POST   | `/sessions/:id/approve`       | **Resolve permission picker — requires mode=`approval`** |
+| POST   | `/sessions/:id/answer`        | **Answer Claude's question — requires mode=`question`** |
 | POST   | `/sessions/:id/input`         | Raw escape hatch: bytes (`text` or `bytes_b64`)  |
 | POST   | `/sessions/:id/signal`        | Deliver a signal (`{"signal":"SIGINT"}`)         |
 | GET    | `/sessions/:id/output`        | Snapshot of buffered PTY output                  |
@@ -186,6 +223,19 @@ POST /sessions/:id/approve
 
 The picker layout varies between Claude releases — `option` is the escape
 hatch when the convention drifts.
+
+### `/answer`
+
+For `AskUserQuestion`. The client reads `pending.questions` off the session
+state and submits one of three forms:
+
+```
+POST /sessions/:id/answer
+{ "option": 2 }                       // pick option 2 of the (only) question
+{ "text": "some custom answer" }      // free-text (when the picker has Other)
+{ "answers": ["1", "Custom value"] }  // multi-question: one entry per question,
+                                      // sent back-to-back with \r between
+```
 
 ## Layout
 
