@@ -1,6 +1,7 @@
 import { useRef, useCallback, useState, useEffect } from 'react';
 import './App.css';
 import NavBar from './components/NavBar';
+import SideBar from './components/SideBar';
 import ScrollContainer, { ScrollContainerRef } from './components/ScrollContainer';
 import ScrollIndicator from './components/ScrollIndicator';
 import ShortcutOverlay from './components/ShortcutOverlay';
@@ -38,6 +39,7 @@ function App() {
   const [renameSignal, setRenameSignal] = useState(0);
   const [chordState, setChordState] = useState<'idle' | 'waiting'>('idle');
   const [showCommandPalette, setShowCommandPalette] = useState(false);
+  const [paletteMode, setPaletteMode] = useState<'tab' | 'split'>('tab');
 
   // App working directory (used as default cwd for Claude panes)
   const appCwdRef = useRef<string>('');
@@ -53,13 +55,15 @@ function App() {
   const [sessionList, setSessionList] = useState<any[]>([]);
   const [sessionName, setSessionName] = useState('Default');
 
-  // PTY mapping: paneId -> ptySessionId
-  const ptyMappingRef = useRef<Record<string, string>>({});
+  // PTY mapping: paneId -> ptySessionId. Tracked as state (not ref) so the
+  // dashboard can resolve "which pane is showing this Claude session" on
+  // re-render. For Claude panes, ptySessionId === Claude session id.
+  const [ptyMapping, setPtyMapping] = useState<Record<string, string>>({});
   // Dirty tracking for session auto-save — hash of last saved state
   const lastSaveHashRef = useRef<string>('');
 
   const handlePtyReady = useCallback((paneId: string, ptySessionId: string) => {
-    ptyMappingRef.current[paneId] = ptySessionId;
+    setPtyMapping((prev) => (prev[paneId] === ptySessionId ? prev : { ...prev, [paneId]: ptySessionId }));
   }, []);
 
   const handleUrlChange = useCallback((tabId: string, paneId: string, url: string) => {
@@ -129,7 +133,7 @@ function App() {
   const handleNewSession = useCallback(() => {
     loadFromSession(defaultTabs, defaultTabs[0].id);
     setSessionName('Default');
-    ptyMappingRef.current = {};
+    setPtyMapping({});
     setSessionPhase('active');
   }, [loadFromSession]);
 
@@ -151,7 +155,7 @@ function App() {
       } else {
         loadFromSession(defaultTabs, defaultTabs[0].id);
       }
-      ptyMappingRef.current = {};
+      setPtyMapping({});
       setSessionPhase('active');
     }).catch(() => {
       loadFromSession(defaultTabs, defaultTabs[0].id);
@@ -174,7 +178,7 @@ function App() {
         ...t,
         panes: t.panes.map((p) => ({ ...p })),
       })),
-      ptyMapping: { ...ptyMappingRef.current },
+      ptyMapping: { ...ptyMapping },
     };
     // Quick hash to skip saves when nothing changed
     const hash = JSON.stringify({ n: payload.name, a: payload.activeTabId, t: payload.tabs.map(t => t.id + t.title + t.panes.map(p => p.id + p.type + (p.url || '')).join()) });
@@ -213,8 +217,8 @@ function App() {
 
   const insertPosition = config.panes.insertPosition || 'after';
 
-  const addTabWithConfig = useCallback((type: PaneType, title?: string, shell?: string, url?: string, appMode?: boolean, cwd?: string, profileId?: string, resumeSessionId?: string) => {
-    return addTab(type, title, insertPosition, shell, url, appMode, cwd, profileId, resumeSessionId);
+  const addTabWithConfig = useCallback((type: PaneType, title?: string, shell?: string, url?: string, appMode?: boolean, cwd?: string, profileId?: string, resumeSessionId?: string, attachSessionId?: string) => {
+    return addTab(type, title, insertPosition, shell, url, appMode, cwd, profileId, resumeSessionId, attachSessionId);
   }, [addTab, insertPosition]);
 
   const openSettings = useCallback(() => {
@@ -254,7 +258,9 @@ function App() {
     onChordStateChange: setChordState,
     onOpenSettings: openSettings,
     onSaveSession: saveCurrentSession,
-    onOpenCommandPalette: useCallback(() => setShowCommandPalette(true), []),
+    onOpenCommandPalette: useCallback(() => { setPaletteMode('tab'); setShowCommandPalette(true); }, []),
+    onOpenSplitPalette: useCallback(() => { setPaletteMode('split'); setShowCommandPalette(true); }, []),
+    shortcuts: config.keybindings?.shortcuts ?? {},
   });
 
   const handleTabClick = useCallback((id: string) => {
@@ -275,12 +281,18 @@ function App() {
     setActivePane(tabId, paneId);
   }, [setActiveTabId, setActivePane]);
 
-  const handleAddTab = useCallback((type: PaneType, shell?: string, label?: string, cwd?: string, profileId?: string, resumeSessionId?: string) => {
+  const handleAddTab = useCallback((type: PaneType, shell?: string, label?: string, cwd?: string, profileId?: string, resumeSessionId?: string, attachSessionId?: string) => {
     // Default Claude panes to the app's working directory
     const resolvedCwd = cwd || (type === 'claude' ? appCwdRef.current : undefined);
-    const newId = addTabWithConfig(type, label, shell, undefined, undefined, resolvedCwd, profileId, resumeSessionId);
+    const newId = addTabWithConfig(type, label, shell, undefined, undefined, resolvedCwd, profileId, resumeSessionId, attachSessionId);
     requestAnimationFrame(() => scrollToTab(newId));
   }, [addTabWithConfig, scrollToTab]);
+
+  const handleSplitPane = useCallback((type: PaneType, shell?: string, label?: string, cwd?: string) => {
+    if (!activeTabId) return;
+    const resolvedCwd = cwd || (type === 'claude' ? appCwdRef.current : undefined);
+    splitTab(activeTabId, type, label, shell, undefined, undefined, resolvedCwd);
+  }, [activeTabId, splitTab]);
 
   const handleLaunchApp = useCallback((app: { name: string; url: string }) => {
     const newId = addTab('browser', app.name, insertPosition, undefined, app.url, true);
@@ -288,16 +300,47 @@ function App() {
   }, [addTab, insertPosition, scrollToTab]);
 
   // --- Render ---
+  const tabPosition = config.panes?.tabPosition ?? 'top';
+
+  // Hooks must be called unconditionally — these used to live inline in the
+  // NavBar JSX, which broke React's hook order when tabPosition switched to
+  // 'left' and NavBar stopped rendering.
+  const handleNavBarRename = useCallback(
+    (tabId: string) => { setActiveTabId(tabId); setRenameSignal(s => s + 1); },
+    [setActiveTabId],
+  );
+  const handleNavBarSplit = useCallback(
+    (tabId: string, type: PaneType) => { splitTab(tabId, type); },
+    [splitTab],
+  );
+
   return (
     <div className="app-root">
-      <NavBar
-        tabs={tabs}
-        activeTabId={activeTabId}
-        onTabClick={handleTabClick}
-        onAddTab={handleAddTab}
-      />
+      {tabPosition === 'top' ? (
+        <NavBar
+          tabs={tabs}
+          activeTabId={activeTabId}
+          onTabClick={handleTabClick}
+          onAddTab={handleAddTab}
+          onCloseTab={removeTab}
+          onRenameTab={handleNavBarRename}
+          onSplitTab={handleNavBarSplit}
+          onMoveTab={moveTab}
+        />
+      ) : (
+        <SideBar
+          tabs={tabs}
+          activeTabId={activeTabId}
+          onTabClick={handleTabClick}
+          onAddTab={handleAddTab}
+          onCloseTab={removeTab}
+        />
+      )}
 
-      <div className="app-content" style={{ marginTop: `${config.ui.navBarHeight || 28}px` }}>
+      <div className="app-content" style={{
+        marginTop: tabPosition === 'top' ? `${Math.max(config.ui.navBarHeight || 34, 32)}px` : '0',
+        marginLeft: tabPosition === 'left' ? '160px' : '0',
+      }}>
         <ScrollContainer
           ref={scrollContainerRef}
           tabs={tabs}
@@ -310,6 +353,8 @@ function App() {
           onPtyReady={handlePtyReady}
           onUrlChange={handleUrlChange}
           onNavigateToTab={handleTabClick}
+          onAddTab={handleAddTab}
+          ptyMapping={ptyMapping}
           renameSignal={renameSignal}
         />
       </div>
@@ -325,14 +370,17 @@ function App() {
         onClose={closeHelp}
         mode={kbMode}
         leader={kbLeader}
+        shortcuts={config.keybindings?.shortcuts}
       />
 
       <CommandPalette
         visible={showCommandPalette}
         apps={config.apps ?? []}
+        mode={paletteMode}
         onClose={useCallback(() => setShowCommandPalette(false), [])}
         onLaunchApp={handleLaunchApp}
         onAddTab={handleAddTab}
+        onSplitPane={handleSplitPane}
       />
 
       {sessionPhase === 'picker' && (

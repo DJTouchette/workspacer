@@ -1,17 +1,21 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import type { TrackerAccount, TrackerProject, TrackerIssue, ProviderInfo } from '../types/tracker';
+import type { TrackerAccount, TrackerProject, TrackerIssue } from '../types/tracker';
 import { claudeColors as colors, ensureKeyframes } from '../components/claude-shared';
 
-// ── Sub-views ──
+/**
+ * TrackerPane — Jira (and Azure DevOps PRs/pipelines) browser.
+ *
+ * Credentials and API access are owned by the devdaemon (Go). This pane never
+ * stores tokens — it talks to the daemon via IPC and renders normalized
+ * issues. If a source is unauthenticated, the daemon returns no account for
+ * that source and we surface a "configure with CLI" banner.
+ */
 
 type View =
-  | { kind: 'accounts' }
-  | { kind: 'add-account' }
-  | { kind: 'projects'; accountId: string }
-  | { kind: 'issues'; accountId: string; projectKey: string; projectName: string }
-  | { kind: 'issue-detail'; accountId: string; issue: TrackerIssue };
-
-// ── Status pill colors ──
+  | { kind: 'sources' }
+  | { kind: 'projects'; accountId: string; sourceLabel: string }
+  | { kind: 'issues'; accountId: string; sourceLabel: string; projectKey: string; projectName: string }
+  | { kind: 'issue-detail'; accountId: string; sourceLabel: string; issue: TrackerIssue };
 
 function statusColor(cat: string): string {
   if (cat === 'done') return colors.success;
@@ -19,203 +23,140 @@ function statusColor(cat: string): string {
   return colors.muted;
 }
 
-// ── Add Account Form ──
+// ── Source list (replaces the old AccountList) ──
 
-const AddAccountForm: React.FC<{
-  providers: ProviderInfo[];
-  onAdded: () => void;
-  onCancel: () => void;
-}> = ({ providers, onAdded, onCancel }) => {
-  const [selectedProvider, setSelectedProvider] = useState(providers[0]?.id ?? '');
-  const [label, setLabel] = useState('');
-  const [config, setConfig] = useState<Record<string, string>>({});
-  const [token, setToken] = useState('');
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
-
-  const provider = providers.find(p => p.id === selectedProvider);
-
-  const handleSubmit = async () => {
-    if (!provider) return;
-    setError('');
-    setLoading(true);
-    try {
-      await window.electronAPI.trackerAddAccount(selectedProvider, label || provider.name, config, token);
-      onAdded();
-    } catch (err: any) {
-      setError(err?.message ?? 'Failed to add account');
-    } finally {
-      setLoading(false);
-    }
-  };
+const SourceList: React.FC<{
+  accounts: TrackerAccount[];
+  loading: boolean;
+  onSelect: (account: TrackerAccount) => void;
+  onRefresh: () => void;
+}> = ({ accounts, loading, onSelect, onRefresh }) => {
+  const hasJira = accounts.some((a) => a.provider === 'jira');
+  const hasAdo = accounts.some((a) => a.provider === 'ado');
 
   return (
-    <div style={{ padding: '20px 24px', maxWidth: 480 }}>
-      <div style={{ fontSize: '0.9rem', fontWeight: 700, color: colors.textBright, marginBottom: 16 }}>
-        Add Account
-      </div>
-
-      {providers.length > 1 && (
-        <div style={{ marginBottom: 12 }}>
-          <FieldLabel>Provider</FieldLabel>
-          <select
-            value={selectedProvider}
-            onChange={e => { setSelectedProvider(e.target.value); setConfig({}); }}
-            style={inputStyle}
-          >
-            {providers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-        </div>
-      )}
-
-      <div style={{ marginBottom: 12 }}>
-        <FieldLabel>Account Label</FieldLabel>
-        <input
-          value={label}
-          onChange={e => setLabel(e.target.value)}
-          placeholder={provider?.name ?? 'My Account'}
-          style={inputStyle}
-        />
-      </div>
-
-      {provider?.configFields.map(field => (
-        <div key={field.key} style={{ marginBottom: 12 }}>
-          <FieldLabel>{field.label}{field.required && ' *'}</FieldLabel>
-          <input
-            type={field.type}
-            value={config[field.key] ?? ''}
-            onChange={e => setConfig({ ...config, [field.key]: e.target.value })}
-            placeholder={field.placeholder}
-            style={inputStyle}
-          />
-        </div>
-      ))}
-
-      <div style={{ marginBottom: 12 }}>
-        <FieldLabel>{provider?.tokenField.label ?? 'API Token'} *</FieldLabel>
-        <input
-          type="password"
-          value={token}
-          onChange={e => setToken(e.target.value)}
-          placeholder={provider?.tokenField.placeholder ?? 'Paste token'}
-          style={inputStyle}
-        />
-        {provider?.tokenField.helpText && (
-          <div style={{ fontSize: '0.6rem', color: colors.muted, marginTop: 4 }}>
-            {provider.tokenField.helpText}
-          </div>
-        )}
-      </div>
-
-      {error && (
-        <div style={{ fontSize: '0.72rem', color: colors.error, marginBottom: 12 }}>
-          {error}
-        </div>
-      )}
-
-      <div style={{ display: 'flex', gap: 8 }}>
-        <button onClick={handleSubmit} disabled={loading || !token} style={btnStyle(colors.accent, !!(token && !loading))}>
-          {loading ? 'Connecting...' : 'Connect'}
+    <div style={{ padding: '20px 24px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+        <div style={{ fontSize: '0.9rem', fontWeight: 700, color: colors.textBright }}>Issue Tracker</div>
+        <button onClick={onRefresh} style={btnStyle(colors.muted, true)} title="Re-check daemon auth">
+          {loading ? '···' : 'Refresh'}
         </button>
-        <button onClick={onCancel} style={btnStyle(colors.muted, true)}>Cancel</button>
       </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {accounts.map((account) => (
+          <div
+            key={account.id}
+            onClick={() => onSelect(account)}
+            style={{
+              padding: '12px 14px',
+              borderRadius: 8,
+              border: `1px solid ${colors.borderSubtle}`,
+              backgroundColor: 'rgba(255,255,255,0.02)',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+            }}
+          >
+            <div>
+              <div style={{ fontSize: '0.8rem', fontWeight: 600, color: colors.textBright }}>
+                {account.provider === 'jira' ? 'Jira' : 'Azure DevOps'}
+              </div>
+              <div style={{ fontSize: '0.65rem', color: colors.muted, marginTop: 2 }}>
+                Credentials managed by devdaemon
+              </div>
+            </div>
+            <span style={{ fontSize: '0.65rem', color: colors.accent }}>{'→'}</span>
+          </div>
+        ))}
+      </div>
+
+      {!hasJira && <MissingAuthBanner source="jira" />}
+      {!hasAdo && <MissingAuthBanner source="ado" />}
+
+      {accounts.length === 0 && !loading && (
+        <div style={{ textAlign: 'center', marginTop: 24, color: colors.muted, fontSize: '0.75rem' }}>
+          Neither Jira nor Azure DevOps is authenticated with the devdaemon.
+        </div>
+      )}
     </div>
   );
 };
 
-// ── Account List ──
-
-const AccountList: React.FC<{
-  accounts: TrackerAccount[];
-  onSelect: (accountId: string) => void;
-  onAdd: () => void;
-  onRemove: (accountId: string) => void;
-}> = ({ accounts, onSelect, onAdd, onRemove }) => (
-  <div style={{ padding: '20px 24px' }}>
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-      <div style={{ fontSize: '0.9rem', fontWeight: 700, color: colors.textBright }}>
-        Issue Tracker
+const MissingAuthBanner: React.FC<{ source: 'jira' | 'ado' }> = ({ source }) => {
+  const label = source === 'jira' ? 'Jira' : 'Azure DevOps';
+  const cmd = source === 'jira' ? 'devdaemon auth jira --token <api-token>' : 'devdaemon auth ado --pat <pat>';
+  return (
+    <div
+      style={{
+        marginTop: 16,
+        padding: '12px 14px',
+        borderRadius: 8,
+        border: `1px solid ${colors.borderSubtle}`,
+        backgroundColor: 'rgba(255,255,255,0.02)',
+      }}
+    >
+      <div style={{ fontSize: '0.72rem', color: colors.textBright, marginBottom: 6, fontWeight: 600 }}>
+        {label} not authenticated
       </div>
-      <button onClick={onAdd} style={btnStyle(colors.accent, true)}>+ Add Account</button>
-    </div>
-
-    {accounts.length === 0 && (
-      <div style={{ textAlign: 'center', marginTop: 40, color: colors.muted }}>
-        <div style={{ fontSize: '1.5rem', marginBottom: 8, opacity: 0.4 }}>{'\u{1F4CB}'}</div>
-        <div style={{ fontSize: '0.8rem' }}>No accounts connected</div>
-        <div style={{ fontSize: '0.7rem', marginTop: 4 }}>Add a Jira account to get started</div>
+      <div style={{ fontSize: '0.68rem', color: colors.muted, marginBottom: 8 }}>
+        Run the CLI command below to give the devdaemon a token, then click Refresh.
       </div>
-    )}
-
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      {accounts.map(account => (
-        <div
-          key={account.id}
-          onClick={() => onSelect(account.id)}
-          style={{
-            padding: '12px 14px',
-            borderRadius: 8,
-            border: `1px solid ${colors.borderSubtle}`,
-            backgroundColor: 'rgba(255,255,255,0.02)',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-          }}
-        >
-          <div>
-            <div style={{ fontSize: '0.8rem', fontWeight: 600, color: colors.textBright }}>{account.label}</div>
-            <div style={{ fontSize: '0.65rem', color: colors.muted, marginTop: 2 }}>
-              {account.provider} {'\u00B7'} {account.config.url ?? account.config.email ?? ''}
-            </div>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: '0.65rem', color: colors.accent }}>{'\u2192'}</span>
-            <span
-              onClick={(e) => { e.stopPropagation(); onRemove(account.id); }}
-              style={{ fontSize: '0.7rem', color: colors.error, cursor: 'pointer', padding: '2px 4px' }}
-              title="Remove account"
-            >
-              {'\u00D7'}
-            </span>
-          </div>
-        </div>
-      ))}
+      <code
+        style={{
+          display: 'block',
+          fontSize: '0.7rem',
+          fontFamily: 'monospace',
+          color: colors.text,
+          backgroundColor: 'rgba(0,0,0,0.3)',
+          padding: '6px 8px',
+          borderRadius: 4,
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-all',
+        }}
+      >
+        {cmd}
+      </code>
     </div>
-  </div>
-);
+  );
+};
 
 // ── Project List ──
 
 const ProjectList: React.FC<{
   accountId: string;
+  sourceLabel: string;
   onSelect: (projectKey: string, projectName: string) => void;
   onBack: () => void;
-}> = ({ accountId, onSelect, onBack }) => {
+}> = ({ accountId, sourceLabel, onSelect, onBack }) => {
   const [projects, setProjects] = useState<TrackerProject[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   useEffect(() => {
     setLoading(true);
-    window.electronAPI.trackerListProjects(accountId)
-      .then(p => setProjects(p))
-      .catch(e => setError(e?.message ?? 'Failed to load projects'))
+    window.electronAPI
+      .trackerListProjects(accountId)
+      .then((p) => setProjects(p))
+      .catch((e) => setError(e?.message ?? 'Failed to load projects'))
       .finally(() => setLoading(false));
   }, [accountId]);
 
   return (
     <div style={{ padding: '20px 24px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-        <button onClick={onBack} style={backBtnStyle}>{'\u2190'}</button>
-        <div style={{ fontSize: '0.9rem', fontWeight: 700, color: colors.textBright }}>Projects</div>
+        <button onClick={onBack} style={backBtnStyle}>{'←'}</button>
+        <div style={{ fontSize: '0.9rem', fontWeight: 700, color: colors.textBright }}>
+          {sourceLabel} Projects
+        </div>
       </div>
 
       {loading && <div style={{ color: colors.muted, fontSize: '0.75rem' }}>Loading projects...</div>}
       {error && <div style={{ color: colors.error, fontSize: '0.75rem' }}>{error}</div>}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {projects.map(p => (
+        {projects.map((p) => (
           <div
             key={p.id}
             onClick={() => onSelect(p.key, p.name)}
@@ -255,17 +196,19 @@ const IssueList: React.FC<{
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
 
-  const load = useCallback((query?: string) => {
-    setLoading(true);
-    setError('');
-    const opts = query
-      ? { projectKey, query, maxResults: 30 }
-      : { projectKey, maxResults: 50 };
-    window.electronAPI.trackerListIssues(accountId, opts)
-      .then(i => setIssues(i))
-      .catch(e => setError(e?.message ?? 'Failed to load issues'))
-      .finally(() => setLoading(false));
-  }, [accountId, projectKey]);
+  const load = useCallback(
+    (query?: string) => {
+      setLoading(true);
+      setError('');
+      const opts = query ? { projectKey, query, maxResults: 30 } : { projectKey, maxResults: 50 };
+      window.electronAPI
+        .trackerListIssues(accountId, opts)
+        .then((i) => setIssues(i))
+        .catch((e) => setError(e?.message ?? 'Failed to load issues'))
+        .finally(() => setLoading(false));
+    },
+    [accountId, projectKey],
+  );
 
   useEffect(() => { load(); }, [load]);
 
@@ -274,19 +217,18 @@ const IssueList: React.FC<{
   return (
     <div style={{ padding: '20px 24px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-        <button onClick={onBack} style={backBtnStyle}>{'\u2190'}</button>
+        <button onClick={onBack} style={backBtnStyle}>{'←'}</button>
         <div>
           <div style={{ fontSize: '0.9rem', fontWeight: 700, color: colors.textBright }}>{projectName}</div>
           <div style={{ fontSize: '0.6rem', color: colors.muted, fontFamily: 'monospace' }}>{projectKey}</div>
         </div>
       </div>
 
-      {/* Search */}
       <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
         <input
           value={search}
-          onChange={e => setSearch(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') handleSearch(); }}
+          onChange={(e) => setSearch(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') handleSearch(); }}
           placeholder="Search issues..."
           style={{ ...inputStyle, flex: 1 }}
         />
@@ -300,7 +242,7 @@ const IssueList: React.FC<{
       )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-        {issues.map(issue => (
+        {issues.map((issue) => (
           <div
             key={issue.id}
             onClick={() => onSelect(issue)}
@@ -361,8 +303,7 @@ interface Transition { id: string; name: string; to: { id: string; name: string;
 const IssueDetail: React.FC<{
   issue: TrackerIssue;
   onBack: () => void;
-  onStatusChanged?: () => void;
-}> = ({ issue, onBack, onStatusChanged }) => {
+}> = ({ issue, onBack }) => {
   const [transitions, setTransitions] = useState<Transition[]>([]);
   const [currentStatus, setCurrentStatus] = useState(issue.status);
   const [currentCategory, setCurrentCategory] = useState(issue.statusCategory);
@@ -371,19 +312,18 @@ const IssueDetail: React.FC<{
   const [childIssues, setChildIssues] = useState<TrackerIssue[]>([]);
   const [issueLinks, setIssueLinks] = useState<Array<{ issue_key: string; link_type: string; link_id: string; link_label: string }>>([]);
 
-  // Load links + children from cache
   useEffect(() => {
     window.electronAPI.cacheGetIssueLinks(issue.key)
-      .then(links => setIssueLinks(links.filter((l: any) => l.link_type !== 'parent' && l.link_type !== 'child')))
+      .then((links) => setIssueLinks(links.filter((l: any) => l.link_type !== 'parent' && l.link_type !== 'child')))
       .catch(() => {});
     window.electronAPI.cacheGetChildIssues(issue.key)
-      .then(children => setChildIssues(children as TrackerIssue[]))
+      .then((children) => setChildIssues(children as TrackerIssue[]))
       .catch(() => {});
   }, [issue.key]);
 
   useEffect(() => {
     window.electronAPI.trackerGetTransitions(issue.accountId, issue.key)
-      .then(t => setTransitions(t))
+      .then((t) => setTransitions(t))
       .catch(() => {});
   }, [issue.accountId, issue.key]);
 
@@ -394,7 +334,6 @@ const IssueDetail: React.FC<{
       setCurrentStatus(t.to.name);
       setCurrentCategory(t.to.category as any);
       setShowTransitions(false);
-      onStatusChanged?.();
     } catch (e: any) {
       console.error('[TrackerPane] transition failed:', e);
     } finally {
@@ -405,13 +344,8 @@ const IssueDetail: React.FC<{
   return (
     <div style={{ padding: '20px 24px', maxWidth: 700 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-        <button onClick={onBack} style={backBtnStyle}>{'\u2190'}</button>
-        <span style={{
-          color: colors.accent,
-          fontWeight: 700,
-          fontFamily: 'monospace',
-          fontSize: '0.8rem',
-        }}>
+        <button onClick={onBack} style={backBtnStyle}>{'←'}</button>
+        <span style={{ color: colors.accent, fontWeight: 700, fontFamily: 'monospace', fontSize: '0.8rem' }}>
           {issue.key}
         </span>
         <span
@@ -427,11 +361,10 @@ const IssueDetail: React.FC<{
           }}
           title={transitions.length > 0 ? 'Click to change status' : undefined}
         >
-          {currentStatus} {transitions.length > 0 ? '\u25BE' : ''}
+          {currentStatus} {transitions.length > 0 ? '▾' : ''}
         </span>
       </div>
 
-      {/* Transition dropdown */}
       {showTransitions && transitions.length > 0 && (
         <div style={{
           marginBottom: 14,
@@ -443,7 +376,7 @@ const IssueDetail: React.FC<{
           <div style={{ fontSize: '0.62rem', color: colors.muted, padding: '0 12px 6px', fontWeight: 500 }}>
             Move to:
           </div>
-          {transitions.map(t => (
+          {transitions.map((t) => (
             <div
               key={t.id}
               onClick={() => !transitioning && handleTransition(t)}
@@ -464,7 +397,7 @@ const IssueDetail: React.FC<{
                 flexShrink: 0,
               }} />
               {t.name}
-              <span style={{ fontSize: '0.6rem', color: colors.muted }}>{'\u2192'} {t.to.name}</span>
+              <span style={{ fontSize: '0.6rem', color: colors.muted }}>{'→'} {t.to.name}</span>
             </div>
           ))}
         </div>
@@ -482,7 +415,7 @@ const IssueDetail: React.FC<{
 
       {issue.labels.length > 0 && (
         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 16 }}>
-          {issue.labels.map(l => (
+          {issue.labels.map((l) => (
             <span key={l} style={{
               fontSize: '0.6rem',
               padding: '1px 6px',
@@ -513,22 +446,24 @@ const IssueDetail: React.FC<{
         </div>
       )}
 
-      {/* Parent issue */}
       {issue.parentKey && (
         <div style={{ marginTop: 14, fontSize: '0.68rem', color: colors.muted }}>
           Parent: <span style={{ color: colors.accent, fontFamily: 'monospace', fontWeight: 600 }}>{issue.parentKey}</span>
         </div>
       )}
 
-      {/* Child issues */}
       {childIssues.length > 0 && (
         <div style={{ marginTop: 14 }}>
           <div style={{ fontSize: '0.62rem', color: colors.muted, fontWeight: 600, marginBottom: 4 }}>
             Subtasks ({childIssues.length})
           </div>
-          {childIssues.map(child => (
+          {childIssues.map((child) => (
             <div key={child.key} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0', fontSize: '0.7rem' }}>
-              <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: statusColor((child as any).status_category ?? child.statusCategory ?? 'todo'), flexShrink: 0 }} />
+              <span style={{
+                width: 6, height: 6, borderRadius: '50%',
+                backgroundColor: statusColor((child as any).status_category ?? child.statusCategory ?? 'todo'),
+                flexShrink: 0,
+              }} />
               <span style={{ color: colors.accent, fontFamily: 'monospace', fontWeight: 600, fontSize: '0.65rem' }}>{child.key}</span>
               <span style={{ color: colors.text }}>{child.title}</span>
             </div>
@@ -536,7 +471,6 @@ const IssueDetail: React.FC<{
         </div>
       )}
 
-      {/* Linked branches, PRs, pipelines */}
       {issueLinks.length > 0 && (
         <div style={{ marginTop: 14 }}>
           <div style={{ fontSize: '0.62rem', color: colors.muted, fontWeight: 600, marginBottom: 4 }}>
@@ -544,7 +478,10 @@ const IssueDetail: React.FC<{
           </div>
           {issueLinks.map((link, i) => (
             <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0', fontSize: '0.68rem' }}>
-              <span style={{ color: link.link_type === 'pr' ? '#c084fc' : link.link_type === 'pipeline' ? colors.warning : colors.accent, fontWeight: 600, fontSize: '0.6rem', minWidth: 50 }}>
+              <span style={{
+                color: link.link_type === 'pr' ? '#c084fc' : link.link_type === 'pipeline' ? colors.warning : colors.accent,
+                fontWeight: 600, fontSize: '0.6rem', minWidth: 50,
+              }}>
                 {link.link_type === 'pr' ? 'PR' : link.link_type === 'pipeline' ? 'Build' : 'Branch'}
               </span>
               <span style={{ color: colors.text, fontFamily: 'monospace', fontSize: '0.65rem' }}>
@@ -563,12 +500,6 @@ const IssueDetail: React.FC<{
 };
 
 // ── Shared styles ──
-
-const FieldLabel: React.FC<{ children: React.ReactNode }> = ({ children }) => (
-  <div style={{ fontSize: '0.68rem', color: colors.muted, marginBottom: 4, fontWeight: 500 }}>
-    {children}
-  </div>
-);
 
 const inputStyle: React.CSSProperties = {
   padding: '6px 10px',
@@ -617,55 +548,63 @@ interface TrackerPaneProps {
   isActive: boolean;
 }
 
-const TrackerPane: React.FC<TrackerPaneProps> = ({ paneId, title, isActive }) => {
-  const [view, setView] = useState<View>({ kind: 'accounts' });
+const TrackerPane: React.FC<TrackerPaneProps> = ({ paneId: _p, title: _t, isActive: _a }) => {
+  const [view, setView] = useState<View>({ kind: 'sources' });
   const [accounts, setAccounts] = useState<TrackerAccount[]>([]);
-  const [providers, setProviders] = useState<ProviderInfo[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => { ensureKeyframes(); }, []);
 
   const refreshAccounts = useCallback(() => {
-    window.electronAPI.trackerGetAccounts().then(setAccounts);
+    setRefreshing(true);
+    window.electronAPI
+      .trackerGetAccounts()
+      .then(setAccounts)
+      .finally(() => setRefreshing(false));
   }, []);
 
-  useEffect(() => {
-    window.electronAPI.trackerGetProviders().then(setProviders);
-    refreshAccounts();
-  }, [refreshAccounts]);
+  useEffect(() => { refreshAccounts(); }, [refreshAccounts]);
 
   return (
-    <div style={{
-      width: '100%',
-      height: '100%',
-      overflow: 'auto',
-      backgroundColor: colors.bg,
-      color: colors.text,
-      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-    }}>
-      {view.kind === 'accounts' && (
-        <AccountList
+    <div
+      style={{
+        width: '100%',
+        height: '100%',
+        overflow: 'auto',
+        backgroundColor: colors.bg,
+        color: colors.text,
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+      }}
+    >
+      {view.kind === 'sources' && (
+        <SourceList
           accounts={accounts}
-          onSelect={(accountId) => setView({ kind: 'projects', accountId })}
-          onAdd={() => setView({ kind: 'add-account' })}
-          onRemove={(accountId) => {
-            window.electronAPI.trackerRemoveAccount(accountId).then(refreshAccounts);
-          }}
-        />
-      )}
-
-      {view.kind === 'add-account' && (
-        <AddAccountForm
-          providers={providers}
-          onAdded={() => { refreshAccounts(); setView({ kind: 'accounts' }); }}
-          onCancel={() => setView({ kind: 'accounts' })}
+          loading={refreshing}
+          onSelect={(account) =>
+            setView({
+              kind: 'projects',
+              accountId: account.id,
+              sourceLabel: account.provider === 'jira' ? 'Jira' : 'Azure DevOps',
+            })
+          }
+          onRefresh={refreshAccounts}
         />
       )}
 
       {view.kind === 'projects' && (
         <ProjectList
           accountId={view.accountId}
-          onSelect={(key, name) => setView({ kind: 'issues', accountId: view.accountId, projectKey: key, projectName: name })}
-          onBack={() => setView({ kind: 'accounts' })}
+          sourceLabel={view.sourceLabel}
+          onSelect={(key, name) =>
+            setView({
+              kind: 'issues',
+              accountId: view.accountId,
+              sourceLabel: view.sourceLabel,
+              projectKey: key,
+              projectName: name,
+            })
+          }
+          onBack={() => setView({ kind: 'sources' })}
         />
       )}
 
@@ -674,15 +613,27 @@ const TrackerPane: React.FC<TrackerPaneProps> = ({ paneId, title, isActive }) =>
           accountId={view.accountId}
           projectKey={view.projectKey}
           projectName={view.projectName}
-          onSelect={(issue) => setView({ kind: 'issue-detail', accountId: view.accountId, issue })}
-          onBack={() => setView({ kind: 'projects', accountId: view.accountId })}
+          onSelect={(issue) =>
+            setView({ kind: 'issue-detail', accountId: view.accountId, sourceLabel: view.sourceLabel, issue })
+          }
+          onBack={() =>
+            setView({ kind: 'projects', accountId: view.accountId, sourceLabel: view.sourceLabel })
+          }
         />
       )}
 
       {view.kind === 'issue-detail' && (
         <IssueDetail
           issue={view.issue}
-          onBack={() => setView({ kind: 'issues', accountId: view.accountId, projectKey: view.issue.projectKey, projectName: view.issue.projectKey })}
+          onBack={() =>
+            setView({
+              kind: 'issues',
+              accountId: view.accountId,
+              sourceLabel: view.sourceLabel,
+              projectKey: view.issue.projectKey,
+              projectName: view.issue.projectKey,
+            })
+          }
         />
       )}
     </div>

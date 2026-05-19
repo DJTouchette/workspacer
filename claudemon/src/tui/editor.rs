@@ -223,7 +223,10 @@ impl Editor {
                 col = 0;
             }
         }
-        (col.min(u16::MAX as usize) as u16, row.min(u16::MAX as usize) as u16)
+        (
+            col.min(u16::MAX as usize) as u16,
+            row.min(u16::MAX as usize) as u16,
+        )
     }
 
     /// Number of visual rows the buffer occupies, for sizing the input

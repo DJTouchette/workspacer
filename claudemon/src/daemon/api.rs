@@ -23,6 +23,7 @@ use crate::session::{transcript, SessionMode, SessionStore};
 pub fn router(store: SessionStore) -> Router {
     Router::new()
         .route("/sessions", get(list_sessions))
+        .route("/sessions/spawn", post(crate::daemon::spawn::handle))
         .route("/sessions/:id", get(get_session))
         .route("/sessions/:id/input", post(post_input))
         .route("/sessions/:id/message", post(post_message))
@@ -31,10 +32,12 @@ pub fn router(store: SessionStore) -> Router {
         .route("/sessions/:id/decide", post(post_decide))
         .route("/sessions/:id/gate", post(post_gate))
         .route("/sessions/:id/signal", post(post_signal))
+        .route("/sessions/:id/resize", post(post_resize))
         .route("/sessions/:id/output", get(get_output))
         .route("/sessions/:id/stream", get(stream_bytes))
         .route("/sessions/:id/transcript", get(get_transcript))
         .route("/events", get(event_stream))
+        .route("/hooks/stream", get(hook_stream))
         .route("/wrapper/:id", get(crate::daemon::wrapper_ws::upgrade))
         .route("/health", get(|| async { "ok" }))
         .layer(CorsLayer::permissive())
@@ -346,6 +349,30 @@ async fn post_signal(
     Json(json!({ "ok": true, "signal": payload.signal })).into_response()
 }
 
+#[derive(Debug, Deserialize)]
+struct ResizePayload {
+    cols: u16,
+    rows: u16,
+}
+
+async fn post_resize(
+    State(store): State<SessionStore>,
+    Path(id): Path<String>,
+    Json(payload): Json<ResizePayload>,
+) -> impl IntoResponse {
+    let Some(handle) = store.wrapper(&id) else {
+        return (StatusCode::NOT_FOUND, "no wrapper attached").into_response();
+    };
+    if handle
+        .tx
+        .send(WrapperMessage::Resize { cols: payload.cols, rows: payload.rows })
+        .is_err()
+    {
+        return (StatusCode::GONE, "wrapper disconnected").into_response();
+    }
+    Json(json!({ "ok": true, "cols": payload.cols, "rows": payload.rows })).into_response()
+}
+
 async fn get_output(
     State(store): State<SessionStore>,
     Path(id): Path<String>,
@@ -387,7 +414,7 @@ async fn get_transcript(
     let Some(cwd) = state.cwd.clone() else {
         return Json(transcript::Transcript::default()).into_response();
     };
-    match transcript::read_for_cwd(&cwd) {
+    match transcript::read_for_session(&cwd, &id) {
         Ok(t) => Json(t).into_response(),
         Err(err) => {
             tracing::warn!(?err, "transcript read failed");
@@ -410,6 +437,26 @@ async fn event_stream(
         },
         Err(err) => {
             tracing::warn!(?err, "sse subscriber lagged");
+            None
+        }
+    });
+    Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
+}
+
+async fn hook_stream(
+    State(store): State<SessionStore>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let rx = store.subscribe_hooks();
+    let stream = BroadcastStream::new(rx).filter_map(|res| match res {
+        Ok(hook) => match serde_json::to_string(&hook) {
+            Ok(json) => Some(Ok(Event::default().event("hook").data(json))),
+            Err(err) => {
+                tracing::warn!(?err, "failed to serialize hook event");
+                None
+            }
+        },
+        Err(err) => {
+            tracing::warn!(?err, "hook sse subscriber lagged");
             None
         }
     });

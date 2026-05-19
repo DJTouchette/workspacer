@@ -1,8 +1,10 @@
 //! TUI application state + actions.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 
 use anyhow::{Context, Result};
+use ratatui::text::Line;
 use reqwest::Client;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -41,12 +43,38 @@ pub struct ChatState {
     pub session_id: String,
     pub transcript: Transcript,
     pub editor: Editor,
+    /// When true, vi-style keys operate on the transcript instead of typing
+    /// into the message editor.
+    pub transcript_focus: bool,
+    /// Show full tool results instead of capped previews.
+    pub expand_tool_results: bool,
     /// Number of lines scrolled up from the bottom. 0 = follow tail.
     pub scroll_offset: u16,
     /// Last mode we observed for this session — used to detect mode→input
     /// transitions so we auto-refresh the transcript when the assistant
     /// finishes a turn.
     pub last_seen_mode: SessionMode,
+    /// Cache of the full, syntax-highlighted transcript lines. Rebuilding
+    /// runs syntect over every code block and is expensive on large
+    /// transcripts — without this cache, every scroll keystroke would
+    /// pay that cost. RefCell so the render path (which only has &App)
+    /// can mutate it.
+    pub render_cache: RefCell<Option<TranscriptRenderCache>>,
+}
+
+#[derive(PartialEq, Eq)]
+pub struct TranscriptRenderKey {
+    pub msg_count: usize,
+    /// Serialized content of the last message — captures appends as a
+    /// streaming response grows, without rehashing the whole transcript.
+    pub last_msg_signature: String,
+    pub inner_width: usize,
+    pub expand_tool_results: bool,
+}
+
+pub struct TranscriptRenderCache {
+    pub key: TranscriptRenderKey,
+    pub lines: Vec<Line<'static>>,
 }
 
 pub struct App {
@@ -92,7 +120,9 @@ impl App {
 
     /// Enter chat view for the currently selected session.
     pub async fn enter_chat(&mut self) {
-        let Some(id) = self.order.get(self.selected).cloned() else { return };
+        let Some(id) = self.order.get(self.selected).cloned() else {
+            return;
+        };
         let last_mode = self
             .sessions
             .get(&id)
@@ -102,8 +132,11 @@ impl App {
             session_id: id.clone(),
             transcript: Transcript::default(),
             editor: Editor::new(),
+            transcript_focus: false,
+            expand_tool_results: false,
             scroll_offset: 0,
             last_seen_mode: last_mode,
+            render_cache: RefCell::new(None),
         });
         self.fetch_transcript_for_chat().await;
     }
@@ -131,8 +164,12 @@ impl App {
     }
 
     pub async fn act_send_message(&mut self) {
-        let View::Chat(chat) = &mut self.view else { return };
-        let Some(text) = chat.editor.take_and_remember() else { return };
+        let View::Chat(chat) = &mut self.view else {
+            return;
+        };
+        let Some(text) = chat.editor.take_and_remember() else {
+            return;
+        };
         let session_id = chat.session_id.clone();
 
         // Decide the right endpoint based on mode. /message requires
@@ -200,6 +237,23 @@ impl App {
         }
     }
 
+    pub fn toggle_transcript_focus(&mut self) {
+        if let View::Chat(chat) = &mut self.view {
+            chat.transcript_focus = !chat.transcript_focus;
+            // Snap back to the tail on every Tab — if the user scrolled
+            // up to read something then tabbed away to type, the most
+            // useful thing on return is the latest output, not where
+            // they were paused.
+            chat.scroll_offset = 0;
+        }
+    }
+
+    pub fn set_tool_results_expanded(&mut self, expanded: bool) {
+        if let View::Chat(chat) = &mut self.view {
+            chat.expand_tool_results = expanded;
+        }
+    }
+
     pub async fn refresh_initial(&mut self) -> Result<()> {
         let url = format!("{}/sessions", self.api_url);
         let sessions: Vec<SessionState> = self
@@ -258,7 +312,9 @@ impl App {
     }
 
     pub fn selected_session(&self) -> Option<&SessionState> {
-        self.order.get(self.selected).and_then(|id| self.sessions.get(id))
+        self.order
+            .get(self.selected)
+            .and_then(|id| self.sessions.get(id))
     }
 
     pub fn select_prev(&mut self) {
@@ -283,7 +339,9 @@ impl App {
     }
 
     pub async fn act_approve(&mut self, yes: bool) {
-        let Some(id) = self.active_session_id() else { return };
+        let Some(id) = self.active_session_id() else {
+            return;
+        };
         let url = format!("{}/sessions/{}/approve", self.api_url, id);
         let body = if yes {
             json!({ "decision": "yes" })
@@ -292,7 +350,11 @@ impl App {
         };
         match self.client.post(&url).json(&body).send().await {
             Ok(r) if r.status().is_success() => {
-                self.toast(format!("{} {}", if yes { "approved" } else { "denied" }, &id[..8]));
+                self.toast(format!(
+                    "{} {}",
+                    if yes { "approved" } else { "denied" },
+                    &id[..8]
+                ));
             }
             Ok(r) => {
                 let status = r.status();
@@ -304,7 +366,9 @@ impl App {
     }
 
     pub async fn act_answer(&mut self, option: u8) {
-        let Some(id) = self.active_session_id() else { return };
+        let Some(id) = self.active_session_id() else {
+            return;
+        };
         let url = format!("{}/sessions/{}/answer", self.api_url, id);
         let body = json!({ "option": option });
         match self.client.post(&url).json(&body).send().await {
@@ -321,7 +385,9 @@ impl App {
     }
 
     pub async fn act_toggle_gate(&mut self) {
-        let Some(id) = self.active_session_id() else { return };
+        let Some(id) = self.active_session_id() else {
+            return;
+        };
         let next = !self.gates.get(&id).copied().unwrap_or(false);
         let url = format!("{}/sessions/{}/gate", self.api_url, id);
         let body = json!({ "on": next });

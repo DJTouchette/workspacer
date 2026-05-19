@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import * as yaml from 'js-yaml';
-import { terminalService } from './terminalService';
+import { claudemonSessionClient } from './claudemonSessionClient';
 
 interface SessionPaneData {
   id: string;
@@ -58,27 +58,10 @@ function sanitizeFilename(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9_-]/g, '-').replace(/-+/g, '-').substring(0, 64);
 }
 
-function getTerminalCwd(ptySessionId: string): string | undefined {
-  const pid = terminalService.getTerminalPid(ptySessionId);
-  if (!pid) return terminalService.getTerminalCwd(ptySessionId);
-
-  try {
-    if (process.platform === 'linux') {
-      return fs.readlinkSync(`/proc/${pid}/cwd`);
-    }
-    if (process.platform === 'darwin') {
-      const { execSync } = require('child_process');
-      const output = execSync(`lsof -p ${pid} 2>/dev/null | grep cwd`, { encoding: 'utf-8' });
-      const match = output.match(/cwd\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+(.*)/);
-      if (match?.[1]?.trim()) return match[1].trim();
-    }
-    // Windows: no /proc or lsof — rely on stored CWD (initial + OSC 7 updates)
-  } catch {
-    // CWD detection failed
-  }
-
-  // Fall back to stored CWD (initial launch dir or last OSC 7 update)
-  return terminalService.getTerminalCwd(ptySessionId);
+function getTerminalCwd(sessionId: string): string | undefined {
+  // claudemon owns the PTY in a separate process, so we can't /proc-walk it.
+  // Fall back to the cwd we spawned with (claudemonSessionClient tracks it).
+  return claudemonSessionClient.getCwd(sessionId);
 }
 
 class SessionService {

@@ -15,6 +15,7 @@ pub mod app;
 pub mod editor;
 pub mod preview;
 mod sse;
+mod syntax;
 pub mod view;
 
 use std::time::Duration;
@@ -65,8 +66,18 @@ pub async fn run(api_url: String) -> Result<()> {
 
     // Keyboard event stream from crossterm, polled in the same select.
     let mut keys = EventStream::new();
+    let mut last_in_chat = app.in_chat();
 
     loop {
+        // Chat <-> dashboard switches change the layout shape, which can
+        // leave ghost cells from the previous view. A one-shot clear on
+        // the transition avoids that without the flicker of clearing
+        // every frame.
+        if app.in_chat() != last_in_chat {
+            terminal.clear().context("clear")?;
+            last_in_chat = app.in_chat();
+        }
+
         terminal
             .draw(|frame| view::render(frame, &app))
             .context("draw")?;
@@ -96,8 +107,14 @@ pub async fn run(api_url: String) -> Result<()> {
                 };
                 if !cont { break; }
             },
-            // Periodic redraw so "n seconds ago" stays fresh.
-            _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+            // Periodic redraw so "n seconds ago" stays fresh. In chat view,
+            // also refetch the JSONL transcript so output appears while Claude
+            // is still working, not only after a final Stop event.
+            _ = tokio::time::sleep(Duration::from_secs(1)) => {
+                if app.in_chat() {
+                    app.fetch_transcript_for_chat().await;
+                }
+            }
         }
     }
 
@@ -147,17 +164,30 @@ async fn handle_chat_key(app: &mut App, key: crossterm::event::KeyEvent) -> bool
         .chat_session_id()
         .and_then(|id| app.sessions.get(&id))
         .map(|s| s.mode);
+    let transcript_focus = match &app.view {
+        app::View::Chat(chat) => chat.transcript_focus,
+        _ => false,
+    };
 
     match code {
         KeyCode::Esc => app.leave_chat(),
+        KeyCode::Tab => app.toggle_transcript_focus(),
+
+        KeyCode::Char('j') if transcript_focus => app.chat_scroll(1),
+        KeyCode::Char('k') if transcript_focus => app.chat_scroll(-1),
+        KeyCode::Down if transcript_focus => app.chat_scroll(1),
+        KeyCode::Up if transcript_focus => app.chat_scroll(-1),
+        KeyCode::Char('l') if transcript_focus => app.set_tool_results_expanded(true),
+        KeyCode::Char('h') if transcript_focus => app.set_tool_results_expanded(false),
 
         // Enter behavior depends on modifiers: Alt/Shift/Ctrl+Enter → newline,
         // plain Enter → send. We also accept Ctrl+J as a universal newline
         // (Ctrl+J is the LF byte; terminals that don't disambiguate Enter
         // can still produce it via Ctrl+J).
-        KeyCode::Enter if mods.contains(KeyModifiers::ALT)
-            || mods.contains(KeyModifiers::SHIFT)
-            || mods.contains(KeyModifiers::CONTROL) =>
+        KeyCode::Enter
+            if mods.contains(KeyModifiers::ALT)
+                || mods.contains(KeyModifiers::SHIFT)
+                || mods.contains(KeyModifiers::CONTROL) =>
         {
             app.with_editor(|e| e.insert_newline());
         }
@@ -221,3 +251,42 @@ async fn handle_chat_key(app: &mut App, key: crossterm::event::KeyEvent) -> bool
     true
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    #[tokio::test]
+    async fn tab_focuses_transcript_and_jk_scroll() {
+        let mut app = App::new("http://test".into());
+        app.view = app::View::Chat(app::ChatState {
+            session_id: "s".into(),
+            transcript: Default::default(),
+            editor: crate::tui::editor::Editor::new(),
+            transcript_focus: false,
+            expand_tool_results: false,
+            scroll_offset: 0,
+            last_seen_mode: crate::session::SessionMode::Input,
+            render_cache: std::cell::RefCell::new(None),
+        });
+
+        assert!(handle_chat_key(&mut app, key(KeyCode::Tab)).await);
+        assert!(matches!(&app.view, app::View::Chat(c) if c.transcript_focus));
+
+        assert!(handle_chat_key(&mut app, key(KeyCode::Char('j'))).await);
+        assert!(matches!(&app.view, app::View::Chat(c) if c.scroll_offset == 0));
+
+        assert!(handle_chat_key(&mut app, key(KeyCode::Char('k'))).await);
+        assert!(matches!(&app.view, app::View::Chat(c) if c.scroll_offset == 1));
+
+        assert!(handle_chat_key(&mut app, key(KeyCode::Char('l'))).await);
+        assert!(matches!(&app.view, app::View::Chat(c) if c.expand_tool_results));
+
+        assert!(handle_chat_key(&mut app, key(KeyCode::Char('h'))).await);
+        assert!(matches!(&app.view, app::View::Chat(c) if !c.expand_tool_results));
+    }
+}

@@ -6,7 +6,11 @@ interface NavBarProps {
   tabs: TabConfig[];
   activeTabId: string;
   onTabClick: (id: string) => void;
-  onAddTab?: (type: PaneType, shell?: string, label?: string, cwd?: string, profileId?: string, resumeSessionId?: string) => void;
+  onAddTab?: (type: PaneType, shell?: string, label?: string, cwd?: string, profileId?: string, resumeSessionId?: string, attachSessionId?: string) => void;
+  onCloseTab?: (tabId: string) => void;
+  onRenameTab?: (tabId: string) => void;
+  onSplitTab?: (tabId: string, type: PaneType) => void;
+  onMoveTab?: (tabId: string, toIndex: number) => void;
 }
 
 const typeLabels: Record<PaneType, string> = {
@@ -19,6 +23,8 @@ const typeLabels: Record<PaneType, string> = {
   dashboard: '\u{1F4CA}',
   tracker: '\u{1F4CB}',
   devops: '\u{1F527}',
+  'agent-manager': '\u{1F916}',
+  devdaemon: '\u26A1',
 };
 
 interface SessionPickerState {
@@ -27,25 +33,30 @@ interface SessionPickerState {
   sessions: { sessionId: string; timestamp: string; summary: string }[];
 }
 
-const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab }) => {
+const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab, onCloseTab, onRenameTab, onSplitTab, onMoveTab }) => {
   const { config } = useConfig();
-  const navHeight = config.ui.navBarHeight || 28;
+  const navHeight = Math.max(config.ui.navBarHeight || 34, 32);
   const shells = config.terminal.shells || [];
   const [showMenu, setShowMenu] = useState(false);
+  const [tabContextMenu, setTabContextMenu] = useState<{ tabId: string; tabIdx: number; x: number; y: number } | null>(null);
   const [profilePickerState, setProfilePickerState] = useState<{ folder: string; profiles: any[] } | null>(null);
   const [sessionPickerState, setSessionPickerState] = useState<SessionPickerState | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const tabMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!showMenu) return;
+    if (!showMenu && !tabContextMenu) return;
     const handler = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+      if (showMenu && menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setShowMenu(false);
+      }
+      if (tabContextMenu && tabMenuRef.current && !tabMenuRef.current.contains(e.target as Node)) {
+        setTabContextMenu(null);
       }
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
-  }, [showMenu]);
+  }, [showMenu, tabContextMenu]);
 
   return (
     <nav
@@ -101,19 +112,23 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
             <button
               key={tab.id}
               onClick={() => onTabClick(tab.id)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setTabContextMenu({ tabId: tab.id, tabIdx: idx, x: e.clientX, y: e.clientY });
+              }}
               style={{
                 display: 'flex',
                 alignItems: 'center',
                 gap: '6px',
-                padding: '2px 8px',
+                padding: '2px 10px',
                 margin: 0,
                 width: 'auto',
-                height: '20px',
+                height: '26px',
                 lineHeight: '1',
                 border: 'none',
                 borderRadius: '4px',
                 cursor: 'pointer',
-                fontSize: '0.65rem',
+                fontSize: '0.75rem',
                 fontFamily: 'inherit',
                 fontWeight: isActive ? 600 : 400,
                 backgroundColor: isActive
@@ -139,7 +154,7 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
               }}
               title={`${tab.title} (Ctrl+${idx + 1})`}
             >
-              <span style={{ fontSize: '0.65rem' }}>
+              <span style={{ fontSize: '0.75rem' }}>
                 {singlePane ? typeLabels[firstPaneType] : '\u25A3'}
               </span>
               <span>{tab.title}</span>
@@ -166,13 +181,13 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
                 justifyContent: 'center',
                 padding: 0,
                 margin: '0 0 0 2px',
-                width: '20px',
-                height: '20px',
+                width: '26px',
+                height: '26px',
                 lineHeight: '1',
                 border: 'none',
                 borderRadius: '4px',
                 cursor: 'pointer',
-                fontSize: '0.75rem',
+                fontSize: '0.9rem',
                 fontFamily: 'inherit',
                 fontWeight: 400,
                 backgroundColor: 'transparent',
@@ -196,7 +211,7 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
               <div
                 style={{
                   position: 'fixed',
-                  top: `${config.ui.navBarHeight || 28}px`,
+                  top: `${navHeight}px`,
                   backgroundColor: 'var(--wks-bg-surface)',
                   border: '1px solid var(--wks-border-input)',
                   borderRadius: '4px',
@@ -237,6 +252,8 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
                 <MenuButton label="Git & Pipelines" onClick={() => { setShowMenu(false); onAddTab('devops'); }} />
                 <MenuButton label="Browser" onClick={() => { setShowMenu(false); onAddTab('browser'); }} />
                 <MenuButton label="Notes" onClick={() => { setShowMenu(false); onAddTab('notes'); }} />
+                <MenuButton label="Agent Manager" onClick={() => { setShowMenu(false); onAddTab('agent-manager'); }} />
+                <MenuButton label="Daemon" onClick={() => { setShowMenu(false); onAddTab('devdaemon'); }} />
 
                 <div style={{ height: '1px', backgroundColor: 'var(--wks-border)', margin: '4px 0' }} />
 
@@ -393,6 +410,38 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
               ))}
             </div>
           </div>
+        </div>
+      )}
+      {/* Tab context menu */}
+      {tabContextMenu && (
+        <div
+          ref={tabMenuRef}
+          style={{
+            position: 'fixed',
+            top: tabContextMenu.y,
+            left: tabContextMenu.x,
+            backgroundColor: 'var(--wks-bg-surface)',
+            border: '1px solid var(--wks-border-input)',
+            borderRadius: '4px',
+            padding: '4px 0',
+            zIndex: 10000,
+            minWidth: '140px',
+            boxShadow: '0 4px 12px var(--wks-shadow)',
+          }}
+        >
+          <MenuButton label="Rename" onClick={() => { setTabContextMenu(null); onRenameTab?.(tabContextMenu.tabId); }} />
+          <MenuButton label="Split — Terminal" onClick={() => { setTabContextMenu(null); onSplitTab?.(tabContextMenu.tabId, 'terminal'); }} />
+          <MenuButton label="Split — Claude" onClick={() => { setTabContextMenu(null); onSplitTab?.(tabContextMenu.tabId, 'claude'); }} />
+          <MenuButton label="Split — Browser" onClick={() => { setTabContextMenu(null); onSplitTab?.(tabContextMenu.tabId, 'browser'); }} />
+          <div style={{ height: '1px', backgroundColor: 'var(--wks-border)', margin: '4px 0' }} />
+          {tabContextMenu.tabIdx > 0 && (
+            <MenuButton label="Move left" onClick={() => { setTabContextMenu(null); onMoveTab?.(tabContextMenu.tabId, tabContextMenu.tabIdx - 1); }} />
+          )}
+          {tabContextMenu.tabIdx < tabs.length - 1 && (
+            <MenuButton label="Move right" onClick={() => { setTabContextMenu(null); onMoveTab?.(tabContextMenu.tabId, tabContextMenu.tabIdx + 1); }} />
+          )}
+          <div style={{ height: '1px', backgroundColor: 'var(--wks-border)', margin: '4px 0' }} />
+          <MenuButton label="Close" onClick={() => { setTabContextMenu(null); onCloseTab?.(tabContextMenu.tabId); }} />
         </div>
       )}
     </nav>

@@ -27,14 +27,18 @@ async fn receive(
     Json(event): Json<HookEvent>,
 ) -> impl IntoResponse {
     tracing::debug!(event = %event.event, session = %event.session_id, "hook received");
-    let session_id = event.session_id.clone();
     let event_kind = event.event.clone();
     let payload_snapshot = event.payload.clone();
     let tool = payload_snapshot
         .get("tool_name")
         .and_then(Value::as_str)
         .map(str::to_owned);
-    store.ingest(event);
+    // ingest() resolves alias / binds pending spawn by cwd; use the canonical
+    // session_id it returns for everything below (gate lookup, park_decision)
+    // so a /sessions/spawn → /gate flow works even though Claude's hook arrives
+    // with a different session_id.
+    let state = store.ingest(event);
+    let session_id = state.session_id.clone();
 
     // Park PreToolUse responses if the session has the gate enabled. Claude
     // Code reads our stdout for the decision and uses it to allow/block the

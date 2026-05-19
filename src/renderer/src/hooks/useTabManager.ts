@@ -15,6 +15,11 @@ const defaultTitles: Record<PaneType, string> = {
   agent: 'Agent',
   claude: 'Claude',
   settings: 'Settings',
+  dashboard: 'Dashboard',
+  tracker: 'Tracker',
+  devops: 'DevOps',
+  'agent-manager': 'Agent Manager',
+  devdaemon: 'Daemon',
 };
 
 export const defaultTabs: TabConfig[] = [
@@ -46,6 +51,7 @@ export function useTabManager() {
     cwd?: string,
     profileId?: string,
     resumeSessionId?: string,
+    attachSessionId?: string,
   ) => {
     const paneId = generateId(type);
     const tabId = generateId('tab');
@@ -61,6 +67,7 @@ export function useTabManager() {
       cwd,
       profileId,
       resumeSessionId,
+      attachSessionId,
     };
 
     const tab: TabConfig = {

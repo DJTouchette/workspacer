@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import type { ClaudeSessionSnapshot } from '../types/claudeSession';
 import type { TrackerIssue, TrackerAccount } from '../types/tracker';
-import type { TabConfig } from '../types/pane';
+import type { TabConfig, PaneType } from '../types/pane';
 import { WriteTerminal } from '../lib/terminalApi';
 import {
   claudeColors as colors,
@@ -16,7 +16,10 @@ import {
 interface DashboardPaneProps {
   title: string;
   tabs: TabConfig[];
+  /** paneId → ptySessionId (for Claude panes, ptySessionId === Claude session id). */
+  ptyMapping: Record<string, string>;
   onNavigateToTab: (tabId: string) => void;
+  onAddTab?: (type: PaneType, shell?: string, label?: string, cwd?: string, profileId?: string, resumeSessionId?: string, attachSessionId?: string) => void;
 }
 
 // ── Session Card ──
@@ -24,8 +27,10 @@ interface DashboardPaneProps {
 const SessionCard: React.FC<{
   session: ClaudeSessionSnapshot;
   tabs: TabConfig[];
+  ptyMapping: Record<string, string>;
   onNavigateToTab: (tabId: string) => void;
-}> = ({ session, tabs, onNavigateToTab }) => {
+  onAddTab?: (type: PaneType, shell?: string, label?: string, cwd?: string, profileId?: string, resumeSessionId?: string, attachSessionId?: string) => void;
+}> = ({ session, tabs, ptyMapping, onNavigateToTab, onAddTab }) => {
   const [inputValue, setInputValue] = useState('');
   const [approvalDismissedAt, setApprovalDismissedAt] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -42,10 +47,32 @@ const SessionCard: React.FC<{
   const lastMsg = [...session.conversation].reverse().find(t => t.content);
   const preview = lastMsg?.content?.slice(0, 150) ?? '';
 
-  // Find which tab contains this session's pty
-  const ownerTab = tabs.find(tab =>
-    tab.panes.some(p => p.id === session.ptyId || p.type === 'claude')
+  // Find which tab contains this session. A pane is bound to a session if
+  // either: (a) it was created with `resumeSessionId === sessionId` and that
+  // resume is still active, or (b) the runtime ptyMapping for the pane's id
+  // resolves to this session id (covers fresh sessions where resumeSessionId
+  // was never set).
+  const ownerTab = tabs.find((tab) =>
+    tab.panes.some(
+      (p) =>
+        p.resumeSessionId === session.sessionId ||
+        ptyMapping[p.id] === session.sessionId,
+    ),
   );
+
+  const handleGoToPane = () => {
+    if (ownerTab) {
+      onNavigateToTab(ownerTab.id);
+      return;
+    }
+    if (onAddTab) {
+      // No pane open for this session — create a viewer pane that ATTACHES
+      // to the running daemon session (no new Claude process). Passing
+      // attachSessionId (not resumeSessionId) ensures we don't try to spawn
+      // a second claude with --resume on a session that's already attached.
+      onAddTab('claude', undefined, undefined, session.cwd, undefined, undefined, session.sessionId);
+    }
+  };
 
   const handleSend = () => {
     if (!inputValue.trim() || !session.ptyId) return;
@@ -263,18 +290,18 @@ const SessionCard: React.FC<{
 
       {/* Footer — navigate to pane */}
       <div
-        onClick={() => ownerTab && onNavigateToTab(ownerTab.id)}
+        onClick={handleGoToPane}
         style={{
           padding: '7px 14px',
           fontSize: '0.68rem',
           color: colors.accent,
-          cursor: ownerTab ? 'pointer' : 'default',
-          opacity: ownerTab ? 1 : 0.4,
+          cursor: (ownerTab || onAddTab) ? 'pointer' : 'default',
+          opacity: (ownerTab || onAddTab) ? 1 : 0.4,
           textAlign: 'center',
           fontWeight: 500,
         }}
       >
-        Go to pane {'\u2192'}
+        {ownerTab ? 'Go to pane' : 'Open in new pane'} {'\u2192'}
       </div>
     </div>
   );
@@ -725,7 +752,275 @@ const RecentPipelinesCard: React.FC = () => {
 
 // ── Dashboard Pane ──
 
-const DashboardPane: React.FC<DashboardPaneProps> = ({ title, tabs, onNavigateToTab }) => {
+// ── Agent Run Card ──
+
+interface AgentRun {
+  id: string;
+  prompt_id: string;
+  prompt_snapshot: string;
+  rendered_prompt: string;
+  cwd: string;
+  model: string;
+  claude_session_id: string;
+  status: string;
+  error: string;
+  started_at: string;
+}
+
+const RunCard: React.FC<{
+  run: AgentRun;
+  session?: ClaudeSessionSnapshot;
+  tabs: TabConfig[];
+  ptyMapping: Record<string, string>;
+  onNavigateToTab: (tabId: string) => void;
+  onAddTab?: (type: PaneType, shell?: string, label?: string, cwd?: string, profileId?: string, resumeSessionId?: string, attachSessionId?: string) => void;
+}> = ({ run, session, tabs, ptyMapping, onNavigateToTab, onAddTab }) => {
+  const [inputValue, setInputValue] = useState('');
+  const projectName = run.cwd.split(/[/\\]/).pop() || run.cwd;
+
+  // Use live session state if available, else fall back to run status
+  const ambientState = session?.ambientState;
+  const isLive = !!session && session.status !== 'ended';
+
+  const statusColors: Record<string, string> = {
+    running: colors.accent,
+    pending: '#e6a700',
+    stopped: colors.muted,
+    error: colors.error,
+  };
+
+  const liveColor = ambientState === 'waiting_approval' ? colors.error
+    : (ambientState === 'streaming' || ambientState === 'thinking') ? colors.accent
+    : colors.muted;
+  const borderColor = isLive
+    ? (ambientState === 'waiting_approval' ? colors.error : liveColor + '60')
+    : (run.status === 'error' ? colors.error + '60' : colors.borderSubtle);
+  const statusColor = isLive ? liveColor : (statusColors[run.status] ?? colors.muted);
+  const statusLabel = isLive ? (badgeLabels[ambientState!] ?? ambientState ?? run.status) : run.status;
+
+  // Find existing Claude pane for this session — match by stored resume id
+  // OR by the runtime paneId→sessionId mapping (covers fresh sessions whose
+  // session id wasn't known when the pane was created).
+  const ownerTab = run.claude_session_id
+    ? tabs.find((tab) =>
+        tab.panes.some(
+          (p) =>
+            p.resumeSessionId === run.claude_session_id ||
+            ptyMapping[p.id] === run.claude_session_id,
+        ),
+      )
+    : undefined;
+
+  const handleGoToPane = () => {
+    if (ownerTab) {
+      onNavigateToTab(ownerTab.id);
+    } else if (run.claude_session_id && onAddTab) {
+      // Attach as a viewer to the live daemon session — don't respawn claude.
+      onAddTab('claude', undefined, `Run: ${projectName}`, run.cwd, undefined, undefined, run.claude_session_id);
+    }
+  };
+
+  // Last message preview from session
+  const lastMsg = session?.conversation ? [...session.conversation].reverse().find(t => t.content) : null;
+  const preview = lastMsg?.content?.slice(0, 150) ?? run.rendered_prompt.slice(0, 120);
+
+  const handleSend = () => {
+    if (!inputValue.trim() || !session?.ptyId) return;
+    WriteTerminal(session.ptyId, inputValue);
+    setTimeout(() => WriteTerminal(session.ptyId, '\r'), 50);
+    setInputValue('');
+  };
+
+  const handleApproval = (approve: boolean) => {
+    if (!session?.ptyId) return;
+    sendApproval(session.ptyId, approve, (data) => WriteTerminal(session.ptyId, data));
+  };
+
+  return (
+    <div style={{
+      borderRadius: 10,
+      border: `1px solid ${borderColor}`,
+      backgroundColor: 'rgba(255,255,255,0.02)',
+      overflow: 'hidden',
+      transition: 'border-color 0.2s',
+    }}>
+      {/* Header */}
+      <div style={{ padding: '10px 14px', borderBottom: `1px solid ${colors.borderSubtle}` }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontSize: '0.82rem', fontWeight: 600, color: colors.text }}>
+            {projectName}
+          </span>
+          <span style={{
+            fontSize: '0.65rem',
+            padding: '2px 8px',
+            borderRadius: 9,
+            backgroundColor: statusColor + '22',
+            color: statusColor,
+            fontWeight: 600,
+          }}>
+            {statusLabel}
+          </span>
+        </div>
+        {run.model && (
+          <div style={{ fontSize: '0.68rem', color: colors.muted, marginTop: 2, fontFamily: 'monospace' }}>
+            {run.model}
+          </div>
+        )}
+      </div>
+
+      {/* Live message preview */}
+      <div style={{ padding: '8px 14px', fontSize: '0.72rem', color: colors.muted, lineHeight: 1.4 }}>
+        {preview}{preview.length >= 120 ? '...' : ''}
+      </div>
+
+      {/* Approval buttons (when waiting) */}
+      {isLive && ambientState === 'waiting_approval' && session?.pendingApproval && (
+        <div style={{
+          display: 'flex', gap: 8, padding: '6px 14px 10px',
+        }}>
+          <button
+            onClick={() => handleApproval(true)}
+            style={{
+              flex: 1, padding: '5px 0', borderRadius: 6,
+              border: `1px solid ${colors.success}`,
+              backgroundColor: colors.success + '18',
+              color: colors.success, fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer',
+            }}
+          >
+            Approve
+          </button>
+          <button
+            onClick={() => handleApproval(false)}
+            style={{
+              flex: 1, padding: '5px 0', borderRadius: 6,
+              border: `1px solid ${colors.error}`,
+              backgroundColor: colors.error + '18',
+              color: colors.error, fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer',
+            }}
+          >
+            Deny
+          </button>
+        </div>
+      )}
+
+      {/* Inline input (when idle or waiting_input) */}
+      {isLive && (ambientState === 'idle' || ambientState === 'waiting_input') && session?.ptyId && (
+        <div style={{ display: 'flex', gap: 6, padding: '4px 14px 10px' }}>
+          <input
+            value={inputValue}
+            onChange={e => setInputValue(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') handleSend(); }}
+            placeholder="Send message..."
+            style={{
+              flex: 1, padding: '5px 10px', borderRadius: 6,
+              border: `1px solid ${colors.borderSubtle}`,
+              backgroundColor: 'transparent', color: colors.text,
+              fontSize: '0.72rem', outline: 'none',
+            }}
+          />
+          <button
+            onClick={handleSend}
+            style={{
+              padding: '5px 12px', borderRadius: 6, border: 'none',
+              backgroundColor: inputValue.trim() ? colors.accent : 'transparent',
+              color: inputValue.trim() ? '#fff' : colors.muted,
+              fontSize: '0.72rem', fontWeight: 600, cursor: inputValue.trim() ? 'pointer' : 'default',
+            }}
+          >
+            Send
+          </button>
+        </div>
+      )}
+
+      {/* Spinner for thinking/streaming */}
+      {isLive && (ambientState === 'thinking' || ambientState === 'streaming') && (
+        <div style={{ padding: '4px 14px 8px', fontSize: '0.68rem', color: colors.accent }}>
+          {ambientState === 'thinking' ? 'Thinking...' : 'Streaming...'}
+        </div>
+      )}
+
+      {/* Error */}
+      {run.error && !isLive && (
+        <div style={{ padding: '4px 14px 8px', fontSize: '0.68rem', color: colors.error }}>
+          {run.error.slice(0, 100)}
+        </div>
+      )}
+
+      {/* Footer — go to pane */}
+      {run.claude_session_id && (
+        <div
+          onClick={handleGoToPane}
+          style={{
+            padding: '7px 14px',
+            fontSize: '0.68rem',
+            color: colors.accent,
+            cursor: 'pointer',
+            textAlign: 'center',
+            fontWeight: 500,
+            borderTop: `1px solid ${colors.borderSubtle}`,
+          }}
+        >
+          {ownerTab ? 'Go to pane' : 'Open in pane'} {'\u2192'}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ── Agent Runs Section ──
+
+const AgentRunsCard: React.FC<{
+  tabs: TabConfig[];
+  sessions: ClaudeSessionSnapshot[];
+  ptyMapping: Record<string, string>;
+  onNavigateToTab: (tabId: string) => void;
+  onAddTab?: (type: PaneType, shell?: string, label?: string, cwd?: string, profileId?: string, resumeSessionId?: string, attachSessionId?: string) => void;
+}> = ({ tabs, sessions, ptyMapping, onNavigateToTab, onAddTab }) => {
+  const [runs, setRuns] = useState<AgentRun[]>([]);
+
+  useEffect(() => {
+    const fetchRuns = () => {
+      fetch('http://127.0.0.1:9800/api/runs')
+        .then(r => r.ok ? r.json() : null)
+        .then(data => { if (data?.runs) setRuns(data.runs); })
+        .catch(() => {});
+    };
+    fetchRuns();
+    const interval = setInterval(fetchRuns, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const active = runs.filter(r => r.status === 'running' || r.status === 'pending');
+  const recent = runs.filter(r => r.status !== 'running' && r.status !== 'pending').slice(0, 4);
+
+  if (runs.length === 0) return null;
+
+  return (
+    <div>
+      <div style={{ fontSize: '0.75rem', color: colors.muted, marginBottom: 12, fontWeight: 500 }}>
+        {active.length} active run{active.length !== 1 ? 's' : ''}
+        {recent.length > 0 && ` · ${recent.length} recent`}
+      </div>
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
+        gap: 14,
+      }}>
+        {[...active, ...recent].map(run => {
+          // Match run to live Claude session by sessionId
+          const session = run.claude_session_id
+            ? sessions.find(s => s.sessionId === run.claude_session_id)
+            : undefined;
+          return (
+            <RunCard key={run.id} run={run} session={session} tabs={tabs} ptyMapping={ptyMapping} onNavigateToTab={onNavigateToTab} onAddTab={onAddTab} />
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+const DashboardPane: React.FC<DashboardPaneProps> = ({ title: _t, tabs, ptyMapping, onNavigateToTab, onAddTab }) => {
   const [sessions, setSessions] = useState<ClaudeSessionSnapshot[]>([]);
 
   useEffect(() => { ensureKeyframes(); }, []);
@@ -771,6 +1066,7 @@ const DashboardPane: React.FC<DashboardPaneProps> = ({ title, tabs, onNavigateTo
       overflow: 'auto',
       padding: '20px 24px',
       backgroundColor: colors.bg,
+      boxSizing: 'border-box',
     }}>
       {/* My Issues */}
       <div style={{ marginBottom: 14 }}>
@@ -780,6 +1076,11 @@ const DashboardPane: React.FC<DashboardPaneProps> = ({ title, tabs, onNavigateTo
       {/* Recent Pipelines */}
       <div style={{ marginBottom: 20 }}>
         <RecentPipelinesCard />
+      </div>
+
+      {/* Agent Runs */}
+      <div style={{ marginBottom: 20 }}>
+        <AgentRunsCard tabs={tabs} sessions={sessions} ptyMapping={ptyMapping} onNavigateToTab={onNavigateToTab} onAddTab={onAddTab} />
       </div>
 
       {/* Claude Sessions */}
@@ -802,7 +1103,9 @@ const DashboardPane: React.FC<DashboardPaneProps> = ({ title, tabs, onNavigateTo
             key={session.sessionId}
             session={session}
             tabs={tabs}
+            ptyMapping={ptyMapping}
             onNavigateToTab={onNavigateToTab}
+            onAddTab={onAddTab}
           />
         ))}
       </div>

@@ -6,13 +6,27 @@ export interface SessionListEntry {
 }
 
 export interface ElectronAPI {
-  // Terminal — control on IPC, I/O on MessagePort
-  createTerminal: (shell: string, cwd?: string, cols?: number, rows?: number, profileId?: string, resumeSessionId?: string) => Promise<string>;
+  // Terminal (non-Claude shells) — control on IPC, I/O on MessagePort
+  createTerminal: (shell: string, cwd?: string, cols?: number, rows?: number) => Promise<string>;
   writeTerminal: (id: string, data: string) => void;
   resizeTerminal: (id: string, cols: number, rows: number) => Promise<void>;
   closeTerminal: (id: string) => Promise<void>;
   onTerminalOutput: (id: string, callback: (data: string) => void) => () => void;
   onTerminalExit: (callback: (id: string) => void) => () => void;
+
+  // Claude sessions (delegated to claudemon daemon)
+  spawnClaude: (opts: { cwd?: string; profileId?: string; resumeSessionId?: string; cols?: number; rows?: number }) => Promise<string>;
+  claudeMessage: (sessionId: string, text: string) => Promise<{ ok: boolean; mode?: string }>;
+  claudeApprove: (sessionId: string, decision: 'yes' | 'no' | 'always', reason?: string) => Promise<void>;
+  claudeAnswer: (sessionId: string, payload: { option?: number; text?: string; answers?: string[] }) => Promise<void>;
+  claudeResize: (sessionId: string, cols: number, rows: number) => Promise<void>;
+  claudeSignal: (sessionId: string, signal: string) => Promise<void>;
+  claudeClose: (sessionId: string) => Promise<void>;
+  attachClaude: (paneId: string, sessionId: string) => Promise<string>;
+  detachClaude: (paneId: string) => Promise<void>;
+  claudeGate: (sessionId: string, on: boolean) => Promise<void>;
+  claudeWrite: (sessionId: string, data: string) => void;
+  onClaudeOutput: (sessionId: string, callback: (data: string) => void) => () => void;
 
   // Config
   getConfig: () => Promise<any>;
@@ -26,9 +40,6 @@ export interface ElectronAPI {
   saveSession: (data: any) => Promise<string>;
   deleteSession: (filename: string) => Promise<void>;
 
-  // Claude session
-  createClaudeTerminal: (cwd?: string, profileId?: string) => Promise<string>;
-
   // Claude session discovery
   claudeListSessionsForDir: (cwd: string) => Promise<{ sessionId: string; timestamp: string; summary: string }[]>;
 
@@ -37,9 +48,9 @@ export interface ElectronAPI {
   claudeProfilesAdd: (name: string, configDir: string, extraArgs: string[]) => Promise<any>;
   claudeProfilesUpdate: (id: string, updates: any) => Promise<any>;
   claudeProfilesRemove: (id: string) => Promise<void>;
-  getClaudeSessionByPty: (ptyId: string) => Promise<any>;
+  getClaudeSession: (sessionId: string) => Promise<any>;
   getAllClaudeSessions: () => Promise<any[]>;
-  onClaudeSessionUpdate: (callback: (ptyId: string, snapshot: any) => void) => () => void;
+  onClaudeSessionUpdate: (callback: (sessionId: string, snapshot: any) => void) => () => void;
 
   // App info
   getCwd: () => Promise<string>;
@@ -77,8 +88,9 @@ export interface ElectronAPI {
   cacheSearchIssues: (query: string) => Promise<any[]>;
   cacheRecentPipelines: (limit?: number) => Promise<any[]>;
   cacheRecentPRs: (limit?: number) => Promise<any[]>;
-  cacheSyncNow: () => Promise<void>;
-  cacheWatchRepo: (repoPath: string) => Promise<void>;
+
+  // Browser cookie import
+  importChromeCookies: (domainFilter?: string[], method?: 'cdp' | 'direct', browser?: 'chrome' | 'edge') => Promise<{ imported: number; skipped: number; errors: string[]; diagnostics?: Record<string, any> }>;
 
   // App lifecycle
   onBeforeQuit: (callback: () => void) => () => void;

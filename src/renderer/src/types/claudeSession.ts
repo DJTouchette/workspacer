@@ -31,6 +31,18 @@ export interface PendingApproval {
   timestamp: number;
 }
 
+export interface PendingQuestionOption {
+  label: string;
+  description?: string;
+}
+
+export interface PendingQuestion {
+  question: string;
+  header?: string;
+  multi_select?: boolean;
+  options: PendingQuestionOption[];
+}
+
 export interface SubagentInfo {
   id: string;
   type: string;
@@ -50,6 +62,7 @@ export interface ClaudeSessionSnapshot {
   completedToolCalls: ToolCall[];
   fileChanges: FileChange[];
   pendingApproval: PendingApproval | null;
+  pendingQuestions: PendingQuestion[] | null;
   subagents: SubagentInfo[];
 
   ambientState: SessionAmbientState;

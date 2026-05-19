@@ -3,11 +3,11 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebFontsAddon } from '@xterm/addon-web-fonts';
 import '@xterm/xterm/css/xterm.css';
-import { usePTY } from '../hooks/usePTY';
+import { useClaudeSpawn } from '../hooks/useClaudeSpawn';
 import { useClaudeSession } from '../hooks/useClaudeSession';
 import { useConfig } from '../hooks/useConfig';
 import { useTheme } from '../hooks/useTheme';
-import type { ClaudeSessionSnapshot, ToolCall, ConversationTurn, FileChange, PendingApproval, SubagentInfo } from '../types/claudeSession';
+import type { ClaudeSessionSnapshot, ToolCall, ConversationTurn, FileChange, PendingApproval, PendingQuestion, SubagentInfo } from '../types/claudeSession';
 import { extractIssueKeys, resolveIssueContext, registerIssueLinkProvider, type IssuePeekData } from '../lib/issueLinks';
 import {
   claudeColors as colors,
@@ -39,6 +39,8 @@ interface ClaudePaneProps {
   cwd?: string;
   profileId?: string;
   resumeSessionId?: string;
+  /** If set, this pane is a viewer for an already-running daemon session. */
+  attachSessionId?: string;
   onPtyReady?: (paneId: string, ptySessionId: string) => void;
 }
 
@@ -537,7 +539,7 @@ const TurnDivider: React.FC<{ label?: string }> = ({ label = 'Response' }) => (
 
 // ── Approval Prompt ──
 
-const ApprovalPrompt: React.FC<{ approval: PendingApproval; onRespond: (response: string) => void }> = ({ approval, onRespond }) => (
+const ApprovalPrompt: React.FC<{ approval: PendingApproval; onRespond: (response: 'yes' | 'no') => void }> = ({ approval, onRespond }) => (
   <div style={{
     padding: '12px 14px',
     margin: '8px 0',
@@ -565,12 +567,121 @@ const ApprovalPrompt: React.FC<{ approval: PendingApproval; onRespond: (response
       {JSON.stringify(approval.toolInput, null, 2)}
     </pre>
     <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-      <button style={{...approvalBtnStyle(colors.success), position: 'relative', zIndex: 10}} onClick={(e) => { e.stopPropagation(); console.log('[ApprovalBtn] Allow clicked'); onRespond('y'); }}>Allow</button>
-      <button style={{...approvalBtnStyle(colors.error), position: 'relative', zIndex: 10}} onClick={(e) => { e.stopPropagation(); console.log('[ApprovalBtn] Deny clicked'); onRespond('n'); }}>Deny</button>
+      <button style={{...approvalBtnStyle(colors.success), position: 'relative', zIndex: 10}} onClick={(e) => { e.stopPropagation(); onRespond('yes'); }}>Allow</button>
+      <button style={{...approvalBtnStyle(colors.error), position: 'relative', zIndex: 10}} onClick={(e) => { e.stopPropagation(); onRespond('no'); }}>Deny</button>
     </div>
   </div>
 );
 
+
+// ── AskUserQuestion picker ──
+
+const QuestionPicker: React.FC<{
+  questions: PendingQuestion[];
+  onAnswer: (payload: { option?: number; text?: string; answers?: string[] }) => void;
+}> = ({ questions, onAnswer }) => {
+  const [customText, setCustomText] = useState('');
+  const single = questions.length === 1 ? questions[0] : null;
+
+  return (
+    <div style={{
+      padding: '12px 14px',
+      margin: '8px 0',
+      borderRadius: 10,
+      backgroundColor: 'var(--wks-accent-bg)',
+      border: `1px solid ${colors.accent}`,
+      animation: 'claudeFadeIn 0.2s ease-out',
+    }}>
+      {questions.map((q, qi) => (
+        <div key={qi} style={{ marginBottom: qi < questions.length - 1 ? 12 : 0 }}>
+          {q.header && (
+            <div style={{ fontSize: '0.6rem', color: colors.mutedDim, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>
+              {q.header}
+            </div>
+          )}
+          <div style={{ fontSize: '0.82rem', color: colors.textBright, fontWeight: 600, marginBottom: 8 }}>
+            {q.question}
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {q.options.map((opt, oi) => (
+              <button
+                key={oi}
+                onClick={() => onAnswer({ option: oi + 1 })}
+                style={{
+                  textAlign: 'left',
+                  padding: '6px 10px',
+                  borderRadius: 6,
+                  border: `1px solid ${colors.border}`,
+                  backgroundColor: 'rgba(255,255,255,0.03)',
+                  color: colors.text,
+                  cursor: 'pointer',
+                  fontFamily: 'inherit',
+                  fontSize: '0.75rem',
+                }}
+              >
+                <span style={{ color: colors.accent, fontWeight: 700, marginRight: 8 }}>{oi + 1}.</span>
+                <span style={{ fontWeight: 600 }}>{opt.label}</span>
+                {opt.description && (
+                  <span style={{ color: colors.muted, marginLeft: 8, fontSize: '0.7rem' }}>
+                    — {opt.description}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
+
+      {single && (
+        <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+          <input
+            placeholder="Or type a custom answer..."
+            value={customText}
+            onChange={(e) => setCustomText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && customText.trim()) {
+                onAnswer({ text: customText.trim() });
+                setCustomText('');
+              }
+            }}
+            style={{
+              flex: 1,
+              fontSize: '0.75rem',
+              padding: '4px 8px',
+              borderRadius: 4,
+              border: `1px solid ${colors.border}`,
+              backgroundColor: 'rgba(255,255,255,0.03)',
+              color: colors.text,
+              outline: 'none',
+              fontFamily: 'inherit',
+            }}
+          />
+          <button
+            onClick={() => {
+              if (customText.trim()) {
+                onAnswer({ text: customText.trim() });
+                setCustomText('');
+              }
+            }}
+            disabled={!customText.trim()}
+            style={{
+              fontSize: '0.7rem',
+              padding: '4px 12px',
+              borderRadius: 4,
+              border: `1px solid ${colors.accent}`,
+              backgroundColor: customText.trim() ? colors.accent : 'transparent',
+              color: customText.trim() ? '#0d0d10' : colors.muted,
+              cursor: customText.trim() ? 'pointer' : 'default',
+              fontFamily: 'inherit',
+            }}
+          >
+            Send
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
 
 // ── Inline context sections (files, subagents) ──
 
@@ -827,7 +938,7 @@ const IssuePeekPopup: React.FC<{ data: IssuePeekData; onClose: () => void }> = (
 
 // ── Main component ──
 
-const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, profileId, resumeSessionId, onPtyReady }) => {
+const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, profileId, resumeSessionId, attachSessionId, onPtyReady }) => {
   const [viewMode, setViewMode] = useState<ViewMode>('terminal');
   const [inputValue, setInputValue] = useState('');
   const [showScrollBtn, setShowScrollBtn] = useState(false);
@@ -866,17 +977,26 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
     }
   }, []);
 
-  const { sessionId, isReady, write, resize, attachToTerminal, startPTY } = usePTY({
+  const { sessionId, isReady, write, resize, attachToTerminal, startSession } = useClaudeSpawn({
     paneId,
-    shell: '__claude__',
     cwd,
     profileId,
     resumeSessionId,
+    attachSessionId,
     onExit: handleExit,
     defer: true,
   });
 
   const { session } = useClaudeSession({ ptySessionId: sessionId });
+
+  // Enable the approval gateway in claudemon as soon as we have a session id
+  // so PreToolUse hooks get parked for our UI to resolve.
+  useEffect(() => {
+    if (!sessionId) return;
+    window.electronAPI.claudeGate(sessionId, true).catch(err =>
+      console.warn('[ClaudePane] failed to enable approval gate:', err)
+    );
+  }, [sessionId]);
 
   // Notify parent of PTY session ID
   useEffect(() => {
@@ -915,7 +1035,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
     webFontsAddon.loadFonts().then(() => {
       term.open(container);
       try { fitAddon.fit(); } catch {}
-      startPTY(term.cols, term.rows);
+      startSession(term.cols, term.rows);
     });
 
     term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
@@ -1120,15 +1240,33 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
     }
   }, [cwd, viewMode]);
 
-  const handleApprovalRespond = useCallback((response: string) => {
-    console.log(`[ClaudePane] sending approval: "${response}"`);
-    sendApproval('', response === 'y', write);
+  const handleApprovalRespond = useCallback((response: 'yes' | 'no') => {
+    if (!sessionId) return;
+    // If a question picker is also pending (PermissionRequest racing with
+    // AskUserQuestion's PreToolUse), the approval card is stale and shouldn't
+    // do anything — the user actually wants to answer the picker. Writing a
+    // keystroke fallback would select option 1 of the picker by accident.
+    const hasPendingQuestion = (session?.pendingQuestions?.length ?? 0) > 0;
+    window.electronAPI.claudeApprove(sessionId, response).catch(err => {
+      console.warn('[ClaudePane] /approve failed:', err);
+      if (!hasPendingQuestion) {
+        sendApproval('', response === 'yes', write);
+      } else {
+        console.warn('[ClaudePane] suppressed keystroke fallback — question picker is active');
+      }
+    });
     setApprovalDismissedAt(Date.now());
-  }, [write]);
+  }, [sessionId, write, session?.pendingQuestions]);
 
-  // Optimistic user messages (shown immediately before JSONL catches up)
+  // Optimistic user messages (shown immediately before JSONL catches up).
+  // We dequeue FIFO whenever session.conversation grows by a new user-message,
+  // regardless of content — content-based matching was unreliable because
+  // claude's JSONL records the post-input-processing text which can differ
+  // from what we sent (whitespace, paste prefixes, autocomplete munging).
   const [optimisticMessages, setOptimisticMessages] = useState<ConversationTurn[]>([]);
   const [optimisticLoading, setOptimisticLoading] = useState(false);
+  // Count of user-messages we've seen consumed by session.conversation.
+  const consumedUserCountRef = useRef(0);
 
   // Handle send — detect issue keys, resolve context, then write to Claude's TUI
   const handleSend = useCallback(async () => {
@@ -1159,21 +1297,42 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
       timestamp: Date.now(),
     }]);
     setOptimisticLoading(true);
-    write(fullMessage);
-    setTimeout(() => write('\r'), 50);
-  }, [inputValue, write, attachedFiles]);
 
-  // Clear optimistic state once session conversation catches up
+    // Prefer claudemon's /message endpoint (mode-gated, sends \r for us).
+    // If the daemon reports the session isn't in input mode (e.g. OAuth picker
+    // before SessionStart, picker in mid-flight) fall back to raw keystrokes.
+    if (sessionId) {
+      window.electronAPI.claudeMessage(sessionId, fullMessage).then((res) => {
+        if (!res.ok) {
+          console.warn(`[ClaudePane] /message rejected (mode=${res.mode}); falling back to PTY write`);
+          write(fullMessage);
+          setTimeout(() => write('\r'), 50);
+        }
+      }).catch(err => {
+        console.warn('[ClaudePane] /message failed:', err);
+        write(fullMessage);
+        setTimeout(() => write('\r'), 50);
+      });
+    } else {
+      write(fullMessage);
+      setTimeout(() => write('\r'), 50);
+    }
+  }, [inputValue, write, attachedFiles, sessionId]);
+
+  // Drop optimistic entries FIFO as session.conversation grows past the
+  // count we last consumed. This avoids content-matching pitfalls.
   useEffect(() => {
-    if (optimisticMessages.length > 0 && session?.conversation) {
-      const sessionTexts = new Set(session.conversation.filter(t => t.role === 'user').map(t => t.content));
-      setOptimisticMessages(prev => prev.filter(m => !sessionTexts.has(m.content)));
+    const userCount = (session?.conversation ?? []).filter(t => t.role === 'user').length;
+    if (userCount > consumedUserCountRef.current) {
+      const newlyConsumed = userCount - consumedUserCountRef.current;
+      consumedUserCountRef.current = userCount;
+      setOptimisticMessages(prev => (newlyConsumed >= prev.length ? [] : prev.slice(newlyConsumed)));
     }
     // Clear optimistic loading when server reports idle or we get a response
     if (optimisticLoading && (session?.ambientState === 'idle' || session?.ambientState === 'streaming')) {
       setOptimisticLoading(false);
     }
-  }, [session?.conversation, session?.ambientState, optimisticMessages.length, optimisticLoading]);
+  }, [session?.conversation, session?.ambientState, optimisticLoading]);
 
   // ── Derived data ──
 
@@ -1188,6 +1347,29 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
   const fileChanges = session?.fileChanges ?? [];
   const subagents = session?.subagents ?? [];
   const pendingApproval = session?.pendingApproval ?? null;
+  const pendingQuestions = session?.pendingQuestions ?? null;
+  // Optimistic dismiss for the question picker — keeps the UI feeling snappy
+  // even when /answer 409s and we fall back to a raw PTY write that takes
+  // a moment to round-trip through the JSONL transcript.
+  const [questionDismissedAt, setQuestionDismissedAt] = useState(0);
+
+  const handleAnswer = useCallback((payload: { option?: number; text?: string; answers?: string[] }) => {
+    if (!sessionId) return;
+    setQuestionDismissedAt(Date.now());
+    // We write directly to the PTY (via the MessagePort → /sessions/:id/input
+    // path) instead of /sessions/:id/answer. /answer requires mode=Question,
+    // which can race with concurrent hook events that flip the daemon's mode
+    // back to Responding/Approval — and the renderer's view of "picker is up"
+    // is what actually matters here. claude's own TUI picker accepts numeric
+    // input + Enter the same way it accepts any other keystroke.
+    if (payload.option !== undefined) {
+      write(`${payload.option}\r`);
+    } else if (payload.text !== undefined) {
+      write(`${payload.text}\r`);
+    } else if (payload.answers) {
+      for (const ans of payload.answers) write(`${ans}\r`);
+    }
+  }, [sessionId, write]);
   const serverStreaming = optimisticLoading || session?.ambientState === 'thinking' || session?.ambientState === 'streaming';
   // If user cancelled, suppress streaming UI until a new activity cycle begins
   const isStreaming = serverStreaming && (session?.lastActivity ?? 0) > cancelledAt;
@@ -1469,9 +1651,19 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
                 {/* Inline file changes */}
                 <InlineFilesSection fileChanges={fileChanges} />
 
-                {/* Pending approval — hide after user responds, show again for new approvals */}
-                {pendingApproval && pendingApproval.timestamp > approvalDismissedAt && (
+                {/* Pending approval — hide after user responds, show again for new approvals.
+                    A pending question picker always takes precedence: claude might fire
+                    PermissionRequest in the same turn as an AskUserQuestion PreToolUse,
+                    and the approval card from the former is stale once the picker is up. */}
+                {pendingApproval && pendingApproval.timestamp > approvalDismissedAt && !(pendingQuestions && pendingQuestions.length > 0) && (
                   <ApprovalPrompt approval={pendingApproval} onRespond={handleApprovalRespond} />
+                )}
+
+                {/* AskUserQuestion picker — surfaced by claudemon's mode=question.
+                    Hide after the user clicks an option until the next PreToolUse
+                    arrives (which clears pendingQuestions server-side). */}
+                {pendingQuestions && pendingQuestions.length > 0 && (session?.lastActivity ?? 0) > questionDismissedAt && (
+                  <QuestionPicker questions={pendingQuestions} onAnswer={handleAnswer} />
                 )}
 
                 {/* Streaming indicator with cancel */}

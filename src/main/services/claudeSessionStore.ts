@@ -1,6 +1,12 @@
 import * as path from 'path';
 import { BrowserWindow } from 'electron';
-import type { SessionAmbientState } from './headlessTerminalManager';
+
+/**
+ * Ambient session activity, mostly driven by hook events now that claudemon
+ * owns the hook ingestion. Kept compatible with the renderer's view-side type
+ * (`src/renderer/src/types/claudeSession.ts`).
+ */
+export type SessionAmbientState = 'idle' | 'thinking' | 'streaming' | 'waiting_input' | 'waiting_approval';
 
 /** Normalize a path for consistent map-key matching on Windows (backslash vs forward slash, case) */
 function normalizeCwd(cwd: string): string {
@@ -45,6 +51,18 @@ export interface PendingApproval {
   timestamp: number;
 }
 
+export interface PendingQuestionOption {
+  label: string;
+  description?: string;
+}
+
+export interface PendingQuestion {
+  question: string;
+  header?: string;
+  multi_select?: boolean;
+  options: PendingQuestionOption[];
+}
+
 export interface SubagentInfo {
   id: string;
   type: string;
@@ -65,6 +83,7 @@ export interface ClaudeSessionState {
   completedToolCalls: ToolCall[];
   fileChanges: FileChange[];
   pendingApproval: PendingApproval | null;
+  pendingQuestions: PendingQuestion[] | null;
   subagents: SubagentInfo[];
 
   ambientState: SessionAmbientState;
@@ -82,95 +101,26 @@ class ClaudeSessionStore {
   private sessions = new Map<string, ClaudeSessionState>();
   private mainWindow: BrowserWindow | null = null;
 
-  // Bidirectional maps for PTY ↔ Claude session binding
-  private ptyToSession = new Map<string, string>();  // ptyId → sessionId
-  private sessionToPty = new Map<string, string>();   // sessionId → ptyId
-
-  // Queue of unbound PTYs waiting for a SessionStart hook, keyed by resolved cwd.
-  // Multiple PTYs with the same cwd are queued in order (FIFO).
-  private unboundPtys = new Map<string, string[]>();  // cwd → [ptyId, ...]
-
-  // Timestamp of last hook-driven state change — poller defers briefly after hooks fire
-  private hookStateTimestamp = new Map<string, number>(); // sessionId → timestamp
-
   setMainWindow(win: BrowserWindow): void {
     this.mainWindow = win;
   }
 
-  /**
-   * Register a PTY as a pending Claude session.
-   * Called when a Claude terminal is spawned, before the SessionStart hook fires.
-   * The cwd is used to match the incoming SessionStart event to this PTY.
-   */
-  registerPendingPty(ptyId: string, cwd: string): void {
-    const key = normalizeCwd(cwd);
-    console.log(`[SessionStore] registerPendingPty ptyId=${ptyId} cwd="${cwd}" key="${key}"`);
-    const queue = this.unboundPtys.get(key) ?? [];
-    queue.push(ptyId);
-    this.unboundPtys.set(key, queue);
-  }
-
-  /** Remove a PTY from pending + bound maps (called on close) */
-  unregisterPty(ptyId: string): void {
-    // Remove from unbound queue
-    for (const [cwd, queue] of this.unboundPtys) {
-      const idx = queue.indexOf(ptyId);
-      if (idx >= 0) {
-        queue.splice(idx, 1);
-        if (queue.length === 0) this.unboundPtys.delete(cwd);
-        break;
-      }
-    }
-    // Remove from bound maps
-    const sid = this.ptyToSession.get(ptyId);
-    if (sid) {
-      this.ptyToSession.delete(ptyId);
-      this.sessionToPty.delete(sid);
-    }
-  }
-
-  getSessionIdForPty(ptyId: string): string | undefined {
-    return this.ptyToSession.get(ptyId);
-  }
-
   // ── Hook event handler ──
+  //
+  // Events come in with claudemon's *canonical* session_id (post-aliasing —
+  // the spawn UUID, not whatever id Claude Code internally generates). We
+  // create or update the session entry under that id; nothing else binds.
 
   handleHookEvent(event: any): void {
     const hookName: string = event.hook_event_name ?? event.type ?? '';
     const sessionId: string = event.session_id ?? '';
     const cwd: string = normalizeCwd(event.cwd ?? '');
 
+    if (!sessionId) return;
+
     let session = this.sessions.get(sessionId);
-
-    if (!session && hookName === 'SessionStart') {
-      // Bind to an unbound PTY by matching cwd (FIFO)
-      console.log(`[SessionStore] SessionStart: looking for pending PTY with cwd="${cwd}"`);
-      console.log(`[SessionStore]   pending cwds: [${[...this.unboundPtys.keys()].map(k => `"${k}"`).join(', ')}]`);
-      const ptyId = this.claimPendingPty(cwd);
-      session = this.createSession(sessionId, cwd, ptyId);
-
-      if (ptyId) {
-        console.log(`[SessionStore]   ✓ bound session=${sessionId} to pty=${ptyId}`);
-        this.ptyToSession.set(ptyId, sessionId);
-        this.sessionToPty.set(sessionId, ptyId);
-      } else {
-        console.warn(`[SessionStore]   ✗ no pending PTY matched cwd="${cwd}"`);
-      }
-    }
-
     if (!session) {
-      // Try to find by session_id already bound
-      // (session_id may differ from initial if Claude resumes — match by cwd as fallback)
-      for (const s of this.sessions.values()) {
-        if (s.cwd === cwd && s.status !== 'ended') {
-          session = s;
-          break;
-        }
-      }
-    }
-    if (!session) {
-      console.warn(`[SessionStore] no session for hook=${hookName} session_id=${sessionId} cwd="${cwd}"`);
-      return;
+      session = this.createSession(sessionId, cwd);
     }
 
     // Capture transcript path from first event that has it
@@ -187,15 +137,11 @@ class ClaudeSessionStore {
     switch (hookName) {
       case 'SessionStart':
         session.status = 'active';
-        // Suppress poller during startup — CLI prints welcome banner before
-        // showing the > prompt, which causes false thinking/streaming flickers
-        this.hookStateTimestamp.set(sessionId, Date.now() + 3000);
+        session.ambientState = 'idle';
         break;
 
       case 'UserPromptSubmit':
         session.ambientState = 'streaming';
-        // Prevent poller from overriding until Stop
-        this.hookStateTimestamp.set(sessionId, Date.now() + 600000);
         break;
 
       case 'PreToolUse': {
@@ -208,6 +154,20 @@ class ClaudeSessionStore {
           startedAt: Date.now(),
         };
         session.activeToolCalls.push(tc);
+
+        // A new tool call invalidates any stale approval card from a prior
+        // tool — the daemon gateway only parks one decision at a time.
+        session.pendingApproval = null;
+
+        // AskUserQuestion: surface the question payload as a pending picker.
+        // Also defensively clear any stale approval card — these are mutually
+        // exclusive: a picker means claude is asking the user, not asking for
+        // tool permission.
+        if (tc.name === 'AskUserQuestion' && Array.isArray(tc.input?.questions)) {
+          session.pendingQuestions = tc.input.questions;
+          session.pendingApproval = null;
+          session.ambientState = 'waiting_input';
+        }
 
         if (['Edit', 'MultiEdit', 'Write'].includes(tc.name)) {
           session.fileChanges.push({
@@ -222,12 +182,19 @@ class ClaudeSessionStore {
 
       case 'PostToolUse': {
         session.ambientState = 'streaming';
+        // Any completed tool clears any leftover approval card — the daemon
+        // gateway is single-shot, so by the time PostToolUse fires, whatever
+        // decision was pending is either resolved or no longer relevant.
+        session.pendingApproval = null;
         const completed = session.activeToolCalls.find(t => t.id === event.tool_use_id);
         if (completed) {
           completed.status = 'complete';
           completed.completedAt = Date.now();
           session.activeToolCalls = session.activeToolCalls.filter(t => t.id !== event.tool_use_id);
           session.completedToolCalls.push(completed);
+          if (completed.name === 'AskUserQuestion') {
+            session.pendingQuestions = null;
+          }
         }
         break;
       }
@@ -256,9 +223,7 @@ class ClaudeSessionStore {
       case 'Stop':
         session.ambientState = 'idle';
         session.pendingApproval = null;
-        // Suppress poller briefly — terminal still has recent activity from
-        // the response that just finished, which causes false thinking flicker
-        this.hookStateTimestamp.set(sessionId, Date.now() + 2000);
+        session.pendingQuestions = null;
         // Clear tool calls — they're already shown inline in conversation via transcript
         session.activeToolCalls = [];
         session.completedToolCalls = [];
@@ -304,58 +269,6 @@ class ClaudeSessionStore {
     this.pushUpdate(session);
   }
 
-  // ── Ambient state (from headless terminal polling) ──
-
-  /** Update ambient state by PTY id (doesn't require session binding) */
-  updateAmbientStateByPty(ptyId: string, state: SessionAmbientState): void {
-    const sessionId = this.ptyToSession.get(ptyId);
-    if (!sessionId) return;
-    const session = this.sessions.get(sessionId);
-    if (!session) return;
-    // Don't override hook-driven states
-    if (session.pendingApproval && state !== 'waiting_approval') return;
-    // Defer to hook-driven state for 2s after a hook fires (e.g. Stop sets idle,
-    // don't let poller flip it back to streaming while terminal settles)
-    const hookTs = this.hookStateTimestamp.get(sessionId);
-    if (hookTs && Date.now() - hookTs < 2000) return;
-    // Skip if state hasn't changed (reduces IPC chatter)
-    if (session.ambientState === state) return;
-
-    const prevState = session.ambientState;
-    session.ambientState = state;
-    session.lastActivity = Date.now();
-
-    console.log(`[SessionStore] state transition: ${prevState} → ${state} (pty=${ptyId.slice(0, 8)})`);
-
-    // Extract conversation from terminal on state transitions
-    this.extractConversationFromTerminal(ptyId, session, prevState, state);
-
-    this.pushUpdate(session);
-  }
-
-  /**
-   * When Claude transitions from active (thinking/streaming) to idle,
-   * read the new terminal output and add it as conversation turns.
-   */
-  private extractConversationFromTerminal(
-    ptyId: string,
-    session: ClaudeSessionState,
-    prevState: SessionAmbientState,
-    newState: SessionAmbientState,
-  ): void {
-    const wasActive = prevState === 'thinking' || prevState === 'streaming';
-    const nowIdle = newState === 'idle' || newState === 'waiting_input';
-
-    if (wasActive && nowIdle) {
-      // Conversation data comes exclusively from the JSONL transcript now —
-      // terminal buffer extraction was the old approach and conflicts with
-      // transcript entries via isDuplicateMessage's startsWith logic.
-      if (session.transcriptPath) {
-        this.refreshFromTranscript(session);
-      }
-    }
-  }
-
   /** Check if a message was already added to avoid duplicates */
   private isDuplicateMessage(session: ClaudeSessionState, role: string, content: string): boolean {
     if (!content) return false;
@@ -377,29 +290,13 @@ class ClaudeSessionStore {
     return Array.from(this.sessions.values()).map(s => ({ ...s }));
   }
 
-  /** Find the Claude session bound to a given PTY id */
-  getSnapshotByPty(ptyId: string): ClaudeSessionSnapshot | null {
-    const sid = this.ptyToSession.get(ptyId);
-    if (!sid) return null;
-    return this.getSnapshot(sid);
-  }
-
   // ── Internals ──
 
-  /** Claim the oldest unbound PTY for a given cwd (FIFO) */
-  private claimPendingPty(cwd: string): string {
-    const queue = this.unboundPtys.get(cwd);
-    if (!queue || queue.length === 0) return '';
-    const ptyId = queue.shift()!;
-    if (queue.length === 0) this.unboundPtys.delete(cwd);
-    return ptyId;
-  }
-
-  private createSession(sessionId: string, cwd: string, ptyId: string): ClaudeSessionState {
+  private createSession(sessionId: string, cwd: string): ClaudeSessionState {
     const session: ClaudeSessionState = {
       sessionId,
       cwd,
-      ptyId,
+      ptyId: sessionId, // legacy field — renderer keys by this; we make it == sessionId
       transcriptPath: '',
       status: 'active',
       conversation: [],
@@ -407,6 +304,7 @@ class ClaudeSessionStore {
       completedToolCalls: [],
       fileChanges: [],
       pendingApproval: null,
+      pendingQuestions: null,
       subagents: [],
       ambientState: 'idle',
       lastActivity: Date.now(),
@@ -540,8 +438,7 @@ class ClaudeSessionStore {
 
   private pushUpdate(session: ClaudeSessionState): void {
     if (!this.mainWindow || this.mainWindow.isDestroyed()) return;
-    if (!session.ptyId) return;
-    this.mainWindow.webContents.send('claude-session:update', session.ptyId, { ...session });
+    this.mainWindow.webContents.send('claude-session:update', session.sessionId, { ...session });
   }
 }
 

@@ -31,6 +31,7 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive, init
   const [loading, setLoading] = useState(false);
   const [canGoBack, setCanGoBack] = useState(false);
   const [canGoForward, setCanGoForward] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const webviewRef = useRef<HTMLElement | null>(null);
   const readyRef = useRef(false);
   const onUrlChangeRef = useRef(onUrlChange);
@@ -216,6 +217,41 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive, init
     if (normalized) window.open(normalized, '_blank');
   }, [url]);
 
+  const handleSyncChromeCookies = useCallback(async () => {
+    setSyncing(true);
+    try {
+      // Restrict the import to hosts likely to be relevant for sign-in flows.
+      // The wildcard list keeps Chrome's bag of unrelated cookies (banking,
+      // shopping, etc.) out of Workspacer's session.
+      const res = await window.electronAPI.importChromeCookies([
+        'atlassian.com',
+        'atlassian.net',
+        'microsoftonline.com',
+        'microsoft.com',
+        'live.com',
+        'office.com',
+        'office365.com',
+        'google.com',
+        'github.com',
+      ]);
+      const summary = `Imported ${res.imported} cookie(s), skipped ${res.skipped}`;
+      console.log('[BrowserPane]', summary, res.errors);
+      // Reload the current page so any session that depended on the new cookies takes effect.
+      const wv = webviewRef.current as any;
+      if (wv && typeof wv.reload === 'function') wv.reload();
+      // Surface a small visible signal — fall back to alert() if no toast system.
+      if (res.errors.length === 0) {
+        alert(summary);
+      } else {
+        alert(`${summary}\n\nFirst error: ${res.errors[0]}`);
+      }
+    } catch (err: any) {
+      alert(`Chrome cookie sync failed: ${err?.message ?? err}`);
+    } finally {
+      setSyncing(false);
+    }
+  }, []);
+
   const bookmarks: Bookmark[] = browserCfg.bookmarks ?? [];
 
   return (
@@ -287,6 +323,14 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive, init
           />
           <button onClick={handleGo} title="Navigate" style={{ ...navBtnStyle, backgroundColor: '#2563eb', color: '#e4e4e7', fontWeight: 600, padding: '0 8px', width: 'auto' }}>Go</button>
           <button onClick={handleOpenExternal} title="Open in system browser" style={navBtnStyle}>&#x2197;</button>
+          <button
+            onClick={handleSyncChromeCookies}
+            title="Sync cookies from Chrome (fixes OAuth sign-ins)"
+            style={navBtnStyle}
+            disabled={syncing}
+          >
+            {syncing ? '⋯' : '\u{1F36A}'}
+          </button>
         </div>
 
         {bookmarks.length > 0 && (

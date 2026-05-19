@@ -49,11 +49,13 @@ interface Config {
     gap: number;
     peek: number;
     insertPosition: string;
+    tabPosition: string; // 'top' | 'left'
     default: Array<{ id: string; type: string; title: string; width: number; order: number }>;
   };
   keybindings: {
     mode: string;
     leader: string;
+    shortcuts: Record<string, string>;
   };
   apps: AppEntry[];
 }
@@ -84,7 +86,7 @@ function defaultConfig(): Config {
       fontFamily: 'Inter, system-ui, sans-serif',
       fontSize: 14,
       borderRadius: 8,
-      navBarHeight: 28,
+      navBarHeight: 34,
       paneHeaderHeight: 22,
     },
     terminal: {
@@ -111,6 +113,7 @@ function defaultConfig(): Config {
       gap: 16,
       peek: 80,
       insertPosition: 'after',
+      tabPosition: 'top',
       default: [
         { id: 'terminal-1', type: 'terminal', title: 'Terminal 1', width: 800, order: 0 },
         { id: 'terminal-2', type: 'terminal', title: 'Terminal 2', width: 800, order: 1 },
@@ -121,6 +124,25 @@ function defaultConfig(): Config {
     keybindings: {
       mode: 'default',
       leader: 'ctrl',
+      shortcuts: {
+        'new-terminal': 'ctrl+t',
+        'new-browser': 'ctrl+n',
+        'new-claude': 'ctrl+j',
+        'split': 'ctrl+d',
+        'quick-split': 'ctrl+shift+d',
+        'close-pane': 'ctrl+w',
+        'command-palette': 'ctrl+k',
+        'settings': 'ctrl+,',
+        'save-session': 'ctrl+s',
+        'rename-tab': 'f2',
+        'toggle-help': 'ctrl+?',
+        'prev-tab': 'ctrl+[',
+        'next-tab': 'ctrl+]',
+        'nav-left': 'ctrl+h',
+        'nav-right': 'ctrl+l',
+        'nav-up': 'ctrl+shift+k',
+        'nav-down': 'ctrl+shift+j',
+      },
     },
     apps: [
       { name: 'GitHub', url: 'https://github.com', icon: '\u{1F4BB}' },

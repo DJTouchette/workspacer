@@ -30,6 +30,8 @@ export const builtInActions: PaletteItem[] = [
   { id: 'new-devops', name: 'Git & Pipelines', description: 'Azure DevOps, GitHub PRs + CI/CD', icon: '\u{1F527}', category: 'action', paneType: 'devops' },
   { id: 'new-notes', name: 'Notes', description: 'Markdown scratchpad', icon: '\u{1F4DD}', category: 'action', paneType: 'notes' },
   { id: 'new-dashboard', name: 'Dashboard', description: 'Session overview', icon: '\u{1F4CA}', category: 'action', paneType: 'dashboard' },
+  { id: 'new-agent-manager', name: 'Agent Manager', description: 'Prompts, runs, workflows', icon: '\u{1F916}', category: 'action', paneType: 'agent-manager' },
+  { id: 'new-devdaemon', name: 'Daemon Dashboard', description: 'devdaemon health, plugins, events', icon: '\u26A1', category: 'action', paneType: 'devdaemon' },
 ];
 
 // ── Props ──
@@ -37,12 +39,14 @@ export const builtInActions: PaletteItem[] = [
 interface CommandPaletteProps {
   visible: boolean;
   apps: AppEntry[];
+  mode?: 'tab' | 'split';
   onClose: () => void;
   onLaunchApp: (app: AppEntry) => void;
   onAddTab: (type: PaneType, shell?: string, label?: string, cwd?: string, profileId?: string) => void;
+  onSplitPane?: (type: PaneType, shell?: string, label?: string, cwd?: string) => void;
 }
 
-const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, onClose, onLaunchApp, onAddTab }) => {
+const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = 'tab', onClose, onLaunchApp, onAddTab, onSplitPane }) => {
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [profilePicker, setProfilePicker] = useState<{ folder: string; profiles: any[]; paneType: PaneType } | null>(null);
@@ -100,13 +104,21 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, onClose,
             return;
           }
         } catch {}
-        onAddTab(item.paneType, undefined, undefined, folder);
+        if (mode === 'split' && onSplitPane) {
+          onSplitPane(item.paneType, undefined, undefined, folder);
+        } else {
+          onAddTab(item.paneType, undefined, undefined, folder);
+        }
       } else {
-        onAddTab(item.paneType);
+        if (mode === 'split' && onSplitPane) {
+          onSplitPane(item.paneType);
+        } else {
+          onAddTab(item.paneType);
+        }
       }
     }
     onClose();
-  }, [onLaunchApp, onAddTab, onClose]);
+  }, [onLaunchApp, onAddTab, onSplitPane, onClose, mode]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Escape') {

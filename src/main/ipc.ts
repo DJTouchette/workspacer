@@ -1,56 +1,114 @@
 import { ipcMain, BrowserWindow, dialog } from 'electron';
-import { terminalService } from './services/terminalService';
+import * as os from 'os';
+import * as fs from 'fs';
 import { configService } from './services/configService';
 import { sessionService } from './services/sessionService';
 import { claudeSessionStore } from './services/claudeSessionStore';
+import { claudemonSessionClient } from './services/claudemonSessionClient';
+import { buildClaudeArgv } from './services/claudeResolver';
+import { importChromeCookies, importChromeCookiesViaCDP } from './services/chromeCookieImport';
 import { trackerService } from './services/tracker/trackerService';
 import { issueCache } from './services/db';
-import { backgroundSync } from './services/tracker/backgroundSync';
 import { devopsService } from './services/devops/devopsService';
 import { claudeProfiles } from './services/claudeProfiles';
 import { listClaudeSessionsForDir } from './services/claudeSessionList';
 
-export function registerIpcHandlers(mainWindow: BrowserWindow): void {
-  // Wire terminal service to use this window for push events
-  terminalService.setMainWindow(mainWindow);
+function detectDefaultShell(): string {
+  if (process.platform === 'win32') {
+    const gitBash = 'C:\\Program Files\\Git\\bin\\bash.exe';
+    try { fs.accessSync(gitBash); return gitBash; } catch {}
+    try { require('child_process').execSync('where pwsh.exe', { stdio: 'ignore' }); return 'pwsh.exe'; } catch {}
+    return 'powershell.exe';
+  }
+  return process.env.SHELL || '/bin/sh';
+}
 
-  // Terminal handlers
-  ipcMain.handle('terminal:create', (_event, shell: string, cwd?: string, cols?: number, rows?: number, profileId?: string, resumeSessionId?: string) => {
+export function registerIpcHandlers(mainWindow: BrowserWindow): void {
+  claudemonSessionClient.setMainWindow(mainWindow);
+
+  // ── Generic terminal (non-Claude shells) — routed through claudemon ──
+  ipcMain.handle('terminal:create', async (_event, shell: string, cwd?: string, cols?: number, rows?: number) => {
     try {
-      return terminalService.createTerminal(shell, cwd, cols, rows, profileId, resumeSessionId);
+      const resolvedShell = shell || detectDefaultShell();
+      const resolvedCwd = cwd && fs.existsSync(cwd) ? cwd : os.homedir();
+      return claudemonSessionClient.spawn({
+        argv: [resolvedShell],
+        cwd: resolvedCwd,
+        cols,
+        rows,
+        portChannel: 'terminal:port',
+      });
     } catch (err: any) {
       console.error('[IPC] terminal:create failed:', err?.message);
       throw err;
     }
   });
 
-  // Claude terminal — spawns claude CLI with headless mirroring
-  ipcMain.handle('terminal:createClaude', (_event, cwd?: string, profileId?: string) => {
-    try {
-      return terminalService.createClaudeTerminal(cwd, undefined, undefined, profileId);
-    } catch (err: any) {
-      console.error('[IPC] terminal:createClaude failed:', err?.message);
-      throw err;
+  ipcMain.handle('terminal:resize', (_event, id: string, cols: number, rows: number) =>
+    claudemonSessionClient.resize(id, cols, rows));
+  ipcMain.handle('terminal:close', (_event, id: string) =>
+    claudemonSessionClient.close(id));
+
+  // ── Claude sessions (delegated to claudemon) ──
+  ipcMain.handle('claude:spawn', async (_event, opts: { cwd?: string; profileId?: string; resumeSessionId?: string; cols?: number; rows?: number }) => {
+    const profile = opts.profileId ? claudeProfiles.getProfile(opts.profileId) : undefined;
+    const env: Record<string, string> = {};
+    if (profile?.configDir) {
+      env.CLAUDE_CONFIG_DIR = profile.configDir.replace(/^~/, os.homedir());
     }
+    const argv = buildClaudeArgv({
+      extraArgs: profile?.extraArgs,
+      resumeSessionId: opts.resumeSessionId,
+    });
+    const cwd = opts.cwd ?? process.env.HOME ?? os.homedir();
+    return claudemonSessionClient.spawn({ argv, cwd, cols: opts.cols, rows: opts.rows, env });
   });
 
-  // Claude session state queries
-  ipcMain.handle('claude-session:getByPty', (_event, ptyId: string) => {
-    return claudeSessionStore.getSnapshotByPty(ptyId);
-  });
+  ipcMain.handle('claude:message', (_event, sessionId: string, text: string) =>
+    claudemonSessionClient.message(sessionId, text));
+  ipcMain.handle('claude:approve', (_event, sessionId: string, decision: 'yes' | 'no' | 'always', reason?: string) =>
+    claudemonSessionClient.approve(sessionId, decision, reason));
+  ipcMain.handle('claude:answer', (_event, sessionId: string, payload: { option?: number; text?: string; answers?: string[] }) =>
+    claudemonSessionClient.answer(sessionId, payload));
+  ipcMain.handle('claude:resize', (_event, sessionId: string, cols: number, rows: number) =>
+    claudemonSessionClient.resize(sessionId, cols, rows));
+  ipcMain.handle('claude:signal', (_event, sessionId: string, signal: string) =>
+    claudemonSessionClient.signal(sessionId, signal));
+  ipcMain.handle('claude:close', (_event, sessionId: string) =>
+    claudemonSessionClient.close(sessionId));
+  ipcMain.handle('claude:attach', (_event, paneId: string, sessionId: string) =>
+    claudemonSessionClient.attach(paneId, sessionId, 'claude:port'));
+  ipcMain.handle('claude:detach', (_event, paneId: string) =>
+    claudemonSessionClient.detach(paneId));
+  ipcMain.handle('claude:gate', (_event, sessionId: string, on: boolean) =>
+    claudemonSessionClient.setGate(sessionId, on));
+
+  ipcMain.handle('claude-session:get', (_event, sessionId: string) =>
+    claudeSessionStore.getSnapshot(sessionId));
 
   ipcMain.handle('claude-session:getAll', () => {
     return claudeSessionStore.getAllSnapshots();
   });
 
-  // terminal:write removed — writes go through MessagePort now
+  // terminal:write — writes go through MessagePort directly
+  // terminal:resize / terminal:close registered above on the daemon-backed path
 
-  ipcMain.handle('terminal:resize', (_event, id: string, cols: number, rows: number) => {
-    terminalService.resizeTerminal(id, cols, rows);
-  });
-
-  ipcMain.handle('terminal:close', (_event, id: string) => {
-    terminalService.closeTerminal(id);
+  // ── Chrome cookie import ──
+  //
+  // Two strategies behind the same handler. `method: 'cdp'` (default) launches
+  // a headless Chrome and reads cookies via the DevTools Protocol — works
+  // with v20 (app-bound) encryption. `method: 'direct'` reads the SQLite +
+  // DPAPI directly — fast, no Chrome needed, but only works for v10/v11.
+  ipcMain.handle('chrome-cookies:import', async (_e, opts?: { domainFilter?: string[]; method?: 'cdp' | 'direct'; browser?: 'chrome' | 'edge' }) => {
+    const method = opts?.method ?? 'cdp';
+    try {
+      if (method === 'cdp') {
+        return await importChromeCookiesViaCDP({ domainFilter: opts?.domainFilter, browser: opts?.browser ?? 'chrome' });
+      }
+      return await importChromeCookies({ domainFilter: opts?.domainFilter });
+    } catch (err: any) {
+      return { imported: 0, skipped: 0, errors: [err?.message ?? String(err)] };
+    }
   });
 
   // Config handlers
@@ -207,14 +265,6 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle('cache:recentPRs', (_event, limit?: number) =>
     issueCache.getRecentPullRequests(limit),
   );
-
-  ipcMain.handle('cache:syncNow', async () => {
-    await backgroundSync.syncAll();
-  });
-
-  ipcMain.handle('cache:watchRepo', (_event, repoPath: string) => {
-    backgroundSync.watchRepo(repoPath);
-  });
 
   // ── DevOps (Git + CI/CD) ──
 

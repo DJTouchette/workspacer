@@ -31,6 +31,7 @@ export interface PanesConfig {
   gap: number;
   peek: number;
   insertPosition: string;
+  tabPosition: 'top' | 'left';
   default: Array<{ id: string; type: string; title: string; width: number; order: number }>;
 }
 
@@ -49,6 +50,7 @@ export interface AppEntry {
 export interface KeybindingsConfig {
   mode: 'default' | 'vim';
   leader: string;
+  shortcuts: Record<string, string>;
 }
 
 export interface Config {
@@ -67,7 +69,7 @@ const DEFAULT_CONFIG: Config = {
     fontFamily: 'Inter, system-ui, sans-serif',
     fontSize: 14,
     borderRadius: 8,
-    navBarHeight: 28,
+    navBarHeight: 34,
     paneHeaderHeight: 22,
   },
   terminal: {
@@ -84,6 +86,7 @@ const DEFAULT_CONFIG: Config = {
     gap: 16,
     peek: 80,
     insertPosition: 'after',
+    tabPosition: 'top',
     default: [],
   },
   browser: {
@@ -94,6 +97,25 @@ const DEFAULT_CONFIG: Config = {
   keybindings: {
     mode: 'default',
     leader: 'ctrl',
+    shortcuts: {
+      'new-terminal': 'ctrl+t',
+      'new-browser': 'ctrl+n',
+      'new-claude': 'ctrl+j',
+      'split': 'ctrl+d',
+      'quick-split': 'ctrl+shift+d',
+      'close-pane': 'ctrl+w',
+      'command-palette': 'ctrl+k',
+      'settings': 'ctrl+,',
+      'save-session': 'ctrl+s',
+      'rename-tab': 'f2',
+      'toggle-help': 'ctrl+?',
+      'prev-tab': 'ctrl+[',
+      'next-tab': 'ctrl+]',
+      'nav-left': 'ctrl+h',
+      'nav-right': 'ctrl+l',
+      'nav-up': 'ctrl+shift+k',
+      'nav-down': 'ctrl+shift+j',
+    },
   },
   apps: [],
 };

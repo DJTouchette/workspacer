@@ -1,6 +1,6 @@
 import React, { useRef, useState, useCallback, useEffect, useImperativeHandle, forwardRef, Suspense } from 'react';
 import Pane from './Pane';
-import { PaneConfig, TabConfig } from '../types/pane';
+import { PaneConfig, PaneType, TabConfig } from '../types/pane';
 import TerminalPane from '../panes/TerminalPane';
 import ClaudePane from '../panes/ClaudePane';
 import { useConfig } from '../hooks/useConfig';
@@ -31,6 +31,9 @@ interface ScrollContainerProps {
   onPtyReady?: (paneId: string, ptySessionId: string) => void;
   onUrlChange?: (tabId: string, paneId: string, url: string) => void;
   onNavigateToTab?: (tabId: string) => void;
+  onAddTab?: (type: PaneType, shell?: string, label?: string, cwd?: string, profileId?: string, resumeSessionId?: string, attachSessionId?: string) => void;
+  /** paneId → ptySessionId. For Claude panes, ptySessionId === Claude session id. */
+  ptyMapping?: Record<string, string>;
   renameSignal?: number;
 }
 
@@ -43,6 +46,8 @@ interface PaneCallbacks {
   onUrlChange?: (paneId: string, url: string) => void;
   tabs?: TabConfig[];
   onNavigateToTab?: (tabId: string) => void;
+  onAddTab?: (type: PaneType, shell?: string, label?: string, cwd?: string, profileId?: string, resumeSessionId?: string, attachSessionId?: string) => void;
+  ptyMapping?: Record<string, string>;
 }
 
 function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneCallbacks) {
@@ -50,7 +55,7 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
     case 'terminal':
       return <TerminalPane paneId={pane.id} title={pane.title} isActive={isActive} shell={pane.shell} cwd={pane.cwd} onPtyReady={callbacks.onPtyReady} />;
     case 'claude':
-      return <ClaudePane paneId={pane.id} title={pane.title} isActive={isActive} cwd={pane.cwd} profileId={pane.profileId} resumeSessionId={pane.resumeSessionId} onPtyReady={callbacks.onPtyReady} />;
+      return <ClaudePane paneId={pane.id} title={pane.title} isActive={isActive} cwd={pane.cwd} profileId={pane.profileId} resumeSessionId={pane.resumeSessionId} attachSessionId={pane.attachSessionId} onPtyReady={callbacks.onPtyReady} />;
     case 'browser':
       return (
         <Suspense fallback={<PaneFallback />}>
@@ -66,7 +71,7 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
     case 'dashboard':
       return (
         <Suspense fallback={<PaneFallback />}>
-          <DashboardPane title={pane.title} tabs={callbacks.tabs ?? []} onNavigateToTab={callbacks.onNavigateToTab ?? (() => {})} />
+          <DashboardPane title={pane.title} tabs={callbacks.tabs ?? []} ptyMapping={callbacks.ptyMapping ?? {}} onNavigateToTab={callbacks.onNavigateToTab ?? (() => {})} onAddTab={callbacks.onAddTab} />
         </Suspense>
       );
     case 'tracker':
@@ -79,6 +84,18 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
       return (
         <Suspense fallback={<PaneFallback />}>
           <DevOpsPane paneId={pane.id} title={pane.title} isActive={isActive} />
+        </Suspense>
+      );
+    case 'agent-manager':
+      return (
+        <Suspense fallback={<PaneFallback />}>
+          <BrowserPane paneId={pane.id} title={pane.title} isActive={isActive} initialUrl={pane.url || 'http://127.0.0.1:9800'} appMode={true} hibernated={false} onUrlChange={() => {}} />
+        </Suspense>
+      );
+    case 'devdaemon':
+      return (
+        <Suspense fallback={<PaneFallback />}>
+          <BrowserPane paneId={pane.id} title={pane.title} isActive={isActive} initialUrl={pane.url || 'http://127.0.0.1:7880'} appMode={true} hibernated={false} onUrlChange={() => {}} />
         </Suspense>
       );
     default:
@@ -174,7 +191,7 @@ function TilingLayout({
 }
 
 const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
-  ({ tabs, activeTabId, onTabFocus, onPaneClose, onPaneFocus, onTabRename, onTabMove, onPtyReady, onUrlChange, onNavigateToTab, renameSignal }, ref) => {
+  ({ tabs, activeTabId, onTabFocus, onPaneClose, onPaneFocus, onTabRename, onTabMove, onPtyReady, onUrlChange, onNavigateToTab, onAddTab, ptyMapping, renameSignal }, ref) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const { config } = useConfig();
     const peek = config.panes?.peek ?? 80;
@@ -286,6 +303,8 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
               : undefined,
             tabs,
             onNavigateToTab: onNavigateToTab ?? onTabFocus,
+            onAddTab,
+            ptyMapping,
           };
 
           return (

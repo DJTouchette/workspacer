@@ -4,7 +4,7 @@
 //! transparently, and mirrors the byte stream to the daemon over WebSocket.
 //! The daemon can push input back (approve/deny, new prompts, signals).
 
-mod pty;
+pub mod pty;
 
 use std::io::{IsTerminal, Read};
 use std::sync::Arc;

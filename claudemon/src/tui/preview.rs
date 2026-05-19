@@ -85,8 +85,11 @@ impl ScenarioBuilder {
                 session_id: id.clone(),
                 transcript: self.chat_transcript,
                 editor,
+                transcript_focus: false,
+                expand_tool_results: false,
                 scroll_offset: 0,
                 last_seen_mode: last,
+                render_cache: std::cell::RefCell::new(None),
             });
         }
         (app, self.chat_session)

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { useConfig, AppEntry } from '../hooks/useConfig';
+import { useConfig, Config, AppEntry } from '../hooks/useConfig';
 import { themes } from '../themes';
 
 interface ClaudeProfile {
@@ -50,6 +50,120 @@ function vimShortcuts(leader: string): [string, string][] {
     ['Ctrl+/', 'Toggle help'],
   ];
 }
+
+// ── Shortcut Editor ──
+
+const SHORTCUT_LABELS: Record<string, string> = {
+  'new-terminal': 'New Terminal',
+  'new-browser': 'New Browser',
+  'new-claude': 'New Claude',
+  'split': 'Split Pane',
+  'quick-split': 'Quick Split (clone)',
+  'close-pane': 'Close Pane',
+  'command-palette': 'Command Palette',
+  'settings': 'Settings',
+  'save-session': 'Save Session',
+  'rename-tab': 'Rename Tab',
+  'toggle-help': 'Toggle Help',
+  'prev-tab': 'Previous Tab',
+  'next-tab': 'Next Tab',
+  'nav-left': 'Navigate Left',
+  'nav-right': 'Navigate Right',
+  'nav-up': 'Navigate Up',
+  'nav-down': 'Navigate Down',
+};
+
+const ShortcutEditor: React.FC<{ config: Config; save: (partial: Partial<Config>) => Promise<Config> }> = ({ config, save }) => {
+  const currentShortcuts = config.keybindings?.shortcuts ?? {};
+  const [capturing, setCapturing] = useState<string | null>(null);
+
+  const handleCapture = useCallback((action: string, e: React.KeyboardEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    // Ignore bare modifier presses
+    if (['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) return;
+
+    const parts: string[] = [];
+    if (e.ctrlKey) parts.push('ctrl');
+    if (e.altKey) parts.push('alt');
+    if (e.shiftKey) parts.push('shift');
+    if (e.metaKey) parts.push('meta');
+
+    const key = e.key === ' ' ? 'space' : e.key.length === 1 ? e.key.toLowerCase() : e.key.toLowerCase();
+    parts.push(key);
+
+    const combo = parts.join('+');
+    const updated = { ...currentShortcuts, [action]: combo };
+    save({ keybindings: { ...config.keybindings, shortcuts: updated } });
+    setCapturing(null);
+  }, [config.keybindings, currentShortcuts, save]);
+
+  const handleReset = useCallback((action: string) => {
+    const defaults: Record<string, string> = {
+      'new-terminal': 'ctrl+t', 'new-browser': 'ctrl+n', 'new-claude': 'ctrl+j',
+      'split': 'ctrl+d', 'quick-split': 'ctrl+shift+d', 'close-pane': 'ctrl+w',
+      'command-palette': 'ctrl+k', 'settings': 'ctrl+,', 'save-session': 'ctrl+s',
+      'rename-tab': 'f2', 'toggle-help': 'ctrl+?', 'prev-tab': 'ctrl+[',
+      'next-tab': 'ctrl+]', 'nav-left': 'ctrl+h', 'nav-right': 'ctrl+l',
+      'nav-up': 'ctrl+shift+k', 'nav-down': 'ctrl+shift+j',
+    };
+    const updated = { ...currentShortcuts, [action]: defaults[action] ?? '' };
+    save({ keybindings: { ...config.keybindings, shortcuts: updated } });
+  }, [config.keybindings, currentShortcuts, save]);
+
+  return (
+    <div style={{ marginTop: '12px' }}>
+      <div style={{ fontSize: '0.65rem', color: 'var(--wks-text-faint)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>
+        Shortcuts (click to rebind)
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+        {Object.entries(SHORTCUT_LABELS).map(([action, label]) => {
+          const isCapturing = capturing === action;
+          const combo = currentShortcuts[action] ?? '';
+          return (
+            <div key={action} style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '4px 8px', borderRadius: '4px',
+              backgroundColor: isCapturing ? 'var(--wks-bg-selected)' : 'transparent',
+            }}>
+              <span style={{ fontSize: '0.7rem', color: 'var(--wks-text-muted)' }}>{label}</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <input
+                  data-leader-capture="true"
+                  readOnly
+                  value={isCapturing ? 'Press keys...' : combo}
+                  onClick={() => setCapturing(action)}
+                  onKeyDown={isCapturing ? (e) => handleCapture(action, e) : undefined}
+                  onBlur={() => setCapturing(null)}
+                  style={{
+                    width: '140px', height: '22px', padding: '0 6px',
+                    fontSize: '0.65rem', fontFamily: 'monospace', textAlign: 'center',
+                    backgroundColor: isCapturing ? 'var(--wks-bg-input)' : 'transparent',
+                    color: isCapturing ? 'var(--wks-accent-text)' : 'var(--wks-text-tertiary)',
+                    border: isCapturing ? '1px solid var(--wks-accent)' : '1px solid var(--wks-border)',
+                    borderRadius: '3px', outline: 'none', cursor: 'pointer',
+                  }}
+                />
+                <button
+                  onClick={() => handleReset(action)}
+                  style={{
+                    fontSize: '0.6rem', padding: '2px 6px', borderRadius: '3px',
+                    border: '1px solid var(--wks-border)', backgroundColor: 'transparent',
+                    color: 'var(--wks-text-faint)', cursor: 'pointer',
+                  }}
+                  title="Reset to default"
+                >
+                  ↺
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
 
 const SettingsPane: React.FC<SettingsPaneProps> = ({ title }) => {
   const { config, save } = useConfig();
@@ -175,6 +289,56 @@ const SettingsPane: React.FC<SettingsPaneProps> = ({ title }) => {
         </Row>
       </Section>
 
+      {/* Layout section */}
+      <Section title="Layout">
+        <Row label="Tab Position">
+          <div style={{ display: 'flex', gap: '4px' }}>
+            <ModeButton
+              label="Top"
+              active={(config.panes?.tabPosition ?? 'top') === 'top'}
+              onClick={() => save({ panes: { ...config.panes, tabPosition: 'top' } })}
+            />
+            <ModeButton
+              label="Left"
+              active={config.panes?.tabPosition === 'left'}
+              onClick={() => save({ panes: { ...config.panes, tabPosition: 'left' } })}
+            />
+          </div>
+        </Row>
+        <Row label="Peek">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <input
+              type="range"
+              min={0}
+              max={200}
+              step={10}
+              value={config.panes?.peek ?? 80}
+              onChange={(e) => save({ panes: { ...config.panes, peek: parseInt(e.target.value) } })}
+              style={{ width: '120px', accentColor: 'var(--wks-accent)' }}
+            />
+            <span style={{ fontSize: '0.7rem', fontFamily: 'monospace', color: 'var(--wks-text-tertiary)', minWidth: '32px' }}>
+              {config.panes?.peek ?? 80}px
+            </span>
+          </div>
+        </Row>
+        <Row label="Gap">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <input
+              type="range"
+              min={0}
+              max={40}
+              step={2}
+              value={config.panes?.gap ?? 16}
+              onChange={(e) => save({ panes: { ...config.panes, gap: parseInt(e.target.value) } })}
+              style={{ width: '120px', accentColor: 'var(--wks-accent)' }}
+            />
+            <span style={{ fontSize: '0.7rem', fontFamily: 'monospace', color: 'var(--wks-text-tertiary)', minWidth: '32px' }}>
+              {config.panes?.gap ?? 16}px
+            </span>
+          </div>
+        </Row>
+      </Section>
+
       {/* Keybindings section */}
       <Section title="Keybindings">
         <Row label="Mode">
@@ -224,27 +388,18 @@ const SettingsPane: React.FC<SettingsPaneProps> = ({ title }) => {
           </Row>
         )}
 
-        {/* Binding reference */}
-        <div style={{ marginTop: '12px' }}>
-          <div style={{ fontSize: '0.65rem', color: 'var(--wks-text-faint)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '6px' }}>
-            {mode === 'vim' ? 'Vim Bindings' : 'Default Bindings'}
-          </div>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.7rem' }}>
-            <tbody>
-              {shortcuts.map(([key, desc], i) => {
-                if (!key && !desc) {
-                  return <tr key={i}><td colSpan={2} style={{ height: '8px' }} /></tr>;
-                }
-                if (!desc) {
-                  return (
-                    <tr key={i}>
-                      <td colSpan={2} style={{ padding: '4px 0 2px', color: 'var(--wks-text-faint)', fontSize: '0.6rem', fontWeight: 600 }}>
-                        {key}
-                      </td>
-                    </tr>
-                  );
-                }
-                return (
+        {/* Shortcut editor */}
+        <ShortcutEditor config={config} save={save} />
+
+        {/* Binding reference (vim chords) */}
+        {mode === 'vim' && (
+          <div style={{ marginTop: '12px' }}>
+            <div style={{ fontSize: '0.65rem', color: 'var(--wks-text-faint)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '6px' }}>
+              Vim Chord Bindings (Leader + key)
+            </div>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.7rem' }}>
+              <tbody>
+                {shortcuts.filter(([_, desc]) => desc).map(([key, desc], i) => (
                   <tr key={i}>
                     <td style={{ padding: '2px 16px 2px 0', color: 'var(--wks-text-tertiary)', fontFamily: 'monospace', fontSize: '0.65rem', whiteSpace: 'nowrap' }}>
                       {key}
@@ -253,11 +408,11 @@ const SettingsPane: React.FC<SettingsPaneProps> = ({ title }) => {
                       {desc}
                     </td>
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </Section>
 
       {/* Browser section */}
@@ -292,6 +447,8 @@ const SettingsPane: React.FC<SettingsPaneProps> = ({ title }) => {
         <div style={{ fontSize: '0.55rem', color: 'var(--wks-text-disabled)' }}>
           Browser panes hibernate after being out of view. 0 = disabled.
         </div>
+
+        <ChromeCookieSyncRow />
       </Section>
 
       {/* Apps section */}
@@ -579,6 +736,108 @@ function SmallButton({ label, onClick, primary, danger }: { label: string; onCli
     >
       {label}
     </button>
+  );
+}
+
+function ChromeCookieSyncRow() {
+  const [syncing, setSyncing] = useState(false);
+  const [lastResult, setLastResult] = useState<string | null>(null);
+  const [restrictDomains, setRestrictDomains] = useState(true);
+  const [browser, setBrowser] = useState<'chrome' | 'edge'>('chrome');
+
+  // Hosts we'll import when "restrict" is checked. Anything you visit in
+  // Chrome that's not in this list stays in Chrome.
+  const defaultDomains = [
+    'atlassian.com',
+    'atlassian.net',
+    'microsoftonline.com',
+    'microsoft.com',
+    'live.com',
+    'office.com',
+    'office365.com',
+    'google.com',
+    'github.com',
+  ];
+
+  const onSync = useCallback(async () => {
+    setSyncing(true);
+    setLastResult(null);
+    try {
+      const res = await window.electronAPI.importChromeCookies(
+        restrictDomains ? defaultDomains : undefined,
+        'cdp',
+        browser,
+      );
+      const diag = (res as any).diagnostics ?? {};
+      const diagStr = Object.keys(diag).length
+        ? ' — ' + Object.entries(diag).map(([k, v]) => `${k}=${v}`).join(', ')
+        : '';
+      const msg = `Imported ${res.imported}, skipped ${res.skipped}` + diagStr +
+        (res.errors.length ? `\nFirst error: ${res.errors[0]}` : '');
+      setLastResult(msg);
+    } catch (err: any) {
+      setLastResult(`Failed: ${err?.message ?? err}`);
+    } finally {
+      setSyncing(false);
+    }
+  }, [restrictDomains, browser]);
+
+  return (
+    <>
+      <Row label="Source browser">
+        <select
+          value={browser}
+          onChange={(e) => setBrowser(e.target.value as 'chrome' | 'edge')}
+          style={{
+            height: '24px',
+            padding: '0 8px',
+            fontSize: '0.65rem',
+            backgroundColor: 'var(--wks-bg-input)',
+            color: 'var(--wks-text-secondary)',
+            border: '1px solid var(--wks-border)',
+            borderRadius: '3px',
+            outline: 'none',
+            fontFamily: 'inherit',
+          }}
+        >
+          <option value="chrome">Google Chrome</option>
+          <option value="edge">Microsoft Edge</option>
+        </select>
+      </Row>
+      <Row label={`Sync cookies from ${browser === 'edge' ? 'Edge' : 'Chrome'}`}>
+        <button
+          onClick={onSync}
+          disabled={syncing}
+          style={{
+            height: '24px',
+            padding: '0 12px',
+            fontSize: '0.65rem',
+            fontWeight: 600,
+            backgroundColor: syncing ? 'var(--wks-bg-input)' : 'var(--wks-accent-bg)',
+            color: syncing ? 'var(--wks-text-disabled)' : 'var(--wks-accent-text)',
+            border: '1px solid var(--wks-border)',
+            borderRadius: '3px',
+            cursor: syncing ? 'default' : 'pointer',
+            fontFamily: 'inherit',
+          }}
+        >
+          {syncing ? 'Syncing…' : 'Sync now'}
+        </button>
+      </Row>
+      <Row label="Restrict to login-related domains">
+        <input
+          type="checkbox"
+          checked={restrictDomains}
+          onChange={(e) => setRestrictDomains(e.target.checked)}
+        />
+      </Row>
+      <div style={{ fontSize: '0.55rem', color: 'var(--wks-text-disabled)' }}>
+        Reads Chrome's local cookie store and copies into Workspacer's browser session — useful when OAuth (e.g. Microsoft sign-in) won't complete inside an embedded webview. Run while Chrome is closed for best results.
+        {lastResult && (
+          <div style={{ marginTop: 4, color: 'var(--wks-text-secondary)' }}>{lastResult}</div>
+        )}
+      </div>
+    </>
   );
 }
 

@@ -35,6 +35,15 @@ function parseKeyCombo(combo: string): { match: (e: KeyboardEvent) => boolean; i
   };
 }
 
+/** Pre-parsed shortcut matchers, keyed by action name. */
+function buildShortcutMatchers(shortcuts: Record<string, string>): Record<string, (e: KeyboardEvent) => boolean> {
+  const matchers: Record<string, (e: KeyboardEvent) => boolean> = {};
+  for (const [action, combo] of Object.entries(shortcuts)) {
+    matchers[action] = parseKeyCombo(combo).match;
+  }
+  return matchers;
+}
+
 interface UseKeyboardNavOptions {
   tabs: TabConfig[];
   activeTabId: string;
@@ -56,6 +65,8 @@ interface UseKeyboardNavOptions {
   onOpenSettings?: () => void;
   onSaveSession?: () => void;
   onOpenCommandPalette?: () => void;
+  onOpenSplitPalette?: () => void;
+  shortcuts?: Record<string, string>;
 }
 
 export function useKeyboardNav({
@@ -79,7 +90,12 @@ export function useKeyboardNav({
   onOpenSettings,
   onSaveSession,
   onOpenCommandPalette,
+  onOpenSplitPalette,
+  shortcuts = {},
 }: UseKeyboardNavOptions) {
+  const matchersRef = useRef(buildShortcutMatchers(shortcuts));
+  // Update matchers when shortcuts change
+  matchersRef.current = buildShortcutMatchers(shortcuts);
   const chordRef = useRef<{ state: ChordState; timeoutId: ReturnType<typeof setTimeout> | null }>({
     state: 'idle', timeoutId: null,
   });
@@ -166,6 +182,9 @@ export function useKeyboardNav({
       else if (key === '?') onToggleHelp();
       else if (key === 's') onSaveSession?.();
       else if (key === 'd') {
+        onOpenSplitPalette?.();
+      }
+      else if (key === 'D') {
         if (activeTab) {
           const activePane = activeTab.panes.find(p => p.id === activeTab.activePaneId);
           const splitType = activePane?.type ?? 'terminal';
@@ -184,20 +203,12 @@ export function useKeyboardNav({
     };
 
     const handler = (e: KeyboardEvent) => {
-      // --- Global shortcuts (both modes) ---
+      const m = matchersRef.current;
 
-      // Ctrl+, : settings
-      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === ',') {
-        e.preventDefault(); e.stopPropagation(); onOpenSettings?.(); return;
-      }
-      // Ctrl+S : save session
-      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 's') {
-        e.preventDefault(); e.stopPropagation(); onSaveSession?.(); return;
-      }
-      // Ctrl+K : command palette
-      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'k') {
-        e.preventDefault(); e.stopPropagation(); onOpenCommandPalette?.(); return;
-      }
+      // --- Global shortcuts (both modes) ---
+      if (m['settings']?.(e)) { e.preventDefault(); e.stopPropagation(); onOpenSettings?.(); return; }
+      if (m['save-session']?.(e)) { e.preventDefault(); e.stopPropagation(); onSaveSession?.(); return; }
+      if (m['command-palette']?.(e)) { e.preventDefault(); e.stopPropagation(); onOpenCommandPalette?.(); return; }
 
       // --- Vim chord handling ---
       if (keybindingsMode === 'vim') {
@@ -225,24 +236,31 @@ export function useKeyboardNav({
         }
       }
 
-      // --- Direct shortcuts ---
-
-      // Ctrl+T : new terminal tab
-      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 't') {
+      // --- Config-driven shortcuts ---
+      if (m['new-terminal']?.(e)) {
         e.preventDefault(); e.stopPropagation();
         const newId = addTab('terminal');
         requestAnimationFrame(() => scrollToTab(newId));
         return;
       }
-      // Ctrl+B : new browser tab
-      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'b') {
+      if (m['new-browser']?.(e)) {
         e.preventDefault(); e.stopPropagation();
         const newId = addTab('browser');
         requestAnimationFrame(() => scrollToTab(newId));
         return;
       }
-      // Ctrl+D : split current tab (matches active pane type)
-      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'd') {
+      if (m['new-claude']?.(e)) {
+        e.preventDefault(); e.stopPropagation();
+        const newId = addTab('claude');
+        requestAnimationFrame(() => scrollToTab(newId));
+        return;
+      }
+      if (m['split']?.(e)) {
+        e.preventDefault(); e.stopPropagation();
+        onOpenSplitPalette?.();
+        return;
+      }
+      if (m['quick-split']?.(e)) {
         e.preventDefault(); e.stopPropagation();
         if (activeTab) {
           const activePane = activeTab.panes.find(p => p.id === activeTab.activePaneId);
@@ -251,8 +269,7 @@ export function useKeyboardNav({
         }
         return;
       }
-      // Ctrl+W : close active pane (or tab if single pane)
-      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'w') {
+      if (m['close-pane']?.(e)) {
         e.preventDefault(); e.stopPropagation();
         if (activeTab) {
           if (activeTab.panes.length <= 1) {
@@ -263,17 +280,22 @@ export function useKeyboardNav({
         }
         return;
       }
-      // F2 : rename active tab
-      if (e.key === 'F2' && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+      if (m['rename-tab']?.(e)) {
         e.preventDefault(); e.stopPropagation();
         if (onRenameTab) onRenameTab();
         return;
       }
-      // Ctrl+/ : help
-      if (e.ctrlKey && (e.key === '/' || e.key === '?')) {
+      if (m['toggle-help']?.(e)) {
         e.preventDefault(); e.stopPropagation(); onToggleHelp(); return;
       }
-      // Ctrl+1-9 : jump to tab
+      if (m['nav-left']?.(e)) { e.preventDefault(); e.stopPropagation(); navigatePane('left'); return; }
+      if (m['nav-right']?.(e)) { e.preventDefault(); e.stopPropagation(); navigatePane('right'); return; }
+      if (m['nav-up']?.(e)) { e.preventDefault(); e.stopPropagation(); navigatePane('up'); return; }
+      if (m['nav-down']?.(e)) { e.preventDefault(); e.stopPropagation(); navigatePane('down'); return; }
+      if (m['prev-tab']?.(e)) { e.preventDefault(); e.stopPropagation(); goToPrevTab(); return; }
+      if (m['next-tab']?.(e)) { e.preventDefault(); e.stopPropagation(); goToNextTab(); return; }
+
+      // Ctrl+1-9 : jump to tab (always hardcoded — too dynamic to configure)
       if (e.ctrlKey && !e.shiftKey && !e.altKey) {
         const num = parseInt(e.key, 10);
         if (num >= 1 && num <= 9) {
@@ -292,20 +314,6 @@ export function useKeyboardNav({
           }
         }
       }
-
-      // Alt+Arrow : navigate sub-panes within tab
-      if (e.altKey && !e.ctrlKey && !e.shiftKey) {
-        if (e.key === 'ArrowLeft') { e.preventDefault(); e.stopPropagation(); navigatePane('left'); return; }
-        if (e.key === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); navigatePane('right'); return; }
-        if (e.key === 'ArrowUp') { e.preventDefault(); e.stopPropagation(); navigatePane('up'); return; }
-        if (e.key === 'ArrowDown') { e.preventDefault(); e.stopPropagation(); navigatePane('down'); return; }
-      }
-
-      // Ctrl+Alt+Left/Right : navigate between tabs
-      if (e.ctrlKey && e.altKey && !e.shiftKey) {
-        if (e.key === 'ArrowLeft') { e.preventDefault(); e.stopPropagation(); goToPrevTab(); return; }
-        if (e.key === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); goToNextTab(); return; }
-      }
     };
 
     window.addEventListener('keydown', handler, true);
@@ -315,5 +323,5 @@ export function useKeyboardNav({
       window.removeEventListener('keyup', handleKeyUp, true);
       cancelChord();
     };
-  }, [goToTab, goToPrevTab, goToNextTab, navigatePane, addTab, splitTab, removeTab, removePane, moveTab, tabs, activeTabId, activeTab, scrollToTab, onToggleHelp, onRenameTab, keybindingsMode, leaderKey, onChordStateChange, onOpenSettings, onSaveSession, onOpenCommandPalette]);
+  }, [goToTab, goToPrevTab, goToNextTab, navigatePane, addTab, splitTab, removeTab, removePane, moveTab, tabs, activeTabId, activeTab, scrollToTab, onToggleHelp, onRenameTab, keybindingsMode, leaderKey, onChordStateChange, onOpenSettings, onSaveSession, onOpenCommandPalette, onOpenSplitPalette]);
 }
