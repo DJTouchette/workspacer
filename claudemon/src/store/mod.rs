@@ -1,0 +1,213 @@
+//! SQLite-backed cold storage for sessions, events, items, and asks.
+//!
+//! Sits alongside the in-memory [`crate::session::SessionStore`]. The hot path
+//! (hook intake, mode tracking, PTY bytes) keeps using the in-memory store
+//! for latency; this module persists the event stream out-of-band so v2
+//! features (inbox items, transcripts search, ask history) survive restarts.
+
+pub mod schema;
+
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+
+use anyhow::{Context, Result};
+use rusqlite::{params, Connection};
+use serde_json::Value;
+use time::OffsetDateTime;
+
+use crate::session::HookEvent;
+
+/// Thread-safe handle to the daemon's SQLite database.
+///
+/// Cloning is cheap (`Arc<Mutex<Connection>>`). All writes serialize through
+/// the mutex; SQLite itself is the bottleneck at high write rates, not lock
+/// contention.
+#[derive(Clone)]
+pub struct Db {
+    conn: Arc<Mutex<Connection>>,
+    #[allow(dead_code)]
+    path: PathBuf,
+}
+
+impl Db {
+    pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+        let path = path.as_ref().to_path_buf();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("creating db parent dir {}", parent.display()))?;
+        }
+        let conn = Connection::open(&path)
+            .with_context(|| format!("opening sqlite at {}", path.display()))?;
+        conn.pragma_update(None, "journal_mode", "WAL")?;
+        conn.pragma_update(None, "synchronous", "NORMAL")?;
+        conn.pragma_update(None, "foreign_keys", "ON")?;
+        schema::migrate(&conn).context("running schema migrations")?;
+        Ok(Self {
+            conn: Arc::new(Mutex::new(conn)),
+            path,
+        })
+    }
+
+    /// Persist one hook event plus a session upsert. Both happen in a single
+    /// transaction so the events row never references a missing session.
+    pub fn record_event(&self, event: &HookEvent) -> Result<i64> {
+        let mut guard = self.conn.lock().expect("db mutex poisoned");
+        let tx = guard.transaction()?;
+        upsert_session_tx(&tx, event)?;
+        let row_id = insert_event_tx(&tx, event)?;
+        tx.commit()?;
+        Ok(row_id)
+    }
+}
+
+fn upsert_session_tx(tx: &rusqlite::Transaction<'_>, event: &HookEvent) -> Result<()> {
+    let now = event_timestamp_unix(event);
+    let session_id = &event.session_id;
+    let cwd = event.cwd.as_deref().unwrap_or("");
+    // Sessions are append-on-first-event; subsequent events only bump
+    // last_event_at and tool_call_count (when applicable).
+    let payload = &event.payload;
+    let name = payload
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .unwrap_or_else(|| derive_name_from_cwd(cwd));
+    let project = payload
+        .get("project")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .unwrap_or_else(|| name.clone());
+    let worktree_path = payload
+        .get("worktree_path")
+        .and_then(Value::as_str)
+        .unwrap_or(cwd);
+    let model = payload.get("model").and_then(Value::as_str);
+    let branch = payload.get("branch").and_then(Value::as_str);
+
+    tx.execute(
+        "INSERT INTO sessions (
+            id, name, project, cwd, worktree_path, branch, base_branch, model,
+            state, pid, created_at, last_event_at, total_cost_usd, tool_call_count
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, 'working', NULL, ?8, ?8, 0, 0)
+         ON CONFLICT(id) DO UPDATE SET
+            last_event_at = excluded.last_event_at,
+            cwd = CASE WHEN sessions.cwd = '' THEN excluded.cwd ELSE sessions.cwd END,
+            model = COALESCE(sessions.model, excluded.model),
+            branch = COALESCE(sessions.branch, excluded.branch)",
+        params![session_id, name, project, cwd, worktree_path, branch, model, now],
+    )?;
+
+    if event.event == "PreToolUse" {
+        tx.execute(
+            "UPDATE sessions SET tool_call_count = tool_call_count + 1 WHERE id = ?1",
+            params![session_id],
+        )?;
+    }
+    Ok(())
+}
+
+fn insert_event_tx(tx: &rusqlite::Transaction<'_>, event: &HookEvent) -> Result<i64> {
+    let ts = event_timestamp_unix(event);
+    let tool_name = event
+        .payload
+        .get("tool_name")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let payload_json = serde_json::to_string(&event.payload)?;
+    tx.execute(
+        "INSERT INTO events (session_id, timestamp, event_type, tool_name, payload_json)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![event.session_id, ts, event.event, tool_name, payload_json],
+    )?;
+    Ok(tx.last_insert_rowid())
+}
+
+fn event_timestamp_unix(event: &HookEvent) -> i64 {
+    event
+        .timestamp
+        .unwrap_or_else(OffsetDateTime::now_utc)
+        .unix_timestamp()
+}
+
+fn derive_name_from_cwd(cwd: &str) -> String {
+    Path::new(cwd)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("session")
+        .to_string()
+}
+
+/// Default location for the SQLite file, honoring XDG_DATA_HOME when set
+/// and falling back to `~/.claudemon/state.db`.
+pub fn default_db_path() -> PathBuf {
+    if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
+        return PathBuf::from(xdg).join("claudemon").join("state.db");
+    }
+    if let Some(home) = directories::BaseDirs::new() {
+        return home.home_dir().join(".claudemon").join("state.db");
+    }
+    PathBuf::from(".claudemon/state.db")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn ev(event: &str, session_id: &str) -> HookEvent {
+        HookEvent {
+            event: event.to_string(),
+            session_id: session_id.to_string(),
+            cwd: Some("/tmp/proj".to_string()),
+            timestamp: None,
+            payload: serde_json::Map::new(),
+        }
+    }
+
+    #[test]
+    fn records_event_and_session() {
+        let tmp = tempfile_path();
+        let db = Db::open(&tmp).unwrap();
+        let id = db.record_event(&ev("SessionStart", "s1")).unwrap();
+        assert!(id > 0);
+        let conn = db.conn.lock().unwrap();
+        let session_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM sessions WHERE id = 's1'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(session_count, 1);
+        let event_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM events WHERE session_id = 's1'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(event_count, 1);
+    }
+
+    #[test]
+    fn pre_tool_use_bumps_tool_count() {
+        let tmp = tempfile_path();
+        let db = Db::open(&tmp).unwrap();
+        db.record_event(&ev("SessionStart", "s2")).unwrap();
+        let mut e = ev("PreToolUse", "s2");
+        e.payload.insert("tool_name".into(), json!("Bash"));
+        db.record_event(&e).unwrap();
+        db.record_event(&e).unwrap();
+        let conn = db.conn.lock().unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT tool_call_count FROM sessions WHERE id = 's2'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 2);
+    }
+
+    fn tempfile_path() -> PathBuf {
+        let mut p = std::env::temp_dir();
+        p.push(format!("claudemon-test-{}.db", uuid::Uuid::new_v4()));
+        p
+    }
+}
