@@ -24,6 +24,16 @@ vi.mock('../../src/lib/claudemonItems', () => {
   };
 });
 
+vi.mock('../../src/lib/claudemonSessions', () => {
+  return {
+    ClaudemonSessionsClient: class {
+      approve = vi.fn().mockResolvedValue(undefined);
+      getTranscript = vi.fn().mockResolvedValue({ path: null, messages: [] });
+      getSession = vi.fn().mockResolvedValue(null);
+    },
+  };
+});
+
 import InboxPane from '../../src/panes/InboxPane';
 
 function item(overrides: Partial<ItemRow> = {}): ItemRow {
@@ -149,5 +159,27 @@ describe('InboxPane', () => {
     listMock.mockRejectedValue(new Error('boom'));
     render(<InboxPane title="Inbox" isActive />);
     expect(await screen.findByText(/boom/)).toBeInTheDocument();
+  });
+
+  it('opens the detail overlay when Enter is pressed on the selected item', async () => {
+    listMock.mockResolvedValue([item()]);
+    const { container } = render(<InboxPane title="Inbox" isActive />);
+    await screen.findByText('feat-auth');
+    const root = container.firstChild as HTMLElement;
+    fireEvent.keyDown(root, { key: 'Enter' });
+    expect(await screen.findByRole('region', { hidden: true }).catch(() => null)).toBeNull();
+    // Overlay should render its detail-aria-label
+    expect(await screen.findByLabelText('Item detail')).toBeInTheDocument();
+  });
+
+  it('overlay esc closes back to inbox', async () => {
+    listMock.mockResolvedValue([item()]);
+    const { container } = render(<InboxPane title="Inbox" isActive />);
+    await screen.findByText('feat-auth');
+    const root = container.firstChild as HTMLElement;
+    fireEvent.keyDown(root, { key: 'Enter' });
+    const overlay = await screen.findByLabelText('Item detail');
+    fireEvent.keyDown(overlay, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByLabelText('Item detail')).not.toBeInTheDocument());
   });
 });

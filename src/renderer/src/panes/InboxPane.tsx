@@ -6,12 +6,14 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
+import ItemDetailOverlay from '../components/ItemDetailOverlay';
 import {
   ClaudemonItemsClient,
   ItemAction,
   ItemChange,
   ItemRow,
 } from '../lib/claudemonItems';
+import { ClaudemonSessionsClient } from '../lib/claudemonSessions';
 
 interface InboxPaneProps {
   title: string;
@@ -26,6 +28,7 @@ interface State {
   selectedId: string | null;
   status: Status;
   snoozeMenuFor: string | null;
+  detailFor: string | null;
   lastError: string | null;
 }
 
@@ -36,7 +39,9 @@ type Action =
   | { type: 'select'; delta: number }
   | { type: 'select_id'; id: string | null }
   | { type: 'open_snooze_menu'; id: string }
-  | { type: 'close_snooze_menu' };
+  | { type: 'close_snooze_menu' }
+  | { type: 'open_detail'; id: string }
+  | { type: 'close_detail' };
 
 function sortItems(items: ItemRow[]): string[] {
   return [...items]
@@ -97,6 +102,10 @@ function reducer(state: State, action: Action): State {
       return { ...state, snoozeMenuFor: action.id };
     case 'close_snooze_menu':
       return { ...state, snoozeMenuFor: null };
+    case 'open_detail':
+      return { ...state, detailFor: action.id };
+    case 'close_detail':
+      return { ...state, detailFor: null };
   }
 }
 
@@ -106,6 +115,7 @@ const initialState: State = {
   selectedId: null,
   status: 'connecting',
   snoozeMenuFor: null,
+  detailFor: null,
   lastError: null,
 };
 
@@ -149,13 +159,18 @@ function priorityColor(priority: number): string {
 const InboxPane: React.FC<InboxPaneProps> = ({ title, isActive }) => {
   const [state, dispatch] = useReducer(reducer, initialState);
   const clientRef = useRef<ClaudemonItemsClient | null>(null);
+  const sessionsRef = useRef<ClaudemonSessionsClient | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const selectedRowRef = useRef<HTMLDivElement>(null);
 
   if (clientRef.current === null) {
     clientRef.current = new ClaudemonItemsClient();
   }
+  if (sessionsRef.current === null) {
+    sessionsRef.current = new ClaudemonSessionsClient();
+  }
   const client = clientRef.current;
+  const sessionsClient = sessionsRef.current;
 
   // Initial load + SSE subscription
   useEffect(() => {
@@ -220,6 +235,9 @@ const InboxPane: React.FC<InboxPaneProps> = ({ title, isActive }) => {
         return;
       }
 
+      // Overlay open: swallow most keys; the overlay has its own handler.
+      if (state.detailFor) return;
+
       const sel = state.selectedId;
       switch (e.key) {
         case 'j':
@@ -231,6 +249,12 @@ const InboxPane: React.FC<InboxPaneProps> = ({ title, isActive }) => {
         case 'ArrowUp':
           e.preventDefault();
           dispatch({ type: 'select', delta: -1 });
+          break;
+        case 'Enter':
+          if (sel) {
+            e.preventDefault();
+            dispatch({ type: 'open_detail', id: sel });
+          }
           break;
         case 'e':
           if (sel) {
@@ -406,12 +430,25 @@ const InboxPane: React.FC<InboxPaneProps> = ({ title, isActive }) => {
         ) : (
           <>
             <span>[j/k] navigate</span>
+            <span>[enter] open</span>
             <span>[e] archive</span>
             <span>[s] snooze</span>
             <span>[!] flag</span>
           </>
         )}
       </div>
+      {state.detailFor && state.items[state.detailFor] && (
+        <ItemDetailOverlay
+          item={state.items[state.detailFor]}
+          itemsClient={client}
+          sessionsClient={sessionsClient}
+          onClose={() => {
+            dispatch({ type: 'close_detail' });
+            containerRef.current?.focus();
+          }}
+          onSnoozeMenu={(id) => dispatch({ type: 'open_snooze_menu', id })}
+        />
+      )}
     </div>
   );
 };
