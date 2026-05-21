@@ -48,11 +48,15 @@ pub fn classify(input: Input) -> Output {
         }
 
         "Notification" => {
+            // Claude Code's real payload key is `notification_type`
+            // (values `idle_prompt` / `permission_prompt`). `kind` and `type`
+            // are kept as fallbacks for synthetic/forwarded events.
             let notif_kind = input
                 .event
                 .payload
-                .get("kind")
+                .get("notification_type")
                 .and_then(Value::as_str)
+                .or_else(|| input.event.payload.get("kind").and_then(Value::as_str))
                 .or_else(|| input.event.payload.get("type").and_then(Value::as_str));
             match notif_kind {
                 Some("idle_prompt") | Some("permission_prompt") => {
@@ -354,6 +358,20 @@ mod tests {
     fn notification_idle_prompt_creates_item() {
         let mut e = event("Notification", "s");
         e.payload.insert("kind".into(), json!("idle_prompt"));
+        let out = classify(input(SessionState::Working, e));
+        assert_eq!(out.new_session_state, SessionState::NeedsInput);
+        assert!(matches!(out.actions.as_slice(),
+            [ItemAction::Create(item)] if item.priority == 90));
+    }
+
+    #[test]
+    fn notification_uses_notification_type_key() {
+        // Claude Code's real payload uses `notification_type`, not `kind`.
+        let mut e = event("Notification", "s");
+        e.payload
+            .insert("notification_type".into(), json!("permission_prompt"));
+        e.payload
+            .insert("message".into(), json!("Claude needs your permission to use Bash"));
         let out = classify(input(SessionState::Working, e));
         assert_eq!(out.new_session_state, SessionState::NeedsInput);
         assert!(matches!(out.actions.as_slice(),

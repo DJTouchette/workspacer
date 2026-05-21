@@ -443,7 +443,27 @@ const InboxPane: React.FC<InboxPaneProps> = ({ title, isActive, onAddTab }) => {
             e.preventDefault();
             const item = state.items[sel];
             if (item) {
-              onAddTab('claude', undefined, item.session_name, undefined, undefined, undefined, item.session_id);
+              // Spawn a fresh `claude --resume <id>` in the session's original
+              // cwd. We resume rather than attach because the inbox tracks
+              // sessions claudemon only observed via hooks — those have no
+              // owned PTY to attach to.
+              sessionsClient
+                .getSession(item.session_id)
+                .then((sess) => {
+                  onAddTab(
+                    'claude',
+                    undefined,
+                    item.session_name,
+                    sess?.cwd ?? undefined,
+                    undefined,
+                    item.session_id,
+                    undefined,
+                  );
+                })
+                .catch(() => {
+                  // cwd lookup failed; spawn anyway with default cwd.
+                  onAddTab('claude', undefined, item.session_name, undefined, undefined, item.session_id, undefined);
+                });
             }
           }
           break;
@@ -813,16 +833,24 @@ const InboxPane: React.FC<InboxPaneProps> = ({ title, isActive, onAddTab }) => {
           onSnoozeMenu={(id) => dispatch({ type: 'open_snooze_menu', id })}
           onOpenSession={
             onAddTab
-              ? (item) =>
-                  onAddTab(
-                    'claude',
-                    undefined,
-                    item.session_name,
-                    undefined,
-                    undefined,
-                    undefined,
-                    item.session_id,
-                  )
+              ? (item) => {
+                  sessionsClient
+                    .getSession(item.session_id)
+                    .then((sess) => {
+                      onAddTab(
+                        'claude',
+                        undefined,
+                        item.session_name,
+                        sess?.cwd ?? undefined,
+                        undefined,
+                        item.session_id,
+                        undefined,
+                      );
+                    })
+                    .catch(() => {
+                      onAddTab('claude', undefined, item.session_name, undefined, undefined, item.session_id, undefined);
+                    });
+                }
               : undefined
           }
         />
