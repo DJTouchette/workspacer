@@ -270,6 +270,52 @@ describe('InboxPane', () => {
     expect(await screen.findByText(/No matches/)).toBeInTheDocument();
   });
 
+  it('Space toggles multi-select; a archives all selected items', async () => {
+    listMock.mockResolvedValue([
+      item({ id: 'a', priority: 95, summary: 'first', session_name: 'A' }),
+      item({ id: 'b', priority: 90, summary: 'second', session_name: 'B' }),
+      item({ id: 'c', priority: 85, summary: 'third', session_name: 'C' }),
+    ]);
+    actionMock.mockResolvedValue(item({ state: 'resolved' }));
+    const { container } = render(<InboxPane title="Inbox" isActive />);
+    await screen.findByText('first');
+    const root = container.firstChild as HTMLElement;
+    // Select a, j to b, select, j to c, select. Then a (archive all).
+    fireEvent.keyDown(root, { key: ' ' });
+    fireEvent.keyDown(root, { key: 'j' });
+    fireEvent.keyDown(root, { key: ' ' });
+    fireEvent.keyDown(root, { key: 'j' });
+    fireEvent.keyDown(root, { key: ' ' });
+    expect(await screen.findByText(/3 selected/)).toBeInTheDocument();
+    fireEvent.keyDown(root, { key: 'a' });
+    await waitFor(() => expect(actionMock).toHaveBeenCalledTimes(3));
+    const calls = actionMock.mock.calls.map((c) => c[0]).sort();
+    expect(calls).toEqual(['a', 'b', 'c']);
+  });
+
+  it('Esc clears multi-select without archiving', async () => {
+    listMock.mockResolvedValue([
+      item({ id: 'a', summary: 'first' }),
+      item({ id: 'b', summary: 'second' }),
+    ]);
+    const { container } = render(<InboxPane title="Inbox" isActive />);
+    await screen.findByText('first');
+    const root = container.firstChild as HTMLElement;
+    fireEvent.keyDown(root, { key: ' ' });
+    expect(await screen.findByText(/1 selected/)).toBeInTheDocument();
+    fireEvent.keyDown(root, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByText(/1 selected/)).not.toBeInTheDocument());
+    expect(actionMock).not.toHaveBeenCalled();
+  });
+
+  it('a key with no multi-select does not archive the cursor item', async () => {
+    listMock.mockResolvedValue([item()]);
+    const { container } = render(<InboxPane title="Inbox" isActive />);
+    await screen.findByText('feat-auth');
+    fireEvent.keyDown(container.firstChild as HTMLElement, { key: 'a' });
+    expect(actionMock).not.toHaveBeenCalled();
+  });
+
   it('j/k navigation skips items in collapsed sections', async () => {
     listMock.mockResolvedValue([
       item({ id: 'a', priority: 95, summary: 'first', session_name: 'A' }),

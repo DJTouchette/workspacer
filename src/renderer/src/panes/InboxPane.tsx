@@ -42,6 +42,8 @@ interface State {
   items: Record<string, ItemRow>;
   order: string[];
   selectedId: string | null;
+  /** Multi-select set for bulk actions (Space adds/removes, `a` archives all). */
+  multiSelect: Set<string>;
   status: Status;
   snoozeMenuFor: string | null;
   detailFor: string | null;
@@ -64,7 +66,9 @@ type Action =
   | { type: 'toggle_section'; section: SectionId }
   | { type: 'open_search' }
   | { type: 'close_search' }
-  | { type: 'set_query'; query: string };
+  | { type: 'set_query'; query: string }
+  | { type: 'toggle_multi'; id: string }
+  | { type: 'clear_multi' };
 
 function sortItems(items: ItemRow[]): string[] {
   return [...items]
@@ -175,6 +179,17 @@ function reducer(state: State, action: Action): State {
       return { ...state, searchOpen: false, query: '' };
     case 'set_query':
       return { ...state, query: action.query };
+    case 'toggle_multi': {
+      const next = new Set(state.multiSelect);
+      if (next.has(action.id)) {
+        next.delete(action.id);
+      } else {
+        next.add(action.id);
+      }
+      return { ...state, multiSelect: next };
+    }
+    case 'clear_multi':
+      return { ...state, multiSelect: new Set() };
   }
 }
 
@@ -182,6 +197,7 @@ const initialState: State = {
   items: {},
   order: [],
   selectedId: null,
+  multiSelect: new Set<string>(),
   status: 'connecting',
   snoozeMenuFor: null,
   detailFor: null,
@@ -333,6 +349,7 @@ const InboxPane: React.FC<InboxPaneProps> = ({ title, isActive, onAddTab }) => {
       }
 
       const sel = state.selectedId;
+      const multi = state.multiSelect;
       switch (e.key) {
         case 'j':
         case 'ArrowDown':
@@ -343,6 +360,31 @@ const InboxPane: React.FC<InboxPaneProps> = ({ title, isActive, onAddTab }) => {
         case 'ArrowUp':
           e.preventDefault();
           dispatch({ type: 'select', delta: -1 });
+          break;
+        case 'Escape':
+          if (multi.size > 0) {
+            e.preventDefault();
+            dispatch({ type: 'clear_multi' });
+          }
+          break;
+        case ' ': // Space: toggle multi-select for the cursor item
+          if (sel) {
+            e.preventDefault();
+            dispatch({ type: 'toggle_multi', id: sel });
+          }
+          break;
+        case 'a':
+          // Bulk archive all multi-selected items. Runs sequentially so
+          // we don't overload the daemon with a parallel POST burst.
+          if (multi.size > 0) {
+            e.preventDefault();
+            (async () => {
+              for (const id of multi) {
+                await applyAction(id, { action: 'archive' });
+              }
+              dispatch({ type: 'clear_multi' });
+            })();
+          }
           break;
         case 'Enter':
           if (sel) {
@@ -400,6 +442,7 @@ const InboxPane: React.FC<InboxPaneProps> = ({ title, isActive, onAddTab }) => {
 
   const renderRow = (item: ItemRow) => {
     const selected = item.id === state.selectedId;
+    const isMulti = state.multiSelect.has(item.id);
     return (
       <div
         key={item.id}
@@ -412,9 +455,11 @@ const InboxPane: React.FC<InboxPaneProps> = ({ title, isActive, onAddTab }) => {
           alignItems: 'center',
           padding: '6px 8px',
           cursor: 'pointer',
-          backgroundColor: selected
-            ? 'var(--wks-bg-hover, #25253a)'
-            : 'transparent',
+          backgroundColor: isMulti
+            ? 'var(--wks-bg-active, #2a2a45)'
+            : selected
+              ? 'var(--wks-bg-hover, #25253a)'
+              : 'transparent',
           borderLeft: selected ? '2px solid var(--wks-accent, #7c7cf0)' : '2px solid transparent',
         }}
       >
@@ -427,7 +472,7 @@ const InboxPane: React.FC<InboxPaneProps> = ({ title, isActive, onAddTab }) => {
           }}
         />
         <div style={{ fontSize: 14 }}>
-          {item.flagged ? '⚑' : item.state === 'unread' ? '●' : '○'}
+          {isMulti ? '☑' : item.flagged ? '⚑' : item.state === 'unread' ? '●' : '○'}
         </div>
         <div
           style={{
@@ -630,13 +675,25 @@ const InboxPane: React.FC<InboxPaneProps> = ({ title, isActive, onAddTab }) => {
           </>
         ) : (
           <>
-            <span>[j/k] navigate</span>
-            <span>[enter] open</span>
-            {onAddTab && <span>[o] session</span>}
-            <span>[e] archive</span>
-            <span>[s] snooze</span>
-            <span>[!] flag</span>
-            <span>[/] search</span>
+            {state.multiSelect.size > 0 ? (
+              <>
+                <span>{state.multiSelect.size} selected</span>
+                <span>[a] archive all</span>
+                <span>[space] toggle</span>
+                <span>[esc] clear</span>
+              </>
+            ) : (
+              <>
+                <span>[j/k] navigate</span>
+                <span>[enter] open</span>
+                {onAddTab && <span>[o] session</span>}
+                <span>[e] archive</span>
+                <span>[s] snooze</span>
+                <span>[!] flag</span>
+                <span>[space] select</span>
+                <span>[/] search</span>
+              </>
+            )}
           </>
         )}
       </div>
