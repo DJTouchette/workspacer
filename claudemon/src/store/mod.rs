@@ -11,11 +11,20 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, Transaction};
 use serde_json::Value;
 use time::OffsetDateTime;
 
+use crate::classifier::{
+    self, ItemAction, ItemKind, NewItem, OpenItem, Output as ClassifierOutput, RecentEvent,
+    SessionSnapshot, SessionState,
+};
 use crate::session::HookEvent;
+
+/// Window of past events the classifier inspects when deciding whether a
+/// session is stuck in a tool-call loop. Matches `classifier::STUCK_WINDOW_EVENTS`
+/// with headroom; the classifier itself caps how many it actually looks at.
+const RECENT_EVENTS_FETCH: usize = 20;
 
 /// Thread-safe handle to the daemon's SQLite database.
 ///
@@ -58,6 +67,256 @@ impl Db {
         tx.commit()?;
         Ok(row_id)
     }
+
+    /// Persist the event, then run the v2 classifier and apply its actions.
+    /// All writes happen in one transaction so a partial failure can't leave
+    /// the inbox out of sync with the event log.
+    pub fn record_and_classify(
+        &self,
+        event: &HookEvent,
+        now_unix: i64,
+    ) -> Result<ClassifyOutcome> {
+        let mut guard = self.conn.lock().expect("db mutex poisoned");
+        let tx = guard.transaction()?;
+
+        upsert_session_tx(&tx, event)?;
+        // Load context BEFORE inserting the new event so the classifier sees
+        // only past events. Otherwise the "5x in 60s" rule double-counts the
+        // incoming call.
+        let session = load_session_snapshot_tx(&tx, &event.session_id)?;
+        let recent_events = load_recent_events_tx(&tx, &event.session_id, RECENT_EVENTS_FETCH)?;
+        let open_items = load_open_items_tx(&tx, &event.session_id)?;
+        let event_row_id = insert_event_tx(&tx, event)?;
+
+        let output = classifier::classify(classifier::Input {
+            session,
+            recent_events,
+            open_items,
+            event: event.clone(),
+            event_row_id,
+            now_unix,
+        });
+
+        let applied = apply_classifier_output_tx(
+            &tx,
+            &event.session_id,
+            now_unix,
+            &output,
+        )?;
+        tx.commit()?;
+
+        Ok(ClassifyOutcome {
+            event_row_id,
+            new_session_state: output.new_session_state,
+            created_item_ids: applied.created_item_ids,
+            touched_item_ids: applied.touched_item_ids,
+            resolved_for_session: applied.resolved_for_session,
+        })
+    }
+
+    /// Sweep for working sessions that have been silent long enough to count
+    /// as stuck (spec §11, IDLE_STUCK_SECONDS). One transaction per session
+    /// that gets an item; sessions already flagged are no-ops.
+    pub fn idle_sweep(&self, now_unix: i64) -> Result<Vec<IdleHit>> {
+        let candidates: Vec<(String, i64)> = {
+            let guard = self.conn.lock().expect("db mutex poisoned");
+            let mut stmt = guard.prepare(
+                "SELECT id, last_event_at FROM sessions
+                 WHERE state = 'working' AND last_event_at < ?1",
+            )?;
+            let rows = stmt.query_map(
+                params![now_unix - classifier::IDLE_STUCK_SECONDS],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+            )?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+
+        let mut hits = Vec::new();
+        for (session_id, last_event_at) in candidates {
+            let mut guard = self.conn.lock().expect("db mutex poisoned");
+            let tx = guard.transaction()?;
+            let open_items = load_open_items_tx(&tx, &session_id)?;
+            let snapshot = SessionSnapshot {
+                state: SessionState::Working,
+                last_event_at_unix: last_event_at,
+            };
+            if let Some(item) = classifier::classify_idle(&snapshot, &open_items, now_unix) {
+                let item_id = insert_item_tx(&tx, &session_id, now_unix, &item)?;
+                update_session_state_tx(&tx, &session_id, SessionState::Stuck, now_unix)?;
+                tx.commit()?;
+                hits.push(IdleHit { session_id, item_id });
+            }
+        }
+        Ok(hits)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ClassifyOutcome {
+    pub event_row_id: i64,
+    pub new_session_state: SessionState,
+    pub created_item_ids: Vec<String>,
+    pub touched_item_ids: Vec<String>,
+    pub resolved_for_session: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct IdleHit {
+    pub session_id: String,
+    pub item_id: String,
+}
+
+#[derive(Default)]
+struct AppliedOutput {
+    created_item_ids: Vec<String>,
+    touched_item_ids: Vec<String>,
+    resolved_for_session: bool,
+}
+
+fn apply_classifier_output_tx(
+    tx: &Transaction<'_>,
+    session_id: &str,
+    now_unix: i64,
+    output: &ClassifierOutput,
+) -> Result<AppliedOutput> {
+    update_session_state_tx(tx, session_id, output.new_session_state, now_unix)?;
+    let mut applied = AppliedOutput::default();
+    for action in &output.actions {
+        match action {
+            ItemAction::Create(item) => {
+                let id = insert_item_tx(tx, session_id, now_unix, item)?;
+                applied.created_item_ids.push(id);
+            }
+            ItemAction::Touch(id) => {
+                tx.execute(
+                    "UPDATE items SET updated_at = ?1
+                     WHERE id = ?2 AND state IN ('unread', 'read')",
+                    params![now_unix, id],
+                )?;
+                applied.touched_item_ids.push(id.clone());
+            }
+            ItemAction::ResolveAllForSession => {
+                tx.execute(
+                    "UPDATE items SET state = 'resolved', resolved_at = ?1
+                     WHERE session_id = ?2 AND state IN ('unread', 'read', 'snoozed')",
+                    params![now_unix, session_id],
+                )?;
+                applied.resolved_for_session = true;
+            }
+        }
+    }
+    Ok(applied)
+}
+
+fn update_session_state_tx(
+    tx: &Transaction<'_>,
+    session_id: &str,
+    state: SessionState,
+    now_unix: i64,
+) -> Result<()> {
+    tx.execute(
+        "UPDATE sessions SET state = ?1, last_event_at = ?2 WHERE id = ?3",
+        params![state.as_str(), now_unix, session_id],
+    )?;
+    Ok(())
+}
+
+fn insert_item_tx(
+    tx: &Transaction<'_>,
+    session_id: &str,
+    now_unix: i64,
+    item: &NewItem,
+) -> Result<String> {
+    let id = uuid::Uuid::new_v4().to_string();
+    tx.execute(
+        "INSERT INTO items (
+            id, session_id, state, priority, kind, summary, context_paragraph,
+            next_action, triggering_event_id, created_at, updated_at,
+            resolved_at, snoozed_until, snoozed_on_event, flagged
+         ) VALUES (?1, ?2, 'unread', ?3, ?4, ?5, NULL, ?6, ?7, ?8, ?8,
+                   NULL, NULL, NULL, 0)",
+        params![
+            id,
+            session_id,
+            item.priority,
+            item.kind.as_str(),
+            item.summary,
+            item.next_action,
+            item.triggering_event_id,
+            now_unix,
+        ],
+    )?;
+    Ok(id)
+}
+
+fn load_session_snapshot_tx(tx: &Transaction<'_>, session_id: &str) -> Result<SessionSnapshot> {
+    let (state_str, last_event_at): (String, i64) = tx.query_row(
+        "SELECT state, last_event_at FROM sessions WHERE id = ?1",
+        params![session_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    let state = SessionState::from_str(&state_str).unwrap_or(SessionState::Working);
+    Ok(SessionSnapshot {
+        state,
+        last_event_at_unix: last_event_at,
+    })
+}
+
+fn load_recent_events_tx(
+    tx: &Transaction<'_>,
+    session_id: &str,
+    limit: usize,
+) -> Result<Vec<RecentEvent>> {
+    let mut stmt = tx.prepare(
+        "SELECT event_type, tool_name, timestamp, payload_json FROM events
+         WHERE session_id = ?1 ORDER BY id DESC LIMIT ?2",
+    )?;
+    let rows = stmt.query_map(params![session_id, limit as i64], |row| {
+        let event_type: String = row.get(0)?;
+        let tool_name: Option<String> = row.get(1)?;
+        let timestamp: i64 = row.get(2)?;
+        let payload_json: String = row.get(3)?;
+        Ok((event_type, tool_name, timestamp, payload_json))
+    })?;
+    let mut events: Vec<RecentEvent> = rows
+        .map(|r| {
+            let (event_type, tool_name, timestamp, payload_json) = r?;
+            let payload: Value =
+                serde_json::from_str(&payload_json).unwrap_or(Value::Null);
+            let tool_input = payload.get("tool_input");
+            let tool_input_hash = classifier::canonical_tool_input_hash(tool_input);
+            Ok::<_, anyhow::Error>(RecentEvent {
+                event_type,
+                tool_name,
+                tool_input_hash,
+                timestamp,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    // Caller wants chronological order (oldest first).
+    events.reverse();
+    Ok(events)
+}
+
+fn load_open_items_tx(tx: &Transaction<'_>, session_id: &str) -> Result<Vec<OpenItem>> {
+    let mut stmt = tx.prepare(
+        "SELECT id, kind, priority FROM items
+         WHERE session_id = ?1 AND state IN ('unread', 'read')",
+    )?;
+    let rows = stmt.query_map(params![session_id], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, i32>(2)?,
+        ))
+    })?;
+    let items = rows
+        .filter_map(|r| r.ok())
+        .filter_map(|(id, kind_str, priority)| {
+            ItemKind::from_str(&kind_str).map(|kind| OpenItem { id, kind, priority })
+        })
+        .collect();
+    Ok(items)
 }
 
 fn upsert_session_tx(tx: &rusqlite::Transaction<'_>, event: &HookEvent) -> Result<()> {
@@ -203,6 +462,141 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn classify_permission_request_inserts_inbox_item() {
+        let tmp = tempfile_path();
+        let db = Db::open(&tmp).unwrap();
+        db.record_and_classify(&ev("SessionStart", "s3"), 1000).unwrap();
+
+        let mut req = ev("PermissionRequest", "s3");
+        req.payload.insert("tool_name".into(), json!("Bash"));
+        let outcome = db.record_and_classify(&req, 1001).unwrap();
+        assert_eq!(outcome.new_session_state, SessionState::NeedsInput);
+        assert_eq!(outcome.created_item_ids.len(), 1);
+
+        let conn = db.conn.lock().unwrap();
+        let (kind, priority, state): (String, i32, String) = conn
+            .query_row(
+                "SELECT kind, priority, state FROM items WHERE session_id = 's3'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(kind, "needs_input");
+        assert_eq!(priority, 95);
+        assert_eq!(state, "unread");
+        let session_state: String = conn
+            .query_row("SELECT state FROM sessions WHERE id = 's3'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(session_state, "needs_input");
+    }
+
+    #[test]
+    fn repeated_permission_request_touches_instead_of_duplicating() {
+        let tmp = tempfile_path();
+        let db = Db::open(&tmp).unwrap();
+        db.record_and_classify(&ev("SessionStart", "s4"), 1000).unwrap();
+        let mut req = ev("PermissionRequest", "s4");
+        req.payload.insert("tool_name".into(), json!("Bash"));
+        db.record_and_classify(&req, 1001).unwrap();
+        let second = db.record_and_classify(&req, 1002).unwrap();
+        assert!(second.created_item_ids.is_empty());
+        assert_eq!(second.touched_item_ids.len(), 1);
+        let count: i64 = db
+            .conn
+            .lock()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM items WHERE session_id = 's4'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn session_end_resolves_open_items() {
+        let tmp = tempfile_path();
+        let db = Db::open(&tmp).unwrap();
+        db.record_and_classify(&ev("SessionStart", "s5"), 1000).unwrap();
+        let mut req = ev("PermissionRequest", "s5");
+        req.payload.insert("tool_name".into(), json!("Bash"));
+        db.record_and_classify(&req, 1001).unwrap();
+        db.record_and_classify(&ev("SessionEnd", "s5"), 1002).unwrap();
+
+        let conn = db.conn.lock().unwrap();
+        let (count_open, count_resolved): (i64, i64) = conn
+            .query_row(
+                "SELECT
+                    (SELECT COUNT(*) FROM items WHERE session_id='s5' AND state='unread'),
+                    (SELECT COUNT(*) FROM items WHERE session_id='s5' AND state='resolved')",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(count_open, 0);
+        assert_eq!(count_resolved, 1);
+        let state: String = conn
+            .query_row("SELECT state FROM sessions WHERE id = 's5'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(state, "ended");
+    }
+
+    #[test]
+    fn repeated_tool_use_promotes_to_stuck() {
+        let tmp = tempfile_path();
+        let db = Db::open(&tmp).unwrap();
+        db.record_and_classify(&ev("SessionStart", "s6"), 1000).unwrap();
+        let mut pre = ev("PreToolUse", "s6");
+        pre.payload.insert("tool_name".into(), json!("Bash"));
+        pre.payload.insert("tool_input".into(), json!({"command": "ls"}));
+        // First four don't trigger; the fifth flips to stuck.
+        db.record_and_classify(&pre, 1001).unwrap();
+        db.record_and_classify(&pre, 1002).unwrap();
+        db.record_and_classify(&pre, 1003).unwrap();
+        db.record_and_classify(&pre, 1004).unwrap();
+        let fifth = db.record_and_classify(&pre, 1005).unwrap();
+        assert_eq!(fifth.new_session_state, SessionState::Stuck);
+        assert_eq!(fifth.created_item_ids.len(), 1);
+
+        // A sixth identical call shouldn't pile on a second stuck item.
+        let sixth = db.record_and_classify(&pre, 1006).unwrap();
+        assert!(sixth.created_item_ids.is_empty());
+    }
+
+    #[test]
+    fn idle_sweep_creates_stuck_item_for_silent_working_session() {
+        let tmp = tempfile_path();
+        let db = Db::open(&tmp).unwrap();
+        db.record_and_classify(&ev("SessionStart", "s7"), 1000).unwrap();
+        let hits = db
+            .idle_sweep(1000 + classifier::IDLE_STUCK_SECONDS + 1)
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].session_id, "s7");
+
+        let (kind, priority): (String, i32) = db
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT kind, priority FROM items WHERE id = ?1",
+                params![hits[0].item_id.clone()],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(kind, "stuck");
+        assert_eq!(priority, 60);
+    }
+
+    #[test]
+    fn idle_sweep_is_noop_when_session_recently_active() {
+        let tmp = tempfile_path();
+        let db = Db::open(&tmp).unwrap();
+        db.record_and_classify(&ev("SessionStart", "s8"), 1000).unwrap();
+        let hits = db.idle_sweep(1000 + 60).unwrap();
+        assert!(hits.is_empty());
     }
 
     fn tempfile_path() -> PathBuf {

@@ -29,6 +29,8 @@ pub async fn run(cfg: ServeConfig) -> Result<()> {
     // Persistence runs out-of-band: subscribe to the raw-hook broadcast and
     // write each event to SQLite without blocking the hook handler's response.
     spawn_persistence_task(db.clone(), store.subscribe_hooks());
+    // Idle sweep: promote silent working sessions to stuck per spec §11.
+    spawn_idle_sweep(db.clone());
 
     let hook_addr: SocketAddr = format!("{}:{}", cfg.host, cfg.hook_port).parse()?;
     let api_addr: SocketAddr = format!("{}:{}", cfg.host, cfg.api_port).parse()?;
@@ -77,13 +79,25 @@ fn spawn_persistence_task(
             match rx.recv().await {
                 Ok(event) => {
                     let db = db.clone();
+                    let now = time::OffsetDateTime::now_utc().unix_timestamp();
                     // Run the synchronous sqlite write on the blocking pool so
                     // we don't tie up an async worker on file I/O.
-                    let result = tokio::task::spawn_blocking(move || db.record_event(&event))
-                        .await
-                        .unwrap_or_else(|join_err| Err(anyhow::anyhow!(join_err)));
-                    if let Err(err) = result {
-                        tracing::warn!(?err, "persisting hook event failed");
+                    let result = tokio::task::spawn_blocking(move || {
+                        db.record_and_classify(&event, now)
+                    })
+                    .await
+                    .unwrap_or_else(|join_err| Err(anyhow::anyhow!(join_err)));
+                    match result {
+                        Ok(outcome) => {
+                            if !outcome.created_item_ids.is_empty() {
+                                tracing::info!(
+                                    items = ?outcome.created_item_ids,
+                                    state = outcome.new_session_state.as_str(),
+                                    "classifier created items"
+                                );
+                            }
+                        }
+                        Err(err) => tracing::warn!(?err, "persisting hook event failed"),
                     }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
@@ -93,6 +107,34 @@ fn spawn_persistence_task(
                     tracing::debug!("hook broadcast closed; persistence task exiting");
                     break;
                 }
+            }
+        }
+    });
+}
+
+/// Tick on a 30s interval and promote silent working sessions to stuck.
+/// Cheap enough to run in the background indefinitely — one indexed scan
+/// against `sessions` per tick plus at most a handful of single-row writes.
+fn spawn_idle_sweep(db: Db) {
+    const TICK: std::time::Duration = std::time::Duration::from_secs(30);
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(TICK);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // Skip the first immediate tick at startup.
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            let db = db.clone();
+            let now = time::OffsetDateTime::now_utc().unix_timestamp();
+            let result = tokio::task::spawn_blocking(move || db.idle_sweep(now))
+                .await
+                .unwrap_or_else(|err| Err(anyhow::anyhow!(err)));
+            match result {
+                Ok(hits) if !hits.is_empty() => {
+                    tracing::info!(?hits, "idle sweep promoted sessions to stuck");
+                }
+                Ok(_) => {}
+                Err(err) => tracing::warn!(?err, "idle sweep failed"),
             }
         }
     });
