@@ -144,6 +144,11 @@ async fn broadcast_classifier_outcome(
             items.send(ItemChange::ItemChanged { item: row });
         }
     }
+    for id in &outcome.unsnoozed_item_ids {
+        if let Some(row) = fetch_item(db, id).await {
+            items.send(ItemChange::ItemChanged { item: row });
+        }
+    }
     for id in &outcome.resolved_item_ids {
         items.send(ItemChange::ItemResolved {
             id: id.clone(),

@@ -83,6 +83,10 @@ impl Db {
         let tx = guard.transaction()?;
 
         upsert_session_tx(&tx, event)?;
+        // Snoozed-on-event wake: any items waiting for the right trigger
+        // come back to unread before the classifier runs, so duplicate-touch
+        // logic sees them as already-open.
+        let unsnoozed_item_ids = wake_snoozed_for_event_tx(&tx, &event.session_id, &event.event, now_unix)?;
         // Load context BEFORE inserting the new event so the classifier sees
         // only past events. Otherwise the "5x in 60s" rule double-counts the
         // incoming call.
@@ -114,6 +118,7 @@ impl Db {
             created_item_ids: applied.created_item_ids,
             touched_item_ids: applied.touched_item_ids,
             resolved_item_ids: applied.resolved_item_ids,
+            unsnoozed_item_ids,
         })
     }
 
@@ -164,6 +169,10 @@ pub struct ClassifyOutcome {
     /// classifier's `ResolveAllForSession` action). Empty for events that
     /// don't trigger resolution.
     pub resolved_item_ids: Vec<String>,
+    /// Ids of items that woke from `snoozed_on_event` because the matching
+    /// trigger fired (e.g. snoozed-until-next-event resolving on any new
+    /// event for the session).
+    pub unsnoozed_item_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -262,6 +271,67 @@ fn insert_item_tx(
         ],
     )?;
     Ok(id)
+}
+
+/// Resolve any `snoozed_on_event` waits that match this event. Returns the
+/// ids of items that got woken so the broadcaster can fire `item_changed`.
+///
+/// Trigger mapping:
+///   - `next_event`   → wakes on any hook event for the session
+///   - `session_done` → wakes on `Stop` or `SessionEnd`
+///   - other values (e.g. `tests_pass`) are user-defined and ignored here
+fn wake_snoozed_for_event_tx(
+    tx: &Transaction<'_>,
+    session_id: &str,
+    event_name: &str,
+    now_unix: i64,
+) -> Result<Vec<String>> {
+    let mut matching: Vec<&'static str> = vec!["next_event"];
+    if event_name == "Stop" || event_name == "SessionEnd" {
+        matching.push("session_done");
+    }
+    let placeholders = matching
+        .iter()
+        .enumerate()
+        .map(|(i, _)| format!("?{}", i + 2))
+        .collect::<Vec<_>>()
+        .join(",");
+    let select_sql = format!(
+        "SELECT id FROM items WHERE session_id = ?1 AND state = 'snoozed'
+         AND snoozed_on_event IN ({placeholders})"
+    );
+    let mut select = tx.prepare(&select_sql)?;
+    let mut params_vec: Vec<rusqlite::types::Value> =
+        vec![session_id.to_string().into()];
+    for trigger in &matching {
+        params_vec.push((*trigger).to_string().into());
+    }
+    let ids: Vec<String> = select
+        .query_map(rusqlite::params_from_iter(params_vec.iter()), |row| {
+            row.get::<_, String>(0)
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    drop(select);
+
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let update_placeholders = (0..ids.len())
+        .map(|i| format!("?{}", i + 2))
+        .collect::<Vec<_>>()
+        .join(",");
+    let update_sql = format!(
+        "UPDATE items SET state = 'unread',
+            snoozed_until = NULL, snoozed_on_event = NULL, updated_at = ?1
+         WHERE id IN ({update_placeholders})"
+    );
+    let mut params_vec: Vec<rusqlite::types::Value> = vec![now_unix.into()];
+    for id in &ids {
+        params_vec.push(id.clone().into());
+    }
+    tx.execute(&update_sql, rusqlite::params_from_iter(params_vec.iter()))?;
+    Ok(ids)
 }
 
 fn load_session_snapshot_tx(tx: &Transaction<'_>, session_id: &str) -> Result<SessionSnapshot> {
@@ -612,6 +682,88 @@ mod tests {
         db.record_and_classify(&ev("SessionStart", "s8"), 1000).unwrap();
         let hits = db.idle_sweep(1000 + 60).unwrap();
         assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn snooze_on_next_event_wakes_on_next_hook() {
+        let db = Db::open(tempfile_path()).unwrap();
+        db.record_and_classify(&ev("SessionStart", "s-snooze"), 1000).unwrap();
+        let mut req = ev("PermissionRequest", "s-snooze");
+        req.payload.insert("tool_name".into(), json!("Bash"));
+        let outcome = db.record_and_classify(&req, 1001).unwrap();
+        let item_id = outcome.created_item_ids[0].clone();
+
+        use crate::store::items::ItemAction;
+        db.apply_item_action(
+            &item_id,
+            &ItemAction::SnoozeOnEvent { on: "next_event".into() },
+            1002,
+        )
+        .unwrap();
+        assert_eq!(db.get_item(&item_id).unwrap().unwrap().state, "snoozed");
+
+        let mut pre = ev("PreToolUse", "s-snooze");
+        pre.payload.insert("tool_name".into(), json!("Edit"));
+        let after = db.record_and_classify(&pre, 1003).unwrap();
+        assert_eq!(after.unsnoozed_item_ids, vec![item_id.clone()]);
+        assert_eq!(db.get_item(&item_id).unwrap().unwrap().state, "unread");
+    }
+
+    #[test]
+    fn snooze_on_session_done_waits_for_stop() {
+        let db = Db::open(tempfile_path()).unwrap();
+        db.record_and_classify(&ev("SessionStart", "s-done"), 1000).unwrap();
+        let mut req = ev("PermissionRequest", "s-done");
+        req.payload.insert("tool_name".into(), json!("Bash"));
+        let item_id = db
+            .record_and_classify(&req, 1001)
+            .unwrap()
+            .created_item_ids[0]
+            .clone();
+        use crate::store::items::ItemAction;
+        db.apply_item_action(
+            &item_id,
+            &ItemAction::SnoozeOnEvent { on: "session_done".into() },
+            1002,
+        )
+        .unwrap();
+
+        let mut pre = ev("PreToolUse", "s-done");
+        pre.payload.insert("tool_name".into(), json!("Edit"));
+        let after_pre = db.record_and_classify(&pre, 1003).unwrap();
+        assert!(after_pre.unsnoozed_item_ids.is_empty());
+        assert_eq!(db.get_item(&item_id).unwrap().unwrap().state, "snoozed");
+
+        let after_stop = db.record_and_classify(&ev("Stop", "s-done"), 1004).unwrap();
+        assert_eq!(after_stop.unsnoozed_item_ids, vec![item_id.clone()]);
+        assert_eq!(db.get_item(&item_id).unwrap().unwrap().state, "unread");
+    }
+
+    #[test]
+    fn snooze_on_event_with_unknown_trigger_stays_snoozed() {
+        let db = Db::open(tempfile_path()).unwrap();
+        db.record_and_classify(&ev("SessionStart", "s-tp"), 1000).unwrap();
+        let mut req = ev("PermissionRequest", "s-tp");
+        req.payload.insert("tool_name".into(), json!("Bash"));
+        let item_id = db
+            .record_and_classify(&req, 1001)
+            .unwrap()
+            .created_item_ids[0]
+            .clone();
+        use crate::store::items::ItemAction;
+        db.apply_item_action(
+            &item_id,
+            &ItemAction::SnoozeOnEvent { on: "tests_pass".into() },
+            1002,
+        )
+        .unwrap();
+        let mut pre = ev("PreToolUse", "s-tp");
+        pre.payload.insert("tool_name".into(), json!("Edit"));
+        let after_pre = db.record_and_classify(&pre, 1003).unwrap();
+        assert!(after_pre.unsnoozed_item_ids.is_empty());
+        let after_stop = db.record_and_classify(&ev("Stop", "s-tp"), 1004).unwrap();
+        assert!(after_stop.unsnoozed_item_ids.is_empty());
+        assert_eq!(db.get_item(&item_id).unwrap().unwrap().state, "snoozed");
     }
 
     fn tempfile_path() -> PathBuf {
