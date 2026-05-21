@@ -65,4 +65,21 @@ export class ClaudemonSessionsClient {
       throw new Error(`approve failed: ${res.status} ${text}`);
     }
   }
+
+  /**
+   * Send a chat message to a session. Only succeeds when the session's
+   * mode is `input` (Claude is at a chat prompt). 409 otherwise — the
+   * caller should surface that error to the user.
+   */
+  async sendMessage(id: string, text: string): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/sessions/${id}/message`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`message failed: ${res.status} ${body}`);
+    }
+  }
 }

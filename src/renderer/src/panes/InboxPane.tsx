@@ -50,6 +50,9 @@ interface State {
   collapsed: Record<SectionId, boolean>;
   searchOpen: boolean;
   query: string;
+  replyFor: string | null;
+  replyText: string;
+  replyError: string | null;
   lastError: string | null;
 }
 
@@ -68,7 +71,11 @@ type Action =
   | { type: 'close_search' }
   | { type: 'set_query'; query: string }
   | { type: 'toggle_multi'; id: string }
-  | { type: 'clear_multi' };
+  | { type: 'clear_multi' }
+  | { type: 'open_reply'; id: string }
+  | { type: 'close_reply' }
+  | { type: 'set_reply_text'; text: string }
+  | { type: 'set_reply_error'; error: string | null };
 
 function sortItems(items: ItemRow[]): string[] {
   return [...items]
@@ -190,6 +197,14 @@ function reducer(state: State, action: Action): State {
     }
     case 'clear_multi':
       return { ...state, multiSelect: new Set() };
+    case 'open_reply':
+      return { ...state, replyFor: action.id, replyText: '', replyError: null };
+    case 'close_reply':
+      return { ...state, replyFor: null, replyText: '', replyError: null };
+    case 'set_reply_text':
+      return { ...state, replyText: action.text };
+    case 'set_reply_error':
+      return { ...state, replyError: action.error };
   }
 }
 
@@ -208,6 +223,9 @@ const initialState: State = {
   },
   searchOpen: false,
   query: '',
+  replyFor: null,
+  replyText: '',
+  replyError: null,
   lastError: null,
 };
 
@@ -304,6 +322,25 @@ const InboxPane: React.FC<InboxPaneProps> = ({ title, isActive, onAddTab }) => {
     [client],
   );
 
+  const submitReply = useCallback(
+    async (id: string, text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed) return;
+      const item = state.items[id];
+      if (!item) return;
+      try {
+        await sessionsClient.sendMessage(item.session_id, trimmed);
+        // Auto-snooze on next_event so the item leaves the inbox until the
+        // session reacts; spec §7.
+        await client.action(id, { action: 'snooze_on_event', on: 'next_event' });
+        dispatch({ type: 'close_reply' });
+      } catch (err) {
+        dispatch({ type: 'set_reply_error', error: String(err) });
+      }
+    },
+    [client, sessionsClient, state.items],
+  );
+
   const buckets = useMemo(() => bucketedItems(state), [state]);
   const visibleCount = navigableItems(state).length;
 
@@ -337,6 +374,15 @@ const InboxPane: React.FC<InboxPaneProps> = ({ title, isActive, onAddTab }) => {
         if (e.key === 'Escape') {
           e.preventDefault();
           dispatch({ type: 'close_search' });
+        }
+        return;
+      }
+
+      // Reply input has focus: input handles its own keys, root catches Esc.
+      if (state.replyFor) {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          dispatch({ type: 'close_reply' });
         }
         return;
       }
@@ -418,6 +464,12 @@ const InboxPane: React.FC<InboxPaneProps> = ({ title, isActive, onAddTab }) => {
             e.preventDefault();
             const item = state.items[sel];
             applyAction(sel, { action: item?.flagged ? 'unflag' : 'flag' });
+          }
+          break;
+        case 'r':
+          if (sel) {
+            e.preventDefault();
+            dispatch({ type: 'open_reply', id: sel });
           }
           break;
       }
@@ -653,6 +705,52 @@ const InboxPane: React.FC<InboxPaneProps> = ({ title, isActive, onAddTab }) => {
         {renderSection('snoozed', 'Snoozed', buckets.snoozed)}
       </div>
 
+      {state.replyFor && state.items[state.replyFor] && (
+        <div
+          style={{
+            padding: '8px 12px',
+            borderTop: '1px solid var(--wks-border, #2a2a35)',
+            backgroundColor: 'var(--wks-bg-elevated, #1c1c26)',
+          }}
+        >
+          <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 4 }}>
+            Reply to {state.items[state.replyFor].session_name}
+          </div>
+          <input
+            autoFocus
+            value={state.replyText}
+            placeholder="type a message and press enter…"
+            onChange={(e) => dispatch({ type: 'set_reply_text', text: e.target.value })}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                submitReply(state.replyFor!, state.replyText);
+              } else if (e.key === 'Escape') {
+                e.preventDefault();
+                dispatch({ type: 'close_reply' });
+                containerRef.current?.focus();
+              }
+            }}
+            style={{
+              width: '100%',
+              background: 'var(--wks-bg-input, #14141a)',
+              color: 'var(--wks-text-primary, #d8d8e0)',
+              border: '1px solid var(--wks-border, #2a2a35)',
+              borderRadius: 4,
+              padding: '6px 8px',
+              fontFamily: 'inherit',
+              fontSize: 13,
+              outline: 'none',
+            }}
+            aria-label="Reply input"
+          />
+          {state.replyError && (
+            <div style={{ marginTop: 4, fontSize: 11, color: '#e06b6b' }}>
+              {state.replyError}
+            </div>
+          )}
+        </div>
+      )}
       <div
         style={{
           padding: '6px 12px',
@@ -682,6 +780,11 @@ const InboxPane: React.FC<InboxPaneProps> = ({ title, isActive, onAddTab }) => {
                 <span>[space] toggle</span>
                 <span>[esc] clear</span>
               </>
+            ) : state.replyFor ? (
+              <>
+                <span>[enter] send</span>
+                <span>[esc] cancel</span>
+              </>
             ) : (
               <>
                 <span>[j/k] navigate</span>
@@ -689,6 +792,7 @@ const InboxPane: React.FC<InboxPaneProps> = ({ title, isActive, onAddTab }) => {
                 {onAddTab && <span>[o] session</span>}
                 <span>[e] archive</span>
                 <span>[s] snooze</span>
+                <span>[r] reply</span>
                 <span>[!] flag</span>
                 <span>[space] select</span>
                 <span>[/] search</span>

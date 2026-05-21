@@ -24,12 +24,15 @@ vi.mock('../../src/lib/claudemonItems', () => {
   };
 });
 
+const sendMessageMock = vi.fn();
+
 vi.mock('../../src/lib/claudemonSessions', () => {
   return {
     ClaudemonSessionsClient: class {
       approve = vi.fn().mockResolvedValue(undefined);
       getTranscript = vi.fn().mockResolvedValue({ path: null, messages: [] });
       getSession = vi.fn().mockResolvedValue(null);
+      sendMessage = sendMessageMock;
     },
   };
 });
@@ -64,6 +67,7 @@ describe('InboxPane', () => {
   beforeEach(() => {
     listMock.mockReset();
     actionMock.mockReset();
+    sendMessageMock.mockReset();
     subscribeMock.mockClear();
     subscribeCb = null;
   });
@@ -268,6 +272,52 @@ describe('InboxPane', () => {
     const input = await screen.findByLabelText('Inbox search');
     fireEvent.change(input, { target: { value: 'nothingmatchesthis' } });
     expect(await screen.findByText(/No matches/)).toBeInTheDocument();
+  });
+
+  it('r opens an inline reply, Enter sends the message and snoozes on next_event', async () => {
+    listMock.mockResolvedValue([item()]);
+    sendMessageMock.mockResolvedValue(undefined);
+    actionMock.mockResolvedValue(item({ state: 'snoozed' }));
+    const { container } = render(<InboxPane title="Inbox" isActive />);
+    await screen.findByText('feat-auth');
+    const root = container.firstChild as HTMLElement;
+    fireEvent.keyDown(root, { key: 'r' });
+    const input = await screen.findByLabelText('Reply input');
+    fireEvent.change(input, { target: { value: 'try the new approach instead' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => {
+      expect(sendMessageMock).toHaveBeenCalledWith('sess-1', 'try the new approach instead');
+      expect(actionMock).toHaveBeenCalledWith('item-1', {
+        action: 'snooze_on_event',
+        on: 'next_event',
+      });
+    });
+  });
+
+  it('r reply surfaces an error when sendMessage fails (e.g. wrong mode)', async () => {
+    listMock.mockResolvedValue([item()]);
+    sendMessageMock.mockRejectedValue(new Error('409 wrong mode'));
+    const { container } = render(<InboxPane title="Inbox" isActive />);
+    await screen.findByText('feat-auth');
+    fireEvent.keyDown(container.firstChild as HTMLElement, { key: 'r' });
+    const input = await screen.findByLabelText('Reply input');
+    fireEvent.change(input, { target: { value: 'hello' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(await screen.findByText(/409 wrong mode/)).toBeInTheDocument();
+    // Action shouldn't fire when the send failed.
+    expect(actionMock).not.toHaveBeenCalled();
+  });
+
+  it('Esc closes the reply input without sending', async () => {
+    listMock.mockResolvedValue([item()]);
+    const { container } = render(<InboxPane title="Inbox" isActive />);
+    await screen.findByText('feat-auth');
+    fireEvent.keyDown(container.firstChild as HTMLElement, { key: 'r' });
+    const input = await screen.findByLabelText('Reply input');
+    fireEvent.change(input, { target: { value: 'never mind' } });
+    fireEvent.keyDown(input, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByLabelText('Reply input')).not.toBeInTheDocument());
+    expect(sendMessageMock).not.toHaveBeenCalled();
   });
 
   it('Space toggles multi-select; a archives all selected items', async () => {
