@@ -20,6 +20,7 @@ const defaultTitles: Record<PaneType, string> = {
   devops: 'DevOps',
   'agent-manager': 'Agent Manager',
   devdaemon: 'Daemon',
+  inbox: 'Inbox',
 };
 
 export const defaultTabs: TabConfig[] = [
