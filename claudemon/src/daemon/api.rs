@@ -1,7 +1,7 @@
 use std::{convert::Infallible, time::Duration};
 
 use axum::{
-    extract::{Path, State},
+    extract::{FromRef, Path, Query, State},
     http::StatusCode,
     response::{
         sse::{Event, KeepAlive, Sse},
@@ -19,8 +19,38 @@ use tower_http::cors::CorsLayer;
 
 use crate::protocol::WrapperMessage;
 use crate::session::{transcript, SessionMode, SessionStore};
+use crate::store::items::{ItemAction, ItemBroadcaster, ItemChange, ListFilter};
+use crate::store::Db;
 
-pub fn router(store: SessionStore) -> Router {
+/// Bundled state for the v2 API router. FromRef lets each handler extract
+/// just the slice it needs, so v1 handlers keep their `State<SessionStore>`
+/// signature.
+#[derive(Clone)]
+pub struct ApiState {
+    pub store: SessionStore,
+    pub db: Db,
+    pub items: ItemBroadcaster,
+}
+
+impl FromRef<ApiState> for SessionStore {
+    fn from_ref(state: &ApiState) -> Self {
+        state.store.clone()
+    }
+}
+
+impl FromRef<ApiState> for Db {
+    fn from_ref(state: &ApiState) -> Self {
+        state.db.clone()
+    }
+}
+
+impl FromRef<ApiState> for ItemBroadcaster {
+    fn from_ref(state: &ApiState) -> Self {
+        state.items.clone()
+    }
+}
+
+pub fn router(state: ApiState) -> Router {
     Router::new()
         .route("/sessions", get(list_sessions))
         .route("/sessions/spawn", post(crate::daemon::spawn::handle))
@@ -38,10 +68,14 @@ pub fn router(store: SessionStore) -> Router {
         .route("/sessions/:id/transcript", get(get_transcript))
         .route("/events", get(event_stream))
         .route("/hooks/stream", get(hook_stream))
+        .route("/items", get(list_items))
+        .route("/items/stream", get(items_stream))
+        .route("/items/:id", get(get_item_by_id))
+        .route("/items/:id/action", post(post_item_action))
         .route("/wrapper/:id", get(crate::daemon::wrapper_ws::upgrade))
         .route("/health", get(|| async { "ok" }))
         .layer(CorsLayer::permissive())
-        .with_state(store)
+        .with_state(state)
 }
 
 async fn list_sessions(State(store): State<SessionStore>) -> impl IntoResponse {
@@ -457,6 +491,105 @@ async fn hook_stream(
         },
         Err(err) => {
             tracing::warn!(?err, "hook sse subscriber lagged");
+            None
+        }
+    });
+    Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
+}
+
+// ---- v2 items API ----------------------------------------------------------
+
+async fn list_items(
+    State(db): State<Db>,
+    Query(filter): Query<ListFilter>,
+) -> impl IntoResponse {
+    match tokio::task::spawn_blocking(move || db.list_items(filter))
+        .await
+        .unwrap_or_else(|err| Err(anyhow::anyhow!(err)))
+    {
+        Ok(items) => Json(json!({ "items": items })).into_response(),
+        Err(err) => {
+            tracing::warn!(?err, "list_items failed");
+            (StatusCode::INTERNAL_SERVER_ERROR, "list_items failed").into_response()
+        }
+    }
+}
+
+async fn get_item_by_id(
+    State(db): State<Db>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match tokio::task::spawn_blocking(move || db.get_item(&id))
+        .await
+        .unwrap_or_else(|err| Err(anyhow::anyhow!(err)))
+    {
+        Ok(Some(item)) => Json(item).into_response(),
+        Ok(None) => (StatusCode::NOT_FOUND, "no such item").into_response(),
+        Err(err) => {
+            tracing::warn!(?err, "get_item failed");
+            (StatusCode::INTERNAL_SERVER_ERROR, "get_item failed").into_response()
+        }
+    }
+}
+
+async fn post_item_action(
+    State(db): State<Db>,
+    State(items): State<ItemBroadcaster>,
+    Path(id): Path<String>,
+    Json(action): Json<ItemAction>,
+) -> impl IntoResponse {
+    let id_for_task = id.clone();
+    let action_for_task = action.clone();
+    let db_for_task = db.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        let now = time::OffsetDateTime::now_utc().unix_timestamp();
+        db_for_task.apply_item_action(&id_for_task, &action_for_task, now)
+    })
+    .await
+    .unwrap_or_else(|err| Err(anyhow::anyhow!(err)));
+
+    match result {
+        Ok(updated) => {
+            broadcast_post_action(&items, &updated);
+            Json(updated).into_response()
+        }
+        Err(err) => {
+            let msg = err.to_string();
+            if msg.contains("no such item") {
+                (StatusCode::NOT_FOUND, msg).into_response()
+            } else {
+                tracing::warn!(?err, "item action failed");
+                (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response()
+            }
+        }
+    }
+}
+
+fn broadcast_post_action(items: &ItemBroadcaster, updated: &crate::store::items::ItemRow) {
+    if updated.state == "resolved" {
+        items.send(ItemChange::ItemResolved {
+            id: updated.id.clone(),
+            session_id: updated.session_id.clone(),
+        });
+    } else {
+        items.send(ItemChange::ItemChanged { item: updated.clone() });
+    }
+}
+
+async fn items_stream(
+    State(items): State<ItemBroadcaster>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let rx = items.subscribe();
+    let stream = BroadcastStream::new(rx).filter_map(|res| match res {
+        Ok(change) => match serde_json::to_string(&change) {
+            Ok(json) => Some(Ok(Event::default().event("item").data(json))),
+            Err(err) => {
+                tracing::warn!(?err, "failed to serialize item change");
+                None
+            }
+        },
+        Err(err) => {
+            tracing::warn!(?err, "item sse subscriber lagged");
             None
         }
     });

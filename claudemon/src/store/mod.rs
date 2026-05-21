@@ -5,7 +5,10 @@
 //! for latency; this module persists the event stream out-of-band so v2
 //! features (inbox items, transcripts search, ask history) survive restarts.
 
+pub mod items;
 pub mod schema;
+
+pub use items::{ItemAction, ItemRow, ListFilter};
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -16,8 +19,8 @@ use serde_json::Value;
 use time::OffsetDateTime;
 
 use crate::classifier::{
-    self, ItemAction, ItemKind, NewItem, OpenItem, Output as ClassifierOutput, RecentEvent,
-    SessionSnapshot, SessionState,
+    self, ItemAction as ClassifierAction, ItemKind, NewItem, OpenItem,
+    Output as ClassifierOutput, RecentEvent, SessionSnapshot, SessionState,
 };
 use crate::session::HookEvent;
 
@@ -110,7 +113,7 @@ impl Db {
             new_session_state: output.new_session_state,
             created_item_ids: applied.created_item_ids,
             touched_item_ids: applied.touched_item_ids,
-            resolved_for_session: applied.resolved_for_session,
+            resolved_item_ids: applied.resolved_item_ids,
         })
     }
 
@@ -157,7 +160,10 @@ pub struct ClassifyOutcome {
     pub new_session_state: SessionState,
     pub created_item_ids: Vec<String>,
     pub touched_item_ids: Vec<String>,
-    pub resolved_for_session: bool,
+    /// Ids of items that transitioned to `resolved` as a side effect (the
+    /// classifier's `ResolveAllForSession` action). Empty for events that
+    /// don't trigger resolution.
+    pub resolved_item_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -170,7 +176,7 @@ pub struct IdleHit {
 struct AppliedOutput {
     created_item_ids: Vec<String>,
     touched_item_ids: Vec<String>,
-    resolved_for_session: bool,
+    resolved_item_ids: Vec<String>,
 }
 
 fn apply_classifier_output_tx(
@@ -183,11 +189,11 @@ fn apply_classifier_output_tx(
     let mut applied = AppliedOutput::default();
     for action in &output.actions {
         match action {
-            ItemAction::Create(item) => {
+            ClassifierAction::Create(item) => {
                 let id = insert_item_tx(tx, session_id, now_unix, item)?;
                 applied.created_item_ids.push(id);
             }
-            ItemAction::Touch(id) => {
+            ClassifierAction::Touch(id) => {
                 tx.execute(
                     "UPDATE items SET updated_at = ?1
                      WHERE id = ?2 AND state IN ('unread', 'read')",
@@ -195,13 +201,22 @@ fn apply_classifier_output_tx(
                 )?;
                 applied.touched_item_ids.push(id.clone());
             }
-            ItemAction::ResolveAllForSession => {
+            ClassifierAction::ResolveAllForSession => {
+                // Capture ids first so the broadcaster can emit per-id events.
+                let mut stmt = tx.prepare(
+                    "SELECT id FROM items WHERE session_id = ?1
+                     AND state IN ('unread', 'read', 'snoozed')",
+                )?;
+                let ids: Vec<String> = stmt
+                    .query_map(params![session_id], |row| row.get::<_, String>(0))?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                drop(stmt);
                 tx.execute(
                     "UPDATE items SET state = 'resolved', resolved_at = ?1
                      WHERE session_id = ?2 AND state IN ('unread', 'read', 'snoozed')",
                     params![now_unix, session_id],
                 )?;
-                applied.resolved_for_session = true;
+                applied.resolved_item_ids.extend(ids);
             }
         }
     }
