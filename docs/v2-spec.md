@@ -432,4 +432,86 @@ push_priority_threshold = 70
 push_action_button
 ```
 
-> **NOTE: The spec as pasted ends mid-line at `push_action_button` in the `[remote]` section. Sections beyond §15 (and the tail of §15 itself) are missing. Need the rest before scoping the full implementation.**
+## 16. Remote / mobile
+
+Out of scope for v2.0, designed-for in v2.1.
+
+v2.1 shape:
+
+- Optional ntfy bridge: claudemon forwards items with priority ≥ 70 to a ntfy topic
+- Action buttons on the notification: Approve / Deny → ntfy webhook → claudemon resolves pending decision
+- Optional local web view (Workspacer exposes `:8766` HTTPS reachable via Tailscale) showing the inbox in read+approve mode — same data, different surface
+- Both opt-in via config. Default off.
+
+## 17. What ships in v2.0
+
+**In scope:**
+
+- Hook listener, event store, classifier, items model — claudemon side
+- L1/L2/L3 views — Workspacer side
+- Snooze, archive, flag, quick reply, approve, deny, kill
+- Summarizer for summary + context paragraph
+- MCP server in claudemon
+- Ask panel with streaming responses and clickable references
+- Preset commands (standup, triage, audit, cost)
+- Single-key navigation everywhere; full keyboard control
+- Hook auto-installer with backup
+- Config file
+- One-binary install for claudemon, packaged Electron app for Workspacer
+
+**Out of scope:**
+
+- Mobile / ntfy bridge (v2.1)
+- Web view (v2.1)
+- Vaulty integration (v2.1 — depends on Vaulty launching)
+- Container Use integration (v2.2 — for sandboxed sessions)
+- Multi-machine (v3 — different product, not v2)
+- Voice (never, probably)
+- Anything that requires Anthropic cloud beyond Claude Code itself
+
+## 18. Migration from v1
+
+v1 Workspacer users are you and maybe a couple of beta testers. Plan:
+
+- v2 ships as a parallel binary. Both can run side-by-side.
+- claudemon gets the new tables added; existing tables untouched. v1 keeps working.
+- v2 reads from existing claudemon state; you can use v2 against an existing session pool.
+- After 2-4 weeks of dogfooding, v1 binary is deprecated, repo is archived.
+- No data migration required because the existing schema is preserved.
+
+## 19. Build sequencing
+
+| Phase | Duration | Deliverable |
+|---|---|---|
+| 0 | 1 weekend | claudemon hook listener + event ingestion + SQLite schema. Verify via curl. |
+| 1 | 1 weekend | Classifier state machine + items table populated. Verify by launching real Claude Code sessions and watching items appear. |
+| 2 | 2 weekends | Workspacer L1 inbox view + IPC subscription + basic actions (archive, snooze). v1 session view still default. |
+| 3 | 1 weekend | L2 item detail view + decision/diff/transcript tabs + approve/deny wiring through `pending_decisions`. |
+| 4 | 1 weekend | Summarizer worker + summary regeneration + context paragraphs in L2. |
+| 5 | 1 weekend | MCP server in claudemon. Verify via `claude -p --mcp-config ...` from terminal. |
+| 6 | 1 weekend | Ask panel in Workspacer with streaming + clickable references + presets. |
+| 7 | 1 weekend | Polish: keymap audit, error handling, hook auto-installer, config loading, themes. |
+| 8 | dogfood | Use it daily for 2 weeks. Fix what breaks. |
+
+Total: ~9 weekends to v2.0 GA. Phase 0-2 alone produces a noticeably better product than v1.
+
+## 20. Success metrics (for your own dogfooding)
+
+You'll know v2 worked if:
+
+- You stop opening tmux to check on agents — Workspacer is the first place you look.
+- Average time from agent question → your response drops by 2-3x.
+- You can run 6+ parallel agents without losing track. (v1 caps out around 3-4 in practice.)
+- Daily Claude Code spend per useful merged change drops (because less re-prompting, fewer abandoned sessions).
+- You can leave the laptop for 30 minutes and come back, and the inbox tells you exactly what happened.
+- You stop writing yourself notes about "what was billing-refactor doing again?" — the context paragraph answers it.
+
+If any of those don't pan out after 2 weeks of dogfooding, the spec is wrong in a way worth re-examining before going further.
+
+## Notes / flagged risks
+
+Three things worth flagging before building:
+
+1. **Phase 2 is the riskiest** — the inbox UX needs to feel better than just looking at terminals, and that's a thing you can only know by using it. Build the smallest possible version of L1 first and live in it for a week before polishing.
+2. **The summarizer is high-leverage but optional for v2.0.** If it's blocking, ship without it (use the deterministic template) and add it in 2.1. The inbox model works even without LLM-generated summaries; it just works better with them.
+3. **Don't build the supervisor MCP until phases 0-4 are done.** It's tempting because it's interesting; resist. The MCP is only useful when the underlying state is rich and stable. Build it last; it'll be smaller and better when you do.
