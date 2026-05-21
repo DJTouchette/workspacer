@@ -207,4 +207,82 @@ describe('InboxPane', () => {
     await screen.findByText('feat-auth');
     expect(screen.queryByText(/\[o\] session/)).not.toBeInTheDocument();
   });
+
+  it('groups items into Needs attention and Working sections by priority', async () => {
+    listMock.mockResolvedValue([
+      item({ id: 'high', priority: 95, summary: 'big deal', session_name: 'feat-auth' }),
+      item({ id: 'low', priority: 40, summary: 'small thing', session_name: 'feat-misc', kind: 'done' }),
+    ]);
+    render(<InboxPane title="Inbox" isActive />);
+    expect(await screen.findByText('Needs attention')).toBeInTheDocument();
+    expect(await screen.findByText('Working')).toBeInTheDocument();
+    expect(await screen.findByText('big deal')).toBeInTheDocument();
+    expect(await screen.findByText('small thing')).toBeInTheDocument();
+  });
+
+  it('hides snoozed items by default but lists them under a collapsed Snoozed section', async () => {
+    listMock.mockResolvedValue([
+      item({ id: 'open', priority: 95, summary: 'still active' }),
+      item({ id: 'zzz', state: 'snoozed', snoozed_until: 9999, summary: 'sleeping' }),
+    ]);
+    render(<InboxPane title="Inbox" isActive />);
+    expect(await screen.findByText('still active')).toBeInTheDocument();
+    expect(await screen.findByText(/Snoozed/)).toBeInTheDocument();
+    // Snoozed items hidden under the collapsed section
+    expect(screen.queryByText('sleeping')).not.toBeInTheDocument();
+    // Click the section header to expand
+    fireEvent.click(screen.getByText(/Snoozed/));
+    expect(await screen.findByText('sleeping')).toBeInTheDocument();
+  });
+
+  it('shows inbox-zero empty state when there are no non-resolved items', async () => {
+    listMock.mockResolvedValue([]);
+    render(<InboxPane title="Inbox" isActive />);
+    expect(await screen.findByText(/Inbox zero/i)).toBeInTheDocument();
+  });
+
+  it('opens a search bar on / and filters by session name / summary', async () => {
+    listMock.mockResolvedValue([
+      item({ id: 'a', summary: 'big deal', session_name: 'feat-auth' }),
+      item({ id: 'b', summary: 'small thing', session_name: 'feat-misc' }),
+    ]);
+    const { container } = render(<InboxPane title="Inbox" isActive />);
+    await screen.findByText('big deal');
+    const root = container.firstChild as HTMLElement;
+    fireEvent.keyDown(root, { key: '/' });
+    const input = await screen.findByLabelText('Inbox search');
+    fireEvent.change(input, { target: { value: 'misc' } });
+    expect(screen.queryByText('big deal')).not.toBeInTheDocument();
+    expect(screen.getByText('small thing')).toBeInTheDocument();
+    // Esc clears query and closes search
+    fireEvent.keyDown(input, { key: 'Escape' });
+    expect(await screen.findByText('big deal')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Inbox search')).not.toBeInTheDocument();
+  });
+
+  it('shows "No matches." when search excludes all items', async () => {
+    listMock.mockResolvedValue([item()]);
+    const { container } = render(<InboxPane title="Inbox" isActive />);
+    await screen.findByText('feat-auth');
+    fireEvent.keyDown(container.firstChild as HTMLElement, { key: '/' });
+    const input = await screen.findByLabelText('Inbox search');
+    fireEvent.change(input, { target: { value: 'nothingmatchesthis' } });
+    expect(await screen.findByText(/No matches/)).toBeInTheDocument();
+  });
+
+  it('j/k navigation skips items in collapsed sections', async () => {
+    listMock.mockResolvedValue([
+      item({ id: 'a', priority: 95, summary: 'first', session_name: 'A' }),
+      item({ id: 's', state: 'snoozed', snoozed_until: 9999, summary: 'sleeping', session_name: 'S' }),
+    ]);
+    actionMock.mockResolvedValue(item({ state: 'resolved' }));
+    const { container } = render(<InboxPane title="Inbox" isActive />);
+    await screen.findByText('first');
+    const root = container.firstChild as HTMLElement;
+    // Snoozed section collapsed; pressing j shouldn't move into it.
+    fireEvent.keyDown(root, { key: 'j' });
+    fireEvent.keyDown(root, { key: 'e' });
+    // Should have archived "a", not "s".
+    await waitFor(() => expect(actionMock).toHaveBeenCalledWith('a', { action: 'archive' }));
+  });
 });

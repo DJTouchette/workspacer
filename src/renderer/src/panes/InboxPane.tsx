@@ -36,6 +36,8 @@ interface InboxPaneProps {
 
 type Status = 'connecting' | 'connected' | 'error';
 
+type SectionId = 'needs_attention' | 'working' | 'snoozed';
+
 interface State {
   items: Record<string, ItemRow>;
   order: string[];
@@ -43,6 +45,9 @@ interface State {
   status: Status;
   snoozeMenuFor: string | null;
   detailFor: string | null;
+  collapsed: Record<SectionId, boolean>;
+  searchOpen: boolean;
+  query: string;
   lastError: string | null;
 }
 
@@ -55,7 +60,11 @@ type Action =
   | { type: 'open_snooze_menu'; id: string }
   | { type: 'close_snooze_menu' }
   | { type: 'open_detail'; id: string }
-  | { type: 'close_detail' };
+  | { type: 'close_detail' }
+  | { type: 'toggle_section'; section: SectionId }
+  | { type: 'open_search' }
+  | { type: 'close_search' }
+  | { type: 'set_query'; query: string };
 
 function sortItems(items: ItemRow[]): string[] {
   return [...items]
@@ -67,10 +76,47 @@ function sortItems(items: ItemRow[]): string[] {
     .map((i) => i.id);
 }
 
-function visibleItems(state: State): ItemRow[] {
-  return state.order
-    .map((id) => state.items[id])
-    .filter((it): it is ItemRow => it !== undefined && it.state !== 'resolved' && it.state !== 'snoozed');
+function bucketOf(item: ItemRow): SectionId | null {
+  if (item.state === 'resolved') return null;
+  if (item.state === 'snoozed') return 'snoozed';
+  if (item.priority >= 70) return 'needs_attention';
+  return 'working';
+}
+
+function bucketedItems(state: State): Record<SectionId, ItemRow[]> {
+  const out: Record<SectionId, ItemRow[]> = {
+    needs_attention: [],
+    working: [],
+    snoozed: [],
+  };
+  const q = state.query.trim().toLowerCase();
+  for (const id of state.order) {
+    const item = state.items[id];
+    if (!item) continue;
+    if (q && !matchesQuery(item, q)) continue;
+    const bucket = bucketOf(item);
+    if (bucket) out[bucket].push(item);
+  }
+  return out;
+}
+
+function matchesQuery(item: ItemRow, q: string): boolean {
+  return (
+    item.session_name.toLowerCase().includes(q) ||
+    item.session_project.toLowerCase().includes(q) ||
+    (item.summary?.toLowerCase().includes(q) ?? false) ||
+    item.kind.includes(q)
+  );
+}
+
+/**
+ * Items the user can actually navigate to with j/k right now — items in
+ * non-collapsed sections, in their on-screen order.
+ */
+function navigableItems(state: State): ItemRow[] {
+  const buckets = bucketedItems(state);
+  const order: SectionId[] = ['needs_attention', 'working', 'snoozed'];
+  return order.flatMap((sec) => (state.collapsed[sec] ? [] : buckets[sec]));
 }
 
 function reducer(state: State, action: Action): State {
@@ -102,9 +148,7 @@ function reducer(state: State, action: Action): State {
     case 'set_status':
       return { ...state, status: action.status, lastError: action.error ?? null };
     case 'select': {
-      const visible = state.order
-        .map((id) => state.items[id])
-        .filter((it): it is ItemRow => !!it && it.state !== 'resolved' && it.state !== 'snoozed');
+      const visible = navigableItems(state);
       if (visible.length === 0) return state;
       const currentIdx = Math.max(0, visible.findIndex((it) => it.id === state.selectedId));
       const nextIdx = Math.min(visible.length - 1, Math.max(0, currentIdx + action.delta));
@@ -120,6 +164,17 @@ function reducer(state: State, action: Action): State {
       return { ...state, detailFor: action.id };
     case 'close_detail':
       return { ...state, detailFor: null };
+    case 'toggle_section':
+      return {
+        ...state,
+        collapsed: { ...state.collapsed, [action.section]: !state.collapsed[action.section] },
+      };
+    case 'open_search':
+      return { ...state, searchOpen: true };
+    case 'close_search':
+      return { ...state, searchOpen: false, query: '' };
+    case 'set_query':
+      return { ...state, query: action.query };
   }
 }
 
@@ -130,6 +185,13 @@ const initialState: State = {
   status: 'connecting',
   snoozeMenuFor: null,
   detailFor: null,
+  collapsed: {
+    needs_attention: false,
+    working: false,
+    snoozed: true,
+  },
+  searchOpen: false,
+  query: '',
   lastError: null,
 };
 
@@ -190,7 +252,7 @@ const InboxPane: React.FC<InboxPaneProps> = ({ title, isActive, onAddTab }) => {
   useEffect(() => {
     let cancelled = false;
     client
-      .list()
+      .list({ include_snoozed: true })
       .then((items) => {
         if (cancelled) return;
         dispatch({ type: 'hydrate', items });
@@ -226,7 +288,8 @@ const InboxPane: React.FC<InboxPaneProps> = ({ title, isActive, onAddTab }) => {
     [client],
   );
 
-  const visible = useMemo(() => visibleItems(state), [state]);
+  const buckets = useMemo(() => bucketedItems(state), [state]);
+  const visibleCount = navigableItems(state).length;
 
   // Keyboard handler attached to the pane root; only fires when this pane
   // has focus, so it doesn't fight other panes' keymaps.
@@ -251,6 +314,23 @@ const InboxPane: React.FC<InboxPaneProps> = ({ title, isActive, onAddTab }) => {
 
       // Overlay open: swallow most keys; the overlay has its own handler.
       if (state.detailFor) return;
+
+      // Search input has focus: Esc closes; everything else passes through
+      // to the input element's own handlers.
+      if (state.searchOpen) {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          dispatch({ type: 'close_search' });
+        }
+        return;
+      }
+
+      // Open search on /
+      if (e.key === '/') {
+        e.preventDefault();
+        dispatch({ type: 'open_search' });
+        return;
+      }
 
       const sel = state.selectedId;
       switch (e.key) {
@@ -312,11 +392,103 @@ const InboxPane: React.FC<InboxPaneProps> = ({ title, isActive, onAddTab }) => {
   const counts = useMemo(() => {
     const all = Object.values(state.items);
     return {
-      visible: visible.length,
+      visible: visibleCount,
       snoozed: all.filter((i) => i.state === 'snoozed').length,
       flagged: all.filter((i) => i.flagged && i.state !== 'resolved').length,
     };
-  }, [state.items, visible.length]);
+  }, [state.items, visibleCount]);
+
+  const renderRow = (item: ItemRow) => {
+    const selected = item.id === state.selectedId;
+    return (
+      <div
+        key={item.id}
+        ref={selected ? selectedRowRef : undefined}
+        onClick={() => dispatch({ type: 'select_id', id: item.id })}
+        style={{
+          display: 'grid',
+          gridTemplateColumns: '4px 14px 140px 16px 1fr auto',
+          gap: 8,
+          alignItems: 'center',
+          padding: '6px 8px',
+          cursor: 'pointer',
+          backgroundColor: selected
+            ? 'var(--wks-bg-hover, #25253a)'
+            : 'transparent',
+          borderLeft: selected ? '2px solid var(--wks-accent, #7c7cf0)' : '2px solid transparent',
+        }}
+      >
+        <div
+          style={{
+            width: 4,
+            height: 24,
+            backgroundColor: priorityColor(item.priority),
+            borderRadius: 2,
+          }}
+        />
+        <div style={{ fontSize: 14 }}>
+          {item.flagged ? '⚑' : item.state === 'unread' ? '●' : '○'}
+        </div>
+        <div
+          style={{
+            fontWeight: 500,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+          title={item.session_name}
+        >
+          {item.session_name}
+        </div>
+        <div title={item.kind}>{kindIcon[item.kind]}</div>
+        <div
+          style={{
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            opacity: 0.85,
+          }}
+          title={item.summary || ''}
+        >
+          {item.summary ?? <span style={{ opacity: 0.5 }}>(no summary)</span>}
+        </div>
+        <div style={{ fontSize: 11, opacity: 0.55, marginLeft: 8 }}>
+          {ageLabel(item.updated_at)}
+        </div>
+      </div>
+    );
+  };
+
+  const renderSection = (id: SectionId, label: string, items: ItemRow[]) => {
+    if (items.length === 0) return null;
+    const isCollapsed = state.collapsed[id];
+    return (
+      <div key={id}>
+        <div
+          onClick={() => dispatch({ type: 'toggle_section', section: id })}
+          style={{
+            padding: '6px 12px',
+            fontSize: 11,
+            textTransform: 'uppercase',
+            letterSpacing: '0.05em',
+            color: 'var(--wks-text-muted, #888892)',
+            cursor: 'pointer',
+            userSelect: 'none',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            borderTop: '1px solid var(--wks-border, #2a2a35)',
+          }}
+          title={`Toggle ${label}`}
+        >
+          <span style={{ display: 'inline-block', width: 10 }}>{isCollapsed ? '▸' : '▾'}</span>
+          <span>{label}</span>
+          <span style={{ opacity: 0.6 }}>· {items.length}</span>
+        </div>
+        {!isCollapsed && items.map(renderRow)}
+      </div>
+    );
+  };
 
   return (
     <div
@@ -356,8 +528,59 @@ const InboxPane: React.FC<InboxPaneProps> = ({ title, isActive, onAddTab }) => {
         </div>
       </div>
 
+      {state.searchOpen && (
+        <div
+          style={{
+            padding: '6px 12px',
+            borderBottom: '1px solid var(--wks-border, #2a2a35)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+          }}
+        >
+          <span style={{ opacity: 0.6, fontSize: 12 }}>/</span>
+          <input
+            autoFocus
+            value={state.query}
+            placeholder="search session, summary, kind…"
+            onChange={(e) => dispatch({ type: 'set_query', query: e.target.value })}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                dispatch({ type: 'close_search' });
+                containerRef.current?.focus();
+              }
+            }}
+            style={{
+              flex: 1,
+              background: 'transparent',
+              color: 'var(--wks-text-primary, #d8d8e0)',
+              border: 'none',
+              outline: 'none',
+              fontFamily: 'inherit',
+              fontSize: 13,
+            }}
+            aria-label="Inbox search"
+          />
+          <button
+            onClick={() => {
+              dispatch({ type: 'close_search' });
+              containerRef.current?.focus();
+            }}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: 'var(--wks-text-muted, #888892)',
+              cursor: 'pointer',
+              fontSize: 11,
+            }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
       <div style={{ flex: 1, overflowY: 'auto' }}>
-        {visible.length === 0 && (
+        {Object.values(state.items).filter((i) => i.state !== 'resolved').length === 0 && (
           <div
             style={{
               padding: '40px 16px',
@@ -368,66 +591,21 @@ const InboxPane: React.FC<InboxPaneProps> = ({ title, isActive, onAddTab }) => {
             Inbox zero.
           </div>
         )}
-        {visible.map((item) => {
-          const selected = item.id === state.selectedId;
-          return (
-            <div
-              key={item.id}
-              ref={selected ? selectedRowRef : undefined}
-              onClick={() => dispatch({ type: 'select_id', id: item.id })}
-              style={{
-                display: 'grid',
-                gridTemplateColumns: '4px 14px 140px 16px 1fr auto',
-                gap: 8,
-                alignItems: 'center',
-                padding: '6px 8px',
-                cursor: 'pointer',
-                backgroundColor: selected
-                  ? 'var(--wks-bg-hover, #25253a)'
-                  : 'transparent',
-                borderLeft: selected ? '2px solid var(--wks-accent, #7c7cf0)' : '2px solid transparent',
-              }}
-            >
-              <div
-                style={{
-                  width: 4,
-                  height: 24,
-                  backgroundColor: priorityColor(item.priority),
-                  borderRadius: 2,
-                }}
-              />
-              <div style={{ fontSize: 14 }}>
-                {item.flagged ? '⚑' : item.state === 'unread' ? '●' : '○'}
-              </div>
-              <div
-                style={{
-                  fontWeight: 500,
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}
-                title={item.session_name}
-              >
-                {item.session_name}
-              </div>
-              <div title={item.kind}>{kindIcon[item.kind]}</div>
-              <div
-                style={{
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                  opacity: 0.85,
-                }}
-                title={item.summary || ''}
-              >
-                {item.summary ?? <span style={{ opacity: 0.5 }}>(no summary)</span>}
-              </div>
-              <div style={{ fontSize: 11, opacity: 0.55, marginLeft: 8 }}>
-                {ageLabel(item.updated_at)}
-              </div>
-            </div>
-          );
-        })}
+        {state.query.trim() && visibleCount === 0 && Object.values(state.items).filter((i) => i.state !== 'resolved').length > 0 && (
+          <div
+            style={{
+              padding: '24px 16px',
+              textAlign: 'center',
+              color: 'var(--wks-text-muted, #6a6a78)',
+              fontSize: 12,
+            }}
+          >
+            No matches.
+          </div>
+        )}
+        {renderSection('needs_attention', 'Needs attention', buckets.needs_attention)}
+        {renderSection('working', 'Working', buckets.working)}
+        {renderSection('snoozed', 'Snoozed', buckets.snoozed)}
       </div>
 
       <div
@@ -458,6 +636,7 @@ const InboxPane: React.FC<InboxPaneProps> = ({ title, isActive, onAddTab }) => {
             <span>[e] archive</span>
             <span>[s] snooze</span>
             <span>[!] flag</span>
+            <span>[/] search</span>
           </>
         )}
       </div>
