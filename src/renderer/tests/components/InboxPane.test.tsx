@@ -182,4 +182,29 @@ describe('InboxPane', () => {
     fireEvent.keyDown(overlay, { key: 'Escape' });
     await waitFor(() => expect(screen.queryByLabelText('Item detail')).not.toBeInTheDocument());
   });
+
+  it('o key from L1 spawns a Claude pane attached to the session', async () => {
+    listMock.mockResolvedValue([item()]);
+    const onAddTab = vi.fn();
+    const { container } = render(<InboxPane title="Inbox" isActive onAddTab={onAddTab} />);
+    await screen.findByText('feat-auth');
+    const root = container.firstChild as HTMLElement;
+    fireEvent.keyDown(root, { key: 'o' });
+    expect(onAddTab).toHaveBeenCalledWith(
+      'claude',
+      undefined,
+      'feat-auth',
+      undefined,
+      undefined,
+      undefined,
+      'sess-1',
+    );
+  });
+
+  it('o key in L1 is hidden when no onAddTab is provided', async () => {
+    listMock.mockResolvedValue([item()]);
+    render(<InboxPane title="Inbox" isActive />);
+    await screen.findByText('feat-auth');
+    expect(screen.queryByText(/\[o\] session/)).not.toBeInTheDocument();
+  });
 });

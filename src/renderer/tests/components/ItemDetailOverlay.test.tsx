@@ -196,6 +196,36 @@ describe('ItemDetailOverlay', () => {
     expect(screen.getByText(/Loading transcript…|No messages\.|user|assistant/)).toBeInTheDocument();
   });
 
+  it('o opens the session via onOpenSession and closes the overlay', () => {
+    const onOpenSession = vi.fn();
+    const { container } = render(
+      <ItemDetailOverlay
+        item={needsInputItem()}
+        itemsClient={itemsClient}
+        sessionsClient={sessionsClient}
+        onClose={onClose}
+        onSnoozeMenu={onSnoozeMenu}
+        onOpenSession={onOpenSession}
+      />,
+    );
+    fireEvent.keyDown(container.querySelector('[aria-label="Item detail"]')!, { key: 'o' });
+    expect(onOpenSession).toHaveBeenCalledWith(expect.objectContaining({ session_id: 'sess-Z' }));
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it('hides the [o] open session hint when onOpenSession is not provided', () => {
+    render(
+      <ItemDetailOverlay
+        item={needsInputItem()}
+        itemsClient={itemsClient}
+        sessionsClient={sessionsClient}
+        onClose={onClose}
+        onSnoozeMenu={onSnoozeMenu}
+      />,
+    );
+    expect(screen.queryByText(/\[o\] open session/)).not.toBeInTheDocument();
+  });
+
   it('lazy-loads the transcript only when the transcript tab opens', async () => {
     sessionsTranscript.mockResolvedValue(emptyTranscript());
     const { container } = render(

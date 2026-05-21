@@ -102,7 +102,7 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
     case 'inbox':
       return (
         <Suspense fallback={<PaneFallback />}>
-          <InboxPane title={pane.title} isActive={isActive} />
+          <InboxPane title={pane.title} isActive={isActive} onAddTab={callbacks.onAddTab} />
         </Suspense>
       );
     default:

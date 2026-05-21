@@ -18,6 +18,8 @@ interface ItemDetailOverlayProps {
   sessionsClient: ClaudemonSessionsClient;
   onClose: () => void;
   onSnoozeMenu: (id: string) => void;
+  /** Optional: spawn an L3 Claude pane attached to the item's session. */
+  onOpenSession?: (item: ItemRow) => void;
 }
 
 type Tab = 'decision' | 'diff' | 'transcript';
@@ -60,6 +62,7 @@ const ItemDetailOverlay: React.FC<ItemDetailOverlayProps> = ({
   sessionsClient,
   onClose,
   onSnoozeMenu,
+  onOpenSession,
 }) => {
   const [tab, setTab] = useState<Tab>('decision');
   const [transcript, setTranscript] = useState<Transcript | null>(null);
@@ -180,8 +183,14 @@ const ItemDetailOverlay: React.FC<ItemDetailOverlayProps> = ({
         applyAction({ action: item.flagged ? 'unflag' : 'flag' });
         return;
       }
+      if (e.key === 'o' && onOpenSession) {
+        e.preventDefault();
+        onOpenSession(item);
+        onClose();
+        return;
+      }
     },
-    [tab, isNeedsInput, decide, applyAction, onClose, onSnoozeMenu, item],
+    [tab, isNeedsInput, decide, applyAction, onClose, onSnoozeMenu, item, onOpenSession],
   );
 
   const triggerPayload = useMemo(() => {
@@ -383,6 +392,7 @@ const ItemDetailOverlay: React.FC<ItemDetailOverlayProps> = ({
           <span>[s] snooze</span>
           <span>[!] {item.flagged ? 'unflag' : 'flag'}</span>
           <span>[e] archive</span>
+          {onOpenSession && <span>[o] open session</span>}
           <span>[tab] cycle tabs</span>
           <span>[d] diff</span>
           <span>[esc] back</span>

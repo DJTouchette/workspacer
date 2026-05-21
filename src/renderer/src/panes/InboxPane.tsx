@@ -18,6 +18,20 @@ import { ClaudemonSessionsClient } from '../lib/claudemonSessions';
 interface InboxPaneProps {
   title: string;
   isActive: boolean;
+  /**
+   * Optional bridge to spawn new tabs/panes. When provided, the `o` keystroke
+   * on a selected item opens a Claude pane attached to that session.
+   * Signature mirrors App.tsx's addTab.
+   */
+  onAddTab?: (
+    type: 'claude',
+    shell?: string,
+    label?: string,
+    cwd?: string,
+    profileId?: string,
+    resumeSessionId?: string,
+    attachSessionId?: string,
+  ) => void;
 }
 
 type Status = 'connecting' | 'connected' | 'error';
@@ -156,7 +170,7 @@ function priorityColor(priority: number): string {
   return '#6b6b6b';
 }
 
-const InboxPane: React.FC<InboxPaneProps> = ({ title, isActive }) => {
+const InboxPane: React.FC<InboxPaneProps> = ({ title, isActive, onAddTab }) => {
   const [state, dispatch] = useReducer(reducer, initialState);
   const clientRef = useRef<ClaudemonItemsClient | null>(null);
   const sessionsRef = useRef<ClaudemonSessionsClient | null>(null);
@@ -256,6 +270,15 @@ const InboxPane: React.FC<InboxPaneProps> = ({ title, isActive }) => {
             dispatch({ type: 'open_detail', id: sel });
           }
           break;
+        case 'o':
+          if (sel && onAddTab) {
+            e.preventDefault();
+            const item = state.items[sel];
+            if (item) {
+              onAddTab('claude', undefined, item.session_name, undefined, undefined, undefined, item.session_id);
+            }
+          }
+          break;
         case 'e':
           if (sel) {
             e.preventDefault();
@@ -277,7 +300,7 @@ const InboxPane: React.FC<InboxPaneProps> = ({ title, isActive }) => {
           break;
       }
     },
-    [state, applyAction],
+    [state, applyAction, onAddTab],
   );
 
   // Auto-focus the pane root so the keymap fires immediately. Also re-focus
@@ -431,6 +454,7 @@ const InboxPane: React.FC<InboxPaneProps> = ({ title, isActive }) => {
           <>
             <span>[j/k] navigate</span>
             <span>[enter] open</span>
+            {onAddTab && <span>[o] session</span>}
             <span>[e] archive</span>
             <span>[s] snooze</span>
             <span>[!] flag</span>
@@ -447,6 +471,20 @@ const InboxPane: React.FC<InboxPaneProps> = ({ title, isActive }) => {
             containerRef.current?.focus();
           }}
           onSnoozeMenu={(id) => dispatch({ type: 'open_snooze_menu', id })}
+          onOpenSession={
+            onAddTab
+              ? (item) =>
+                  onAddTab(
+                    'claude',
+                    undefined,
+                    item.session_name,
+                    undefined,
+                    undefined,
+                    undefined,
+                    item.session_id,
+                  )
+              : undefined
+          }
         />
       )}
     </div>
