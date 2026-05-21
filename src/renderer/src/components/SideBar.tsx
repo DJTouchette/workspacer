@@ -21,6 +21,7 @@ const typeIcons: Record<PaneType, string> = {
   devops: '\u{1F527}',
   'agent-manager': '\u{1F916}',
   devdaemon: '\u26A1',
+  inbox: '\u{1F4E5}',
 };
 
 export const SIDEBAR_WIDTH = 160;

@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
@@ -18,6 +20,10 @@ pub enum Command {
         hook_port: u16,
         #[arg(long, default_value_t = 7891)]
         api_port: u16,
+        /// Path to the SQLite database file. Defaults to
+        /// `$XDG_DATA_HOME/claudemon/state.db` or `~/.claudemon/state.db`.
+        #[arg(long)]
+        db_path: Option<PathBuf>,
     },
     /// Merge claudemon's hook configuration into ~/.claude/settings.json.
     Init {
@@ -46,8 +52,14 @@ pub enum Command {
 
 pub async fn dispatch(cli: Cli) -> Result<()> {
     match cli.command {
-        Command::Serve { host, hook_port, api_port } => {
-            crate::daemon::run(&host, hook_port, api_port).await
+        Command::Serve { host, hook_port, api_port, db_path } => {
+            let cfg = crate::daemon::ServeConfig {
+                host,
+                hook_port,
+                api_port,
+                db_path: db_path.unwrap_or_else(crate::store::default_db_path),
+            };
+            crate::daemon::run(cfg).await
         }
         Command::Init { dry_run, hook_port } => {
             crate::daemon::init::run_with_port(dry_run, hook_port).await

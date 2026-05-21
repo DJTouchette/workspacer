@@ -5,9 +5,11 @@
 //! tests (`tests/*.rs`) and visual previews without redundantly duplicating
 //! file references.
 
+pub mod classifier;
 pub mod cli;
 pub mod daemon;
 pub mod protocol;
 pub mod session;
+pub mod store;
 pub mod tui;
 pub mod wrapper;
