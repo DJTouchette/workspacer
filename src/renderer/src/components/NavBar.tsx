@@ -11,6 +11,8 @@ interface NavBarProps {
   onRenameTab?: (tabId: string) => void;
   onSplitTab?: (tabId: string, type: PaneType) => void;
   onMoveTab?: (tabId: string, toIndex: number) => void;
+  /** Pixels to inset the bar from the left (to clear the agent sidebar). */
+  leftOffset?: number;
 }
 
 const typeLabels: Record<PaneType, string> = {
@@ -34,7 +36,7 @@ interface SessionPickerState {
   sessions: { sessionId: string; timestamp: string; summary: string }[];
 }
 
-const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab, onCloseTab, onRenameTab, onSplitTab, onMoveTab }) => {
+const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab, onCloseTab, onRenameTab, onSplitTab, onMoveTab, leftOffset = 0 }) => {
   const { config } = useConfig();
   const navHeight = Math.max(config.ui.navBarHeight || 34, 32);
   const shells = config.terminal.shells || [];
@@ -65,7 +67,7 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
       style={{
         position: 'fixed',
         top: 0,
-        left: 0,
+        left: leftOffset,
         right: 0,
         height: `${navHeight}px`,
         display: 'flex',
