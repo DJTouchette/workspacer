@@ -32,7 +32,25 @@ pub const IDLE_STUCK_SECONDS: i64 = 300;
 pub fn classify(input: Input) -> Output {
     let mut actions = Vec::new();
     let new_state = match input.event.event.as_str() {
-        "SessionStart" => SessionState::Working,
+        "SessionStart" => {
+            // Surface the session in the inbox immediately so it mirrors the
+            // dashboard's "every active session" view. Higher-priority events
+            // (NeedsInput, Error, …) override this slot via push_or_touch.
+            let item = build_item(
+                ItemKind::WorkingMilestone,
+                20,
+                &input.event,
+                input.event_row_id,
+                None,
+            );
+            push_or_touch(
+                &mut actions,
+                ItemKind::WorkingMilestone,
+                &input.open_items,
+                item,
+            );
+            SessionState::Working
+        }
         "UserPromptSubmit" => SessionState::Working,
 
         "PermissionRequest" => {
@@ -74,17 +92,12 @@ pub fn classify(input: Input) -> Output {
             }
         }
 
-        "PostToolUseFailure" => {
-            let item = build_item(
-                ItemKind::Error,
-                80,
-                &input.event,
-                input.event_row_id,
-                Some("review_diff".into()),
-            );
-            actions.push(ItemAction::Create(item));
-            SessionState::Errored
-        }
+        // A single failed tool call isn't worth interrupting the user for —
+        // Claude almost always recovers (retry, different approach, or it
+        // surfaces the failure in its own message). Stay in Working so the
+        // session doesn't get pinned to the inbox; the repeat-tool-call rule
+        // in PreToolUse still catches genuine "stuck in a loop" cases.
+        "PostToolUseFailure" => SessionState::Working,
 
         "StopFailure" => {
             let item = build_item(
@@ -143,7 +156,9 @@ pub fn classify(input: Input) -> Output {
         }
 
         "SessionEnd" => {
-            actions.push(ItemAction::ResolveAllForSession);
+            // Don't auto-resolve items — let them persist in the inbox
+            // until the user archives manually, so completed work from
+            // interactive sessions stays visible for review.
             SessionState::Ended
         }
 
@@ -317,10 +332,30 @@ mod tests {
     }
 
     #[test]
-    fn session_start_yields_working_no_item() {
+    fn session_start_creates_working_milestone() {
         let out = classify(input(SessionState::Working, event("SessionStart", "s")));
         assert_eq!(out.new_session_state, SessionState::Working);
-        assert!(out.actions.is_empty());
+        match out.actions.as_slice() {
+            [ItemAction::Create(item)] => {
+                assert_eq!(item.kind, ItemKind::WorkingMilestone);
+                assert_eq!(item.priority, 20);
+            }
+            other => panic!("expected one Create action, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn second_session_start_touches_existing_milestone() {
+        let mut inp = input(SessionState::Working, event("SessionStart", "s"));
+        inp.open_items.push(OpenItem {
+            id: "milestone-1".into(),
+            kind: ItemKind::WorkingMilestone,
+            priority: 20,
+        });
+        let out = classify(inp);
+        assert_eq!(out.new_session_state, SessionState::Working);
+        assert!(matches!(out.actions.as_slice(),
+            [ItemAction::Touch(id)] if id == "milestone-1"));
     }
 
     #[test]
@@ -388,22 +423,19 @@ mod tests {
     }
 
     #[test]
-    fn post_tool_use_failure_creates_error_item() {
+    fn post_tool_use_failure_is_noop() {
+        // A single tool failure shouldn't pin the session to the inbox —
+        // it stays in Working, no item created. (The repeat-tool-call
+        // detector still catches real loops.)
         let mut e = event("PostToolUseFailure", "s");
         e.payload.insert("tool_name".into(), json!("Edit"));
         let out = classify(input(SessionState::Working, e));
-        assert_eq!(out.new_session_state, SessionState::Errored);
-        match out.actions.as_slice() {
-            [ItemAction::Create(item)] => {
-                assert_eq!(item.kind, ItemKind::Error);
-                assert_eq!(item.priority, 80);
-            }
-            other => panic!("got {other:?}"),
-        }
+        assert_eq!(out.new_session_state, SessionState::Working);
+        assert!(out.actions.is_empty());
     }
 
     #[test]
-    fn stop_failure_outranks_post_tool_failure() {
+    fn stop_failure_creates_error_item() {
         let mut e = event("StopFailure", "s");
         e.payload.insert("tool_name".into(), json!("Edit"));
         let out = classify(input(SessionState::Working, e));
@@ -420,10 +452,10 @@ mod tests {
     }
 
     #[test]
-    fn session_end_resolves_all_items() {
+    fn session_end_preserves_items() {
         let out = classify(input(SessionState::NeedsInput, event("SessionEnd", "s")));
         assert_eq!(out.new_session_state, SessionState::Ended);
-        assert!(matches!(out.actions.as_slice(), [ItemAction::ResolveAllForSession]));
+        assert!(out.actions.is_empty(), "SessionEnd should not auto-resolve items");
     }
 
     #[test]

@@ -564,7 +564,8 @@ mod tests {
         let conn = db.conn.lock().unwrap();
         let (kind, priority, state): (String, i32, String) = conn
             .query_row(
-                "SELECT kind, priority, state FROM items WHERE session_id = 's3'",
+                "SELECT kind, priority, state FROM items \
+                 WHERE session_id = 's3' AND kind = 'needs_input'",
                 [],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
@@ -593,15 +594,18 @@ mod tests {
             .conn
             .lock()
             .unwrap()
-            .query_row("SELECT COUNT(*) FROM items WHERE session_id = 's4'", [], |r| {
-                r.get(0)
-            })
+            .query_row(
+                "SELECT COUNT(*) FROM items \
+                 WHERE session_id = 's4' AND kind = 'needs_input'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(count, 1);
     }
 
     #[test]
-    fn session_end_resolves_open_items() {
+    fn session_end_preserves_items_for_manual_review() {
         let tmp = tempfile_path();
         let db = Db::open(&tmp).unwrap();
         db.record_and_classify(&ev("SessionStart", "s5"), 1000).unwrap();
@@ -611,17 +615,16 @@ mod tests {
         db.record_and_classify(&ev("SessionEnd", "s5"), 1002).unwrap();
 
         let conn = db.conn.lock().unwrap();
-        let (count_open, count_resolved): (i64, i64) = conn
+        // Items stay open so the user can review and archive manually.
+        let count_open: i64 = conn
             .query_row(
-                "SELECT
-                    (SELECT COUNT(*) FROM items WHERE session_id='s5' AND state='unread'),
-                    (SELECT COUNT(*) FROM items WHERE session_id='s5' AND state='resolved')",
+                "SELECT COUNT(*) FROM items WHERE session_id='s5' AND state='unread'",
                 [],
-                |r| Ok((r.get(0)?, r.get(1)?)),
+                |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(count_open, 0);
-        assert_eq!(count_resolved, 1);
+        assert_eq!(count_open, 2);
+        // Session state still transitions to ended.
         let state: String = conn
             .query_row("SELECT state FROM sessions WHERE id = 's5'", [], |r| r.get(0))
             .unwrap();

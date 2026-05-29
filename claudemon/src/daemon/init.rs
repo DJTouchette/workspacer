@@ -32,7 +32,6 @@ const HOOK_EVENTS: &[&str] = &[
     "SessionEnd",
     "UserPromptSubmit",
     "PreToolUse",
-    "PostToolUse",
     "Notification",
     "Stop",
     "SubagentStop",
@@ -44,7 +43,7 @@ const TAG: &str = "# claudemon-hook";
 
 fn hook_command(hook_port: u16) -> String {
     format!(
-        "curl -s -X POST http://127.0.0.1:{hook_port}/hook -H 'content-type: application/json' -d @- {TAG}"
+        "curl -s -X POST http://127.0.0.1:{hook_port}/hook -H \"content-type: application/json\" -d @- {TAG}"
     )
 }
 

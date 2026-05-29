@@ -23,6 +23,7 @@ export interface ItemRow {
   session_name: string;
   session_project: string;
   session_state: string;
+  session_cwd: string;
 }
 
 export type ItemChange =

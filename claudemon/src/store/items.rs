@@ -75,6 +75,7 @@ pub struct ItemRow {
     pub session_name: String,
     pub session_project: String,
     pub session_state: String,
+    pub session_cwd: String,
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
@@ -110,7 +111,7 @@ SELECT
     i.context_paragraph, i.next_action, i.triggering_event_id,
     i.created_at, i.updated_at, i.resolved_at, i.snoozed_until,
     i.snoozed_on_event, i.flagged,
-    s.name, s.project, s.state
+    s.name, s.project, s.state, s.cwd
 FROM items i
 JOIN sessions s ON s.id = i.session_id
 "#;
@@ -135,6 +136,7 @@ fn row_to_item(row: &Row<'_>) -> rusqlite::Result<ItemRow> {
         session_name: row.get(15)?,
         session_project: row.get(16)?,
         session_state: row.get(17)?,
+        session_cwd: row.get(18)?,
     })
 }
 
@@ -250,7 +252,10 @@ mod tests {
     }
 
     fn seed(db: &Db) {
-        db.record_and_classify(&ev("SessionStart", "s1"), 1000).unwrap();
+        // PermissionRequest alone creates the session row (via upsert) and
+        // produces exactly one item — skipping SessionStart avoids the
+        // working_milestone item it now seeds, keeping these tests focused
+        // on the needs_input flow they were written for.
         let mut req = ev("PermissionRequest", "s1");
         req.payload.insert("tool_name".into(), serde_json::json!("Bash"));
         db.record_and_classify(&req, 1001).unwrap();
@@ -324,7 +329,7 @@ mod tests {
         req.payload.insert("tool_name".into(), serde_json::json!("Bash"));
         db.record_and_classify(&req, 1001).unwrap();
         db.record_and_classify(&ev("SessionStart", "s2"), 1002).unwrap();
-        let mut fail = ev("PostToolUseFailure", "s2");
+        let mut fail = ev("StopFailure", "s2");
         fail.payload.insert("tool_name".into(), serde_json::json!("Edit"));
         db.record_and_classify(&fail, 1003).unwrap();
 
@@ -333,7 +338,7 @@ mod tests {
         assert_eq!(items_before[0].priority, 95);
         let lower_id = items_before
             .iter()
-            .find(|i| i.priority == 80)
+            .find(|i| i.priority == 85)
             .unwrap()
             .id
             .clone();

@@ -282,11 +282,28 @@ function App() {
   }, [setActiveTabId, setActivePane]);
 
   const handleAddTab = useCallback((type: PaneType, shell?: string, label?: string, cwd?: string, profileId?: string, resumeSessionId?: string, attachSessionId?: string) => {
+    // If opening a Claude session that already has a tab, navigate to it.
+    const sessionId = resumeSessionId || attachSessionId;
+    if (type === 'claude' && sessionId) {
+      for (const tab of tabs) {
+        const match = tab.panes.find((p) =>
+          p.resumeSessionId === sessionId ||
+          p.attachSessionId === sessionId ||
+          ptyMapping[p.id] === sessionId,
+        );
+        if (match) {
+          setActiveTabId(tab.id);
+          setActivePane(tab.id, match.id);
+          scrollToTab(tab.id);
+          return;
+        }
+      }
+    }
     // Default Claude panes to the app's working directory
     const resolvedCwd = cwd || (type === 'claude' ? appCwdRef.current : undefined);
     const newId = addTabWithConfig(type, label, shell, undefined, undefined, resolvedCwd, profileId, resumeSessionId, attachSessionId);
     requestAnimationFrame(() => scrollToTab(newId));
-  }, [addTabWithConfig, scrollToTab]);
+  }, [tabs, ptyMapping, addTabWithConfig, setActiveTabId, setActivePane, scrollToTab]);
 
   const handleSplitPane = useCallback((type: PaneType, shell?: string, label?: string, cwd?: string) => {
     if (!activeTabId) return;

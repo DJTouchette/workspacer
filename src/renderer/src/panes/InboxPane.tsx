@@ -94,21 +94,42 @@ function bucketOf(item: ItemRow): SectionId | null {
   return 'working';
 }
 
-function bucketedItems(state: State): Record<SectionId, ItemRow[]> {
+/**
+ * Group items by session: for each session only the highest-priority
+ * (first in sort order) item survives into the bucket. Lower-priority
+ * siblings are tracked in `siblingMap` so actions can cascade.
+ */
+function bucketedItems(state: State): { buckets: Record<SectionId, ItemRow[]>; siblingMap: Record<string, string[]> } {
   const out: Record<SectionId, ItemRow[]> = {
     needs_attention: [],
     working: [],
     snoozed: [],
   };
+  const siblingMap: Record<string, string[]> = {};
+  // Track which session already has a representative in a bucket.
+  const seenSession = new Set<string>();
   const q = state.query.trim().toLowerCase();
   for (const id of state.order) {
     const item = state.items[id];
     if (!item) continue;
     if (q && !matchesQuery(item, q)) continue;
     const bucket = bucketOf(item);
-    if (bucket) out[bucket].push(item);
+    if (!bucket) continue;
+    if (seenSession.has(item.session_id)) {
+      // Find the representative and record this item as a sibling.
+      const repId = out[bucket].find((r) => r.session_id === item.session_id)?.id
+        // Representative might be in a different bucket (e.g. needs_attention
+        // vs working). Search all buckets.
+        ?? Object.values(out).flat().find((r) => r.session_id === item.session_id)?.id;
+      if (repId) {
+        (siblingMap[repId] ??= []).push(item.id);
+      }
+      continue;
+    }
+    seenSession.add(item.session_id);
+    out[bucket].push(item);
   }
-  return out;
+  return { buckets: out, siblingMap };
 }
 
 function matchesQuery(item: ItemRow, q: string): boolean {
@@ -125,7 +146,7 @@ function matchesQuery(item: ItemRow, q: string): boolean {
  * non-collapsed sections, in their on-screen order.
  */
 function navigableItems(state: State): ItemRow[] {
-  const buckets = bucketedItems(state);
+  const { buckets } = bucketedItems(state);
   const order: SectionId[] = ['needs_attention', 'working', 'snoozed'];
   return order.flatMap((sec) => (state.collapsed[sec] ? [] : buckets[sec]));
 }
@@ -266,6 +287,11 @@ function priorityColor(priority: number): string {
   return '#6b6b6b';
 }
 
+/** Session is still running if it hasn't reached a terminal state. */
+function isSessionLive(sessionState: string): boolean {
+  return sessionState === 'working' || sessionState === 'needs_input' || sessionState === 'stuck' || sessionState === 'errored';
+}
+
 const InboxPane: React.FC<InboxPaneProps> = ({ title, isActive, onAddTab }) => {
   const [state, dispatch] = useReducer(reducer, initialState);
   const clientRef = useRef<ClaudemonItemsClient | null>(null);
@@ -341,8 +367,44 @@ const InboxPane: React.FC<InboxPaneProps> = ({ title, isActive, onAddTab }) => {
     [client, sessionsClient, state.items],
   );
 
-  const buckets = useMemo(() => bucketedItems(state), [state]);
+  const openSession = useCallback(
+    (item: ItemRow) => {
+      if (!onAddTab) return;
+      const cwd = item.session_cwd || undefined;
+      // Check the in-memory store to see if the session has an active PTY.
+      // If so, attach as a viewer; otherwise spawn claude --resume.
+      sessionsClient
+        .getSession(item.session_id)
+        .then((sess) => {
+          if (sess) {
+            // Session has an active PTY — attach as viewer.
+            onAddTab('claude', undefined, item.session_name, sess.cwd ?? cwd, undefined, undefined, item.session_id);
+          } else {
+            // Session not in memory (hook-observed only) — resume.
+            onAddTab('claude', undefined, item.session_name, cwd, undefined, item.session_id, undefined);
+          }
+        })
+        .catch(() => {
+          // Daemon unreachable — fall back to resume.
+          onAddTab('claude', undefined, item.session_name, cwd, undefined, item.session_id, undefined);
+        });
+    },
+    [onAddTab, sessionsClient],
+  );
+
+  const { buckets, siblingMap } = useMemo(() => bucketedItems(state), [state]);
   const visibleCount = navigableItems(state).length;
+
+  /** Apply an action to an item AND all its grouped siblings. */
+  const applyGroupAction = useCallback(
+    async (id: string, action: ItemAction) => {
+      await applyAction(id, action);
+      for (const sibId of siblingMap[id] ?? []) {
+        await applyAction(sibId, action);
+      }
+    },
+    [applyAction, siblingMap],
+  );
 
   // Keyboard handler attached to the pane root; only fires when this pane
   // has focus, so it doesn't fight other panes' keymaps.
@@ -353,7 +415,7 @@ const InboxPane: React.FC<InboxPaneProps> = ({ title, isActive, onAddTab }) => {
         if (choice) {
           e.preventDefault();
           const until = choice.seconds === -1 ? tomorrow9amUnix() : Math.floor(Date.now() / 1000) + choice.seconds;
-          applyAction(state.snoozeMenuFor, { action: 'snooze_until', until });
+          applyGroupAction(state.snoozeMenuFor, { action: 'snooze_until', until });
           dispatch({ type: 'close_snooze_menu' });
           return;
         }
@@ -420,13 +482,12 @@ const InboxPane: React.FC<InboxPaneProps> = ({ title, isActive, onAddTab }) => {
           }
           break;
         case 'a':
-          // Bulk archive all multi-selected items. Runs sequentially so
-          // we don't overload the daemon with a parallel POST burst.
+          // Bulk archive all multi-selected items (+ their siblings).
           if (multi.size > 0) {
             e.preventDefault();
             (async () => {
               for (const id of multi) {
-                await applyAction(id, { action: 'archive' });
+                await applyGroupAction(id, { action: 'archive' });
               }
               dispatch({ type: 'clear_multi' });
             })();
@@ -443,34 +504,14 @@ const InboxPane: React.FC<InboxPaneProps> = ({ title, isActive, onAddTab }) => {
             e.preventDefault();
             const item = state.items[sel];
             if (item) {
-              // Spawn a fresh `claude --resume <id>` in the session's original
-              // cwd. We resume rather than attach because the inbox tracks
-              // sessions claudemon only observed via hooks — those have no
-              // owned PTY to attach to.
-              sessionsClient
-                .getSession(item.session_id)
-                .then((sess) => {
-                  onAddTab(
-                    'claude',
-                    undefined,
-                    item.session_name,
-                    sess?.cwd ?? undefined,
-                    undefined,
-                    item.session_id,
-                    undefined,
-                  );
-                })
-                .catch(() => {
-                  // cwd lookup failed; spawn anyway with default cwd.
-                  onAddTab('claude', undefined, item.session_name, undefined, undefined, item.session_id, undefined);
-                });
+              openSession(item);
             }
           }
           break;
         case 'e':
           if (sel) {
             e.preventDefault();
-            applyAction(sel, { action: 'archive' });
+            applyGroupAction(sel, { action: 'archive' });
           }
           break;
         case 's':
@@ -494,7 +535,7 @@ const InboxPane: React.FC<InboxPaneProps> = ({ title, isActive, onAddTab }) => {
           break;
       }
     },
-    [state, applyAction, onAddTab],
+    [state, applyAction, applyGroupAction, onAddTab],
   );
 
   // Auto-focus the pane root so the keymap fires immediately. Also re-focus
@@ -515,6 +556,7 @@ const InboxPane: React.FC<InboxPaneProps> = ({ title, isActive, onAddTab }) => {
   const renderRow = (item: ItemRow) => {
     const selected = item.id === state.selectedId;
     const isMulti = state.multiSelect.has(item.id);
+    const siblingCount = (siblingMap[item.id] ?? []).length;
     return (
       <div
         key={item.id}
@@ -552,10 +594,25 @@ const InboxPane: React.FC<InboxPaneProps> = ({ title, isActive, onAddTab }) => {
             overflow: 'hidden',
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
           }}
           title={item.session_name}
         >
           {item.session_name}
+          {siblingCount > 0 && (
+            <span style={{
+              fontSize: 10,
+              opacity: 0.55,
+              backgroundColor: 'var(--wks-bg-active, #2a2a45)',
+              borderRadius: 8,
+              padding: '1px 5px',
+              flexShrink: 0,
+            }}>
+              +{siblingCount}
+            </span>
+          )}
         </div>
         <div title={item.kind}>{kindIcon[item.kind]}</div>
         <div
@@ -832,26 +889,7 @@ const InboxPane: React.FC<InboxPaneProps> = ({ title, isActive, onAddTab }) => {
           }}
           onSnoozeMenu={(id) => dispatch({ type: 'open_snooze_menu', id })}
           onOpenSession={
-            onAddTab
-              ? (item) => {
-                  sessionsClient
-                    .getSession(item.session_id)
-                    .then((sess) => {
-                      onAddTab(
-                        'claude',
-                        undefined,
-                        item.session_name,
-                        sess?.cwd ?? undefined,
-                        undefined,
-                        item.session_id,
-                        undefined,
-                      );
-                    })
-                    .catch(() => {
-                      onAddTab('claude', undefined, item.session_name, undefined, undefined, item.session_id, undefined);
-                    });
-                }
-              : undefined
+            onAddTab ? openSession : undefined
           }
         />
       )}
