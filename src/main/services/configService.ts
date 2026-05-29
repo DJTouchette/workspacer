@@ -142,6 +142,9 @@ function defaultConfig(): Config {
         'nav-right': 'ctrl+l',
         'nav-up': 'ctrl+shift+k',
         'nav-down': 'ctrl+shift+j',
+        'prev-agent': 'ctrl+alt+arrowup',
+        'next-agent': 'ctrl+alt+arrowdown',
+        'spawn-agent': 'ctrl+alt+n',
       },
     },
     apps: [

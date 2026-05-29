@@ -11,6 +11,8 @@ interface NavBarProps {
   onRenameTab?: (tabId: string) => void;
   onSplitTab?: (tabId: string, type: PaneType) => void;
   onMoveTab?: (tabId: string, toIndex: number) => void;
+  /** Pixels to inset the bar from the left (to clear the agent sidebar). */
+  leftOffset?: number;
 }
 
 const typeLabels: Record<PaneType, string> = {
@@ -20,12 +22,10 @@ const typeLabels: Record<PaneType, string> = {
   agent: '\u{1F916}',
   claude: '\u2666',
   settings: '\u2699',
-  dashboard: '\u{1F4CA}',
   tracker: '\u{1F4CB}',
   devops: '\u{1F527}',
   'agent-manager': '\u{1F916}',
   devdaemon: '\u26A1',
-  inbox: '\u{1F4E5}',
 };
 
 interface SessionPickerState {
@@ -34,7 +34,7 @@ interface SessionPickerState {
   sessions: { sessionId: string; timestamp: string; summary: string }[];
 }
 
-const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab, onCloseTab, onRenameTab, onSplitTab, onMoveTab }) => {
+const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab, onCloseTab, onRenameTab, onSplitTab, onMoveTab, leftOffset = 0 }) => {
   const { config } = useConfig();
   const navHeight = Math.max(config.ui.navBarHeight || 34, 32);
   const shells = config.terminal.shells || [];
@@ -65,7 +65,7 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
       style={{
         position: 'fixed',
         top: 0,
-        left: 0,
+        left: leftOffset,
         right: 0,
         height: `${navHeight}px`,
         display: 'flex',
@@ -248,7 +248,6 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
                   } catch {}
                   onAddTab('claude', undefined, undefined, folder);
                 }} />
-                <MenuButton label="Dashboard" onClick={() => { setShowMenu(false); onAddTab('dashboard'); }} />
                 <MenuButton label="Tracker" onClick={() => { setShowMenu(false); onAddTab('tracker'); }} />
                 <MenuButton label="Git & Pipelines" onClick={() => { setShowMenu(false); onAddTab('devops'); }} />
                 <MenuButton label="Browser" onClick={() => { setShowMenu(false); onAddTab('browser'); }} />

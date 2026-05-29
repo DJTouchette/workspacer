@@ -10,10 +10,8 @@ const BrowserPane = React.lazy(() => import('../panes/BrowserPane'));
 const NotesPane = React.lazy(() => import('../panes/NotesPane'));
 const AgentPane = React.lazy(() => import('../panes/AgentPane'));
 const SettingsPane = React.lazy(() => import('../panes/SettingsPane'));
-const DashboardPane = React.lazy(() => import('../panes/DashboardPane'));
 const TrackerPane = React.lazy(() => import('../panes/TrackerPane'));
 const DevOpsPane = React.lazy(() => import('../panes/DevOpsPane'));
-const InboxPane = React.lazy(() => import('../panes/InboxPane'));
 
 const PaneFallback = () => (
   <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--wks-bg-base)', color: 'var(--wks-text-muted)', fontSize: '0.8rem' }}>
@@ -69,12 +67,6 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
       return <Suspense fallback={<PaneFallback />}><AgentPane title={pane.title} /></Suspense>;
     case 'settings':
       return <Suspense fallback={<PaneFallback />}><SettingsPane title={pane.title} /></Suspense>;
-    case 'dashboard':
-      return (
-        <Suspense fallback={<PaneFallback />}>
-          <DashboardPane title={pane.title} tabs={callbacks.tabs ?? []} ptyMapping={callbacks.ptyMapping ?? {}} onNavigateToTab={callbacks.onNavigateToTab ?? (() => {})} onAddTab={callbacks.onAddTab} />
-        </Suspense>
-      );
     case 'tracker':
       return (
         <Suspense fallback={<PaneFallback />}>
@@ -97,12 +89,6 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
       return (
         <Suspense fallback={<PaneFallback />}>
           <BrowserPane paneId={pane.id} title={pane.title} isActive={isActive} initialUrl={pane.url || 'http://127.0.0.1:7880'} appMode={true} hibernated={false} onUrlChange={() => {}} />
-        </Suspense>
-      );
-    case 'inbox':
-      return (
-        <Suspense fallback={<PaneFallback />}>
-          <InboxPane title={pane.title} isActive={isActive} onAddTab={callbacks.onAddTab} />
         </Suspense>
       );
     default:

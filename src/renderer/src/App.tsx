@@ -1,14 +1,16 @@
 import { useRef, useCallback, useState, useEffect } from 'react';
 import './App.css';
 import NavBar from './components/NavBar';
-import SideBar from './components/SideBar';
+import SideBar, { SIDEBAR_WIDTH } from './components/SideBar';
+import SpawnAgentDialog from './components/SpawnAgentDialog';
 import ScrollContainer, { ScrollContainerRef } from './components/ScrollContainer';
 import ScrollIndicator from './components/ScrollIndicator';
 import ShortcutOverlay from './components/ShortcutOverlay';
 import SessionPicker from './components/SessionPicker';
 import CommandPalette from './components/CommandPalette';
-import { useTabManager, defaultTabs } from './hooks/useTabManager';
-import type { PaneType } from './types/pane';
+import { useAgentManager } from './hooks/useAgentManager';
+import type { PaneType, AgentWorkspace } from './types/pane';
+import type { SessionAmbientState } from './types/claudeSession';
 import { useKeyboardNav } from './hooks/useKeyboardNav';
 import { useConfig } from './hooks/useConfig';
 import { useTheme } from './hooks/useTheme';
@@ -17,6 +19,16 @@ function App() {
   const { config } = useConfig();
   useTheme();
   const {
+    agents,
+    activeAgentId,
+    activeAgent,
+    spawnAgent,
+    respawnAgent,
+    terminateAgent,
+    renameAgent,
+    reconcileAgents,
+    loadAgentsFromSession,
+    setActiveAgentId,
     tabs,
     activeTabId,
     setActiveTabId,
@@ -30,9 +42,8 @@ function App() {
     hibernatePane,
     wakePane,
     updatePaneUrl,
-    loadFromSession,
     getActiveTab,
-  } = useTabManager();
+  } = useAgentManager();
 
   const scrollContainerRef = useRef<ScrollContainerRef>(null);
   const [showHelp, setShowHelp] = useState(false);
@@ -40,26 +51,38 @@ function App() {
   const [chordState, setChordState] = useState<'idle' | 'waiting'>('idle');
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   const [paletteMode, setPaletteMode] = useState<'tab' | 'split'>('tab');
+  const [showSpawnDialog, setShowSpawnDialog] = useState(false);
 
-  // App working directory (used as default cwd for Claude panes)
+  // App working directory (used as the default cwd for the spawn dialog)
   const appCwdRef = useRef<string>('');
   useEffect(() => {
     window.electronAPI.getCwd().then((cwd) => { appCwdRef.current = cwd; }).catch(() => {});
   }, []);
 
-  // Font loading happens in main.tsx at module level (before React mounts)
-  // Terminal panes await window.__fontsReady before calling term.open()
+  // Live agent status: sessionId -> ambient state, sourced from claudemon.
+  const [statusBySession, setStatusBySession] = useState<Record<string, SessionAmbientState>>({});
+  useEffect(() => {
+    let cancelled = false;
+    window.electronAPI.getAllClaudeSessions().then((sessions: any[]) => {
+      if (cancelled) return;
+      const map: Record<string, SessionAmbientState> = {};
+      for (const s of sessions) map[s.sessionId] = s.ambientState;
+      setStatusBySession(map);
+    }).catch(() => {});
+    const unsub = window.electronAPI.onClaudeSessionUpdate((sessionId: string, snapshot: any) => {
+      setStatusBySession((prev) => ({ ...prev, [sessionId]: snapshot.ambientState }));
+    });
+    return () => { cancelled = true; unsub(); };
+  }, []);
 
   // Session state
   const [sessionPhase, setSessionPhase] = useState<'loading' | 'picker' | 'active'>('loading');
   const [sessionList, setSessionList] = useState<any[]>([]);
   const [sessionName, setSessionName] = useState('Default');
 
-  // PTY mapping: paneId -> ptySessionId. Tracked as state (not ref) so the
-  // dashboard can resolve "which pane is showing this Claude session" on
-  // re-render. For Claude panes, ptySessionId === Claude session id.
+  // PTY mapping: paneId -> ptySessionId. For Claude panes, ptySessionId is the
+  // Claude session id; used to resolve "which pane shows this session".
   const [ptyMapping, setPtyMapping] = useState<Record<string, string>>({});
-  // Dirty tracking for session auto-save — hash of last saved state
   const lastSaveHashRef = useRef<string>('');
 
   const handlePtyReady = useCallback((paneId: string, ptySessionId: string) => {
@@ -96,7 +119,7 @@ function App() {
     }
   }, [activeTabId, tabs, wakePane]);
 
-  // Hibernate timer
+  // Hibernate timer (browser panes in inactive tabs)
   useEffect(() => {
     if (hibernateAfter <= 0 || sessionPhase !== 'active') return;
     const interval = setInterval(() => {
@@ -115,9 +138,16 @@ function App() {
     return () => clearInterval(interval);
   }, [tabs, activeTabId, hibernateAfter, hibernatePane, sessionPhase]);
 
+  // Reconcile saved agents against the daemon's live sessions — mark any whose
+  // session no longer exists as stopped (so the sidebar offers a respawn).
+  const reconcileWithDaemon = useCallback(() => {
+    window.electronAPI.getAllClaudeSessions().then((sessions: any[]) => {
+      reconcileAgents(new Set(sessions.map((s) => s.sessionId)));
+    }).catch(() => {});
+  }, [reconcileAgents]);
+
   // --- Session lifecycle ---
   useEffect(() => {
-    loadFromSession(defaultTabs, defaultTabs[0].id);
     window.electronAPI.listSessions().then((sessions) => {
       if (sessions.length > 0) {
         setSessionList(sessions);
@@ -128,40 +158,45 @@ function App() {
     }).catch(() => {
       setSessionPhase('active');
     });
-  }, [loadFromSession]);
+  }, []);
 
   const handleNewSession = useCallback(() => {
-    loadFromSession(defaultTabs, defaultTabs[0].id);
+    loadAgentsFromSession([], '');
     setSessionName('Default');
     setPtyMapping({});
     setSessionPhase('active');
-  }, [loadFromSession]);
+  }, [loadAgentsFromSession]);
 
   const handleResumeSession = useCallback((filename: string) => {
     window.electronAPI.loadSession(filename).then((data: any) => {
-      if (data && data.tabs?.length > 0) {
-        loadFromSession(data.tabs, data.activeTabId);
+      if (data && Array.isArray(data.agents)) {
+        loadAgentsFromSession(data.agents, data.activeAgentId);
         setSessionName(data.name || 'Default');
-      } else if (data && data.panes?.length > 0) {
-        // Backward compat: old flat pane format → wrap each in a tab
-        const migrated = data.panes.map((p: any) => ({
-          id: `tab-${p.id}`,
-          title: p.title,
-          panes: [p],
-          activePaneId: p.id,
-        }));
-        loadFromSession(migrated, `tab-${data.activePaneId}`);
+      } else if (data && (data.tabs?.length > 0 || data.panes?.length > 0)) {
+        // Backward compat: old flat workspace → wrap its tabs into one agent.
+        const oldTabs = data.tabs?.length > 0
+          ? data.tabs
+          : data.panes.map((p: any) => ({ id: `tab-${p.id}`, title: p.title, panes: [p], activePaneId: p.id }));
+        const migrated: AgentWorkspace = {
+          id: `agent-migrated-${Date.now()}`,
+          name: data.name || 'Imported',
+          cwd: appCwdRef.current,
+          tabs: oldTabs,
+          activeTabId: data.activeTabId || oldTabs[0]?.id || '',
+        };
+        loadAgentsFromSession([migrated], migrated.id);
         setSessionName(data.name || 'Default');
       } else {
-        loadFromSession(defaultTabs, defaultTabs[0].id);
+        loadAgentsFromSession([], '');
       }
       setPtyMapping({});
       setSessionPhase('active');
+      reconcileWithDaemon();
     }).catch(() => {
-      loadFromSession(defaultTabs, defaultTabs[0].id);
+      loadAgentsFromSession([], '');
       setSessionPhase('active');
     });
-  }, [loadFromSession]);
+  }, [loadAgentsFromSession, reconcileWithDaemon]);
 
   const handleDeleteSession = useCallback((filename: string) => {
     window.electronAPI.deleteSession(filename).then(() => {
@@ -170,24 +205,28 @@ function App() {
   }, []);
 
   const saveCurrentSession = useCallback((force?: boolean) => {
-    if (sessionPhase !== 'active' || tabs.length === 0) return;
+    if (sessionPhase !== 'active') return;
     const payload = {
       name: sessionName,
-      activeTabId,
-      tabs: tabs.map((t) => ({
-        ...t,
-        panes: t.panes.map((p) => ({ ...p })),
+      activeAgentId,
+      agents: agents.map((a) => ({
+        ...a,
+        tabs: a.tabs.map((t) => ({ ...t, panes: t.panes.map((p) => ({ ...p })) })),
       })),
       ptyMapping: { ...ptyMapping },
     };
-    // Quick hash to skip saves when nothing changed
-    const hash = JSON.stringify({ n: payload.name, a: payload.activeTabId, t: payload.tabs.map(t => t.id + t.title + t.panes.map(p => p.id + p.type + (p.url || '')).join()) });
+    const hash = JSON.stringify({
+      n: payload.name,
+      a: payload.activeAgentId,
+      g: payload.agents.map((ag) => ag.id + ag.name + (ag.sessionId || '') + ag.activeTabId
+        + ag.tabs.map((t) => t.id + t.title + t.panes.map((p) => p.id + p.type + (p.url || '')).join()).join()),
+    });
     if (!force && hash === lastSaveHashRef.current) return;
     lastSaveHashRef.current = hash;
     window.electronAPI.saveSession(payload).catch((err: any) => {
       console.error('[Session] save failed:', err);
     });
-  }, [tabs, activeTabId, sessionName, sessionPhase]);
+  }, [agents, activeAgentId, sessionName, sessionPhase, ptyMapping]);
 
   useEffect(() => {
     if (sessionPhase !== 'active') return;
@@ -235,8 +274,31 @@ function App() {
   const kbMode = config.keybindings?.mode ?? 'default';
   const kbLeader = config.keybindings?.leader ?? 'ctrl';
 
-  // Get current tab for keyboard nav context
   const activeTab = getActiveTab();
+
+  // --- Agent handlers (defined before useKeyboardNav so it can bind them) ---
+  const handleSelectAgent = useCallback((id: string) => {
+    setActiveAgentId(id);
+    const agent = agents.find((a) => a.id === id);
+    if (agent && !agent.sessionId) respawnAgent(id);
+  }, [agents, setActiveAgentId, respawnAgent]);
+
+  const handleSpawnAgent = useCallback((opts: { cwd: string; name?: string; profileId?: string }) => {
+    setShowSpawnDialog(false);
+    void spawnAgent(opts);
+  }, [spawnAgent]);
+
+  const goToAgent = useCallback((delta: number) => {
+    if (agents.length === 0) return;
+    const idx = agents.findIndex((a) => a.id === activeAgentId);
+    const base = idx < 0 ? 0 : idx;
+    const next = (base + delta + agents.length) % agents.length;
+    handleSelectAgent(agents[next].id);
+  }, [agents, activeAgentId, handleSelectAgent]);
+
+  const handlePrevAgent = useCallback(() => goToAgent(-1), [goToAgent]);
+  const handleNextAgent = useCallback(() => goToAgent(1), [goToAgent]);
+  const handleSpawnAgentShortcut = useCallback(() => setShowSpawnDialog(true), []);
 
   useKeyboardNav({
     tabs,
@@ -260,6 +322,9 @@ function App() {
     onSaveSession: saveCurrentSession,
     onOpenCommandPalette: useCallback(() => { setPaletteMode('tab'); setShowCommandPalette(true); }, []),
     onOpenSplitPalette: useCallback(() => { setPaletteMode('split'); setShowCommandPalette(true); }, []),
+    onPrevAgent: handlePrevAgent,
+    onNextAgent: handleNextAgent,
+    onSpawnAgent: handleSpawnAgentShortcut,
     shortcuts: config.keybindings?.shortcuts ?? {},
   });
 
@@ -299,17 +364,17 @@ function App() {
         }
       }
     }
-    // Default Claude panes to the app's working directory
-    const resolvedCwd = cwd || (type === 'claude' ? appCwdRef.current : undefined);
+    // New panes inherit the active agent's working directory.
+    const resolvedCwd = cwd || activeAgent?.cwd;
     const newId = addTabWithConfig(type, label, shell, undefined, undefined, resolvedCwd, profileId, resumeSessionId, attachSessionId);
     requestAnimationFrame(() => scrollToTab(newId));
-  }, [tabs, ptyMapping, addTabWithConfig, setActiveTabId, setActivePane, scrollToTab]);
+  }, [tabs, ptyMapping, activeAgent, addTabWithConfig, setActiveTabId, setActivePane, scrollToTab]);
 
   const handleSplitPane = useCallback((type: PaneType, shell?: string, label?: string, cwd?: string) => {
     if (!activeTabId) return;
-    const resolvedCwd = cwd || (type === 'claude' ? appCwdRef.current : undefined);
+    const resolvedCwd = cwd || activeAgent?.cwd;
     splitTab(activeTabId, type, label, shell, undefined, undefined, resolvedCwd);
-  }, [activeTabId, splitTab]);
+  }, [activeTabId, activeAgent, splitTab]);
 
   const handleLaunchApp = useCallback((app: { name: string; url: string }) => {
     const newId = addTab('browser', app.name, insertPosition, undefined, app.url, true);
@@ -317,13 +382,10 @@ function App() {
   }, [addTab, insertPosition, scrollToTab]);
 
   // --- Render ---
-  const tabPosition = config.panes?.tabPosition ?? 'top';
+  const navHeight = Math.max(config.ui.navBarHeight || 34, 32);
 
-  // Hooks must be called unconditionally — these used to live inline in the
-  // NavBar JSX, which broke React's hook order when tabPosition switched to
-  // 'left' and NavBar stopped rendering.
   const handleNavBarRename = useCallback(
-    (tabId: string) => { setActiveTabId(tabId); setRenameSignal(s => s + 1); },
+    (tabId: string) => { setActiveTabId(tabId); setRenameSignal((s) => s + 1); },
     [setActiveTabId],
   );
   const handleNavBarSplit = useCallback(
@@ -333,54 +395,83 @@ function App() {
 
   return (
     <div className="app-root">
-      {tabPosition === 'top' ? (
-        <NavBar
-          tabs={tabs}
-          activeTabId={activeTabId}
-          onTabClick={handleTabClick}
-          onAddTab={handleAddTab}
-          onCloseTab={removeTab}
-          onRenameTab={handleNavBarRename}
-          onSplitTab={handleNavBarSplit}
-          onMoveTab={moveTab}
-        />
-      ) : (
-        <SideBar
-          tabs={tabs}
-          activeTabId={activeTabId}
-          onTabClick={handleTabClick}
-          onAddTab={handleAddTab}
-          onCloseTab={removeTab}
-        />
-      )}
+      <SideBar
+        agents={agents}
+        activeAgentId={activeAgentId}
+        statusBySession={statusBySession}
+        onSelectAgent={handleSelectAgent}
+        onSpawnAgent={() => setShowSpawnDialog(true)}
+        onTerminateAgent={terminateAgent}
+        onRenameAgent={renameAgent}
+      />
 
-      <div className="app-content" style={{
-        marginTop: tabPosition === 'top' ? `${Math.max(config.ui.navBarHeight || 34, 32)}px` : '0',
-        marginLeft: tabPosition === 'left' ? '160px' : '0',
-      }}>
-        <ScrollContainer
-          ref={scrollContainerRef}
-          tabs={tabs}
-          activeTabId={activeTabId}
-          onTabFocus={handleTabFocus}
-          onPaneClose={handlePaneClose}
-          onPaneFocus={handlePaneFocus}
-          onTabRename={renameTab}
-          onTabMove={moveTab}
-          onPtyReady={handlePtyReady}
-          onUrlChange={handleUrlChange}
-          onNavigateToTab={handleTabClick}
-          onAddTab={handleAddTab}
-          ptyMapping={ptyMapping}
-          renameSignal={renameSignal}
-        />
-      </div>
-
-      <ScrollIndicator
+      <NavBar
         tabs={tabs}
         activeTabId={activeTabId}
-        onDotClick={handleTabClick}
+        onTabClick={handleTabClick}
+        onAddTab={handleAddTab}
+        onCloseTab={removeTab}
+        onRenameTab={handleNavBarRename}
+        onSplitTab={handleNavBarSplit}
+        onMoveTab={moveTab}
+        leftOffset={SIDEBAR_WIDTH}
       />
+
+      <div className="app-content" style={{
+        marginTop: `${navHeight}px`,
+        marginLeft: `${SIDEBAR_WIDTH}px`,
+      }}>
+        {activeAgent ? (
+          <ScrollContainer
+            ref={scrollContainerRef}
+            tabs={tabs}
+            activeTabId={activeTabId}
+            onTabFocus={handleTabFocus}
+            onPaneClose={handlePaneClose}
+            onPaneFocus={handlePaneFocus}
+            onTabRename={renameTab}
+            onTabMove={moveTab}
+            onPtyReady={handlePtyReady}
+            onUrlChange={handleUrlChange}
+            onNavigateToTab={handleTabClick}
+            onAddTab={handleAddTab}
+            ptyMapping={ptyMapping}
+            renameSignal={renameSignal}
+          />
+        ) : (
+          <div style={{
+            height: '100%', display: 'flex', flexDirection: 'column',
+            alignItems: 'center', justifyContent: 'center', gap: 12,
+            color: 'var(--wks-text-muted)', textAlign: 'center', padding: 24,
+          }}>
+            <div style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--wks-text-secondary)' }}>
+              No agent selected
+            </div>
+            <div style={{ fontSize: '0.8rem', maxWidth: 360, lineHeight: 1.5 }}>
+              Spawn an agent to start a Claude Code session. It stays running until you terminate it,
+              and its tabs &amp; panes are remembered.
+            </div>
+            <button
+              onClick={() => setShowSpawnDialog(true)}
+              style={{
+                marginTop: 4, fontSize: '0.8rem', fontFamily: 'inherit', fontWeight: 600,
+                cursor: 'pointer', background: 'var(--wks-accent)', color: 'var(--wks-text-on-accent, #fff)',
+                border: 'none', borderRadius: 4, padding: '8px 16px',
+              }}
+            >
+              + Spawn agent
+            </button>
+          </div>
+        )}
+      </div>
+
+      {activeAgent && (
+        <ScrollIndicator
+          tabs={tabs}
+          activeTabId={activeTabId}
+          onDotClick={handleTabClick}
+        />
+      )}
 
       <ShortcutOverlay
         visible={showHelp}
@@ -399,6 +490,14 @@ function App() {
         onAddTab={handleAddTab}
         onSplitPane={handleSplitPane}
       />
+
+      {showSpawnDialog && (
+        <SpawnAgentDialog
+          defaultCwd={appCwdRef.current}
+          onSpawn={handleSpawnAgent}
+          onCancel={() => setShowSpawnDialog(false)}
+        />
+      )}
 
       {sessionPhase === 'picker' && (
         <SessionPicker

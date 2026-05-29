@@ -22,10 +22,8 @@ const typeIndicators: Record<PaneType, string> = {
   agent: '\u{1F916}',
   claude: '\u2666',
   settings: '\u2699',
-  dashboard: '\u{1F4CA}',
   tracker: '\u{1F4CB}',
   devops: '\u{1F527}',
-  inbox: '\u{1F4E5}',
   'agent-manager': '\u{1F916}',
   devdaemon: '\u26a1',
 };
