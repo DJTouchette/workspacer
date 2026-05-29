@@ -15,12 +15,10 @@ const defaultTitles: Record<PaneType, string> = {
   agent: 'Agent',
   claude: 'Claude',
   settings: 'Settings',
-  dashboard: 'Dashboard',
   tracker: 'Tracker',
   devops: 'DevOps',
   'agent-manager': 'Agent Manager',
   devdaemon: 'Daemon',
-  inbox: 'Inbox',
 };
 
 /** Derive a human label from a working directory (its basename). */

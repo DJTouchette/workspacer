@@ -10,6 +10,14 @@ interface ShortcutOverlayProps {
 
 const SHORTCUT_DISPLAY: { section: string; items: { action: string; label: string }[] }[] = [
   {
+    section: 'Agents',
+    items: [
+      { action: 'prev-agent', label: 'Previous agent' },
+      { action: 'next-agent', label: 'Next agent' },
+      { action: 'spawn-agent', label: 'Spawn agent' },
+    ],
+  },
+  {
     section: 'Navigation',
     items: [
       { action: '_ctrl_1_9', label: 'Jump to tab' },
@@ -156,6 +164,9 @@ const ShortcutOverlay: React.FC<ShortcutOverlayProps> = ({ visible, onClose, mod
 
 function getVimChord(action: string, leader: string): string | null {
   const map: Record<string, string> = {
+    'prev-agent': 'k',
+    'next-agent': 'j',
+    'spawn-agent': 'a',
     'prev-tab': 'h',
     'next-tab': 'l',
     'new-terminal': 'n',

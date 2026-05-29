@@ -22,12 +22,10 @@ const typeLabels: Record<PaneType, string> = {
   agent: '\u{1F916}',
   claude: '\u2666',
   settings: '\u2699',
-  dashboard: '\u{1F4CA}',
   tracker: '\u{1F4CB}',
   devops: '\u{1F527}',
   'agent-manager': '\u{1F916}',
   devdaemon: '\u26A1',
-  inbox: '\u{1F4E5}',
 };
 
 interface SessionPickerState {
@@ -250,7 +248,6 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
                   } catch {}
                   onAddTab('claude', undefined, undefined, folder);
                 }} />
-                <MenuButton label="Dashboard" onClick={() => { setShowMenu(false); onAddTab('dashboard'); }} />
                 <MenuButton label="Tracker" onClick={() => { setShowMenu(false); onAddTab('tracker'); }} />
                 <MenuButton label="Git & Pipelines" onClick={() => { setShowMenu(false); onAddTab('devops'); }} />
                 <MenuButton label="Browser" onClick={() => { setShowMenu(false); onAddTab('browser'); }} />

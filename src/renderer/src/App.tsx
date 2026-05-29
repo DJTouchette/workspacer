@@ -276,6 +276,30 @@ function App() {
 
   const activeTab = getActiveTab();
 
+  // --- Agent handlers (defined before useKeyboardNav so it can bind them) ---
+  const handleSelectAgent = useCallback((id: string) => {
+    setActiveAgentId(id);
+    const agent = agents.find((a) => a.id === id);
+    if (agent && !agent.sessionId) respawnAgent(id);
+  }, [agents, setActiveAgentId, respawnAgent]);
+
+  const handleSpawnAgent = useCallback((opts: { cwd: string; name?: string; profileId?: string }) => {
+    setShowSpawnDialog(false);
+    void spawnAgent(opts);
+  }, [spawnAgent]);
+
+  const goToAgent = useCallback((delta: number) => {
+    if (agents.length === 0) return;
+    const idx = agents.findIndex((a) => a.id === activeAgentId);
+    const base = idx < 0 ? 0 : idx;
+    const next = (base + delta + agents.length) % agents.length;
+    handleSelectAgent(agents[next].id);
+  }, [agents, activeAgentId, handleSelectAgent]);
+
+  const handlePrevAgent = useCallback(() => goToAgent(-1), [goToAgent]);
+  const handleNextAgent = useCallback(() => goToAgent(1), [goToAgent]);
+  const handleSpawnAgentShortcut = useCallback(() => setShowSpawnDialog(true), []);
+
   useKeyboardNav({
     tabs,
     activeTabId,
@@ -298,6 +322,9 @@ function App() {
     onSaveSession: saveCurrentSession,
     onOpenCommandPalette: useCallback(() => { setPaletteMode('tab'); setShowCommandPalette(true); }, []),
     onOpenSplitPalette: useCallback(() => { setPaletteMode('split'); setShowCommandPalette(true); }, []),
+    onPrevAgent: handlePrevAgent,
+    onNextAgent: handleNextAgent,
+    onSpawnAgent: handleSpawnAgentShortcut,
     shortcuts: config.keybindings?.shortcuts ?? {},
   });
 
@@ -353,18 +380,6 @@ function App() {
     const newId = addTab('browser', app.name, insertPosition, undefined, app.url, true);
     requestAnimationFrame(() => scrollToTab(newId));
   }, [addTab, insertPosition, scrollToTab]);
-
-  // --- Agent handlers ---
-  const handleSelectAgent = useCallback((id: string) => {
-    setActiveAgentId(id);
-    const agent = agents.find((a) => a.id === id);
-    if (agent && !agent.sessionId) respawnAgent(id);
-  }, [agents, setActiveAgentId, respawnAgent]);
-
-  const handleSpawnAgent = useCallback((opts: { cwd: string; name?: string; profileId?: string }) => {
-    setShowSpawnDialog(false);
-    void spawnAgent(opts);
-  }, [spawnAgent]);
 
   // --- Render ---
   const navHeight = Math.max(config.ui.navBarHeight || 34, 32);

@@ -1,6 +1,6 @@
 /**
  * Shared Claude session UI components and utilities.
- * Used by both ClaudePane (full GUI) and DashboardPane (session cards).
+ * Used by ClaudePane for the full conversation GUI.
  */
 import React from 'react';
 import type { ClaudeSessionSnapshot, ToolCall } from '../types/claudeSession';

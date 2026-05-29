@@ -15,15 +15,16 @@ interface SettingsPaneProps {
 }
 
 const defaultShortcuts: [string, string][] = [
-  ['Ctrl+1-9', 'Jump to pane'],
-  ['Alt+Left/Right', 'Previous/Next pane'],
+  ['Ctrl+Alt+Up/Down', 'Previous/Next agent'],
+  ['Ctrl+Alt+N', 'Spawn agent'],
+  ['Ctrl+1-9', 'Jump to tab'],
+  ['Ctrl+[ / ]', 'Previous/Next tab'],
+  ['Ctrl+H/L', 'Navigate panes'],
   ['Ctrl+T', 'New terminal'],
   ['Ctrl+B', 'New browser'],
   ['Ctrl+W', 'Close active pane'],
-  ['Ctrl+Shift+Left/Right', 'Shrink/Grow pane'],
-  ['Ctrl+Shift+0', 'Reset pane width'],
-  ['Ctrl+Shift+1-9', 'Move pane to position'],
-  ['F2', 'Rename active pane'],
+  ['Ctrl+Shift+1-9', 'Move tab to position'],
+  ['F2', 'Rename active tab'],
   ['Ctrl+,', 'Open settings'],
   ['Ctrl+/', 'Toggle help'],
 ];
@@ -31,18 +32,20 @@ const defaultShortcuts: [string, string][] = [
 function vimShortcuts(leader: string): [string, string][] {
   const l = leader || 'Ctrl';
   return [
-    [`${l} then 1-9`, 'Jump to pane'],
-    [`${l} then h / l`, 'Prev / next pane'],
-    [`${l} then H / L`, 'Move pane left / right'],
+    [`${l} then k / j`, 'Prev / next agent'],
+    [`${l} then a`, 'Spawn agent'],
+    [`${l} then 1-9`, 'Jump to tab'],
+    [`${l} then h / l`, 'Prev / next tab'],
+    [`${l} then H / L`, 'Move tab left / right'],
     [`${l} then n`, 'New terminal'],
     [`${l} then b`, 'New browser'],
-    [`${l} then q`, 'Close pane'],
-    [`${l} then r`, 'Rename pane'],
-    [`${l} then + / -`, 'Grow / shrink pane'],
-    [`${l} then =`, 'Reset pane width'],
+    [`${l} then q`, 'Close tab'],
+    [`${l} then r`, 'Rename tab'],
     [`${l} then ?`, 'Toggle help'],
     ['', ''],
     ['Direct shortcuts (always active):', ''],
+    ['Ctrl+Alt+Up/Down', 'Prev / next agent'],
+    ['Ctrl+Alt+N', 'Spawn agent'],
     ['Ctrl+T', 'New terminal'],
     ['Ctrl+B', 'New browser'],
     ['Ctrl+W', 'Close pane'],
@@ -71,6 +74,9 @@ const SHORTCUT_LABELS: Record<string, string> = {
   'nav-right': 'Navigate Right',
   'nav-up': 'Navigate Up',
   'nav-down': 'Navigate Down',
+  'prev-agent': 'Previous Agent',
+  'next-agent': 'Next Agent',
+  'spawn-agent': 'Spawn Agent',
 };
 
 const ShortcutEditor: React.FC<{ config: Config; save: (partial: Partial<Config>) => Promise<Config> }> = ({ config, save }) => {
@@ -107,6 +113,8 @@ const ShortcutEditor: React.FC<{ config: Config; save: (partial: Partial<Config>
       'rename-tab': 'f2', 'toggle-help': 'ctrl+?', 'prev-tab': 'ctrl+[',
       'next-tab': 'ctrl+]', 'nav-left': 'ctrl+h', 'nav-right': 'ctrl+l',
       'nav-up': 'ctrl+shift+k', 'nav-down': 'ctrl+shift+j',
+      'prev-agent': 'ctrl+alt+arrowup', 'next-agent': 'ctrl+alt+arrowdown',
+      'spawn-agent': 'ctrl+alt+n',
     };
     const updated = { ...currentShortcuts, [action]: defaults[action] ?? '' };
     save({ keybindings: { ...config.keybindings, shortcuts: updated } });
@@ -291,20 +299,6 @@ const SettingsPane: React.FC<SettingsPaneProps> = ({ title }) => {
 
       {/* Layout section */}
       <Section title="Layout">
-        <Row label="Tab Position">
-          <div style={{ display: 'flex', gap: '4px' }}>
-            <ModeButton
-              label="Top"
-              active={(config.panes?.tabPosition ?? 'top') === 'top'}
-              onClick={() => save({ panes: { ...config.panes, tabPosition: 'top' } })}
-            />
-            <ModeButton
-              label="Left"
-              active={config.panes?.tabPosition === 'left'}
-              onClick={() => save({ panes: { ...config.panes, tabPosition: 'left' } })}
-            />
-          </div>
-        </Row>
         <Row label="Peek">
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <input
