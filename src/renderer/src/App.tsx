@@ -300,6 +300,46 @@ function App() {
   const handleNextAgent = useCallback(() => goToAgent(1), [goToAgent]);
   const handleSpawnAgentShortcut = useCallback(() => setShowSpawnDialog(true), []);
 
+  // When the active agent changes, pull keyboard focus into its active pane.
+  // Switching agents (sidebar click or keyboard shortcut) leaves DOM focus on
+  // whatever was focused before — the sidebar button, a dialog, etc. — so the
+  // new agent's pane is *shown* but keystrokes still go to the old element.
+  // The per-pane `isActive` focus effects are best-effort and lose the race
+  // against that external focus, so nudge focus into the active pane here.
+  const prevFocusedAgentRef = useRef(activeAgentId);
+  useEffect(() => {
+    if (activeAgentId === prevFocusedAgentRef.current) return;
+    prevFocusedAgentRef.current = activeAgentId;
+    if (!activeAgentId) return;
+
+    const activeTab = tabs.find((t) => t.id === activeTabId);
+    const paneId = activeTab?.activePaneId;
+    if (!paneId) return;
+
+    // The active pane (and its lazily-loaded content) may not be mounted on the
+    // first frame after the switch, so retry across a few frames.
+    let attempts = 0;
+    let raf = 0;
+    const focusActivePane = () => {
+      const wrapper = document.querySelector(`[data-pane-id="${paneId}"]`);
+      if (wrapper) {
+        // Terminal view exposes xterm's hidden textarea; GUI view exposes the
+        // message input. Only one is visible at a time, so focus the first
+        // visible focusable element (skips the hidden terminal textarea while
+        // in GUI view).
+        const candidates = wrapper.querySelectorAll<HTMLElement>('textarea, input');
+        const target = Array.from(candidates).find((el) => el.offsetParent !== null);
+        if (target) {
+          target.focus();
+          return;
+        }
+      }
+      if (attempts++ < 15) raf = requestAnimationFrame(focusActivePane);
+    };
+    raf = requestAnimationFrame(focusActivePane);
+    return () => cancelAnimationFrame(raf);
+  }, [activeAgentId, tabs, activeTabId]);
+
   useKeyboardNav({
     tabs,
     activeTabId,
