@@ -73,6 +73,8 @@ pub fn router(state: ApiState) -> Router {
         .route("/items/:id", get(get_item_by_id))
         .route("/items/:id/action", post(post_item_action))
         .route("/wrapper/:id", get(crate::daemon::wrapper_ws::upgrade))
+        .route("/git/status", get(crate::daemon::git::get_status))
+        .route("/git/diff", get(crate::daemon::git::get_diff))
         .route("/health", get(|| async { "ok" }))
         .layer(CorsLayer::permissive())
         .with_state(state)

@@ -24,6 +24,7 @@ const typeLabels: Record<PaneType, string> = {
   settings: '\u2699',
   tracker: '\u{1F4CB}',
   devops: '\u{1F527}',
+  review: '\u{1F50D}',
   'agent-manager': '\u{1F916}',
   devdaemon: '\u26A1',
 };

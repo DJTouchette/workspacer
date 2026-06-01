@@ -28,6 +28,7 @@ export const builtInActions: PaletteItem[] = [
   { id: 'new-browser', name: 'New Browser', description: 'Web browser tab', icon: '\u{1F310}', category: 'action', paneType: 'browser' },
   { id: 'new-tracker', name: 'Issue Tracker', description: 'Jira, Linear, Trello', icon: '\u{1F4CB}', category: 'action', paneType: 'tracker' },
   { id: 'new-devops', name: 'Git & Pipelines', description: 'Azure DevOps, GitHub PRs + CI/CD', icon: '\u{1F527}', category: 'action', paneType: 'devops' },
+  { id: 'new-review', name: 'Review Changes', description: 'Git diff & status for this agent', icon: '\u{1F50D}', category: 'action', paneType: 'review' },
   { id: 'new-notes', name: 'Notes', description: 'Markdown scratchpad', icon: '\u{1F4DD}', category: 'action', paneType: 'notes' },
   { id: 'new-agent-manager', name: 'Agent Manager', description: 'Prompts, runs, workflows', icon: '\u{1F916}', category: 'action', paneType: 'agent-manager' },
   { id: 'new-devdaemon', name: 'Daemon Dashboard', description: 'devdaemon health, plugins, events', icon: '\u26A1', category: 'action', paneType: 'devdaemon' },

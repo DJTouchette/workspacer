@@ -17,6 +17,7 @@ const defaultTitles: Record<PaneType, string> = {
   settings: 'Settings',
   tracker: 'Tracker',
   devops: 'DevOps',
+  review: 'Review',
   'agent-manager': 'Agent Manager',
   devdaemon: 'Daemon',
 };

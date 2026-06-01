@@ -1,6 +1,6 @@
 {
   "name": "workspacer",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A horizontal-scroll workspace for agent-driven development",
   "main": "dist/main/index.js",
   "scripts": {

@@ -12,6 +12,7 @@ const AgentPane = React.lazy(() => import('../panes/AgentPane'));
 const SettingsPane = React.lazy(() => import('../panes/SettingsPane'));
 const TrackerPane = React.lazy(() => import('../panes/TrackerPane'));
 const DevOpsPane = React.lazy(() => import('../panes/DevOpsPane'));
+const ReviewPane = React.lazy(() => import('../panes/ReviewPane'));
 
 const PaneFallback = () => (
   <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--wks-bg-base)', color: 'var(--wks-text-muted)', fontSize: '0.8rem' }}>
@@ -77,6 +78,12 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
       return (
         <Suspense fallback={<PaneFallback />}>
           <DevOpsPane paneId={pane.id} title={pane.title} isActive={isActive} />
+        </Suspense>
+      );
+    case 'review':
+      return (
+        <Suspense fallback={<PaneFallback />}>
+          <ReviewPane paneId={pane.id} title={pane.title} isActive={isActive} cwd={pane.cwd} />
         </Suspense>
       );
     case 'agent-manager':
