@@ -1,10 +1,17 @@
-//! Read-only git inspection for the review pane.
+//! Git inspection and staging actions for the review pane.
 //!
-//! Two endpoints, both keyed off a `cwd` query param (the renderer passes the
+//! Read endpoints (keyed off a `cwd` query param — the renderer passes the
 //! active agent's working directory, which it already has in hand):
 //!
 //!   - `GET /git/status?cwd=<path>`            → branch + changed files
 //!   - `GET /git/diff?cwd=<path>&path=&staged=` → raw unified diff text
+//!
+//! Write endpoints (cwd + args in a JSON body):
+//!
+//!   - `POST /git/stage`   { cwd, path? }    → `git add` (path, or -A for all)
+//!   - `POST /git/unstage` { cwd, path? }    → `git reset HEAD` (path, or all)
+//!   - `POST /git/commit`  { cwd, message }  → `git commit -m <message>`
+//!   - `POST /git/push`    { cwd }           → `git push`
 //!
 //! Everything shells out to the `git` binary via `tokio::process::Command`.
 //! Before running anything we verify `cwd` is inside a git work tree with
@@ -30,6 +37,25 @@ pub struct DiffQuery {
     /// unstaged (work tree vs index) changes.
     #[serde(default)]
     staged: bool,
+}
+
+/// Body for `/git/stage` and `/git/unstage`. `path` limits the action to a
+/// single file; omit it to act on the whole work tree.
+#[derive(Debug, Deserialize)]
+pub struct StageRequest {
+    cwd: String,
+    path: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CommitRequest {
+    cwd: String,
+    message: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PushRequest {
+    cwd: String,
 }
 
 /// One changed file as reported by `git status --porcelain`. `staged` and
@@ -155,6 +181,74 @@ pub async fn get_diff(Query(q): Query<DiffQuery>) -> impl IntoResponse {
             (StatusCode::INTERNAL_SERVER_ERROR, "could not run git").into_response()
         }
     }
+}
+
+/// Run a mutating git command in `cwd`, mapping the result to a JSON response.
+/// On a non-zero git exit we return 422 with git's stderr so the renderer can
+/// surface the real reason (nothing staged, no upstream, merge conflict, …).
+async fn git_action(cwd: &str, args: &[&str], what: &str) -> axum::response::Response {
+    if !is_work_tree(cwd).await {
+        return (StatusCode::BAD_REQUEST, "cwd is not inside a git work tree").into_response();
+    }
+
+    match run_git(cwd, args).await {
+        Ok((true, stdout, _)) => Json(json!({ "ok": true, "output": stdout })).into_response(),
+        Ok((false, _, stderr)) => {
+            tracing::warn!(action = what, stderr = %stderr, "git action failed");
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({ "ok": false, "error": stderr })),
+            )
+                .into_response()
+        }
+        Err(err) => {
+            tracing::warn!(action = what, ?err, "spawning git failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "ok": false, "error": "could not run git" })),
+            )
+                .into_response()
+        }
+    }
+}
+
+pub async fn post_stage(Json(req): Json<StageRequest>) -> impl IntoResponse {
+    let mut args: Vec<&str> = vec!["add"];
+    match req.path.as_deref() {
+        // `--` keeps a path that looks like a flag from being parsed as one.
+        Some(path) => {
+            args.push("--");
+            args.push(path);
+        }
+        None => args.push("-A"),
+    }
+    git_action(&req.cwd, &args, "stage").await
+}
+
+pub async fn post_unstage(Json(req): Json<StageRequest>) -> impl IntoResponse {
+    // `reset -q HEAD -- <path>` drops the path from the index without touching
+    // the work tree. With no path it unstages everything.
+    let mut args: Vec<&str> = vec!["reset", "-q", "HEAD"];
+    if let Some(path) = req.path.as_deref() {
+        args.push("--");
+        args.push(path);
+    }
+    git_action(&req.cwd, &args, "unstage").await
+}
+
+pub async fn post_commit(Json(req): Json<CommitRequest>) -> impl IntoResponse {
+    if req.message.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "ok": false, "error": "empty commit message" })),
+        )
+            .into_response();
+    }
+    git_action(&req.cwd, &["commit", "-m", req.message.as_str()], "commit").await
+}
+
+pub async fn post_push(Json(req): Json<PushRequest>) -> impl IntoResponse {
+    git_action(&req.cwd, &["push"], "push").await
 }
 
 #[cfg(test)]

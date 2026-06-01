@@ -25,6 +25,8 @@ interface SideBarProps {
   onSpawnAgent: () => void;
   onTerminateAgent: (id: string) => void;
   onRenameAgent: (id: string, name: string) => void;
+  /** Jump to the next agent blocked on the user (approval / input). */
+  onJumpToAttention?: () => void;
 }
 
 const SideBar: React.FC<SideBarProps> = ({
@@ -35,7 +37,17 @@ const SideBar: React.FC<SideBarProps> = ({
   onSpawnAgent,
   onTerminateAgent,
   onRenameAgent,
+  onJumpToAttention,
 }) => {
+  // Aggregate live counts for the header summary.
+  const needYouCount = agents.reduce((n, a) => {
+    const s = a.sessionId ? statusBySession[a.sessionId] : undefined;
+    return n + (s === 'waiting_approval' || s === 'waiting_input' ? 1 : 0);
+  }, 0);
+  const workingCount = agents.reduce((n, a) => {
+    const s = a.sessionId ? statusBySession[a.sessionId] : undefined;
+    return n + (s === 'thinking' || s === 'streaming' ? 1 : 0);
+  }, 0);
   const [contextMenu, setContextMenu] = useState<{ agentId: string; y: number } | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
@@ -77,8 +89,36 @@ const SideBar: React.FC<SideBarProps> = ({
         letterSpacing: '0.08em',
         textTransform: 'uppercase',
         color: 'var(--wks-text-faint)',
+        display: 'flex',
+        alignItems: 'baseline',
+        gap: 6,
       }}>
-        Agents
+        <span>Agents</span>
+        {needYouCount > 0 && (
+          <span
+            onClick={onJumpToAttention}
+            title="Jump to the next agent that needs you"
+            style={{
+              color: 'var(--wks-warning, #e0a000)',
+              cursor: onJumpToAttention ? 'pointer' : 'default',
+              letterSpacing: 0,
+              textTransform: 'none',
+              fontWeight: 600,
+            }}
+          >
+            {needYouCount} need you
+          </span>
+        )}
+        {needYouCount === 0 && workingCount > 0 && (
+          <span style={{
+            color: 'var(--wks-accent, #4a9eff)',
+            letterSpacing: 0,
+            textTransform: 'none',
+            fontWeight: 600,
+          }}>
+            {workingCount} working
+          </span>
+        )}
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '2px' }}>

@@ -23,29 +23,30 @@ detects per-session states — `NeedsInput`, `Error`, `Stuck` (loop + idle detec
 
 Highest leverage — most of this code is already written.
 
-- **Bring back the Inbox / triage view.** The classifier still produces
-  `Stuck`/`NeedsInput`/`Done` items, and `claudemonItems.ts`, `ItemDetailOverlay.tsx`,
-  and their tests still exist — but the `InboxPane` was deleted (commit `92beece`).
-  That signal now surfaces *only* as a sidebar dot. A unified triage view
-  ("3 agents need you, 1 is stuck, 2 done") is the single biggest payoff and is
-  mostly already implemented.
 - **Build out `NotesPane`** — currently a "Phase 2" placeholder. Lowest-hanging fruit:
   a per-agent markdown scratchpad that saves with the session.
 - **Build out `AgentPane`** — also a "Phase 2" placeholder.
-- **LLM summarizer ("Phase 4").** Referenced in `classifier/mod.rs`. Items currently
-  get deterministic fallback strings ("Working", "Stuck looping on Bash"). Real
-  one-line summaries would make the inbox genuinely useful.
 
-## 2. Notifications & ambient awareness
+> **Triage inbox — dropped (2026-06-01).** The per-agent workspace model plus
+> sidebar status/counts + OS notifications + jump-to-next-attention (#2) cover the
+> routing a unified inbox would have. Decided not to rebuild it. The classifier's
+> `Stuck`/`Error` detections are *not* surfaced anywhere now (the only consumer,
+> `InboxPane`, was deleted; `claudemonItems.ts` + `ItemDetailOverlay.tsx` are dead
+> code) — revisit only if silent loop/error detection becomes a felt need.
+
+## 2. Notifications & ambient awareness ✅ (shipped 2026-06-01)
 
 The core use case is babysitting agents you're *not* actively watching.
 
-- **OS notifications / tray badge / taskbar flash / sound** when an agent needs
-  approval or finishes. Today the only signal is a dot you have to be looking at.
-  The hook data already flows through the daemon.
-- **"Jump to next agent that needs me"** keyboard shortcut (prev/next agent exists,
-  but not "go to the one that's waiting").
-- **Aggregate counts** in the UI (e.g. sidebar header "Agents (2 need input)").
+- ✅ **OS notifications + taskbar flash** when an agent needs approval/input or
+  finishes (working→idle). Fires from `claudeSessionStore` ambient-state
+  transitions via `agentNotifier` (main). Suppressed for the agent you're
+  watching (window focused + that agent on screen). Config block `notifications`
+  (`enabled`/`notifyDone`/`onlyWhenUnwatched`/`sound`), silent by default. Tray
+  badge / overlay icon not done (Windows needs a generated overlay image).
+- ✅ **"Jump to next agent that needs me"** — `ctrl+alt+→` (vim chord `<leader> m`),
+  also the clickable "N need you" sidebar header.
+- ✅ **Aggregate counts** in the sidebar header ("N need you" / "N working").
 
 ## 3. Git / diff review
 
@@ -85,6 +86,7 @@ The core use case is babysitting agents you're *not* actively watching.
 
 ## Suggested top 3 (value-for-effort)
 
-1. **Bring back a triage inbox** over the classifier that's already running.
-2. **OS notifications** when an agent needs you.
-3. **A diff / review pane** so "agent finished" leads somewhere.
+1. ~~Bring back a triage inbox~~ — dropped; the workspace + notifications cover it.
+2. ✅ **OS notifications** when an agent needs you — shipped.
+3. ✅ **A diff / review pane** so "agent finished" leads somewhere — shipped
+   (read-only + stage/commit/push; `review_diff`/`merge` wiring still open).

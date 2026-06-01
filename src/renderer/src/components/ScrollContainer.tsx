@@ -35,6 +35,13 @@ interface ScrollContainerProps {
   /** paneId → ptySessionId. For Claude panes, ptySessionId === Claude session id. */
   ptyMapping?: Record<string, string>;
   renameSignal?: number;
+  /**
+   * Whether this container's agent is the one currently shown. Every agent's
+   * container stays mounted (so terminals/scrollback survive agent switches);
+   * inactive ones are hidden. When false, no pane counts as active, so off-
+   * screen panes throttle their updates and skip terminal refits.
+   */
+  agentActive?: boolean;
 }
 
 export interface ScrollContainerRef {
@@ -53,7 +60,7 @@ interface PaneCallbacks {
 function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneCallbacks) {
   switch (pane.type) {
     case 'terminal':
-      return <TerminalPane paneId={pane.id} title={pane.title} isActive={isActive} shell={pane.shell} cwd={pane.cwd} onPtyReady={callbacks.onPtyReady} />;
+      return <TerminalPane paneId={pane.id} title={pane.title} isActive={isActive} shell={pane.shell} cwd={pane.cwd} initialCommand={pane.initialCommand} onPtyReady={callbacks.onPtyReady} />;
     case 'claude':
       return <ClaudePane paneId={pane.id} title={pane.title} isActive={isActive} cwd={pane.cwd} profileId={pane.profileId} resumeSessionId={pane.resumeSessionId} attachSessionId={pane.attachSessionId} onPtyReady={callbacks.onPtyReady} />;
     case 'browser':
@@ -107,6 +114,7 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
 function TilingLayout({
   panes,
   activePaneId,
+  agentActive,
   containerWidth,
   containerHeight,
   onPaneClose,
@@ -115,6 +123,7 @@ function TilingLayout({
 }: {
   panes: PaneConfig[];
   activePaneId: string;
+  agentActive: boolean;
   containerWidth: number;
   containerHeight: number;
   onPaneClose: (paneId: string) => void;
@@ -156,7 +165,7 @@ function TilingLayout({
       {panes.map((pane, idx) => {
         const layout = layouts[idx];
         if (!layout) return null;
-        const isActive = pane.id === activePaneId;
+        const isActive = agentActive && pane.id === activePaneId;
         const left = layout.col * cellWidth + gap;
         const top = layout.row * cellHeight + gap;
         const width = layout.colSpan * cellWidth - gap * 2;
@@ -191,7 +200,7 @@ function TilingLayout({
 }
 
 const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
-  ({ tabs, activeTabId, onTabFocus, onPaneClose, onPaneFocus, onTabRename, onTabMove, onPtyReady, onUrlChange, onNavigateToTab, onAddTab, ptyMapping, renameSignal }, ref) => {
+  ({ tabs, activeTabId, onTabFocus, onPaneClose, onPaneFocus, onTabRename, onTabMove, onPtyReady, onUrlChange, onNavigateToTab, onAddTab, ptyMapping, renameSignal, agentActive = true }, ref) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const { config } = useConfig();
     const peek = config.panes?.peek ?? 80;
@@ -294,6 +303,9 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
       >
         {tabs.map((tab) => {
           const isActiveTab = tab.id === activeTabId;
+          // A pane is only "active" (focused, un-throttled) when its agent is
+          // the one on screen AND its tab is the active one.
+          const paneActive = agentActive && isActiveTab;
           const singlePane = tab.panes.length === 1;
 
           const paneCallbacks: PaneCallbacks = {
@@ -319,6 +331,11 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
                 alignItems: 'stretch',
                 width: `${tabWidth}px`,
                 minWidth: `${tabWidth}px`,
+                // Let the browser skip layout/paint/animation for tabs scrolled
+                // off-screen. The intrinsic size keeps the scrollbar stable so
+                // skipped tabs still occupy their slot.
+                contentVisibility: 'auto',
+                containIntrinsicSize: `${tabWidth}px ${containerHeight}px`,
               }}
             >
               {singlePane ? (
@@ -335,7 +352,7 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
                   renameSignal={isActiveTab ? renameSignal : undefined}
                   hideHeader
                 >
-                  {renderPaneContent(tab.panes[0], isActiveTab, paneCallbacks)}
+                  {renderPaneContent(tab.panes[0], paneActive, paneCallbacks)}
                 </Pane>
               ) : (
                 // Multi-pane tab — tiling layout inside a container
@@ -359,6 +376,7 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
                   <TilingLayout
                     panes={tab.panes}
                     activePaneId={tab.activePaneId}
+                    agentActive={agentActive}
                     containerWidth={tabWidth - 18}
                     containerHeight={containerHeight - 8}
                     onPaneClose={(paneId) => onPaneClose(tab.id, paneId)}

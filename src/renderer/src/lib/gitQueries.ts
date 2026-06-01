@@ -1,5 +1,6 @@
 /**
- * Thin client for claudemon's read-only git API, used by the review pane.
+ * Thin client for claudemon's git API, used by the review pane: read-only
+ * status/diff plus the staging actions (stage/unstage/commit/push).
  * Endpoints implemented at claudemon/src/daemon/git.rs.
  */
 
@@ -42,5 +43,44 @@ export class GitClient {
     if (!res.ok) throw new Error(`git diff failed: ${res.status} ${await res.text()}`);
     const body = (await res.json()) as { diff: string };
     return body.diff;
+  }
+
+  // ── Mutating actions ──
+  //
+  // Each posts a JSON body and expects `{ ok, output?, error? }`. The daemon
+  // returns 422 with git's stderr in `error` for the expected failures
+  // (nothing staged, no upstream, conflicts), which we surface verbatim.
+
+  private async post(path: string, body: Record<string, unknown>): Promise<string> {
+    const res = await fetch(`${this.baseUrl}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = (await res.json().catch(() => null)) as
+      | { ok?: boolean; output?: string; error?: string }
+      | null;
+    if (!res.ok || !data?.ok) {
+      throw new Error(data?.error?.trim() || `${path} failed: ${res.status}`);
+    }
+    return data.output ?? '';
+  }
+
+  /** Stage a single path, or the whole work tree when `path` is omitted. */
+  stage(cwd: string, path?: string): Promise<string> {
+    return this.post('/git/stage', { cwd, path });
+  }
+
+  /** Unstage a single path, or everything when `path` is omitted. */
+  unstage(cwd: string, path?: string): Promise<string> {
+    return this.post('/git/unstage', { cwd, path });
+  }
+
+  commit(cwd: string, message: string): Promise<string> {
+    return this.post('/git/commit', { cwd, message });
+  }
+
+  push(cwd: string): Promise<string> {
+    return this.post('/git/push', { cwd });
   }
 }

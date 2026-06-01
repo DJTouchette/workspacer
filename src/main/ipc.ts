@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import { configService } from './services/configService';
 import { sessionService } from './services/sessionService';
 import { claudeSessionStore } from './services/claudeSessionStore';
+import { agentNotifier } from './services/agentNotifier';
 import { claudemonSessionClient } from './services/claudemonSessionClient';
 import { buildClaudeArgv } from './services/claudeResolver';
 import { importChromeCookies, importChromeCookiesViaCDP } from './services/chromeCookieImport';
@@ -25,6 +26,12 @@ function detectDefaultShell(): string {
 
 export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   claudemonSessionClient.setMainWindow(mainWindow);
+
+  // Renderer reports which agent session is currently on screen, so the
+  // notifier can suppress alerts for the agent you're actively watching.
+  ipcMain.on('notify:set-active-session', (_event, sessionId: string | null) => {
+    agentNotifier.setActiveSession(sessionId);
+  });
 
   // ── Generic terminal (non-Claude shells) — routed through claudemon ──
   ipcMain.handle('terminal:create', async (_event, shell: string, cwd?: string, cols?: number, rows?: number) => {

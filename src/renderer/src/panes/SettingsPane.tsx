@@ -409,6 +409,9 @@ const SettingsPane: React.FC<SettingsPaneProps> = ({ title }) => {
         )}
       </Section>
 
+      {/* Notifications section */}
+      <NotificationsSection config={config} save={save} />
+
       {/* Browser section */}
       <Section title="Browser">
         <Row label="Hibernate after (seconds)">
@@ -543,6 +546,46 @@ const SettingsPane: React.FC<SettingsPaneProps> = ({ title }) => {
       {/* Claude Profiles section */}
       <ClaudeProfilesSection />
     </div>
+  );
+};
+
+// ── Notifications Section ──
+
+const NOTIF_DEFAULTS = { enabled: true, notifyDone: true, onlyWhenUnwatched: true, sound: false };
+
+const NotificationsSection: React.FC<{ config: Config; save: (partial: Partial<Config>) => Promise<Config> }> = ({ config, save }) => {
+  const notif = config.notifications ?? NOTIF_DEFAULTS;
+  const set = (patch: Partial<typeof notif>) => save({ notifications: { ...notif, ...patch } });
+
+  return (
+    <Section title="Notifications">
+      <CheckRow
+        label="Desktop notifications"
+        checked={notif.enabled}
+        onChange={(v) => set({ enabled: v })}
+      />
+      <CheckRow
+        label="Notify when an agent finishes"
+        checked={notif.notifyDone}
+        disabled={!notif.enabled}
+        onChange={(v) => set({ notifyDone: v })}
+      />
+      <CheckRow
+        label="Only when I'm not watching that agent"
+        checked={notif.onlyWhenUnwatched}
+        disabled={!notif.enabled}
+        onChange={(v) => set({ onlyWhenUnwatched: v })}
+      />
+      <CheckRow
+        label="Play a sound"
+        checked={notif.sound}
+        disabled={!notif.enabled}
+        onChange={(v) => set({ sound: v })}
+      />
+      <div style={{ fontSize: '0.55rem', color: 'var(--wks-text-disabled)' }}>
+        Alerts when an agent needs approval/input or finishes. Ctrl+Alt+→ jumps to the next agent that needs you.
+      </div>
+    </Section>
   );
 };
 
@@ -861,6 +904,26 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
       <span style={{ fontSize: '0.7rem', color: 'var(--wks-text-muted)' }}>{label}</span>
       {children}
     </div>
+  );
+}
+
+function CheckRow({ label, checked, onChange, disabled }: { label: string; checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
+  return (
+    <label
+      style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.45 : 1,
+      }}
+    >
+      <span style={{ fontSize: '0.7rem', color: 'var(--wks-text-muted)' }}>{label}</span>
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.checked)}
+        style={{ accentColor: 'var(--wks-accent)', cursor: disabled ? 'default' : 'pointer' }}
+      />
+    </label>
   );
 }
 

@@ -53,12 +53,27 @@ export interface KeybindingsConfig {
   shortcuts: Record<string, string>;
 }
 
+export interface NotificationsConfig {
+  enabled: boolean;
+  notifyDone: boolean;
+  onlyWhenUnwatched: boolean;
+  sound: boolean;
+}
+
+export interface ScriptEntry {
+  name: string;
+  command: string;
+}
+
 export interface Config {
   ui: UIConfig;
   terminal: TerminalConfig;
   panes: PanesConfig;
   browser: BrowserConfig;
   keybindings: KeybindingsConfig;
+  notifications: NotificationsConfig;
+  /** Per-directory script buttons, keyed by workspace root (normalized cwd). */
+  scripts: Record<string, ScriptEntry[]>;
   apps: AppEntry[];
 }
 
@@ -117,6 +132,13 @@ const DEFAULT_CONFIG: Config = {
       'nav-down': 'ctrl+shift+j',
     },
   },
+  notifications: {
+    enabled: true,
+    notifyDone: true,
+    onlyWhenUnwatched: true,
+    sound: false,
+  },
+  scripts: {},
   apps: [],
 };
 

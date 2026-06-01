@@ -987,7 +987,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
     defer: true,
   });
 
-  const { session } = useClaudeSession({ ptySessionId: sessionId });
+  const { session } = useClaudeSession({ ptySessionId: sessionId, active: isActive });
 
   // Enable the approval gateway in claudemon as soon as we have a session id
   // so PreToolUse hooks get parked for our UI to resolve.

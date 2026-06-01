@@ -91,11 +91,15 @@ const FileRow: React.FC<{
   code: string;
   active: boolean;
   onClick: () => void;
-}> = ({ file, code, active, onClick }) => {
+  /** Label for the inline action button ("Stage" / "Unstage"). */
+  actionLabel: string;
+  onAction: () => void;
+  busy: boolean;
+}> = ({ file, code, active, onClick, actionLabel, onAction, busy }) => {
   const meta = codeMeta(code);
   const label = file.orig_path ? `${file.orig_path} → ${file.path}` : file.path;
   return (
-    <button
+    <div
       onClick={onClick}
       title={label}
       style={{
@@ -104,13 +108,11 @@ const FileRow: React.FC<{
         gap: 8,
         width: '100%',
         padding: '4px 10px',
-        border: 'none',
+        boxSizing: 'border-box',
         background: active ? 'var(--wks-bg-hover)' : 'transparent',
         color: active ? colors.textBright : colors.text,
         cursor: 'pointer',
-        fontFamily: 'inherit',
         fontSize: '0.74rem',
-        textAlign: 'left',
         borderLeft: `2px solid ${active ? colors.accent : 'transparent'}`,
       }}
     >
@@ -127,6 +129,8 @@ const FileRow: React.FC<{
       </span>
       <span
         style={{
+          flex: 1,
+          minWidth: 0,
           overflow: 'hidden',
           textOverflow: 'ellipsis',
           whiteSpace: 'nowrap',
@@ -135,13 +139,44 @@ const FileRow: React.FC<{
       >
         {label}
       </span>
-    </button>
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onAction();
+        }}
+        disabled={busy}
+        title={actionLabel}
+        style={{
+          flexShrink: 0,
+          padding: '1px 7px',
+          borderRadius: 5,
+          border: `1px solid ${colors.borderSubtle}`,
+          background: 'transparent',
+          color: colors.text,
+          cursor: busy ? 'default' : 'pointer',
+          fontSize: '0.64rem',
+          fontFamily: 'inherit',
+          opacity: busy ? 0.5 : 1,
+        }}
+      >
+        {actionLabel}
+      </button>
+    </div>
   );
 };
 
-const SectionHeader: React.FC<{ label: string; count: number }> = ({ label, count }) => (
+const SectionHeader: React.FC<{
+  label: string;
+  count: number;
+  /** Optional right-aligned bulk action (e.g. "Stage all"). */
+  action?: { label: string; onClick: () => void; busy: boolean };
+}> = ({ label, count, action }) => (
   <div
     style={{
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 8,
       padding: '8px 10px 4px',
       fontSize: '0.62rem',
       fontWeight: 700,
@@ -150,7 +185,31 @@ const SectionHeader: React.FC<{ label: string; count: number }> = ({ label, coun
       color: colors.muted,
     }}
   >
-    {label} {count > 0 && <span style={{ opacity: 0.7 }}>({count})</span>}
+    <span>
+      {label} {count > 0 && <span style={{ opacity: 0.7 }}>({count})</span>}
+    </span>
+    {action && (
+      <button
+        onClick={action.onClick}
+        disabled={action.busy}
+        style={{
+          padding: '1px 7px',
+          borderRadius: 5,
+          border: `1px solid ${colors.borderSubtle}`,
+          background: 'transparent',
+          color: colors.text,
+          cursor: action.busy ? 'default' : 'pointer',
+          fontSize: '0.6rem',
+          fontFamily: 'inherit',
+          fontWeight: 600,
+          letterSpacing: 0,
+          textTransform: 'none',
+          opacity: action.busy ? 0.5 : 1,
+        }}
+      >
+        {action.label}
+      </button>
+    )}
   </div>
 );
 
@@ -163,6 +222,8 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd }) => {
   const [error, setError] = useState<string>('');
   const [loadingStatus, setLoadingStatus] = useState(false);
   const [loadingDiff, setLoadingDiff] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [commitMsg, setCommitMsg] = useState('');
 
   const refresh = useCallback(async () => {
     if (!cwd) return;
@@ -215,6 +276,25 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd }) => {
       }
     },
     [cwd],
+  );
+
+  // Run a mutating git action, then refresh status. Errors surface in the
+  // banner; the action button stays disabled (busy) until it settles.
+  const runAction = useCallback(
+    async (fn: (dir: string) => Promise<unknown>) => {
+      if (!cwd) return;
+      setBusy(true);
+      setError('');
+      try {
+        await fn(cwd);
+        await refresh();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [cwd, refresh],
   );
 
   if (!cwd) {
@@ -272,23 +352,41 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd }) => {
           >
             {status?.branch ? `⎇ ${status.branch}` : 'git'}
           </span>
-          <button
-            onClick={() => void refresh()}
-            disabled={loadingStatus}
-            style={{
-              padding: '3px 10px',
-              borderRadius: 6,
-              border: `1px solid ${colors.borderSubtle}`,
-              background: 'transparent',
-              color: colors.text,
-              cursor: loadingStatus ? 'default' : 'pointer',
-              fontSize: '0.68rem',
-              fontFamily: 'inherit',
-              flexShrink: 0,
-            }}
-          >
-            {loadingStatus ? '…' : 'Refresh'}
-          </button>
+          <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+            <button
+              onClick={() => void runAction((dir) => git.push(dir))}
+              disabled={busy}
+              title="git push"
+              style={{
+                padding: '3px 10px',
+                borderRadius: 6,
+                border: `1px solid ${colors.borderSubtle}`,
+                background: 'transparent',
+                color: colors.text,
+                cursor: busy ? 'default' : 'pointer',
+                fontSize: '0.68rem',
+                fontFamily: 'inherit',
+              }}
+            >
+              {busy ? '…' : 'Push'}
+            </button>
+            <button
+              onClick={() => void refresh()}
+              disabled={loadingStatus}
+              style={{
+                padding: '3px 10px',
+                borderRadius: 6,
+                border: `1px solid ${colors.borderSubtle}`,
+                background: 'transparent',
+                color: colors.text,
+                cursor: loadingStatus ? 'default' : 'pointer',
+                fontSize: '0.68rem',
+                fontFamily: 'inherit',
+              }}
+            >
+              {loadingStatus ? '…' : 'Refresh'}
+            </button>
+          </div>
         </div>
 
         <div style={{ overflowY: 'auto', flex: 1 }}>
@@ -301,7 +399,17 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd }) => {
             </div>
           )}
 
-          {staged.length > 0 && <SectionHeader label="Staged" count={staged.length} />}
+          {staged.length > 0 && (
+            <SectionHeader
+              label="Staged"
+              count={staged.length}
+              action={{
+                label: 'Unstage all',
+                busy,
+                onClick: () => void runAction((dir) => git.unstage(dir)),
+              }}
+            />
+          )}
           {staged.map((f) => {
             const sel: Selection = { path: f.path, staged: true, untracked: false };
             return (
@@ -311,11 +419,24 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd }) => {
                 code={f.staged}
                 active={selection != null && selKey(selection) === selKey(sel)}
                 onClick={() => void select(sel)}
+                actionLabel="Unstage"
+                onAction={() => void runAction((dir) => git.unstage(dir, f.path))}
+                busy={busy}
               />
             );
           })}
 
-          {unstaged.length > 0 && <SectionHeader label="Changes" count={unstaged.length} />}
+          {unstaged.length > 0 && (
+            <SectionHeader
+              label="Changes"
+              count={unstaged.length}
+              action={{
+                label: 'Stage all',
+                busy,
+                onClick: () => void runAction((dir) => git.stage(dir)),
+              }}
+            />
+          )}
           {unstaged.map((f) => {
             const sel: Selection = { path: f.path, staged: false, untracked: false };
             return (
@@ -325,11 +446,31 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd }) => {
                 code={f.unstaged}
                 active={selection != null && selKey(selection) === selKey(sel)}
                 onClick={() => void select(sel)}
+                actionLabel="Stage"
+                onAction={() => void runAction((dir) => git.stage(dir, f.path))}
+                busy={busy}
               />
             );
           })}
 
-          {untracked.length > 0 && <SectionHeader label="Untracked" count={untracked.length} />}
+          {untracked.length > 0 && (
+            <SectionHeader
+              label="Untracked"
+              count={untracked.length}
+              // "Stage all" is `git add -A` (everything), so only offer it here
+              // when there are no tracked changes — otherwise the Changes header
+              // already covers it and a second identical button would mislead.
+              action={
+                unstaged.length === 0
+                  ? {
+                      label: 'Stage all',
+                      busy,
+                      onClick: () => void runAction((dir) => git.stage(dir)),
+                    }
+                  : undefined
+              }
+            />
+          )}
           {untracked.map((f) => {
             const sel: Selection = { path: f.path, staged: false, untracked: true };
             return (
@@ -339,9 +480,74 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd }) => {
                 code="?"
                 active={selection != null && selection.untracked && selection.path === f.path}
                 onClick={() => void select(sel)}
+                actionLabel="Stage"
+                onAction={() => void runAction((dir) => git.stage(dir, f.path))}
+                busy={busy}
               />
             );
           })}
+        </div>
+
+        {/* Commit bar — enabled only when something is staged. */}
+        <div
+          style={{
+            borderTop: `1px solid ${colors.borderSubtle}`,
+            padding: 8,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 6,
+          }}
+        >
+          <textarea
+            value={commitMsg}
+            onChange={(e) => setCommitMsg(e.target.value)}
+            onKeyDown={(e) => {
+              // Cmd/Ctrl+Enter commits, matching the usual editor convention.
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && staged.length > 0 && commitMsg.trim()) {
+                e.preventDefault();
+                void runAction(async (dir) => {
+                  await git.commit(dir, commitMsg);
+                  setCommitMsg('');
+                });
+              }
+            }}
+            placeholder={staged.length > 0 ? 'Commit message… (⌘/Ctrl+Enter)' : 'Stage files to commit'}
+            disabled={busy || staged.length === 0}
+            rows={2}
+            style={{
+              resize: 'none',
+              padding: '6px 8px',
+              borderRadius: 6,
+              border: `1px solid ${colors.borderSubtle}`,
+              background: 'var(--wks-bg-input, transparent)',
+              color: colors.text,
+              fontSize: '0.72rem',
+              fontFamily: 'inherit',
+              boxSizing: 'border-box',
+            }}
+          />
+          <button
+            onClick={() =>
+              void runAction(async (dir) => {
+                await git.commit(dir, commitMsg);
+                setCommitMsg('');
+              })
+            }
+            disabled={busy || staged.length === 0 || !commitMsg.trim()}
+            style={{
+              padding: '5px 10px',
+              borderRadius: 6,
+              border: `1px solid ${colors.borderSubtle}`,
+              background: staged.length > 0 && commitMsg.trim() ? colors.accent : 'transparent',
+              color: staged.length > 0 && commitMsg.trim() ? colors.textBright : colors.muted,
+              cursor: busy || staged.length === 0 || !commitMsg.trim() ? 'default' : 'pointer',
+              fontSize: '0.72rem',
+              fontFamily: 'inherit',
+              fontWeight: 600,
+            }}
+          >
+            {`Commit${staged.length > 0 ? ` ${staged.length} file${staged.length > 1 ? 's' : ''}` : ''}`}
+          </button>
         </div>
       </div>
 

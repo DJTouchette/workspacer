@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { PaneType, TabConfig } from '../types/pane';
-import { useConfig } from '../hooks/useConfig';
+import { useConfig, ScriptEntry } from '../hooks/useConfig';
 
 interface NavBarProps {
   tabs: TabConfig[];
@@ -13,6 +13,14 @@ interface NavBarProps {
   onMoveTab?: (tabId: string, toIndex: number) => void;
   /** Pixels to inset the bar from the left (to clear the agent sidebar). */
   leftOffset?: number;
+  /** Active agent's workspace root — scripts are scoped to this directory. */
+  cwd?: string;
+  /** Script buttons for the current directory. */
+  scripts?: ScriptEntry[];
+  /** Run a script in a new terminal tab at `cwd`. */
+  onRunScript?: (name: string, command: string) => void;
+  /** Persist the current directory's script list. */
+  onSaveScripts?: (entries: ScriptEntry[]) => void;
 }
 
 const typeLabels: Record<PaneType, string> = {
@@ -35,7 +43,7 @@ interface SessionPickerState {
   sessions: { sessionId: string; timestamp: string; summary: string }[];
 }
 
-const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab, onCloseTab, onRenameTab, onSplitTab, onMoveTab, leftOffset = 0 }) => {
+const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab, onCloseTab, onRenameTab, onSplitTab, onMoveTab, leftOffset = 0, cwd, scripts = [], onRunScript, onSaveScripts }) => {
   const { config } = useConfig();
   const navHeight = Math.max(config.ui.navBarHeight || 34, 32);
   const shells = config.terminal.shells || [];
@@ -43,11 +51,14 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
   const [tabContextMenu, setTabContextMenu] = useState<{ tabId: string; tabIdx: number; x: number; y: number } | null>(null);
   const [profilePickerState, setProfilePickerState] = useState<{ folder: string; profiles: any[] } | null>(null);
   const [sessionPickerState, setSessionPickerState] = useState<SessionPickerState | null>(null);
+  const [managingScripts, setManagingScripts] = useState(false);
+  const [scriptDraft, setScriptDraft] = useState<ScriptEntry[]>([]);
   const menuRef = useRef<HTMLDivElement>(null);
   const tabMenuRef = useRef<HTMLDivElement>(null);
+  const scriptMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!showMenu && !tabContextMenu) return;
+    if (!showMenu && !tabContextMenu && !managingScripts) return;
     const handler = (e: MouseEvent) => {
       if (showMenu && menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setShowMenu(false);
@@ -55,10 +66,13 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
       if (tabContextMenu && tabMenuRef.current && !tabMenuRef.current.contains(e.target as Node)) {
         setTabContextMenu(null);
       }
+      if (managingScripts && scriptMenuRef.current && !scriptMenuRef.current.contains(e.target as Node)) {
+        setManagingScripts(false);
+      }
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
-  }, [showMenu, tabContextMenu]);
+  }, [showMenu, tabContextMenu, managingScripts]);
 
   return (
     <nav
@@ -265,6 +279,81 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
           </div>
         )}
       </div>
+
+      {/* Per-directory script bar (right side) */}
+      {cwd && onRunScript && (
+        <div
+          ref={scriptMenuRef}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '4px',
+            flexShrink: 0,
+            paddingLeft: '8px',
+            position: 'relative',
+            // @ts-ignore
+            WebkitAppRegion: 'no-drag',
+            appRegion: 'no-drag',
+          }}
+        >
+          {scripts.map((s, i) => (
+            <button
+              key={`${s.name}-${i}`}
+              onClick={() => onRunScript(s.name, s.command)}
+              title={s.command}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 4,
+                height: '22px', padding: '0 10px', margin: 0,
+                border: '1px solid var(--wks-border)', borderRadius: '11px',
+                cursor: 'pointer', fontSize: '0.68rem', fontFamily: 'inherit',
+                backgroundColor: 'transparent', color: 'var(--wks-text-muted)',
+                whiteSpace: 'nowrap', lineHeight: 1,
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--wks-bg-hover)';
+                (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-primary)';
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent';
+                (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-muted)';
+              }}
+            >
+              <span style={{ fontSize: '0.6rem', opacity: 0.7 }}>{'▶'}</span>
+              {s.name}
+            </button>
+          ))}
+
+          {/* Manage scripts */}
+          {onSaveScripts && (
+            <button
+              onClick={() => { setScriptDraft(scripts.map((s) => ({ ...s }))); setManagingScripts((v) => !v); }}
+              title="Edit scripts for this directory"
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                width: '22px', height: '22px', padding: 0, margin: 0,
+                border: '1px dashed var(--wks-border-input)', borderRadius: '11px',
+                cursor: 'pointer', fontSize: '0.7rem', fontFamily: 'inherit',
+                backgroundColor: 'transparent', color: 'var(--wks-text-faint)',
+              }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-secondary)'; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-faint)'; }}
+            >
+              {scripts.length === 0 ? '+' : '⚙'}
+            </button>
+          )}
+
+          {managingScripts && onSaveScripts && (
+            <ScriptManager
+              navHeight={navHeight}
+              draft={scriptDraft}
+              setDraft={setScriptDraft}
+              onSave={(entries) => { onSaveScripts(entries); setManagingScripts(false); }}
+              onCancel={() => setManagingScripts(false)}
+            />
+          )}
+        </div>
+      )}
+
       {/* Profile Picker Modal */}
       {profilePickerState && (
         <div
@@ -455,6 +544,111 @@ function formatSessionDate(iso: string): string {
     return iso;
   }
 }
+
+const ScriptManager: React.FC<{
+  navHeight: number;
+  draft: ScriptEntry[];
+  setDraft: React.Dispatch<React.SetStateAction<ScriptEntry[]>>;
+  onSave: (entries: ScriptEntry[]) => void;
+  onCancel: () => void;
+}> = ({ navHeight, draft, setDraft, onSave, onCancel }) => {
+  const update = (i: number, patch: Partial<ScriptEntry>) =>
+    setDraft((prev) => prev.map((s, idx) => (idx === i ? { ...s, ...patch } : s)));
+  const remove = (i: number) => setDraft((prev) => prev.filter((_, idx) => idx !== i));
+  const add = () => setDraft((prev) => [...prev, { name: '', command: '' }]);
+
+  const inputStyle: React.CSSProperties = {
+    height: '24px', padding: '0 6px', fontSize: '0.68rem',
+    backgroundColor: 'var(--wks-bg-input)', color: 'var(--wks-text-secondary)',
+    border: '1px solid var(--wks-border)', borderRadius: '3px', outline: 'none',
+    fontFamily: 'inherit', boxSizing: 'border-box',
+  };
+
+  return (
+    <div
+      style={{
+        position: 'fixed', top: `${navHeight + 2}px`, right: '10px',
+        backgroundColor: 'var(--wks-bg-surface)', border: '1px solid var(--wks-border-input)',
+        borderRadius: '6px', padding: '10px', zIndex: 10000, width: '380px',
+        boxShadow: '0 6px 20px var(--wks-shadow)',
+        display: 'flex', flexDirection: 'column', gap: '6px',
+      }}
+    >
+      <div style={{ fontSize: '0.6rem', color: 'var(--wks-text-disabled)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+        Scripts for this directory
+      </div>
+
+      {draft.length === 0 && (
+        <div style={{ fontSize: '0.65rem', color: 'var(--wks-text-faint)', padding: '4px 0' }}>
+          No scripts yet. Add one below — e.g. “Test” → <code style={{ fontFamily: 'monospace' }}>npm test</code>.
+        </div>
+      )}
+
+      {draft.map((s, i) => (
+        <div key={i} style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+          <input
+            value={s.name}
+            onChange={(e) => update(i, { name: e.target.value })}
+            placeholder="Name"
+            style={{ ...inputStyle, width: '90px', flexShrink: 0 }}
+          />
+          <input
+            value={s.command}
+            onChange={(e) => update(i, { command: e.target.value })}
+            placeholder="bash command (e.g. cargo test)"
+            style={{ ...inputStyle, flex: 1, fontFamily: 'monospace' }}
+            onKeyDown={(e) => { if (e.key === 'Enter') onSave(draft.filter((d) => d.name.trim() && d.command.trim())); }}
+          />
+          <button
+            onClick={() => remove(i)}
+            title="Remove"
+            style={{
+              width: '22px', height: '24px', flexShrink: 0, border: '1px solid var(--wks-border)',
+              borderRadius: '3px', backgroundColor: 'transparent', color: 'var(--wks-error, #e05555)',
+              cursor: 'pointer', fontSize: '0.7rem',
+            }}
+          >
+            {'✕'}
+          </button>
+        </div>
+      ))}
+
+      <button
+        onClick={add}
+        style={{
+          padding: '4px', fontSize: '0.65rem', fontFamily: 'inherit', fontWeight: 500,
+          backgroundColor: 'transparent', color: 'var(--wks-text-muted)',
+          border: '1px dashed var(--wks-border-input)', borderRadius: '4px', cursor: 'pointer',
+        }}
+      >
+        + Add script
+      </button>
+
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '6px', marginTop: '2px' }}>
+        <button
+          onClick={onCancel}
+          style={{
+            padding: '3px 10px', fontSize: '0.65rem', fontFamily: 'inherit',
+            border: '1px solid var(--wks-border)', borderRadius: '3px',
+            backgroundColor: 'transparent', color: 'var(--wks-text-muted)', cursor: 'pointer',
+          }}
+        >
+          Cancel
+        </button>
+        <button
+          onClick={() => onSave(draft.filter((d) => d.name.trim() && d.command.trim()))}
+          style={{
+            padding: '3px 10px', fontSize: '0.65rem', fontFamily: 'inherit', fontWeight: 600,
+            border: '1px solid var(--wks-accent)', borderRadius: '3px',
+            backgroundColor: 'var(--wks-accent)', color: '#fff', cursor: 'pointer',
+          }}
+        >
+          Save
+        </button>
+      </div>
+    </div>
+  );
+};
 
 function MenuButton({ label, onClick }: { label: string; onClick: () => void }) {
   return (

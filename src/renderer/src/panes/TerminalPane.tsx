@@ -28,10 +28,13 @@ interface TerminalPaneProps {
   isActive: boolean;
   shell?: string;
   cwd?: string;
+  /** Command typed into the PTY once it's ready (script buttons). */
+  initialCommand?: string;
   onPtyReady?: (paneId: string, ptySessionId: string) => void;
 }
 
-const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, shell, cwd, onPtyReady }) => {
+const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, shell, cwd, initialCommand, onPtyReady }) => {
+  const ranInitialRef = useRef(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -263,6 +266,16 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
 
     return () => clearTimeout(timer);
   }, [isReady, resize]);
+
+  // Run the initial command (script buttons) once the PTY is ready. Small delay
+  // so the shell has printed its prompt before we type — otherwise the first
+  // keystrokes can be swallowed by shell startup.
+  useEffect(() => {
+    if (!isReady || !initialCommand || ranInitialRef.current) return;
+    ranInitialRef.current = true;
+    const timer = setTimeout(() => write(initialCommand + '\r'), 400);
+    return () => clearTimeout(timer);
+  }, [isReady, initialCommand, write]);
 
   // Update terminal theme when it changes
   useEffect(() => {

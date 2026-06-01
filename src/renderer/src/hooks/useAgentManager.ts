@@ -181,6 +181,7 @@ export function useAgentManager() {
     profileId?: string,
     resumeSessionId?: string,
     attachSessionId?: string,
+    initialCommand?: string,
   ) => {
     const aid = activeAgentIdRef.current;
     if (!aid) return '';
@@ -189,7 +190,7 @@ export function useAgentManager() {
     const paneTitle = title ?? defaultTitles[type];
 
     const pane: PaneConfig = {
-      id: paneId, type, title: paneTitle, shell, url, appMode, cwd, profileId, resumeSessionId, attachSessionId,
+      id: paneId, type, title: paneTitle, shell, url, appMode, cwd, profileId, resumeSessionId, attachSessionId, initialCommand,
     };
     const tab: TabConfig = { id: tabId, title: paneTitle, panes: [pane], activePaneId: paneId };
 

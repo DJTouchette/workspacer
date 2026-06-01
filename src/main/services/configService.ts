@@ -20,6 +20,11 @@ interface AppEntry {
   icon?: string;
 }
 
+interface ScriptEntry {
+  name: string;
+  command: string;
+}
+
 interface Config {
   ui: {
     animations: boolean;
@@ -57,6 +62,18 @@ interface Config {
     leader: string;
     shortcuts: Record<string, string>;
   };
+  notifications: {
+    /** Master switch for OS notifications + taskbar attention. */
+    enabled: boolean;
+    /** Also notify when an agent finishes (working → idle), not just needs-you. */
+    notifyDone: boolean;
+    /** Suppress notifications for the agent currently on screen. */
+    onlyWhenUnwatched: boolean;
+    /** Play the OS notification sound. */
+    sound: boolean;
+  };
+  /** Per-directory script buttons, keyed by workspace root (normalized cwd). */
+  scripts: Record<string, ScriptEntry[]>;
   apps: AppEntry[];
 }
 
@@ -144,9 +161,17 @@ function defaultConfig(): Config {
         'nav-down': 'ctrl+shift+j',
         'prev-agent': 'ctrl+alt+arrowup',
         'next-agent': 'ctrl+alt+arrowdown',
+        'next-attention': 'ctrl+alt+arrowright',
         'spawn-agent': 'ctrl+alt+n',
       },
     },
+    notifications: {
+      enabled: true,
+      notifyDone: true,
+      onlyWhenUnwatched: true,
+      sound: false,
+    },
+    scripts: {},
     apps: [
       { name: 'GitHub', url: 'https://github.com', icon: '\u{1F4BB}' },
       { name: 'ChatGPT', url: 'https://chat.openai.com', icon: '\u{1F916}' },

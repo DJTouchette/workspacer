@@ -68,6 +68,7 @@ interface UseKeyboardNavOptions {
   onOpenSplitPalette?: () => void;
   onPrevAgent?: () => void;
   onNextAgent?: () => void;
+  onNextAttention?: () => void;
   onSpawnAgent?: () => void;
   shortcuts?: Record<string, string>;
 }
@@ -96,6 +97,7 @@ export function useKeyboardNav({
   onOpenSplitPalette,
   onPrevAgent,
   onNextAgent,
+  onNextAttention,
   onSpawnAgent,
   shortcuts = {},
 }: UseKeyboardNavOptions) {
@@ -184,9 +186,11 @@ export function useKeyboardNav({
         requestAnimationFrame(() => scrollToTab(newId));
       }
       else if (key === 'q') removeTab(activeTabId);
-      // Agents (vertical sidebar): k/j move up/down, a spawns.
+      // Agents (vertical sidebar): k/j move up/down, a spawns, m → next that
+      // needs me (approval / input).
       else if (key === 'k') onPrevAgent?.();
       else if (key === 'j') onNextAgent?.();
+      else if (key === 'm') onNextAttention?.();
       else if (key === 'a') onSpawnAgent?.();
       else if (key === 'r') onRenameTab?.();
       else if (key === '?') onToggleHelp();
@@ -221,6 +225,7 @@ export function useKeyboardNav({
       if (m['command-palette']?.(e)) { e.preventDefault(); e.stopPropagation(); onOpenCommandPalette?.(); return; }
       if (m['prev-agent']?.(e)) { e.preventDefault(); e.stopPropagation(); onPrevAgent?.(); return; }
       if (m['next-agent']?.(e)) { e.preventDefault(); e.stopPropagation(); onNextAgent?.(); return; }
+      if (m['next-attention']?.(e)) { e.preventDefault(); e.stopPropagation(); onNextAttention?.(); return; }
       if (m['spawn-agent']?.(e)) { e.preventDefault(); e.stopPropagation(); onSpawnAgent?.(); return; }
 
       // --- Vim chord handling ---
@@ -336,5 +341,5 @@ export function useKeyboardNav({
       window.removeEventListener('keyup', handleKeyUp, true);
       cancelChord();
     };
-  }, [goToTab, goToPrevTab, goToNextTab, navigatePane, addTab, splitTab, removeTab, removePane, moveTab, tabs, activeTabId, activeTab, scrollToTab, onToggleHelp, onRenameTab, keybindingsMode, leaderKey, onChordStateChange, onOpenSettings, onSaveSession, onOpenCommandPalette, onOpenSplitPalette, onPrevAgent, onNextAgent, onSpawnAgent]);
+  }, [goToTab, goToPrevTab, goToNextTab, navigatePane, addTab, splitTab, removeTab, removePane, moveTab, tabs, activeTabId, activeTab, scrollToTab, onToggleHelp, onRenameTab, keybindingsMode, leaderKey, onChordStateChange, onOpenSettings, onSaveSession, onOpenCommandPalette, onOpenSplitPalette, onPrevAgent, onNextAgent, onNextAttention, onSpawnAgent]);
 }

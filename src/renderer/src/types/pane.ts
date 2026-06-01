@@ -16,6 +16,9 @@ export interface PaneConfig {
    *  running in claudemon and we just want to subscribe to its byte stream
    *  without spawning a second process. Mutually exclusive with resumeSessionId. */
   attachSessionId?: string;
+  /** Terminal panes only: a command typed into the PTY once it's ready (used by
+   *  the per-directory script buttons). */
+  initialCommand?: string;
 }
 
 export interface TabConfig {

@@ -94,6 +94,10 @@ export interface ElectronAPI {
 
   // App lifecycle
   onBeforeQuit: (callback: () => void) => () => void;
+
+  // Notifications / ambient awareness
+  setActiveSession: (sessionId: string | null) => void;
+  onFocusAgent: (callback: (sessionId: string) => void) => () => void;
 }
 
 declare global {

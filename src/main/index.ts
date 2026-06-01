@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import { registerIpcHandlers } from './ipc';
 import { claudeSessionStore } from './services/claudeSessionStore';
+import { agentNotifier } from './services/agentNotifier';
 import { claudemonSessionClient } from './services/claudemonSessionClient';
 import { startClaudemon, stopClaudemon, runClaudemonInit } from './services/claudemonDaemon';
 import { startDevDaemon, stopDevDaemon } from './services/devdaemonManager';
@@ -167,6 +168,7 @@ function createWindow(): void {
 
   registerIpcHandlers(mainWindow);
   claudeSessionStore.setMainWindow(mainWindow);
+  agentNotifier.setMainWindow(mainWindow);
 
   // claudemon daemon owns hook ingestion + transcript parsing. We spawn it,
   // run `claudemon init` to merge our hooks into ~/.claude/settings.json,

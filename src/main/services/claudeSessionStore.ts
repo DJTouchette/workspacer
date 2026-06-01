@@ -1,5 +1,6 @@
 import * as path from 'path';
 import { BrowserWindow } from 'electron';
+import { agentNotifier } from './agentNotifier';
 
 /**
  * Ambient session activity, mostly driven by hook events now that claudemon
@@ -134,6 +135,10 @@ class ClaudeSessionStore {
       this.refreshFromTranscript(session);
     }
 
+    // Snapshot the ambient state so the notifier can detect transitions
+    // (needs-you / done) after the switch below applies the new state.
+    const prevAmbient = session.ambientState;
+
     switch (hookName) {
       case 'SessionStart':
         session.status = 'active';
@@ -266,6 +271,7 @@ class ClaudeSessionStore {
         break;
     }
 
+    agentNotifier.notifyOnTransition(session, prevAmbient);
     this.pushUpdate(session);
   }
 

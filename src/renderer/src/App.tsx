@@ -15,8 +15,13 @@ import { useKeyboardNav } from './hooks/useKeyboardNav';
 import { useConfig } from './hooks/useConfig';
 import { useTheme } from './hooks/useTheme';
 
+/** Normalize a workspace dir into a stable config key (slashes + no trailing /). */
+function scriptKey(cwd: string): string {
+  return cwd.replace(/\\/g, '/').replace(/\/+$/, '');
+}
+
 function App() {
-  const { config } = useConfig();
+  const { config, save: saveConfig } = useConfig();
   useTheme();
   const {
     agents,
@@ -256,8 +261,8 @@ function App() {
 
   const insertPosition = config.panes.insertPosition || 'after';
 
-  const addTabWithConfig = useCallback((type: PaneType, title?: string, shell?: string, url?: string, appMode?: boolean, cwd?: string, profileId?: string, resumeSessionId?: string, attachSessionId?: string) => {
-    return addTab(type, title, insertPosition, shell, url, appMode, cwd, profileId, resumeSessionId, attachSessionId);
+  const addTabWithConfig = useCallback((type: PaneType, title?: string, shell?: string, url?: string, appMode?: boolean, cwd?: string, profileId?: string, resumeSessionId?: string, attachSessionId?: string, initialCommand?: string) => {
+    return addTab(type, title, insertPosition, shell, url, appMode, cwd, profileId, resumeSessionId, attachSessionId, initialCommand);
   }, [addTab, insertPosition]);
 
   const openSettings = useCallback(() => {
@@ -300,6 +305,38 @@ function App() {
   const handleNextAgent = useCallback(() => goToAgent(1), [goToAgent]);
   const handleSpawnAgentShortcut = useCallback(() => setShowSpawnDialog(true), []);
 
+  // Jump to the next agent that's blocked on you (approval / input), cycling
+  // from the current one. No-op if nothing needs you.
+  const goToNextAttention = useCallback(() => {
+    if (agents.length === 0) return;
+    const needsMe = (a: AgentWorkspace) => {
+      const s = a.sessionId ? statusBySession[a.sessionId] : undefined;
+      return s === 'waiting_approval' || s === 'waiting_input';
+    };
+    const startIdx = agents.findIndex((a) => a.id === activeAgentId);
+    const base = startIdx < 0 ? 0 : startIdx;
+    for (let off = 1; off <= agents.length; off++) {
+      const cand = agents[(base + off) % agents.length];
+      if (needsMe(cand)) { handleSelectAgent(cand.id); return; }
+    }
+  }, [agents, activeAgentId, statusBySession, handleSelectAgent]);
+
+  // Tell main which agent session is on screen so notifications can skip the
+  // one you're watching.
+  useEffect(() => {
+    window.electronAPI.setActiveSession(activeAgent?.sessionId ?? null);
+  }, [activeAgent?.sessionId]);
+
+  // Clicking an OS notification focuses the window (main) and asks us to jump
+  // to the agent that fired it.
+  useEffect(() => {
+    const unsub = window.electronAPI.onFocusAgent((sessionId) => {
+      const agent = agents.find((a) => a.sessionId === sessionId);
+      if (agent) handleSelectAgent(agent.id);
+    });
+    return unsub;
+  }, [agents, handleSelectAgent]);
+
   // When the active agent changes, pull keyboard focus into its active pane.
   // Switching agents (sidebar click or keyboard shortcut) leaves DOM focus on
   // whatever was focused before — the sidebar button, a dialog, etc. — so the
@@ -315,6 +352,10 @@ function App() {
     const activeTab = tabs.find((t) => t.id === activeTabId);
     const paneId = activeTab?.activePaneId;
     if (!paneId) return;
+
+    // The just-shown container may have a stale scroll position (it was hidden
+    // while other agents were active), so re-center its active tab.
+    requestAnimationFrame(() => scrollContainerRef.current?.scrollToTab(activeTabId));
 
     // The active pane (and its lazily-loaded content) may not be mounted on the
     // first frame after the switch, so retry across a few frames.
@@ -364,6 +405,7 @@ function App() {
     onOpenSplitPalette: useCallback(() => { setPaletteMode('split'); setShowCommandPalette(true); }, []),
     onPrevAgent: handlePrevAgent,
     onNextAgent: handleNextAgent,
+    onNextAttention: goToNextAttention,
     onSpawnAgent: handleSpawnAgentShortcut,
     shortcuts: config.keybindings?.shortcuts ?? {},
   });
@@ -421,6 +463,23 @@ function App() {
     requestAnimationFrame(() => scrollToTab(newId));
   }, [addTab, insertPosition, scrollToTab]);
 
+  // --- Per-directory script buttons ---
+  const agentCwd = activeAgent?.cwd ?? '';
+  const dirScripts = agentCwd ? (config.scripts?.[scriptKey(agentCwd)] ?? []) : [];
+
+  // Run a script in a fresh terminal tab rooted at the agent's workspace.
+  const handleRunScript = useCallback((name: string, command: string) => {
+    if (!agentCwd) return;
+    const newId = addTabWithConfig('terminal', name, undefined, undefined, undefined, agentCwd, undefined, undefined, undefined, command);
+    requestAnimationFrame(() => scrollToTab(newId));
+  }, [agentCwd, addTabWithConfig, scrollToTab]);
+
+  // Persist this directory's script list to config.
+  const handleSaveScripts = useCallback((entries: { name: string; command: string }[]) => {
+    if (!agentCwd) return;
+    saveConfig({ scripts: { ...(config.scripts ?? {}), [scriptKey(agentCwd)]: entries } });
+  }, [agentCwd, config.scripts, saveConfig]);
+
   // --- Render ---
   const navHeight = Math.max(config.ui.navBarHeight || 34, 32);
 
@@ -443,6 +502,7 @@ function App() {
         onSpawnAgent={() => setShowSpawnDialog(true)}
         onTerminateAgent={terminateAgent}
         onRenameAgent={renameAgent}
+        onJumpToAttention={goToNextAttention}
       />
 
       <NavBar
@@ -455,29 +515,48 @@ function App() {
         onSplitTab={handleNavBarSplit}
         onMoveTab={moveTab}
         leftOffset={SIDEBAR_WIDTH}
+        cwd={agentCwd || undefined}
+        scripts={dirScripts}
+        onRunScript={handleRunScript}
+        onSaveScripts={handleSaveScripts}
       />
 
       <div className="app-content" style={{
         marginTop: `${navHeight}px`,
         marginLeft: `${SIDEBAR_WIDTH}px`,
       }}>
-        {activeAgent ? (
-          <ScrollContainer
-            ref={scrollContainerRef}
-            tabs={tabs}
-            activeTabId={activeTabId}
-            onTabFocus={handleTabFocus}
-            onPaneClose={handlePaneClose}
-            onPaneFocus={handlePaneFocus}
-            onTabRename={renameTab}
-            onTabMove={moveTab}
-            onPtyReady={handlePtyReady}
-            onUrlChange={handleUrlChange}
-            onNavigateToTab={handleTabClick}
-            onAddTab={handleAddTab}
-            ptyMapping={ptyMapping}
-            renameSignal={renameSignal}
-          />
+        {agents.length > 0 ? (
+          // Keep every agent's workspace mounted and just toggle visibility, so
+          // switching agents never unmounts a Claude pane (which would detach
+          // its viewer and clear the terminal). Only the active agent's
+          // container is shown and wired to the scroll ref.
+          agents.map((agent) => {
+            const isActiveAgent = agent.id === activeAgentId;
+            return (
+              <div
+                key={agent.id}
+                style={{ display: isActiveAgent ? 'block' : 'none', height: '100%' }}
+              >
+                <ScrollContainer
+                  ref={isActiveAgent ? scrollContainerRef : undefined}
+                  agentActive={isActiveAgent}
+                  tabs={agent.tabs}
+                  activeTabId={agent.activeTabId}
+                  onTabFocus={handleTabFocus}
+                  onPaneClose={handlePaneClose}
+                  onPaneFocus={handlePaneFocus}
+                  onTabRename={renameTab}
+                  onTabMove={moveTab}
+                  onPtyReady={handlePtyReady}
+                  onUrlChange={handleUrlChange}
+                  onNavigateToTab={handleTabClick}
+                  onAddTab={handleAddTab}
+                  ptyMapping={ptyMapping}
+                  renameSignal={renameSignal}
+                />
+              </div>
+            );
+          })
         ) : (
           <div style={{
             height: '100%', display: 'flex', flexDirection: 'column',

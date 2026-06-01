@@ -269,4 +269,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.removeListener('app:before-quit', handler);
     };
   },
+
+  // Notifications / ambient awareness
+  /** Tell main which agent session is currently on screen (null = none). */
+  setActiveSession: (sessionId: string | null): void =>
+    ipcRenderer.send('notify:set-active-session', sessionId),
+  /** Fired when the user clicks an OS notification — carries the sessionId. */
+  onFocusAgent: (callback: (sessionId: string) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, sessionId: string) => callback(sessionId);
+    ipcRenderer.on('notify:focus-agent', handler);
+    return () => {
+      ipcRenderer.removeListener('notify:focus-agent', handler);
+    };
+  },
 });
