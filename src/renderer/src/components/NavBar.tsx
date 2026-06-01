@@ -82,17 +82,6 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
     >
       <div
         style={{
-          fontWeight: 600,
-          fontSize: '0.7rem',
-          color: 'var(--wks-text-secondary)',
-          marginRight: '16px',
-        }}
-      >
-        Workspacer
-      </div>
-
-      <div
-        style={{
           display: 'flex',
           alignItems: 'center',
           gap: '2px',
@@ -127,7 +116,7 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
                 height: '26px',
                 lineHeight: '1',
                 border: 'none',
-                borderRadius: '4px',
+                borderRadius: '13px',
                 cursor: 'pointer',
                 fontSize: '0.75rem',
                 fontFamily: 'inherit',
@@ -186,7 +175,7 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
                 height: '26px',
                 lineHeight: '1',
                 border: 'none',
-                borderRadius: '4px',
+                borderRadius: '13px',
                 cursor: 'pointer',
                 fontSize: '0.9rem',
                 fontFamily: 'inherit',

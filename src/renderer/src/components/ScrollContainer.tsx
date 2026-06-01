@@ -326,6 +326,7 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
                   onMove={onTabMove ? (_, delta) => handleTabMove(tab.id, delta) : undefined}
                   onRename={onTabRename ? (_, title) => onTabRename(tab.id, title) : undefined}
                   renameSignal={isActiveTab ? renameSignal : undefined}
+                  hideHeader
                 >
                   {renderPaneContent(tab.panes[0], isActiveTab, paneCallbacks)}
                 </Pane>

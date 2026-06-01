@@ -322,10 +322,16 @@ impl SessionStore {
     }
 
     pub async fn record_output(&self, session_id: &str, chunk: &[u8]) {
-        if let Some(buf) = self.buffers.get(session_id).map(|e| e.clone()) {
-            buf.lock().await.push(chunk);
-        }
-        if let Some(tx) = self.bytes_tx.get(session_id).map(|e| e.clone()) {
+        // Hold the buffer lock across both the ring-buffer push and the
+        // broadcast send so a concurrent snapshot_and_subscribe can't see a
+        // chunk in the snapshot *and* receive it again via the broadcast.
+        let Some(buf) = self.buffers.get(session_id).map(|e| e.clone()) else {
+            return;
+        };
+        let tx = self.bytes_tx.get(session_id).map(|e| e.clone());
+        let mut guard = buf.lock().await;
+        guard.push(chunk);
+        if let Some(tx) = tx {
             let _ = tx.send(chunk.to_vec());
         }
     }
@@ -338,6 +344,25 @@ impl SessionStore {
 
     pub fn subscribe_bytes(&self, session_id: &str) -> Option<broadcast::Receiver<Vec<u8>>> {
         self.bytes_tx.get(session_id).map(|e| e.subscribe())
+    }
+
+    /// Atomically take a snapshot of the ring buffer and subscribe to live
+    /// bytes. The buffer mutex is held across both operations, and
+    /// `record_output` holds the same mutex across its push+broadcast, so the
+    /// returned snapshot and receiver are gap-free and duplicate-free: any
+    /// chunk written before this call is in the snapshot only; any chunk
+    /// written after is delivered via the receiver only.
+    pub async fn snapshot_and_subscribe(
+        &self,
+        session_id: &str,
+    ) -> Option<(Vec<u8>, broadcast::Receiver<Vec<u8>>)> {
+        let buf = self.buffers.get(session_id).map(|e| e.clone())?;
+        let tx = self.bytes_tx.get(session_id).map(|e| e.clone())?;
+        let guard = buf.lock().await;
+        let snapshot = guard.snapshot();
+        let rx = tx.subscribe();
+        drop(guard);
+        Some((snapshot, rx))
     }
 }
 

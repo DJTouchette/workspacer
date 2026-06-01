@@ -12,6 +12,9 @@ interface PaneProps {
   onMove?: (id: string, delta: number) => void;
   onRename?: (id: string, title: string) => void;
   renameSignal?: number;
+  /** Omit the header bar (title + close button). Used for single-pane tabs
+   *  where the tab itself already carries the label. */
+  hideHeader?: boolean;
   children: React.ReactNode;
 }
 
@@ -38,6 +41,7 @@ const Pane: React.FC<PaneProps> = ({
   onMove,
   onRename,
   renameSignal,
+  hideHeader,
   children,
 }) => {
   const { config } = useConfig();
@@ -147,7 +151,8 @@ const Pane: React.FC<PaneProps> = ({
       }}
       onClick={() => onFocus(id)}
     >
-      {/* Header bar */}
+      {/* Header bar — hidden for single-pane tabs (the tab label suffices). */}
+      {!hideHeader && (
       <div
         className="pane-header"
         onMouseDown={handleHeaderMouseDown}
@@ -245,6 +250,7 @@ const Pane: React.FC<PaneProps> = ({
           &#x2715;
         </button>
       </div>
+      )}
 
       <div
         className="pane-content"

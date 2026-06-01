@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { AgentWorkspace } from '../types/pane';
 import type { SessionAmbientState } from '../types/claudeSession';
 
-export const SIDEBAR_WIDTH = 200;
+export const SIDEBAR_WIDTH = 168;
 
 /** Ambient state (or `undefined` = stopped) → status dot color + label. */
 function statusVisual(state: SessionAmbientState | undefined): { color: string; label: string } {

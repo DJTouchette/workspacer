@@ -424,15 +424,25 @@ async fn stream_bytes(
     State(store): State<SessionStore>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    let Some(rx) = store.subscribe_bytes(&id) else {
+    let Some((snapshot, rx)) = store.snapshot_and_subscribe(&id).await else {
         return (StatusCode::NOT_FOUND, "no buffer for that session").into_response();
     };
-    let stream = BroadcastStream::new(rx).filter_map(|res| match res {
+
+    // First event replays the ring buffer so reconnecting/attaching clients
+    // see prior terminal output. Empty snapshot → no replay event.
+    let replay = (!snapshot.is_empty()).then(|| {
+        Ok::<_, Infallible>(Event::default().event("pty.bytes").data(B64.encode(&snapshot)))
+    });
+
+    let live = BroadcastStream::new(rx).filter_map(|res| match res {
         Ok(chunk) => Some(Ok::<_, Infallible>(
             Event::default().event("pty.bytes").data(B64.encode(&chunk)),
         )),
         Err(_) => None,
     });
+
+    let stream = futures::stream::iter(replay).chain(live);
+
     Sse::new(stream)
         .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
         .into_response()
