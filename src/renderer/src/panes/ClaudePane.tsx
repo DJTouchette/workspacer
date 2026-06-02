@@ -8,7 +8,6 @@ import { useClaudeSession } from '../hooks/useClaudeSession';
 import { useConfig } from '../hooks/useConfig';
 import { useTheme } from '../hooks/useTheme';
 import type { ClaudeSessionSnapshot, ToolCall, ConversationTurn, FileChange, PendingApproval, PendingQuestion, SubagentInfo } from '../types/claudeSession';
-import { extractIssueKeys, resolveIssueContext, registerIssueLinkProvider, type IssuePeekData } from '../lib/issueLinks';
 import {
   claudeColors as colors,
   ensureKeyframes,
@@ -41,6 +40,8 @@ interface ClaudePaneProps {
   resumeSessionId?: string;
   /** If set, this pane is a viewer for an already-running daemon session. */
   attachSessionId?: string;
+  /** Text to seed the message input with on first mount (library spawn). */
+  initialPrompt?: string;
   onPtyReady?: (paneId: string, ptySessionId: string) => void;
 }
 
@@ -873,81 +874,18 @@ const ScrollToBottomButton: React.FC<{ onClick: () => void }> = ({ onClick }) =>
   </div>
 );
 
-// ── Issue Peek Popup ──
-
-const IssuePeekPopup: React.FC<{ data: IssuePeekData; onClose: () => void }> = ({ data, onClose }) => (
-  <div
-    onClick={onClose}
-    style={{
-      position: 'absolute',
-      inset: 0,
-      zIndex: 100,
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: 'rgba(0,0,0,0.4)',
-    }}
-  >
-    <div
-      onClick={e => e.stopPropagation()}
-      style={{
-        width: 420,
-        maxHeight: '70vh',
-        overflow: 'auto',
-        borderRadius: 10,
-        border: `1px solid ${colors.border}`,
-        backgroundColor: 'var(--wks-bg-surface)',
-        padding: '16px 20px',
-        animation: 'claudeFadeIn 0.15s ease-out',
-      }}
-    >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-        <span style={{ color: colors.accent, fontWeight: 700, fontFamily: 'monospace', fontSize: '0.82rem' }}>
-          {data.key}
-        </span>
-        <span style={{
-          fontSize: '0.6rem', fontWeight: 600, padding: '2px 8px', borderRadius: 10,
-          backgroundColor: 'rgba(255,255,255,0.05)',
-          color: data.statusCategory === 'done' ? colors.success : data.statusCategory === 'in_progress' ? colors.accent : colors.muted,
-        }}>
-          {data.status}
-        </span>
-        <div style={{ flex: 1 }} />
-        <span onClick={onClose} style={{ cursor: 'pointer', color: colors.muted, fontSize: '0.85rem' }}>{'\u00D7'}</span>
-      </div>
-      <div style={{ fontSize: '0.82rem', fontWeight: 600, color: colors.textBright, marginBottom: 8 }}>
-        {data.title}
-      </div>
-      <div style={{ fontSize: '0.65rem', color: colors.muted, marginBottom: 10, display: 'flex', gap: 12 }}>
-        <span>Type: {data.type}</span>
-        {data.assignee && <span>Assignee: {data.assignee}</span>}
-      </div>
-      {data.description && (
-        <div style={{
-          fontSize: '0.72rem', lineHeight: 1.5, color: colors.text,
-          whiteSpace: 'pre-wrap', padding: '10px 12px', borderRadius: 6,
-          border: `1px solid ${colors.borderSubtle}`, backgroundColor: 'rgba(255,255,255,0.02)',
-          maxHeight: 200, overflow: 'auto',
-        }}>
-          {data.description}
-        </div>
-      )}
-    </div>
-  </div>
-);
 
 // ── Main component ──
 
-const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, profileId, resumeSessionId, attachSessionId, onPtyReady }) => {
-  const [viewMode, setViewMode] = useState<ViewMode>('terminal');
-  const [inputValue, setInputValue] = useState('');
+const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, profileId, resumeSessionId, attachSessionId, initialPrompt, onPtyReady }) => {
+  const [viewMode, setViewMode] = useState<ViewMode>(initialPrompt ? 'gui' : 'terminal');
+  const [inputValue, setInputValue] = useState(initialPrompt ?? '');
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   const [approvalDismissedAt, setApprovalDismissedAt] = useState(0);
   const [cancelledAt, setCancelledAt] = useState(0);
   const [visibleCount, setVisibleCount] = useState(CONVERSATION_PAGE_SIZE);
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
   const [isDragOver, setIsDragOver] = useState(false);
-  const [issuePeek, setIssuePeek] = useState<IssuePeekData | null>(null);
   const dragCounterRef = useRef(0);
   const termContainerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
@@ -1004,6 +942,23 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
       onPtyReady(paneId, sessionId);
     }
   }, [sessionId, paneId, onPtyReady]);
+
+  // Library: receive a prompt/skill inserted from the library. Targeted by
+  // sessionId/paneId, or delivered to the active pane when untargeted.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const d = (e as CustomEvent).detail as { text?: string; sessionId?: string; paneId?: string } | undefined;
+      if (!d?.text) return;
+      const targeted = d.sessionId || d.paneId;
+      const matches = targeted ? (d.sessionId === sessionId || d.paneId === paneId) : isActive;
+      if (!matches) return;
+      setViewMode('gui');
+      setInputValue((prev) => (prev.trim() ? `${prev.replace(/\s+$/, '')}\n${d.text}` : d.text!));
+      requestAnimationFrame(() => inputRef.current?.focus());
+    };
+    window.addEventListener('library:insert', handler as EventListener);
+    return () => window.removeEventListener('library:insert', handler as EventListener);
+  }, [sessionId, paneId, isActive]);
 
   // Initialize xterm.js
   useEffect(() => {
@@ -1080,11 +1035,6 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
 
     attachToTerminal(term);
 
-    // Issue key link provider — makes PROJ-123 clickable in terminal
-    const issueLinkDisp = registerIssueLinkProvider(term, (data) => {
-      setIssuePeek(data);
-    });
-
     const onDataDisp = term.onData((data) => write(data));
     const onBinaryDisp = term.onBinary((data) => write(data));
 
@@ -1096,7 +1046,6 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
     const onResizeDisp = term.onResize(({ cols, rows }) => resize(cols, rows));
 
     return () => {
-      issueLinkDisp.dispose();
       onDataDisp.dispose();
       onBinaryDisp.dispose();
       onResizeDisp.dispose();
@@ -1281,14 +1230,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
     // Build file prefix
     const filePrefix = hasFiles ? buildPromptPrefix(attachedFiles) : '';
 
-    // Detect and resolve issue keys (e.g. PL-43)
-    const issueKeys = extractIssueKeys(userText);
-    let issueContext = '';
-    if (issueKeys.length > 0) {
-      try { issueContext = await resolveIssueContext(issueKeys); } catch {}
-    }
-
-    const fullMessage = [issueContext, filePrefix + userText].filter(Boolean).join('\n');
+    const fullMessage = filePrefix + userText;
 
     // Show message immediately and set loading state
     setOptimisticMessages(prev => [...prev, {
@@ -1560,7 +1502,6 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
       {/* Content area */}
       <div style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
         {isDragOver && <DropOverlay />}
-        {issuePeek && <IssuePeekPopup data={issuePeek} onClose={() => setIssuePeek(null)} />}
 
         {/* Terminal view (always mounted, visibility toggled) */}
         <div

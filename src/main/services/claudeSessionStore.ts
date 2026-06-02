@@ -1,6 +1,14 @@
 import * as path from 'path';
 import { BrowserWindow } from 'electron';
 import { agentNotifier } from './agentNotifier';
+import { configService } from './configService';
+import {
+  type SessionUsage,
+  contextTokensOf,
+  contextLimitFor,
+  turnCostUSD,
+  emptyUsage,
+} from './modelUsage';
 
 /**
  * Ambient session activity, mostly driven by hook events now that claudemon
@@ -91,6 +99,7 @@ export interface ClaudeSessionState {
   lastActivity: number;
   totalToolCalls: number;
   lastTranscriptLine: number; // track how far we've read in JSONL
+  usage: SessionUsage | null; // token / cost / context, parsed from transcript
 }
 
 // Serialisable snapshot sent over IPC
@@ -101,6 +110,13 @@ export type ClaudeSessionSnapshot = Omit<ClaudeSessionState, never>;
 class ClaudeSessionStore {
   private sessions = new Map<string, ClaudeSessionState>();
   private mainWindow: BrowserWindow | null = null;
+  // sessionId → last accounted assistant message id, so re-seen transcript
+  // lines (blocks of one message stream as separate entries) don't double-count
+  // cumulative cost / token totals.
+  private lastUsageKey = new Map<string, string>();
+  // Concrete model ids we've already persisted to config, so we only write on
+  // genuinely-new models. Lazily seeded from config on first use.
+  private knownModels: Set<string> | null = null;
 
   setMainWindow(win: BrowserWindow): void {
     this.mainWindow = win;
@@ -316,6 +332,7 @@ class ClaudeSessionStore {
       lastActivity: Date.now(),
       totalToolCalls: 0,
       lastTranscriptLine: 0,
+      usage: null,
     };
     this.sessions.set(sessionId, session);
     return session;
@@ -401,6 +418,12 @@ class ClaudeSessionStore {
         session.conversation.push({ role: 'user', content, timestamp: Date.now() });
       }
     } else if (type === 'assistant' && msg) {
+      // Token usage rides on the assistant message. Context fullness is a
+      // point-in-time snapshot (overwrite); cost/totals accumulate per message.
+      if (msg.usage) {
+        this.applyUsage(session, msg.model ?? null, msg.usage, entry?.message?.id ?? entry?.uuid ?? null);
+      }
+
       // The JSONL transcript streams each content block as a separate entry.
       // Keep each block as its own conversation turn so text and tool calls
       // render interlaced in timeline order.
@@ -440,6 +463,49 @@ class ClaudeSessionStore {
         }
       }
     }
+  }
+
+  /**
+   * Fold one assistant message's `usage` into the session.
+   * Context = latest turn's input side (overwritten each time, idempotent).
+   * Totals/cost accumulate, deduped by message id so streamed blocks of the
+   * same message aren't counted twice.
+   */
+  private applyUsage(
+    session: ClaudeSessionState,
+    model: string | null,
+    usage: any,
+    key: string | null,
+  ): void {
+    if (!session.usage) session.usage = emptyUsage();
+    const u = session.usage;
+
+    const ctx = contextTokensOf(usage);
+    u.contextTokens = ctx;
+    if (model) {
+      u.model = model;
+      this.rememberModel(model);
+    }
+    u.contextLimit = contextLimitFor(u.model, ctx);
+
+    // Cumulative — only once per distinct message.
+    if (key && this.lastUsageKey.get(session.sessionId) === key) return;
+    if (key) this.lastUsageKey.set(session.sessionId, key);
+    u.totalInputTokens += ctx;
+    u.totalOutputTokens += usage.output_tokens ?? 0;
+    u.costUSD += turnCostUSD(u.model, usage);
+  }
+
+  /** Persist a concrete model id to config the first time we see it, so the
+   *  spawn dropdown can offer it across restarts. */
+  private rememberModel(model: string): void {
+    if (this.knownModels === null) {
+      const cfg = configService.getConfig() as any;
+      this.knownModels = new Set(Array.isArray(cfg.claude?.seenModels) ? cfg.claude.seenModels : []);
+    }
+    if (this.knownModels.has(model)) return;
+    this.knownModels.add(model);
+    configService.saveConfig({ claude: { seenModels: Array.from(this.knownModels).sort() } } as any);
   }
 
   private pushUpdate(session: ClaudeSessionState): void {

@@ -51,6 +51,16 @@ export interface SubagentInfo {
   completedAt?: number;
 }
 
+/** Token / cost / context usage, parsed from the transcript in the main process. */
+export interface SessionUsage {
+  model: string | null;
+  contextTokens: number; // latest turn's input side (point-in-time)
+  contextLimit: number; // tokens the model's window holds
+  totalInputTokens: number; // cumulative (incl. cache)
+  totalOutputTokens: number; // cumulative
+  costUSD: number; // cumulative
+}
+
 export interface ClaudeSessionSnapshot {
   sessionId: string;
   cwd: string;
@@ -68,4 +78,5 @@ export interface ClaudeSessionSnapshot {
   ambientState: SessionAmbientState;
   lastActivity: number;
   totalToolCalls: number;
+  usage: SessionUsage | null;
 }

@@ -6,8 +6,10 @@
   "scripts": {
     "dev": "concurrently -k \"npm run dev:renderer\" \"npm run dev:main\"",
     "dev:renderer": "cd src/renderer && npx vite --port 5173",
-    "dev:main": "npm run build:main && wait-on http://localhost:5173 && cross-env ELECTRON_DEV=1 electron .",
+    "dev:main": "npm run build:hub && npm run build:main && wait-on http://localhost:5173 && cross-env ELECTRON_DEV=1 electron .",
     "build:main": "tsc -p tsconfig.main.json",
+    "build:hub": "cd hub && go build -o hub ./cmd/hub",
+    "test:hub": "cd hub && go test -race ./...",
     "build:renderer": "cd src/renderer && npx vite build",
     "build": "npm run build:main && npm run build:renderer",
     "package": "npm run build && electron-builder",
@@ -89,6 +91,7 @@
     }
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@types/better-sqlite3": "^7.6.0",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.0.0",

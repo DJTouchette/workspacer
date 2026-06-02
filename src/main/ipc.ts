@@ -2,17 +2,17 @@ import { ipcMain, BrowserWindow, dialog } from 'electron';
 import * as os from 'os';
 import * as fs from 'fs';
 import { configService } from './services/configService';
+import { libraryService } from './services/libraryService';
 import { sessionService } from './services/sessionService';
 import { claudeSessionStore } from './services/claudeSessionStore';
 import { agentNotifier } from './services/agentNotifier';
 import { claudemonSessionClient } from './services/claudemonSessionClient';
 import { buildClaudeArgv } from './services/claudeResolver';
 import { importChromeCookies, importChromeCookiesViaCDP } from './services/chromeCookieImport';
-import { trackerService } from './services/tracker/trackerService';
-import { issueCache } from './services/db';
-import { devopsService } from './services/devops/devopsService';
 import { claudeProfiles } from './services/claudeProfiles';
 import { listClaudeSessionsForDir } from './services/claudeSessionList';
+import { HUB_HTTP_URL } from './services/hubDaemon';
+import { publishToHub, isHubConnected } from './services/hubClient';
 
 function detectDefaultShell(): string {
   if (process.platform === 'win32') {
@@ -26,6 +26,13 @@ function detectDefaultShell(): string {
 
 export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   claudemonSessionClient.setMainWindow(mainWindow);
+  libraryService.setMainWindow(mainWindow);
+
+  // ── Library (reusable prompts + skills) ──
+  ipcMain.handle('library:list', (_event, cwd?: string) => libraryService.list(cwd));
+  ipcMain.handle('library:save', (_event, input: any) => libraryService.save(input));
+  ipcMain.handle('library:remove', (_event, scope: 'global' | 'project', id: string, cwd?: string) =>
+    libraryService.remove(scope, id, cwd));
 
   // Renderer reports which agent session is currently on screen, so the
   // notifier can suppress alerts for the agent you're actively watching.
@@ -57,7 +64,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     claudemonSessionClient.close(id));
 
   // ── Claude sessions (delegated to claudemon) ──
-  ipcMain.handle('claude:spawn', async (_event, opts: { cwd?: string; profileId?: string; resumeSessionId?: string; cols?: number; rows?: number }) => {
+  ipcMain.handle('claude:spawn', async (_event, opts: { cwd?: string; profileId?: string; model?: string; skipPermissions?: boolean; resumeSessionId?: string; cols?: number; rows?: number }) => {
     const profile = opts.profileId ? claudeProfiles.getProfile(opts.profileId) : undefined;
     const env: Record<string, string> = {};
     if (profile?.configDir) {
@@ -66,9 +73,75 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     const argv = buildClaudeArgv({
       extraArgs: profile?.extraArgs,
       resumeSessionId: opts.resumeSessionId,
+      model: opts.model,
+      skipPermissions: opts.skipPermissions,
     });
     const cwd = opts.cwd ?? process.env.HOME ?? os.homedir();
     return claudemonSessionClient.spawn({ argv, cwd, cols: opts.cols, rows: opts.rows, env });
+  });
+
+  // ── Hub (control-plane / event bus) ──
+  ipcMain.handle('hub:listPlugins', async () => {
+    try {
+      const res = await fetch(`${HUB_HTTP_URL}/plugins`);
+      if (!res.ok) return [];
+      return await res.json();
+    } catch {
+      return [];
+    }
+  });
+  ipcMain.handle('hub:publish', (_event, ev: { type: string; source?: string; data?: unknown }) => {
+    publishToHub(ev);
+  });
+  ipcMain.handle('hub:getStatus', () => ({ connected: isHubConnected() }));
+  ipcMain.handle('hub:installPlugin', async (_event, url: string) => {
+    try {
+      const res = await fetch(`${HUB_HTTP_URL}/plugins/install`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url }),
+      });
+      const body = await res.json() as any;
+      if (!res.ok) return { ok: false, error: body?.error || `HTTP ${res.status}` };
+      return { ok: true, plugin: body };
+    } catch (err) {
+      return { ok: false, error: String((err as Error)?.message ?? err) };
+    }
+  });
+  ipcMain.handle('hub:removePlugin', async (_event, id: string) => {
+    try {
+      await fetch(`${HUB_HTTP_URL}/plugins/remove`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
+      });
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: String((err as Error)?.message ?? err) };
+    }
+  });
+
+  // Model choices for the spawn dialog. Dynamic by design: the aliases always
+  // resolve to the latest model of each family (so they track Claude Code
+  // updates with zero maintenance), and `seen` carries concrete ids observed
+  // in real transcripts — past sessions plus anything persisted in config.
+  ipcMain.handle('claude:listModels', () => {
+    const cfg = configService.getConfig() as any;
+    const persisted: string[] = Array.isArray(cfg.claude?.seenModels) ? cfg.claude.seenModels : [];
+    const live = claudeSessionStore.getAllSnapshots()
+      .map((s) => s.usage?.model)
+      .filter((m): m is string => !!m);
+    const seen = Array.from(new Set([...persisted, ...live])).sort();
+    return {
+      defaultModel: typeof cfg.claude?.defaultModel === 'string' ? cfg.claude.defaultModel : '',
+      skipPermissionsDefault: cfg.claude?.skipPermissionsDefault === true,
+      aliases: [
+        { value: 'opus', label: 'Opus — latest' },
+        { value: 'sonnet', label: 'Sonnet — latest' },
+        { value: 'haiku', label: 'Haiku — latest' },
+      ],
+      seen,
+    };
   });
 
   ipcMain.handle('claude:message', (_event, sessionId: string, text: string) =>
@@ -205,82 +278,4 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle('claude-profiles:remove', (_event, id: string) =>
     claudeProfiles.removeProfile(id));
 
-  // ── Issue Tracker ──
-
-  ipcMain.handle('tracker:getProviders', () => trackerService.getProviderList());
-
-  ipcMain.handle('tracker:getAccounts', () => trackerService.getAccounts());
-
-  ipcMain.handle('tracker:addAccount', async (_event, provider: string, label: string, config: Record<string, string>, token: string) =>
-    trackerService.addAccount(provider, label, config, token),
-  );
-
-  ipcMain.handle('tracker:updateAccount', async (_event, accountId: string, updates: any) =>
-    trackerService.updateAccount(accountId, updates),
-  );
-
-  ipcMain.handle('tracker:removeAccount', (_event, accountId: string) => {
-    trackerService.removeAccount(accountId);
-  });
-
-  ipcMain.handle('tracker:listProjects', async (_event, accountId: string) =>
-    trackerService.listProjects(accountId),
-  );
-
-  ipcMain.handle('tracker:listIssues', async (_event, accountId: string, options: any) =>
-    trackerService.listIssues(accountId, options),
-  );
-
-  ipcMain.handle('tracker:getIssue', async (_event, accountId: string, issueKey: string) =>
-    trackerService.getIssue(accountId, issueKey),
-  );
-
-  ipcMain.handle('tracker:searchIssues', async (_event, accountId: string, query: string) =>
-    trackerService.searchIssues(accountId, query),
-  );
-
-  ipcMain.handle('tracker:resolveIssueKey', async (_event, issueKey: string) =>
-    trackerService.resolveIssueKey(issueKey),
-  );
-
-  ipcMain.handle('tracker:getTransitions', async (_event, accountId: string, issueKey: string) =>
-    trackerService.getTransitions(accountId, issueKey),
-  );
-
-  ipcMain.handle('tracker:transitionIssue', async (_event, accountId: string, issueKey: string, transitionId: string) =>
-    trackerService.transitionIssue(accountId, issueKey, transitionId),
-  );
-
-  // ── Cached queries (SQLite) ──
-
-  ipcMain.handle('cache:getIssueLinks', (_event, issueKey: string) =>
-    issueCache.getIssueLinks(issueKey),
-  );
-
-  ipcMain.handle('cache:getChildIssues', (_event, parentKey: string) =>
-    issueCache.getChildIssues(parentKey),
-  );
-
-  ipcMain.handle('cache:searchIssues', (_event, query: string) =>
-    issueCache.searchIssues(query),
-  );
-
-  ipcMain.handle('cache:recentPipelines', (_event, limit?: number) =>
-    issueCache.getRecentPipelines(limit),
-  );
-
-  ipcMain.handle('cache:recentPRs', (_event, limit?: number) =>
-    issueCache.getRecentPullRequests(limit),
-  );
-
-  // ── DevOps (Git + CI/CD) ──
-
-  ipcMain.handle('devops:getProviders', () => devopsService.getProviderList());
-  ipcMain.handle('devops:getAccounts', () => devopsService.getAccounts());
-  ipcMain.handle('devops:addAccount', async (_event, provider: string, label: string, config: Record<string, string>, token: string) =>
-    devopsService.addAccount(provider, label, config, token));
-  ipcMain.handle('devops:removeAccount', (_event, accountId: string) => devopsService.removeAccount(accountId));
-  ipcMain.handle('devops:listRepos', async (_event, accountId: string) => devopsService.listRepos(accountId));
-  ipcMain.handle('devops:listPRs', async (_event, accountId: string, options?: any) => devopsService.listPullRequests(accountId, options));
-  ipcMain.handle('devops:listPipelines', async (_event, accountId: string, options?: any) => devopsService.listPipelines(accountId, options));
 }

@@ -1,8 +1,29 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { AgentWorkspace } from '../types/pane';
-import type { SessionAmbientState } from '../types/claudeSession';
+import type { SessionAmbientState, SessionUsage } from '../types/claudeSession';
+import HubStatus from './HubStatus';
 
-export const SIDEBAR_WIDTH = 168;
+export const SIDEBAR_WIDTH = 196;
+
+/** 142345 → "142k", 1_200_000 → "1.2M". */
+function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`;
+  if (n >= 1_000) return `${Math.round(n / 1_000)}k`;
+  return `${n}`;
+}
+
+function fmtUSD(n: number): string {
+  if (n >= 10) return `$${n.toFixed(2)}`;
+  if (n >= 0.01) return `$${n.toFixed(2)}`;
+  return n > 0 ? '<$0.01' : '$0.00';
+}
+
+/** Green → amber → red as the context window fills. */
+function contextColor(frac: number): string {
+  if (frac >= 0.9) return 'var(--wks-danger, #e05555)';
+  if (frac >= 0.7) return 'var(--wks-warning, #e0a000)';
+  return 'var(--wks-success, #3fb950)';
+}
 
 /** Ambient state (or `undefined` = stopped) → status dot color + label. */
 function statusVisual(state: SessionAmbientState | undefined): { color: string; label: string } {
@@ -21,6 +42,8 @@ interface SideBarProps {
   activeAgentId: string;
   /** sessionId → live ambient state, from claudeSessionStore. */
   statusBySession: Record<string, SessionAmbientState>;
+  /** sessionId → token / cost / context usage, parsed from the transcript. */
+  usageBySession: Record<string, SessionUsage>;
   onSelectAgent: (id: string) => void;
   onSpawnAgent: () => void;
   onTerminateAgent: (id: string) => void;
@@ -33,6 +56,7 @@ const SideBar: React.FC<SideBarProps> = ({
   agents,
   activeAgentId,
   statusBySession,
+  usageBySession,
   onSelectAgent,
   onSpawnAgent,
   onTerminateAgent,
@@ -130,9 +154,17 @@ const SideBar: React.FC<SideBarProps> = ({
 
         {agents.map((agent) => {
           const isActive = agent.id === activeAgentId;
+          const isGlobal = !!agent.global;
           const state = agent.sessionId ? statusBySession[agent.sessionId] : undefined;
           const { color, label } = statusVisual(state);
           const isRenaming = renamingId === agent.id;
+          const usage = agent.sessionId ? usageBySession[agent.sessionId] : undefined;
+          const ctxFrac = usage && usage.contextLimit > 0
+            ? Math.min(1, usage.contextTokens / usage.contextLimit)
+            : 0;
+          const usageTip = usage
+            ? `\n${fmtTokens(usage.contextTokens)} / ${fmtTokens(usage.contextLimit)} context · ${fmtUSD(usage.costUSD)}${usage.model ? ` · ${usage.model.replace(/^claude-/, '')}` : ''}`
+            : '';
 
           return (
             <button
@@ -140,6 +172,7 @@ const SideBar: React.FC<SideBarProps> = ({
               onClick={() => onSelectAgent(agent.id)}
               onContextMenu={(e) => {
                 e.preventDefault();
+                if (isGlobal) return; // Overview can't be renamed/terminated
                 setContextMenu({ agentId: agent.id, y: e.clientY });
               }}
               style={{
@@ -161,8 +194,11 @@ const SideBar: React.FC<SideBarProps> = ({
                 textAlign: 'left',
                 boxSizing: 'border-box',
               }}
-              title={`${agent.name} — ${label}\n${agent.cwd}`}
+              title={isGlobal ? 'Overview — cross-agent dashboards & plugin panes' : `${agent.name} — ${label}\n${agent.cwd}${usageTip}`}
             >
+              {isGlobal ? (
+                <span style={{ width: 8, flexShrink: 0, textAlign: 'center', fontSize: '0.7rem', lineHeight: 1 }}>▦</span>
+              ) : (
               <span
                 style={{
                   width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
@@ -170,6 +206,7 @@ const SideBar: React.FC<SideBarProps> = ({
                   boxShadow: state && state !== 'idle' ? `0 0 6px ${color}` : 'none',
                 }}
               />
+              )}
               <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '1px' }}>
                 {isRenaming ? (
                   <input
@@ -197,10 +234,31 @@ const SideBar: React.FC<SideBarProps> = ({
                 )}
                 <span style={{
                   fontSize: '0.6rem', color: 'var(--wks-text-faint)',
-                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  display: 'flex', alignItems: 'baseline', gap: 4,
+                  overflow: 'hidden', whiteSpace: 'nowrap',
                 }}>
-                  {agent.sessionId ? label : 'Stopped — click to respawn'}
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {isGlobal ? 'Dashboards & plugins' : agent.sessionId ? label : 'Stopped — click to respawn'}
+                  </span>
+                  {usage && usage.contextTokens > 0 && (
+                    <span style={{ marginLeft: 'auto', flexShrink: 0, color: contextColor(ctxFrac), fontVariantNumeric: 'tabular-nums' }}>
+                      {Math.round(ctxFrac * 100)}%
+                    </span>
+                  )}
                 </span>
+                {usage && usage.contextTokens > 0 && (
+                  <span style={{
+                    height: 3, borderRadius: 2, marginTop: 1,
+                    backgroundColor: 'var(--wks-border-subtle, #2a2a2a)',
+                    overflow: 'hidden', display: 'block',
+                  }}>
+                    <span style={{
+                      display: 'block', height: '100%',
+                      width: `${Math.max(2, ctxFrac * 100)}%`,
+                      backgroundColor: contextColor(ctxFrac),
+                    }} />
+                  </span>
+                )}
               </span>
             </button>
           );
@@ -232,6 +290,9 @@ const SideBar: React.FC<SideBarProps> = ({
         <span style={{ width: 8, display: 'inline-flex', justifyContent: 'center', fontSize: '0.95rem' }}>+</span>
         <span>Spawn agent</span>
       </button>
+
+      {/* Hub bus status — sits in-flow at the bottom of the sidebar */}
+      <HubStatus />
 
       {/* Context menu */}
       {contextMenu && (

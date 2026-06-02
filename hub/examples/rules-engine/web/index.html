@@ -1,0 +1,415 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Rules Engine</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, sans-serif; background: #161616; color: #e8e8e8; }
+    header { display: flex; align-items: center; gap: 10px; padding: 12px 16px;
+             border-bottom: 1px solid #2a2a2a; position: sticky; top: 0; background: #1a1a1a; z-index: 5; }
+    header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+    header .spacer { flex: 1; }
+    .pill { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: #2a2a2a; color: #aaa; }
+    .pill.dirty { background: #4a3a12; color: #ffcf6b; }
+    .pill.saved { background: #16361f; color: #6bdc8a; }
+    button { font: inherit; font-size: 13px; border: 1px solid #333; background: #232323; color: #e8e8e8;
+             border-radius: 6px; padding: 5px 10px; cursor: pointer; }
+    button:hover { background: #2c2c2c; }
+    button.primary { background: #2f6df6; border-color: #2f6df6; color: #fff; }
+    button.primary:hover { background: #3b78ff; }
+    button.danger { color: #ff8a8a; }
+    button.mini { font-size: 12px; padding: 2px 8px; border-radius: 5px; }
+    button.warn { background: #4a2418; border-color: #6a3324; color: #ffb39c; }
+    button.warn.on { background: #c0392b; border-color: #c0392b; color: #fff; }
+    main { padding: 16px; max-width: 900px; margin: 0 auto; }
+    .banner { background: #3a1714; border: 1px solid #7a2a20; color: #ffb3a6; border-radius: 8px;
+              padding: 8px 12px; margin-bottom: 12px; font-size: 13px; display: none; }
+    .banner.show { display: block; }
+    .rule { border: 1px solid #2a2a2a; border-radius: 8px; margin-bottom: 10px; background: #1c1c1c; overflow: hidden; }
+    .rule-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px; }
+    .rule-head .name { font-weight: 600; }
+    .rule-head .meta { color: #888; font-size: 12px; }
+    .rule-head .spacer { flex: 1; }
+    .rule.disabled .name { color: #888; }
+    .toggle { position: relative; width: 38px; height: 20px; flex: none; }
+    .toggle input { opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+    .toggle .track { position: absolute; inset: 0; background: #3a3a3a; border-radius: 999px; transition: .15s; pointer-events: none; }
+    .toggle .knob { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; background: #ccc;
+                    border-radius: 50%; transition: .15s; pointer-events: none; }
+    .toggle input:checked + .track { background: #2f6df6; }
+    .toggle input:checked + .track + .knob { left: 20px; background: #fff; }
+    .seg { display: inline-flex; border: 1px solid #333; border-radius: 6px; overflow: hidden; }
+    .seg button { border: none; border-radius: 0; padding: 4px 10px; font-size: 12px; background: #1c1c1c; }
+    .seg button.active { background: #2f6df6; color: #fff; }
+    .editor { border-top: 1px solid #2a2a2a; padding: 12px; display: none; }
+    .rule.open .editor { display: block; }
+    .field { margin-bottom: 12px; }
+    .flabel { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: #888; margin-bottom: 4px; }
+    .grid3 { display: grid; grid-template-columns: 1fr 1fr auto; gap: 10px; align-items: end; }
+    input, select, textarea { font: inherit; font-size: 13px; background: #111; color: #e8e8e8;
+             border: 1px solid #2a2a2a; border-radius: 6px; padding: 6px 8px; width: 100%; }
+    input[type=checkbox] { width: auto; }
+    textarea { min-height: 200px; color: #cfe3ff; font-family: ui-monospace, monospace; font-size: 12px; resize: vertical; }
+    textarea.bad { border-color: #c0392b; }
+    .kv, .kv3 { display: grid; gap: 6px; margin-bottom: 6px; align-items: center; }
+    .kv { grid-template-columns: 1fr 1fr auto; }
+    .kv3 { grid-template-columns: 1.3fr auto 1fr auto; }
+    .action { border: 1px solid #2a2a2a; border-radius: 6px; padding: 8px; margin-bottom: 8px; background: #181818; }
+    .arow { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+    .arow select { width: auto; }
+    .arow .spacer { flex: 1; }
+    .afields .field { margin-bottom: 8px; }
+    .checkrow { display: flex; align-items: center; gap: 6px; font-size: 13px; height: 32px; }
+    .row { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+    .hint { color: #777; font-size: 12px; margin: 4px 0 0; }
+    .err { color: #ff8a8a; font-size: 12px; margin-top: 6px; min-height: 14px; }
+    .empty { color: #888; text-align: center; padding: 40px; }
+    code { background: #222; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+    details { margin-top: 20px; border: 1px solid #2a2a2a; border-radius: 8px; background: #1c1c1c; }
+    summary { cursor: pointer; padding: 10px 12px; font-weight: 600; user-select: none; }
+    .firelist { padding: 0 12px 12px; }
+    .fire { display: flex; gap: 10px; font-size: 12px; padding: 5px 0; border-top: 1px solid #242424; }
+    .fire .t { color: #888; font-variant-numeric: tabular-nums; flex: none; }
+    .fire .r { color: #cfe3ff; font-weight: 600; }
+    .fire .e { color: #888; }
+    .fire .a { color: #6bdc8a; margin-left: auto; flex: none; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>⚙ Rules Engine</h1>
+    <span id="status" class="pill">loading…</span>
+    <div class="spacer"></div>
+    <button id="pause" class="warn" title="Global kill-switch — pause every rule">Pause</button>
+    <button id="add">+ Add rule</button>
+    <button id="save" class="primary">Save</button>
+  </header>
+  <main>
+    <div id="banner" class="banner">⏸ Rules are <b>paused</b> — no rule will fire until you resume.</div>
+    <div id="list"></div>
+    <p class="hint">
+      Rules fire on bus events even while this pane is closed. Triggers:
+      <code>agent.state_changed</code> (mode = approval / question / input / responding / stopped),
+      <code>ui.*</code>, <code>agents.poll</code> (cost/usage). Actions:
+      <code>notify</code>, <code>command</code>, <code>sendMessage</code>, <code>emit</code>, <code>webhook</code>.
+      Use <code>{{data.sessionId}}</code> templates in any string.
+    </p>
+
+    <details id="firings">
+      <summary>Recent firings (audit trail)</summary>
+      <div id="firelist" class="firelist"><div class="hint">Open to load. Auto-refreshes while open.</div></div>
+    </details>
+  </main>
+
+  <datalist id="events">
+    <option value="agent.state_changed"></option>
+    <option value="agent.*"></option>
+    <option value="agents.poll"></option>
+    <option value="ui.pane.opened"></option>
+    <option value="ui.pane.focused"></option>
+    <option value="ui.tab.focused"></option>
+    <option value="ui.*"></option>
+    <option value="command.*"></option>
+    <option value="rules.fired"></option>
+  </datalist>
+
+  <script>
+    // ── tiny DOM helper ──────────────────────────────────────────────────────
+    function h(tag, attrs, ...kids) {
+      const e = document.createElement(tag);
+      for (const [k, v] of Object.entries(attrs || {})) {
+        if (v == null) continue;
+        if (k === 'class') e.className = v;
+        else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
+        else if (k in e) { try { e[k] = v; } catch { e.setAttribute(k, v); } }
+        else e.setAttribute(k, v);
+      }
+      for (const kid of kids.flat()) {
+        if (kid == null) continue;
+        e.append(kid.nodeType ? kid : document.createTextNode(kid));
+      }
+      return e;
+    }
+    const OPS = ['eq', 'ne', 'gt', 'lt', 'gte', 'lte', 'contains', 'regex'];
+    const ACTION_TYPES = ['notify', 'sendMessage', 'command', 'emit', 'webhook'];
+    const METHODS = ['POST', 'GET', 'PUT', 'PATCH', 'DELETE'];
+
+    function coerce(s) {
+      if (typeof s !== 'string') return s;
+      const t = s.trim();
+      if (t === '') return '';
+      if (t === 'true') return true;
+      if (t === 'false') return false;
+      if (t === 'null') return null;
+      if (/^-?\d+(\.\d+)?$/.test(t)) return Number(t);
+      return s; // keep original (preserve template spacing)
+    }
+    const valToStr = v => v == null ? '' : (typeof v === 'object' ? JSON.stringify(v) : String(v));
+    function esc(s) {
+      return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    }
+
+    // ── app state ────────────────────────────────────────────────────────────
+    const listEl = document.getElementById('list');
+    const statusEl = document.getElementById('status');
+    const pauseBtn = document.getElementById('pause');
+    const bannerEl = document.getElementById('banner');
+    let rules = [];
+    let dirty = false;
+    let paused = false;
+    let cards = []; // [{ commit() }]
+
+    function setStatus(text, cls) { statusEl.textContent = text; statusEl.className = 'pill' + (cls ? ' ' + cls : ''); }
+    function markDirty() { dirty = true; setStatus('unsaved changes', 'dirty'); }
+    function summary(r) {
+      const parts = [r.when?.event || '?'];
+      if (r.when?.match) parts.push(Object.entries(r.when.match).map(([k, v]) => `${k}=${v}`).join(' '));
+      const acts = (r.do || []).map(a => a.type).join(', ');
+      return parts.filter(Boolean).join(' · ') + ' → ' + (acts || 'no actions');
+    }
+
+    // ── load / save ──────────────────────────────────────────────────────────
+    async function loadRules() {
+      try {
+        rules = await (await fetch('/rules')).json();
+        if (!Array.isArray(rules)) rules = [];
+        dirty = false;
+        setStatus(rules.length + ' rule' + (rules.length === 1 ? '' : 's'));
+        render();
+      } catch { setStatus('load failed', 'dirty'); }
+    }
+    async function saveRules() {
+      try {
+        for (const c of cards) c.commit(); // pull any JSON-mode editors into the model
+      } catch (e) { setStatus(e.message, 'dirty'); return; }
+      try {
+        const res = await fetch('/rules', {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rules)
+        });
+        if (!res.ok) throw new Error((await res.json()).error || res.statusText);
+        dirty = false; setStatus('saved ✓', 'saved'); render();
+      } catch (e) { setStatus('save failed: ' + e.message, 'dirty'); }
+    }
+
+    // ── pause kill-switch ────────────────────────────────────────────────────
+    function reflectPause() {
+      pauseBtn.textContent = paused ? 'Resume' : 'Pause';
+      pauseBtn.classList.toggle('on', paused);
+      bannerEl.classList.toggle('show', paused);
+    }
+    async function loadState() {
+      try { paused = !!(await (await fetch('/state')).json()).paused; reflectPause(); } catch {}
+    }
+    pauseBtn.addEventListener('click', async () => {
+      paused = !paused; reflectPause();
+      try {
+        await fetch('/state', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paused }) });
+      } catch { paused = !paused; reflectPause(); }
+    });
+
+    // ── render rule list ─────────────────────────────────────────────────────
+    function render() {
+      listEl.innerHTML = ''; cards = [];
+      if (!rules.length) {
+        listEl.innerHTML = '<div class="empty">No rules yet. Click <b>+ Add rule</b>.</div>';
+        return;
+      }
+      rules.forEach((r, i) => listEl.appendChild(ruleCard(r, i)));
+    }
+
+    function ruleCard(r, i) {
+      r.when = r.when || {};
+      let mode = 'form';
+      const card = h('div', { class: 'rule' + (r.enabled ? '' : ' disabled') });
+
+      const nameEl = h('div', { class: 'name' }, r.name || r.id);
+      const metaEl = h('div', { class: 'meta' }, summary(r));
+      const refresh = () => { nameEl.textContent = r.name || r.id; metaEl.textContent = summary(r); card.classList.toggle('disabled', !r.enabled); markDirty(); };
+
+      const enable = h('input', { type: 'checkbox', checked: r.enabled, onchange: e => { r.enabled = e.target.checked; refresh(); } });
+      const formBtn = h('button', { class: 'active', onclick: () => toForm() }, 'Form');
+      const jsonBtn = h('button', { onclick: () => toJson() }, 'JSON');
+      const seg = h('div', { class: 'seg' }, formBtn, jsonBtn);
+
+      const formWrap = h('div', {});
+      const ta = h('textarea', { spellcheck: false });
+      const jsonErr = h('div', { class: 'err' });
+      const applyBtn = h('button', { class: 'primary', onclick: () => applyJson() }, 'Apply to form');
+      const jsonWrap = h('div', { style: 'display:none' }, ta, jsonErr,
+        h('div', { class: 'row' }, applyBtn, h('span', { class: 'hint' }, 'Applies this edit in-memory; click Save to persist.')));
+
+      buildForm(r, formWrap, refresh);
+
+      function setSeg() { formBtn.classList.toggle('active', mode === 'form'); jsonBtn.classList.toggle('active', mode === 'json'); }
+      function modelFromJson() {
+        const obj = JSON.parse(ta.value);
+        for (const k of Object.keys(r)) delete r[k];
+        Object.assign(r, obj); r.when = r.when || {};
+      }
+      function applyJson() {
+        try { modelFromJson(); ta.classList.remove('bad'); jsonErr.textContent = ''; }
+        catch (e) { ta.classList.add('bad'); jsonErr.textContent = e.message; return; }
+        formWrap.innerHTML = ''; buildForm(r, formWrap, refresh); refresh();
+      }
+      function toForm() {
+        if (mode === 'json') { try { modelFromJson(); } catch (e) { ta.classList.add('bad'); jsonErr.textContent = e.message; return; }
+          formWrap.innerHTML = ''; buildForm(r, formWrap, refresh); }
+        mode = 'form'; formWrap.style.display = ''; jsonWrap.style.display = 'none'; setSeg();
+      }
+      function toJson() {
+        ta.value = JSON.stringify(r, null, 2); ta.classList.remove('bad'); jsonErr.textContent = '';
+        mode = 'json'; jsonWrap.style.display = ''; formWrap.style.display = 'none'; setSeg();
+      }
+
+      const editBtn = h('button', { onclick: () => card.classList.toggle('open') }, 'Edit');
+      const delBtn = h('button', { class: 'danger', onclick: () => { rules.splice(i, 1); markDirty(); render(); } }, 'Delete');
+
+      card.append(
+        h('div', { class: 'rule-head' },
+          h('label', { class: 'toggle' }, enable, h('span', { class: 'track' }), h('span', { class: 'knob' })),
+          h('div', {}, nameEl, metaEl),
+          h('div', { class: 'spacer' }), seg, editBtn, delBtn),
+        h('div', { class: 'editor' }, formWrap, jsonWrap)
+      );
+
+      // commit pulls JSON-mode edits into the model before save.
+      cards.push({ commit() { if (mode === 'json') { try { modelFromJson(); } catch (e) { card.classList.add('open'); throw new Error('Rule ' + (i + 1) + ': invalid JSON'); } } } });
+      return card;
+    }
+
+    // ── form builder ─────────────────────────────────────────────────────────
+    function field(label, node) { return h('div', { class: 'field' }, h('div', { class: 'flabel' }, label), node); }
+    function input(val, onInput, type = 'text') { return h('input', { type, value: val == null ? '' : val, oninput: e => onInput(e.target.value) }); }
+    function selectEl(val, opts, onChange) {
+      return h('select', { onchange: e => onChange(e.target.value) }, ...opts.map(o => h('option', { value: o, selected: o === val }, o)));
+    }
+
+    function buildForm(r, wrap, onM) {
+      r.when = r.when || {};
+      wrap.append(
+        field('Name', input(r.name, v => { r.name = v; onM(); })),
+        h('div', { class: 'grid3' },
+          field('ID', input(r.id, v => { r.id = v; onM(); })),
+          field('Cooldown (ms)', input(r.cooldownMs || '', v => { r.cooldownMs = v === '' ? 0 : (Number(v) || 0); onM(); }, 'number')),
+          h('label', { class: 'checkrow' }, h('input', { type: 'checkbox', checked: !!r.once, onchange: e => { r.once = e.target.checked; onM(); } }), 'once')
+        ),
+        field('When event', h('input', { list: 'events', value: r.when.event || '', placeholder: 'agent.state_changed', oninput: e => { r.when.event = e.target.value; onM(); } })),
+        field('Match (event.data equals — AND)', mapEditor(r.when.match, o => { if (Object.keys(o).length) r.when.match = o; else delete r.when.match; onM(); }, 'data key (e.g. mode)', 'value (e.g. approval)')),
+        field('Where (conditions — AND)', whereEditor(r.when.where, a => { if (a.length) r.when.where = a; else delete r.when.where; onM(); })),
+        actionsField(r, onM)
+      );
+    }
+
+    // key/value map editor; calls onChange(newObj) on every edit
+    function mapEditor(initial, onChange, kPlace = 'key', vPlace = 'value') {
+      let pairs = Object.entries(initial || {}).map(([k, v]) => [k, valToStr(v)]);
+      const rowsEl = h('div', {});
+      const emit = () => { const o = {}; for (const [k, v] of pairs) if (k.trim() !== '') o[k] = coerce(v); onChange(o); };
+      function draw() {
+        rowsEl.innerHTML = '';
+        pairs.forEach((p, idx) => rowsEl.append(h('div', { class: 'kv' },
+          h('input', { value: p[0], placeholder: kPlace, oninput: e => { p[0] = e.target.value; emit(); } }),
+          h('input', { value: p[1], placeholder: vPlace, oninput: e => { p[1] = e.target.value; emit(); } }),
+          h('button', { class: 'mini', onclick: () => { pairs.splice(idx, 1); draw(); emit(); } }, '×'))));
+      }
+      draw();
+      return h('div', {}, rowsEl, h('button', { class: 'mini', onclick: () => { pairs.push(['', '']); draw(); emit(); } }, '+ add'));
+    }
+
+    // where editor: rows of {path, op, value}
+    function whereEditor(initial, onChange) {
+      let rows = (initial || []).map(c => ({ path: c.path || '', op: c.op || 'eq', value: valToStr(c.value) }));
+      const box = h('div', {});
+      const emit = () => onChange(rows.filter(r => r.path.trim() !== '').map(r => ({ path: r.path, op: r.op, value: coerce(r.value) })));
+      function draw() {
+        box.innerHTML = '';
+        rows.forEach((rw, idx) => box.append(h('div', { class: 'kv3' },
+          h('input', { value: rw.path, placeholder: 'data.costUSD', oninput: e => { rw.path = e.target.value; emit(); } }),
+          selectEl(rw.op, OPS, v => { rw.op = v; emit(); }),
+          h('input', { value: rw.value, placeholder: 'value', oninput: e => { rw.value = e.target.value; emit(); } }),
+          h('button', { class: 'mini', onclick: () => { rows.splice(idx, 1); draw(); emit(); } }, '×'))));
+      }
+      draw();
+      return h('div', {}, box, h('button', { class: 'mini', onclick: () => { rows.push({ path: '', op: 'eq', value: '' }); draw(); emit(); } }, '+ add'));
+    }
+
+    // actions list editor
+    function actionsField(r, onM) {
+      r.do = r.do || [];
+      const list = h('div', {});
+      function draw() {
+        list.innerHTML = '';
+        r.do.forEach((a, idx) => list.append(actionEditor(a, onM, () => { r.do.splice(idx, 1); draw(); onM(); })));
+      }
+      draw();
+      const add = h('button', { class: 'mini', onclick: () => { r.do.push({ type: 'notify', title: '', body: '' }); draw(); onM(); } }, '+ add action');
+      return field('Actions (run in order)', h('div', {}, list, add));
+    }
+
+    function actionEditor(a, onM, onRemove) {
+      const fields = h('div', { class: 'afields' });
+      const af = (label, key) => field(label, input(a[key], v => { a[key] = v; onM(); }));
+      function drawFields() {
+        fields.innerHTML = '';
+        switch (a.type) {
+          case 'notify': fields.append(af('title', 'title'), af('body', 'body')); break;
+          case 'sendMessage': fields.append(af('sessionId', 'sessionId'), af('text', 'text')); break;
+          case 'command': fields.append(af('command (→ command.<name>)', 'command'),
+            field('params', mapEditor(a.params, o => { a.params = o; onM(); }))); break;
+          case 'emit': fields.append(af('event (type)', 'event'),
+            field('data', mapEditor(a.data, o => { a.data = o; onM(); }))); break;
+          case 'webhook': fields.append(
+            field('method', selectEl(a.method || 'POST', METHODS, v => { a.method = v; onM(); })),
+            af('url', 'url'), af('body', 'body'),
+            field('headers', mapEditor(a.headers, o => { a.headers = o; onM(); }, 'Header', 'value'))); break;
+        }
+      }
+      const typeSel = selectEl(a.type, ACTION_TYPES, v => { a.type = v; drawFields(); onM(); });
+      drawFields();
+      return h('div', { class: 'action' },
+        h('div', { class: 'arow' }, typeSel, h('div', { class: 'spacer' }), h('button', { class: 'mini danger', onclick: onRemove }, 'remove')),
+        fields);
+    }
+
+    // ── recent firings panel ─────────────────────────────────────────────────
+    const firings = document.getElementById('firings');
+    const firelist = document.getElementById('firelist');
+    let firePoll = null;
+    async function loadFirings() {
+      try {
+        const log = await (await fetch('/log')).json();
+        if (!log.length) { firelist.innerHTML = '<div class="hint">No firings yet.</div>'; return; }
+        firelist.innerHTML = '';
+        for (const f of log) {
+          const t = new Date(f.time).toLocaleTimeString();
+          firelist.append(h('div', { class: 'fire' },
+            h('span', { class: 't' }, t),
+            h('span', { class: 'r' }, f.ruleName || f.ruleId),
+            h('span', { class: 'e' }, f.event),
+            h('span', { class: 'a' }, (f.actions || []).join(', '))));
+        }
+      } catch { firelist.innerHTML = '<div class="hint">Could not load firings.</div>'; }
+    }
+    firings.addEventListener('toggle', () => {
+      if (firings.open) { loadFirings(); firePoll = setInterval(loadFirings, 4000); }
+      else { clearInterval(firePoll); firePoll = null; }
+    });
+
+    // ── wire up ──────────────────────────────────────────────────────────────
+    document.getElementById('add').addEventListener('click', () => {
+      rules.push({ id: 'rule-' + (rules.length + 1), name: 'New rule', enabled: false,
+        when: { event: 'agent.state_changed', match: { mode: 'approval' } },
+        do: [{ type: 'notify', title: 'Heads up', body: '{{data.cwd}}' }], cooldownMs: 4000 });
+      markDirty(); render();
+      const last = listEl.lastElementChild; if (last) last.classList.add('open');
+    });
+    document.getElementById('save').addEventListener('click', saveRules);
+    window.addEventListener('beforeunload', e => { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
+
+    loadState();
+    loadRules();
+  </script>
+</body>
+</html>

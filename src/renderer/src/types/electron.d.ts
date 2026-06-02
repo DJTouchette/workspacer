@@ -1,3 +1,6 @@
+import type { PluginManifest } from './plugin';
+import type { LibraryItem, LibrarySaveInput } from './library';
+
 export interface SessionListEntry {
   name: string;
   filename: string;
@@ -15,7 +18,8 @@ export interface ElectronAPI {
   onTerminalExit: (callback: (id: string) => void) => () => void;
 
   // Claude sessions (delegated to claudemon daemon)
-  spawnClaude: (opts: { cwd?: string; profileId?: string; resumeSessionId?: string; cols?: number; rows?: number }) => Promise<string>;
+  spawnClaude: (opts: { cwd?: string; profileId?: string; model?: string; skipPermissions?: boolean; resumeSessionId?: string; cols?: number; rows?: number }) => Promise<string>;
+  claudeListModels: () => Promise<{ defaultModel: string; skipPermissionsDefault: boolean; aliases: Array<{ value: string; label: string }>; seen: string[] }>;
   claudeMessage: (sessionId: string, text: string) => Promise<{ ok: boolean; mode?: string }>;
   claudeApprove: (sessionId: string, decision: 'yes' | 'no' | 'always', reason?: string) => Promise<void>;
   claudeAnswer: (sessionId: string, payload: { option?: number; text?: string; answers?: string[] }) => Promise<void>;
@@ -51,6 +55,19 @@ export interface ElectronAPI {
   getClaudeSession: (sessionId: string) => Promise<any>;
   getAllClaudeSessions: () => Promise<any[]>;
   onClaudeSessionUpdate: (callback: (sessionId: string, snapshot: any) => void) => () => void;
+  onHubEvent: (callback: (event: { id: string; type: string; source: string; time: string; data?: unknown }) => void) => () => void;
+  onHubStatus: (callback: (status: { connected: boolean }) => void) => () => void;
+  getHubStatus: () => Promise<{ connected: boolean }>;
+  listHubPlugins: () => Promise<PluginManifest[]>;
+  hubPublish: (event: { type: string; source?: string; data?: unknown }) => Promise<void>;
+  installPlugin: (url: string) => Promise<{ ok: boolean; plugin?: PluginManifest; error?: string }>;
+  removePlugin: (id: string) => Promise<{ ok: boolean; error?: string }>;
+
+  // Library (reusable prompts + skills)
+  libraryList: (cwd?: string) => Promise<LibraryItem[]>;
+  librarySave: (input: LibrarySaveInput) => Promise<LibraryItem>;
+  libraryRemove: (scope: 'global' | 'project', id: string, cwd?: string) => Promise<void>;
+  onLibraryChanged: (callback: () => void) => () => void;
 
   // App info
   getCwd: () => Promise<string>;
@@ -59,35 +76,6 @@ export interface ElectronAPI {
   pickFolder: (defaultPath?: string) => Promise<string | null>;
   pickFiles: (defaultPath?: string) => Promise<string[]>;
 
-  // Issue Tracker
-  trackerGetProviders: () => Promise<any[]>;
-  trackerGetAccounts: () => Promise<any[]>;
-  trackerAddAccount: (provider: string, label: string, config: Record<string, string>, token: string) => Promise<any>;
-  trackerUpdateAccount: (accountId: string, updates: any) => Promise<any>;
-  trackerRemoveAccount: (accountId: string) => Promise<void>;
-  trackerListProjects: (accountId: string) => Promise<any[]>;
-  trackerListIssues: (accountId: string, options?: any) => Promise<any[]>;
-  trackerGetIssue: (accountId: string, issueKey: string) => Promise<any>;
-  trackerSearchIssues: (accountId: string, query: string) => Promise<any[]>;
-  trackerResolveIssueKey: (issueKey: string) => Promise<any>;
-  trackerGetTransitions: (accountId: string, issueKey: string) => Promise<any[]>;
-  trackerTransitionIssue: (accountId: string, issueKey: string, transitionId: string) => Promise<void>;
-
-  // DevOps (Git + CI/CD)
-  devopsGetProviders: () => Promise<any[]>;
-  devopsGetAccounts: () => Promise<any[]>;
-  devopsAddAccount: (provider: string, label: string, config: Record<string, string>, token: string) => Promise<any>;
-  devopsRemoveAccount: (accountId: string) => Promise<void>;
-  devopsListRepos: (accountId: string) => Promise<any[]>;
-  devopsListPRs: (accountId: string, options?: any) => Promise<any[]>;
-  devopsListPipelines: (accountId: string, options?: any) => Promise<any[]>;
-
-  // Cached queries (SQLite)
-  cacheGetIssueLinks: (issueKey: string) => Promise<any[]>;
-  cacheGetChildIssues: (parentKey: string) => Promise<any[]>;
-  cacheSearchIssues: (query: string) => Promise<any[]>;
-  cacheRecentPipelines: (limit?: number) => Promise<any[]>;
-  cacheRecentPRs: (limit?: number) => Promise<any[]>;
 
   // Browser cookie import
   importChromeCookies: (domainFilter?: string[], method?: 'cdp' | 'direct', browser?: 'chrome' | 'edge') => Promise<{ imported: number; skipped: number; errors: string[]; diagnostics?: Record<string, any> }>;

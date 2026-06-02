@@ -120,8 +120,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('session:delete', filename),
 
   // ── Claude sessions (delegated to claudemon daemon) ──
-  spawnClaude: (opts: { cwd?: string; profileId?: string; resumeSessionId?: string; cols?: number; rows?: number }): Promise<string> =>
+  spawnClaude: (opts: { cwd?: string; profileId?: string; model?: string; skipPermissions?: boolean; resumeSessionId?: string; cols?: number; rows?: number }): Promise<string> =>
     ipcRenderer.invoke('claude:spawn', opts),
+  claudeListModels: (): Promise<{ defaultModel: string; skipPermissionsDefault: boolean; aliases: Array<{ value: string; label: string }>; seen: string[] }> =>
+    ipcRenderer.invoke('claude:listModels'),
   claudeMessage: (sessionId: string, text: string): Promise<{ ok: boolean; mode?: string }> =>
     ipcRenderer.invoke('claude:message', sessionId, text),
   claudeApprove: (sessionId: string, decision: 'yes' | 'no' | 'always', reason?: string): Promise<void> =>
@@ -199,6 +201,39 @@ contextBridge.exposeInMainWorld('electronAPI', {
     };
   },
 
+  // Hub event bus — events forwarded from the hub daemon's WebSocket.
+  onHubEvent: (callback: (event: { id: string; type: string; source: string; time: string; data?: unknown }) => void): (() => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, ev: any) => callback(ev);
+    ipcRenderer.on('hub:event', handler);
+    return () => ipcRenderer.removeListener('hub:event', handler);
+  },
+  onHubStatus: (callback: (status: { connected: boolean }) => void): (() => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, s: any) => callback(s);
+    ipcRenderer.on('hub:status', handler);
+    return () => ipcRenderer.removeListener('hub:status', handler);
+  },
+  listHubPlugins: (): Promise<any[]> => ipcRenderer.invoke('hub:listPlugins'),
+  hubPublish: (event: { type: string; source?: string; data?: unknown }): Promise<void> =>
+    ipcRenderer.invoke('hub:publish', event),
+  getHubStatus: (): Promise<{ connected: boolean }> => ipcRenderer.invoke('hub:getStatus'),
+  installPlugin: (url: string): Promise<{ ok: boolean; plugin?: any; error?: string }> =>
+    ipcRenderer.invoke('hub:installPlugin', url),
+  removePlugin: (id: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('hub:removePlugin', id),
+
+  // ── Library (reusable prompts + skills) ──
+  libraryList: (cwd?: string): Promise<any[]> =>
+    ipcRenderer.invoke('library:list', cwd),
+  librarySave: (input: any): Promise<any> =>
+    ipcRenderer.invoke('library:save', input),
+  libraryRemove: (scope: 'global' | 'project', id: string, cwd?: string): Promise<void> =>
+    ipcRenderer.invoke('library:remove', scope, id, cwd),
+  onLibraryChanged: (callback: () => void): (() => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('library:changed', handler);
+    return () => ipcRenderer.removeListener('library:changed', handler);
+  },
+
   // App info
   getCwd: (): Promise<string> =>
     ipcRenderer.invoke('app:getCwd'),
@@ -209,53 +244,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   pickFiles: (defaultPath?: string): Promise<string[]> =>
     ipcRenderer.invoke('dialog:pickFiles', defaultPath),
 
-  // Issue Tracker
-  trackerGetProviders: (): Promise<any[]> =>
-    ipcRenderer.invoke('tracker:getProviders'),
-  trackerGetAccounts: (): Promise<any[]> =>
-    ipcRenderer.invoke('tracker:getAccounts'),
-  trackerAddAccount: (provider: string, label: string, config: Record<string, string>, token: string): Promise<any> =>
-    ipcRenderer.invoke('tracker:addAccount', provider, label, config, token),
-  trackerUpdateAccount: (accountId: string, updates: any): Promise<any> =>
-    ipcRenderer.invoke('tracker:updateAccount', accountId, updates),
-  trackerRemoveAccount: (accountId: string): Promise<void> =>
-    ipcRenderer.invoke('tracker:removeAccount', accountId),
-  trackerListProjects: (accountId: string): Promise<any[]> =>
-    ipcRenderer.invoke('tracker:listProjects', accountId),
-  trackerListIssues: (accountId: string, options?: any): Promise<any[]> =>
-    ipcRenderer.invoke('tracker:listIssues', accountId, options),
-  trackerGetIssue: (accountId: string, issueKey: string): Promise<any> =>
-    ipcRenderer.invoke('tracker:getIssue', accountId, issueKey),
-  trackerSearchIssues: (accountId: string, query: string): Promise<any[]> =>
-    ipcRenderer.invoke('tracker:searchIssues', accountId, query),
-  trackerResolveIssueKey: (issueKey: string): Promise<any> =>
-    ipcRenderer.invoke('tracker:resolveIssueKey', issueKey),
-  trackerGetTransitions: (accountId: string, issueKey: string): Promise<any[]> =>
-    ipcRenderer.invoke('tracker:getTransitions', accountId, issueKey),
-  trackerTransitionIssue: (accountId: string, issueKey: string, transitionId: string): Promise<void> =>
-    ipcRenderer.invoke('tracker:transitionIssue', accountId, issueKey, transitionId),
-
-  // Cached queries (SQLite)
-  cacheGetIssueLinks: (issueKey: string): Promise<any[]> =>
-    ipcRenderer.invoke('cache:getIssueLinks', issueKey),
-  cacheGetChildIssues: (parentKey: string): Promise<any[]> =>
-    ipcRenderer.invoke('cache:getChildIssues', parentKey),
-  cacheSearchIssues: (query: string): Promise<any[]> =>
-    ipcRenderer.invoke('cache:searchIssues', query),
-  cacheRecentPipelines: (limit?: number): Promise<any[]> =>
-    ipcRenderer.invoke('cache:recentPipelines', limit),
-  cacheRecentPRs: (limit?: number): Promise<any[]> =>
-    ipcRenderer.invoke('cache:recentPRs', limit),
-
-  // DevOps (Git + CI/CD)
-  devopsGetProviders: (): Promise<any[]> => ipcRenderer.invoke('devops:getProviders'),
-  devopsGetAccounts: (): Promise<any[]> => ipcRenderer.invoke('devops:getAccounts'),
-  devopsAddAccount: (provider: string, label: string, config: Record<string, string>, token: string): Promise<any> =>
-    ipcRenderer.invoke('devops:addAccount', provider, label, config, token),
-  devopsRemoveAccount: (accountId: string): Promise<void> => ipcRenderer.invoke('devops:removeAccount', accountId),
-  devopsListRepos: (accountId: string): Promise<any[]> => ipcRenderer.invoke('devops:listRepos', accountId),
-  devopsListPRs: (accountId: string, options?: any): Promise<any[]> => ipcRenderer.invoke('devops:listPRs', accountId, options),
-  devopsListPipelines: (accountId: string, options?: any): Promise<any[]> => ipcRenderer.invoke('devops:listPipelines', accountId, options),
 
   // Browser cookie import (Chrome or Edge)
   importChromeCookies: (domainFilter?: string[], method?: 'cdp' | 'direct', browser?: 'chrome' | 'edge'): Promise<{ imported: number; skipped: number; errors: string[] }> =>

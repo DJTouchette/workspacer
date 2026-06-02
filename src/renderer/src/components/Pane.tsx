@@ -25,11 +25,11 @@ const typeIndicators: Record<PaneType, string> = {
   agent: '\u{1F916}',
   claude: '\u2666',
   settings: '\u2699',
-  tracker: '\u{1F4CB}',
-  devops: '\u{1F527}',
   review: '\u{1F50D}',
-  'agent-manager': '\u{1F916}',
-  devdaemon: '\u26a1',
+  plugin: '\u{1F9E9}',
+  plugins: '\u{1F9F0}',
+  overview: '\u{1F3E0}',
+  library: '⚡',
 };
 
 const Pane: React.FC<PaneProps> = ({

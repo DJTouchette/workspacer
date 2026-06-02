@@ -1,0 +1,246 @@
+// Package supervisor runs a managed child process: spawn, health-check,
+// restart-on-crash, graceful stop. It generalizes the bespoke per-daemon
+// spawning the Electron app does today and reports lifecycle on the event bus.
+package supervisor
+
+import (
+	"context"
+	"net/http"
+	"os"
+	"os/exec"
+	"sync"
+	"sync/atomic"
+	"syscall"
+	"time"
+
+	"github.com/djtouchette/workspacer-hub/internal/event"
+)
+
+// Publisher is the slice of the broker the supervisor needs.
+type Publisher interface {
+	Publish(event.Envelope)
+}
+
+// State is the coarse lifecycle of the managed process.
+type State string
+
+const (
+	Stopped   State = "stopped"
+	Running   State = "running"
+	Healthy   State = "healthy"
+	Unhealthy State = "unhealthy"
+	Crashed   State = "crashed"
+)
+
+// Spec describes a process to manage.
+type Spec struct {
+	Name    string
+	Command string
+	Args    []string
+	Env     []string // extra env appended to os.Environ()
+	Dir     string
+
+	// HealthURL, if set, is polled with GET; 200 == healthy.
+	HealthURL    string
+	HealthPeriod time.Duration // default 2s
+	RestartWait  time.Duration // backoff before restart, default 1s
+}
+
+func (s Spec) healthPeriod() time.Duration {
+	if s.HealthPeriod > 0 {
+		return s.HealthPeriod
+	}
+	return 2 * time.Second
+}
+
+func (s Spec) restartWait() time.Duration {
+	if s.RestartWait > 0 {
+		return s.RestartWait
+	}
+	return time.Second
+}
+
+// statusData is the payload of sidecar.* events.
+type statusData struct {
+	Name  string `json:"name"`
+	State State  `json:"state"`
+	PID   int    `json:"pid,omitempty"`
+	Err   string `json:"err,omitempty"`
+}
+
+// Supervisor manages one process per Spec.
+type Supervisor struct {
+	spec   Spec
+	pub    Publisher
+	client *http.Client
+
+	mu      sync.Mutex
+	state   State
+	cancel  context.CancelFunc
+	done    chan struct{}
+	healthy atomic.Bool
+}
+
+// New creates a supervisor. pub may be nil (no lifecycle events emitted).
+func New(spec Spec, pub Publisher) *Supervisor {
+	return &Supervisor{
+		spec:   spec,
+		pub:    pub,
+		client: &http.Client{Timeout: 2 * time.Second},
+		state:  Stopped,
+	}
+}
+
+// Start launches the manage loop in the background. Idempotent-ish: call Stop
+// before Start again.
+func (s *Supervisor) Start() {
+	ctx, cancel := context.WithCancel(context.Background())
+	s.mu.Lock()
+	s.cancel = cancel
+	s.done = make(chan struct{})
+	done := s.done
+	s.mu.Unlock()
+	go func() {
+		s.run(ctx)
+		close(done)
+	}()
+}
+
+// Stop signals the process to terminate and waits for the loop to exit.
+func (s *Supervisor) Stop() {
+	s.mu.Lock()
+	cancel := s.cancel
+	done := s.done
+	s.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	if done != nil {
+		<-done
+	}
+}
+
+// State returns the current lifecycle state.
+func (s *Supervisor) State() State {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.state
+}
+
+func (s *Supervisor) setState(st State) {
+	s.mu.Lock()
+	s.state = st
+	s.mu.Unlock()
+}
+
+func (s *Supervisor) emit(st State, pid int, errMsg string) {
+	if s.pub == nil {
+		return
+	}
+	s.pub.Publish(event.New("sidecar."+string(st), "supervisor", statusData{
+		Name: s.spec.Name, State: st, PID: pid, Err: errMsg,
+	}))
+}
+
+func (s *Supervisor) run(ctx context.Context) {
+	for {
+		if ctx.Err() != nil {
+			s.setState(Stopped)
+			return
+		}
+
+		cmd := exec.CommandContext(ctx, s.spec.Command, s.spec.Args...)
+		cmd.Env = append(os.Environ(), s.spec.Env...)
+		cmd.Dir = s.spec.Dir
+		// Graceful stop: SIGTERM on cancel, SIGKILL if it lingers.
+		cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+		cmd.WaitDelay = 5 * time.Second
+
+		if err := cmd.Start(); err != nil {
+			s.setState(Crashed)
+			s.emit(Crashed, 0, err.Error())
+			if !sleepOrDone(ctx, s.spec.restartWait()) {
+				s.setState(Stopped)
+				return
+			}
+			continue
+		}
+
+		s.setState(Running)
+		s.emit(Running, cmd.Process.Pid, "")
+
+		hctx, hcancel := context.WithCancel(ctx)
+		if s.spec.HealthURL != "" {
+			go s.healthLoop(hctx, cmd.Process.Pid)
+		}
+
+		err := cmd.Wait()
+		hcancel()
+		s.healthy.Store(false)
+
+		if ctx.Err() != nil { // we asked it to stop
+			s.setState(Stopped)
+			s.emit(Stopped, 0, "")
+			return
+		}
+
+		// Unexpected exit — report and restart after backoff.
+		s.setState(Crashed)
+		msg := ""
+		if err != nil {
+			msg = err.Error()
+		}
+		s.emit(Crashed, 0, msg)
+		if !sleepOrDone(ctx, s.spec.restartWait()) {
+			s.setState(Stopped)
+			return
+		}
+	}
+}
+
+func (s *Supervisor) healthLoop(ctx context.Context, pid int) {
+	t := time.NewTicker(s.spec.healthPeriod())
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			ok := s.ping(ctx)
+			was := s.healthy.Swap(ok)
+			switch {
+			case ok && !was:
+				s.setState(Healthy)
+				s.emit(Healthy, pid, "")
+			case !ok && was:
+				s.setState(Unhealthy)
+				s.emit(Unhealthy, pid, "")
+			}
+		}
+	}
+}
+
+func (s *Supervisor) ping(ctx context.Context) bool {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.spec.HealthURL, nil)
+	if err != nil {
+		return false
+	}
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
+}
+
+// sleepOrDone waits for d, returning false if ctx is cancelled first.
+func sleepOrDone(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
+	}
+}

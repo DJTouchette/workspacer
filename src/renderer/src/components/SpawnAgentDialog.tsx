@@ -3,9 +3,11 @@ import { deriveAgentName } from '../hooks/useAgentManager';
 
 interface SpawnAgentDialogProps {
   defaultCwd: string;
-  onSpawn: (opts: { cwd: string; name?: string; profileId?: string }) => void;
+  onSpawn: (opts: { cwd: string; name?: string; profileId?: string; model?: string; skipPermissions?: boolean }) => void;
   onCancel: () => void;
 }
+
+const CUSTOM = '__custom__';
 
 const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, onSpawn, onCancel }) => {
   const [cwd, setCwd] = useState(defaultCwd);
@@ -13,13 +15,36 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, onSpawn
   const [profiles, setProfiles] = useState<Array<{ id: string; name: string }>>([]);
   const [profileId, setProfileId] = useState<string>('');
 
+  // Model selection. `modelSel` is the dropdown value (''=Default, an alias/id,
+  // or the CUSTOM sentinel); `customModel` holds the free-text id when CUSTOM.
+  const [aliases, setAliases] = useState<Array<{ value: string; label: string }>>([]);
+  const [seen, setSeen] = useState<string[]>([]);
+  const [modelSel, setModelSel] = useState<string>('');
+  const [customModel, setCustomModel] = useState('');
+  const [skipPermissions, setSkipPermissions] = useState(false);
+
   useEffect(() => { setCwd(defaultCwd); }, [defaultCwd]);
 
   useEffect(() => {
     window.electronAPI.claudeProfilesList?.()
       .then((list: any[]) => setProfiles(list ?? []))
       .catch(() => {});
+    window.electronAPI.claudeListModels?.()
+      .then((res) => {
+        if (!res) return;
+        setAliases(res.aliases ?? []);
+        setSeen(res.seen ?? []);
+        setSkipPermissions(res.skipPermissionsDefault === true);
+        // Pre-select the saved default. If it's a concrete id we don't have in
+        // a list, keep it as a custom entry so the saved value isn't dropped.
+        const d = res.defaultModel ?? '';
+        const known = d === '' || (res.aliases ?? []).some((a) => a.value === d) || (res.seen ?? []).includes(d);
+        if (known) { setModelSel(d); } else { setModelSel(CUSTOM); setCustomModel(d); }
+      })
+      .catch(() => {});
   }, []);
+
+  const resolvedModel = modelSel === CUSTOM ? customModel.trim() : modelSel;
 
   const browse = async () => {
     const picked = await window.electronAPI.pickFolder?.(cwd || undefined);
@@ -28,7 +53,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, onSpawn
 
   const submit = () => {
     if (!cwd.trim()) return;
-    onSpawn({ cwd: cwd.trim(), name: name.trim() || undefined, profileId: profileId || undefined });
+    onSpawn({ cwd: cwd.trim(), name: name.trim() || undefined, profileId: profileId || undefined, model: resolvedModel || undefined, skipPermissions });
   };
 
   const placeholderName = cwd.trim() ? deriveAgentName(cwd.trim()) : 'agent';
@@ -82,6 +107,36 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, onSpawn
           />
         </Field>
 
+        <Field label="Model">
+          <select value={modelSel} onChange={(e) => setModelSel(e.target.value)} style={inputStyle}>
+            <option value="">Default (Claude Code setting)</option>
+            {aliases.length > 0 && (
+              <optgroup label="Latest">
+                {aliases.map((a) => (
+                  <option key={a.value} value={a.value}>{a.label}</option>
+                ))}
+              </optgroup>
+            )}
+            {seen.length > 0 && (
+              <optgroup label="Seen in sessions">
+                {seen.map((m) => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </optgroup>
+            )}
+            <option value={CUSTOM}>Custom…</option>
+          </select>
+          {modelSel === CUSTOM && (
+            <input
+              value={customModel}
+              onChange={(e) => setCustomModel(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') onCancel(); }}
+              placeholder="claude-opus-4-8  or  opus"
+              style={{ ...inputStyle, marginTop: 6 }}
+            />
+          )}
+        </Field>
+
         {profiles.length > 0 && (
           <Field label="Profile (optional)">
             <select value={profileId} onChange={(e) => setProfileId(e.target.value)} style={inputStyle}>
@@ -92,6 +147,24 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, onSpawn
             </select>
           </Field>
         )}
+
+        <label style={{
+          display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 4, cursor: 'pointer',
+        }}>
+          <input
+            type="checkbox"
+            checked={skipPermissions}
+            onChange={(e) => setSkipPermissions(e.target.checked)}
+            style={{ marginTop: 2, cursor: 'pointer' }}
+          />
+          <span style={{ fontSize: '0.72rem', lineHeight: 1.4 }}>
+            <span style={{ color: 'var(--wks-text-primary)' }}>Skip permissions</span>
+            <span style={{ color: 'var(--wks-danger, #e05555)', marginLeft: 6 }}>dangerous</span>
+            <div style={{ color: 'var(--wks-text-faint)', fontSize: '0.65rem', marginTop: 1 }}>
+              Bypasses all approval prompts (--dangerously-skip-permissions).
+            </div>
+          </span>
+        </label>
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}>
           <button onClick={onCancel} style={secondaryBtnStyle}>Cancel</button>

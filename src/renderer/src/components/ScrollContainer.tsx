@@ -10,9 +10,10 @@ const BrowserPane = React.lazy(() => import('../panes/BrowserPane'));
 const NotesPane = React.lazy(() => import('../panes/NotesPane'));
 const AgentPane = React.lazy(() => import('../panes/AgentPane'));
 const SettingsPane = React.lazy(() => import('../panes/SettingsPane'));
-const TrackerPane = React.lazy(() => import('../panes/TrackerPane'));
-const DevOpsPane = React.lazy(() => import('../panes/DevOpsPane'));
 const ReviewPane = React.lazy(() => import('../panes/ReviewPane'));
+const PluginsManagerPane = React.lazy(() => import('../panes/PluginsManagerPane'));
+const OverviewPane = React.lazy(() => import('../panes/OverviewPane'));
+const LibraryPane = React.lazy(() => import('../panes/LibraryPane'));
 
 const PaneFallback = () => (
   <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--wks-bg-base)', color: 'var(--wks-text-muted)', fontSize: '0.8rem' }}>
@@ -42,6 +43,11 @@ interface ScrollContainerProps {
    * screen panes throttle their updates and skip terminal refits.
    */
   agentActive?: boolean;
+  /** workspacer's own agents (for the Overview pane to scope stats to them,
+   *  not every Claude session claudemon tracks machine-wide). */
+  workspaceAgents?: { sessionId?: string }[];
+  /** Fallback project root for the Library pane (the app's cwd). */
+  appCwd?: string;
 }
 
 export interface ScrollContainerRef {
@@ -55,6 +61,8 @@ interface PaneCallbacks {
   onNavigateToTab?: (tabId: string) => void;
   onAddTab?: (type: PaneType, shell?: string, label?: string, cwd?: string, profileId?: string, resumeSessionId?: string, attachSessionId?: string) => void;
   ptyMapping?: Record<string, string>;
+  workspaceAgents?: { sessionId?: string }[];
+  appCwd?: string;
 }
 
 function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneCallbacks) {
@@ -62,7 +70,7 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
     case 'terminal':
       return <TerminalPane paneId={pane.id} title={pane.title} isActive={isActive} shell={pane.shell} cwd={pane.cwd} initialCommand={pane.initialCommand} onPtyReady={callbacks.onPtyReady} />;
     case 'claude':
-      return <ClaudePane paneId={pane.id} title={pane.title} isActive={isActive} cwd={pane.cwd} profileId={pane.profileId} resumeSessionId={pane.resumeSessionId} attachSessionId={pane.attachSessionId} onPtyReady={callbacks.onPtyReady} />;
+      return <ClaudePane paneId={pane.id} title={pane.title} isActive={isActive} cwd={pane.cwd} profileId={pane.profileId} resumeSessionId={pane.resumeSessionId} attachSessionId={pane.attachSessionId} initialPrompt={pane.initialPrompt} onPtyReady={callbacks.onPtyReady} />;
     case 'browser':
       return (
         <Suspense fallback={<PaneFallback />}>
@@ -75,36 +83,25 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
       return <Suspense fallback={<PaneFallback />}><AgentPane title={pane.title} /></Suspense>;
     case 'settings':
       return <Suspense fallback={<PaneFallback />}><SettingsPane title={pane.title} /></Suspense>;
-    case 'tracker':
-      return (
-        <Suspense fallback={<PaneFallback />}>
-          <TrackerPane paneId={pane.id} title={pane.title} isActive={isActive} />
-        </Suspense>
-      );
-    case 'devops':
-      return (
-        <Suspense fallback={<PaneFallback />}>
-          <DevOpsPane paneId={pane.id} title={pane.title} isActive={isActive} />
-        </Suspense>
-      );
     case 'review':
       return (
         <Suspense fallback={<PaneFallback />}>
           <ReviewPane paneId={pane.id} title={pane.title} isActive={isActive} cwd={pane.cwd} />
         </Suspense>
       );
-    case 'agent-manager':
+    case 'plugin':
+      // A plugin-injected pane: a webview onto the plugin sidecar's own UI.
       return (
         <Suspense fallback={<PaneFallback />}>
-          <BrowserPane paneId={pane.id} title={pane.title} isActive={isActive} initialUrl={pane.url || 'http://127.0.0.1:9800'} appMode={true} hibernated={false} onUrlChange={() => {}} />
+          <BrowserPane paneId={pane.id} title={pane.title} isActive={isActive} initialUrl={pane.url || 'about:blank'} appMode={true} hibernated={pane.hibernated} onUrlChange={() => {}} />
         </Suspense>
       );
-    case 'devdaemon':
-      return (
-        <Suspense fallback={<PaneFallback />}>
-          <BrowserPane paneId={pane.id} title={pane.title} isActive={isActive} initialUrl={pane.url || 'http://127.0.0.1:7880'} appMode={true} hibernated={false} onUrlChange={() => {}} />
-        </Suspense>
-      );
+    case 'plugins':
+      return <Suspense fallback={<PaneFallback />}><PluginsManagerPane title={pane.title} /></Suspense>;
+    case 'overview':
+      return <Suspense fallback={<PaneFallback />}><OverviewPane title={pane.title} agents={callbacks.workspaceAgents} /></Suspense>;
+    case 'library':
+      return <Suspense fallback={<PaneFallback />}><LibraryPane title={pane.title} cwd={pane.cwd || callbacks.appCwd} /></Suspense>;
     default:
       return <div>Unknown pane type</div>;
   }
@@ -200,7 +197,7 @@ function TilingLayout({
 }
 
 const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
-  ({ tabs, activeTabId, onTabFocus, onPaneClose, onPaneFocus, onTabRename, onTabMove, onPtyReady, onUrlChange, onNavigateToTab, onAddTab, ptyMapping, renameSignal, agentActive = true }, ref) => {
+  ({ tabs, activeTabId, onTabFocus, onPaneClose, onPaneFocus, onTabRename, onTabMove, onPtyReady, onUrlChange, onNavigateToTab, onAddTab, ptyMapping, renameSignal, agentActive = true, workspaceAgents, appCwd }, ref) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const { config } = useConfig();
     const peek = config.panes?.peek ?? 80;
@@ -317,6 +314,8 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
             onNavigateToTab: onNavigateToTab ?? onTabFocus,
             onAddTab,
             ptyMapping,
+            workspaceAgents,
+            appCwd,
           };
 
           return (

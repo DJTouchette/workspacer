@@ -75,6 +75,11 @@ export interface Config {
   /** Per-directory script buttons, keyed by workspace root (normalized cwd). */
   scripts: Record<string, ScriptEntry[]>;
   apps: AppEntry[];
+  /** Directories surfaced in the Overview pane for quick agent launching. */
+  directories?: {
+    recent: string[];
+    favourites: string[];
+  };
 }
 
 const DEFAULT_CONFIG: Config = {

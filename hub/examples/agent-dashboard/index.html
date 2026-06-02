@@ -1,0 +1,189 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Agent Dashboard</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, sans-serif; background: #161616; color: #e8e8e8; }
+    header { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid #2a2a2a; }
+    header h1 { font-size: 0.95rem; margin: 0; font-weight: 600; }
+    #conn { font-size: 0.65rem; color: #888; display: flex; align-items: center; gap: 5px; }
+    #conn .dot { width: 7px; height: 7px; border-radius: 50%; background: #666; }
+    #conn.on .dot { background: #3fb950; box-shadow: 0 0 5px #3fb950; }
+    .toolbar { margin-left: auto; display: flex; gap: 8px; }
+    button { font: inherit; font-size: 0.7rem; cursor: pointer; background: #232323; color: #ddd;
+             border: 1px solid #333; border-radius: 5px; padding: 4px 10px; }
+    button:hover { background: #2c2c2c; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; padding: 14px; }
+    .card { background: #1d1d1d; border: 1px solid #2a2a2a; border-radius: 8px; padding: 12px; }
+    .card .top { display: flex; align-items: center; gap: 8px; }
+    .card .dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+    .card .name { font-size: 0.8rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .card .state { margin-left: auto; font-size: 0.62rem; color: #999; }
+    .card .cwd { font-size: 0.6rem; color: #777; margin: 4px 0 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .meta { display: flex; gap: 10px; font-size: 0.62rem; color: #aaa; margin-bottom: 8px; }
+    .bar { height: 4px; border-radius: 2px; background: #2a2a2a; overflow: hidden; margin-bottom: 8px; }
+    .bar > span { display: block; height: 100%; }
+    .send { display: flex; gap: 6px; }
+    .send input { flex: 1; min-width: 0; font: inherit; font-size: 0.68rem; background: #141414; color: #eee;
+                  border: 1px solid #333; border-radius: 5px; padding: 4px 7px; }
+    .empty { padding: 40px; text-align: center; color: #777; font-size: 0.8rem; }
+    #log { font-size: 0.58rem; color: #666; padding: 6px 14px; border-top: 1px solid #2a2a2a;
+           height: 70px; overflow: auto; font-family: ui-monospace, monospace; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>📊 Agent Dashboard</h1>
+    <div id="conn"><span class="dot"></span><span id="connText">connecting…</span></div>
+    <div class="toolbar">
+      <input id="broadcast" placeholder="broadcast to all…"
+             style="font:inherit;font-size:0.68rem;background:#141414;color:#eee;border:1px solid #333;border-radius:5px;padding:4px 8px;width:200px" />
+      <button id="broadcastBtn">Broadcast</button>
+    </div>
+  </header>
+  <div id="grid" class="grid"></div>
+  <div id="empty" class="empty">No agents yet. Spawn one in workspacer.</div>
+  <div id="log"></div>
+
+  <script>
+    // The dashboard speaks the hub bus protocol directly from the webview:
+    // it subscribes to agent.* events and calls capabilities over one WebSocket.
+    const BUS = 'ws://127.0.0.1:7895/bus';
+    let ws, connected = false, callSeq = 0;
+    const pending = new Map();           // call id -> {resolve, reject}
+    let agents = [];
+    let refreshTimer = null;
+
+    const $ = (id) => document.getElementById(id);
+    function log(msg) {
+      const el = $('log');
+      el.textContent = `${new Date().toLocaleTimeString()}  ${msg}\n` + el.textContent;
+    }
+
+    function publish(type, data) {
+      if (connected) ws.send(JSON.stringify({ op: 'publish', event: { type, source: 'workspacer.agent-dashboard', data: data || {} } }));
+    }
+
+    function call(method, params) {
+      return new Promise((resolve, reject) => {
+        if (!connected) return reject(new Error('not connected'));
+        const id = `c${++callSeq}`;
+        pending.set(id, { resolve, reject });
+        ws.send(JSON.stringify({ op: 'call', id, method, params: params || {} }));
+        setTimeout(() => { if (pending.has(id)) { pending.delete(id); reject(new Error('timeout')); } }, 8000);
+      });
+    }
+
+    function scheduleRefresh() {
+      if (refreshTimer) return;
+      refreshTimer = setTimeout(async () => {
+        refreshTimer = null;
+        try { agents = await call('agents.list'); render(); } catch (e) { log('agents.list failed: ' + e.message); }
+      }, 150);
+    }
+
+    function stateColor(s) {
+      if (s === 'waiting_approval' || s === 'waiting_input') return '#e0a000';
+      if (s === 'thinking' || s === 'streaming') return '#4a9eff';
+      if (s === 'idle') return '#3fb950';
+      return '#666';
+    }
+    function ctxColor(f) { return f >= 0.9 ? '#e05555' : f >= 0.7 ? '#e0a000' : '#3fb950'; }
+    function fmtTok(n) { return n >= 1e6 ? (n/1e6).toFixed(1)+'M' : n >= 1e3 ? Math.round(n/1e3)+'k' : ''+n; }
+
+    function render() {
+      const grid = $('grid');
+      $('empty').style.display = agents.length ? 'none' : 'block';
+      grid.innerHTML = '';
+      for (const a of agents) {
+        const frac = a.contextLimit ? Math.min(1, a.contextTokens / a.contextLimit) : 0;
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.innerHTML = `
+          <div class="top">
+            <span class="dot" style="background:${stateColor(a.state)};box-shadow:0 0 5px ${stateColor(a.state)}"></span>
+            <span class="name">${(a.cwd||'').split('/').pop() || a.sessionId.slice(0,8)}</span>
+            <span class="state">${a.state||''}</span>
+          </div>
+          <div class="cwd">${a.cwd||''}</div>
+          <div class="meta">
+            <span>${(a.model||'').replace(/^claude-/,'') || '—'}</span>
+            <span>${a.contextTokens?fmtTok(a.contextTokens)+' / '+fmtTok(a.contextLimit):''}</span>
+            <span>${a.costUSD?'$'+a.costUSD.toFixed(2):''}</span>
+          </div>
+          <div class="bar"><span style="width:${Math.max(2,frac*100)}%;background:${ctxColor(frac)}"></span></div>
+          <div class="send">
+            <input placeholder="send a prompt…" />
+            <button>Send</button>
+          </div>`;
+        // Click an agent's name → tell workspacer to focus that agent.
+        const nameEl = card.querySelector('.name');
+        nameEl.style.cursor = 'pointer';
+        nameEl.title = 'Focus this agent in workspacer';
+        nameEl.onclick = () => { publish('command.focus_agent', { sessionId: a.sessionId }); log('command.focus_agent → ' + a.sessionId.slice(0, 8)); };
+        const input = card.querySelector('input');
+        const btn = card.querySelector('button');
+        const send = async () => {
+          const text = input.value.trim();
+          if (!text) return;
+          input.value = '';
+          try { await call('agents.sendMessage', { sessionId: a.sessionId, text }); log(`sent to ${a.sessionId.slice(0,8)}`); }
+          catch (e) { log('send failed: ' + e.message); }
+        };
+        btn.onclick = send;
+        input.onkeydown = (e) => { if (e.key === 'Enter') send(); };
+        grid.appendChild(card);
+      }
+    }
+
+    $('broadcastBtn').onclick = async () => {
+      const text = $('broadcast').value.trim();
+      if (!text) return;
+      $('broadcast').value = '';
+      let ok = 0;
+      for (const a of agents) {
+        try { await call('agents.sendMessage', { sessionId: a.sessionId, text }); ok++; } catch {}
+      }
+      log(`broadcast to ${ok}/${agents.length} agents`);
+      try { await call('notifications.post', { title: 'Broadcast sent', body: `to ${ok} agents` }); } catch {}
+    };
+
+    function setConn(on) {
+      connected = on;
+      $('conn').classList.toggle('on', on);
+      $('connText').textContent = on ? 'connected to hub' : 'disconnected';
+    }
+
+    function connect() {
+      ws = new WebSocket(BUS);
+      ws.onopen = () => {
+        setConn(true);
+        ws.send(JSON.stringify({ op: 'subscribe', topics: ['agent.*', 'ui.*'] }));
+        scheduleRefresh();
+        log('connected, subscribed to agent.* + ui.*');
+      };
+      ws.onmessage = (e) => {
+        const f = JSON.parse(e.data);
+        if (f.op === 'event' && f.event && f.event.type.startsWith('agent.')) {
+          scheduleRefresh(); // any agent event → refresh the roster
+        } else if (f.op === 'event' && f.event && f.event.type.startsWith('ui.')) {
+          // workspacer's own UI actions — show them as live activity.
+          const d = f.event.data || {};
+          const detail = d.type || d.title || d.workspaceId || '';
+          log(`${f.event.type}  ${detail}`);
+        } else if (f.op === 'result' && pending.has(f.id)) {
+          pending.get(f.id).resolve(f.result); pending.delete(f.id);
+        } else if (f.op === 'error' && pending.has(f.id)) {
+          pending.get(f.id).reject(new Error(f.error)); pending.delete(f.id);
+        }
+      };
+      ws.onclose = () => { setConn(false); setTimeout(connect, 1000); };
+      ws.onerror = () => { try { ws.close(); } catch {} };
+    }
+    connect();
+  </script>
+</body>
+</html>

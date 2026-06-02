@@ -15,11 +15,11 @@ const defaultTitles: Record<PaneType, string> = {
   agent: 'Agent',
   claude: 'Claude',
   settings: 'Settings',
-  tracker: 'Tracker',
-  devops: 'DevOps',
   review: 'Review',
-  'agent-manager': 'Agent Manager',
-  devdaemon: 'Daemon',
+  plugin: 'Plugin',
+  plugins: 'Plugins',
+  overview: 'Overview',
+  library: 'Library',
 };
 
 /** Derive a human label from a working directory (its basename). */
@@ -34,7 +34,7 @@ export function deriveAgentName(cwd: string): string {
  * to the agent's daemon session as a viewer (the session itself was already
  * spawned, so the pane never owns its lifetime).
  */
-function defaultAgentTabs(sessionId: string | undefined, cwd: string): { tabs: TabConfig[]; activeTabId: string } {
+function defaultAgentTabs(sessionId: string | undefined, cwd: string, initialPrompt?: string): { tabs: TabConfig[]; activeTabId: string } {
   const paneId = generateId('claude');
   const tabId = generateId('tab');
   const pane: PaneConfig = {
@@ -43,6 +43,7 @@ function defaultAgentTabs(sessionId: string | undefined, cwd: string): { tabs: T
     title: 'Claude',
     cwd,
     attachSessionId: sessionId,
+    initialPrompt,
   };
   return {
     tabs: [{ id: tabId, title: 'Claude', panes: [pane], activePaneId: paneId }],
@@ -50,8 +51,36 @@ function defaultAgentTabs(sessionId: string | undefined, cwd: string): { tabs: T
   };
 }
 
+/** Fixed id for the singleton global "Overview" workspace. */
+export const GLOBAL_WORKSPACE_ID = 'global';
+
+/** The default Overview tab — a dashboard pane, so the global workspace isn't empty. */
+function overviewTab(): TabConfig {
+  const paneId = generateId('pane');
+  const tabId = generateId('tab');
+  return { id: tabId, title: 'Overview', panes: [{ id: paneId, type: 'overview', title: 'Overview' }], activePaneId: paneId };
+}
+
+/** The agent-less workspace that hosts cross-agent / plugin panes. */
+function makeGlobalWorkspace(): AgentWorkspace {
+  const tab = overviewTab();
+  return { id: GLOBAL_WORKSPACE_ID, name: 'Overview', cwd: '', global: true, tabs: [tab], activeTabId: tab.id };
+}
+
+/** Ensure exactly one global workspace exists (pinned first) and that it always
+ *  has at least the Overview pane — backfills it into an empty/legacy global. */
+function withGlobalWorkspace(list: AgentWorkspace[]): AgentWorkspace[] {
+  const existing = list.find((a) => a.global);
+  if (!existing) return [makeGlobalWorkspace(), ...list];
+  if (existing.tabs.length === 0) {
+    const tab = overviewTab();
+    return list.map((a) => (a.global ? { ...a, tabs: [tab], activeTabId: tab.id } : a));
+  }
+  return list;
+}
+
 export function useAgentManager() {
-  const [agents, setAgents] = useState<AgentWorkspace[]>([]);
+  const [agents, setAgents] = useState<AgentWorkspace[]>(() => withGlobalWorkspace([]));
   const [activeAgentId, setActiveAgentId] = useState<string>('');
 
   // Refs let the (stable) callbacks below read current state without being
@@ -80,20 +109,22 @@ export function useAgentManager() {
   // ── Agent lifecycle ────────────────────────────────────────────────────
 
   /** Spawn a long-lived claudemon session and open a workspace for it. */
-  const spawnAgent = useCallback(async (opts: { cwd: string; name?: string; profileId?: string }) => {
+  const spawnAgent = useCallback(async (opts: { cwd: string; name?: string; profileId?: string; model?: string; skipPermissions?: boolean; initialPrompt?: string }) => {
     const cwd = opts.cwd;
     let sessionId: string | undefined;
     try {
-      sessionId = await window.electronAPI.spawnClaude({ cwd, profileId: opts.profileId, cols: 120, rows: 32 });
+      sessionId = await window.electronAPI.spawnClaude({ cwd, profileId: opts.profileId, model: opts.model, skipPermissions: opts.skipPermissions, cols: 120, rows: 32 });
     } catch (err) {
       console.error('[Agent] spawn failed:', err);
     }
-    const { tabs: agentTabs, activeTabId: agentActiveTab } = defaultAgentTabs(sessionId, cwd);
+    const { tabs: agentTabs, activeTabId: agentActiveTab } = defaultAgentTabs(sessionId, cwd, opts.initialPrompt);
     const agent: AgentWorkspace = {
       id: generateId('agent'),
       name: opts.name?.trim() || deriveAgentName(cwd),
       cwd,
       profileId: opts.profileId,
+      model: opts.model,
+      skipPermissions: opts.skipPermissions,
       sessionId,
       tabs: agentTabs,
       activeTabId: agentActiveTab,
@@ -110,7 +141,7 @@ export function useAgentManager() {
     if (!agent) return;
     let sessionId: string | undefined;
     try {
-      sessionId = await window.electronAPI.spawnClaude({ cwd: agent.cwd, profileId: agent.profileId, cols: 120, rows: 32 });
+      sessionId = await window.electronAPI.spawnClaude({ cwd: agent.cwd, profileId: agent.profileId, model: agent.model, skipPermissions: agent.skipPermissions, cols: 120, rows: 32 });
     } catch (err) {
       console.error('[Agent] respawn failed:', err);
     }
@@ -133,6 +164,7 @@ export function useAgentManager() {
   /** Explicitly terminate an agent: kill its daemon session and drop it. */
   const terminateAgent = useCallback(async (agentId: string) => {
     const agent = agentsRef.current.find((a) => a.id === agentId);
+    if (agent?.global) return; // the Overview workspace is permanent
     setAgents((prev) => prev.filter((a) => a.id !== agentId));
     setActiveAgentId((cur) => {
       if (cur !== agentId) return cur;
@@ -160,8 +192,24 @@ export function useAgentManager() {
   }, []);
 
   const loadAgentsFromSession = useCallback((sessionAgents: AgentWorkspace[], activeId: string) => {
-    setAgents(sessionAgents);
-    setActiveAgentId(activeId || sessionAgents[0]?.id || '');
+    const list = withGlobalWorkspace(sessionAgents);
+    setAgents(list);
+    // Prefer a real agent on load; fall back to the Overview workspace.
+    setActiveAgentId(activeId || sessionAgents[0]?.id || list[0]?.id || '');
+  }, []);
+
+  /** Open a pane in a specific workspace (agent or the global Overview) and
+   *  switch to it. Used to place plugin panes by their declared scope. */
+  const openPaneIn = useCallback((workspaceId: string, type: PaneType, title: string, url?: string): void => {
+    const paneId = generateId('pane');
+    const tabId = generateId('tab');
+    const pane: PaneConfig = { id: paneId, type, title, url, appMode: true };
+    setAgents((prev) => withGlobalWorkspace(prev).map((a) =>
+      a.id === workspaceId
+        ? { ...a, tabs: [...a.tabs, { id: tabId, title, panes: [pane], activePaneId: paneId }], activeTabId: tabId }
+        : a,
+    ));
+    setActiveAgentId(workspaceId);
   }, []);
 
   // ── Tab/pane operations (scoped to the active agent) ──────────────────────
@@ -355,6 +403,7 @@ export function useAgentManager() {
     renameAgent,
     reconcileAgents,
     loadAgentsFromSession,
+    openPaneIn,
     // tabs (active agent)
     tabs,
     activeTabId,

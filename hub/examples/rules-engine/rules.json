@@ -1,0 +1,53 @@
+[
+  {
+    "id": "needs-approval",
+    "name": "Jump to agents needing approval",
+    "enabled": true,
+    "when": { "event": "agent.state_changed", "match": { "mode": "approval" } },
+    "do": [
+      { "type": "notify", "title": "Agent needs approval", "body": "{{data.cwd}}" },
+      { "type": "command", "command": "focus_agent", "params": { "sessionId": "{{data.sessionId}}" } }
+    ],
+    "cooldownMs": 4000
+  },
+  {
+    "id": "needs-input",
+    "name": "Notify on questions",
+    "enabled": true,
+    "when": { "event": "agent.state_changed", "match": { "mode": "question" } },
+    "do": [
+      { "type": "notify", "title": "Agent has a question", "body": "{{data.cwd}}" }
+    ],
+    "cooldownMs": 4000
+  },
+  {
+    "id": "finished",
+    "name": "Notify when an agent finishes a turn",
+    "enabled": false,
+    "when": { "event": "agent.state_changed", "match": { "hookEvent": "Stop" } },
+    "do": [
+      { "type": "notify", "title": "Agent finished", "body": "{{data.cwd}}" }
+    ],
+    "cooldownMs": 8000
+  },
+  {
+    "id": "over-budget",
+    "name": "Warn when an agent passes $5",
+    "enabled": false,
+    "when": { "event": "agents.poll", "where": [ { "path": "data.costUSD", "op": "gt", "value": 5 } ] },
+    "do": [
+      { "type": "notify", "title": "Agent over budget", "body": "{{data.cwd}} — ${{data.costUSD}}" }
+    ],
+    "once": true
+  },
+  {
+    "id": "phone-on-approval",
+    "name": "Push to phone on approval (edit URL)",
+    "enabled": false,
+    "when": { "event": "agent.state_changed", "match": { "mode": "approval" } },
+    "do": [
+      { "type": "webhook", "method": "POST", "url": "https://ntfy.sh/YOUR-TOPIC", "body": "Agent in {{data.cwd}} needs approval" }
+    ],
+    "cooldownMs": 10000
+  }
+]

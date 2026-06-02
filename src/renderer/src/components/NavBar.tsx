@@ -30,11 +30,11 @@ const typeLabels: Record<PaneType, string> = {
   agent: '\u{1F916}',
   claude: '\u2666',
   settings: '\u2699',
-  tracker: '\u{1F4CB}',
-  devops: '\u{1F527}',
   review: '\u{1F50D}',
-  'agent-manager': '\u{1F916}',
-  devdaemon: '\u26A1',
+  plugin: '\u{1F9E9}',
+  plugins: '\u{1F9F0}',
+  overview: '\u{1F3E0}',
+  library: '⚡',
 };
 
 interface SessionPickerState {
@@ -252,12 +252,8 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
                   } catch {}
                   onAddTab('claude', undefined, undefined, folder);
                 }} />
-                <MenuButton label="Tracker" onClick={() => { setShowMenu(false); onAddTab('tracker'); }} />
-                <MenuButton label="Git & Pipelines" onClick={() => { setShowMenu(false); onAddTab('devops'); }} />
                 <MenuButton label="Browser" onClick={() => { setShowMenu(false); onAddTab('browser'); }} />
                 <MenuButton label="Notes" onClick={() => { setShowMenu(false); onAddTab('notes'); }} />
-                <MenuButton label="Agent Manager" onClick={() => { setShowMenu(false); onAddTab('agent-manager'); }} />
-                <MenuButton label="Daemon" onClick={() => { setShowMenu(false); onAddTab('devdaemon'); }} />
 
                 <div style={{ height: '1px', backgroundColor: 'var(--wks-border)', margin: '4px 0' }} />
 

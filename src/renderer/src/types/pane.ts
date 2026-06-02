@@ -1,4 +1,4 @@
-export type PaneType = 'terminal' | 'browser' | 'notes' | 'agent' | 'claude' | 'settings' | 'tracker' | 'devops' | 'review' | 'agent-manager' | 'devdaemon';
+export type PaneType = 'terminal' | 'browser' | 'notes' | 'agent' | 'claude' | 'settings' | 'review' | 'plugin' | 'plugins' | 'overview' | 'library';
 
 export interface PaneConfig {
   id: string;
@@ -19,6 +19,9 @@ export interface PaneConfig {
   /** Terminal panes only: a command typed into the PTY once it's ready (used by
    *  the per-directory script buttons). */
   initialCommand?: string;
+  /** Claude panes only: text to seed the message input with on first mount —
+   *  used when spawning an agent from a library prompt/skill. */
+  initialPrompt?: string;
 }
 
 export interface TabConfig {
@@ -39,9 +42,17 @@ export interface AgentWorkspace {
   id: string;
   /** Display name — defaults to the basename of `cwd`, renameable. */
   name: string;
+  /** The agent-less "Overview" workspace: holds cross-agent / global plugin
+   *  panes (e.g. the Agent Dashboard) that don't belong to any single agent.
+   *  Always present, pinned first, not spawnable/terminable. */
+  global?: boolean;
   /** Working directory. Used as the default cwd for every pane opened here. */
   cwd: string;
   profileId?: string;
+  /** Model passed as `--model` at spawn (alias or full id). '' / undefined = Claude default. */
+  model?: string;
+  /** Whether this agent was spawned with `--dangerously-skip-permissions`. */
+  skipPermissions?: boolean;
   /** claudemon session id once spawned. Undefined means the agent is stopped
    *  (e.g. the daemon session ended or didn't survive a restart). */
   sessionId?: string;

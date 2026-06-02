@@ -6,7 +6,6 @@ import '@xterm/xterm/css/xterm.css';
 import { usePTY } from '../hooks/usePTY';
 import { useConfig, Config } from '../hooks/useConfig';
 import { useTheme } from '../hooks/useTheme';
-import { registerIssueLinkProvider, type IssuePeekData } from '../lib/issueLinks';
 import { claudeColors as colors, ensureKeyframes } from '../components/claude-shared';
 
 /** Ensure each CSS font-family name with spaces is quoted */
@@ -40,7 +39,6 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
   const fitAddonRef = useRef<FitAddon | null>(null);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const initializedRef = useRef(false);
-  const [issuePeek, setIssuePeek] = useState<IssuePeekData | null>(null);
 
   const { config } = useConfig();
   const termCfg = config.terminal;
@@ -177,11 +175,6 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
 
     attachToTerminal(term);
 
-    // Issue key link provider — makes PROJ-123 clickable
-    const issueLinkDisp = registerIssueLinkProvider(term, (data) => {
-      setIssuePeek(data);
-    });
-
     const onDataDisposable = term.onData((data) => {
       write(data);
     });
@@ -211,7 +204,6 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
     term.focus();
 
     return () => {
-      issueLinkDisp.dispose();
       onDataDisposable.dispose();
       onBinaryDisposable.dispose();
       onResizeDisposable.dispose();
@@ -295,57 +287,6 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
           backgroundColor: 'var(--wks-bg-terminal)',
         }}
       />
-      {issuePeek && (
-        <div
-          onClick={() => setIssuePeek(null)}
-          style={{
-            position: 'absolute', inset: 0, zIndex: 100,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            backgroundColor: 'rgba(0,0,0,0.4)',
-          }}
-        >
-          <div
-            onClick={e => e.stopPropagation()}
-            style={{
-              width: 420, maxHeight: '70vh', overflow: 'auto',
-              borderRadius: 10, border: `1px solid ${colors.border}`,
-              backgroundColor: 'var(--wks-bg-surface)', padding: '16px 20px',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-              <span style={{ color: colors.accent, fontWeight: 700, fontFamily: 'monospace', fontSize: '0.82rem' }}>
-                {issuePeek.key}
-              </span>
-              <span style={{
-                fontSize: '0.6rem', fontWeight: 600, padding: '2px 8px', borderRadius: 10,
-                backgroundColor: 'rgba(255,255,255,0.05)',
-                color: issuePeek.statusCategory === 'done' ? colors.success : issuePeek.statusCategory === 'in_progress' ? colors.accent : colors.muted,
-              }}>
-                {issuePeek.status}
-              </span>
-              <div style={{ flex: 1 }} />
-              <span onClick={() => setIssuePeek(null)} style={{ cursor: 'pointer', color: colors.muted, fontSize: '0.85rem' }}>{'\u00D7'}</span>
-            </div>
-            <div style={{ fontSize: '0.82rem', fontWeight: 600, color: colors.textBright, marginBottom: 8 }}>
-              {issuePeek.title}
-            </div>
-            <div style={{ fontSize: '0.65rem', color: colors.muted, marginBottom: 10, display: 'flex', gap: 12 }}>
-              <span>Type: {issuePeek.type}</span>
-              {issuePeek.assignee && <span>Assignee: {issuePeek.assignee}</span>}
-            </div>
-            {issuePeek.description && (
-              <div style={{
-                fontSize: '0.72rem', lineHeight: 1.5, color: colors.text,
-                whiteSpace: 'pre-wrap', padding: '10px 12px', borderRadius: 6,
-                border: `1px solid ${colors.borderSubtle}`, backgroundColor: 'rgba(255,255,255,0.02)',
-                maxHeight: 200, overflow: 'auto',
-              }}>
-                {issuePeek.description}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
     </div>
   );
 };

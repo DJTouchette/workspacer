@@ -1,0 +1,19 @@
+{
+  "id": "example.clock",
+  "name": "Clock",
+  "apiVersion": "1",
+  "server": {
+    "command": "python3",
+    "args": ["-m", "http.server", "9111", "--bind", "127.0.0.1"],
+    "port": 9111,
+    "health": "/"
+  },
+  "panes": [
+    { "type": "example.clock", "title": "Clock", "icon": "🕐", "path": "/index.html" }
+  ],
+  "hotkeys": [
+    { "id": "open-clock", "default": "ctrl+shift+k", "command": "open-pane:example.clock" }
+  ],
+  "consumes": ["agent.state_changed"],
+  "emits": ["example.clock.tick"]
+}

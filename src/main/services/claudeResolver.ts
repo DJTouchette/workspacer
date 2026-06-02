@@ -117,11 +117,25 @@ function getBaseArgv(): string[] {
 export interface ClaudeArgvOptions {
   extraArgs?: string[];
   resumeSessionId?: string;
+  /** Alias ('opus'/'sonnet') or full id ('claude-opus-4-8'). '' = Claude default. */
+  model?: string;
+  /** Pass `--dangerously-skip-permissions` to bypass all permission checks. */
+  skipPermissions?: boolean;
 }
 
 export function buildClaudeArgv(opts: ClaudeArgvOptions = {}): string[] {
   const argv = getBaseArgv();
   if (opts.extraArgs && opts.extraArgs.length) argv.push(...opts.extraArgs);
+  // Inject --model unless the profile's extraArgs already pin one.
+  const profilePinsModel = (opts.extraArgs ?? []).some((a) => a === '--model' || a.startsWith('--model='));
+  if (opts.model && opts.model.trim() && !profilePinsModel) {
+    argv.push('--model', opts.model.trim());
+  }
+  // Inject --dangerously-skip-permissions unless a profile already set it.
+  const alreadySkips = (opts.extraArgs ?? []).includes('--dangerously-skip-permissions');
+  if (opts.skipPermissions && !alreadySkips) {
+    argv.push('--dangerously-skip-permissions');
+  }
   if (opts.resumeSessionId) argv.push('--resume', opts.resumeSessionId);
   return argv;
 }

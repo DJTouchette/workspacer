@@ -72,6 +72,19 @@ interface Config {
     /** Play the OS notification sound. */
     sound: boolean;
   };
+  claude: {
+    /** Default `--model` for new agents ('' = Claude Code's own default). */
+    defaultModel: string;
+    /** Concrete model ids observed in transcripts, to enrich the spawn dropdown. */
+    seenModels: string[];
+    /** Default for the spawn dialog's `--dangerously-skip-permissions` toggle. */
+    skipPermissionsDefault: boolean;
+  };
+  /** Directories surfaced in the Overview pane for quick agent launching. */
+  directories: {
+    recent: string[];
+    favourites: string[];
+  };
   /** Per-directory script buttons, keyed by workspace root (normalized cwd). */
   scripts: Record<string, ScriptEntry[]>;
   apps: AppEntry[];
@@ -149,6 +162,7 @@ function defaultConfig(): Config {
         'quick-split': 'ctrl+shift+d',
         'close-pane': 'ctrl+w',
         'command-palette': 'ctrl+k',
+        'library-picker': 'ctrl+shift+l',
         'settings': 'ctrl+,',
         'save-session': 'ctrl+s',
         'rename-tab': 'f2',
@@ -171,6 +185,15 @@ function defaultConfig(): Config {
       onlyWhenUnwatched: true,
       sound: false,
     },
+    claude: {
+      defaultModel: '',
+      seenModels: [],
+      skipPermissionsDefault: false,
+    },
+    directories: {
+      recent: [],
+      favourites: [],
+    },
     scripts: {},
     apps: [
       { name: 'GitHub', url: 'https://github.com', icon: '\u{1F4BB}' },
@@ -183,7 +206,7 @@ function defaultConfig(): Config {
   };
 }
 
-function getConfigDir(): string {
+export function getConfigDir(): string {
   if (process.platform === 'win32') {
     const appData = process.env.APPDATA;
     if (appData) return path.join(appData, 'workspacer');

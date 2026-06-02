@@ -7,8 +7,10 @@ import { claudeSessionStore } from './services/claudeSessionStore';
 import { agentNotifier } from './services/agentNotifier';
 import { claudemonSessionClient } from './services/claudemonSessionClient';
 import { startClaudemon, stopClaudemon, runClaudemonInit } from './services/claudemonDaemon';
-import { startDevDaemon, stopDevDaemon } from './services/devdaemonManager';
 import { startClaudemonHookBridge, stopClaudemonHookBridge } from './services/claudemonHookBridge';
+import { startHub, stopHub } from './services/hubDaemon';
+import { setHubMainWindow, startHubClient, stopHubClient } from './services/hubClient';
+import { registerHubCapabilities } from './services/hubCapabilities';
 import { database } from './services/db';
 
 // Font file registry: filename → absolute path (populated during discovery)
@@ -169,6 +171,7 @@ function createWindow(): void {
   registerIpcHandlers(mainWindow);
   claudeSessionStore.setMainWindow(mainWindow);
   agentNotifier.setMainWindow(mainWindow);
+  setHubMainWindow(mainWindow);
 
   // claudemon daemon owns hook ingestion + transcript parsing. We spawn it,
   // run `claudemon init` to merge our hooks into ~/.claude/settings.json,
@@ -183,15 +186,18 @@ function createWindow(): void {
       startClaudemonHookBridge().catch(err =>
         console.error('[main] hook bridge crashed:', err)
       );
+      // Hub (control-plane / event bus) bridges claudemon onto its bus; the
+      // main process connects as a client, forwards events to the renderer, and
+      // registers the capabilities plugins/MCP can call. Started after claudemon
+      // so the bridge has a live /events source.
+      registerHubCapabilities();
+      startHub()
+        .then(() => startHubClient())
+        .catch(err => console.error('[main] failed to start hub:', err));
     })
     .catch(err => {
       console.error('[main] failed to start claudemon — Claude sessions will not get hook events:', err);
     });
-
-  // Start devdaemon + agent-manager for workflow automation.
-  startDevDaemon().catch(err => {
-    console.error('[main] failed to start devdaemon/agent-manager:', err);
-  });
 
   // Prevent Electron from navigating to dropped files
   mainWindow.webContents.on('will-navigate', (event) => { event.preventDefault(); });
@@ -306,16 +312,18 @@ app.on('before-quit', () => {
     mainWindow.webContents.send('app:before-quit');
   }
   stopClaudemonHookBridge();
+  stopHubClient();
+  stopHub();
   stopClaudemon();
-  stopDevDaemon();
   database.close();
 });
 
 app.on('window-all-closed', () => {
   claudemonSessionClient.closeAll();
   stopClaudemonHookBridge();
+  stopHubClient();
+  stopHub();
   stopClaudemon();
-  stopDevDaemon();
   app.quit();
 });
 

@@ -2,15 +2,22 @@ import { useRef, useCallback, useState, useEffect } from 'react';
 import './App.css';
 import NavBar from './components/NavBar';
 import SideBar, { SIDEBAR_WIDTH } from './components/SideBar';
+import PluginInstallDialog from './components/PluginInstallDialog';
+import { usePlugins } from './hooks/usePlugins';
+import { useUiEventBus } from './hooks/useUiEventBus';
+import { useUiCommands } from './hooks/useUiCommands';
+import type { PluginPane } from './types/plugin';
 import SpawnAgentDialog from './components/SpawnAgentDialog';
 import ScrollContainer, { ScrollContainerRef } from './components/ScrollContainer';
 import ScrollIndicator from './components/ScrollIndicator';
 import ShortcutOverlay from './components/ShortcutOverlay';
 import SessionPicker from './components/SessionPicker';
 import CommandPalette from './components/CommandPalette';
-import { useAgentManager } from './hooks/useAgentManager';
+import LibraryHost from './components/LibraryHost';
+import { useLibrary } from './hooks/useLibrary';
+import { useAgentManager, GLOBAL_WORKSPACE_ID } from './hooks/useAgentManager';
 import type { PaneType, AgentWorkspace } from './types/pane';
-import type { SessionAmbientState } from './types/claudeSession';
+import type { SessionAmbientState, SessionUsage } from './types/claudeSession';
 import { useKeyboardNav } from './hooks/useKeyboardNav';
 import { useConfig } from './hooks/useConfig';
 import { useTheme } from './hooks/useTheme';
@@ -33,6 +40,7 @@ function App() {
     renameAgent,
     reconcileAgents,
     loadAgentsFromSession,
+    openPaneIn,
     setActiveAgentId,
     tabs,
     activeTabId,
@@ -56,26 +64,43 @@ function App() {
   const [chordState, setChordState] = useState<'idle' | 'waiting'>('idle');
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   const [paletteMode, setPaletteMode] = useState<'tab' | 'split'>('tab');
+  const [paletteRestrict, setPaletteRestrict] = useState<'library' | undefined>(undefined);
   const [showSpawnDialog, setShowSpawnDialog] = useState(false);
 
-  // App working directory (used as the default cwd for the spawn dialog)
+  // App working directory (used as the default cwd for the spawn dialog + the
+  // Library's fallback project root).
   const appCwdRef = useRef<string>('');
+  const [appCwd, setAppCwd] = useState('');
   useEffect(() => {
-    window.electronAPI.getCwd().then((cwd) => { appCwdRef.current = cwd; }).catch(() => {});
+    window.electronAPI.getCwd().then((cwd) => { appCwdRef.current = cwd; setAppCwd(cwd); }).catch(() => {});
   }, []);
+
+  // Library (reusable prompts + skills): global + the active project's items.
+  const libraryCwd = activeAgent?.cwd || appCwd || undefined;
+  const { items: libraryItems } = useLibrary(libraryCwd);
+  const openLibraryPicker = useCallback(() => { setPaletteRestrict('library'); setPaletteMode('tab'); setShowCommandPalette(true); }, []);
 
   // Live agent status: sessionId -> ambient state, sourced from claudemon.
   const [statusBySession, setStatusBySession] = useState<Record<string, SessionAmbientState>>({});
+  const [usageBySession, setUsageBySession] = useState<Record<string, SessionUsage>>({});
   useEffect(() => {
     let cancelled = false;
     window.electronAPI.getAllClaudeSessions().then((sessions: any[]) => {
       if (cancelled) return;
       const map: Record<string, SessionAmbientState> = {};
-      for (const s of sessions) map[s.sessionId] = s.ambientState;
+      const usage: Record<string, SessionUsage> = {};
+      for (const s of sessions) {
+        map[s.sessionId] = s.ambientState;
+        if (s.usage) usage[s.sessionId] = s.usage;
+      }
       setStatusBySession(map);
+      setUsageBySession(usage);
     }).catch(() => {});
     const unsub = window.electronAPI.onClaudeSessionUpdate((sessionId: string, snapshot: any) => {
       setStatusBySession((prev) => ({ ...prev, [sessionId]: snapshot.ambientState }));
+      if (snapshot.usage) {
+        setUsageBySession((prev) => ({ ...prev, [sessionId]: snapshot.usage }));
+      }
     });
     return () => { cancelled = true; unsub(); };
   }, []);
@@ -288,10 +313,24 @@ function App() {
     if (agent && !agent.sessionId) respawnAgent(id);
   }, [agents, setActiveAgentId, respawnAgent]);
 
-  const handleSpawnAgent = useCallback((opts: { cwd: string; name?: string; profileId?: string }) => {
+  // Record a directory at the front of the Overview's recent list (deduped, capped).
+  const recordRecentDir = useCallback((cwd?: string) => {
+    if (!cwd) return;
+    const cur = config.directories?.recent ?? [];
+    if (cur[0] === cwd) return;
+    const recent = [cwd, ...cur.filter((d) => d !== cwd)].slice(0, 8);
+    saveConfig({ directories: { recent, favourites: config.directories?.favourites ?? [] } });
+  }, [config.directories, saveConfig]);
+
+  const handleSpawnAgent = useCallback((opts: { cwd: string; name?: string; profileId?: string; model?: string; skipPermissions?: boolean }) => {
     setShowSpawnDialog(false);
+    // Remember the picked model + skip-permissions choice so they stick next time.
+    window.electronAPI.saveConfig({
+      claude: { defaultModel: opts.model ?? '', skipPermissionsDefault: opts.skipPermissions ?? false },
+    }).catch(() => {});
+    recordRecentDir(opts.cwd);
     void spawnAgent(opts);
-  }, [spawnAgent]);
+  }, [spawnAgent, recordRecentDir]);
 
   const goToAgent = useCallback((delta: number) => {
     if (agents.length === 0) return;
@@ -401,8 +440,8 @@ function App() {
     onChordStateChange: setChordState,
     onOpenSettings: openSettings,
     onSaveSession: saveCurrentSession,
-    onOpenCommandPalette: useCallback(() => { setPaletteMode('tab'); setShowCommandPalette(true); }, []),
-    onOpenSplitPalette: useCallback(() => { setPaletteMode('split'); setShowCommandPalette(true); }, []),
+    onOpenCommandPalette: useCallback(() => { setPaletteRestrict(undefined); setPaletteMode('tab'); setShowCommandPalette(true); }, []),
+    onOpenSplitPalette: useCallback(() => { setPaletteRestrict(undefined); setPaletteMode('split'); setShowCommandPalette(true); }, []),
     onPrevAgent: handlePrevAgent,
     onNextAgent: handleNextAgent,
     onNextAttention: goToNextAttention,
@@ -463,6 +502,117 @@ function App() {
     requestAnimationFrame(() => scrollToTab(newId));
   }, [addTab, insertPosition, scrollToTab]);
 
+  // Publish every UI action (pane open/close, focus changes) onto the hub bus
+  // so plugins/MCP can react to what's happening in the app.
+  useUiEventBus(agents, activeAgentId);
+
+  // --- Plugins (contributed panes + hotkeys from the hub) ---
+  const { panes: pluginPanes, hotkeys: pluginHotkeys } = usePlugins();
+  const [showInstallPlugin, setShowInstallPlugin] = useState(false);
+
+  const handleOpenPlugin = useCallback((pane: PluginPane) => {
+    // Place the pane by its declared scope:
+    //  - global → the Overview workspace
+    //  - agent  → the active agent (else the first real agent), with that
+    //             agent's session/cwd handed to the webview via query params
+    //  - both   → wherever the user currently is
+    const activeIsAgent = !!activeAgent && !activeAgent.global;
+    let target: AgentWorkspace | undefined;
+    if (pane.scope === 'global') {
+      target = undefined; // global
+    } else if (pane.scope === 'agent') {
+      target = activeIsAgent ? activeAgent : agents.find((a) => !a.global);
+    } else {
+      target = activeIsAgent ? activeAgent : undefined; // 'both'
+    }
+
+    if (!target) {
+      openPaneIn(GLOBAL_WORKSPACE_ID, 'plugin', pane.title, pane.url);
+      return;
+    }
+    // Hand agent context to the plugin's webview.
+    const sep = pane.url.includes('?') ? '&' : '?';
+    const params = new URLSearchParams();
+    if (target.sessionId) params.set('sessionId', target.sessionId);
+    if (target.cwd) params.set('cwd', target.cwd);
+    const url = params.toString() ? `${pane.url}${sep}${params.toString()}` : pane.url;
+    openPaneIn(target.id, 'plugin', pane.title, url);
+  }, [openPaneIn, activeAgent, agents]);
+
+  // Bind plugin-contributed hotkeys: open-pane:<type> or emit:<eventType>.
+  useEffect(() => {
+    if (pluginHotkeys.length === 0) return;
+    const matches = (combo: string, e: KeyboardEvent): boolean => {
+      const parts = combo.toLowerCase().split('+');
+      const key = parts[parts.length - 1];
+      return e.ctrlKey === parts.includes('ctrl')
+        && e.shiftKey === parts.includes('shift')
+        && e.altKey === parts.includes('alt')
+        && e.metaKey === parts.includes('meta')
+        && e.key.toLowerCase() === key;
+    };
+    const handler = (e: KeyboardEvent) => {
+      for (const h of pluginHotkeys) {
+        if (!matches(h.combo, e)) continue;
+        e.preventDefault();
+        if (h.command.startsWith('open-pane:')) {
+          const type = h.command.slice('open-pane:'.length);
+          const pane = pluginPanes.find((p) => p.type === type);
+          if (pane) handleOpenPlugin(pane);
+        } else if (h.command.startsWith('emit:')) {
+          window.electronAPI.hubPublish?.({ type: h.command.slice('emit:'.length), data: {} });
+        }
+        return;
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [pluginHotkeys, pluginPanes, handleOpenPlugin]);
+
+  // Library quick-picker hotkey (default ctrl+shift+l): opens the palette
+  // restricted to prompts & skills.
+  useEffect(() => {
+    const combo = config.keybindings?.shortcuts?.['library-picker'];
+    if (!combo) return;
+    const parts = combo.toLowerCase().split('+');
+    const key = parts[parts.length - 1];
+    const handler = (e: KeyboardEvent) => {
+      if (e.ctrlKey === parts.includes('ctrl') && e.shiftKey === parts.includes('shift')
+        && e.altKey === parts.includes('alt') && e.metaKey === parts.includes('meta')
+        && e.key.toLowerCase() === key) {
+        e.preventDefault();
+        openLibraryPicker();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [config.keybindings?.shortcuts, openLibraryPicker]);
+
+  // Listen for bus commands (from plugins / MCP) and drive the UI. The ui.*
+  // event each action emits doubles as the confirmation back on the bus.
+  useUiCommands({
+    focusAgent: (idOrSession) => {
+      const a = agents.find((x) => x.id === idOrSession || x.sessionId === idOrSession);
+      if (a) handleSelectAgent(a.id);
+    },
+    spawnAgent: (opts) => {
+      const cwd = opts.cwd || activeAgent?.cwd || appCwdRef.current;
+      if (cwd) { recordRecentDir(cwd); void spawnAgent({ cwd, name: opts.name, model: opts.model }); }
+    },
+    openPane: (paneType, opts) => handleAddTab(paneType as PaneType, undefined, undefined, opts?.cwd),
+    openPlugin: (type) => {
+      const pane = pluginPanes.find((p) => p.type === type);
+      if (pane) handleOpenPlugin(pane);
+    },
+    closePane: (paneId) => {
+      for (const a of agents) {
+        for (const t of a.tabs) {
+          if (t.panes.some((p) => p.id === paneId)) { removePane(t.id, paneId); return; }
+        }
+      }
+    },
+  });
+
   // --- Per-directory script buttons ---
   const agentCwd = activeAgent?.cwd ?? '';
   const dirScripts = agentCwd ? (config.scripts?.[scriptKey(agentCwd)] ?? []) : [];
@@ -498,6 +648,7 @@ function App() {
         agents={agents}
         activeAgentId={activeAgentId}
         statusBySession={statusBySession}
+        usageBySession={usageBySession}
         onSelectAgent={handleSelectAgent}
         onSpawnAgent={() => setShowSpawnDialog(true)}
         onTerminateAgent={terminateAgent}
@@ -553,6 +704,8 @@ function App() {
                   onAddTab={handleAddTab}
                   ptyMapping={ptyMapping}
                   renameSignal={renameSignal}
+                  workspaceAgents={agents.filter((a) => !a.global).map((a) => ({ sessionId: a.sessionId }))}
+                  appCwd={appCwd}
                 />
               </div>
             );
@@ -604,11 +757,29 @@ function App() {
         visible={showCommandPalette}
         apps={config.apps ?? []}
         mode={paletteMode}
-        onClose={useCallback(() => setShowCommandPalette(false), [])}
+        restrictTo={paletteRestrict}
+        libraryItems={libraryItems}
+        onClose={useCallback(() => { setShowCommandPalette(false); setPaletteRestrict(undefined); }, [])}
         onLaunchApp={handleLaunchApp}
         onAddTab={handleAddTab}
         onSplitPane={handleSplitPane}
+        pluginPanes={pluginPanes}
+        onOpenPlugin={handleOpenPlugin}
+        onInstallPlugin={() => { setShowCommandPalette(false); setShowInstallPlugin(true); }}
+        onManagePlugins={() => { setShowCommandPalette(false); openPaneIn(GLOBAL_WORKSPACE_ID, 'plugins', 'Plugins'); }}
+        onOpenLibrary={() => { setShowCommandPalette(false); openPaneIn(GLOBAL_WORKSPACE_ID, 'library', 'Library'); }}
       />
+
+      <LibraryHost
+        activeAgent={activeAgent}
+        appCwd={appCwd}
+        spawnAgent={(opts) => { void spawnAgent(opts); }}
+        recordRecentDir={recordRecentDir}
+      />
+
+      {showInstallPlugin && (
+        <PluginInstallDialog onClose={() => setShowInstallPlugin(false)} />
+      )}
 
       {showSpawnDialog && (
         <SpawnAgentDialog

@@ -1,0 +1,141 @@
+/**
+ * Main-process client for the hub event bus. One WebSocket to the hub does two
+ * jobs:
+ *
+ *   1. Subscribes to bus events and forwards them to the renderer (hub:event).
+ *   2. Registers main as a capability *provider* — it answers `call` frames for
+ *      methods like `agents.list` / `agents.sendMessage`. This is the inverse of
+ *      events (request/reply) and the same path the MCP facade will drive.
+ *
+ * Reconnects with backoff; re-subscribes and re-registers on every (re)connect.
+ */
+
+import WebSocket from 'ws';
+import { BrowserWindow } from 'electron';
+import { HUB_BUS_URL } from './hubDaemon';
+
+const TOPICS = ['*'];
+
+type CapabilityHandler = (params: unknown) => Promise<unknown> | unknown;
+
+interface HubEvent {
+  id: string;
+  type: string;
+  source: string;
+  time: string;
+  data?: unknown;
+}
+
+const handlers = new Map<string, CapabilityHandler>();
+let ws: WebSocket | null = null;
+let mainWindow: BrowserWindow | null = null;
+let stopped = false;
+let backoff = 200;
+let connected = false;
+
+/** Current bus connection state — lets a late-mounting renderer sync up. */
+export function isHubConnected(): boolean {
+  return connected;
+}
+
+export function setHubMainWindow(win: BrowserWindow): void {
+  mainWindow = win;
+}
+
+/** Register a capability main provides on the bus. Call before startHubClient. */
+export function registerCapability(method: string, handler: CapabilityHandler): void {
+  handlers.set(method, handler);
+}
+
+function forward(channel: string, ...args: unknown[]): void {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(channel, ...args);
+  }
+}
+
+function send(frame: Record<string, unknown>): void {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(frame));
+  }
+}
+
+function handleCall(id: string, method: string, params: unknown): void {
+  const handler = handlers.get(method);
+  if (!handler) {
+    send({ op: 'error', id, error: `no handler for ${method}` });
+    return;
+  }
+  Promise.resolve()
+    .then(() => handler(params))
+    .then(
+      (result) => send({ op: 'result', id, result: result ?? null }),
+      (err) => send({ op: 'error', id, error: err?.message ? String(err.message) : String(err) }),
+    );
+}
+
+function connect(): void {
+  if (stopped) return;
+  ws = new WebSocket(HUB_BUS_URL);
+
+  ws.on('open', () => {
+    backoff = 200;
+    connected = true;
+    send({ op: 'subscribe', topics: TOPICS });
+    if (handlers.size > 0) {
+      send({ op: 'register', methods: Array.from(handlers.keys()) });
+    }
+    forward('hub:status', { connected: true });
+    console.log(`[hub-client] connected; subscribed ${TOPICS.join(',')}; provides ${Array.from(handlers.keys()).join(',') || '(none)'}`);
+  });
+
+  ws.on('message', (raw: WebSocket.RawData) => {
+    let frame: { op?: string; event?: HubEvent; id?: string; method?: string; params?: unknown };
+    try {
+      frame = JSON.parse(raw.toString());
+    } catch {
+      return;
+    }
+    switch (frame.op) {
+      case 'event':
+        if (frame.event) forward('hub:event', frame.event);
+        break;
+      case 'call':
+        if (frame.id && frame.method) handleCall(frame.id, frame.method, frame.params);
+        break;
+      // hello / subscribed / registered acks: nothing to do.
+    }
+  });
+
+  ws.on('close', () => {
+    connected = false;
+    forward('hub:status', { connected: false });
+    scheduleReconnect();
+  });
+
+  ws.on('error', () => {
+    try { ws?.close(); } catch { /* noop */ }
+  });
+}
+
+function scheduleReconnect(): void {
+  if (stopped) return;
+  const wait = backoff;
+  backoff = Math.min(backoff * 2, 5000);
+  setTimeout(connect, wait);
+}
+
+/** Publish an event onto the bus (e.g. from a renderer-triggered plugin hotkey). */
+export function publishToHub(ev: { type: string; source?: string; data?: unknown }): void {
+  send({ op: 'publish', event: { source: 'workspacer', ...ev } });
+}
+
+export function startHubClient(): void {
+  stopped = false;
+  connect();
+}
+
+export function stopHubClient(): void {
+  stopped = true;
+  try { ws?.close(); } catch { /* noop */ }
+  ws = null;
+}
