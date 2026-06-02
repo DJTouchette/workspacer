@@ -9,6 +9,13 @@ import {
   turnCostUSD,
   emptyUsage,
 } from './modelUsage';
+import {
+  workflowWatcher,
+  type WorkflowRunInfo,
+  type WorkflowWatcherUpdate,
+} from './workflowWatcher';
+
+export type { WorkflowRunInfo, WorkflowAgentInfo, WorkflowPhaseInfo } from './workflowWatcher';
 
 /**
  * Ambient session activity, mostly driven by hook events now that claudemon
@@ -78,6 +85,13 @@ export interface SubagentInfo {
   status: 'running' | 'complete';
   startedAt: number;
   completedAt?: number;
+  // Live enrichment from the subagent's transcript (workflowWatcher)
+  description?: string;
+  model?: string;
+  tokens?: number;
+  toolCalls?: number;
+  lastToolName?: string;
+  lastToolSummary?: string;
 }
 
 export interface ClaudeSessionState {
@@ -94,6 +108,7 @@ export interface ClaudeSessionState {
   pendingApproval: PendingApproval | null;
   pendingQuestions: PendingQuestion[] | null;
   subagents: SubagentInfo[];
+  workflows: WorkflowRunInfo[];
 
   ambientState: SessionAmbientState;
   lastActivity: number;
@@ -117,6 +132,9 @@ class ClaudeSessionStore {
   // Concrete model ids we've already persisted to config, so we only write on
   // genuinely-new models. Lazily seeded from config on first use.
   private knownModels: Set<string> | null = null;
+  // Latest workflow/subagent filesystem state per session, re-merged whenever
+  // either the watcher ticks or a hook event mutates the subagent list.
+  private watcherUpdates = new Map<string, WorkflowWatcherUpdate>();
 
   setMainWindow(win: BrowserWindow): void {
     this.mainWindow = win;
@@ -144,7 +162,13 @@ class ClaudeSessionStore {
     if (event.transcript_path && !session.transcriptPath) {
       session.transcriptPath = event.transcript_path;
       console.log(`[SessionStore] transcript: ${session.transcriptPath}`);
+      // Start watching for workflow runs + subagent transcripts beside it
+      workflowWatcher.attach(sessionId, session.transcriptPath, (update) => {
+        this.applyWatcherUpdate(sessionId, update);
+      });
     }
+    // Keep the watcher's poll loop alive while hooks are flowing
+    workflowWatcher.poke(sessionId);
 
     // Refresh conversation from JSONL transcript on every hook event
     if (session.transcriptPath) {
@@ -284,11 +308,51 @@ class ClaudeSessionStore {
       case 'SessionEnd':
         session.status = 'ended';
         session.ambientState = 'idle';
+        workflowWatcher.detach(sessionId);
         break;
     }
 
     agentNotifier.notifyOnTransition(session, prevAmbient);
+    this.mergeWatcherData(session);
     this.pushUpdate(session);
+  }
+
+  // ── Workflow watcher integration ──
+
+  /** Callback from workflowWatcher's poll loop — fold in and broadcast. */
+  private applyWatcherUpdate(sessionId: string, update: WorkflowWatcherUpdate): void {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    this.watcherUpdates.set(sessionId, update);
+    this.mergeWatcherData(session);
+    this.pushUpdate(session);
+  }
+
+  /**
+   * Merge the latest filesystem-derived workflow state into the session:
+   * adopt workflow runs, enrich hook-driven subagents with live transcript
+   * activity, and drop subagents that actually belong to a workflow run
+   * (they render inside the run card instead).
+   */
+  private mergeWatcherData(session: ClaudeSessionState): void {
+    const update = this.watcherUpdates.get(session.sessionId);
+    if (!update) return;
+
+    session.workflows = update.runs;
+
+    const stripPrefix = (s: string) => s.replace(/^agent-/, '');
+    const workflowIds = new Set(update.workflowAgentIds);
+    session.subagents = session.subagents.filter(s => !workflowIds.has(stripPrefix(s.id)));
+    for (const sub of session.subagents) {
+      const activity = update.subagentActivity[stripPrefix(sub.id)];
+      if (!activity) continue;
+      if (activity.description) sub.description = activity.description;
+      if (activity.model) sub.model = activity.model;
+      if (activity.tokens !== undefined) sub.tokens = activity.tokens;
+      if (activity.toolCalls !== undefined) sub.toolCalls = activity.toolCalls;
+      if (activity.lastToolName) sub.lastToolName = activity.lastToolName;
+      if (activity.lastToolSummary !== undefined) sub.lastToolSummary = activity.lastToolSummary;
+    }
   }
 
   /** Check if a message was already added to avoid duplicates */
@@ -328,6 +392,7 @@ class ClaudeSessionStore {
       pendingApproval: null,
       pendingQuestions: null,
       subagents: [],
+      workflows: [],
       ambientState: 'idle',
       lastActivity: Date.now(),
       totalToolCalls: 0,

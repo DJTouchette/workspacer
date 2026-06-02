@@ -151,6 +151,13 @@ export function formatToolSummary(tc: ToolCall): { call: string; result: string 
       const desc = tc.input?.description ?? 'subagent';
       return { call: `Agent(${desc})`, result: '' };
     }
+    case 'Workflow': {
+      // input.script starts with `export const meta = { name: '...', ... }`
+      const name = tc.input?.name
+        ?? /name:\s*['"`]([^'"`]+)['"`]/.exec(tc.input?.script ?? '')?.[1]
+        ?? 'workflow';
+      return { call: `Workflow(${name})`, result: '' };
+    }
     default: {
       const vals = Object.values(tc.input ?? {});
       const firstStr = vals.find(v => typeof v === 'string') as string | undefined;

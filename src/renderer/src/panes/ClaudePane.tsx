@@ -7,7 +7,7 @@ import { useClaudeSpawn } from '../hooks/useClaudeSpawn';
 import { useClaudeSession } from '../hooks/useClaudeSession';
 import { useConfig } from '../hooks/useConfig';
 import { useTheme } from '../hooks/useTheme';
-import type { ClaudeSessionSnapshot, ToolCall, ConversationTurn, FileChange, PendingApproval, PendingQuestion, SubagentInfo } from '../types/claudeSession';
+import type { ClaudeSessionSnapshot, ToolCall, ConversationTurn, FileChange, PendingApproval, PendingQuestion, SubagentInfo, WorkflowRunInfo, WorkflowAgentInfo } from '../types/claudeSession';
 import {
   claudeColors as colors,
   ensureKeyframes,
@@ -19,6 +19,7 @@ import {
   StreamingDots,
   sendApproval,
 } from '../components/claude-shared';
+import { parseMarkdownBlocks } from '../components/markdown';
 
 /** Ensure each CSS font-family name with spaces is quoted */
 function quoteFontFamily(ff: string): string {
@@ -81,26 +82,237 @@ const WorkingTimer: React.FC<{ session: ClaudeSessionSnapshot | null }> = ({ ses
 
 // ── Inline Work Log (Claude Code style — flat list, no card) ──
 
-const InlineWorkLog: React.FC<{ toolCalls: ToolCall[]; subagents?: SubagentInfo[] }> = ({ toolCalls, subagents }) => {
-  if (toolCalls.length === 0 && (!subagents || subagents.length === 0)) return null;
+const AGENT_PURPLE = '#c084fc';
+
+const fmtTokens = (n?: number): string => {
+  if (!n) return '';
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1000) return `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k`;
+  return String(n);
+};
+
+const fmtDuration = (ms?: number): string => {
+  if (ms === undefined || ms < 0) return '';
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  return `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s`;
+};
+
+/** "claude-sonnet-4-6" to "sonnet-4-6" (enough to tell agents apart at a glance) */
+const shortModel = (m?: string): string =>
+  m ? m.replace(/^claude-/, '').replace(/-\d{8}$/, '') : '';
+
+/** 1s ticker so elapsed clocks advance between session snapshots */
+function useNowTicker(active: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active) return;
+    const iv = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(iv);
+  }, [active]);
+  return active ? now : Date.now();
+}
+
+const AgentSpinner: React.FC<{ color?: string }> = ({ color = AGENT_PURPLE }) => (
+  <span style={{
+    display: 'inline-block', width: 12, height: 12,
+    border: `1.5px solid ${color}`, borderTopColor: 'transparent',
+    borderRadius: '50%', animation: 'claudeSpinner 0.8s linear infinite', flexShrink: 0,
+  }} />
+);
+
+const agentStatusIcon = (status: WorkflowAgentInfo['status']): React.ReactNode => {
+  switch (status) {
+    case 'queued':
+      return <span style={{ color: colors.mutedDim, fontSize: '0.7rem', width: 12, textAlign: 'center', flexShrink: 0 }}>{'\u25cc'}</span>;
+    case 'running':
+      return <AgentSpinner />;
+    case 'failed':
+      return <span style={{ color: colors.error, fontSize: '0.7rem', width: 12, textAlign: 'center', flexShrink: 0 }}>{'\u2717'}</span>;
+    default:
+      return <span style={{ color: colors.success, fontSize: '0.7rem', width: 12, textAlign: 'center', flexShrink: 0 }}>{'\u2713'}</span>;
+  }
+};
+
+const agentMetaStyle: React.CSSProperties = {
+  color: colors.mutedDim,
+  fontSize: '0.65rem',
+  fontVariantNumeric: 'tabular-nums',
+  whiteSpace: 'nowrap',
+  flexShrink: 0,
+};
+
+const lastToolLineStyle: React.CSSProperties = {
+  paddingLeft: 18,
+  fontSize: '0.68rem',
+  color: colors.muted,
+  lineHeight: 1.3,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+  fontFamily: 'var(--claude-mono-font, monospace)',
+};
+
+const WorkflowAgentRow: React.FC<{ agent: WorkflowAgentInfo; now: number }> = ({ agent, now }) => {
+  const running = agent.status === 'running';
+  const title = agent.label ?? agent.promptPreview ?? agent.id;
+  const duration = agent.durationMs ?? (running && agent.startedAt ? now - agent.startedAt : undefined);
+
+  return (
+    <div style={{ padding: '1px 0' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.72rem', lineHeight: 1.4 }}>
+        {agentStatusIcon(agent.status)}
+        <span
+          title={agent.promptPreview ?? title}
+          style={{
+            color: running ? colors.textBright : colors.text,
+            flex: 1,
+            minWidth: 0,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {title}
+        </span>
+        {agent.model && <span style={agentMetaStyle}>{shortModel(agent.model)}</span>}
+        {agent.tokens > 0 && <span style={agentMetaStyle}>{fmtTokens(agent.tokens)} tok</span>}
+        {duration !== undefined && <span style={agentMetaStyle}>{fmtDuration(duration)}</span>}
+      </div>
+      {running && agent.lastToolName && (
+        <div style={lastToolLineStyle}>
+          {'\u2514'} {agent.lastToolName}{agent.lastToolSummary ? ` ${agent.lastToolSummary}` : ''}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const WorkflowRunCard: React.FC<{ run: WorkflowRunInfo }> = ({ run }) => {
+  const running = run.status === 'running';
+  const [expanded, setExpanded] = useState(running);
+  // Auto-collapse once when the run finishes; user can re-expand
+  const prevStatus = useRef(run.status);
+  useEffect(() => {
+    if (prevStatus.current === 'running' && run.status !== 'running') setExpanded(false);
+    prevStatus.current = run.status;
+  }, [run.status]);
+
+  const now = useNowTicker(running);
+  const finished = run.agents.filter(a => a.status === 'done' || a.status === 'failed').length;
+  const elapsed = running ? now - run.startedAt : run.durationMs;
+  const tokens = run.totalTokens ?? run.agents.reduce((sum, a) => sum + a.tokens, 0);
+
+  // Group agents by phase. phaseTitle is only known once the final state file
+  // lands, so live agents render as a flat list until then.
+  const groups = useMemo(() => {
+    const out: { title: string | null; agents: WorkflowAgentInfo[] }[] = [];
+    for (const a of run.agents) {
+      const title = a.phaseTitle ?? null;
+      const last = out[out.length - 1];
+      if (last && last.title === title) last.agents.push(a);
+      else out.push({ title, agents: [a] });
+    }
+    return out;
+  }, [run.agents]);
+
+  return (
+    <div style={{
+      margin: '4px 0',
+      border: `1px solid ${colors.borderSubtle}`,
+      borderRadius: 6,
+      backgroundColor: 'rgba(255,255,255,0.02)',
+      overflow: 'hidden',
+    }}>
+      {/* Header */}
+      <div
+        onClick={() => setExpanded(e => !e)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          padding: '4px 8px', cursor: 'pointer', userSelect: 'none',
+          fontSize: '0.72rem',
+        }}
+      >
+        {running ? <AgentSpinner /> : (
+          <span style={{ color: run.status === 'failed' ? colors.error : colors.success, fontSize: '0.7rem', width: 12, textAlign: 'center', flexShrink: 0 }}>
+            {run.status === 'failed' ? '\u2717' : '\u2713'}
+          </span>
+        )}
+        <span style={{ color: AGENT_PURPLE, fontWeight: 600, flexShrink: 0 }}>Workflow</span>
+        <span
+          title={run.description ?? run.name}
+          style={{ color: colors.textBright, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}
+        >
+          {run.name ?? run.runId}
+        </span>
+        <div style={{ flex: 1 }} />
+        <span style={agentMetaStyle}>{finished}/{run.agents.length} agents</span>
+        {tokens > 0 && <span style={agentMetaStyle}>{fmtTokens(tokens)} tok</span>}
+        {elapsed !== undefined && <span style={agentMetaStyle}>{fmtDuration(elapsed)}</span>}
+        <span style={{ color: colors.mutedDim, fontSize: '0.6rem', flexShrink: 0 }}>{expanded ? '\u25be' : '\u25b8'}</span>
+      </div>
+
+      {/* Agent rows, grouped by phase when known */}
+      {expanded && (
+        <div style={{ padding: '2px 8px 6px 8px', borderTop: `1px solid ${colors.borderSubtle}` }}>
+          {run.agents.length === 0 && (
+            <div style={{ color: colors.mutedDim, fontSize: '0.68rem', padding: '2px 0' }}>
+              starting agents...
+            </div>
+          )}
+          {groups.map((g, gi) => (
+            <div key={`${g.title ?? 'live'}-${gi}`}>
+              {g.title && (
+                <div style={{ color: colors.muted, fontSize: '0.62rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, padding: '3px 0 1px 0' }}>
+                  {g.title}
+                </div>
+              )}
+              {g.agents.map(a => <WorkflowAgentRow key={a.id} agent={a} now={now} />)}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const SubagentRow: React.FC<{ sub: SubagentInfo }> = ({ sub }) => (
+  <div style={{ padding: '1px 0' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem', lineHeight: 1.4 }}>
+      {sub.status === 'running' ? <AgentSpinner /> : (
+        <span style={{ color: colors.success, fontSize: '0.7rem', width: 12, textAlign: 'center', flexShrink: 0 }}>{'\u2713'}</span>
+      )}
+      <span style={{ color: AGENT_PURPLE, fontWeight: 600 }}>Agent</span>
+      <span style={{ color: colors.text, flexShrink: 0 }}>{sub.type}</span>
+      {sub.description ? (
+        <span style={{ color: colors.muted, fontSize: '0.7rem', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={sub.description}>
+          {sub.description}
+        </span>
+      ) : (
+        <div style={{ flex: 1 }} />
+      )}
+      {(sub.toolCalls ?? 0) > 0 && <span style={agentMetaStyle}>{sub.toolCalls} tools</span>}
+      {(sub.tokens ?? 0) > 0 && <span style={agentMetaStyle}>{fmtTokens(sub.tokens)} tok</span>}
+    </div>
+    {sub.status === 'running' && sub.lastToolName && (
+      <div style={lastToolLineStyle}>
+        {'\u2514'} {sub.lastToolName}{sub.lastToolSummary ? ` ${sub.lastToolSummary}` : ''}
+      </div>
+    )}
+  </div>
+);
+
+const InlineWorkLog: React.FC<{
+  toolCalls: ToolCall[];
+  subagents?: SubagentInfo[];
+  workflows?: WorkflowRunInfo[];
+}> = ({ toolCalls, subagents, workflows }) => {
+  if (toolCalls.length === 0 && (!subagents || subagents.length === 0) && (!workflows || workflows.length === 0)) return null;
 
   return (
     <div style={{ margin: '4px 0 6px 0', padding: '0 2px' }}>
-      {subagents && subagents.length > 0 && subagents.map(sub => (
-        <div key={sub.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '1px 0', fontSize: '0.75rem' }}>
-          {sub.status === 'running' ? (
-            <span style={{
-              display: 'inline-block', width: 12, height: 12,
-              border: `1.5px solid #c084fc`, borderTopColor: 'transparent',
-              borderRadius: '50%', animation: 'claudeSpinner 0.8s linear infinite', flexShrink: 0,
-            }} />
-          ) : (
-            <span style={{ color: colors.success, fontSize: '0.7rem', width: 12, textAlign: 'center', flexShrink: 0 }}>{'\u2713'}</span>
-          )}
-          <span style={{ color: '#c084fc', fontWeight: 600 }}>Agent</span>
-          <span style={{ color: colors.text }}>{sub.type}</span>
-        </div>
-      ))}
+      {workflows && workflows.map(run => <WorkflowRunCard key={run.runId} run={run} />)}
+      {subagents && subagents.map(sub => <SubagentRow key={sub.id} sub={sub} />)}
       {toolCalls.map(tc => <WorkLogEntry key={tc.id} tc={tc} />)}
     </div>
   );
@@ -175,240 +387,9 @@ const DiffView: React.FC<{ oldStr: string; newStr: string; filePath?: string }> 
   );
 };
 
-// ── Lightweight Markdown Renderer ──
+// ── Markdown rendering: shared module (components/markdown.tsx) ──
 
-/** Render inline markdown: **bold**, *italic*, `code`, [links](url) */
-function renderInlineMarkdown(text: string): React.ReactNode[] {
-  const nodes: React.ReactNode[] = [];
-  const regex = /(\*\*(.+?)\*\*|\*(.+?)\*|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\))/g;
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
-  let key = 0;
 
-  while ((match = regex.exec(text)) !== null) {
-    if (match.index > lastIndex) {
-      nodes.push(text.slice(lastIndex, match.index));
-    }
-
-    if (match[2]) {
-      nodes.push(<strong key={key++} style={{ color: colors.textBright, fontWeight: 700 }}>{match[2]}</strong>);
-    } else if (match[3]) {
-      nodes.push(<em key={key++} style={{ color: 'rgb(210, 210, 230)', fontStyle: 'italic' }}>{match[3]}</em>);
-    } else if (match[4]) {
-      nodes.push(
-        <code key={key++} style={{
-          backgroundColor: 'rgba(255, 255, 255, 0.07)',
-          padding: '1px 5px',
-          borderRadius: 3,
-          fontSize: '0.9em',
-          fontFamily: 'var(--claude-mono-font, monospace)',
-          color: 'rgb(180, 210, 255)',
-        }}>
-          {match[4]}
-        </code>
-      );
-    } else if (match[5] && match[6]) {
-      nodes.push(
-        <span key={key++} style={{ color: colors.accent, textDecoration: 'underline', cursor: 'default' }} title={match[6]}>
-          {match[5]}
-        </span>
-      );
-    }
-
-    lastIndex = match.index + match[0].length;
-  }
-
-  if (lastIndex < text.length) {
-    nodes.push(text.slice(lastIndex));
-  }
-
-  return nodes.length > 0 ? nodes : [text];
-}
-
-/** Parse a markdown string into structured blocks */
-function parseMarkdownBlocks(text: string): React.ReactNode[] {
-  if (!text) return [];
-
-  const lines = text.split('\n');
-  const blocks: React.ReactNode[] = [];
-  let key = 0;
-  let i = 0;
-
-  while (i < lines.length) {
-    const line = lines[i];
-
-    // Fenced code block
-    if (line.trimStart().startsWith('```')) {
-      const lang = line.trimStart().slice(3).trim();
-      const codeLines: string[] = [];
-      i++;
-      while (i < lines.length && !lines[i].trimStart().startsWith('```')) {
-        codeLines.push(lines[i]);
-        i++;
-      }
-      i++;
-      blocks.push(
-        <div key={key++} style={{ margin: '6px 0' }}>
-          {lang && (
-            <div style={{
-              fontSize: '0.6rem',
-              color: colors.muted,
-              backgroundColor: 'rgba(255,255,255,0.04)',
-              padding: '2px 10px',
-              borderRadius: '6px 6px 0 0',
-              borderBottom: `1px solid ${colors.border}`,
-              fontFamily: 'var(--claude-mono-font, monospace)',
-            }}>
-              {lang}
-            </div>
-          )}
-          <pre style={{
-            margin: 0,
-            padding: '10px 12px',
-            backgroundColor: 'rgba(0, 0, 0, 0.3)',
-            borderRadius: lang ? '0 0 6px 6px' : '6px',
-            fontSize: '0.75rem',
-            lineHeight: 1.5,
-            color: 'rgb(190, 200, 220)',
-            fontFamily: 'var(--claude-mono-font, monospace)',
-            overflowX: 'auto',
-            whiteSpace: 'pre',
-            border: `1px solid ${colors.border}`,
-            borderTop: lang ? 'none' : undefined,
-          }}>
-            {codeLines.join('\n')}
-          </pre>
-        </div>
-      );
-      continue;
-    }
-
-    // Heading
-    const headingMatch = line.match(/^(#{1,4})\s+(.+)$/);
-    if (headingMatch) {
-      const level = headingMatch[1].length;
-      const sizes: Record<number, string> = { 1: '0.95rem', 2: '0.88rem', 3: '0.82rem', 4: '0.78rem' };
-      blocks.push(
-        <div key={key++} style={{
-          fontSize: sizes[level] ?? '0.78rem',
-          fontWeight: 700,
-          color: colors.textBright,
-          margin: `${level === 1 ? 12 : 8}px 0 4px 0`,
-          paddingBottom: level <= 2 ? 4 : 0,
-          borderBottom: level <= 2 ? `1px solid ${colors.divider}` : 'none',
-        }}>
-          {renderInlineMarkdown(headingMatch[2])}
-        </div>
-      );
-      i++;
-      continue;
-    }
-
-    // Unordered list
-    if (/^\s*[-*]\s+/.test(line)) {
-      const listItems: { indent: number; content: string }[] = [];
-      while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) {
-        const m = lines[i].match(/^(\s*)[-*]\s+(.+)$/);
-        if (m) listItems.push({ indent: m[1].length, content: m[2] });
-        i++;
-      }
-      blocks.push(
-        <div key={key++} style={{ margin: '4px 0' }}>
-          {listItems.map((item, idx) => (
-            <div key={idx} style={{ display: 'flex', gap: 6, paddingLeft: Math.min(item.indent, 12) + 4, marginBottom: 2 }}>
-              <span style={{ color: colors.accent, flexShrink: 0, lineHeight: 1.6 }}>{'\u2022'}</span>
-              <span style={{ lineHeight: 1.6 }}>{renderInlineMarkdown(item.content)}</span>
-            </div>
-          ))}
-        </div>
-      );
-      continue;
-    }
-
-    // Ordered list
-    if (/^\s*\d+[.)]\s+/.test(line)) {
-      const listItems: { num: string; content: string }[] = [];
-      while (i < lines.length && /^\s*\d+[.)]\s+/.test(lines[i])) {
-        const m = lines[i].match(/^\s*(\d+)[.)]\s+(.+)$/);
-        if (m) listItems.push({ num: m[1], content: m[2] });
-        i++;
-      }
-      blocks.push(
-        <div key={key++} style={{ margin: '4px 0' }}>
-          {listItems.map((item, idx) => (
-            <div key={idx} style={{ display: 'flex', gap: 6, paddingLeft: 4, marginBottom: 2 }}>
-              <span style={{ color: colors.muted, flexShrink: 0, minWidth: 14, textAlign: 'right', lineHeight: 1.6 }}>{item.num}.</span>
-              <span style={{ lineHeight: 1.6 }}>{renderInlineMarkdown(item.content)}</span>
-            </div>
-          ))}
-        </div>
-      );
-      continue;
-    }
-
-    // Horizontal rule
-    if (/^[-*_]{3,}\s*$/.test(line.trim())) {
-      blocks.push(<hr key={key++} style={{ border: 'none', borderTop: `1px solid ${colors.divider}`, margin: '8px 0' }} />);
-      i++;
-      continue;
-    }
-
-    // Blockquote
-    if (line.startsWith('>')) {
-      const quoteLines: string[] = [];
-      while (i < lines.length && lines[i].startsWith('>')) {
-        quoteLines.push(lines[i].replace(/^>\s?/, ''));
-        i++;
-      }
-      blocks.push(
-        <div key={key++} style={{
-          borderLeft: `2px solid ${colors.muted}`,
-          paddingLeft: 10,
-          margin: '4px 0',
-          color: 'rgb(160, 165, 185)',
-          fontStyle: 'italic',
-          lineHeight: 1.6,
-        }}>
-          {renderInlineMarkdown(quoteLines.join(' '))}
-        </div>
-      );
-      continue;
-    }
-
-    // Empty line
-    if (line.trim() === '') {
-      blocks.push(<div key={key++} style={{ height: 4 }} />);
-      i++;
-      continue;
-    }
-
-    // Regular paragraph
-    const paraLines: string[] = [];
-    while (
-      i < lines.length &&
-      lines[i].trim() !== '' &&
-      !lines[i].trimStart().startsWith('```') &&
-      !lines[i].match(/^#{1,4}\s+/) &&
-      !/^\s*[-*]\s+/.test(lines[i]) &&
-      !/^\s*\d+[.)]\s+/.test(lines[i]) &&
-      !lines[i].startsWith('>') &&
-      !/^[-*_]{3,}\s*$/.test(lines[i].trim())
-    ) {
-      paraLines.push(lines[i]);
-      i++;
-    }
-
-    if (paraLines.length > 0) {
-      blocks.push(
-        <p key={key++} style={{ margin: '3px 0', lineHeight: 1.6, wordBreak: 'break-word' }}>
-          {renderInlineMarkdown(paraLines.join('\n'))}
-        </p>
-      );
-    }
-  }
-
-  return blocks;
-}
 
 // ── Conversation Message ──
 
@@ -1288,6 +1269,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
   const hasOlderMessages = conversation.length > visibleCount;
   const fileChanges = session?.fileChanges ?? [];
   const subagents = session?.subagents ?? [];
+  const workflows = session?.workflows ?? [];
   const pendingApproval = session?.pendingApproval ?? null;
   const pendingQuestions = session?.pendingQuestions ?? null;
   // Optimistic dismiss for the question picker — keeps the UI feeling snappy
@@ -1371,6 +1353,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
     session?.completedToolCalls?.length,
     session?.lastActivity,
     session?.subagents?.length,
+    session?.workflows?.length,
     liveToolCalls.length,
     optimisticMessages.length,
     isStreaming,
@@ -1446,11 +1429,16 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
           </span>
         )}
 
-        {subagents.filter(s => s.status === 'running').length > 0 && (
-          <span style={{ fontSize: '0.55rem', color: '#c084fc' }}>
-            {subagents.filter(s => s.status === 'running').length} subagent(s)
-          </span>
-        )}
+        {(() => {
+          const liveAgents =
+            subagents.filter(s => s.status === 'running').length +
+            workflows.flatMap(w => w.agents).filter(a => a.status === 'running').length;
+          return liveAgents > 0 ? (
+            <span style={{ fontSize: '0.55rem', color: '#c084fc' }}>
+              {liveAgents} subagent(s)
+            </span>
+          ) : null;
+        })()}
 
         {attachedFiles.length > 0 && (
           <span style={{ fontSize: '0.55rem', color: colors.accent }}>
@@ -1584,9 +1572,9 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
                 {/* Rendered conversation messages with dividers */}
                 {renderedConversation}
 
-                {/* Active tool calls + subagents as inline work log */}
-                {(liveToolCalls.length > 0 || subagents.length > 0) && (
-                  <InlineWorkLog toolCalls={liveToolCalls} subagents={subagents} />
+                {/* Active tool calls + subagents + workflow runs as inline work log */}
+                {(liveToolCalls.length > 0 || subagents.length > 0 || workflows.length > 0) && (
+                  <InlineWorkLog toolCalls={liveToolCalls} subagents={subagents} workflows={workflows} />
                 )}
 
                 {/* Inline file changes */}

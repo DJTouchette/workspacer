@@ -49,6 +49,51 @@ export interface SubagentInfo {
   status: 'running' | 'complete';
   startedAt: number;
   completedAt?: number;
+  // Live enrichment from the subagent's transcript (main-process workflowWatcher)
+  description?: string;
+  model?: string;
+  tokens?: number;
+  toolCalls?: number;
+  lastToolName?: string;
+  lastToolSummary?: string;
+}
+
+// ── Workflow runs (mirrors src/main/services/workflowWatcher.ts) ──
+
+export interface WorkflowPhaseInfo {
+  title: string;
+  detail?: string;
+}
+
+export interface WorkflowAgentInfo {
+  id: string;
+  label?: string;
+  phaseTitle?: string;
+  model?: string;
+  status: 'queued' | 'running' | 'done' | 'failed';
+  startedAt?: number;
+  completedAt?: number;
+  durationMs?: number;
+  tokens: number;
+  toolCalls: number;
+  lastToolName?: string;
+  lastToolSummary?: string;
+  promptPreview?: string;
+  resultPreview?: string;
+}
+
+export interface WorkflowRunInfo {
+  runId: string;
+  name?: string;
+  description?: string;
+  status: 'running' | 'completed' | 'failed';
+  startedAt: number;
+  completedAt?: number;
+  durationMs?: number;
+  phases: WorkflowPhaseInfo[];
+  agents: WorkflowAgentInfo[];
+  totalTokens?: number;
+  totalToolCalls?: number;
 }
 
 /** Token / cost / context usage, parsed from the transcript in the main process. */
@@ -74,6 +119,7 @@ export interface ClaudeSessionSnapshot {
   pendingApproval: PendingApproval | null;
   pendingQuestions: PendingQuestion[] | null;
   subagents: SubagentInfo[];
+  workflows: WorkflowRunInfo[];
 
   ambientState: SessionAmbientState;
   lastActivity: number;
