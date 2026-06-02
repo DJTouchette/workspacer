@@ -5,3 +5,7 @@ src/renderer/node_modules/
 src/renderer/dist/
 *.js.map
 .DS_Store
+
+# hub build artifacts (built by npm run build:hub)
+hub/hub
+hub/hub.exe

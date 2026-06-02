@@ -8,7 +8,7 @@
     "dev:renderer": "cd src/renderer && npx vite --port 5173",
     "dev:main": "npm run build:hub && npm run build:main && wait-on http://localhost:5173 && cross-env ELECTRON_DEV=1 electron .",
     "build:main": "tsc -p tsconfig.main.json",
-    "build:hub": "cd hub && go build -o hub ./cmd/hub",
+    "build:hub": "cd hub && go build -o . ./cmd/hub",
     "test:hub": "cd hub && go test -race ./...",
     "build:renderer": "cd src/renderer && npx vite build",
     "build": "npm run build:main && npm run build:renderer",
