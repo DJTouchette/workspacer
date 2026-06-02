@@ -71,8 +71,8 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
   const libItems: PaletteItem[] = useMemo(() => libraryItems.map((it) => ({
     id: `lib-${it.scope}-${it.id}`,
     name: it.title,
-    description: it.description || (it.kind === 'skill' ? 'skill' : 'prompt'),
-    icon: it.kind === 'skill' ? '\u{1F9E0}' : '⚡',
+    description: it.description || it.kind,
+    icon: it.kind === 'skill' ? '\u{1F9E0}' : it.kind === 'agent' ? '\u{1F916}' : '⚡',
     category: 'library' as const,
     libraryItem: it,
   })), [libraryItems]);

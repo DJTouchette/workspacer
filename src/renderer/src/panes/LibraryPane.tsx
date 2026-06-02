@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useLibrary } from '../hooks/useLibrary';
 import { runLibraryItem } from '../lib/libraryBus';
+import MarkdownEditor from '../components/MarkdownEditor';
 import type { LibraryItem, LibraryKind, LibraryScope, LibraryAction, LibrarySaveInput } from '../types/library';
 
 interface Props {
@@ -50,20 +51,26 @@ const LibraryPane: React.FC<Props> = ({ cwd }) => {
 
   const saveDraft = async () => {
     if (!draft || !draft.title.trim()) return;
+    const isClaude = draft.scope === 'claude';
     const input: LibrarySaveInput = {
       scope: draft.scope,
       id: draft.original?.id,
       title: draft.title.trim(),
       kind: draft.kind,
+      // tags/action aren't part of Claude Code's frontmatter format
       description: draft.description.trim() || undefined,
-      tags: draft.tags.split(',').map((t) => t.trim()).filter(Boolean),
-      action: draft.action,
+      tags: isClaude ? undefined : draft.tags.split(',').map((t) => t.trim()).filter(Boolean),
+      action: isClaude ? undefined : draft.action,
       body: draft.body,
       cwd,
     };
-    // If scope changed on an existing item, remove the old file first.
-    if (draft.original && draft.original.scope !== draft.scope) {
-      await remove(draft.original.scope, draft.original.id);
+    // If the storage location changed (scope, or kind within claude scope —
+    // skills and agents live in different dirs), remove the old file first.
+    if (draft.original && (
+      draft.original.scope !== draft.scope ||
+      (draft.scope === 'claude' && draft.original.kind !== draft.kind)
+    )) {
+      await remove(draft.original.scope, draft.original.id, draft.original.kind);
     }
     await save(input);
     setDraft(null);
@@ -82,41 +89,64 @@ const LibraryPane: React.FC<Props> = ({ cwd }) => {
           <Field label="Title">
             <input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} style={inputStyle} placeholder="Refactor for testability" />
           </Field>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: draft.scope === 'claude' ? '1fr 1fr' : '1fr 1fr 1fr', gap: 10 }}>
             <Field label="Kind">
               <select value={draft.kind} onChange={(e) => setDraft({ ...draft, kind: e.target.value as LibraryKind })} style={inputStyle}>
-                <option value="prompt">prompt</option>
+                {draft.scope !== 'claude' && <option value="prompt">prompt</option>}
                 <option value="skill">skill</option>
+                <option value="agent">agent</option>
               </select>
             </Field>
             <Field label="Scope">
-              <select value={draft.scope} onChange={(e) => setDraft({ ...draft, scope: e.target.value as LibraryScope })} style={inputStyle}>
+              <select
+                value={draft.scope}
+                onChange={(e) => {
+                  const scope = e.target.value as LibraryScope;
+                  // .claude only stores skills and agents, never prompts
+                  const kind = scope === 'claude' && draft.kind === 'prompt' ? 'skill' : draft.kind;
+                  setDraft({ ...draft, scope, kind });
+                }}
+                style={inputStyle}
+              >
                 <option value="global">global</option>
                 <option value="project">project</option>
+                <option value="claude">claude (.claude/)</option>
               </select>
             </Field>
-            <Field label="Default action">
-              <select value={draft.action} onChange={(e) => setDraft({ ...draft, action: e.target.value as LibraryAction })} style={inputStyle}>
-                <option value="insert">insert</option>
-                <option value="spawn">spawn</option>
-                <option value="copy">copy</option>
-              </select>
-            </Field>
+            {draft.scope !== 'claude' && (
+              <Field label="Default action">
+                <select value={draft.action} onChange={(e) => setDraft({ ...draft, action: e.target.value as LibraryAction })} style={inputStyle}>
+                  <option value="insert">insert</option>
+                  <option value="spawn">spawn</option>
+                  <option value="copy">copy</option>
+                </select>
+              </Field>
+            )}
           </div>
           <Field label="Description">
             <input value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} style={inputStyle} placeholder="Short summary (shown in lists)" />
           </Field>
-          <Field label="Tags (comma-separated)">
-            <input value={draft.tags} onChange={(e) => setDraft({ ...draft, tags: e.target.value })} style={inputStyle} placeholder="refactor, tests" />
-          </Field>
+          {draft.scope !== 'claude' && (
+            <Field label="Tags (comma-separated)">
+              <input value={draft.tags} onChange={(e) => setDraft({ ...draft, tags: e.target.value })} style={inputStyle} placeholder="refactor, tests" />
+            </Field>
+          )}
           <Field label="Body — supports {{cwd}}, {{selection}}, {{clipboard}}, {{?Question}}">
-            <textarea value={draft.body} onChange={(e) => setDraft({ ...draft, body: e.target.value })}
-              style={{ ...inputStyle, minHeight: 220, resize: 'vertical', fontFamily: 'var(--wks-mono, ui-monospace, monospace)' }}
-              spellCheck={false} placeholder="The prompt or skill text…" />
+            <MarkdownEditor
+              value={draft.body}
+              onChange={(body) => setDraft({ ...draft, body })}
+              placeholder="The prompt or skill text…"
+            />
           </Field>
           {draft.scope === 'project' && (
             <div style={{ fontSize: '0.62rem', color: 'var(--wks-text-faint)', marginTop: 4 }}>
               Project items save to <code>{cwd ? `${cwd}/.workspacer/library/` : '.workspacer/library/'}</code>
+            </div>
+          )}
+          {draft.scope === 'claude' && (
+            <div style={{ fontSize: '0.62rem', color: 'var(--wks-text-faint)', marginTop: 4 }}>
+              Saves to <code>{`${cwd ?? '.'}/${draft.kind === 'agent' ? '.claude/agents/<id>.md' : '.claude/skills/<id>/SKILL.md'}`}</code> in
+              Claude Code's native format — extra frontmatter (tools, model, ...) is preserved.
             </div>
           )}
         </div>
@@ -132,7 +162,7 @@ const LibraryPane: React.FC<Props> = ({ cwd }) => {
         <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search prompts & skills…" spellCheck={false}
           style={{ ...inputStyle, height: 28, flex: 1, maxWidth: 280, margin: '0 8px' }} />
         <div style={{ display: 'flex', gap: 2, marginRight: 8 }}>
-          {(['all', 'global', 'project'] as const).map((s) => (
+          {(['all', 'global', 'project', 'claude'] as const).map((s) => (
             <button key={s} onClick={() => setScopeFilter(s)} style={chip(scopeFilter === s)}>{s}</button>
           ))}
         </div>
@@ -156,7 +186,15 @@ const LibraryPane: React.FC<Props> = ({ cwd }) => {
               <button onClick={() => runLibraryItem(it, 'spawn')} style={miniBtn} title="Spawn a new agent with this">Spawn</button>
               <button onClick={() => runLibraryItem(it, 'copy')} style={miniBtn} title="Copy to clipboard">Copy</button>
               <button onClick={() => startEdit(it)} style={miniBtn}>Edit</button>
-              <button onClick={() => { if (confirm(`Delete “${it.title}”?`)) remove(it.scope, it.id); }} style={{ ...miniBtn, color: 'var(--wks-danger, #ff8a8a)' }}>Delete</button>
+              <button
+                onClick={() => {
+                  const warning = it.scope === 'claude' && it.kind === 'skill'
+                    ? `Delete “${it.title}”? This removes the whole .claude/skills/${it.id}/ folder (including any resource files).`
+                    : `Delete “${it.title}”?`;
+                  if (confirm(warning)) remove(it.scope, it.id, it.kind);
+                }}
+                style={{ ...miniBtn, color: 'var(--wks-danger, #ff8a8a)' }}
+              >Delete</button>
             </div>
             {it.description && <div style={{ fontSize: '0.68rem', color: 'var(--wks-text-secondary)', marginTop: 3 }}>{it.description}</div>}
             <div style={{ fontSize: '0.62rem', color: 'var(--wks-text-faint)', marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontFamily: 'var(--wks-mono, ui-monospace, monospace)' }}>
@@ -222,11 +260,21 @@ function chip(active: boolean): React.CSSProperties {
   };
 }
 function kindBadge(kind: LibraryKind): React.CSSProperties {
+  const palette: Record<LibraryKind, { bg: string; fg: string }> = {
+    prompt: { bg: 'rgba(96,165,250,0.18)', fg: '#60a5fa' },
+    skill: { bg: 'rgba(192,132,252,0.18)', fg: '#c084fc' },
+    agent: { bg: 'rgba(74,222,128,0.18)', fg: '#4ade80' },
+  };
+  const { bg, fg } = palette[kind] ?? palette.prompt;
   return { fontSize: '0.55rem', padding: '1px 6px', borderRadius: 999, fontWeight: 700, textTransform: 'uppercase',
-    background: kind === 'skill' ? 'rgba(192,132,252,0.18)' : 'rgba(96,165,250,0.18)',
-    color: kind === 'skill' ? '#c084fc' : '#60a5fa' };
+    background: bg, color: fg };
 }
 function scopeBadge(scope: LibraryScope): React.CSSProperties {
+  // claude-scoped items get a distinct tint — they live in .claude/, not the library dirs
+  if (scope === 'claude') {
+    return { fontSize: '0.55rem', padding: '1px 6px', borderRadius: 999, fontWeight: 600,
+      background: 'rgba(251,146,60,0.16)', color: '#fb923c' };
+  }
   return { fontSize: '0.55rem', padding: '1px 6px', borderRadius: 999, fontWeight: 600,
     background: 'var(--wks-bg-selected)', color: 'var(--wks-text-faint)' };
 }

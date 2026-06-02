@@ -199,16 +199,19 @@ export function useAgentManager() {
   }, []);
 
   /** Open a pane in a specific workspace (agent or the global Overview) and
-   *  switch to it. Used to place plugin panes by their declared scope. */
-  const openPaneIn = useCallback((workspaceId: string, type: PaneType, title: string, url?: string): void => {
+   *  switch to it. Used to place plugin/library panes by their declared scope.
+   *  If the workspace already has a tab with the same pane type + title, it is
+   *  focused instead of opening a duplicate. */
+  const openPaneIn = useCallback((workspaceId: string, type: PaneType, title: string, url?: string, cwd?: string): void => {
     const paneId = generateId('pane');
     const tabId = generateId('tab');
-    const pane: PaneConfig = { id: paneId, type, title, url, appMode: true };
-    setAgents((prev) => withGlobalWorkspace(prev).map((a) =>
-      a.id === workspaceId
-        ? { ...a, tabs: [...a.tabs, { id: tabId, title, panes: [pane], activePaneId: paneId }], activeTabId: tabId }
-        : a,
-    ));
+    setAgents((prev) => withGlobalWorkspace(prev).map((a) => {
+      if (a.id !== workspaceId) return a;
+      const existing = a.tabs.find((t) => t.panes.length === 1 && t.panes[0].type === type && t.panes[0].title === title);
+      if (existing) return { ...a, activeTabId: existing.id };
+      const pane: PaneConfig = { id: paneId, type, title, url, cwd, appMode: true };
+      return { ...a, tabs: [...a.tabs, { id: tabId, title, panes: [pane], activePaneId: paneId }], activeTabId: tabId };
+    }));
     setActiveAgentId(workspaceId);
   }, []);
 

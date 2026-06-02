@@ -1,5 +1,5 @@
-export type LibraryScope = 'global' | 'project';
-export type LibraryKind = 'prompt' | 'skill';
+export type LibraryScope = 'global' | 'project' | 'claude';
+export type LibraryKind = 'prompt' | 'skill' | 'agent';
 export type LibraryAction = 'insert' | 'spawn' | 'copy';
 
 /** A reusable prompt or skill stored as a markdown file. Mirrors the main

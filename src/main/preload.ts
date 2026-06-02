@@ -226,8 +226,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('library:list', cwd),
   librarySave: (input: any): Promise<any> =>
     ipcRenderer.invoke('library:save', input),
-  libraryRemove: (scope: 'global' | 'project', id: string, cwd?: string): Promise<void> =>
-    ipcRenderer.invoke('library:remove', scope, id, cwd),
+  libraryRemove: (scope: 'global' | 'project' | 'claude', id: string, cwd?: string, kind?: 'prompt' | 'skill' | 'agent'): Promise<void> =>
+    ipcRenderer.invoke('library:remove', scope, id, cwd, kind),
   onLibraryChanged: (callback: () => void): (() => void) => {
     const handler = () => callback();
     ipcRenderer.on('library:changed', handler);

@@ -66,7 +66,7 @@ export interface ElectronAPI {
   // Library (reusable prompts + skills)
   libraryList: (cwd?: string) => Promise<LibraryItem[]>;
   librarySave: (input: LibrarySaveInput) => Promise<LibraryItem>;
-  libraryRemove: (scope: 'global' | 'project', id: string, cwd?: string) => Promise<void>;
+  libraryRemove: (scope: 'global' | 'project' | 'claude', id: string, cwd?: string, kind?: 'prompt' | 'skill' | 'agent') => Promise<void>;
   onLibraryChanged: (callback: () => void) => () => void;
 
   // App info

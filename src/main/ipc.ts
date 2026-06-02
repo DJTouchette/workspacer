@@ -31,8 +31,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // ── Library (reusable prompts + skills) ──
   ipcMain.handle('library:list', (_event, cwd?: string) => libraryService.list(cwd));
   ipcMain.handle('library:save', (_event, input: any) => libraryService.save(input));
-  ipcMain.handle('library:remove', (_event, scope: 'global' | 'project', id: string, cwd?: string) =>
-    libraryService.remove(scope, id, cwd));
+  ipcMain.handle('library:remove', (_event, scope: 'global' | 'project' | 'claude', id: string, cwd?: string, kind?: 'prompt' | 'skill' | 'agent') =>
+    libraryService.remove(scope, id, cwd, kind));
 
   // Renderer reports which agent session is currently on screen, so the
   // notifier can suppress alerts for the agent you're actively watching.

@@ -767,7 +767,17 @@ function App() {
         onOpenPlugin={handleOpenPlugin}
         onInstallPlugin={() => { setShowCommandPalette(false); setShowInstallPlugin(true); }}
         onManagePlugins={() => { setShowCommandPalette(false); openPaneIn(GLOBAL_WORKSPACE_ID, 'plugins', 'Plugins'); }}
-        onOpenLibrary={() => { setShowCommandPalette(false); openPaneIn(GLOBAL_WORKSPACE_ID, 'library', 'Library'); }}
+        onOpenLibrary={() => {
+          setShowCommandPalette(false);
+          // Open in the active agent's workspace (with its project cwd) so the
+          // pane shows that project's library + .claude skills; fall back to
+          // the global Overview when no agent is focused.
+          if (activeAgent && !activeAgent.global) {
+            openPaneIn(activeAgent.id, 'library', 'Library', undefined, activeAgent.cwd);
+          } else {
+            openPaneIn(GLOBAL_WORKSPACE_ID, 'library', 'Library');
+          }
+        }}
       />
 
       <LibraryHost

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import type { LibraryItem, LibrarySaveInput, LibraryScope } from '../types/library';
+import type { LibraryItem, LibrarySaveInput, LibraryScope, LibraryKind } from '../types/library';
 
 /**
  * Loads the merged library (global + project for `cwd`) and keeps it live by
@@ -28,8 +28,8 @@ export function useLibrary(cwd?: string) {
     reload();
   }, [cwd, reload]);
 
-  const remove = useCallback(async (scope: LibraryScope, id: string) => {
-    await window.electronAPI.libraryRemove(scope, id, cwd);
+  const remove = useCallback(async (scope: LibraryScope, id: string, kind?: LibraryKind) => {
+    await window.electronAPI.libraryRemove(scope, id, cwd, kind);
     reload();
   }, [cwd, reload]);
 
