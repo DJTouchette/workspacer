@@ -4,20 +4,32 @@
   <meta charset="utf-8" />
   <title>Clock plugin</title>
   <style>
+    /* Workspacer injects its theme as --wks-* custom properties into plugin
+       webviews (see hub/docs/plugin-theming.md). Always provide a fallback
+       so the page still works standalone in a normal browser. */
     body { margin: 0; height: 100vh; display: grid; place-items: center;
-           font-family: system-ui, sans-serif; background: #1a1a1a; color: #eee; }
-    #t { font-size: 3rem; font-variant-numeric: tabular-nums; }
-    small { color: #888; }
+           font-family: system-ui, sans-serif;
+           background: var(--wks-bg-base, #1a1a1a);
+           color: var(--wks-text-primary, #eee); }
+    #t { font-size: 3rem; font-variant-numeric: tabular-nums;
+         color: var(--wks-accent-text, #eee); }
+    small { color: var(--wks-text-muted, #888); }
   </style>
 </head>
 <body>
   <div style="text-align:center">
     <div id="t">--:--:--</div>
-    <small>example.clock — a workspacer plugin (webview pane)</small>
+    <small id="sub">example.clock — a workspacer plugin (webview pane)</small>
   </div>
   <script>
     const t = document.getElementById('t');
     setInterval(() => { t.textContent = new Date().toLocaleTimeString(); }, 250);
+
+    // Optional: react to live theme switches (useful for canvas/JS-drawn UI;
+    // plain CSS using var(--wks-*) updates automatically without this).
+    window.addEventListener('wks-theme', (e) => {
+      console.log('theme is now', e.detail.name);
+    });
   </script>
 </body>
 </html>

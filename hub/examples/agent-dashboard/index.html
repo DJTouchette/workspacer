@@ -4,33 +4,44 @@
   <meta charset="utf-8" />
   <title>Agent Dashboard</title>
   <style>
+    /* Workspacer injects its theme as --wks-* custom properties (see
+       hub/docs/plugin-theming.md). Fallbacks keep the page working standalone. */
     :root { color-scheme: dark; }
     * { box-sizing: border-box; }
-    body { margin: 0; font-family: system-ui, sans-serif; background: #161616; color: #e8e8e8; }
-    header { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid #2a2a2a; }
+    body { margin: 0; font-family: system-ui, sans-serif;
+           background: var(--wks-bg-base, #161616); color: var(--wks-text-primary, #e8e8e8); }
+    header { display: flex; align-items: center; gap: 12px; padding: 10px 14px;
+             border-bottom: 1px solid var(--wks-border-subtle, #2a2a2a); }
     header h1 { font-size: 0.95rem; margin: 0; font-weight: 600; }
-    #conn { font-size: 0.65rem; color: #888; display: flex; align-items: center; gap: 5px; }
-    #conn .dot { width: 7px; height: 7px; border-radius: 50%; background: #666; }
-    #conn.on .dot { background: #3fb950; box-shadow: 0 0 5px #3fb950; }
+    #conn { font-size: 0.65rem; color: var(--wks-text-muted, #888); display: flex; align-items: center; gap: 5px; }
+    #conn .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--wks-text-faint, #666); }
+    #conn.on .dot { background: var(--wks-success, #3fb950); box-shadow: 0 0 5px var(--wks-success, #3fb950); }
     .toolbar { margin-left: auto; display: flex; gap: 8px; }
-    button { font: inherit; font-size: 0.7rem; cursor: pointer; background: #232323; color: #ddd;
-             border: 1px solid #333; border-radius: 5px; padding: 4px 10px; }
-    button:hover { background: #2c2c2c; }
+    button { font: inherit; font-size: 0.7rem; cursor: pointer;
+             background: var(--wks-bg-elevated, #232323); color: var(--wks-text-secondary, #ddd);
+             border: 1px solid var(--wks-border-input, #333); border-radius: 5px; padding: 4px 10px; }
+    button:hover { background: var(--wks-bg-hover, #2c2c2c); }
     .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; padding: 14px; }
-    .card { background: #1d1d1d; border: 1px solid #2a2a2a; border-radius: 8px; padding: 12px; }
+    .card { background: var(--wks-bg-raised, #1d1d1d); border: 1px solid var(--wks-border-subtle, #2a2a2a);
+            border-radius: 8px; padding: 12px; }
     .card .top { display: flex; align-items: center; gap: 8px; }
     .card .dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
     .card .name { font-size: 0.8rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .card .state { margin-left: auto; font-size: 0.62rem; color: #999; }
-    .card .cwd { font-size: 0.6rem; color: #777; margin: 4px 0 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .meta { display: flex; gap: 10px; font-size: 0.62rem; color: #aaa; margin-bottom: 8px; }
-    .bar { height: 4px; border-radius: 2px; background: #2a2a2a; overflow: hidden; margin-bottom: 8px; }
+    .card .state { margin-left: auto; font-size: 0.62rem; color: var(--wks-text-muted, #999); }
+    .card .cwd { font-size: 0.6rem; color: var(--wks-text-faint, #777); margin: 4px 0 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .meta { display: flex; gap: 10px; font-size: 0.62rem; color: var(--wks-text-tertiary, #aaa); margin-bottom: 8px; }
+    .bar { height: 4px; border-radius: 2px; background: var(--wks-bg-hover, #2a2a2a); overflow: hidden; margin-bottom: 8px; }
     .bar > span { display: block; height: 100%; }
     .send { display: flex; gap: 6px; }
-    .send input { flex: 1; min-width: 0; font: inherit; font-size: 0.68rem; background: #141414; color: #eee;
-                  border: 1px solid #333; border-radius: 5px; padding: 4px 7px; }
-    .empty { padding: 40px; text-align: center; color: #777; font-size: 0.8rem; }
-    #log { font-size: 0.58rem; color: #666; padding: 6px 14px; border-top: 1px solid #2a2a2a;
+    .send input, .toolbar input {
+      font: inherit; font-size: 0.68rem; background: var(--wks-bg-input, #141414);
+      color: var(--wks-text-primary, #eee); border: 1px solid var(--wks-border-input, #333);
+      border-radius: 5px; padding: 4px 7px; }
+    .send input { flex: 1; min-width: 0; }
+    .toolbar input { width: 200px; padding: 4px 8px; }
+    .empty { padding: 40px; text-align: center; color: var(--wks-text-faint, #777); font-size: 0.8rem; }
+    #log { font-size: 0.58rem; color: var(--wks-text-faint, #666); padding: 6px 14px;
+           border-top: 1px solid var(--wks-border-subtle, #2a2a2a);
            height: 70px; overflow: auto; font-family: ui-monospace, monospace; }
   </style>
 </head>
@@ -39,8 +50,7 @@
     <h1>📊 Agent Dashboard</h1>
     <div id="conn"><span class="dot"></span><span id="connText">connecting…</span></div>
     <div class="toolbar">
-      <input id="broadcast" placeholder="broadcast to all…"
-             style="font:inherit;font-size:0.68rem;background:#141414;color:#eee;border:1px solid #333;border-radius:5px;padding:4px 8px;width:200px" />
+      <input id="broadcast" placeholder="broadcast to all…" />
       <button id="broadcastBtn">Broadcast</button>
     </div>
   </header>
@@ -85,13 +95,18 @@
       }, 150);
     }
 
+    // var() works inside inline styles too, so these track the injected theme.
     function stateColor(s) {
-      if (s === 'waiting_approval' || s === 'waiting_input') return '#e0a000';
-      if (s === 'thinking' || s === 'streaming') return '#4a9eff';
-      if (s === 'idle') return '#3fb950';
-      return '#666';
+      if (s === 'waiting_approval' || s === 'waiting_input') return 'var(--wks-warning, #e0a000)';
+      if (s === 'thinking' || s === 'streaming') return 'var(--wks-accent-text, #4a9eff)';
+      if (s === 'idle') return 'var(--wks-success, #3fb950)';
+      return 'var(--wks-text-faint, #666)';
     }
-    function ctxColor(f) { return f >= 0.9 ? '#e05555' : f >= 0.7 ? '#e0a000' : '#3fb950'; }
+    function ctxColor(f) {
+      return f >= 0.9 ? 'var(--wks-error, #e05555)'
+        : f >= 0.7 ? 'var(--wks-warning, #e0a000)'
+        : 'var(--wks-success, #3fb950)';
+    }
     function fmtTok(n) { return n >= 1e6 ? (n/1e6).toFixed(1)+'M' : n >= 1e3 ? Math.round(n/1e3)+'k' : ''+n; }
 
     function render() {

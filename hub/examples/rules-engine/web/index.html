@@ -4,77 +4,94 @@
   <meta charset="utf-8" />
   <title>Rules Engine</title>
   <style>
+    /* Workspacer injects its theme as --wks-* custom properties (see
+       hub/docs/plugin-theming.md). Fallbacks keep the page working standalone.
+       Status-tinted surfaces (pills, banner, warn) derive from the status
+       tokens via color-mix so the tint follows whatever theme is active. */
     :root { color-scheme: dark; }
     * { box-sizing: border-box; }
-    body { margin: 0; font-family: system-ui, sans-serif; background: #161616; color: #e8e8e8; }
+    body { margin: 0; font-family: system-ui, sans-serif;
+           background: var(--wks-bg-base, #161616); color: var(--wks-text-primary, #e8e8e8); }
     header { display: flex; align-items: center; gap: 10px; padding: 12px 16px;
-             border-bottom: 1px solid #2a2a2a; position: sticky; top: 0; background: #1a1a1a; z-index: 5; }
+             border-bottom: 1px solid var(--wks-border-subtle, #2a2a2a); position: sticky; top: 0;
+             background: var(--wks-bg-header, #1a1a1a); z-index: 5; }
     header h1 { font-size: 15px; margin: 0; font-weight: 600; }
     header .spacer { flex: 1; }
-    .pill { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: #2a2a2a; color: #aaa; }
-    .pill.dirty { background: #4a3a12; color: #ffcf6b; }
-    .pill.saved { background: #16361f; color: #6bdc8a; }
-    button { font: inherit; font-size: 13px; border: 1px solid #333; background: #232323; color: #e8e8e8;
+    .pill { font-size: 11px; padding: 2px 8px; border-radius: 999px;
+            background: var(--wks-bg-selected, #2a2a2a); color: var(--wks-text-tertiary, #aaa); }
+    .pill.dirty { background: color-mix(in srgb, var(--wks-warning, #ffcf6b) 18%, transparent); color: var(--wks-warning, #ffcf6b); }
+    .pill.saved { background: color-mix(in srgb, var(--wks-success, #6bdc8a) 15%, transparent); color: var(--wks-success, #6bdc8a); }
+    button { font: inherit; font-size: 13px; border: 1px solid var(--wks-border-input, #333);
+             background: var(--wks-bg-elevated, #232323); color: var(--wks-text-primary, #e8e8e8);
              border-radius: 6px; padding: 5px 10px; cursor: pointer; }
-    button:hover { background: #2c2c2c; }
-    button.primary { background: #2f6df6; border-color: #2f6df6; color: #fff; }
-    button.primary:hover { background: #3b78ff; }
-    button.danger { color: #ff8a8a; }
+    button:hover { background: var(--wks-bg-hover, #2c2c2c); }
+    button.primary { background: var(--wks-accent, #2f6df6); border-color: var(--wks-accent, #2f6df6); color: #fff; }
+    button.primary:hover { background: var(--wks-accent, #3b78ff); filter: brightness(1.1); }
+    button.danger { color: var(--wks-error, #ff8a8a); }
     button.mini { font-size: 12px; padding: 2px 8px; border-radius: 5px; }
-    button.warn { background: #4a2418; border-color: #6a3324; color: #ffb39c; }
-    button.warn.on { background: #c0392b; border-color: #c0392b; color: #fff; }
+    button.warn { background: color-mix(in srgb, var(--wks-error, #c0392b) 20%, transparent);
+                  border-color: color-mix(in srgb, var(--wks-error, #c0392b) 40%, transparent);
+                  color: var(--wks-error, #ffb39c); }
+    button.warn.on { background: var(--wks-error, #c0392b); border-color: var(--wks-error, #c0392b); color: #fff; }
     main { padding: 16px; max-width: 900px; margin: 0 auto; }
-    .banner { background: #3a1714; border: 1px solid #7a2a20; color: #ffb3a6; border-radius: 8px;
+    .banner { background: color-mix(in srgb, var(--wks-error, #ff5544) 14%, transparent);
+              border: 1px solid color-mix(in srgb, var(--wks-error, #ff5544) 40%, transparent);
+              color: var(--wks-error, #ffb3a6); border-radius: 8px;
               padding: 8px 12px; margin-bottom: 12px; font-size: 13px; display: none; }
     .banner.show { display: block; }
-    .rule { border: 1px solid #2a2a2a; border-radius: 8px; margin-bottom: 10px; background: #1c1c1c; overflow: hidden; }
+    .rule { border: 1px solid var(--wks-border-subtle, #2a2a2a); border-radius: 8px; margin-bottom: 10px;
+            background: var(--wks-bg-raised, #1c1c1c); overflow: hidden; }
     .rule-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px; }
     .rule-head .name { font-weight: 600; }
-    .rule-head .meta { color: #888; font-size: 12px; }
+    .rule-head .meta { color: var(--wks-text-muted, #888); font-size: 12px; }
     .rule-head .spacer { flex: 1; }
-    .rule.disabled .name { color: #888; }
+    .rule.disabled .name { color: var(--wks-text-muted, #888); }
     .toggle { position: relative; width: 38px; height: 20px; flex: none; }
     .toggle input { opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
-    .toggle .track { position: absolute; inset: 0; background: #3a3a3a; border-radius: 999px; transition: .15s; pointer-events: none; }
-    .toggle .knob { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; background: #ccc;
+    .toggle .track { position: absolute; inset: 0; background: var(--wks-bg-selected, #3a3a3a); border-radius: 999px; transition: .15s; pointer-events: none; }
+    .toggle .knob { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+                    background: var(--wks-text-secondary, #ccc);
                     border-radius: 50%; transition: .15s; pointer-events: none; }
-    .toggle input:checked + .track { background: #2f6df6; }
+    .toggle input:checked + .track { background: var(--wks-accent, #2f6df6); }
     .toggle input:checked + .track + .knob { left: 20px; background: #fff; }
-    .seg { display: inline-flex; border: 1px solid #333; border-radius: 6px; overflow: hidden; }
-    .seg button { border: none; border-radius: 0; padding: 4px 10px; font-size: 12px; background: #1c1c1c; }
-    .seg button.active { background: #2f6df6; color: #fff; }
-    .editor { border-top: 1px solid #2a2a2a; padding: 12px; display: none; }
+    .seg { display: inline-flex; border: 1px solid var(--wks-border-input, #333); border-radius: 6px; overflow: hidden; }
+    .seg button { border: none; border-radius: 0; padding: 4px 10px; font-size: 12px; background: var(--wks-bg-raised, #1c1c1c); }
+    .seg button.active { background: var(--wks-accent, #2f6df6); color: #fff; }
+    .editor { border-top: 1px solid var(--wks-border-subtle, #2a2a2a); padding: 12px; display: none; }
     .rule.open .editor { display: block; }
     .field { margin-bottom: 12px; }
-    .flabel { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: #888; margin-bottom: 4px; }
+    .flabel { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--wks-text-muted, #888); margin-bottom: 4px; }
     .grid3 { display: grid; grid-template-columns: 1fr 1fr auto; gap: 10px; align-items: end; }
-    input, select, textarea { font: inherit; font-size: 13px; background: #111; color: #e8e8e8;
-             border: 1px solid #2a2a2a; border-radius: 6px; padding: 6px 8px; width: 100%; }
+    input, select, textarea { font: inherit; font-size: 13px;
+             background: var(--wks-bg-input, #111); color: var(--wks-text-primary, #e8e8e8);
+             border: 1px solid var(--wks-border-input, #2a2a2a); border-radius: 6px; padding: 6px 8px; width: 100%; }
     input[type=checkbox] { width: auto; }
-    textarea { min-height: 200px; color: #cfe3ff; font-family: ui-monospace, monospace; font-size: 12px; resize: vertical; }
-    textarea.bad { border-color: #c0392b; }
+    textarea { min-height: 200px; color: var(--wks-accent-text, #cfe3ff); font-family: ui-monospace, monospace; font-size: 12px; resize: vertical; }
+    textarea.bad { border-color: var(--wks-error, #c0392b); }
     .kv, .kv3 { display: grid; gap: 6px; margin-bottom: 6px; align-items: center; }
     .kv { grid-template-columns: 1fr 1fr auto; }
     .kv3 { grid-template-columns: 1.3fr auto 1fr auto; }
-    .action { border: 1px solid #2a2a2a; border-radius: 6px; padding: 8px; margin-bottom: 8px; background: #181818; }
+    .action { border: 1px solid var(--wks-border-subtle, #2a2a2a); border-radius: 6px; padding: 8px; margin-bottom: 8px;
+              background: var(--wks-bg-surface, #181818); }
     .arow { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
     .arow select { width: auto; }
     .arow .spacer { flex: 1; }
     .afields .field { margin-bottom: 8px; }
     .checkrow { display: flex; align-items: center; gap: 6px; font-size: 13px; height: 32px; }
     .row { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
-    .hint { color: #777; font-size: 12px; margin: 4px 0 0; }
-    .err { color: #ff8a8a; font-size: 12px; margin-top: 6px; min-height: 14px; }
-    .empty { color: #888; text-align: center; padding: 40px; }
-    code { background: #222; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
-    details { margin-top: 20px; border: 1px solid #2a2a2a; border-radius: 8px; background: #1c1c1c; }
+    .hint { color: var(--wks-text-faint, #777); font-size: 12px; margin: 4px 0 0; }
+    .err { color: var(--wks-error, #ff8a8a); font-size: 12px; margin-top: 6px; min-height: 14px; }
+    .empty { color: var(--wks-text-muted, #888); text-align: center; padding: 40px; }
+    code { background: var(--wks-bg-elevated, #222); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+    details { margin-top: 20px; border: 1px solid var(--wks-border-subtle, #2a2a2a); border-radius: 8px;
+              background: var(--wks-bg-raised, #1c1c1c); }
     summary { cursor: pointer; padding: 10px 12px; font-weight: 600; user-select: none; }
     .firelist { padding: 0 12px 12px; }
-    .fire { display: flex; gap: 10px; font-size: 12px; padding: 5px 0; border-top: 1px solid #242424; }
-    .fire .t { color: #888; font-variant-numeric: tabular-nums; flex: none; }
-    .fire .r { color: #cfe3ff; font-weight: 600; }
-    .fire .e { color: #888; }
-    .fire .a { color: #6bdc8a; margin-left: auto; flex: none; }
+    .fire { display: flex; gap: 10px; font-size: 12px; padding: 5px 0; border-top: 1px solid var(--wks-border-subtle, #242424); }
+    .fire .t { color: var(--wks-text-muted, #888); font-variant-numeric: tabular-nums; flex: none; }
+    .fire .r { color: var(--wks-accent-text, #cfe3ff); font-weight: 600; }
+    .fire .e { color: var(--wks-text-muted, #888); }
+    .fire .a { color: var(--wks-success, #6bdc8a); margin-left: auto; flex: none; }
   </style>
 </head>
 <body>

@@ -33,6 +33,8 @@ proves the full event spine (claudemon SSE → bridge → broker → bus → cli
   supervises each plugin's sidecar (via M2), emits `plugin.loaded`/`unloaded`,
   and exposes manifests at `GET /plugins`. Run with `--plugins-dir`. See
   `examples/clock-plugin/` for a working one (a webview pane + a hotkey).
+  Plugin panes get the app theme injected as `--wks-*` CSS variables — see
+  [docs/plugin-theming.md](docs/plugin-theming.md).
 
 Wired into the app: Electron main spawns the hub, connects as a client,
 forwards events to the renderer, **provides** capabilities (`agents.list`,

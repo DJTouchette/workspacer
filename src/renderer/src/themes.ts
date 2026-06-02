@@ -999,41 +999,68 @@ export const themes: Record<string, Theme> = {
 
 // ── Apply theme as CSS custom properties ──
 
+/** Full token → CSS custom property map. Single source of truth — used for
+ *  the app's own documentElement AND injected into plugin webviews. */
+export function cssVarsOf(theme: Theme): Record<string, string> {
+  return {
+    '--wks-bg-base': theme.bgBase,
+    '--wks-bg-raised': theme.bgRaised,
+    '--wks-bg-surface': theme.bgSurface,
+    '--wks-bg-elevated': theme.bgElevated,
+    '--wks-bg-header': theme.bgHeader,
+    '--wks-bg-input': theme.bgInput,
+    '--wks-bg-hover': theme.bgHover,
+    '--wks-bg-selected': theme.bgSelected,
+    '--wks-bg-terminal': theme.bgTerminal,
+    '--wks-border': theme.border,
+    '--wks-border-subtle': theme.borderSubtle,
+    '--wks-border-input': theme.borderInput,
+    '--wks-text-primary': theme.textPrimary,
+    '--wks-text-secondary': theme.textSecondary,
+    '--wks-text-tertiary': theme.textTertiary,
+    '--wks-text-muted': theme.textMuted,
+    '--wks-text-faint': theme.textFaint,
+    '--wks-text-disabled': theme.textDisabled,
+    '--wks-accent': theme.accent,
+    '--wks-accent-text': theme.accentText,
+    '--wks-accent-glow': theme.accentGlow,
+    '--wks-accent-bg': theme.accentBg,
+    '--wks-success': theme.success,
+    '--wks-error': theme.error,
+    '--wks-warning': theme.warning,
+    '--wks-overlay': theme.overlay,
+    '--wks-shadow': theme.shadow,
+    '--wks-scrollbar-thumb': theme.scrollbarThumb,
+    '--wks-scrollbar-hover': theme.scrollbarHover,
+    '--wks-claude-bg': theme.claudeBg,
+    '--wks-claude-user-bubble': theme.claudeUserBubble,
+    '--wks-claude-user-border': theme.claudeUserBorder,
+    '--wks-claude-divider': theme.claudeDivider,
+    '--wks-claude-border': theme.claudeBorder,
+    '--wks-claude-border-subtle': theme.claudeBorderSubtle,
+  };
+}
+
+/** Perceived lightness of the theme, from its base background. Drives the
+ *  guest page's `color-scheme` so native controls/scrollbars match. */
+export function isLightTheme(theme: Theme): boolean {
+  const m = /^#([0-9a-f]{6})$/i.exec(theme.bgBase.trim());
+  let r: number, g: number, b: number;
+  if (m) {
+    r = parseInt(m[1].slice(0, 2), 16);
+    g = parseInt(m[1].slice(2, 4), 16);
+    b = parseInt(m[1].slice(4, 6), 16);
+  } else {
+    const rgb = /rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/.exec(theme.bgBase);
+    if (!rgb) return false; // unknown format — assume dark
+    r = +rgb[1]; g = +rgb[2]; b = +rgb[3];
+  }
+  return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 > 0.5;
+}
+
 export function applyTheme(theme: Theme): void {
   const s = document.documentElement.style;
-  s.setProperty('--wks-bg-base', theme.bgBase);
-  s.setProperty('--wks-bg-raised', theme.bgRaised);
-  s.setProperty('--wks-bg-surface', theme.bgSurface);
-  s.setProperty('--wks-bg-elevated', theme.bgElevated);
-  s.setProperty('--wks-bg-header', theme.bgHeader);
-  s.setProperty('--wks-bg-input', theme.bgInput);
-  s.setProperty('--wks-bg-hover', theme.bgHover);
-  s.setProperty('--wks-bg-selected', theme.bgSelected);
-  s.setProperty('--wks-bg-terminal', theme.bgTerminal);
-  s.setProperty('--wks-border', theme.border);
-  s.setProperty('--wks-border-subtle', theme.borderSubtle);
-  s.setProperty('--wks-border-input', theme.borderInput);
-  s.setProperty('--wks-text-primary', theme.textPrimary);
-  s.setProperty('--wks-text-secondary', theme.textSecondary);
-  s.setProperty('--wks-text-tertiary', theme.textTertiary);
-  s.setProperty('--wks-text-muted', theme.textMuted);
-  s.setProperty('--wks-text-faint', theme.textFaint);
-  s.setProperty('--wks-text-disabled', theme.textDisabled);
-  s.setProperty('--wks-accent', theme.accent);
-  s.setProperty('--wks-accent-text', theme.accentText);
-  s.setProperty('--wks-accent-glow', theme.accentGlow);
-  s.setProperty('--wks-accent-bg', theme.accentBg);
-  s.setProperty('--wks-success', theme.success);
-  s.setProperty('--wks-error', theme.error);
-  s.setProperty('--wks-warning', theme.warning);
-  s.setProperty('--wks-overlay', theme.overlay);
-  s.setProperty('--wks-shadow', theme.shadow);
-  s.setProperty('--wks-scrollbar-thumb', theme.scrollbarThumb);
-  s.setProperty('--wks-scrollbar-hover', theme.scrollbarHover);
-  s.setProperty('--wks-claude-bg', theme.claudeBg);
-  s.setProperty('--wks-claude-user-bubble', theme.claudeUserBubble);
-  s.setProperty('--wks-claude-user-border', theme.claudeUserBorder);
-  s.setProperty('--wks-claude-divider', theme.claudeDivider);
-  s.setProperty('--wks-claude-border', theme.claudeBorder);
-  s.setProperty('--wks-claude-border-subtle', theme.claudeBorderSubtle);
+  for (const [prop, value] of Object.entries(cssVarsOf(theme))) {
+    s.setProperty(prop, value);
+  }
 }

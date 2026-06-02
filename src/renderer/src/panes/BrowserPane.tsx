@@ -1,5 +1,7 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { useConfig } from '../hooks/useConfig';
+import { useTheme } from '../hooks/useTheme';
+import { webviewThemeCSS, webviewThemeJS } from '../lib/webviewTheme';
 
 interface BrowserPaneProps {
   paneId: string;
@@ -37,6 +39,42 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive, init
   const onUrlChangeRef = useRef(onUrlChange);
   onUrlChangeRef.current = onUrlChange;
 
+  // ── Theme bridge (plugin/appMode webviews only) ──
+  //
+  // Plugin pages are separate documents, so the app's --wks-* vars don't
+  // reach them. Inject the full token set (plus color-scheme and
+  // zero-specificity body defaults) on every page load and theme change.
+  // Regular browsing (appMode=false) is never touched.
+  const { theme } = useTheme();
+  const themeRef = useRef(theme);
+  themeRef.current = theme;
+  const insertedCssKeyRef = useRef<string | null>(null);
+
+  const applyWebviewTheme = useCallback(async (newDocument = false) => {
+    if (!appMode) return;
+    const wv = webviewRef.current as any;
+    if (!wv || !readyRef.current) return;
+    try {
+      // insertCSS keys die with the document they were inserted into
+      if (newDocument) insertedCssKeyRef.current = null;
+      if (insertedCssKeyRef.current && wv.removeInsertedCSS) {
+        await wv.removeInsertedCSS(insertedCssKeyRef.current).catch(() => {});
+        insertedCssKeyRef.current = null;
+      }
+      insertedCssKeyRef.current = await wv.insertCSS(webviewThemeCSS(themeRef.current));
+      await wv.executeJavaScript(webviewThemeJS(themeRef.current));
+    } catch {
+      /* webview mid-navigation or destroyed — next dom-ready re-applies */
+    }
+  }, [appMode]);
+  const applyWebviewThemeRef = useRef(applyWebviewTheme);
+  applyWebviewThemeRef.current = applyWebviewTheme;
+
+  // Re-inject when the user switches theme while the plugin is open
+  useEffect(() => {
+    applyWebviewTheme();
+  }, [theme, applyWebviewTheme]);
+
   // Attach webview event listeners once the element is ready
   useEffect(() => {
     const wv = webviewRef.current as any;
@@ -44,6 +82,8 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive, init
 
     const handleDomReady = () => {
       readyRef.current = true;
+      // Fresh document: theme first so the page doesn't flash unstyled
+      applyWebviewThemeRef.current(true);
       // Inject key forwarder once DOM is ready
       setTimeout(() => injectKeyForwarder(), 100);
     };
