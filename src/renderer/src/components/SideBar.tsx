@@ -50,6 +50,8 @@ interface SideBarProps {
   onRenameAgent: (id: string, name: string) => void;
   /** Jump to the next agent blocked on the user (approval / input). */
   onJumpToAttention?: () => void;
+  /** Open the remote-control (phone sharing) panel. */
+  onOpenRemote?: () => void;
 }
 
 const SideBar: React.FC<SideBarProps> = ({
@@ -62,6 +64,7 @@ const SideBar: React.FC<SideBarProps> = ({
   onTerminateAgent,
   onRenameAgent,
   onJumpToAttention,
+  onOpenRemote,
 }) => {
   // Aggregate live counts for the header summary.
   const needYouCount = agents.reduce((n, a) => {
@@ -303,7 +306,7 @@ const SideBar: React.FC<SideBarProps> = ({
       </button>
 
       {/* Hub bus status — sits in-flow at the bottom of the sidebar */}
-      <HubStatus />
+      <HubStatus onOpenRemote={onOpenRemote} />
 
       {/* Context menu */}
       {contextMenu && (

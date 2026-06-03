@@ -5,7 +5,7 @@ import type { PluginPane } from '../types/plugin';
 import type { LibraryItem, LibraryAction } from '../types/library';
 import { runLibraryItem } from '../lib/libraryBus';
 import {
-  PaneIcon, Globe, Puzzle, Blocks, Brain, Bot, Zap, BarChart3, LayoutGrid, FolderOpen, Plus,
+  PaneIcon, Globe, Puzzle, Blocks, Brain, Bot, Zap, BarChart3, LayoutGrid, FolderOpen, Plus, Smartphone,
   type LucideIcon,
 } from './icons';
 
@@ -77,9 +77,11 @@ interface CommandPaletteProps {
   onOpenAnalytics?: () => void;
   /** Open the layout-templates manager. */
   onOpenLayouts?: () => void;
+  /** Open the remote-control (phone sharing) panel. */
+  onOpenRemote?: () => void;
 }
 
-const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = 'tab', onClose, onLaunchApp, onAddTab, onSplitPane, pluginPanes = [], onOpenPlugin, onInstallPlugin, onManagePlugins, libraryItems = [], restrictTo, onOpenLibrary, onSwitchSession, onOpenAnalytics, onOpenLayouts }) => {
+const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = 'tab', onClose, onLaunchApp, onAddTab, onSplitPane, pluginPanes = [], onOpenPlugin, onInstallPlugin, onManagePlugins, libraryItems = [], restrictTo, onOpenLibrary, onSwitchSession, onOpenAnalytics, onOpenLayouts, onOpenRemote }) => {
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [profilePicker, setProfilePicker] = useState<{ folder: string; profiles: any[]; paneType: PaneType } | null>(null);
@@ -397,7 +399,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
             );
           })}
 
-          {restrictTo !== 'library' && (onSwitchSession || onOpenAnalytics || onOpenLayouts) && (
+          {restrictTo !== 'library' && (onSwitchSession || onOpenAnalytics || onOpenLayouts || onOpenRemote) && (
             <>
               <div style={{ padding: '6px 12px 2px', fontSize: '0.55rem', color: 'var(--wks-text-disabled)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                 Workspace
@@ -405,6 +407,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
               {onOpenAnalytics && <CommandRow icon={<BarChart3 size={16} strokeWidth={1.75} />} label="Analytics" onClick={onOpenAnalytics} />}
               {onOpenLayouts && <CommandRow icon={<LayoutGrid size={16} strokeWidth={1.75} />} label="Layouts…" onClick={onOpenLayouts} />}
               {onSwitchSession && <CommandRow icon={<FolderOpen size={16} strokeWidth={1.75} />} label="Switch session…" onClick={onSwitchSession} />}
+              {onOpenRemote && <CommandRow icon={<Smartphone size={16} strokeWidth={1.75} />} label="Remote control…" onClick={onOpenRemote} />}
             </>
           )}
 
