@@ -80,6 +80,10 @@ export interface Config {
     recent: string[];
     favourites: string[];
   };
+  session?: {
+    /** Restore the most recent session automatically on launch (skip the picker). */
+    autoResume: boolean;
+  };
 }
 
 const DEFAULT_CONFIG: Config = {
@@ -145,6 +149,7 @@ const DEFAULT_CONFIG: Config = {
   },
   scripts: {},
   apps: [],
+  session: { autoResume: true },
 };
 
 let cachedConfig: Config | null = null;

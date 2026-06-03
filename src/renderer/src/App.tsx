@@ -28,7 +28,7 @@ function scriptKey(cwd: string): string {
 }
 
 function App() {
-  const { config, save: saveConfig } = useConfig();
+  const { config, loaded: configLoaded, save: saveConfig } = useConfig();
   useTheme();
   const {
     agents,
@@ -108,6 +108,8 @@ function App() {
   // Session state
   const [sessionPhase, setSessionPhase] = useState<'loading' | 'picker' | 'active'>('loading');
   const [sessionList, setSessionList] = useState<any[]>([]);
+  // True only when the picker is reopened mid-session (so it can be dismissed).
+  const [pickerCancellable, setPickerCancellable] = useState(false);
   const [sessionName, setSessionName] = useState('Default');
 
   // PTY mapping: paneId -> ptySessionId. For Claude panes, ptySessionId is the
@@ -177,27 +179,16 @@ function App() {
   }, [reconcileAgents]);
 
   // --- Session lifecycle ---
-  useEffect(() => {
-    window.electronAPI.listSessions().then((sessions) => {
-      if (sessions.length > 0) {
-        setSessionList(sessions);
-        setSessionPhase('picker');
-      } else {
-        setSessionPhase('active');
-      }
-    }).catch(() => {
-      setSessionPhase('active');
-    });
-  }, []);
-
   const handleNewSession = useCallback(() => {
     loadAgentsFromSession([], '');
     setSessionName('Default');
     setPtyMapping({});
+    setPickerCancellable(false);
     setSessionPhase('active');
   }, [loadAgentsFromSession]);
 
   const handleResumeSession = useCallback((filename: string) => {
+    setPickerCancellable(false);
     window.electronAPI.loadSession(filename).then((data: any) => {
       if (data && Array.isArray(data.agents)) {
         loadAgentsFromSession(data.agents, data.activeAgentId);
@@ -273,6 +264,40 @@ function App() {
   useEffect(() => {
     const unsub = window.electronAPI.onBeforeQuit(() => saveCurrentSession(true));
     return unsub;
+  }, [saveCurrentSession]);
+
+  // Decide what to show on launch once config is loaded (so a user's saved
+  // autoResume preference is respected, not the in-memory default). With
+  // autoResume on we restore the most recent session straight away; otherwise
+  // we fall back to the picker. Runs exactly once.
+  const startupDoneRef = useRef(false);
+  useEffect(() => {
+    if (!configLoaded || startupDoneRef.current) return;
+    startupDoneRef.current = true;
+    const autoResume = config.session?.autoResume ?? true;
+    window.electronAPI.listSessions().then((sessions) => {
+      if (sessions.length === 0) {
+        setSessionPhase('active');
+        return;
+      }
+      setSessionList(sessions);
+      if (autoResume) {
+        handleResumeSession(sessions[0].filename); // most recent (list is sorted desc)
+      } else {
+        setSessionPhase('picker');
+      }
+    }).catch(() => setSessionPhase('active'));
+  }, [configLoaded, config.session?.autoResume, handleResumeSession]);
+
+  // Re-open the picker mid-session (Command palette → "Switch session"). Saves
+  // the current layout first so nothing is lost when switching, and marks the
+  // picker dismissable so Escape/Cancel returns to the running app.
+  const switchSession = useCallback(() => {
+    saveCurrentSession(true);
+    setPickerCancellable(true);
+    window.electronAPI.listSessions()
+      .then((sessions) => { setSessionList(sessions); setSessionPhase('picker'); })
+      .catch(() => setSessionPhase('picker'));
   }, [saveCurrentSession]);
 
   // --- Normal app logic ---
@@ -778,6 +803,7 @@ function App() {
             openPaneIn(GLOBAL_WORKSPACE_ID, 'library', 'Library');
           }
         }}
+        onSwitchSession={() => { setShowCommandPalette(false); switchSession(); }}
       />
 
       <LibraryHost
@@ -805,6 +831,7 @@ function App() {
           onNewSession={handleNewSession}
           onResumeSession={handleResumeSession}
           onDeleteSession={handleDeleteSession}
+          onCancel={pickerCancellable ? () => { setPickerCancellable(false); setSessionPhase('active'); } : undefined}
         />
       )}
 

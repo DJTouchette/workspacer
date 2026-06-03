@@ -412,6 +412,9 @@ const SettingsPane: React.FC<SettingsPaneProps> = ({ title }) => {
       {/* Notifications section */}
       <NotificationsSection config={config} save={save} />
 
+      {/* Session section */}
+      <SessionSection config={config} save={save} />
+
       {/* Browser section */}
       <Section title="Browser">
         <Row label="Hibernate after (seconds)">
@@ -584,6 +587,25 @@ const NotificationsSection: React.FC<{ config: Config; save: (partial: Partial<C
       />
       <div style={{ fontSize: '0.55rem', color: 'var(--wks-text-disabled)' }}>
         Alerts when an agent needs approval/input or finishes. Ctrl+Alt+→ jumps to the next agent that needs you.
+      </div>
+    </Section>
+  );
+};
+
+// ── Session Section ──
+
+const SessionSection: React.FC<{ config: Config; save: (partial: Partial<Config>) => Promise<Config> }> = ({ config, save }) => {
+  const autoResume = config.session?.autoResume ?? true;
+  return (
+    <Section title="Session">
+      <CheckRow
+        label="Restore my last session on launch"
+        checked={autoResume}
+        onChange={(v) => save({ session: { autoResume: v } })}
+      />
+      <div style={{ fontSize: '0.55rem', color: 'var(--wks-text-disabled)' }}>
+        Reopens your agents and tabs automatically. Off shows the session picker at startup.
+        Switch sessions any time from the command palette (Ctrl+K → Switch session).
       </div>
     </Section>
   );

@@ -22,12 +22,28 @@ interface SessionTabData {
   activePaneId: string;
 }
 
+interface SessionAgentData {
+  id: string;
+  name: string;
+  global?: boolean;
+  cwd: string;
+  profileId?: string;
+  model?: string;
+  skipPermissions?: boolean;
+  sessionId?: string;
+  tabs: SessionTabData[];
+  activeTabId: string;
+}
+
 interface SessionData {
   name: string;
   timestamp: string;
+  // Agent-centric layout (current): a roster of agent workspaces, each with tabs.
+  activeAgentId?: string;
+  agents?: SessionAgentData[];
+  // Legacy flat layout — a single set of tabs/panes — kept for backward compat.
   activeTabId?: string;
   tabs?: SessionTabData[];
-  // Legacy fields for backward compat
   activePaneId?: string;
   panes?: SessionPaneData[];
 }
@@ -37,6 +53,7 @@ interface SessionListEntry {
   filename: string;
   timestamp: string;
   paneCount: number;
+  agentCount: number;
 }
 
 function getConfigDir(): string {
@@ -81,11 +98,16 @@ class SessionService {
         try {
           const data = fs.readFileSync(path.join(dir, file), 'utf-8');
           const session = yaml.load(data) as SessionData;
+          const agents = session.agents ?? [];
+          const paneCount = agents.length > 0
+            ? agents.reduce((n, a) => n + (a.tabs ?? []).reduce((m, t) => m + (t.panes?.length || 0), 0), 0)
+            : (session.tabs?.reduce((m, t) => m + (t.panes?.length || 0), 0) ?? session.panes?.length ?? 0);
           entries.push({
             name: session.name || file.replace('.yaml', ''),
             filename: file,
             timestamp: session.timestamp || '',
-            paneCount: session.panes?.length || 0,
+            paneCount,
+            agentCount: agents.filter((a) => !a.global).length,
           });
         } catch {
           // Skip malformed session files
@@ -138,6 +160,17 @@ class SessionService {
         }
         return pane;
       });
+  }
+
+  /** Enrich every pane inside an agent roster's tabs with its terminal cwd. */
+  enrichAgentsWithCwd(agents: SessionAgentData[], ptyMapping: Record<string, string>): SessionAgentData[] {
+    return agents.map((agent) => ({
+      ...agent,
+      tabs: (agent.tabs ?? []).map((tab) => ({
+        ...tab,
+        panes: this.enrichPanesWithCwd(tab.panes ?? [], ptyMapping),
+      })),
+    }));
   }
 }
 

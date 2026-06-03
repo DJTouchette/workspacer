@@ -58,9 +58,11 @@ interface CommandPaletteProps {
   restrictTo?: 'library';
   /** Open the Library pane (in the global Overview workspace). */
   onOpenLibrary?: () => void;
+  /** Re-open the session picker to switch/start a named workspace session. */
+  onSwitchSession?: () => void;
 }
 
-const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = 'tab', onClose, onLaunchApp, onAddTab, onSplitPane, pluginPanes = [], onOpenPlugin, onInstallPlugin, onManagePlugins, libraryItems = [], restrictTo, onOpenLibrary }) => {
+const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = 'tab', onClose, onLaunchApp, onAddTab, onSplitPane, pluginPanes = [], onOpenPlugin, onInstallPlugin, onManagePlugins, libraryItems = [], restrictTo, onOpenLibrary, onSwitchSession }) => {
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [profilePicker, setProfilePicker] = useState<{ folder: string; profiles: any[]; paneType: PaneType } | null>(null);
@@ -346,6 +348,27 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
               />
             );
           })}
+
+          {restrictTo !== 'library' && onSwitchSession && (
+            <>
+              <div style={{ padding: '6px 12px 2px', fontSize: '0.55rem', color: 'var(--wks-text-disabled)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Session
+              </div>
+              <div
+                onClick={() => { onSwitchSession(); }}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '10px',
+                  padding: '7px 12px', margin: '0 4px', borderRadius: '5px', cursor: 'pointer',
+                  color: 'var(--wks-text-muted)',
+                }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--wks-bg-selected)'; }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'; }}
+              >
+                <span style={{ fontSize: '0.85rem', width: '20px', textAlign: 'center', flexShrink: 0 }}>🗂️</span>
+                <span style={{ fontSize: '0.78rem' }}>Switch session…</span>
+              </div>
+            </>
+          )}
 
           {(pluginItems.length > 0 || onInstallPlugin || onManagePlugins) && (
             <div style={{ padding: '6px 12px 2px', fontSize: '0.55rem', color: 'var(--wks-text-disabled)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>

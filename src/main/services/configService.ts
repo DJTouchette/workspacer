@@ -88,6 +88,10 @@ interface Config {
   /** Per-directory script buttons, keyed by workspace root (normalized cwd). */
   scripts: Record<string, ScriptEntry[]>;
   apps: AppEntry[];
+  session: {
+    /** Restore the most recent session automatically on launch (skip the picker). */
+    autoResume: boolean;
+  };
 }
 
 function defaultShells(): ShellOption[] {
@@ -195,6 +199,9 @@ function defaultConfig(): Config {
       favourites: [],
     },
     scripts: {},
+    session: {
+      autoResume: true,
+    },
     apps: [
       { name: 'GitHub', url: 'https://github.com', icon: '\u{1F4BB}' },
       { name: 'ChatGPT', url: 'https://chat.openai.com', icon: '\u{1F916}' },

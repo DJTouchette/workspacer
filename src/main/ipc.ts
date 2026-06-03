@@ -218,13 +218,23 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   });
 
   ipcMain.handle('session:save', (_event, data: any) => {
-    // Enrich terminal panes with CWD within tabs
     const ptyMapping = data.ptyMapping || {};
+
+    // Current layout: a roster of agent workspaces, each with its own tabs.
+    if (Array.isArray(data.agents)) {
+      return sessionService.saveSession({
+        name: data.name,
+        timestamp: new Date().toISOString(),
+        activeAgentId: data.activeAgentId,
+        agents: sessionService.enrichAgentsWithCwd(data.agents, ptyMapping),
+      });
+    }
+
+    // Legacy flat layout (single set of tabs) — kept for backward compat.
     const enrichedTabs = (data.tabs || []).map((tab: any) => ({
       ...tab,
       panes: sessionService.enrichPanesWithCwd(tab.panes || [], ptyMapping),
     }));
-
     return sessionService.saveSession({
       name: data.name,
       timestamp: new Date().toISOString(),
