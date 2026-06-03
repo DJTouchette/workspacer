@@ -4,6 +4,8 @@ import * as fs from 'fs';
 import { configService } from './services/configService';
 import { libraryService } from './services/libraryService';
 import { sessionService } from './services/sessionService';
+import { sessionHistory } from './services/sessionHistory';
+import { layoutService } from './services/layoutService';
 import { claudeSessionStore } from './services/claudeSessionStore';
 import { agentNotifier } from './services/agentNotifier';
 import { claudemonSessionClient } from './services/claudemonSessionClient';
@@ -218,13 +220,23 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   });
 
   ipcMain.handle('session:save', (_event, data: any) => {
-    // Enrich terminal panes with CWD within tabs
     const ptyMapping = data.ptyMapping || {};
+
+    // Current layout: a roster of agent workspaces, each with its own tabs.
+    if (Array.isArray(data.agents)) {
+      return sessionService.saveSession({
+        name: data.name,
+        timestamp: new Date().toISOString(),
+        activeAgentId: data.activeAgentId,
+        agents: sessionService.enrichAgentsWithCwd(data.agents, ptyMapping),
+      });
+    }
+
+    // Legacy flat layout (single set of tabs) — kept for backward compat.
     const enrichedTabs = (data.tabs || []).map((tab: any) => ({
       ...tab,
       panes: sessionService.enrichPanesWithCwd(tab.panes || [], ptyMapping),
     }));
-
     return sessionService.saveSession({
       name: data.name,
       timestamp: new Date().toISOString(),
@@ -236,6 +248,15 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle('session:delete', (_event, filename: string) => {
     sessionService.deleteSession(filename);
   });
+
+  // ── Analytics (old-session metadata) ──
+  ipcMain.handle('analytics:summary', () => sessionHistory.summary());
+  ipcMain.handle('analytics:recent', (_event, limit?: number) => sessionHistory.recent(limit));
+
+  // ── Layout templates (reusable directory + pane arrangements) ──
+  ipcMain.handle('layouts:list', () => layoutService.list());
+  ipcMain.handle('layouts:save', (_event, layout: any) => layoutService.save(layout));
+  ipcMain.handle('layouts:delete', (_event, id: string) => layoutService.remove(id));
 
   // App info
   ipcMain.handle('app:getCwd', () => {

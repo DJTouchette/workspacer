@@ -1,11 +1,14 @@
 import type { PluginManifest } from './plugin';
 import type { LibraryItem, LibrarySaveInput } from './library';
+import type { AnalyticsSummary, SessionHistoryRecord } from './analytics';
+import type { Layout, LayoutAgent } from './layout';
 
 export interface SessionListEntry {
   name: string;
   filename: string;
   timestamp: string;
   paneCount: number;
+  agentCount?: number;
 }
 
 export interface ElectronAPI {
@@ -43,6 +46,15 @@ export interface ElectronAPI {
   loadSession: (filename: string) => Promise<any>;
   saveSession: (data: any) => Promise<string>;
   deleteSession: (filename: string) => Promise<void>;
+
+  // Analytics (old-session metadata)
+  analyticsSummary: () => Promise<AnalyticsSummary>;
+  analyticsRecent: (limit?: number) => Promise<SessionHistoryRecord[]>;
+
+  // Layout templates
+  layoutsList: () => Promise<Layout[]>;
+  layoutsSave: (layout: { id?: string; name: string; agents: LayoutAgent[] }) => Promise<Layout>;
+  layoutsDelete: (id: string) => Promise<void>;
 
   // Claude session discovery
   claudeListSessionsForDir: (cwd: string) => Promise<{ sessionId: string; timestamp: string; summary: string }[]>;

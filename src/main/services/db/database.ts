@@ -93,6 +93,36 @@ CREATE INDEX IF NOT EXISTS idx_issue_links_key ON issue_links(issue_key);
 CREATE INDEX IF NOT EXISTS idx_issue_links_target ON issue_links(link_type, link_id);
 `;
 
+// v2: historical metadata for finished/old Claude sessions, for analytics.
+// One row per session (upserted by session_id), append-only over the app's life.
+const MIGRATION_V2 = `
+CREATE TABLE IF NOT EXISTS session_history (
+  session_id TEXT PRIMARY KEY,
+  cwd TEXT DEFAULT '',
+  agent_name TEXT DEFAULT '',
+  model TEXT DEFAULT '',
+  git_branch TEXT DEFAULT '',
+  started_at TEXT DEFAULT '',
+  ended_at TEXT DEFAULT '',
+  duration_ms INTEGER DEFAULT 0,
+  input_tokens INTEGER DEFAULT 0,
+  output_tokens INTEGER DEFAULT 0,
+  cost_usd REAL DEFAULT 0,
+  peak_context INTEGER DEFAULT 0,
+  tool_calls INTEGER DEFAULT 0,
+  message_count INTEGER DEFAULT 0,
+  subagent_count INTEGER DEFAULT 0,
+  workflow_runs INTEGER DEFAULT 0,
+  workflow_failed INTEGER DEFAULT 0,
+  status TEXT DEFAULT 'active',
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_history_started ON session_history(started_at);
+CREATE INDEX IF NOT EXISTS idx_session_history_cwd ON session_history(cwd);
+CREATE INDEX IF NOT EXISTS idx_session_history_model ON session_history(model);
+`;
+
 function getDbPath(): string {
   return path.join(os.homedir(), '.config', 'workspacer', 'workspacer.db');
 }
@@ -148,6 +178,15 @@ export class DatabaseService {
         new Date().toISOString(),
       );
       console.log('[DatabaseService] applied migration v1');
+    }
+
+    if (currentVersion < 2) {
+      db.exec(MIGRATION_V2);
+      db.prepare('INSERT INTO _migrations (version, applied_at) VALUES (?, ?)').run(
+        2,
+        new Date().toISOString(),
+      );
+      console.log('[DatabaseService] applied migration v2');
     }
   }
 

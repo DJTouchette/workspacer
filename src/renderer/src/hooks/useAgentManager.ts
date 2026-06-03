@@ -20,6 +20,7 @@ const defaultTitles: Record<PaneType, string> = {
   plugins: 'Plugins',
   overview: 'Overview',
   library: 'Library',
+  analytics: 'Analytics',
 };
 
 /** Derive a human label from a working directory (its basename). */

@@ -13,7 +13,9 @@ import ScrollIndicator from './components/ScrollIndicator';
 import ShortcutOverlay from './components/ShortcutOverlay';
 import SessionPicker from './components/SessionPicker';
 import CommandPalette from './components/CommandPalette';
+import LayoutsDialog from './components/LayoutsDialog';
 import LibraryHost from './components/LibraryHost';
+import type { Layout, LayoutAgent } from './types/layout';
 import { useLibrary } from './hooks/useLibrary';
 import { useAgentManager, GLOBAL_WORKSPACE_ID } from './hooks/useAgentManager';
 import type { PaneType, AgentWorkspace } from './types/pane';
@@ -28,7 +30,7 @@ function scriptKey(cwd: string): string {
 }
 
 function App() {
-  const { config, save: saveConfig } = useConfig();
+  const { config, loaded: configLoaded, save: saveConfig } = useConfig();
   useTheme();
   const {
     agents,
@@ -66,6 +68,7 @@ function App() {
   const [paletteMode, setPaletteMode] = useState<'tab' | 'split'>('tab');
   const [paletteRestrict, setPaletteRestrict] = useState<'library' | undefined>(undefined);
   const [showSpawnDialog, setShowSpawnDialog] = useState(false);
+  const [showLayouts, setShowLayouts] = useState(false);
 
   // App working directory (used as the default cwd for the spawn dialog + the
   // Library's fallback project root).
@@ -108,6 +111,8 @@ function App() {
   // Session state
   const [sessionPhase, setSessionPhase] = useState<'loading' | 'picker' | 'active'>('loading');
   const [sessionList, setSessionList] = useState<any[]>([]);
+  // True only when the picker is reopened mid-session (so it can be dismissed).
+  const [pickerCancellable, setPickerCancellable] = useState(false);
   const [sessionName, setSessionName] = useState('Default');
 
   // PTY mapping: paneId -> ptySessionId. For Claude panes, ptySessionId is the
@@ -177,27 +182,16 @@ function App() {
   }, [reconcileAgents]);
 
   // --- Session lifecycle ---
-  useEffect(() => {
-    window.electronAPI.listSessions().then((sessions) => {
-      if (sessions.length > 0) {
-        setSessionList(sessions);
-        setSessionPhase('picker');
-      } else {
-        setSessionPhase('active');
-      }
-    }).catch(() => {
-      setSessionPhase('active');
-    });
-  }, []);
-
   const handleNewSession = useCallback(() => {
     loadAgentsFromSession([], '');
     setSessionName('Default');
     setPtyMapping({});
+    setPickerCancellable(false);
     setSessionPhase('active');
   }, [loadAgentsFromSession]);
 
   const handleResumeSession = useCallback((filename: string) => {
+    setPickerCancellable(false);
     window.electronAPI.loadSession(filename).then((data: any) => {
       if (data && Array.isArray(data.agents)) {
         loadAgentsFromSession(data.agents, data.activeAgentId);
@@ -275,6 +269,41 @@ function App() {
     return unsub;
   }, [saveCurrentSession]);
 
+  // Decide what to show on launch once config is loaded (so a user's saved
+  // autoResume preference is respected, not the in-memory default). With
+  // autoResume on we restore the most recent session straight away; otherwise
+  // we fall back to the picker. Runs exactly once.
+  const startupDoneRef = useRef(false);
+  useEffect(() => {
+    if (!configLoaded || startupDoneRef.current) return;
+    startupDoneRef.current = true;
+    const autoResume = config.session?.autoResume ?? true;
+    window.electronAPI.listSessions().then((sessions) => {
+      if (sessions.length === 0) {
+        setSessionPhase('active');
+        return;
+      }
+      setSessionList(sessions);
+      if (autoResume) {
+        handleResumeSession(sessions[0].filename); // most recent (list is sorted desc)
+      } else {
+        setSessionPhase('picker');
+      }
+    }).catch(() => setSessionPhase('active'));
+  }, [configLoaded, config.session?.autoResume, handleResumeSession]);
+
+  // Re-open the picker mid-session (Command palette → "Switch session"). Saves
+  // the current layout first so nothing is lost when switching, and marks the
+  // picker dismissable so Escape/Cancel returns to the running app.
+  const switchSession = useCallback(() => {
+    saveCurrentSession(true);
+    setPickerCancellable(true);
+    window.electronAPI.listSessions()
+      .then((sessions) => { setSessionList(sessions); setSessionPhase('picker'); })
+      .catch(() => setSessionPhase('picker'));
+  }, [saveCurrentSession]);
+
+
   // --- Normal app logic ---
 
   const scrollToTab = useCallback((id: string) => {
@@ -331,6 +360,50 @@ function App() {
     recordRecentDir(opts.cwd);
     void spawnAgent(opts);
   }, [spawnAgent, recordRecentDir]);
+
+  // --- Layout templates ---
+
+  // Snapshot the current (non-global) agents as a reusable layout: directories
+  // + their pane arrangement, stripped of live session ids.
+  const captureLayout = useCallback((): LayoutAgent[] => {
+    return agents.filter((a) => !a.global).map((a) => ({
+      name: a.name,
+      cwd: a.cwd,
+      model: a.model,
+      tabs: a.tabs.map((t) => ({
+        title: t.title,
+        panes: t.panes
+          .filter((p) => p.type !== 'settings')
+          .map((p) => ({ type: p.type, title: p.title, url: p.url, shell: p.shell, cwd: p.cwd })),
+      })),
+    }));
+  }, [agents]);
+
+  const handleSaveLayout = useCallback((name: string) => {
+    window.electronAPI.layoutsSave({ name, agents: captureLayout() }).catch((err: any) => {
+      console.error('[Layout] save failed:', err);
+    });
+  }, [captureLayout]);
+
+  // Restore a layout: spawn a fresh agent per saved directory, then reopen its
+  // non-Claude panes (spawnAgent already creates the primary Claude tab).
+  const handleRestoreLayout = useCallback(async (layout: Layout) => {
+    for (const la of layout.agents) {
+      recordRecentDir(la.cwd);
+      const agentId = await spawnAgent({ cwd: la.cwd, name: la.name, model: la.model });
+      for (const tab of la.tabs) {
+        for (const pane of tab.panes) {
+          if (pane.type === 'claude') continue; // primary Claude tab already created
+          openPaneIn(agentId, pane.type as PaneType, pane.title, pane.url, pane.cwd ?? la.cwd);
+        }
+      }
+    }
+  }, [spawnAgent, openPaneIn, recordRecentDir]);
+
+  const openAnalytics = useCallback(() => {
+    setShowCommandPalette(false);
+    openPaneIn(GLOBAL_WORKSPACE_ID, 'analytics', 'Analytics');
+  }, [openPaneIn]);
 
   const goToAgent = useCallback((delta: number) => {
     if (agents.length === 0) return;
@@ -778,6 +851,9 @@ function App() {
             openPaneIn(GLOBAL_WORKSPACE_ID, 'library', 'Library');
           }
         }}
+        onSwitchSession={() => { setShowCommandPalette(false); switchSession(); }}
+        onOpenAnalytics={openAnalytics}
+        onOpenLayouts={() => { setShowCommandPalette(false); setShowLayouts(true); }}
       />
 
       <LibraryHost
@@ -799,12 +875,22 @@ function App() {
         />
       )}
 
+      {showLayouts && (
+        <LayoutsDialog
+          agentCount={agents.filter((a) => !a.global).length}
+          onSaveCurrent={handleSaveLayout}
+          onRestore={handleRestoreLayout}
+          onClose={() => setShowLayouts(false)}
+        />
+      )}
+
       {sessionPhase === 'picker' && (
         <SessionPicker
           sessions={sessionList}
           onNewSession={handleNewSession}
           onResumeSession={handleResumeSession}
           onDeleteSession={handleDeleteSession}
+          onCancel={pickerCancellable ? () => { setPickerCancellable(false); setSessionPhase('active'); } : undefined}
         />
       )}
 

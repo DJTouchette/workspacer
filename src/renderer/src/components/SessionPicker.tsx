@@ -5,6 +5,7 @@ interface SessionEntry {
   filename: string;
   timestamp: string;
   paneCount: number;
+  agentCount?: number;
 }
 
 interface SessionPickerProps {
@@ -12,6 +13,9 @@ interface SessionPickerProps {
   onNewSession: () => void;
   onResumeSession: (filename: string) => void;
   onDeleteSession: (filename: string) => void;
+  /** When provided, the picker is dismissable (mid-session switch) — Escape and
+   *  a Cancel button return to the running app instead of starting fresh. */
+  onCancel?: () => void;
 }
 
 function formatTimestamp(ts: string): string {
@@ -33,18 +37,19 @@ function formatTimestamp(ts: string): string {
   }
 }
 
-const SessionPicker: React.FC<SessionPickerProps> = ({ sessions, onNewSession, onResumeSession, onDeleteSession }) => {
-  // Escape or Enter on empty list → new session
+const SessionPicker: React.FC<SessionPickerProps> = ({ sessions, onNewSession, onResumeSession, onDeleteSession, onCancel }) => {
+  // Escape → dismiss (mid-session switch) if cancellable, else start a new session.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
-        onNewSession();
+        if (onCancel) onCancel();
+        else onNewSession();
       }
     };
     window.addEventListener('keydown', handler, true);
     return () => window.removeEventListener('keydown', handler, true);
-  }, [onNewSession]);
+  }, [onNewSession, onCancel]);
 
   const lastSession = sessions[0];
 
@@ -94,6 +99,9 @@ const SessionPicker: React.FC<SessionPickerProps> = ({ sessions, onNewSession, o
               primary
             />
           )}
+          {onCancel && (
+            <ActionButton label="Cancel" onClick={onCancel} />
+          )}
         </div>
 
         {/* Session list */}
@@ -134,7 +142,7 @@ const SessionPicker: React.FC<SessionPickerProps> = ({ sessions, onNewSession, o
                       {session.name}
                     </div>
                     <div style={{ fontSize: '0.6rem', color: 'var(--wks-text-faint)', marginTop: '1px' }}>
-                      {session.paneCount} panes &middot; {formatTimestamp(session.timestamp)}
+                      {session.agentCount ? `${session.agentCount} agents · ` : ''}{session.paneCount} panes &middot; {formatTimestamp(session.timestamp)}
                     </div>
                   </div>
                   <button
@@ -172,7 +180,7 @@ const SessionPicker: React.FC<SessionPickerProps> = ({ sessions, onNewSession, o
         )}
 
         <div style={{ fontSize: '0.55rem', color: 'var(--wks-text-disabled)', marginTop: '12px', textAlign: 'center' }}>
-          Press Escape for new session
+          {onCancel ? 'Press Escape to cancel' : 'Press Escape for new session'}
         </div>
       </div>
     </div>

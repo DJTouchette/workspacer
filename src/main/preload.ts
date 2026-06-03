@@ -119,6 +119,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deleteSession: (filename: string): Promise<void> =>
     ipcRenderer.invoke('session:delete', filename),
 
+  // ── Analytics ──
+  analyticsSummary: (): Promise<unknown> =>
+    ipcRenderer.invoke('analytics:summary'),
+  analyticsRecent: (limit?: number): Promise<unknown[]> =>
+    ipcRenderer.invoke('analytics:recent', limit),
+
+  // ── Layout templates ──
+  layoutsList: (): Promise<unknown[]> =>
+    ipcRenderer.invoke('layouts:list'),
+  layoutsSave: (layout: unknown): Promise<unknown> =>
+    ipcRenderer.invoke('layouts:save', layout),
+  layoutsDelete: (id: string): Promise<void> =>
+    ipcRenderer.invoke('layouts:delete', id),
+
   // ── Claude sessions (delegated to claudemon daemon) ──
   spawnClaude: (opts: { cwd?: string; profileId?: string; model?: string; skipPermissions?: boolean; resumeSessionId?: string; cols?: number; rows?: number }): Promise<string> =>
     ipcRenderer.invoke('claude:spawn', opts),

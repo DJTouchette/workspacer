@@ -49,5 +49,43 @@
       { "type": "webhook", "method": "POST", "url": "https://ntfy.sh/YOUR-TOPIC", "body": "Agent in {{data.cwd}} needs approval" }
     ],
     "cooldownMs": 10000
+  },
+  {
+    "id": "workflow-started",
+    "name": "Notify when a workflow run starts",
+    "enabled": false,
+    "when": { "event": "workflow.started" },
+    "do": [
+      { "type": "notify", "title": "Workflow started: {{data.name}}", "body": "{{data.agents}} agents in {{data.cwd}}" }
+    ],
+    "cooldownMs": 2000
+  },
+  {
+    "id": "workflow-completed",
+    "name": "Notify when a workflow run finishes",
+    "enabled": false,
+    "when": { "event": "workflow.completed" },
+    "do": [
+      { "type": "notify", "title": "Workflow done: {{data.name}}", "body": "{{data.totalTokens}} tokens in {{data.cwd}}" }
+    ]
+  },
+  {
+    "id": "workflow-failed",
+    "name": "Alert when a workflow run fails",
+    "enabled": false,
+    "when": { "event": "workflow.failed" },
+    "do": [
+      { "type": "notify", "title": "Workflow FAILED: {{data.name}}", "body": "{{data.cwd}}" }
+    ]
+  },
+  {
+    "id": "workflow-agent-failed",
+    "name": "Alert when an agent inside a workflow fails",
+    "enabled": false,
+    "when": { "event": "workflow.agent.finished", "match": { "status": "failed" } },
+    "do": [
+      { "type": "notify", "title": "Agent failed: {{data.label}}", "body": "{{data.phaseTitle}} — {{data.cwd}}" }
+    ],
+    "cooldownMs": 2000
   }
 ]

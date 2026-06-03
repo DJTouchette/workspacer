@@ -35,6 +35,7 @@ const typeLabels: Record<PaneType, string> = {
   plugins: '\u{1F9F0}',
   overview: '\u{1F3E0}',
   library: '⚡',
+  analytics: '\u{1F4CA}',
 };
 
 interface SessionPickerState {
