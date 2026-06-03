@@ -14,6 +14,7 @@ const ReviewPane = React.lazy(() => import('../panes/ReviewPane'));
 const PluginsManagerPane = React.lazy(() => import('../panes/PluginsManagerPane'));
 const OverviewPane = React.lazy(() => import('../panes/OverviewPane'));
 const LibraryPane = React.lazy(() => import('../panes/LibraryPane'));
+const AnalyticsPane = React.lazy(() => import('../panes/AnalyticsPane'));
 
 const PaneFallback = () => (
   <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--wks-bg-base)', color: 'var(--wks-text-muted)', fontSize: '0.8rem' }}>
@@ -102,6 +103,8 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
       return <Suspense fallback={<PaneFallback />}><OverviewPane title={pane.title} agents={callbacks.workspaceAgents} /></Suspense>;
     case 'library':
       return <Suspense fallback={<PaneFallback />}><LibraryPane title={pane.title} cwd={pane.cwd || callbacks.appCwd} /></Suspense>;
+    case 'analytics':
+      return <Suspense fallback={<PaneFallback />}><AnalyticsPane title={pane.title} /></Suspense>;
     default:
       return <div>Unknown pane type</div>;
   }

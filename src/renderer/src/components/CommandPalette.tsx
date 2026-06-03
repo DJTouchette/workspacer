@@ -60,9 +60,13 @@ interface CommandPaletteProps {
   onOpenLibrary?: () => void;
   /** Re-open the session picker to switch/start a named workspace session. */
   onSwitchSession?: () => void;
+  /** Open the Analytics pane. */
+  onOpenAnalytics?: () => void;
+  /** Open the layout-templates manager. */
+  onOpenLayouts?: () => void;
 }
 
-const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = 'tab', onClose, onLaunchApp, onAddTab, onSplitPane, pluginPanes = [], onOpenPlugin, onInstallPlugin, onManagePlugins, libraryItems = [], restrictTo, onOpenLibrary, onSwitchSession }) => {
+const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = 'tab', onClose, onLaunchApp, onAddTab, onSplitPane, pluginPanes = [], onOpenPlugin, onInstallPlugin, onManagePlugins, libraryItems = [], restrictTo, onOpenLibrary, onSwitchSession, onOpenAnalytics, onOpenLayouts }) => {
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [profilePicker, setProfilePicker] = useState<{ folder: string; profiles: any[]; paneType: PaneType } | null>(null);
@@ -349,24 +353,14 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
             );
           })}
 
-          {restrictTo !== 'library' && onSwitchSession && (
+          {restrictTo !== 'library' && (onSwitchSession || onOpenAnalytics || onOpenLayouts) && (
             <>
               <div style={{ padding: '6px 12px 2px', fontSize: '0.55rem', color: 'var(--wks-text-disabled)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                Session
+                Workspace
               </div>
-              <div
-                onClick={() => { onSwitchSession(); }}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: '10px',
-                  padding: '7px 12px', margin: '0 4px', borderRadius: '5px', cursor: 'pointer',
-                  color: 'var(--wks-text-muted)',
-                }}
-                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--wks-bg-selected)'; }}
-                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'; }}
-              >
-                <span style={{ fontSize: '0.85rem', width: '20px', textAlign: 'center', flexShrink: 0 }}>🗂️</span>
-                <span style={{ fontSize: '0.78rem' }}>Switch session…</span>
-              </div>
+              {onOpenAnalytics && <CommandRow icon="📊" label="Analytics" onClick={onOpenAnalytics} />}
+              {onOpenLayouts && <CommandRow icon="🧩" label="Layouts…" onClick={onOpenLayouts} />}
+              {onSwitchSession && <CommandRow icon="🗂️" label="Switch session…" onClick={onSwitchSession} />}
             </>
           )}
 
@@ -494,6 +488,22 @@ const PaletteRow: React.FC<{
         </div>
       )}
     </div>
+  </div>
+);
+
+const CommandRow: React.FC<{ icon: string; label: string; onClick: () => void }> = ({ icon, label, onClick }) => (
+  <div
+    onClick={onClick}
+    style={{
+      display: 'flex', alignItems: 'center', gap: '10px',
+      padding: '7px 12px', margin: '0 4px', borderRadius: '5px', cursor: 'pointer',
+      color: 'var(--wks-text-muted)',
+    }}
+    onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--wks-bg-selected)'; }}
+    onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'; }}
+  >
+    <span style={{ fontSize: '0.85rem', width: '20px', textAlign: 'center', flexShrink: 0 }}>{icon}</span>
+    <span style={{ fontSize: '0.78rem' }}>{label}</span>
   </div>
 );
 

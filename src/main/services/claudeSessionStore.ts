@@ -15,6 +15,7 @@ import {
   type WorkflowWatcherUpdate,
 } from './workflowWatcher';
 import { publishWorkflowRuns, forgetSession as forgetTelemetry } from './hubTelemetry';
+import { sessionHistory } from './sessionHistory';
 
 export type { WorkflowRunInfo, WorkflowAgentInfo, WorkflowPhaseInfo } from './workflowWatcher';
 
@@ -112,8 +113,10 @@ export interface ClaudeSessionState {
   workflows: WorkflowRunInfo[];
 
   ambientState: SessionAmbientState;
+  startedAt: number; // ms, when the session was first seen (for analytics duration)
   lastActivity: number;
   totalToolCalls: number;
+  peakContext: number; // highest context-token reading seen (for analytics)
   lastTranscriptLine: number; // track how far we've read in JSONL
   usage: SessionUsage | null; // token / cost / context, parsed from transcript
 }
@@ -276,7 +279,9 @@ class ClaudeSessionStore {
         session.subagents = session.subagents.filter(s => s.status === 'running');
         // Delayed re-read: final assistant message may still be flushing
         if (session.transcriptPath) {
-          setTimeout(() => { this.refreshFromTranscript(session); this.pushUpdate(session); }, 500);
+          setTimeout(() => { this.refreshFromTranscript(session); this.pushUpdate(session); this.writeHistory(session, 'active'); }, 500);
+        } else {
+          this.writeHistory(session, 'active');
         }
         break;
 
@@ -311,6 +316,7 @@ class ClaudeSessionStore {
         session.ambientState = 'idle';
         workflowWatcher.detach(sessionId);
         forgetTelemetry(sessionId);
+        this.writeHistory(session, 'ended');
         break;
     }
 
@@ -398,8 +404,10 @@ class ClaudeSessionStore {
       subagents: [],
       workflows: [],
       ambientState: 'idle',
+      startedAt: Date.now(),
       lastActivity: Date.now(),
       totalToolCalls: 0,
+      peakContext: 0,
       lastTranscriptLine: 0,
       usage: null,
     };
@@ -551,6 +559,7 @@ class ClaudeSessionStore {
 
     const ctx = contextTokensOf(usage);
     u.contextTokens = ctx;
+    if (ctx > session.peakContext) session.peakContext = ctx;
     if (model) {
       u.model = model;
       this.rememberModel(model);
@@ -575,6 +584,46 @@ class ClaudeSessionStore {
     if (this.knownModels.has(model)) return;
     this.knownModels.add(model);
     configService.saveConfig({ claude: { seenModels: Array.from(this.knownModels).sort() } } as any);
+  }
+
+  /** Best-effort current git branch for a working dir (reads .git/HEAD). */
+  private gitBranchOf(cwd: string): string {
+    if (!cwd) return '';
+    try {
+      const fs = require('fs');
+      const head = fs.readFileSync(path.join(cwd, '.git', 'HEAD'), 'utf-8').trim();
+      const m = head.match(/^ref:\s*refs\/heads\/(.+)$/);
+      return m ? m[1] : head.slice(0, 12); // detached HEAD → short sha
+    } catch {
+      return '';
+    }
+  }
+
+  /** Snapshot this session's metadata into the analytics history store. */
+  private writeHistory(session: ClaudeSessionState, status: 'active' | 'ended'): void {
+    const now = Date.now();
+    const workflowFailed = session.workflows.filter((w) => w.status === 'failed').length;
+    const subagentCount = session.subagents.length + session.workflows.reduce((n, w) => n + w.agents.length, 0);
+    sessionHistory.record({
+      sessionId: session.sessionId,
+      cwd: session.cwd,
+      agentName: session.cwd ? path.basename(session.cwd.replace(/[/\\]+$/, '')) : session.sessionId.slice(0, 8),
+      model: session.usage?.model ?? '',
+      gitBranch: this.gitBranchOf(session.cwd),
+      startedAt: new Date(session.startedAt).toISOString(),
+      endedAt: status === 'ended' ? new Date(now).toISOString() : '',
+      durationMs: now - session.startedAt,
+      inputTokens: session.usage?.totalInputTokens ?? 0,
+      outputTokens: session.usage?.totalOutputTokens ?? 0,
+      costUSD: session.usage?.costUSD ?? 0,
+      peakContext: session.peakContext,
+      toolCalls: session.totalToolCalls,
+      messageCount: session.conversation.length,
+      subagentCount,
+      workflowRuns: session.workflows.length,
+      workflowFailed,
+      status,
+    });
   }
 
   private pushUpdate(session: ClaudeSessionState): void {

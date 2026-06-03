@@ -13,7 +13,9 @@ import ScrollIndicator from './components/ScrollIndicator';
 import ShortcutOverlay from './components/ShortcutOverlay';
 import SessionPicker from './components/SessionPicker';
 import CommandPalette from './components/CommandPalette';
+import LayoutsDialog from './components/LayoutsDialog';
 import LibraryHost from './components/LibraryHost';
+import type { Layout, LayoutAgent } from './types/layout';
 import { useLibrary } from './hooks/useLibrary';
 import { useAgentManager, GLOBAL_WORKSPACE_ID } from './hooks/useAgentManager';
 import type { PaneType, AgentWorkspace } from './types/pane';
@@ -66,6 +68,7 @@ function App() {
   const [paletteMode, setPaletteMode] = useState<'tab' | 'split'>('tab');
   const [paletteRestrict, setPaletteRestrict] = useState<'library' | undefined>(undefined);
   const [showSpawnDialog, setShowSpawnDialog] = useState(false);
+  const [showLayouts, setShowLayouts] = useState(false);
 
   // App working directory (used as the default cwd for the spawn dialog + the
   // Library's fallback project root).
@@ -300,6 +303,7 @@ function App() {
       .catch(() => setSessionPhase('picker'));
   }, [saveCurrentSession]);
 
+
   // --- Normal app logic ---
 
   const scrollToTab = useCallback((id: string) => {
@@ -356,6 +360,50 @@ function App() {
     recordRecentDir(opts.cwd);
     void spawnAgent(opts);
   }, [spawnAgent, recordRecentDir]);
+
+  // --- Layout templates ---
+
+  // Snapshot the current (non-global) agents as a reusable layout: directories
+  // + their pane arrangement, stripped of live session ids.
+  const captureLayout = useCallback((): LayoutAgent[] => {
+    return agents.filter((a) => !a.global).map((a) => ({
+      name: a.name,
+      cwd: a.cwd,
+      model: a.model,
+      tabs: a.tabs.map((t) => ({
+        title: t.title,
+        panes: t.panes
+          .filter((p) => p.type !== 'settings')
+          .map((p) => ({ type: p.type, title: p.title, url: p.url, shell: p.shell, cwd: p.cwd })),
+      })),
+    }));
+  }, [agents]);
+
+  const handleSaveLayout = useCallback((name: string) => {
+    window.electronAPI.layoutsSave({ name, agents: captureLayout() }).catch((err: any) => {
+      console.error('[Layout] save failed:', err);
+    });
+  }, [captureLayout]);
+
+  // Restore a layout: spawn a fresh agent per saved directory, then reopen its
+  // non-Claude panes (spawnAgent already creates the primary Claude tab).
+  const handleRestoreLayout = useCallback(async (layout: Layout) => {
+    for (const la of layout.agents) {
+      recordRecentDir(la.cwd);
+      const agentId = await spawnAgent({ cwd: la.cwd, name: la.name, model: la.model });
+      for (const tab of la.tabs) {
+        for (const pane of tab.panes) {
+          if (pane.type === 'claude') continue; // primary Claude tab already created
+          openPaneIn(agentId, pane.type as PaneType, pane.title, pane.url, pane.cwd ?? la.cwd);
+        }
+      }
+    }
+  }, [spawnAgent, openPaneIn, recordRecentDir]);
+
+  const openAnalytics = useCallback(() => {
+    setShowCommandPalette(false);
+    openPaneIn(GLOBAL_WORKSPACE_ID, 'analytics', 'Analytics');
+  }, [openPaneIn]);
 
   const goToAgent = useCallback((delta: number) => {
     if (agents.length === 0) return;
@@ -804,6 +852,8 @@ function App() {
           }
         }}
         onSwitchSession={() => { setShowCommandPalette(false); switchSession(); }}
+        onOpenAnalytics={openAnalytics}
+        onOpenLayouts={() => { setShowCommandPalette(false); setShowLayouts(true); }}
       />
 
       <LibraryHost
@@ -822,6 +872,15 @@ function App() {
           defaultCwd={appCwdRef.current}
           onSpawn={handleSpawnAgent}
           onCancel={() => setShowSpawnDialog(false)}
+        />
+      )}
+
+      {showLayouts && (
+        <LayoutsDialog
+          agentCount={agents.filter((a) => !a.global).length}
+          onSaveCurrent={handleSaveLayout}
+          onRestore={handleRestoreLayout}
+          onClose={() => setShowLayouts(false)}
         />
       )}
 
