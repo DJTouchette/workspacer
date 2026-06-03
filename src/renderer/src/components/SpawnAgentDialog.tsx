@@ -71,11 +71,13 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, onSpawn
         onMouseDown={(e) => e.stopPropagation()}
         style={{
           width: 420, maxWidth: '90vw',
-          backgroundColor: 'var(--wks-bg-surface)',
-          border: '1px solid var(--wks-border-input)',
-          borderRadius: 8,
+          backgroundColor: 'var(--wks-glass-strong)',
+          backdropFilter: 'blur(var(--wks-glass-blur)) saturate(170%)',
+          WebkitBackdropFilter: 'blur(var(--wks-glass-blur)) saturate(170%)',
+          border: '1px solid var(--wks-glass-border)',
+          borderRadius: 'var(--wks-radius-lg)',
           padding: 20,
-          boxShadow: '0 8px 32px var(--wks-shadow)',
+          boxShadow: '0 16px 48px var(--wks-glass-shadow), inset 0 0 0 1.5px var(--wks-glass-highlight)',
           fontFamily: 'inherit',
         }}
       >

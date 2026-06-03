@@ -20,6 +20,7 @@ import {
   sendApproval,
 } from '../components/claude-shared';
 import { parseMarkdownBlocks } from '../components/markdown';
+import { RefreshCw } from '../components/icons';
 
 /** Ensure each CSS font-family name with spaces is quoted */
 function quoteFontFamily(ff: string): string {
@@ -874,7 +875,23 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
   const termInitRef = useRef(false);
   const conversationEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const contentAreaRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Escape hatch for the rare backdrop-filter compositing garble: nudge the
+  // content area onto a fresh raster (toggle a composited property for one
+  // frame). Clears stale pixels without resetting scroll position or the PTY.
+  const forceRepaint = useCallback(() => {
+    const el = contentAreaRef.current;
+    if (!el) return;
+    el.style.transform = 'translateZ(0)';
+    el.style.opacity = '0.999';
+    requestAnimationFrame(() => {
+      if (!el) return;
+      el.style.transform = '';
+      el.style.opacity = '';
+    });
+  }, []);
 
   const { config } = useConfig();
   const { terminalTheme } = useTheme();
@@ -1448,6 +1465,21 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
 
         <div style={{ flex: 1 }} />
 
+        {/* Redraw — clears the rare backdrop-filter compositing garble */}
+        <button
+          onClick={forceRepaint}
+          title="Redraw pane (fixes occasional rendering glitches)"
+          style={{
+            ...toggleBtnStyle,
+            display: 'flex',
+            alignItems: 'center',
+            backgroundColor: 'transparent',
+            color: colors.mutedDim,
+          }}
+        >
+          <RefreshCw size={13} strokeWidth={1.9} />
+        </button>
+
         {/* Attach files */}
         <button
           onClick={openFilePicker}
@@ -1488,7 +1520,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
       </div>
 
       {/* Content area */}
-      <div style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
+      <div ref={contentAreaRef} style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
         {isDragOver && <DropOverlay />}
 
         {/* Terminal view (always mounted, visibility toggled) */}
@@ -1518,6 +1550,11 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
                 overflowY: 'auto',
                 padding: '12px 16px',
                 position: 'relative',
+                // Promote to its own compositor layer so streaming/markdown
+                // repaints don't corrupt the backdrop-filter snapshots of the
+                // surrounding glass (transient garble that cleared on repaint).
+                transform: 'translateZ(0)',
+                contain: 'paint',
               }}
             >
               {/* Centered content container */}

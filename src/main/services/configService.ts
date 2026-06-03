@@ -29,6 +29,10 @@ interface Config {
   ui: {
     animations: boolean;
     theme: string;
+    /** User override for corner style ('' = use the theme's own default). */
+    cornerStyle: string;
+    /** User override for the focused-pane border color ('' = theme default). */
+    borderColor: string;
     fontFamily: string;
     fontSize: number;
     borderRadius: number;
@@ -117,6 +121,8 @@ function defaultConfig(): Config {
     ui: {
       animations: false,
       theme: 'dark',
+      cornerStyle: '',
+      borderColor: '',
       fontFamily: 'Inter, system-ui, sans-serif',
       fontSize: 14,
       borderRadius: 8,

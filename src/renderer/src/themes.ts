@@ -25,8 +25,15 @@ export interface TerminalTheme {
   brightWhite: string;
 }
 
+/** Corner treatment for the whole UI. Themes declare a default; the user can
+ *  override it in Settings (the override wins until the theme is switched). */
+export type CornerStyle = 'rounded' | 'soft' | 'square';
+
 export interface Theme {
   name: string;
+
+  /** Default corner style for this theme (falls back to 'soft' if absent). */
+  corners?: CornerStyle;
 
   // Surfaces
   bgBase: string;
@@ -57,6 +64,10 @@ export interface Theme {
   accentText: string;
   accentGlow: string;
   accentBg: string;
+
+  /** Focused-pane border color. Defaults to `accent` when omitted; the user can
+   *  override it in Settings (override wins until the theme is switched). */
+  borderActive?: string;
 
   // Status
   success: string;
@@ -997,12 +1008,91 @@ export const themes: Record<string, Theme> = {
   cyberpunk: cyberpunkTheme,
 };
 
+// ── Corner styles ──
+
+/** Curated default corner style per theme, so each theme keeps its character
+ *  (neon/retro themes feel sharper, soft themes feel rounder). The user can
+ *  override this in Settings; switching themes re-adopts the theme default. */
+const THEME_CORNERS: Record<string, CornerStyle> = {
+  light: 'rounded',
+  midnight: 'rounded',
+  'rose-pine': 'rounded',
+  cyberpunk: 'square',
+  synthwave: 'square',
+  monokai: 'square',
+};
+
+// Backfill each theme's `corners` from the curated map (default 'soft').
+for (const [name, t] of Object.entries(themes)) {
+  if (t.corners === undefined) t.corners = THEME_CORNERS[name] ?? 'soft';
+}
+
+/** Effective corner style: explicit user override wins, else the theme's own. */
+export function cornersOf(theme: Theme, override?: string): CornerStyle {
+  if (override === 'rounded' || override === 'soft' || override === 'square') return override;
+  return theme.corners ?? 'soft';
+}
+
+/** Radius scale → CSS custom properties. Square collapses every radius to 0
+ *  (circular dots use an explicit 50% and are unaffected). */
+export function radiusVarsFor(corners: CornerStyle): Record<string, string> {
+  const scale: Record<CornerStyle, [number, number, number]> = {
+    rounded: [8, 13, 18],
+    soft: [5, 8, 12],
+    square: [0, 0, 0],
+  };
+  const [sm, md, lg] = scale[corners] ?? scale.soft;
+  return {
+    '--wks-radius-sm': `${sm}px`,
+    '--wks-radius-md': `${md}px`,
+    '--wks-radius-lg': `${lg}px`,
+    '--wks-radius-pill': corners === 'square' ? '0px' : '999px',
+  };
+}
+
 // ── Apply theme as CSS custom properties ──
 
 /** Full token → CSS custom property map. Single source of truth — used for
  *  the app's own documentElement AND injected into plugin webviews. */
+function parseRgb(color: string): [number, number, number] | null {
+  const c = color.trim();
+  const hex = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(c);
+  if (hex) {
+    let h = hex[1];
+    if (h.length === 3) h = h.split('').map((ch) => ch + ch).join('');
+    return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  }
+  const m = /rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/.exec(c);
+  if (m) return [+m[1], +m[2], +m[3]];
+  return null;
+}
+
+/** Re-express any theme color (hex / rgb / rgba) as rgba() with a new alpha.
+ *  Used to derive the translucent "glass" surfaces from each theme's palette. */
+export function toRgba(color: string, alpha: number): string {
+  const rgb = parseRgb(color);
+  return rgb ? `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${alpha})` : color;
+}
+
+/** Normalize any theme color to #rrggbb (for <input type="color"> swatches). */
+export function toHex(color: string): string {
+  const rgb = parseRgb(color);
+  if (!rgb) return '#000000';
+  return '#' + rgb.map((c) => Math.max(0, Math.min(255, Math.round(c))).toString(16).padStart(2, '0')).join('');
+}
+
 export function cssVarsOf(theme: Theme): Record<string, string> {
+  const light = isLightTheme(theme);
   return {
+    // Frosted-glass surfaces — derived from the theme so blur/translucency
+    // keeps each theme's hue. Consumed with backdrop-filter: blur().
+    '--wks-glass-bg': toRgba(theme.bgSurface, light ? 0.72 : 0.6),
+    '--wks-glass-strong': toRgba(theme.bgElevated, light ? 0.86 : 0.78),
+    '--wks-glass-border': light ? 'rgba(0, 0, 0, 0.14)' : 'rgba(255, 255, 255, 0.16)',
+    '--wks-glass-highlight': light ? 'rgba(255, 255, 255, 0.9)' : 'rgba(255, 255, 255, 0.10)',
+    '--wks-glass-blur': '18px',
+    '--wks-glass-shadow': theme.shadow,
+    '--wks-glass-tint': toRgba(theme.accent, light ? 0.05 : 0.08),
     '--wks-bg-base': theme.bgBase,
     '--wks-bg-raised': theme.bgRaised,
     '--wks-bg-surface': theme.bgSurface,
@@ -1025,6 +1115,7 @@ export function cssVarsOf(theme: Theme): Record<string, string> {
     '--wks-accent-text': theme.accentText,
     '--wks-accent-glow': theme.accentGlow,
     '--wks-accent-bg': theme.accentBg,
+    '--wks-border-active': theme.borderActive ?? theme.accent,
     '--wks-success': theme.success,
     '--wks-error': theme.error,
     '--wks-warning': theme.warning,
@@ -1061,6 +1152,14 @@ export function isLightTheme(theme: Theme): boolean {
 export function applyTheme(theme: Theme): void {
   const s = document.documentElement.style;
   for (const [prop, value] of Object.entries(cssVarsOf(theme))) {
+    s.setProperty(prop, value);
+  }
+}
+
+/** Apply the radius scale for the resolved corner style as CSS custom props. */
+export function applyCorners(corners: CornerStyle): void {
+  const s = document.documentElement.style;
+  for (const [prop, value] of Object.entries(radiusVarsFor(corners))) {
     s.setProperty(prop, value);
   }
 }

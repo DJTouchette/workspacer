@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { PaneType, TabConfig } from '../types/pane';
 import { useConfig, ScriptEntry } from '../hooks/useConfig';
+import { PaneIcon, Play, Settings, Plus, Columns3 } from './icons';
 
 interface NavBarProps {
   tabs: TabConfig[];
@@ -23,20 +24,6 @@ interface NavBarProps {
   onSaveScripts?: (entries: ScriptEntry[]) => void;
 }
 
-const typeLabels: Record<PaneType, string> = {
-  terminal: '>_',
-  browser: '\u{1F310}',
-  notes: '\u{1F4DD}',
-  agent: '\u{1F916}',
-  claude: '\u2666',
-  settings: '\u2699',
-  review: '\u{1F50D}',
-  plugin: '\u{1F9E9}',
-  plugins: '\u{1F9F0}',
-  overview: '\u{1F3E0}',
-  library: '⚡',
-  analytics: '\u{1F4CA}',
-};
 
 interface SessionPickerState {
   folder: string;
@@ -79,15 +66,18 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
     <nav
       className="navbar"
       style={{
-        position: 'fixed',
+        position: 'absolute',
         top: 0,
         left: leftOffset,
         right: 0,
         height: `${navHeight}px`,
         display: 'flex',
         alignItems: 'center',
-        backgroundColor: 'var(--wks-bg-input)',
-        borderBottom: '1px solid var(--wks-border-subtle)',
+        backgroundColor: 'var(--wks-glass-strong)',
+        backdropFilter: 'blur(var(--wks-glass-blur)) saturate(160%)',
+        WebkitBackdropFilter: 'blur(var(--wks-glass-blur)) saturate(160%)',
+        borderBottom: '1px solid var(--wks-glass-border)',
+        boxShadow: 'inset 0 1px 0 var(--wks-glass-highlight)',
         padding: '0 10px',
         zIndex: 100,
         userSelect: 'none',
@@ -132,7 +122,7 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
                 height: '26px',
                 lineHeight: '1',
                 border: 'none',
-                borderRadius: '13px',
+                borderRadius: 'var(--wks-radius-pill)',
                 cursor: 'pointer',
                 fontSize: '0.75rem',
                 fontFamily: 'inherit',
@@ -160,8 +150,8 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
               }}
               title={`${tab.title} (Ctrl+${idx + 1})`}
             >
-              <span style={{ fontSize: '0.75rem' }}>
-                {singlePane ? typeLabels[firstPaneType] : '\u25A3'}
+              <span style={{ display: 'flex', alignItems: 'center' }}>
+                {singlePane ? <PaneIcon type={firstPaneType} size={13} /> : <Columns3 size={13} strokeWidth={1.75} />}
               </span>
               <span>{tab.title}</span>
               {!singlePane && (
@@ -191,7 +181,7 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
                 height: '26px',
                 lineHeight: '1',
                 border: 'none',
-                borderRadius: '13px',
+                borderRadius: 'var(--wks-radius-pill)',
                 cursor: 'pointer',
                 fontSize: '0.9rem',
                 fontFamily: 'inherit',
@@ -210,7 +200,7 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
               }}
               title="New terminal (Ctrl+T) | Right-click for more"
             >
-              +
+              <Plus size={15} strokeWidth={2} />
             </button>
 
             {showMenu && (
@@ -301,7 +291,7 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
               style={{
                 display: 'flex', alignItems: 'center', gap: 4,
                 height: '22px', padding: '0 10px', margin: 0,
-                border: '1px solid var(--wks-border)', borderRadius: '11px',
+                border: '1px solid var(--wks-border)', borderRadius: 'var(--wks-radius-pill)',
                 cursor: 'pointer', fontSize: '0.68rem', fontFamily: 'inherit',
                 backgroundColor: 'transparent', color: 'var(--wks-text-muted)',
                 whiteSpace: 'nowrap', lineHeight: 1,
@@ -315,7 +305,7 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
                 (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-muted)';
               }}
             >
-              <span style={{ fontSize: '0.6rem', opacity: 0.7 }}>{'▶'}</span>
+              <Play size={11} strokeWidth={2} style={{ opacity: 0.75 }} />
               {s.name}
             </button>
           ))}
@@ -328,14 +318,14 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
               style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 width: '22px', height: '22px', padding: 0, margin: 0,
-                border: '1px dashed var(--wks-border-input)', borderRadius: '11px',
+                border: '1px dashed var(--wks-border-input)', borderRadius: 'var(--wks-radius-pill)',
                 cursor: 'pointer', fontSize: '0.7rem', fontFamily: 'inherit',
                 backgroundColor: 'transparent', color: 'var(--wks-text-faint)',
               }}
               onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-secondary)'; }}
               onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-faint)'; }}
             >
-              {scripts.length === 0 ? '+' : '⚙'}
+              {scripts.length === 0 ? <Plus size={13} strokeWidth={2} /> : <Settings size={12} strokeWidth={1.75} />}
             </button>
           )}
 

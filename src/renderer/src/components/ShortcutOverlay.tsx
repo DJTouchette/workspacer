@@ -90,9 +90,12 @@ const ShortcutOverlay: React.FC<ShortcutOverlayProps> = ({ visible, onClose, mod
     >
       <div
         style={{
-          backgroundColor: 'var(--wks-bg-surface)',
-          border: '1px solid var(--wks-border-input)',
-          borderRadius: '6px',
+          backgroundColor: 'var(--wks-glass-strong)',
+          backdropFilter: 'blur(var(--wks-glass-blur)) saturate(170%)',
+          WebkitBackdropFilter: 'blur(var(--wks-glass-blur)) saturate(170%)',
+          border: '1px solid var(--wks-glass-border)',
+          borderRadius: 'var(--wks-radius-md)',
+          boxShadow: '0 16px 48px var(--wks-glass-shadow), inset 0 0 0 1.5px var(--wks-glass-highlight)',
           padding: '12px 16px',
           minWidth: '320px',
           maxWidth: '440px',

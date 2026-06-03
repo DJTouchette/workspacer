@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { usePlugins } from '../hooks/usePlugins';
 import PluginInstallDialog from '../components/PluginInstallDialog';
+import { Blocks } from '../components/icons';
 
 /** Latest supervisor state per plugin id, from `sidecar.*` bus events. */
 function useSidecarStates(): Record<string, string> {
@@ -46,7 +47,9 @@ const PluginsManagerPane: React.FC<{ title?: string }> = () => {
         display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px',
         borderBottom: '1px solid var(--wks-border-subtle)',
       }}>
-        <div style={{ fontSize: '0.95rem', fontWeight: 600 }}>🧰 Plugins</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: '0.95rem', fontWeight: 600 }}>
+          <Blocks size={17} strokeWidth={1.75} /> Plugins
+        </div>
         <div style={{ fontSize: '0.65rem', color: 'var(--wks-text-faint)' }}>{plugins.length} installed</div>
         <button
           onClick={() => setShowInstall(true)}

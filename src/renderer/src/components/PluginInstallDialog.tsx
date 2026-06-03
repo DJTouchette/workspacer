@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { AlertTriangle } from './icons';
 
 interface PluginInstallDialogProps {
   onClose: () => void;
@@ -49,10 +50,12 @@ const PluginInstallDialog: React.FC<PluginInstallDialogProps> = ({ onClose, onIn
         onMouseDown={(e) => e.stopPropagation()}
         style={{
           width: 460, maxWidth: '92vw',
-          backgroundColor: 'var(--wks-bg-surface)',
-          border: '1px solid var(--wks-border-input)',
-          borderRadius: 8, padding: 20,
-          boxShadow: '0 8px 32px var(--wks-shadow)', fontFamily: 'inherit',
+          backgroundColor: 'var(--wks-glass-strong)',
+          backdropFilter: 'blur(var(--wks-glass-blur)) saturate(170%)',
+          WebkitBackdropFilter: 'blur(var(--wks-glass-blur)) saturate(170%)',
+          border: '1px solid var(--wks-glass-border)',
+          borderRadius: 'var(--wks-radius-lg)', padding: 20,
+          boxShadow: '0 16px 48px var(--wks-glass-shadow), inset 0 0 0 1.5px var(--wks-glass-highlight)', fontFamily: 'inherit',
         }}
       >
         <div style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--wks-text-primary)', marginBottom: 4 }}>
@@ -80,7 +83,7 @@ const PluginInstallDialog: React.FC<PluginInstallDialogProps> = ({ onClose, onIn
           background: 'var(--wks-bg-input)', border: '1px solid var(--wks-border-subtle)',
           fontSize: '0.65rem', lineHeight: 1.5, color: 'var(--wks-text-muted)',
         }}>
-          <span style={{ color: 'var(--wks-danger, #e05555)', fontWeight: 600 }}>⚠ Runs code from the internet.</span>{' '}
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, verticalAlign: 'text-bottom', color: 'var(--wks-danger, #e05555)', fontWeight: 600 }}><AlertTriangle size={12} strokeWidth={2} /> Runs code from the internet.</span>{' '}
           Installing starts the plugin's server process on your machine — like a VS Code extension.
           Only install plugins you trust.
         </div>

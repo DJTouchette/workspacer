@@ -1,6 +1,7 @@
 import React, { useCallback, useRef, useState, useEffect } from 'react';
 import { PaneType } from '../types/pane';
 import { useConfig } from '../hooks/useConfig';
+import { PaneIcon } from './icons';
 
 interface PaneProps {
   id: string;
@@ -15,23 +16,12 @@ interface PaneProps {
   /** Omit the header bar (title + close button). Used for single-pane tabs
    *  where the tab itself already carries the label. */
   hideHeader?: boolean;
+  /** Don't show the focused/accent border — used when a tab has a single pane,
+   *  where indicating "which pane is focused" is meaningless. */
+  hideActiveBorder?: boolean;
   children: React.ReactNode;
 }
 
-const typeIndicators: Record<PaneType, string> = {
-  terminal: '>_',
-  browser: '\u{1F310}',
-  notes: '\u{1F4DD}',
-  agent: '\u{1F916}',
-  claude: '\u2666',
-  settings: '\u2699',
-  review: '\u{1F50D}',
-  plugin: '\u{1F9E9}',
-  plugins: '\u{1F9F0}',
-  overview: '\u{1F3E0}',
-  library: '⚡',
-  analytics: '\u{1F4CA}',
-};
 
 const Pane: React.FC<PaneProps> = ({
   id,
@@ -44,6 +34,7 @@ const Pane: React.FC<PaneProps> = ({
   onRename,
   renameSignal,
   hideHeader,
+  hideActiveBorder,
   children,
 }) => {
   const { config } = useConfig();
@@ -137,15 +128,15 @@ const Pane: React.FC<PaneProps> = ({
         height: 'calc(100% - 8px)',
         display: 'flex',
         flexDirection: 'column',
-        borderRadius: '8px',
+        borderRadius: 'var(--wks-radius-lg)',
         overflow: 'hidden',
         margin: '4px 8px',
-        border: isActive
-          ? '1px solid var(--wks-accent)'
-          : '1px solid var(--wks-border)',
-        boxShadow: isActive
-          ? '0 0 12px var(--wks-accent-glow)'
-          : 'none',
+        border: isActive && !hideActiveBorder
+          ? '1px solid var(--wks-border-active)'
+          : '1px solid var(--wks-glass-border)',
+        boxShadow: isActive && !hideActiveBorder
+          ? 'inset 0 0 0 1.5px var(--wks-glass-highlight), 0 0 0 1px var(--wks-accent-glow), 0 10px 34px var(--wks-glass-shadow)'
+          : 'inset 0 0 0 1.5px var(--wks-glass-highlight), 0 6px 22px var(--wks-glass-shadow)',
         transition: 'none',
         flexShrink: 0,
         position: 'relative',
@@ -165,10 +156,15 @@ const Pane: React.FC<PaneProps> = ({
           alignItems: 'center',
           justifyContent: 'space-between',
           padding: '0 8px',
+          // Solid-ish tint, no backdrop-filter: the header sits over the static
+          // app background (blur added nothing visible) and a backdrop-filter
+          // inside the pane's clipped region couples it to heavy repaints from
+          // dynamic panes (streaming Claude transcript / WebGL terminal), which
+          // caused transient compositing garble. See bg-header / bg-elevated.
           backgroundColor: isActive
             ? 'var(--wks-bg-header)'
             : 'var(--wks-bg-elevated)',
-          borderBottom: '1px solid var(--wks-border)',
+          borderBottom: '1px solid var(--wks-glass-border)',
           cursor: onMove ? 'grab' : 'default',
           userSelect: 'none',
           position: 'relative',
@@ -176,8 +172,8 @@ const Pane: React.FC<PaneProps> = ({
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}>
-          <span style={{ fontSize: '0.6rem', opacity: 0.7 }}>
-            {typeIndicators[type]}
+          <span style={{ display: 'flex', alignItems: 'center', opacity: 0.75, color: 'var(--wks-text-tertiary)' }}>
+            <PaneIcon type={type} size={12} />
           </span>
           {isEditing ? (
             <input

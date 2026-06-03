@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useConfig } from '../hooks/useConfig';
+import { Home, Star, Plus } from '../components/icons';
 
 interface Snap {
   sessionId: string;
@@ -39,11 +40,11 @@ const DirRow: React.FC<{ dir: string; fav: boolean; onSpawn: () => void; onToggl
     <span
       onClick={(e) => { e.stopPropagation(); onToggleFav(); }}
       title={fav ? 'Unfavourite' : 'Favourite'}
-      style={{ flexShrink: 0, cursor: 'pointer', fontSize: '0.85rem', color: fav ? 'var(--wks-warning, #e0a000)' : 'var(--wks-text-faint)' }}
-    >{fav ? '★' : '☆'}</span>
+      style={{ display: 'flex', alignItems: 'center', flexShrink: 0, cursor: 'pointer', color: fav ? 'var(--wks-warning, #e0a000)' : 'var(--wks-text-faint)' }}
+    ><Star size={14} strokeWidth={1.75} fill={fav ? 'currentColor' : 'none'} /></span>
     <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--wks-text-primary)', flexShrink: 0 }}>{basename(dir)}</span>
     <span style={{ fontSize: '0.62rem', color: 'var(--wks-text-faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dir}</span>
-    <span style={{ marginLeft: 'auto', flexShrink: 0, fontSize: '0.62rem', color: 'var(--wks-accent)' }}>＋ launch</span>
+    <span style={{ display: 'flex', alignItems: 'center', gap: 3, marginLeft: 'auto', flexShrink: 0, fontSize: '0.62rem', color: 'var(--wks-accent)' }}><Plus size={11} strokeWidth={2.2} /> launch</span>
   </div>
 );
 
@@ -94,7 +95,9 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
   return (
     <div style={{ height: '100%', overflow: 'auto', background: 'var(--wks-bg-base)', color: 'var(--wks-text-primary)', padding: 18 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-        <div style={{ fontSize: '1.05rem', fontWeight: 700 }}>🏠 Workspace</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '1.05rem', fontWeight: 700 }}>
+          <Home size={18} strokeWidth={1.9} /> Workspace
+        </div>
         <button
           onClick={browse}
           style={{

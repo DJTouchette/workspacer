@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { useLibrary } from '../hooks/useLibrary';
 import { runLibraryItem } from '../lib/libraryBus';
 import MarkdownEditor from '../components/MarkdownEditor';
+import { Zap } from '../components/icons';
 import type { LibraryItem, LibraryKind, LibraryScope, LibraryAction, LibrarySaveInput } from '../types/library';
 
 interface Props {
@@ -158,7 +159,9 @@ const LibraryPane: React.FC<Props> = ({ cwd }) => {
   return (
     <Shell>
       <div style={headerStyle}>
-        <span style={{ fontWeight: 600, fontSize: '0.8rem' }}>⚡ Library</span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, fontSize: '0.8rem' }}>
+          <Zap size={15} strokeWidth={1.9} /> Library
+        </span>
         <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search prompts & skills…" spellCheck={false}
           style={{ ...inputStyle, height: 28, flex: 1, maxWidth: 280, margin: '0 8px' }} />
         <div style={{ display: 'flex', gap: 2, marginRight: 8 }}>

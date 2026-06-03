@@ -93,15 +93,26 @@ const SideBar: React.FC<SideBarProps> = ({
 
   return (
     <div style={{
-      position: 'fixed',
+      position: 'absolute',
       top: 0, left: 0, bottom: 0,
       width: `${SIDEBAR_WIDTH}px`,
       display: 'flex',
       flexDirection: 'column',
       paddingTop: '8px',
       gap: '2px',
-      backgroundColor: 'var(--wks-bg-input)',
-      borderRight: '1px solid var(--wks-border-subtle)',
+      backgroundColor: 'var(--wks-glass-strong)',
+      backdropFilter: 'blur(var(--wks-glass-blur)) saturate(160%)',
+      WebkitBackdropFilter: 'blur(var(--wks-glass-blur)) saturate(160%)',
+      borderRight: '1px solid var(--wks-glass-border)',
+      boxShadow: 'inset -1px 0 0 var(--wks-glass-highlight)',
+      // Round the inner (right) corners with the active corner style — the left
+      // edge stays flush to the window (rounded by the app shell). Square corner
+      // style resolves these to 0.
+      borderTopRightRadius: 'var(--wks-radius-lg)',
+      borderBottomRightRadius: 'var(--wks-radius-lg)',
+      // Clip children (e.g. the HubStatus footer's solid background) to the
+      // rounded corners. The context menu is position:fixed so it still escapes.
+      overflow: 'hidden',
       zIndex: 100,
       userSelect: 'none',
       boxSizing: 'border-box',

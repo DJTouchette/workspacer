@@ -9,7 +9,6 @@ import { useUiCommands } from './hooks/useUiCommands';
 import type { PluginPane } from './types/plugin';
 import SpawnAgentDialog from './components/SpawnAgentDialog';
 import ScrollContainer, { ScrollContainerRef } from './components/ScrollContainer';
-import ScrollIndicator from './components/ScrollIndicator';
 import ShortcutOverlay from './components/ShortcutOverlay';
 import SessionPicker from './components/SessionPicker';
 import CommandPalette from './components/CommandPalette';
@@ -711,8 +710,9 @@ function App() {
     [setActiveTabId],
   );
   const handleNavBarSplit = useCallback(
-    (tabId: string, type: PaneType) => { splitTab(tabId, type); },
-    [splitTab],
+    // New split panes inherit the active agent's working directory.
+    (tabId: string, type: PaneType) => { splitTab(tabId, type, undefined, undefined, undefined, undefined, activeAgent?.cwd); },
+    [splitTab, activeAgent],
   );
 
   return (
@@ -746,7 +746,8 @@ function App() {
       />
 
       <div className="app-content" style={{
-        marginTop: `${navHeight}px`,
+        // Small gap between the tab bar and the top of the panes.
+        marginTop: `${navHeight + 8}px`,
         marginLeft: `${SIDEBAR_WIDTH}px`,
       }}>
         {agents.length > 0 ? (
@@ -809,14 +810,6 @@ function App() {
           </div>
         )}
       </div>
-
-      {activeAgent && (
-        <ScrollIndicator
-          tabs={tabs}
-          activeTabId={activeTabId}
-          onDotClick={handleTabClick}
-        />
-      )}
 
       <ShortcutOverlay
         visible={showHelp}

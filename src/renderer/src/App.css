@@ -1,5 +1,20 @@
 /* Workspacer App Styles */
 
+/* Design-token fallbacks — JS (applyTheme/applyCorners) overrides these at
+ * runtime; these keep the first paint sane. */
+:root {
+  --wks-radius-sm: 5px;
+  --wks-radius-md: 8px;
+  --wks-radius-lg: 12px;
+  --wks-radius-pill: 999px;
+  --wks-glass-bg: rgba(30, 30, 33, 0.6);
+  --wks-glass-strong: rgba(32, 32, 36, 0.78);
+  --wks-glass-border: rgba(255, 255, 255, 0.16);
+  --wks-glass-highlight: rgba(255, 255, 255, 0.10);
+  --wks-glass-blur: 18px;
+  --wks-glass-shadow: rgba(0, 0, 0, 0.4);
+  --wks-glass-tint: rgba(96, 165, 250, 0.08);
+}
 
 html, body {
   margin: 0;
@@ -14,18 +29,43 @@ html, body {
   flex-direction: column;
   height: 100vh;
   width: 100vw;
+  /* Positioning context so the (absolute) NavBar/SideBar are clipped by the
+   * rounded overflow below, instead of escaping like fixed elements do. */
+  position: relative;
   overflow: hidden;
+  /* The whole app reads as one rounded glass panel; radius follows the theme's
+   * corner style (square themes → square window). The compositor supplies the
+   * drop shadow on a transparent window. */
+  border-radius: var(--wks-radius-lg);
+  box-shadow: inset 0 0 0 1px var(--wks-glass-border);
   background-color: var(--wks-bg-base);
+  /* Soft accent-tinted depth so the frosted-glass surfaces have something to
+   * blur over instead of a flat fill. */
+  background-image:
+    radial-gradient(120% 100% at 0% 0%, var(--wks-glass-tint), transparent 55%),
+    radial-gradient(120% 100% at 100% 100%, var(--wks-glass-tint), transparent 55%);
+  background-attachment: fixed;
   color: var(--wks-text-primary);
   font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto",
     "Oxygen", "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue",
     sans-serif;
 }
 
+/* Shared frosted-glass surface. Apply alongside per-element layout styles. */
+.wks-glass {
+  background-color: var(--wks-glass-bg);
+  -webkit-backdrop-filter: blur(var(--wks-glass-blur)) saturate(160%);
+  backdrop-filter: blur(var(--wks-glass-blur)) saturate(160%);
+  border: 1px solid var(--wks-glass-border);
+  box-shadow:
+    0 8px 32px var(--wks-glass-shadow),
+    inset 0 1px 0 var(--wks-glass-highlight);
+}
+
 .app-content {
   flex: 1;
   margin-top: 28px; /* NavBar height */
-  margin-bottom: 16px; /* ScrollIndicator height + room for pane border */
+  margin-bottom: 4px; /* room for pane border */
   overflow: hidden;
 }
 

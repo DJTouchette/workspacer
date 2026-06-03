@@ -95,7 +95,11 @@ const overlay: React.CSSProperties = {
   display: 'flex', alignItems: 'center', justifyContent: 'center',
 };
 const modal: React.CSSProperties = {
-  backgroundColor: 'var(--wks-bg-raised)', border: '1px solid var(--wks-border)', borderRadius: 8,
+  backgroundColor: 'var(--wks-glass-strong)',
+  backdropFilter: 'blur(var(--wks-glass-blur)) saturate(170%)',
+  WebkitBackdropFilter: 'blur(var(--wks-glass-blur)) saturate(170%)',
+  border: '1px solid var(--wks-glass-border)', borderRadius: 'var(--wks-radius-lg)',
+  boxShadow: '0 16px 48px var(--wks-glass-shadow), inset 0 0 0 1.5px var(--wks-glass-highlight)',
   padding: '18px 20px', width: 460, maxWidth: '90vw', maxHeight: '70vh', display: 'flex', flexDirection: 'column',
 };
 const input: React.CSSProperties = {

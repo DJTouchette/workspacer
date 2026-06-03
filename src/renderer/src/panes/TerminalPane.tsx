@@ -39,6 +39,9 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
   const fitAddonRef = useRef<FitAddon | null>(null);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const initializedRef = useRef(false);
+  // Latest active state, readable from async init callbacks below.
+  const isActiveRef = useRef(isActive);
+  isActiveRef.current = isActive;
 
   const { config } = useConfig();
   const termCfg = config.terminal;
@@ -98,6 +101,10 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
       try { fitAddon.fit(); } catch {}
       // NOW create the PTY with the correct dimensions
       startPTY(term.cols, term.rows);
+      // The synchronous term.focus() below runs before the terminal is opened
+      // into the DOM, so it's a no-op for a freshly-created pane (e.g. from the
+      // command palette). Re-assert focus here now that it's actually attached.
+      if (isActiveRef.current) requestAnimationFrame(() => term.focus());
     });
 
     // Tell xterm to NOT process keys that the app handles.

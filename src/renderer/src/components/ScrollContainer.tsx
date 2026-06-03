@@ -110,7 +110,9 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
   }
 }
 
-// Auto-tiling layout for multiple panes within a tab
+// Auto-tiling layout for the panes within a tab. Handles 1..N panes through a
+// single structure so that adding/removing a pane never re-parents (and thus
+// never remounts → kills the PTY of) an existing pane.
 function TilingLayout({
   panes,
   activePaneId,
@@ -120,6 +122,12 @@ function TilingLayout({
   onPaneClose,
   onPaneFocus,
   callbacks,
+  isActiveTab,
+  tabTitle,
+  onTabFocus,
+  onTabMove,
+  onTabRename,
+  renameSignal,
 }: {
   panes: PaneConfig[];
   activePaneId: string;
@@ -129,7 +137,16 @@ function TilingLayout({
   onPaneClose: (paneId: string) => void;
   onPaneFocus: (paneId: string) => void;
   callbacks: PaneCallbacks;
+  // Tab-level props used only when the tab has a single pane (headerless,
+  // labelled by the tab itself and renamable/movable like the old layout).
+  isActiveTab: boolean;
+  tabTitle: string;
+  onTabFocus: () => void;
+  onTabMove?: (delta: number) => void;
+  onTabRename?: (title: string) => void;
+  renameSignal?: number;
 }) {
+  const single = panes.length === 1;
   const count = panes.length;
   const cols = count <= 1 ? 1 : count <= 2 ? 2 : count <= 4 ? 2 : count <= 6 ? 3 : Math.ceil(Math.sqrt(count));
   const rows = Math.ceil(count / cols);
@@ -165,32 +182,38 @@ function TilingLayout({
       {panes.map((pane, idx) => {
         const layout = layouts[idx];
         if (!layout) return null;
-        const isActive = agentActive && pane.id === activePaneId;
-        const left = layout.col * cellWidth + gap;
-        const top = layout.row * cellHeight + gap;
-        const width = layout.colSpan * cellWidth - gap * 2;
-        const height = layout.rowSpan * cellHeight - gap * 2;
+        // Liveness (drives throttling/focus) requires the agent to be on
+        // screen; the single-pane visual highlight tracks the active tab.
+        const liveActive = agentActive && (single ? isActiveTab : pane.id === activePaneId);
+        const isActive = single ? isActiveTab : liveActive;
+        // Single pane fills the whole tab area (and stays headerless, labelled
+        // by the tab). Multi-pane uses the computed grid cell.
+        const cellStyle: React.CSSProperties = single
+          ? { position: 'absolute', inset: 0 }
+          : {
+              position: 'absolute',
+              left: `${layout.col * cellWidth + gap}px`,
+              top: `${layout.row * cellHeight + gap}px`,
+              width: `${layout.colSpan * cellWidth - gap * 2}px`,
+              height: `${layout.rowSpan * cellHeight - gap * 2}px`,
+            };
 
         return (
-          <div
-            key={pane.id}
-            style={{
-              position: 'absolute',
-              left: `${left}px`,
-              top: `${top}px`,
-              width: `${width}px`,
-              height: `${height}px`,
-            }}
-          >
+          <div key={pane.id} style={cellStyle}>
             <Pane
               id={pane.id}
               type={pane.type}
-              title={pane.title}
+              title={single ? tabTitle : pane.title}
               isActive={isActive}
               onClose={() => onPaneClose(pane.id)}
-              onFocus={() => onPaneFocus(pane.id)}
+              onFocus={single ? onTabFocus : () => onPaneFocus(pane.id)}
+              onMove={single && onTabMove ? (_, delta) => onTabMove(delta) : undefined}
+              onRename={single && onTabRename ? (_, title) => onTabRename(title) : undefined}
+              renameSignal={single ? renameSignal : undefined}
+              hideHeader={single}
+              hideActiveBorder={single}
             >
-              {renderPaneContent(pane, isActive, callbacks)}
+              {renderPaneContent(pane, liveActive, callbacks)}
             </Pane>
           </div>
         );
@@ -303,9 +326,6 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
       >
         {tabs.map((tab) => {
           const isActiveTab = tab.id === activeTabId;
-          // A pane is only "active" (focused, un-throttled) when its agent is
-          // the one on screen AND its tab is the active one.
-          const paneActive = agentActive && isActiveTab;
           const singlePane = tab.panes.length === 1;
 
           const paneCallbacks: PaneCallbacks = {
@@ -340,53 +360,37 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
                 containIntrinsicSize: `${tabWidth}px ${containerHeight}px`,
               }}
             >
-              {singlePane ? (
-                // Single pane tab — render like before
-                <Pane
-                  id={tab.panes[0].id}
-                  type={tab.panes[0].type}
-                  title={tab.title}
-                  isActive={isActiveTab}
-                  onClose={() => onPaneClose(tab.id, tab.panes[0].id)}
-                  onFocus={() => onTabFocus(tab.id)}
-                  onMove={onTabMove ? (_, delta) => handleTabMove(tab.id, delta) : undefined}
-                  onRename={onTabRename ? (_, title) => onTabRename(tab.id, title) : undefined}
+              {/* Always render through TilingLayout — single- and multi-pane
+                 tabs share one structure so splitting/closing a pane never
+                 re-parents (and thus never remounts → kills the PTY of) an
+                 existing pane. This wrapper is just an invisible positioning
+                 box; each pane carries its own border (focused one accented). */}
+              <div
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  height: '100%',
+                  position: 'relative',
+                }}
+                onClick={() => onTabFocus(tab.id)}
+              >
+                <TilingLayout
+                  panes={tab.panes}
+                  activePaneId={tab.activePaneId}
+                  agentActive={agentActive}
+                  containerWidth={tabWidth}
+                  containerHeight={containerHeight}
+                  onPaneClose={(paneId) => onPaneClose(tab.id, paneId)}
+                  onPaneFocus={(paneId) => onPaneFocus(tab.id, paneId)}
+                  callbacks={paneCallbacks}
+                  isActiveTab={isActiveTab}
+                  tabTitle={tab.title}
+                  onTabFocus={() => onTabFocus(tab.id)}
+                  onTabMove={onTabMove ? (delta) => handleTabMove(tab.id, delta) : undefined}
+                  onTabRename={onTabRename ? (title) => onTabRename(tab.id, title) : undefined}
                   renameSignal={isActiveTab ? renameSignal : undefined}
-                  hideHeader
-                >
-                  {renderPaneContent(tab.panes[0], paneActive, paneCallbacks)}
-                </Pane>
-              ) : (
-                // Multi-pane tab — tiling layout inside a container
-                <div
-                  style={{
-                    flex: 1,
-                    minWidth: 0,
-                    height: 'calc(100% - 8px)',
-                    margin: '4px 8px',
-                    borderRadius: '8px',
-                    overflow: 'hidden',
-                    border: isActiveTab
-                      ? '1px solid var(--wks-accent)'
-                      : '1px solid var(--wks-border)',
-                    boxShadow: isActiveTab ? '0 0 12px var(--wks-accent-glow)' : 'none',
-                    position: 'relative',
-                    backgroundColor: 'var(--wks-bg-base)',
-                  }}
-                  onClick={() => onTabFocus(tab.id)}
-                >
-                  <TilingLayout
-                    panes={tab.panes}
-                    activePaneId={tab.activePaneId}
-                    agentActive={agentActive}
-                    containerWidth={tabWidth - 18}
-                    containerHeight={containerHeight - 8}
-                    onPaneClose={(paneId) => onPaneClose(tab.id, paneId)}
-                    onPaneFocus={(paneId) => onPaneFocus(tab.id, paneId)}
-                    callbacks={paneCallbacks}
-                  />
-                </div>
-              )}
+                />
+              </div>
             </div>
           );
         })}

@@ -4,14 +4,27 @@ import type { PaneType } from '../types/pane';
 import type { PluginPane } from '../types/plugin';
 import type { LibraryItem, LibraryAction } from '../types/library';
 import { runLibraryItem } from '../lib/libraryBus';
+import {
+  PaneIcon, Globe, Puzzle, Blocks, Brain, Bot, Zap, BarChart3, LayoutGrid, FolderOpen, Plus,
+  type LucideIcon,
+} from './icons';
 
 // ── Unified palette item ──
+
+/** Render a user-supplied icon string: a URL becomes a favicon-style image,
+ *  anything else falls back to a thin-stroke lucide glyph (no emoji). */
+function userIcon(raw: string | undefined, Fallback: LucideIcon): React.ReactNode {
+  if (raw && /^https?:\/\//.test(raw)) {
+    return <img src={raw} width={16} height={16} style={{ borderRadius: 3, objectFit: 'contain' }} alt="" />;
+  }
+  return <Fallback size={16} strokeWidth={1.75} />;
+}
 
 export interface PaletteItem {
   id: string;
   name: string;
   description?: string;
-  icon: string;
+  icon: React.ReactNode;
   category: 'action' | 'app' | 'plugin' | 'library';
   /** For actions: the pane type to create */
   paneType?: PaneType;
@@ -30,12 +43,12 @@ export interface PaletteItem {
 // ── Built-in actions ──
 
 export const builtInActions: PaletteItem[] = [
-  { id: 'new-claude', name: 'New Claude Code', description: 'AI-powered coding assistant', icon: '\u2666', category: 'action', paneType: 'claude', pickFolder: true },
-  { id: 'new-terminal', name: 'New Terminal', description: 'Shell terminal', icon: '>_', category: 'action', paneType: 'terminal' },
-  { id: 'new-browser', name: 'New Browser', description: 'Web browser tab', icon: '\u{1F310}', category: 'action', paneType: 'browser' },
-  { id: 'new-review', name: 'Review Changes', description: 'Git diff & status for this agent', icon: '\u{1F50D}', category: 'action', paneType: 'review' },
-  { id: 'new-notes', name: 'Notes', description: 'Markdown scratchpad', icon: '\u{1F4DD}', category: 'action', paneType: 'notes' },
-  { id: 'open-library', name: 'Library', description: 'Reusable prompts & skills', icon: '⚡', category: 'action', paneType: 'library' },
+  { id: 'new-claude', name: 'New Claude Code', description: 'AI-powered coding assistant', icon: <PaneIcon type="claude" size={16} />, category: 'action', paneType: 'claude', pickFolder: true },
+  { id: 'new-terminal', name: 'New Terminal', description: 'Shell terminal', icon: <PaneIcon type="terminal" size={16} />, category: 'action', paneType: 'terminal' },
+  { id: 'new-browser', name: 'New Browser', description: 'Web browser tab', icon: <PaneIcon type="browser" size={16} />, category: 'action', paneType: 'browser' },
+  { id: 'new-review', name: 'Review Changes', description: 'Git diff & status for this agent', icon: <PaneIcon type="review" size={16} />, category: 'action', paneType: 'review' },
+  { id: 'new-notes', name: 'Notes', description: 'Markdown scratchpad', icon: <PaneIcon type="notes" size={16} />, category: 'action', paneType: 'notes' },
+  { id: 'open-library', name: 'Library', description: 'Reusable prompts & skills', icon: <PaneIcon type="library" size={16} />, category: 'action', paneType: 'library' },
 ];
 
 // ── Props ──
@@ -78,7 +91,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
     id: `lib-${it.scope}-${it.id}`,
     name: it.title,
     description: it.description || it.kind,
-    icon: it.kind === 'skill' ? '\u{1F9E0}' : it.kind === 'agent' ? '\u{1F916}' : '⚡',
+    icon: it.kind === 'skill' ? <Brain size={16} strokeWidth={1.75} /> : it.kind === 'agent' ? <Bot size={16} strokeWidth={1.75} /> : <Zap size={16} strokeWidth={1.75} />,
     category: 'library' as const,
     libraryItem: it,
   })), [libraryItems]);
@@ -92,7 +105,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
         id: `app-${i}`,
         name: app.name,
         description: app.url,
-        icon: app.icon || '\u{1F310}',
+        icon: userIcon(app.icon, Globe),
         category: 'app' as const,
         url: app.url,
         app,
@@ -101,7 +114,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
         id: `plugin-${p.type}`,
         name: p.title,
         description: p.pluginId,
-        icon: p.icon || '\u{1F9E9}',
+        icon: userIcon(p.icon, Puzzle),
         category: 'plugin' as const,
         pluginPane: p,
       })),
@@ -109,13 +122,42 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
     ];
   }, [apps, pluginPanes, libItems, restrictTo]);
 
-  // Focus input and reset state when opening
+  // Remember what had focus before we opened so we can hand it back — but only
+  // when the palette is *dismissed* (Escape / click-away). When the user picks
+  // an action, the thing it opens (a new pane / dialog) owns focus instead.
+  const prevFocusRef = useRef<HTMLElement | null>(null);
+  const dismissedRef = useRef(false);
+
+  // Dismiss without performing an action — restores the prior focus on close.
+  const dismiss = useCallback(() => {
+    dismissedRef.current = true;
+    onClose();
+  }, [onClose]);
+
   useEffect(() => {
     if (visible) {
+      prevFocusRef.current = document.activeElement as HTMLElement | null;
+      dismissedRef.current = false;
       setQuery('');
       setSelectedIndex(0);
       setProfilePicker(null);
       setTimeout(() => inputRef.current?.focus(), 0);
+    } else {
+      const prev = prevFocusRef.current;
+      const wasDismissed = dismissedRef.current;
+      prevFocusRef.current = null;
+      dismissedRef.current = false;
+      // Only restore on a pure dismiss, and only if focus is otherwise stranded
+      // (on <body> or the now-removed search input) — never yank it back from a
+      // pane/dialog that an action just opened.
+      if (!wasDismissed) return;
+      requestAnimationFrame(() => {
+        const active = document.activeElement;
+        const stranded = !active || active === document.body || active === inputRef.current;
+        if (stranded && prev && typeof prev.focus === 'function' && document.contains(prev)) {
+          prev.focus();
+        }
+      });
     }
   }, [visible]);
 
@@ -179,7 +221,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
     if (e.key === 'Escape') {
       e.preventDefault();
       e.stopPropagation();
-      onClose();
+      dismiss();
     } else if (e.key === 'ArrowDown') {
       e.preventDefault();
       setSelectedIndex((i) => Math.min(i + 1, filtered.length - 1));
@@ -198,7 +240,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
         activateItem(item, libAction);
       }
     }
-  }, [filtered, selectedIndex, onClose, activateItem]);
+  }, [filtered, selectedIndex, dismiss, activateItem]);
 
   if (!visible) return null;
 
@@ -207,10 +249,10 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
     return (
       <div
         style={{ position: 'fixed', inset: 0, backgroundColor: 'var(--wks-overlay)', display: 'flex', justifyContent: 'center', paddingTop: '15vh', zIndex: 2000 }}
-        onClick={() => { setProfilePicker(null); onClose(); }}
+        onClick={() => { setProfilePicker(null); dismiss(); }}
       >
         <div
-          style={{ backgroundColor: 'var(--wks-bg-raised)', border: '1px solid var(--wks-border-input)', borderRadius: 8, width: 340, maxHeight: 320, overflow: 'hidden', boxShadow: '0 8px 32px var(--wks-shadow)', display: 'flex', flexDirection: 'column' }}
+          style={{ backgroundColor: 'var(--wks-glass-strong)', backdropFilter: 'blur(var(--wks-glass-blur)) saturate(170%)', WebkitBackdropFilter: 'blur(var(--wks-glass-blur)) saturate(170%)', border: '1px solid var(--wks-glass-border)', borderRadius: 'var(--wks-radius-lg)', width: 340, maxHeight: 320, overflow: 'hidden', boxShadow: '0 16px 48px var(--wks-glass-shadow), inset 0 0 0 1.5px var(--wks-glass-highlight)', display: 'flex', flexDirection: 'column' }}
           onClick={e => e.stopPropagation()}
         >
           <div style={{ padding: '12px 16px 8px', fontSize: '0.75rem', fontWeight: 600, color: 'var(--wks-text-secondary)', borderBottom: '1px solid var(--wks-border)' }}>
@@ -264,19 +306,21 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
         paddingTop: '15vh',
         zIndex: 2000,
       }}
-      onClick={onClose}
+      onClick={dismiss}
     >
       <div
         style={{
-          backgroundColor: 'var(--wks-bg-raised)',
-          border: '1px solid var(--wks-border-input)',
-          borderRadius: '8px',
+          backgroundColor: 'var(--wks-glass-strong)',
+          backdropFilter: 'blur(var(--wks-glass-blur)) saturate(170%)',
+          WebkitBackdropFilter: 'blur(var(--wks-glass-blur)) saturate(170%)',
+          border: '1px solid var(--wks-glass-border)',
+          borderRadius: 'var(--wks-radius-lg)',
           width: '440px',
           maxHeight: '420px',
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
-          boxShadow: '0 8px 32px var(--wks-shadow)',
+          boxShadow: '0 16px 48px var(--wks-glass-shadow), inset 0 0 0 1.5px var(--wks-glass-highlight)',
         }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -298,7 +342,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
               backgroundColor: 'var(--wks-bg-input)',
               color: 'var(--wks-text-primary)',
               border: '1px solid var(--wks-border-input)',
-              borderRadius: '5px',
+              borderRadius: 'var(--wks-radius-sm)',
               outline: 'none',
               boxSizing: 'border-box',
             }}
@@ -358,9 +402,9 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
               <div style={{ padding: '6px 12px 2px', fontSize: '0.55rem', color: 'var(--wks-text-disabled)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                 Workspace
               </div>
-              {onOpenAnalytics && <CommandRow icon="📊" label="Analytics" onClick={onOpenAnalytics} />}
-              {onOpenLayouts && <CommandRow icon="🧩" label="Layouts…" onClick={onOpenLayouts} />}
-              {onSwitchSession && <CommandRow icon="🗂️" label="Switch session…" onClick={onSwitchSession} />}
+              {onOpenAnalytics && <CommandRow icon={<BarChart3 size={16} strokeWidth={1.75} />} label="Analytics" onClick={onOpenAnalytics} />}
+              {onOpenLayouts && <CommandRow icon={<LayoutGrid size={16} strokeWidth={1.75} />} label="Layouts…" onClick={onOpenLayouts} />}
+              {onSwitchSession && <CommandRow icon={<FolderOpen size={16} strokeWidth={1.75} />} label="Switch session…" onClick={onSwitchSession} />}
             </>
           )}
 
@@ -375,13 +419,13 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
               onClick={() => { onManagePlugins(); }}
               style={{
                 display: 'flex', alignItems: 'center', gap: '10px',
-                padding: '7px 12px', margin: '0 4px', borderRadius: '5px', cursor: 'pointer',
+                padding: '7px 12px', margin: '0 4px', borderRadius: 'var(--wks-radius-sm)', cursor: 'pointer',
                 color: 'var(--wks-text-muted)',
               }}
               onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--wks-bg-selected)'; }}
               onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'; }}
             >
-              <span style={{ fontSize: '0.85rem', width: '20px', textAlign: 'center', flexShrink: 0 }}>🧰</span>
+              <span style={{ display: 'flex', justifyContent: 'center', width: '20px', flexShrink: 0 }}><Blocks size={16} strokeWidth={1.75} /></span>
               <span style={{ fontSize: '0.78rem' }}>Manage plugins…</span>
             </div>
           )}
@@ -391,13 +435,13 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
               onClick={() => { onInstallPlugin(); }}
               style={{
                 display: 'flex', alignItems: 'center', gap: '10px',
-                padding: '7px 12px', margin: '0 4px', borderRadius: '5px', cursor: 'pointer',
+                padding: '7px 12px', margin: '0 4px', borderRadius: 'var(--wks-radius-sm)', cursor: 'pointer',
                 color: 'var(--wks-text-muted)',
               }}
               onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--wks-bg-selected)'; }}
               onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'; }}
             >
-              <span style={{ fontSize: '0.85rem', width: '20px', textAlign: 'center', flexShrink: 0 }}>＋</span>
+              <span style={{ display: 'flex', justifyContent: 'center', width: '20px', flexShrink: 0 }}><Plus size={16} strokeWidth={2} /></span>
               <span style={{ fontSize: '0.78rem' }}>Install from GitHub…</span>
             </div>
           )}
@@ -464,12 +508,12 @@ const PaletteRow: React.FC<{
       gap: '10px',
       padding: '7px 12px',
       margin: '0 4px',
-      borderRadius: '5px',
+      borderRadius: 'var(--wks-radius-sm)',
       cursor: 'pointer',
       backgroundColor: selected ? 'var(--wks-bg-selected)' : 'transparent',
     }}
   >
-    <span style={{ fontSize: '0.85rem', width: '20px', textAlign: 'center', flexShrink: 0 }}>
+    <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '20px', flexShrink: 0, color: 'var(--wks-text-tertiary)' }}>
       {item.icon}
     </span>
     <div style={{ flex: 1, minWidth: 0 }}>
@@ -491,18 +535,18 @@ const PaletteRow: React.FC<{
   </div>
 );
 
-const CommandRow: React.FC<{ icon: string; label: string; onClick: () => void }> = ({ icon, label, onClick }) => (
+const CommandRow: React.FC<{ icon: React.ReactNode; label: string; onClick: () => void }> = ({ icon, label, onClick }) => (
   <div
     onClick={onClick}
     style={{
       display: 'flex', alignItems: 'center', gap: '10px',
-      padding: '7px 12px', margin: '0 4px', borderRadius: '5px', cursor: 'pointer',
+      padding: '7px 12px', margin: '0 4px', borderRadius: 'var(--wks-radius-sm)', cursor: 'pointer',
       color: 'var(--wks-text-muted)',
     }}
     onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--wks-bg-selected)'; }}
     onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'; }}
   >
-    <span style={{ fontSize: '0.85rem', width: '20px', textAlign: 'center', flexShrink: 0 }}>{icon}</span>
+    <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '20px', flexShrink: 0 }}>{icon}</span>
     <span style={{ fontSize: '0.78rem' }}>{label}</span>
   </div>
 );

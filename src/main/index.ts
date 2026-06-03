@@ -147,12 +147,18 @@ function createWindow(): void {
   // Remove default menu to prevent Ctrl+T/W conflicts
   Menu.setApplicationMenu(null);
 
+  // Transparent shell so the renderer can paint its own rounded corners (the
+  // app-root is clipped to a radius). Skipped on Windows, where the native
+  // titleBarOverlay window controls need an opaque frame.
+  const transparentShell = process.platform !== 'win32';
+
   mainWindow = new BrowserWindow({
     width: 1600,
     height: 900,
     minWidth: 800,
     minHeight: 600,
-    backgroundColor: '#1b2636',
+    backgroundColor: transparentShell ? '#00000000' : '#1b2636',
+    transparent: transparentShell,
     frame: false,
     titleBarStyle: 'hidden',
     titleBarOverlay: process.platform === 'win32' ? {

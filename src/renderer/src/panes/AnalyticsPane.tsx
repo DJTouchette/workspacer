@@ -27,8 +27,12 @@ function shortModel(m: string | null): string {
 
 const Stat: React.FC<{ label: string; value: string; color?: string }> = ({ label, value, color }) => (
   <div style={{
-    flex: 1, minWidth: 120, padding: '12px 14px', borderRadius: 10,
-    background: 'var(--wks-bg-surface)', border: '1px solid var(--wks-border-subtle)',
+    flex: 1, minWidth: 120, padding: '12px 14px', borderRadius: 'var(--wks-radius-md)',
+    background: 'var(--wks-glass-bg)',
+    backdropFilter: 'blur(var(--wks-glass-blur)) saturate(150%)',
+    WebkitBackdropFilter: 'blur(var(--wks-glass-blur)) saturate(150%)',
+    border: '1px solid var(--wks-glass-border)',
+    boxShadow: 'inset 0 0 0 1.5px var(--wks-glass-highlight)',
   }}>
     <div style={{ fontSize: '1.4rem', fontWeight: 700, color: color || 'var(--wks-text-primary)', fontVariantNumeric: 'tabular-nums' }}>{value}</div>
     <div style={{ fontSize: '0.6rem', color: 'var(--wks-text-faint)', textTransform: 'uppercase', letterSpacing: '0.05em', marginTop: 2 }}>{label}</div>

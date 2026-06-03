@@ -70,13 +70,16 @@ const SessionPicker: React.FC<SessionPickerProps> = ({ sessions, onNewSession, o
     >
       <div
         style={{
-          backgroundColor: 'var(--wks-bg-raised)',
-          border: '1px solid var(--wks-border)',
-          borderRadius: '8px',
+          backgroundColor: 'var(--wks-glass-strong)',
+          backdropFilter: 'blur(var(--wks-glass-blur)) saturate(170%)',
+          WebkitBackdropFilter: 'blur(var(--wks-glass-blur)) saturate(170%)',
+          border: '1px solid var(--wks-glass-border)',
+          borderRadius: 'var(--wks-radius-lg)',
           padding: '20px 24px',
           minWidth: '340px',
           maxWidth: '450px',
           maxHeight: '70vh',
+          boxShadow: '0 16px 48px var(--wks-glass-shadow), inset 0 0 0 1.5px var(--wks-glass-highlight)',
           display: 'flex',
           flexDirection: 'column',
         }}
