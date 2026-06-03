@@ -40,4 +40,53 @@ export function registerHubCapabilities(): void {
     new Notification({ title: title || 'workspacer', body: body || '' }).show();
     return { ok: true };
   });
+
+  // Control: resolve a parked permission prompt. The remote counterpart of the
+  // `claude:approve` IPC handler — this is what lets a phone unblock an agent.
+  registerCapability('claude.approve', async (params: unknown) => {
+    const { sessionId, decision, reason } = (params ?? {}) as {
+      sessionId?: string;
+      decision?: 'yes' | 'no' | 'always';
+      reason?: string;
+    };
+    if (!sessionId || (decision !== 'yes' && decision !== 'no' && decision !== 'always')) {
+      throw new Error("claude.approve requires { sessionId, decision: 'yes'|'no'|'always' }");
+    }
+    await claudemonSessionClient.approve(sessionId, decision, reason);
+    return { ok: true };
+  });
+
+  // Control: answer an AskUserQuestion picker. Mirrors the `claude:answer` IPC
+  // handler — pass an option index, free text, or an array of answers.
+  registerCapability('claude.answer', async (params: unknown) => {
+    const { sessionId, option, text, answers } = (params ?? {}) as {
+      sessionId?: string;
+      option?: number;
+      text?: string;
+      answers?: string[];
+    };
+    if (!sessionId) throw new Error('claude.answer requires { sessionId, ... }');
+    if (option === undefined && text === undefined && answers === undefined) {
+      throw new Error('claude.answer requires one of { option, text, answers }');
+    }
+    await claudemonSessionClient.answer(sessionId, { option, text, answers });
+    return { ok: true };
+  });
+
+  // Control: send a POSIX signal to a session (e.g. SIGTERM to stop a runaway
+  // agent, SIGINT to interrupt). Mirrors the `claude:signal` IPC handler.
+  registerCapability('claude.signal', async (params: unknown) => {
+    const { sessionId, signal } = (params ?? {}) as { sessionId?: string; signal?: string };
+    if (!sessionId || !signal) throw new Error('claude.signal requires { sessionId, signal }');
+    await claudemonSessionClient.signal(sessionId, signal);
+    return { ok: true };
+  });
+
+  // Read-only: fetch a session's transcript so a remote client can show the
+  // context behind a pending approval/question before answering.
+  registerCapability('sessions.transcript', async (params: unknown) => {
+    const { sessionId } = (params ?? {}) as { sessionId?: string };
+    if (!sessionId) throw new Error('sessions.transcript requires { sessionId }');
+    return claudemonSessionClient.getTranscript(sessionId);
+  });
 }

@@ -12,7 +12,7 @@
 
 import WebSocket from 'ws';
 import { BrowserWindow } from 'electron';
-import { HUB_BUS_URL } from './hubDaemon';
+import { HUB_BUS_URL, getHubToken } from './hubDaemon';
 
 const TOPICS = ['*'];
 
@@ -75,7 +75,11 @@ function handleCall(id: string, method: string, params: unknown): void {
 
 function connect(): void {
   if (stopped) return;
-  ws = new WebSocket(HUB_BUS_URL);
+  // When remote auth is on the hub rejects /bus without the token; the local
+  // client presents it too. No token configured → URL is unchanged.
+  const token = getHubToken();
+  const url = token ? `${HUB_BUS_URL}?token=${encodeURIComponent(token)}` : HUB_BUS_URL;
+  ws = new WebSocket(url);
 
   ws.on('open', () => {
     backoff = 200;

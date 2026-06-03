@@ -230,6 +230,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   hubPublish: (event: { type: string; source?: string; data?: unknown }): Promise<void> =>
     ipcRenderer.invoke('hub:publish', event),
   getHubStatus: (): Promise<{ connected: boolean }> => ipcRenderer.invoke('hub:getStatus'),
+  getRemoteInfo: (): Promise<{ enabled: boolean; token: string; remoteUrl: string; busUrl: string }> =>
+    ipcRenderer.invoke('hub:getRemoteInfo'),
   installPlugin: (url: string): Promise<{ ok: boolean; plugin?: any; error?: string }> =>
     ipcRenderer.invoke('hub:installPlugin', url),
   removePlugin: (id: string): Promise<{ ok: boolean; error?: string }> =>

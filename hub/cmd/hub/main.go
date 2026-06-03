@@ -23,10 +23,26 @@ func main() {
 	addr := flag.String("addr", "127.0.0.1:7895", "listen address for the bus + health endpoints")
 	claudemonEvents := flag.String("claudemon-events", "", "claudemon /events SSE URL to bridge onto the bus (e.g. http://127.0.0.1:7891/events)")
 	pluginsDir := flag.String("plugins-dir", "", "directory of plugin subdirs (each with a plugin.json) to load + supervise")
+	token := flag.String("token", os.Getenv("HUB_TOKEN"), "shared secret required to reach /bus + mutating routes (empty = no auth, localhost-only default)")
 	flag.Parse()
 
 	b := broker.New()
 	srv := bus.NewServer(b)
+	srv.SetToken(*token)
+	if *token != "" {
+		log.Printf("bus auth enabled (token required on /bus, /remote, /plugins/install, /plugins/remove)")
+	}
+
+	// guard wraps a mutating/sensitive route so it requires the bus token.
+	guard := func(h http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if !srv.Authorized(r) {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			h(w, r)
+		}
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -37,8 +53,14 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(mgr.List())
 	})
+	// Mobile / remote-control web client. Self-contained single page that talks
+	// the bus protocol over /bus. Token-guarded since it's the remote entrypoint.
+	srv.AddRoute("/remote", guard(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write(remoteHTML)
+	}))
 	// Install a plugin from a GitHub URL: download → extract → load → supervise.
-	srv.AddRoute("/plugins/install", func(w http.ResponseWriter, r *http.Request) {
+	srv.AddRoute("/plugins/install", guard(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		var body struct{ URL string }
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.URL == "" {
@@ -55,9 +77,9 @@ func main() {
 		mgr.Add(m)
 		log.Printf("installed plugin %s from %s", m.ID, body.URL)
 		_ = json.NewEncoder(w).Encode(m)
-	})
+	}))
 	// Remove a plugin: stop its sidecar + delete its directory.
-	srv.AddRoute("/plugins/remove", func(w http.ResponseWriter, r *http.Request) {
+	srv.AddRoute("/plugins/remove", guard(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		var body struct{ ID string }
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ID == "" {
@@ -76,7 +98,7 @@ func main() {
 			_ = os.RemoveAll(dir)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
-	})
+	}))
 	if *pluginsDir != "" {
 		manifests, errs := plugin.LoadDir(*pluginsDir)
 		for _, e := range errs {

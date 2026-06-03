@@ -13,7 +13,7 @@ import { buildClaudeArgv } from './services/claudeResolver';
 import { importChromeCookies, importChromeCookiesViaCDP } from './services/chromeCookieImport';
 import { claudeProfiles } from './services/claudeProfiles';
 import { listClaudeSessionsForDir } from './services/claudeSessionList';
-import { HUB_HTTP_URL } from './services/hubDaemon';
+import { HUB_HTTP_URL, getHubToken, getRemoteShareInfo } from './services/hubDaemon';
 import { publishToHub, isHubConnected } from './services/hubClient';
 
 function detectDefaultShell(): string {
@@ -96,11 +96,21 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     publishToHub(ev);
   });
   ipcMain.handle('hub:getStatus', () => ({ connected: isHubConnected() }));
+  // Connection info for the remote-control client (URL + token for a QR/share).
+  ipcMain.handle('hub:getRemoteInfo', () => getRemoteShareInfo());
+  // When remote auth is on, the hub's mutating routes require the token; the
+  // local UI presents it via the same Authorization header a remote client uses.
+  const hubAuthHeaders = (): Record<string, string> => {
+    const token = getHubToken();
+    const h: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) h['Authorization'] = `Bearer ${token}`;
+    return h;
+  };
   ipcMain.handle('hub:installPlugin', async (_event, url: string) => {
     try {
       const res = await fetch(`${HUB_HTTP_URL}/plugins/install`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: hubAuthHeaders(),
         body: JSON.stringify({ url }),
       });
       const body = await res.json() as any;
@@ -114,7 +124,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     try {
       await fetch(`${HUB_HTTP_URL}/plugins/remove`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: hubAuthHeaders(),
         body: JSON.stringify({ id }),
       });
       return { ok: true };

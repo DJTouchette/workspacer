@@ -48,11 +48,33 @@ type Server struct {
 	broker *broker.Broker
 	router *router
 	extra  map[string]http.HandlerFunc
+	token  string // when non-empty, /bus + protected routes require this bearer token
 }
 
 // NewServer wraps a broker.
 func NewServer(b *broker.Broker) *Server {
 	return &Server{broker: b, router: newRouter(), extra: map[string]http.HandlerFunc{}}
+}
+
+// SetToken sets the shared secret required to connect to /bus (and to call
+// Authorized). Empty token = no auth (the localhost-only default). Set this
+// whenever the bus is reachable beyond loopback (remote sharing / Tailscale).
+func (s *Server) SetToken(t string) {
+	s.token = t
+}
+
+// Authorized reports whether a request carries the required token. Always true
+// when no token is configured. Accepts either `Authorization: Bearer <token>`
+// or a `?token=<token>` query param — browsers can't set headers on a
+// WebSocket handshake, so the query form is what the mobile client uses.
+func (s *Server) Authorized(r *http.Request) bool {
+	if s.token == "" {
+		return true
+	}
+	if h := r.Header.Get("Authorization"); h == "Bearer "+s.token {
+		return true
+	}
+	return r.URL.Query().Get("token") == s.token
 }
 
 // AddRoute registers an extra HTTP route (e.g. /plugins). Call before Handler().
@@ -82,6 +104,10 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
+	if !s.Authorized(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
 	if err != nil {
 		return

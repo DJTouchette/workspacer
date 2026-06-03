@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>workspacer · remote</title>
+<style>
+  :root {
+    --bg: #0c0d10; --panel: #16181d; --panel2: #1d2026; --line: #2a2e37;
+    --fg: #e6e8ec; --dim: #8b919c; --accent: #6ea8fe; --ok: #4ec9a8;
+    --warn: #e0b341; --bad: #e06c75; --radius: 12px;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg); color: var(--fg); font: 15px/1.45 -apple-system,
+    BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right)
+             env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+  header {
+    display: flex; align-items: center; gap: 10px; padding: 14px 16px;
+    border-bottom: 1px solid var(--line); position: sticky; top: 0;
+    background: var(--bg); z-index: 5;
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: .2px; }
+  #dot { width: 9px; height: 9px; border-radius: 50%; background: var(--bad);
+         box-shadow: 0 0 0 3px rgba(224,108,117,.15); transition: .3s; }
+  #dot.on { background: var(--ok); box-shadow: 0 0 0 3px rgba(78,201,168,.15); }
+  #status { color: var(--dim); font-size: 12px; margin-left: auto; }
+  main { padding: 14px 16px 40px; max-width: 760px; margin: 0 auto; }
+  .empty { color: var(--dim); text-align: center; padding: 48px 16px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius); margin-bottom: 14px; overflow: hidden;
+  }
+  .card.waiting { border-color: var(--warn); }
+  .row { display: flex; align-items: center; gap: 10px; padding: 13px 14px; }
+  .cwd { font-weight: 600; word-break: break-all; }
+  .meta { color: var(--dim); font-size: 12px; margin-top: 2px; }
+  .badge {
+    margin-left: auto; font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .5px; padding: 4px 9px; border-radius: 999px; white-space: nowrap;
+    background: var(--panel2); color: var(--dim);
+  }
+  .badge.input, .badge.waiting { background: rgba(224,179,65,.16); color: var(--warn); }
+  .badge.thinking, .badge.running { background: rgba(110,168,254,.16); color: var(--accent); }
+  .badge.error { background: rgba(224,108,117,.16); color: var(--bad); }
+  .badge.done, .badge.idle { background: rgba(78,201,168,.14); color: var(--ok); }
+  .actions { padding: 0 14px 14px; display: flex; flex-direction: column; gap: 9px; }
+  .btns { display: flex; gap: 8px; flex-wrap: wrap; }
+  button {
+    font: inherit; font-weight: 600; color: var(--fg); background: var(--panel2);
+    border: 1px solid var(--line); border-radius: 9px; padding: 11px 14px;
+    flex: 1 1 auto; min-width: 70px; cursor: pointer; transition: .12s;
+  }
+  button:active { transform: scale(.97); }
+  button.yes { background: rgba(78,201,168,.15); border-color: rgba(78,201,168,.4); color: var(--ok); }
+  button.no  { background: rgba(224,108,117,.15); border-color: rgba(224,108,117,.4); color: var(--bad); }
+  button.always { background: rgba(110,168,254,.15); border-color: rgba(110,168,254,.4); color: var(--accent); }
+  .send { display: flex; gap: 8px; }
+  input[type=text] {
+    flex: 1; font: inherit; color: var(--fg); background: var(--bg);
+    border: 1px solid var(--line); border-radius: 9px; padding: 11px 12px;
+  }
+  input[type=text]:focus { outline: none; border-color: var(--accent); }
+  .send button { flex: 0 0 auto; }
+  .gate { background: var(--bg); border-top: 1px solid var(--line);
+          padding: 16px; max-width: 420px; margin: 60px auto; border-radius: var(--radius); }
+  .gate h2 { margin: 0 0 6px; font-size: 16px; }
+  .gate p { color: var(--dim); margin: 0 0 16px; font-size: 13px; }
+  .toast {
+    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+    background: var(--panel2); border: 1px solid var(--line); color: var(--fg);
+    padding: 10px 16px; border-radius: 999px; font-size: 13px; opacity: 0;
+    transition: opacity .25s; pointer-events: none; z-index: 20; max-width: 90vw;
+  }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<header>
+  <div id="dot"></div>
+  <h1>workspacer remote</h1>
+  <span id="status">connecting…</span>
+</header>
+<main id="main"></main>
+<div class="toast" id="toast"></div>
+
+<script>
+(() => {
+  const qs = new URLSearchParams(location.search);
+  let token = qs.get('token') || sessionStorage.getItem('hubToken') || '';
+  if (token) sessionStorage.setItem('hubToken', token);
+
+  const $ = (id) => document.getElementById(id);
+  const main = $('main'), dot = $('dot'), statusEl = $('status'), toastEl = $('toast');
+  let ws = null, backoff = 500, calls = new Map(), callSeq = 0;
+  const sessions = new Map(); // sessionId -> {sessionId, cwd, state, model, ...}
+
+  function toast(msg) {
+    toastEl.textContent = msg; toastEl.classList.add('show');
+    clearTimeout(toast._t); toast._t = setTimeout(() => toastEl.classList.remove('show'), 2200);
+  }
+
+  function gate() {
+    main.innerHTML = `<div class="gate">
+      <h2>Token required</h2>
+      <p>Paste the remote-control token from workspacer to connect.</p>
+      <div class="send">
+        <input type="text" id="tok" placeholder="token" autocomplete="off">
+        <button class="always" id="tokGo">Connect</button>
+      </div></div>`;
+    $('tokGo').onclick = () => {
+      const v = $('tok').value.trim();
+      if (!v) return;
+      token = v; sessionStorage.setItem('hubToken', v);
+      connect();
+    };
+    $('tok').addEventListener('keydown', e => { if (e.key === 'Enter') $('tokGo').click(); });
+  }
+
+  function wsURL() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${proto}//${location.host}/bus?token=${encodeURIComponent(token)}`;
+  }
+
+  function call(method, params) {
+    return new Promise((resolve, reject) => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return reject(new Error('offline'));
+      const id = 'c' + (++callSeq);
+      calls.set(id, { resolve, reject });
+      ws.send(JSON.stringify({ op: 'call', id, method, params }));
+      setTimeout(() => { if (calls.has(id)) { calls.delete(id); reject(new Error('timeout')); } }, 12000);
+    });
+  }
+
+  async function refresh() {
+    try {
+      const list = await call('agents.list', {});
+      sessions.clear();
+      for (const s of (list || [])) sessions.set(s.sessionId, s);
+      render();
+    } catch (e) { /* shown via connection state */ }
+  }
+
+  function badgeClass(state) {
+    const s = (state || '').toLowerCase();
+    if (s === 'input' || s === 'waiting') return 'waiting';
+    if (s === 'thinking' || s === 'running') return 'thinking';
+    if (s === 'error') return 'error';
+    return 'done';
+  }
+  function isWaiting(state) {
+    const s = (state || '').toLowerCase();
+    return s === 'input' || s === 'waiting' || s === 'error';
+  }
+
+  function render() {
+    if (sessions.size === 0) {
+      main.innerHTML = `<div class="empty">No active sessions.</div>`;
+      return;
+    }
+    const items = [...sessions.values()].sort((a, b) =>
+      Number(isWaiting(b.state)) - Number(isWaiting(a.state)));
+    main.innerHTML = '';
+    for (const s of items) {
+      const waiting = isWaiting(s.state);
+      const card = document.createElement('div');
+      card.className = 'card' + (waiting ? ' waiting' : '');
+      const ctx = s.contextLimit ? ` · ${Math.round((s.contextTokens / s.contextLimit) * 100)}% ctx` : '';
+      const cost = s.costUSD ? ` · $${Number(s.costUSD).toFixed(2)}` : '';
+      card.innerHTML = `
+        <div class="row">
+          <div>
+            <div class="cwd">${esc(shortCwd(s.cwd))}</div>
+            <div class="meta">${esc(s.model || 'claude')}${ctx}${cost}</div>
+          </div>
+          <span class="badge ${badgeClass(s.state)}">${esc(s.state || 'idle')}</span>
+        </div>
+        <div class="actions">
+          <div class="btns">
+            <button class="yes">Approve</button>
+            <button class="no">Deny</button>
+            <button class="always">Always</button>
+          </div>
+          <div class="send">
+            <input type="text" placeholder="message / answer…">
+            <button>Send</button>
+          </div>
+          <div class="btns">
+            <button>Interrupt</button>
+            <button>Stop</button>
+          </div>
+        </div>`;
+      const [approve, deny, always] = card.querySelectorAll('.actions .btns:first-of-type button');
+      const input = card.querySelector('input');
+      const sendBtn = card.querySelector('.send button');
+      const [interrupt, stop] = card.querySelectorAll('.actions .btns:last-of-type button');
+      approve.onclick = () => doCall('claude.approve', { sessionId: s.sessionId, decision: 'yes' }, 'Approved');
+      deny.onclick    = () => doCall('claude.approve', { sessionId: s.sessionId, decision: 'no' }, 'Denied');
+      always.onclick  = () => doCall('claude.approve', { sessionId: s.sessionId, decision: 'always' }, 'Approved (always)');
+      const send = () => {
+        const text = input.value.trim();
+        if (!text) return;
+        // If the agent is asking a question, answer it; otherwise send a message.
+        const method = isWaiting(s.state) ? 'claude.answer' : 'agents.sendMessage';
+        const params = method === 'claude.answer'
+          ? { sessionId: s.sessionId, text } : { sessionId: s.sessionId, text };
+        doCall(method, params, 'Sent');
+        input.value = '';
+      };
+      sendBtn.onclick = send;
+      input.addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
+      interrupt.onclick = () => doCall('claude.signal', { sessionId: s.sessionId, signal: 'SIGINT' }, 'Interrupted');
+      stop.onclick      = () => doCall('claude.signal', { sessionId: s.sessionId, signal: 'SIGTERM' }, 'Stopped');
+      main.appendChild(card);
+    }
+  }
+
+  async function doCall(method, params, okMsg) {
+    try { await call(method, params); toast(okMsg); refresh(); }
+    catch (e) { toast('Failed: ' + e.message); }
+  }
+
+  function shortCwd(p) {
+    if (!p) return '(session)';
+    const parts = p.split('/').filter(Boolean);
+    return parts.length <= 2 ? p : '…/' + parts.slice(-2).join('/');
+  }
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, c =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  function setConnected(on) {
+    dot.classList.toggle('on', on);
+    statusEl.textContent = on ? 'connected' : 'reconnecting…';
+  }
+
+  function connect() {
+    if (!token) return gate();
+    setConnected(false);
+    statusEl.textContent = 'connecting…';
+    try { ws = new WebSocket(wsURL()); } catch { return scheduleReconnect(); }
+
+    ws.onopen = () => {
+      backoff = 500;
+      setConnected(true);
+      ws.send(JSON.stringify({ op: 'subscribe', topics: ['agent.state_changed', 'workflow.*'] }));
+      refresh();
+    };
+    ws.onmessage = (ev) => {
+      let f; try { f = JSON.parse(ev.data); } catch { return; }
+      if (f.op === 'result') {
+        const c = calls.get(f.id); if (c) { calls.delete(f.id); c.resolve(f.result); }
+      } else if (f.op === 'error' && f.id) {
+        const c = calls.get(f.id); if (c) { calls.delete(f.id); c.reject(new Error(f.error || 'error')); }
+      } else if (f.op === 'event') {
+        // Any agent state change → re-pull the authoritative list.
+        if (f.event && f.event.type === 'agent.state_changed') refresh();
+      }
+    };
+    ws.onclose = (ev) => {
+      setConnected(false);
+      if (ev.code === 1008 || ev.code === 4401) { token = ''; sessionStorage.removeItem('hubToken'); return gate(); }
+      scheduleReconnect();
+    };
+    ws.onerror = () => { try { ws.close(); } catch {} };
+  }
+
+  function scheduleReconnect() {
+    setTimeout(connect, backoff);
+    backoff = Math.min(backoff * 2, 8000);
+  }
+
+  // Auth failures over plain HTTP upgrade surface as a close; if the very first
+  // connect is rejected we fall back to the token gate above.
+  connect();
+})();
+</script>
+</body>
+</html>
