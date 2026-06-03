@@ -21,6 +21,12 @@ export function registerHubCapabilities(): void {
       contextTokens: s.usage?.contextTokens ?? 0,
       contextLimit: s.usage?.contextLimit ?? 0,
       costUSD: s.usage?.costUSD ?? 0,
+      // What the agent is blocked on, if anything — lets a remote client show
+      // the actual approval/question instead of a generic "waiting" badge.
+      pendingApproval: s.pendingApproval
+        ? { toolName: s.pendingApproval.toolName, toolInput: s.pendingApproval.toolInput }
+        : null,
+      pendingQuestions: s.pendingQuestions ?? null,
     })),
   );
 

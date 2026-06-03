@@ -24,16 +24,23 @@
     border-bottom: 1px solid var(--line); position: sticky; top: 0;
     background: var(--bg); z-index: 5;
   }
-  header h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: .2px; }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: .2px;
+              overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #back {
+    display: none; flex: 0 0 auto; min-width: 0; padding: 6px 12px;
+    font-size: 18px; line-height: 1; border-radius: 9px;
+  }
+  body.chat-open #back { display: block; }
   #dot { width: 9px; height: 9px; border-radius: 50%; background: var(--bad);
-         box-shadow: 0 0 0 3px rgba(224,108,117,.15); transition: .3s; }
+         box-shadow: 0 0 0 3px rgba(224,108,117,.15); transition: .3s; flex: 0 0 auto; }
   #dot.on { background: var(--ok); box-shadow: 0 0 0 3px rgba(78,201,168,.15); }
-  #status { color: var(--dim); font-size: 12px; margin-left: auto; }
+  #status { color: var(--dim); font-size: 12px; margin-left: auto; white-space: nowrap; }
   main { padding: 14px 16px 40px; max-width: 760px; margin: 0 auto; }
   .empty { color: var(--dim); text-align: center; padding: 48px 16px; }
   .card {
     background: var(--panel); border: 1px solid var(--line);
     border-radius: var(--radius); margin-bottom: 14px; overflow: hidden;
+    cursor: pointer;
   }
   .card.waiting { border-color: var(--warn); }
   .row { display: flex; align-items: center; gap: 10px; padding: 13px 14px; }
@@ -48,7 +55,9 @@
   .badge.thinking, .badge.running { background: rgba(110,168,254,.16); color: var(--accent); }
   .badge.error { background: rgba(224,108,117,.16); color: var(--bad); }
   .badge.done, .badge.idle { background: rgba(78,201,168,.14); color: var(--ok); }
-  .actions { padding: 0 14px 14px; display: flex; flex-direction: column; gap: 9px; }
+  .preview { padding: 0 14px 12px; color: var(--dim); font-size: 13px;
+             display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+             overflow: hidden; }
   .btns { display: flex; gap: 8px; flex-wrap: wrap; }
   button {
     font: inherit; font-weight: 600; color: var(--fg); background: var(--panel2);
@@ -63,6 +72,7 @@
   input[type=text] {
     flex: 1; font: inherit; color: var(--fg); background: var(--bg);
     border: 1px solid var(--line); border-radius: 9px; padding: 11px 12px;
+    min-width: 0;
   }
   input[type=text]:focus { outline: none; border-color: var(--accent); }
   .send button { flex: 0 0 auto; }
@@ -77,12 +87,59 @@
     transition: opacity .25s; pointer-events: none; z-index: 20; max-width: 90vw;
   }
   .toast.show { opacity: 1; }
+
+  /* ── chat view ─────────────────────────────────────────────────────── */
+  body.chat-open main { padding-bottom: 12px; }
+  #msgs { display: flex; flex-direction: column; gap: 10px; }
+  .msg { max-width: 88%; border-radius: var(--radius); padding: 10px 13px;
+         font-size: 14px; white-space: pre-wrap; word-break: break-word; }
+  .msg.user { align-self: flex-end; background: rgba(110,168,254,.14);
+              border: 1px solid rgba(110,168,254,.28); }
+  .msg.assistant { align-self: flex-start; background: var(--panel);
+                   border: 1px solid var(--line); }
+  .msg pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
+             padding: 8px 10px; overflow-x: auto; font-size: 12.5px; margin: 6px 0;
+             white-space: pre; }
+  .msg code { background: var(--bg); border: 1px solid var(--line); border-radius: 5px;
+              padding: 1px 5px; font-size: 12.5px; }
+  .tools { align-self: flex-start; display: flex; flex-direction: column; gap: 5px;
+           max-width: 88%; }
+  .tool {
+    font-size: 12px; color: var(--dim); background: var(--panel2);
+    border: 1px solid var(--line); border-radius: 999px; padding: 4px 11px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .tool b { color: var(--fg); font-weight: 600; }
+  .typing { align-self: flex-start; color: var(--dim); font-size: 13px; padding: 2px 4px; }
+  .typing::after { content: '…'; animation: blink 1.2s infinite; }
+  @keyframes blink { 50% { opacity: .3; } }
+  .ask {
+    border: 1px solid var(--warn); border-radius: var(--radius);
+    background: rgba(224,179,65,.08); padding: 12px 14px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .ask .ask-title { font-weight: 600; font-size: 14px; color: var(--warn); }
+  .ask pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
+             padding: 8px 10px; overflow-x: auto; font-size: 12px; margin: 0;
+             max-height: 180px; overflow-y: auto; }
+  .ask .opt { text-align: left; font-weight: 500; }
+  .ask .opt small { display: block; color: var(--dim); font-weight: 400; }
+  #composer {
+    position: sticky; bottom: 0; background: var(--bg);
+    border-top: 1px solid var(--line); padding: 10px 0
+      calc(10px + env(safe-area-inset-bottom)); margin-top: 14px;
+    display: none; flex-direction: column; gap: 8px;
+  }
+  body.chat-open #composer { display: flex; }
+  #composer .small button { padding: 8px 12px; font-size: 13px; font-weight: 500;
+                            color: var(--dim); flex: 0 1 auto; }
 </style>
 </head>
 <body>
 <header>
+  <button id="back">‹</button>
   <div id="dot"></div>
-  <h1>workspacer remote</h1>
+  <h1 id="title">workspacer remote</h1>
   <span id="status">connecting…</span>
 </header>
 <main id="main"></main>
@@ -96,8 +153,14 @@
 
   const $ = (id) => document.getElementById(id);
   const main = $('main'), dot = $('dot'), statusEl = $('status'), toastEl = $('toast');
+  const backBtn = $('back'), titleEl = $('title');
   let ws = null, backoff = 500, calls = new Map(), callSeq = 0;
-  const sessions = new Map(); // sessionId -> {sessionId, cwd, state, model, ...}
+  const sessions = new Map(); // sessionId -> {sessionId, cwd, state, pendingApproval, ...}
+
+  // View state: list of agents, or the chat for one of them.
+  let view = { name: 'list' };       // | { name: 'chat', sessionId }
+  let chatPoll = null;               // interval while the open agent is busy
+  let lastTranscriptKey = '';        // cheap change detection to avoid re-rendering
 
   function toast(msg) {
     toastEl.textContent = msg; toastEl.classList.add('show');
@@ -156,8 +219,21 @@
     const s = (state || '').toLowerCase();
     return s === 'input' || s === 'waiting' || s === 'error';
   }
+  function isBusy(state) {
+    const s = (state || '').toLowerCase();
+    return s === 'thinking' || s === 'running' || s === 'streaming';
+  }
+
+  // ── rendering ──────────────────────────────────────────────────────────
 
   function render() {
+    if (view.name === 'chat') return renderChat();
+    renderList();
+  }
+
+  function renderList() {
+    document.body.classList.remove('chat-open');
+    titleEl.textContent = 'workspacer remote';
     if (sessions.size === 0) {
       main.innerHTML = `<div class="empty">No active sessions.</div>`;
       return;
@@ -171,6 +247,10 @@
       card.className = 'card' + (waiting ? ' waiting' : '');
       const ctx = s.contextLimit ? ` · ${Math.round((s.contextTokens / s.contextLimit) * 100)}% ctx` : '';
       const cost = s.costUSD ? ` · $${Number(s.costUSD).toFixed(2)}` : '';
+      const preview = s.pendingApproval
+        ? `Wants to run <b>${esc(s.pendingApproval.toolName)}</b>`
+        : (s.pendingQuestions && s.pendingQuestions.length
+            ? esc(s.pendingQuestions[0].question) : '');
       card.innerHTML = `
         <div class="row">
           <div>
@@ -179,54 +259,232 @@
           </div>
           <span class="badge ${badgeClass(s.state)}">${esc(s.state || 'idle')}</span>
         </div>
-        <div class="actions">
-          <div class="btns">
-            <button class="yes">Approve</button>
-            <button class="no">Deny</button>
-            <button class="always">Always</button>
-          </div>
-          <div class="send">
-            <input type="text" placeholder="message / answer…">
-            <button>Send</button>
-          </div>
-          <div class="btns">
-            <button>Interrupt</button>
-            <button>Stop</button>
-          </div>
-        </div>`;
-      const [approve, deny, always] = card.querySelectorAll('.actions .btns:first-of-type button');
-      const input = card.querySelector('input');
-      const sendBtn = card.querySelector('.send button');
-      const [interrupt, stop] = card.querySelectorAll('.actions .btns:last-of-type button');
-      approve.onclick = () => doCall('claude.approve', { sessionId: s.sessionId, decision: 'yes' }, 'Approved');
-      deny.onclick    = () => doCall('claude.approve', { sessionId: s.sessionId, decision: 'no' }, 'Denied');
-      always.onclick  = () => doCall('claude.approve', { sessionId: s.sessionId, decision: 'always' }, 'Approved (always)');
-      const send = () => {
-        const text = input.value.trim();
-        if (!text) return;
-        // If the agent is asking a question, answer it; otherwise send a message.
-        const method = isWaiting(s.state) ? 'claude.answer' : 'agents.sendMessage';
-        const params = method === 'claude.answer'
-          ? { sessionId: s.sessionId, text } : { sessionId: s.sessionId, text };
-        doCall(method, params, 'Sent');
-        input.value = '';
-      };
-      sendBtn.onclick = send;
-      input.addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
-      interrupt.onclick = () => doCall('claude.signal', { sessionId: s.sessionId, signal: 'SIGINT' }, 'Interrupted');
-      stop.onclick      = () => doCall('claude.signal', { sessionId: s.sessionId, signal: 'SIGTERM' }, 'Stopped');
+        ${preview ? `<div class="preview">${preview}</div>` : ''}`;
+      card.onclick = () => openChat(s.sessionId);
       main.appendChild(card);
     }
   }
 
+  // ── chat view ──────────────────────────────────────────────────────────
+
+  function openChat(sessionId) {
+    view = { name: 'chat', sessionId };
+    lastTranscriptKey = '';
+    document.body.classList.add('chat-open');
+    main.innerHTML = `
+      <div id="msgs"><div class="empty">Loading transcript…</div></div>
+      <div id="ask"></div>
+      <div id="composer">
+        <div class="send">
+          <input type="text" id="chatInput" placeholder="message / answer…" autocomplete="off">
+          <button class="always" id="chatSend">Send</button>
+        </div>
+        <div class="btns small">
+          <button id="chatInterrupt">Interrupt</button>
+          <button id="chatStop">Stop</button>
+        </div>
+      </div>`;
+    const input = $('chatInput');
+    const send = () => {
+      const text = input.value.trim();
+      if (!text) return;
+      const s = sessions.get(sessionId);
+      // If the agent is asking a question, answer it; otherwise send a message.
+      const method = s && isWaiting(s.state) && s.pendingQuestions && s.pendingQuestions.length
+        ? 'claude.answer' : 'agents.sendMessage';
+      doCall(method, { sessionId, text }, 'Sent');
+      input.value = '';
+    };
+    $('chatSend').onclick = send;
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
+    $('chatInterrupt').onclick = () => doCall('claude.signal', { sessionId, signal: 'SIGINT' }, 'Interrupted');
+    $('chatStop').onclick      = () => doCall('claude.signal', { sessionId, signal: 'SIGTERM' }, 'Stopped');
+    renderChat();
+    loadTranscript();
+    // Events only fire on state *changes*, so poll for new content while busy.
+    clearInterval(chatPoll);
+    chatPoll = setInterval(() => {
+      const s = sessions.get(sessionId);
+      if (view.name === 'chat' && s && isBusy(s.state)) loadTranscript();
+    }, 2500);
+  }
+
+  function closeChat() {
+    view = { name: 'list' };
+    clearInterval(chatPoll); chatPoll = null;
+    render();
+  }
+  backBtn.onclick = closeChat;
+
+  function renderChat() {
+    const s = sessions.get(view.sessionId);
+    titleEl.textContent = s ? shortCwd(s.cwd) : 'session ended';
+    renderAsk(s);
+    // Typing indicator lives in #msgs; re-stamp it on every state change.
+    const msgs = $('msgs');
+    if (msgs) {
+      const old = msgs.querySelector('.typing');
+      if (old) old.remove();
+      if (s && isBusy(s.state)) {
+        const t = document.createElement('div');
+        t.className = 'typing'; t.textContent = 'working';
+        msgs.appendChild(t);
+        maybeScroll();
+      }
+    }
+  }
+
+  // The pending approval / question card, pinned between transcript and composer.
+  function renderAsk(s) {
+    const ask = $('ask');
+    if (!ask) return;
+    if (!s || (!s.pendingApproval && !(s.pendingQuestions && s.pendingQuestions.length))) {
+      ask.innerHTML = '';
+      return;
+    }
+    if (s.pendingApproval) {
+      const inputJSON = JSON.stringify(s.pendingApproval.toolInput ?? {}, null, 1);
+      ask.innerHTML = `<div class="ask">
+        <div class="ask-title">Wants to run ${esc(s.pendingApproval.toolName)}</div>
+        <pre>${esc(truncate(inputJSON, 1200))}</pre>
+        <div class="btns">
+          <button class="yes">Approve</button>
+          <button class="no">Deny</button>
+          <button class="always">Always</button>
+        </div></div>`;
+      const [yes, no, always] = ask.querySelectorAll('button');
+      yes.onclick    = () => doCall('claude.approve', { sessionId: s.sessionId, decision: 'yes' }, 'Approved');
+      no.onclick     = () => doCall('claude.approve', { sessionId: s.sessionId, decision: 'no' }, 'Denied');
+      always.onclick = () => doCall('claude.approve', { sessionId: s.sessionId, decision: 'always' }, 'Approved (always)');
+      maybeScroll();
+      return;
+    }
+    // Question picker: render the first question's options as tappable buttons.
+    // Multi-question / multi-select fall back to the free-text composer.
+    const q = s.pendingQuestions[0];
+    const opts = (s.pendingQuestions.length === 1 && !q.multi_select)
+      ? (q.options || []) : [];
+    ask.innerHTML = `<div class="ask">
+      <div class="ask-title">${esc(q.header || 'Question')}</div>
+      <div>${esc(q.question)}</div>
+      ${opts.map((o, i) => `<button class="opt" data-i="${i}">${esc(o.label)}
+        ${o.description ? `<small>${esc(o.description)}</small>` : ''}</button>`).join('')}
+    </div>`;
+    for (const btn of ask.querySelectorAll('.opt')) {
+      btn.onclick = () => doCall('claude.answer',
+        { sessionId: s.sessionId, option: Number(btn.dataset.i) }, 'Answered');
+    }
+    maybeScroll();
+  }
+
+  async function loadTranscript() {
+    if (view.name !== 'chat') return;
+    const sessionId = view.sessionId;
+    let tx;
+    try { tx = await call('sessions.transcript', { sessionId }); }
+    catch { return; }
+    if (view.name !== 'chat' || view.sessionId !== sessionId) return; // navigated away
+    const turns = toTurns((tx && tx.messages) || (tx && tx.entries) || []);
+    // Skip the re-render when nothing changed (polling path).
+    const key = turns.length + ':' + (turns.length ? hashTail(turns[turns.length - 1]) : '');
+    if (key === lastTranscriptKey) return;
+    const firstLoad = lastTranscriptKey === '';
+    lastTranscriptKey = key;
+
+    const msgs = $('msgs');
+    if (!msgs) return;
+    msgs.innerHTML = turns.length ? '' : `<div class="empty">No messages yet.</div>`;
+    for (const t of turns) {
+      const tools = t.parts.filter(p => p.kind === 'tool');
+      const texts = t.parts.filter(p => p.kind === 'text');
+      for (const p of texts) {
+        const el = document.createElement('div');
+        el.className = `msg ${t.role}`;
+        el.innerHTML = mdLite(p.text);
+        msgs.appendChild(el);
+      }
+      if (tools.length) {
+        const wrap = document.createElement('div');
+        wrap.className = 'tools';
+        wrap.innerHTML = tools.map(p =>
+          `<div class="tool"><b>${esc(p.name)}</b>${p.summary ? ' · ' + esc(p.summary) : ''}</div>`
+        ).join('');
+        msgs.appendChild(wrap);
+      }
+    }
+    renderChat(); // re-stamp typing indicator + ask card
+    maybeScroll(firstLoad);
+  }
+
+  // Convert raw transcript messages (string or content-block array) into
+  // renderable turns. Tool results, thinking and meta noise are dropped.
+  function toTurns(messages) {
+    const out = [];
+    for (const m of messages) {
+      const role = m.role === 'assistant' ? 'assistant' : (m.role === 'user' ? 'user' : null);
+      if (!role) continue;
+      const blocks = Array.isArray(m.content)
+        ? m.content
+        : [{ type: 'text', text: String(m.content ?? '') }];
+      const parts = [];
+      for (const b of blocks) {
+        if (!b || typeof b !== 'object') continue;
+        if (b.type === 'text' && typeof b.text === 'string') {
+          const text = b.text.trim();
+          if (!text || /^<(local-command|command-name|command-message|system-reminder)/.test(text)) continue;
+          parts.push({ kind: 'text', text });
+        } else if (b.type === 'tool_use' && role === 'assistant') {
+          parts.push({ kind: 'tool', name: b.name || 'tool', summary: toolSummary(b.input) });
+        }
+        // tool_result / thinking / images: skipped
+      }
+      if (parts.length) out.push({ role, parts });
+    }
+    return out;
+  }
+
+  function toolSummary(input) {
+    if (!input || typeof input !== 'object') return '';
+    for (const k of ['file_path', 'path', 'command', 'pattern', 'query', 'url', 'prompt', 'description']) {
+      if (typeof input[k] === 'string' && input[k]) return truncate(input[k], 64);
+    }
+    return '';
+  }
+
+  function hashTail(turn) {
+    const p = turn.parts[turn.parts.length - 1];
+    const s = p.kind === 'text' ? p.text : p.name + (p.summary || '');
+    return s.length + ':' + s.slice(-48);
+  }
+
+  // Markdown-lite: escape everything, then bring back fences / inline code /
+  // bold. Bubbles use white-space: pre-wrap, so newlines render as-is.
+  function mdLite(text) {
+    let s = esc(text);
+    s = s.replace(/```([a-zA-Z0-9_-]*)\n?([\s\S]*?)```/g, (_, _lang, code) => `<pre>${code.replace(/\n$/, '')}</pre>`);
+    s = s.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+    s = s.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+    return s;
+  }
+
+  // Stick to the bottom unless the user has scrolled up to read history.
+  function maybeScroll(force) {
+    const nearBottom = window.innerHeight + window.scrollY >=
+      document.body.scrollHeight - 160;
+    if (force || nearBottom) {
+      window.scrollTo({ top: document.body.scrollHeight });
+    }
+  }
+
   async function doCall(method, params, okMsg) {
-    try { await call(method, params); toast(okMsg); refresh(); }
+    try { await call(method, params); toast(okMsg); refresh(); if (view.name === 'chat') loadTranscript(); }
     catch (e) { toast('Failed: ' + e.message); }
   }
 
+  function truncate(s, n) { return s.length > n ? s.slice(0, n - 1) + '…' : s; }
   function shortCwd(p) {
     if (!p) return '(session)';
-    const parts = p.split('/').filter(Boolean);
+    const parts = p.split(/[\\/]/).filter(Boolean);
     return parts.length <= 2 ? p : '…/' + parts.slice(-2).join('/');
   }
   function esc(s) {
@@ -250,6 +508,7 @@
       setConnected(true);
       ws.send(JSON.stringify({ op: 'subscribe', topics: ['agent.state_changed', 'workflow.*'] }));
       refresh();
+      if (view.name === 'chat') loadTranscript();
     };
     ws.onmessage = (ev) => {
       let f; try { f = JSON.parse(ev.data); } catch { return; }
@@ -258,8 +517,12 @@
       } else if (f.op === 'error' && f.id) {
         const c = calls.get(f.id); if (c) { calls.delete(f.id); c.reject(new Error(f.error || 'error')); }
       } else if (f.op === 'event') {
-        // Any agent state change → re-pull the authoritative list.
-        if (f.event && f.event.type === 'agent.state_changed') refresh();
+        // Any agent state change → re-pull the authoritative list, and the
+        // transcript too if we're looking at a chat.
+        if (f.event && f.event.type === 'agent.state_changed') {
+          refresh();
+          if (view.name === 'chat') loadTranscript();
+        }
       }
     };
     ws.onclose = (ev) => {

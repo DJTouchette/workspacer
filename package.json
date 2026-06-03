@@ -5,6 +5,7 @@
   "main": "dist/main/index.js",
   "scripts": {
     "dev": "concurrently -k \"npm run dev:renderer\" \"npm run dev:main\"",
+    "dev:share": "cross-env WORKSPACER_REMOTE_SHARE=1 npm run dev",
     "dev:renderer": "cd src/renderer && npx vite --port 5173",
     "dev:main": "npm run build:hub && npm run build:main && wait-on http://localhost:5173 && cross-env ELECTRON_DEV=1 electron .",
     "build:main": "tsc -p tsconfig.main.json",
