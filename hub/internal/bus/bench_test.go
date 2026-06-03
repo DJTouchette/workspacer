@@ -107,6 +107,13 @@ func TestSnapshotLatencyDistribution(t *testing.T) {
 	if testing.Short() {
 		t.Skip("latency distribution skipped in -short")
 	}
+	// Under -race the p99<5ms localhost budget is meaningless (instrumentation
+	// adds ~10x), and the slowdown lets the publisher outrun the subscriber so
+	// the lossy broker can drop a frame — which the unbounded Read below would
+	// then block on forever. Skip; run without -race for real perf numbers.
+	if raceEnabled {
+		t.Skip("latency distribution is invalid under -race")
+	}
 	srv := NewServer(broker.New())
 	hs := httptest.NewServer(srv.Handler())
 	defer hs.Close()
