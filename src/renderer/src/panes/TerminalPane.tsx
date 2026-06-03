@@ -117,10 +117,9 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
         if (sel) navigator.clipboard.writeText(sel);
         return false;
       }
-      // Ctrl+Shift+V — paste into terminal
+      // Ctrl+Shift+V — paste. Let xterm's native paste event deliver the text
+      // (single insert, bracketed-paste aware); return false only to suppress ^V.
       if (e.ctrlKey && e.shiftKey && e.key === 'V') {
-        e.preventDefault();
-        navigator.clipboard.readText().then(text => { if (text) write(text); });
         return false;
       }
       // Ctrl+C — copy if there's a selection, otherwise let xterm send SIGINT
@@ -134,10 +133,11 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
         }
         return true; // no selection — let xterm send ^C
       }
-      // Ctrl+V — paste
+      // Ctrl+V — paste. Handled by xterm's native paste event (single insert,
+      // bracketed-paste aware); return false so xterm doesn't also emit ^V.
+      // Manual clipboard.readText + write here caused a double paste, because
+      // preventDefault on keydown does not stop the browser's native paste event.
       if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'v') {
-        e.preventDefault();
-        navigator.clipboard.readText().then(text => { if (text) write(text); });
         return false;
       }
       // Ctrl+T, Ctrl+B, Ctrl+W, Ctrl+/, Ctrl+, — always app-level

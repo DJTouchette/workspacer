@@ -999,10 +999,9 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
         if (sel) navigator.clipboard.writeText(sel);
         return false;
       }
-      // Ctrl+Shift+V — paste
+      // Ctrl+Shift+V — paste. Let xterm's native paste event deliver the text
+      // (single insert, bracketed-paste aware); return false only to suppress ^V.
       if (e.ctrlKey && e.shiftKey && e.key === 'V') {
-        e.preventDefault();
-        navigator.clipboard.readText().then(text => { if (text) write(text); });
         return false;
       }
       // Ctrl+C — copy if selection, SIGINT if not
@@ -1011,10 +1010,11 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
         if (sel) { e.preventDefault(); navigator.clipboard.writeText(sel); term.clearSelection(); return false; }
         return true;
       }
-      // Ctrl+V — paste
+      // Ctrl+V — paste. Handled by xterm's native paste event (single insert,
+      // bracketed-paste aware); return false so xterm doesn't also emit ^V.
+      // Manual clipboard.readText + write here caused a double paste, because
+      // preventDefault on keydown does not stop the browser's native paste event.
       if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'v') {
-        e.preventDefault();
-        navigator.clipboard.readText().then(text => { if (text) write(text); });
         return false;
       }
       if (e.ctrlKey && !e.altKey && !e.shiftKey && ['t', 'b', 'w', 'd', '/', '?', ',', 's', 'k'].includes(e.key)) return false;
