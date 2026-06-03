@@ -70,6 +70,7 @@ export interface ElectronAPI {
   onHubEvent: (callback: (event: { id: string; type: string; source: string; time: string; data?: unknown }) => void) => () => void;
   onHubStatus: (callback: (status: { connected: boolean }) => void) => () => void;
   getHubStatus: () => Promise<{ connected: boolean }>;
+  getRemoteInfo: () => Promise<{ enabled: boolean; token: string; remoteUrl: string; busUrl: string }>;
   listHubPlugins: () => Promise<PluginManifest[]>;
   hubPublish: (event: { type: string; source?: string; data?: unknown }) => Promise<void>;
   installPlugin: (url: string) => Promise<{ ok: boolean; plugin?: PluginManifest; error?: string }>;

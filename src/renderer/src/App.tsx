@@ -8,6 +8,7 @@ import { useUiEventBus } from './hooks/useUiEventBus';
 import { useUiCommands } from './hooks/useUiCommands';
 import type { PluginPane } from './types/plugin';
 import SpawnAgentDialog from './components/SpawnAgentDialog';
+import RemoteShareDialog from './components/RemoteShareDialog';
 import ScrollContainer, { ScrollContainerRef } from './components/ScrollContainer';
 import ShortcutOverlay from './components/ShortcutOverlay';
 import SessionPicker from './components/SessionPicker';
@@ -68,6 +69,7 @@ function App() {
   const [paletteRestrict, setPaletteRestrict] = useState<'library' | undefined>(undefined);
   const [showSpawnDialog, setShowSpawnDialog] = useState(false);
   const [showLayouts, setShowLayouts] = useState(false);
+  const [showRemote, setShowRemote] = useState(false);
 
   // App working directory (used as the default cwd for the spawn dialog + the
   // Library's fallback project root).
@@ -727,6 +729,7 @@ function App() {
         onTerminateAgent={terminateAgent}
         onRenameAgent={renameAgent}
         onJumpToAttention={goToNextAttention}
+        onOpenRemote={() => setShowRemote(true)}
       />
 
       <NavBar
@@ -858,6 +861,10 @@ function App() {
 
       {showInstallPlugin && (
         <PluginInstallDialog onClose={() => setShowInstallPlugin(false)} />
+      )}
+
+      {showRemote && (
+        <RemoteShareDialog onClose={() => setShowRemote(false)} />
       )}
 
       {showSpawnDialog && (

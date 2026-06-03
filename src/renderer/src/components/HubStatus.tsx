@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { Smartphone } from 'lucide-react';
 
 interface HubEvent {
   id: string;
@@ -13,7 +14,7 @@ interface HubEvent {
  * the IPC-forwarded hub stream — no prop threading. Sits at the bottom of the
  * sidebar. Proof that claudemon → hub → main → renderer round-trips.
  */
-const HubStatus: React.FC = () => {
+const HubStatus: React.FC<{ onOpenRemote?: () => void }> = ({ onOpenRemote }) => {
   const [connected, setConnected] = useState(false);
   const [count, setCount] = useState(0);
   const [last, setLast] = useState<HubEvent | null>(null);
@@ -58,6 +59,22 @@ const HubStatus: React.FC = () => {
       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {connected ? `hub · ${count}` : 'hub offline'}
       </span>
+      {onOpenRemote && (
+        <button
+          onClick={onOpenRemote}
+          title="Remote control — drive agents from your phone"
+          style={{
+            marginLeft: 'auto', flexShrink: 0,
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            background: 'transparent', border: 'none', padding: 2, cursor: 'pointer',
+            color: 'var(--wks-text-faint)', borderRadius: 4,
+          }}
+          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-tertiary)'; }}
+          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-faint)'; }}
+        >
+          <Smartphone size={12} />
+        </button>
+      )}
     </div>
   );
 };
