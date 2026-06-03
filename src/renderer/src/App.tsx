@@ -850,6 +850,7 @@ function App() {
         onSwitchSession={() => { setShowCommandPalette(false); switchSession(); }}
         onOpenAnalytics={openAnalytics}
         onOpenLayouts={() => { setShowCommandPalette(false); setShowLayouts(true); }}
+        onOpenRemote={() => { setShowCommandPalette(false); setShowRemote(true); }}
       />
 
       <LibraryHost
