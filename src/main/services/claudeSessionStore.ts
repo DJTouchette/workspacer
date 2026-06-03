@@ -14,6 +14,7 @@ import {
   type WorkflowRunInfo,
   type WorkflowWatcherUpdate,
 } from './workflowWatcher';
+import { publishWorkflowRuns, forgetSession as forgetTelemetry } from './hubTelemetry';
 
 export type { WorkflowRunInfo, WorkflowAgentInfo, WorkflowPhaseInfo } from './workflowWatcher';
 
@@ -309,6 +310,7 @@ class ClaudeSessionStore {
         session.status = 'ended';
         session.ambientState = 'idle';
         workflowWatcher.detach(sessionId);
+        forgetTelemetry(sessionId);
         break;
     }
 
@@ -339,6 +341,8 @@ class ClaudeSessionStore {
     if (!update) return;
 
     session.workflows = update.runs;
+    // Republish run/agent transitions onto the hub bus for the rules engine.
+    publishWorkflowRuns({ sessionId: session.sessionId, cwd: session.cwd }, update.runs);
 
     const stripPrefix = (s: string) => s.replace(/^agent-/, '');
     const workflowIds = new Set(update.workflowAgentIds);

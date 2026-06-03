@@ -39,8 +39,9 @@ type Envelope struct {
 const source = "rules-engine"
 
 // Topics the engine listens to. command.* is included so rules can react to
-// commands others publish (and to rules' own emit/command actions).
-var subscribeTopics = []string{"agent.*", "ui.*", "command.*"}
+// commands others publish (and to rules' own emit/command actions). workflow.*
+// carries workspacer's live workflow run/agent telemetry.
+var subscribeTopics = []string{"agent.*", "workflow.*", "ui.*", "command.*"}
 
 // busClient is a reconnecting WebSocket client to the hub bus. It serializes
 // writes (coder/websocket forbids concurrent writers) and correlates calls by id.
