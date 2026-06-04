@@ -24,12 +24,33 @@ export interface PaneConfig {
   initialPrompt?: string;
 }
 
+/** Position + size of a tab's card on the spatial canvas, in world coordinates
+ *  (pre-zoom). Only used when the global view mode is 'spatial'; absent until the
+ *  card is first placed/dragged, at which point a default grid slot is persisted. */
+export interface CanvasRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 export interface TabConfig {
   id: string;
   title: string;
   panes: PaneConfig[];
   activePaneId: string;
+  /** Spatial-canvas placement. See {@link CanvasRect}. */
+  canvas?: CanvasRect;
+  /** Epoch ms of the tab's last activity (focus / creation / split). The axis
+   *  the 'timeline' view sorts cards on. Absent for tabs predating the feature. */
+  lastActiveAt?: number;
 }
+
+/** How the workspace lays out tabs. Global (config.panes.viewMode).
+ *  - 'tabs':     the classic horizontal scroll strip (one tab on screen at a time)
+ *  - 'spatial':  every tab is a free-floating card on a pannable/zoomable canvas
+ *  - 'timeline': cards stacked in a vertical feed, newest activity on top */
+export type ViewMode = 'tabs' | 'spatial' | 'timeline';
 
 /**
  * An agent workspace = one long-lived Claude Code (claudemon) session plus its

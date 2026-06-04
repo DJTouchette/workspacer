@@ -18,7 +18,7 @@ import LibraryHost from './components/LibraryHost';
 import type { Layout, LayoutAgent } from './types/layout';
 import { useLibrary } from './hooks/useLibrary';
 import { useAgentManager, GLOBAL_WORKSPACE_ID } from './hooks/useAgentManager';
-import type { PaneType, AgentWorkspace } from './types/pane';
+import type { PaneType, AgentWorkspace, ViewMode } from './types/pane';
 import type { SessionAmbientState, SessionUsage } from './types/claudeSession';
 import { useKeyboardNav } from './hooks/useKeyboardNav';
 import { useConfig } from './hooks/useConfig';
@@ -53,6 +53,7 @@ function App() {
     removePane,
     renameTab,
     moveTab,
+    updateTabCanvas,
     setActivePane,
     hibernatePane,
     wakePane,
@@ -707,6 +708,17 @@ function App() {
   // --- Render ---
   const navHeight = Math.max(config.ui.navBarHeight || 34, 32);
 
+  const viewMode: ViewMode =
+    config.panes?.viewMode === 'spatial' ? 'spatial'
+    : config.panes?.viewMode === 'timeline' ? 'timeline'
+    : 'tabs';
+  const toggleViewMode = useCallback(() => {
+    // Cycle: tabs → spatial → timeline → tabs
+    const order: ViewMode[] = ['tabs', 'spatial', 'timeline'];
+    const next = order[(order.indexOf(viewMode) + 1) % order.length];
+    saveConfig({ panes: { ...config.panes, viewMode: next } });
+  }, [viewMode, config.panes, saveConfig]);
+
   const handleNavBarRename = useCallback(
     (tabId: string) => { setActiveTabId(tabId); setRenameSignal((s) => s + 1); },
     [setActiveTabId],
@@ -741,6 +753,8 @@ function App() {
         onRenameTab={handleNavBarRename}
         onSplitTab={handleNavBarSplit}
         onMoveTab={moveTab}
+        viewMode={viewMode}
+        onToggleViewMode={toggleViewMode}
         leftOffset={SIDEBAR_WIDTH}
         cwd={agentCwd || undefined}
         scripts={dirScripts}
@@ -775,6 +789,8 @@ function App() {
                   onPaneFocus={handlePaneFocus}
                   onTabRename={renameTab}
                   onTabMove={moveTab}
+                  viewMode={viewMode}
+                  onTabCanvasChange={updateTabCanvas}
                   onPtyReady={handlePtyReady}
                   onUrlChange={handleUrlChange}
                   onNavigateToTab={handleTabClick}

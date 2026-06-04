@@ -47,7 +47,7 @@ function defaultAgentTabs(sessionId: string | undefined, cwd: string, initialPro
     initialPrompt,
   };
   return {
-    tabs: [{ id: tabId, title: 'Claude', panes: [pane], activePaneId: paneId }],
+    tabs: [{ id: tabId, title: 'Claude', panes: [pane], activePaneId: paneId, lastActiveAt: Date.now() }],
     activeTabId: tabId,
   };
 }
@@ -211,7 +211,7 @@ export function useAgentManager() {
       const existing = a.tabs.find((t) => t.panes.length === 1 && t.panes[0].type === type && t.panes[0].title === title);
       if (existing) return { ...a, activeTabId: existing.id };
       const pane: PaneConfig = { id: paneId, type, title, url, cwd, appMode: true };
-      return { ...a, tabs: [...a.tabs, { id: tabId, title, panes: [pane], activePaneId: paneId }], activeTabId: tabId };
+      return { ...a, tabs: [...a.tabs, { id: tabId, title, panes: [pane], activePaneId: paneId, lastActiveAt: Date.now() }], activeTabId: tabId };
     }));
     setActiveAgentId(workspaceId);
   }, []);
@@ -219,7 +219,12 @@ export function useAgentManager() {
   // ── Tab/pane operations (scoped to the active agent) ──────────────────────
 
   const setActiveTabId = useCallback((tabId: string) => {
-    mutateActiveAgent((a) => ({ ...a, activeTabId: tabId }));
+    mutateActiveAgent((a) => ({
+      ...a,
+      activeTabId: tabId,
+      // Focusing a tab counts as activity — drives the timeline view's ordering.
+      tabs: a.tabs.map((t) => (t.id === tabId ? { ...t, lastActiveAt: Date.now() } : t)),
+    }));
   }, [mutateActiveAgent]);
 
   const addTab = useCallback((
@@ -244,7 +249,7 @@ export function useAgentManager() {
     const pane: PaneConfig = {
       id: paneId, type, title: paneTitle, shell, url, appMode, cwd, profileId, resumeSessionId, attachSessionId, initialCommand,
     };
-    const tab: TabConfig = { id: tabId, title: paneTitle, panes: [pane], activePaneId: paneId };
+    const tab: TabConfig = { id: tabId, title: paneTitle, panes: [pane], activePaneId: paneId, lastActiveAt: Date.now() };
 
     mutateAgent(aid, (a) => {
       let newTabs: TabConfig[];
@@ -280,7 +285,7 @@ export function useAgentManager() {
     mutateActiveAgent((a) => ({
       ...a,
       tabs: a.tabs.map((t) =>
-        t.id === tabId ? { ...t, panes: [...t.panes, pane], activePaneId: paneId } : t,
+        t.id === tabId ? { ...t, panes: [...t.panes, pane], activePaneId: paneId, lastActiveAt: Date.now() } : t,
       ),
     }));
     return paneId;
@@ -334,6 +339,13 @@ export function useAgentManager() {
     mutateActiveAgent((a) => ({
       ...a,
       tabs: a.tabs.map((t) => (t.id === tabId ? { ...t, title } : t)),
+    }));
+  }, [mutateActiveAgent]);
+
+  const updateTabCanvas = useCallback((tabId: string, canvas: TabConfig['canvas']) => {
+    mutateActiveAgent((a) => ({
+      ...a,
+      tabs: a.tabs.map((t) => (t.id === tabId ? { ...t, canvas } : t)),
     }));
   }, [mutateActiveAgent]);
 
@@ -418,6 +430,7 @@ export function useAgentManager() {
     removePane,
     renameTab,
     moveTab,
+    updateTabCanvas,
     setActivePane,
     hibernatePane,
     wakePane,

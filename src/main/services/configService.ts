@@ -59,6 +59,7 @@ interface Config {
     peek: number;
     insertPosition: string;
     tabPosition: string; // 'top' | 'left'
+    viewMode: string; // 'tabs' | 'spatial' | 'timeline'
     default: Array<{ id: string; type: string; title: string; width: number; order: number }>;
   };
   keybindings: {
@@ -154,6 +155,7 @@ function defaultConfig(): Config {
       peek: 80,
       insertPosition: 'after',
       tabPosition: 'top',
+      viewMode: 'tabs',
       default: [
         { id: 'terminal-1', type: 'terminal', title: 'Terminal 1', width: 800, order: 0 },
         { id: 'terminal-2', type: 'terminal', title: 'Terminal 2', width: 800, order: 1 },

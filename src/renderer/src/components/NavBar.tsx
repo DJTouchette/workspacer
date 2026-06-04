@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { PaneType, TabConfig } from '../types/pane';
+import { PaneType, TabConfig, ViewMode } from '../types/pane';
 import { useConfig, ScriptEntry } from '../hooks/useConfig';
-import { PaneIcon, Play, Settings, Plus, Columns3 } from './icons';
+import { PaneIcon, Play, Settings, Plus, Columns3, LayoutGrid, Clock } from './icons';
 
 interface NavBarProps {
   tabs: TabConfig[];
@@ -12,6 +12,10 @@ interface NavBarProps {
   onRenameTab?: (tabId: string) => void;
   onSplitTab?: (tabId: string, type: PaneType) => void;
   onMoveTab?: (tabId: string, toIndex: number) => void;
+  /** Current global layout paradigm ('tabs' | 'spatial'). */
+  viewMode?: ViewMode;
+  /** Toggle between the tab strip and the spatial canvas. */
+  onToggleViewMode?: () => void;
   /** Pixels to inset the bar from the left (to clear the agent sidebar). */
   leftOffset?: number;
   /** Active agent's workspace root — scripts are scoped to this directory. */
@@ -31,7 +35,7 @@ interface SessionPickerState {
   sessions: { sessionId: string; timestamp: string; summary: string }[];
 }
 
-const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab, onCloseTab, onRenameTab, onSplitTab, onMoveTab, leftOffset = 0, cwd, scripts = [], onRunScript, onSaveScripts }) => {
+const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab, onCloseTab, onRenameTab, onSplitTab, onMoveTab, viewMode = 'tabs', onToggleViewMode, leftOffset = 0, cwd, scripts = [], onRunScript, onSaveScripts }) => {
   const { config } = useConfig();
   const navHeight = Math.max(config.ui.navBarHeight || 34, 32);
   const shells = config.terminal.shells || [];
@@ -266,6 +270,46 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
           </div>
         )}
       </div>
+
+      {/* View-mode toggle (tabs → spatial → timeline). Outside the scrolling
+          tab cluster so it stays visible no matter how many tabs are open. */}
+      {onToggleViewMode && (() => {
+        const labels: Record<ViewMode, string> = { tabs: 'Tabs', spatial: 'Spatial canvas', timeline: 'Timeline' };
+        const nextOf: Record<ViewMode, ViewMode> = { tabs: 'spatial', spatial: 'timeline', timeline: 'tabs' };
+        const active = viewMode !== 'tabs';
+        const Icon = viewMode === 'spatial' ? LayoutGrid : viewMode === 'timeline' ? Clock : Columns3;
+        return (
+          <button
+            onClick={onToggleViewMode}
+            title={`View: ${labels[viewMode]} — click for ${labels[nextOf[viewMode]]}`}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              padding: 0, margin: '0 6px 0 4px', width: '26px', height: '26px',
+              lineHeight: '1', border: 'none', borderRadius: 'var(--wks-radius-pill)',
+              cursor: 'pointer', fontFamily: 'inherit', flexShrink: 0,
+              backgroundColor: active ? 'var(--wks-bg-selected)' : 'transparent',
+              color: active ? 'var(--wks-text-primary)' : 'var(--wks-text-faint)',
+              // @ts-ignore
+              WebkitAppRegion: 'no-drag',
+              appRegion: 'no-drag',
+            }}
+            onMouseEnter={(e) => {
+              if (!active) {
+                (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--wks-bg-hover)';
+                (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-secondary)';
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (!active) {
+                (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent';
+                (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-faint)';
+              }
+            }}
+          >
+            <Icon size={14} strokeWidth={1.75} />
+          </button>
+        );
+      })()}
 
       {/* Per-directory script bar (right side) */}
       {cwd && onRunScript && (

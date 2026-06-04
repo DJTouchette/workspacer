@@ -25,6 +25,7 @@ import {
   AlertTriangle,
   RefreshCw,
   Smartphone,
+  Clock,
   type LucideIcon,
 } from 'lucide-react';
 import { PaneType } from '../types/pane';
@@ -88,5 +89,6 @@ export {
   AlertTriangle,
   RefreshCw,
   Smartphone,
+  Clock,
 };
 export type { LucideIcon };

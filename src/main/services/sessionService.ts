@@ -20,6 +20,10 @@ interface SessionTabData {
   title: string;
   panes: SessionPaneData[];
   activePaneId: string;
+  /** Spatial-canvas placement (x/y/w/h in world coords); absent in tabs mode. */
+  canvas?: { x: number; y: number; w: number; h: number };
+  /** Epoch ms of last activity — the 'timeline' view's sort axis. */
+  lastActiveAt?: number;
 }
 
 interface SessionAgentData {

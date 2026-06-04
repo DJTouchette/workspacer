@@ -36,6 +36,8 @@ export interface PanesConfig {
   peek: number;
   insertPosition: string;
   tabPosition: 'top' | 'left';
+  /** Global layout paradigm: 'tabs' strip, 'spatial' canvas, or 'timeline' feed. */
+  viewMode: 'tabs' | 'spatial' | 'timeline';
   default: Array<{ id: string; type: string; title: string; width: number; order: number }>;
 }
 
@@ -117,6 +119,7 @@ const DEFAULT_CONFIG: Config = {
     peek: 80,
     insertPosition: 'after',
     tabPosition: 'top',
+    viewMode: 'tabs',
     default: [],
   },
   browser: {
