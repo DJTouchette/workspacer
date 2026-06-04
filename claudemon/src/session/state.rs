@@ -86,6 +86,11 @@ pub struct SessionState {
     pub updated_at: OffsetDateTime,
     pub tool_calls: u64,
     pub last_event: Option<String>,
+    /// Absolute path to Claude's transcript JSONL, captured from the hook
+    /// payload. Lets `/transcript` read the exact file even when the session id
+    /// we expose (a spawn UUID) differs from Claude's own id that names the file.
+    #[serde(default)]
+    pub transcript_path: Option<String>,
 }
 
 impl SessionState {
@@ -100,6 +105,7 @@ impl SessionState {
             updated_at: now,
             tool_calls: 0,
             last_event: None,
+            transcript_path: None,
         }
     }
 
@@ -108,6 +114,11 @@ impl SessionState {
         self.last_event = Some(event.event.clone());
         if self.cwd.is_none() {
             self.cwd = event.cwd.clone();
+        }
+        // Every Claude Code hook carries `transcript_path` — capture it so the
+        // transcript endpoint reads the right file regardless of id aliasing.
+        if let Some(tp) = event.payload.get("transcript_path").and_then(Value::as_str) {
+            self.transcript_path = Some(tp.to_string());
         }
 
         match event.event.as_str() {
@@ -208,4 +219,31 @@ pub struct HookEvent {
     pub timestamp: Option<OffsetDateTime>,
     #[serde(flatten)]
     pub payload: serde_json::Map<String, Value>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn captures_transcript_path_from_hook() {
+        let mut state = SessionState::new("spawn-uuid".into(), Some("/tmp".into()));
+        let mut payload = serde_json::Map::new();
+        payload.insert(
+            "transcript_path".into(),
+            Value::String("/home/u/.claude/projects/p/real-id.jsonl".into()),
+        );
+        let event = HookEvent {
+            event: "SessionStart".into(),
+            session_id: "claude-real-id".into(),
+            cwd: Some("/tmp".into()),
+            timestamp: None,
+            payload,
+        };
+        state.apply(&event);
+        assert_eq!(
+            state.transcript_path.as_deref(),
+            Some("/home/u/.claude/projects/p/real-id.jsonl")
+        );
+    }
 }

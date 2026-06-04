@@ -461,6 +461,19 @@ async fn get_transcript(
     let Some(state) = store.get(&id) else {
         return (StatusCode::NOT_FOUND, "session not found").into_response();
     };
+    // Authoritative path captured from the hook — read the exact file. Falls
+    // through to cwd-based resolution only if it isn't known yet or is missing.
+    if let Some(tp) = state.transcript_path.as_deref() {
+        if std::path::Path::new(tp).exists() {
+            return match transcript::read_at(tp) {
+                Ok(t) => Json(t).into_response(),
+                Err(err) => {
+                    tracing::warn!(?err, "transcript read failed");
+                    (StatusCode::INTERNAL_SERVER_ERROR, "transcript read failed").into_response()
+                }
+            };
+        }
+    }
     let Some(cwd) = state.cwd.clone() else {
         return Json(transcript::Transcript::default()).into_response();
     };

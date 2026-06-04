@@ -78,6 +78,12 @@ pub fn read_for_session(cwd: &str, session_id: &str) -> Result<Transcript> {
     read_for_cwd_and_session(cwd, Some(session_id))
 }
 
+/// Parse the transcript at an exact absolute path (the `transcript_path` from
+/// the hook). The authoritative read — no cwd guessing.
+pub fn read_at(path: &str) -> Result<Transcript> {
+    read_transcript_file(PathBuf::from(path))
+}
+
 fn read_for_cwd_and_session(cwd: &str, session_id: Option<&str>) -> Result<Transcript> {
     let Some(root) = projects_dir() else {
         return Ok(Transcript::default());
