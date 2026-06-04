@@ -1,0 +1,29 @@
+[package]
+name = "wks-tui"
+version = "0.1.0"
+edition = "2021"
+description = "Terminal client for workspacer — monitors and drives Claude agents over the hub bus"
+license = "MIT"
+
+[[bin]]
+name = "wks-tui"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = "0.24"
+futures-util = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ratatui = "0.29"
+crossterm = { version = "0.28", features = ["event-stream"] }
+anyhow = "1"
+clap = { version = "4", features = ["derive", "env"] }
+directories = "5"
+base64 = "0.22"
+tui-term = "0.2" # re-exports vt100 as tui_term::vt100 (version-locked)
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
