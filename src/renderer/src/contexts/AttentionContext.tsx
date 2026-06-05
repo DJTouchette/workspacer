@@ -26,9 +26,11 @@ interface AttentionContextValue {
   setViewLevel: (v: ViewLevel) => void;
 
   // Actions (all by sessionId — resolve any agent without owning its pane)
-  approve: (item: AttentionItem, response: 'yes' | 'no') => void;
+  approve: (item: AttentionItem, response: 'yes' | 'no' | 'always') => void;
   answer: (item: AttentionItem, payload: { option?: number; text?: string; answers?: string[] }) => void;
   reply: (item: AttentionItem, text: string) => void;
+  /** Send a free-text message straight to a session (e.g. a Fleet card's compose box). */
+  sendMessage: (sessionId: string, text: string) => void;
   dismiss: (sig: string) => void;
   snooze: (sig: string, minutes: number) => void;
   /** Focus an agent's full workspace (closes the inbox, drops to piloting). */
@@ -94,7 +96,7 @@ export const AttentionProvider: React.FC<ProviderProps> = ({
     [snapshotBySession],
   );
 
-  const approve = useCallback((item: AttentionItem, response: 'yes' | 'no') => {
+  const approve = useCallback((item: AttentionItem, response: 'yes' | 'no' | 'always') => {
     resolveApproval(item.sessionId, response, hasPendingQuestion(item.sessionId));
   }, [hasPendingQuestion]);
 
@@ -104,6 +106,10 @@ export const AttentionProvider: React.FC<ProviderProps> = ({
 
   const reply = useCallback((item: AttentionItem, text: string) => {
     if (text.trim()) resolveReply(item.sessionId, text.trim());
+  }, []);
+
+  const sendMessage = useCallback((sessionId: string, text: string) => {
+    if (text.trim()) resolveReply(sessionId, text.trim());
   }, []);
 
   const openAgent = useCallback((agentId: string) => {
@@ -117,7 +123,7 @@ export const AttentionProvider: React.FC<ProviderProps> = ({
     inboxOpen, openInbox, closeInbox,
     selectedSig, setSelectedSig, moveSelection, selectedItem,
     viewLevel, setViewLevel,
-    approve, answer, reply, dismiss, snooze, openAgent,
+    approve, answer, reply, sendMessage, dismiss, snooze, openAgent,
   };
 
   return <AttentionContext.Provider value={value}>{children}</AttentionContext.Provider>;

@@ -31,14 +31,24 @@ export function registerHubCapabilities(): void {
     })),
   );
 
-  // Control: send a prompt to an agent. Only succeeds when that session is at an
-  // input prompt (claudemon enforces mode=input).
+  // Control: send a prompt to an agent. Prefers claudemon's mode-gated /message
+  // (it appends the carriage return for us). When the session isn't at an input
+  // prompt — e.g. the agent is mid-turn — /message 409s; rather than silently
+  // dropping the text (which made the remote "break" after the first message),
+  // mirror the desktop ClaudePane fallback and type straight into the PTY so
+  // follow-up messages queue into claude's input like any other keystrokes.
   registerCapability('agents.sendMessage', async (params: unknown) => {
     const { sessionId, text } = (params ?? {}) as { sessionId?: string; text?: string };
     if (!sessionId || typeof text !== 'string') {
       throw new Error('agents.sendMessage requires { sessionId, text }');
     }
-    return claudemonSessionClient.message(sessionId, text);
+    const res = await claudemonSessionClient.message(sessionId, text);
+    if (!res.ok) {
+      await claudemonSessionClient.input(sessionId, text);
+      await new Promise((r) => setTimeout(r, 50));
+      await claudemonSessionClient.input(sessionId, '\r');
+    }
+    return { ok: true };
   });
 
   // Surface an OS notification.
@@ -63,8 +73,12 @@ export function registerHubCapabilities(): void {
     return { ok: true };
   });
 
-  // Control: answer an AskUserQuestion picker. Mirrors the `claude:answer` IPC
-  // handler — pass an option index, free text, or an array of answers.
+  // Control: answer an AskUserQuestion picker. Mirrors the desktop ClaudePane
+  // handleAnswer — drive the picker by typing into the PTY rather than the
+  // mode-gated /answer endpoint, which requires mode=Question and races with
+  // concurrent hook events. claude's TUI accepts the numeric option (or free
+  // text) followed by Enter exactly like any other keystroke, so this lands
+  // reliably whether the picker arrived via PreToolUse or mid-stream.
   registerCapability('claude.answer', async (params: unknown) => {
     const { sessionId, option, text, answers } = (params ?? {}) as {
       sessionId?: string;
@@ -76,7 +90,13 @@ export function registerHubCapabilities(): void {
     if (option === undefined && text === undefined && answers === undefined) {
       throw new Error('claude.answer requires one of { option, text, answers }');
     }
-    await claudemonSessionClient.answer(sessionId, { option, text, answers });
+    if (option !== undefined) {
+      await claudemonSessionClient.input(sessionId, `${option}\r`);
+    } else if (text !== undefined) {
+      await claudemonSessionClient.input(sessionId, `${text}\r`);
+    } else if (answers) {
+      for (const a of answers) await claudemonSessionClient.input(sessionId, `${a}\r`);
+    }
     return { ok: true };
   });
 
@@ -118,6 +138,30 @@ export function registerHubCapabilities(): void {
     const { sessionId } = (params ?? {}) as { sessionId?: string };
     if (!sessionId) throw new Error('sessions.detachTerminal requires { sessionId }');
     terminalShare.stopTerminal(sessionId);
+    return { ok: true };
+  });
+
+  // Control: forward raw keystrokes from a remote terminal view into the PTY —
+  // the write-side counterpart of the pty.bytes stream. Lets a phone actually
+  // drive the terminal (type, Ctrl-C, answer raw prompts), not just watch it.
+  registerCapability('sessions.terminalInput', async (params: unknown) => {
+    const { sessionId, data } = (params ?? {}) as { sessionId?: string; data?: string };
+    if (!sessionId || typeof data !== 'string') {
+      throw new Error('sessions.terminalInput requires { sessionId, data }');
+    }
+    await claudemonSessionClient.input(sessionId, data);
+    return { ok: true };
+  });
+
+  // Control: resize the session's PTY to the remote viewer's grid so wrapping
+  // matches the phone's screen instead of the desktop pane. The PTY is shared,
+  // so this reflows the desktop too — intentional: the active driver sets size.
+  registerCapability('sessions.terminalResize', async (params: unknown) => {
+    const { sessionId, cols, rows } = (params ?? {}) as { sessionId?: string; cols?: number; rows?: number };
+    if (!sessionId || !cols || !rows) {
+      throw new Error('sessions.terminalResize requires { sessionId, cols, rows }');
+    }
+    await claudemonSessionClient.resize(sessionId, Math.round(cols), Math.round(rows));
     return { ok: true };
   });
 }

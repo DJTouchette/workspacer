@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useState } from 'react';
 import type { AgentWorkspace } from '../types/pane';
 import type { ClaudeSessionSnapshot, SessionAmbientState } from '../types/claudeSession';
 import { formatToolSummary } from './claude-shared';
+import { QuestionPicker } from './claude/QuestionPicker';
 import { useAttention } from '../contexts/AttentionContext';
 
 function fmtTokens(n: number): string {
@@ -16,6 +17,21 @@ function ctxColor(frac: number): string {
   if (frac >= 0.9) return 'var(--wks-danger, #e05555)';
   if (frac >= 0.7) return 'var(--wks-warning, #e0a000)';
   return 'var(--wks-success, #3fb950)';
+}
+function relTime(ts: number | undefined): string {
+  if (!ts) return '';
+  const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
+  if (s < 60) return `${s}s ago`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.round(h / 24)}d ago`;
+}
+function baseName(p: string | undefined): string {
+  if (!p) return '';
+  const parts = p.replace(/\/+$/, '').split('/');
+  return parts[parts.length - 1] || p;
 }
 
 interface StateVisual { color: string; label: string; pulse: boolean }
@@ -46,14 +62,14 @@ interface Props {
 }
 
 /**
- * A live, glanceable Fleet Deck tile — the "telemetry face" of one agent,
- * rendered purely from its snapshot (no live terminal at deck scale, so N
- * agents stay cheap). Border tints by ambient state and pulses when the agent
- * is blocked on you. Click pilots into the agent; quick-actions resolve the
- * common blocked case without leaving the deck.
+ * A live Fleet Deck tile — the "telemetry face" of one agent, rendered purely
+ * from its snapshot. Border tints by ambient state and pulses when the agent is
+ * blocked on you. Clicking the card body pilots into the agent; the action zone
+ * lets you resolve the common cases (approve / answer a question / drop a quick
+ * message) without ever leaving the deck.
  */
 export const AgentCard: React.FC<Props> = ({ agent, snapshot }) => {
-  const { openAgent, approve, feed } = useAttention();
+  const { openAgent, approve, answer, sendMessage, feed } = useAttention();
   const state = snapshot?.ambientState;
   const v = stateVisual(agent.sessionId ? state : undefined);
   const usage = snapshot?.usage;
@@ -63,18 +79,32 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot }) => {
   const runningSubs = (snapshot?.subagents ?? []).filter((s) => s.status === 'running').length;
   const runningWf = (snapshot?.workflows ?? []).filter((w) => w.status === 'running');
   const approvalItem = feed.find((it) => it.agentId === agent.id && it.kind === 'approval');
+  const questionItem = feed.find((it) => it.agentId === agent.id && it.kind === 'question');
+  const turns = (snapshot?.conversation ?? []).length;
 
   const working = state === 'thinking' || state === 'streaming';
   const body = working && activeTool
     ? formatToolSummary(activeTool).call
     : lastAssistant(snapshot) || (agent.sessionId ? 'No activity yet' : 'Stopped — click to respawn');
 
+  const [draft, setDraft] = useState('');
+  const submitDraft = () => {
+    if (!agent.sessionId || !draft.trim()) return;
+    sendMessage(agent.sessionId, draft.trim());
+    setDraft('');
+  };
+
+  const hasAction = !!(approvalItem || questionItem);
+  // The compose box duplicates the question picker's own text field, so hide it
+  // while a question is up to avoid two rival inputs on the same card.
+  const showCompose = !!agent.sessionId && !questionItem;
+
   return (
     <div
       onClick={() => openAgent(agent.id)}
       title={`${agent.name} — ${v.label}\n${agent.cwd}`}
       style={{
-        display: 'flex', flexDirection: 'column', minHeight: 150, cursor: 'pointer',
+        display: 'flex', flexDirection: 'column', minHeight: 230, cursor: 'pointer',
         borderRadius: 'var(--wks-radius-lg)', overflow: 'hidden',
         background: 'var(--wks-bg-surface)',
         border: `1.5px solid ${v.color}`,
@@ -86,56 +116,120 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot }) => {
       onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.transform = ''; }}
     >
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px' }}>
-        <span style={{ width: 9, height: 9, borderRadius: '50%', background: v.color, flexShrink: 0, boxShadow: state && state !== 'idle' ? `0 0 7px ${v.color}` : 'none' }} />
-        <span style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--wks-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{agent.name}</span>
-        <span style={{ marginLeft: 'auto', fontSize: '0.64rem', fontWeight: 600, color: v.color, flexShrink: 0 }}>{v.label}</span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '12px 14px 8px' }}>
+        <span style={{ width: 10, height: 10, borderRadius: '50%', background: v.color, flexShrink: 0, boxShadow: state && state !== 'idle' ? `0 0 8px ${v.color}` : 'none' }} />
+        <span style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--wks-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{agent.name}</span>
+        <span style={{ marginLeft: 'auto', fontSize: '0.7rem', fontWeight: 600, color: v.color, flexShrink: 0 }}>{v.label}</span>
+      </div>
+
+      {/* Meta line: model · turns · last activity · folder */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '0 14px 8px', fontSize: '0.66rem', color: 'var(--wks-text-faint)' }}>
+        {usage?.model && <span style={{ color: 'var(--wks-text-secondary)' }}>{usage.model.replace(/^claude-/, '')}</span>}
+        {turns > 0 && <span>· {turns} turn{turns > 1 ? 's' : ''}</span>}
+        {snapshot?.lastActivity ? <span>· {relTime(snapshot.lastActivity)}</span> : null}
+        {agent.cwd && <span style={{ marginLeft: 'auto', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '60%' }} title={agent.cwd}>{baseName(agent.cwd)}</span>}
       </div>
 
       {/* Body: current tool or last message */}
-      <div style={{ flex: 1, padding: '0 12px 8px', fontSize: '0.74rem', color: 'var(--wks-text-secondary)', lineHeight: 1.45, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical', fontFamily: working && activeTool ? 'var(--claude-mono-font, monospace)' : 'inherit' }}>
+      <div style={{ flex: 1, padding: '0 14px 10px', fontSize: '0.8rem', color: 'var(--wks-text-secondary)', lineHeight: 1.5, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: hasAction ? 3 : 6, WebkitBoxOrient: 'vertical', fontFamily: working && activeTool ? 'var(--claude-mono-font, monospace)' : 'inherit' }}>
         {body}
       </div>
 
       {/* Orchestration mini-progress */}
       {(runningSubs > 0 || runningWf.length > 0) && (
-        <div style={{ padding: '0 12px 8px', display: 'flex', gap: 8, fontSize: '0.64rem', color: 'var(--wks-accent)', fontWeight: 600 }}>
+        <div style={{ padding: '0 14px 8px', display: 'flex', gap: 10, fontSize: '0.68rem', color: 'var(--wks-accent)', fontWeight: 600 }}>
           {runningWf.length > 0 && <span>⚙ {runningWf[0].name || 'workflow'}</span>}
           {runningSubs > 0 && <span>◇ {runningSubs} subagent{runningSubs > 1 ? 's' : ''}</span>}
         </div>
       )}
 
-      {/* Footer: context bar + cost, or quick-approve when blocked */}
-      <div style={{ padding: '8px 12px', borderTop: '1px solid var(--wks-glass-border)', background: 'var(--wks-glass-strong)' }}>
-        {approvalItem ? (
-          <div style={{ display: 'flex', gap: 6 }} onClick={(e) => e.stopPropagation()}>
-            <button onClick={() => approve(approvalItem, 'yes')} style={qa('var(--wks-success, #3fb950)')}>Allow</button>
-            <button onClick={() => approve(approvalItem, 'no')} style={qa('var(--wks-error, #f87171)')}>Deny</button>
-            <button onClick={() => openAgent(agent.id)} style={{ ...qa('var(--wks-text-secondary)'), marginLeft: 'auto' }}>Open</button>
-          </div>
+      {/* Metrics: context bar + cost */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 14px 10px' }}>
+        {usage && usage.contextTokens > 0 ? (
+          <>
+            <span style={{ flex: 1, height: 5, borderRadius: 3, background: 'var(--wks-border-subtle, #2a2a2a)', overflow: 'hidden' }}>
+              <span style={{ display: 'block', height: '100%', width: `${Math.max(2, ctxFrac * 100)}%`, background: ctxColor(ctxFrac) }} />
+            </span>
+            <span style={{ fontSize: '0.64rem', color: ctxColor(ctxFrac), fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>{fmtTokens(usage.contextTokens)} · {Math.round(ctxFrac * 100)}%</span>
+            <span style={{ fontSize: '0.64rem', color: 'var(--wks-text-faint)', flexShrink: 0 }}>{fmtUSD(usage.costUSD)}</span>
+          </>
         ) : (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            {usage && usage.contextTokens > 0 ? (
-              <>
-                <span style={{ flex: 1, height: 4, borderRadius: 2, background: 'var(--wks-border-subtle, #2a2a2a)', overflow: 'hidden' }}>
-                  <span style={{ display: 'block', height: '100%', width: `${Math.max(2, ctxFrac * 100)}%`, background: ctxColor(ctxFrac) }} />
-                </span>
-                <span style={{ fontSize: '0.62rem', color: ctxColor(ctxFrac), fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>{Math.round(ctxFrac * 100)}%</span>
-                <span style={{ fontSize: '0.62rem', color: 'var(--wks-text-faint)', flexShrink: 0 }}>{fmtUSD(usage.costUSD)}</span>
-              </>
-            ) : (
-              <span style={{ fontSize: '0.62rem', color: 'var(--wks-text-faint)' }}>{usage?.model?.replace(/^claude-/, '') || ''}</span>
-            )}
-          </div>
+          <span style={{ fontSize: '0.64rem', color: 'var(--wks-text-faint)' }}>{agent.sessionId ? 'No usage yet' : ''}</span>
         )}
       </div>
+
+      {/* Action zone: approve / answer a question / compose a message */}
+      {(hasAction || showCompose) && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{ padding: '10px 14px 12px', borderTop: '1px solid var(--wks-glass-border)', background: 'var(--wks-glass-strong)', display: 'flex', flexDirection: 'column', gap: 8 }}
+        >
+          {/* Approval — yes / allow-all / no */}
+          {approvalItem && (
+            <div>
+              <div style={{ fontSize: '0.66rem', fontWeight: 600, color: 'var(--wks-warning, #e0a000)', marginBottom: 6 }}>
+                Permission: {approvalItem.title}{approvalItem.detail ? ` — ${approvalItem.detail}` : ''}
+              </div>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                <button onClick={() => approve(approvalItem, 'yes')} style={qa('var(--wks-success, #3fb950)')}>Allow</button>
+                <button onClick={() => approve(approvalItem, 'always')} style={qa('var(--wks-accent, #4a9eff)')}>Allow all</button>
+                <button onClick={() => approve(approvalItem, 'no')} style={qa('var(--wks-error, #f87171)')}>Deny</button>
+                <button onClick={() => openAgent(agent.id)} style={{ ...qa('var(--wks-text-secondary)'), marginLeft: 'auto' }}>Open</button>
+              </div>
+            </div>
+          )}
+
+          {/* Question — option buttons + custom answer (reuses the standard picker) */}
+          {questionItem && questionItem.payload.type === 'question' && (
+            <QuestionPicker
+              questions={questionItem.payload.questions}
+              onAnswer={(p) => answer(questionItem, p)}
+            />
+          )}
+
+          {/* Compose — drop a free message to the agent without leaving the deck */}
+          {showCompose && (
+            <div style={{ display: 'flex', gap: 6, alignItems: 'flex-end' }}>
+              <textarea
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitDraft(); }
+                }}
+                placeholder={`Message ${agent.name}…`}
+                rows={1}
+                style={{
+                  flex: 1, resize: 'none', minHeight: 30, maxHeight: 90, fontSize: '0.74rem',
+                  padding: '6px 9px', borderRadius: 6, lineHeight: 1.4,
+                  border: '1px solid var(--wks-glass-border)',
+                  background: 'var(--wks-bg-input, rgba(255,255,255,0.03))',
+                  color: 'var(--wks-text-primary)', outline: 'none', fontFamily: 'inherit',
+                }}
+              />
+              <button
+                onClick={submitDraft}
+                disabled={!draft.trim()}
+                style={{
+                  fontSize: '0.7rem', fontWeight: 700, fontFamily: 'inherit', padding: '6px 12px',
+                  borderRadius: 6, cursor: draft.trim() ? 'pointer' : 'default', flexShrink: 0,
+                  border: `1px solid ${draft.trim() ? 'var(--wks-accent, #4a9eff)' : 'var(--wks-glass-border)'}`,
+                  background: draft.trim() ? 'var(--wks-accent, #4a9eff)' : 'transparent',
+                  color: draft.trim() ? '#0d0d10' : 'var(--wks-text-faint)',
+                }}
+              >
+                Send
+              </button>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };
 
 function qa(color: string): React.CSSProperties {
   return {
-    fontSize: '0.66rem', fontWeight: 700, fontFamily: 'inherit', padding: '3px 12px',
-    borderRadius: 5, border: `1px solid ${color}`, background: 'transparent', color, cursor: 'pointer',
+    fontSize: '0.7rem', fontWeight: 700, fontFamily: 'inherit', padding: '4px 14px',
+    borderRadius: 6, border: `1px solid ${color}`, background: 'transparent', color, cursor: 'pointer',
   };
 }

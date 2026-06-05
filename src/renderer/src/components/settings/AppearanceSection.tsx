@@ -1,32 +1,37 @@
 import React from 'react';
 import { Config } from '../../hooks/useConfig';
 import { themes, darkTheme, toHex } from '../../themes';
-import { Section, Row, ModeButton } from './primitives';
+import { Section, Row, ModeButton, SearchableSelect } from './primitives';
 
 interface AppearanceSectionProps {
   config: Config;
   save: (partial: Partial<Config>) => Promise<Config>;
 }
 
+/** "tokyo-night" → "Tokyo Night", "ayu-dark" → "Ayu Dark". */
+function prettyThemeLabel(id: string): string {
+  return id.split('-').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+}
+
 const AppearanceSection: React.FC<AppearanceSectionProps> = ({ config, save }) => {
   const activeTheme = themes[config.ui.theme] ?? darkTheme;
   const borderHex = toHex(config.ui.borderColor || activeTheme.borderActive || activeTheme.accent);
 
+  const themeOptions = React.useMemo(
+    () => Object.entries(themes).map(([id, t]) => ({ value: id, label: prettyThemeLabel(id), swatch: t.accent })),
+    [],
+  );
+
   return (
     <Section title="Appearance">
       <Row label="Theme">
-        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-          {Object.keys(themes).map((themeName) => (
-            <ModeButton
-              key={themeName}
-              label={themeName.charAt(0).toUpperCase() + themeName.slice(1)}
-              active={config.ui.theme === themeName}
-              /* Switching theme re-adopts that theme's own corner style and
-               * border color (overrides cleared). */
-              onClick={() => save({ ui: { ...config.ui, theme: themeName, cornerStyle: '', borderColor: '' } })}
-            />
-          ))}
-        </div>
+        <SearchableSelect
+          value={config.ui.theme}
+          options={themeOptions}
+          /* Switching theme re-adopts that theme's own corner style and
+           * border color (overrides cleared). */
+          onChange={(themeName) => save({ ui: { ...config.ui, theme: themeName, cornerStyle: '', borderColor: '' } })}
+        />
       </Row>
       <Row label="Corners">
         <div style={{ display: 'flex', gap: '4px' }}>
