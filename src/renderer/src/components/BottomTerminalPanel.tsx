@@ -41,8 +41,7 @@ const BottomTerminalPanel: React.FC<Props> = ({ visible, onClose, cwd, left = SI
         borderTopRightRadius: 'var(--wks-radius-lg)',
         boxShadow: '0 -8px 28px var(--wks-shadow)',
         transform: visible ? 'translateY(0)' : 'translateY(100%)',
-        transition: 'transform 0.22s cubic-bezier(0.32, 0.72, 0, 1)',
-        willChange: 'transform',
+        // Instant open/close — no slide animation.
         pointerEvents: visible ? 'auto' : 'none',
         overflow: 'hidden',
       }}
