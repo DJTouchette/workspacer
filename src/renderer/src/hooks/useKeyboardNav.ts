@@ -73,6 +73,8 @@ interface UseKeyboardNavOptions {
   onSpawnAgent?: () => void;
   onToggleTerminal?: () => void;
   onToggleSidebar?: () => void;
+  onToggleInbox?: () => void;
+  onToggleFleet?: () => void;
   shortcuts?: Record<string, string>;
 }
 
@@ -103,6 +105,8 @@ export function useKeyboardNav({
   onNextAttention,
   onToggleTerminal,
   onToggleSidebar,
+  onToggleInbox,
+  onToggleFleet,
   onSpawnAgent,
   shortcuts = {},
 }: UseKeyboardNavOptions) {
@@ -196,6 +200,8 @@ export function useKeyboardNav({
       else if (key === 'k') onPrevAgent?.();
       else if (key === 'j') onNextAgent?.();
       else if (key === 'm') onNextAttention?.();
+      else if (key === 'i') onToggleInbox?.();
+      else if (key === 'f') onToggleFleet?.();
       else if (key === 'a') onSpawnAgent?.();
       else if (key === 'r') onRenameTab?.();
       else if (key === '?') onToggleHelp();
@@ -234,6 +240,8 @@ export function useKeyboardNav({
       if (m['spawn-agent']?.(e)) { e.preventDefault(); e.stopPropagation(); onSpawnAgent?.(); return; }
       if (m['toggle-terminal']?.(e)) { e.preventDefault(); e.stopPropagation(); onToggleTerminal?.(); return; }
       if (m['toggle-sidebar']?.(e)) { e.preventDefault(); e.stopPropagation(); onToggleSidebar?.(); return; }
+      if (m['toggle-inbox']?.(e)) { e.preventDefault(); e.stopPropagation(); onToggleInbox?.(); return; }
+      if (m['toggle-fleet']?.(e)) { e.preventDefault(); e.stopPropagation(); onToggleFleet?.(); return; }
 
       // --- Vim chord handling ---
       if (keybindingsMode === 'vim') {
@@ -348,5 +356,5 @@ export function useKeyboardNav({
       window.removeEventListener('keyup', handleKeyUp, true);
       cancelChord();
     };
-  }, [goToTab, goToPrevTab, goToNextTab, navigatePane, addTab, splitTab, removeTab, removePane, moveTab, tabs, activeTabId, activeTab, scrollToTab, onToggleHelp, onRenameTab, keybindingsMode, leaderKey, onChordStateChange, onOpenSettings, onSaveSession, onOpenCommandPalette, onOpenSplitPalette, onPrevAgent, onNextAgent, onNextAttention, onSpawnAgent]);
+  }, [goToTab, goToPrevTab, goToNextTab, navigatePane, addTab, splitTab, removeTab, removePane, moveTab, tabs, activeTabId, activeTab, scrollToTab, onToggleHelp, onRenameTab, keybindingsMode, leaderKey, onChordStateChange, onOpenSettings, onSaveSession, onOpenCommandPalette, onOpenSplitPalette, onPrevAgent, onNextAgent, onNextAttention, onSpawnAgent, onToggleInbox, onToggleFleet]);
 }

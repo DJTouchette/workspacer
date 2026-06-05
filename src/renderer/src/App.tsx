@@ -17,11 +17,14 @@ import LayoutsDialog from './components/LayoutsDialog';
 import LibraryHost from './components/LibraryHost';
 import LibrarySidePanel from './components/LibrarySidePanel';
 import BottomTerminalPanel from './components/BottomTerminalPanel';
+import InboxDrawer from './components/InboxDrawer';
+import FleetDeck from './components/FleetDeck';
+import { AttentionProvider } from './contexts/AttentionContext';
 import type { Layout, LayoutAgent } from './types/layout';
 import { useLibrary } from './hooks/useLibrary';
 import { useAgentManager, GLOBAL_WORKSPACE_ID } from './hooks/useAgentManager';
-import type { PaneType, AgentWorkspace, ViewMode } from './types/pane';
-import type { SessionAmbientState, SessionUsage } from './types/claudeSession';
+import type { PaneType, AgentWorkspace, ViewMode, ViewLevel } from './types/pane';
+import type { SessionAmbientState, SessionUsage, ClaudeSessionSnapshot } from './types/claudeSession';
 import { useKeyboardNav } from './hooks/useKeyboardNav';
 import { useConfig } from './hooks/useConfig';
 import { useTheme } from './hooks/useTheme';
@@ -165,29 +168,54 @@ function App() {
   const toggleLibraryPanel = useCallback(() => { setShowLibraryPanel((v) => !v); }, []);
 
   // Live agent status: sessionId -> ambient state, sourced from claudemon.
+  // We also promote the FULL snapshot per session into snapshotBySession — the
+  // shared substrate the Triage Inbox and Fleet Deck both project from. (App
+  // already re-renders on every status update, so storing the snapshot here is
+  // no extra render churn; it just stops throwing the rich payload away.)
   const [statusBySession, setStatusBySession] = useState<Record<string, SessionAmbientState>>({});
   const [usageBySession, setUsageBySession] = useState<Record<string, SessionUsage>>({});
+  const [snapshotBySession, setSnapshotBySession] = useState<Record<string, ClaudeSessionSnapshot>>({});
   useEffect(() => {
     let cancelled = false;
     window.electronAPI.getAllClaudeSessions().then((sessions: any[]) => {
       if (cancelled) return;
       const map: Record<string, SessionAmbientState> = {};
       const usage: Record<string, SessionUsage> = {};
+      const snaps: Record<string, ClaudeSessionSnapshot> = {};
       for (const s of sessions) {
         map[s.sessionId] = s.ambientState;
         if (s.usage) usage[s.sessionId] = s.usage;
+        snaps[s.sessionId] = s;
       }
       setStatusBySession(map);
       setUsageBySession(usage);
+      setSnapshotBySession(snaps);
     }).catch(() => {});
     const unsub = window.electronAPI.onClaudeSessionUpdate((sessionId: string, snapshot: any) => {
       setStatusBySession((prev) => ({ ...prev, [sessionId]: snapshot.ambientState }));
       if (snapshot.usage) {
         setUsageBySession((prev) => ({ ...prev, [sessionId]: snapshot.usage }));
       }
+      setSnapshotBySession((prev) => ({ ...prev, [sessionId]: snapshot }));
     });
     return () => { cancelled = true; unsub(); };
   }, []);
+
+  // Mission Control surfaces: the Triage Inbox (a top-level drawer) and the
+  // Fleet Deck (a cross-agent radar, a global altitude orthogonal to viewMode).
+  const [inboxOpen, setInboxOpen] = useState(false);
+  const openInbox = useCallback(() => setInboxOpen(true), []);
+  const closeInbox = useCallback(() => setInboxOpen(false), []);
+  const toggleInbox = useCallback(() => setInboxOpen((v) => !v), []);
+
+  // Altitude: 'piloting' (inside one agent) vs 'fleet' (the cross-agent deck).
+  const viewLevel: ViewLevel = config.panes?.viewLevel === 'fleet' ? 'fleet' : 'piloting';
+  const setViewLevel = useCallback((next: ViewLevel) => {
+    saveConfig({ panes: { ...config.panes, viewLevel: next } });
+  }, [config.panes, saveConfig]);
+  const toggleFleet = useCallback(() => {
+    setViewLevel(viewLevel === 'fleet' ? 'piloting' : 'fleet');
+  }, [viewLevel, setViewLevel]);
 
   const handleUrlChange = useCallback((tabId: string, paneId: string, url: string) => {
     updatePaneUrl(tabId, paneId, url);
@@ -455,8 +483,20 @@ function App() {
     onSpawnAgent: handleSpawnAgentShortcut,
     onToggleTerminal: useCallback(() => setShowBottomTerminal((v) => !v), []),
     onToggleSidebar: useCallback(() => setSidebarCollapsed((v) => !v), []),
+    onToggleInbox: toggleInbox,
+    onToggleFleet: toggleFleet,
     shortcuts: config.keybindings?.shortcuts ?? {},
   });
+
+  // Escape exits the Fleet Deck back to piloting (when the inbox isn't capturing).
+  useEffect(() => {
+    if (viewLevel !== 'fleet') return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !inboxOpen) { e.preventDefault(); setViewLevel('piloting'); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [viewLevel, inboxOpen, setViewLevel]);
 
   const handleTabClick = useCallback((id: string) => {
     setActiveTabId(id);
@@ -626,6 +666,17 @@ function App() {
   );
 
   return (
+    <AttentionProvider
+      agents={agents}
+      activeAgentId={activeAgentId}
+      snapshotBySession={snapshotBySession}
+      inboxOpen={inboxOpen}
+      openInbox={openInbox}
+      closeInbox={closeInbox}
+      viewLevel={viewLevel}
+      setViewLevel={setViewLevel}
+      onOpenAgent={handleSelectAgent}
+    >
     <div className="app-root">
       {!sidebarCollapsed && (
         <SideBar
@@ -638,6 +689,9 @@ function App() {
           onTerminateAgent={terminateAgent}
           onRenameAgent={renameAgent}
           onJumpToAttention={goToNextAttention}
+          onOpenInbox={openInbox}
+          onToggleFleet={toggleFleet}
+          viewLevel={viewLevel}
           onOpenRemote={() => setShowRemote(true)}
           onToggleCollapse={() => setSidebarCollapsed(true)}
         />
@@ -856,7 +910,17 @@ function App() {
           -- CMD --
         </div>
       )}
+
+      {/* Fleet Deck — cross-agent radar overlay. Sits OVER the still-mounted
+          per-agent workspaces, so entering/leaving never remounts a pane. */}
+      {viewLevel === 'fleet' && agents.some((a) => !a.global) && (
+        <FleetDeck top={navHeight + 8} left={contentLeft} />
+      )}
+
+      {/* Triage Inbox — top-level drawer, reachable from any agent. */}
+      <InboxDrawer />
     </div>
+    </AttentionProvider>
   );
 }
 

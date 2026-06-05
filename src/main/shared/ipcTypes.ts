@@ -192,6 +192,7 @@ export interface AppConfig {
     insertPosition: string;
     tabPosition: string;
     viewMode: string;
+    viewLevel?: string;
     default: Array<{ id: string; type: string; title: string; width: number; order: number }>;
   };
   keybindings: {

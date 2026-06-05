@@ -52,6 +52,12 @@ export interface TabConfig {
  *  - 'stacked':  cards in a vertical feed (natural order); wraps top↔bottom */
 export type ViewMode = 'tabs' | 'spatial' | 'stacked';
 
+/** Altitude of the workspace, orthogonal to {@link ViewMode}. Global
+ *  (config.panes.viewLevel).
+ *  - 'piloting': you're inside one agent's workspace (the classic view)
+ *  - 'fleet':    the Fleet Deck — a cross-agent radar of live agent cards */
+export type ViewLevel = 'fleet' | 'piloting';
+
 /**
  * An agent workspace = one long-lived Claude Code (claudemon) session plus its
  * own set of tabs/panes. The session is identified by `cwd` (+ optional name)

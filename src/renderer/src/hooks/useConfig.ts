@@ -38,6 +38,8 @@ export interface PanesConfig {
   tabPosition: 'top' | 'left';
   /** Global layout paradigm: 'tabs' strip, 'spatial' canvas, or 'stacked' feed. */
   viewMode: 'tabs' | 'spatial' | 'stacked';
+  /** Global altitude: 'piloting' one agent, or the cross-agent 'fleet' deck. */
+  viewLevel?: 'fleet' | 'piloting';
   default: Array<{ id: string; type: string; title: string; width: number; order: number }>;
 }
 
@@ -120,6 +122,7 @@ export const DEFAULT_CONFIG: Config = {
     insertPosition: 'after',
     tabPosition: 'top',
     viewMode: 'tabs',
+    viewLevel: 'piloting',
     default: [],
   },
   browser: {
@@ -141,6 +144,8 @@ export const DEFAULT_CONFIG: Config = {
       'library-picker': 'ctrl+l',
       'toggle-terminal': 'ctrl+`',
       'toggle-sidebar': 'ctrl+b',
+      'toggle-inbox': 'ctrl+shift+a',
+      'toggle-fleet': 'ctrl+shift+f',
       'settings': 'ctrl+,',
       'save-session': 'ctrl+s',
       'rename-tab': 'f2',

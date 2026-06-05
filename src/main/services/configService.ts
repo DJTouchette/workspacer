@@ -60,6 +60,7 @@ interface Config {
     insertPosition: string;
     tabPosition: string; // 'top' | 'left'
     viewMode: string; // 'tabs' | 'spatial' | 'stacked'
+    viewLevel?: string; // 'piloting' | 'fleet'
     default: Array<{ id: string; type: string; title: string; width: number; order: number }>;
   };
   keybindings: {
@@ -156,6 +157,7 @@ function defaultConfig(): Config {
       insertPosition: 'after',
       tabPosition: 'top',
       viewMode: 'tabs',
+      viewLevel: 'piloting',
       default: [
         { id: 'terminal-1', type: 'terminal', title: 'Terminal 1', width: 800, order: 0 },
         { id: 'terminal-2', type: 'terminal', title: 'Terminal 2', width: 800, order: 1 },
@@ -177,6 +179,8 @@ function defaultConfig(): Config {
         'library-picker': 'ctrl+l',
         'toggle-terminal': 'ctrl+`',
         'toggle-sidebar': 'ctrl+b',
+        'toggle-inbox': 'ctrl+shift+a',
+        'toggle-fleet': 'ctrl+shift+f',
         'settings': 'ctrl+,',
         'save-session': 'ctrl+s',
         'rename-tab': 'f2',

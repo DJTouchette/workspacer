@@ -1,0 +1,148 @@
+import React, { useEffect, useRef } from 'react';
+import { useAttention } from '../contexts/AttentionContext';
+import { AttentionCard } from './attention/AttentionCard';
+import { SNOOZE_MINUTES } from '../contexts/AttentionContext';
+
+const DRAWER_WIDTH = 440;
+
+/**
+ * The Triage Inbox — a top-level right-side drawer reachable from ANY agent
+ * (not buried in a workspace). It is a pure projection of the attention feed:
+ * zero live panes, so it can never remount a terminal/webview/Claude viewer.
+ * You clear it top-down like email; resolution happens in place via the
+ * by-sessionId actions on AttentionContext.
+ */
+const InboxDrawer: React.FC = () => {
+  const {
+    inboxOpen, closeInbox, feed, counts,
+    selectedItem, moveSelection, setSelectedSig,
+    approve, answer, dismiss, snooze, openAgent,
+  } = useAttention();
+  const listRef = useRef<HTMLDivElement>(null);
+
+  // Keep the selected card scrolled into view as you j/k through the feed.
+  useEffect(() => {
+    if (!inboxOpen || !selectedItem) return;
+    const el = listRef.current?.querySelector(`[data-attention-sig="${selectedItem.signature}"]`);
+    el?.scrollIntoView({ block: 'nearest' });
+  }, [inboxOpen, selectedItem]);
+
+  // Keyboard triage — only while the drawer is open and you're not typing into
+  // an input (e.g. the question picker's custom-answer field).
+  useEffect(() => {
+    if (!inboxOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) {
+        if (e.key === 'Escape') (t as HTMLInputElement).blur();
+        return;
+      }
+      const it = selectedItem;
+      const stop = () => { e.preventDefault(); e.stopPropagation(); };
+
+      if (e.key === 'Escape') { stop(); closeInbox(); return; }
+      if (e.key === 'j' || e.key === 'ArrowDown') { stop(); moveSelection(1); return; }
+      if (e.key === 'k' || e.key === 'ArrowUp') { stop(); moveSelection(-1); return; }
+      if (!it) return;
+
+      if (e.key === 'o') { stop(); openAgent(it.agentId); return; }
+      if (e.key === 'e') { stop(); dismiss(it.signature); return; }
+      if (e.key === 's') { stop(); snooze(it.signature, SNOOZE_MINUTES); return; }
+
+      if (it.payload.type === 'approval') {
+        if (e.key === 'y' || e.key === 'Enter') { stop(); approve(it, 'yes'); return; }
+        if (e.key === 'n') { stop(); approve(it, 'no'); return; }
+      }
+      if (it.payload.type === 'question') {
+        const n = parseInt(e.key, 10);
+        if (n >= 1 && n <= 9 && n <= (it.payload.questions[0]?.options.length ?? 0)) {
+          stop(); answer(it, { option: n }); return;
+        }
+        if (e.key === 'Enter') { stop(); openAgent(it.agentId); return; }
+      }
+      if (it.payload.type === 'summary' && e.key === 'Enter') { stop(); openAgent(it.agentId); return; }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [inboxOpen, selectedItem, moveSelection, closeInbox, openAgent, dismiss, snooze, approve, answer]);
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div
+        onClick={closeInbox}
+        style={{
+          position: 'fixed', inset: 0, zIndex: 300,
+          background: 'rgba(0,0,0,0.28)',
+          opacity: inboxOpen ? 1 : 0,
+          pointerEvents: inboxOpen ? 'auto' : 'none',
+          transition: 'opacity 0.16s ease',
+        }}
+      />
+      <div
+        style={{
+          position: 'fixed', top: 0, right: 0, bottom: 0, width: DRAWER_WIDTH, maxWidth: '92vw',
+          zIndex: 301, display: 'flex', flexDirection: 'column',
+          background: 'var(--wks-glass-strong)',
+          backdropFilter: 'blur(var(--wks-glass-blur)) saturate(160%)',
+          WebkitBackdropFilter: 'blur(var(--wks-glass-blur)) saturate(160%)',
+          borderLeft: '1px solid var(--wks-glass-border)',
+          boxShadow: '-12px 0 40px var(--wks-shadow)',
+          transform: inboxOpen ? 'translateX(0)' : 'translateX(100%)',
+          transition: 'transform 0.18s cubic-bezier(0.32, 0.72, 0, 1)',
+        }}
+      >
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px 10px' }}>
+          <div style={{ fontSize: '0.95rem', fontWeight: 800, color: 'var(--wks-text-primary)', letterSpacing: '-0.01em' }}>Inbox</div>
+          {counts.needsYou > 0 ? (
+            <span style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--wks-warning, #e0a000)' }}>{counts.needsYou} need you</span>
+          ) : counts.total > 0 ? (
+            <span style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--wks-success, #3fb950)' }}>{counts.total} to review</span>
+          ) : (
+            <span style={{ fontSize: '0.72rem', color: 'var(--wks-text-faint)' }}>all clear</span>
+          )}
+          <div style={{ flex: 1 }} />
+          <button onClick={closeInbox} title="Close (Esc)" style={closeBtn}>✕</button>
+        </div>
+
+        {/* Hint strip */}
+        <div style={{ padding: '0 16px 10px', fontSize: '0.62rem', color: 'var(--wks-text-faint)', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <Hint k="j/k" t="move" /><Hint k="y/n" t="approve" /><Hint k="1-9" t="answer" /><Hint k="o" t="open" /><Hint k="e" t="dismiss" /><Hint k="s" t="snooze" />
+        </div>
+
+        {/* Feed */}
+        <div ref={listRef} style={{ flex: 1, overflowY: 'auto', padding: '4px 14px 18px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {feed.length === 0 ? (
+            <div style={{ marginTop: 64, textAlign: 'center', color: 'var(--wks-text-faint)' }}>
+              <div style={{ fontSize: '2rem', marginBottom: 8 }}>✓</div>
+              <div style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--wks-text-secondary)' }}>Inbox zero</div>
+              <div style={{ fontSize: '0.72rem', marginTop: 4, lineHeight: 1.5, maxWidth: 240, marginInline: 'auto' }}>
+                No agent needs you right now. Approvals, questions, and finished runs will surface here.
+              </div>
+            </div>
+          ) : (
+            feed.map((it) => (
+              <AttentionCard key={it.signature} item={it} selected={selectedItem?.signature === it.signature} />
+            ))
+          )}
+        </div>
+      </div>
+    </>
+  );
+};
+
+const closeBtn: React.CSSProperties = {
+  width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center',
+  border: '1px solid var(--wks-glass-border)', borderRadius: 6, cursor: 'pointer',
+  background: 'var(--wks-bg-surface)', color: 'var(--wks-text-secondary)', fontSize: '0.8rem', lineHeight: 1,
+};
+
+const Hint: React.FC<{ k: string; t: string }> = ({ k, t }) => (
+  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+    <kbd style={{ fontSize: '0.58rem', color: 'var(--wks-text-secondary)', border: '1px solid var(--wks-glass-border)', borderRadius: 3, padding: '0 4px', fontFamily: 'monospace' }}>{k}</kbd>
+    <span>{t}</span>
+  </span>
+);
+
+export default InboxDrawer;

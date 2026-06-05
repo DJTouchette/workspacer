@@ -50,6 +50,12 @@ interface SideBarProps {
   onRenameAgent: (id: string, name: string) => void;
   /** Jump to the next agent blocked on the user (approval / input). */
   onJumpToAttention?: () => void;
+  /** Open the Triage Inbox drawer. */
+  onOpenInbox?: () => void;
+  /** Toggle the Fleet Deck (cross-agent radar). */
+  onToggleFleet?: () => void;
+  /** Current altitude — highlights the Fleet button when active. */
+  viewLevel?: 'fleet' | 'piloting';
   /** Open the remote-control (phone sharing) panel. */
   onOpenRemote?: () => void;
   /** Collapse the sidebar (so panes take the full width). */
@@ -66,6 +72,9 @@ const SideBar: React.FC<SideBarProps> = ({
   onTerminateAgent,
   onRenameAgent,
   onJumpToAttention,
+  onOpenInbox,
+  onToggleFleet,
+  viewLevel,
   onOpenRemote,
   onToggleCollapse,
 }) => {
@@ -137,11 +146,11 @@ const SideBar: React.FC<SideBarProps> = ({
         <span>Agents</span>
         {needYouCount > 0 && (
           <span
-            onClick={onJumpToAttention}
-            title="Jump to the next agent that needs you"
+            onClick={onOpenInbox ?? onJumpToAttention}
+            title="Open the Triage Inbox"
             style={{
               color: 'var(--wks-warning, #e0a000)',
-              cursor: onJumpToAttention ? 'pointer' : 'default',
+              cursor: (onOpenInbox ?? onJumpToAttention) ? 'pointer' : 'default',
               letterSpacing: 0,
               textTransform: 'none',
               fontWeight: 600,
@@ -173,6 +182,31 @@ const SideBar: React.FC<SideBarProps> = ({
             }}
           >«</button>
         )}
+      </div>
+
+      {/* Mission Control: the cross-agent surfaces — always reachable. */}
+      <div style={{ display: 'flex', gap: 6, padding: '2px 6px 6px' }}>
+        <button
+          onClick={onOpenInbox}
+          title="Triage Inbox (Ctrl+Shift+A)"
+          style={mcBtnStyle(false)}
+        >
+          <span>Inbox</span>
+          {needYouCount > 0 && (
+            <span style={{
+              marginLeft: 'auto', minWidth: 16, height: 16, padding: '0 4px', borderRadius: 8,
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              background: 'var(--wks-warning, #e0a000)', color: '#1a1a1a', fontSize: '0.6rem', fontWeight: 700,
+            }}>{needYouCount}</span>
+          )}
+        </button>
+        <button
+          onClick={onToggleFleet}
+          title="Fleet Deck (Ctrl+Shift+F)"
+          style={mcBtnStyle(viewLevel === 'fleet')}
+        >
+          Fleet
+        </button>
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px', padding: '2px 0' }}>
@@ -364,6 +398,18 @@ const SideBar: React.FC<SideBarProps> = ({
     </div>
   );
 };
+
+function mcBtnStyle(active: boolean): React.CSSProperties {
+  return {
+    flex: 1, display: 'flex', alignItems: 'center', gap: 6,
+    padding: '6px 10px', borderRadius: 'var(--wks-radius-md)', cursor: 'pointer',
+    fontSize: '0.72rem', fontFamily: 'inherit', fontWeight: 600,
+    border: `1px solid ${active ? 'var(--wks-accent)' : 'var(--wks-glass-border)'}`,
+    background: active ? 'var(--wks-bg-selected)' : 'var(--wks-bg-surface)',
+    color: active ? 'var(--wks-text-primary)' : 'var(--wks-text-secondary)',
+    boxSizing: 'border-box',
+  };
+}
 
 function SideMenuItem({ label, onClick, danger }: { label: string; onClick: () => void; danger?: boolean }) {
   return (
