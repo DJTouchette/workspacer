@@ -31,14 +31,24 @@ export function registerHubCapabilities(): void {
     })),
   );
 
-  // Control: send a prompt to an agent. Only succeeds when that session is at an
-  // input prompt (claudemon enforces mode=input).
+  // Control: send a prompt to an agent. Prefers claudemon's mode-gated /message
+  // (it appends the carriage return for us). When the session isn't at an input
+  // prompt — e.g. the agent is mid-turn — /message 409s; rather than silently
+  // dropping the text (which made the remote "break" after the first message),
+  // mirror the desktop ClaudePane fallback and type straight into the PTY so
+  // follow-up messages queue into claude's input like any other keystrokes.
   registerCapability('agents.sendMessage', async (params: unknown) => {
     const { sessionId, text } = (params ?? {}) as { sessionId?: string; text?: string };
     if (!sessionId || typeof text !== 'string') {
       throw new Error('agents.sendMessage requires { sessionId, text }');
     }
-    return claudemonSessionClient.message(sessionId, text);
+    const res = await claudemonSessionClient.message(sessionId, text);
+    if (!res.ok) {
+      await claudemonSessionClient.input(sessionId, text);
+      await new Promise((r) => setTimeout(r, 50));
+      await claudemonSessionClient.input(sessionId, '\r');
+    }
+    return { ok: true };
   });
 
   // Surface an OS notification.
@@ -63,8 +73,12 @@ export function registerHubCapabilities(): void {
     return { ok: true };
   });
 
-  // Control: answer an AskUserQuestion picker. Mirrors the `claude:answer` IPC
-  // handler — pass an option index, free text, or an array of answers.
+  // Control: answer an AskUserQuestion picker. Mirrors the desktop ClaudePane
+  // handleAnswer — drive the picker by typing into the PTY rather than the
+  // mode-gated /answer endpoint, which requires mode=Question and races with
+  // concurrent hook events. claude's TUI accepts the numeric option (or free
+  // text) followed by Enter exactly like any other keystroke, so this lands
+  // reliably whether the picker arrived via PreToolUse or mid-stream.
   registerCapability('claude.answer', async (params: unknown) => {
     const { sessionId, option, text, answers } = (params ?? {}) as {
       sessionId?: string;
@@ -76,7 +90,13 @@ export function registerHubCapabilities(): void {
     if (option === undefined && text === undefined && answers === undefined) {
       throw new Error('claude.answer requires one of { option, text, answers }');
     }
-    await claudemonSessionClient.answer(sessionId, { option, text, answers });
+    if (option !== undefined) {
+      await claudemonSessionClient.input(sessionId, `${option}\r`);
+    } else if (text !== undefined) {
+      await claudemonSessionClient.input(sessionId, `${text}\r`);
+    } else if (answers) {
+      for (const a of answers) await claudemonSessionClient.input(sessionId, `${a}\r`);
+    }
     return { ok: true };
   });
 

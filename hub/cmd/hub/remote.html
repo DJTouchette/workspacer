@@ -234,20 +234,32 @@
     } catch (e) { /* shown via connection state */ }
   }
 
+  // The hub reports claude's ambient state verbatim: idle | thinking | streaming
+  // | waiting_input | waiting_approval. (Older 'input'/'running'/'waiting'/'error'
+  // aliases are kept so a stale client still colours correctly.)
   function badgeClass(state) {
     const s = (state || '').toLowerCase();
-    if (s === 'input' || s === 'waiting') return 'waiting';
-    if (s === 'thinking' || s === 'running') return 'thinking';
+    if (s === 'waiting_approval' || s === 'waiting_input' || s === 'input' || s === 'waiting') return 'waiting';
+    if (s === 'thinking' || s === 'streaming' || s === 'running') return 'thinking';
     if (s === 'error') return 'error';
     return 'done';
   }
+  function stateLabel(state) {
+    const s = (state || '').toLowerCase();
+    if (s === 'waiting_approval') return 'needs approval';
+    if (s === 'waiting_input' || s === 'input' || s === 'waiting') return 'needs you';
+    if (s === 'streaming') return 'working';
+    if (s === 'thinking') return 'thinking';
+    if (s === 'idle' || s === 'done' || !s) return 'idle';
+    return state;
+  }
   function isWaiting(state) {
     const s = (state || '').toLowerCase();
-    return s === 'input' || s === 'waiting' || s === 'error';
+    return s === 'waiting_approval' || s === 'waiting_input' || s === 'input' || s === 'waiting' || s === 'error';
   }
   function isBusy(state) {
     const s = (state || '').toLowerCase();
-    return s === 'thinking' || s === 'running' || s === 'streaming';
+    return s === 'thinking' || s === 'streaming' || s === 'running';
   }
 
   // ── rendering ──────────────────────────────────────────────────────────
@@ -283,7 +295,7 @@
             <div class="cwd">${esc(shortCwd(s.cwd))}</div>
             <div class="meta">${esc(s.model || 'claude')}${ctx}${cost}</div>
           </div>
-          <span class="badge ${badgeClass(s.state)}">${esc(s.state || 'idle')}</span>
+          <span class="badge ${badgeClass(s.state)}">${esc(stateLabel(s.state))}</span>
         </div>
         ${preview ? `<div class="preview">${preview}</div>` : ''}`;
       card.onclick = () => openChat(s.sessionId);
@@ -321,9 +333,10 @@
       if (!text) return;
       const s = sessions.get(sessionId);
       // If the agent is asking a question, answer it; otherwise send a message.
-      const method = s && isWaiting(s.state) && s.pendingQuestions && s.pendingQuestions.length
-        ? 'claude.answer' : 'agents.sendMessage';
-      doCall(method, { sessionId, text }, 'Sent');
+      const answering = !!(s && s.pendingQuestions && s.pendingQuestions.length);
+      const method = answering ? 'claude.answer' : 'agents.sendMessage';
+      echoUser(text); // optimistic bubble — survives until the real turn lands
+      doCall(method, { sessionId, text }, answering ? 'Answered' : 'Sent');
       input.value = '';
     };
     $('chatSend').onclick = send;
@@ -425,6 +438,13 @@
     const s = sessions.get(view.sessionId);
     titleEl.textContent = s ? shortCwd(s.cwd) : 'session ended';
     renderAsk(s);
+    // Composer adapts to what the agent needs: answering a question vs chatting.
+    const input = $('chatInput'), sendBtn = $('chatSend');
+    if (input && sendBtn) {
+      const asking = !!(s && s.pendingQuestions && s.pendingQuestions.length);
+      input.placeholder = asking ? 'type your answer…' : 'message…';
+      sendBtn.textContent = asking ? 'Answer' : 'Send';
+    }
     // Typing indicator lives in #msgs; re-stamp it on every state change.
     const msgs = $('msgs');
     if (msgs) {
@@ -480,6 +500,22 @@
         { sessionId: s.sessionId, option: Number(btn.dataset.i) }, 'Answered');
     }
     maybeScroll();
+  }
+
+  // Optimistically show the just-sent text as a user bubble. loadTranscript only
+  // wipes #msgs when the transcript actually changes, so this bubble stays put
+  // until the real turn round-trips through claudemon, then gets replaced.
+  function echoUser(text) {
+    const msgs = $('msgs');
+    if (!msgs) return;
+    const empty = msgs.querySelector('.empty');
+    if (empty) empty.remove();
+    const el = document.createElement('div');
+    el.className = 'msg user';
+    el.innerHTML = mdLite(text);
+    const typing = msgs.querySelector('.typing');
+    if (typing) msgs.insertBefore(el, typing); else msgs.appendChild(el);
+    maybeScroll(true);
   }
 
   async function loadTranscript() {
