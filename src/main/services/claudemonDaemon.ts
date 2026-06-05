@@ -11,11 +11,12 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { spawn, ChildProcess, execSync } from 'child_process';
+import { spawn, ChildProcess } from 'child_process';
 import { app } from 'electron';
+import { killStaleListener, waitForHealth as waitForHealthShared, PORTS } from '../lib/daemonUtils';
 
-const HOOK_PORT = 7890;
-const API_PORT = 7891;
+const HOOK_PORT = PORTS.claudemonHook;
+const API_PORT = PORTS.claudemonApi;
 const HEALTH_TIMEOUT_MS = 5000;
 
 let child: ChildProcess | null = null;
@@ -34,48 +35,6 @@ export function claudemonBinaryPath(): string {
   return path.join(process.resourcesPath, 'claudemon', exeName());
 }
 
-/** Kill any process listening on the daemon's ports (stale Workspacer instance). */
-function killStaleListener(port: number): void {
-  try {
-    if (process.platform === 'win32') {
-      const out = execSync(`netstat -ano | findstr "127.0.0.1:${port}"`, { encoding: 'utf-8', timeout: 3000 });
-      const match = out.match(/LISTENING\s+(\d+)/);
-      if (match) {
-        const pid = parseInt(match[1], 10);
-        if (pid && pid !== process.pid) {
-          console.log(`[claudemon] killing stale listener on :${port} pid=${pid}`);
-          execSync(`taskkill /F /PID ${pid}`, { timeout: 3000 });
-        }
-      }
-    } else {
-      const out = execSync(`lsof -ti :${port}`, { encoding: 'utf-8', timeout: 3000 });
-      for (const line of out.trim().split('\n')) {
-        const pid = parseInt(line, 10);
-        if (pid && pid !== process.pid) {
-          console.log(`[claudemon] killing stale listener on :${port} pid=${pid}`);
-          process.kill(pid, 'SIGTERM');
-        }
-      }
-    }
-  } catch {
-    // No listener, or we don't have rights — let the daemon try anyway.
-  }
-}
-
-async function waitForHealth(): Promise<void> {
-  const deadline = Date.now() + HEALTH_TIMEOUT_MS;
-  let lastErr: unknown = null;
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(`http://127.0.0.1:${API_PORT}/health`);
-      if (res.ok) return;
-    } catch (err) {
-      lastErr = err;
-    }
-    await new Promise(r => setTimeout(r, 100));
-  }
-  throw new Error(`claudemon /health did not respond within ${HEALTH_TIMEOUT_MS}ms (last error: ${String(lastErr)})`);
-}
 
 /** Spawn the daemon. Idempotent — repeat calls return the existing ready promise. */
 export function startClaudemon(): Promise<void> {
@@ -86,8 +45,8 @@ export function startClaudemon(): Promise<void> {
     return Promise.reject(new Error(`claudemon binary not found at ${bin}`));
   }
 
-  killStaleListener(HOOK_PORT);
-  killStaleListener(API_PORT);
+  killStaleListener(HOOK_PORT, 'claudemon');
+  killStaleListener(API_PORT, 'claudemon');
 
   console.log(`[claudemon] spawning ${bin}`);
   child = spawn(bin, ['serve', '--hook-port', String(HOOK_PORT), '--api-port', String(API_PORT)], {
@@ -104,7 +63,7 @@ export function startClaudemon(): Promise<void> {
     readyPromise = null;
   });
 
-  readyPromise = waitForHealth();
+  readyPromise = waitForHealthShared(`http://127.0.0.1:${API_PORT}/health`, HEALTH_TIMEOUT_MS, 'claudemon');
   return readyPromise;
 }
 

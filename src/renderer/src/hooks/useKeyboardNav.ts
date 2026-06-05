@@ -1,12 +1,13 @@
 import { useEffect, useCallback, useRef } from 'react';
 import { PaneType, TabConfig } from '../types/pane';
+import { tilingColumns } from '../lib/layoutUtils';
 
 const CHORD_TIMEOUT = 500;
 
 type ChordState = 'idle' | 'waiting';
 
 const MODIFIER_NAMES = new Set(['ctrl', 'alt', 'shift', 'meta']);
-const KEY_TO_CODE: Record<string, string> = { space: 'Space' };
+const KEY_TO_CODE: Record<string, string> = { space: 'Space', '`': 'Backquote' };
 
 function parseKeyCombo(combo: string): { match: (e: KeyboardEvent) => boolean; isModifierOnly: boolean } {
   const parts = combo.toLowerCase().split('+');
@@ -70,6 +71,8 @@ interface UseKeyboardNavOptions {
   onNextAgent?: () => void;
   onNextAttention?: () => void;
   onSpawnAgent?: () => void;
+  onToggleTerminal?: () => void;
+  onToggleSidebar?: () => void;
   shortcuts?: Record<string, string>;
 }
 
@@ -98,6 +101,8 @@ export function useKeyboardNav({
   onPrevAgent,
   onNextAgent,
   onNextAttention,
+  onToggleTerminal,
+  onToggleSidebar,
   onSpawnAgent,
   shortcuts = {},
 }: UseKeyboardNavOptions) {
@@ -136,7 +141,7 @@ export function useKeyboardNav({
     if (currentIdx < 0) return;
 
     const count = panes.length;
-    const cols = count <= 1 ? 1 : count <= 2 ? 2 : count <= 4 ? 2 : count <= 6 ? 3 : Math.ceil(Math.sqrt(count));
+    const cols = tilingColumns(count);
     let targetIdx = currentIdx;
 
     if (direction === 'left') targetIdx = currentIdx - 1;
@@ -227,6 +232,8 @@ export function useKeyboardNav({
       if (m['next-agent']?.(e)) { e.preventDefault(); e.stopPropagation(); onNextAgent?.(); return; }
       if (m['next-attention']?.(e)) { e.preventDefault(); e.stopPropagation(); onNextAttention?.(); return; }
       if (m['spawn-agent']?.(e)) { e.preventDefault(); e.stopPropagation(); onSpawnAgent?.(); return; }
+      if (m['toggle-terminal']?.(e)) { e.preventDefault(); e.stopPropagation(); onToggleTerminal?.(); return; }
+      if (m['toggle-sidebar']?.(e)) { e.preventDefault(); e.stopPropagation(); onToggleSidebar?.(); return; }
 
       // --- Vim chord handling ---
       if (keybindingsMode === 'vim') {

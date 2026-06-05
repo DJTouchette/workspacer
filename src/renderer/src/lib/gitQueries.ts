@@ -19,10 +19,10 @@ export interface GitStatus {
   files: FileStatus[];
 }
 
-const DEFAULT_BASE = 'http://127.0.0.1:7891';
+import { CLAUDEMON_API_BASE } from './claudemonBase';
 
 export class GitClient {
-  constructor(private readonly baseUrl: string = DEFAULT_BASE) {}
+  constructor(private readonly baseUrl: string = CLAUDEMON_API_BASE) {}
 
   async status(cwd: string): Promise<GitStatus> {
     const url = `${this.baseUrl}/git/status?cwd=${encodeURIComponent(cwd)}`;

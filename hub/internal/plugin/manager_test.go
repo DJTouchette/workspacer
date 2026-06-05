@@ -2,6 +2,8 @@ package plugin
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -59,6 +61,43 @@ func TestManagerMetadataOnlyPlugin(t *testing.T) {
 	cap.waitFor(t, "plugin.unloaded")
 	if len(m.List()) != 0 {
 		t.Fatal("List should be empty after Remove")
+	}
+}
+
+// TestManagerRemoveReturnsDir verifies that Remove returns the plugin dir
+// atomically — i.e. the caller never needs an extra List() call, which would
+// open a TOCTOU window if a concurrent Remove raced between List and Remove.
+func TestManagerRemoveReturnsDir(t *testing.T) {
+	cap := newCapture()
+	m := NewManager(cap)
+
+	// Create a real temp dir so we can also verify RemoveAll works in the
+	// handler pattern (not done here, but the dir path must be non-empty).
+	tmp := t.TempDir()
+	pluginDir := filepath.Join(tmp, "acme.widget")
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	mf := Manifest{ID: "acme.widget", APIVersion: "1", Dir: pluginDir}
+	m.Add(mf)
+	cap.waitFor(t, "plugin.loaded")
+
+	// Remove must return the dir in one atomic step.
+	got := m.Remove("acme.widget")
+	if got != pluginDir {
+		t.Fatalf("Remove returned dir=%q, want %q", got, pluginDir)
+	}
+	cap.waitFor(t, "plugin.unloaded")
+
+	// A second Remove on the same id (already gone) must return "".
+	if got2 := m.Remove("acme.widget"); got2 != "" {
+		t.Fatalf("second Remove returned %q, want empty string", got2)
+	}
+
+	// List is now empty.
+	if lst := m.List(); len(lst) != 0 {
+		t.Fatalf("List after Remove = %+v, want empty", lst)
 	}
 }
 

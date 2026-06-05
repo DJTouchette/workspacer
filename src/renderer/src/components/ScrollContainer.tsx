@@ -4,6 +4,7 @@ import { PaneConfig, PaneType, TabConfig, CanvasRect, ViewMode } from '../types/
 import TerminalPane from '../panes/TerminalPane';
 import ClaudePane from '../panes/ClaudePane';
 import { useConfig } from '../hooks/useConfig';
+import { tilingColumns } from '../lib/layoutUtils';
 
 // Lazy-load pane types that aren't needed on initial render
 const BrowserPane = React.lazy(() => import('../panes/BrowserPane'));
@@ -39,42 +40,12 @@ function defaultCanvas(index: number): CanvasRect {
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
-// --- Timeline (vertical activity feed) constants ------------------------------
-const TL_GUTTER = 96;   // left time-label column
-const TL_TOP = 28;      // top padding
-const TL_RIGHT = 28;    // right margin
-const TL_CARD_H = 360;  // fixed card height
-const TL_GAP = 24;      // vertical gap between cards
-const TL_MIN_W = 360;
-
-// Tabs sorted newest-activity-first for the timeline. Stable: tabs sharing a
-// timestamp (or both missing one) keep their existing order.
-function timelineSorted(tabs: TabConfig[]): TabConfig[] {
-  return tabs
-    .map((tab, index) => ({ tab, index }))
-    .sort((a, b) => {
-      const ta = a.tab.lastActiveAt ?? -Infinity;
-      const tb = b.tab.lastActiveAt ?? -Infinity;
-      if (ta !== tb) return tb - ta;
-      return a.index - b.index;
-    })
-    .map((e) => e.tab);
-}
-
-function formatRelative(ts?: number): string {
-  if (!ts) return '—';
-  const diff = Date.now() - ts;
-  if (diff < 0) return 'now';
-  const s = Math.floor(diff / 1000);
-  if (s < 45) return 'now';
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  const d = Math.floor(h / 24);
-  if (d < 7) return `${d}d ago`;
-  try { return new Date(ts).toLocaleDateString(); } catch { return '—'; }
-}
+// --- Stacked feed (vertical, Instagram-style) constants -----------------------
+const STK_TOP = 16;     // top/bottom padding
+const STK_GAP = 20;     // vertical gap between cards
+const STK_SIDE = 16;    // min horizontal margin around the centered column
+const STK_MAX_W = 1600; // max card width
+const STK_MIN_W = 360;  // min card width before it just fills the space
 
 const PaneFallback = () => (
   <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--wks-bg-base)', color: 'var(--wks-text-muted)', fontSize: '0.8rem' }}>
@@ -216,7 +187,7 @@ function TilingLayout({
 }) {
   const single = panes.length === 1;
   const count = panes.length;
-  const cols = count <= 1 ? 1 : count <= 2 ? 2 : count <= 4 ? 2 : count <= 6 ? 3 : Math.ceil(Math.sqrt(count));
+  const cols = tilingColumns(count);
   const rows = Math.ceil(count / cols);
 
   const layouts: Array<{ col: number; row: number; colSpan: number; rowSpan: number }> = [];
@@ -311,7 +282,7 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
     const peek = config.panes?.peek ?? 80;
     const gap = config.panes?.gap ?? 16;
     const spatial = viewMode === 'spatial';
-    const timeline = viewMode === 'timeline';
+    const stacked = viewMode === 'stacked';
 
     const [tabWidth, setTabWidth] = useState(800);
     const [containerHeight, setContainerHeight] = useState(600);
@@ -367,12 +338,9 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
         return;
       }
 
-      if (timeline) {
-        const order = timelineSorted(tabs);
-        const pos = order.findIndex((t) => t.id === id);
-        if (pos < 0) return;
-        const y = TL_TOP + pos * (TL_CARD_H + TL_GAP);
-        container.scrollTo({ top: Math.max(0, y - 24), behavior: 'instant' });
+      if (stacked) {
+        const el = container.querySelector(`[data-tab-id="${id}"]`) as HTMLElement | null;
+        if (el) container.scrollTo({ top: Math.max(0, el.offsetTop - STK_TOP), behavior: 'instant' });
         return;
       }
 
@@ -382,9 +350,33 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
       const tabRect = tabEl.getBoundingClientRect();
       const scrollLeft = tabEl.offsetLeft - containerRect.width / 2 + tabRect.width / 2;
       container.scrollTo({ left: scrollLeft, behavior: 'instant' });
-    }, [spatial, timeline, tabs, zoom]);
+    }, [spatial, stacked, tabs, zoom]);
 
     useImperativeHandle(ref, () => ({ scrollToTab }), [scrollToTab]);
+
+    // Stacked feed: wrap the scroll so it loops (Instagram-style). At the bottom
+    // a downward scroll jumps to the top; at the top an upward scroll jumps to
+    // the bottom. Live panes can't be duplicated, so the seam is a jump, not a
+    // seamless wrap. Wheel/trackpad only — scrollbar drag stays linear.
+    useEffect(() => {
+      const container = containerRef.current;
+      if (!container || !stacked) return;
+      const onWheel = (e: WheelEvent) => {
+        const max = container.scrollHeight - container.clientHeight;
+        if (max <= 0) return;
+        const atTop = container.scrollTop <= 0;
+        const atBottom = container.scrollTop >= max - 1;
+        if (e.deltaY > 0 && atBottom) {
+          e.preventDefault();
+          container.scrollTo({ top: 0, behavior: 'auto' });
+        } else if (e.deltaY < 0 && atTop) {
+          e.preventDefault();
+          container.scrollTo({ top: max, behavior: 'auto' });
+        }
+      };
+      container.addEventListener('wheel', onWheel, { passive: false });
+      return () => container.removeEventListener('wheel', onWheel);
+    }, [stacked, tabs.length]);
 
     // Detect which tab is most visible after scroll ends (tabs mode only).
     useEffect(() => {
@@ -530,11 +522,12 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
       onTabMove(tabId, idx + delta);
     }, [tabs, onTabMove]);
 
-    // --- Timeline geometry (vertical activity feed) ---------------------------
-    const tlIndex = new Map<string, number>();
-    if (timeline) timelineSorted(tabs).forEach((t, i) => tlIndex.set(t.id, i));
-    const tlCardW = Math.max(TL_MIN_W, containerWidth - TL_GUTTER - TL_RIGHT);
-    const tlTotalH = TL_TOP + tabs.length * (TL_CARD_H + TL_GAP);
+    // --- Stacked feed geometry (vertical, natural order) ----------------------
+    // Cards are near-viewport tall and snap, so the feed pages one at a time.
+    const stkCardW = Math.min(STK_MAX_W, Math.max(STK_MIN_W, containerWidth - 2 * STK_SIDE));
+    const stkLeft = Math.max(STK_SIDE, Math.round((containerWidth - stkCardW) / 2));
+    const stkCardH = Math.max(360, containerHeight - 2 * STK_TOP);
+    const stkTotalH = STK_TOP + tabs.length * (stkCardH + STK_GAP);
 
     return (
       <div
@@ -546,9 +539,9 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
           display: viewMode === 'tabs' ? 'flex' : 'block',
           flexDirection: 'row',
           overflowX: viewMode === 'tabs' ? 'auto' : 'hidden',
-          overflowY: timeline ? 'auto' : 'hidden',
+          overflowY: stacked ? 'auto' : 'hidden',
           height: '100%',
-          scrollSnapType: viewMode === 'tabs' ? 'x mandatory' : undefined,
+          scrollSnapType: viewMode === 'tabs' ? 'x mandatory' : stacked ? 'y mandatory' : undefined,
           scrollBehavior: 'auto',
           padding: '0',
           gap: '0px',
@@ -593,13 +586,13 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
                   transformOrigin: '0 0',
                   zIndex: 1,
                 }
-              : timeline
+              : stacked
               ? // Vertical feed: a tall relative block the container scrolls
-                // through; cards are absolutely positioned within it by recency.
+                // through; cards are absolutely positioned within it in order.
                 {
                   position: 'relative',
                   width: '100%',
-                  height: `${tlTotalH}px`,
+                  height: `${stkTotalH}px`,
                   zIndex: 1,
                 }
               : // In tabs mode the wrapper itself must not participate in layout
@@ -614,9 +607,10 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
           {tabs.map((tab, index) => {
             const isActiveTab = tab.id === activeTabId;
             const rect = spatial ? rectFor(tab, index) : null;
-            const showHeader = spatial || timeline;
-            const tlPos = timeline ? (tlIndex.get(tab.id) ?? index) : 0;
-            const tlY = TL_TOP + tlPos * (TL_CARD_H + TL_GAP);
+            // Only spatial keeps the card header — it's the drag handle there.
+            // Stacked (and tabs) show the pane content with no title bar.
+            const showHeader = spatial;
+            const stkY = STK_TOP + index * (stkCardH + STK_GAP);
 
             const paneCallbacks: PaneCallbacks = {
               onPtyReady,
@@ -632,11 +626,11 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
             };
 
             // Per-card inner dimensions handed to the tiling layout.
-            const innerW = spatial ? rect!.w : timeline ? tlCardW : tabWidth;
+            const innerW = spatial ? rect!.w : stacked ? stkCardW : tabWidth;
             const innerH = spatial
               ? rect!.h - CARD_HEADER_H
-              : timeline
-              ? TL_CARD_H - CARD_HEADER_H
+              : stacked
+              ? stkCardH // no header in stacked → content fills the whole card
               : containerHeight;
 
             const floatingCard: React.CSSProperties = {
@@ -657,16 +651,22 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
                   width: `${rect!.w}px`,
                   height: `${rect!.h}px`,
                 }
-              : timeline
+              : stacked
               ? {
-                  ...floatingCard,
+                  // No card chrome in stacked — just the pane content (theme-aware
+                  // rounded corners, no background/border/shadow frame).
                   position: 'absolute',
-                  left: `${TL_GUTTER}px`,
-                  top: `${tlY}px`,
-                  width: `${tlCardW}px`,
-                  height: `${TL_CARD_H}px`,
+                  left: `${stkLeft}px`,
+                  top: `${stkY}px`,
+                  width: `${stkCardW}px`,
+                  height: `${stkCardH}px`,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  overflow: 'hidden',
+                  borderRadius: 'var(--wks-radius-lg)',
+                  scrollSnapAlign: 'center',
                   contentVisibility: 'auto',
-                  containIntrinsicSize: `${tlCardW}px ${TL_CARD_H}px`,
+                  containIntrinsicSize: `${stkCardW}px ${stkCardH}px`,
                 }
               : {
                   scrollSnapAlign: 'center',
@@ -696,25 +696,19 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
                   style={{
                     display: showHeader ? 'flex' : 'none',
                     alignItems: 'center',
-                    gap: 6,
+                    justifyContent: 'center',
                     height: `${CARD_HEADER_H}px`,
                     flexShrink: 0,
-                    padding: '0 8px',
                     cursor: spatial ? 'move' : 'default',
-                    fontSize: '0.72rem',
-                    fontWeight: isActiveTab ? 600 : 400,
-                    color: isActiveTab ? 'var(--wks-text-primary)' : 'var(--wks-text-muted)',
                     backgroundColor: 'var(--wks-glass-strong)',
                     borderBottom: '1px solid var(--wks-glass-border)',
                     userSelect: 'none',
                   }}
+                  title={spatial ? 'Drag to move · double-click to rename' : undefined}
                 >
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {tab.title}
-                  </span>
-                  {tab.panes.length > 1 && (
-                    <span style={{ fontSize: '0.55rem', opacity: 0.6 }}>{tab.panes.length}</span>
-                  )}
+                  {/* Title-less drag handle (spatial only) — a subtle grip, no
+                      "Claude/Terminal" label. */}
+                  <div style={{ width: 26, height: 3, borderRadius: 2, backgroundColor: 'var(--wks-text-faint)', opacity: 0.45 }} />
                 </div>
 
                 {/* Invisible positioning box; the pane subtree lives here in
@@ -733,7 +727,7 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
                     panes={tab.panes}
                     activePaneId={tab.activePaneId}
                     agentActive={agentActive}
-                    forceLive={spatial || timeline}
+                    forceLive={spatial || stacked}
                     containerWidth={innerW}
                     containerHeight={innerH}
                     onPaneClose={(paneId) => onPaneClose(tab.id, paneId)}
@@ -770,78 +764,6 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
             );
           })}
 
-          {/* Timeline rail + per-card time labels in the left gutter. Keyed
-              siblings of the cards — they never disturb card (pane) identity. */}
-          {timeline && (
-            <div
-              key="tl-rail"
-              aria-hidden
-              style={{
-                position: 'absolute',
-                left: `${TL_GUTTER - 18}px`,
-                top: `${TL_TOP}px`,
-                width: '2px',
-                height: `${Math.max(0, tlTotalH - TL_TOP - TL_GAP)}px`,
-                backgroundColor: 'var(--wks-glass-border)',
-                zIndex: 0,
-              }}
-            />
-          )}
-          {timeline && tabs.map((tab) => {
-            const pos = tlIndex.get(tab.id) ?? 0;
-            const y = TL_TOP + pos * (TL_CARD_H + TL_GAP);
-            const isActiveTab = tab.id === activeTabId;
-            return (
-              <div
-                key={`tl-label-${tab.id}`}
-                onClick={() => { onTabFocus(tab.id); scrollToTab(tab.id); }}
-                title={tab.lastActiveAt ? new Date(tab.lastActiveAt).toLocaleString() : 'no recorded activity'}
-                style={{
-                  position: 'absolute',
-                  left: 0,
-                  top: `${y}px`,
-                  width: `${TL_GUTTER - 26}px`,
-                  height: `${CARD_HEADER_H}px`,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'flex-end',
-                  justifyContent: 'center',
-                  textAlign: 'right',
-                  cursor: 'pointer',
-                  zIndex: 1,
-                }}
-              >
-                <span style={{ fontSize: '0.62rem', fontWeight: 600, color: isActiveTab ? 'var(--wks-accent)' : 'var(--wks-text-muted)', lineHeight: 1.1 }}>
-                  {formatRelative(tab.lastActiveAt)}
-                </span>
-              </div>
-            );
-          })}
-
-          {/* Rail dots, drawn last so they sit atop the rail line. */}
-          {timeline && tabs.map((tab) => {
-            const pos = tlIndex.get(tab.id) ?? 0;
-            const y = TL_TOP + pos * (TL_CARD_H + TL_GAP);
-            const isActiveTab = tab.id === activeTabId;
-            return (
-              <div
-                key={`tl-dot-${tab.id}`}
-                aria-hidden
-                style={{
-                  position: 'absolute',
-                  left: `${TL_GUTTER - 18 - 3}px`,
-                  top: `${y + CARD_HEADER_H / 2 - 4}px`,
-                  width: '8px',
-                  height: '8px',
-                  borderRadius: '50%',
-                  backgroundColor: isActiveTab ? 'var(--wks-accent)' : 'var(--wks-text-faint)',
-                  border: '2px solid var(--wks-bg-base)',
-                  boxSizing: 'content-box',
-                  zIndex: 1,
-                }}
-              />
-            );
-          })}
         </div>
       </div>
     );

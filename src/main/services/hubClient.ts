@@ -101,7 +101,12 @@ function connect(): void {
     }
     switch (frame.op) {
       case 'event':
-        if (frame.event) forward('hub:event', frame.event);
+        // High-frequency PTY mirror events are for remote clients only; the
+        // local renderer draws the terminal straight from claudemon, so don't
+        // echo them back to it (we'd receive our own publishes via the '*' sub).
+        if (frame.event && !frame.event.type.startsWith('pty.')) {
+          forward('hub:event', frame.event);
+        }
         break;
       case 'call':
         if (frame.id && frame.method) handleCall(frame.id, frame.method, frame.params);

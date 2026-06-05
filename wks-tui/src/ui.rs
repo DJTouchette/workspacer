@@ -151,7 +151,6 @@ fn badge(state: &str) -> String {
 fn state_color(state: &str) -> Color {
     match state.to_lowercase().as_str() {
         "input" | "waiting" => WARN,
-        "thinking" | "running" | "streaming" => ACCENT,
         "error" => BAD,
         _ => OK,
     }
@@ -740,6 +739,133 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
         Paragraph::new(Line::from(Span::styled(format!(" {hint}"), Style::default().fg(DIM)))),
         area,
     );
+}
+
+// ── state_color characterization tests ──────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Pin the exact Color values so a future palette or enum refactor is forced
+    // to make a conscious decision.  state_color() takes the *state()* string
+    // (already lowercased internally), and applies .to_lowercase() itself.
+
+    const OK:     Color = Color::Rgb(78,  201, 168);
+    const WARN:   Color = Color::Rgb(224, 179, 65);
+    const BAD:    Color = Color::Rgb(224, 108, 117);
+
+    fn sc(s: &str) -> Color {
+        state_color(s)
+    }
+
+    // ── modes that claudemon actually emits ──────────────────────────────────
+
+    /// "input" — user's turn; renders as WARN (amber), same as "waiting".
+    #[test]
+    fn state_color_input_is_warn() {
+        assert_eq!(sc("input"), WARN);
+    }
+
+    /// "approval" — tool approval pending; not in an explicit arm, falls to OK.
+    #[test]
+    fn state_color_approval_is_ok() {
+        assert_eq!(sc("approval"), OK);
+    }
+
+    /// "question" — structured question; falls to OK.
+    #[test]
+    fn state_color_question_is_ok() {
+        assert_eq!(sc("question"), OK);
+    }
+
+    /// "responding" — generating a turn; falls to OK.
+    #[test]
+    fn state_color_responding_is_ok() {
+        assert_eq!(sc("responding"), OK);
+    }
+
+    /// "stopped" — session ended; falls to OK.
+    #[test]
+    fn state_color_stopped_is_ok() {
+        assert_eq!(sc("stopped"), OK);
+    }
+
+    /// "unknown" — emitted by Agent::state() when mode is absent; falls to OK.
+    #[test]
+    fn state_color_unknown_is_ok() {
+        assert_eq!(sc("unknown"), OK);
+    }
+
+    /// "other" — emitted by Agent::state() for any unrecognised AgentMode;
+    /// falls to OK (catch-all).
+    #[test]
+    fn state_color_other_is_ok() {
+        assert_eq!(sc("other"), OK);
+    }
+
+    // ── aliased and legacy strings ───────────────────────────────────────────
+
+    /// "waiting" — alias for "input" in state_color(); also yields WARN.
+    #[test]
+    fn state_color_waiting_alias_is_warn() {
+        assert_eq!(sc("waiting"), WARN);
+    }
+
+    /// "thinking", "running", "streaming" — daemon never emits these; the
+    /// dead ACCENT arm was removed, so they now fall to the OK catch-all.
+    #[test]
+    fn state_color_removed_dead_branches_fall_to_ok() {
+        assert_eq!(sc("thinking"),  OK, "thinking falls to OK after dead branch removal");
+        assert_eq!(sc("running"),   OK, "running falls to OK after dead branch removal");
+        assert_eq!(sc("streaming"), OK, "streaming falls to OK after dead branch removal");
+    }
+
+    /// "error" — explicit BAD arm is still present.
+    #[test]
+    fn state_color_error_is_bad() {
+        assert_eq!(sc("error"), BAD);
+    }
+
+    /// state_color() normalises to lowercase before matching.
+    #[test]
+    fn state_color_case_insensitive() {
+        assert_eq!(sc("INPUT"),  WARN,   "uppercase INPUT must also be WARN");
+        assert_eq!(sc("Error"),  BAD,    "mixed-case Error must also be BAD");
+        assert_eq!(sc("STOPPED"), OK,    "uppercase STOPPED must also be OK");
+    }
+
+    /// Exhaustive table for all known inputs.
+    #[test]
+    fn state_color_table() {
+        let cases: &[(&str, Color)] = &[
+            // daemon-emitted modes
+            ("input",      WARN),
+            ("approval",   OK),
+            ("question",   OK),
+            ("responding", OK),
+            ("stopped",    OK),
+            ("unknown",    OK),
+            ("other",      OK),
+            // "waiting" alias preserved
+            ("waiting",    WARN),
+            // formerly ACCENT dead branches, now OK after removal
+            ("thinking",   OK),
+            ("running",    OK),
+            ("streaming",  OK),
+            // explicit BAD arm
+            ("error",      BAD),
+            // catch-all
+            ("",           OK),
+            ("anything",   OK),
+        ];
+        for (state, want) in cases {
+            assert_eq!(
+                sc(state), *want,
+                "state_color({state:?}) expected {want:?}"
+            );
+        }
+    }
 }
 
 // ── text wrapping ───────────────────────────────────────────────────────────

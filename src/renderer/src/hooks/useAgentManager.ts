@@ -222,7 +222,8 @@ export function useAgentManager() {
     mutateActiveAgent((a) => ({
       ...a,
       activeTabId: tabId,
-      // Focusing a tab counts as activity — drives the timeline view's ordering.
+      // Record focus time (kept for potential recency features; the stacked
+      // feed itself uses natural tab order, not activity).
       tabs: a.tabs.map((t) => (t.id === tabId ? { ...t, lastActiveAt: Date.now() } : t)),
     }));
   }, [mutateActiveAgent]);
@@ -292,6 +293,12 @@ export function useAgentManager() {
   }, [mutateActiveAgent]);
 
   const removeTab = useCallback((tabId: string) => {
+    // Closing the last tab terminates the (non-global) agent.
+    const agent = agentsRef.current.find((a) => a.id === activeAgentIdRef.current);
+    if (agent && !agent.global && agent.tabs.length <= 1 && agent.tabs.some((t) => t.id === tabId)) {
+      terminateAgent(agent.id);
+      return;
+    }
     mutateActiveAgent((a) => {
       const filtered = a.tabs.filter((t) => t.id !== tabId);
       if (filtered.length === 0) return a; // an agent always keeps at least one tab
@@ -303,9 +310,16 @@ export function useAgentManager() {
       }
       return { ...a, tabs: filtered, activeTabId: nextActive };
     });
-  }, [mutateActiveAgent]);
+  }, [mutateActiveAgent, terminateAgent]);
 
   const removePane = useCallback((tabId: string, paneId: string) => {
+    // Closing the last pane of the last tab terminates the (non-global) agent.
+    const agent = agentsRef.current.find((a) => a.id === activeAgentIdRef.current);
+    const closingTab = agent?.tabs.find((t) => t.id === tabId);
+    if (agent && !agent.global && closingTab && closingTab.panes.length <= 1 && agent.tabs.length <= 1) {
+      terminateAgent(agent.id);
+      return;
+    }
     mutateActiveAgent((a) => {
       const tab = a.tabs.find((t) => t.id === tabId);
       if (!tab) return a;
@@ -333,7 +347,7 @@ export function useAgentManager() {
         }),
       };
     });
-  }, [mutateActiveAgent]);
+  }, [mutateActiveAgent, terminateAgent]);
 
   const renameTab = useCallback((tabId: string, title: string) => {
     mutateActiveAgent((a) => ({

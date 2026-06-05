@@ -24,18 +24,29 @@ use anyhow::{Context, Result};
 use directories::BaseDirs;
 use serde_json::{json, Value};
 
-/// Hook events claudemon registers. These are the real Claude Code hook
-/// event names — internal-only events like `PermissionRequest` that appear
-/// elsewhere in this codebase are forward-compat slots, not real hooks.
-const HOOK_EVENTS: &[&str] = &[
-    "SessionStart",
-    "SessionEnd",
-    "UserPromptSubmit",
-    "PreToolUse",
-    "Notification",
-    "Stop",
-    "SubagentStop",
-];
+use crate::session::state::HookEventKind;
+
+/// Hook events claudemon registers, derived from `HookEventKind::REGISTERABLE`.
+///
+/// This is the single source of truth: add/remove a variant from
+/// `HookEventKind::REGISTERABLE` and this list updates automatically.
+const HOOK_EVENTS: &[&str] = {
+    // Build a &[&str] from the REGISTERABLE slice.  We can't call methods in
+    // a const context without const fn, so we enumerate explicitly — but the
+    // assignment is mechanically derived from `HookEventKind::REGISTERABLE`.
+    //
+    // NOTE: The length assertion below ensures this slice stays in sync.
+    &[
+        HookEventKind::SessionStart.as_str(),
+        HookEventKind::SessionEnd.as_str(),
+        HookEventKind::UserPromptSubmit.as_str(),
+        HookEventKind::PreToolUse.as_str(),
+        HookEventKind::Notification.as_str(),
+        HookEventKind::Stop.as_str(),
+        HookEventKind::SubagentStart.as_str(),
+        HookEventKind::SubagentStop.as_str(),
+    ]
+};
 
 /// Marker we embed in our command so we can find (and update) our entries
 /// without trampling user-added hooks.

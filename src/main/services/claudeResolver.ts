@@ -121,6 +121,13 @@ export interface ClaudeArgvOptions {
   model?: string;
   /** Pass `--dangerously-skip-permissions` to bypass all permission checks. */
   skipPermissions?: boolean;
+  /**
+   * Pin the session id via `--session-id <uuid>` for a *new* session. Makes
+   * claude name its transcript `<uuid>.jsonl`, so the id we track, claude's id,
+   * and the transcript file all agree — no cwd-based guessing. Ignored when
+   * resuming (the resumed id already fixes the file).
+   */
+  sessionId?: string;
 }
 
 export function buildClaudeArgv(opts: ClaudeArgvOptions = {}): string[] {
@@ -136,6 +143,12 @@ export function buildClaudeArgv(opts: ClaudeArgvOptions = {}): string[] {
   if (opts.skipPermissions && !alreadySkips) {
     argv.push('--dangerously-skip-permissions');
   }
-  if (opts.resumeSessionId) argv.push('--resume', opts.resumeSessionId);
+  if (opts.resumeSessionId) {
+    argv.push('--resume', opts.resumeSessionId);
+  } else if (opts.sessionId) {
+    // Pin the id for a fresh session, unless a profile already set one.
+    const pinsId = (opts.extraArgs ?? []).some((a) => a === '--session-id' || a.startsWith('--session-id='));
+    if (!pinsId) argv.push('--session-id', opts.sessionId);
+  }
   return argv;
 }

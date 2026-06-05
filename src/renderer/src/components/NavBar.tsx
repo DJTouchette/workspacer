@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { PaneType, TabConfig, ViewMode } from '../types/pane';
 import { useConfig, ScriptEntry } from '../hooks/useConfig';
-import { PaneIcon, Play, Settings, Plus, Columns3, LayoutGrid, Clock } from './icons';
+import { PaneIcon, Play, Settings, Plus, Columns3, LayoutGrid, Rows3 } from './icons';
 
 interface NavBarProps {
   tabs: TabConfig[];
@@ -38,6 +38,13 @@ interface SessionPickerState {
 const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab, onCloseTab, onRenameTab, onSplitTab, onMoveTab, viewMode = 'tabs', onToggleViewMode, leftOffset = 0, cwd, scripts = [], onRunScript, onSaveScripts }) => {
   const { config } = useConfig();
   const navHeight = Math.max(config.ui.navBarHeight || 34, 32);
+  // On Windows the native caption buttons (min/max/close) are drawn by the
+  // titleBarOverlay in the top-right corner. Reserve that strip so the
+  // right-aligned controls (view-mode toggle, scripts) don't slide under them.
+  const winControlsWidth = window.electronAPI?.platform === 'win32' ? 138 : 0;
+  // The stacked feed has its own per-card headers, so the horizontal tab strip
+  // is redundant there. Hide it (keep the bar for drag + view toggle).
+  const showTabStrip = viewMode !== 'stacked';
   const shells = config.terminal.shells || [];
   const [showMenu, setShowMenu] = useState(false);
   const [tabContextMenu, setTabContextMenu] = useState<{ tabId: string; tabIdx: number; x: number; y: number } | null>(null);
@@ -82,7 +89,10 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
         WebkitBackdropFilter: 'blur(var(--wks-glass-blur)) saturate(160%)',
         borderBottom: '1px solid var(--wks-glass-border)',
         boxShadow: 'inset 0 1px 0 var(--wks-glass-highlight)',
-        padding: '0 10px',
+        paddingTop: 0,
+        paddingBottom: 0,
+        paddingLeft: 10,
+        paddingRight: 10 + winControlsWidth,
         zIndex: 100,
         userSelect: 'none',
         // @ts-ignore
@@ -96,13 +106,14 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
           alignItems: 'center',
           gap: '2px',
           flex: 1,
+          // Empty in stacked mode → let that area drag the window.
           // @ts-ignore
-          WebkitAppRegion: 'no-drag',
-          appRegion: 'no-drag',
+          WebkitAppRegion: showTabStrip ? 'no-drag' : 'drag',
+          appRegion: showTabStrip ? 'no-drag' : 'drag',
           overflow: 'hidden',
         }}
       >
-        {tabs.map((tab, idx) => {
+        {showTabStrip && tabs.map((tab, idx) => {
           const isActive = tab.id === activeTabId;
           const singlePane = tab.panes.length === 1;
           const firstPaneType = tab.panes[0]?.type ?? 'terminal';
@@ -167,7 +178,7 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
           );
         })}
 
-        {onAddTab && (
+        {showTabStrip && onAddTab && (
           <div ref={menuRef} style={{ position: 'relative', display: 'inline-flex' }}>
             <button
               onClick={() => onAddTab('terminal')}
@@ -271,13 +282,13 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
         )}
       </div>
 
-      {/* View-mode toggle (tabs → spatial → timeline). Outside the scrolling
+      {/* View-mode toggle (tabs → spatial → stacked). Outside the scrolling
           tab cluster so it stays visible no matter how many tabs are open. */}
       {onToggleViewMode && (() => {
-        const labels: Record<ViewMode, string> = { tabs: 'Tabs', spatial: 'Spatial canvas', timeline: 'Timeline' };
-        const nextOf: Record<ViewMode, ViewMode> = { tabs: 'spatial', spatial: 'timeline', timeline: 'tabs' };
+        const labels: Record<ViewMode, string> = { tabs: 'Tabs', spatial: 'Spatial canvas', stacked: 'Stacked feed' };
+        const nextOf: Record<ViewMode, ViewMode> = { tabs: 'spatial', spatial: 'stacked', stacked: 'tabs' };
         const active = viewMode !== 'tabs';
-        const Icon = viewMode === 'spatial' ? LayoutGrid : viewMode === 'timeline' ? Clock : Columns3;
+        const Icon = viewMode === 'spatial' ? LayoutGrid : viewMode === 'stacked' ? Rows3 : Columns3;
         return (
           <button
             onClick={onToggleViewMode}

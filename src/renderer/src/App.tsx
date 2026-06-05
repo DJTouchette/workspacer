@@ -15,6 +15,8 @@ import SessionPicker from './components/SessionPicker';
 import CommandPalette from './components/CommandPalette';
 import LayoutsDialog from './components/LayoutsDialog';
 import LibraryHost from './components/LibraryHost';
+import LibrarySidePanel from './components/LibrarySidePanel';
+import BottomTerminalPanel from './components/BottomTerminalPanel';
 import type { Layout, LayoutAgent } from './types/layout';
 import { useLibrary } from './hooks/useLibrary';
 import { useAgentManager, GLOBAL_WORKSPACE_ID } from './hooks/useAgentManager';
@@ -23,10 +25,53 @@ import type { SessionAmbientState, SessionUsage } from './types/claudeSession';
 import { useKeyboardNav } from './hooks/useKeyboardNav';
 import { useConfig } from './hooks/useConfig';
 import { useTheme } from './hooks/useTheme';
+import { useSessionLifecycle } from './hooks/useSessionLifecycle';
+import { usePluginHotkeys } from './hooks/usePluginHotkeys';
 
 /** Normalize a workspace dir into a stable config key (slashes + no trailing /). */
 function scriptKey(cwd: string): string {
   return cwd.replace(/\\/g, '/').replace(/\/+$/, '');
+}
+
+/**
+ * Pure helper — normalizes a raw saved-session blob into a canonical
+ * { agents, activeAgentId, name } shape that `loadAgentsFromSession` can
+ * consume.  Handles all legacy session variants:
+ *
+ *  1. Modern   — data.agents is an array  → pass through as-is
+ *  2. tabs-only  — data.tabs present but no agents → wrap into one agent
+ *  3. panes-only — data.panes present but no tabs  → each pane becomes a tab
+ *  4. neither  — null / empty data → empty session (no agents)
+ *
+ * `cwd` is the fallback working directory assigned to migrated agents when
+ * the saved data doesn't carry one (typically the app's process cwd).
+ *
+ * Exported for unit tests only; callers inside the module use handleResumeSession.
+ */
+export function migrateSessionData(
+  data: any,
+  cwd: string,
+): { agents: AgentWorkspace[]; activeAgentId: string; name: string } {
+  if (data && Array.isArray(data.agents)) {
+    // Modern format — pass through as-is.
+    return { agents: data.agents, activeAgentId: data.activeAgentId || '', name: data.name || 'Default' };
+  }
+  if (data && (data.tabs?.length > 0 || data.panes?.length > 0)) {
+    // Backward compat: old flat workspace → wrap its tabs into one agent.
+    const oldTabs = data.tabs?.length > 0
+      ? data.tabs
+      : data.panes.map((p: any) => ({ id: `tab-${p.id}`, title: p.title, panes: [p], activePaneId: p.id }));
+    const migrated: AgentWorkspace = {
+      id: `agent-migrated-legacy`,
+      name: data.name || 'Imported',
+      cwd,
+      tabs: oldTabs,
+      activeTabId: data.activeTabId || oldTabs[0]?.id || '',
+    };
+    return { agents: [migrated], activeAgentId: migrated.id, name: data.name || 'Default' };
+  }
+  // Null / empty data → empty session.
+  return { agents: [], activeAgentId: '', name: 'Default' };
 }
 
 function App() {
@@ -71,6 +116,13 @@ function App() {
   const [showSpawnDialog, setShowSpawnDialog] = useState(false);
   const [showLayouts, setShowLayouts] = useState(false);
   const [showRemote, setShowRemote] = useState(false);
+  const [showLibraryPanel, setShowLibraryPanel] = useState(false);
+  const [showBottomTerminal, setShowBottomTerminal] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  // Layout offsets: panes go full-width when the sidebar is collapsed; the navbar
+  // keeps a small left inset so the floating "show sidebar" button has room.
+  const contentLeft = sidebarCollapsed ? 0 : SIDEBAR_WIDTH;
+  const navLeft = sidebarCollapsed ? 36 : SIDEBAR_WIDTH;
 
   // App working directory (used as the default cwd for the spawn dialog + the
   // Library's fallback project root).
@@ -80,10 +132,37 @@ function App() {
     window.electronAPI.getCwd().then((cwd) => { appCwdRef.current = cwd; setAppCwd(cwd); }).catch(() => {});
   }, []);
 
+  // Session lifecycle (load / save / auto-resume / picker).
+  const {
+    sessionPhase,
+    setSessionPhase,
+    sessionList,
+    pickerCancellable,
+    setPickerCancellable,
+    sessionName,
+    ptyMapping,
+    handlePtyReady,
+    handleNewSession,
+    handleResumeSession,
+    handleDeleteSession,
+    saveCurrentSession,
+    switchSession,
+  } = useSessionLifecycle({
+    configLoaded,
+    autoResume: config.session?.autoResume,
+    agents,
+    activeAgentId,
+    loadAgentsFromSession,
+    reconcileAgents,
+    appCwdRef,
+  });
+
   // Library (reusable prompts + skills): global + the active project's items.
   const libraryCwd = activeAgent?.cwd || appCwd || undefined;
   const { items: libraryItems } = useLibrary(libraryCwd);
-  const openLibraryPicker = useCallback(() => { setPaletteRestrict('library'); setPaletteMode('tab'); setShowCommandPalette(true); }, []);
+  // Toggle the right-side Library panel (bound to the 'library-picker' shortcut,
+  // default Ctrl+L). Replaces the old restricted-command-palette quick-picker.
+  const toggleLibraryPanel = useCallback(() => { setShowLibraryPanel((v) => !v); }, []);
 
   // Live agent status: sessionId -> ambient state, sourced from claudemon.
   const [statusBySession, setStatusBySession] = useState<Record<string, SessionAmbientState>>({});
@@ -108,22 +187,6 @@ function App() {
       }
     });
     return () => { cancelled = true; unsub(); };
-  }, []);
-
-  // Session state
-  const [sessionPhase, setSessionPhase] = useState<'loading' | 'picker' | 'active'>('loading');
-  const [sessionList, setSessionList] = useState<any[]>([]);
-  // True only when the picker is reopened mid-session (so it can be dismissed).
-  const [pickerCancellable, setPickerCancellable] = useState(false);
-  const [sessionName, setSessionName] = useState('Default');
-
-  // PTY mapping: paneId -> ptySessionId. For Claude panes, ptySessionId is the
-  // Claude session id; used to resolve "which pane shows this session".
-  const [ptyMapping, setPtyMapping] = useState<Record<string, string>>({});
-  const lastSaveHashRef = useRef<string>('');
-
-  const handlePtyReady = useCallback((paneId: string, ptySessionId: string) => {
-    setPtyMapping((prev) => (prev[paneId] === ptySessionId ? prev : { ...prev, [paneId]: ptySessionId }));
   }, []);
 
   const handleUrlChange = useCallback((tabId: string, paneId: string, url: string) => {
@@ -174,137 +237,6 @@ function App() {
     }, 15000);
     return () => clearInterval(interval);
   }, [tabs, activeTabId, hibernateAfter, hibernatePane, sessionPhase]);
-
-  // Reconcile saved agents against the daemon's live sessions — mark any whose
-  // session no longer exists as stopped (so the sidebar offers a respawn).
-  const reconcileWithDaemon = useCallback(() => {
-    window.electronAPI.getAllClaudeSessions().then((sessions: any[]) => {
-      reconcileAgents(new Set(sessions.map((s) => s.sessionId)));
-    }).catch(() => {});
-  }, [reconcileAgents]);
-
-  // --- Session lifecycle ---
-  const handleNewSession = useCallback(() => {
-    loadAgentsFromSession([], '');
-    setSessionName('Default');
-    setPtyMapping({});
-    setPickerCancellable(false);
-    setSessionPhase('active');
-  }, [loadAgentsFromSession]);
-
-  const handleResumeSession = useCallback((filename: string) => {
-    setPickerCancellable(false);
-    window.electronAPI.loadSession(filename).then((data: any) => {
-      if (data && Array.isArray(data.agents)) {
-        loadAgentsFromSession(data.agents, data.activeAgentId);
-        setSessionName(data.name || 'Default');
-      } else if (data && (data.tabs?.length > 0 || data.panes?.length > 0)) {
-        // Backward compat: old flat workspace → wrap its tabs into one agent.
-        const oldTabs = data.tabs?.length > 0
-          ? data.tabs
-          : data.panes.map((p: any) => ({ id: `tab-${p.id}`, title: p.title, panes: [p], activePaneId: p.id }));
-        const migrated: AgentWorkspace = {
-          id: `agent-migrated-${Date.now()}`,
-          name: data.name || 'Imported',
-          cwd: appCwdRef.current,
-          tabs: oldTabs,
-          activeTabId: data.activeTabId || oldTabs[0]?.id || '',
-        };
-        loadAgentsFromSession([migrated], migrated.id);
-        setSessionName(data.name || 'Default');
-      } else {
-        loadAgentsFromSession([], '');
-      }
-      setPtyMapping({});
-      setSessionPhase('active');
-      reconcileWithDaemon();
-    }).catch(() => {
-      loadAgentsFromSession([], '');
-      setSessionPhase('active');
-    });
-  }, [loadAgentsFromSession, reconcileWithDaemon]);
-
-  const handleDeleteSession = useCallback((filename: string) => {
-    window.electronAPI.deleteSession(filename).then(() => {
-      setSessionList((prev) => prev.filter((s) => s.filename !== filename));
-    });
-  }, []);
-
-  const saveCurrentSession = useCallback((force?: boolean) => {
-    if (sessionPhase !== 'active') return;
-    const payload = {
-      name: sessionName,
-      activeAgentId,
-      agents: agents.map((a) => ({
-        ...a,
-        tabs: a.tabs.map((t) => ({ ...t, panes: t.panes.map((p) => ({ ...p })) })),
-      })),
-      ptyMapping: { ...ptyMapping },
-    };
-    const hash = JSON.stringify({
-      n: payload.name,
-      a: payload.activeAgentId,
-      g: payload.agents.map((ag) => ag.id + ag.name + (ag.sessionId || '') + ag.activeTabId
-        + ag.tabs.map((t) => t.id + t.title + t.panes.map((p) => p.id + p.type + (p.url || '')).join()).join()),
-    });
-    if (!force && hash === lastSaveHashRef.current) return;
-    lastSaveHashRef.current = hash;
-    window.electronAPI.saveSession(payload).catch((err: any) => {
-      console.error('[Session] save failed:', err);
-    });
-  }, [agents, activeAgentId, sessionName, sessionPhase, ptyMapping]);
-
-  useEffect(() => {
-    if (sessionPhase !== 'active') return;
-    const interval = setInterval(saveCurrentSession, 30000);
-    return () => clearInterval(interval);
-  }, [sessionPhase, saveCurrentSession]);
-
-  useEffect(() => {
-    const handler = () => saveCurrentSession();
-    window.addEventListener('beforeunload', handler);
-    return () => window.removeEventListener('beforeunload', handler);
-  }, [saveCurrentSession]);
-
-  useEffect(() => {
-    const unsub = window.electronAPI.onBeforeQuit(() => saveCurrentSession(true));
-    return unsub;
-  }, [saveCurrentSession]);
-
-  // Decide what to show on launch once config is loaded (so a user's saved
-  // autoResume preference is respected, not the in-memory default). With
-  // autoResume on we restore the most recent session straight away; otherwise
-  // we fall back to the picker. Runs exactly once.
-  const startupDoneRef = useRef(false);
-  useEffect(() => {
-    if (!configLoaded || startupDoneRef.current) return;
-    startupDoneRef.current = true;
-    const autoResume = config.session?.autoResume ?? true;
-    window.electronAPI.listSessions().then((sessions) => {
-      if (sessions.length === 0) {
-        setSessionPhase('active');
-        return;
-      }
-      setSessionList(sessions);
-      if (autoResume) {
-        handleResumeSession(sessions[0].filename); // most recent (list is sorted desc)
-      } else {
-        setSessionPhase('picker');
-      }
-    }).catch(() => setSessionPhase('active'));
-  }, [configLoaded, config.session?.autoResume, handleResumeSession]);
-
-  // Re-open the picker mid-session (Command palette → "Switch session"). Saves
-  // the current layout first so nothing is lost when switching, and marks the
-  // picker dismissable so Escape/Cancel returns to the running app.
-  const switchSession = useCallback(() => {
-    saveCurrentSession(true);
-    setPickerCancellable(true);
-    window.electronAPI.listSessions()
-      .then((sessions) => { setSessionList(sessions); setSessionPhase('picker'); })
-      .catch(() => setSessionPhase('picker'));
-  }, [saveCurrentSession]);
-
 
   // --- Normal app logic ---
 
@@ -521,6 +453,8 @@ function App() {
     onNextAgent: handleNextAgent,
     onNextAttention: goToNextAttention,
     onSpawnAgent: handleSpawnAgentShortcut,
+    onToggleTerminal: useCallback(() => setShowBottomTerminal((v) => !v), []),
+    onToggleSidebar: useCallback(() => setSidebarCollapsed((v) => !v), []),
     shortcuts: config.keybindings?.shortcuts ?? {},
   });
 
@@ -614,54 +548,14 @@ function App() {
     openPaneIn(target.id, 'plugin', pane.title, url);
   }, [openPaneIn, activeAgent, agents]);
 
-  // Bind plugin-contributed hotkeys: open-pane:<type> or emit:<eventType>.
-  useEffect(() => {
-    if (pluginHotkeys.length === 0) return;
-    const matches = (combo: string, e: KeyboardEvent): boolean => {
-      const parts = combo.toLowerCase().split('+');
-      const key = parts[parts.length - 1];
-      return e.ctrlKey === parts.includes('ctrl')
-        && e.shiftKey === parts.includes('shift')
-        && e.altKey === parts.includes('alt')
-        && e.metaKey === parts.includes('meta')
-        && e.key.toLowerCase() === key;
-    };
-    const handler = (e: KeyboardEvent) => {
-      for (const h of pluginHotkeys) {
-        if (!matches(h.combo, e)) continue;
-        e.preventDefault();
-        if (h.command.startsWith('open-pane:')) {
-          const type = h.command.slice('open-pane:'.length);
-          const pane = pluginPanes.find((p) => p.type === type);
-          if (pane) handleOpenPlugin(pane);
-        } else if (h.command.startsWith('emit:')) {
-          window.electronAPI.hubPublish?.({ type: h.command.slice('emit:'.length), data: {} });
-        }
-        return;
-      }
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [pluginHotkeys, pluginPanes, handleOpenPlugin]);
-
-  // Library quick-picker hotkey (default ctrl+shift+l): opens the palette
-  // restricted to prompts & skills.
-  useEffect(() => {
-    const combo = config.keybindings?.shortcuts?.['library-picker'];
-    if (!combo) return;
-    const parts = combo.toLowerCase().split('+');
-    const key = parts[parts.length - 1];
-    const handler = (e: KeyboardEvent) => {
-      if (e.ctrlKey === parts.includes('ctrl') && e.shiftKey === parts.includes('shift')
-        && e.altKey === parts.includes('alt') && e.metaKey === parts.includes('meta')
-        && e.key.toLowerCase() === key) {
-        e.preventDefault();
-        openLibraryPicker();
-      }
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [config.keybindings?.shortcuts, openLibraryPicker]);
+  // Bind plugin-contributed hotkeys + library-picker shortcut.
+  usePluginHotkeys({
+    pluginHotkeys,
+    pluginPanes,
+    handleOpenPlugin,
+    libraryPickerCombo: config.keybindings?.shortcuts?.['library-picker'],
+    openLibraryPicker: toggleLibraryPanel,
+  });
 
   // Listen for bus commands (from plugins / MCP) and drive the UI. The ui.*
   // event each action emits doubles as the confirmation back on the bus.
@@ -708,13 +602,15 @@ function App() {
   // --- Render ---
   const navHeight = Math.max(config.ui.navBarHeight || 34, 32);
 
+  const rawViewMode = config.panes?.viewMode as string | undefined;
   const viewMode: ViewMode =
-    config.panes?.viewMode === 'spatial' ? 'spatial'
-    : config.panes?.viewMode === 'timeline' ? 'timeline'
+    rawViewMode === 'spatial' ? 'spatial'
+    // 'timeline' is the old name for 'stacked' — keep reading old configs.
+    : (rawViewMode === 'stacked' || rawViewMode === 'timeline') ? 'stacked'
     : 'tabs';
   const toggleViewMode = useCallback(() => {
-    // Cycle: tabs → spatial → timeline → tabs
-    const order: ViewMode[] = ['tabs', 'spatial', 'timeline'];
+    // Cycle: tabs → spatial → stacked → tabs
+    const order: ViewMode[] = ['tabs', 'spatial', 'stacked'];
     const next = order[(order.indexOf(viewMode) + 1) % order.length];
     saveConfig({ panes: { ...config.panes, viewMode: next } });
   }, [viewMode, config.panes, saveConfig]);
@@ -731,18 +627,36 @@ function App() {
 
   return (
     <div className="app-root">
-      <SideBar
-        agents={agents}
-        activeAgentId={activeAgentId}
-        statusBySession={statusBySession}
-        usageBySession={usageBySession}
-        onSelectAgent={handleSelectAgent}
-        onSpawnAgent={() => setShowSpawnDialog(true)}
-        onTerminateAgent={terminateAgent}
-        onRenameAgent={renameAgent}
-        onJumpToAttention={goToNextAttention}
-        onOpenRemote={() => setShowRemote(true)}
-      />
+      {!sidebarCollapsed && (
+        <SideBar
+          agents={agents}
+          activeAgentId={activeAgentId}
+          statusBySession={statusBySession}
+          usageBySession={usageBySession}
+          onSelectAgent={handleSelectAgent}
+          onSpawnAgent={() => setShowSpawnDialog(true)}
+          onTerminateAgent={terminateAgent}
+          onRenameAgent={renameAgent}
+          onJumpToAttention={goToNextAttention}
+          onOpenRemote={() => setShowRemote(true)}
+          onToggleCollapse={() => setSidebarCollapsed(true)}
+        />
+      )}
+      {sidebarCollapsed && (
+        <button
+          onClick={() => setSidebarCollapsed(false)}
+          title="Show sidebar (Ctrl+B)"
+          style={{
+            position: 'fixed', top: 6, left: 6, zIndex: 200,
+            width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            border: '1px solid var(--wks-glass-border)', borderRadius: 'var(--wks-radius-md)',
+            background: 'var(--wks-bg-surface)', color: 'var(--wks-text-secondary)',
+            cursor: 'pointer', fontSize: '0.95rem', lineHeight: 1,
+            // @ts-ignore — keep it clickable over the draggable navbar region
+            WebkitAppRegion: 'no-drag',
+          }}
+        >»</button>
+      )}
 
       <NavBar
         tabs={tabs}
@@ -755,7 +669,7 @@ function App() {
         onMoveTab={moveTab}
         viewMode={viewMode}
         onToggleViewMode={toggleViewMode}
-        leftOffset={SIDEBAR_WIDTH}
+        leftOffset={navLeft}
         cwd={agentCwd || undefined}
         scripts={dirScripts}
         onRunScript={handleRunScript}
@@ -765,7 +679,7 @@ function App() {
       <div className="app-content" style={{
         // Small gap between the tab bar and the top of the panes.
         marginTop: `${navHeight + 8}px`,
-        marginLeft: `${SIDEBAR_WIDTH}px`,
+        marginLeft: `${contentLeft}px`,
       }}>
         {agents.length > 0 ? (
           // Keep every agent's workspace mounted and just toggle visibility, so
@@ -841,6 +755,7 @@ function App() {
       <CommandPalette
         visible={showCommandPalette}
         apps={config.apps ?? []}
+        agentCwd={agentCwd || undefined}
         mode={paletteMode}
         restrictTo={paletteRestrict}
         libraryItems={libraryItems}
@@ -883,6 +798,19 @@ function App() {
       {showRemote && (
         <RemoteShareDialog onClose={() => setShowRemote(false)} />
       )}
+
+      <LibrarySidePanel
+        visible={showLibraryPanel}
+        onClose={() => setShowLibraryPanel(false)}
+        cwd={libraryCwd}
+      />
+
+      <BottomTerminalPanel
+        visible={showBottomTerminal}
+        onClose={() => setShowBottomTerminal(false)}
+        cwd={agentCwd || appCwd || undefined}
+        left={contentLeft}
+      />
 
       {showSpawnDialog && (
         <SpawnAgentDialog

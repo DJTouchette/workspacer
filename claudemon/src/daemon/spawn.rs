@@ -37,6 +37,12 @@ pub struct SpawnPayload {
     /// Extra env vars merged on top of the daemon's environment.
     #[serde(default)]
     pub env: HashMap<String, String>,
+    /// Caller-pinned session id. When the caller launches
+    /// `claude --session-id <uuid>` it passes the same uuid here, so our id,
+    /// claude's id, and the transcript filename (`<uuid>.jsonl`) all agree — no
+    /// cwd-based alias guessing, correct even with many sessions in one cwd.
+    #[serde(default)]
+    pub session_id: Option<String>,
 }
 
 pub async fn handle(
@@ -47,21 +53,24 @@ pub async fn handle(
         return (StatusCode::BAD_REQUEST, "argv must not be empty").into_response();
     }
 
-    let session_id = Uuid::new_v4().to_string();
+    // Prefer the caller-pinned id (matches `claude --session-id <uuid>`); fall
+    // back to a fresh one for callers that don't pin (e.g. plain shells).
+    let session_id = payload
+        .session_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
     let cwd = payload.cwd.clone();
     let cols = payload.cols.unwrap_or(80);
     let rows = payload.rows.unwrap_or(24);
-
-    // pty::spawn currently reads std::env::vars() unconditionally; we apply
-    // overrides by mutating the process env. That's racy if two spawns happen
-    // at once with overlapping keys, but the alternative is wider changes to
-    // pty::spawn. For now we accept the trade-off and document it.
-    let _env_guard = ApplyEnv::apply(&payload.env);
 
     let pty_handle = match pty::spawn(
         &payload.argv,
         &cwd,
         PtySize { cols, rows, pixel_width: 0, pixel_height: 0 },
+        &payload.env,
     ) {
         Ok(h) => Arc::new(h),
         Err(err) => {
@@ -82,7 +91,7 @@ pub async fn handle(
                         let _ = pty::write_bytes(&pty_for_input, &decoded).await;
                     }
                 }
-                WrapperMessage::Signal { signal } if signal == "SIGINT" => {
+                WrapperMessage::Signal { signal: crate::protocol::Signal::Sigint } => {
                     let _ = pty::write_bytes(&pty_for_input, b"\x03").await;
                 }
                 WrapperMessage::Resize { cols, rows } => {
@@ -119,33 +128,4 @@ pub async fn handle(
     tracing::info!(%session_id, %cwd, argv=?payload.argv, "spawned in-daemon PTY");
 
     Json(json!({ "session_id": session_id, "cwd": cwd })).into_response()
-}
-
-/// Temporarily apply env overrides to the process environment. Restored on
-/// drop. Used because `pty::spawn` reads `std::env::vars()` to populate the
-/// child's environment.
-struct ApplyEnv {
-    restore: Vec<(String, Option<String>)>,
-}
-
-impl ApplyEnv {
-    fn apply(overrides: &HashMap<String, String>) -> Self {
-        let mut restore = Vec::with_capacity(overrides.len());
-        for (k, v) in overrides {
-            restore.push((k.clone(), std::env::var(k).ok()));
-            std::env::set_var(k, v);
-        }
-        Self { restore }
-    }
-}
-
-impl Drop for ApplyEnv {
-    fn drop(&mut self) {
-        for (k, prev) in self.restore.drain(..) {
-            match prev {
-                Some(v) => std::env::set_var(&k, v),
-                None => std::env::remove_var(&k),
-            }
-        }
-    }
 }

@@ -7,6 +7,17 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Signal names that the daemon can ask the wrapper to deliver to the child
+/// process.  The serialized form is UPPERCASE — byte-identical to the string
+/// literals previously accepted as a plain `String`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum Signal {
+    Sigint,
+    Sigterm,
+    Sigkill,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WrapperMessage {
@@ -34,11 +45,59 @@ pub enum WrapperMessage {
     },
     /// Daemon → wrapper: deliver a signal.
     Signal {
-        signal: String,
+        signal: Signal,
     },
     /// Daemon → wrapper: PTY size changed.
     Resize {
         cols: u16,
         rows: u16,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn signal_serializes_to_uppercase_strings() {
+        assert_eq!(
+            serde_json::to_string(&Signal::Sigint).unwrap(),
+            "\"SIGINT\""
+        );
+        assert_eq!(
+            serde_json::to_string(&Signal::Sigterm).unwrap(),
+            "\"SIGTERM\""
+        );
+        assert_eq!(
+            serde_json::to_string(&Signal::Sigkill).unwrap(),
+            "\"SIGKILL\""
+        );
+    }
+
+    #[test]
+    fn signal_round_trips() {
+        for (json_str, expected) in [
+            ("\"SIGINT\"", Signal::Sigint),
+            ("\"SIGTERM\"", Signal::Sigterm),
+            ("\"SIGKILL\"", Signal::Sigkill),
+        ] {
+            let parsed: Signal = serde_json::from_str(json_str).unwrap();
+            assert_eq!(parsed, expected);
+            assert_eq!(serde_json::to_string(&parsed).unwrap(), json_str);
+        }
+    }
+
+    #[test]
+    fn wrapper_message_signal_round_trips() {
+        let msg = WrapperMessage::Signal {
+            signal: Signal::Sigint,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("\"SIGINT\""), "wire form must be SIGINT: {json}");
+        let parsed: WrapperMessage = serde_json::from_str(&json).unwrap();
+        match parsed {
+            WrapperMessage::Signal { signal } => assert_eq!(signal, Signal::Sigint),
+            other => panic!("expected Signal variant, got {other:?}"),
+        }
+    }
 }

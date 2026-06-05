@@ -52,6 +52,8 @@ interface SideBarProps {
   onJumpToAttention?: () => void;
   /** Open the remote-control (phone sharing) panel. */
   onOpenRemote?: () => void;
+  /** Collapse the sidebar (so panes take the full width). */
+  onToggleCollapse?: () => void;
 }
 
 const SideBar: React.FC<SideBarProps> = ({
@@ -65,6 +67,7 @@ const SideBar: React.FC<SideBarProps> = ({
   onRenameAgent,
   onJumpToAttention,
   onOpenRemote,
+  onToggleCollapse,
 }) => {
   // Aggregate live counts for the header summary.
   const needYouCount = agents.reduce((n, a) => {
@@ -128,7 +131,7 @@ const SideBar: React.FC<SideBarProps> = ({
         textTransform: 'uppercase',
         color: 'var(--wks-text-faint)',
         display: 'flex',
-        alignItems: 'baseline',
+        alignItems: 'center',
         gap: 6,
       }}>
         <span>Agents</span>
@@ -157,9 +160,22 @@ const SideBar: React.FC<SideBarProps> = ({
             {workingCount} working
           </span>
         )}
+        <div style={{ flex: 1 }} />
+        {onToggleCollapse && (
+          <button
+            onClick={onToggleCollapse}
+            title="Collapse sidebar (Ctrl+B)"
+            style={{
+              width: 20, height: 20, padding: 0, flexShrink: 0,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              border: 'none', borderRadius: 5, cursor: 'pointer',
+              background: 'transparent', color: 'var(--wks-text-faint)', fontSize: '0.9rem', lineHeight: 1,
+            }}
+          >«</button>
+        )}
       </div>
 
-      <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+      <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px', padding: '2px 0' }}>
         {agents.length === 0 && (
           <div style={{ padding: '8px 12px', fontSize: '0.7rem', color: 'var(--wks-text-faint)', lineHeight: 1.5 }}>
             No agents yet. Spawn one to start a Claude Code session.
@@ -190,23 +206,23 @@ const SideBar: React.FC<SideBarProps> = ({
                 setContextMenu({ agentId: agent.id, y: e.clientY });
               }}
               style={{
-                width: 'calc(100% - 8px)',
-                margin: '0 4px',
-                padding: '6px 8px',
+                width: 'calc(100% - 12px)',
+                margin: '0 6px',
+                padding: '9px 11px',
                 display: 'flex',
                 alignItems: 'center',
-                gap: '8px',
-                border: 'none',
-                borderRadius: '6px',
+                gap: '9px',
+                borderRadius: 'var(--wks-radius-md)',
                 cursor: 'pointer',
-                fontSize: '0.75rem',
+                fontSize: '0.85rem',
                 fontFamily: 'inherit',
-                fontWeight: isActive ? 600 : 400,
-                backgroundColor: isActive ? 'var(--wks-bg-selected)' : 'transparent',
-                color: isActive ? 'var(--wks-text-primary)' : 'var(--wks-text-muted)',
-                borderLeft: isActive ? '2px solid var(--wks-accent)' : '2px solid transparent',
+                fontWeight: isActive ? 600 : 500,
+                backgroundColor: isActive ? 'var(--wks-bg-selected)' : 'var(--wks-bg-surface)',
+                color: isActive ? 'var(--wks-text-primary)' : 'var(--wks-text-secondary)',
+                border: `1px solid ${isActive ? 'var(--wks-accent)' : 'var(--wks-glass-border)'}`,
                 textAlign: 'left',
                 boxSizing: 'border-box',
+                transition: 'border-color 0.12s, background-color 0.12s',
               }}
               title={isGlobal ? 'Overview — cross-agent dashboards & plugin panes' : `${agent.name} — ${label}\n${agent.cwd}${usageTip}`}
             >
@@ -247,7 +263,7 @@ const SideBar: React.FC<SideBarProps> = ({
                   </span>
                 )}
                 <span style={{
-                  fontSize: '0.6rem', color: 'var(--wks-text-faint)',
+                  fontSize: '0.67rem', color: 'var(--wks-text-faint)',
                   display: 'flex', alignItems: 'baseline', gap: 4,
                   overflow: 'hidden', whiteSpace: 'nowrap',
                 }}>
@@ -338,11 +354,9 @@ const SideBar: React.FC<SideBarProps> = ({
             label="Terminate"
             danger
             onClick={() => {
-              const agent = agents.find((a) => a.id === contextMenu.agentId);
+              const id = contextMenu.agentId;
               setContextMenu(null);
-              if (window.confirm(`Terminate agent "${agent?.name}"? This kills its Claude session.`)) {
-                onTerminateAgent(contextMenu.agentId);
-              }
+              onTerminateAgent(id);
             }}
           />
         </div>

@@ -7,19 +7,7 @@ import { usePTY } from '../hooks/usePTY';
 import { useConfig, Config } from '../hooks/useConfig';
 import { useTheme } from '../hooks/useTheme';
 import { claudeColors as colors, ensureKeyframes } from '../components/claude-shared';
-
-/** Ensure each CSS font-family name with spaces is quoted */
-function quoteFontFamily(ff: string): string {
-  return ff.split(',').map(f => {
-    f = f.trim();
-    if (!f) return f;
-    // Already quoted or a generic family (monospace, serif, etc.)
-    if (/^["']/.test(f) || /^(monospace|sans-serif|serif|cursive|fantasy|system-ui)$/i.test(f)) return f;
-    // Has spaces — needs quoting
-    if (f.includes(' ')) return `"${f}"`;
-    return f;
-  }).join(', ');
-}
+import { quoteFontFamily, fitWithRetry } from '../lib/terminalUtils';
 
 interface TerminalPaneProps {
   paneId: string;
@@ -140,8 +128,8 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
       if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'v') {
         return false;
       }
-      // Ctrl+T, Ctrl+B, Ctrl+W, Ctrl+/, Ctrl+, — always app-level
-      if (e.ctrlKey && !e.altKey && !e.shiftKey && ['t', 'b', 'w', 'd', '/', '?', ',', 's', 'k'].includes(e.key)) {
+      // Ctrl+T/B/W/D, Ctrl+/, Ctrl+,, Ctrl+S, Ctrl+K, Ctrl+` (toggle terminal) — app-level
+      if (e.ctrlKey && !e.altKey && !e.shiftKey && ['t', 'b', 'w', 'd', '/', '?', ',', 's', 'k', '`'].includes(e.key)) {
         return false;
       }
       // Ctrl+1-9 — jump to pane
@@ -169,16 +157,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
     });
 
     // Fit multiple times during startup — the container needs time to reach final size
-    const fitWithRetry = () => {
-      try {
-        fitAddon.fit();
-      } catch {
-        // Ignore fit errors
-      }
-    };
-    requestAnimationFrame(fitWithRetry);
-    setTimeout(fitWithRetry, 100);
-    setTimeout(fitWithRetry, 300);
+    fitWithRetry(fitAddon);
 
     attachToTerminal(term);
 

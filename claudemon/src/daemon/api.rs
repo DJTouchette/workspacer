@@ -18,7 +18,7 @@ use tokio_stream::{wrappers::BroadcastStream, StreamExt};
 use tower_http::cors::CorsLayer;
 
 use crate::protocol::WrapperMessage;
-use crate::session::{transcript, SessionMode, SessionStore};
+use crate::session::{transcript, usage, SessionMode, SessionStore};
 use crate::store::items::{ItemAction, ItemBroadcaster, ItemChange, ListFilter};
 use crate::store::Db;
 
@@ -85,7 +85,19 @@ pub fn router(state: ApiState) -> Router {
 }
 
 async fn list_sessions(State(store): State<SessionStore>) -> impl IntoResponse {
-    Json(store.list())
+    let sessions: Vec<Value> = store
+        .list()
+        .into_iter()
+        .map(|state| {
+            let u = usage::usage_for_path(state.transcript_path.as_deref());
+            let mut v = serde_json::to_value(&state).unwrap_or(Value::Null);
+            if let Some(obj) = v.as_object_mut() {
+                obj.insert("usage".to_string(), serde_json::to_value(&u).unwrap_or(Value::Null));
+            }
+            v
+        })
+        .collect();
+    Json(sessions)
 }
 
 async fn get_session(
@@ -93,7 +105,17 @@ async fn get_session(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     match store.get(&id) {
-        Some(state) => Json(state).into_response(),
+        Some(state) => {
+            let u = usage::usage_for_path(state.transcript_path.as_deref());
+            let mut v = serde_json::to_value(&state).unwrap_or(Value::Null);
+            if let Some(obj) = v.as_object_mut() {
+                obj.insert(
+                    "usage".to_string(),
+                    serde_json::to_value(&u).unwrap_or(Value::Null),
+                );
+            }
+            Json(v).into_response()
+        }
         None => (StatusCode::NOT_FOUND, "session not found").into_response(),
     }
 }
@@ -368,7 +390,7 @@ async fn post_answer(
 
 #[derive(Debug, Deserialize)]
 struct SignalPayload {
-    signal: String,
+    signal: crate::protocol::Signal,
 }
 
 async fn post_signal(
@@ -381,7 +403,7 @@ async fn post_signal(
     };
     if handle
         .tx
-        .send(WrapperMessage::Signal { signal: payload.signal.clone() })
+        .send(WrapperMessage::Signal { signal: payload.signal })
         .is_err()
     {
         return (StatusCode::GONE, "wrapper disconnected").into_response();

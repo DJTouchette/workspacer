@@ -1,6 +1,7 @@
 import { ipcMain, BrowserWindow, dialog } from 'electron';
 import * as os from 'os';
 import * as fs from 'fs';
+import { randomUUID } from 'crypto';
 import { configService } from './services/configService';
 import { libraryService } from './services/libraryService';
 import { sessionService } from './services/sessionService';
@@ -15,6 +16,8 @@ import { claudeProfiles } from './services/claudeProfiles';
 import { listClaudeSessionsForDir } from './services/claudeSessionList';
 import { HUB_HTTP_URL, getHubToken, getRemoteShareInfo } from './services/hubDaemon';
 import { publishToHub, isHubConnected } from './services/hubClient';
+import { IPC } from './shared/ipcChannels';
+import type { ClaudeSessionSnapshot, AppConfig, AppConfigPartial, SessionData, LayoutInput, ProfileUpdate } from './shared/ipcTypes';
 
 function detectDefaultShell(): string {
   if (process.platform === 'win32') {
@@ -31,19 +34,19 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   libraryService.setMainWindow(mainWindow);
 
   // ── Library (reusable prompts + skills) ──
-  ipcMain.handle('library:list', (_event, cwd?: string) => libraryService.list(cwd));
-  ipcMain.handle('library:save', (_event, input: any) => libraryService.save(input));
-  ipcMain.handle('library:remove', (_event, scope: 'global' | 'project' | 'claude', id: string, cwd?: string, kind?: 'prompt' | 'skill' | 'agent') =>
+  ipcMain.handle(IPC.LIBRARY_LIST, (_event, cwd?: string) => libraryService.list(cwd));
+  ipcMain.handle(IPC.LIBRARY_SAVE, (_event, input: unknown) => libraryService.save(input as any));
+  ipcMain.handle(IPC.LIBRARY_REMOVE, (_event, scope: 'global' | 'project' | 'claude', id: string, cwd?: string, kind?: 'prompt' | 'skill' | 'agent') =>
     libraryService.remove(scope, id, cwd, kind));
 
   // Renderer reports which agent session is currently on screen, so the
   // notifier can suppress alerts for the agent you're actively watching.
-  ipcMain.on('notify:set-active-session', (_event, sessionId: string | null) => {
+  ipcMain.on(IPC.NOTIFY_SET_ACTIVE_SESSION, (_event, sessionId: string | null) => {
     agentNotifier.setActiveSession(sessionId);
   });
 
   // ── Generic terminal (non-Claude shells) — routed through claudemon ──
-  ipcMain.handle('terminal:create', async (_event, shell: string, cwd?: string, cols?: number, rows?: number) => {
+  ipcMain.handle(IPC.TERMINAL_CREATE, async (_event, shell: string, cwd?: string, cols?: number, rows?: number) => {
     try {
       const resolvedShell = shell || detectDefaultShell();
       const resolvedCwd = cwd && fs.existsSync(cwd) ? cwd : os.homedir();
@@ -52,7 +55,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
         cwd: resolvedCwd,
         cols,
         rows,
-        portChannel: 'terminal:port',
+        portChannel: IPC.TERMINAL_PORT,
       });
     } catch (err: any) {
       console.error('[IPC] terminal:create failed:', err?.message);
@@ -60,30 +63,35 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     }
   });
 
-  ipcMain.handle('terminal:resize', (_event, id: string, cols: number, rows: number) =>
+  ipcMain.handle(IPC.TERMINAL_RESIZE, (_event, id: string, cols: number, rows: number) =>
     claudemonSessionClient.resize(id, cols, rows));
-  ipcMain.handle('terminal:close', (_event, id: string) =>
+  ipcMain.handle(IPC.TERMINAL_CLOSE, (_event, id: string) =>
     claudemonSessionClient.close(id));
 
   // ── Claude sessions (delegated to claudemon) ──
-  ipcMain.handle('claude:spawn', async (_event, opts: { cwd?: string; profileId?: string; model?: string; skipPermissions?: boolean; resumeSessionId?: string; cols?: number; rows?: number }) => {
+  ipcMain.handle(IPC.CLAUDE_SPAWN, async (_event, opts: { cwd?: string; profileId?: string; model?: string; skipPermissions?: boolean; resumeSessionId?: string; cols?: number; rows?: number }) => {
     const profile = opts.profileId ? claudeProfiles.getProfile(opts.profileId) : undefined;
     const env: Record<string, string> = {};
     if (profile?.configDir) {
       env.CLAUDE_CONFIG_DIR = profile.configDir.replace(/^~/, os.homedir());
     }
+    // Pin the session id so claude names its transcript `<id>.jsonl` and our
+    // id == claude's id == the filename — correct transcripts even with many
+    // sessions in one cwd. Resuming keeps the existing id.
+    const sessionId = opts.resumeSessionId || randomUUID();
     const argv = buildClaudeArgv({
       extraArgs: profile?.extraArgs,
       resumeSessionId: opts.resumeSessionId,
       model: opts.model,
       skipPermissions: opts.skipPermissions,
+      sessionId,
     });
     const cwd = opts.cwd ?? process.env.HOME ?? os.homedir();
-    return claudemonSessionClient.spawn({ argv, cwd, cols: opts.cols, rows: opts.rows, env });
+    return claudemonSessionClient.spawn({ argv, cwd, cols: opts.cols, rows: opts.rows, env, sessionId });
   });
 
   // ── Hub (control-plane / event bus) ──
-  ipcMain.handle('hub:listPlugins', async () => {
+  ipcMain.handle(IPC.HUB_LIST_PLUGINS, async () => {
     try {
       const res = await fetch(`${HUB_HTTP_URL}/plugins`);
       if (!res.ok) return [];
@@ -92,12 +100,12 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       return [];
     }
   });
-  ipcMain.handle('hub:publish', (_event, ev: { type: string; source?: string; data?: unknown }) => {
+  ipcMain.handle(IPC.HUB_PUBLISH, (_event, ev: { type: string; source?: string; data?: unknown }) => {
     publishToHub(ev);
   });
-  ipcMain.handle('hub:getStatus', () => ({ connected: isHubConnected() }));
+  ipcMain.handle(IPC.HUB_GET_STATUS, () => ({ connected: isHubConnected() }));
   // Connection info for the remote-control client (URL + token for a QR/share).
-  ipcMain.handle('hub:getRemoteInfo', () => getRemoteShareInfo());
+  ipcMain.handle(IPC.HUB_GET_REMOTE_INFO, () => getRemoteShareInfo());
   // When remote auth is on, the hub's mutating routes require the token; the
   // local UI presents it via the same Authorization header a remote client uses.
   const hubAuthHeaders = (): Record<string, string> => {
@@ -106,7 +114,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     if (token) h['Authorization'] = `Bearer ${token}`;
     return h;
   };
-  ipcMain.handle('hub:installPlugin', async (_event, url: string) => {
+  ipcMain.handle(IPC.HUB_INSTALL_PLUGIN, async (_event, url: string) => {
     try {
       const res = await fetch(`${HUB_HTTP_URL}/plugins/install`, {
         method: 'POST',
@@ -120,7 +128,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       return { ok: false, error: String((err as Error)?.message ?? err) };
     }
   });
-  ipcMain.handle('hub:removePlugin', async (_event, id: string) => {
+  ipcMain.handle(IPC.HUB_REMOVE_PLUGIN, async (_event, id: string) => {
     try {
       await fetch(`${HUB_HTTP_URL}/plugins/remove`, {
         method: 'POST',
@@ -137,7 +145,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // resolve to the latest model of each family (so they track Claude Code
   // updates with zero maintenance), and `seen` carries concrete ids observed
   // in real transcripts — past sessions plus anything persisted in config.
-  ipcMain.handle('claude:listModels', () => {
+  ipcMain.handle(IPC.CLAUDE_LIST_MODELS, () => {
     const cfg = configService.getConfig() as any;
     const persisted: string[] = Array.isArray(cfg.claude?.seenModels) ? cfg.claude.seenModels : [];
     const live = claudeSessionStore.getAllSnapshots()
@@ -156,29 +164,29 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     };
   });
 
-  ipcMain.handle('claude:message', (_event, sessionId: string, text: string) =>
+  ipcMain.handle(IPC.CLAUDE_MESSAGE, (_event, sessionId: string, text: string) =>
     claudemonSessionClient.message(sessionId, text));
-  ipcMain.handle('claude:approve', (_event, sessionId: string, decision: 'yes' | 'no' | 'always', reason?: string) =>
+  ipcMain.handle(IPC.CLAUDE_APPROVE, (_event, sessionId: string, decision: 'yes' | 'no' | 'always', reason?: string) =>
     claudemonSessionClient.approve(sessionId, decision, reason));
-  ipcMain.handle('claude:answer', (_event, sessionId: string, payload: { option?: number; text?: string; answers?: string[] }) =>
+  ipcMain.handle(IPC.CLAUDE_ANSWER, (_event, sessionId: string, payload: { option?: number; text?: string; answers?: string[] }) =>
     claudemonSessionClient.answer(sessionId, payload));
-  ipcMain.handle('claude:resize', (_event, sessionId: string, cols: number, rows: number) =>
+  ipcMain.handle(IPC.CLAUDE_RESIZE, (_event, sessionId: string, cols: number, rows: number) =>
     claudemonSessionClient.resize(sessionId, cols, rows));
-  ipcMain.handle('claude:signal', (_event, sessionId: string, signal: string) =>
+  ipcMain.handle(IPC.CLAUDE_SIGNAL, (_event, sessionId: string, signal: string) =>
     claudemonSessionClient.signal(sessionId, signal));
-  ipcMain.handle('claude:close', (_event, sessionId: string) =>
+  ipcMain.handle(IPC.CLAUDE_CLOSE, (_event, sessionId: string) =>
     claudemonSessionClient.close(sessionId));
-  ipcMain.handle('claude:attach', (_event, paneId: string, sessionId: string) =>
-    claudemonSessionClient.attach(paneId, sessionId, 'claude:port'));
-  ipcMain.handle('claude:detach', (_event, paneId: string) =>
+  ipcMain.handle(IPC.CLAUDE_ATTACH, (_event, paneId: string, sessionId: string) =>
+    claudemonSessionClient.attach(paneId, sessionId, IPC.CLAUDE_PORT));
+  ipcMain.handle(IPC.CLAUDE_DETACH, (_event, paneId: string) =>
     claudemonSessionClient.detach(paneId));
-  ipcMain.handle('claude:gate', (_event, sessionId: string, on: boolean) =>
+  ipcMain.handle(IPC.CLAUDE_GATE, (_event, sessionId: string, on: boolean) =>
     claudemonSessionClient.setGate(sessionId, on));
 
-  ipcMain.handle('claude-session:get', (_event, sessionId: string) =>
+  ipcMain.handle(IPC.CLAUDE_SESSION_GET, (_event, sessionId: string): ClaudeSessionSnapshot | null =>
     claudeSessionStore.getSnapshot(sessionId));
 
-  ipcMain.handle('claude-session:getAll', () => {
+  ipcMain.handle(IPC.CLAUDE_SESSION_GET_ALL, (): ClaudeSessionSnapshot[] => {
     return claudeSessionStore.getAllSnapshots();
   });
 
@@ -191,7 +199,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // a headless Chrome and reads cookies via the DevTools Protocol — works
   // with v20 (app-bound) encryption. `method: 'direct'` reads the SQLite +
   // DPAPI directly — fast, no Chrome needed, but only works for v10/v11.
-  ipcMain.handle('chrome-cookies:import', async (_e, opts?: { domainFilter?: string[]; method?: 'cdp' | 'direct'; browser?: 'chrome' | 'edge' }) => {
+  ipcMain.handle(IPC.CHROME_COOKIES_IMPORT, async (_e, opts?: { domainFilter?: string[]; method?: 'cdp' | 'direct'; browser?: 'chrome' | 'edge' }) => {
     const method = opts?.method ?? 'cdp';
     try {
       if (method === 'cdp') {
@@ -204,32 +212,32 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   });
 
   // Config handlers
-  ipcMain.handle('config:get', () => {
-    return configService.getConfig();
+  ipcMain.handle(IPC.CONFIG_GET, (): AppConfig => {
+    return configService.getConfig() as AppConfig;
   });
 
-  ipcMain.handle('config:reload', () => {
-    return configService.reloadConfig();
+  ipcMain.handle(IPC.CONFIG_RELOAD, (): AppConfig => {
+    return configService.reloadConfig() as AppConfig;
   });
 
-  ipcMain.handle('config:getPath', () => {
+  ipcMain.handle(IPC.CONFIG_GET_PATH, () => {
     return configService.getConfigPath();
   });
 
-  ipcMain.handle('config:save', (_event, partial: unknown) => {
-    return configService.saveConfig(partial as any);
+  ipcMain.handle(IPC.CONFIG_SAVE, (_event, partial: AppConfigPartial): AppConfig => {
+    return configService.saveConfig(partial as any) as AppConfig;
   });
 
   // Session handlers
-  ipcMain.handle('session:list', () => {
+  ipcMain.handle(IPC.SESSION_LIST, () => {
     return sessionService.listSessions();
   });
 
-  ipcMain.handle('session:load', (_event, filename: string) => {
+  ipcMain.handle(IPC.SESSION_LOAD, (_event, filename: string) => {
     return sessionService.loadSession(filename);
   });
 
-  ipcMain.handle('session:save', (_event, data: any) => {
+  ipcMain.handle(IPC.SESSION_SAVE, (_event, data: SessionData) => {
     const ptyMapping = data.ptyMapping || {};
 
     // Current layout: a roster of agent workspaces, each with its own tabs.
@@ -238,7 +246,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
         name: data.name,
         timestamp: new Date().toISOString(),
         activeAgentId: data.activeAgentId,
-        agents: sessionService.enrichAgentsWithCwd(data.agents, ptyMapping),
+        agents: sessionService.enrichAgentsWithCwd(data.agents as any, ptyMapping),
       });
     }
 
@@ -255,26 +263,26 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     });
   });
 
-  ipcMain.handle('session:delete', (_event, filename: string) => {
+  ipcMain.handle(IPC.SESSION_DELETE, (_event, filename: string) => {
     sessionService.deleteSession(filename);
   });
 
   // ── Analytics (old-session metadata) ──
-  ipcMain.handle('analytics:summary', () => sessionHistory.summary());
-  ipcMain.handle('analytics:recent', (_event, limit?: number) => sessionHistory.recent(limit));
+  ipcMain.handle(IPC.ANALYTICS_SUMMARY, () => sessionHistory.summary());
+  ipcMain.handle(IPC.ANALYTICS_RECENT, (_event, limit?: number) => sessionHistory.recent(limit));
 
   // ── Layout templates (reusable directory + pane arrangements) ──
-  ipcMain.handle('layouts:list', () => layoutService.list());
-  ipcMain.handle('layouts:save', (_event, layout: any) => layoutService.save(layout));
-  ipcMain.handle('layouts:delete', (_event, id: string) => layoutService.remove(id));
+  ipcMain.handle(IPC.LAYOUTS_LIST, () => layoutService.list());
+  ipcMain.handle(IPC.LAYOUTS_SAVE, (_event, layout: LayoutInput) => layoutService.save(layout));
+  ipcMain.handle(IPC.LAYOUTS_DELETE, (_event, id: string) => layoutService.remove(id));
 
   // App info
-  ipcMain.handle('app:getCwd', () => {
+  ipcMain.handle(IPC.APP_GET_CWD, () => {
     return process.cwd();
   });
 
   // Dialog
-  ipcMain.handle('dialog:pickFolder', async (_event, defaultPath?: string) => {
+  ipcMain.handle(IPC.DIALOG_PICK_FOLDER, async (_event, defaultPath?: string) => {
     const result = await dialog.showOpenDialog(mainWindow, {
       title: 'Choose working directory for Claude',
       defaultPath: defaultPath || process.cwd(),
@@ -284,7 +292,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     return result.filePaths[0];
   });
 
-  ipcMain.handle('dialog:pickFiles', async (_event, defaultPath?: string) => {
+  ipcMain.handle(IPC.DIALOG_PICK_FILES, async (_event, defaultPath?: string) => {
     const result = await dialog.showOpenDialog(mainWindow, {
       title: 'Attach files',
       defaultPath: defaultPath || process.cwd(),
@@ -298,15 +306,15 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   // ── Claude Session Discovery ──
 
-  ipcMain.handle('claude-sessions:listForDir', (_event, cwd: string) =>
+  ipcMain.handle(IPC.CLAUDE_SESSIONS_LIST_FOR_DIR, (_event, cwd: string) =>
     listClaudeSessionsForDir(cwd));
 
-  ipcMain.handle('claude-profiles:list', () => claudeProfiles.getProfiles());
-  ipcMain.handle('claude-profiles:add', (_event, name: string, configDir: string, extraArgs: string[]) =>
+  ipcMain.handle(IPC.CLAUDE_PROFILES_LIST, () => claudeProfiles.getProfiles());
+  ipcMain.handle(IPC.CLAUDE_PROFILES_ADD, (_event, name: string, configDir: string, extraArgs: string[]) =>
     claudeProfiles.addProfile(name, configDir, extraArgs));
-  ipcMain.handle('claude-profiles:update', (_event, id: string, updates: any) =>
+  ipcMain.handle(IPC.CLAUDE_PROFILES_UPDATE, (_event, id: string, updates: ProfileUpdate) =>
     claudeProfiles.updateProfile(id, updates));
-  ipcMain.handle('claude-profiles:remove', (_event, id: string) =>
+  ipcMain.handle(IPC.CLAUDE_PROFILES_REMOVE, (_event, id: string) =>
     claudeProfiles.removeProfile(id));
 
 }

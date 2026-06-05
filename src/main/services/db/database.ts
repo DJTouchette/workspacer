@@ -1,7 +1,7 @@
 import * as path from 'path';
-import * as os from 'os';
 import * as fs from 'fs';
 import type BetterSqlite3 from 'better-sqlite3';
+import { getConfigDir } from '../configService';
 
 // Native module — use require to avoid ESM/bundler issues
 const Database = require('better-sqlite3') as typeof BetterSqlite3;
@@ -124,7 +124,7 @@ CREATE INDEX IF NOT EXISTS idx_session_history_model ON session_history(model);
 `;
 
 function getDbPath(): string {
-  return path.join(os.homedir(), '.config', 'workspacer', 'workspacer.db');
+  return path.join(getConfigDir(), 'workspacer.db');
 }
 
 export class DatabaseService {

@@ -168,9 +168,7 @@ impl Claudemon {
                 }
             }
 
-            while let Some(i) = find(&buf, b"\n\n") {
-                let frame: Vec<u8> = buf.drain(..i).collect();
-                buf.drain(..2);
+            for frame in drain_sse_frames(&mut buf) {
                 let text = String::from_utf8_lossy(&frame);
                 for line in text.lines() {
                     if let Some(data) = line.strip_prefix("data:") {
@@ -186,14 +184,24 @@ impl Claudemon {
     }
 
     /// Spawn a Claude session in a fresh PTY. Returns the assigned session id.
-    pub async fn spawn(&self, argv: Vec<String>, cwd: String, env: Map<String, Value>) -> Result<String> {
-        let body = json!({
+    pub async fn spawn(
+        &self,
+        argv: Vec<String>,
+        cwd: String,
+        env: Map<String, Value>,
+        session_id: &str,
+    ) -> Result<String> {
+        let mut body = json!({
             "argv": argv,
             "cwd": cwd,
             "cols": 120,
             "rows": 32,
             "env": Value::Object(env),
         });
+        // Pin the id so it matches `--session-id` in argv (empty for shells).
+        if !session_id.is_empty() {
+            body["session_id"] = json!(session_id);
+        }
         let resp = self.post_json("/sessions/spawn", &body).await?;
         resp.get("session_id")
             .and_then(|v| v.as_str())
@@ -294,15 +302,27 @@ async fn sse_connect(base: &str, tx: &mpsc::UnboundedSender<DaemonEvent>) -> Res
         }
 
         // SSE frames are separated by a blank line.
-        while let Some(i) = find(&buf, b"\n\n") {
-            let frame: Vec<u8> = buf.drain(..i).collect();
-            buf.drain(..2);
+        for frame in drain_sse_frames(&mut buf) {
             let text = String::from_utf8_lossy(&frame);
             if text.lines().any(|l| l.starts_with("data:")) {
                 let _ = tx.send(DaemonEvent::Changed);
             }
         }
     }
+}
+
+/// Drain all complete SSE frames (separated by `\n\n`) from `buf`, returning
+/// them as a `Vec` of raw frame byte vectors. `buf` is left with any trailing
+/// incomplete frame. Behaviour-preserving: identical to the previous inline
+/// `while let Some(i) = find(&buf, b"\n\n")` loop used in both stream loops.
+fn drain_sse_frames(buf: &mut Vec<u8>) -> Vec<Vec<u8>> {
+    let mut frames = Vec::new();
+    while let Some(i) = find(buf, b"\n\n") {
+        let frame: Vec<u8> = buf.drain(..i).collect();
+        buf.drain(..2); // consume the trailing \n\n
+        frames.push(frame);
+    }
+    frames
 }
 
 /// Parse a buffered HTTP/1.1 response: check the status line, return the JSON
@@ -345,6 +365,42 @@ mod tests {
     use super::*;
 
     #[test]
+    fn drain_single_frame() {
+        let mut buf = b"data: hello\n\n".to_vec();
+        let frames = drain_sse_frames(&mut buf);
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0], b"data: hello");
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn drain_multiple_frames() {
+        let mut buf = b"data: a\n\ndata: b\n\n".to_vec();
+        let frames = drain_sse_frames(&mut buf);
+        assert_eq!(frames.len(), 2);
+        assert_eq!(frames[0], b"data: a");
+        assert_eq!(frames[1], b"data: b");
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn drain_partial_frame_stays_in_buf() {
+        let mut buf = b"data: incomplete".to_vec();
+        let frames = drain_sse_frames(&mut buf);
+        assert!(frames.is_empty());
+        assert_eq!(buf, b"data: incomplete");
+    }
+
+    #[test]
+    fn drain_one_complete_one_partial() {
+        let mut buf = b"data: done\n\ndata: pending".to_vec();
+        let frames = drain_sse_frames(&mut buf);
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0], b"data: done");
+        assert_eq!(buf, b"data: pending");
+    }
+
+    #[test]
     fn http_status_and_body() {
         let raw = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"ok\":true}";
         assert_eq!(parse_http_json(raw).unwrap()["ok"], true);
@@ -369,7 +425,7 @@ mod tests {
         use std::time::Duration;
         let cm = Claudemon::new("http://127.0.0.1:7891".into());
         let sid = cm
-            .spawn(vec!["cat".into()], "/tmp".into(), Map::new())
+            .spawn(vec!["cat".into()], "/tmp".into(), Map::new(), "")
             .await
             .expect("spawn cat");
 
@@ -409,12 +465,9 @@ mod tests {
         let agents = cm.list().await.expect("claudemon GET /sessions");
         eprintln!("claudemon reports {} session(s):", agents.len());
         for a in &agents {
-            let usage = cm
-                .transcript(&a.session_id)
-                .await
-                .ok()
-                .and_then(|t| crate::usage::from_transcript(&t));
-            let extra = match usage {
+            // Usage is now returned directly by GET /sessions — no transcript
+            // fetch needed.
+            let extra = match &a.usage {
                 Some(u) => format!(
                     "{} · {}/{} ctx · ${:.2}",
                     u.model.as_deref().unwrap_or("?"),

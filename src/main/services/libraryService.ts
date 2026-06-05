@@ -24,6 +24,7 @@ import * as path from 'path';
 import * as yaml from 'js-yaml';
 import type { BrowserWindow } from 'electron';
 import { getConfigDir } from './configService';
+import { slugLibrary } from '../lib/fileUtils';
 
 export type LibraryScope = 'global' | 'project' | 'claude';
 export type LibraryKind = 'prompt' | 'skill' | 'agent';
@@ -42,10 +43,7 @@ export interface LibraryItem {
   path: string;          // absolute file path
 }
 
-function slug(s: string): string {
-  const out = (s || '').toLowerCase().replace(/[^a-z0-9-_]+/g, '-').replace(/^-+|-+$/g, '');
-  return out || 'item';
-}
+const slug = slugLibrary;
 
 function globalDir(): string {
   return path.join(getConfigDir(), 'library');

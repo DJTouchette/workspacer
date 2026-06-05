@@ -1,4 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import { IPC } from './shared/ipcChannels';
+import type { ClaudeSessionSnapshot, AppConfig, AppConfigPartial, SessionData, LayoutInput, ProfileUpdate } from './shared/ipcTypes';
 
 // ── MessagePort storage (preload isolated world) ──
 // Minimal type for the DOM MessagePort (main tsconfig lacks DOM lib)
@@ -24,7 +26,7 @@ function deliverPort(id: string, port: IPort): void {
 }
 
 // Receive ports sent by main process after terminal creation (regular shells)
-ipcRenderer.on('terminal:port', (event, { id }: { id: string }) => {
+ipcRenderer.on(IPC.TERMINAL_PORT, (event, { id }: { id: string }) => {
   const port = event.ports[0] as unknown as IPort;
   if (!port) return;
   deliverPort(id, port);
@@ -34,7 +36,7 @@ ipcRenderer.on('terminal:port', (event, { id }: { id: string }) => {
 //   - For spawned panes (1 viewer per session), viewerKey === sessionId.
 //   - For attached panes, viewerKey === paneId so multiple viewers of the
 //     same session each get their own port.
-ipcRenderer.on('claude:port', (event, payload: { sessionId: string; viewerKey?: string }) => {
+ipcRenderer.on(IPC.CLAUDE_PORT, (event, payload: { sessionId: string; viewerKey?: string }) => {
   const port = event.ports[0] as unknown as IPort;
   if (!port) return;
   deliverPort(payload.viewerKey ?? payload.sessionId, port);
@@ -51,9 +53,13 @@ function getPort(id: string): Promise<IPort> {
 }
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  // Host OS — lets the renderer reserve space for native window controls
+  // (the Windows titleBarOverlay caption buttons live in the top-right corner).
+  platform: process.platform,
+
   // Terminal — control messages stay on IPC, I/O goes through MessagePort
   createTerminal: (shell: string, cwd?: string, cols?: number, rows?: number): Promise<string> =>
-    ipcRenderer.invoke('terminal:create', shell, cwd, cols, rows),
+    ipcRenderer.invoke(IPC.TERMINAL_CREATE, shell, cwd, cols, rows),
 
   writeTerminal: (id: string, data: string): void => {
     const port = terminalPorts.get(id);
@@ -61,10 +67,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   resizeTerminal: (id: string, cols: number, rows: number): Promise<void> =>
-    ipcRenderer.invoke('terminal:resize', id, cols, rows),
+    ipcRenderer.invoke(IPC.TERMINAL_RESIZE, id, cols, rows),
 
   closeTerminal: (id: string): Promise<void> =>
-    ipcRenderer.invoke('terminal:close', id).then(() => {
+    ipcRenderer.invoke(IPC.TERMINAL_CLOSE, id).then(() => {
       const port = terminalPorts.get(id);
       if (port) { port.close(); terminalPorts.delete(id); }
     }),
@@ -87,84 +93,84 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const handler = (_event: Electron.IpcRendererEvent, id: string) => {
       callback(id);
     };
-    ipcRenderer.on('terminal:exit', handler);
+    ipcRenderer.on(IPC.TERMINAL_EXIT, handler);
     return () => {
-      ipcRenderer.removeListener('terminal:exit', handler);
+      ipcRenderer.removeListener(IPC.TERMINAL_EXIT, handler);
     };
   },
 
   // Config
-  getConfig: (): Promise<unknown> =>
-    ipcRenderer.invoke('config:get'),
+  getConfig: (): Promise<AppConfig> =>
+    ipcRenderer.invoke(IPC.CONFIG_GET),
 
-  reloadConfig: (): Promise<unknown> =>
-    ipcRenderer.invoke('config:reload'),
+  reloadConfig: (): Promise<AppConfig> =>
+    ipcRenderer.invoke(IPC.CONFIG_RELOAD),
 
   getConfigPath: (): Promise<string> =>
-    ipcRenderer.invoke('config:getPath'),
+    ipcRenderer.invoke(IPC.CONFIG_GET_PATH),
 
-  saveConfig: (partial: unknown): Promise<unknown> =>
-    ipcRenderer.invoke('config:save', partial),
+  saveConfig: (partial: AppConfigPartial): Promise<AppConfig> =>
+    ipcRenderer.invoke(IPC.CONFIG_SAVE, partial),
 
   // Session
   listSessions: (): Promise<unknown[]> =>
-    ipcRenderer.invoke('session:list'),
+    ipcRenderer.invoke(IPC.SESSION_LIST),
 
   loadSession: (filename: string): Promise<unknown> =>
-    ipcRenderer.invoke('session:load', filename),
+    ipcRenderer.invoke(IPC.SESSION_LOAD, filename),
 
-  saveSession: (data: unknown): Promise<string> =>
-    ipcRenderer.invoke('session:save', data),
+  saveSession: (data: SessionData): Promise<string> =>
+    ipcRenderer.invoke(IPC.SESSION_SAVE, data),
 
   deleteSession: (filename: string): Promise<void> =>
-    ipcRenderer.invoke('session:delete', filename),
+    ipcRenderer.invoke(IPC.SESSION_DELETE, filename),
 
   // ── Analytics ──
   analyticsSummary: (): Promise<unknown> =>
-    ipcRenderer.invoke('analytics:summary'),
+    ipcRenderer.invoke(IPC.ANALYTICS_SUMMARY),
   analyticsRecent: (limit?: number): Promise<unknown[]> =>
-    ipcRenderer.invoke('analytics:recent', limit),
+    ipcRenderer.invoke(IPC.ANALYTICS_RECENT, limit),
 
   // ── Layout templates ──
   layoutsList: (): Promise<unknown[]> =>
-    ipcRenderer.invoke('layouts:list'),
-  layoutsSave: (layout: unknown): Promise<unknown> =>
-    ipcRenderer.invoke('layouts:save', layout),
+    ipcRenderer.invoke(IPC.LAYOUTS_LIST),
+  layoutsSave: (layout: LayoutInput): Promise<unknown> =>
+    ipcRenderer.invoke(IPC.LAYOUTS_SAVE, layout),
   layoutsDelete: (id: string): Promise<void> =>
-    ipcRenderer.invoke('layouts:delete', id),
+    ipcRenderer.invoke(IPC.LAYOUTS_DELETE, id),
 
   // ── Claude sessions (delegated to claudemon daemon) ──
   spawnClaude: (opts: { cwd?: string; profileId?: string; model?: string; skipPermissions?: boolean; resumeSessionId?: string; cols?: number; rows?: number }): Promise<string> =>
-    ipcRenderer.invoke('claude:spawn', opts),
+    ipcRenderer.invoke(IPC.CLAUDE_SPAWN, opts),
   claudeListModels: (): Promise<{ defaultModel: string; skipPermissionsDefault: boolean; aliases: Array<{ value: string; label: string }>; seen: string[] }> =>
-    ipcRenderer.invoke('claude:listModels'),
+    ipcRenderer.invoke(IPC.CLAUDE_LIST_MODELS),
   claudeMessage: (sessionId: string, text: string): Promise<{ ok: boolean; mode?: string }> =>
-    ipcRenderer.invoke('claude:message', sessionId, text),
+    ipcRenderer.invoke(IPC.CLAUDE_MESSAGE, sessionId, text),
   claudeApprove: (sessionId: string, decision: 'yes' | 'no' | 'always', reason?: string): Promise<void> =>
-    ipcRenderer.invoke('claude:approve', sessionId, decision, reason),
+    ipcRenderer.invoke(IPC.CLAUDE_APPROVE, sessionId, decision, reason),
   claudeAnswer: (sessionId: string, payload: { option?: number; text?: string; answers?: string[] }): Promise<void> =>
-    ipcRenderer.invoke('claude:answer', sessionId, payload),
+    ipcRenderer.invoke(IPC.CLAUDE_ANSWER, sessionId, payload),
   claudeResize: (sessionId: string, cols: number, rows: number): Promise<void> =>
-    ipcRenderer.invoke('claude:resize', sessionId, cols, rows),
+    ipcRenderer.invoke(IPC.CLAUDE_RESIZE, sessionId, cols, rows),
   claudeSignal: (sessionId: string, signal: string): Promise<void> =>
-    ipcRenderer.invoke('claude:signal', sessionId, signal),
+    ipcRenderer.invoke(IPC.CLAUDE_SIGNAL, sessionId, signal),
   claudeClose: (sessionId: string): Promise<void> => {
-    return ipcRenderer.invoke('claude:close', sessionId).then(() => {
+    return ipcRenderer.invoke(IPC.CLAUDE_CLOSE, sessionId).then(() => {
       const port = terminalPorts.get(sessionId);
       if (port) { port.close(); terminalPorts.delete(sessionId); }
     });
   },
   /** Subscribe a viewer pane to an existing daemon session — no spawn. */
   attachClaude: (paneId: string, sessionId: string): Promise<string> =>
-    ipcRenderer.invoke('claude:attach', paneId, sessionId),
+    ipcRenderer.invoke(IPC.CLAUDE_ATTACH, paneId, sessionId),
   /** Disconnect an attached viewer without affecting the underlying session. */
   detachClaude: (paneId: string): Promise<void> =>
-    ipcRenderer.invoke('claude:detach', paneId).then(() => {
+    ipcRenderer.invoke(IPC.CLAUDE_DETACH, paneId).then(() => {
       const port = terminalPorts.get(paneId);
       if (port) { port.close(); terminalPorts.delete(paneId); }
     }),
   claudeGate: (sessionId: string, on: boolean): Promise<void> =>
-    ipcRenderer.invoke('claude:gate', sessionId, on),
+    ipcRenderer.invoke(IPC.CLAUDE_GATE, sessionId, on),
 
   /** Same shape as onTerminalOutput — works on the Claude byte port. */
   onClaudeOutput: (sessionId: string, callback: (data: string) => void): (() => void) => {
@@ -187,103 +193,103 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   // Claude session discovery
-  claudeListSessionsForDir: (cwd: string): Promise<any[]> =>
-    ipcRenderer.invoke('claude-sessions:listForDir', cwd),
+  claudeListSessionsForDir: (cwd: string): Promise<{ sessionId: string; timestamp: string; summary: string }[]> =>
+    ipcRenderer.invoke(IPC.CLAUDE_SESSIONS_LIST_FOR_DIR, cwd),
 
   // Claude profiles
-  claudeProfilesList: (): Promise<any[]> => ipcRenderer.invoke('claude-profiles:list'),
-  claudeProfilesAdd: (name: string, configDir: string, extraArgs: string[]): Promise<any> =>
-    ipcRenderer.invoke('claude-profiles:add', name, configDir, extraArgs),
-  claudeProfilesUpdate: (id: string, updates: any): Promise<any> =>
-    ipcRenderer.invoke('claude-profiles:update', id, updates),
+  claudeProfilesList: (): Promise<ProfileUpdate[]> => ipcRenderer.invoke(IPC.CLAUDE_PROFILES_LIST),
+  claudeProfilesAdd: (name: string, configDir: string, extraArgs: string[]): Promise<ProfileUpdate> =>
+    ipcRenderer.invoke(IPC.CLAUDE_PROFILES_ADD, name, configDir, extraArgs),
+  claudeProfilesUpdate: (id: string, updates: ProfileUpdate): Promise<ProfileUpdate> =>
+    ipcRenderer.invoke(IPC.CLAUDE_PROFILES_UPDATE, id, updates),
   claudeProfilesRemove: (id: string): Promise<void> =>
-    ipcRenderer.invoke('claude-profiles:remove', id),
+    ipcRenderer.invoke(IPC.CLAUDE_PROFILES_REMOVE, id),
 
-  getClaudeSession: (sessionId: string): Promise<any> =>
-    ipcRenderer.invoke('claude-session:get', sessionId),
+  getClaudeSession: (sessionId: string): Promise<ClaudeSessionSnapshot | null> =>
+    ipcRenderer.invoke(IPC.CLAUDE_SESSION_GET, sessionId),
 
-  getAllClaudeSessions: (): Promise<any[]> =>
-    ipcRenderer.invoke('claude-session:getAll'),
+  getAllClaudeSessions: (): Promise<ClaudeSessionSnapshot[]> =>
+    ipcRenderer.invoke(IPC.CLAUDE_SESSION_GET_ALL),
 
-  onClaudeSessionUpdate: (callback: (sessionId: string, snapshot: any) => void): (() => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, sessionId: string, snapshot: any) => {
+  onClaudeSessionUpdate: (callback: (sessionId: string, snapshot: ClaudeSessionSnapshot) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, sessionId: string, snapshot: ClaudeSessionSnapshot) => {
       callback(sessionId, snapshot);
     };
-    ipcRenderer.on('claude-session:update', handler);
+    ipcRenderer.on(IPC.CLAUDE_SESSION_UPDATE, handler);
     return () => {
-      ipcRenderer.removeListener('claude-session:update', handler);
+      ipcRenderer.removeListener(IPC.CLAUDE_SESSION_UPDATE, handler);
     };
   },
 
   // Hub event bus — events forwarded from the hub daemon's WebSocket.
   onHubEvent: (callback: (event: { id: string; type: string; source: string; time: string; data?: unknown }) => void): (() => void) => {
-    const handler = (_e: Electron.IpcRendererEvent, ev: any) => callback(ev);
-    ipcRenderer.on('hub:event', handler);
-    return () => ipcRenderer.removeListener('hub:event', handler);
+    const handler = (_e: Electron.IpcRendererEvent, ev: { id: string; type: string; source: string; time: string; data?: unknown }) => callback(ev);
+    ipcRenderer.on(IPC.HUB_EVENT, handler);
+    return () => ipcRenderer.removeListener(IPC.HUB_EVENT, handler);
   },
   onHubStatus: (callback: (status: { connected: boolean }) => void): (() => void) => {
-    const handler = (_e: Electron.IpcRendererEvent, s: any) => callback(s);
-    ipcRenderer.on('hub:status', handler);
-    return () => ipcRenderer.removeListener('hub:status', handler);
+    const handler = (_e: Electron.IpcRendererEvent, s: { connected: boolean }) => callback(s);
+    ipcRenderer.on(IPC.HUB_STATUS, handler);
+    return () => ipcRenderer.removeListener(IPC.HUB_STATUS, handler);
   },
-  listHubPlugins: (): Promise<any[]> => ipcRenderer.invoke('hub:listPlugins'),
+  listHubPlugins: (): Promise<unknown[]> => ipcRenderer.invoke(IPC.HUB_LIST_PLUGINS),
   hubPublish: (event: { type: string; source?: string; data?: unknown }): Promise<void> =>
-    ipcRenderer.invoke('hub:publish', event),
-  getHubStatus: (): Promise<{ connected: boolean }> => ipcRenderer.invoke('hub:getStatus'),
+    ipcRenderer.invoke(IPC.HUB_PUBLISH, event),
+  getHubStatus: (): Promise<{ connected: boolean }> => ipcRenderer.invoke(IPC.HUB_GET_STATUS),
   getRemoteInfo: (): Promise<{ enabled: boolean; token: string; remoteUrl: string; busUrl: string }> =>
-    ipcRenderer.invoke('hub:getRemoteInfo'),
-  installPlugin: (url: string): Promise<{ ok: boolean; plugin?: any; error?: string }> =>
-    ipcRenderer.invoke('hub:installPlugin', url),
+    ipcRenderer.invoke(IPC.HUB_GET_REMOTE_INFO),
+  installPlugin: (url: string): Promise<{ ok: boolean; plugin?: unknown; error?: string }> =>
+    ipcRenderer.invoke(IPC.HUB_INSTALL_PLUGIN, url),
   removePlugin: (id: string): Promise<{ ok: boolean; error?: string }> =>
-    ipcRenderer.invoke('hub:removePlugin', id),
+    ipcRenderer.invoke(IPC.HUB_REMOVE_PLUGIN, id),
 
   // ── Library (reusable prompts + skills) ──
-  libraryList: (cwd?: string): Promise<any[]> =>
-    ipcRenderer.invoke('library:list', cwd),
-  librarySave: (input: any): Promise<any> =>
-    ipcRenderer.invoke('library:save', input),
+  libraryList: (cwd?: string): Promise<unknown[]> =>
+    ipcRenderer.invoke(IPC.LIBRARY_LIST, cwd),
+  librarySave: (input: unknown): Promise<unknown> =>
+    ipcRenderer.invoke(IPC.LIBRARY_SAVE, input),
   libraryRemove: (scope: 'global' | 'project' | 'claude', id: string, cwd?: string, kind?: 'prompt' | 'skill' | 'agent'): Promise<void> =>
-    ipcRenderer.invoke('library:remove', scope, id, cwd, kind),
+    ipcRenderer.invoke(IPC.LIBRARY_REMOVE, scope, id, cwd, kind),
   onLibraryChanged: (callback: () => void): (() => void) => {
     const handler = () => callback();
-    ipcRenderer.on('library:changed', handler);
-    return () => ipcRenderer.removeListener('library:changed', handler);
+    ipcRenderer.on(IPC.LIBRARY_CHANGED, handler);
+    return () => ipcRenderer.removeListener(IPC.LIBRARY_CHANGED, handler);
   },
 
   // App info
   getCwd: (): Promise<string> =>
-    ipcRenderer.invoke('app:getCwd'),
+    ipcRenderer.invoke(IPC.APP_GET_CWD),
 
   // Dialog
   pickFolder: (defaultPath?: string): Promise<string | null> =>
-    ipcRenderer.invoke('dialog:pickFolder', defaultPath),
+    ipcRenderer.invoke(IPC.DIALOG_PICK_FOLDER, defaultPath),
   pickFiles: (defaultPath?: string): Promise<string[]> =>
-    ipcRenderer.invoke('dialog:pickFiles', defaultPath),
+    ipcRenderer.invoke(IPC.DIALOG_PICK_FILES, defaultPath),
 
 
   // Browser cookie import (Chrome or Edge)
   importChromeCookies: (domainFilter?: string[], method?: 'cdp' | 'direct', browser?: 'chrome' | 'edge'): Promise<{ imported: number; skipped: number; errors: string[] }> =>
-    ipcRenderer.invoke('chrome-cookies:import', { domainFilter, method, browser }),
+    ipcRenderer.invoke(IPC.CHROME_COOKIES_IMPORT, { domainFilter, method, browser }),
 
   // App lifecycle
   onBeforeQuit: (callback: () => void): (() => void) => {
     const handler = () => callback();
-    ipcRenderer.on('app:before-quit', handler);
+    ipcRenderer.on(IPC.APP_BEFORE_QUIT, handler);
     return () => {
-      ipcRenderer.removeListener('app:before-quit', handler);
+      ipcRenderer.removeListener(IPC.APP_BEFORE_QUIT, handler);
     };
   },
 
   // Notifications / ambient awareness
   /** Tell main which agent session is currently on screen (null = none). */
   setActiveSession: (sessionId: string | null): void =>
-    ipcRenderer.send('notify:set-active-session', sessionId),
+    ipcRenderer.send(IPC.NOTIFY_SET_ACTIVE_SESSION, sessionId),
   /** Fired when the user clicks an OS notification — carries the sessionId. */
   onFocusAgent: (callback: (sessionId: string) => void): (() => void) => {
     const handler = (_event: Electron.IpcRendererEvent, sessionId: string) => callback(sessionId);
-    ipcRenderer.on('notify:focus-agent', handler);
+    ipcRenderer.on(IPC.NOTIFY_FOCUS_AGENT, handler);
     return () => {
-      ipcRenderer.removeListener('notify:focus-agent', handler);
+      ipcRenderer.removeListener(IPC.NOTIFY_FOCUS_AGENT, handler);
     };
   },
 });

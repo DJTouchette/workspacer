@@ -7,6 +7,7 @@
 
 import { useEffect, useRef, useCallback, useState } from 'react';
 import type { Terminal } from '@xterm/xterm';
+import { binaryStringToUint8Array } from '../lib/terminalUtils';
 
 interface UseClaudeSpawnOptions {
   paneId: string;
@@ -131,11 +132,7 @@ export function useClaudeSpawn({
 
       unsubOutputRef.current = window.electronAPI.onClaudeOutput(viewerKey, (data: string) => {
         if (!data || !termRef.current) return;
-        const bytes = new Uint8Array(data.length);
-        for (let i = 0; i < data.length; i++) {
-          bytes[i] = data.charCodeAt(i);
-        }
-        pendingOutputRef.current.push(bytes);
+        pendingOutputRef.current.push(binaryStringToUint8Array(data));
         if (rafRef.current === null) {
           rafRef.current = requestAnimationFrame(() => {
             rafRef.current = null;

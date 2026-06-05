@@ -69,6 +69,36 @@ func rpcServer(t *testing.T) string {
 	return hs.URL
 }
 
+// rpcServerWith returns both the URL and the underlying Server so callers can
+// reach internal fields (e.g. router.authorize) from within the same package.
+func rpcServerWith(t *testing.T) (string, *Server) {
+	t.Helper()
+	srv := NewServer(broker.New())
+	hs := httptest.NewServer(srv.Handler())
+	t.Cleanup(hs.Close)
+	return hs.URL, srv
+}
+
+// TestCallNotAuthorized pins the authorize-seam behavior: when a non-nil
+// authorize func returns false for a method the caller receives an "error"
+// frame whose Error field contains "not authorized".
+func TestCallNotAuthorized(t *testing.T) {
+	url, srv := rpcServerWith(t)
+
+	// Block every method call so we never need a real provider.
+	srv.router.authorize = func(_ uint64, _ string) bool { return false }
+
+	caller := dialClient(t, url)
+	caller.send(Frame{Op: "call", ID: "auth1", Method: "agents.spawn"})
+	e := caller.readUntil("error")
+	if e.ID != "auth1" {
+		t.Fatalf("correlation id = %q, want auth1", e.ID)
+	}
+	if !strings.Contains(e.Error, "not authorized") {
+		t.Fatalf("error = %q, want it to contain \"not authorized\"", e.Error)
+	}
+}
+
 func TestCapabilityRoundTrip(t *testing.T) {
 	url := rpcServer(t)
 	provider := dialClient(t, url)

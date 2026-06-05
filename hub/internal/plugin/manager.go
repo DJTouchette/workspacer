@@ -62,18 +62,23 @@ func (m *Manager) AddAll(manifests []Manifest) {
 }
 
 // Remove stops a plugin's sidecar and emits plugin.unloaded.
-func (m *Manager) Remove(id string) {
+// It returns the plugin's directory path (empty string if the id was not
+// found) so the caller can delete the directory without an additional
+// List() call — avoiding the TOCTOU window that existed when the handler
+// called List() and Remove() in two separate unlocked steps.
+func (m *Manager) Remove(id string) string {
 	m.mu.Lock()
 	l, ok := m.plugins[id]
 	delete(m.plugins, id)
 	m.mu.Unlock()
 	if !ok {
-		return
+		return ""
 	}
 	if l.sup != nil {
 		l.sup.Stop()
 	}
 	m.pub.Publish(event.New("plugin.unloaded", "hub", map[string]string{"id": id}))
+	return l.manifest.Dir
 }
 
 // Stop tears every plugin down (used on hub shutdown).

@@ -9,6 +9,7 @@
 
 import { BrowserWindow, MessageChannelMain, MessagePortMain } from 'electron';
 import { CLAUDEMON_API_URL } from './claudemonDaemon';
+import { consumeSseStream } from '../lib/sseConsumer';
 
 const BACKOFF_INITIAL_MS = 200;
 const BACKOFF_MAX_MS = 5000;
@@ -53,19 +54,23 @@ class ClaudemonSessionClient {
     rows?: number;
     env?: Record<string, string>;
     portChannel?: string;
+    /** Caller-pinned session id (matches `claude --session-id <uuid>`). */
+    sessionId?: string;
   }): Promise<string> {
-    const { portChannel = 'claude:port', ...spawnArgs } = args;
+    const { portChannel = 'claude:port', sessionId: pinnedId, ...rest } = args;
+    // claudemon's SpawnPayload uses snake_case.
+    const reqBody = { ...rest, ...(pinnedId ? { session_id: pinnedId } : {}) };
     const res = await fetch(`${CLAUDEMON_API_URL}/sessions/spawn`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(spawnArgs),
+      body: JSON.stringify(reqBody),
     });
     if (!res.ok) {
       throw new Error(`spawn failed: HTTP ${res.status} ${await res.text()}`);
     }
-    const body = await res.json() as { session_id: string };
-    const sessionId = body.session_id;
-    this.cwds.set(sessionId, spawnArgs.cwd);
+    const resBody = await res.json() as { session_id: string };
+    const sessionId = resBody.session_id;
+    this.cwds.set(sessionId, rest.cwd);
     this.attachByteStream(sessionId, sessionId, portChannel, 'owner');
     return sessionId;
   }
@@ -149,54 +154,30 @@ class ClaudemonSessionClient {
   }
 
   private async consumeByteStream(stream: SessionStream): Promise<void> {
-    let backoff = BACKOFF_INITIAL_MS;
-    while (!stream.stopped) {
-      try {
-        const res = await fetch(`${CLAUDEMON_API_URL}/sessions/${stream.sessionId}/stream`, {
-          headers: { Accept: 'text/event-stream' },
-          signal: stream.abort.signal,
-        });
-        if (!res.ok || !res.body) {
-          throw new Error(`HTTP ${res.status}`);
-        }
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-
-        while (!stream.stopped) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          let sep: number;
-          while ((sep = buffer.indexOf('\n\n')) !== -1) {
-            const frame = buffer.slice(0, sep);
-            buffer = buffer.slice(sep + 2);
-            const dataLines: string[] = [];
-            for (const line of frame.split('\n')) {
-              if (line.startsWith('data:')) {
-                dataLines.push(line.slice(5).replace(/^ /, ''));
-              }
-            }
-            if (dataLines.length === 0) continue;
-            const b64 = dataLines.join('');
-            const bytes = Buffer.from(b64, 'base64');
-            // Send as binary string (matches the existing terminal:port shape
-            // that the renderer's onTerminalOutput already decodes from).
-            const binStr = bytes.toString('binary');
-            if (!stream.stopped) {
-              try { stream.port.postMessage(binStr); } catch {}
-            }
+    await consumeSseStream(
+      `${CLAUDEMON_API_URL}/sessions/${stream.sessionId}/stream`,
+      {
+        signal: stream.abort.signal,
+        backoffInitialMs: BACKOFF_INITIAL_MS,
+        backoffMaxMs: BACKOFF_MAX_MS,
+        joinWith: '',
+        onFrame(b64) {
+          const bytes = Buffer.from(b64, 'base64');
+          // Send as binary string (matches the existing terminal:port shape
+          // that the renderer's onTerminalOutput already decodes from).
+          const binStr = bytes.toString('binary');
+          if (!stream.stopped) {
+            try { stream.port.postMessage(binStr); } catch {}
           }
-        }
-        backoff = BACKOFF_INITIAL_MS;
-      } catch (err) {
-        if (stream.stopped) return;
-        console.warn(`[claudemonSessionClient] stream ${stream.sessionId} error, retrying in ${backoff}ms:`, err);
-      }
-      if (stream.stopped) return;
-      await new Promise(r => setTimeout(r, backoff));
-      backoff = Math.min(backoff * 2, BACKOFF_MAX_MS);
-    }
+        },
+        onError(err) {
+          console.warn(
+            `[claudemonSessionClient] stream ${stream.sessionId} error, retrying:`,
+            err,
+          );
+        },
+      },
+    );
   }
 
   /** Send raw bytes (or a base64-encoded payload) to the session's PTY input. */
@@ -243,7 +224,7 @@ class ClaudemonSessionClient {
 
   async getTranscript(sessionId: string): Promise<any> {
     const res = await fetch(`${CLAUDEMON_API_URL}/sessions/${sessionId}/transcript`);
-    if (!res.ok) return { entries: [] };
+    if (!res.ok) return { messages: [] };
     return res.json();
   }
 

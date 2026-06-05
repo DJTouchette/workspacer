@@ -15,11 +15,13 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as crypto from 'crypto';
-import { spawn, ChildProcess, execSync } from 'child_process';
+import { spawn, ChildProcess } from 'child_process';
 import { app } from 'electron';
 import { CLAUDEMON_API_URL } from './claudemonDaemon';
+import { killStaleListener, waitForHealth as waitForHealthShared, PORTS } from '../lib/daemonUtils';
+import { getConfigDir } from './configService';
 
-const PORT = 7895;
+const PORT = PORTS.hub;
 const HEALTH_TIMEOUT_MS = 5000;
 
 let child: ChildProcess | null = null;
@@ -45,8 +47,7 @@ const BIND_ADDR = REMOTE_ENABLED
 /** Load (or create + persist) the shared bus token. Empty unless remote is on. */
 function loadOrCreateToken(): string {
   if (!REMOTE_ENABLED) return '';
-  const cfg = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
-  const file = path.join(cfg, 'workspacer', 'remote-token');
+  const file = path.join(getConfigDir(), 'remote-token');
   try {
     const existing = fs.readFileSync(file, 'utf-8').trim();
     if (existing) return existing;
@@ -126,8 +127,7 @@ function bundledExamplesDir(): string {
 
 /** Persistent, writable plugins directory where installs land. */
 function userPluginsDir(): string {
-  const cfg = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
-  return path.join(cfg, 'workspacer', 'plugins');
+  return path.join(getConfigDir(), 'plugins');
 }
 
 /** Ensure the user plugins dir exists; seed it from bundled examples once. */
@@ -147,42 +147,6 @@ function ensurePluginsDir(): string {
   return dir;
 }
 
-function killStaleListener(port: number): void {
-  try {
-    if (process.platform === 'win32') {
-      const out = execSync(`netstat -ano | findstr "127.0.0.1:${port}"`, { encoding: 'utf-8', timeout: 3000 });
-      const match = out.match(/LISTENING\s+(\d+)/);
-      if (match) {
-        const pid = parseInt(match[1], 10);
-        if (pid && pid !== process.pid) execSync(`taskkill /F /PID ${pid}`, { timeout: 3000 });
-      }
-    } else {
-      const out = execSync(`lsof -ti :${port}`, { encoding: 'utf-8', timeout: 3000 });
-      for (const line of out.trim().split('\n')) {
-        const pid = parseInt(line, 10);
-        if (pid && pid !== process.pid) process.kill(pid, 'SIGTERM');
-      }
-    }
-  } catch {
-    // No listener, or we lack rights — let the daemon try anyway.
-  }
-}
-
-async function waitForHealth(): Promise<void> {
-  const deadline = Date.now() + HEALTH_TIMEOUT_MS;
-  let lastErr: unknown = null;
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(`http://127.0.0.1:${PORT}/health`);
-      if (res.ok) return;
-    } catch (err) {
-      lastErr = err;
-    }
-    await new Promise(r => setTimeout(r, 100));
-  }
-  throw new Error(`hub /health did not respond within ${HEALTH_TIMEOUT_MS}ms (last error: ${String(lastErr)})`);
-}
-
 /** Spawn the hub. Idempotent — repeat calls return the existing ready promise. */
 export function startHub(): Promise<void> {
   if (readyPromise) return readyPromise;
@@ -192,7 +156,7 @@ export function startHub(): Promise<void> {
     return Promise.reject(new Error(`hub binary not found at ${bin} (run: cd hub && go build -o hub ./cmd/hub)`));
   }
 
-  killStaleListener(PORT);
+  killStaleListener(PORT, 'hub');
 
   const pluginsDir = ensurePluginsDir();
   console.log(`[hub] spawning ${bin} (addr ${BIND_ADDR})`);
@@ -220,7 +184,7 @@ export function startHub(): Promise<void> {
     readyPromise = null;
   });
 
-  readyPromise = waitForHealth();
+  readyPromise = waitForHealthShared(`http://127.0.0.1:${PORT}/health`, HEALTH_TIMEOUT_MS, 'hub');
   return readyPromise;
 }
 

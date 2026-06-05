@@ -6,6 +6,7 @@ import {
   ResizeTerminal,
   CloseTerminal,
 } from '../lib/terminalApi';
+import { binaryStringToUint8Array } from '../lib/terminalUtils';
 
 interface UsePTYOptions {
   /** The pane ID this terminal belongs to */
@@ -116,12 +117,7 @@ export function usePTY({ paneId, shell = '', cwd, profileId, resumeSessionId, on
       unsubOutputRef.current = window.electronAPI.onTerminalOutput(id, (data: string) => {
         if (!data || !termRef.current) return;
 
-        // Convert binary string to Uint8Array for xterm
-        const bytes = new Uint8Array(data.length);
-        for (let i = 0; i < data.length; i++) {
-          bytes[i] = data.charCodeAt(i);
-        }
-        pendingOutputRef.current.push(bytes);
+        pendingOutputRef.current.push(binaryStringToUint8Array(data));
         if (rafRef.current === null) {
           rafRef.current = requestAnimationFrame(() => {
             rafRef.current = null;

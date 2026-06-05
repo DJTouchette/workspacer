@@ -1,8 +1,9 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import * as os from 'os';
 import * as yaml from 'js-yaml';
 import { claudemonSessionClient } from './claudemonSessionClient';
+import { getConfigDir } from './configService';
+import { slugSession } from '../lib/fileUtils';
 
 interface SessionPaneData {
   id: string;
@@ -22,7 +23,7 @@ interface SessionTabData {
   activePaneId: string;
   /** Spatial-canvas placement (x/y/w/h in world coords); absent in tabs mode. */
   canvas?: { x: number; y: number; w: number; h: number };
-  /** Epoch ms of last activity — the 'timeline' view's sort axis. */
+  /** Epoch ms of the tab's last activity (focus / creation / split). */
   lastActiveAt?: number;
 }
 
@@ -60,24 +61,11 @@ interface SessionListEntry {
   agentCount: number;
 }
 
-function getConfigDir(): string {
-  if (process.platform === 'win32') {
-    const appData = process.env.APPDATA;
-    if (appData) return path.join(appData, 'workspacer');
-    return path.join(os.homedir(), 'AppData', 'Roaming', 'workspacer');
-  }
-  const xdg = process.env.XDG_CONFIG_HOME;
-  if (xdg) return path.join(xdg, 'workspacer');
-  return path.join(os.homedir(), '.config', 'workspacer');
-}
-
 function getSessionsDir(): string {
   return path.join(getConfigDir(), 'sessions');
 }
 
-function sanitizeFilename(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9_-]/g, '-').replace(/-+/g, '-').substring(0, 64);
-}
+const sanitizeFilename = slugSession;
 
 function getTerminalCwd(sessionId: string): string | undefined {
   // claudemon owns the PTY in a separate process, so we can't /proc-walk it.

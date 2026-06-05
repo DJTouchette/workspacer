@@ -26,6 +26,7 @@ import {
   RefreshCw,
   Smartphone,
   Clock,
+  Rows3,
   type LucideIcon,
 } from 'lucide-react';
 import { PaneType } from '../types/pane';
@@ -90,5 +91,6 @@ export {
   RefreshCw,
   Smartphone,
   Clock,
+  Rows3,
 };
 export type { LucideIcon };

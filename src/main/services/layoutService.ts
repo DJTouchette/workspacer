@@ -10,6 +10,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as yaml from 'js-yaml';
 import { getConfigDir } from './configService';
+import { slugLayout } from '../lib/fileUtils';
 
 export interface LayoutPane {
   type: string;
@@ -42,9 +43,7 @@ function layoutsDir(): string {
   return path.join(getConfigDir(), 'layouts');
 }
 
-function slug(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9_-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 64) || 'layout';
-}
+const slug = slugLayout;
 
 class LayoutService {
   private ensureDir(): void {

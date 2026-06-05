@@ -89,21 +89,25 @@ fn read_for_cwd_and_session(cwd: &str, session_id: Option<&str>) -> Result<Trans
         return Ok(Transcript::default());
     };
     let dir = root.join(encoded_cwd(cwd));
-    if !dir.exists() {
-        return Ok(Transcript::default());
-    }
 
     if let Some(session_id) = session_id {
+        // Exact match only. We must NOT fall back to "newest jsonl in cwd" here:
+        // when several sessions share a cwd that returns a *different* session's
+        // transcript. Showing nothing beats showing the wrong conversation.
         let path = dir.join(format!("{session_id}.jsonl"));
         if path.exists() {
             return read_transcript_file(path);
         }
-
         if let Some(path) = find_session_file(&root, session_id)? {
             return read_transcript_file(path);
         }
+        return Ok(Transcript::default());
     }
 
+    // No session id known: best-effort newest jsonl in the cwd dir.
+    if !dir.exists() {
+        return Ok(Transcript::default());
+    }
     let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
     for entry in fs::read_dir(&dir)? {
         let entry = entry?;
@@ -580,6 +584,616 @@ mod tests {
         // Unknown tool falls back to JSON
         let s = summarize_tool_input("Unknown", &json!({"a": 1}));
         assert!(s.contains("\"a\":1"));
+    }
+
+    // ------------------------------------------------------------------ //
+    // summarize_tool_input — characterization per tool family             //
+    // ------------------------------------------------------------------ //
+
+    // --- File-path tools ---
+
+    #[test]
+    fn summarize_read_returns_file_path() {
+        assert_eq!(
+            summarize_tool_input("Read", &json!({"file_path": "/home/user/main.rs"})),
+            "/home/user/main.rs"
+        );
+    }
+
+    #[test]
+    fn summarize_write_returns_file_path() {
+        assert_eq!(
+            summarize_tool_input("Write", &json!({"file_path": "/tmp/out.txt", "content": "hi"})),
+            "/tmp/out.txt"
+        );
+    }
+
+    #[test]
+    fn summarize_edit_returns_file_path() {
+        assert_eq!(
+            summarize_tool_input("Edit", &json!({"file_path": "/src/lib.rs"})),
+            "/src/lib.rs"
+        );
+    }
+
+    #[test]
+    fn summarize_multi_edit_returns_file_path() {
+        assert_eq!(
+            summarize_tool_input("MultiEdit", &json!({"file_path": "/x.rs"})),
+            "/x.rs"
+        );
+    }
+
+    #[test]
+    fn summarize_file_path_tool_empty_path_returns_tool_unit() {
+        // When file_path is "" the trimmed result is empty, so the fallback fires.
+        assert_eq!(
+            summarize_tool_input("Read", &json!({"file_path": ""})),
+            "Read()"
+        );
+    }
+
+    // --- Search tools ---
+
+    #[test]
+    fn summarize_grep_formats_pattern_and_path() {
+        assert_eq!(
+            summarize_tool_input("Grep", &json!({"pattern": "TODO", "path": "/repo"})),
+            "/TODO/  in /repo"
+        );
+    }
+
+    #[test]
+    fn summarize_grep_uses_dot_when_path_missing() {
+        assert_eq!(
+            summarize_tool_input("Grep", &json!({"pattern": "foo"})),
+            "/foo/  in ."
+        );
+    }
+
+    #[test]
+    fn summarize_glob_returns_pattern() {
+        assert_eq!(
+            summarize_tool_input("Glob", &json!({"pattern": "**/*.rs"})),
+            "**/*.rs"
+        );
+    }
+
+    #[test]
+    fn summarize_web_search_returns_query() {
+        assert_eq!(
+            summarize_tool_input("WebSearch", &json!({"query": "rust async traits"})),
+            "rust async traits"
+        );
+    }
+
+    #[test]
+    fn summarize_web_fetch_returns_url() {
+        assert_eq!(
+            summarize_tool_input("WebFetch", &json!({"url": "https://example.com"})),
+            "https://example.com"
+        );
+    }
+
+    // --- Command / Bash tools ---
+
+    #[test]
+    fn summarize_bash_returns_command() {
+        assert_eq!(
+            summarize_tool_input("Bash", &json!({"command": "cargo build --release"})),
+            "cargo build --release"
+        );
+    }
+
+    #[test]
+    fn summarize_monitor_returns_command() {
+        assert_eq!(
+            summarize_tool_input("Monitor", &json!({"command": "tail -f /var/log/syslog"})),
+            "tail -f /var/log/syslog"
+        );
+    }
+
+    #[test]
+    fn summarize_power_shell_returns_command() {
+        assert_eq!(
+            summarize_tool_input("PowerShell", &json!({"command": "Get-Process"})),
+            "Get-Process"
+        );
+    }
+
+    // --- Agent / Task tools ---
+
+    #[test]
+    fn summarize_agent_prefers_description_over_prompt() {
+        assert_eq!(
+            summarize_tool_input(
+                "Agent",
+                &json!({"description": "Fix the bug", "prompt": "Please fix it"})
+            ),
+            "Fix the bug"
+        );
+    }
+
+    #[test]
+    fn summarize_agent_falls_back_to_prompt_when_description_missing() {
+        assert_eq!(
+            summarize_tool_input("Agent", &json!({"prompt": "Do the thing"})),
+            "Do the thing"
+        );
+    }
+
+    #[test]
+    fn summarize_agent_falls_back_to_task_when_both_absent() {
+        assert_eq!(
+            summarize_tool_input("Agent", &json!({"task": "Run tests"})),
+            "Run tests"
+        );
+    }
+
+    #[test]
+    fn summarize_agent_all_empty_returns_unit() {
+        assert_eq!(summarize_tool_input("Agent", &json!({})), "Agent()");
+    }
+
+    #[test]
+    fn summarize_task_create_prefers_active_form() {
+        assert_eq!(
+            summarize_tool_input(
+                "TaskCreate",
+                &json!({"activeForm": "Review PR", "description": "Long desc"})
+            ),
+            "Review PR"
+        );
+    }
+
+    #[test]
+    fn summarize_task_create_falls_back_to_first_line_of_description() {
+        assert_eq!(
+            summarize_tool_input(
+                "TaskCreate",
+                &json!({"description": "Write tests\nfor everything"})
+            ),
+            "Write tests"
+        );
+    }
+
+    #[test]
+    fn summarize_task_create_empty_yields_unit() {
+        assert_eq!(summarize_tool_input("TaskCreate", &json!({})), "TaskCreate()");
+    }
+
+    #[test]
+    fn summarize_task_update_all_three_fields() {
+        assert_eq!(
+            summarize_tool_input(
+                "TaskUpdate",
+                &json!({"taskId": 42, "status": "done", "activeForm": "Ship it"})
+            ),
+            "#42 done: Ship it"
+        );
+    }
+
+    #[test]
+    fn summarize_task_update_id_and_status_only() {
+        assert_eq!(
+            summarize_tool_input(
+                "TaskUpdate",
+                &json!({"taskId": 7, "status": "in_progress"})
+            ),
+            "#7 in_progress"
+        );
+    }
+
+    #[test]
+    fn summarize_task_update_id_and_active_form_only() {
+        assert_eq!(
+            summarize_tool_input("TaskUpdate", &json!({"taskId": 3, "activeForm": "Draft"})),
+            "#3: Draft"
+        );
+    }
+
+    #[test]
+    fn summarize_task_update_status_and_active_form_no_id() {
+        assert_eq!(
+            summarize_tool_input(
+                "TaskUpdate",
+                &json!({"status": "blocked", "activeForm": "Waiting on review"})
+            ),
+            "blocked: Waiting on review"
+        );
+    }
+
+    #[test]
+    fn summarize_task_update_status_only() {
+        assert_eq!(
+            summarize_tool_input("TaskUpdate", &json!({"status": "cancelled"})),
+            "cancelled"
+        );
+    }
+
+    #[test]
+    fn summarize_task_update_active_form_only() {
+        assert_eq!(
+            summarize_tool_input("TaskUpdate", &json!({"activeForm": "Just a note"})),
+            "Just a note"
+        );
+    }
+
+    #[test]
+    fn summarize_task_list_is_constant() {
+        assert_eq!(summarize_tool_input("TaskList", &json!({})), "list tasks");
+    }
+
+    #[test]
+    fn summarize_task_get_with_id() {
+        assert_eq!(
+            summarize_tool_input("TaskGet", &json!({"taskId": 99})),
+            "get task #99"
+        );
+    }
+
+    #[test]
+    fn summarize_task_stop_with_id() {
+        assert_eq!(
+            summarize_tool_input("TaskStop", &json!({"id": 5})),
+            "stop task #5"
+        );
+    }
+
+    #[test]
+    fn summarize_cron_create_returns_name() {
+        assert_eq!(
+            summarize_tool_input("CronCreate", &json!({"name": "daily-backup"})),
+            "daily-backup"
+        );
+    }
+
+    #[test]
+    fn summarize_cron_delete_formats_id() {
+        assert_eq!(
+            summarize_tool_input("CronDelete", &json!({"cronId": "abc-123"})),
+            "cancel #abc-123"
+        );
+    }
+
+    #[test]
+    fn summarize_cron_list_is_constant() {
+        assert_eq!(
+            summarize_tool_input("CronList", &json!({})),
+            "list scheduled tasks"
+        );
+    }
+
+    // --- mcp__ prefix family ---
+
+    #[test]
+    fn summarize_mcp_tool_uses_last_segment_plus_first_detail_field() {
+        // mcp__Neon__run_sql → short name "run_sql", detail from "query"
+        assert_eq!(
+            summarize_tool_input(
+                "mcp__Neon__run_sql",
+                &json!({"query": "SELECT 1"})
+            ),
+            "run_sql SELECT 1"
+        );
+    }
+
+    #[test]
+    fn summarize_mcp_tool_falls_back_to_name_field_when_query_missing() {
+        assert_eq!(
+            summarize_tool_input(
+                "mcp__SomeSrv__do_thing",
+                &json!({"name": "my-resource"})
+            ),
+            "do_thing my-resource"
+        );
+    }
+
+    #[test]
+    fn summarize_mcp_tool_no_detail_returns_short_name_only() {
+        assert_eq!(
+            summarize_tool_input("mcp__Neon__list_projects", &json!({})),
+            "list_projects"
+        );
+    }
+
+    #[test]
+    fn summarize_mcp_tool_uses_uri_field() {
+        assert_eq!(
+            summarize_tool_input(
+                "mcp__FS__read_resource",
+                &json!({"uri": "file:///etc/hosts"})
+            ),
+            "read_resource file:///etc/hosts"
+        );
+    }
+
+    #[test]
+    fn summarize_mcp_tool_uses_path_field() {
+        assert_eq!(
+            summarize_tool_input(
+                "mcp__FS__stat",
+                &json!({"path": "/var/log"})
+            ),
+            "stat /var/log"
+        );
+    }
+
+    #[test]
+    fn summarize_mcp_tool_uses_url_field() {
+        assert_eq!(
+            summarize_tool_input(
+                "mcp__Browser__navigate",
+                &json!({"url": "https://example.com"})
+            ),
+            "navigate https://example.com"
+        );
+    }
+
+    #[test]
+    fn summarize_mcp_tool_uses_command_field() {
+        assert_eq!(
+            summarize_tool_input(
+                "mcp__Shell__exec",
+                &json!({"command": "make test"})
+            ),
+            "exec make test"
+        );
+    }
+
+    // --- Unknown / fallback ---
+
+    #[test]
+    fn summarize_unknown_tool_compact_json() {
+        let result = summarize_tool_input("UnknownTool", &json!({"key": "val"}));
+        // Should contain the JSON key-value pair
+        assert!(result.contains("\"key\""), "expected key in output: {result}");
+        assert!(result.contains("\"val\""), "expected val in output: {result}");
+    }
+
+    #[test]
+    fn summarize_unknown_tool_null_input_returns_unit() {
+        // serde_json::to_string(null) = "null", which is non-empty, so no unit fallback
+        let result = summarize_tool_input("MyTool", &json!(null));
+        assert_eq!(result, "null");
+    }
+
+    #[test]
+    fn summarize_unknown_tool_empty_object_returns_unit() {
+        // serde_json::to_string({}) = "{}", non-empty; tool() unit only fires when trimmed is ""
+        let result = summarize_tool_input("MyTool", &json!({}));
+        assert_eq!(result, "{}");
+    }
+
+    // --- AskUserQuestion ---
+
+    #[test]
+    fn summarize_ask_user_question_returns_first_question_text() {
+        assert_eq!(
+            summarize_tool_input(
+                "AskUserQuestion",
+                &json!({
+                    "questions": [{"question": "Which strategy?", "options": []},
+                                  {"question": "Second?", "options": []}]
+                })
+            ),
+            "Which strategy?"
+        );
+    }
+
+    #[test]
+    fn summarize_ask_user_question_flat_fallback() {
+        // When there's no questions array, fall back to top-level "question" field.
+        assert_eq!(
+            summarize_tool_input("AskUserQuestion", &json!({"question": "Are you sure?"})),
+            "Are you sure?"
+        );
+    }
+
+    #[test]
+    fn summarize_ask_user_question_empty_input_returns_unit() {
+        assert_eq!(
+            summarize_tool_input("AskUserQuestion", &json!({})),
+            "AskUserQuestion()"
+        );
+    }
+
+    // --- TodoWrite ---
+
+    #[test]
+    fn summarize_todo_write_counts_completed_todos() {
+        let input = json!({
+            "todos": [
+                {"status": "completed", "text": "Write tests"},
+                {"status": "pending", "text": "Deploy"},
+                {"status": "done", "text": "Review PR"},
+            ]
+        });
+        assert_eq!(summarize_tool_input("TodoWrite", &input), "2/3 todos complete");
+    }
+
+    #[test]
+    fn summarize_todo_write_no_todos_key_returns_update_string() {
+        assert_eq!(
+            summarize_tool_input("TodoWrite", &json!({})),
+            "update todos"
+        );
+    }
+
+    #[test]
+    fn summarize_todo_write_empty_list() {
+        assert_eq!(
+            summarize_tool_input("TodoWrite", &json!({"todos": []})),
+            "0/0 todos complete"
+        );
+    }
+
+    // --- Misc named tools ---
+
+    #[test]
+    fn summarize_tool_search_with_query() {
+        assert_eq!(
+            summarize_tool_input("ToolSearch", &json!({"query": "select:Read"})),
+            "search select:Read"
+        );
+    }
+
+    #[test]
+    fn summarize_tool_search_without_query_returns_constant() {
+        assert_eq!(
+            summarize_tool_input("ToolSearch", &json!({"query": ""})),
+            "search tools"
+        );
+    }
+
+    #[test]
+    fn summarize_tool_search_no_query_field_returns_constant() {
+        assert_eq!(
+            summarize_tool_input("ToolSearch", &json!({})),
+            "search tools"
+        );
+    }
+
+    #[test]
+    fn summarize_send_message_prefers_message_field() {
+        assert_eq!(
+            summarize_tool_input(
+                "SendMessage",
+                &json!({"message": "Hello agent", "recipient": "AgentB"})
+            ),
+            "Hello agent"
+        );
+    }
+
+    #[test]
+    fn summarize_push_notification_prefers_message_field() {
+        assert_eq!(
+            summarize_tool_input(
+                "PushNotification",
+                &json!({"message": "Build done"})
+            ),
+            "Build done"
+        );
+    }
+
+    #[test]
+    fn summarize_enter_plan_mode_is_constant() {
+        assert_eq!(
+            summarize_tool_input("EnterPlanMode", &json!({})),
+            "enter plan mode"
+        );
+    }
+
+    #[test]
+    fn summarize_exit_plan_mode_prefers_plan_field() {
+        assert_eq!(
+            summarize_tool_input("ExitPlanMode", &json!({"plan": "Refactor auth module"})),
+            "Refactor auth module"
+        );
+    }
+
+    #[test]
+    fn summarize_enter_worktree_returns_path() {
+        assert_eq!(
+            summarize_tool_input("EnterWorktree", &json!({"path": "/worktrees/feat"})),
+            "/worktrees/feat"
+        );
+    }
+
+    #[test]
+    fn summarize_exit_worktree_is_constant() {
+        assert_eq!(
+            summarize_tool_input("ExitWorktree", &json!({})),
+            "exit worktree"
+        );
+    }
+
+    #[test]
+    fn summarize_remote_trigger_prefers_name() {
+        assert_eq!(
+            summarize_tool_input(
+                "RemoteTrigger",
+                &json!({"name": "deploy", "action": "run"})
+            ),
+            "deploy"
+        );
+    }
+
+    #[test]
+    fn summarize_team_create_returns_name() {
+        assert_eq!(
+            summarize_tool_input("TeamCreate", &json!({"name": "alpha-team"})),
+            "alpha-team"
+        );
+    }
+
+    #[test]
+    fn summarize_team_delete_returns_team_id() {
+        assert_eq!(
+            summarize_tool_input("TeamDelete", &json!({"team_id": "tid-99"})),
+            "tid-99"
+        );
+    }
+
+    #[test]
+    fn summarize_notebook_edit_returns_notebook_path() {
+        assert_eq!(
+            summarize_tool_input(
+                "NotebookEdit",
+                &json!({"notebook_path": "/nb/analysis.ipynb"})
+            ),
+            "/nb/analysis.ipynb"
+        );
+    }
+
+    #[test]
+    fn summarize_read_mcp_resource_tool_returns_uri() {
+        assert_eq!(
+            summarize_tool_input(
+                "ReadMcpResourceTool",
+                &json!({"uri": "resource://my/thing"})
+            ),
+            "resource://my/thing"
+        );
+    }
+
+    #[test]
+    fn summarize_list_mcp_resources_tool_returns_server() {
+        assert_eq!(
+            summarize_tool_input("ListMcpResourcesTool", &json!({"server": "neon"})),
+            "neon"
+        );
+    }
+
+    #[test]
+    fn summarize_skill_returns_skill_field() {
+        assert_eq!(
+            summarize_tool_input("Skill", &json!({"skill": "run"})),
+            "run"
+        );
+    }
+
+    #[test]
+    fn summarize_lsp_prefers_query_then_symbol() {
+        assert_eq!(
+            summarize_tool_input(
+                "LSP",
+                &json!({"query": "SessionState", "symbol": "something"})
+            ),
+            "SessionState"
+        );
+        assert_eq!(
+            summarize_tool_input("LSP", &json!({"symbol": "apply"})),
+            "apply"
+        );
+    }
+
+    #[test]
+    fn summarize_task_output_with_id() {
+        assert_eq!(
+            summarize_tool_input("TaskOutput", &json!({"taskId": 12})),
+            "task output #12"
+        );
     }
 
     #[test]

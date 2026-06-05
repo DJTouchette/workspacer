@@ -275,7 +275,6 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive, init
         'github.com',
       ]);
       const summary = `Imported ${res.imported} cookie(s), skipped ${res.skipped}`;
-      console.log('[BrowserPane]', summary, res.errors);
       // Reload the current page so any session that depended on the new cookies takes effect.
       const wv = webviewRef.current as any;
       if (wv && typeof wv.reload === 'function') wv.reload();

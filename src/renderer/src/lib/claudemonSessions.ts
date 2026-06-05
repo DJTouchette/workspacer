@@ -29,10 +29,10 @@ export interface SessionState {
 
 export type ApprovalDecision = 'yes' | 'no' | 'always';
 
-const DEFAULT_BASE = 'http://127.0.0.1:7891';
+import { CLAUDEMON_API_BASE } from './claudemonBase';
 
 export class ClaudemonSessionsClient {
-  constructor(private readonly baseUrl: string = DEFAULT_BASE) {}
+  constructor(private readonly baseUrl: string = CLAUDEMON_API_BASE) {}
 
   async getSession(id: string): Promise<SessionState | null> {
     const res = await fetch(`${this.baseUrl}/sessions/${id}`);

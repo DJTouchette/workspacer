@@ -2,6 +2,64 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use time::OffsetDateTime;
 
+/// Every hook event name that claudemon handles (or is registered for).
+///
+/// The serialized form is PascalCase — identical to the string literals that
+/// were previously used in `match event.event.as_str()` arms.  Adding a new
+/// variant here is the single source of truth; `HOOK_EVENTS` in `init.rs`
+/// derives the registration list from this enum via `REGISTERABLE`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub enum HookEventKind {
+    SessionStart,
+    SessionEnd,
+    UserPromptSubmit,
+    PreToolUse,
+    PostToolUse,
+    PostToolUseFailure,
+    Notification,
+    Stop,
+    SubagentStart,
+    SubagentStop,
+    PermissionRequest,
+}
+
+impl HookEventKind {
+    /// Serialized (wire) name for this variant — identical to what serde would
+    /// produce, but available at runtime without an allocating round-trip.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::SessionStart => "SessionStart",
+            Self::SessionEnd => "SessionEnd",
+            Self::UserPromptSubmit => "UserPromptSubmit",
+            Self::PreToolUse => "PreToolUse",
+            Self::PostToolUse => "PostToolUse",
+            Self::PostToolUseFailure => "PostToolUseFailure",
+            Self::Notification => "Notification",
+            Self::Stop => "Stop",
+            Self::SubagentStart => "SubagentStart",
+            Self::SubagentStop => "SubagentStop",
+            Self::PermissionRequest => "PermissionRequest",
+        }
+    }
+
+    /// The subset of variants that map to real Claude Code hook event names
+    /// and must be registered in `~/.claude/settings.json`.
+    ///
+    /// `PostToolUseFailure` and `PermissionRequest` are NOT real registerable
+    /// hooks — they are internal / forward-compat variants only.
+    pub const REGISTERABLE: &'static [HookEventKind] = &[
+        Self::SessionStart,
+        Self::SessionEnd,
+        Self::UserPromptSubmit,
+        Self::PreToolUse,
+        Self::Notification,
+        Self::Stop,
+        Self::SubagentStart,
+        Self::SubagentStop,
+    ];
+}
+
 /// What Claude Code is doing right now, as far as the daemon can tell.
 ///
 /// Driven by hook events. `Approval` and `Question` are both paused states;
@@ -121,22 +179,29 @@ impl SessionState {
             self.transcript_path = Some(tp.to_string());
         }
 
-        match event.event.as_str() {
-            "SessionStart" => {
+        // Parse the event name into a typed enum; unrecognised events are a no-op.
+        let Ok(kind) = serde_json::from_value::<HookEventKind>(
+            serde_json::Value::String(event.event.clone()),
+        ) else {
+            return;
+        };
+
+        match kind {
+            HookEventKind::SessionStart => {
                 self.mode = SessionMode::Input;
                 self.pending = None;
             }
-            "SessionEnd" => {
+            HookEventKind::SessionEnd => {
                 self.mode = SessionMode::Stopped;
                 self.pending = None;
             }
 
-            "UserPromptSubmit" => {
+            HookEventKind::UserPromptSubmit => {
                 self.mode = SessionMode::Responding;
                 self.pending = None;
             }
 
-            "PreToolUse" => {
+            HookEventKind::PreToolUse => {
                 self.tool_calls = self.tool_calls.saturating_add(1);
                 let tool = event
                     .payload
@@ -162,12 +227,12 @@ impl SessionState {
                     self.mode = SessionMode::Responding;
                 }
             }
-            "PostToolUse" | "PostToolUseFailure" => {
+            HookEventKind::PostToolUse | HookEventKind::PostToolUseFailure => {
                 self.mode = SessionMode::Responding;
                 self.pending = None;
             }
 
-            "PermissionRequest" => {
+            HookEventKind::PermissionRequest => {
                 let tool = event
                     .payload
                     .get("tool_name")
@@ -184,7 +249,7 @@ impl SessionState {
                 self.pending = Some(Pending::Approval { tool, summary, raw });
             }
 
-            "SubagentStart" | "SubagentStop" => {
+            HookEventKind::SubagentStart | HookEventKind::SubagentStop => {
                 if self.mode != SessionMode::Approval
                     && self.mode != SessionMode::Question
                 {
@@ -192,13 +257,12 @@ impl SessionState {
                 }
             }
 
-            "Stop" => {
+            HookEventKind::Stop => {
                 self.mode = SessionMode::Input;
                 self.pending = None;
             }
 
-            "Notification" => {}
-            _ => {}
+            HookEventKind::Notification => {}
         }
     }
 }
@@ -225,6 +289,32 @@ pub struct HookEvent {
 mod tests {
     use super::*;
 
+    /// Build a minimal HookEvent with an empty payload.
+    fn make_event(name: &str) -> HookEvent {
+        HookEvent {
+            event: name.to_string(),
+            session_id: "test-session".to_string(),
+            cwd: None,
+            timestamp: None,
+            payload: serde_json::Map::new(),
+        }
+    }
+
+    /// Build a HookEvent with a pre-populated JSON payload.
+    fn make_event_with_payload(name: &str, payload: serde_json::Value) -> HookEvent {
+        let map = match payload {
+            serde_json::Value::Object(m) => m,
+            _ => serde_json::Map::new(),
+        };
+        HookEvent {
+            event: name.to_string(),
+            session_id: "test-session".to_string(),
+            cwd: None,
+            timestamp: None,
+            payload: map,
+        }
+    }
+
     #[test]
     fn captures_transcript_path_from_hook() {
         let mut state = SessionState::new("spawn-uuid".into(), Some("/tmp".into()));
@@ -245,5 +335,401 @@ mod tests {
             state.transcript_path.as_deref(),
             Some("/home/u/.claude/projects/p/real-id.jsonl")
         );
+    }
+
+    // ------------------------------------------------------------------ //
+    // apply() — characterization tests for every event arm                //
+    // ------------------------------------------------------------------ //
+
+    #[test]
+    fn apply_user_prompt_submit_sets_responding_clears_pending() {
+        let mut state = SessionState::new("s".into(), None);
+        // Precondition: put state in Approval to confirm the arm always overrides it.
+        state.mode = SessionMode::Approval;
+        state.pending = Some(Pending::Approval {
+            tool: Some("Bash".into()),
+            summary: None,
+            raw: Value::Null,
+        });
+
+        state.apply(&make_event("UserPromptSubmit"));
+
+        assert_eq!(state.mode, SessionMode::Responding);
+        assert!(state.pending.is_none());
+        assert_eq!(state.last_event.as_deref(), Some("UserPromptSubmit"));
+    }
+
+    #[test]
+    fn apply_pre_tool_use_ask_user_question_sets_question_mode() {
+        let mut state = SessionState::new("s".into(), None);
+        state.mode = SessionMode::Responding;
+
+        let payload = serde_json::json!({
+            "tool_name": "AskUserQuestion",
+            "tool_input": {
+                "questions": [
+                    {
+                        "question": "Which approach?",
+                        "options": [{"label": "A"}, {"label": "B"}]
+                    }
+                ]
+            }
+        });
+        state.apply(&make_event_with_payload("PreToolUse", payload));
+
+        assert_eq!(state.mode, SessionMode::Question);
+        assert!(state.pending.is_some());
+        match state.pending.as_ref().unwrap() {
+            Pending::Question { questions, .. } => {
+                assert_eq!(questions.len(), 1);
+                assert_eq!(questions[0].question, "Which approach?");
+                assert_eq!(questions[0].options.len(), 2);
+                assert_eq!(questions[0].options[0].label, "A");
+            }
+            other => panic!("expected Pending::Question, got {:?}", other),
+        }
+        // tool_calls counter incremented
+        assert_eq!(state.tool_calls, 1);
+    }
+
+    #[test]
+    fn apply_pre_tool_use_ask_user_question_empty_questions_still_sets_question_mode() {
+        let mut state = SessionState::new("s".into(), None);
+        let payload = serde_json::json!({
+            "tool_name": "AskUserQuestion",
+            "tool_input": {}
+        });
+        state.apply(&make_event_with_payload("PreToolUse", payload));
+
+        assert_eq!(state.mode, SessionMode::Question);
+        match state.pending.as_ref().unwrap() {
+            Pending::Question { questions, .. } => {
+                assert!(questions.is_empty(), "no questions parsed from empty input");
+            }
+            other => panic!("expected Pending::Question, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn apply_pre_tool_use_other_tool_sets_responding_when_not_blocked() {
+        let mut state = SessionState::new("s".into(), None);
+        state.mode = SessionMode::Input;
+
+        let payload = serde_json::json!({ "tool_name": "Bash", "tool_input": {"command": "ls"} });
+        state.apply(&make_event_with_payload("PreToolUse", payload));
+
+        assert_eq!(state.mode, SessionMode::Responding);
+        assert!(state.pending.is_none());
+        assert_eq!(state.tool_calls, 1);
+    }
+
+    #[test]
+    fn apply_pre_tool_use_other_tool_does_not_override_approval() {
+        // When mode is Approval, a non-AskUserQuestion PreToolUse must NOT change the mode.
+        let mut state = SessionState::new("s".into(), None);
+        state.mode = SessionMode::Approval;
+        state.pending = Some(Pending::Approval {
+            tool: Some("Write".into()),
+            summary: Some("overwrite /etc/passwd".into()),
+            raw: Value::Null,
+        });
+
+        let payload = serde_json::json!({ "tool_name": "Read", "tool_input": {"file_path": "/x"} });
+        state.apply(&make_event_with_payload("PreToolUse", payload));
+
+        // Mode stays Approval; tool_calls still incremented.
+        assert_eq!(state.mode, SessionMode::Approval);
+        assert_eq!(state.tool_calls, 1);
+    }
+
+    #[test]
+    fn apply_pre_tool_use_other_tool_does_not_override_question() {
+        let mut state = SessionState::new("s".into(), None);
+        state.mode = SessionMode::Question;
+
+        let payload = serde_json::json!({ "tool_name": "Bash", "tool_input": {} });
+        state.apply(&make_event_with_payload("PreToolUse", payload));
+
+        assert_eq!(state.mode, SessionMode::Question);
+        assert_eq!(state.tool_calls, 1);
+    }
+
+    #[test]
+    fn apply_post_tool_use_sets_responding_clears_pending() {
+        let mut state = SessionState::new("s".into(), None);
+        state.mode = SessionMode::Approval;
+        state.pending = Some(Pending::Approval {
+            tool: Some("Bash".into()),
+            summary: None,
+            raw: Value::Null,
+        });
+
+        state.apply(&make_event("PostToolUse"));
+
+        assert_eq!(state.mode, SessionMode::Responding);
+        assert!(state.pending.is_none());
+    }
+
+    #[test]
+    fn apply_post_tool_use_failure_also_sets_responding_clears_pending() {
+        let mut state = SessionState::new("s".into(), None);
+        state.mode = SessionMode::Question;
+        state.apply(&make_event("PostToolUseFailure"));
+
+        assert_eq!(state.mode, SessionMode::Responding);
+        assert!(state.pending.is_none());
+    }
+
+    #[test]
+    fn apply_permission_request_sets_approval_mode_with_tool_and_summary() {
+        let mut state = SessionState::new("s".into(), None);
+        state.mode = SessionMode::Responding;
+
+        let payload = serde_json::json!({
+            "tool_name": "Write",
+            "summary": "Overwrite config file"
+        });
+        state.apply(&make_event_with_payload("PermissionRequest", payload));
+
+        assert_eq!(state.mode, SessionMode::Approval);
+        match state.pending.as_ref().unwrap() {
+            Pending::Approval { tool, summary, raw } => {
+                assert_eq!(tool.as_deref(), Some("Write"));
+                assert_eq!(summary.as_deref(), Some("Overwrite config file"));
+                // raw is the whole payload wrapped in an Object
+                assert!(raw.is_object());
+                assert_eq!(raw.get("tool_name").and_then(Value::as_str), Some("Write"));
+            }
+            other => panic!("expected Pending::Approval, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn apply_permission_request_falls_back_to_message_field_for_summary() {
+        let mut state = SessionState::new("s".into(), None);
+        let payload = serde_json::json!({
+            "tool_name": "Bash",
+            "message": "Run dangerous command"
+        });
+        state.apply(&make_event_with_payload("PermissionRequest", payload));
+
+        assert_eq!(state.mode, SessionMode::Approval);
+        match state.pending.as_ref().unwrap() {
+            Pending::Approval { summary, .. } => {
+                assert_eq!(summary.as_deref(), Some("Run dangerous command"));
+            }
+            other => panic!("expected Pending::Approval, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn apply_permission_request_no_tool_name_yields_none_tool() {
+        let mut state = SessionState::new("s".into(), None);
+        let payload = serde_json::json!({ "summary": "something" });
+        state.apply(&make_event_with_payload("PermissionRequest", payload));
+
+        assert_eq!(state.mode, SessionMode::Approval);
+        match state.pending.as_ref().unwrap() {
+            Pending::Approval { tool, .. } => assert!(tool.is_none()),
+            other => panic!("expected Pending::Approval, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn apply_subagent_start_sets_responding_when_not_blocked() {
+        let mut state = SessionState::new("s".into(), None);
+        state.mode = SessionMode::Input;
+        state.apply(&make_event("SubagentStart"));
+        assert_eq!(state.mode, SessionMode::Responding);
+    }
+
+    #[test]
+    fn apply_subagent_stop_sets_responding_when_not_blocked() {
+        let mut state = SessionState::new("s".into(), None);
+        state.mode = SessionMode::Input;
+        state.apply(&make_event("SubagentStop"));
+        assert_eq!(state.mode, SessionMode::Responding);
+    }
+
+    #[test]
+    fn apply_subagent_start_does_not_override_approval() {
+        let mut state = SessionState::new("s".into(), None);
+        state.mode = SessionMode::Approval;
+        state.apply(&make_event("SubagentStart"));
+        assert_eq!(state.mode, SessionMode::Approval);
+    }
+
+    #[test]
+    fn apply_subagent_stop_does_not_override_question() {
+        let mut state = SessionState::new("s".into(), None);
+        state.mode = SessionMode::Question;
+        state.apply(&make_event("SubagentStop"));
+        assert_eq!(state.mode, SessionMode::Question);
+    }
+
+    #[test]
+    fn apply_stop_sets_input_clears_pending() {
+        let mut state = SessionState::new("s".into(), None);
+        state.mode = SessionMode::Responding;
+        state.pending = Some(Pending::Approval {
+            tool: None,
+            summary: None,
+            raw: Value::Null,
+        });
+
+        state.apply(&make_event("Stop"));
+
+        assert_eq!(state.mode, SessionMode::Input);
+        assert!(state.pending.is_none());
+    }
+
+    #[test]
+    fn apply_session_end_sets_stopped_clears_pending() {
+        let mut state = SessionState::new("s".into(), None);
+        state.mode = SessionMode::Responding;
+        state.pending = Some(Pending::Approval {
+            tool: None,
+            summary: None,
+            raw: Value::Null,
+        });
+
+        state.apply(&make_event("SessionEnd"));
+
+        assert_eq!(state.mode, SessionMode::Stopped);
+        assert!(state.pending.is_none());
+    }
+
+    #[test]
+    fn apply_notification_is_noop_for_mode() {
+        let mut state = SessionState::new("s".into(), None);
+        state.mode = SessionMode::Responding;
+        state.apply(&make_event("Notification"));
+        // Mode must not change; last_event should be updated.
+        assert_eq!(state.mode, SessionMode::Responding);
+        assert_eq!(state.last_event.as_deref(), Some("Notification"));
+    }
+
+    #[test]
+    fn apply_unknown_event_is_noop_for_mode() {
+        let mut state = SessionState::new("s".into(), None);
+        state.mode = SessionMode::Input;
+        state.apply(&make_event("SomeFutureEvent"));
+        assert_eq!(state.mode, SessionMode::Input);
+        assert_eq!(state.last_event.as_deref(), Some("SomeFutureEvent"));
+    }
+
+    #[test]
+    fn apply_always_updates_last_event_and_updated_at() {
+        let mut state = SessionState::new("s".into(), None);
+        let before = state.updated_at;
+        // Sleep a tiny bit isn't needed — we just confirm the field is set.
+        state.apply(&make_event("Stop"));
+        assert_eq!(state.last_event.as_deref(), Some("Stop"));
+        // updated_at must be >= before (monotone).
+        assert!(state.updated_at >= before);
+    }
+
+    #[test]
+    fn apply_sets_cwd_from_event_when_state_has_none() {
+        let mut state = SessionState::new("s".into(), None);
+        assert!(state.cwd.is_none());
+
+        let mut event = make_event("Stop");
+        event.cwd = Some("/project/dir".into());
+        state.apply(&event);
+
+        assert_eq!(state.cwd.as_deref(), Some("/project/dir"));
+    }
+
+    #[test]
+    fn apply_does_not_overwrite_existing_cwd() {
+        let mut state = SessionState::new("s".into(), Some("/original".into()));
+
+        let mut event = make_event("Stop");
+        event.cwd = Some("/new".into());
+        state.apply(&event);
+
+        assert_eq!(state.cwd.as_deref(), Some("/original"));
+    }
+
+    #[test]
+    fn tool_calls_accumulate_across_pre_tool_use_events() {
+        let mut state = SessionState::new("s".into(), None);
+        for _ in 0..5 {
+            let payload = serde_json::json!({ "tool_name": "Bash" });
+            state.apply(&make_event_with_payload("PreToolUse", payload));
+        }
+        assert_eq!(state.tool_calls, 5);
+    }
+
+    #[test]
+    fn apply_pre_tool_use_without_tool_name_field_increments_counter_and_sets_responding() {
+        // When tool_name is absent, the arm sees "" which is not "AskUserQuestion",
+        // so it falls through to the else-if branch.
+        let mut state = SessionState::new("s".into(), None);
+        state.mode = SessionMode::Input;
+        let payload = serde_json::json!({});
+        state.apply(&make_event_with_payload("PreToolUse", payload));
+        assert_eq!(state.tool_calls, 1);
+        assert_eq!(state.mode, SessionMode::Responding);
+    }
+
+    // ------------------------------------------------------------------ //
+    // HookEventKind — serialization round-trip                            //
+    // ------------------------------------------------------------------ //
+
+    #[test]
+    fn hook_event_kind_serializes_to_pascal_case_strings() {
+        let cases: &[(HookEventKind, &str)] = &[
+            (HookEventKind::SessionStart, "\"SessionStart\""),
+            (HookEventKind::SessionEnd, "\"SessionEnd\""),
+            (HookEventKind::UserPromptSubmit, "\"UserPromptSubmit\""),
+            (HookEventKind::PreToolUse, "\"PreToolUse\""),
+            (HookEventKind::PostToolUse, "\"PostToolUse\""),
+            (HookEventKind::PostToolUseFailure, "\"PostToolUseFailure\""),
+            (HookEventKind::Notification, "\"Notification\""),
+            (HookEventKind::Stop, "\"Stop\""),
+            (HookEventKind::SubagentStart, "\"SubagentStart\""),
+            (HookEventKind::SubagentStop, "\"SubagentStop\""),
+            (HookEventKind::PermissionRequest, "\"PermissionRequest\""),
+        ];
+        for (variant, expected_json) in cases {
+            let serialized = serde_json::to_string(variant).unwrap();
+            assert_eq!(
+                &serialized, expected_json,
+                "wrong serialization for {variant:?}"
+            );
+            // Also verify round-trip deserialization.
+            let deserialized: HookEventKind =
+                serde_json::from_str(&serialized).unwrap();
+            assert_eq!(deserialized, *variant, "round-trip failed for {variant:?}");
+        }
+    }
+
+    #[test]
+    fn hook_event_kind_as_str_matches_serde() {
+        let all = [
+            HookEventKind::SessionStart,
+            HookEventKind::SessionEnd,
+            HookEventKind::UserPromptSubmit,
+            HookEventKind::PreToolUse,
+            HookEventKind::PostToolUse,
+            HookEventKind::PostToolUseFailure,
+            HookEventKind::Notification,
+            HookEventKind::Stop,
+            HookEventKind::SubagentStart,
+            HookEventKind::SubagentStop,
+            HookEventKind::PermissionRequest,
+        ];
+        for variant in all {
+            let serde_str = serde_json::to_string(&variant).unwrap();
+            // serde produces a quoted string; strip the quotes.
+            let unquoted = serde_str.trim_matches('"');
+            assert_eq!(
+                variant.as_str(),
+                unquoted,
+                "as_str() diverges from serde for {variant:?}"
+            );
+        }
     }
 }

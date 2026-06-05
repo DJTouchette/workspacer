@@ -77,6 +77,19 @@ func (s *Server) Authorized(r *http.Request) bool {
 	return r.URL.Query().Get("token") == s.token
 }
 
+// SetAuthorize installs a per-method RPC authorization callback. The function
+// receives the internal connection id of the caller and the method name, and
+// must return true to allow the call. Passing a nil function restores the
+// default allow-all behavior. This must be called before Handler() is invoked.
+//
+// Note: the /bus endpoint already enforces the bus token at the WebSocket
+// handshake, so every connected caller is already authenticated at the
+// transport level. SetAuthorize provides a finer-grained seam for per-method
+// capability tokens — future work that slots in here without touching callers.
+func (s *Server) SetAuthorize(fn func(callerID uint64, method string) bool) {
+	s.router.authorize = fn
+}
+
 // AddRoute registers an extra HTTP route (e.g. /plugins). Call before Handler().
 // Keeps the bus package decoupled from what it serves alongside the bus.
 func (s *Server) AddRoute(path string, h http.HandlerFunc) {
@@ -112,6 +125,12 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
+	// coder/websocket defaults to a 32 KiB per-message read limit, which silently
+	// kills the connection on any larger frame. RPC results carry full payloads —
+	// a session transcript is easily hundreds of KB — so lift the cap well clear
+	// of any realistic frame. Applies to the trusted main-process provider link
+	// and to token-gated remote clients alike.
+	ws.SetReadLimit(64 << 20) // 64 MiB
 	ctx := r.Context()
 	cn := &conn{ws: ws, ctx: ctx}
 	s.router.addConn(cn)

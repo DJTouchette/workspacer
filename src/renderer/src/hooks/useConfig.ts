@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useConfigContext } from '../contexts/ConfigContext';
 
 export interface ShellOption {
   name: string;
@@ -36,8 +36,8 @@ export interface PanesConfig {
   peek: number;
   insertPosition: string;
   tabPosition: 'top' | 'left';
-  /** Global layout paradigm: 'tabs' strip, 'spatial' canvas, or 'timeline' feed. */
-  viewMode: 'tabs' | 'spatial' | 'timeline';
+  /** Global layout paradigm: 'tabs' strip, 'spatial' canvas, or 'stacked' feed. */
+  viewMode: 'tabs' | 'spatial' | 'stacked';
   default: Array<{ id: string; type: string; title: string; width: number; order: number }>;
 }
 
@@ -92,7 +92,7 @@ export interface Config {
   };
 }
 
-const DEFAULT_CONFIG: Config = {
+export const DEFAULT_CONFIG: Config = {
   ui: {
     animations: false,
     theme: 'dark',
@@ -138,6 +138,9 @@ const DEFAULT_CONFIG: Config = {
       'quick-split': 'ctrl+shift+d',
       'close-pane': 'ctrl+w',
       'command-palette': 'ctrl+k',
+      'library-picker': 'ctrl+l',
+      'toggle-terminal': 'ctrl+`',
+      'toggle-sidebar': 'ctrl+b',
       'settings': 'ctrl+,',
       'save-session': 'ctrl+s',
       'rename-tab': 'f2',
@@ -145,7 +148,7 @@ const DEFAULT_CONFIG: Config = {
       'prev-tab': 'ctrl+[',
       'next-tab': 'ctrl+]',
       'nav-left': 'ctrl+h',
-      'nav-right': 'ctrl+l',
+      'nav-right': 'ctrl+shift+l',
       'nav-up': 'ctrl+shift+k',
       'nav-down': 'ctrl+shift+j',
     },
@@ -158,58 +161,16 @@ const DEFAULT_CONFIG: Config = {
   },
   scripts: {},
   apps: [],
-  session: { autoResume: true },
+  session: { autoResume: false },
 };
 
-let cachedConfig: Config | null = null;
-
+/**
+ * Access the application config.
+ *
+ * Must be rendered inside <ConfigProvider>.  Returns { config, loaded, reload, save }.
+ * The public API is identical to the previous module-singleton implementation;
+ * all consumers continue to work without changes.
+ */
 export function useConfig() {
-  const [config, setConfig] = useState<Config>(cachedConfig ?? DEFAULT_CONFIG);
-  const [loaded, setLoaded] = useState(cachedConfig !== null);
-
-  useEffect(() => {
-    if (cachedConfig) return;
-    window.electronAPI.getConfig()
-      .then((cfg) => {
-        cachedConfig = cfg as Config;
-        setConfig(cfg as Config);
-        setLoaded(true);
-      })
-      .catch(() => {
-        setLoaded(true);
-      });
-  }, []);
-
-  // Listen for config updates from other components
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const cfg = (e as CustomEvent).detail as Config;
-      cachedConfig = cfg;
-      setConfig(cfg);
-    };
-    window.addEventListener('config-updated', handler);
-    return () => window.removeEventListener('config-updated', handler);
-  }, []);
-
-  const reload = useCallback(() => {
-    window.electronAPI.reloadConfig()
-      .then((cfg) => {
-        cachedConfig = cfg as Config;
-        setConfig(cfg as Config);
-        window.dispatchEvent(new CustomEvent('config-updated', { detail: cfg }));
-      })
-      .catch(console.error);
-  }, []);
-
-  const save = useCallback((partial: Partial<Config>) => {
-    return window.electronAPI.saveConfig(partial)
-      .then((cfg) => {
-        cachedConfig = cfg as Config;
-        setConfig(cfg as Config);
-        window.dispatchEvent(new CustomEvent('config-updated', { detail: cfg }));
-        return cfg as Config;
-      });
-  }, []);
-
-  return { config, loaded, reload, save };
+  return useConfigContext();
 }

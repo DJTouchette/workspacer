@@ -926,70 +926,6 @@ export const cyberpunkTheme: Theme = {
   },
 };
 
-// ── Synthwave '84 Theme (retro-futuristic sunset vibes) ──
-
-export const synthwaveTheme: Theme = {
-  name: 'synthwave',
-  bgBase: '#1b1720',
-  bgRaised: '#241b2f',
-  bgSurface: '#2a2139',
-  bgElevated: '#332842',
-  bgHeader: '#241b2f',
-  bgInput: '#150f1c',
-  bgHover: '#332842',
-  bgSelected: '#3f2e55',
-  bgTerminal: '#1b1720',
-  border: '#3f2e55',
-  borderSubtle: '#2a2139',
-  borderInput: '#4e3a6b',
-  textPrimary: '#f0e4fc',
-  textSecondary: '#d6c2e8',
-  textTertiary: '#b8a0d0',
-  textMuted: '#7a6591',
-  textFaint: '#5a4870',
-  textDisabled: '#3f2e55',
-  accent: '#ff7edb',
-  accentText: '#ff7edb',
-  accentGlow: 'rgba(255, 126, 219, 0.25)',
-  accentBg: 'rgba(255, 126, 219, 0.15)',
-  success: '#72f1b8',
-  error: '#fe4450',
-  warning: '#fede5d',
-  overlay: 'rgba(0, 0, 0, 0.55)',
-  shadow: 'rgba(0, 0, 0, 0.45)',
-  scrollbarThumb: 'rgba(240, 228, 252, 0.08)',
-  scrollbarHover: 'rgba(240, 228, 252, 0.15)',
-  claudeBg: '#150f1c',
-  claudeUserBubble: 'rgba(255, 126, 219, 0.12)',
-  claudeUserBorder: 'rgba(255, 126, 219, 0.28)',
-  claudeDivider: 'rgba(240, 228, 252, 0.05)',
-  claudeBorder: 'rgba(240, 228, 252, 0.07)',
-  claudeBorderSubtle: 'rgba(240, 228, 252, 0.04)',
-  terminal: {
-    background: '#1b1720',
-    foreground: '#f0e4fc',
-    cursor: '#ff7edb',
-    cursorAccent: '#1b1720',
-    selectionBackground: 'rgba(255, 126, 219, 0.3)',
-    black: '#1b1720',
-    red: '#fe4450',
-    green: '#72f1b8',
-    yellow: '#fede5d',
-    blue: '#36f9f6',
-    magenta: '#ff7edb',
-    cyan: '#36f9f6',
-    white: '#f0e4fc',
-    brightBlack: '#7a6591',
-    brightRed: '#ff6e7a',
-    brightGreen: '#92ffcf',
-    brightYellow: '#fff88f',
-    brightBlue: '#6af9f8',
-    brightMagenta: '#ff9de6',
-    brightCyan: '#6af9f8',
-    brightWhite: '#ffffff',
-  },
-};
-
 // ── Theme registry ──
 
 export const themes: Record<string, Theme> = {
@@ -1018,7 +954,6 @@ const THEME_CORNERS: Record<string, CornerStyle> = {
   midnight: 'rounded',
   'rose-pine': 'rounded',
   cyberpunk: 'square',
-  synthwave: 'square',
   monokai: 'square',
 };
 

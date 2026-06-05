@@ -59,7 +59,7 @@ interface Config {
     peek: number;
     insertPosition: string;
     tabPosition: string; // 'top' | 'left'
-    viewMode: string; // 'tabs' | 'spatial' | 'timeline'
+    viewMode: string; // 'tabs' | 'spatial' | 'stacked'
     default: Array<{ id: string; type: string; title: string; width: number; order: number }>;
   };
   keybindings: {
@@ -174,7 +174,9 @@ function defaultConfig(): Config {
         'quick-split': 'ctrl+shift+d',
         'close-pane': 'ctrl+w',
         'command-palette': 'ctrl+k',
-        'library-picker': 'ctrl+shift+l',
+        'library-picker': 'ctrl+l',
+        'toggle-terminal': 'ctrl+`',
+        'toggle-sidebar': 'ctrl+b',
         'settings': 'ctrl+,',
         'save-session': 'ctrl+s',
         'rename-tab': 'f2',
@@ -182,7 +184,7 @@ function defaultConfig(): Config {
         'prev-tab': 'ctrl+[',
         'next-tab': 'ctrl+]',
         'nav-left': 'ctrl+h',
-        'nav-right': 'ctrl+l',
+        'nav-right': 'ctrl+shift+l',
         'nav-up': 'ctrl+shift+k',
         'nav-down': 'ctrl+shift+j',
         'prev-agent': 'ctrl+alt+arrowup',
@@ -208,7 +210,7 @@ function defaultConfig(): Config {
     },
     scripts: {},
     session: {
-      autoResume: true,
+      autoResume: false,
     },
     apps: [
       { name: 'GitHub', url: 'https://github.com', icon: '\u{1F4BB}' },

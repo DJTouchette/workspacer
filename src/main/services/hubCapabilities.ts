@@ -8,6 +8,7 @@ import { Notification } from 'electron';
 import { claudeSessionStore } from './claudeSessionStore';
 import { claudemonSessionClient } from './claudemonSessionClient';
 import { registerCapability } from './hubClient';
+import * as terminalShare from './terminalShare';
 
 export function registerHubCapabilities(): void {
   // Read-only: list live agents with light state. The bread-and-butter "what's
@@ -94,5 +95,29 @@ export function registerHubCapabilities(): void {
     const { sessionId } = (params ?? {}) as { sessionId?: string };
     if (!sessionId) throw new Error('sessions.transcript requires { sessionId }');
     return claudemonSessionClient.getTranscript(sessionId);
+  });
+
+  // Live terminal mirror: a remote opening the terminal view attaches here,
+  // which streams the session's raw PTY bytes onto the bus as
+  // `pty.bytes.<sessionId>` events (see terminalShare). Keepalive holds the
+  // lease open; detach (or a lapsed lease) stops the stream.
+  registerCapability('sessions.attachTerminal', (params: unknown) => {
+    const { sessionId } = (params ?? {}) as { sessionId?: string };
+    if (!sessionId) throw new Error('sessions.attachTerminal requires { sessionId }');
+    terminalShare.attachTerminal(sessionId);
+    return { ok: true };
+  });
+
+  registerCapability('sessions.terminalKeepalive', (params: unknown) => {
+    const { sessionId } = (params ?? {}) as { sessionId?: string };
+    if (!sessionId) throw new Error('sessions.terminalKeepalive requires { sessionId }');
+    return { ok: terminalShare.keepaliveTerminal(sessionId) };
+  });
+
+  registerCapability('sessions.detachTerminal', (params: unknown) => {
+    const { sessionId } = (params ?? {}) as { sessionId?: string };
+    if (!sessionId) throw new Error('sessions.detachTerminal requires { sessionId }');
+    terminalShare.stopTerminal(sessionId);
+    return { ok: true };
   });
 }

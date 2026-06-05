@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <title>workspacer · remote</title>
+<link rel="stylesheet" href="xterm.css">
 <style>
   :root {
     --bg: #0c0d10; --panel: #16181d; --panel2: #1d2026; --line: #2a2e37;
@@ -133,6 +134,23 @@
   body.chat-open #composer { display: flex; }
   #composer .small button { padding: 8px 12px; font-size: 13px; font-weight: 500;
                             color: var(--dim); flex: 0 1 auto; }
+
+  /* ── chat / terminal view switch ───────────────────────────────────── */
+  .viewtabs { display: flex; gap: 6px; margin-bottom: 12px; }
+  .viewtabs .vt {
+    flex: 0 0 auto; padding: 6px 14px; font-size: 13px; font-weight: 600;
+    color: var(--dim); background: var(--panel); border: 1px solid var(--line);
+    border-radius: 999px;
+  }
+  .viewtabs .vt.on { color: var(--fg); background: var(--panel2); border-color: var(--accent); }
+  /* Terminal mirror: a real xterm.js fed raw PTY bytes from the desktop pane. */
+  #term { display: none; height: 68vh; width: 100%; padding: 6px 4px 6px 8px;
+          background: #000; border: 1px solid var(--line); border-radius: var(--radius);
+          overflow: hidden; }
+  body.term-mode #msgs, body.term-mode #ask { display: none; }
+  body.term-mode #term { display: block; }
+  /* The composer (send / approve) still applies in terminal mode. */
+  #term .xterm { height: 100%; }
 </style>
 </head>
 <body>
@@ -145,6 +163,8 @@
 <main id="main"></main>
 <div class="toast" id="toast"></div>
 
+<script src="xterm.js"></script>
+<script src="addon-fit.js"></script>
 <script>
 (() => {
   const qs = new URLSearchParams(location.search);
@@ -161,6 +181,12 @@
   let view = { name: 'list' };       // | { name: 'chat', sessionId }
   let chatPoll = null;               // interval while the open agent is busy
   let lastTranscriptKey = '';        // cheap change detection to avoid re-rendering
+
+  // Live terminal mirror (xterm.js fed PTY bytes over the bus).
+  let termMode = false;              // chat view showing the terminal vs the transcript
+  let term = null, fitAddon = null;  // xterm instance + fit addon
+  let termKeepalive = null;          // interval refreshing the streaming lease
+  let termSessionId = '';            // session the terminal is currently mirroring
 
   function toast(msg) {
     toastEl.textContent = msg; toastEl.classList.add('show');
@@ -272,7 +298,12 @@
     lastTranscriptKey = '';
     document.body.classList.add('chat-open');
     main.innerHTML = `
+      <div class="viewtabs">
+        <button class="vt on" id="tabChat">Chat</button>
+        <button class="vt" id="tabTerm">Terminal</button>
+      </div>
       <div id="msgs"><div class="empty">Loading transcript…</div></div>
+      <div id="term"></div>
       <div id="ask"></div>
       <div id="composer">
         <div class="send">
@@ -299,22 +330,96 @@
     input.addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
     $('chatInterrupt').onclick = () => doCall('claude.signal', { sessionId, signal: 'SIGINT' }, 'Interrupted');
     $('chatStop').onclick      = () => doCall('claude.signal', { sessionId, signal: 'SIGTERM' }, 'Stopped');
+    $('tabChat').onclick = () => setTermMode(false);
+    $('tabTerm').onclick = () => setTermMode(true);
     renderChat();
     loadTranscript();
     // Events only fire on state *changes*, so poll for new content while busy.
     clearInterval(chatPoll);
     chatPoll = setInterval(() => {
       const s = sessions.get(sessionId);
-      if (view.name === 'chat' && s && isBusy(s.state)) loadTranscript();
+      if (view.name === 'chat' && !termMode && s && isBusy(s.state)) loadTranscript();
     }, 2500);
   }
 
   function closeChat() {
+    leaveTerminal();
     view = { name: 'list' };
     clearInterval(chatPoll); chatPoll = null;
     render();
   }
   backBtn.onclick = closeChat;
+
+  // ── live terminal mirror ──────────────────────────────────────────────
+  function setTermMode(on) {
+    if (on === termMode) return;
+    if (on) enterTerminal(); else leaveTerminal();
+  }
+
+  function enterTerminal() {
+    if (view.name !== 'chat' || !window.Terminal) return;
+    termMode = true;
+    termSessionId = view.sessionId;
+    document.body.classList.add('term-mode');
+    const ct = $('tabChat'), tt = $('tabTerm');
+    if (ct) ct.classList.remove('on');
+    if (tt) tt.classList.add('on');
+
+    const host = $('term');
+    if (host && !term) {
+      term = new Terminal({
+        convertEol: false, scrollback: 5000, fontSize: 12,
+        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+        theme: { background: '#000000' }, disableStdin: true, cursorBlink: false,
+      });
+      try { fitAddon = new FitAddon.FitAddon(); term.loadAddon(fitAddon); } catch {}
+      term.open(host);
+    }
+    // Fit once the container is laid out, then start the stream.
+    requestAnimationFrame(() => { try { fitAddon && fitAddon.fit(); } catch {} });
+    subscribePty(termSessionId, true);
+    call('sessions.attachTerminal', { sessionId: termSessionId }).catch(() => {});
+    clearInterval(termKeepalive);
+    termKeepalive = setInterval(() => {
+      if (!termMode) return;
+      // If the lease lapsed (e.g. a hiccup), re-attach to restart + re-prime.
+      call('sessions.terminalKeepalive', { sessionId: termSessionId })
+        .then(r => { if (r && r.ok === false) call('sessions.attachTerminal', { sessionId: termSessionId }).catch(() => {}); })
+        .catch(() => {});
+    }, 8000);
+  }
+
+  function leaveTerminal() {
+    if (!termMode) return;
+    termMode = false;
+    document.body.classList.remove('term-mode');
+    const ct = $('tabChat'), tt = $('tabTerm');
+    if (ct) ct.classList.add('on');
+    if (tt) tt.classList.remove('on');
+    clearInterval(termKeepalive); termKeepalive = null;
+    if (termSessionId) {
+      subscribePty(termSessionId, false);
+      call('sessions.detachTerminal', { sessionId: termSessionId }).catch(() => {});
+    }
+    if (term) { try { term.dispose(); } catch {} term = null; fitAddon = null; }
+    termSessionId = '';
+  }
+
+  function subscribePty(sessionId, on) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ op: on ? 'subscribe' : 'unsubscribe', topics: ['pty.bytes.' + sessionId] }));
+  }
+
+  // Decode one base64 PTY chunk and write the raw bytes into xterm.
+  function writePty(b64) {
+    if (!term) return;
+    try {
+      const bin = atob(b64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      term.write(bytes);
+    } catch {}
+  }
 
   function renderChat() {
     const s = sessions.get(view.sessionId);
@@ -508,7 +613,12 @@
       setConnected(true);
       ws.send(JSON.stringify({ op: 'subscribe', topics: ['agent.state_changed', 'workflow.*'] }));
       refresh();
-      if (view.name === 'chat') loadTranscript();
+      if (view.name === 'chat' && !termMode) loadTranscript();
+      // Re-establish the PTY stream after a reconnect.
+      if (termMode && termSessionId) {
+        subscribePty(termSessionId, true);
+        call('sessions.attachTerminal', { sessionId: termSessionId }).catch(() => {});
+      }
     };
     ws.onmessage = (ev) => {
       let f; try { f = JSON.parse(ev.data); } catch { return; }
@@ -517,11 +627,18 @@
       } else if (f.op === 'error' && f.id) {
         const c = calls.get(f.id); if (c) { calls.delete(f.id); c.reject(new Error(f.error || 'error')); }
       } else if (f.op === 'event') {
+        const evt = f.event;
+        if (!evt) return;
+        // Live PTY bytes for the terminal we're mirroring → straight to xterm.
+        if (termMode && evt.type === 'pty.bytes.' + termSessionId) {
+          writePty(evt.data);
+          return;
+        }
         // Any agent state change → re-pull the authoritative list, and the
-        // transcript too if we're looking at a chat.
-        if (f.event && f.event.type === 'agent.state_changed') {
+        // transcript too if we're looking at a chat (but not the terminal).
+        if (evt.type === 'agent.state_changed') {
           refresh();
-          if (view.name === 'chat') loadTranscript();
+          if (view.name === 'chat' && !termMode) loadTranscript();
         }
       }
     };

@@ -186,7 +186,11 @@ impl SessionStore {
         // a spawn, register the alias by looking up the pending spawn by cwd.
         if let Some(canonical) = self.aliases.get(&event.session_id).map(|e| e.clone()) {
             event.session_id = canonical;
-        } else if event.event == "SessionStart" {
+        } else if !self.states.contains_key(&event.session_id) && event.event == "SessionStart" {
+            // Only guess by cwd when we don't already know this id. When the
+            // caller pinned `--session-id`, claude's hook id *is* our spawn id
+            // (already in `states`), so we must skip the cwd guess — otherwise a
+            // sibling spawn sharing the cwd could steal this session's hooks.
             if let Some(cwd) = event.cwd.clone() {
                 if let Some((_, canonical)) = self.pending_spawns_by_cwd.remove(&cwd) {
                     self.aliases.insert(event.session_id.clone(), canonical.clone());
@@ -369,5 +373,60 @@ impl SessionStore {
 impl Default for SessionStore {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn hook(event: &str, session_id: &str, cwd: &str) -> HookEvent {
+        HookEvent {
+            event: event.into(),
+            session_id: session_id.into(),
+            cwd: Some(cwd.into()),
+            timestamp: None,
+            payload: serde_json::Map::new(),
+        }
+    }
+
+    fn handle() -> WrapperHandle {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        WrapperHandle { tx }
+    }
+
+    // A pinned spawn (claude launched with `--session-id` == our id) must keep
+    // its own hooks even when a sibling spawn shares the cwd. Without the
+    // `states.contains_key` guard, SessionStart would consume the cwd's pending
+    // entry and re-alias to the sibling, stealing the session — the root cause
+    // of "wrong transcript" with several agents in one repo.
+    #[test]
+    fn pinned_session_id_not_stolen_by_cwd_sibling() {
+        let store = SessionStore::new();
+        let cwd = "/work/repo";
+        // The later spawn overwrites pending_spawns_by_cwd[cwd].
+        store.register_spawn("AAA", cwd, handle());
+        store.register_spawn("BBB", cwd, handle());
+
+        let state = store.ingest(hook("SessionStart", "AAA", cwd));
+        assert_eq!(state.session_id, "AAA", "pinned hook must apply to its own state");
+        assert!(store.get("AAA").is_some());
+        assert!(!store.aliases.contains_key("AAA"), "pinned id must not be aliased away");
+    }
+
+    // Legacy path: a spawn with no pinned id (claude picks its own session id)
+    // still correlates by cwd on the first SessionStart.
+    #[test]
+    fn legacy_unpinned_session_aliases_by_cwd() {
+        let store = SessionStore::new();
+        let cwd = "/work/solo";
+        store.register_spawn("canonical-uuid", cwd, handle());
+
+        let state = store.ingest(hook("SessionStart", "claude-own-id", cwd));
+        assert_eq!(state.session_id, "canonical-uuid");
+        assert_eq!(
+            store.aliases.get("claude-own-id").map(|e| e.clone()),
+            Some("canonical-uuid".to_string()),
+        );
     }
 }

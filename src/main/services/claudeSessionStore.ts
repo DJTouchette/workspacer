@@ -1,21 +1,16 @@
 import * as path from 'path';
 import { BrowserWindow } from 'electron';
 import { agentNotifier } from './agentNotifier';
-import { configService } from './configService';
-import {
-  type SessionUsage,
-  contextTokensOf,
-  contextLimitFor,
-  turnCostUSD,
-  emptyUsage,
-} from './modelUsage';
 import {
   workflowWatcher,
   type WorkflowRunInfo,
   type WorkflowWatcherUpdate,
 } from './workflowWatcher';
 import { publishWorkflowRuns, forgetSession as forgetTelemetry } from './hubTelemetry';
-import { sessionHistory } from './sessionHistory';
+import { applyHookEvent, applyStopEvent, applySessionEndEvent } from './sessionStore/hookEventRouter';
+import { refreshFromTranscript } from './sessionStore/transcriptParser';
+import { SessionUsageAccumulator } from './sessionStore/usageAccumulator';
+import { writeHistory } from './sessionStore/analyticsWriter';
 
 export type { WorkflowRunInfo, WorkflowAgentInfo, WorkflowPhaseInfo } from './workflowWatcher';
 
@@ -118,7 +113,7 @@ export interface ClaudeSessionState {
   totalToolCalls: number;
   peakContext: number; // highest context-token reading seen (for analytics)
   lastTranscriptLine: number; // track how far we've read in JSONL
-  usage: SessionUsage | null; // token / cost / context, parsed from transcript
+  usage: import('./modelUsage').SessionUsage | null; // token / cost / context, parsed from transcript
 }
 
 // Serialisable snapshot sent over IPC
@@ -129,16 +124,11 @@ export type ClaudeSessionSnapshot = Omit<ClaudeSessionState, never>;
 class ClaudeSessionStore {
   private sessions = new Map<string, ClaudeSessionState>();
   private mainWindow: BrowserWindow | null = null;
-  // sessionId → last accounted assistant message id, so re-seen transcript
-  // lines (blocks of one message stream as separate entries) don't double-count
-  // cumulative cost / token totals.
-  private lastUsageKey = new Map<string, string>();
-  // Concrete model ids we've already persisted to config, so we only write on
-  // genuinely-new models. Lazily seeded from config on first use.
-  private knownModels: Set<string> | null = null;
   // Latest workflow/subagent filesystem state per session, re-merged whenever
   // either the watcher ticks or a hook event mutates the subagent list.
   private watcherUpdates = new Map<string, WorkflowWatcherUpdate>();
+  // Accumulator owns lastUsageKey + knownModels dedup state.
+  private usageAccumulator = new SessionUsageAccumulator();
 
   setMainWindow(win: BrowserWindow): void {
     this.mainWindow = win;
@@ -176,148 +166,33 @@ class ClaudeSessionStore {
 
     // Refresh conversation from JSONL transcript on every hook event
     if (session.transcriptPath) {
-      this.refreshFromTranscript(session);
+      refreshFromTranscript(session, (s, model, usage, key) => this.usageAccumulator.applyUsage(s, model, usage, key));
     }
 
     // Snapshot the ambient state so the notifier can detect transitions
     // (needs-you / done) after the switch below applies the new state.
     const prevAmbient = session.ambientState;
 
-    switch (hookName) {
-      case 'SessionStart':
-        session.status = 'active';
-        session.ambientState = 'idle';
-        break;
-
-      case 'UserPromptSubmit':
-        session.ambientState = 'streaming';
-        break;
-
-      case 'PreToolUse': {
-        session.ambientState = 'streaming';
-        const tc: ToolCall = {
-          id: event.tool_use_id ?? `tc-${Date.now()}`,
-          name: event.tool_name ?? 'unknown',
-          input: event.tool_input ?? {},
-          status: 'running',
-          startedAt: Date.now(),
-        };
-        session.activeToolCalls.push(tc);
-
-        // A new tool call invalidates any stale approval card from a prior
-        // tool — the daemon gateway only parks one decision at a time.
-        session.pendingApproval = null;
-
-        // AskUserQuestion: surface the question payload as a pending picker.
-        // Also defensively clear any stale approval card — these are mutually
-        // exclusive: a picker means claude is asking the user, not asking for
-        // tool permission.
-        if (tc.name === 'AskUserQuestion' && Array.isArray(tc.input?.questions)) {
-          session.pendingQuestions = tc.input.questions;
-          session.pendingApproval = null;
-          session.ambientState = 'waiting_input';
-        }
-
-        if (['Edit', 'MultiEdit', 'Write'].includes(tc.name)) {
-          session.fileChanges.push({
-            path: tc.input?.file_path ?? 'unknown',
-            toolName: tc.name,
-            input: tc.input,
-            timestamp: Date.now(),
-          });
-        }
-        break;
+    // Handle Stop and SessionEnd here because they need store-level side-effects.
+    if (hookName === 'Stop') {
+      applyStopEvent(session);
+      // Delayed re-read: final assistant message may still be flushing
+      if (session.transcriptPath) {
+        setTimeout(() => {
+          refreshFromTranscript(session!, (s, model, usage, key) => this.usageAccumulator.applyUsage(s, model, usage, key));
+          this.pushUpdate(session!);
+          writeHistory(session!, 'active');
+        }, 500);
+      } else {
+        writeHistory(session, 'active');
       }
-
-      case 'PostToolUse': {
-        session.ambientState = 'streaming';
-        // Any completed tool clears any leftover approval card — the daemon
-        // gateway is single-shot, so by the time PostToolUse fires, whatever
-        // decision was pending is either resolved or no longer relevant.
-        session.pendingApproval = null;
-        const completed = session.activeToolCalls.find(t => t.id === event.tool_use_id);
-        if (completed) {
-          completed.status = 'complete';
-          completed.completedAt = Date.now();
-          session.activeToolCalls = session.activeToolCalls.filter(t => t.id !== event.tool_use_id);
-          session.completedToolCalls.push(completed);
-          if (completed.name === 'AskUserQuestion') {
-            session.pendingQuestions = null;
-          }
-        }
-        break;
-      }
-
-      case 'PostToolUseFailure': {
-        const failed = session.activeToolCalls.find(t => t.id === event.tool_use_id);
-        if (failed) {
-          failed.status = 'failed';
-          failed.completedAt = Date.now();
-          session.activeToolCalls = session.activeToolCalls.filter(t => t.id !== event.tool_use_id);
-          session.completedToolCalls.push(failed);
-        }
-        break;
-      }
-
-      case 'PermissionRequest':
-        session.pendingApproval = {
-          toolName: event.tool_name ?? '',
-          toolInput: event.tool_input ?? {},
-          suggestions: event.permission_suggestions,
-          timestamp: Date.now(),
-        };
-        session.ambientState = 'waiting_approval';
-        break;
-
-      case 'Stop':
-        session.ambientState = 'idle';
-        session.pendingApproval = null;
-        session.pendingQuestions = null;
-        // Clear tool calls — they're already shown inline in conversation via transcript
-        session.activeToolCalls = [];
-        session.completedToolCalls = [];
-        session.subagents = session.subagents.filter(s => s.status === 'running');
-        // Delayed re-read: final assistant message may still be flushing
-        if (session.transcriptPath) {
-          setTimeout(() => { this.refreshFromTranscript(session); this.pushUpdate(session); this.writeHistory(session, 'active'); }, 500);
-        } else {
-          this.writeHistory(session, 'active');
-        }
-        break;
-
-      case 'SubagentStart':
-        session.subagents.push({
-          id: event.agent_id ?? `sa-${Date.now()}`,
-          type: event.agent_type ?? 'unknown',
-          status: 'running',
-          startedAt: Date.now(),
-        });
-        break;
-
-      case 'SubagentStop': {
-        const sub = session.subagents.find(s => s.id === event.agent_id);
-        if (sub) {
-          sub.status = 'complete';
-          sub.completedAt = Date.now();
-        }
-        break;
-      }
-
-      case 'Notification':
-        session.conversation.push({
-          role: 'assistant',
-          content: event.message ?? event.notification ?? '[notification]',
-          timestamp: Date.now(),
-        });
-        break;
-
-      case 'SessionEnd':
-        session.status = 'ended';
-        session.ambientState = 'idle';
-        workflowWatcher.detach(sessionId);
-        forgetTelemetry(sessionId);
-        this.writeHistory(session, 'ended');
-        break;
+    } else if (hookName === 'SessionEnd') {
+      applySessionEndEvent(session);
+      workflowWatcher.detach(sessionId);
+      forgetTelemetry(sessionId);
+      writeHistory(session, 'ended');
+    } else {
+      applyHookEvent(session, event);
     }
 
     agentNotifier.notifyOnTransition(session, prevAmbient);
@@ -365,15 +240,6 @@ class ClaudeSessionStore {
     }
   }
 
-  /** Check if a message was already added to avoid duplicates */
-  private isDuplicateMessage(session: ClaudeSessionState, role: string, content: string): boolean {
-    if (!content) return false;
-    const recent = session.conversation.slice(-5);
-    return recent.some(
-      (t) => t.role === role && t.content && t.content === content,
-    );
-  }
-
   // ── Queries ──
 
   getSnapshot(sessionId: string): ClaudeSessionSnapshot | null {
@@ -413,217 +279,6 @@ class ClaudeSessionStore {
     };
     this.sessions.set(sessionId, session);
     return session;
-  }
-
-  /** Read new lines from JSONL transcript and update conversation */
-  private refreshFromTranscript(session: ClaudeSessionState): void {
-    if (!session.transcriptPath) return;
-    const fs = require('fs');
-    try {
-      if (!fs.existsSync(session.transcriptPath)) return;
-      const content = fs.readFileSync(session.transcriptPath, 'utf-8');
-      const lines = content.split('\n').filter((l: string) => l.trim());
-
-      if (lines.length <= session.lastTranscriptLine) return;
-
-      const newLines = lines.slice(session.lastTranscriptLine);
-
-      let parsed = 0;
-      for (const line of newLines) {
-        try {
-          const entry = JSON.parse(line);
-          this.processTranscriptEntry(session, entry);
-          parsed++;
-        } catch {
-          // Stop at first unparseable line — likely a partial write at EOF.
-          // It will be re-read (now complete) on the next hook event.
-          break;
-        }
-      }
-      session.lastTranscriptLine += parsed;
-
-      // Housekeeping: drop completedToolCalls already absorbed into conversation
-      if (parsed > 0 && session.completedToolCalls.length > 0) {
-        const convToolIds = new Set<string>();
-        for (const turn of session.conversation) {
-          if (turn.toolCalls) for (const tc of turn.toolCalls) convToolIds.add(tc.id);
-        }
-        session.completedToolCalls = session.completedToolCalls.filter(tc => !convToolIds.has(tc.id));
-      }
-    } catch (err) {
-      console.error('[SessionStore] transcript read error:', err);
-    }
-  }
-
-  private processTranscriptEntry(session: ClaudeSessionState, entry: any): void {
-    const type = entry.type;
-    const msg = entry.message;
-
-    if (type === 'user' && msg) {
-      const contentBlocks = Array.isArray(msg.content) ? msg.content : [];
-      // Skip tool_result entries — they're API plumbing, not user messages
-      const hasToolResult = contentBlocks.some((b: any) => b.type === 'tool_result');
-      if (hasToolResult) {
-        // Extract tool results and attach to the corresponding tool calls
-        for (const block of contentBlocks) {
-          if (block.type === 'tool_result' && block.tool_use_id) {
-            const resultText = typeof block.content === 'string'
-              ? block.content
-              : Array.isArray(block.content)
-                ? block.content.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('\n')
-                : '';
-            // Find the matching tool call and set its response
-            for (let i = session.conversation.length - 1; i >= 0; i--) {
-              const tcs = session.conversation[i].toolCalls;
-              if (!tcs) continue;
-              const tc = tcs.find(t => t.id === block.tool_use_id);
-              if (tc) {
-                tc.response = resultText;
-                break;
-              }
-            }
-          }
-        }
-        return;
-      }
-
-      // Real user message
-      const content = typeof msg.content === 'string'
-        ? msg.content
-        : contentBlocks.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('\n');
-      if (content && !this.isDuplicateMessage(session, 'user', content)) {
-        session.conversation.push({ role: 'user', content, timestamp: Date.now() });
-      }
-    } else if (type === 'assistant' && msg) {
-      // Token usage rides on the assistant message. Context fullness is a
-      // point-in-time snapshot (overwrite); cost/totals accumulate per message.
-      if (msg.usage) {
-        this.applyUsage(session, msg.model ?? null, msg.usage, entry?.message?.id ?? entry?.uuid ?? null);
-      }
-
-      // The JSONL transcript streams each content block as a separate entry.
-      // Keep each block as its own conversation turn so text and tool calls
-      // render interlaced in timeline order.
-      const blocks = Array.isArray(msg.content) ? msg.content : [];
-
-      for (const block of blocks) {
-        if (block.type === 'thinking') continue;
-
-        if (block.type === 'text' && block.text) {
-          const text = block.text.trim();
-          if (!text) continue;
-          if (!this.isDuplicateMessage(session, 'assistant', text)) {
-            session.conversation.push({
-              role: 'assistant',
-              content: text,
-              timestamp: Date.now(),
-            });
-          }
-        } else if (block.type === 'tool_use') {
-          const tc: ToolCall = {
-            id: block.id ?? `tc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-            name: block.name ?? 'unknown',
-            input: block.input ?? {},
-            status: 'complete',
-            startedAt: Date.now(),
-            completedAt: Date.now(),
-          };
-          session.totalToolCalls++;
-
-          // Each tool call is its own turn — interlaced with text
-          session.conversation.push({
-            role: 'assistant',
-            content: '',
-            timestamp: Date.now(),
-            toolCalls: [tc],
-          });
-        }
-      }
-    }
-  }
-
-  /**
-   * Fold one assistant message's `usage` into the session.
-   * Context = latest turn's input side (overwritten each time, idempotent).
-   * Totals/cost accumulate, deduped by message id so streamed blocks of the
-   * same message aren't counted twice.
-   */
-  private applyUsage(
-    session: ClaudeSessionState,
-    model: string | null,
-    usage: any,
-    key: string | null,
-  ): void {
-    if (!session.usage) session.usage = emptyUsage();
-    const u = session.usage;
-
-    const ctx = contextTokensOf(usage);
-    u.contextTokens = ctx;
-    if (ctx > session.peakContext) session.peakContext = ctx;
-    if (model) {
-      u.model = model;
-      this.rememberModel(model);
-    }
-    u.contextLimit = contextLimitFor(u.model, ctx);
-
-    // Cumulative — only once per distinct message.
-    if (key && this.lastUsageKey.get(session.sessionId) === key) return;
-    if (key) this.lastUsageKey.set(session.sessionId, key);
-    u.totalInputTokens += ctx;
-    u.totalOutputTokens += usage.output_tokens ?? 0;
-    u.costUSD += turnCostUSD(u.model, usage);
-  }
-
-  /** Persist a concrete model id to config the first time we see it, so the
-   *  spawn dropdown can offer it across restarts. */
-  private rememberModel(model: string): void {
-    if (this.knownModels === null) {
-      const cfg = configService.getConfig() as any;
-      this.knownModels = new Set(Array.isArray(cfg.claude?.seenModels) ? cfg.claude.seenModels : []);
-    }
-    if (this.knownModels.has(model)) return;
-    this.knownModels.add(model);
-    configService.saveConfig({ claude: { seenModels: Array.from(this.knownModels).sort() } } as any);
-  }
-
-  /** Best-effort current git branch for a working dir (reads .git/HEAD). */
-  private gitBranchOf(cwd: string): string {
-    if (!cwd) return '';
-    try {
-      const fs = require('fs');
-      const head = fs.readFileSync(path.join(cwd, '.git', 'HEAD'), 'utf-8').trim();
-      const m = head.match(/^ref:\s*refs\/heads\/(.+)$/);
-      return m ? m[1] : head.slice(0, 12); // detached HEAD → short sha
-    } catch {
-      return '';
-    }
-  }
-
-  /** Snapshot this session's metadata into the analytics history store. */
-  private writeHistory(session: ClaudeSessionState, status: 'active' | 'ended'): void {
-    const now = Date.now();
-    const workflowFailed = session.workflows.filter((w) => w.status === 'failed').length;
-    const subagentCount = session.subagents.length + session.workflows.reduce((n, w) => n + w.agents.length, 0);
-    sessionHistory.record({
-      sessionId: session.sessionId,
-      cwd: session.cwd,
-      agentName: session.cwd ? path.basename(session.cwd.replace(/[/\\]+$/, '')) : session.sessionId.slice(0, 8),
-      model: session.usage?.model ?? '',
-      gitBranch: this.gitBranchOf(session.cwd),
-      startedAt: new Date(session.startedAt).toISOString(),
-      endedAt: status === 'ended' ? new Date(now).toISOString() : '',
-      durationMs: now - session.startedAt,
-      inputTokens: session.usage?.totalInputTokens ?? 0,
-      outputTokens: session.usage?.totalOutputTokens ?? 0,
-      costUSD: session.usage?.costUSD ?? 0,
-      peakContext: session.peakContext,
-      toolCalls: session.totalToolCalls,
-      messageCount: session.conversation.length,
-      subagentCount,
-      workflowRuns: session.workflows.length,
-      workflowFailed,
-      status,
-    });
   }
 
   private pushUpdate(session: ClaudeSessionState): void {

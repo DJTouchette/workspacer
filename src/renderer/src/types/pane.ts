@@ -41,16 +41,16 @@ export interface TabConfig {
   activePaneId: string;
   /** Spatial-canvas placement. See {@link CanvasRect}. */
   canvas?: CanvasRect;
-  /** Epoch ms of the tab's last activity (focus / creation / split). The axis
-   *  the 'timeline' view sorts cards on. Absent for tabs predating the feature. */
+  /** Epoch ms of the tab's last activity (focus / creation / split).
+   *  Absent for tabs predating the feature. */
   lastActiveAt?: number;
 }
 
 /** How the workspace lays out tabs. Global (config.panes.viewMode).
  *  - 'tabs':     the classic horizontal scroll strip (one tab on screen at a time)
  *  - 'spatial':  every tab is a free-floating card on a pannable/zoomable canvas
- *  - 'timeline': cards stacked in a vertical feed, newest activity on top */
-export type ViewMode = 'tabs' | 'spatial' | 'timeline';
+ *  - 'stacked':  cards in a vertical feed (natural order); wraps top↔bottom */
+export type ViewMode = 'tabs' | 'spatial' | 'stacked';
 
 /**
  * An agent workspace = one long-lived Claude Code (claudemon) session plus its

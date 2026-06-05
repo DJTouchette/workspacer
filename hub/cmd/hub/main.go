@@ -33,6 +33,14 @@ func main() {
 		log.Printf("bus auth enabled (token required on /bus, /remote, /plugins/install, /plugins/remove)")
 	}
 
+	// Wire the RPC authorize seam. The /bus endpoint already enforces the bus
+	// token at the HTTP/WebSocket handshake level, so every connected caller is
+	// already authenticated. The authorize func is therefore permissive — it
+	// allows all method calls — but it is non-nil, which means the seam is
+	// active. Future per-method capability tokens slot in here without touching
+	// callers or providers.
+	srv.SetAuthorize(func(_ uint64, _ string) bool { return true })
+
 	// guard wraps a mutating/sensitive route so it requires the bus token.
 	guard := func(h http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
@@ -59,6 +67,19 @@ func main() {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write(remoteHTML)
 	}))
+	// Static xterm assets for the remote's live terminal mirror. Unguarded:
+	// they're public library code, and <script>/<link> tags can't carry the
+	// bus token. Long-cache since they're content-pinned to a vendored version.
+	staticAsset := func(contentType string, body []byte) http.HandlerFunc {
+		return func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", contentType)
+			w.Header().Set("Cache-Control", "public, max-age=86400")
+			_, _ = w.Write(body)
+		}
+	}
+	srv.AddRoute("/xterm.js", staticAsset("application/javascript; charset=utf-8", xtermJS))
+	srv.AddRoute("/xterm.css", staticAsset("text/css; charset=utf-8", xtermCSS))
+	srv.AddRoute("/addon-fit.js", staticAsset("application/javascript; charset=utf-8", addonFitJS))
 	// Install a plugin from a GitHub URL: download → extract → load → supervise.
 	srv.AddRoute("/plugins/install", guard(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -87,15 +108,14 @@ func main() {
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "missing id"})
 			return
 		}
-		var dir string
-		for _, m := range mgr.List() {
-			if m.ID == body.ID {
-				dir = m.Dir
-			}
-		}
-		mgr.Remove(body.ID)
+		// Remove returns the plugin dir atomically under the manager lock, which
+		// eliminates the TOCTOU window that existed when List() and Remove()
+		// were two separate calls.
+		dir := mgr.Remove(body.ID)
 		if dir != "" {
-			_ = os.RemoveAll(dir)
+			if err := os.RemoveAll(dir); err != nil {
+				log.Printf("plugins/remove: RemoveAll %s: %v", dir, err)
+			}
 		}
 		_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 	}))

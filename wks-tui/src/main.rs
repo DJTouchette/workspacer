@@ -15,7 +15,6 @@ mod profiles;
 mod terminal;
 mod types;
 mod ui;
-mod usage;
 
 use std::io::{self, Stdout};
 use std::time::Duration;

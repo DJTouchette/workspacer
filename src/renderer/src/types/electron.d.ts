@@ -2,6 +2,15 @@ import type { PluginManifest } from './plugin';
 import type { LibraryItem, LibrarySaveInput } from './library';
 import type { AnalyticsSummary, SessionHistoryRecord } from './analytics';
 import type { Layout, LayoutAgent } from './layout';
+import type {
+  ClaudeSessionSnapshot,
+  AppConfig,
+  AppConfigPartial,
+  SessionData,
+  LayoutInput,
+  ProfileUpdate,
+  ClaudeProfile,
+} from '../../../main/shared/ipcTypes';
 
 export interface SessionListEntry {
   name: string;
@@ -12,6 +21,9 @@ export interface SessionListEntry {
 }
 
 export interface ElectronAPI {
+  // Host OS — 'win32' | 'darwin' | 'linux' | …
+  platform: NodeJS.Platform;
+
   // Terminal (non-Claude shells) — control on IPC, I/O on MessagePort
   createTerminal: (shell: string, cwd?: string, cols?: number, rows?: number) => Promise<string>;
   writeTerminal: (id: string, data: string) => void;
@@ -36,10 +48,10 @@ export interface ElectronAPI {
   onClaudeOutput: (sessionId: string, callback: (data: string) => void) => () => void;
 
   // Config
-  getConfig: () => Promise<any>;
-  reloadConfig: () => Promise<any>;
+  getConfig: () => Promise<AppConfig>;
+  reloadConfig: () => Promise<AppConfig>;
   getConfigPath: () => Promise<string>;
-  saveConfig: (partial: any) => Promise<any>;
+  saveConfig: (partial: AppConfigPartial) => Promise<AppConfig>;
 
   // Session
   listSessions: () => Promise<SessionListEntry[]>;
@@ -53,20 +65,20 @@ export interface ElectronAPI {
 
   // Layout templates
   layoutsList: () => Promise<Layout[]>;
-  layoutsSave: (layout: { id?: string; name: string; agents: LayoutAgent[] }) => Promise<Layout>;
+  layoutsSave: (layout: LayoutInput) => Promise<Layout>;
   layoutsDelete: (id: string) => Promise<void>;
 
   // Claude session discovery
   claudeListSessionsForDir: (cwd: string) => Promise<{ sessionId: string; timestamp: string; summary: string }[]>;
 
   // Claude profiles
-  claudeProfilesList: () => Promise<any[]>;
-  claudeProfilesAdd: (name: string, configDir: string, extraArgs: string[]) => Promise<any>;
-  claudeProfilesUpdate: (id: string, updates: any) => Promise<any>;
+  claudeProfilesList: () => Promise<ClaudeProfile[]>;
+  claudeProfilesAdd: (name: string, configDir: string, extraArgs: string[]) => Promise<ClaudeProfile>;
+  claudeProfilesUpdate: (id: string, updates: ProfileUpdate) => Promise<ClaudeProfile>;
   claudeProfilesRemove: (id: string) => Promise<void>;
-  getClaudeSession: (sessionId: string) => Promise<any>;
-  getAllClaudeSessions: () => Promise<any[]>;
-  onClaudeSessionUpdate: (callback: (sessionId: string, snapshot: any) => void) => () => void;
+  getClaudeSession: (sessionId: string) => Promise<ClaudeSessionSnapshot | null>;
+  getAllClaudeSessions: () => Promise<ClaudeSessionSnapshot[]>;
+  onClaudeSessionUpdate: (callback: (sessionId: string, snapshot: ClaudeSessionSnapshot) => void) => () => void;
   onHubEvent: (callback: (event: { id: string; type: string; source: string; time: string; data?: unknown }) => void) => () => void;
   onHubStatus: (callback: (status: { connected: boolean }) => void) => () => void;
   getHubStatus: () => Promise<{ connected: boolean }>;

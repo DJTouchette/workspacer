@@ -8,7 +8,8 @@
     "dev:share": "cross-env WORKSPACER_REMOTE_SHARE=1 npm run dev",
     "dev:renderer": "cd src/renderer && npx vite --port 5173",
     "dev:main": "npm run build:hub && npm run build:main && wait-on http://localhost:5173 && cross-env ELECTRON_DEV=1 electron .",
-    "build:main": "tsc -p tsconfig.main.json",
+    "build:main": "tsc -p tsconfig.main.json && npm run bundle:preload",
+    "bundle:preload": "esbuild src/main/preload.ts --bundle --platform=node --format=cjs --external:electron --target=node18 --outfile=dist/main/preload.js",
     "build:hub": "cd hub && go build -o . ./cmd/hub",
     "test:hub": "cd hub && go test -race ./...",
     "build:renderer": "cd src/renderer && npx vite build",
@@ -101,6 +102,7 @@
     "cross-env": "^10.1.0",
     "electron": "^33.0.0",
     "electron-builder": "^25.0.0",
+    "esbuild": "^0.21.5",
     "typescript": "^5.6.0",
     "vitest": "^4.1.1",
     "wait-on": "^9.0.4"

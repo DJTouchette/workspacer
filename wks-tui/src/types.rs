@@ -6,15 +6,60 @@
 use serde::Deserialize;
 use serde_json::Value;
 
+/// Token/cost/context usage for a session, as returned by claudemon's
+/// `GET /sessions` (and `GET /sessions/:id`) in the additive `usage` field.
+/// Fields are optional so older daemon versions that omit the block still
+/// deserialize cleanly.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct Usage {
+    pub model: Option<String>,
+    /// Input side of the latest turn — a point-in-time view of context fullness.
+    #[serde(default)]
+    pub context_tokens: u64,
+    #[serde(default)]
+    pub context_limit: u64,
+    /// Cumulative cost (USD) for the session.
+    #[serde(default)]
+    pub cost_usd: f64,
+}
+
+/// The mode a Claude session can be in, mirroring claudemon's `SessionMode`.
+///
+/// Uses `#[serde(rename_all = "snake_case")]` to match the wire format claudemon
+/// emits (e.g. `"input"`, `"approval"`). The `Unknown` catch-all variant absorbs
+/// any future values so deserialization never fails on unknown modes.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentMode {
+    /// No hook has fired yet, or the mode field was absent.
+    #[default]
+    Unknown,
+    /// Chat prompt is up — waiting for the user to send a message.
+    Input,
+    /// Claude is actively producing a turn (streaming, thinking, or tool use).
+    Responding,
+    /// Paused waiting for a tool-permission yes/no/always decision.
+    Approval,
+    /// Claude asked the user a structured question via `AskUserQuestion`.
+    Question,
+    /// Session has ended.
+    Stopped,
+    /// A mode this client doesn't recognise yet — forward-compat catch-all.
+    #[serde(other)]
+    Other,
+}
+
 /// One live session, as returned by claudemon's `GET /sessions`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Agent {
     pub session_id: String,
     #[serde(default)]
     pub cwd: Option<String>,
-    /// One of: unknown, input, responding, approval, question, stopped.
+    /// The current session mode. Defaults to `AgentMode::Unknown` when the
+    /// field is absent, and falls back to `AgentMode::Other` for unrecognised
+    /// values so deserialization never panics on future daemon versions.
     #[serde(default)]
-    pub mode: String,
+    pub mode: AgentMode,
     /// What Claude is blocked on, if anything. `skip_deserializing` on the
     /// daemon means it can be absent; we tolerate that.
     #[serde(default)]
@@ -23,10 +68,10 @@ pub struct Agent {
     pub tool_calls: u64,
     #[serde(default)]
     pub last_event: Option<String>,
-    /// Token/cost/context derived from the transcript (not part of the
-    /// `/sessions` payload — filled in after listing). See [`crate::usage`].
-    #[serde(skip)]
-    pub usage: Option<crate::usage::Usage>,
+    /// Token/cost/context/model as returned by claudemon's `/sessions` response.
+    /// Absent when the daemon hasn't computed it yet (no assistant turns).
+    #[serde(default)]
+    pub usage: Option<Usage>,
 }
 
 /// Whatever Claude is waiting on, tagged by `kind` (matches claudemon's enum).
@@ -69,22 +114,26 @@ pub struct QuestionOption {
 
 impl Agent {
     pub fn state(&self) -> &str {
-        if self.mode.is_empty() {
-            "unknown"
-        } else {
-            &self.mode
+        match &self.mode {
+            AgentMode::Unknown => "unknown",
+            AgentMode::Input => "input",
+            AgentMode::Responding => "responding",
+            AgentMode::Approval => "approval",
+            AgentMode::Question => "question",
+            AgentMode::Stopped => "stopped",
+            AgentMode::Other => "other",
         }
     }
 
     /// True when the agent needs the user: an approval, a question, or a chat
     /// prompt awaiting the next message (matches the `/remote` semantics).
     pub fn is_waiting(&self) -> bool {
-        matches!(self.mode.as_str(), "input" | "approval" | "question")
+        matches!(self.mode, AgentMode::Input | AgentMode::Approval | AgentMode::Question)
     }
 
     /// True when the agent is actively producing a turn.
     pub fn is_busy(&self) -> bool {
-        self.mode == "responding"
+        self.mode == AgentMode::Responding
     }
 
     pub fn cwd_str(&self) -> &str {
@@ -152,7 +201,6 @@ pub enum Part {
 pub fn turns_from_transcript(tx: &Value) -> Vec<Turn> {
     let messages = tx
         .get("messages")
-        .or_else(|| tx.get("entries"))
         .and_then(|m| m.as_array())
         .cloned()
         .unwrap_or_default();
@@ -244,7 +292,7 @@ mod tests {
 
     #[test]
     fn parses_live_sessions_list_shape() {
-        // Exactly what claudemon's GET /sessions returns.
+        // Exactly what claudemon's GET /sessions returns (with the new usage block).
         let json = serde_json::json!([{
             "session_id": "abc",
             "cwd": "/home/u/proj",
@@ -253,7 +301,13 @@ mod tests {
             "started_at": "2026-06-04T03:00:00Z",
             "updated_at": "2026-06-04T03:00:10Z",
             "tool_calls": 3,
-            "last_event": "PreToolUse"
+            "last_event": "PreToolUse",
+            "usage": {
+                "model": "claude-sonnet-4-6",
+                "context_tokens": 5200,
+                "context_limit": 200000,
+                "cost_usd": 0.042
+            }
         }]);
         let agents: Vec<Agent> = serde_json::from_value(json).unwrap();
         assert_eq!(agents.len(), 1);
@@ -263,6 +317,23 @@ mod tests {
         assert!(a.is_busy() && !a.is_waiting());
         assert_eq!(a.short_cwd(), "…/u/proj");
         assert!(a.approval().is_none() && a.questions().is_none());
+        // usage comes straight from the API now — no transcript fetch needed.
+        let u = a.usage.as_ref().expect("usage present");
+        assert_eq!(u.model.as_deref(), Some("claude-sonnet-4-6"));
+        assert_eq!(u.context_tokens, 5200);
+        assert_eq!(u.context_limit, 200_000);
+        assert!((u.cost_usd - 0.042).abs() < 1e-9);
+    }
+
+    #[test]
+    fn parses_sessions_list_without_usage() {
+        // Daemons that don't yet emit the usage block must still deserialize.
+        let json = serde_json::json!([{
+            "session_id": "abc",
+            "mode": "responding",
+        }]);
+        let agents: Vec<Agent> = serde_json::from_value(json).unwrap();
+        assert!(agents[0].usage.is_none());
     }
 
     #[test]
@@ -293,5 +364,114 @@ mod tests {
         let qs = a.questions().unwrap();
         assert_eq!(qs[0].options.len(), 2);
         assert_eq!(qs[0].options[1].description.as_deref(), Some("the b one"));
+    }
+
+    // ── agent-mode contract characterization ────────────────────────────────
+    // These tests pin the is_waiting / is_busy / state() behavior for every
+    // mode that claudemon can emit, now that mode is a typed AgentMode enum.
+
+    fn agent_with_mode(mode: &str) -> Agent {
+        serde_json::from_value(serde_json::json!({
+            "session_id": "test",
+            "mode": mode
+        }))
+        .unwrap()
+    }
+
+    /// "input" — user's turn to type the next message.
+    #[test]
+    fn mode_input_is_waiting_not_busy() {
+        let a = agent_with_mode("input");
+        assert!(a.is_waiting(), "input must be waiting");
+        assert!(!a.is_busy(), "input must not be busy");
+        assert_eq!(a.state(), "input");
+    }
+
+    /// "approval" — Claude wants to run a tool and needs a y/n.
+    #[test]
+    fn mode_approval_is_waiting_not_busy() {
+        let a = agent_with_mode("approval");
+        assert!(a.is_waiting(), "approval must be waiting");
+        assert!(!a.is_busy(), "approval must not be busy");
+        assert_eq!(a.state(), "approval");
+    }
+
+    /// "question" — Claude asked the user a structured question.
+    #[test]
+    fn mode_question_is_waiting_not_busy() {
+        let a = agent_with_mode("question");
+        assert!(a.is_waiting(), "question must be waiting");
+        assert!(!a.is_busy(), "question must not be busy");
+        assert_eq!(a.state(), "question");
+    }
+
+    /// "responding" — Claude is actively generating a turn.
+    #[test]
+    fn mode_responding_is_busy_not_waiting() {
+        let a = agent_with_mode("responding");
+        assert!(a.is_busy(), "responding must be busy");
+        assert!(!a.is_waiting(), "responding must not be waiting");
+        assert_eq!(a.state(), "responding");
+    }
+
+    /// "stopped" — session is finished / Claude process exited.
+    #[test]
+    fn mode_stopped_is_neither_waiting_nor_busy() {
+        let a = agent_with_mode("stopped");
+        assert!(!a.is_waiting(), "stopped must not be waiting");
+        assert!(!a.is_busy(), "stopped must not be busy");
+        assert_eq!(a.state(), "stopped");
+    }
+
+    /// Absent mode field — #[serde(default)] yields AgentMode::Unknown, so
+    /// state() returns "unknown".
+    #[test]
+    fn mode_empty_state_is_unknown() {
+        let a: Agent = serde_json::from_value(serde_json::json!({"session_id": "t"})).unwrap();
+        assert_eq!(a.state(), "unknown", "absent mode yields 'unknown' from state()");
+        assert!(!a.is_waiting());
+        assert!(!a.is_busy());
+    }
+
+    /// An explicit empty string or an unrecognised mode (e.g. a future value
+    /// the daemon emits) maps to AgentMode::Other via #[serde(other)], which
+    /// state() renders as "other". It is neither waiting nor busy.
+    #[test]
+    fn mode_unknown_string_maps_to_other() {
+        // Explicit empty string falls to #[serde(other)] => AgentMode::Other.
+        let a_empty = agent_with_mode("");
+        assert_eq!(a_empty.state(), "other");
+        assert!(!a_empty.is_waiting());
+        assert!(!a_empty.is_busy());
+
+        // An arbitrary future mode string also maps to AgentMode::Other.
+        let a = agent_with_mode("future_mode");
+        assert_eq!(a.state(), "other");
+        assert!(!a.is_waiting());
+        assert!(!a.is_busy());
+    }
+
+    /// Exhaustive table confirming the three-way classification for all known
+    /// daemon-emitted modes.  Each tuple: (mode, is_waiting, is_busy).
+    #[test]
+    fn mode_classification_table() {
+        let cases: &[(&str, bool, bool)] = &[
+            ("input",      true,  false),
+            ("approval",   true,  false),
+            ("question",   true,  false),
+            ("responding", false, true),
+            ("stopped",    false, false),
+        ];
+        for (mode, want_waiting, want_busy) in cases {
+            let a = agent_with_mode(mode);
+            assert_eq!(
+                a.is_waiting(), *want_waiting,
+                "is_waiting mismatch for mode={mode:?}"
+            );
+            assert_eq!(
+                a.is_busy(), *want_busy,
+                "is_busy mismatch for mode={mode:?}"
+            );
+        }
     }
 }

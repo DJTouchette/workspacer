@@ -63,7 +63,12 @@ fn read_file() -> Option<Vec<Profile>> {
 /// Build the argv claudemon should execute for a fresh Claude session, mirroring
 /// the Electron app's `buildClaudeArgv`: base binary, then the profile's extra
 /// args, then `--model` / skip-permissions unless the profile already pins them.
-pub fn build_argv(profile: &Profile, model: Option<&str>, skip_permissions: bool) -> Vec<String> {
+///
+/// `session_id` pins `--session-id <uuid>` so claude names its transcript
+/// `<uuid>.jsonl` — the same id we hand to claudemon and track here. Without it,
+/// claudemon would have to guess the transcript by cwd and could serve the wrong
+/// one when several agents share a directory. Pass "" to skip (non-claude spawns).
+pub fn build_argv(profile: &Profile, model: Option<&str>, skip_permissions: bool, session_id: &str) -> Vec<String> {
     let claude = std::env::var("WKS_CLAUDE_BIN").unwrap_or_else(|_| "claude".into());
     let mut argv = vec![claude];
     argv.extend(profile.extra_args.iter().cloned());
@@ -83,6 +88,15 @@ pub fn build_argv(profile: &Profile, model: Option<&str>, skip_permissions: bool
     let already_skips = profile.extra_args.iter().any(|a| a == "--dangerously-skip-permissions");
     if skip_permissions && !already_skips {
         argv.push("--dangerously-skip-permissions".into());
+    }
+
+    let pins_id = profile
+        .extra_args
+        .iter()
+        .any(|a| a == "--session-id" || a.starts_with("--session-id="));
+    if !session_id.is_empty() && !pins_id {
+        argv.push("--session-id".into());
+        argv.push(session_id.into());
     }
     argv
 }

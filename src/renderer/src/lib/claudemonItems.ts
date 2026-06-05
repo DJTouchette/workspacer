@@ -44,10 +44,10 @@ export interface ListFilter {
   include_resolved?: boolean;
 }
 
-const DEFAULT_BASE = 'http://127.0.0.1:7891';
+import { CLAUDEMON_API_BASE } from './claudemonBase';
 
 export class ClaudemonItemsClient {
-  constructor(private readonly baseUrl: string = DEFAULT_BASE) {}
+  constructor(private readonly baseUrl: string = CLAUDEMON_API_BASE) {}
 
   async list(filter: ListFilter = {}): Promise<ItemRow[]> {
     const params = new URLSearchParams();

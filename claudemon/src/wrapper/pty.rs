@@ -17,7 +17,19 @@ pub struct PtyHandle {
     pub child: Arc<Mutex<Box<dyn Child + Send + Sync>>>,
 }
 
-pub fn spawn(argv: &[String], cwd: &str, size: PtySize) -> Result<PtyHandle> {
+/// Spawn a command in a new PTY.
+///
+/// `extra_env` is merged on top of the daemon's current environment.  The
+/// overrides are passed directly into the `CommandBuilder` rather than being
+/// applied to the process-global environment, which eliminates the data race
+/// that existed when two concurrent spawns with overlapping keys both called
+/// `std::env::set_var`.
+pub fn spawn(
+    argv: &[String],
+    cwd: &str,
+    size: PtySize,
+    extra_env: &std::collections::HashMap<String, String>,
+) -> Result<PtyHandle> {
     let pty_system = native_pty_system();
     let pair = pty_system
         .openpty(size)
@@ -28,8 +40,13 @@ pub fn spawn(argv: &[String], cwd: &str, size: PtySize) -> Result<PtyHandle> {
         cmd.args(&argv[1..]);
     }
     cmd.cwd(cwd);
-    // Pass through current env so the child sees the same shell/tool config.
+    // Pass through current env so the child sees the same shell/tool config,
+    // then layer the caller-supplied overrides on top.  Both steps are local
+    // to this CommandBuilder — no process-global mutation occurs.
     for (k, v) in std::env::vars() {
+        cmd.env(k, v);
+    }
+    for (k, v) in extra_env {
         cmd.env(k, v);
     }
 

@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import { registerIpcHandlers } from './ipc';
+import { getConfigDir } from './services/configService';
 import { claudeSessionStore } from './services/claudeSessionStore';
 import { agentNotifier } from './services/agentNotifier';
 import { claudemonSessionClient } from './services/claudemonSessionClient';
@@ -10,6 +11,7 @@ import { startClaudemon, stopClaudemon, runClaudemonInit } from './services/clau
 import { startClaudemonHookBridge, stopClaudemonHookBridge } from './services/claudemonHookBridge';
 import { startHub, stopHub } from './services/hubDaemon';
 import { setHubMainWindow, startHubClient, stopHubClient } from './services/hubClient';
+import { stopAllTerminals } from './services/terminalShare';
 import { registerHubCapabilities } from './services/hubCapabilities';
 import { database } from './services/db';
 
@@ -32,7 +34,7 @@ function discoverFontDirs(): string[] {
 
 // Font cache: persists discovered font file→path mappings so we skip
 // filesystem scanning on subsequent launches.
-const fontCachePath = path.join(os.homedir(), '.config', 'workspacer', '.font-cache.json');
+const fontCachePath = path.join(getConfigDir(), '.font-cache.json');
 
 interface FontCacheEntry { file: string; fullPath: string; mtime: number }
 
@@ -317,6 +319,7 @@ app.on('before-quit', () => {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('app:before-quit');
   }
+  stopAllTerminals();
   stopClaudemonHookBridge();
   stopHubClient();
   stopHub();
@@ -326,6 +329,7 @@ app.on('before-quit', () => {
 
 app.on('window-all-closed', () => {
   claudemonSessionClient.closeAll();
+  stopAllTerminals();
   stopClaudemonHookBridge();
   stopHubClient();
   stopHub();

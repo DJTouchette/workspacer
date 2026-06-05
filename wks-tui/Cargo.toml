@@ -21,6 +21,7 @@ anyhow = "1"
 clap = { version = "4", features = ["derive", "env"] }
 directories = "5"
 base64 = "0.22"
+uuid = { version = "1", features = ["v4"] }
 tui-term = "0.2" # re-exports vt100 as tui_term::vt100 (version-locked)
 
 [profile.release]

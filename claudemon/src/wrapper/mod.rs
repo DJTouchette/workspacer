@@ -38,6 +38,7 @@ pub async fn run_with_daemon(argv: Vec<String>, daemon_ws: &str) -> Result<()> {
         &argv,
         &cwd,
         PtySize { cols, rows, pixel_width: 0, pixel_height: 0 },
+        &std::collections::HashMap::new(),
     )?;
     let pty = Arc::new(pty);
 
@@ -108,9 +109,9 @@ pub async fn run_with_daemon(argv: Vec<String>, daemon_ws: &str) -> Result<()> {
                         }
                     }
                     WrapperMessage::Signal { signal } => {
-                        tracing::info!(%signal, "received signal (best-effort)");
+                        tracing::info!(?signal, "received signal (best-effort)");
                         // SIGINT via Ctrl-C byte; richer signal delivery TBD.
-                        if signal == "SIGINT" {
+                        if signal == crate::protocol::Signal::Sigint {
                             let _ = pty::write_bytes(&pty_for_reader, b"\x03").await;
                         }
                     }

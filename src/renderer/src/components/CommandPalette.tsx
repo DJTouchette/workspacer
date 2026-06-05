@@ -57,6 +57,9 @@ interface CommandPaletteProps {
   visible: boolean;
   apps: AppEntry[];
   mode?: 'tab' | 'split';
+  /** Active agent's working directory — folder-launches (e.g. New Claude)
+   *  reuse it so they keep the workspace's directory context. */
+  agentCwd?: string;
   onClose: () => void;
   onLaunchApp: (app: AppEntry) => void;
   onAddTab: (type: PaneType, shell?: string, label?: string, cwd?: string, profileId?: string) => void;
@@ -81,7 +84,7 @@ interface CommandPaletteProps {
   onOpenRemote?: () => void;
 }
 
-const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = 'tab', onClose, onLaunchApp, onAddTab, onSplitPane, pluginPanes = [], onOpenPlugin, onInstallPlugin, onManagePlugins, libraryItems = [], restrictTo, onOpenLibrary, onSwitchSession, onOpenAnalytics, onOpenLayouts, onOpenRemote }) => {
+const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = 'tab', agentCwd, onClose, onLaunchApp, onAddTab, onSplitPane, pluginPanes = [], onOpenPlugin, onInstallPlugin, onManagePlugins, libraryItems = [], restrictTo, onOpenLibrary, onSwitchSession, onOpenAnalytics, onOpenLayouts, onOpenRemote }) => {
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [profilePicker, setProfilePicker] = useState<{ folder: string; profiles: any[]; paneType: PaneType } | null>(null);
@@ -193,7 +196,10 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
       onLaunchApp(item.app);
     } else if (item.paneType) {
       if (item.pickFolder) {
-        const folder = await window.electronAPI.pickFolder();
+        // In a workspace, reuse the active agent's directory (like New Terminal
+        // already does) so launches keep their directory context. Only prompt
+        // for a folder when there's no agent context (e.g. the Overview).
+        const folder = agentCwd || await window.electronAPI.pickFolder();
         if (!folder) return;
         // Check for profiles — show picker inline if multiple
         try {
@@ -217,7 +223,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
       }
     }
     onClose();
-  }, [onLaunchApp, onAddTab, onSplitPane, onOpenPlugin, onClose, mode, onOpenLibrary]);
+  }, [onLaunchApp, onAddTab, onSplitPane, onOpenPlugin, onClose, mode, onOpenLibrary, agentCwd]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Escape') {

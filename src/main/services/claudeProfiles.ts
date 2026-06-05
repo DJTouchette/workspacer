@@ -4,8 +4,8 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
-import * as os from 'os';
 import * as crypto from 'crypto';
+import { getConfigDir } from './configService';
 
 export interface ClaudeProfile {
   id: string;
@@ -18,8 +18,7 @@ export interface ClaudeProfile {
   isDefault: boolean;
 }
 
-const configDir = path.join(os.homedir(), '.config', 'workspacer');
-const profilesFile = path.join(configDir, 'claude-profiles.json');
+const profilesFile = path.join(getConfigDir(), 'claude-profiles.json');
 
 class ClaudeProfileService {
   private profiles: ClaudeProfile[] = [];
@@ -98,7 +97,8 @@ class ClaudeProfileService {
   }
 
   private save(): void {
-    if (!fs.existsSync(configDir)) fs.mkdirSync(configDir, { recursive: true });
+    const dir = getConfigDir();
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(profilesFile, JSON.stringify({ profiles: this.profiles }, null, 2));
   }
 }
