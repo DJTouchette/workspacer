@@ -22,7 +22,7 @@
  */
 export function resolveApproval(
   sessionId: string,
-  response: 'yes' | 'no',
+  response: 'yes' | 'no' | 'always',
   hasPendingQuestion: boolean,
 ): void {
   window.electronAPI.claudeApprove(sessionId, response).catch((err) => {
@@ -31,9 +31,11 @@ export function resolveApproval(
       console.warn('[resolveAttention] suppressed keystroke fallback — question picker is active');
       return;
     }
-    // sendApproval-equivalent over the by-id PTY write: Enter approves, two
-    // downs + Enter denies.
-    window.electronAPI.claudeWrite(sessionId, response === 'yes' ? '\r' : '\x1b[B\x1b[B\r');
+    // sendApproval-equivalent over the by-id PTY write, matching claude's 3-row
+    // permission menu: Enter approves (row 1), one down approves-for-session
+    // ("allow all", row 2), two downs deny (row 3).
+    const keys = response === 'yes' ? '\r' : response === 'always' ? '\x1b[B\r' : '\x1b[B\x1b[B\r';
+    window.electronAPI.claudeWrite(sessionId, keys);
   });
 }
 
