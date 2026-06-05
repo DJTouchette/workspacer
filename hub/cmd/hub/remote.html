@@ -143,14 +143,41 @@
     border-radius: 999px;
   }
   .viewtabs .vt.on { color: var(--fg); background: var(--panel2); border-color: var(--accent); }
-  /* Terminal mirror: a real xterm.js fed raw PTY bytes from the desktop pane. */
-  #term { display: none; height: 68vh; width: 100%; padding: 6px 4px 6px 8px;
+  /* Terminal mirror: a real xterm.js fed raw PTY bytes from the desktop pane,
+     now interactive — keystrokes are forwarded back to the PTY. */
+  #termwrap { display: none; position: relative; }
+  body.term-mode #termwrap { display: block; }
+  #term { height: 64vh; width: 100%; padding: 6px 4px 6px 8px;
           background: #000; border: 1px solid var(--line); border-radius: var(--radius);
           overflow: hidden; }
-  body.term-mode #msgs, body.term-mode #ask { display: none; }
-  body.term-mode #term { display: block; }
-  /* The composer (send / approve) still applies in terminal mode. */
+  @media (orientation: landscape) { #term { height: 80vh; } }
   #term .xterm { height: 100%; }
+  /* Let the terminal own vertical touch-scroll without dragging the page. */
+  #term .xterm-viewport { touch-action: pan-y; }
+  body.term-mode #msgs, body.term-mode #ask { display: none; }
+  /* The composer (send / approve) still applies in terminal mode. */
+
+  /* "reconnecting" veil over the terminal while the socket is down. */
+  #termveil { position: absolute; inset: 0; display: none; align-items: center;
+              justify-content: center; background: rgba(0,0,0,.6); color: var(--dim);
+              font-size: 13px; border-radius: var(--radius); z-index: 3; }
+  body.term-mode.disconnected #termveil { display: flex; }
+  /* jump-to-bottom pill, shown only when scrolled up. */
+  #termBottom { position: absolute; right: 14px; bottom: 14px; display: none;
+                background: var(--panel2); border: 1px solid var(--line); color: var(--fg);
+                border-radius: 999px; padding: 7px 14px; font-size: 12px; font-weight: 600;
+                z-index: 4; box-shadow: 0 4px 14px rgba(0,0,0,.4); }
+  #termBottom.show { display: block; }
+  /* On-screen keys for what phone keyboards lack (Esc/Tab/Ctrl/arrows/^C). */
+  #termbar { display: none; flex-direction: column; gap: 6px; margin-top: 8px; }
+  body.term-mode #termbar { display: flex; }
+  .termrow { display: flex; gap: 6px; flex-wrap: wrap; }
+  .termrow button { flex: 0 0 auto; padding: 8px 12px; font-size: 13px; font-weight: 600;
+                    background: var(--panel2); border: 1px solid var(--line); color: var(--fg);
+                    border-radius: 8px; min-width: 0; }
+  .termrow button.on { border-color: var(--accent); color: var(--accent);
+                       background: rgba(110,168,254,.12); }
+  .termrow .spacer { flex: 1 1 auto; }
 </style>
 </head>
 <body>
@@ -187,6 +214,9 @@
   let term = null, fitAddon = null;  // xterm instance + fit addon
   let termKeepalive = null;          // interval refreshing the streaming lease
   let termSessionId = '';            // session the terminal is currently mirroring
+  let termFont = 13;                 // adjustable font size (A− / A+)
+  let ctrlSticky = false;            // Ctrl key armed for the next keystroke
+  let termResizeTimer = null;        // debounce for refit on rotate / keyboard
 
   function toast(msg) {
     toastEl.textContent = msg; toastEl.classList.add('show');
@@ -315,7 +345,29 @@
         <button class="vt" id="tabTerm">Terminal</button>
       </div>
       <div id="msgs"><div class="empty">Loading transcript…</div></div>
-      <div id="term"></div>
+      <div id="termwrap">
+        <div id="term"></div>
+        <div id="termveil">reconnecting…</div>
+        <button id="termBottom">▾ Jump to bottom</button>
+      </div>
+      <div id="termbar">
+        <div class="termrow">
+          <button data-act="focus" title="Show keyboard">⌨ Keyboard</button>
+          <button data-act="fontdown" title="Smaller">A−</button>
+          <button data-act="fontup" title="Larger">A+</button>
+          <span class="spacer"></span>
+        </div>
+        <div class="termrow">
+          <button data-key="esc">Esc</button>
+          <button data-key="tab">Tab</button>
+          <button data-act="ctrl" id="ctrlKey">Ctrl</button>
+          <button data-key="up">↑</button>
+          <button data-key="down">↓</button>
+          <button data-key="left">←</button>
+          <button data-key="right">→</button>
+          <button data-key="ctrlc">^C</button>
+        </div>
+      </div>
       <div id="ask"></div>
       <div id="composer">
         <div class="send">
@@ -345,6 +397,7 @@
     $('chatStop').onclick      = () => doCall('claude.signal', { sessionId, signal: 'SIGTERM' }, 'Stopped');
     $('tabChat').onclick = () => setTermMode(false);
     $('tabTerm').onclick = () => setTermMode(true);
+    wireTermBar();
     renderChat();
     loadTranscript();
     // Events only fire on state *changes*, so poll for new content while busy.
@@ -381,15 +434,33 @@
     const host = $('term');
     if (host && !term) {
       term = new Terminal({
-        convertEol: false, scrollback: 5000, fontSize: 12,
+        convertEol: false, scrollback: 5000, fontSize: termFont,
         fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-        theme: { background: '#000000' }, disableStdin: true, cursorBlink: false,
+        theme: { background: '#000000' }, disableStdin: false, cursorBlink: true,
       });
       try { fitAddon = new FitAddon.FitAddon(); term.loadAddon(fitAddon); } catch {}
       term.open(host);
+      // Keystrokes (incl. the soft keyboard) → forward raw to the PTY. A sticky
+      // Ctrl from the key bar rewrites the next letter into its control code.
+      term.onData(d => {
+        if (ctrlSticky) {
+          if (d.length === 1) {
+            const c = d.toLowerCase().charCodeAt(0);
+            if (c >= 97 && c <= 122) d = String.fromCharCode(c - 96);
+            else if (d === ' ') d = '\x00';
+          }
+          ctrlSticky = false;
+          const cb = $('ctrlKey'); if (cb) cb.classList.remove('on');
+        }
+        termSend(d);
+      });
+      term.onScroll(() => updateTermBottom());
     }
-    // Fit once the container is laid out, then start the stream.
-    requestAnimationFrame(() => { try { fitAddon && fitAddon.fit(); } catch {} });
+    // Fit to the screen, push that grid to the PTY, then start the stream.
+    requestAnimationFrame(refitTerm);
+    window.addEventListener('resize', scheduleRefit);
+    window.addEventListener('orientationchange', scheduleRefit);
+    if (window.visualViewport) window.visualViewport.addEventListener('resize', scheduleRefit);
     subscribePty(termSessionId, true);
     call('sessions.attachTerminal', { sessionId: termSessionId }).catch(() => {});
     clearInterval(termKeepalive);
@@ -409,6 +480,11 @@
     const ct = $('tabChat'), tt = $('tabTerm');
     if (ct) ct.classList.add('on');
     if (tt) tt.classList.remove('on');
+    window.removeEventListener('resize', scheduleRefit);
+    window.removeEventListener('orientationchange', scheduleRefit);
+    if (window.visualViewport) window.visualViewport.removeEventListener('resize', scheduleRefit);
+    clearTimeout(termResizeTimer); termResizeTimer = null;
+    ctrlSticky = false;
     clearInterval(termKeepalive); termKeepalive = null;
     if (termSessionId) {
       subscribePty(termSessionId, false);
@@ -430,8 +506,72 @@
       const bin = atob(b64);
       const bytes = new Uint8Array(bin.length);
       for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      term.write(bytes);
+      term.write(bytes, () => updateTermBottom());
     } catch {}
+  }
+
+  // ── terminal input + sizing helpers ────────────────────────────────────
+  function termSend(data) {
+    if (!termSessionId || !data) return;
+    call('sessions.terminalInput', { sessionId: termSessionId, data }).catch(() => {});
+  }
+
+  const KEYSEQ = {
+    esc: '\x1b', tab: '\t', ctrlc: '\x03',
+    up: '\x1b[A', down: '\x1b[B', left: '\x1b[D', right: '\x1b[C',
+  };
+
+  // Wire the on-screen key bar (the keys phone keyboards don't offer) plus the
+  // font / keyboard / jump-to-bottom controls. The bar lives in the DOM the
+  // whole time the chat is open; CSS only reveals it in terminal mode.
+  function wireTermBar() {
+    const bar = $('termbar');
+    if (bar) {
+      bar.querySelectorAll('[data-key]').forEach(btn => {
+        btn.onclick = () => { termSend(KEYSEQ[btn.dataset.key] || ''); if (term) term.focus(); };
+      });
+      bar.querySelectorAll('[data-act]').forEach(btn => {
+        btn.onclick = () => {
+          const a = btn.dataset.act;
+          if (a === 'focus') { if (term) term.focus(); }
+          else if (a === 'fontup') setTermFont(termFont + 1);
+          else if (a === 'fontdown') setTermFont(termFont - 1);
+          else if (a === 'ctrl') { ctrlSticky = !ctrlSticky; btn.classList.toggle('on', ctrlSticky); if (term) term.focus(); }
+        };
+      });
+    }
+    const jb = $('termBottom');
+    if (jb) jb.onclick = () => { if (term) { term.scrollToBottom(); updateTermBottom(); } };
+  }
+
+  function setTermFont(px) {
+    termFont = Math.max(8, Math.min(20, px));
+    if (term) {
+      try { term.options.fontSize = termFont; }
+      catch { try { term.setOption('fontSize', termFont); } catch {} }
+    }
+    refitTerm();
+  }
+
+  // Fit xterm to the container, then resize the shared PTY to that grid so the
+  // remote's wrapping matches the phone instead of the desktop pane.
+  function refitTerm() {
+    if (!term || !fitAddon || !termMode) return;
+    try { fitAddon.fit(); } catch {}
+    const cols = Math.max(20, term.cols || 80);
+    const rows = Math.max(6, term.rows || 24);
+    call('sessions.terminalResize', { sessionId: termSessionId, cols, rows }).catch(() => {});
+  }
+  function scheduleRefit() {
+    clearTimeout(termResizeTimer);
+    termResizeTimer = setTimeout(refitTerm, 160);
+  }
+
+  function updateTermBottom() {
+    const jb = $('termBottom');
+    if (!jb || !term) return;
+    const b = term.buffer.active;
+    jb.classList.toggle('show', b.viewportY < b.baseY);
   }
 
   function renderChat() {
@@ -636,6 +776,8 @@
   function setConnected(on) {
     dot.classList.toggle('on', on);
     statusEl.textContent = on ? 'connected' : 'reconnecting…';
+    // Drives the terminal "reconnecting…" veil (CSS: body.term-mode.disconnected).
+    document.body.classList.toggle('disconnected', !on);
   }
 
   function connect() {
@@ -650,10 +792,12 @@
       ws.send(JSON.stringify({ op: 'subscribe', topics: ['agent.state_changed', 'workflow.*'] }));
       refresh();
       if (view.name === 'chat' && !termMode) loadTranscript();
-      // Re-establish the PTY stream after a reconnect.
+      // Re-establish the PTY stream after a reconnect, and re-assert our size
+      // (the shared PTY may have been resized by the desktop while we were out).
       if (termMode && termSessionId) {
         subscribePty(termSessionId, true);
-        call('sessions.attachTerminal', { sessionId: termSessionId }).catch(() => {});
+        call('sessions.attachTerminal', { sessionId: termSessionId })
+          .then(() => refitTerm()).catch(() => {});
       }
     };
     ws.onmessage = (ev) => {

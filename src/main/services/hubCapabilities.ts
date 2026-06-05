@@ -140,4 +140,28 @@ export function registerHubCapabilities(): void {
     terminalShare.stopTerminal(sessionId);
     return { ok: true };
   });
+
+  // Control: forward raw keystrokes from a remote terminal view into the PTY —
+  // the write-side counterpart of the pty.bytes stream. Lets a phone actually
+  // drive the terminal (type, Ctrl-C, answer raw prompts), not just watch it.
+  registerCapability('sessions.terminalInput', async (params: unknown) => {
+    const { sessionId, data } = (params ?? {}) as { sessionId?: string; data?: string };
+    if (!sessionId || typeof data !== 'string') {
+      throw new Error('sessions.terminalInput requires { sessionId, data }');
+    }
+    await claudemonSessionClient.input(sessionId, data);
+    return { ok: true };
+  });
+
+  // Control: resize the session's PTY to the remote viewer's grid so wrapping
+  // matches the phone's screen instead of the desktop pane. The PTY is shared,
+  // so this reflows the desktop too — intentional: the active driver sets size.
+  registerCapability('sessions.terminalResize', async (params: unknown) => {
+    const { sessionId, cols, rows } = (params ?? {}) as { sessionId?: string; cols?: number; rows?: number };
+    if (!sessionId || !cols || !rows) {
+      throw new Error('sessions.terminalResize requires { sessionId, cols, rows }');
+    }
+    await claudemonSessionClient.resize(sessionId, Math.round(cols), Math.round(rows));
+    return { ok: true };
+  });
 }
