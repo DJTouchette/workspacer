@@ -15,6 +15,8 @@ export interface UiCommandHandlers {
   openPane: (paneType: string, opts?: { cwd?: string }) => void;
   openPlugin: (paneType: string) => void;
   closePane: (paneId: string) => void;
+  /** Open the Ask pane in the global workspace. */
+  openAskPane?: () => void;
 }
 
 export function useUiCommands(handlers: UiCommandHandlers): void {
@@ -40,6 +42,9 @@ export function useUiCommands(handlers: UiCommandHandlers): void {
           break;
         case 'command.close_pane':
           if (d.paneId) ref.current.closePane(d.paneId);
+          break;
+        case 'command.open_ask_pane':
+          ref.current.openAskPane?.();
           break;
         default:
           break;

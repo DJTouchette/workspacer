@@ -21,6 +21,7 @@ const defaultTitles: Record<PaneType, string> = {
   overview: 'Overview',
   library: 'Library',
   analytics: 'Analytics',
+  ask: 'Ask',
 };
 
 /** Derive a human label from a working directory (its basename). */
@@ -28,6 +29,14 @@ export function deriveAgentName(cwd: string): string {
   if (!cwd) return 'Agent';
   const parts = cwd.replace(/[/\\]+$/, '').split(/[/\\]/);
   return parts[parts.length - 1] || cwd;
+}
+
+/** Derive a short display name for a supervisor from its seed question.
+ *  Produces e.g. "🧭 why is the build failing" (truncated to ~40 chars). */
+export function deriveSupervisorName(question: string): string {
+  const words = question.trim().split(/\s+/).slice(0, 5).join(' ');
+  const truncated = words.length > 37 ? `${words.slice(0, 37)}…` : words;
+  return `\u{1F9ED} ${truncated}`;
 }
 
 /**
@@ -110,11 +119,24 @@ export function useAgentManager() {
   // ── Agent lifecycle ────────────────────────────────────────────────────
 
   /** Spawn a long-lived claudemon session and open a workspace for it. */
-  const spawnAgent = useCallback(async (opts: { cwd: string; name?: string; profileId?: string; model?: string; skipPermissions?: boolean; initialPrompt?: string }) => {
+  const spawnAgent = useCallback(async (opts: {
+    cwd: string;
+    name?: string;
+    profileId?: string;
+    model?: string;
+    skipPermissions?: boolean;
+    initialPrompt?: string;
+    /** When true the spawned session receives the workspacer MCP facade. */
+    supervisor?: boolean;
+    /** Marks this workspace as a supervisor. */
+    kind?: 'supervisor';
+    /** For supervisors: the id of the agent being supervised. */
+    parentId?: string;
+  }) => {
     const cwd = opts.cwd;
     let sessionId: string | undefined;
     try {
-      sessionId = await window.electronAPI.spawnClaude({ cwd, profileId: opts.profileId, model: opts.model, skipPermissions: opts.skipPermissions, cols: 120, rows: 32 });
+      sessionId = await window.electronAPI.spawnClaude({ cwd, profileId: opts.profileId, model: opts.model, skipPermissions: opts.skipPermissions, supervisor: opts.supervisor, cols: 120, rows: 32 });
     } catch (err) {
       console.error('[Agent] spawn failed:', err);
     }
@@ -127,6 +149,8 @@ export function useAgentManager() {
       model: opts.model,
       skipPermissions: opts.skipPermissions,
       sessionId,
+      kind: opts.kind,
+      parentId: opts.parentId,
       tabs: agentTabs,
       activeTabId: agentActiveTab,
     };
@@ -161,6 +185,31 @@ export function useAgentManager() {
       })),
     }));
   }, [mutateAgent]);
+
+  /**
+   * Convenience wrapper to spawn a supervisor agent: derives a name from the
+   * question, picks a sensible cwd, and calls `spawnAgent` with supervisor=true.
+   * Returns the new agent id.
+   */
+  const spawnSupervisor = useCallback(async (opts: { question: string; parentId?: string; cwd?: string }): Promise<string> => {
+    const name = deriveSupervisorName(opts.question);
+    // Resolve cwd: explicit > parent agent's cwd > first real agent's cwd > ''.
+    let cwd = opts.cwd;
+    if (!cwd && opts.parentId) {
+      cwd = agentsRef.current.find((a) => a.id === opts.parentId)?.cwd;
+    }
+    if (!cwd) {
+      cwd = agentsRef.current.find((a) => !a.global)?.cwd ?? '';
+    }
+    return spawnAgent({
+      cwd,
+      name,
+      kind: 'supervisor',
+      parentId: opts.parentId,
+      supervisor: true,
+      initialPrompt: opts.question,
+    });
+  }, [spawnAgent]);
 
   /** Explicitly terminate an agent: kill its daemon session and drop it. */
   const terminateAgent = useCallback(async (agentId: string) => {
@@ -428,6 +477,7 @@ export function useAgentManager() {
     activeAgent,
     setActiveAgentId,
     spawnAgent,
+    spawnSupervisor,
     respawnAgent,
     terminateAgent,
     renameAgent,

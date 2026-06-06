@@ -11,6 +11,7 @@ import { claudeSessionStore } from './services/claudeSessionStore';
 import { agentNotifier } from './services/agentNotifier';
 import { claudemonSessionClient } from './services/claudemonSessionClient';
 import { buildClaudeArgv } from './services/claudeResolver';
+import { supervisorMcpConfigPath, SUPERVISOR_SYSTEM_PROMPT } from './services/mcpConfig';
 import { importChromeCookies, importChromeCookiesViaCDP } from './services/chromeCookieImport';
 import { claudeProfiles } from './services/claudeProfiles';
 import { listClaudeSessionsForDir } from './services/claudeSessionList';
@@ -69,7 +70,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     claudemonSessionClient.close(id));
 
   // ── Claude sessions (delegated to claudemon) ──
-  ipcMain.handle(IPC.CLAUDE_SPAWN, async (_event, opts: { cwd?: string; profileId?: string; model?: string; skipPermissions?: boolean; resumeSessionId?: string; cols?: number; rows?: number }) => {
+  ipcMain.handle(IPC.CLAUDE_SPAWN, async (_event, opts: { cwd?: string; profileId?: string; model?: string; skipPermissions?: boolean; resumeSessionId?: string; cols?: number; rows?: number; supervisor?: boolean }) => {
     const profile = opts.profileId ? claudeProfiles.getProfile(opts.profileId) : undefined;
     const env: Record<string, string> = {};
     if (profile?.configDir) {
@@ -85,6 +86,13 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       model: opts.model,
       skipPermissions: opts.skipPermissions,
       sessionId,
+      // Supervisor sessions get the MCP facade config + pre-allowed tools +
+      // role prompt injected so the agent can observe and drive the fleet.
+      ...(opts.supervisor && {
+        mcpConfig: supervisorMcpConfigPath(),
+        appendSystemPrompt: SUPERVISOR_SYSTEM_PROMPT,
+        allowedTools: ['mcp__workspacer'],
+      }),
     });
     const cwd = opts.cwd ?? process.env.HOME ?? os.homedir();
     return claudemonSessionClient.spawn({ argv, cwd, cols: opts.cols, rows: opts.rows, env, sessionId });

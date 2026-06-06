@@ -216,117 +216,151 @@ const SideBar: React.FC<SideBarProps> = ({
           </div>
         )}
 
-        {agents.map((agent) => {
-          const isActive = agent.id === activeAgentId;
-          const isGlobal = !!agent.global;
-          const state = agent.sessionId ? statusBySession[agent.sessionId] : undefined;
-          const { color, label } = statusVisual(state);
-          const isRenaming = renamingId === agent.id;
-          const usage = agent.sessionId ? usageBySession[agent.sessionId] : undefined;
-          const ctxFrac = usage && usage.contextLimit > 0
-            ? Math.min(1, usage.contextTokens / usage.contextLimit)
-            : 0;
-          const usageTip = usage
-            ? `\n${fmtTokens(usage.contextTokens)} / ${fmtTokens(usage.contextLimit)} context · ${fmtUSD(usage.costUSD)}${usage.model ? ` · ${usage.model.replace(/^claude-/, '')}` : ''}`
-            : '';
+        {/* Render agents with supervisors nested beneath their parent.
+            Strategy: iterate top-level agents (non-supervisor, or fleet-level
+            supervisors without a parentId that matches any other agent), and
+            immediately after each one render its child supervisors indented. */}
+        {(() => {
+          // Build a lookup: parentId → child supervisors.
+          const childSupervisors = new Map<string, typeof agents>();
+          const topLevel: typeof agents = [];
+          for (const agent of agents) {
+            if (agent.kind === 'supervisor' && agent.parentId) {
+              const bucket = childSupervisors.get(agent.parentId) ?? [];
+              bucket.push(agent);
+              childSupervisors.set(agent.parentId, bucket);
+            } else {
+              topLevel.push(agent);
+            }
+          }
 
-          return (
-            <button
-              key={agent.id}
-              onClick={() => onSelectAgent(agent.id)}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                if (isGlobal) return; // Overview can't be renamed/terminated
-                setContextMenu({ agentId: agent.id, y: e.clientY });
-              }}
-              style={{
-                width: 'calc(100% - 12px)',
-                margin: '0 6px',
-                padding: '9px 11px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '9px',
-                borderRadius: 'var(--wks-radius-md)',
-                cursor: 'pointer',
-                fontSize: '0.85rem',
-                fontFamily: 'inherit',
-                fontWeight: isActive ? 600 : 500,
-                backgroundColor: isActive ? 'var(--wks-bg-selected)' : 'var(--wks-bg-surface)',
-                color: isActive ? 'var(--wks-text-primary)' : 'var(--wks-text-secondary)',
-                border: `1px solid ${isActive ? 'var(--wks-accent)' : 'var(--wks-glass-border)'}`,
-                textAlign: 'left',
-                boxSizing: 'border-box',
-                transition: 'border-color 0.12s, background-color 0.12s',
-              }}
-              title={isGlobal ? 'Overview — cross-agent dashboards & plugin panes' : `${agent.name} — ${label}\n${agent.cwd}${usageTip}`}
-            >
-              {isGlobal ? (
-                <span style={{ width: 8, flexShrink: 0, textAlign: 'center', fontSize: '0.7rem', lineHeight: 1 }}>▦</span>
-              ) : (
-              <span
-                style={{
-                  width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
-                  backgroundColor: color,
-                  boxShadow: state && state !== 'idle' ? `0 0 6px ${color}` : 'none',
+          const renderAgentRow = (agent: typeof agents[0], indent?: boolean) => {
+            const isActive = agent.id === activeAgentId;
+            const isGlobal = !!agent.global;
+            const isSupervisor = agent.kind === 'supervisor';
+            const state = agent.sessionId ? statusBySession[agent.sessionId] : undefined;
+            const { color, label } = statusVisual(state);
+            const isRenaming = renamingId === agent.id;
+            const usage = agent.sessionId ? usageBySession[agent.sessionId] : undefined;
+            const ctxFrac = usage && usage.contextLimit > 0
+              ? Math.min(1, usage.contextTokens / usage.contextLimit)
+              : 0;
+            const usageTip = usage
+              ? `\n${fmtTokens(usage.contextTokens)} / ${fmtTokens(usage.contextLimit)} context · ${fmtUSD(usage.costUSD)}${usage.model ? ` · ${usage.model.replace(/^claude-/, '')}` : ''}`
+              : '';
+
+            return (
+              <button
+                key={agent.id}
+                onClick={() => onSelectAgent(agent.id)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  if (isGlobal) return; // Overview can't be renamed/terminated
+                  setContextMenu({ agentId: agent.id, y: e.clientY });
                 }}
-              />
-              )}
-              <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '1px' }}>
-                {isRenaming ? (
-                  <input
-                    autoFocus
-                    value={renameValue}
-                    onChange={(e) => setRenameValue(e.target.value)}
-                    onBlur={commitRename}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') commitRename();
-                      if (e.key === 'Escape') setRenamingId(null);
-                      e.stopPropagation();
-                    }}
-                    onClick={(e) => e.stopPropagation()}
+                style={{
+                  width: indent ? 'calc(100% - 24px)' : 'calc(100% - 12px)',
+                  margin: indent ? '0 6px 0 18px' : '0 6px',
+                  padding: '9px 11px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '9px',
+                  borderRadius: 'var(--wks-radius-md)',
+                  cursor: 'pointer',
+                  fontSize: indent ? '0.78rem' : '0.85rem',
+                  fontFamily: 'inherit',
+                  fontWeight: isActive ? 600 : 500,
+                  backgroundColor: isActive ? 'var(--wks-bg-selected)' : 'var(--wks-bg-surface)',
+                  color: isActive ? 'var(--wks-text-primary)' : 'var(--wks-text-secondary)',
+                  border: `1px solid ${isActive ? 'var(--wks-accent)' : 'var(--wks-glass-border)'}`,
+                  textAlign: 'left',
+                  boxSizing: 'border-box',
+                  transition: 'border-color 0.12s, background-color 0.12s',
+                  opacity: indent ? 0.9 : 1,
+                }}
+                title={isGlobal ? 'Overview — cross-agent dashboards & plugin panes' : `${agent.name} — ${label}\n${agent.cwd}${usageTip}`}
+              >
+                {isGlobal ? (
+                  <span style={{ width: 8, flexShrink: 0, textAlign: 'center', fontSize: '0.7rem', lineHeight: 1 }}>▦</span>
+                ) : isSupervisor ? (
+                  <span style={{ width: 8, flexShrink: 0, textAlign: 'center', fontSize: '0.65rem', lineHeight: 1 }}>🧭</span>
+                ) : (
+                  <span
                     style={{
-                      width: '100%', fontSize: '0.75rem', fontFamily: 'inherit',
-                      background: 'var(--wks-bg-base)', color: 'var(--wks-text-primary)',
-                      border: '1px solid var(--wks-accent)', borderRadius: 3, padding: '1px 4px',
-                      boxSizing: 'border-box',
+                      width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+                      backgroundColor: color,
+                      boxShadow: state && state !== 'idle' ? `0 0 6px ${color}` : 'none',
                     }}
                   />
-                ) : (
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {agent.name}
-                  </span>
                 )}
-                <span style={{
-                  fontSize: '0.67rem', color: 'var(--wks-text-faint)',
-                  display: 'flex', alignItems: 'baseline', gap: 4,
-                  overflow: 'hidden', whiteSpace: 'nowrap',
-                }}>
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {isGlobal ? 'Dashboards & plugins' : agent.sessionId ? label : 'Stopped — click to respawn'}
+                <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '1px' }}>
+                  {isRenaming ? (
+                    <input
+                      autoFocus
+                      value={renameValue}
+                      onChange={(e) => setRenameValue(e.target.value)}
+                      onBlur={commitRename}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') commitRename();
+                        if (e.key === 'Escape') setRenamingId(null);
+                        e.stopPropagation();
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                      style={{
+                        width: '100%', fontSize: '0.75rem', fontFamily: 'inherit',
+                        background: 'var(--wks-bg-base)', color: 'var(--wks-text-primary)',
+                        border: '1px solid var(--wks-accent)', borderRadius: 3, padding: '1px 4px',
+                        boxSizing: 'border-box',
+                      }}
+                    />
+                  ) : (
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {agent.name}
+                    </span>
+                  )}
+                  <span style={{
+                    fontSize: '0.67rem', color: 'var(--wks-text-faint)',
+                    display: 'flex', alignItems: 'baseline', gap: 4,
+                    overflow: 'hidden', whiteSpace: 'nowrap',
+                  }}>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {isGlobal ? 'Dashboards & plugins' : agent.sessionId ? label : 'Stopped — click to respawn'}
+                    </span>
+                    {usage && usage.contextTokens > 0 && (
+                      <span style={{ marginLeft: 'auto', flexShrink: 0, color: contextColor(ctxFrac), fontVariantNumeric: 'tabular-nums' }}>
+                        {Math.round(ctxFrac * 100)}%
+                      </span>
+                    )}
                   </span>
                   {usage && usage.contextTokens > 0 && (
-                    <span style={{ marginLeft: 'auto', flexShrink: 0, color: contextColor(ctxFrac), fontVariantNumeric: 'tabular-nums' }}>
-                      {Math.round(ctxFrac * 100)}%
+                    <span style={{
+                      height: 3, borderRadius: 2, marginTop: 1,
+                      backgroundColor: 'var(--wks-border-subtle, #2a2a2a)',
+                      overflow: 'hidden', display: 'block',
+                    }}>
+                      <span style={{
+                        display: 'block', height: '100%',
+                        width: `${Math.max(2, ctxFrac * 100)}%`,
+                        backgroundColor: contextColor(ctxFrac),
+                      }} />
                     </span>
                   )}
                 </span>
-                {usage && usage.contextTokens > 0 && (
-                  <span style={{
-                    height: 3, borderRadius: 2, marginTop: 1,
-                    backgroundColor: 'var(--wks-border-subtle, #2a2a2a)',
-                    overflow: 'hidden', display: 'block',
-                  }}>
-                    <span style={{
-                      display: 'block', height: '100%',
-                      width: `${Math.max(2, ctxFrac * 100)}%`,
-                      backgroundColor: contextColor(ctxFrac),
-                    }} />
-                  </span>
-                )}
-              </span>
-            </button>
-          );
-        })}
+              </button>
+            );
+          };
+
+          const rows: React.ReactNode[] = [];
+          for (const agent of topLevel) {
+            rows.push(renderAgentRow(agent, false));
+            // Render child supervisors indented directly after their parent.
+            const children = childSupervisors.get(agent.id) ?? [];
+            for (const child of children) {
+              rows.push(renderAgentRow(child, true));
+            }
+          }
+          return rows;
+        })()}
       </div>
 
       {/* Spawn button */}

@@ -85,6 +85,7 @@ function App() {
     activeAgentId,
     activeAgent,
     spawnAgent,
+    spawnSupervisor,
     respawnAgent,
     terminateAgent,
     renameAgent,
@@ -367,6 +368,18 @@ function App() {
     openPaneIn(GLOBAL_WORKSPACE_ID, 'analytics', 'Analytics');
   }, [openPaneIn]);
 
+  /** Open the Ask pane in the global Overview workspace (command-palette entry
+   *  "Ask the fleet"). Reuses an existing Ask tab rather than opening a duplicate. */
+  const openAskPane = useCallback(() => {
+    setShowCommandPalette(false);
+    openPaneIn(GLOBAL_WORKSPACE_ID, 'ask', 'Ask');
+  }, [openPaneIn]);
+
+  /** Jump to a specific agent by id — passed down to the Ask pane. */
+  const handleJumpToAgent = useCallback((agentId: string) => {
+    handleSelectAgent(agentId);
+  }, [handleSelectAgent]);
+
   const goToAgent = useCallback((delta: number) => {
     if (agents.length === 0) return;
     const idx = agents.findIndex((a) => a.id === activeAgentId);
@@ -620,6 +633,7 @@ function App() {
         }
       }
     },
+    openAskPane,
   });
 
   // --- Per-directory script buttons ---
@@ -767,6 +781,9 @@ function App() {
                   renameSignal={renameSignal}
                   workspaceAgents={agents.filter((a) => !a.global).map((a) => ({ sessionId: a.sessionId }))}
                   appCwd={appCwd}
+                  allAgents={agents}
+                  spawnSupervisor={spawnSupervisor}
+                  onJumpToAgent={handleJumpToAgent}
                 />
               </div>
             );
@@ -836,6 +853,7 @@ function App() {
         onOpenAnalytics={openAnalytics}
         onOpenLayouts={() => { setShowCommandPalette(false); setShowLayouts(true); }}
         onOpenRemote={() => { setShowCommandPalette(false); setShowRemote(true); }}
+        onOpenAskPane={openAskPane}
       />
 
       <LibraryHost

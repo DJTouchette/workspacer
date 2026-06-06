@@ -128,6 +128,20 @@ export interface ClaudeArgvOptions {
    * resuming (the resumed id already fixes the file).
    */
   sessionId?: string;
+  /** Absolute path to an MCP config JSON file (`--mcp-config <path>`). */
+  mcpConfig?: string;
+  /**
+   * Comma-joined tool glob(s) to pre-allow without a permission prompt.
+   * Each entry is passed as a single comma-separated value to `--allowedTools`.
+   * Example: `['mcp__workspacer']` → `--allowedTools mcp__workspacer`.
+   */
+  allowedTools?: string[];
+  /**
+   * Text appended to claude's system prompt via `--append-system-prompt`.
+   * Useful for injecting role instructions into a supervisor session without
+   * overwriting whatever the profile or user already configured.
+   */
+  appendSystemPrompt?: string;
 }
 
 export function buildClaudeArgv(opts: ClaudeArgvOptions = {}): string[] {
@@ -142,6 +156,16 @@ export function buildClaudeArgv(opts: ClaudeArgvOptions = {}): string[] {
   const alreadySkips = (opts.extraArgs ?? []).includes('--dangerously-skip-permissions');
   if (opts.skipPermissions && !alreadySkips) {
     argv.push('--dangerously-skip-permissions');
+  }
+  // Supervisor / MCP extras — appended after profile args so they always land.
+  if (opts.mcpConfig) {
+    argv.push('--mcp-config', opts.mcpConfig);
+  }
+  if (opts.allowedTools && opts.allowedTools.length) {
+    argv.push('--allowedTools', opts.allowedTools.join(','));
+  }
+  if (opts.appendSystemPrompt) {
+    argv.push('--append-system-prompt', opts.appendSystemPrompt);
   }
   if (opts.resumeSessionId) {
     argv.push('--resume', opts.resumeSessionId);

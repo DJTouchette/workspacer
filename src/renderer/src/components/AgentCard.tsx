@@ -118,7 +118,9 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot }) => {
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '12px 14px 8px' }}>
         <span style={{ width: 10, height: 10, borderRadius: '50%', background: v.color, flexShrink: 0, boxShadow: state && state !== 'idle' ? `0 0 8px ${v.color}` : 'none' }} />
-        <span style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--wks-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{agent.name}</span>
+        <span style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--wks-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {agent.kind === 'supervisor' && <span style={{ marginRight: 4 }}>🧭</span>}{agent.name}
+        </span>
         <span style={{ marginLeft: 'auto', fontSize: '0.7rem', fontWeight: 600, color: v.color, flexShrink: 0 }}>{v.label}</span>
       </div>
 

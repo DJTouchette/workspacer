@@ -15,6 +15,7 @@ import { claudeProfiles } from './claudeProfiles';
 import { registerCapability } from './hubClient';
 import * as terminalShare from './terminalShare';
 import { IPC } from '../shared/ipcChannels';
+import { supervisorMcpConfigPath, SUPERVISOR_SYSTEM_PROMPT } from './mcpConfig';
 
 // Mirror of ipc.ts's shell detection so a capability-spawned terminal picks the
 // same default shell a UI-spawned one would. Kept local to avoid importing the
@@ -78,7 +79,7 @@ export function registerHubCapabilities(): void {
   // capabilities. The session runs headless in claudemon; a desktop pane can
   // attach to it later via the normal attach flow.
   registerCapability('agents.spawn', async (params: unknown) => {
-    const { cwd, profileId, model, skipPermissions, resumeSessionId, cols, rows } =
+    const { cwd, profileId, model, skipPermissions, resumeSessionId, cols, rows, supervisor } =
       (params ?? {}) as {
         cwd?: string;
         profileId?: string;
@@ -87,6 +88,7 @@ export function registerHubCapabilities(): void {
         resumeSessionId?: string;
         cols?: number;
         rows?: number;
+        supervisor?: boolean;
       };
     const profile = profileId ? claudeProfiles.getProfile(profileId) : undefined;
     const env: Record<string, string> = {};
@@ -101,6 +103,13 @@ export function registerHubCapabilities(): void {
       model,
       skipPermissions,
       sessionId,
+      // Supervisor sessions get the MCP facade config + pre-allowed tools +
+      // role prompt injected so the agent can observe and drive the fleet.
+      ...(supervisor && {
+        mcpConfig: supervisorMcpConfigPath(),
+        appendSystemPrompt: SUPERVISOR_SYSTEM_PROMPT,
+        allowedTools: ['mcp__workspacer'],
+      }),
     });
     const resolvedCwd = cwd ?? process.env.HOME ?? os.homedir();
     const id = await claudemonSessionClient.spawn({ argv, cwd: resolvedCwd, cols, rows, env, sessionId });
