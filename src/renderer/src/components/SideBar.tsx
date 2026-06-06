@@ -216,19 +216,22 @@ const SideBar: React.FC<SideBarProps> = ({
           </div>
         )}
 
-        {/* Render agents with supervisors nested beneath their parent.
-            Strategy: iterate top-level agents (non-supervisor, or fleet-level
-            supervisors without a parentId that matches any other agent), and
-            immediately after each one render its child supervisors indented. */}
+        {/* Render agents with nested children beneath their parent.
+            Strategy: any agent with a parentId that resolves to a known agent's
+            id is rendered indented below that parent. Top-level agents are those
+            with no parentId, or whose parentId doesn't resolve (fallback so
+            nothing disappears). Children are NOT rendered again at top level. */}
         {(() => {
-          // Build a lookup: parentId → child supervisors.
-          const childSupervisors = new Map<string, typeof agents>();
+          // Build a set of all known agent ids for fast parent-resolution checks.
+          const agentIds = new Set(agents.map((a) => a.id));
+          // Build a lookup: parentId → child agents (any kind with a resolvable parentId).
+          const childrenByParent = new Map<string, typeof agents>();
           const topLevel: typeof agents = [];
           for (const agent of agents) {
-            if (agent.kind === 'supervisor' && agent.parentId) {
-              const bucket = childSupervisors.get(agent.parentId) ?? [];
+            if (agent.parentId && agentIds.has(agent.parentId)) {
+              const bucket = childrenByParent.get(agent.parentId) ?? [];
               bucket.push(agent);
-              childSupervisors.set(agent.parentId, bucket);
+              childrenByParent.set(agent.parentId, bucket);
             } else {
               topLevel.push(agent);
             }
@@ -353,8 +356,8 @@ const SideBar: React.FC<SideBarProps> = ({
           const rows: React.ReactNode[] = [];
           for (const agent of topLevel) {
             rows.push(renderAgentRow(agent, false));
-            // Render child supervisors indented directly after their parent.
-            const children = childSupervisors.get(agent.id) ?? [];
+            // Render children indented directly after their parent.
+            const children = childrenByParent.get(agent.id) ?? [];
             for (const child of children) {
               rows.push(renderAgentRow(child, true));
             }

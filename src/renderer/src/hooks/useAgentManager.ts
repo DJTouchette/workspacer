@@ -211,6 +211,28 @@ export function useAgentManager() {
     });
   }, [spawnAgent]);
 
+  /** Adopt a live daemon session that has no workspace yet (e.g. one spawned via
+   *  the MCP facade / by another agent), so it appears as a card. Idempotent:
+   *  does nothing if some workspace already owns this sessionId. Resolves nesting
+   *  by matching parentSessionId to an existing agent's sessionId. */
+  const adoptAgent = useCallback((opts: { sessionId: string; cwd: string; name?: string; parentSessionId?: string }) => {
+    setAgents((prev) => {
+      if (prev.some((a) => a.sessionId === opts.sessionId)) return prev; // already tracked — dedupe inside the updater (race-safe)
+      const parent = opts.parentSessionId ? prev.find((a) => a.sessionId === opts.parentSessionId) : undefined;
+      const { tabs, activeTabId } = defaultAgentTabs(opts.sessionId, opts.cwd);
+      const agent: AgentWorkspace = {
+        id: generateId('agent'),
+        name: opts.name?.trim() || deriveAgentName(opts.cwd),
+        cwd: opts.cwd,
+        sessionId: opts.sessionId,
+        parentId: parent?.id,
+        tabs,
+        activeTabId,
+      };
+      return [...prev, agent];
+    });
+  }, []);
+
   /** Explicitly terminate an agent: kill its daemon session and drop it. */
   const terminateAgent = useCallback(async (agentId: string) => {
     const agent = agentsRef.current.find((a) => a.id === agentId);
@@ -478,6 +500,7 @@ export function useAgentManager() {
     setActiveAgentId,
     spawnAgent,
     spawnSupervisor,
+    adoptAgent,
     respawnAgent,
     terminateAgent,
     renameAgent,

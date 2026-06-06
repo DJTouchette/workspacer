@@ -92,7 +92,7 @@ func newServer(c *busclient.Client) *mcp.Server {
 
 	// Create.
 	addTool[spawnAgentIn](s, c, "spawn_agent",
-		"Start a new Claude Code agent session in a directory. Returns the new sessionId, which you can then drive with send_message, approve, answer, etc.",
+		"Start a new Claude Code agent session in a directory. Returns the new sessionId, which you can then drive with send_message, approve, answer, etc. Pass label to give the new agent a human-readable name shown in the UI, and parentSessionId (your own session id) so the new agent appears nested under you in the UI.",
 		"agents.spawn")
 	addTool[createTerminalIn](s, c, "create_terminal",
 		"Open a new shell terminal session. Returns the new sessionId; write to it with terminal_input.",
@@ -161,6 +161,8 @@ type spawnAgentIn struct {
 	Model           string `json:"model,omitempty" jsonschema:"model id to use, e.g. claude-opus-4-8 (optional)"`
 	ProfileID       string `json:"profileId,omitempty" jsonschema:"workspacer Claude profile id to use (optional)"`
 	SkipPermissions bool   `json:"skipPermissions,omitempty" jsonschema:"start the agent with --dangerously-skip-permissions"`
+	Label           string `json:"label,omitempty" jsonschema:"a short human label for the new agent, shown as its name in the UI"`
+	ParentSessionId string `json:"parentSessionId,omitempty" jsonschema:"the spawning agent's own session id; set this so the new agent appears nested under you in the UI"`
 }
 
 type createTerminalIn struct {

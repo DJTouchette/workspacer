@@ -79,7 +79,7 @@ export function registerHubCapabilities(): void {
   // capabilities. The session runs headless in claudemon; a desktop pane can
   // attach to it later via the normal attach flow.
   registerCapability('agents.spawn', async (params: unknown) => {
-    const { cwd, profileId, model, skipPermissions, resumeSessionId, cols, rows, supervisor } =
+    const { cwd, profileId, model, skipPermissions, resumeSessionId, cols, rows, supervisor, label, parentSessionId } =
       (params ?? {}) as {
         cwd?: string;
         profileId?: string;
@@ -89,6 +89,8 @@ export function registerHubCapabilities(): void {
         cols?: number;
         rows?: number;
         supervisor?: boolean;
+        label?: string;
+        parentSessionId?: string;
       };
     const profile = profileId ? claudeProfiles.getProfile(profileId) : undefined;
     const env: Record<string, string> = {};
@@ -97,6 +99,9 @@ export function registerHubCapabilities(): void {
     }
     // Pin the id so claude's transcript filename matches our id (see ipc.ts).
     const sessionId = resumeSessionId || randomUUID();
+    // Record name/parent before the session registers so adopted cards are
+    // enriched from the very first hook event.
+    claudeSessionStore.setSpawnMeta(sessionId, { label, parentSessionId });
     const argv = buildClaudeArgv({
       extraArgs: profile?.extraArgs,
       resumeSessionId,
@@ -105,9 +110,11 @@ export function registerHubCapabilities(): void {
       sessionId,
       // Supervisor sessions get the MCP facade config + pre-allowed tools +
       // role prompt injected so the agent can observe and drive the fleet.
+      // Also tell the supervisor its own session id so it can pass parentSessionId
+      // when spawning workers, making them appear nested in the UI.
       ...(supervisor && {
         mcpConfig: supervisorMcpConfigPath(),
-        appendSystemPrompt: SUPERVISOR_SYSTEM_PROMPT,
+        appendSystemPrompt: `${SUPERVISOR_SYSTEM_PROMPT}\n\nYour own workspacer session id is ${sessionId}. When you spawn worker agents with spawn_agent, pass parentSessionId:"${sessionId}" and a short label so they appear nested under you in the UI.`,
         allowedTools: ['mcp__workspacer'],
       }),
     });
