@@ -125,4 +125,9 @@ export interface ClaudeSessionSnapshot {
   lastActivity: number;
   totalToolCalls: number;
   usage: SessionUsage | null;
+
+  /** Human label set at spawn time (e.g. by a supervisor naming a worker). */
+  label?: string;
+  /** Session id of the agent that spawned this one — drives nesting in the UI. */
+  parentSessionId?: string;
 }

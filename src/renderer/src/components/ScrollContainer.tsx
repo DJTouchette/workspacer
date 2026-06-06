@@ -1,6 +1,6 @@
 import React, { useRef, useState, useCallback, useEffect, useImperativeHandle, forwardRef, Suspense } from 'react';
 import Pane from './Pane';
-import { PaneConfig, PaneType, TabConfig, CanvasRect, ViewMode } from '../types/pane';
+import { PaneConfig, PaneType, TabConfig, CanvasRect, ViewMode, AgentWorkspace } from '../types/pane';
 import TerminalPane from '../panes/TerminalPane';
 import ClaudePane from '../panes/ClaudePane';
 import { useConfig } from '../hooks/useConfig';
@@ -16,6 +16,7 @@ const PluginsManagerPane = React.lazy(() => import('../panes/PluginsManagerPane'
 const OverviewPane = React.lazy(() => import('../panes/OverviewPane'));
 const LibraryPane = React.lazy(() => import('../panes/LibraryPane'));
 const AnalyticsPane = React.lazy(() => import('../panes/AnalyticsPane'));
+const AskPane = React.lazy(() => import('../panes/AskPane'));
 
 // --- Spatial-canvas constants -------------------------------------------------
 const CARD_HEADER_H = 26;        // drag-handle strip atop each spatial card
@@ -84,6 +85,12 @@ interface ScrollContainerProps {
   workspaceAgents?: { sessionId?: string }[];
   /** Fallback project root for the Library pane (the app's cwd). */
   appCwd?: string;
+  /** Full agent list — passed down to the Ask pane so it can display all agents. */
+  allAgents?: AgentWorkspace[];
+  /** Spawn a supervisor agent from a question — forwarded to AskPane. */
+  spawnSupervisor?: (opts: { question: string; parentId?: string }) => Promise<string>;
+  /** Jump to a specific agent by id — forwarded to AskPane. */
+  onJumpToAgent?: (agentId: string) => void;
 }
 
 export interface ScrollContainerRef {
@@ -99,6 +106,12 @@ interface PaneCallbacks {
   ptyMapping?: Record<string, string>;
   workspaceAgents?: { sessionId?: string }[];
   appCwd?: string;
+  /** Full agent list for the Ask pane. */
+  allAgents?: AgentWorkspace[];
+  /** Spawn a supervisor — for the Ask pane. */
+  spawnSupervisor?: (opts: { question: string; parentId?: string }) => Promise<string>;
+  /** Jump to agent by id — for the Ask pane. */
+  onJumpToAgent?: (agentId: string) => void;
 }
 
 function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneCallbacks) {
@@ -140,6 +153,17 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
       return <Suspense fallback={<PaneFallback />}><LibraryPane title={pane.title} cwd={pane.cwd || callbacks.appCwd} /></Suspense>;
     case 'analytics':
       return <Suspense fallback={<PaneFallback />}><AnalyticsPane title={pane.title} /></Suspense>;
+    case 'ask':
+      return (
+        <Suspense fallback={<PaneFallback />}>
+          <AskPane
+            agents={callbacks.allAgents ?? []}
+            spawnSupervisor={callbacks.spawnSupervisor ?? (() => Promise.resolve(''))}
+            onJumpToAgent={callbacks.onJumpToAgent ?? (() => {})}
+            scopeAgentId={pane.scopeAgentId}
+          />
+        </Suspense>
+      );
     default:
       return <div>Unknown pane type</div>;
   }
@@ -276,7 +300,7 @@ interface Interaction {
 }
 
 const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
-  ({ tabs, activeTabId, onTabFocus, onPaneClose, onPaneFocus, onTabRename, onTabMove, onPtyReady, onUrlChange, onNavigateToTab, onAddTab, ptyMapping, renameSignal, viewMode = 'tabs', onTabCanvasChange, agentActive = true, workspaceAgents, appCwd }, ref) => {
+  ({ tabs, activeTabId, onTabFocus, onPaneClose, onPaneFocus, onTabRename, onTabMove, onPtyReady, onUrlChange, onNavigateToTab, onAddTab, ptyMapping, renameSignal, viewMode = 'tabs', onTabCanvasChange, agentActive = true, workspaceAgents, appCwd, allAgents, spawnSupervisor, onJumpToAgent }, ref) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const { config } = useConfig();
     const peek = config.panes?.peek ?? 80;
@@ -623,6 +647,9 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
               ptyMapping,
               workspaceAgents,
               appCwd,
+              allAgents,
+              spawnSupervisor,
+              onJumpToAgent,
             };
 
             // Per-card inner dimensions handed to the tiling layout.

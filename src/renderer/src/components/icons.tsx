@@ -44,6 +44,7 @@ const PANE_ICONS: Record<PaneType, LucideIcon> = {
   overview: LayoutGrid,
   library: Zap,
   analytics: BarChart3,
+  ask: Brain,
 };
 
 export interface IconProps {

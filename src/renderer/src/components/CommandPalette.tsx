@@ -82,9 +82,11 @@ interface CommandPaletteProps {
   onOpenLayouts?: () => void;
   /** Open the remote-control (phone sharing) panel. */
   onOpenRemote?: () => void;
+  /** Open the Ask pane (fleet supervisor question interface). */
+  onOpenAskPane?: () => void;
 }
 
-const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = 'tab', agentCwd, onClose, onLaunchApp, onAddTab, onSplitPane, pluginPanes = [], onOpenPlugin, onInstallPlugin, onManagePlugins, libraryItems = [], restrictTo, onOpenLibrary, onSwitchSession, onOpenAnalytics, onOpenLayouts, onOpenRemote }) => {
+const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = 'tab', agentCwd, onClose, onLaunchApp, onAddTab, onSplitPane, pluginPanes = [], onOpenPlugin, onInstallPlugin, onManagePlugins, libraryItems = [], restrictTo, onOpenLibrary, onSwitchSession, onOpenAnalytics, onOpenLayouts, onOpenRemote, onOpenAskPane }) => {
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [profilePicker, setProfilePicker] = useState<{ folder: string; profiles: any[]; paneType: PaneType } | null>(null);
@@ -405,11 +407,12 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
             );
           })}
 
-          {restrictTo !== 'library' && (onSwitchSession || onOpenAnalytics || onOpenLayouts || onOpenRemote) && (
+          {restrictTo !== 'library' && (onSwitchSession || onOpenAnalytics || onOpenLayouts || onOpenRemote || onOpenAskPane) && (
             <>
               <div style={{ padding: '6px 12px 2px', fontSize: '0.55rem', color: 'var(--wks-text-disabled)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                 Workspace
               </div>
+              {onOpenAskPane && <CommandRow icon={<Brain size={16} strokeWidth={1.75} />} label="Ask the fleet" onClick={onOpenAskPane} />}
               {onOpenAnalytics && <CommandRow icon={<BarChart3 size={16} strokeWidth={1.75} />} label="Analytics" onClick={onOpenAnalytics} />}
               {onOpenLayouts && <CommandRow icon={<LayoutGrid size={16} strokeWidth={1.75} />} label="Layouts…" onClick={onOpenLayouts} />}
               {onSwitchSession && <CommandRow icon={<FolderOpen size={16} strokeWidth={1.75} />} label="Switch session…" onClick={onSwitchSession} />}

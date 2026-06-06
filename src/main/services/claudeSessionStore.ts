@@ -114,6 +114,10 @@ export interface ClaudeSessionState {
   peakContext: number; // highest context-token reading seen (for analytics)
   lastTranscriptLine: number; // track how far we've read in JSONL
   usage: import('./modelUsage').SessionUsage | null; // token / cost / context, parsed from transcript
+  // Adoption metadata — set before first hook arrives so adopted cards can be
+  // named and nested under the agent that spawned them.
+  label?: string;
+  parentSessionId?: string;
 }
 
 // Serialisable snapshot sent over IPC
@@ -129,6 +133,17 @@ class ClaudeSessionStore {
   private watcherUpdates = new Map<string, WorkflowWatcherUpdate>();
   // Accumulator owns lastUsageKey + knownModels dedup state.
   private usageAccumulator = new SessionUsageAccumulator();
+  // Pre-spawn metadata keyed by pinned session id. Recorded before the first
+  // hook arrives so adopted cards carry a name and parent from the start.
+  private spawnMeta = new Map<string, { label?: string; parentSessionId?: string }>();
+
+  /** Record name/parent for a session about to be spawned, keyed by its pinned
+   *  id. Consumed when the session first registers (see createSession), so an
+   *  adopted card can be named and nested under its spawner. */
+  setSpawnMeta(sessionId: string, meta: { label?: string; parentSessionId?: string }): void {
+    if (!sessionId) return;
+    this.spawnMeta.set(sessionId, meta);
+  }
 
   setMainWindow(win: BrowserWindow): void {
     this.mainWindow = win;
@@ -277,6 +292,14 @@ class ClaudeSessionStore {
       lastTranscriptLine: 0,
       usage: null,
     };
+    // Apply any pre-registered spawn metadata (label, parentSessionId) so the
+    // snapshot is enriched before the first push to the renderer.
+    const meta = this.spawnMeta.get(sessionId);
+    if (meta) {
+      session.label = meta.label;
+      session.parentSessionId = meta.parentSessionId;
+      this.spawnMeta.delete(sessionId);
+    }
     this.sessions.set(sessionId, session);
     return session;
   }

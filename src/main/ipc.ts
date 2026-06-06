@@ -11,6 +11,7 @@ import { claudeSessionStore } from './services/claudeSessionStore';
 import { agentNotifier } from './services/agentNotifier';
 import { claudemonSessionClient } from './services/claudemonSessionClient';
 import { buildClaudeArgv } from './services/claudeResolver';
+import { supervisorMcpConfigPath, SUPERVISOR_SYSTEM_PROMPT } from './services/mcpConfig';
 import { importChromeCookies, importChromeCookiesViaCDP } from './services/chromeCookieImport';
 import { claudeProfiles } from './services/claudeProfiles';
 import { listClaudeSessionsForDir } from './services/claudeSessionList';
@@ -69,7 +70,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     claudemonSessionClient.close(id));
 
   // ── Claude sessions (delegated to claudemon) ──
-  ipcMain.handle(IPC.CLAUDE_SPAWN, async (_event, opts: { cwd?: string; profileId?: string; model?: string; skipPermissions?: boolean; resumeSessionId?: string; cols?: number; rows?: number }) => {
+  ipcMain.handle(IPC.CLAUDE_SPAWN, async (_event, opts: { cwd?: string; profileId?: string; model?: string; skipPermissions?: boolean; resumeSessionId?: string; cols?: number; rows?: number; supervisor?: boolean; label?: string; parentSessionId?: string }) => {
     const profile = opts.profileId ? claudeProfiles.getProfile(opts.profileId) : undefined;
     const env: Record<string, string> = {};
     if (profile?.configDir) {
@@ -79,12 +80,24 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     // id == claude's id == the filename — correct transcripts even with many
     // sessions in one cwd. Resuming keeps the existing id.
     const sessionId = opts.resumeSessionId || randomUUID();
+    // Record name/parent before the session registers so adopted cards are
+    // enriched from the very first hook event.
+    claudeSessionStore.setSpawnMeta(sessionId, { label: opts.label, parentSessionId: opts.parentSessionId });
     const argv = buildClaudeArgv({
       extraArgs: profile?.extraArgs,
       resumeSessionId: opts.resumeSessionId,
       model: opts.model,
       skipPermissions: opts.skipPermissions,
       sessionId,
+      // Supervisor sessions get the MCP facade config + pre-allowed tools +
+      // role prompt injected so the agent can observe and drive the fleet.
+      // Also tell the supervisor its own session id so it can pass parentSessionId
+      // when spawning workers, making them appear nested in the UI.
+      ...(opts.supervisor && {
+        mcpConfig: supervisorMcpConfigPath(),
+        appendSystemPrompt: `${SUPERVISOR_SYSTEM_PROMPT}\n\nYour own workspacer session id is ${sessionId}. When you spawn worker agents with spawn_agent, pass parentSessionId:"${sessionId}" and a short label so they appear nested under you in the UI.`,
+        allowedTools: ['mcp__workspacer'],
+      }),
     });
     const cwd = opts.cwd ?? process.env.HOME ?? os.homedir();
     return claudemonSessionClient.spawn({ argv, cwd, cols: opts.cols, rows: opts.rows, env, sessionId });

@@ -1,4 +1,4 @@
-export type PaneType = 'terminal' | 'browser' | 'notes' | 'agent' | 'claude' | 'settings' | 'review' | 'plugin' | 'plugins' | 'overview' | 'library' | 'analytics';
+export type PaneType = 'terminal' | 'browser' | 'notes' | 'agent' | 'claude' | 'settings' | 'review' | 'plugin' | 'plugins' | 'overview' | 'library' | 'analytics' | 'ask';
 
 export interface PaneConfig {
   id: string;
@@ -22,6 +22,9 @@ export interface PaneConfig {
   /** Claude panes only: text to seed the message input with on first mount —
    *  used when spawning an agent from a library prompt/skill. */
   initialPrompt?: string;
+  /** Ask panes only: the AgentWorkspace.id this pane is scoped to (limits the
+   *  supervisor question to that agent's context). Undefined = fleet-wide. */
+  scopeAgentId?: string;
 }
 
 /** Position + size of a tab's card on the spatial canvas, in world coordinates
@@ -83,6 +86,12 @@ export interface AgentWorkspace {
   /** claudemon session id once spawned. Undefined means the agent is stopped
    *  (e.g. the daemon session ended or didn't survive a restart). */
   sessionId?: string;
+  /** Marks a supervisor agent — spawned with the workspacer MCP facade so it can
+   *  observe and coordinate the other agents. Rendered nested under its parent. */
+  kind?: 'supervisor';
+  /** For supervisors: the AgentWorkspace.id of the agent this one supervises.
+   *  Used to render it nested in the sidebar. Undefined = fleet-level supervisor. */
+  parentId?: string;
   /** Per-agent tabs. Mirrors what a flat workspace used to hold globally. */
   tabs: TabConfig[];
   activeTabId: string;

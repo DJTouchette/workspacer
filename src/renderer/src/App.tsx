@@ -85,6 +85,8 @@ function App() {
     activeAgentId,
     activeAgent,
     spawnAgent,
+    spawnSupervisor,
+    adoptAgent,
     respawnAgent,
     terminateAgent,
     renameAgent,
@@ -200,6 +202,26 @@ function App() {
     });
     return () => { cancelled = true; unsub(); };
   }, []);
+
+  // Auto-adopt any live daemon session that has no AgentWorkspace yet (e.g. one
+  // spawned externally via the MCP facade or by another agent). Gated on the
+  // session-restore phase so we don't create duplicates for sessions that are
+  // about to be loaded from the saved session file.
+  const adoptedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    // Wait until the initial session-restore has completed (phase leaves 'loading').
+    if (sessionPhase === 'loading') return;
+    for (const [sessionId, snapshot] of Object.entries(snapshotBySession)) {
+      // Skip ended sessions and already-adopted ones.
+      if (snapshot.status === 'ended') continue;
+      if (adoptedRef.current.has(sessionId)) continue;
+      // Skip if some agent already owns this session.
+      if (agents.some((a) => a.sessionId === sessionId)) continue;
+      // Mark as adopted before calling to avoid redundant calls from re-renders.
+      adoptedRef.current.add(sessionId);
+      adoptAgent({ sessionId, cwd: snapshot.cwd, name: snapshot.label, parentSessionId: snapshot.parentSessionId });
+    }
+  }, [snapshotBySession, agents, adoptAgent, sessionPhase]);
 
   // Mission Control surfaces: the Triage Inbox (a top-level drawer) and the
   // Fleet Deck (a cross-agent radar, a global altitude orthogonal to viewMode).
@@ -366,6 +388,18 @@ function App() {
     setShowCommandPalette(false);
     openPaneIn(GLOBAL_WORKSPACE_ID, 'analytics', 'Analytics');
   }, [openPaneIn]);
+
+  /** Open the Ask pane in the global Overview workspace (command-palette entry
+   *  "Ask the fleet"). Reuses an existing Ask tab rather than opening a duplicate. */
+  const openAskPane = useCallback(() => {
+    setShowCommandPalette(false);
+    openPaneIn(GLOBAL_WORKSPACE_ID, 'ask', 'Ask');
+  }, [openPaneIn]);
+
+  /** Jump to a specific agent by id — passed down to the Ask pane. */
+  const handleJumpToAgent = useCallback((agentId: string) => {
+    handleSelectAgent(agentId);
+  }, [handleSelectAgent]);
 
   const goToAgent = useCallback((delta: number) => {
     if (agents.length === 0) return;
@@ -620,6 +654,7 @@ function App() {
         }
       }
     },
+    openAskPane,
   });
 
   // --- Per-directory script buttons ---
@@ -767,6 +802,9 @@ function App() {
                   renameSignal={renameSignal}
                   workspaceAgents={agents.filter((a) => !a.global).map((a) => ({ sessionId: a.sessionId }))}
                   appCwd={appCwd}
+                  allAgents={agents}
+                  spawnSupervisor={spawnSupervisor}
+                  onJumpToAgent={handleJumpToAgent}
                 />
               </div>
             );
@@ -836,6 +874,7 @@ function App() {
         onOpenAnalytics={openAnalytics}
         onOpenLayouts={() => { setShowCommandPalette(false); setShowLayouts(true); }}
         onOpenRemote={() => { setShowCommandPalette(false); setShowRemote(true); }}
+        onOpenAskPane={openAskPane}
       />
 
       <LibraryHost
