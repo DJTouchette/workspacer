@@ -5,10 +5,29 @@
  */
 
 import { Notification } from 'electron';
+import * as os from 'os';
+import * as fs from 'fs';
+import { randomUUID } from 'crypto';
 import { claudeSessionStore } from './claudeSessionStore';
 import { claudemonSessionClient } from './claudemonSessionClient';
+import { buildClaudeArgv } from './claudeResolver';
+import { claudeProfiles } from './claudeProfiles';
 import { registerCapability } from './hubClient';
 import * as terminalShare from './terminalShare';
+import { IPC } from '../shared/ipcChannels';
+
+// Mirror of ipc.ts's shell detection so a capability-spawned terminal picks the
+// same default shell a UI-spawned one would. Kept local to avoid importing the
+// IPC module (which pulls in Electron BrowserWindow plumbing).
+function detectDefaultShell(): string {
+  if (process.platform === 'win32') {
+    const gitBash = 'C:\\Program Files\\Git\\bin\\bash.exe';
+    try { fs.accessSync(gitBash); return gitBash; } catch {}
+    try { require('child_process').execSync('where pwsh.exe', { stdio: 'ignore' }); return 'pwsh.exe'; } catch {}
+    return 'powershell.exe';
+  }
+  return process.env.SHELL || '/bin/sh';
+}
 
 export function registerHubCapabilities(): void {
   // Read-only: list live agents with light state. The bread-and-butter "what's
@@ -49,6 +68,64 @@ export function registerHubCapabilities(): void {
       await claudemonSessionClient.input(sessionId, '\r');
     }
     return { ok: true };
+  });
+
+  // Control: spawn a brand-new Claude Code agent session. The hub/MCP
+  // counterpart of the `claude:spawn` IPC handler — lets a remote client (or
+  // Claude via the MCP facade) start a fresh agent in a directory. Mirrors the
+  // IPC path exactly (pinned session id, profile env, argv), then returns the
+  // new sessionId so the caller can immediately drive it with the other
+  // capabilities. The session runs headless in claudemon; a desktop pane can
+  // attach to it later via the normal attach flow.
+  registerCapability('agents.spawn', async (params: unknown) => {
+    const { cwd, profileId, model, skipPermissions, resumeSessionId, cols, rows } =
+      (params ?? {}) as {
+        cwd?: string;
+        profileId?: string;
+        model?: string;
+        skipPermissions?: boolean;
+        resumeSessionId?: string;
+        cols?: number;
+        rows?: number;
+      };
+    const profile = profileId ? claudeProfiles.getProfile(profileId) : undefined;
+    const env: Record<string, string> = {};
+    if (profile?.configDir) {
+      env.CLAUDE_CONFIG_DIR = profile.configDir.replace(/^~/, os.homedir());
+    }
+    // Pin the id so claude's transcript filename matches our id (see ipc.ts).
+    const sessionId = resumeSessionId || randomUUID();
+    const argv = buildClaudeArgv({
+      extraArgs: profile?.extraArgs,
+      resumeSessionId,
+      model,
+      skipPermissions,
+      sessionId,
+    });
+    const resolvedCwd = cwd ?? process.env.HOME ?? os.homedir();
+    const id = await claudemonSessionClient.spawn({ argv, cwd: resolvedCwd, cols, rows, env, sessionId });
+    return { sessionId: id };
+  });
+
+  // Control: open a new shell terminal session. The hub/MCP counterpart of the
+  // `terminal:create` IPC handler. Returns the new PTY's session id.
+  registerCapability('terminals.create', async (params: unknown) => {
+    const { shell, cwd, cols, rows } = (params ?? {}) as {
+      shell?: string;
+      cwd?: string;
+      cols?: number;
+      rows?: number;
+    };
+    const resolvedShell = shell || detectDefaultShell();
+    const resolvedCwd = cwd && fs.existsSync(cwd) ? cwd : os.homedir();
+    const id = await claudemonSessionClient.spawn({
+      argv: [resolvedShell],
+      cwd: resolvedCwd,
+      cols,
+      rows,
+      portChannel: IPC.TERMINAL_PORT,
+    });
+    return { sessionId: id };
   });
 
   // Surface an OS notification.
