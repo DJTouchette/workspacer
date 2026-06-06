@@ -48,8 +48,58 @@ Wire the bridge into the running daemon:
 go run ./cmd/hub --claudemon-events http://127.0.0.1:7891/events
 ```
 
-Next milestones: capability/control API (what plugins can *do*) → plugin
-manifests + dynamic pane registry + hotkeys → MCP facade.
+- **M6 MCP facade** ✅ — `cmd/mcp` is a standalone MCP server that connects to
+  the hub as a capability **caller** and re-exposes each capability as an MCP
+  tool, so Claude Code (or any MCP client) can drive workspacer headlessly. It
+  is a thin adapter: a tool call becomes a bus `call`, the provider (Electron
+  main) executes it, the reply becomes the tool result. The facade never touches
+  workspacer state — it routes, exactly like the hub. Reusable client lives in
+  `internal/busclient`. See [MCP facade](#mcp-facade) below.
+
+## MCP facade
+
+`cmd/mcp` exposes the hub's capabilities as MCP tools over HTTP. It serves two
+transports off the same server — `/mcp` (Streamable HTTP, the current MCP HTTP
+transport) and `/sse` (legacy SSE) — plus `/health`.
+
+```sh
+# hub first (the bus), then the facade pointed at it
+go run ./cmd/hub --addr 127.0.0.1:7895
+go run ./cmd/mcp --addr 127.0.0.1:7897 --hub ws://127.0.0.1:7895/bus
+# (pass --token / $HUB_TOKEN when the hub requires auth)
+```
+
+Attach it to Claude Code via `--mcp-config`:
+
+```json
+{
+  "mcpServers": {
+    "workspacer": { "type": "http", "url": "http://127.0.0.1:7897/mcp" }
+  }
+}
+```
+
+Tools (each maps 1:1 to a hub capability provided by Electron main):
+
+| Tool | Capability | What it does |
+| --- | --- | --- |
+| `list_agents` | `agents.list` | List running agents + state/usage/pending asks |
+| `get_transcript` | `sessions.transcript` | Read a session's transcript |
+| `spawn_agent` | `agents.spawn` | Start a new Claude Code agent; returns its sessionId |
+| `create_terminal` | `terminals.create` | Open a new shell PTY; returns its sessionId |
+| `send_message` | `agents.sendMessage` | Send a prompt to an agent |
+| `approve` | `claude.approve` | Resolve a permission prompt (yes/no/always) |
+| `answer` | `claude.answer` | Answer an AskUserQuestion picker |
+| `signal` | `claude.signal` | Send a signal (SIGINT/SIGTERM/…) |
+| `terminal_input` | `sessions.terminalInput` | Write raw bytes into a PTY |
+| `notify` | `notifications.post` | Show a desktop notification |
+
+The `spawn_agent` / `create_terminal` tools require the matching capabilities to
+be registered by Electron main (`src/main/services/hubCapabilities.ts`); the
+session runs headless in claudemon and a desktop pane can attach to it later.
+
+Next milestones: per-method capability tokens (the `SetAuthorize` seam) →
+surfacing MCP-spawned sessions as panes in the UI automatically.
 
 ## Protocol
 

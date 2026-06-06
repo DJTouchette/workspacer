@@ -11,6 +11,7 @@
     "build:main": "tsc -p tsconfig.main.json && npm run bundle:preload",
     "bundle:preload": "esbuild src/main/preload.ts --bundle --platform=node --format=cjs --external:electron --target=node18 --outfile=dist/main/preload.js",
     "build:hub": "cd hub && go build -o . ./cmd/hub",
+    "build:mcp": "cd hub && go build -o . ./cmd/mcp",
     "test:hub": "cd hub && go test -race ./...",
     "build:renderer": "cd src/renderer && npx vite build",
     "build": "npm run build:main && npm run build:renderer",
