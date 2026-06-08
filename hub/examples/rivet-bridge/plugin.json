@@ -1,0 +1,36 @@
+{
+  "id": "workspacer.rivet-bridge",
+  "name": "Rivet Bridge",
+  "apiVersion": "1",
+  "server": {
+    "command": "./rivet-bridge",
+    "args": ["--port", "9130"],
+    "port": 9130,
+    "health": "/health"
+  },
+  "install": ["go", "build", "-o", "rivet-bridge", "."],
+  "panes": [
+    { "type": "workspacer.rivet-bridge", "title": "Rivet", "icon": "⛏", "path": "/", "scope": "global" }
+  ],
+  "hotkeys": [
+    { "id": "open-rivet", "default": "ctrl+shift+v", "command": "open-pane:workspacer.rivet-bridge" }
+  ],
+  "provides": [
+    "recon.overview",
+    "recon.search",
+    "recon.symbols",
+    "recon.related",
+    "recon.tests",
+    "recon.changes",
+    "recon.context",
+    "recon.hotspots",
+    "recon.grep",
+    "witness.select",
+    "witness.staged",
+    "witness.since",
+    "schema.overview",
+    "schema.tables",
+    "schema.describe"
+  ],
+  "emits": ["rivet.ready", "rivet.down"]
+}
