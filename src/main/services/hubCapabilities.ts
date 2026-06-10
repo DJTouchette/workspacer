@@ -7,14 +7,23 @@
 import { Notification } from 'electron';
 import * as os from 'os';
 import * as fs from 'fs';
+import * as path from 'path';
 import { randomUUID } from 'crypto';
 import { claudeSessionStore } from './claudeSessionStore';
 import { claudemonSessionClient } from './claudemonSessionClient';
 import { buildClaudeArgv } from './claudeResolver';
 import { claudeProfiles } from './claudeProfiles';
 import { registerCapability } from './hubClient';
+import { configService } from './configService';
+import { listClaudeModels } from './claudeModels';
+import { libraryService } from './libraryService';
+import { sessionService } from './sessionService';
+import { sessionHistory } from './sessionHistory';
+import { layoutService } from './layoutService';
+import { listClaudeSessionsForDir } from './claudeSessionList';
 import * as terminalShare from './terminalShare';
 import { IPC } from '../shared/ipcChannels';
+import type { SessionData, LayoutInput, ProfileUpdate } from '../shared/ipcTypes';
 import { supervisorMcpConfigPath, SUPERVISOR_SYSTEM_PROMPT } from './mcpConfig';
 
 // Mirror of ipc.ts's shell detection so a capability-spawned terminal picks the
@@ -256,5 +265,155 @@ export function registerHubCapabilities(): void {
     }
     await claudemonSessionClient.resize(sessionId, Math.round(cols), Math.round(rows));
     return { ok: true };
+  });
+
+  // ── Full session snapshots (web parity) ────────────────────────────────
+  // The reduced `agents.list` row is enough for a dashboard badge; the web
+  // renderer needs the *full* snapshot (transcript, tool calls, fleet/workflow
+  // detail) that the desktop gets over the `claude-session:update` IPC. These
+  // mirror the CLAUDE_SESSION_GET / GET_ALL handlers; live updates arrive as
+  // `agent.snapshot` bus events (published from claudeSessionStore.pushUpdate).
+  registerCapability('sessions.snapshots', () => claudeSessionStore.getAllSnapshots());
+  registerCapability('sessions.snapshot', (params: unknown) => {
+    const { sessionId } = (params ?? {}) as { sessionId?: string };
+    if (!sessionId) throw new Error('sessions.snapshot requires { sessionId }');
+    return claudeSessionStore.getSnapshot(sessionId);
+  });
+
+  // ── Config (web parity) ────────────────────────────────────────────────
+  // Mirror the CONFIG_* IPC handlers so the web renderer loads the real config
+  // (theme, keybindings, pane settings) instead of falling back to defaults,
+  // and can persist changes from the Settings pane.
+  registerCapability('config.get', () => configService.getConfig());
+  registerCapability('config.reload', () => configService.reloadConfig());
+  registerCapability('config.getPath', () => configService.getConfigPath());
+  registerCapability('config.save', (params: unknown) =>
+    configService.saveConfig((params ?? {}) as Parameters<typeof configService.saveConfig>[0]));
+
+  // ── Model picker (web parity) ──────────────────────────────────────────
+  registerCapability('claude.listModels', () => listClaudeModels());
+
+  // ── Saved sessions (workspace layouts) ─────────────────────────────────
+  // Mirror the SESSION_* IPC handlers so the web client can list/load/save the
+  // saved agent arrangements (the session picker).
+  registerCapability('sessions.list', () => sessionService.listSessions());
+  registerCapability('sessions.load', (params: unknown) => {
+    const { filename } = (params ?? {}) as { filename?: string };
+    if (!filename) throw new Error('sessions.load requires { filename }');
+    return sessionService.loadSession(filename);
+  });
+  registerCapability('sessions.save', (params: unknown) => {
+    const data = (params ?? {}) as SessionData;
+    const ptyMapping = data.ptyMapping || {};
+    if (Array.isArray(data.agents)) {
+      return sessionService.saveSession({
+        name: data.name,
+        timestamp: new Date().toISOString(),
+        activeAgentId: data.activeAgentId,
+        agents: sessionService.enrichAgentsWithCwd(data.agents as any, ptyMapping),
+      });
+    }
+    const enrichedTabs = (data.tabs || []).map((tab: any) => ({
+      ...tab,
+      panes: sessionService.enrichPanesWithCwd(tab.panes || [], ptyMapping),
+    }));
+    return sessionService.saveSession({
+      name: data.name,
+      timestamp: new Date().toISOString(),
+      activeTabId: data.activeTabId,
+      tabs: enrichedTabs,
+    });
+  });
+  registerCapability('sessions.delete', (params: unknown) => {
+    const { filename } = (params ?? {}) as { filename?: string };
+    if (!filename) throw new Error('sessions.delete requires { filename }');
+    sessionService.deleteSession(filename);
+    return { ok: true };
+  });
+
+  // ── Layout templates ───────────────────────────────────────────────────
+  registerCapability('layouts.list', () => layoutService.list());
+  registerCapability('layouts.save', (params: unknown) => layoutService.save((params ?? {}) as LayoutInput));
+  registerCapability('layouts.delete', (params: unknown) => {
+    const { id } = (params ?? {}) as { id?: string };
+    if (!id) throw new Error('layouts.delete requires { id }');
+    layoutService.remove(id);
+    return { ok: true };
+  });
+
+  // ── Claude profiles ────────────────────────────────────────────────────
+  registerCapability('claude.profiles.list', () => claudeProfiles.getProfiles());
+  registerCapability('claude.profiles.add', (params: unknown) => {
+    const { name, configDir, extraArgs } = (params ?? {}) as { name?: string; configDir?: string; extraArgs?: string[] };
+    if (!name) throw new Error('claude.profiles.add requires { name }');
+    return claudeProfiles.addProfile(name, configDir ?? '', extraArgs ?? []);
+  });
+  registerCapability('claude.profiles.update', (params: unknown) => {
+    const { id, updates } = (params ?? {}) as { id?: string; updates?: ProfileUpdate };
+    if (!id) throw new Error('claude.profiles.update requires { id, updates }');
+    return claudeProfiles.updateProfile(id, updates ?? ({} as ProfileUpdate));
+  });
+  registerCapability('claude.profiles.remove', (params: unknown) => {
+    const { id } = (params ?? {}) as { id?: string };
+    if (!id) throw new Error('claude.profiles.remove requires { id }');
+    claudeProfiles.removeProfile(id);
+    return { ok: true };
+  });
+
+  // ── Claude session discovery (resume picker) ───────────────────────────
+  registerCapability('claude.sessionsForDir', (params: unknown) => {
+    const { cwd } = (params ?? {}) as { cwd?: string };
+    if (!cwd) throw new Error('claude.sessionsForDir requires { cwd }');
+    return listClaudeSessionsForDir(cwd);
+  });
+
+  // ── Library (reusable prompts + skills) ────────────────────────────────
+  registerCapability('library.list', (params: unknown) => {
+    const { cwd } = (params ?? {}) as { cwd?: string };
+    return libraryService.list(cwd);
+  });
+  registerCapability('library.save', (params: unknown) => libraryService.save((params ?? {}) as any));
+  registerCapability('library.remove', (params: unknown) => {
+    const { scope, id, cwd, kind } = (params ?? {}) as {
+      scope?: 'global' | 'project' | 'claude'; id?: string; cwd?: string; kind?: 'prompt' | 'skill' | 'agent';
+    };
+    if (!scope || !id) throw new Error('library.remove requires { scope, id }');
+    libraryService.remove(scope, id, cwd, kind);
+    return { ok: true };
+  });
+
+  // ── Analytics ──────────────────────────────────────────────────────────
+  registerCapability('analytics.summary', () => sessionHistory.summary());
+  registerCapability('analytics.recent', (params: unknown) => {
+    const { limit } = (params ?? {}) as { limit?: number };
+    return sessionHistory.recent(limit);
+  });
+
+  // ── Approval gate + host cwd ───────────────────────────────────────────
+  registerCapability('claude.gate', (params: unknown) => {
+    const { sessionId, on } = (params ?? {}) as { sessionId?: string; on?: boolean };
+    if (!sessionId) throw new Error('claude.gate requires { sessionId, on }');
+    return claudemonSessionClient.setGate(sessionId, !!on);
+  });
+  registerCapability('app.getCwd', () => process.cwd());
+
+  // ── Host filesystem browsing (web folder picker) ───────────────────────
+  // The web client can't open a native OS dialog, so it browses the host's
+  // directories through this to choose a working directory for a new agent.
+  // Directories only (you spawn an agent *in* a folder); hidden entries skipped.
+  registerCapability('fs.listDir', (params: unknown) => {
+    const { path: p } = (params ?? {}) as { path?: string };
+    const home = os.homedir();
+    const resolved = path.resolve(p && p.trim() ? p.replace(/^~/, home) : home);
+    let dirs: string[] = [];
+    try {
+      dirs = fs.readdirSync(resolved, { withFileTypes: true })
+        .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
+        .map((e) => e.name)
+        .sort((a, b) => a.localeCompare(b));
+    } catch (err) {
+      throw new Error(`cannot read ${resolved}: ${(err as Error).message}`);
+    }
+    return { path: resolved, parent: path.dirname(resolved), home, dirs };
   });
 }

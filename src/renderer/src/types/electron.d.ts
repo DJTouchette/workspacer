@@ -82,7 +82,7 @@ export interface ElectronAPI {
   onHubEvent: (callback: (event: { id: string; type: string; source: string; time: string; data?: unknown }) => void) => () => void;
   onHubStatus: (callback: (status: { connected: boolean }) => void) => () => void;
   getHubStatus: () => Promise<{ connected: boolean }>;
-  getRemoteInfo: () => Promise<{ enabled: boolean; token: string; remoteUrl: string; busUrl: string }>;
+  getRemoteInfo: () => Promise<{ enabled: boolean; token: string; remoteUrl: string; appUrl: string; busUrl: string }>;
   listHubPlugins: () => Promise<PluginManifest[]>;
   hubPublish: (event: { type: string; source?: string; data?: unknown }) => Promise<void>;
   installPlugin: (url: string) => Promise<{ ok: boolean; plugin?: PluginManifest; error?: string }>;
@@ -100,6 +100,10 @@ export interface ElectronAPI {
   // Dialog
   pickFolder: (defaultPath?: string) => Promise<string | null>;
   pickFiles: (defaultPath?: string) => Promise<string[]>;
+
+  // Host filesystem browsing (web folder picker). Optional: only the web build
+  // implements it — the desktop uses native OS dialogs instead.
+  fsListDir?: (path?: string) => Promise<{ path: string; parent: string; home: string; dirs: string[] }>;
 
 
   // Browser cookie import

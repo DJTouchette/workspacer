@@ -5,8 +5,11 @@ import { Smartphone, Copy, Check, Eye, EyeOff } from 'lucide-react';
 interface RemoteInfo {
   enabled: boolean;
   token: string;
-  /** URL to open on the phone/other PC, token included. */
+  /** Lightweight client URL (the /remote single page), token included. */
   remoteUrl: string;
+  /** Full-app (real renderer) URL at /app, token included. Empty when the web
+   *  build hasn't been produced (run `npm run build:renderer:web`). */
+  appUrl: string;
   /** Bare bus URL (no token) for diagnostics. */
   busUrl: string;
 }
@@ -142,6 +145,11 @@ function EnabledState({
   onCopy: (label: string, text: string) => void;
   onToggleToken: () => void;
 }) {
+  const hasApp = !!info.appUrl;
+  // Prefer the full app when it's available; fall back to the lite client.
+  const [mode, setMode] = useState<'app' | 'lite'>(hasApp ? 'app' : 'lite');
+  const activeUrl = mode === 'app' && hasApp ? info.appUrl : info.remoteUrl;
+
   return (
     <div>
       <div style={{
@@ -157,18 +165,32 @@ function EnabledState({
         Remote sharing is ON
       </div>
 
+      {/* Full app vs lite client. The full app is the real renderer served at
+          /app; lite is the single-page /remote client. */}
+      {hasApp ? (
+        <div style={{ display: 'flex', gap: 4, marginBottom: 14 }}>
+          <ModeTab active={mode === 'app'} onClick={() => setMode('app')} title="The full Workspacer UI, in the browser">Full app</ModeTab>
+          <ModeTab active={mode === 'lite'} onClick={() => setMode('lite')} title="Lightweight single-page control client">Lite</ModeTab>
+        </div>
+      ) : (
+        <div style={{ fontSize: '0.66rem', color: 'var(--wks-text-faint)', marginBottom: 12, lineHeight: 1.5 }}>
+          Showing the lite client. Build the full app with{' '}
+          <code style={inlineCode}>npm run build:renderer:web</code> and restart to share the full UI.
+        </div>
+      )}
+
       {/* QR — the fast path. White quiet-zone box so it scans on any theme. */}
       <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 14 }}>
         <div style={{ background: '#fff', padding: 12, borderRadius: 8, lineHeight: 0 }}>
-          <QRCodeSVG value={info.remoteUrl} size={188} level="M" marginSize={0} bgColor="#ffffff" fgColor="#000000" />
+          <QRCodeSVG value={activeUrl} size={188} level="M" marginSize={0} bgColor="#ffffff" fgColor="#000000" />
         </div>
       </div>
       <div style={{ textAlign: 'center', fontSize: '0.68rem', color: 'var(--wks-text-muted)', marginBottom: 16 }}>
-        Scan with your phone's camera to open the control panel.
+        Scan with your phone's camera to open {mode === 'app' && hasApp ? 'the full app' : 'the control panel'}.
       </div>
 
-      <CopyRow label="Connection URL" value={info.remoteUrl} display={info.remoteUrl}
-        copied={copied === 'url'} onCopy={() => onCopy('url', info.remoteUrl)} />
+      <CopyRow label="Connection URL" value={activeUrl} display={activeUrl}
+        copied={copied === 'url'} onCopy={() => onCopy('url', activeUrl)} />
 
       <CopyRow
         label="Token"
@@ -225,6 +247,24 @@ function CopyRow({
         </button>
       </div>
     </div>
+  );
+}
+
+function ModeTab({ active, onClick, title, children }: { active: boolean; onClick: () => void; title?: string; children: React.ReactNode }) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      style={{
+        flex: 1, cursor: 'pointer', fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit',
+        padding: '6px 10px', borderRadius: 6,
+        background: active ? 'var(--wks-accent-soft, var(--wks-bg-input))' : 'transparent',
+        color: active ? 'var(--wks-text-primary)' : 'var(--wks-text-muted)',
+        border: `1px solid ${active ? 'var(--wks-accent, #4a9eff)' : 'var(--wks-border-input)'}`,
+      }}
+    >
+      {children}
+    </button>
   );
 }
 

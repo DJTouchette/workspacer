@@ -140,7 +140,11 @@ export function useClaudeSpawn({
             if (!term) return;
             const chunks = pendingOutputRef.current;
             pendingOutputRef.current = [];
-            for (const chunk of chunks) term.write(chunk);
+            // Guard each write: a single malformed/edge-case sequence that makes
+            // xterm throw must not abort the batch or break the render loop.
+            for (const chunk of chunks) {
+              try { term.write(chunk); } catch (err) { console.warn('[useClaudeSpawn] term.write threw:', err); }
+            }
           });
         }
       });

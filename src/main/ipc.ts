@@ -8,6 +8,7 @@ import { sessionService } from './services/sessionService';
 import { sessionHistory } from './services/sessionHistory';
 import { layoutService } from './services/layoutService';
 import { claudeSessionStore } from './services/claudeSessionStore';
+import { listClaudeModels } from './services/claudeModels';
 import { agentNotifier } from './services/agentNotifier';
 import { claudemonSessionClient } from './services/claudemonSessionClient';
 import { buildClaudeArgv } from './services/claudeResolver';
@@ -158,24 +159,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // resolve to the latest model of each family (so they track Claude Code
   // updates with zero maintenance), and `seen` carries concrete ids observed
   // in real transcripts — past sessions plus anything persisted in config.
-  ipcMain.handle(IPC.CLAUDE_LIST_MODELS, () => {
-    const cfg = configService.getConfig() as any;
-    const persisted: string[] = Array.isArray(cfg.claude?.seenModels) ? cfg.claude.seenModels : [];
-    const live = claudeSessionStore.getAllSnapshots()
-      .map((s) => s.usage?.model)
-      .filter((m): m is string => !!m);
-    const seen = Array.from(new Set([...persisted, ...live])).sort();
-    return {
-      defaultModel: typeof cfg.claude?.defaultModel === 'string' ? cfg.claude.defaultModel : '',
-      skipPermissionsDefault: cfg.claude?.skipPermissionsDefault === true,
-      aliases: [
-        { value: 'opus', label: 'Opus — latest' },
-        { value: 'sonnet', label: 'Sonnet — latest' },
-        { value: 'haiku', label: 'Haiku — latest' },
-      ],
-      seen,
-    };
-  });
+  ipcMain.handle(IPC.CLAUDE_LIST_MODELS, () => listClaudeModels());
 
   ipcMain.handle(IPC.CLAUDE_MESSAGE, (_event, sessionId: string, text: string) =>
     claudemonSessionClient.message(sessionId, text));

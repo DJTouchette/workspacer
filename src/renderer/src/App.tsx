@@ -9,6 +9,7 @@ import { useUiCommands } from './hooks/useUiCommands';
 import type { PluginPane } from './types/plugin';
 import SpawnAgentDialog from './components/SpawnAgentDialog';
 import RemoteShareDialog from './components/RemoteShareDialog';
+import WebFolderPicker from './components/WebFolderPicker';
 import ScrollContainer, { ScrollContainerRef } from './components/ScrollContainer';
 import ShortcutOverlay from './components/ShortcutOverlay';
 import SessionPicker from './components/SessionPicker';
@@ -26,6 +27,7 @@ import { useAgentManager, GLOBAL_WORKSPACE_ID } from './hooks/useAgentManager';
 import type { PaneType, AgentWorkspace, ViewMode, ViewLevel } from './types/pane';
 import type { SessionAmbientState, SessionUsage, ClaudeSessionSnapshot } from './types/claudeSession';
 import { useKeyboardNav } from './hooks/useKeyboardNav';
+import { useIsSmallScreen } from './hooks/useMediaQuery';
 import { useConfig } from './hooks/useConfig';
 import { useTheme } from './hooks/useTheme';
 import { useSessionLifecycle } from './hooks/useSessionLifecycle';
@@ -123,11 +125,26 @@ function App() {
   const [showRemote, setShowRemote] = useState(false);
   const [showLibraryPanel, setShowLibraryPanel] = useState(false);
   const [showBottomTerminal, setShowBottomTerminal] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  // On phone-sized viewports the sidebar starts collapsed and floats as an
+  // overlay rather than reserving a column.
+  const isSmallScreen = useIsSmallScreen();
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(isSmallScreen);
+  // Auto-collapse when crossing into a small screen and auto-expand when
+  // crossing back out. Manual toggles between breakpoint crossings are
+  // preserved (we only react to the transition, not every render).
+  const prevSmallScreen = useRef(isSmallScreen);
+  useEffect(() => {
+    if (isSmallScreen !== prevSmallScreen.current) {
+      prevSmallScreen.current = isSmallScreen;
+      setSidebarCollapsed(isSmallScreen);
+    }
+  }, [isSmallScreen]);
   // Layout offsets: panes go full-width when the sidebar is collapsed; the navbar
   // keeps a small left inset so the floating "show sidebar" button has room.
-  const contentLeft = sidebarCollapsed ? 0 : SIDEBAR_WIDTH;
-  const navLeft = sidebarCollapsed ? 36 : SIDEBAR_WIDTH;
+  // On small screens the sidebar overlays the content, so we never reserve space.
+  const sidebarOverlay = isSmallScreen;
+  const contentLeft = sidebarCollapsed || sidebarOverlay ? 0 : SIDEBAR_WIDTH;
+  const navLeft = sidebarCollapsed || sidebarOverlay ? 36 : SIDEBAR_WIDTH;
 
   // App working directory (used as the default cwd for the spawn dialog + the
   // Library's fallback project root).
@@ -713,13 +730,24 @@ function App() {
       onOpenAgent={handleSelectAgent}
     >
     <div className="app-root">
+      {!sidebarCollapsed && sidebarOverlay && (
+        <div
+          onClick={() => setSidebarCollapsed(true)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 90,
+            background: 'rgba(0,0,0,0.45)',
+            // @ts-ignore — stay clickable over the draggable navbar region
+            WebkitAppRegion: 'no-drag',
+          }}
+        />
+      )}
       {!sidebarCollapsed && (
         <SideBar
           agents={agents}
           activeAgentId={activeAgentId}
           statusBySession={statusBySession}
           usageBySession={usageBySession}
-          onSelectAgent={handleSelectAgent}
+          onSelectAgent={(id) => { handleSelectAgent(id); if (sidebarOverlay) setSidebarCollapsed(true); }}
           onSpawnAgent={() => setShowSpawnDialog(true)}
           onTerminateAgent={terminateAgent}
           onRenameAgent={renameAgent}
@@ -891,6 +919,9 @@ function App() {
       {showRemote && (
         <RemoteShareDialog onClose={() => setShowRemote(false)} />
       )}
+
+      {/* Host filesystem browser for the web build's pickFolder (inert on desktop). */}
+      <WebFolderPicker />
 
       <LibrarySidePanel
         visible={showLibraryPanel}

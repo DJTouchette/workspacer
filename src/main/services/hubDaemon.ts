@@ -83,20 +83,33 @@ function advertiseHost(): string {
 export interface RemoteShareInfo {
   enabled: boolean;
   token: string;
-  /** URL to open on the phone/other PC, token included. */
+  /** URL to open on the phone/other PC, token included. The lightweight client. */
   remoteUrl: string;
+  /** Full-app (real renderer) URL, token included. Served only when the web
+   *  build exists; empty otherwise. */
+  appUrl: string;
   /** Bare bus URL (no token) for diagnostics. */
   busUrl: string;
+}
+
+/** Location of the built web app (dist/web) the hub serves at /app/. */
+function webappDir(): string {
+  if (process.env.ELECTRON_DEV || !app.isPackaged) {
+    return path.join(app.getAppPath(), 'dist', 'web');
+  }
+  return path.join(process.resourcesPath, 'web');
 }
 
 /** Connection info for the remote-control client — for the UI / logs. */
 export function getRemoteShareInfo(): RemoteShareInfo {
   const host = advertiseHost();
   const q = HUB_TOKEN ? `?token=${encodeURIComponent(HUB_TOKEN)}` : '';
+  const hasWebApp = REMOTE_ENABLED && fs.existsSync(webappDir());
   return {
     enabled: REMOTE_ENABLED,
     token: HUB_TOKEN,
     remoteUrl: `http://${host}:${PORT}/remote${q}`,
+    appUrl: hasWebApp ? `http://${host}:${PORT}/app/${q}` : '',
     busUrl: `ws://${host}:${PORT}/bus`,
   };
 }
@@ -166,6 +179,12 @@ export function startHub(): Promise<void> {
     '--plugins-dir', pluginsDir,
   ];
   if (HUB_TOKEN) hubArgs.push('--token', HUB_TOKEN);
+  // Serve the full web app (real renderer) at /app/ when remote sharing is on
+  // and a web build exists. The lightweight /remote client works regardless.
+  const webDir = webappDir();
+  if (REMOTE_ENABLED && fs.existsSync(webDir)) {
+    hubArgs.push('--webapp-dir', webDir);
+  }
   child = spawn(bin, hubArgs, {
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
@@ -173,7 +192,8 @@ export function startHub(): Promise<void> {
 
   if (REMOTE_ENABLED) {
     const info = getRemoteShareInfo();
-    console.log(`[hub] remote sharing ON — open on your phone/PC: ${info.remoteUrl}`);
+    console.log(`[hub] remote sharing ON — lightweight client: ${info.remoteUrl}`);
+    if (info.appUrl) console.log(`[hub] full app (real renderer): ${info.appUrl}`);
   }
 
   child.stdout?.on('data', d => process.stdout.write(`[hub] ${d}`));

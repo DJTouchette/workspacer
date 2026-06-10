@@ -14,6 +14,8 @@
     "build:mcp": "cd hub && go build -o . ./cmd/mcp",
     "test:hub": "cd hub && go test -race ./...",
     "build:renderer": "cd src/renderer && npx vite build",
+    "build:renderer:web": "cd src/renderer && npx vite build --config vite.config.web.ts",
+    "dev:web": "npm run build:renderer:web && npm run dev:share",
     "build": "npm run build:main && npm run build:renderer",
     "package": "npm run build && electron-builder",
     "postinstall": "npx electron-rebuild -f -w better-sqlite3",

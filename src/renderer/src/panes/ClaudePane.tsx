@@ -172,6 +172,16 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
 
+    // Work around an xterm 6.x-beta crash: its DECRQM handler ("request mode",
+    // CSI ? Ps $ p and CSI Ps $ p) throws `ReferenceError: i is not defined`,
+    // which aborts the whole write() and blanks the terminal. Claude's TUI probes
+    // modes with this, and the web mirror replays it in one large coalesced chunk
+    // so the crash eats the entire replay. Consume the sequence ourselves (no-op)
+    // so the buggy default never runs — an unanswered mode query just reads as
+    // "unsupported", which is safe.
+    term.parser.registerCsiHandler({ prefix: '?', intermediates: '$', final: 'p' }, () => true);
+    term.parser.registerCsiHandler({ intermediates: '$', final: 'p' }, () => true);
+
     terminalRef.current = term;
     fitAddonRef.current = fitAddon;
 

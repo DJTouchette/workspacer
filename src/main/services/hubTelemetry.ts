@@ -17,6 +17,20 @@
  */
 import { publishToHub } from './hubClient';
 import type { WorkflowRunInfo } from './workflowWatcher';
+import type { ClaudeSessionSnapshot } from './claudeSessionStore';
+
+/**
+ * Publish a full session snapshot onto the bus as `agent.snapshot`, so the web
+ * build's renderer (which has no Electron IPC) gets the same rich per-session
+ * state — transcript, tool calls, fleet/workflow detail — that the desktop gets
+ * over `claude-session:update`. Gated on remote sharing: when it's off there is
+ * no web consumer, so we skip the extra serialization entirely and the
+ * desktop-only path is unchanged.
+ */
+export function publishSnapshot(snapshot: ClaudeSessionSnapshot): void {
+  if (!process.env.WORKSPACER_REMOTE_SHARE) return;
+  publishToHub({ type: 'agent.snapshot', data: snapshot });
+}
 
 interface SessionMeta {
   sessionId: string;

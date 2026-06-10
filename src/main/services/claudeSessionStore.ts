@@ -6,7 +6,7 @@ import {
   type WorkflowRunInfo,
   type WorkflowWatcherUpdate,
 } from './workflowWatcher';
-import { publishWorkflowRuns, forgetSession as forgetTelemetry } from './hubTelemetry';
+import { publishWorkflowRuns, publishSnapshot, forgetSession as forgetTelemetry } from './hubTelemetry';
 import { applyHookEvent, applyStopEvent, applySessionEndEvent } from './sessionStore/hookEventRouter';
 import { refreshFromTranscript } from './sessionStore/transcriptParser';
 import { SessionUsageAccumulator } from './sessionStore/usageAccumulator';
@@ -305,6 +305,9 @@ class ClaudeSessionStore {
   }
 
   private pushUpdate(session: ClaudeSessionState): void {
+    // Mirror onto the hub bus for the web build (no-op when remote sharing is
+    // off). Done before the window guard so it doesn't depend on a desktop window.
+    publishSnapshot({ ...session });
     if (!this.mainWindow || this.mainWindow.isDestroyed()) return;
     this.mainWindow.webContents.send('claude-session:update', session.sessionId, { ...session });
   }
