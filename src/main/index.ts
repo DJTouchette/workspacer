@@ -133,6 +133,15 @@ if (process.platform === 'win32') {
 // Enable V8 code caching for faster subsequent launches
 app.commandLine.appendSwitch('v8-cache-options', 'code');
 
+// Some Linux GPUs (notably hybrid Intel+AMD/NVIDIA laptops under Wayland)
+// render the Chromium surface as garbage — speckled "dots everywhere"
+// corruption. Let those machines opt out of GPU rasterization without
+// affecting single-GPU machines that render fine. Set WORKSPACER_DISABLE_GPU=1.
+if (process.env.WORKSPACER_DISABLE_GPU === '1') {
+  app.disableHardwareAcceleration();
+  app.commandLine.appendSwitch('disable-gpu-compositing');
+}
+
 // Spoof a plain Chrome user-agent for every webContents/webview/session.
 // Microsoft sign-in (and Google's, and a few others) refuse to OAuth into
 // embedded web views — they sniff for "Electron/x.y.z" or app-name tokens
