@@ -157,6 +157,11 @@ const Centered: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   </div>
 );
 
+/** Left-to-Right mark (U+200E). Wrapping path text in these pins it to LTR
+ *  inside the RTL (left-ellipsis) container, so slashes don't get
+ *  bidi-reordered (otherwise a trailing "/" jumps to the far end). */
+const LRM = String.fromCharCode(0x200e);
+
 /** File path with dimmed directories and a bright basename, truncating the
  * directory part from the left when space runs out. */
 const PathBreadcrumb: React.FC<{ path: string }> = ({ path }) => {
@@ -186,7 +191,11 @@ const PathBreadcrumb: React.FC<{ path: string }> = ({ path }) => {
             minWidth: 0,
           }}
         >
-          {dir}
+          {/* The container is RTL so the ellipsis clips on the LEFT (keeping the
+              meaningful tail of the path). Wrap the text in Left-to-Right marks
+              (U+200E) so its slashes don't get bidi-reordered — without these,
+              the trailing "/" flips to the far end and jams the basename. */}
+          {LRM + dir + LRM}
         </span>
       )}
       <span style={{ color: colors.textBright, fontWeight: 600, flexShrink: 0 }}>{base}</span>

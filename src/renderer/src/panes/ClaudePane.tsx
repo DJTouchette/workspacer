@@ -461,24 +461,47 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
     }]);
     setOptimisticLoading(true);
 
-    // Prefer claudemon's /message endpoint (mode-gated, sends \r for us).
-    // If the daemon reports the session isn't in input mode (e.g. OAuth picker
-    // before SessionStart, picker in mid-flight) fall back to raw keystrokes.
-    if (sessionId) {
-      window.electronAPI.claudeMessage(sessionId, fullMessage).then((res) => {
-        if (!res.ok) {
-          console.warn(`[ClaudePane] /message rejected (mode=${res.mode}); falling back to PTY write`);
-          write(fullMessage);
-          setTimeout(() => write('\r'), 50);
-        }
-      }).catch(err => {
-        console.warn('[ClaudePane] /message failed:', err);
-        write(fullMessage);
-        setTimeout(() => write('\r'), 50);
-      });
-    } else {
+    const rawFallback = () => {
+      // Last resort: type the text and submit with a slightly longer delay so
+      // the \r doesn't race a mid-flight redraw.
       write(fullMessage);
-      setTimeout(() => write('\r'), 50);
+      setTimeout(() => write('\r'), 80);
+    };
+
+    if (!sessionId) {
+      rawFallback();
+      return;
+    }
+
+    // Prefer claudemon's /message endpoint — it appends \r and sends the whole
+    // line atomically through the daemon, which is reliable. It's mode-gated,
+    // though: a freshly spawned session sits in `unknown` mode until the
+    // SessionStart hook fires (claude's TUI is up and ready). The FIRST message
+    // typically arrives during that window, so /message 409s and we'd fall to a
+    // raw PTY write whose lone \r races claude's cold-start rendering and gets
+    // dropped — the "typed but not sent" bug. Fix: while the daemon still
+    // reports the startup `unknown` mode, retry briefly to wait for readiness,
+    // then use the atomic path. Other non-input modes (responding / approval /
+    // question) won't become input by waiting, so fall back immediately.
+    const MAX_WAIT_MS = 4000;
+    const RETRY_MS = 200;
+    const deadline = Date.now() + MAX_WAIT_MS;
+    for (;;) {
+      let res: { ok: boolean; mode?: string };
+      try {
+        res = await window.electronAPI.claudeMessage(sessionId, fullMessage);
+      } catch (err) {
+        console.warn('[ClaudePane] /message failed:', err);
+        rawFallback();
+        return;
+      }
+      if (res.ok) return; // sent cleanly via the daemon
+      if (res.mode !== 'unknown' || Date.now() >= deadline) {
+        console.warn(`[ClaudePane] /message not accepted (mode=${res.mode}); raw PTY write`);
+        rawFallback();
+        return;
+      }
+      await new Promise(r => setTimeout(r, RETRY_MS));
     }
   }, [inputValue, write, attachedFiles, sessionId]);
 
