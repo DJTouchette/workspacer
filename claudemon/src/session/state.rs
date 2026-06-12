@@ -131,6 +131,90 @@ pub enum Pending {
     },
 }
 
+/// Live telemetry from Claude Code's `statusLine` command.
+///
+/// This is a *different channel* from hooks: Claude pipes this JSON only to the
+/// configured `statusLine` command (claudemon's forwarder posts a copy to
+/// `/statusline`). It carries context-window %, cumulative cost, and the 5h/7d
+/// rate-limit windows — none of which appear in hook payloads or the transcript.
+/// Every field is optional because Claude omits some (e.g. `rate_limits` only
+/// exists for Pro/Max accounts after the first API response).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StatusLine {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_display: Option<String>,
+    /// `context_window.used_percentage` (0–100).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_used_pct: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window_size: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_input_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_output_tokens: Option<u64>,
+    /// `cost.total_cost_usd` — Claude's own authoritative session cost.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_usd: Option<f64>,
+    /// `rate_limits.five_hour.used_percentage` (0–100).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub five_hour_pct: Option<f64>,
+    /// Unix epoch seconds the 5h window resets at.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub five_hour_resets_at: Option<i64>,
+    /// `rate_limits.seven_day.used_percentage` (0–100).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seven_day_pct: Option<f64>,
+    /// Unix epoch seconds the 7d window resets at.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seven_day_resets_at: Option<i64>,
+    /// When the daemon received this line, so clients can age out stale data.
+    #[serde(
+        default,
+        with = "time::serde::rfc3339::option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub received_at: Option<OffsetDateTime>,
+}
+
+impl StatusLine {
+    /// Extract the fields we care about from Claude Code's raw statusLine JSON.
+    /// Tolerant of missing keys — anything absent stays `None`.
+    pub fn from_claude_json(v: &Value) -> Self {
+        let cw = v.get("context_window");
+        let cost = v.get("cost");
+        let rl = v.get("rate_limits");
+        let five = rl.and_then(|r| r.get("five_hour"));
+        let seven = rl.and_then(|r| r.get("seven_day"));
+        StatusLine {
+            model_display: v
+                .get("model")
+                .and_then(|m| m.get("display_name"))
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            context_used_pct: cw.and_then(|c| c.get("used_percentage")).and_then(Value::as_f64),
+            context_window_size: cw
+                .and_then(|c| c.get("context_window_size"))
+                .and_then(Value::as_u64),
+            total_input_tokens: cw
+                .and_then(|c| c.get("total_input_tokens"))
+                .and_then(Value::as_u64),
+            total_output_tokens: cw
+                .and_then(|c| c.get("total_output_tokens"))
+                .and_then(Value::as_u64),
+            cost_usd: cost
+                .and_then(|c| c.get("total_cost_usd"))
+                .and_then(Value::as_f64),
+            five_hour_pct: five.and_then(|f| f.get("used_percentage")).and_then(Value::as_f64),
+            five_hour_resets_at: five.and_then(|f| f.get("resets_at")).and_then(Value::as_i64),
+            seven_day_pct: seven
+                .and_then(|s| s.get("used_percentage"))
+                .and_then(Value::as_f64),
+            seven_day_resets_at: seven.and_then(|s| s.get("resets_at")).and_then(Value::as_i64),
+            received_at: Some(OffsetDateTime::now_utc()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionState {
     pub session_id: String,
@@ -149,6 +233,9 @@ pub struct SessionState {
     /// we expose (a spawn UUID) differs from Claude's own id that names the file.
     #[serde(default)]
     pub transcript_path: Option<String>,
+    /// Latest statusLine telemetry, fed by the `/statusline` forwarder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_line: Option<StatusLine>,
 }
 
 impl SessionState {
@@ -164,6 +251,7 @@ impl SessionState {
             tool_calls: 0,
             last_event: None,
             transcript_path: None,
+            status_line: None,
         }
     }
 

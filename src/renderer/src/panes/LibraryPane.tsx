@@ -132,12 +132,13 @@ const LibraryPane: React.FC<Props> = ({ cwd }) => {
               <input value={draft.tags} onChange={(e) => setDraft({ ...draft, tags: e.target.value })} style={inputStyle} placeholder="refactor, tests" />
             </Field>
           )}
-          <Field label="Body — supports {{cwd}}, {{selection}}, {{clipboard}}, {{?Question}}">
+          <Field label="Body — supports {{cwd}}, {{selection}}, {{clipboard}} + form fields">
             <MarkdownEditor
               value={draft.body}
               onChange={(body) => setDraft({ ...draft, body })}
               placeholder="The prompt or skill text…"
             />
+            <FormFieldLegend />
           </Field>
           {draft.scope === 'project' && (
             <div style={{ fontSize: '0.62rem', color: 'var(--wks-text-faint)', marginTop: 4 }}>
@@ -227,6 +228,36 @@ const Field: React.FC<{ label: string; children: React.ReactNode }> = ({ label, 
     {children}
   </div>
 );
+
+/** Cheat-sheet for the {{?…}} form-field syntax, shown under the body editor.
+ *  When an item with these tokens runs, a form pops up to collect the values. */
+const FormFieldLegend: React.FC = () => {
+  const rows: Array<[string, string]> = [
+    ['{{?Context}}', 'paragraph (multi-line) — the default'],
+    ['{{?Service|text}}', 'single-line text'],
+    ['{{?Env|select:dev,staging,prod}}', 'dropdown (first option is the default)'],
+    ['{{?Verbose|toggle:--verbose,}}', 'checkbox → injects the on/off value'],
+  ];
+  return (
+    <div style={{ marginTop: 6, padding: '8px 10px', borderRadius: 6, background: 'var(--wks-bg-base)', border: '1px solid var(--wks-border-subtle)' }}>
+      <div style={{ fontSize: '0.6rem', color: 'var(--wks-text-faint)', marginBottom: 5 }}>
+        Form fields — a form pops up to collect these when the item runs. Add a default with a colon, e.g. <code style={codeStyle}>{'{{?Service:payments-api|text}}'}</code>.
+      </div>
+      {rows.map(([tok, desc]) => (
+        <div key={tok} style={{ display: 'flex', gap: 8, fontSize: '0.6rem', lineHeight: 1.7 }}>
+          <code style={{ ...codeStyle, flexShrink: 0 }}>{tok}</code>
+          <span style={{ color: 'var(--wks-text-faint)' }}>{desc}</span>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+const codeStyle: React.CSSProperties = {
+  fontFamily: 'var(--wks-mono, ui-monospace, monospace)', fontSize: '0.58rem',
+  color: 'var(--wks-text-secondary)', background: 'var(--wks-bg-selected)',
+  padding: '1px 5px', borderRadius: 4,
+};
 
 const headerStyle: React.CSSProperties = {
   display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px',

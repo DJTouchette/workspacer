@@ -599,6 +599,7 @@ mod tests {
             tool_calls: 0,
             last_event: Some("SessionStart".into()),
             transcript_path: None,
+            status_line: None,
         };
         app.sessions.insert(session.session_id.clone(), session);
         app.order.push("test-session-id".into());

@@ -47,9 +47,11 @@ vi.mock('../../src/main/services/workflowWatcher', () => ({
   },
 }));
 
-// hubTelemetry — publishWorkflowRuns + forgetSession talk to a WebSocket hub
+// hubTelemetry — publishWorkflowRuns + publishSnapshot + forgetSession talk to
+// a WebSocket hub
 vi.mock('../../src/main/services/hubTelemetry', () => ({
   publishWorkflowRuns: vi.fn(),
+  publishSnapshot: vi.fn(),
   forgetSession: vi.fn(),
 }));
 

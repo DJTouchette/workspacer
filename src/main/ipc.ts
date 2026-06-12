@@ -17,7 +17,7 @@ import { importChromeCookies, importChromeCookiesViaCDP } from './services/chrom
 import { claudeProfiles } from './services/claudeProfiles';
 import { listClaudeSessionsForDir } from './services/claudeSessionList';
 import { HUB_HTTP_URL, getHubToken, getRemoteShareInfo } from './services/hubDaemon';
-import { publishToHub, isHubConnected } from './services/hubClient';
+import { publishToHub, isHubConnected, callHub } from './services/hubClient';
 import { IPC } from './shared/ipcChannels';
 import type { ClaudeSessionSnapshot, AppConfig, AppConfigPartial, SessionData, LayoutInput, ProfileUpdate } from './shared/ipcTypes';
 
@@ -118,6 +118,14 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     publishToHub(ev);
   });
   ipcMain.handle(IPC.HUB_GET_STATUS, () => ({ connected: isHubConnected() }));
+
+  // ── Shared layout document (hub-owned) ──
+  // The hub owns the workspace layout so desktop + web mirror each other. These
+  // proxy the renderer's reads/writes onto the hub's in-process layout.get /
+  // layout.set capabilities; live changes arrive as layout.changed events,
+  // forwarded to the renderer over LAYOUT_CHANGED (see hubClient / setupHub).
+  ipcMain.handle(IPC.LAYOUT_GET, () => callHub('layout.get', {}));
+  ipcMain.handle(IPC.LAYOUT_SET, (_event, data: unknown) => callHub('layout.set', { data }));
   // Connection info for the remote-control client (URL + token for a QR/share).
   ipcMain.handle(IPC.HUB_GET_REMOTE_INFO, () => getRemoteShareInfo());
   // When remote auth is on, the hub's mutating routes require the token; the

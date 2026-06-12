@@ -19,7 +19,6 @@ import { RefreshCw } from '../components/icons';
 import { quoteFontFamily } from '../lib/terminalUtils';
 
 // ── Sub-components ──
-import { WorkingTimer } from '../components/claude/WorkingTimer';
 import { InlineWorkLog } from '../components/claude/InlineWorkLog';
 import { ConversationMessage } from '../components/claude/ConversationMessage';
 import { TurnDivider } from '../components/claude/TurnDivider';
@@ -29,6 +28,7 @@ import { InlineFilesSection } from '../components/claude/InlineFilesSection';
 import { FileChips } from '../components/claude/FileChips';
 import { DropOverlay } from '../components/claude/DropOverlay';
 import { ScrollToBottomButton } from '../components/claude/ScrollToBottomButton';
+import { SessionStatusBar } from '../components/claude/SessionStatusBar';
 import { classifyFile, buildPromptPrefix, extractFilePaths } from '../components/claude/fileAttachment';
 import type { AttachedFile } from '../components/claude/fileAttachment';
 
@@ -627,21 +627,10 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
         flexShrink: 0,
       }}>
         <StatusBadge session={session} approvalDismissed={!!(pendingApproval && pendingApproval.timestamp <= approvalDismissedAt)} />
-        <WorkingTimer session={session} />
 
-        {cwd && (
-          <span style={{
-            fontSize: '0.55rem',
-            color: colors.mutedDim,
-            fontFamily: 'monospace',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-            maxWidth: 200,
-          }} title={cwd}>
-            {cwd.split('/').pop() || cwd}
-          </span>
-        )}
+        {/* In-app status line — model · ctx · tok/cost · 5h/7d (replaces the
+            old working-timer + directory readouts). */}
+        <SessionStatusBar snapshot={session} cwd={cwd} />
 
         {session && (
           <span style={{ fontSize: '0.55rem', color: colors.mutedDim }}>

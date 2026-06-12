@@ -21,6 +21,7 @@ pub fn router(store: SessionStore) -> Router {
     Router::new()
         .route("/hook", post(receive))
         .route("/hook/:kind", post(receive_named))
+        .route("/statusline", post(receive_status_line))
         .route("/health", axum::routing::get(health))
         .with_state(store)
 }
@@ -69,6 +70,21 @@ async fn receive_named(
         )
             .into_response(),
     }
+}
+
+/// `POST /statusline` — receives the JSON Claude Code pipes to its `statusLine`
+/// command (forwarded by claudemon's wrapper command, see `init.rs`). This is a
+/// separate channel from hooks: it's the only source of context-window %,
+/// cumulative cost, and the 5h/7d rate-limit windows. We attach it to the
+/// session and return an empty body — Claude ignores the forwarder's output
+/// (the user's own statusLine script still renders the terminal line).
+async fn receive_status_line(
+    State(store): State<SessionStore>,
+    Json(body): Json<Value>,
+) -> impl IntoResponse {
+    let matched = store.ingest_status_line(&body).is_some();
+    tracing::debug!(matched, "statusline received");
+    (StatusCode::OK, Json(json!({})))
 }
 
 async fn process(store: &SessionStore, event: HookEvent) -> axum::response::Response {

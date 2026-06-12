@@ -91,6 +91,26 @@ export interface SubagentInfo {
   lastToolSummary?: string;
 }
 
+/**
+ * Live statusLine telemetry, fed by claudemon's `/statusline/stream` (the only
+ * channel carrying Claude's context-%, authoritative cost, and 5h/7d rate-limit
+ * windows). Mirrors `SessionStatusLine` in the renderer types. All fields
+ * optional — Claude omits some (e.g. rate_limits only for Pro/Max accounts).
+ */
+export interface SessionStatusLine {
+  modelDisplay?: string;
+  contextUsedPct?: number;
+  contextWindowSize?: number;
+  totalInputTokens?: number;
+  totalOutputTokens?: number;
+  costUSD?: number;
+  fiveHourPct?: number;
+  fiveHourResetsAt?: number;
+  sevenDayPct?: number;
+  sevenDayResetsAt?: number;
+  receivedAt?: string;
+}
+
 export interface ClaudeSessionState {
   sessionId: string;
   cwd: string;
@@ -114,6 +134,7 @@ export interface ClaudeSessionState {
   peakContext: number; // highest context-token reading seen (for analytics)
   lastTranscriptLine: number; // track how far we've read in JSONL
   usage: import('./modelUsage').SessionUsage | null; // token / cost / context, parsed from transcript
+  statusLine?: SessionStatusLine; // live statusLine telemetry (ctx%/cost/rate-limits)
   // Adoption metadata — set before first hook arrives so adopted cards can be
   // named and nested under the agent that spawned them.
   label?: string;
@@ -212,6 +233,22 @@ class ClaudeSessionStore {
 
     agentNotifier.notifyOnTransition(session, prevAmbient);
     this.mergeWatcherData(session);
+    this.pushUpdate(session);
+  }
+
+  // ── StatusLine integration ──
+  //
+  // Fed by claudemonStatusLineBridge from claudemon's `/statusline/stream`.
+  // The id is already canonical (claudemon resolved the alias). We only attach
+  // to a session we already know — the statusLine fires repeatedly, so if the
+  // first hook hasn't created the session yet, the next tick lands. We don't
+  // bump lastActivity: statusLine ticks aren't activity and shouldn't keep an
+  // idle session looking busy.
+  applyStatusLine(sessionId: string, statusLine: SessionStatusLine): void {
+    if (!sessionId) return;
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    session.statusLine = statusLine;
     this.pushUpdate(session);
   }
 

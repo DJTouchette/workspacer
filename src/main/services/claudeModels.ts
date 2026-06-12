@@ -27,6 +27,7 @@ export function listClaudeModels(): ListModelsResult {
     defaultModel: typeof cfg.claude?.defaultModel === 'string' ? cfg.claude.defaultModel : '',
     skipPermissionsDefault: cfg.claude?.skipPermissionsDefault === true,
     aliases: [
+      { value: 'fable', label: 'Fable — latest' },
       { value: 'opus', label: 'Opus — latest' },
       { value: 'sonnet', label: 'Sonnet — latest' },
       { value: 'haiku', label: 'Haiku — latest' },

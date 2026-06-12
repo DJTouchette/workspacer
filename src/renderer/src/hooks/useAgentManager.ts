@@ -126,6 +126,8 @@ export function useAgentManager() {
     model?: string;
     skipPermissions?: boolean;
     initialPrompt?: string;
+    /** Resume an existing Claude session (`--resume <id>`) instead of starting fresh. */
+    resumeSessionId?: string;
     /** When true the spawned session receives the workspacer MCP facade. */
     supervisor?: boolean;
     /** Marks this workspace as a supervisor. */
@@ -136,7 +138,7 @@ export function useAgentManager() {
     const cwd = opts.cwd;
     let sessionId: string | undefined;
     try {
-      sessionId = await window.electronAPI.spawnClaude({ cwd, profileId: opts.profileId, model: opts.model, skipPermissions: opts.skipPermissions, supervisor: opts.supervisor, cols: 120, rows: 32 });
+      sessionId = await window.electronAPI.spawnClaude({ cwd, profileId: opts.profileId, model: opts.model, skipPermissions: opts.skipPermissions, resumeSessionId: opts.resumeSessionId, supervisor: opts.supervisor, cols: 120, rows: 32 });
     } catch (err) {
       console.error('[Agent] spawn failed:', err);
     }

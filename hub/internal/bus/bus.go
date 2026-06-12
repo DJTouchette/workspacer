@@ -90,6 +90,14 @@ func (s *Server) SetAuthorize(fn func(callerID uint64, method string) bool) {
 	s.router.authorize = fn
 }
 
+// RegisterLocal installs an in-process capability handler so the hub itself can
+// provide a method (e.g. the shared layout document) without a WebSocket
+// provider. Local handlers take precedence over remote providers of the same
+// name. Call before Handler().
+func (s *Server) RegisterLocal(method string, h LocalHandler) {
+	s.router.registerLocal(method, h)
+}
+
 // AddRoute registers an extra HTTP route (e.g. /plugins). Call before Handler().
 // Keeps the bus package decoupled from what it serves alongside the bus.
 func (s *Server) AddRoute(path string, h http.HandlerFunc) {

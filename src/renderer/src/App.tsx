@@ -23,6 +23,7 @@ import FleetDeck from './components/FleetDeck';
 import { AttentionProvider } from './contexts/AttentionContext';
 import type { Layout, LayoutAgent } from './types/layout';
 import { useLibrary } from './hooks/useLibrary';
+import { useLayoutSync, type HydrationResult } from './hooks/useLayoutSync';
 import { useAgentManager, GLOBAL_WORKSPACE_ID } from './hooks/useAgentManager';
 import type { PaneType, AgentWorkspace, ViewMode, ViewLevel } from './types/pane';
 import type { SessionAmbientState, SessionUsage, ClaudeSessionSnapshot } from './types/claudeSession';
@@ -82,6 +83,15 @@ export function migrateSessionData(
 function App() {
   const { config, loaded: configLoaded, save: saveConfig } = useConfig();
   useTheme();
+
+  // Shared-layout hydration gate (tmux-style mirror). Until the hub's layout
+  // document is read we don't know whether to adopt a shared layout or run the
+  // local session picker, so session restore waits on this:
+  //   'pending'  — still reading the hub
+  //   'adopted'  — the hub had a layout; we mirrored it and skip the picker
+  //   'empty'    — no shared layout yet; run normal session restore (which then
+  //                seeds the hub via useLayoutSync's push)
+  const [hubHydration, setHubHydration] = useState<HydrationResult>('pending');
   const {
     agents,
     activeAgentId,
@@ -170,13 +180,29 @@ function App() {
     saveCurrentSession,
     switchSession,
   } = useSessionLifecycle({
-    configLoaded,
+    // Hold session restore until the hub layout has been read. If the hub
+    // already has a shared layout we adopt it instead (hubHydration === 'adopted'
+    // never unblocks startup); only 'empty' falls through to local restore.
+    configLoaded: configLoaded && hubHydration === 'empty',
     autoResume: config.session?.autoResume,
     agents,
     activeAgentId,
     loadAgentsFromSession,
     reconcileAgents,
     appCwdRef,
+  });
+
+  // Mirror the workspace layout across clients (desktop ⇄ web). Reads the hub
+  // doc on startup (driving hubHydration above), applies remote changes, and
+  // pushes local changes back so every client converges — the tmux-style mirror.
+  useLayoutSync({
+    agents,
+    activeAgentId,
+    loadAgentsFromSession,
+    sessionPhase,
+    setSessionPhase,
+    enabled: configLoaded,
+    onHydration: setHubHydration,
   });
 
   // Library (reusable prompts + skills): global + the active project's items.
@@ -352,7 +378,7 @@ function App() {
     saveConfig({ directories: { recent, favourites: config.directories?.favourites ?? [] } });
   }, [config.directories, saveConfig]);
 
-  const handleSpawnAgent = useCallback((opts: { cwd: string; name?: string; profileId?: string; model?: string; skipPermissions?: boolean }) => {
+  const handleSpawnAgent = useCallback((opts: { cwd: string; name?: string; profileId?: string; model?: string; skipPermissions?: boolean; resumeSessionId?: string }) => {
     setShowSpawnDialog(false);
     // Remember the picked model + skip-permissions choice so they stick next time.
     window.electronAPI.saveConfig({

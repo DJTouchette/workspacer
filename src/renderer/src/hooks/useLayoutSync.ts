@@ -1,0 +1,155 @@
+/**
+ * useLayoutSync — makes the workspace layout mirror across clients, tmux-style.
+ *
+ * claudemon owns the live sessions/PTYs; the hub owns the *window manager*
+ * state — which agent cards exist, their tabs/panes, the active tab. This hook
+ * is the renderer's half of that contract:
+ *
+ *   • hydrate — on startup, read the hub's layout document. If it already holds
+ *     a layout (another client — the desktop, or a prior web session — seeded
+ *     it), adopt it and skip the local session picker. If it's empty, report
+ *     `empty` so the normal session-restore runs and then seeds the hub.
+ *   • apply   — when the hub broadcasts `layout.changed` from another client,
+ *     replace local state with it.
+ *   • push    — when local state changes (a tab opened, a pane split, the
+ *     active tab switched), write it back to the hub (debounced), which
+ *     re-broadcasts so every other client converges.
+ *
+ * Convergence is last-writer-wins (see the hub's layout package). Echo loops are
+ * broken by content, not just version: the projection we last sent/received is
+ * remembered, and an incoming document equal to it is acknowledged (version
+ * bumped) but not re-applied — so our own broadcast never bounces back as a
+ * spurious local update.
+ *
+ * The reducer stays in `useAgentManager`; this only moves bytes in and out, so
+ * there is exactly one place that knows how to mutate a layout.
+ */
+import { useEffect, useRef } from 'react';
+import type { AgentWorkspace } from '../types/pane';
+import type { LayoutDoc } from '../types/electron';
+
+/** The slice of app state that is shared across clients. */
+interface SharedLayout {
+  agents: AgentWorkspace[];
+  activeAgentId: string;
+}
+
+export type HydrationResult = 'pending' | 'adopted' | 'empty';
+
+interface UseLayoutSyncOptions {
+  agents: AgentWorkspace[];
+  activeAgentId: string;
+  /** Replace local layout state wholesale (same path session-restore uses). */
+  loadAgentsFromSession: (agents: AgentWorkspace[], activeAgentId: string) => void;
+  sessionPhase: 'loading' | 'picker' | 'active';
+  setSessionPhase: (phase: 'loading' | 'picker' | 'active') => void;
+  /** Don't touch the hub until config has loaded (mirrors session lifecycle). */
+  enabled: boolean;
+  /** Reports the outcome of the initial hub read so App can gate session restore. */
+  onHydration: (result: HydrationResult) => void;
+}
+
+/** Stable projection used for both sending and echo-detection. Built identically
+ *  on every client so a round-tripped document compares equal to what we sent. */
+function project(agents: AgentWorkspace[], activeAgentId: string): string {
+  return JSON.stringify({ agents, activeAgentId });
+}
+
+/** A layout document counts as "seeded" only if it carries real agent state —
+ *  a lone Overview workspace (or nothing) means no client has populated it yet. */
+function hasRealLayout(data: SharedLayout | null): boolean {
+  if (!data || !Array.isArray(data.agents)) return false;
+  return data.agents.some((a) => !a.global);
+}
+
+const PUSH_DEBOUNCE_MS = 250;
+
+export function useLayoutSync({
+  agents,
+  activeAgentId,
+  loadAgentsFromSession,
+  sessionPhase,
+  setSessionPhase,
+  enabled,
+  onHydration,
+}: UseLayoutSyncOptions): void {
+  // Highest document version we've accounted for (applied or acknowledged).
+  const appliedVersionRef = useRef<number>(-1);
+  // Projection of the layout we last sent or received — the echo-breaker.
+  const lastSyncedRef = useRef<string | null>(null);
+  const hydratedRef = useRef(false);
+  const pushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ── hydrate + subscribe ─────────────────────────────────────────────────
+  useEffect(() => {
+    if (!enabled || hydratedRef.current) return;
+    hydratedRef.current = true;
+
+    let cancelled = false;
+
+    window.electronAPI
+      .layoutGet()
+      .then((doc: LayoutDoc) => {
+        if (cancelled) return;
+        const data = doc?.data as SharedLayout | null;
+        appliedVersionRef.current = doc?.version ?? -1;
+        if (hasRealLayout(data) && data) {
+          // Another client already populated the layout — adopt it and skip the
+          // local picker so this client comes up mirroring, not blank.
+          lastSyncedRef.current = project(data.agents, data.activeAgentId);
+          loadAgentsFromSession(data.agents, data.activeAgentId);
+          setSessionPhase('active');
+          onHydration('adopted');
+        } else {
+          onHydration('empty');
+        }
+      })
+      .catch(() => {
+        // Hub unreachable — fall back to local-only behavior.
+        if (!cancelled) onHydration('empty');
+      });
+
+    const unsub = window.electronAPI.onLayoutChanged((doc: LayoutDoc) => {
+      if (!doc || doc.version <= appliedVersionRef.current) return;
+      appliedVersionRef.current = doc.version;
+      const data = doc.data as SharedLayout | null;
+      if (!data || !Array.isArray(data.agents)) return;
+      const incoming = project(data.agents, data.activeAgentId);
+      if (incoming === lastSyncedRef.current) return; // our own echo / identical
+      lastSyncedRef.current = incoming;
+      loadAgentsFromSession(data.agents, data.activeAgentId);
+    });
+
+    return () => {
+      cancelled = true;
+      unsub();
+    };
+  }, [enabled, loadAgentsFromSession, setSessionPhase, onHydration]);
+
+  // ── push local changes ──────────────────────────────────────────────────
+  useEffect(() => {
+    if (!enabled || sessionPhase !== 'active') return;
+    const json = project(agents, activeAgentId);
+    if (json === lastSyncedRef.current) return; // nothing new vs. last sync
+    // Mark optimistically *now* so the broadcast we're about to cause is
+    // recognized as our own echo when it comes back.
+    lastSyncedRef.current = json;
+
+    if (pushTimerRef.current) clearTimeout(pushTimerRef.current);
+    pushTimerRef.current = setTimeout(() => {
+      window.electronAPI
+        .layoutSet({ agents, activeAgentId })
+        .then((doc: LayoutDoc) => {
+          if (doc?.version != null) {
+            appliedVersionRef.current = Math.max(appliedVersionRef.current, doc.version);
+          }
+        })
+        .catch(() => {
+          // Push failed — drop the optimistic marker so the next change retries.
+          if (lastSyncedRef.current === json) lastSyncedRef.current = null;
+        });
+    }, PUSH_DEBOUNCE_MS);
+  }, [agents, activeAgentId, enabled, sessionPhase]);
+
+  useEffect(() => () => { if (pushTimerRef.current) clearTimeout(pushTimerRef.current); }, []);
+}

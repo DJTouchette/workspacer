@@ -171,6 +171,15 @@ export function createWebBackend(token: string): ElectronAPI {
     // ── Hub plumbing ─────────────────────────────────────────────────────
     onHubEvent: (callback) => { hubEventHandlers.add(callback); return () => hubEventHandlers.delete(callback); },
     onHubStatus: (callback) => client.onStatus((connected) => callback({ connected })),
+
+    // ── Shared layout document (hub-owned; tmux-style mirror) ────────────────
+    // The hub provides layout.get/layout.set in-process and broadcasts
+    // layout.changed; the desktop reaches these through main, the web reaches
+    // them straight off the bus. Identical surface either way.
+    layoutGet: () => client.call('layout.get', {}),
+    layoutSet: (data) => client.call('layout.set', { data }),
+    onLayoutChanged: (callback) =>
+      client.subscribe('layout.changed', (ev) => callback(ev.data as { version: number; data: unknown })),
     getHubStatus: () => Promise.resolve({ connected: client.isConnected() }),
     getRemoteInfo: () => Promise.resolve({ enabled: true, token, remoteUrl: location.href, appUrl: location.href, busUrl: '' }),
     listHubPlugins: () => { warnOnce('listHubPlugins'); return Promise.resolve([]); },

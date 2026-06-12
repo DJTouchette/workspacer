@@ -62,6 +62,11 @@ export const IPC = {
   HUB_EVENT: 'hub:event',           // push (main → renderer)
   HUB_STATUS: 'hub:status',         // push (main → renderer)
 
+  // ── Shared layout document (hub-owned; tmux-style mirror) ──
+  LAYOUT_GET: 'layout:get',
+  LAYOUT_SET: 'layout:set',
+  LAYOUT_CHANGED: 'layout:changed', // push (main → renderer)
+
   // ── Config ──
   CONFIG_GET: 'config:get',
   CONFIG_RELOAD: 'config:reload',

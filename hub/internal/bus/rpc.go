@@ -1,10 +1,18 @@
 package bus
 
 import (
+	"encoding/json"
 	"strconv"
 	"sync"
 	"time"
 )
+
+// LocalHandler is an in-process capability implementation. Unlike a WebSocket
+// provider, it runs inside the hub itself — the seam that lets the hub *own*
+// state (e.g. the shared layout document) and answer calls for it directly,
+// while still keeping the router generic. The returned value is JSON-encoded
+// into the result frame; a non-nil error becomes an error frame.
+type LocalHandler func(params json.RawMessage) (any, error)
 
 // callTimeout bounds how long a caller waits for a provider's reply.
 const callTimeout = 30 * time.Second
@@ -22,7 +30,8 @@ type router struct {
 	connSeq   uint64
 	callSeq   uint64
 	conns     map[uint64]*conn
-	providers map[string]uint64 // method -> provider conn id
+	providers map[string]uint64       // method -> provider conn id
+	local     map[string]LocalHandler // method -> in-process handler (hub-owned)
 	pending   map[uint64]*pendingCall
 	timeout   time.Duration
 
@@ -42,6 +51,7 @@ func newRouter() *router {
 	return &router{
 		conns:     make(map[uint64]*conn),
 		providers: make(map[string]uint64),
+		local:     make(map[string]LocalHandler),
 		pending:   make(map[uint64]*pendingCall),
 		timeout:   callTimeout,
 	}
@@ -86,6 +96,14 @@ func (rt *router) dropConn(cn *conn) {
 	}
 }
 
+// registerLocal installs an in-process capability handler. Local handlers take
+// precedence over WebSocket providers for the same method name.
+func (rt *router) registerLocal(method string, h LocalHandler) {
+	rt.mu.Lock()
+	rt.local[method] = h
+	rt.mu.Unlock()
+}
+
 func (rt *router) register(cn *conn, methods []string) {
 	rt.mu.Lock()
 	for _, m := range methods {
@@ -104,6 +122,29 @@ func (rt *router) call(caller *conn, f Frame) {
 	}
 	if rt.authorize != nil && !rt.authorize(caller.id, f.Method) {
 		_ = caller.send(Frame{Op: "error", ID: f.ID, Error: "not authorized for " + f.Method})
+		return
+	}
+
+	// In-process handlers (hub-owned capabilities) take precedence over remote
+	// providers. Run off the read loop so a slow handler can't stall the caller's
+	// connection, and reply directly with the JSON-encoded result.
+	rt.mu.Lock()
+	h, isLocal := rt.local[f.Method]
+	rt.mu.Unlock()
+	if isLocal {
+		go func() {
+			res, err := h(f.Params)
+			if err != nil {
+				_ = caller.send(Frame{Op: "error", ID: f.ID, Error: err.Error()})
+				return
+			}
+			raw, mErr := json.Marshal(res)
+			if mErr != nil {
+				_ = caller.send(Frame{Op: "error", ID: f.ID, Error: mErr.Error()})
+				return
+			}
+			_ = caller.send(Frame{Op: "result", ID: f.ID, Result: raw})
+		}()
 		return
 	}
 
@@ -181,7 +222,7 @@ func (rt *router) failCall(gid uint64, msg string) {
 func (rt *router) methodCount() int {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
-	return len(rt.providers)
+	return len(rt.providers) + len(rt.local)
 }
 
 type sendTask struct {

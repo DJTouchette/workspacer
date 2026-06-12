@@ -33,6 +33,31 @@ let stopped = false;
 let backoff = 200;
 let connected = false;
 
+// Outbound calls: main as a *caller* (the inverse of the provider role above).
+// Lets the renderer reach hub-owned capabilities — e.g. the shared layout
+// document — through main, mirroring how the web build calls the bus directly.
+const CALL_TIMEOUT_MS = 15000;
+let callSeq = 0;
+const pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>();
+
+/** Invoke a capability on the bus and resolve with its result. Rejects if the
+ *  socket is down, the call errors, or it times out. Our ids are prefixed `m`
+ *  so they never collide with the hub-assigned numeric ids of inbound calls. */
+export function callHub<T = unknown>(method: string, params: unknown = {}): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      reject(new Error('hub not connected'));
+      return;
+    }
+    const id = 'm' + (++callSeq);
+    const timer = setTimeout(() => {
+      if (pending.has(id)) { pending.delete(id); reject(new Error(`hub call timeout: ${method}`)); }
+    }, CALL_TIMEOUT_MS);
+    pending.set(id, { resolve: resolve as (v: unknown) => void, reject, timer });
+    send({ op: 'call', id, method, params });
+  });
+}
+
 /** Current bus connection state — lets a late-mounting renderer sync up. */
 export function isHubConnected(): boolean {
   return connected;
@@ -93,7 +118,7 @@ function connect(): void {
   });
 
   ws.on('message', (raw: WebSocket.RawData) => {
-    let frame: { op?: string; event?: HubEvent; id?: string; method?: string; params?: unknown };
+    let frame: { op?: string; event?: HubEvent; id?: string; method?: string; params?: unknown; result?: unknown; error?: string };
     try {
       frame = JSON.parse(raw.toString());
     } catch {
@@ -106,17 +131,35 @@ function connect(): void {
         // echo them back to it (we'd receive our own publishes via the '*' sub).
         if (frame.event && !frame.event.type.startsWith('pty.')) {
           forward('hub:event', frame.event);
+          // The shared layout document changed somewhere (this desktop, the web
+          // remote, or another client) — push it to the renderer on its own
+          // channel so the layout reconciles without filtering the event firehose.
+          if (frame.event.type === 'layout.changed') {
+            forward('layout:changed', frame.event.data);
+          }
         }
         break;
       case 'call':
         if (frame.id && frame.method) handleCall(frame.id, frame.method, frame.params);
         break;
+      case 'result': {
+        const c = frame.id ? pending.get(frame.id) : undefined;
+        if (c && frame.id) { pending.delete(frame.id); clearTimeout(c.timer); c.resolve(frame.result); }
+        break;
+      }
+      case 'error': {
+        const c = frame.id ? pending.get(frame.id) : undefined;
+        if (c && frame.id) { pending.delete(frame.id); clearTimeout(c.timer); c.reject(new Error(frame.error || 'hub error')); }
+        break;
+      }
       // hello / subscribed / registered acks: nothing to do.
     }
   });
 
   ws.on('close', () => {
     connected = false;
+    // Fail any in-flight outbound calls — their socket is gone.
+    for (const [id, c] of pending) { clearTimeout(c.timer); c.reject(new Error('hub disconnected')); pending.delete(id); }
     forward('hub:status', { connected: false });
     scheduleReconnect();
   });

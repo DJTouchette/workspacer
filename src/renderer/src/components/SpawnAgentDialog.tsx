@@ -3,7 +3,7 @@ import { deriveAgentName } from '../hooks/useAgentManager';
 
 interface SpawnAgentDialogProps {
   defaultCwd: string;
-  onSpawn: (opts: { cwd: string; name?: string; profileId?: string; model?: string; skipPermissions?: boolean }) => void;
+  onSpawn: (opts: { cwd: string; name?: string; profileId?: string; model?: string; skipPermissions?: boolean; resumeSessionId?: string }) => void;
   onCancel: () => void;
 }
 
@@ -23,7 +23,29 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, onSpawn
   const [customModel, setCustomModel] = useState('');
   const [skipPermissions, setSkipPermissions] = useState(false);
 
+  // Resume an existing Claude session in this cwd. ''=start fresh.
+  const [sessions, setSessions] = useState<Array<{ sessionId: string; timestamp: string; summary: string }>>([]);
+  const [resumeSessionId, setResumeSessionId] = useState('');
+
   useEffect(() => { setCwd(defaultCwd); }, [defaultCwd]);
+
+  // Discover resumable sessions whenever the directory settles (debounced).
+  useEffect(() => {
+    const dir = cwd.trim();
+    if (!dir) { setSessions([]); return; }
+    let cancelled = false;
+    const handle = setTimeout(() => {
+      window.electronAPI.claudeListSessionsForDir?.(dir)
+        .then((list) => { if (!cancelled) setSessions(list ?? []); })
+        .catch(() => { if (!cancelled) setSessions([]); });
+    }, 250);
+    return () => { cancelled = true; clearTimeout(handle); };
+  }, [cwd]);
+
+  // If the picked session disappears from the list (cwd changed), reset to fresh.
+  useEffect(() => {
+    if (resumeSessionId && !sessions.some((s) => s.sessionId === resumeSessionId)) setResumeSessionId('');
+  }, [sessions, resumeSessionId]);
 
   useEffect(() => {
     window.electronAPI.claudeProfilesList?.()
@@ -53,7 +75,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, onSpawn
 
   const submit = () => {
     if (!cwd.trim()) return;
-    onSpawn({ cwd: cwd.trim(), name: name.trim() || undefined, profileId: profileId || undefined, model: resolvedModel || undefined, skipPermissions });
+    onSpawn({ cwd: cwd.trim(), name: name.trim() || undefined, profileId: profileId || undefined, model: resolvedModel || undefined, skipPermissions, resumeSessionId: resumeSessionId || undefined });
   };
 
   const placeholderName = cwd.trim() ? deriveAgentName(cwd.trim()) : 'agent';
@@ -108,6 +130,19 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, onSpawn
             style={inputStyle}
           />
         </Field>
+
+        {sessions.length > 0 && (
+          <Field label="Resume session (optional)">
+            <select value={resumeSessionId} onChange={(e) => setResumeSessionId(e.target.value)} style={inputStyle}>
+              <option value="">Start fresh</option>
+              {sessions.map((s) => (
+                <option key={s.sessionId} value={s.sessionId}>
+                  {relTime(s.timestamp)} — {s.summary}
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
 
         <Field label="Model">
           <select value={modelSel} onChange={(e) => setModelSel(e.target.value)} style={inputStyle}>
@@ -176,6 +211,19 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, onSpawn
     </div>
   );
 };
+
+/** Compact relative time for the resume picker, e.g. "2h ago", "3d ago". */
+function relTime(iso: string): string {
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return '';
+  const s = Math.max(0, (Date.now() - t) / 1000);
+  if (s < 60) return 'just now';
+  const m = s / 60;
+  if (m < 60) return `${Math.floor(m)}m ago`;
+  const h = m / 60;
+  if (h < 24) return `${Math.floor(h)}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (

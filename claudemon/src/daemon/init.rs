@@ -52,10 +52,35 @@ const HOOK_EVENTS: &[&str] = {
 /// without trampling user-added hooks.
 const TAG: &str = "# claudemon-hook";
 
+/// Marker for our statusLine forwarder, kept distinct from the hook tag so the
+/// two are matched independently.
+const STATUS_TAG: &str = "# claudemon-statusline";
+
 fn hook_command(hook_port: u16) -> String {
     format!(
         "curl -s -X POST http://127.0.0.1:{hook_port}/hook -H \"content-type: application/json\" -d @- {TAG}"
     )
+}
+
+/// Build the statusLine command claudemon installs. It reads Claude Code's
+/// statusLine JSON from stdin once, forwards a copy to `/statusline`, then —
+/// when the user already had a statusLine — pipes the same JSON to their
+/// original command so their terminal line keeps rendering unchanged.
+///
+/// Runs in the same bash/sh Claude uses for hook commands (the hook command
+/// relies on `-d @-` and `#` comments, so a shell is guaranteed). The trailing
+/// `STATUS_TAG` comment both marks the entry as ours and is inert at runtime.
+fn status_line_command(hook_port: u16, inner: Option<&str>) -> String {
+    // `--max-time 2` so an unresponsive daemon can never stall the (frequently
+    // re-run, latency-sensitive) status line; connection-refused already fails
+    // fast when the daemon is simply down.
+    let forward = format!(
+        "printf '%s' \"$i\" | curl -s --max-time 2 -X POST http://127.0.0.1:{hook_port}/statusline -H \"content-type: application/json\" -d @- >/dev/null 2>&1"
+    );
+    match inner {
+        Some(cmd) => format!("i=$(cat); {forward}; printf '%s' \"$i\" | {cmd} {STATUS_TAG}"),
+        None => format!("i=$(cat); {forward} {STATUS_TAG}"),
+    }
 }
 
 fn settings_path() -> Result<PathBuf> {
@@ -76,22 +101,29 @@ pub async fn run_with_port(dry_run: bool, hook_port: u16) -> Result<()> {
     };
 
     let command = hook_command(hook_port);
-    let (merged, changed_events) = merge_hooks(existing, &command);
+    let (mut merged, changed_events) = merge_hooks(existing, &command);
+    let status_changed = merge_status_line(&mut merged, hook_port);
+    let nothing_changed = changed_events.is_empty() && !status_changed;
 
     let formatted = serde_json::to_string_pretty(&merged)? + "\n";
 
     if dry_run {
         println!("# would write to {}", path.display());
-        if changed_events.is_empty() {
+        if nothing_changed {
             println!("# (no changes — already up to date)");
         } else {
-            println!("# adding/updating hooks for: {}", changed_events.join(", "));
+            if !changed_events.is_empty() {
+                println!("# adding/updating hooks for: {}", changed_events.join(", "));
+            }
+            if status_changed {
+                println!("# adding/updating statusLine forwarder");
+            }
         }
         println!("{formatted}");
         return Ok(());
     }
 
-    if changed_events.is_empty() {
+    if nothing_changed {
         println!("✓ {} already up to date", path.display());
         return Ok(());
     }
@@ -111,13 +143,59 @@ pub async fn run_with_port(dry_run: bool, hook_port: u16) -> Result<()> {
     fs::rename(&tmp, &path)
         .with_context(|| format!("renaming {} → {}", tmp.display(), path.display()))?;
 
-    println!(
-        "✓ wrote {} hook(s) to {}: {}",
-        changed_events.len(),
-        path.display(),
-        changed_events.join(", ")
-    );
+    if !changed_events.is_empty() {
+        println!(
+            "✓ wrote {} hook(s) to {}: {}",
+            changed_events.len(),
+            path.display(),
+            changed_events.join(", ")
+        );
+    }
+    if status_changed {
+        println!("✓ wrapped statusLine forwarder in {}", path.display());
+    }
     Ok(())
+}
+
+/// Merge our statusLine forwarder into the settings doc, returning `true` if it
+/// changed anything.
+///
+/// We *wrap* any existing `statusLine.command` so the user's own status line
+/// keeps rendering while a copy of Claude Code's statusLine JSON is forwarded to
+/// claudemon — the only channel carrying context-%/cost/rate-limit data.
+/// Idempotent: once our `STATUS_TAG` is present we leave the entry alone (this
+/// also prevents double-wrapping). `padding` and other keys are preserved.
+fn merge_status_line(doc: &mut Value, hook_port: u16) -> bool {
+    let obj = doc.as_object_mut().expect("settings must be an object");
+    let existing = obj.get("statusLine");
+
+    // Already ours → idempotent no-op (also guards against re-wrapping).
+    if existing
+        .and_then(|sl| sl.get("command"))
+        .and_then(Value::as_str)
+        .is_some_and(|c| c.contains(STATUS_TAG))
+    {
+        return false;
+    }
+
+    // Preserve the user's existing command (wrap it) and any sibling keys.
+    let inner = existing
+        .and_then(|sl| sl.get("command"))
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let command = status_line_command(hook_port, inner.as_deref());
+
+    let entry = obj
+        .entry("statusLine".to_string())
+        .or_insert_with(|| Value::Object(Default::default()));
+    let Some(map) = entry.as_object_mut() else {
+        // A non-object statusLine is malformed; replace it wholesale.
+        *entry = json!({ "type": "command", "command": command });
+        return true;
+    };
+    map.insert("type".to_string(), Value::String("command".to_string()));
+    map.insert("command".to_string(), Value::String(command));
+    true
 }
 
 /// Merge our hook entries into the settings JSON. Returns the updated
@@ -218,6 +296,49 @@ mod tests {
         assert_eq!(pre.len(), 2, "user hook should still be present alongside ours");
         let user_cmd = pre[0]["hooks"][0]["command"].as_str().unwrap();
         assert_eq!(user_cmd, "echo user-hook");
+    }
+
+    #[test]
+    fn status_line_wraps_existing_user_command() {
+        let mut doc = json!({
+            "statusLine": { "type": "command", "command": "bash ~/.claude/my-statusline.sh", "padding": 2 }
+        });
+        let changed = merge_status_line(&mut doc, 7890);
+        assert!(changed);
+        let cmd = doc["statusLine"]["command"].as_str().unwrap();
+        // User's original command is preserved (piped to) ...
+        assert!(cmd.contains("bash ~/.claude/my-statusline.sh"), "inner command preserved");
+        // ... and a forward to /statusline is prepended, tagged as ours.
+        assert!(cmd.contains("/statusline"));
+        assert!(cmd.contains(STATUS_TAG));
+        // Sibling keys like padding survive.
+        assert_eq!(doc["statusLine"]["padding"], json!(2));
+    }
+
+    #[test]
+    fn status_line_installs_forwarder_when_absent() {
+        let mut doc = json!({});
+        let changed = merge_status_line(&mut doc, 7890);
+        assert!(changed);
+        let cmd = doc["statusLine"]["command"].as_str().unwrap();
+        assert!(cmd.contains("/statusline"));
+        assert!(cmd.contains(STATUS_TAG));
+        assert_eq!(doc["statusLine"]["type"], json!("command"));
+    }
+
+    #[test]
+    fn status_line_idempotent_no_double_wrap() {
+        let mut doc = json!({
+            "statusLine": { "type": "command", "command": "bash ~/.claude/my-statusline.sh" }
+        });
+        assert!(merge_status_line(&mut doc, 7890));
+        let after_first = doc["statusLine"]["command"].as_str().unwrap().to_string();
+        // Second run must detect our tag and leave the (already-wrapped) command alone.
+        assert!(!merge_status_line(&mut doc, 7890), "second run should be a no-op");
+        assert_eq!(doc["statusLine"]["command"].as_str().unwrap(), after_first);
+        // The original command appears exactly once — no nested re-wrap.
+        let occurrences = after_first.matches("my-statusline.sh").count();
+        assert_eq!(occurrences, 1, "inner command must not be wrapped twice");
     }
 
     #[test]

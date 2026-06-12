@@ -236,6 +236,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   hubPublish: (event: { type: string; source?: string; data?: unknown }): Promise<void> =>
     ipcRenderer.invoke(IPC.HUB_PUBLISH, event),
   getHubStatus: (): Promise<{ connected: boolean }> => ipcRenderer.invoke(IPC.HUB_GET_STATUS),
+
+  // ── Shared layout document (hub-owned; tmux-style mirror) ──
+  layoutGet: (): Promise<{ version: number; data: unknown }> =>
+    ipcRenderer.invoke(IPC.LAYOUT_GET),
+  layoutSet: (data: unknown): Promise<{ version: number; data: unknown }> =>
+    ipcRenderer.invoke(IPC.LAYOUT_SET, data),
+  onLayoutChanged: (callback: (doc: { version: number; data: unknown }) => void): (() => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, doc: { version: number; data: unknown }) => callback(doc);
+    ipcRenderer.on(IPC.LAYOUT_CHANGED, handler);
+    return () => ipcRenderer.removeListener(IPC.LAYOUT_CHANGED, handler);
+  },
   getRemoteInfo: (): Promise<{ enabled: boolean; token: string; remoteUrl: string; appUrl: string; busUrl: string }> =>
     ipcRenderer.invoke(IPC.HUB_GET_REMOTE_INFO),
   installPlugin: (url: string): Promise<{ ok: boolean; plugin?: unknown; error?: string }> =>

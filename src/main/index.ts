@@ -9,6 +9,7 @@ import { agentNotifier } from './services/agentNotifier';
 import { claudemonSessionClient } from './services/claudemonSessionClient';
 import { startClaudemon, stopClaudemon, runClaudemonInit } from './services/claudemonDaemon';
 import { startClaudemonHookBridge, stopClaudemonHookBridge } from './services/claudemonHookBridge';
+import { startClaudemonStatusLineBridge, stopClaudemonStatusLineBridge } from './services/claudemonStatusLineBridge';
 import { startHub, stopHub } from './services/hubDaemon';
 import { setHubMainWindow, startHubClient, stopHubClient } from './services/hubClient';
 import { stopAllTerminals } from './services/terminalShare';
@@ -194,6 +195,9 @@ function createWindow(): void {
       startClaudemonHookBridge().catch(err =>
         console.error('[main] hook bridge crashed:', err)
       );
+      startClaudemonStatusLineBridge().catch(err =>
+        console.error('[main] statusline bridge crashed:', err)
+      );
       // Hub (control-plane / event bus) bridges claudemon onto its bus; the
       // main process connects as a client, forwards events to the renderer, and
       // registers the capabilities plugins/MCP can call. Started after claudemon
@@ -321,6 +325,7 @@ app.on('before-quit', () => {
   }
   stopAllTerminals();
   stopClaudemonHookBridge();
+  stopClaudemonStatusLineBridge();
   stopHubClient();
   stopHub();
   stopClaudemon();
@@ -331,6 +336,7 @@ app.on('window-all-closed', () => {
   claudemonSessionClient.closeAll();
   stopAllTerminals();
   stopClaudemonHookBridge();
+  stopClaudemonStatusLineBridge();
   stopHubClient();
   stopHub();
   stopClaudemon();

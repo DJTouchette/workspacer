@@ -106,6 +106,26 @@ export interface SessionUsage {
   costUSD: number; // cumulative
 }
 
+/**
+ * Live statusLine telemetry, fed by claudemon's `/statusline/stream`. This is
+ * the only source of Claude's authoritative context-%, cost, and the 5h/7d
+ * rate-limit windows (none appear in the transcript-derived `SessionUsage`).
+ * All fields optional — Claude omits some (rate_limits is Pro/Max-only).
+ */
+export interface SessionStatusLine {
+  modelDisplay?: string;
+  contextUsedPct?: number;
+  contextWindowSize?: number;
+  totalInputTokens?: number;
+  totalOutputTokens?: number;
+  costUSD?: number;
+  fiveHourPct?: number;
+  fiveHourResetsAt?: number;
+  sevenDayPct?: number;
+  sevenDayResetsAt?: number;
+  receivedAt?: string;
+}
+
 export interface ClaudeSessionSnapshot {
   sessionId: string;
   cwd: string;
@@ -125,6 +145,8 @@ export interface ClaudeSessionSnapshot {
   lastActivity: number;
   totalToolCalls: number;
   usage: SessionUsage | null;
+  /** Live statusLine telemetry (ctx%/cost/5h/7d), fed by /statusline/stream. */
+  statusLine?: SessionStatusLine;
 
   /** Human label set at spawn time (e.g. by a supervisor naming a worker). */
   label?: string;

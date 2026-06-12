@@ -18,8 +18,20 @@ import (
 	"github.com/djtouchette/workspacer-hub/internal/broker"
 	"github.com/djtouchette/workspacer-hub/internal/bus"
 	"github.com/djtouchette/workspacer-hub/internal/claudemon"
+	"github.com/djtouchette/workspacer-hub/internal/layout"
 	"github.com/djtouchette/workspacer-hub/internal/plugin"
 )
+
+// defaultLayoutFile returns the path where the shared layout document is
+// persisted across hub restarts: <user-config-dir>/workspacer-hub/layout.json,
+// falling back to the working directory if the config dir is unavailable.
+func defaultLayoutFile() string {
+	dir, err := os.UserConfigDir()
+	if err != nil || dir == "" {
+		return "layout.json"
+	}
+	return filepath.Join(dir, "workspacer-hub", "layout.json")
+}
 
 func main() {
 	addr := flag.String("addr", "127.0.0.1:7895", "listen address for the bus + health endpoints")
@@ -27,6 +39,7 @@ func main() {
 	pluginsDir := flag.String("plugins-dir", "", "directory of plugin subdirs (each with a plugin.json) to load + supervise")
 	webappDir := flag.String("webapp-dir", os.Getenv("WORKSPACER_WEBAPP_DIR"), "directory of the built web app (dist/web) to serve at /app/ for full remote parity; empty = disabled")
 	token := flag.String("token", os.Getenv("HUB_TOKEN"), "shared secret required to reach /bus + mutating routes (empty = no auth, localhost-only default)")
+	layoutFile := flag.String("layout-file", defaultLayoutFile(), "path to persist the shared workspace layout document (empty = memory only)")
 	flag.Parse()
 
 	b := broker.New()
@@ -43,6 +56,16 @@ func main() {
 	// active. Future per-method capability tokens slot in here without touching
 	// callers or providers.
 	srv.SetAuthorize(func(_ uint64, _ string) bool { return true })
+
+	// Shared workspace layout document — the hub owns this so the desktop and
+	// the web remote mirror each other (tmux-style). Registered as in-process
+	// capabilities (layout.get / layout.set); changes broadcast as layout.changed.
+	lay := layout.New(b, *layoutFile)
+	srv.RegisterLocal("layout.get", lay.Get)
+	srv.RegisterLocal("layout.set", lay.Set)
+	if *layoutFile != "" {
+		log.Printf("layout document persisted at %s", *layoutFile)
+	}
 
 	// guard wraps a mutating/sensitive route so it requires the bus token.
 	guard := func(h http.HandlerFunc) http.HandlerFunc {

@@ -68,6 +68,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/sessions/:id/transcript", get(get_transcript))
         .route("/events", get(event_stream))
         .route("/hooks/stream", get(hook_stream))
+        .route("/statusline/stream", get(status_line_stream))
         .route("/items", get(list_items))
         .route("/items/stream", get(items_stream))
         .route("/items/:id", get(get_item_by_id))
@@ -542,6 +543,26 @@ async fn hook_stream(
         },
         Err(err) => {
             tracing::warn!(?err, "hook sse subscriber lagged");
+            None
+        }
+    });
+    Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
+}
+
+async fn status_line_stream(
+    State(store): State<SessionStore>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let rx = store.subscribe_status_lines();
+    let stream = BroadcastStream::new(rx).filter_map(|res| match res {
+        Ok(update) => match serde_json::to_string(&update) {
+            Ok(json) => Some(Ok(Event::default().event("statusline").data(json))),
+            Err(err) => {
+                tracing::warn!(?err, "failed to serialize statusline update");
+                None
+            }
+        },
+        Err(err) => {
+            tracing::warn!(?err, "statusline sse subscriber lagged");
             None
         }
     });

@@ -7,6 +7,13 @@ interface Snap {
   ambientState?: string;
   cwd?: string;
   usage?: { costUSD?: number; contextTokens?: number } | null;
+  statusLine?: {
+    fiveHourPct?: number;
+    fiveHourResetsAt?: number;
+    sevenDayPct?: number;
+    sevenDayResetsAt?: number;
+    receivedAt?: string;
+  };
 }
 
 function basename(p: string): string {
@@ -15,6 +22,61 @@ function basename(p: string): string {
 function fmtUSD(n: number): string {
   return n >= 0.01 ? `$${n.toFixed(2)}` : n > 0 ? '<$0.01' : '$0.00';
 }
+function limitColor(pct: number): string {
+  if (pct >= 80) return 'var(--wks-danger, #e05555)';
+  if (pct >= 50) return 'var(--wks-warning, #e0a000)';
+  return 'var(--wks-success, #3fb950)';
+}
+function fmtReset(epochSecs: number | undefined): string {
+  if (!epochSecs) return '';
+  const mins = Math.round((epochSecs * 1000 - Date.now()) / 60000);
+  if (mins <= 0) return 'resets soon';
+  if (mins < 60) return `resets in ${mins}m`;
+  const h = Math.round(mins / 60);
+  if (h < 24) return `resets in ${h}h`;
+  return `resets in ${Math.round(h / 24)}d`;
+}
+
+/**
+ * The 5h/7d rate-limit windows are account-global (identical across every
+ * session), so we surface them once. Pick the freshest statusLine that carries
+ * them — newest `receivedAt` wins.
+ */
+const RateLimitCard: React.FC<{ snaps: Snap[] }> = ({ snaps }) => {
+  let best: NonNullable<Snap['statusLine']> | null = null;
+  let bestTs = -1;
+  for (const s of snaps) {
+    const sl = s.statusLine;
+    if (!sl || (sl.fiveHourPct === undefined && sl.sevenDayPct === undefined)) continue;
+    const ts = sl.receivedAt ? Date.parse(sl.receivedAt) : 0;
+    if (ts >= bestTs) { bestTs = ts; best = sl; }
+  }
+  if (!best) return null;
+
+  const Row: React.FC<{ label: string; pct?: number; reset?: number }> = ({ label, pct, reset }) =>
+    pct === undefined ? null : (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ fontSize: '0.62rem', color: 'var(--wks-text-faint)', width: 22, flexShrink: 0 }}>{label}</span>
+        <span style={{ flex: 1, height: 5, borderRadius: 3, background: 'var(--wks-border-subtle, #2a2a2a)', overflow: 'hidden' }}>
+          <span style={{ display: 'block', height: '100%', width: `${Math.max(2, Math.min(100, pct))}%`, background: limitColor(pct) }} />
+        </span>
+        <span style={{ fontSize: '0.66rem', fontWeight: 700, color: limitColor(pct), fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>{Math.round(pct)}%</span>
+        {reset ? <span style={{ fontSize: '0.55rem', color: 'var(--wks-text-faint)', flexShrink: 0 }}>{fmtReset(reset)}</span> : null}
+      </div>
+    );
+
+  return (
+    <div style={{
+      flex: 1, minWidth: 220, padding: '10px 14px', borderRadius: 10,
+      background: 'var(--wks-bg-surface)', border: '1px solid var(--wks-border-subtle)',
+      display: 'flex', flexDirection: 'column', gap: 6,
+    }}>
+      <div style={{ fontSize: '0.6rem', color: 'var(--wks-text-faint)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Account usage</div>
+      <Row label="5h" pct={best.fiveHourPct} reset={best.fiveHourResetsAt} />
+      <Row label="7d" pct={best.sevenDayPct} reset={best.sevenDayResetsAt} />
+    </div>
+  );
+};
 
 const Stat: React.FC<{ label: string; value: string; color?: string }> = ({ label, value, color }) => (
   <div style={{
@@ -113,6 +175,9 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
         <Stat label="Working" value={String(working)} color={working ? 'var(--wks-accent, #4a9eff)' : undefined} />
         <Stat label="Need you" value={String(needsYou)} color={needsYou ? 'var(--wks-warning, #e0a000)' : undefined} />
         <Stat label="Total cost" value={fmtUSD(totalCost)} />
+        {/* Account-wide 5h/7d rate-limit windows (scanned across all sessions,
+            not just workspacer's — they're global to the account). */}
+        <RateLimitCard snaps={snaps} />
       </div>
 
       {favourites.length > 0 && (

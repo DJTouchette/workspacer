@@ -20,6 +20,15 @@ export interface SessionListEntry {
   agentCount?: number;
 }
 
+/** The hub-owned shared layout document. `data` is the serialized workspace
+ *  layout (agents + globals); `version` increments on every accepted write so
+ *  clients can ignore their own stale echoes. `data` is null before the first
+ *  client seeds the document. See `src/renderer/src/types/sharedLayout.ts`. */
+export interface LayoutDoc<T = unknown> {
+  version: number;
+  data: T | null;
+}
+
 export interface ElectronAPI {
   // Host OS — 'win32' | 'darwin' | 'linux' | …
   platform: NodeJS.Platform;
@@ -82,6 +91,12 @@ export interface ElectronAPI {
   onHubEvent: (callback: (event: { id: string; type: string; source: string; time: string; data?: unknown }) => void) => () => void;
   onHubStatus: (callback: (status: { connected: boolean }) => void) => () => void;
   getHubStatus: () => Promise<{ connected: boolean }>;
+
+  // Shared layout document (hub-owned; tmux-style mirror). Reads/writes the live
+  // workspace layout so the desktop and the web remote mirror each other.
+  layoutGet: () => Promise<LayoutDoc>;
+  layoutSet: (data: unknown) => Promise<LayoutDoc>;
+  onLayoutChanged: (callback: (doc: LayoutDoc) => void) => () => void;
   getRemoteInfo: () => Promise<{ enabled: boolean; token: string; remoteUrl: string; appUrl: string; busUrl: string }>;
   listHubPlugins: () => Promise<PluginManifest[]>;
   hubPublish: (event: { type: string; source?: string; data?: unknown }) => Promise<void>;

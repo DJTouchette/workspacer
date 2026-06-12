@@ -5,11 +5,14 @@ use dashmap::DashMap;
 use serde_json::Value;
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 
-use super::state::{HookEvent, Pending, SessionMode, SessionState};
+use time::OffsetDateTime;
+
+use super::state::{HookEvent, Pending, SessionMode, SessionState, StatusLine};
 use crate::protocol::WrapperMessage;
 
 const BROADCAST_CAPACITY: usize = 256;
 const HOOK_BROADCAST_CAPACITY: usize = 256;
+const STATUS_BROADCAST_CAPACITY: usize = 256;
 const OUTPUT_BUFFER_CAP: usize = 256 * 1024; // 256 KiB per session
 const BYTE_BROADCAST_CAPACITY: usize = 1024;
 
@@ -51,6 +54,17 @@ pub struct SessionUpdate {
     pub state: SessionState,
 }
 
+/// A statusLine tick for one session. Broadcast on its own channel (not the
+/// hook fanout) because the statusLine command fires very frequently — routing
+/// it through `hook_tx` would flood the SQLite persistence task.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct StatusLineUpdate {
+    pub session_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    pub status_line: StatusLine,
+}
+
 /// Handle the daemon keeps for each connected wrapper. Sending into `tx`
 /// reaches the wrapper's WebSocket and ultimately the child's stdin / signals.
 #[derive(Clone)]
@@ -69,6 +83,9 @@ pub struct SessionStore {
     /// before state-machine processing, so clients that want the unaggregated
     /// stream (e.g. a richer external session store) can subscribe.
     hook_tx: broadcast::Sender<HookEvent>,
+    /// StatusLine fanout — kept separate from `hook_tx` so the high-frequency
+    /// statusLine ticks never reach the SQLite persistence task.
+    status_tx: broadcast::Sender<StatusLineUpdate>,
     /// Per-session opt-in for the deferred-hook gateway. When `true`,
     /// PreToolUse hook responses are parked until a client decides
     /// (or until the daemon's timeout fires).
@@ -89,6 +106,7 @@ impl SessionStore {
     pub fn new() -> Self {
         let (update_tx, _) = broadcast::channel(BROADCAST_CAPACITY);
         let (hook_tx, _) = broadcast::channel(HOOK_BROADCAST_CAPACITY);
+        let (status_tx, _) = broadcast::channel(STATUS_BROADCAST_CAPACITY);
         Self {
             states: Arc::new(DashMap::new()),
             wrappers: Arc::new(DashMap::new()),
@@ -96,6 +114,7 @@ impl SessionStore {
             bytes_tx: Arc::new(DashMap::new()),
             update_tx,
             hook_tx,
+            status_tx,
             gates: Arc::new(DashMap::new()),
             decisions: Arc::new(DashMap::new()),
             pending_spawns_by_cwd: Arc::new(DashMap::new()),
@@ -219,6 +238,38 @@ impl SessionStore {
         state
     }
 
+    /// Apply a Claude Code statusLine payload to its session.
+    ///
+    /// The statusLine JSON carries Claude's *own* session id (same id its hooks
+    /// use), so we resolve it through the same alias map `ingest` builds —
+    /// landing on the canonical (spawn-side) id Workspacer knows. No-op if the
+    /// session isn't registered yet: the statusLine command fires repeatedly,
+    /// so the next tick lands once `SessionStart` has created the alias. Returns
+    /// the updated state (and broadcasts a `StatusLine` update) when matched.
+    pub fn ingest_status_line(&self, raw: &Value) -> Option<SessionState> {
+        let sid = raw.get("session_id").and_then(Value::as_str)?;
+        let canonical = self
+            .aliases
+            .get(sid)
+            .map(|e| e.clone())
+            .unwrap_or_else(|| sid.to_string());
+
+        let status = StatusLine::from_claude_json(raw);
+        let state = {
+            let mut entry = self.states.get_mut(&canonical)?;
+            let session = entry.value_mut();
+            session.status_line = Some(status.clone());
+            session.updated_at = OffsetDateTime::now_utc();
+            session.clone()
+        };
+        let _ = self.status_tx.send(StatusLineUpdate {
+            session_id: canonical,
+            cwd: state.cwd.clone(),
+            status_line: status,
+        });
+        Some(state)
+    }
+
     pub fn list(&self) -> Vec<SessionState> {
         self.states.iter().map(|e| e.value().clone()).collect()
     }
@@ -233,6 +284,10 @@ impl SessionStore {
 
     pub fn subscribe_hooks(&self) -> broadcast::Receiver<HookEvent> {
         self.hook_tx.subscribe()
+    }
+
+    pub fn subscribe_status_lines(&self) -> broadcast::Receiver<StatusLineUpdate> {
+        self.status_tx.subscribe()
     }
 
     // --- wrapper-driven session lifecycle -----------------------------------
@@ -286,7 +341,7 @@ impl SessionStore {
         handle: WrapperHandle,
     ) -> SessionState {
         let state = {
-            let mut entry = self
+            let entry = self
                 .states
                 .entry(session_id.to_string())
                 .or_insert_with(|| {
@@ -428,5 +483,48 @@ mod tests {
             store.aliases.get("claude-own-id").map(|e| e.clone()),
             Some("canonical-uuid".to_string()),
         );
+    }
+
+    // A statusLine payload arrives with Claude's own session id; it must resolve
+    // through the alias map to the canonical (spawn) id and land on that state.
+    #[test]
+    fn status_line_resolves_alias_and_lands_on_canonical_session() {
+        let store = SessionStore::new();
+        let cwd = "/work/repo";
+        store.register_spawn("canonical-uuid", cwd, handle());
+        // SessionStart binds claude's id → canonical via cwd.
+        store.ingest(hook("SessionStart", "claude-own-id", cwd));
+
+        let raw = serde_json::json!({
+            "session_id": "claude-own-id",
+            "workspace": { "current_dir": cwd },
+            "model": { "display_name": "Opus 4.8 (1M context)" },
+            "context_window": { "used_percentage": 22, "total_input_tokens": 220_000, "total_output_tokens": 700 },
+            "cost": { "total_cost_usd": 3.34 },
+            "rate_limits": {
+                "five_hour": { "used_percentage": 1.0, "resets_at": 1_738_425_600i64 },
+                "seven_day": { "used_percentage": 35.0 }
+            }
+        });
+        let state = store.ingest_status_line(&raw).expect("should match canonical session");
+        assert_eq!(state.session_id, "canonical-uuid");
+        let sl = state.status_line.expect("status_line set");
+        assert_eq!(sl.model_display.as_deref(), Some("Opus 4.8 (1M context)"));
+        assert_eq!(sl.context_used_pct, Some(22.0));
+        assert_eq!(sl.cost_usd, Some(3.34));
+        assert_eq!(sl.five_hour_pct, Some(1.0));
+        assert_eq!(sl.five_hour_resets_at, Some(1_738_425_600));
+        assert_eq!(sl.seven_day_pct, Some(35.0));
+        assert_eq!(sl.seven_day_resets_at, None);
+    }
+
+    // Before any SessionStart, a statusLine for an unknown id is a silent no-op
+    // (it fires repeatedly, so the next tick lands once the session registers).
+    #[test]
+    fn status_line_for_unknown_session_is_noop() {
+        let store = SessionStore::new();
+        let raw = serde_json::json!({ "session_id": "nobody", "context_window": { "used_percentage": 5 } });
+        assert!(store.ingest_status_line(&raw).is_none());
+        assert!(store.get("nobody").is_none(), "must not create a phantom session");
     }
 }
