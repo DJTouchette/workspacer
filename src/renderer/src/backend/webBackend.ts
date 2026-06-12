@@ -134,6 +134,7 @@ export function createWebBackend(token: string): ElectronAPI {
     attachClaude: (paneId, sessionId) => { viewerSessions.set(paneId, sessionId); return Promise.resolve(sessionId); },
     detachClaude: (paneId) => { viewerSessions.delete(paneId); return Promise.resolve(); }, // stream lifetime owned by onClaudeOutput's teardown
     claudeGate: (sessionId, on) => client.call<void>('claude.gate', { sessionId, on }).then(() => {}),
+    claudeSummarize: (sessionId, steps) => client.call<string | null>('claude.summarize', { sessionId, steps }).catch(() => null),
     claudeWrite: (viewerKey, data) => { client.call('sessions.terminalInput', { sessionId: sessionFor(viewerKey), data }).catch(() => {}); },
     onClaudeOutput: (viewerKey, callback) => streamPty(client, reprimers, sessionFor(viewerKey), callback),
 

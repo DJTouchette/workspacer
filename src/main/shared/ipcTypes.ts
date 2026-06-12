@@ -210,6 +210,7 @@ export interface AppConfig {
     defaultModel: string;
     seenModels: string[];
     skipPermissionsDefault: boolean;
+    defaultView: 'gui' | 'terminal';
   };
   directories: {
     recent: string[];

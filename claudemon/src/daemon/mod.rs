@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use tokio::net::TcpListener;
 
-use crate::session::{HookEvent, SessionStore};
+use crate::session::{conversation, ConversationStore, HookEvent, SessionStore};
 use crate::store::items::{ItemBroadcaster, ItemChange};
 use crate::store::Db;
 
@@ -39,6 +39,11 @@ pub async fn run(cfg: ServeConfig) -> Result<()> {
     // Idle sweep: promote silent working sessions to stuck per spec §11.
     spawn_idle_sweep(db.clone(), items_broadcaster.clone());
 
+    // Transcript tailer: daemon-owned conversation parsing. Streams structured
+    // deltas to clients so they never re-read the JSONL themselves.
+    let conv = ConversationStore::new();
+    conversation::spawn_tailer(store.clone(), conv.clone());
+
     let hook_addr: SocketAddr = format!("{}:{}", cfg.host, cfg.hook_port).parse()?;
     let api_addr: SocketAddr = format!("{}:{}", cfg.host, cfg.api_port).parse()?;
 
@@ -57,6 +62,7 @@ pub async fn run(cfg: ServeConfig) -> Result<()> {
         store,
         db,
         items: items_broadcaster,
+        conv,
     });
 
     let hook_task = tokio::spawn(async move {

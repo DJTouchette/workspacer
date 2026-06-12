@@ -22,13 +22,23 @@ html, body {
   overflow: hidden;
   height: 100%;
   width: 100%;
+  /* Phones: stop iOS from auto-zooming text, kill pull-to-refresh / rubber-band
+   * bounce that would otherwise drag the fixed-position chrome around. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  overscroll-behavior: none;
 }
 
 .app-root {
   display: flex;
   flex-direction: column;
+  /* 100vh is wrong on mobile browsers — it counts the area behind the URL bar,
+   * so the bottom of the app gets cut off. 100dvh tracks the *visible* viewport
+   * as the bars show/hide; the 100vh line is the fallback for older engines. */
   height: 100vh;
+  height: 100dvh;
   width: 100vw;
+  width: 100dvw;
   /* Positioning context so the (absolute) NavBar/SideBar are clipped by the
    * rounded overflow below, instead of escaping like fixed elements do. */
   position: relative;
@@ -95,4 +105,55 @@ html, body {
 /* Pane hover effect */
 .pane-wrapper:hover .pane-header {
   background-color: var(--wks-bg-header);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * Phone / small-screen tuning. Mirrors SMALL_SCREEN_QUERY (max-width: 768px)
+ * in useMediaQuery.ts — keep the breakpoints in sync. Applies to both the web
+ * remote and a narrowed-down desktop window.
+ * ──────────────────────────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  /* Go full-bleed: a rounded, inset-bordered "window" only makes sense on the
+   * desktop where the OS draws a frame around it. On a phone it just wastes
+   * edge pixels and rounds off content. */
+  .app-root {
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  /* Honor the notch / home indicator so the top tab bar and any bottom UI
+   * aren't tucked under the system insets. */
+  .navbar {
+    padding-top: env(safe-area-inset-top);
+    padding-left: max(10px, env(safe-area-inset-left));
+    padding-right: max(10px, env(safe-area-inset-right));
+  }
+
+  /* The tab strip clips overflow on desktop (mouse users scroll the wheel /
+   * use Ctrl+number). On a phone that hides tabs with no way to reach them —
+   * let it scroll horizontally instead, with momentum and no visible bar. */
+  .navbar > div:first-child {
+    overflow-x: auto !important;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .navbar > div:first-child::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Fatten tap targets. Inline styles set 26px heights tuned for a cursor;
+   * 36px is the practical floor for a fingertip. !important is required to
+   * win over the element-level inline styles. */
+  .navbar button {
+    min-height: 34px !important;
+    min-width: 34px !important;
+  }
+
+  /* Touch scrollbars are easy to fat-finger when they're 4px — widen them so
+   * scrollable panes (chat transcript, file lists) are draggable by thumb. */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
 }

@@ -7,7 +7,7 @@ import { useClaudeSpawn } from '../hooks/useClaudeSpawn';
 import { useClaudeSession } from '../hooks/useClaudeSession';
 import { useConfig } from '../hooks/useConfig';
 import { useTheme } from '../hooks/useTheme';
-import type { ConversationTurn } from '../types/claudeSession';
+import type { ConversationTurn, ToolCall, SubagentInfo, WorkflowRunInfo } from '../types/claudeSession';
 import {
   claudeColors as colors,
   ensureKeyframes,
@@ -16,16 +16,17 @@ import {
   sendApproval,
 } from '../components/claude-shared';
 import { RefreshCw } from '../components/icons';
+import { PanelRight } from 'lucide-react';
 import { quoteFontFamily } from '../lib/terminalUtils';
 
 // ── Sub-components ──
 import { InlineWorkLog } from '../components/claude/InlineWorkLog';
 import { ConversationMessage } from '../components/claude/ConversationMessage';
 import { TurnDivider } from '../components/claude/TurnDivider';
-import { ApprovalPrompt } from '../components/claude/ApprovalPrompt';
-import { QuestionPicker } from '../components/claude/QuestionPicker';
-import { InlineFilesSection } from '../components/claude/InlineFilesSection';
-import { FileChips } from '../components/claude/FileChips';
+import { NeedsYouDock } from '../components/claude/NeedsYouDock';
+import { Composer } from '../components/claude/Composer';
+import { WorkCard } from '../components/claude/WorkCard';
+import { InspectorRail } from '../components/claude/InspectorRail';
 import { DropOverlay } from '../components/claude/DropOverlay';
 import { ScrollToBottomButton } from '../components/claude/ScrollToBottomButton';
 import { SessionStatusBar } from '../components/claude/SessionStatusBar';
@@ -54,7 +55,13 @@ const CONVERSATION_PAGE_SIZE = 60;
 // ── Main component ──
 
 const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, profileId, resumeSessionId, attachSessionId, initialPrompt, onPtyReady }) => {
-  const [viewMode, setViewMode] = useState<ViewMode>(initialPrompt ? 'gui' : 'terminal');
+  const { config } = useConfig();
+  // A spawned-with-prompt pane always opens in GUI; otherwise honour the
+  // configured default view (falls back to terminal until config loads).
+  const [viewMode, setViewMode] = useState<ViewMode>(
+    initialPrompt ? 'gui' : (config.claude?.defaultView ?? 'terminal'),
+  );
+  const [railOpen, setRailOpen] = useState(() => localStorage.getItem('wks-claude-rail') === '1');
   const [inputValue, setInputValue] = useState(initialPrompt ?? '');
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   const [approvalDismissedAt, setApprovalDismissedAt] = useState(0);
@@ -70,7 +77,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
   const conversationEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const contentAreaRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   // Escape hatch for the rare backdrop-filter compositing garble: nudge the
   // content area onto a fresh raster (toggle a composited property for one
@@ -87,7 +94,6 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
     });
   }, []);
 
-  const { config } = useConfig();
   const { terminalTheme } = useTheme();
   const termCfg = config.terminal;
 
@@ -269,6 +275,20 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
       requestAnimationFrame(() => inputRef.current?.focus());
     }
   }, [viewMode, isActive, isReady]);
+
+  // Jump to the latest message whenever the GUI view opens — the scroll
+  // container is freshly mounted on each GUI switch, so land at the bottom
+  // (instant, no smooth animation) rather than wherever it last rendered.
+  useEffect(() => {
+    if (viewMode !== 'gui') return;
+    const snap = () => {
+      const c = scrollContainerRef.current;
+      if (c) c.scrollTop = c.scrollHeight;
+    };
+    // Two frames: one for the GUI subtree to mount, one for content layout.
+    const id = requestAnimationFrame(() => requestAnimationFrame(snap));
+    return () => cancelAnimationFrame(id);
+  }, [viewMode]);
 
   // Re-fit terminal on active change
   useEffect(() => {
@@ -487,7 +507,6 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
     return [...base, ...optimisticMessages];
   }, [session?.conversation, optimisticMessages]);
   const hasOlderMessages = conversation.length > visibleCount;
-  const fileChanges = session?.fileChanges ?? [];
   const subagents = session?.subagents ?? [];
   const workflows = session?.workflows ?? [];
   const pendingApproval = session?.pendingApproval ?? null;
@@ -518,6 +537,14 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
   // If user cancelled, suppress streaming UI until a new activity cycle begins
   const isStreaming = serverStreaming && (session?.lastActivity ?? 0) > cancelledAt;
 
+  // Needs-you dock visibility. Dismissal timestamps give an optimistic hide:
+  // the dock vanishes on click while the response round-trips through the
+  // daemon. New approvals/questions (newer timestamps) re-show it.
+  const dockApproval = pendingApproval && pendingApproval.timestamp > approvalDismissedAt ? pendingApproval : null;
+  const dockQuestions = pendingQuestions && pendingQuestions.length > 0 && (session?.lastActivity ?? 0) > questionDismissedAt
+    ? pendingQuestions
+    : null;
+
   // Cancel the current task — send Escape and suppress streaming UI
   const cancelTask = useCallback(() => {
     write('\x1b');
@@ -536,6 +563,69 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [viewMode, isActive, isStreaming, cancelTask]);
+
+  const toggleRail = useCallback(() => {
+    setRailOpen(open => {
+      localStorage.setItem('wks-claude-rail', open ? '0' : '1');
+      return !open;
+    });
+  }, []);
+
+  // Inspector-rail hotkey (configurable: keybindings.shortcuts['toggle-inspector']).
+  // The rail is per-pane state, so we match the combo here for the active pane
+  // rather than routing through the global nav handler. Capture phase + stop
+  // beats xterm's own key handling when the pane is in terminal mode.
+  const inspectorCombo = config.keybindings?.shortcuts?.['toggle-inspector'];
+  useEffect(() => {
+    if (!isActive || !inspectorCombo) return;
+    const parts = inspectorCombo.toLowerCase().split('+');
+    const key = parts[parts.length - 1];
+    const needCtrl = parts.includes('ctrl');
+    const needAlt = parts.includes('alt');
+    const needShift = parts.includes('shift');
+    const needMeta = parts.includes('meta');
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey !== needCtrl || e.altKey !== needAlt || e.shiftKey !== needShift || e.metaKey !== needMeta) return;
+      if (e.key.toLowerCase() !== key) return;
+      e.preventDefault();
+      e.stopPropagation();
+      toggleRail();
+    };
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [isActive, inspectorCombo, toggleRail]);
+
+  // Anchor subagents/workflow runs to the Agent/Workflow tool calls that
+  // spawned them so they render inline in the timeline. Hooks and the
+  // transcript don't share ids, so match by order: the nth Agent tool call
+  // in the conversation pairs with the nth hook-reported subagent (tool_use
+  // blocks land in the JSONL before execution starts, so ordering holds).
+  // Anything left over (hook arrived before the transcript caught up)
+  // renders in the live section at the bottom.
+  const { toolIdToSubagent, toolIdToWorkflow, unanchoredSubagents, unanchoredWorkflows } = useMemo(() => {
+    const agentCalls: ToolCall[] = [];
+    const workflowCalls: ToolCall[] = [];
+    for (const turn of conversation) {
+      for (const tc of turn.toolCalls ?? []) {
+        if (tc.name === 'Agent') agentCalls.push(tc);
+        else if (tc.name === 'Workflow') workflowCalls.push(tc);
+      }
+    }
+    const toolIdToSubagent = new Map<string, SubagentInfo>();
+    subagents.forEach((sub, i) => {
+      if (i < agentCalls.length) toolIdToSubagent.set(agentCalls[i].id, sub);
+    });
+    const toolIdToWorkflow = new Map<string, WorkflowRunInfo>();
+    workflows.forEach((run, i) => {
+      if (i < workflowCalls.length) toolIdToWorkflow.set(workflowCalls[i].id, run);
+    });
+    return {
+      toolIdToSubagent,
+      toolIdToWorkflow,
+      unanchoredSubagents: subagents.slice(agentCalls.length),
+      unanchoredWorkflows: workflows.slice(workflowCalls.length),
+    };
+  }, [conversation, subagents, workflows]);
 
   // Show active + completed tool calls, excluding any already in conversation
   // turns (from JSONL transcript) to avoid duplication while keeping history
@@ -579,7 +669,9 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
     isStreaming,
   ]);
 
-  // Build rendered conversation with dividers (windowed to last visibleCount turns)
+  // Build rendered conversation with dividers (windowed to last visibleCount
+  // turns). Consecutive tool-call turns collapse into one WorkCard so the
+  // timeline reads as: user said → Claude worked → Claude said.
   const renderedConversation = useMemo(() => {
     const items: React.ReactNode[] = [];
     const startIdx = Math.max(0, conversation.length - visibleCount);
@@ -587,8 +679,39 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
     // Seed prevRole from turn before the window so the first divider renders correctly
     let prevRole: string | null = startIdx > 0 ? conversation[startIdx - 1].role : null;
 
+    const isToolTurn = (t: ConversationTurn) =>
+      t.role === 'assistant' && (t.toolCalls?.length ?? 0) > 0 && !t.content;
+
+    let pendingWork: { calls: ToolCall[]; keyStart: number; endIdx: number } | null = null;
+    const flushWork = () => {
+      if (!pendingWork) return;
+      const { calls, keyStart, endIdx } = pendingWork;
+      items.push(
+        <WorkCard
+          key={`work-${keyStart}`}
+          toolCalls={calls}
+          subagentByToolId={toolIdToSubagent}
+          workflowByToolId={toolIdToWorkflow}
+          live={isStreaming && endIdx === conversation.length - 1}
+          sessionId={sessionId ?? undefined}
+        />
+      );
+      pendingWork = null;
+    };
+
     visibleTurns.forEach((turn, vi) => {
       const gi = startIdx + vi; // global index for stable keys
+      if (isToolTurn(turn)) {
+        if (!pendingWork) {
+          if (prevRole === 'user' && gi > 0) items.push(<TurnDivider key={`div-${gi}`} />);
+          pendingWork = { calls: [], keyStart: gi, endIdx: gi };
+        }
+        pendingWork.calls.push(...(turn.toolCalls ?? []));
+        pendingWork.endIdx = gi;
+        prevRole = 'assistant';
+        return;
+      }
+      flushWork();
       if (turn.role === 'assistant' && prevRole === 'user' && gi > 0) {
         items.push(<TurnDivider key={`div-${gi}`} />);
       }
@@ -601,9 +724,10 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
       );
       prevRole = turn.role;
     });
+    flushWork();
 
     return items;
-  }, [conversation, visibleCount]);
+  }, [conversation, visibleCount, toolIdToSubagent, toolIdToWorkflow, isStreaming, sessionId]);
 
   return (
     <div style={{
@@ -686,6 +810,21 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
           +
         </button>
 
+        {/* Inspector rail toggle — available in both GUI and Terminal mode */}
+        <button
+          onClick={toggleRail}
+          title={railOpen ? 'Hide inspector' : 'Show inspector (files / workflows / agents / usage)'}
+          style={{
+            ...toggleBtnStyle,
+            display: 'flex',
+            alignItems: 'center',
+            backgroundColor: railOpen ? 'var(--wks-accent-bg)' : 'transparent',
+            color: railOpen ? colors.accent : colors.mutedDim,
+          }}
+        >
+          <PanelRight size={13} strokeWidth={1.9} />
+        </button>
+
         {/* View mode toggle */}
         <div style={{ display: 'flex', gap: 2 }}>
           <button
@@ -711,8 +850,10 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
         </div>
       </div>
 
-      {/* Content area */}
-      <div ref={contentAreaRef} style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
+      {/* Content + inspector rail row — the rail is a sibling of the content
+          area (not nested in the GUI view) so it stays put across GUI/Term. */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'row', overflow: 'hidden' }}>
+      <div ref={contentAreaRef} style={{ flex: 1, minWidth: 0, overflow: 'hidden', position: 'relative' }}>
         {isDragOver && <DropOverlay />}
 
         {/* Terminal view (always mounted, visibility toggled) */}
@@ -801,27 +942,11 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
                 {/* Rendered conversation messages with dividers */}
                 {renderedConversation}
 
-                {/* Active tool calls + subagents + workflow runs as inline work log */}
-                {(liveToolCalls.length > 0 || subagents.length > 0 || workflows.length > 0) && (
-                  <InlineWorkLog toolCalls={liveToolCalls} subagents={subagents} workflows={workflows} />
-                )}
-
-                {/* Inline file changes */}
-                <InlineFilesSection fileChanges={fileChanges} />
-
-                {/* Pending approval — hide after user responds, show again for new approvals.
-                    A pending question picker always takes precedence: claude might fire
-                    PermissionRequest in the same turn as an AskUserQuestion PreToolUse,
-                    and the approval card from the former is stale once the picker is up. */}
-                {pendingApproval && pendingApproval.timestamp > approvalDismissedAt && !(pendingQuestions && pendingQuestions.length > 0) && (
-                  <ApprovalPrompt approval={pendingApproval} onRespond={handleApprovalRespond} />
-                )}
-
-                {/* AskUserQuestion picker — surfaced by claudemon's mode=question.
-                    Hide after the user clicks an option until the next PreToolUse
-                    arrives (which clears pendingQuestions server-side). */}
-                {pendingQuestions && pendingQuestions.length > 0 && (session?.lastActivity ?? 0) > questionDismissedAt && (
-                  <QuestionPicker questions={pendingQuestions} onAnswer={handleAnswer} />
+                {/* Live work not yet absorbed into the timeline: in-flight tool
+                    calls plus agents/workflows that hooks reported before the
+                    transcript caught up. Anchored agents render in WorkCards. */}
+                {(liveToolCalls.length > 0 || unanchoredSubagents.length > 0 || unanchoredWorkflows.length > 0) && (
+                  <InlineWorkLog toolCalls={liveToolCalls} subagents={unanchoredSubagents} workflows={unanchoredWorkflows} />
                 )}
 
                 {/* Streaming indicator with cancel */}
@@ -860,96 +985,33 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
             {/* Scroll to bottom button */}
             {showScrollBtn && <ScrollToBottomButton onClick={scrollToBottom} />}
 
+            {/* Needs-you dock — approvals and questions pinned above the composer */}
+            <NeedsYouDock
+              approval={dockApproval}
+              questions={dockQuestions}
+              onApprove={handleApprovalRespond}
+              onAnswer={handleAnswer}
+            />
+
             {/* Composer / Input area */}
-            <div style={{
-              borderTop: `1px solid ${colors.border}`,
-              padding: '8px 16px 10px 16px',
-              flexShrink: 0,
-            }}>
-              <div style={{ maxWidth: 720, margin: '0 auto' }}>
-                <FileChips files={attachedFiles} onRemove={removeAttachedFile} />
-                <div style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  padding: '6px 6px 6px 10px',
-                  borderRadius: 20,
-                  border: `1px solid ${attachedFiles.length > 0 ? colors.accent : colors.border}`,
-                  backgroundColor: 'rgba(255, 255, 255, 0.03)',
-                  transition: 'border-color 0.15s',
-                }}>
-                  <button
-                    onClick={openFilePicker}
-                    title="Attach files"
-                    style={{
-                      width: 24,
-                      height: 24,
-                      borderRadius: '50%',
-                      border: 'none',
-                      backgroundColor: 'transparent',
-                      color: colors.muted,
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: '1rem',
-                      flexShrink: 0,
-                      padding: 0,
-                    }}
-                  >
-                    +
-                  </button>
-                  <input
-                    ref={inputRef}
-                    placeholder={attachedFiles.length > 0 ? 'What should Claude do with these files?' : 'Message Claude...'}
-                    value={inputValue}
-                    onChange={(e) => setInputValue(e.target.value)}
-                    onPaste={handlePaste}
-                    style={{
-                      flex: 1,
-                      fontSize: '0.8rem',
-                      padding: '4px 0',
-                      border: 'none',
-                      backgroundColor: 'transparent',
-                      color: colors.text,
-                      outline: 'none',
-                      fontFamily: 'inherit',
-                      lineHeight: 1.4,
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault();
-                        handleSend();
-                      }
-                    }}
-                  />
-                <button
-                  onClick={handleSend}
-                  style={{
-                    width: 28,
-                    height: 28,
-                    borderRadius: '50%',
-                    border: 'none',
-                    backgroundColor: (inputValue.trim() || attachedFiles.length > 0) ? colors.accent : 'rgba(255,255,255,0.06)',
-                    color: (inputValue.trim() || attachedFiles.length > 0) ? '#0d0d10' : colors.mutedDim,
-                    cursor: (inputValue.trim() || attachedFiles.length > 0) ? 'pointer' : 'default',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontSize: '0.85rem',
-                    fontWeight: 700,
-                    flexShrink: 0,
-                    transition: 'background-color 0.15s, color 0.15s',
-                  }}
-                  aria-label="Send message"
-                >
-                  {'↑'}
-                </button>
-                </div>
-              </div>
-            </div>
+            <Composer
+              value={inputValue}
+              onChange={setInputValue}
+              onSend={handleSend}
+              onPaste={handlePaste}
+              onPickFiles={openFilePicker}
+              attachedFiles={attachedFiles}
+              onRemoveFile={removeAttachedFile}
+              dimmed={!!(dockApproval || dockQuestions)}
+              inputRef={inputRef}
+            />
           </div>
         )}
+      </div>
+
+      {/* Inspector rail — files / workflows / agents / usage. Sibling of the
+          content area, so it persists in both GUI and Terminal mode. */}
+      {railOpen && <InspectorRail session={session} onClose={toggleRail} />}
       </div>
     </div>
   );

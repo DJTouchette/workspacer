@@ -8,8 +8,9 @@ import {
 } from './workflowWatcher';
 import { publishWorkflowRuns, publishSnapshot, forgetSession as forgetTelemetry } from './hubTelemetry';
 import { applyHookEvent, applyStopEvent, applySessionEndEvent } from './sessionStore/hookEventRouter';
-import { refreshFromTranscript } from './sessionStore/transcriptParser';
+import { applyConversationItems, type ConversationDeltaWire } from './sessionStore/conversationApplier';
 import { SessionUsageAccumulator } from './sessionStore/usageAccumulator';
+import { CLAUDEMON_API_URL } from './claudemonDaemon';
 import { writeHistory } from './sessionStore/analyticsWriter';
 
 export type { WorkflowRunInfo, WorkflowAgentInfo, WorkflowPhaseInfo } from './workflowWatcher';
@@ -132,8 +133,7 @@ export interface ClaudeSessionState {
   lastActivity: number;
   totalToolCalls: number;
   peakContext: number; // highest context-token reading seen (for analytics)
-  lastTranscriptLine: number; // track how far we've read in JSONL
-  usage: import('./modelUsage').SessionUsage | null; // token / cost / context, parsed from transcript
+  usage: import('./modelUsage').SessionUsage | null; // token / cost / context, from the daemon's usage items
   statusLine?: SessionStatusLine; // live statusLine telemetry (ctx%/cost/rate-limits)
   // Adoption metadata — set before first hook arrives so adopted cards can be
   // named and nested under the agent that spawned them.
@@ -157,6 +157,10 @@ class ClaudeSessionStore {
   // Pre-spawn metadata keyed by pinned session id. Recorded before the first
   // hook arrives so adopted cards carry a name and parent from the start.
   private spawnMeta = new Map<string, { label?: string; parentSessionId?: string }>();
+  // Last-applied conversation sequence per session (gap detection for the
+  // daemon's delta stream) and sessions with a snapshot resync in flight.
+  private convSeq = new Map<string, number>();
+  private resyncing = new Set<string>();
 
   /** Record name/parent for a session about to be spawned, keyed by its pinned
    *  id. Consumed when the session first registers (see createSession), so an
@@ -200,10 +204,8 @@ class ClaudeSessionStore {
     // Keep the watcher's poll loop alive while hooks are flowing
     workflowWatcher.poke(sessionId);
 
-    // Refresh conversation from JSONL transcript on every hook event
-    if (session.transcriptPath) {
-      refreshFromTranscript(session, (s, model, usage, key) => this.usageAccumulator.applyUsage(s, model, usage, key));
-    }
+    // Conversation content arrives via claudemon's transcript tailer
+    // (applyConversationDelta) — no JSONL reads happen in this process.
 
     // Snapshot the ambient state so the notifier can detect transitions
     // (needs-you / done) after the switch below applies the new state.
@@ -212,16 +214,12 @@ class ClaudeSessionStore {
     // Handle Stop and SessionEnd here because they need store-level side-effects.
     if (hookName === 'Stop') {
       applyStopEvent(session);
-      // Delayed re-read: final assistant message may still be flushing
-      if (session.transcriptPath) {
-        setTimeout(() => {
-          refreshFromTranscript(session!, (s, model, usage, key) => this.usageAccumulator.applyUsage(s, model, usage, key));
-          this.pushUpdate(session!);
-          writeHistory(session!, 'active');
-        }, 500);
-      } else {
-        writeHistory(session, 'active');
-      }
+      // Delayed history write: the final assistant message may still be in
+      // flight on the conversation stream (claudemon keeps tailing briefly
+      // after Stop), so give it a moment to land before snapshotting.
+      setTimeout(() => {
+        writeHistory(session!, 'active');
+      }, 1500);
     } else if (hookName === 'SessionEnd') {
       applySessionEndEvent(session);
       workflowWatcher.detach(sessionId);
@@ -234,6 +232,68 @@ class ClaudeSessionStore {
     agentNotifier.notifyOnTransition(session, prevAmbient);
     this.mergeWatcherData(session);
     this.pushUpdate(session);
+  }
+
+  // ── Conversation delta integration ──
+  //
+  // Fed by claudemonConversationBridge from claudemon's `/conversation/stream`.
+  // The daemon owns transcript parsing; we just fold typed items into the
+  // session. Sequence numbers detect missed frames (daemon restart, SSE lag):
+  // on a gap we resync from the snapshot endpoint instead of guessing.
+
+  applyConversationDelta(delta: ConversationDeltaWire): void {
+    const sessionId = delta.session_id;
+    if (!sessionId) return;
+    let session = this.sessions.get(sessionId);
+    if (!session) {
+      // Deltas can outrun the first hook for adopted/external sessions —
+      // create the entry the same way handleHookEvent would.
+      session = this.createSession(sessionId, '');
+    }
+
+    if (delta.reset) {
+      session.conversation = [];
+      session.totalToolCalls = 0;
+      this.convSeq.set(sessionId, 0);
+    }
+
+    const lastSeq = this.convSeq.get(sessionId) ?? 0;
+    if (!delta.reset && delta.seq !== lastSeq + delta.items.length) {
+      // Missed frames — rebuild from the daemon's snapshot.
+      void this.resyncConversation(sessionId);
+      return;
+    }
+
+    this.convSeq.set(sessionId, delta.seq);
+    applyConversationItems(session, delta.items, (s, model, usage, key) =>
+      this.usageAccumulator.applyUsage(s, model, usage, key));
+    session.lastActivity = Date.now();
+    this.mergeWatcherData(session);
+    this.pushUpdate(session);
+  }
+
+  /** Replace a session's conversation with the daemon's full parsed history. */
+  private async resyncConversation(sessionId: string): Promise<void> {
+    if (this.resyncing.has(sessionId)) return;
+    this.resyncing.add(sessionId);
+    try {
+      const res = await fetch(`${CLAUDEMON_API_URL}/sessions/${sessionId}/conversation`);
+      if (!res.ok) return;
+      const snap = await res.json() as { seq: number; items: ConversationDeltaWire['items'] };
+      const session = this.sessions.get(sessionId);
+      if (!session) return;
+      session.conversation = [];
+      session.totalToolCalls = 0;
+      applyConversationItems(session, snap.items ?? [], (s, model, usage, key) =>
+        this.usageAccumulator.applyUsage(s, model, usage, key));
+      this.convSeq.set(sessionId, snap.seq ?? 0);
+      this.mergeWatcherData(session);
+      this.pushUpdate(session);
+    } catch (err) {
+      console.warn(`[SessionStore] conversation resync failed for ${sessionId}:`, err);
+    } finally {
+      this.resyncing.delete(sessionId);
+    }
   }
 
   // ── StatusLine integration ──
@@ -326,7 +386,6 @@ class ClaudeSessionStore {
       lastActivity: Date.now(),
       totalToolCalls: 0,
       peakContext: 0,
-      lastTranscriptLine: 0,
       usage: null,
     };
     // Apply any pre-registered spawn metadata (label, parentSessionId) so the

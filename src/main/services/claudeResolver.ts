@@ -114,6 +114,13 @@ function getBaseArgv(): string[] {
   return process.platform === 'win32' ? ['cmd.exe', '/c', 'claude'] : ['claude'];
 }
 
+/** The resolved `claude` launcher argv with no session flags — e.g. `['claude']`
+ *  or `['cmd.exe', '/c', 'claude']` on Windows. Handed to claudemon so it can
+ *  run a headless `claude -p` summary call without re-resolving the binary. */
+export function claudeBaseArgv(): string[] {
+  return getBaseArgv();
+}
+
 export interface ClaudeArgvOptions {
   extraArgs?: string[];
   resumeSessionId?: string;

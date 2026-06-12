@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { PaneType, TabConfig, ViewMode } from '../types/pane';
 import { useConfig, ScriptEntry } from '../hooks/useConfig';
+import { useIsSmallScreen } from '../hooks/useMediaQuery';
 import { PaneIcon, Play, Settings, Plus, Columns3, LayoutGrid, Rows3 } from './icons';
 
 interface NavBarProps {
@@ -37,7 +38,10 @@ interface SessionPickerState {
 
 const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab, onCloseTab, onRenameTab, onSplitTab, onMoveTab, viewMode = 'tabs', onToggleViewMode, leftOffset = 0, cwd, scripts = [], onRunScript, onSaveScripts }) => {
   const { config } = useConfig();
-  const navHeight = Math.max(config.ui.navBarHeight || 34, 32);
+  const isSmallScreen = useIsSmallScreen();
+  // Keep this formula identical to App.tsx's navHeight — the app reserves
+  // navHeight + 8px of top margin for content, so a mismatch would clip panes.
+  const navHeight = Math.max(config.ui.navBarHeight || 34, isSmallScreen ? 44 : 32);
   // On Windows the native caption buttons (min/max/close) are drawn by the
   // titleBarOverlay in the top-right corner. Reserve that strip so the
   // right-aligned controls (view-mode toggle, scripts) don't slide under them.

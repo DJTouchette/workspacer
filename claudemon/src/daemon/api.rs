@@ -18,7 +18,7 @@ use tokio_stream::{wrappers::BroadcastStream, StreamExt};
 use tower_http::cors::CorsLayer;
 
 use crate::protocol::WrapperMessage;
-use crate::session::{transcript, usage, SessionMode, SessionStore};
+use crate::session::{transcript, usage, ConversationStore, SessionMode, SessionStore};
 use crate::store::items::{ItemAction, ItemBroadcaster, ItemChange, ListFilter};
 use crate::store::Db;
 
@@ -30,11 +30,18 @@ pub struct ApiState {
     pub store: SessionStore,
     pub db: Db,
     pub items: ItemBroadcaster,
+    pub conv: ConversationStore,
 }
 
 impl FromRef<ApiState> for SessionStore {
     fn from_ref(state: &ApiState) -> Self {
         state.store.clone()
+    }
+}
+
+impl FromRef<ApiState> for ConversationStore {
+    fn from_ref(state: &ApiState) -> Self {
+        state.conv.clone()
     }
 }
 
@@ -66,6 +73,9 @@ pub fn router(state: ApiState) -> Router {
         .route("/sessions/:id/output", get(get_output))
         .route("/sessions/:id/stream", get(stream_bytes))
         .route("/sessions/:id/transcript", get(get_transcript))
+        .route("/sessions/:id/summarize", post(post_summarize))
+        .route("/sessions/:id/conversation", get(get_conversation))
+        .route("/conversation/stream", get(conversation_stream))
         .route("/events", get(event_stream))
         .route("/hooks/stream", get(hook_stream))
         .route("/statusline/stream", get(status_line_stream))
@@ -76,6 +86,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/wrapper/:id", get(crate::daemon::wrapper_ws::upgrade))
         .route("/git/status", get(crate::daemon::git::get_status))
         .route("/git/diff", get(crate::daemon::git::get_diff))
+        .route("/git/numstat", get(crate::daemon::git::get_numstat))
         .route("/git/stage", post(crate::daemon::git::post_stage))
         .route("/git/unstage", post(crate::daemon::git::post_unstage))
         .route("/git/commit", post(crate::daemon::git::post_commit))
@@ -507,6 +518,154 @@ async fn get_transcript(
             (StatusCode::INTERNAL_SERVER_ERROR, "transcript read failed").into_response()
         }
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct SummarizePayload {
+    /// One-line descriptions of the tool calls in the work batch
+    /// (e.g. `Bash(grep ...)`, `Read(foo.rs)`), in timeline order.
+    steps: Vec<String>,
+    /// The resolved `claude` launcher argv (e.g. `["claude"]` or
+    /// `["cmd.exe","/c","claude"]`). The caller (Electron) owns binary
+    /// resolution; we append the print-mode flags. Falls back to `claude`.
+    #[serde(default)]
+    claude_argv: Option<Vec<String>>,
+    /// Working directory for the helper process (defaults to the session's).
+    #[serde(default)]
+    cwd: Option<String>,
+}
+
+/// One-shot intent summary of a batch of tool calls, produced by a cheap
+/// headless `claude -p --model claude-haiku-4-5` call. This is a *side* call —
+/// it never touches the live session's transcript or context; it just labels
+/// what the agent was doing for the UI's work cards. Auth is inherited from
+/// the user's existing Claude Code credentials (~/.claude), same as any spawn.
+///
+/// Returns `{ "summary": "..." }` on success, or `{ "summary": null }` on any
+/// failure (timeout, non-zero exit, empty output) so the client falls back to
+/// the mechanical summary without surfacing an error.
+async fn post_summarize(
+    State(store): State<SessionStore>,
+    Path(id): Path<String>,
+    Json(payload): Json<SummarizePayload>,
+) -> impl IntoResponse {
+    let session = store.get(&id);
+    if session.is_none() {
+        return (StatusCode::NOT_FOUND, "session not found").into_response();
+    }
+    if payload.steps.is_empty() {
+        return Json(json!({ "summary": Value::Null })).into_response();
+    }
+
+    let prompt = build_summary_prompt(&payload.steps);
+    let mut argv = payload
+        .claude_argv
+        .filter(|a| !a.is_empty())
+        .unwrap_or_else(|| vec!["claude".to_string()]);
+    argv.extend([
+        "-p".to_string(),
+        prompt,
+        "--model".to_string(),
+        "claude-haiku-4-5".to_string(),
+    ]);
+
+    let cwd = payload
+        .cwd
+        .or_else(|| session.and_then(|s| s.cwd))
+        .unwrap_or_else(|| ".".to_string());
+
+    let mut cmd = tokio::process::Command::new(&argv[0]);
+    cmd.args(&argv[1..]).current_dir(&cwd);
+    cmd.stdin(std::process::Stdio::null());
+
+    // Haiku is fast, but `claude` has a cold-start cost — cap the wait so a
+    // hung helper never blocks the UI's request.
+    let output = match tokio::time::timeout(Duration::from_secs(25), cmd.output()).await {
+        Ok(Ok(out)) => out,
+        Ok(Err(err)) => {
+            tracing::warn!(?err, "summarize: claude spawn failed");
+            return Json(json!({ "summary": Value::Null })).into_response();
+        }
+        Err(_) => {
+            tracing::warn!("summarize: claude timed out");
+            return Json(json!({ "summary": Value::Null })).into_response();
+        }
+    };
+
+    if !output.status.success() {
+        tracing::warn!(code = ?output.status.code(), "summarize: claude exited non-zero");
+        return Json(json!({ "summary": Value::Null })).into_response();
+    }
+
+    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let summary = clean_summary(&text);
+    Json(json!({ "summary": summary })).into_response()
+}
+
+/// Build the Haiku prompt: a tight instruction plus the step list.
+fn build_summary_prompt(steps: &[String]) -> String {
+    let mut p = String::from(
+        "You are labeling a batch of tool calls a coding agent just ran, for a UI. \
+         In ONE short sentence (max ~12 words), say what the agent was actually doing — \
+         the intent, not a list. No preamble, no quotes, no trailing period. \
+         Tool calls:\n",
+    );
+    for s in steps {
+        p.push_str("- ");
+        p.push_str(s);
+        p.push('\n');
+    }
+    p
+}
+
+/// Defensive cleanup: take the first non-empty line, strip wrapping quotes and
+/// a trailing period. Returns null for empty output so the client falls back.
+fn clean_summary(text: &str) -> Value {
+    let line = text.lines().map(str::trim).find(|l| !l.is_empty());
+    match line {
+        Some(l) => {
+            let trimmed = l.trim_matches('"').trim_end_matches('.').trim();
+            if trimmed.is_empty() {
+                Value::Null
+            } else {
+                Value::String(trimmed.to_string())
+            }
+        }
+        None => Value::Null,
+    }
+}
+
+/// Parsed conversation snapshot for one session: full item history + the
+/// sequence number of the last item, so a client can join the delta stream
+/// without gaps.
+async fn get_conversation(
+    State(conv): State<ConversationStore>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let (seq, items) = conv.snapshot(&id).unwrap_or((0, Vec::new()));
+    Json(json!({ "session_id": id, "seq": seq, "items": items }))
+}
+
+/// Global SSE feed of conversation deltas across all sessions — the content
+/// counterpart to `/hooks/stream`. Each frame is a `ConversationDelta`.
+async fn conversation_stream(
+    State(conv): State<ConversationStore>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let rx = conv.subscribe();
+    let stream = BroadcastStream::new(rx).filter_map(|res| match res {
+        Ok(delta) => match serde_json::to_string(&delta) {
+            Ok(json) => Some(Ok(Event::default().event("conversation.delta").data(json))),
+            Err(err) => {
+                tracing::warn!(?err, "failed to serialize conversation delta");
+                None
+            }
+        },
+        Err(err) => {
+            tracing::warn!(?err, "conversation sse subscriber lagged");
+            None
+        }
+    });
+    Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
 }
 
 async fn event_stream(

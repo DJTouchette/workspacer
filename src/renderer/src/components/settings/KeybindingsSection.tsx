@@ -65,6 +65,7 @@ const SHORTCUT_LABELS: Record<string, string> = {
   'prev-agent': 'Previous Agent',
   'next-agent': 'Next Agent',
   'spawn-agent': 'Spawn Agent',
+  'toggle-inspector': 'Toggle Inspector (Claude pane)',
 };
 
 const ShortcutEditor: React.FC<{ config: Config; save: (partial: Partial<Config>) => Promise<Config> }> = ({ config, save }) => {
@@ -102,7 +103,7 @@ const ShortcutEditor: React.FC<{ config: Config; save: (partial: Partial<Config>
       'next-tab': 'ctrl+]', 'nav-left': 'ctrl+h', 'nav-right': 'ctrl+l',
       'nav-up': 'ctrl+shift+k', 'nav-down': 'ctrl+shift+j',
       'prev-agent': 'ctrl+alt+arrowup', 'next-agent': 'ctrl+alt+arrowdown',
-      'spawn-agent': 'ctrl+alt+n',
+      'spawn-agent': 'ctrl+alt+n', 'toggle-inspector': 'ctrl+shift+e',
     };
     const updated = { ...currentShortcuts, [action]: defaults[action] ?? '' };
     save({ keybindings: { ...config.keybindings, shortcuts: updated } });

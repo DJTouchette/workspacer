@@ -9,13 +9,12 @@
  *
  * All sidecar imports that touch OS notifications, analytics DB, hub WebSocket,
  * or the workflowWatcher poll loop are mocked so the tests run deterministically
- * in the Node vitest environment. Real fs is used for transcript tests (temp files).
+ * in the Node vitest environment. Conversation content arrives via
+ * applyConversationDelta (claudemon's parsed transcript stream) — no disk I/O.
  */
 
 import { describe, it, expect, vi } from 'vitest';
 import * as path from 'path';
-import * as os from 'os';
-import * as fsSync from 'fs';
 
 // ── Mock sidecar modules before importing the store ──────────────────────────
 
@@ -633,189 +632,135 @@ describe('ClaudeSessionStore — handleHookEvent / getSnapshot / getAllSnapshots
     });
   });
 
-  // ── Transcript-driven fields ───────────────────────────────────────────────
-  // These tests write real JSONL files to a temp dir so that the store's
-  // refreshFromTranscript (which uses require('fs')) hits actual disk I/O.
+  // ── Conversation deltas (claudemon-owned transcript parsing) ───────────────
+  // The daemon tails each session's JSONL and streams typed items; the store
+  // folds them in via applyConversationDelta. Sequence gaps trigger a resync
+  // fetch against the daemon's snapshot endpoint.
 
-  /** Write lines to a temp JSONL file and return its path. */
-  function writeTempJsonl(lines: object[]): string {
-    const p = path.join(os.tmpdir(), `store-test-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`);
-    fsSync.writeFileSync(p, lines.map(l => JSON.stringify(l)).join('\n') + '\n', 'utf8');
-    return p;
+  function mkDelta(sessionId: string, seq: number, items: object[], reset = false) {
+    return { session_id: sessionId, seq, reset, items } as any;
   }
 
-  describe('transcript-driven conversation (real temp files)', () => {
-    it('reads new JSONL lines from the transcript on each hook event', () => {
-      const id = sid('transcript-conv-1');
-      const transcriptPath = writeTempJsonl([
-        { type: 'user', message: { content: 'Hello from transcript', role: 'user' } },
-        { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'Hi there!' }] } },
-      ]);
-
-      store.handleHookEvent(mkEvent('SessionStart', id, { transcript_path: transcriptPath }));
+  describe('applyConversationDelta', () => {
+    it('creates user and assistant turns from delta items with real timestamps', () => {
+      const id = sid('conv-delta-1');
+      store.handleHookEvent(mkEvent('SessionStart', id));
+      store.applyConversationDelta(mkDelta(id, 2, [
+        { kind: 'user_message', text: 'Hello from daemon', timestamp: '2026-06-12T10:00:00Z' },
+        { kind: 'assistant_text', text: 'Hi there!' },
+      ], true));
 
       const snap = store.getSnapshot(id)!;
       const userTurns = snap.conversation.filter(t => t.role === 'user');
       const assistantTurns = snap.conversation.filter(t => t.role === 'assistant');
-      expect(userTurns.length).toBeGreaterThanOrEqual(1);
-      expect(userTurns[0].content).toBe('Hello from transcript');
-      expect(assistantTurns.length).toBeGreaterThanOrEqual(1);
+      expect(userTurns).toHaveLength(1);
+      expect(userTurns[0].content).toBe('Hello from daemon');
+      expect(userTurns[0].timestamp).toBe(Date.parse('2026-06-12T10:00:00Z'));
+      expect(assistantTurns).toHaveLength(1);
       expect(assistantTurns[0].content).toBe('Hi there!');
-
-      fsSync.unlinkSync(transcriptPath);
     });
 
-    it('skips tool_result user messages — they are API plumbing', () => {
-      const id = sid('transcript-skip-1');
-      const transcriptPath = writeTempJsonl([
-        {
-          type: 'user',
-          message: {
-            content: [{ type: 'tool_result', tool_use_id: 'tc-x', content: 'result' }],
-            role: 'user',
-          },
-        },
-      ]);
-
-      store.handleHookEvent(mkEvent('SessionStart', id, { transcript_path: transcriptPath }));
-      const snap = store.getSnapshot(id)!;
-      // tool_result user messages must NOT appear as conversation turns
-      const userTurns = snap.conversation.filter(t => t.role === 'user');
-      expect(userTurns).toHaveLength(0);
-
-      fsSync.unlinkSync(transcriptPath);
+    it('creates the session when a delta arrives before any hook', () => {
+      const id = sid('conv-delta-prehook');
+      store.applyConversationDelta(mkDelta(id, 1, [
+        { kind: 'user_message', text: 'early bird' },
+      ], true));
+      const snap = store.getSnapshot(id);
+      expect(snap).not.toBeNull();
+      expect(snap!.conversation[0].content).toBe('early bird');
     });
 
-    it('records tool_use blocks from assistant messages and increments totalToolCalls', () => {
-      const id = sid('transcript-tool-1');
-      const transcriptPath = writeTempJsonl([
-        {
-          type: 'assistant',
-          message: {
-            role: 'assistant',
-            content: [{ type: 'tool_use', id: 'tc-tr-1', name: 'Bash', input: { command: 'ls' } }],
-          },
-        },
-      ]);
+    it('tool_use items create tool-call turns and increment totalToolCalls', () => {
+      const id = sid('conv-delta-tool');
+      store.handleHookEvent(mkEvent('SessionStart', id));
+      store.applyConversationDelta(mkDelta(id, 1, [
+        { kind: 'tool_use', id: 'tc-tr-1', name: 'Bash', input: { command: 'ls' } },
+      ], true));
 
-      store.handleHookEvent(mkEvent('SessionStart', id, { transcript_path: transcriptPath }));
       const snap = store.getSnapshot(id)!;
       expect(snap.totalToolCalls).toBe(1);
       const toolTurns = snap.conversation.filter(t => t.toolCalls && t.toolCalls.length > 0);
       expect(toolTurns).toHaveLength(1);
       expect(toolTurns[0].toolCalls![0].name).toBe('Bash');
-
-      fsSync.unlinkSync(transcriptPath);
     });
 
-    it('applies usage from assistant messages and updates session.usage', () => {
-      const id = sid('transcript-usage-1');
-      const transcriptPath = writeTempJsonl([
-        {
-          type: 'assistant',
-          message: {
-            id: 'msg-u-1',
-            role: 'assistant',
-            model: 'claude-sonnet-4-5',
-            content: [],
-            usage: { input_tokens: 100, output_tokens: 50, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
-          },
-        },
-      ]);
-
-      store.handleHookEvent(mkEvent('SessionStart', id, { transcript_path: transcriptPath }));
-      const snap = store.getSnapshot(id)!;
-      expect(snap.usage).not.toBeNull();
-      expect(snap.usage!.model).toBe('claude-sonnet-4-5');
-      expect(snap.usage!.contextTokens).toBe(100);
-      expect(snap.usage!.totalInputTokens).toBe(100);
-
-      fsSync.unlinkSync(transcriptPath);
-    });
-
-    it('does not double-count usage for the same message id across multiple events', () => {
-      const id = sid('transcript-dedup-1');
-      // The transcript has one assistant message with a stable id.
-      // We'll trigger two hook events after attaching — the store's
-      // lastTranscriptLine cursor prevents re-processing already-seen lines,
-      // and applyUsage's key dedup prevents double-counting even if the same
-      // line were processed twice.
-      const transcriptPath = writeTempJsonl([
-        {
-          type: 'assistant',
-          message: {
-            id: 'msg-dedup-1',
-            role: 'assistant',
-            model: 'claude-sonnet-4-5',
-            content: [],
-            usage: { input_tokens: 200, output_tokens: 30 },
-          },
-        },
-      ]);
-
-      store.handleHookEvent(mkEvent('SessionStart', id, { transcript_path: transcriptPath }));
-      // Second event — no new lines; lastTranscriptLine is already 1
-      store.handleHookEvent(mkEvent('UserPromptSubmit', id));
+    it('tool_result items attach to the matching tool call instead of creating turns', () => {
+      const id = sid('conv-delta-result');
+      store.handleHookEvent(mkEvent('SessionStart', id));
+      store.applyConversationDelta(mkDelta(id, 1, [
+        { kind: 'tool_use', id: 'tc-res-1', name: 'Bash', input: { command: 'pwd' } },
+      ], true));
+      store.applyConversationDelta(mkDelta(id, 2, [
+        { kind: 'tool_result', tool_use_id: 'tc-res-1', content: '/home/user', is_error: false },
+      ]));
 
       const snap = store.getSnapshot(id)!;
-      // Should only count once: the first read consumed the line
-      expect(snap.usage!.totalInputTokens).toBe(200);
-
-      fsSync.unlinkSync(transcriptPath);
-    });
-
-    it('ignores thinking blocks in assistant messages', () => {
-      const id = sid('transcript-thinking-1');
-      const transcriptPath = writeTempJsonl([
-        {
-          type: 'assistant',
-          message: {
-            role: 'assistant',
-            content: [
-              { type: 'thinking', thinking: 'some internal reasoning' },
-              { type: 'text', text: 'Visible text' },
-            ],
-          },
-        },
-      ]);
-
-      store.handleHookEvent(mkEvent('SessionStart', id, { transcript_path: transcriptPath }));
-      const snap = store.getSnapshot(id)!;
-      const textTurns = snap.conversation.filter(t => t.role === 'assistant' && t.content === 'Visible text');
-      expect(textTurns).toHaveLength(1);
-      // Thinking block must not produce a conversation turn
-      const thinkingTurns = snap.conversation.filter(t => t.content && t.content.includes('internal reasoning'));
-      expect(thinkingTurns).toHaveLength(0);
-
-      fsSync.unlinkSync(transcriptPath);
-    });
-
-    it('attaches tool_result to the matching tool call as response', () => {
-      const id = sid('transcript-result-1');
-      const transcriptPath = writeTempJsonl([
-        {
-          type: 'assistant',
-          message: {
-            role: 'assistant',
-            content: [{ type: 'tool_use', id: 'tc-res-1', name: 'Bash', input: { command: 'pwd' } }],
-          },
-        },
-        {
-          type: 'user',
-          message: {
-            content: [{ type: 'tool_result', tool_use_id: 'tc-res-1', content: '/home/user' }],
-            role: 'user',
-          },
-        },
-      ]);
-
-      store.handleHookEvent(mkEvent('SessionStart', id, { transcript_path: transcriptPath }));
-      const snap = store.getSnapshot(id)!;
+      const userTurns = snap.conversation.filter(t => t.role === 'user');
+      expect(userTurns).toHaveLength(0);
       const toolTurns = snap.conversation.filter(t => t.toolCalls?.some(tc => tc.id === 'tc-res-1'));
       expect(toolTurns).toHaveLength(1);
       expect(toolTurns[0].toolCalls![0].response).toBe('/home/user');
+    });
 
-      fsSync.unlinkSync(transcriptPath);
+    it('applies usage items and dedups by message_id across deltas', () => {
+      const id = sid('conv-delta-usage');
+      store.handleHookEvent(mkEvent('SessionStart', id));
+      const usageItem = {
+        kind: 'usage',
+        model: 'claude-sonnet-4-5',
+        usage: { input_tokens: 200, output_tokens: 30 },
+        message_id: 'msg-dedup-1',
+      };
+      store.applyConversationDelta(mkDelta(id, 1, [usageItem], true));
+      // Same message id again (e.g. a second block of the same streamed
+      // message) — must not double-count.
+      store.applyConversationDelta(mkDelta(id, 2, [usageItem]));
+
+      const snap = store.getSnapshot(id)!;
+      expect(snap.usage).not.toBeNull();
+      expect(snap.usage!.model).toBe('claude-sonnet-4-5');
+      expect(snap.usage!.contextTokens).toBe(200);
+      expect(snap.usage!.totalInputTokens).toBe(200);
+    });
+
+    it('reset replaces the conversation wholesale', () => {
+      const id = sid('conv-delta-reset');
+      store.handleHookEvent(mkEvent('SessionStart', id));
+      store.applyConversationDelta(mkDelta(id, 1, [
+        { kind: 'user_message', text: 'old history' },
+      ], true));
+      store.applyConversationDelta(mkDelta(id, 1, [
+        { kind: 'user_message', text: 'fresh start' },
+      ], true));
+
+      const snap = store.getSnapshot(id)!;
+      expect(snap.conversation).toHaveLength(1);
+      expect(snap.conversation[0].content).toBe('fresh start');
+    });
+
+    it('does not apply items when a sequence gap is detected (resyncs instead)', () => {
+      const id = sid('conv-delta-gap');
+      // Resync fetches the daemon snapshot — stub it out so the test stays
+      // offline and we only observe the synchronous behavior.
+      const fetchStub = vi.fn(() => Promise.reject(new Error('no daemon in tests')));
+      vi.stubGlobal('fetch', fetchStub);
+      try {
+        store.handleHookEvent(mkEvent('SessionStart', id));
+        store.applyConversationDelta(mkDelta(id, 1, [
+          { kind: 'user_message', text: 'first' },
+        ], true));
+        // seq jumps from 1 to 5 — frames were missed.
+        store.applyConversationDelta(mkDelta(id, 5, [
+          { kind: 'user_message', text: 'after the gap' },
+        ]));
+
+        const snap = store.getSnapshot(id)!;
+        expect(snap.conversation).toHaveLength(1);
+        expect(snap.conversation[0].content).toBe('first');
+        expect(fetchStub).toHaveBeenCalledOnce();
+      } finally {
+        vi.unstubAllGlobals();
+      }
     });
   });
 

@@ -1,0 +1,8 @@
+
+ RUN  v4.1.1 C:/Users/DamienTouchette/work/workspacer/claudemon
+
+No test files found, exiting with code 1
+
+include: src/main/**/*.test.ts, tests/main/**/*.test.ts
+exclude:  **/node_modules/**, **/.git/**
+

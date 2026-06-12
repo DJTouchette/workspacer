@@ -85,6 +85,8 @@ interface Config {
     seenModels: string[];
     /** Default for the spawn dialog's `--dangerously-skip-permissions` toggle. */
     skipPermissionsDefault: boolean;
+    /** Which view a Claude pane opens in by default: rich 'gui' or raw 'terminal'. */
+    defaultView: 'gui' | 'terminal';
   };
   /** Directories surfaced in the Overview pane for quick agent launching. */
   directories: {
@@ -181,6 +183,7 @@ function defaultConfig(): Config {
         'toggle-sidebar': 'ctrl+b',
         'toggle-inbox': 'ctrl+shift+a',
         'toggle-fleet': 'ctrl+shift+f',
+        'toggle-inspector': 'ctrl+shift+e',
         'settings': 'ctrl+,',
         'save-session': 'ctrl+s',
         'rename-tab': 'f2',
@@ -207,6 +210,7 @@ function defaultConfig(): Config {
       defaultModel: '',
       seenModels: [],
       skipPermissionsDefault: false,
+      defaultView: 'terminal',
     },
     directories: {
       recent: [],

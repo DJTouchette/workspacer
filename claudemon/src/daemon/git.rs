@@ -37,6 +37,18 @@ pub struct DiffQuery {
     /// unstaged (work tree vs index) changes.
     #[serde(default)]
     staged: bool,
+    /// When true, render an untracked file as an all-added diff
+    /// (`git diff --no-index /dev/null <path>`). Requires `path`.
+    #[serde(default)]
+    untracked: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NumstatQuery {
+    cwd: String,
+    /// When true, count the staged (index vs HEAD) changes instead.
+    #[serde(default)]
+    staged: bool,
 }
 
 /// Body for `/git/stage` and `/git/unstage`. `path` limits the action to a
@@ -159,6 +171,29 @@ pub async fn get_diff(Query(q): Query<DiffQuery>) -> impl IntoResponse {
         return (StatusCode::BAD_REQUEST, "cwd is not inside a git work tree").into_response();
     }
 
+    if q.untracked {
+        let Some(path) = q.path.as_deref() else {
+            return (StatusCode::BAD_REQUEST, "untracked diff requires a path").into_response();
+        };
+        // `--no-index` exits 1 when the files differ — the expected case here —
+        // so success is "produced output", not "exit 0". git special-cases the
+        // literal "/dev/null" on every platform, including Windows.
+        return match run_git(&q.cwd, &["diff", "--no-index", "--", "/dev/null", path]).await {
+            Ok((ok, stdout, stderr)) => {
+                if ok || !stdout.is_empty() {
+                    Json(json!({ "diff": stdout })).into_response()
+                } else {
+                    tracing::warn!(stderr, "git diff --no-index failed");
+                    (StatusCode::INTERNAL_SERVER_ERROR, "git diff failed").into_response()
+                }
+            }
+            Err(err) => {
+                tracing::warn!(?err, "spawning git diff failed");
+                (StatusCode::INTERNAL_SERVER_ERROR, "could not run git").into_response()
+            }
+        };
+    }
+
     let mut args: Vec<&str> = vec!["diff"];
     if q.staged {
         args.push("--staged");
@@ -174,6 +209,73 @@ pub async fn get_diff(Query(q): Query<DiffQuery>) -> impl IntoResponse {
         Ok((true, stdout, _)) => Json(json!({ "diff": stdout })).into_response(),
         Ok((false, _, stderr)) => {
             tracing::warn!(stderr, "git diff failed");
+            (StatusCode::INTERNAL_SERVER_ERROR, "git diff failed").into_response()
+        }
+        Err(err) => {
+            tracing::warn!(?err, "spawning git diff failed");
+            (StatusCode::INTERNAL_SERVER_ERROR, "could not run git").into_response()
+        }
+    }
+}
+
+/// One row of `git diff --numstat`: lines added/deleted per file. `None`
+/// counts mean a binary file (numstat prints `-` for those).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct NumstatEntry {
+    pub path: String,
+    pub added: Option<u64>,
+    pub deleted: Option<u64>,
+}
+
+/// Resolve a numstat path to the *new* name. Renames appear either as
+/// `old => new` or in brace form `prefix/{old => new}/suffix`.
+fn parse_numstat_path(raw: &str) -> String {
+    if let (Some(open), Some(close)) = (raw.find('{'), raw.find('}')) {
+        if open < close {
+            if let Some((_, new)) = raw[open + 1..close].split_once(" => ") {
+                let joined = format!("{}{}{}", &raw[..open], new, &raw[close + 1..]);
+                // An empty side ("{ => sub}") leaves a doubled separator behind.
+                return joined.replace("//", "/");
+            }
+        }
+    }
+    match raw.split_once(" => ") {
+        Some((_, new)) => new.to_string(),
+        None => raw.to_string(),
+    }
+}
+
+fn parse_numstat(stdout: &str) -> Vec<NumstatEntry> {
+    stdout
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.splitn(3, '\t');
+            let added = parts.next()?;
+            let deleted = parts.next()?;
+            let raw_path = parts.next()?;
+            Some(NumstatEntry {
+                path: parse_numstat_path(raw_path.trim_end_matches('\r')),
+                added: added.parse().ok(),
+                deleted: deleted.parse().ok(),
+            })
+        })
+        .collect()
+}
+
+pub async fn get_numstat(Query(q): Query<NumstatQuery>) -> impl IntoResponse {
+    if !is_work_tree(&q.cwd).await {
+        return (StatusCode::BAD_REQUEST, "cwd is not inside a git work tree").into_response();
+    }
+
+    let mut args: Vec<&str> = vec!["diff", "--numstat"];
+    if q.staged {
+        args.push("--staged");
+    }
+
+    match run_git(&q.cwd, &args).await {
+        Ok((true, stdout, _)) => Json(json!({ "files": parse_numstat(&stdout) })).into_response(),
+        Ok((false, _, stderr)) => {
+            tracing::warn!(stderr, "git diff --numstat failed");
             (StatusCode::INTERNAL_SERVER_ERROR, "git diff failed").into_response()
         }
         Err(err) => {
@@ -296,5 +398,34 @@ mod tests {
     #[test]
     fn skips_blank_and_short_lines() {
         assert!(parse_porcelain("\n\nx\n").is_empty());
+    }
+
+    #[test]
+    fn parses_numstat_counts_and_binary() {
+        let out = "12\t3\tsrc/main.rs\n-\t-\tlogo.png\n";
+        assert_eq!(
+            parse_numstat(out),
+            vec![
+                NumstatEntry {
+                    path: "src/main.rs".into(),
+                    added: Some(12),
+                    deleted: Some(3),
+                },
+                NumstatEntry {
+                    path: "logo.png".into(),
+                    added: None,
+                    deleted: None,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn resolves_numstat_rename_paths() {
+        assert_eq!(parse_numstat_path("old.rs => new.rs"), "new.rs");
+        assert_eq!(parse_numstat_path("src/{a.rs => b.rs}"), "src/b.rs");
+        assert_eq!(parse_numstat_path("src/{ => sub}/mod.rs"), "src/sub/mod.rs");
+        assert_eq!(parse_numstat_path("src/{old => }/mod.rs"), "src/mod.rs");
+        assert_eq!(parse_numstat_path("plain/path.rs"), "plain/path.rs");
     }
 }

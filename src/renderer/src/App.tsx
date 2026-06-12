@@ -5,6 +5,7 @@ import SideBar, { SIDEBAR_WIDTH } from './components/SideBar';
 import PluginInstallDialog from './components/PluginInstallDialog';
 import { usePlugins } from './hooks/usePlugins';
 import { useUiEventBus } from './hooks/useUiEventBus';
+import { REVIEW_REQUEST_FILE_EVENT, openReviewFile, type ReviewFileTarget } from './lib/reviewBus';
 import { useUiCommands } from './hooks/useUiCommands';
 import type { PluginPane } from './types/plugin';
 import SpawnAgentDialog from './components/SpawnAgentDialog';
@@ -623,6 +624,35 @@ function App() {
     splitTab(activeTabId, type, label, shell, undefined, undefined, resolvedCwd);
   }, [activeTabId, activeAgent, splitTab]);
 
+  // Open a changed file in the Review pane (from the Claude pane's file list).
+  // Focus an existing Review pane in the active agent if there is one, else
+  // open a new one; then hand the target file to the (now-mounted) pane. The
+  // double rAF lets a freshly-created pane mount + attach its listener first.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const target = (e as CustomEvent).detail as ReviewFileTarget | undefined;
+      if (!target?.path) return;
+      const cwd = target.cwd || activeAgent?.cwd;
+      let existing: { tabId: string; paneId: string } | null = null;
+      for (const tab of tabs) {
+        const pane = tab.panes.find((p) => p.type === 'review');
+        if (pane) { existing = { tabId: tab.id, paneId: pane.id }; break; }
+      }
+      if (existing) {
+        setActiveTabId(existing.tabId);
+        setActivePane(existing.tabId, existing.paneId);
+        scrollToTab(existing.tabId);
+      } else {
+        handleAddTab('review', undefined, 'Review', cwd);
+      }
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => openReviewFile({ path: target.path, cwd })),
+      );
+    };
+    window.addEventListener(REVIEW_REQUEST_FILE_EVENT, handler);
+    return () => window.removeEventListener(REVIEW_REQUEST_FILE_EVENT, handler);
+  }, [tabs, activeAgent, setActiveTabId, setActivePane, scrollToTab, handleAddTab]);
+
   const handleLaunchApp = useCallback((app: { name: string; url: string }) => {
     const newId = addTab('browser', app.name, insertPosition, undefined, app.url, true);
     requestAnimationFrame(() => scrollToTab(newId));
@@ -718,7 +748,9 @@ function App() {
   }, [agentCwd, config.scripts, saveConfig]);
 
   // --- Render ---
-  const navHeight = Math.max(config.ui.navBarHeight || 34, 32);
+  // Phones get a taller bar so the (fattened) touch targets fit; this height
+  // also drives the content top-offset below, so the two stay in sync.
+  const navHeight = Math.max(config.ui.navBarHeight || 34, isSmallScreen ? 44 : 32);
 
   const rawViewMode = config.panes?.viewMode as string | undefined;
   const viewMode: ViewMode =
@@ -790,11 +822,16 @@ function App() {
           onClick={() => setSidebarCollapsed(false)}
           title="Show sidebar (Ctrl+B)"
           style={{
-            position: 'fixed', top: 6, left: 6, zIndex: 200,
-            width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            position: 'fixed', zIndex: 200,
+            // Clear the notch/status bar on phones; keep it tight on desktop.
+            top: isSmallScreen ? 'calc(env(safe-area-inset-top) + 6px)' : 6,
+            left: isSmallScreen ? 'calc(env(safe-area-inset-left) + 6px)' : 6,
+            // Larger fingertip target on phones (Apple HIG floor is ~44px).
+            width: isSmallScreen ? 38 : 26, height: isSmallScreen ? 38 : 26,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
             border: '1px solid var(--wks-glass-border)', borderRadius: 'var(--wks-radius-md)',
             background: 'var(--wks-bg-surface)', color: 'var(--wks-text-secondary)',
-            cursor: 'pointer', fontSize: '0.95rem', lineHeight: 1,
+            cursor: 'pointer', fontSize: isSmallScreen ? '1.1rem' : '0.95rem', lineHeight: 1,
             // @ts-ignore — keep it clickable over the draggable navbar region
             WebkitAppRegion: 'no-drag',
           }}

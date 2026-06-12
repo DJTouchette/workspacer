@@ -19,6 +19,13 @@ export interface GitStatus {
   files: FileStatus[];
 }
 
+/** Per-file added/deleted line counts. Null counts mean a binary file. */
+export interface NumstatEntry {
+  path: string;
+  added: number | null;
+  deleted: number | null;
+}
+
 import { CLAUDEMON_API_BASE } from './claudemonBase';
 
 export class GitClient {
@@ -34,15 +41,27 @@ export class GitClient {
   /**
    * Unified diff text for a single file (or the whole work tree if `path` is
    * omitted). `staged` selects index-vs-HEAD instead of work-tree-vs-index.
+   * `untracked` renders an untracked file as an all-added diff.
    */
-  async diff(cwd: string, path?: string, staged = false): Promise<string> {
+  async diff(cwd: string, path?: string, staged = false, untracked = false): Promise<string> {
     const params = new URLSearchParams({ cwd });
     if (path) params.set('path', path);
     if (staged) params.set('staged', 'true');
+    if (untracked) params.set('untracked', 'true');
     const res = await fetch(`${this.baseUrl}/git/diff?${params.toString()}`);
     if (!res.ok) throw new Error(`git diff failed: ${res.status} ${await res.text()}`);
     const body = (await res.json()) as { diff: string };
     return body.diff;
+  }
+
+  /** Added/deleted line counts per changed file (`git diff --numstat`). */
+  async numstat(cwd: string, staged = false): Promise<NumstatEntry[]> {
+    const params = new URLSearchParams({ cwd });
+    if (staged) params.set('staged', 'true');
+    const res = await fetch(`${this.baseUrl}/git/numstat?${params.toString()}`);
+    if (!res.ok) throw new Error(`git numstat failed: ${res.status} ${await res.text()}`);
+    const body = (await res.json()) as { files: NumstatEntry[] };
+    return body.files;
   }
 
   // ── Mutating actions ──

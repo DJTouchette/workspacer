@@ -11,7 +11,7 @@ import { claudeSessionStore } from './services/claudeSessionStore';
 import { listClaudeModels } from './services/claudeModels';
 import { agentNotifier } from './services/agentNotifier';
 import { claudemonSessionClient } from './services/claudemonSessionClient';
-import { buildClaudeArgv } from './services/claudeResolver';
+import { buildClaudeArgv, claudeBaseArgv } from './services/claudeResolver';
 import { supervisorMcpConfigPath, SUPERVISOR_SYSTEM_PROMPT } from './services/mcpConfig';
 import { importChromeCookies, importChromeCookiesViaCDP } from './services/chromeCookieImport';
 import { claudeProfiles } from './services/claudeProfiles';
@@ -187,6 +187,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     claudemonSessionClient.detach(paneId));
   ipcMain.handle(IPC.CLAUDE_GATE, (_event, sessionId: string, on: boolean) =>
     claudemonSessionClient.setGate(sessionId, on));
+  ipcMain.handle(IPC.CLAUDE_SUMMARIZE, (_event, sessionId: string, steps: string[]) =>
+    claudemonSessionClient.summarize(sessionId, steps, claudeBaseArgv()));
 
   ipcMain.handle(IPC.CLAUDE_SESSION_GET, (_event, sessionId: string): ClaudeSessionSnapshot | null =>
     claudeSessionStore.getSnapshot(sessionId));

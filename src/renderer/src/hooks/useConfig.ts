@@ -92,6 +92,12 @@ export interface Config {
     /** Restore the most recent session automatically on launch (skip the picker). */
     autoResume: boolean;
   };
+  claude?: {
+    /** Which view a Claude pane opens in by default: rich 'gui' or raw 'terminal'. */
+    defaultView: 'gui' | 'terminal';
+    /** Concrete model ids seen across sessions, surfaced in the spawn dropdown. */
+    seenModels?: string[];
+  };
 }
 
 export const DEFAULT_CONFIG: Config = {
@@ -146,6 +152,7 @@ export const DEFAULT_CONFIG: Config = {
       'toggle-sidebar': 'ctrl+b',
       'toggle-inbox': 'ctrl+shift+a',
       'toggle-fleet': 'ctrl+shift+f',
+      'toggle-inspector': 'ctrl+shift+e',
       'settings': 'ctrl+,',
       'save-session': 'ctrl+s',
       'rename-tab': 'f2',
@@ -167,6 +174,7 @@ export const DEFAULT_CONFIG: Config = {
   scripts: {},
   apps: [],
   session: { autoResume: false },
+  claude: { defaultView: 'terminal' },
 };
 
 /**
