@@ -10,3 +10,9 @@ src/renderer/dist/
 hub/hub
 hub/hub.exe
 hub/hub.exe~
+
+# A global ignore (~/.gitignore_global) has a `claude/` rule (meant for `.claude/`)
+# that wrongly matches this source directory, so new files in it were silently
+# untracked. Re-include the directory and its contents for this repo.
+!src/renderer/src/components/claude/
+!src/renderer/src/components/claude/**
