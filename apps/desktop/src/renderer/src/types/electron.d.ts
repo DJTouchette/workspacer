@@ -34,7 +34,7 @@ export interface ElectronAPI {
   platform: NodeJS.Platform;
 
   // Terminal (non-Claude shells) — control on IPC, I/O on MessagePort
-  createTerminal: (shell: string, cwd?: string, cols?: number, rows?: number) => Promise<string>;
+  createTerminal: (shell: string, cwd?: string, cols?: number, rows?: number, profileId?: string, resumeSessionId?: string) => Promise<string>;
   writeTerminal: (id: string, data: string) => void;
   resizeTerminal: (id: string, cols: number, rows: number) => Promise<void>;
   closeTerminal: (id: string) => Promise<void>;

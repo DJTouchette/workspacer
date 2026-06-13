@@ -121,6 +121,7 @@ function App() {
     hibernatePane,
     wakePane,
     updatePaneUrl,
+    updatePaneNotes,
     getActiveTab,
   } = useAgentManager();
 
@@ -286,6 +287,10 @@ function App() {
   const handleUrlChange = useCallback((tabId: string, paneId: string, url: string) => {
     updatePaneUrl(tabId, paneId, url);
   }, [updatePaneUrl]);
+
+  const handleNotesChange = useCallback((tabId: string, paneId: string, notes: string) => {
+    updatePaneNotes(tabId, paneId, notes);
+  }, [updatePaneNotes]);
 
   // Hibernation tracking
   const lastVisibleRef = useRef<Record<string, number>>({});
@@ -887,6 +892,7 @@ function App() {
                   onTabCanvasChange={updateTabCanvas}
                   onPtyReady={handlePtyReady}
                   onUrlChange={handleUrlChange}
+                  onNotesChange={handleNotesChange}
                   onNavigateToTab={handleTabClick}
                   onAddTab={handleAddTab}
                   ptyMapping={ptyMapping}

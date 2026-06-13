@@ -9,7 +9,6 @@ import { tilingColumns } from '../lib/layoutUtils';
 // Lazy-load pane types that aren't needed on initial render
 const BrowserPane = React.lazy(() => import('../panes/BrowserPane'));
 const NotesPane = React.lazy(() => import('../panes/NotesPane'));
-const AgentPane = React.lazy(() => import('../panes/AgentPane'));
 const SettingsPane = React.lazy(() => import('../panes/SettingsPane'));
 const ReviewPane = React.lazy(() => import('../panes/ReviewPane'));
 const PluginsManagerPane = React.lazy(() => import('../panes/PluginsManagerPane'));
@@ -64,6 +63,7 @@ interface ScrollContainerProps {
   onTabMove?: (tabId: string, toIndex: number) => void;
   onPtyReady?: (paneId: string, ptySessionId: string) => void;
   onUrlChange?: (tabId: string, paneId: string, url: string) => void;
+  onNotesChange?: (tabId: string, paneId: string, notes: string) => void;
   onNavigateToTab?: (tabId: string) => void;
   onAddTab?: (type: PaneType, shell?: string, label?: string, cwd?: string, profileId?: string, resumeSessionId?: string, attachSessionId?: string) => void;
   /** paneId → ptySessionId. For Claude panes, ptySessionId === Claude session id. */
@@ -100,6 +100,7 @@ export interface ScrollContainerRef {
 interface PaneCallbacks {
   onPtyReady?: (paneId: string, ptySessionId: string) => void;
   onUrlChange?: (paneId: string, url: string) => void;
+  onNotesChange?: (paneId: string, notes: string) => void;
   tabs?: TabConfig[];
   onNavigateToTab?: (tabId: string) => void;
   onAddTab?: (type: PaneType, shell?: string, label?: string, cwd?: string, profileId?: string, resumeSessionId?: string, attachSessionId?: string) => void;
@@ -127,9 +128,11 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
         </Suspense>
       );
     case 'notes':
-      return <Suspense fallback={<PaneFallback />}><NotesPane title={pane.title} /></Suspense>;
-    case 'agent':
-      return <Suspense fallback={<PaneFallback />}><AgentPane title={pane.title} /></Suspense>;
+      return (
+        <Suspense fallback={<PaneFallback />}>
+          <NotesPane title={pane.title} notes={pane.notes} onNotesChange={(notes) => callbacks.onNotesChange?.(pane.id, notes)} />
+        </Suspense>
+      );
     case 'settings':
       return <Suspense fallback={<PaneFallback />}><SettingsPane title={pane.title} /></Suspense>;
     case 'review':
@@ -300,7 +303,7 @@ interface Interaction {
 }
 
 const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
-  ({ tabs, activeTabId, onTabFocus, onPaneClose, onPaneFocus, onTabRename, onTabMove, onPtyReady, onUrlChange, onNavigateToTab, onAddTab, ptyMapping, renameSignal, viewMode = 'tabs', onTabCanvasChange, agentActive = true, workspaceAgents, appCwd, allAgents, spawnSupervisor, onJumpToAgent }, ref) => {
+  ({ tabs, activeTabId, onTabFocus, onPaneClose, onPaneFocus, onTabRename, onTabMove, onPtyReady, onUrlChange, onNotesChange, onNavigateToTab, onAddTab, ptyMapping, renameSignal, viewMode = 'tabs', onTabCanvasChange, agentActive = true, workspaceAgents, appCwd, allAgents, spawnSupervisor, onJumpToAgent }, ref) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const { config } = useConfig();
     const peek = config.panes?.peek ?? 80;
@@ -640,6 +643,9 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
               onPtyReady,
               onUrlChange: onUrlChange
                 ? (paneId: string, url: string) => onUrlChange(tab.id, paneId, url)
+                : undefined,
+              onNotesChange: onNotesChange
+                ? (paneId: string, notes: string) => onNotesChange(tab.id, paneId, notes)
                 : undefined,
               tabs,
               onNavigateToTab: onNavigateToTab ?? onTabFocus,

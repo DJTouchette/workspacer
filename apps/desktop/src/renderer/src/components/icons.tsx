@@ -35,7 +35,6 @@ const PANE_ICONS: Record<PaneType, LucideIcon> = {
   terminal: SquareTerminal,
   browser: Globe,
   notes: NotebookPen,
-  agent: Bot,
   claude: Sparkles,
   settings: Settings,
   review: Search,

@@ -58,7 +58,9 @@ export interface AppEntry {
 export interface KeybindingsConfig {
   mode: 'default' | 'vim';
   leader: string;
-  shortcuts: Record<string, string>;
+  /** Per-action combo overrides. Optional: recomputed from mode/leader at runtime
+   *  and omitted from partial saves; all readers use optional chaining. */
+  shortcuts?: Record<string, string>;
 }
 
 export interface NotificationsConfig {

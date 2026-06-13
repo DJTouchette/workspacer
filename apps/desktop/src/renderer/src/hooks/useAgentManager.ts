@@ -12,7 +12,6 @@ const defaultTitles: Record<PaneType, string> = {
   terminal: 'Terminal',
   browser: 'Browser',
   notes: 'Notes',
-  agent: 'Agent',
   claude: 'Claude',
   settings: 'Settings',
   review: 'Review',
@@ -489,6 +488,17 @@ export function useAgentManager() {
     }));
   }, [mutateActiveAgent]);
 
+  const updatePaneNotes = useCallback((tabId: string, paneId: string, notes: string) => {
+    mutateActiveAgent((a) => ({
+      ...a,
+      tabs: a.tabs.map((t) =>
+        t.id === tabId
+          ? { ...t, panes: t.panes.map((p) => (p.id === paneId ? { ...p, notes } : p)) }
+          : t,
+      ),
+    }));
+  }, [mutateActiveAgent]);
+
   const getActiveTab = useCallback((): TabConfig | undefined => {
     const agent = agentsRef.current.find((a) => a.id === activeAgentIdRef.current);
     return agent?.tabs.find((t) => t.id === agent.activeTabId);
@@ -524,6 +534,7 @@ export function useAgentManager() {
     hibernatePane,
     wakePane,
     updatePaneUrl,
+    updatePaneNotes,
     getActiveTab,
   };
 }
