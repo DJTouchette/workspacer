@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { PaneConfig, PaneType, TabConfig, AgentWorkspace } from '../types/pane';
+import { agentIdForSession, dedupeBySessionId } from '../lib/agentIdentity';
 
 let nextId = 1;
 
@@ -143,7 +144,9 @@ export function useAgentManager() {
     }
     const { tabs: agentTabs, activeTabId: agentActiveTab } = defaultAgentTabs(sessionId, cwd, opts.initialPrompt);
     const agent: AgentWorkspace = {
-      id: generateId('agent'),
+      // Deterministic id when we have a session, so every client converges on one
+      // card for it; fall back to a random id only if the spawn failed.
+      id: sessionId ? agentIdForSession(sessionId) : generateId('agent'),
       name: opts.name?.trim() || deriveAgentName(cwd),
       cwd,
       profileId: opts.profileId,
@@ -222,7 +225,9 @@ export function useAgentManager() {
       const parent = opts.parentSessionId ? prev.find((a) => a.sessionId === opts.parentSessionId) : undefined;
       const { tabs, activeTabId } = defaultAgentTabs(opts.sessionId, opts.cwd);
       const agent: AgentWorkspace = {
-        id: generateId('agent'),
+        // Same deterministic id any other client would mint for this session, so
+        // concurrent adoptions converge on one card instead of racing ids.
+        id: agentIdForSession(opts.sessionId),
         name: opts.name?.trim() || deriveAgentName(opts.cwd),
         cwd: opts.cwd,
         sessionId: opts.sessionId,
@@ -265,7 +270,10 @@ export function useAgentManager() {
   }, []);
 
   const loadAgentsFromSession = useCallback((sessionAgents: AgentWorkspace[], activeId: string) => {
-    const list = withGlobalWorkspace(sessionAgents);
+    // Dedupe by sessionId on the way in: this is the merge point for every
+    // cross-client layout update, so collapsing same-session cards here is what
+    // stops the multi-client "spawn one, get seven" accumulation.
+    const list = withGlobalWorkspace(dedupeBySessionId(sessionAgents));
     setAgents(list);
     // Prefer a real agent on load; fall back to the Overview workspace.
     setActiveAgentId(activeId || sessionAgents[0]?.id || list[0]?.id || '');
