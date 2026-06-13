@@ -348,9 +348,25 @@ function App() {
 
   const insertPosition = config.panes.insertPosition || 'after';
 
-  const addTabWithConfig = useCallback((type: PaneType, title?: string, shell?: string, url?: string, appMode?: boolean, cwd?: string, profileId?: string, resumeSessionId?: string, attachSessionId?: string, initialCommand?: string) => {
-    return addTab(type, title, insertPosition, shell, url, appMode, cwd, profileId, resumeSessionId, attachSessionId, initialCommand);
+  const addTabWithConfig = useCallback((type: PaneType, title?: string, shell?: string, url?: string, appMode?: boolean, cwd?: string, profileId?: string, resumeSessionId?: string, attachSessionId?: string, initialCommand?: string, filePath?: string) => {
+    return addTab(type, title, insertPosition, shell, url, appMode, cwd, profileId, resumeSessionId, attachSessionId, initialCommand, filePath);
   }, [addTab, insertPosition]);
+
+  // Open a file in an Editor pane: pick a file (if none given), then open a
+  // pane bound to it. The pane's engine (CodeMirror vs terminal) is decided at
+  // render time from config.editor.engine.
+  const openFileInEditor = useCallback(async (filePath?: string) => {
+    let target = filePath;
+    if (!target) {
+      const picked = await window.electronAPI.pickFiles(activeAgent?.cwd);
+      target = picked?.[0];
+    }
+    if (!target) return;
+    const name = target.split(/[\\/]/).pop() || 'Editor';
+    const dir = target.replace(/[\\/][^\\/]*$/, '') || activeAgent?.cwd;
+    const newId = addTabWithConfig('editor', name, undefined, undefined, undefined, dir, undefined, undefined, undefined, undefined, target);
+    requestAnimationFrame(() => scrollToTab(newId));
+  }, [activeAgent, addTabWithConfig, scrollToTab]);
 
   const openSettings = useCallback(() => {
     const existing = tabs.find((t) => t.panes.length === 1 && t.panes[0].type === 'settings');
@@ -972,6 +988,7 @@ function App() {
         onOpenLayouts={() => { setShowCommandPalette(false); setShowLayouts(true); }}
         onOpenRemote={() => { setShowCommandPalette(false); setShowRemote(true); }}
         onOpenAskPane={openAskPane}
+        onOpenFile={() => { setShowCommandPalette(false); openFileInEditor(); }}
       />
 
       <LibraryHost

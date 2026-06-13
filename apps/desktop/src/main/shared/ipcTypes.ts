@@ -206,6 +206,10 @@ export interface AppConfig {
     onlyWhenUnwatched: boolean;
     sound: boolean;
   };
+  editor: {
+    engine: 'codemirror' | 'terminal';
+    terminalCommand: string;
+  };
   claude: {
     defaultModel: string;
     seenModels: string[];

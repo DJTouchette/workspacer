@@ -94,6 +94,10 @@ export const IPC = {
   DIALOG_PICK_FOLDER: 'dialog:pickFolder',
   DIALOG_PICK_FILES: 'dialog:pickFiles',
 
+  // ── Files (editor pane) ──
+  FILE_READ: 'file:read',
+  FILE_WRITE: 'file:write',
+
   // ── Browser cookies ──
   CHROME_COOKIES_IMPORT: 'chrome-cookies:import',
 

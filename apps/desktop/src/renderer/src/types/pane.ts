@@ -1,4 +1,4 @@
-export type PaneType = 'terminal' | 'browser' | 'notes' | 'claude' | 'settings' | 'review' | 'plugin' | 'plugins' | 'overview' | 'library' | 'analytics' | 'ask';
+export type PaneType = 'terminal' | 'browser' | 'notes' | 'claude' | 'settings' | 'review' | 'plugin' | 'plugins' | 'overview' | 'library' | 'analytics' | 'ask' | 'editor';
 
 export interface PaneConfig {
   id: string;
@@ -27,6 +27,8 @@ export interface PaneConfig {
   scopeAgentId?: string;
   /** Notes panes only: the markdown scratchpad content, persisted with the session. */
   notes?: string;
+  /** Editor panes only: absolute path of the file being edited. */
+  filePath?: string;
 }
 
 /** Position + size of a tab's card on the spatial canvas, in world coordinates

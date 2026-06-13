@@ -70,6 +70,13 @@ export interface NotificationsConfig {
   sound: boolean;
 }
 
+export interface EditorConfig {
+  /** Editor-pane engine: in-app 'codemirror', or your $EDITOR in a 'terminal'. */
+  engine: 'codemirror' | 'terminal';
+  /** Command for the 'terminal' engine; the file path is appended as its last arg. */
+  terminalCommand: string;
+}
+
 export interface ScriptEntry {
   name: string;
   command: string;
@@ -82,6 +89,7 @@ export interface Config {
   browser: BrowserConfig;
   keybindings: KeybindingsConfig;
   notifications: NotificationsConfig;
+  editor?: EditorConfig;
   /** Per-directory script buttons, keyed by workspace root (normalized cwd). */
   scripts: Record<string, ScriptEntry[]>;
   apps: AppEntry[];

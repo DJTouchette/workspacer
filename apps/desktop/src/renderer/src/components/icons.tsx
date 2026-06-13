@@ -3,6 +3,7 @@
 import React from 'react';
 import {
   SquareTerminal,
+  FileCode2,
   Globe,
   NotebookPen,
   Bot,
@@ -44,6 +45,7 @@ const PANE_ICONS: Record<PaneType, LucideIcon> = {
   library: Zap,
   analytics: BarChart3,
   ask: Brain,
+  editor: FileCode2,
 };
 
 export interface IconProps {

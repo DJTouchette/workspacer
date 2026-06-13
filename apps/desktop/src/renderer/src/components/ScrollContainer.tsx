@@ -9,6 +9,7 @@ import { tilingColumns } from '../lib/layoutUtils';
 // Lazy-load pane types that aren't needed on initial render
 const BrowserPane = React.lazy(() => import('../panes/BrowserPane'));
 const NotesPane = React.lazy(() => import('../panes/NotesPane'));
+const EditorPane = React.lazy(() => import('../panes/EditorPane'));
 const SettingsPane = React.lazy(() => import('../panes/SettingsPane'));
 const ReviewPane = React.lazy(() => import('../panes/ReviewPane'));
 const PluginsManagerPane = React.lazy(() => import('../panes/PluginsManagerPane'));
@@ -39,6 +40,11 @@ function defaultCanvas(index: number): CanvasRect {
 }
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+
+/** POSIX single-quote a path so it's safe as a terminal-editor argument. */
+function shellQuote(p: string): string {
+  return `'${p.replace(/'/g, `'\\''`)}'`;
+}
 
 // --- Stacked feed (vertical, Instagram-style) constants -----------------------
 const STK_TOP = 16;     // top/bottom padding
@@ -101,6 +107,9 @@ interface PaneCallbacks {
   onPtyReady?: (paneId: string, ptySessionId: string) => void;
   onUrlChange?: (paneId: string, url: string) => void;
   onNotesChange?: (paneId: string, notes: string) => void;
+  /** Editor-pane engine + terminal command, from config.editor. */
+  editorEngine?: 'codemirror' | 'terminal';
+  editorTerminalCommand?: string;
   tabs?: TabConfig[];
   onNavigateToTab?: (tabId: string) => void;
   onAddTab?: (type: PaneType, shell?: string, label?: string, cwd?: string, profileId?: string, resumeSessionId?: string, attachSessionId?: string) => void;
@@ -131,6 +140,20 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
       return (
         <Suspense fallback={<PaneFallback />}>
           <NotesPane title={pane.title} notes={pane.notes} onNotesChange={(notes) => callbacks.onNotesChange?.(pane.id, notes)} />
+        </Suspense>
+      );
+    case 'editor':
+      // The 'terminal' engine just runs the user's editor in a PTY pane; the
+      // 'codemirror' engine is the in-app editor. Chosen live from config.
+      if (callbacks.editorEngine === 'terminal') {
+        const cmd = pane.filePath
+          ? `${callbacks.editorTerminalCommand || 'nvim'} ${shellQuote(pane.filePath)}`
+          : undefined;
+        return <TerminalPane paneId={pane.id} title={pane.title} isActive={isActive} cwd={pane.cwd} initialCommand={cmd} onPtyReady={callbacks.onPtyReady} />;
+      }
+      return (
+        <Suspense fallback={<PaneFallback />}>
+          <EditorPane paneId={pane.id} title={pane.title} isActive={isActive} filePath={pane.filePath} cwd={pane.cwd} />
         </Suspense>
       );
     case 'settings':
@@ -308,6 +331,8 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
     const { config } = useConfig();
     const peek = config.panes?.peek ?? 80;
     const gap = config.panes?.gap ?? 16;
+    const editorEngine = config.editor?.engine ?? 'codemirror';
+    const editorTerminalCommand = config.editor?.terminalCommand ?? 'nvim';
     const spatial = viewMode === 'spatial';
     const stacked = viewMode === 'stacked';
 
@@ -647,6 +672,8 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
               onNotesChange: onNotesChange
                 ? (paneId: string, notes: string) => onNotesChange(tab.id, paneId, notes)
                 : undefined,
+              editorEngine,
+              editorTerminalCommand,
               tabs,
               onNavigateToTab: onNavigateToTab ?? onTabFocus,
               onAddTab,

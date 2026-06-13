@@ -280,6 +280,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   pickFiles: (defaultPath?: string): Promise<string[]> =>
     ipcRenderer.invoke(IPC.DIALOG_PICK_FILES, defaultPath),
 
+  // Files (editor pane)
+  readFile: (filePath: string): Promise<{ path: string; contents: string; size: number }> =>
+    ipcRenderer.invoke(IPC.FILE_READ, filePath),
+  writeFile: (filePath: string, contents: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(IPC.FILE_WRITE, filePath, contents),
+
 
   // Browser cookie import (Chrome or Edge)
   importChromeCookies: (domainFilter?: string[], method?: 'cdp' | 'direct', browser?: 'chrome' | 'edge'): Promise<{ imported: number; skipped: number; errors: string[] }> =>

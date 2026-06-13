@@ -116,6 +116,8 @@ export interface ElectronAPI {
   // Dialog
   pickFolder: (defaultPath?: string) => Promise<string | null>;
   pickFiles: (defaultPath?: string) => Promise<string[]>;
+  readFile: (filePath: string) => Promise<{ path: string; contents: string; size: number }>;
+  writeFile: (filePath: string, contents: string) => Promise<{ ok: boolean }>;
 
   // Host filesystem browsing (web folder picker). Optional: only the web build
   // implements it — the desktop uses native OS dialogs instead.

@@ -22,6 +22,7 @@ const defaultTitles: Record<PaneType, string> = {
   library: 'Library',
   analytics: 'Analytics',
   ask: 'Ask',
+  editor: 'Editor',
 };
 
 /** Derive a human label from a working directory (its basename). */
@@ -320,6 +321,7 @@ export function useAgentManager() {
     resumeSessionId?: string,
     attachSessionId?: string,
     initialCommand?: string,
+    filePath?: string,
   ) => {
     const aid = activeAgentIdRef.current;
     if (!aid) return '';
@@ -328,7 +330,7 @@ export function useAgentManager() {
     const paneTitle = title ?? defaultTitles[type];
 
     const pane: PaneConfig = {
-      id: paneId, type, title: paneTitle, shell, url, appMode, cwd, profileId, resumeSessionId, attachSessionId, initialCommand,
+      id: paneId, type, title: paneTitle, shell, url, appMode, cwd, profileId, resumeSessionId, attachSessionId, initialCommand, filePath,
     };
     const tab: TabConfig = { id: tabId, title: paneTitle, panes: [pane], activePaneId: paneId, lastActiveAt: Date.now() };
 

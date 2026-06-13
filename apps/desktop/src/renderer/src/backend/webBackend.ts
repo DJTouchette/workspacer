@@ -138,6 +138,10 @@ export function createWebBackend(token: string): ElectronAPI {
     claudeWrite: (viewerKey, data) => { client.call('sessions.terminalInput', { sessionId: sessionFor(viewerKey), data }).catch(() => {}); },
     onClaudeOutput: (viewerKey, callback) => streamPty(client, reprimers, sessionFor(viewerKey), callback),
 
+    // ── Files (editor pane) ──────────────────────────────────────────────
+    readFile: (filePath) => client.call<{ path: string; contents: string; size: number }>('fs.read', { path: filePath }),
+    writeFile: (filePath, contents) => client.call<{ ok: boolean }>('fs.write', { path: filePath, contents }),
+
     // ── Config ───────────────────────────────────────────────────────────
     getConfig: () => client.call<AppConfig>('config.get', {}),
     reloadConfig: () => client.call<AppConfig>('config.reload', {}),

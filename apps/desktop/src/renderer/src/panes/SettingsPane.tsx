@@ -6,6 +6,7 @@ import KeybindingsSection from '../components/settings/KeybindingsSection';
 import NotificationsSection from '../components/settings/NotificationsSection';
 import SessionSection from '../components/settings/SessionSection';
 import BrowserSection from '../components/settings/BrowserSection';
+import EditorSection from '../components/settings/EditorSection';
 import AppsSection from '../components/settings/AppsSection';
 import ClaudeProfilesSection from '../components/settings/ClaudeProfilesSection';
 
@@ -51,6 +52,9 @@ const SettingsPane: React.FC<SettingsPaneProps> = ({ title }) => {
 
       {/* Browser section */}
       <BrowserSection config={config} save={save} />
+
+      {/* Editor section */}
+      <EditorSection config={config} save={save} />
 
       {/* Apps section */}
       <AppsSection config={config} save={save} />

@@ -21,6 +21,7 @@ import { sessionService } from './sessionService';
 import { sessionHistory } from './sessionHistory';
 import { layoutService } from './layoutService';
 import { listClaudeSessionsForDir } from './claudeSessionList';
+import { readTextFile, writeTextFile } from './fileService';
 import * as terminalShare from './terminalShare';
 import { IPC } from '../shared/ipcChannels';
 import type { SessionData, LayoutInput, ProfileUpdate } from '../shared/ipcTypes';
@@ -415,5 +416,19 @@ export function registerHubCapabilities(): void {
       throw new Error(`cannot read ${resolved}: ${(err as Error).message}`);
     }
     return { path: resolved, parent: path.dirname(resolved), home, dirs };
+  });
+
+  // ── File read/write (editor pane) ──────────────────────────────────────
+  // Same backend as the file:read/file:write IPC, so the web/phone client edits
+  // the same host files as the desktop. Errors propagate as a failed call.
+  registerCapability('fs.read', (params: unknown) => {
+    const { path: p } = (params ?? {}) as { path?: string };
+    if (!p) throw new Error('fs.read requires a path');
+    return readTextFile(p);
+  });
+  registerCapability('fs.write', (params: unknown) => {
+    const { path: p, contents } = (params ?? {}) as { path?: string; contents?: string };
+    if (!p) throw new Error('fs.write requires a path');
+    return writeTextFile(p, contents ?? '');
   });
 }

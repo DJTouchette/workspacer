@@ -16,6 +16,7 @@ import { supervisorMcpConfigPath, SUPERVISOR_SYSTEM_PROMPT } from './services/mc
 import { importChromeCookies, importChromeCookiesViaCDP } from './services/chromeCookieImport';
 import { claudeProfiles } from './services/claudeProfiles';
 import { listClaudeSessionsForDir } from './services/claudeSessionList';
+import { readTextFile, writeTextFile } from './services/fileService';
 import { HUB_HTTP_URL, getHubToken, getRemoteShareInfo } from './services/hubDaemon';
 import { publishToHub, isHubConnected, callHub } from './services/hubClient';
 import { IPC } from './shared/ipcChannels';
@@ -287,6 +288,13 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC.APP_GET_CWD, () => {
     return process.cwd();
   });
+
+  // Files (editor pane). Errors (missing / too big / binary) reject the invoke,
+  // which the EditorPane surfaces to the user.
+  ipcMain.handle(IPC.FILE_READ, (_event, filePath: string) => readTextFile(filePath));
+  ipcMain.handle(IPC.FILE_WRITE, (_event, filePath: string, contents: string) =>
+    writeTextFile(filePath, contents),
+  );
 
   // Dialog
   ipcMain.handle(IPC.DIALOG_PICK_FOLDER, async (_event, defaultPath?: string) => {

@@ -100,6 +100,12 @@ interface Config {
     /** Restore the most recent session automatically on launch (skip the picker). */
     autoResume: boolean;
   };
+  editor: {
+    /** Editor-pane engine: in-app 'codemirror', or your $EDITOR in a 'terminal'. */
+    engine: 'codemirror' | 'terminal';
+    /** Command for the 'terminal' engine; the file path is appended as its last arg. */
+    terminalCommand: string;
+  };
 }
 
 function defaultShells(): ShellOption[] {
@@ -205,6 +211,10 @@ function defaultConfig(): Config {
       notifyDone: true,
       onlyWhenUnwatched: true,
       sound: false,
+    },
+    editor: {
+      engine: 'codemirror',
+      terminalCommand: 'nvim',
     },
     claude: {
       defaultModel: '',

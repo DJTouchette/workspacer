@@ -48,6 +48,7 @@ export const builtInActions: PaletteItem[] = [
   { id: 'new-browser', name: 'New Browser', description: 'Web browser tab', icon: <PaneIcon type="browser" size={16} />, category: 'action', paneType: 'browser' },
   { id: 'new-review', name: 'Review Changes', description: 'Git diff & status for this agent', icon: <PaneIcon type="review" size={16} />, category: 'action', paneType: 'review' },
   { id: 'new-notes', name: 'Notes', description: 'Markdown scratchpad', icon: <PaneIcon type="notes" size={16} />, category: 'action', paneType: 'notes' },
+  { id: 'new-editor', name: 'Open File…', description: 'Edit a file in an editor pane', icon: <PaneIcon type="editor" size={16} />, category: 'action', paneType: 'editor' },
   { id: 'open-library', name: 'Library', description: 'Reusable prompts & skills', icon: <PaneIcon type="library" size={16} />, category: 'action', paneType: 'library' },
 ];
 
@@ -84,9 +85,11 @@ interface CommandPaletteProps {
   onOpenRemote?: () => void;
   /** Open the Ask pane (fleet supervisor question interface). */
   onOpenAskPane?: () => void;
+  /** Open a file in an Editor pane (prompts for a file first). */
+  onOpenFile?: () => void;
 }
 
-const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = 'tab', agentCwd, onClose, onLaunchApp, onAddTab, onSplitPane, pluginPanes = [], onOpenPlugin, onInstallPlugin, onManagePlugins, libraryItems = [], restrictTo, onOpenLibrary, onSwitchSession, onOpenAnalytics, onOpenLayouts, onOpenRemote, onOpenAskPane }) => {
+const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = 'tab', agentCwd, onClose, onLaunchApp, onAddTab, onSplitPane, pluginPanes = [], onOpenPlugin, onInstallPlugin, onManagePlugins, libraryItems = [], restrictTo, onOpenLibrary, onSwitchSession, onOpenAnalytics, onOpenLayouts, onOpenRemote, onOpenAskPane, onOpenFile }) => {
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [profilePicker, setProfilePicker] = useState<{ folder: string; profiles: any[]; paneType: PaneType } | null>(null);
@@ -184,6 +187,13 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
   const activateItem = useCallback(async (item: PaletteItem, libraryAction?: LibraryAction) => {
     if (item.id === 'open-library' && onOpenLibrary) {
       onOpenLibrary();
+      onClose();
+      return;
+    }
+    if (item.id === 'new-editor' && onOpenFile) {
+      // Opening a file prompts for one (native dialog / host browser), so it
+      // can't go through the standard onAddTab path.
+      onOpenFile();
       onClose();
       return;
     }
