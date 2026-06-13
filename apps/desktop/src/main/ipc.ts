@@ -16,7 +16,7 @@ import { supervisorMcpConfigPath, SUPERVISOR_SYSTEM_PROMPT } from './services/mc
 import { importChromeCookies, importChromeCookiesViaCDP } from './services/chromeCookieImport';
 import { claudeProfiles } from './services/claudeProfiles';
 import { listClaudeSessionsForDir } from './services/claudeSessionList';
-import { readTextFile, writeTextFile } from './services/fileService';
+import { readTextFile, writeTextFile, listDir } from './services/fileService';
 import { HUB_HTTP_URL, getHubToken, getRemoteShareInfo } from './services/hubDaemon';
 import { publishToHub, isHubConnected, callHub } from './services/hubClient';
 import { IPC } from './shared/ipcChannels';
@@ -295,6 +295,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC.FILE_WRITE, (_event, filePath: string, contents: string) =>
     writeTextFile(filePath, contents),
   );
+  ipcMain.handle(IPC.FILE_LIST_DIR, (_event, dirPath: string) => listDir(dirPath));
 
   // Dialog
   ipcMain.handle(IPC.DIALOG_PICK_FOLDER, async (_event, defaultPath?: string) => {

@@ -146,9 +146,10 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
       // The 'terminal' engine just runs the user's editor in a PTY pane; the
       // 'codemirror' engine is the in-app editor. Chosen live from config.
       if (callbacks.editorEngine === 'terminal') {
+        const editorCmd = callbacks.editorTerminalCommand || 'nvim';
         const cmd = pane.filePath
-          ? `${callbacks.editorTerminalCommand || 'nvim'} ${shellQuote(pane.filePath)}`
-          : undefined;
+          ? `${editorCmd} ${shellQuote(pane.filePath)}`
+          : pane.cwd ? `${editorCmd} .` : undefined;
         return <TerminalPane paneId={pane.id} title={pane.title} isActive={isActive} cwd={pane.cwd} initialCommand={cmd} onPtyReady={callbacks.onPtyReady} />;
       }
       return (

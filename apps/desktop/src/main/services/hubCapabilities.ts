@@ -21,7 +21,7 @@ import { sessionService } from './sessionService';
 import { sessionHistory } from './sessionHistory';
 import { layoutService } from './layoutService';
 import { listClaudeSessionsForDir } from './claudeSessionList';
-import { readTextFile, writeTextFile } from './fileService';
+import { readTextFile, writeTextFile, listDir } from './fileService';
 import * as terminalShare from './terminalShare';
 import { IPC } from '../shared/ipcChannels';
 import type { SessionData, LayoutInput, ProfileUpdate } from '../shared/ipcTypes';
@@ -430,5 +430,11 @@ export function registerHubCapabilities(): void {
     const { path: p, contents } = (params ?? {}) as { path?: string; contents?: string };
     if (!p) throw new Error('fs.write requires a path');
     return writeTextFile(p, contents ?? '');
+  });
+  // Files-included, gitignore-aware listing for the editor's file tree (web client).
+  registerCapability('fs.listEntries', (params: unknown) => {
+    const { path: p } = (params ?? {}) as { path?: string };
+    if (!p) throw new Error('fs.listEntries requires a path');
+    return listDir(p);
   });
 }

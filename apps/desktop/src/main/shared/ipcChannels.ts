@@ -97,6 +97,7 @@ export const IPC = {
   // ── Files (editor pane) ──
   FILE_READ: 'file:read',
   FILE_WRITE: 'file:write',
+  FILE_LIST_DIR: 'file:listDir',
 
   // ── Browser cookies ──
   CHROME_COOKIES_IMPORT: 'chrome-cookies:import',

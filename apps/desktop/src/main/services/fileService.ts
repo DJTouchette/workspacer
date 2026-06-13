@@ -11,6 +11,8 @@
  * never loads something it would silently corrupt when it saves the buffer back.
  */
 import * as fs from 'fs';
+import * as path from 'path';
+import { execFileSync } from 'child_process';
 
 /** Largest file the editor will open. Bigger files are refused, not truncated. */
 const MAX_READ_BYTES = 5 * 1024 * 1024;
@@ -19,6 +21,63 @@ export interface ReadFileResult {
   path: string;
   contents: string;
   size: number;
+}
+
+export interface DirEntry {
+  name: string;
+  path: string;
+  isDir: boolean;
+}
+export interface ListDirResult {
+  path: string;
+  entries: DirEntry[];
+}
+
+/**
+ * List a single directory level for the editor's file tree. Always hides `.git`;
+ * within a git repo it also hides anything matched by `.gitignore` (using git's
+ * own logic via `git check-ignore`, so nested ignore files are honoured). One
+ * git invocation per directory expand — fine for interactive browsing.
+ */
+export function listDir(dirPath: string): ListDirResult {
+  const resolved = path.resolve(dirPath);
+  const dirents = fs.readdirSync(resolved, { withFileTypes: true }).filter((e) => e.name !== '.git');
+
+  // Ask git which of these names are ignored (batched over stdin, one per line).
+  let ignored = new Set<string>();
+  if (dirents.length) {
+    const names = dirents.map((e) => e.name).join('\n');
+    try {
+      const out = execFileSync('git', ['check-ignore', '--stdin'], {
+        cwd: resolved,
+        input: names,
+        encoding: 'utf8',
+      });
+      ignored = new Set(out.split('\n').filter(Boolean));
+    } catch (err) {
+      // exit 1 = nothing ignored (stdout still holds any matches); 128 = not a
+      // git repo / git missing → no filtering at all.
+      const e = err as { status?: number; stdout?: string };
+      if (e.status === 1 && typeof e.stdout === 'string') {
+        ignored = new Set(e.stdout.split('\n').filter(Boolean));
+      }
+    }
+  }
+
+  const entries: DirEntry[] = dirents
+    .filter((e) => !ignored.has(e.name))
+    .map((e) => {
+      const full = path.join(resolved, e.name);
+      let isDir = e.isDirectory();
+      if (!isDir && e.isSymbolicLink()) {
+        try { isDir = fs.statSync(full).isDirectory(); } catch { /* dangling link */ }
+      }
+      return { name: e.name, path: full, isDir };
+    })
+    // Directories first, then alphabetical (locale-aware).
+    .sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1));
+
+  return { path: resolved, entries };
 }
 
 export function readTextFile(filePath: string): ReadFileResult {

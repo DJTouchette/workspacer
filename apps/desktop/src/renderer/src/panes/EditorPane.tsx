@@ -86,11 +86,101 @@ interface EditorPaneProps {
 
 type Status = 'idle' | 'loading' | 'ready' | 'error';
 
+interface DirEntry { name: string; path: string; isDir: boolean; }
+
 function basename(p: string): string {
   return p.split(/[\\/]/).pop() || p;
 }
 
-const EditorPane: React.FC<EditorPaneProps> = ({ filePath }) => {
+/** One directory level in the tree — lazily lists its children when expanded. */
+const TreeDir: React.FC<{
+  path: string;
+  name: string;
+  depth: number;
+  activePath?: string;
+  defaultOpen?: boolean;
+  onOpen: (p: string) => void;
+}> = ({ path, name, depth, activePath, defaultOpen, onOpen }) => {
+  const [open, setOpen] = useState(!!defaultOpen);
+  const [entries, setEntries] = useState<DirEntry[] | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!open || entries !== null || loading) return;
+    setLoading(true);
+    window.electronAPI
+      .readDir(path)
+      .then((r) => setEntries(r.entries))
+      .catch(() => setEntries([]))
+      .finally(() => setLoading(false));
+  }, [open, path, entries, loading]);
+
+  const indent = 6 + depth * 12;
+  return (
+    <>
+      <div
+        onClick={() => setOpen((o) => !o)}
+        title={name}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer',
+          padding: '1px 6px', paddingLeft: indent, whiteSpace: 'nowrap', overflow: 'hidden',
+          textOverflow: 'ellipsis', color: 'var(--wks-text-secondary)',
+        }}
+        onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--wks-bg-hover)')}
+        onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+      >
+        <span style={{ width: 10, display: 'inline-block', color: 'var(--wks-text-disabled)' }}>{open ? '▾' : '▸'}</span>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</span>
+      </div>
+      {open && entries?.map((e) =>
+        e.isDir ? (
+          <TreeDir key={e.path} path={e.path} name={e.name} depth={depth + 1} activePath={activePath} onOpen={onOpen} />
+        ) : (
+          <div
+            key={e.path}
+            onClick={() => onOpen(e.path)}
+            title={e.name}
+            style={{
+              padding: '1px 6px', paddingLeft: 6 + (depth + 1) * 12 + 14, cursor: 'pointer',
+              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+              color: e.path === activePath ? 'var(--wks-text-primary)' : 'var(--wks-text-muted)',
+              background: e.path === activePath ? 'var(--wks-bg-selected)' : 'transparent',
+            }}
+            onMouseEnter={(ev) => { if (e.path !== activePath) ev.currentTarget.style.background = 'var(--wks-bg-hover)'; }}
+            onMouseLeave={(ev) => { if (e.path !== activePath) ev.currentTarget.style.background = 'transparent'; }}
+          >
+            {e.name}
+          </div>
+        ),
+      )}
+    </>
+  );
+};
+
+/** File-tree sidebar rooted at the agent's cwd. Refresh re-keys the root. */
+const FileTree: React.FC<{ root: string; activePath?: string; onOpen: (p: string) => void }> = ({ root, activePath, onOpen }) => {
+  const [reloadKey, setReloadKey] = useState(0);
+  return (
+    <div style={{
+      width: 220, flex: '0 0 auto', overflow: 'auto',
+      borderRight: '1px solid var(--wks-border-subtle)', background: 'var(--wks-bg-raised)',
+      fontFamily: 'var(--wks-mono, ui-monospace, monospace)', fontSize: '0.7rem', paddingBottom: 8,
+    }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', padding: '4px 8px', position: 'sticky', top: 0,
+        background: 'var(--wks-bg-raised)', borderBottom: '1px solid var(--wks-border-subtle)',
+        color: 'var(--wks-text-disabled)', fontSize: '0.55rem', textTransform: 'uppercase', letterSpacing: '0.05em',
+      }}>
+        <span>Files</span>
+        <div style={{ flex: 1 }} />
+        <span onClick={() => setReloadKey((k) => k + 1)} title="Refresh" style={{ cursor: 'pointer' }}>⟳</span>
+      </div>
+      <TreeDir key={reloadKey} path={root} name={basename(root)} depth={0} activePath={activePath} defaultOpen onOpen={onOpen} />
+    </div>
+  );
+};
+
+const EditorPane: React.FC<EditorPaneProps> = ({ filePath, cwd }) => {
   const { config } = useConfig();
   const { theme } = useTheme();
   const vimMode = config.keybindings?.mode === 'vim';
@@ -106,16 +196,24 @@ const EditorPane: React.FC<EditorPaneProps> = ({ filePath }) => {
   const [error, setError] = useState<string>('');
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  // The file currently shown in the editor. Starts at the pane's filePath (if
+  // any) and changes as the user clicks files in the tree — no pane remount.
+  const [openFile, setOpenFile] = useState<string | undefined>(filePath);
+  useEffect(() => {
+    if (filePath && filePath !== openFile) setOpenFile(filePath);
+    // Only react to an externally-driven file change (e.g. open-in-editor).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filePath]);
 
   const doSave = useRef<() => void>(() => {});
   doSave.current = () => {
     const view = viewRef.current;
-    if (!view || !filePath || saving) return;
+    if (!view || !openFile || saving) return;
     const contents = view.state.doc.toString();
     if (contents === savedRef.current) return; // nothing changed
     setSaving(true);
     window.electronAPI
-      .writeFile(filePath, contents)
+      .writeFile(openFile, contents)
       .then(() => {
         savedRef.current = contents;
         setDirty(false);
@@ -126,13 +224,13 @@ const EditorPane: React.FC<EditorPaneProps> = ({ filePath }) => {
 
   // Create the editor once, load the file, lazily swap in the right language.
   useEffect(() => {
-    if (!hostRef.current || !filePath) return;
+    if (!hostRef.current || !openFile) return;
     let disposed = false;
 
     setStatus('loading');
     setError('');
     window.electronAPI
-      .readFile(filePath)
+      .readFile(openFile)
       .then((res: { contents: string }) => {
         if (disposed || !hostRef.current) return;
         savedRef.current = res.contents;
@@ -170,7 +268,7 @@ const EditorPane: React.FC<EditorPaneProps> = ({ filePath }) => {
         setStatus('ready');
 
         // Resolve the language for this extension and reconfigure when ready.
-        const desc = languages.find((l) => l.extensions.includes(basename(filePath).split('.').pop() || ''));
+        const desc = languages.find((l) => l.extensions.includes(basename(openFile).split('.').pop() || ''));
         if (desc) {
           desc.load().then((support) => {
             if (!disposed && viewRef.current) {
@@ -190,8 +288,8 @@ const EditorPane: React.FC<EditorPaneProps> = ({ filePath }) => {
       viewRef.current?.destroy();
       viewRef.current = null;
     };
-    // Re-create only when the file changes (engine/vim changes remount the pane).
-  }, [filePath, vimMode]);
+    // Re-create only when the open file changes (engine/vim changes remount the pane).
+  }, [openFile, vimMode]);
 
   // Re-theme on app theme change without rebuilding the editor. The chrome uses
   // --wks-* vars (updates for free); this swaps in the new theme's ANSI-matched
@@ -202,40 +300,52 @@ const EditorPane: React.FC<EditorPaneProps> = ({ filePath }) => {
     });
   }, [theme]);
 
-  const name = filePath ? basename(filePath) : 'No file';
+  const name = openFile ? basename(openFile) : 'No file';
+
+  // Switch the open file from the tree, saving any pending edits to the old one first.
+  const handleTreeOpen = (p: string) => {
+    if (p === openFile) return;
+    doSave.current();
+    setOpenFile(p);
+  };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--wks-bg-base)' }}>
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 8,
-        padding: '4px 10px', flex: '0 0 auto',
-        background: 'var(--wks-bg-raised)',
-        borderBottom: '1px solid var(--wks-border-subtle)',
-        fontSize: '0.65rem', color: 'var(--wks-text-secondary)',
-      }}>
-        <span style={{ fontFamily: 'var(--wks-mono, ui-monospace, monospace)' }}>{name}</span>
-        {dirty && <span title="Unsaved changes" style={{ color: 'var(--wks-accent, #e6c200)' }}>●</span>}
-        <div style={{ flex: 1 }} />
-        <span style={{ fontSize: '0.55rem', color: 'var(--wks-text-disabled)' }}>
-          {saving ? 'Saving…' : dirty ? 'Ctrl+S to save' : status === 'ready' ? 'Saved' : ''}
-        </span>
-      </div>
+    <div style={{ display: 'flex', height: '100%', background: 'var(--wks-bg-base)' }}>
+      {cwd && <FileTree root={cwd} activePath={openFile} onOpen={handleTreeOpen} />}
 
-      {!filePath && (
-        <div style={{ flex: 1, display: 'grid', placeItems: 'center', color: 'var(--wks-text-disabled)', fontSize: '0.8rem' }}>
-          No file open.
+      {/* Editor column */}
+      <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 }}>
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          padding: '4px 10px', flex: '0 0 auto',
+          background: 'var(--wks-bg-raised)',
+          borderBottom: '1px solid var(--wks-border-subtle)',
+          fontSize: '0.65rem', color: 'var(--wks-text-secondary)',
+        }}>
+          <span style={{ fontFamily: 'var(--wks-mono, ui-monospace, monospace)' }}>{name}</span>
+          {dirty && <span title="Unsaved changes" style={{ color: 'var(--wks-accent, #e6c200)' }}>●</span>}
+          <div style={{ flex: 1 }} />
+          <span style={{ fontSize: '0.55rem', color: 'var(--wks-text-disabled)' }}>
+            {saving ? 'Saving…' : dirty ? 'Ctrl+S to save' : status === 'ready' ? 'Saved' : ''}
+          </span>
         </div>
-      )}
-      {status === 'error' && (
-        <div style={{ flex: 1, display: 'grid', placeItems: 'center', color: 'var(--wks-text-muted)', fontSize: '0.78rem', padding: 16, textAlign: 'center' }}>
-          Could not open <code>{name}</code>:<br />{error}
-        </div>
-      )}
-      {/* CodeMirror host — hidden (not unmounted) on error/no-file so the view keeps its state. */}
-      <div
-        ref={hostRef}
-        style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: filePath && status !== 'error' ? 'block' : 'none' }}
-      />
+
+        {!openFile && (
+          <div style={{ flex: 1, display: 'grid', placeItems: 'center', color: 'var(--wks-text-disabled)', fontSize: '0.8rem', padding: 16, textAlign: 'center' }}>
+            {cwd ? 'Select a file from the tree.' : 'No file open.'}
+          </div>
+        )}
+        {status === 'error' && (
+          <div style={{ flex: 1, display: 'grid', placeItems: 'center', color: 'var(--wks-text-muted)', fontSize: '0.78rem', padding: 16, textAlign: 'center' }}>
+            Could not open <code>{name}</code>:<br />{error}
+          </div>
+        )}
+        {/* CodeMirror host — hidden (not unmounted) on error/no-file so the view keeps its state. */}
+        <div
+          ref={hostRef}
+          style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: openFile && status !== 'error' ? 'block' : 'none' }}
+        />
+      </div>
     </div>
   );
 };

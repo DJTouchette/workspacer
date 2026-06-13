@@ -353,19 +353,24 @@ function App() {
     return addTab(type, title, insertPosition, shell, url, appMode, cwd, profileId, resumeSessionId, attachSessionId, initialCommand, filePath);
   }, [addTab, insertPosition]);
 
-  // Open a file in an Editor pane: pick a file (if none given), then open a
-  // pane bound to it. The pane's engine (CodeMirror vs terminal) is decided at
-  // render time from config.editor.engine.
+  // Open an Editor pane. In an agent, it roots a file-tree sidebar at the
+  // agent's working dir (the whole project) — open with no file and browse, or
+  // pass a filePath to open that file with the tree alongside. Outside an agent
+  // (no cwd) we fall back to the OS file picker. Engine (CodeMirror vs terminal)
+  // is decided at render time from config.editor.engine.
   const openFileInEditor = useCallback(async (filePath?: string) => {
     let target = filePath;
-    if (!target) {
-      const picked = await window.electronAPI.pickFiles(activeAgent?.cwd);
+    if (!target && !activeAgent?.cwd) {
+      const picked = await window.electronAPI.pickFiles();
       target = picked?.[0];
+      if (!target) return;
     }
-    if (!target) return;
-    const name = target.split(/[\\/]/).pop() || 'Editor';
-    const dir = target.replace(/[\\/][^\\/]*$/, '') || activeAgent?.cwd;
-    const newId = addTabWithConfig('editor', name, undefined, undefined, undefined, dir, undefined, undefined, undefined, undefined, target);
+    // Tree root: the agent's cwd when present (whole project), else the file's dir.
+    const dir = activeAgent?.cwd || (target ? target.replace(/[\\/][^\\/]*$/, '') : undefined);
+    const title = target
+      ? (target.split(/[\\/]/).pop() || 'Editor')
+      : (dir ? (dir.split(/[\\/]/).pop() || 'Editor') : 'Editor');
+    const newId = addTabWithConfig('editor', title, undefined, undefined, undefined, dir, undefined, undefined, undefined, undefined, target);
     requestAnimationFrame(() => scrollToTab(newId));
   }, [activeAgent, addTabWithConfig, scrollToTab]);
 

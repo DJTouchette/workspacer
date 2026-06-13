@@ -285,6 +285,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke(IPC.FILE_READ, filePath),
   writeFile: (filePath: string, contents: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.FILE_WRITE, filePath, contents),
+  readDir: (dirPath: string): Promise<{ path: string; entries: { name: string; path: string; isDir: boolean }[] }> =>
+    ipcRenderer.invoke(IPC.FILE_LIST_DIR, dirPath),
 
 
   // Browser cookie import (Chrome or Edge)

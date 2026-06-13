@@ -141,6 +141,7 @@ export function createWebBackend(token: string): ElectronAPI {
     // ── Files (editor pane) ──────────────────────────────────────────────
     readFile: (filePath) => client.call<{ path: string; contents: string; size: number }>('fs.read', { path: filePath }),
     writeFile: (filePath, contents) => client.call<{ ok: boolean }>('fs.write', { path: filePath, contents }),
+    readDir: (dirPath) => client.call<{ path: string; entries: { name: string; path: string; isDir: boolean }[] }>('fs.listEntries', { path: dirPath }),
 
     // ── Config ───────────────────────────────────────────────────────────
     getConfig: () => client.call<AppConfig>('config.get', {}),

@@ -48,7 +48,7 @@ export const builtInActions: PaletteItem[] = [
   { id: 'new-browser', name: 'New Browser', description: 'Web browser tab', icon: <PaneIcon type="browser" size={16} />, category: 'action', paneType: 'browser' },
   { id: 'new-review', name: 'Review Changes', description: 'Git diff & status for this agent', icon: <PaneIcon type="review" size={16} />, category: 'action', paneType: 'review' },
   { id: 'new-notes', name: 'Notes', description: 'Markdown scratchpad', icon: <PaneIcon type="notes" size={16} />, category: 'action', paneType: 'notes' },
-  { id: 'new-editor', name: 'Open File…', description: 'Edit a file in an editor pane', icon: <PaneIcon type="editor" size={16} />, category: 'action', paneType: 'editor' },
+  { id: 'new-editor', name: 'Open Editor', description: "Browse the agent's folder and edit files", icon: <PaneIcon type="editor" size={16} />, category: 'action', paneType: 'editor' },
   { id: 'open-library', name: 'Library', description: 'Reusable prompts & skills', icon: <PaneIcon type="library" size={16} />, category: 'action', paneType: 'library' },
 ];
 
