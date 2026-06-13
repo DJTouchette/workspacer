@@ -16,9 +16,9 @@ HUB       := services/hub
 .PHONY: dev install build build-desktop build-hub build-claudemon build-tui \
         test test-desktop test-hub package clean
 
-## dev: run the desktop app in dev mode (Vite + Electron)
+## dev: run the desktop app in dev mode (Vite + Electron) with remote sharing on
 dev:
-	cd $(DESKTOP) && npm run dev
+	cd $(DESKTOP) && npm run dev:share
 
 ## install: install desktop JS dependencies
 install:
