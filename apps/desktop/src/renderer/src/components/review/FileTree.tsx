@@ -142,6 +142,8 @@ export interface FileTreeProps {
   busy: boolean;
   /** Line counts per path, from numstat. */
   stats: ReadonlyMap<string, NumstatEntry>;
+  /** Right-click → "Open in editor". Omit to disable the context menu. */
+  onOpenInEditor?: (entry: TreeEntry) => void;
 }
 
 const INDENT = 13;
@@ -154,10 +156,28 @@ const FileTree: React.FC<FileTreeProps> = ({
   onAction,
   busy,
   stats,
+  onOpenInEditor,
 }) => {
   ensureReviewStyles();
   const tree = useMemo(() => buildTree(entries), [entries]);
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
+  const [menu, setMenu] = useState<{ x: number; y: number; entry: TreeEntry } | null>(null);
+
+  // Dismiss the context menu on any outside interaction.
+  React.useEffect(() => {
+    if (!menu) return;
+    const close = () => setMenu(null);
+    window.addEventListener('click', close);
+    window.addEventListener('contextmenu', close);
+    window.addEventListener('keydown', close);
+    window.addEventListener('blur', close);
+    return () => {
+      window.removeEventListener('click', close);
+      window.removeEventListener('contextmenu', close);
+      window.removeEventListener('keydown', close);
+      window.removeEventListener('blur', close);
+    };
+  }, [menu]);
 
   const toggle = (path: string) => {
     setCollapsed((prev) => {
@@ -226,6 +246,11 @@ const FileTree: React.FC<FileTreeProps> = ({
             key={entry.key}
             className="wks-review-row"
             onClick={() => onSelect(entry)}
+            onContextMenu={onOpenInEditor ? (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setMenu({ x: e.clientX, y: e.clientY, entry });
+            } : undefined}
             title={title}
             style={{
               display: 'flex',
@@ -289,7 +314,44 @@ const FileTree: React.FC<FileTreeProps> = ({
     </>
   );
 
-  return <div style={{ paddingBottom: 2 }}>{renderChildren(tree, 0)}</div>;
+  return (
+    <div style={{ paddingBottom: 2 }}>
+      {renderChildren(tree, 0)}
+      {menu && onOpenInEditor && (
+        <div
+          style={{
+            position: 'fixed',
+            top: menu.y,
+            left: menu.x,
+            zIndex: 1000,
+            minWidth: 150,
+            padding: 4,
+            borderRadius: 8,
+            background: 'var(--wks-bg-elevated, #222)',
+            border: '1px solid var(--wks-border-subtle)',
+            boxShadow: 'var(--wks-shadow, 0 6px 24px rgba(0,0,0,0.4))',
+            fontSize: '0.74rem',
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            onClick={() => { onOpenInEditor(menu.entry); setMenu(null); }}
+            style={{
+              display: 'block', width: '100%', textAlign: 'left',
+              padding: '5px 10px', borderRadius: 5, border: 'none',
+              background: 'transparent', color: 'var(--wks-text-primary)',
+              cursor: 'pointer', font: 'inherit',
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--wks-bg-hover, rgba(255,255,255,0.06))')}
+            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+          >
+            Open in editor
+          </button>
+        </div>
+      )}
+    </div>
+  );
 };
 
 export default FileTree;

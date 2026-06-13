@@ -16,9 +16,51 @@ import { EditorState, Compartment } from '@codemirror/state';
 import { keymap } from '@codemirror/view';
 import { indentWithTab } from '@codemirror/commands';
 import { languages } from '@codemirror/language-data';
-import { oneDark } from '@codemirror/theme-one-dark';
+import { syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language';
+import { oneDarkHighlightStyle } from '@codemirror/theme-one-dark';
 import { vim } from '@replit/codemirror-vim';
 import { useConfig } from '../hooks/useConfig';
+
+/** Is the active app theme dark? Resolve --wks-bg-base to rgb via a probe (so it
+ *  works for hex/hsl/named values) and check its luminance. */
+function isDarkTheme(el: HTMLElement | null): boolean {
+  try {
+    const raw = el ? getComputedStyle(el).getPropertyValue('--wks-bg-base').trim() : '';
+    const probe = document.createElement('div');
+    probe.style.color = raw || 'var(--wks-bg-base)';
+    document.body.appendChild(probe);
+    const rgb = getComputedStyle(probe).color;
+    probe.remove();
+    const m = rgb.match(/\d+(\.\d+)?/g);
+    if (!m || m.length < 3) return true;
+    const [r, g, b] = m.map(Number);
+    return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 < 0.5;
+  } catch {
+    return true;
+  }
+}
+
+/** Editor chrome (background, text, gutter, selection, cursor) driven entirely by
+ *  the app's --wks-* tokens, plus a light/dark-appropriate syntax palette — so
+ *  the editor matches whichever of the ~18 themes is active. */
+function themeExtensions(dark: boolean) {
+  const chrome = EditorView.theme(
+    {
+      '&': { height: '100%', color: 'var(--wks-text-primary)', backgroundColor: 'var(--wks-bg-base)' },
+      '.cm-content': { caretColor: 'var(--wks-accent)' },
+      '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--wks-accent)' },
+      '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection': {
+        backgroundColor: 'var(--wks-bg-selected)',
+      },
+      '.cm-gutters': { backgroundColor: 'var(--wks-bg-base)', color: 'var(--wks-text-disabled)', border: 'none' },
+      '.cm-activeLine': { backgroundColor: 'var(--wks-bg-hover)' },
+      '.cm-activeLineGutter': { backgroundColor: 'var(--wks-bg-hover)' },
+      '.cm-scroller': { overflow: 'auto' },
+    },
+    { dark },
+  );
+  return [chrome, syntaxHighlighting(dark ? oneDarkHighlightStyle : defaultHighlightStyle)];
+}
 
 interface EditorPaneProps {
   paneId: string;
@@ -41,6 +83,7 @@ const EditorPane: React.FC<EditorPaneProps> = ({ filePath }) => {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const langCompartment = useRef(new Compartment());
+  const themeCompartment = useRef(new Compartment());
   // Latest persisted contents, to compute the dirty flag and to skip no-op saves.
   const savedRef = useRef<string>('');
 
@@ -87,7 +130,7 @@ const EditorPane: React.FC<EditorPaneProps> = ({ filePath }) => {
           ...(vimMode ? [vim()] : []), // vim must come first
           basicSetup,
           langCompartment.current.of([]),
-          oneDark,
+          themeCompartment.current.of(themeExtensions(isDarkTheme(hostRef.current))),
           saveKeys,
           // Stop Ctrl-S bubbling to the app's global "save session" binding.
           EditorView.domEventHandlers({
@@ -103,7 +146,6 @@ const EditorPane: React.FC<EditorPaneProps> = ({ filePath }) => {
               setDirty(u.state.doc.toString() !== savedRef.current);
             }
           }),
-          EditorView.theme({ '&': { height: '100%' }, '.cm-scroller': { overflow: 'auto' } }),
         ];
 
         viewRef.current = new EditorView({
@@ -135,6 +177,18 @@ const EditorPane: React.FC<EditorPaneProps> = ({ filePath }) => {
     };
     // Re-create only when the file changes (engine/vim changes remount the pane).
   }, [filePath, vimMode]);
+
+  // Re-theme on app theme change without rebuilding the editor. The chrome uses
+  // --wks-* vars (so it updates for free); this re-picks the light/dark syntax
+  // palette once the new theme's CSS vars have applied.
+  useEffect(() => {
+    const id = requestAnimationFrame(() => {
+      viewRef.current?.dispatch({
+        effects: themeCompartment.current.reconfigure(themeExtensions(isDarkTheme(hostRef.current))),
+      });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [config.ui?.theme]);
 
   const name = filePath ? basename(filePath) : 'No file';
 

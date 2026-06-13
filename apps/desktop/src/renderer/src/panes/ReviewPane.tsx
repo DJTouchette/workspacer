@@ -16,6 +16,7 @@ import DiffViewer from '../components/review/DiffViewer';
 import { ensureReviewStyles } from '../components/review/reviewStyles';
 import { parseUnifiedDiff } from '../lib/diff/parseDiff';
 import { REVIEW_OPEN_FILE_EVENT } from '../lib/reviewBus';
+import { requestOpenInEditor } from '../lib/editorBus';
 
 interface ReviewPaneProps {
   paneId: string;
@@ -462,6 +463,8 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive }) => {
       void runAction((dir) =>
         section === 'staged' ? git.unstage(dir, e.file.path) : git.stage(dir, e.file.path),
       ),
+    onOpenInEditor: (e: TreeEntry) =>
+      requestOpenInEditor({ path: cwd ? `${cwd.replace(/[\\/]$/, '')}/${e.file.path}` : e.file.path, cwd }),
   });
 
   return (

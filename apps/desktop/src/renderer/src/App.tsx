@@ -6,6 +6,7 @@ import PluginInstallDialog from './components/PluginInstallDialog';
 import { usePlugins } from './hooks/usePlugins';
 import { useUiEventBus } from './hooks/useUiEventBus';
 import { REVIEW_REQUEST_FILE_EVENT, openReviewFile, type ReviewFileTarget } from './lib/reviewBus';
+import { EDITOR_OPEN_FILE_EVENT } from './lib/editorBus';
 import { useUiCommands } from './hooks/useUiCommands';
 import type { PluginPane } from './types/plugin';
 import SpawnAgentDialog from './components/SpawnAgentDialog';
@@ -367,6 +368,16 @@ function App() {
     const newId = addTabWithConfig('editor', name, undefined, undefined, undefined, dir, undefined, undefined, undefined, undefined, target);
     requestAnimationFrame(() => scrollToTab(newId));
   }, [activeAgent, addTabWithConfig, scrollToTab]);
+
+  // Open-in-editor requests (e.g. right-click in the Review pane's file tree).
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const target = (e as CustomEvent).detail as { path?: string } | undefined;
+      if (target?.path) void openFileInEditor(target.path);
+    };
+    window.addEventListener(EDITOR_OPEN_FILE_EVENT, handler);
+    return () => window.removeEventListener(EDITOR_OPEN_FILE_EVENT, handler);
+  }, [openFileInEditor]);
 
   const openSettings = useCallback(() => {
     const existing = tabs.find((t) => t.panes.length === 1 && t.panes[0].type === 'settings');
