@@ -16,34 +16,43 @@ import { EditorState, Compartment } from '@codemirror/state';
 import { keymap } from '@codemirror/view';
 import { indentWithTab } from '@codemirror/commands';
 import { languages } from '@codemirror/language-data';
-import { syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language';
-import { oneDarkHighlightStyle } from '@codemirror/theme-one-dark';
+import { syntaxHighlighting, HighlightStyle } from '@codemirror/language';
+import { tags as t } from '@lezer/highlight';
 import { vim } from '@replit/codemirror-vim';
 import { useConfig } from '../hooks/useConfig';
+import { useTheme } from '../hooks/useTheme';
+import { isLightTheme, type Theme } from '../themes';
 
-/** Is the active app theme dark? Resolve --wks-bg-base to rgb via a probe (so it
- *  works for hex/hsl/named values) and check its luminance. */
-function isDarkTheme(el: HTMLElement | null): boolean {
-  try {
-    const raw = el ? getComputedStyle(el).getPropertyValue('--wks-bg-base').trim() : '';
-    const probe = document.createElement('div');
-    probe.style.color = raw || 'var(--wks-bg-base)';
-    document.body.appendChild(probe);
-    const rgb = getComputedStyle(probe).color;
-    probe.remove();
-    const m = rgb.match(/\d+(\.\d+)?/g);
-    if (!m || m.length < 3) return true;
-    const [r, g, b] = m.map(Number);
-    return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 < 0.5;
-  } catch {
-    return true;
-  }
+/** A syntax palette built from the active theme's ANSI terminal colors, so the
+ *  editor's highlighting matches the integrated terminal and every app theme
+ *  exactly — not a generic dark/light preset. */
+function buildHighlightStyle(theme: Theme): HighlightStyle {
+  const c = theme.terminal;
+  return HighlightStyle.define([
+    { tag: [t.keyword, t.moduleKeyword, t.controlKeyword, t.operatorKeyword, t.definitionKeyword], color: c.magenta },
+    { tag: [t.string, t.special(t.string), t.docString], color: c.green },
+    { tag: [t.regexp, t.escape, t.character], color: c.cyan },
+    { tag: [t.number, t.bool, t.null, t.atom], color: c.yellow },
+    { tag: [t.comment, t.lineComment, t.blockComment, t.meta], color: c.brightBlack, fontStyle: 'italic' },
+    { tag: [t.function(t.variableName), t.function(t.propertyName), t.labelName], color: c.blue },
+    { tag: [t.typeName, t.className, t.namespace], color: c.cyan },
+    { tag: [t.propertyName, t.attributeName], color: c.brightCyan },
+    { tag: [t.constant(t.variableName), t.standard(t.name)], color: c.brightYellow },
+    { tag: [t.variableName, t.attributeValue], color: c.foreground },
+    { tag: [t.operator, t.punctuation, t.separator, t.bracket, t.derefOperator], color: c.brightBlack },
+    { tag: [t.tagName, t.angleBracket], color: c.red },
+    { tag: [t.heading], color: c.blue, fontWeight: 'bold' },
+    { tag: [t.strong], fontWeight: 'bold' },
+    { tag: [t.emphasis], fontStyle: 'italic' },
+    { tag: [t.link, t.url], color: c.cyan, textDecoration: 'underline' },
+    { tag: [t.invalid], color: c.brightRed },
+  ]);
 }
 
-/** Editor chrome (background, text, gutter, selection, cursor) driven entirely by
- *  the app's --wks-* tokens, plus a light/dark-appropriate syntax palette — so
- *  the editor matches whichever of the ~18 themes is active. */
-function themeExtensions(dark: boolean) {
+/** Editor chrome (background, text, gutter, selection, cursor) driven by the
+ *  app's --wks-* tokens — so it updates live with the theme — plus the
+ *  theme-matched ANSI syntax palette above. */
+function themeExtensions(theme: Theme) {
   const chrome = EditorView.theme(
     {
       '&': { height: '100%', color: 'var(--wks-text-primary)', backgroundColor: 'var(--wks-bg-base)' },
@@ -54,12 +63,17 @@ function themeExtensions(dark: boolean) {
       },
       '.cm-gutters': { backgroundColor: 'var(--wks-bg-base)', color: 'var(--wks-text-disabled)', border: 'none' },
       '.cm-activeLine': { backgroundColor: 'var(--wks-bg-hover)' },
-      '.cm-activeLineGutter': { backgroundColor: 'var(--wks-bg-hover)' },
+      '.cm-activeLineGutter': { backgroundColor: 'var(--wks-bg-hover)', color: 'var(--wks-text-muted)' },
+      '.cm-foldGutter, .cm-lineNumbers': { color: 'var(--wks-text-disabled)' },
+      '.cm-selectionMatch': { backgroundColor: 'var(--wks-accent-bg)' },
+      '.cm-matchingBracket, &.cm-focused .cm-matchingBracket': { backgroundColor: 'var(--wks-accent-bg)', outline: '1px solid var(--wks-accent)' },
+      '.cm-tooltip': { backgroundColor: 'var(--wks-bg-elevated)', border: '1px solid var(--wks-border-subtle)', color: 'var(--wks-text-primary)' },
+      '.cm-panels': { backgroundColor: 'var(--wks-bg-raised)', color: 'var(--wks-text-primary)' },
       '.cm-scroller': { overflow: 'auto' },
     },
-    { dark },
+    { dark: !isLightTheme(theme) },
   );
-  return [chrome, syntaxHighlighting(dark ? oneDarkHighlightStyle : defaultHighlightStyle)];
+  return [chrome, syntaxHighlighting(buildHighlightStyle(theme))];
 }
 
 interface EditorPaneProps {
@@ -78,6 +92,7 @@ function basename(p: string): string {
 
 const EditorPane: React.FC<EditorPaneProps> = ({ filePath }) => {
   const { config } = useConfig();
+  const { theme } = useTheme();
   const vimMode = config.keybindings?.mode === 'vim';
 
   const hostRef = useRef<HTMLDivElement>(null);
@@ -130,7 +145,7 @@ const EditorPane: React.FC<EditorPaneProps> = ({ filePath }) => {
           ...(vimMode ? [vim()] : []), // vim must come first
           basicSetup,
           langCompartment.current.of([]),
-          themeCompartment.current.of(themeExtensions(isDarkTheme(hostRef.current))),
+          themeCompartment.current.of(themeExtensions(theme)),
           saveKeys,
           // Stop Ctrl-S bubbling to the app's global "save session" binding.
           EditorView.domEventHandlers({
@@ -179,16 +194,13 @@ const EditorPane: React.FC<EditorPaneProps> = ({ filePath }) => {
   }, [filePath, vimMode]);
 
   // Re-theme on app theme change without rebuilding the editor. The chrome uses
-  // --wks-* vars (so it updates for free); this re-picks the light/dark syntax
-  // palette once the new theme's CSS vars have applied.
+  // --wks-* vars (updates for free); this swaps in the new theme's ANSI-matched
+  // syntax palette.
   useEffect(() => {
-    const id = requestAnimationFrame(() => {
-      viewRef.current?.dispatch({
-        effects: themeCompartment.current.reconfigure(themeExtensions(isDarkTheme(hostRef.current))),
-      });
+    viewRef.current?.dispatch({
+      effects: themeCompartment.current.reconfigure(themeExtensions(theme)),
     });
-    return () => cancelAnimationFrame(id);
-  }, [config.ui?.theme]);
+  }, [theme]);
 
   const name = filePath ? basename(filePath) : 'No file';
 
