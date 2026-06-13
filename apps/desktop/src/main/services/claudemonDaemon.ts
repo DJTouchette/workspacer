@@ -13,7 +13,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { spawn, ChildProcess } from 'child_process';
 import { app } from 'electron';
-import { killStaleListener, waitForHealth as waitForHealthShared, PORTS } from '../lib/daemonUtils';
+import { killStaleListener, waitForHealth as waitForHealthShared, PORTS, RestartBackoff } from '../lib/daemonUtils';
 
 const HOOK_PORT = PORTS.claudemonHook;
 const API_PORT = PORTS.claudemonApi;
@@ -21,6 +21,9 @@ const HEALTH_TIMEOUT_MS = 5000;
 
 let child: ChildProcess | null = null;
 let readyPromise: Promise<void> | null = null;
+/** Set by stopClaudemon() / app shutdown so an intentional kill isn't respawned. */
+let intentionalStop = false;
+const backoff = new RestartBackoff();
 
 function exeName(): string {
   return process.platform === 'win32' ? 'claudemon.exe' : 'claudemon';
@@ -46,10 +49,17 @@ export function startClaudemon(): Promise<void> {
     return Promise.reject(new Error(`claudemon binary not found at ${bin}`));
   }
 
+  intentionalStop = false;
+  return launch(bin);
+}
+
+/** Spawn the process and wire up exit-driven restart. Returns the health promise. */
+function launch(bin: string): Promise<void> {
   killStaleListener(HOOK_PORT, 'claudemon');
   killStaleListener(API_PORT, 'claudemon');
 
   console.log(`[claudemon] spawning ${bin}`);
+  backoff.markStarted();
   child = spawn(bin, ['serve', '--hook-port', String(HOOK_PORT), '--api-port', String(API_PORT)], {
     stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, RUST_LOG: process.env.RUST_LOG ?? 'claudemon=info' },
@@ -62,10 +72,26 @@ export function startClaudemon(): Promise<void> {
     console.log(`[claudemon] exited code=${code} signal=${signal}`);
     child = null;
     readyPromise = null;
+    if (!intentionalStop) scheduleRestart(bin);
   });
 
-  readyPromise = waitForHealthShared(`http://127.0.0.1:${API_PORT}/health`, HEALTH_TIMEOUT_MS, 'claudemon');
+  readyPromise = waitForHealthShared(`http://127.0.0.1:${API_PORT}/health`, HEALTH_TIMEOUT_MS, 'claudemon')
+    .then(() => { backoff.reset(); });
   return readyPromise;
+}
+
+/** Respawn after an unexpected exit, with exponential backoff. */
+function scheduleRestart(bin: string): void {
+  const delay = backoff.nextDelay();
+  if (delay === null) {
+    console.error('[claudemon] crashed too many times; giving up auto-restart. Restart the app to recover.');
+    return;
+  }
+  console.warn(`[claudemon] unexpected exit — restarting in ${delay}ms`);
+  setTimeout(() => {
+    if (intentionalStop || child) return; // stopped, or already back up
+    launch(bin).catch(err => console.error('[claudemon] restart failed health check:', err));
+  }, delay);
 }
 
 /** Run `claudemon init` to merge hook entries into ~/.claude/settings.json. */
@@ -96,6 +122,7 @@ export function runClaudemonInit(): Promise<void> {
 }
 
 export function stopClaudemon(): void {
+  intentionalStop = true;
   if (child) {
     try { child.kill(); } catch {}
     child = null;

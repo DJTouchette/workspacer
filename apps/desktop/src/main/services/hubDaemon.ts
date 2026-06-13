@@ -19,7 +19,7 @@ import * as crypto from 'crypto';
 import { spawn, ChildProcess } from 'child_process';
 import { app } from 'electron';
 import { CLAUDEMON_API_URL } from './claudemonDaemon';
-import { killStaleListener, waitForHealth as waitForHealthShared, PORTS } from '../lib/daemonUtils';
+import { killStaleListener, waitForHealth as waitForHealthShared, PORTS, RestartBackoff } from '../lib/daemonUtils';
 import { getConfigDir } from './configService';
 
 const PORT = PORTS.hub;
@@ -27,6 +27,9 @@ const HEALTH_TIMEOUT_MS = 5000;
 
 let child: ChildProcess | null = null;
 let readyPromise: Promise<void> | null = null;
+/** Set by stopHub() / app shutdown so an intentional kill isn't respawned. */
+let intentionalStop = false;
+const backoff = new RestartBackoff();
 
 /**
  * Remote sharing (opt-in). When WORKSPACER_REMOTE_SHARE is set, the hub binds
@@ -170,10 +173,17 @@ export function startHub(): Promise<void> {
     return Promise.reject(new Error(`hub binary not found at ${bin} (run: cd services/hub && go build -o hub ./cmd/hub)`));
   }
 
+  intentionalStop = false;
+  return launch(bin);
+}
+
+/** Spawn the process and wire up exit-driven restart. Returns the health promise. */
+function launch(bin: string): Promise<void> {
   killStaleListener(PORT, 'hub');
 
   const pluginsDir = ensurePluginsDir();
   console.log(`[hub] spawning ${bin} (addr ${BIND_ADDR})`);
+  backoff.markStarted();
   const hubArgs = [
     '--addr', BIND_ADDR,
     '--claudemon-events', `${CLAUDEMON_API_URL}/events`,
@@ -203,13 +213,30 @@ export function startHub(): Promise<void> {
     console.log(`[hub] exited code=${code} signal=${signal}`);
     child = null;
     readyPromise = null;
+    if (!intentionalStop) scheduleRestart(bin);
   });
 
-  readyPromise = waitForHealthShared(`http://127.0.0.1:${PORT}/health`, HEALTH_TIMEOUT_MS, 'hub');
+  readyPromise = waitForHealthShared(`http://127.0.0.1:${PORT}/health`, HEALTH_TIMEOUT_MS, 'hub')
+    .then(() => { backoff.reset(); });
   return readyPromise;
 }
 
+/** Respawn after an unexpected exit, with exponential backoff. */
+function scheduleRestart(bin: string): void {
+  const delay = backoff.nextDelay();
+  if (delay === null) {
+    console.error('[hub] crashed too many times; giving up auto-restart. Restart the app to recover.');
+    return;
+  }
+  console.warn(`[hub] unexpected exit — restarting in ${delay}ms`);
+  setTimeout(() => {
+    if (intentionalStop || child) return; // stopped, or already back up
+    launch(bin).catch(err => console.error('[hub] restart failed health check:', err));
+  }, delay);
+}
+
 export function stopHub(): void {
+  intentionalStop = true;
   if (child) {
     try { child.kill(); } catch {}
     child = null;

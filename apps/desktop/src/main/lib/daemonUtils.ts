@@ -79,3 +79,49 @@ export async function waitForHealth(
     `${label} /health did not respond within ${timeoutMs}ms (last error: ${String(lastErr)})`,
   );
 }
+
+// ── RestartBackoff ───────────────────────────────────────────────────────────
+
+export interface RestartBackoffOptions {
+  /** Delay before the first restart. Default 1000ms. */
+  baseMs?: number;
+  /** Maximum backoff delay. Default 30000ms. */
+  maxMs?: number;
+  /** Give up after this many consecutive failures. Default 10. */
+  maxAttempts?: number;
+  /** If the process stayed up at least this long, the next crash is treated as
+   *  a fresh failure (counter resets). Default 60000ms. */
+  resetAfterMs?: number;
+}
+
+/**
+ * Exponential-backoff bookkeeping for restarting a supervised daemon. A daemon
+ * that crashes is respawned with growing delays; one that ran healthily past
+ * `resetAfterMs` gets a clean slate so transient crashes don't exhaust the
+ * budget. Pure state — the caller owns the actual spawn + timer.
+ */
+export class RestartBackoff {
+  private attempts = 0;
+  private startedAt = 0;
+  constructor(private readonly opts: RestartBackoffOptions = {}) {}
+
+  /** Record that the process (re)started, for the uptime reset heuristic. */
+  markStarted(): void {
+    this.startedAt = Date.now();
+  }
+
+  /** Manually clear the failure counter (e.g. after a confirmed-healthy start). */
+  reset(): void {
+    this.attempts = 0;
+  }
+
+  /** Delay (ms) before the next restart, or null once the budget is exhausted. */
+  nextDelay(): number | null {
+    const { baseMs = 1000, maxMs = 30000, maxAttempts = 10, resetAfterMs = 60000 } = this.opts;
+    if (this.startedAt && Date.now() - this.startedAt >= resetAfterMs) this.attempts = 0;
+    if (this.attempts >= maxAttempts) return null;
+    const delay = Math.min(maxMs, baseMs * 2 ** this.attempts);
+    this.attempts++;
+    return delay;
+  }
+}
