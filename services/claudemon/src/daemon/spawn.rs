@@ -91,9 +91,18 @@ pub async fn handle(
                         let _ = pty::write_bytes(&pty_for_input, &decoded).await;
                     }
                 }
-                WrapperMessage::Signal { signal: crate::protocol::Signal::Sigint } => {
-                    let _ = pty::write_bytes(&pty_for_input, b"\x03").await;
-                }
+                WrapperMessage::Signal { signal } => match signal {
+                    // Interactive interrupt: Ctrl-C byte through the tty.
+                    crate::protocol::Signal::Sigint => {
+                        let _ = pty::write_bytes(&pty_for_input, b"\x03").await;
+                    }
+                    // Terminate / kill: real process signal so a runaway session stops.
+                    other => {
+                        if let Err(err) = pty::signal_child(&pty_for_input, other) {
+                            tracing::warn!(?err, "signal delivery failed");
+                        }
+                    }
+                },
                 WrapperMessage::Resize { cols, rows } => {
                     let _ = pty::resize(&pty_for_input, cols, rows).await;
                 }

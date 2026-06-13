@@ -109,10 +109,18 @@ pub async fn run_with_daemon(argv: Vec<String>, daemon_ws: &str) -> Result<()> {
                         }
                     }
                     WrapperMessage::Signal { signal } => {
-                        tracing::info!(?signal, "received signal (best-effort)");
-                        // SIGINT via Ctrl-C byte; richer signal delivery TBD.
-                        if signal == crate::protocol::Signal::Sigint {
-                            let _ = pty::write_bytes(&pty_for_reader, b"\x03").await;
+                        tracing::info!(?signal, "delivering signal");
+                        match signal {
+                            // Interactive interrupt: Ctrl-C byte through the tty.
+                            crate::protocol::Signal::Sigint => {
+                                let _ = pty::write_bytes(&pty_for_reader, b"\x03").await;
+                            }
+                            // Terminate / kill: real process signal.
+                            other => {
+                                if let Err(err) = pty::signal_child(&pty_for_reader, other) {
+                                    tracing::warn!(?err, "signal delivery failed");
+                                }
+                            }
                         }
                     }
                     WrapperMessage::Resize { cols, rows } => {

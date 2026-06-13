@@ -105,6 +105,45 @@ pub async fn write_bytes(handle: &PtyHandle, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// Deliver a real process signal to the PTY child.
+///
+/// SIGINT is intentionally NOT handled here — callers send the Ctrl-C byte
+/// (`\x03`) through the tty, which is how an interactive interrupt reaches the
+/// foreground process group. This covers the terminate/kill signals a Ctrl-C
+/// cannot express, so a runaway session can actually be stopped.
+///
+/// On Unix, SIGTERM is sent to the child's pid via `nix`. SIGKILL uses
+/// portable-pty's `kill()` (SIGKILL on Unix). On non-Unix, both fall back to
+/// `kill()` (TerminateProcess), since there is no SIGTERM equivalent.
+pub fn signal_child(handle: &PtyHandle, sig: crate::protocol::Signal) -> Result<()> {
+    use crate::protocol::Signal;
+    let mut child = handle.child.lock().expect("PTY child mutex poisoned");
+    match sig {
+        Signal::Sigkill => {
+            child.kill().context("SIGKILL child")?;
+        }
+        Signal::Sigterm | Signal::Sigint => {
+            #[cfg(unix)]
+            {
+                let posix = match sig {
+                    Signal::Sigterm => nix::sys::signal::Signal::SIGTERM,
+                    _ => nix::sys::signal::Signal::SIGINT,
+                };
+                if let Some(pid) = child.process_id() {
+                    nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), posix)
+                        .with_context(|| format!("send {posix:?} to pid {pid}"))?;
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                // No SIGTERM on Windows — terminate the process.
+                child.kill().context("terminate child")?;
+            }
+        }
+    }
+    Ok(())
+}
+
 pub async fn resize(handle: &PtyHandle, cols: u16, rows: u16) -> Result<()> {
     let master = handle.master.clone();
     tokio::task::spawn_blocking(move || -> Result<()> {
