@@ -25,7 +25,6 @@ electronLanguages:
 linux:
   target:
     - AppImage
-    - deb
   category: Development
   extraResources:
     - from: ../../services/claudemon/target/release/claudemon
@@ -34,6 +33,8 @@ linux:
       to: hub/hub
     - from: ../../services/hub/examples
       to: hub/examples
+    - from: dist/web
+      to: web
 
 win:
   target:
@@ -46,6 +47,8 @@ win:
       to: hub/hub.exe
     - from: ../../services/hub/examples
       to: hub/examples
+    - from: dist/web
+      to: web
 
 mac:
   target:
@@ -58,6 +61,8 @@ mac:
       to: hub/hub
     - from: ../../services/hub/examples
       to: hub/examples
+    - from: dist/web
+      to: web
 
 nsis:
   oneClick: false

@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Launch the packaged Workspacer AppImage with remote sharing ON.
+#
+# Remote share (WORKSPACER_REMOTE_SHARE=1) makes the hub bind 0.0.0.0:7895 and
+# serve a token-authed /remote (lightweight) and /app (full web app) — reach it
+# from another device on your LAN/tailnet. The remote URL + token are shown in
+# the app's Hub status. Override the bind with WORKSPACER_REMOTE_ADDR=host:port.
+set -euo pipefail
+APPIMAGE="$(dirname "$0")/apps/desktop/release/Workspacer-1.0.1.AppImage"
+if [[ ! -x "$APPIMAGE" ]]; then
+  echo "AppImage not found at $APPIMAGE — build it with: make package" >&2
+  exit 1
+fi
+export WORKSPACER_REMOTE_SHARE=1
+# Run without needing FUSE/libfuse: the AppImage runtime self-extracts to a
+# temp dir instead of mounting. (Install `fuse2` for faster native mounting.)
+export APPIMAGE_EXTRACT_AND_RUN=1
+exec "$APPIMAGE" "$@"
