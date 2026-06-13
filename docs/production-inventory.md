@@ -46,6 +46,27 @@ placeholder panes, no-auto-restart daemon supervision, and platform gaps
 
 ---
 
+## Decisions taken (2026-06-13)
+
+| Decision | Outcome | Status |
+|---|---|---|
+| Classifier + `/items` + SQLite inbox | **Park as experimental** — kept, tagged EXPERIMENTAL/PARKED in `classifier/mod.rs`, `store/items.rs`, `api.rs`; not wired to any UI | ✅ done |
+| Dead renderer client chain (`claudemonItems`, `claudemonSessions`, `ItemDetailOverlay`) | Deleted (dead regardless of the park) | ✅ done |
+| Other dead renderer files (`WorkingTimer`, `terminalQueries`, `ScrollIndicator`) | Deleted | ✅ done |
+| NotesPane | **Finished** — real per-agent markdown scratchpad, persists with the session | ✅ done |
+| AgentPane placeholder + `'agent'` pane type | Removed | ✅ done |
+| `docs/v2-spec.md` | Deleted (superseded) | ✅ done |
+| claudemon/hub auto-restart on crash | Implemented (exponential backoff supervision) | ✅ done |
+| SIGTERM/SIGKILL delivery to sessions | Implemented (`pty::signal_child`, real POSIX signals) | ✅ done |
+| Pre-existing renderer typecheck errors (KeybindingsConfig, createTerminal decl) | Fixed in passing | ✅ done |
+
+**Still open (not in this pass):** macOS/Linux Chrome cookie import; tray/overlay
+icon; git merge / `review_diff` next-action wiring; stale E2E `claudePane.test.ts`;
+untested main-process services; the experimental SQLite tables
+(`pending_decisions`, `asks`, `events_fts`) left in place with the parked stack.
+
+---
+
 ## 1. Desktop renderer (`apps/desktop/src/renderer`)
 
 ### Pane types

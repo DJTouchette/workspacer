@@ -1,3 +1,11 @@
+//! EXPERIMENTAL / PARKED (2026-06-13): this classifier and the `/items` inbox
+//! it feeds have no live consumer. The desktop client chain that read `/items`
+//! was deleted, and the shipped product routes attention through the renderer's
+//! live snapshot-based InboxDrawer instead. Kept (and tested) as the substrate
+//! for a possible future silent loop/error-detection surface — not wired into
+//! any UI today. See docs/production-inventory.md §6.1. Do not assume the items
+//! it emits are displayed anywhere.
+//!
 //! Pure classifier: maps `(session snapshot, recent events, incoming event)`
 //! to a new session state and a list of inbox-item actions.
 //!

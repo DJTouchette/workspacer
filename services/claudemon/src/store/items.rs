@@ -1,3 +1,8 @@
+//! EXPERIMENTAL / PARKED (2026-06-13): the `/items` inbox API backed by these
+//! queries has no live consumer (its only desktop client was deleted; the
+//! shipped UI uses the renderer's snapshot-based InboxDrawer). Kept and tested
+//! as future substrate, not surfaced anywhere. See docs/production-inventory.md §6.1.
+//!
 //! Inbox-item queries and user-action writes used by the v2 API surface.
 //!
 //! Reads are denormalized: each [`ItemRow`] also carries the session name

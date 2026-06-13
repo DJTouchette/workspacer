@@ -728,7 +728,9 @@ async fn status_line_stream(
     Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
 }
 
-// ---- v2 items API ----------------------------------------------------------
+// ---- v2 items API (EXPERIMENTAL / PARKED) -----------------------------------
+// These routes serve the classifier-driven inbox. They have no live client
+// today — kept as future substrate. See docs/production-inventory.md §6.1.
 
 async fn list_items(
     State(db): State<Db>,
