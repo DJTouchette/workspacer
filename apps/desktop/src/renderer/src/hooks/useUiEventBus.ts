@@ -7,6 +7,8 @@ interface PaneInfo {
   title: string;
   workspaceId: string;
   tabId: string;
+  /** Editor panes only: the file being edited, so plugins can react to it. */
+  filePath?: string;
 }
 
 function flattenPanes(agents: AgentWorkspace[]): Map<string, PaneInfo> {
@@ -14,7 +16,7 @@ function flattenPanes(agents: AgentWorkspace[]): Map<string, PaneInfo> {
   for (const a of agents) {
     for (const t of a.tabs) {
       for (const p of t.panes) {
-        m.set(p.id, { type: p.type, title: p.title, workspaceId: a.id, tabId: t.id });
+        m.set(p.id, { type: p.type, title: p.title, workspaceId: a.id, tabId: t.id, filePath: p.filePath });
       }
     }
   }
@@ -38,12 +40,12 @@ export function useUiEventBus(agents: AgentWorkspace[], activeAgentId: string): 
     if (prev) {
       for (const [id, info] of cur) {
         if (!prev.has(id)) {
-          emitUiEvent('ui.pane.opened', { paneId: id, type: info.type, title: info.title, workspaceId: info.workspaceId, tabId: info.tabId });
+          emitUiEvent('ui.pane.opened', { paneId: id, type: info.type, title: info.title, workspaceId: info.workspaceId, tabId: info.tabId, ...(info.filePath ? { filePath: info.filePath } : {}) });
         }
       }
       for (const [id, info] of prev) {
         if (!cur.has(id)) {
-          emitUiEvent('ui.pane.closed', { paneId: id, type: info.type, workspaceId: info.workspaceId });
+          emitUiEvent('ui.pane.closed', { paneId: id, type: info.type, workspaceId: info.workspaceId, ...(info.filePath ? { filePath: info.filePath } : {}) });
         }
       }
     }
@@ -64,7 +66,7 @@ export function useUiEventBus(agents: AgentWorkspace[], activeAgentId: string): 
       if (tabId && tabId !== prev.tab) emitUiEvent('ui.tab.focused', { tabId, workspaceId: ws });
       if (paneId && paneId !== prev.pane) {
         const pane = tab?.panes.find((p) => p.id === paneId);
-        emitUiEvent('ui.pane.focused', { paneId, type: pane?.type, workspaceId: ws, tabId });
+        emitUiEvent('ui.pane.focused', { paneId, type: pane?.type, workspaceId: ws, tabId, ...(pane?.filePath ? { filePath: pane.filePath } : {}) });
       }
     }
     prevFocus.current = { ws, tab: tabId, pane: paneId };
