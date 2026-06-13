@@ -1,9 +1,9 @@
 [tools]
-# Go: hub/ requires go 1.25.4 (see hub/go.mod)
+# Go: services/hub/ requires go 1.25.4 (see services/hub/go.mod)
 go = "1.25"
 # Node: Electron app + renderer (README requires Node 18+; pin to current LTS)
 node = "22"
 
 [env]
-# Ensure project-local node_modules binaries resolve in tasks
-_.path = ["./node_modules/.bin"]
+# Ensure the desktop app's node_modules binaries resolve in tasks
+_.path = ["./apps/desktop/node_modules/.bin"]

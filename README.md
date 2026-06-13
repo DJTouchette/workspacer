@@ -1,98 +1,57 @@
 # Workspacer
 
-An Electron desktop application providing a horizontal-scroll workspace for agent-driven development. Built with React and TypeScript.
+A horizontal-scroll workspace for agent-driven development. Workspacer is a
+monorepo: two client apps over a shared Go control-plane, plus a Rust daemon
+that supervises Claude Code sessions.
 
-## Features
+## Layout
 
-- **Horizontal pane layout** - Navigate between panes with keyboard shortcuts or scroll
-- **Multiple pane types** - Terminal, browser, notes, Claude Code, and settings
-- **Claude Code integration** - Built-in Claude CLI panes with headless terminal mirroring and hook support
-- **Session persistence** - Auto-save and resume workspaces across restarts
-- **Browser hibernation** - Inactive browser panes hibernate to save resources
-- **Nerd Font support** - Auto-discovers and injects local Nerd Fonts
-- **Configurable keybindings** - Default and Vim-style modes with leader key support
-- **Command palette** - Quick access to apps and actions
+```
+apps/
+  desktop/     Electron + React desktop app (the GUI client)
+  tui/         wks-tui — Rust terminal client over the hub bus
+services/
+  claudemon/   Rust daemon: ingests Claude Code hook events, owns session
+               state, parses transcripts
+  hub/         Go control-plane / event bus + MCP facade — plugins and remote
+               clients broker events here
+docs/          specs and design notes
+```
 
-## Getting Started
+The desktop app spawns and supervises `claudemon` and `hub` as child
+processes; `wks-tui` and remote/web clients connect to the same `hub` bus.
 
-### Prerequisites
-
-- Node.js 18+
-- npm
-- Electron (installed via npm)
-
-### Install dependencies
+## Quick start
 
 ```bash
-npm install
-cd src/renderer && npm install
+make install      # install desktop JS deps
+make dev          # run the desktop app (Vite + Electron)   — or: ./dev
 ```
 
-### Development
+`make dev` (and `./dev`) auto-build the `hub` binary first; the running app
+builds/locates `claudemon` and `hub` from `services/` automatically.
 
-```bash
-npm run dev
-```
+## Common tasks (from the repo root)
 
-This starts both the Vite dev server (frontend) and Electron with hot reload.
+| Command                  | What it does                                        |
+| ------------------------ | --------------------------------------------------- |
+| `make dev` / `./dev`     | Desktop app in dev mode (hot reload)                |
+| `make build`             | Build all four components                           |
+| `make build-hub`         | Build the Go hub + mcp binaries                     |
+| `make build-claudemon`   | `cargo build --release` for claudemon               |
+| `make build-tui`         | `cargo build --release` for wks-tui                 |
+| `make test`              | Desktop + hub test suites                           |
+| `make package`           | Build daemons + produce desktop installers          |
+| `make clean`             | Remove build artifacts across all components        |
 
-### Build
+Each component also builds independently from its own directory — see the
+per-component READMEs (`apps/desktop/README.md`, `apps/tui/README.md`,
+`services/claudemon/README.md`, `services/hub/README.md`).
 
-```bash
-npm run build
-```
+## Toolchains
 
-### Package for distribution
-
-```bash
-npm run package
-```
-
-Uses electron-builder to create platform-specific installers. Outputs to `release/` directory:
-- **Windows** - NSIS installer, portable executable
-- **macOS** - DMG
-- **Linux** - AppImage, deb
-
-## Architecture
-
-This is an Electron app with a two-process architecture:
-
-- **Main process** (`src/main/`) - Node.js backend handling window management, IPC, and system services
-- **Renderer process** (`src/renderer/`) - React frontend bundled with Vite
-
-## Project Structure
-
-```
-src/
-  main/           # Electron main process
-    index.ts      # App entry point, window creation
-    ipc.ts        # IPC handlers
-    services/     # Terminal, session, config services
-  renderer/       # React frontend (Vite)
-    src/
-      App.tsx     # Main app component
-      components/ # UI components (NavBar, ScrollContainer, etc.)
-      panes/      # Pane implementations (Terminal, Browser, Claude, etc.)
-      hooks/      # React hooks (useTabManager, useKeyboardNav, etc.)
-```
-
-## Keyboard Shortcuts
-
-Press `?` to view the shortcut overlay. Default bindings include:
-
-- `Ctrl+T` - New terminal tab
-- `Ctrl+W` - Close current tab
-- `Ctrl+[1-9]` - Jump to tab by number
-- `Ctrl+Shift+Left/Right` - Move tab
-
-## Testing
-
-```bash
-npm run test           # Run all tests
-npm run test:main      # Main process tests
-npm run test:renderer  # Renderer tests
-npm run test:e2e       # End-to-end tests (Playwright)
-```
+Pinned via [`mise`](https://mise.jdx.dev) (`mise.toml`): Go 1.25, Node 22.
+Rust is via the standard `cargo`/`rustup` toolchain.
 
 ## License
 

@@ -1,18 +1,26 @@
+# Dependencies & build output (match at any depth across the monorepo)
 node_modules/
 dist/
 release/
-src/renderer/node_modules/
-src/renderer/dist/
 *.js.map
 .DS_Store
 
-# hub build artifacts (built by npm run build:hub)
-hub/hub
-hub/hub.exe
-hub/hub.exe~
+# Rust target dirs (apps/tui, services/claudemon)
+target/
+
+# hub build artifacts (built by `npm run build:hub` / `npm run build:mcp`)
+services/hub/hub
+services/hub/hub.exe
+services/hub/hub.exe~
+services/hub/mcp
+services/hub/mcp.exe
+
+# Committed binaries don't belong in source control (deleted from history going forward)
+/bin/
+/workspacer
 
 # A global ignore (~/.gitignore_global) has a `claude/` rule (meant for `.claude/`)
 # that wrongly matches this source directory, so new files in it were silently
 # untracked. Re-include the directory and its contents for this repo.
-!src/renderer/src/components/claude/
-!src/renderer/src/components/claude/**
+!apps/desktop/src/renderer/src/components/claude/
+!apps/desktop/src/renderer/src/components/claude/**

@@ -23,7 +23,7 @@ The hard part is already done by the "Way better remote" commit (`17d5766`):
   are viewers; neither runs anything.
 - **hub (Go) = transport.** Today a *pure router* — `rpc.go`: "The hub never executes a
   capability — it only routes." Holds zero app state.
-- **Web renderer = the same React app** as Electron. `src/renderer/src/backend/webBackend.ts`
+- **Web renderer = the same React app** as Electron. `apps/desktop/src/renderer/src/backend/webBackend.ts`
   reimplements the entire `window.electronAPI` surface against the hub-bus WebSocket
   (`hubBusClient.ts`). React can't tell preload-bridge from WebSocket apart.
 - **Terminal content already mirrors like tmux:** both clients attach the same PTY
@@ -63,7 +63,7 @@ extends the "UI is rendering-only" principle from session data to the window man
 ## Phases
 
 ### Phase 1 — Hub layout service (Go) [foundational, self-contained]
-New `hub/internal/layout` package. Holds the layout doc in memory (shape of
+New `services/hub/internal/layout` package. Holds the layout doc in memory (shape of
 `AgentWorkspace[]` + globals: active agent, view mode). Registers as a bus *provider* for:
 - `layout.get` → full snapshot
 - `layout.apply` → a granular mutation (`openTab`, `closeTab`, `setActiveTab`,
@@ -103,12 +103,12 @@ into the live doc, not the source of truth. Clean split, but it changes desktop 
 
 ## Key files
 
-- `hub/internal/bus/rpc.go`, `hub/internal/bus/bus.go` — router + provider registration
-- `hub/internal/broker/broker.go` — pub/sub
-- `hub/cmd/hub/main.go` — wiring
-- `src/main/services/hubClient.ts` — main-process bus client (add caller role)
-- `src/main/services/hubCapabilities.ts` — existing capability registrations (reference)
-- `src/main/ipc.ts`, `src/main/preload.ts` — desktop IPC surface
-- `src/renderer/src/backend/webBackend.ts`, `hubBusClient.ts` — web bus client
-- `src/renderer/src/hooks/useAgentManager.ts`, `src/renderer/src/App.tsx` — layout state
-- `src/renderer/src/types/pane.ts` — `AgentWorkspace`/`TabConfig`/`PaneConfig` shapes
+- `services/hub/internal/bus/rpc.go`, `services/hub/internal/bus/bus.go` — router + provider registration
+- `services/hub/internal/broker/broker.go` — pub/sub
+- `services/hub/cmd/hub/main.go` — wiring
+- `apps/desktop/src/main/services/hubClient.ts` — main-process bus client (add caller role)
+- `apps/desktop/src/main/services/hubCapabilities.ts` — existing capability registrations (reference)
+- `apps/desktop/src/main/ipc.ts`, `apps/desktop/src/main/preload.ts` — desktop IPC surface
+- `apps/desktop/src/renderer/src/backend/webBackend.ts`, `hubBusClient.ts` — web bus client
+- `apps/desktop/src/renderer/src/hooks/useAgentManager.ts`, `apps/desktop/src/renderer/src/App.tsx` — layout state
+- `apps/desktop/src/renderer/src/types/pane.ts` — `AgentWorkspace`/`TabConfig`/`PaneConfig` shapes

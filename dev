@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Run the Workspacer desktop app in dev mode from the repo root.
+# Thin wrapper around `apps/desktop` npm dev (Vite renderer + Electron main).
+set -euo pipefail
+cd "$(dirname "$0")/apps/desktop"
+exec npm run dev "$@"

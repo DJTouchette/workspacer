@@ -1,32 +1,60 @@
-.PHONY: build build-go build-web dev dev-go dev-web install clean check
+# Workspacer monorepo — top-level orchestrator.
+#
+#   apps/desktop      Electron app (npm)        — the GUI client
+#   apps/tui          wks-tui (Rust/cargo)      — the terminal client
+#   services/claudemon  Claude session daemon (Rust/cargo)
+#   services/hub        control-plane / event bus (Go)
+#
+# Each component also builds on its own from its directory; these targets just
+# delegate so you have one entry point from the repo root.
 
-build: build-go build-web
+DESKTOP   := apps/desktop
+TUI       := apps/tui
+CLAUDEMON := services/claudemon
+HUB       := services/hub
 
-build-go:
-	go build -o workspacer ./cmd/workspacer
+.PHONY: dev install build build-desktop build-hub build-claudemon build-tui \
+        test test-desktop test-hub package clean
 
-build-web:
-	cd web && npm run build
-
+## dev: run the desktop app in dev mode (Vite + Electron)
 dev:
-	@trap 'kill 0' EXIT; \
-	go run ./cmd/workspacer --web & \
-	cd web && npm run dev & \
-	wait
+	cd $(DESKTOP) && npm run dev
 
-dev-go:
-	go run ./cmd/workspacer --web
-
-dev-web:
-	cd web && npm run dev
-
+## install: install desktop JS dependencies
 install:
-	cd web && npm install
+	cd $(DESKTOP) && npm install
 
+## build: build every component
+build: build-hub build-claudemon build-desktop build-tui
+
+build-desktop:
+	cd $(DESKTOP) && npm run build
+
+build-hub:
+	cd $(HUB) && go build -o . ./cmd/hub && go build -o . ./cmd/mcp
+
+build-claudemon:
+	cd $(CLAUDEMON) && cargo build --release
+
+build-tui:
+	cd $(TUI) && cargo build --release
+
+## test: run all test suites
+test: test-desktop test-hub
+
+test-desktop:
+	cd $(DESKTOP) && npm test
+
+test-hub:
+	cd $(HUB) && go test -race ./...
+
+## package: build daemons + produce desktop installers (electron-builder)
+package:
+	cd $(DESKTOP) && npm run package
+
+## clean: remove build artifacts across components
 clean:
-	rm -f workspacer
-	rm -rf dist/
-
-check:
-	go vet ./...
-	cd web && npx tsc --noEmit
+	rm -rf $(DESKTOP)/dist $(DESKTOP)/release
+	rm -f $(HUB)/hub $(HUB)/hub.exe $(HUB)/mcp
+	cd $(CLAUDEMON) && cargo clean
+	cd $(TUI) && cargo clean
