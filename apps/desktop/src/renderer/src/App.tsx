@@ -587,6 +587,7 @@ function App() {
     onSaveSession: saveCurrentSession,
     onOpenCommandPalette: useCallback(() => { setPaletteRestrict(undefined); setPaletteMode('tab'); setShowCommandPalette(true); }, []),
     onOpenSplitPalette: useCallback(() => { setPaletteRestrict(undefined); setPaletteMode('split'); setShowCommandPalette(true); }, []),
+    onOpenFile: openFileInEditor,
     onPrevAgent: handlePrevAgent,
     onNextAgent: handleNextAgent,
     onNextAttention: goToNextAttention,

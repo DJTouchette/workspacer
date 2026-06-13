@@ -67,6 +67,7 @@ interface UseKeyboardNavOptions {
   onSaveSession?: () => void;
   onOpenCommandPalette?: () => void;
   onOpenSplitPalette?: () => void;
+  onOpenFile?: () => void;
   onPrevAgent?: () => void;
   onNextAgent?: () => void;
   onNextAttention?: () => void;
@@ -100,6 +101,7 @@ export function useKeyboardNav({
   onSaveSession,
   onOpenCommandPalette,
   onOpenSplitPalette,
+  onOpenFile,
   onPrevAgent,
   onNextAgent,
   onNextAttention,
@@ -234,6 +236,7 @@ export function useKeyboardNav({
       if (m['settings']?.(e)) { e.preventDefault(); e.stopPropagation(); onOpenSettings?.(); return; }
       if (m['save-session']?.(e)) { e.preventDefault(); e.stopPropagation(); onSaveSession?.(); return; }
       if (m['command-palette']?.(e)) { e.preventDefault(); e.stopPropagation(); onOpenCommandPalette?.(); return; }
+      if (m['open-file']?.(e)) { e.preventDefault(); e.stopPropagation(); onOpenFile?.(); return; }
       if (m['prev-agent']?.(e)) { e.preventDefault(); e.stopPropagation(); onPrevAgent?.(); return; }
       if (m['next-agent']?.(e)) { e.preventDefault(); e.stopPropagation(); onNextAgent?.(); return; }
       if (m['next-attention']?.(e)) { e.preventDefault(); e.stopPropagation(); onNextAttention?.(); return; }

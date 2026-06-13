@@ -52,6 +52,7 @@ const SHORTCUT_LABELS: Record<string, string> = {
   'quick-split': 'Quick Split (clone)',
   'close-pane': 'Close Pane',
   'command-palette': 'Command Palette',
+  'open-file': 'Open File (editor)',
   'settings': 'Settings',
   'save-session': 'Save Session',
   'rename-tab': 'Rename Tab',
@@ -98,7 +99,7 @@ const ShortcutEditor: React.FC<{ config: Config; save: (partial: Partial<Config>
     const defaults: Record<string, string> = {
       'new-terminal': 'ctrl+t', 'new-browser': 'ctrl+n', 'new-claude': 'ctrl+j',
       'split': 'ctrl+d', 'quick-split': 'ctrl+shift+d', 'close-pane': 'ctrl+w',
-      'command-palette': 'ctrl+k', 'settings': 'ctrl+,', 'save-session': 'ctrl+s',
+      'command-palette': 'ctrl+k', 'open-file': 'ctrl+e', 'settings': 'ctrl+,', 'save-session': 'ctrl+s',
       'rename-tab': 'f2', 'toggle-help': 'ctrl+?', 'prev-tab': 'ctrl+[',
       'next-tab': 'ctrl+]', 'nav-left': 'ctrl+h', 'nav-right': 'ctrl+l',
       'nav-up': 'ctrl+shift+k', 'nav-down': 'ctrl+shift+j',

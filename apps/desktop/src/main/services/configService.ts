@@ -184,6 +184,7 @@ function defaultConfig(): Config {
         'quick-split': 'ctrl+shift+d',
         'close-pane': 'ctrl+w',
         'command-palette': 'ctrl+k',
+        'open-file': 'ctrl+e',
         'library-picker': 'ctrl+l',
         'toggle-terminal': 'ctrl+`',
         'toggle-sidebar': 'ctrl+b',
