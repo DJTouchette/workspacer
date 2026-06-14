@@ -247,13 +247,15 @@ pub fn turns_from_transcript(tx: &Value) -> Vec<Turn> {
     out
 }
 
-/// Slash-command echoes and injected reminders aren't real conversation.
+/// Slash-command echoes, injected reminders, and background-task notifications
+/// (emitted by workflows) aren't real conversation.
 fn is_meta_noise(text: &str) -> bool {
-    const TAGS: [&str; 4] = [
+    const TAGS: [&str; 5] = [
         "<local-command",
         "<command-name",
         "<command-message",
         "<system-reminder",
+        "<task-notification",
     ];
     TAGS.iter().any(|t| text.starts_with(t))
 }

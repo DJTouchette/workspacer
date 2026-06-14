@@ -233,6 +233,22 @@ async fn tail_one(conv: &ConversationStore, session_id: &str, path: &str) -> std
 /// Mirrors what clients used to derive themselves: user text, assistant text
 /// per content block, tool_use starts, tool_results joined by id, and usage.
 /// Thinking blocks and meta rows are skipped.
+/// Injected, non-conversational user blocks Claude Code writes into the
+/// transcript: slash-command echoes, system reminders, and the background-task
+/// notifications workflows emit. They're UI noise — never what the user typed —
+/// so they're filtered out of the conversation surfaced to clients.
+fn is_injected_meta(text: &str) -> bool {
+    const TAGS: [&str; 5] = [
+        "<task-notification",
+        "<system-reminder",
+        "<local-command",
+        "<command-name",
+        "<command-message",
+    ];
+    let t = text.trim_start();
+    TAGS.iter().any(|tag| t.starts_with(tag))
+}
+
 pub fn items_from_row(value: &Value) -> Vec<ConversationItem> {
     let mut out = Vec::new();
     if value.get("isMeta").and_then(Value::as_bool).unwrap_or(false) {
@@ -274,7 +290,11 @@ pub fn items_from_row(value: &Value) -> Vec<ConversationItem> {
                 let text = bs
                     .iter()
                     .filter_map(|b| match b {
-                        Block::Text { text } => Some(*text),
+                        // Drop injected, non-conversational blocks (slash-command
+                        // echoes, system reminders, our background-task
+                        // notifications) — they're transcript plumbing, not
+                        // something the user typed.
+                        Block::Text { text } if !is_injected_meta(text) => Some(*text),
                         _ => None,
                     })
                     .collect::<Vec<_>>()
@@ -343,6 +363,45 @@ mod tests {
                 assert_eq!(text, "hello there");
                 assert_eq!(timestamp.as_deref(), Some("2026-06-12T10:00:00Z"));
             }
+            other => panic!("expected UserMessage, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn injected_meta_user_rows_are_dropped() {
+        // A workflow task-notification (and other injected blocks) is transcript
+        // plumbing, not a user message — it must not surface as a UserMessage.
+        for content in [
+            "<task-notification>\n<status>completed</status>\n</task-notification>",
+            "<system-reminder>be nice</system-reminder>",
+            "<command-name>/clear</command-name>",
+        ] {
+            let row = json!({
+                "type": "user",
+                "message": { "role": "user", "content": content }
+            });
+            assert!(
+                items_from_row(&row).is_empty(),
+                "expected {content:?} to be filtered out"
+            );
+        }
+    }
+
+    #[test]
+    fn injected_meta_block_filtered_but_real_text_kept() {
+        // A user row carrying both a reminder block and real text keeps only the
+        // real text.
+        let row = json!({
+            "type": "user",
+            "message": { "role": "user", "content": [
+                { "type": "text", "text": "<system-reminder>noise</system-reminder>" },
+                { "type": "text", "text": "actually do this" }
+            ]}
+        });
+        let items = items_from_row(&row);
+        assert_eq!(items.len(), 1);
+        match &items[0] {
+            ConversationItem::UserMessage { text, .. } => assert_eq!(text, "actually do this"),
             other => panic!("expected UserMessage, got {other:?}"),
         }
     }
