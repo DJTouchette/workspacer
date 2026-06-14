@@ -7,7 +7,7 @@ import { usePTY } from '../hooks/usePTY';
 import { useConfig, Config } from '../hooks/useConfig';
 import { useTheme } from '../hooks/useTheme';
 import { claudeColors as colors, ensureKeyframes } from '../components/claude-shared';
-import { quoteFontFamily, fitWithRetry } from '../lib/terminalUtils';
+import { quoteFontFamily, fitWithRetry, isTermVisible, refitAndRepaint } from '../lib/terminalUtils';
 
 interface TerminalPaneProps {
   paneId: string;
@@ -156,8 +156,10 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
       return true;
     });
 
-    // Fit multiple times during startup — the container needs time to reach final size
-    fitWithRetry(fitAddon);
+    // Fit multiple times during startup — the container needs time to reach
+    // final size. Guard on the container so a pane created under a hidden agent
+    // doesn't fit a zero-size box.
+    fitWithRetry(fitAddon, container);
 
     attachToTerminal(term);
 
@@ -170,6 +172,9 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
     });
 
     const observer = new ResizeObserver(() => {
+      // Skip while hidden: toggling a workspace to display:none fires a 0×0
+      // resize, and fitting that collapses the grid and garbles the PTY on show.
+      if (!isTermVisible(container)) return;
       requestAnimationFrame(() => {
         try {
           if (fitAddonRef.current) {
@@ -212,15 +217,13 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
     if (!term) return;
     if (isActive) {
       term.focus();
-      // Re-fit when pane becomes active — size may have changed
-      requestAnimationFrame(() => {
-        try {
-          fitAddonRef.current?.fit();
-          resize(term.cols, term.rows);
-        } catch {
-          // Ignore
-        }
-      });
+      // Re-fit + repaint when pane becomes active — the workspace was likely
+      // just toggled back from display:none, leaving stale glyphs. Two frames
+      // so layout settles before fitting.
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        refitAndRepaint(fitAddonRef.current, term, containerRef.current);
+        resize(term.cols, term.rows);
+      }));
     } else {
       term.blur();
     }
@@ -231,12 +234,11 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
     if (!isReady || !fitAddonRef.current || !terminalRef.current) return;
 
     const timer = setTimeout(() => {
+      const term = terminalRef.current;
+      if (!term || !isTermVisible(containerRef.current)) return;
       try {
         fitAddonRef.current?.fit();
-        const term = terminalRef.current;
-        if (term) {
-          resize(term.cols, term.rows);
-        }
+        resize(term.cols, term.rows);
       } catch {
         // Ignore
       }

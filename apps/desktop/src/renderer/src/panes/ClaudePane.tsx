@@ -17,7 +17,7 @@ import {
 } from '../components/claude-shared';
 import { RefreshCw } from '../components/icons';
 import { PanelRight } from 'lucide-react';
-import { quoteFontFamily } from '../lib/terminalUtils';
+import { quoteFontFamily, isTermVisible, refitAndRepaint } from '../lib/terminalUtils';
 
 // ── Sub-components ──
 import { InlineWorkLog } from '../components/claude/InlineWorkLog';
@@ -247,6 +247,9 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
     const onBinaryDisp = term.onBinary((data) => write(data));
 
     const observer = new ResizeObserver(() => {
+      // Skip while hidden: toggling a workspace to display:none fires a 0×0
+      // resize, and fitting that collapses the grid and garbles the PTY on show.
+      if (!isTermVisible(container)) return;
       requestAnimationFrame(() => { try { fitAddonRef.current?.fit(); } catch {} });
     });
     observer.observe(container);
@@ -270,7 +273,8 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
     if (!isActive) return;
     if (viewMode === 'terminal' && terminalRef.current) {
       terminalRef.current.focus();
-      requestAnimationFrame(() => { try { fitAddonRef.current?.fit(); } catch {} });
+      requestAnimationFrame(() =>
+        refitAndRepaint(fitAddonRef.current, terminalRef.current, termContainerRef.current));
     } else if (viewMode === 'gui') {
       requestAnimationFrame(() => inputRef.current?.focus());
     }
@@ -290,17 +294,17 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
     return () => cancelAnimationFrame(id);
   }, [viewMode]);
 
-  // Re-fit terminal on active change
+  // Re-fit terminal on active change. The workspace was likely just toggled
+  // from display:none to block, so refit + repaint (two frames so layout
+  // settles first) to clear any stale glyphs, then sync the PTY size.
   useEffect(() => {
     if (isActive && viewMode === 'terminal' && terminalRef.current) {
       terminalRef.current.focus();
-      requestAnimationFrame(() => {
-        try {
-          fitAddonRef.current?.fit();
-          const t = terminalRef.current;
-          if (t) resize(t.cols, t.rows);
-        } catch {}
-      });
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        const t = terminalRef.current;
+        refitAndRepaint(fitAddonRef.current, t, termContainerRef.current);
+        if (t) resize(t.cols, t.rows);
+      }));
     }
   }, [isActive, viewMode, resize]);
 

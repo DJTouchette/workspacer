@@ -14,6 +14,7 @@ interface SessionPaneData {
   shell?: string;
   cwd?: string;
   url?: string;
+  notes?: string;
 }
 
 interface SessionTabData {
