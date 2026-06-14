@@ -117,14 +117,32 @@ the TUI suite as 🟡 Partial).
   cleanly rather than blank — the terminal analogue of the desktop ErrorBoundary
   /EmptyState pass.
 
+## Phase 7 — Settings (config: themes + keybindings) ☑
+
+Done ahead of the rest at the user's request — the desktop app has themes +
+remappable keybindings + a shortcut overlay, and the TUI now matches.
+
+- ☑ `~/.config/workspacer/tui.json` loader (`config.rs`) — optional,
+  all-defaulted, warns-and-degrades on a bad file.
+- ☑ **Theme** (`theme.rs`) — semantic color roles, built-in presets
+  (default/nord/gruvbox/ansi), per-role overrides; threaded through `ui.rs`.
+- ☑ **Keybindings** (`keys.rs`) — semantic `Action` enum + per-context `Keymap`
+  with config overrides (`none` to unbind); `input.rs` dispatches through it.
+- ☑ **Help overlay** (`?`) — lists active bindings per context + themes,
+  generated from the live keymap so it can't drift.
+- ☐ Remaining: persist runtime changes (live theme/keymap reload), a settings
+  *editor* in-app (vs editing JSON), and notification config.
+
 ---
 
 ## Explicitly out of scope (desktop-only / no terminal analogue)
 
-✗ Spatial / stacked view modes · ✗ Fleet Deck radar · ✗ themes (terminal owns its
-palette) · ✗ browser/plugin webview panes · ✗ OS notification config UI (a
-terminal bell on needs-input is the most we'd add) · ✗ analytics history (no
-claudemon endpoint; would need new backend) · ✗ layout templates.
+✗ Spatial / stacked view modes · ✗ Fleet Deck radar · ✗ browser/plugin webview
+panes · ✗ OS notification config UI (a terminal bell on needs-input is the most
+we'd add) · ✗ analytics history (no claudemon endpoint; would need new backend)
+· ✗ layout templates.
+
+> Themes moved **out of "out of scope" into Phase 7** — the user asked for them.
 
 ---
 
@@ -134,3 +152,7 @@ claudemon endpoint; would need new backend) · ✗ layout templates.
   source and claudemon's route table. Baseline `cargo build` clean; 76 desktop
   tests + renderer typecheck green (UI/UX hardening sweep pushed in the same
   session).
+- 2026-06-13 — Phase 7 (Settings) done at the user's request: config-loaded
+  theme system (`theme.rs`/`config.rs`), configurable keybindings (`keys.rs`,
+  `input.rs` refactored to keymap dispatch), and a `?` help overlay. 60 TUI
+  tests pass; clean build. Config documented in `apps/tui/README.md`.

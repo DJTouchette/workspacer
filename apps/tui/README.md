@@ -122,6 +122,40 @@ only `Ctrl-]` is intercepted.
 | `enter` | spawn |
 | `esc` | cancel |
 
+## Configuration
+
+Optional, read from `~/.config/workspacer/tui.json` (the same config dir the
+desktop app and Claude profiles use). Everything has a sane default; a missing
+or malformed file is ignored (with a warning) rather than blocking startup. Open
+the in-app help overlay with `?` to see the active bindings and theme list.
+
+```json
+{
+  "theme": "nord",
+  "colors": { "accent": "#88c0d0", "warn": "yellow" },
+  "keys": {
+    "list":             { "x": "quit", "q": "none" },
+    "agent_transcript": { "ctrl+r": "refresh" },
+    "global":           { "f1": "help" }
+  }
+}
+```
+
+**Theme** — `theme` picks a built-in preset (`default`, `nord`, `gruvbox`,
+`ansi`); `ansi` uses your terminal's own 16-color palette. `colors` overrides
+individual roles (`accent`, `ok`, `warn`, `bad`, `dim`, `fg`, `selection_bg`) on
+top of the preset. A color is `#rrggbb`, a bare `rrggbb`, an ANSI name (`cyan`,
+`darkgray`…), or a 256-color index.
+
+**Keys** — `keys` remaps bindings per context. Contexts: `global` (checked
+everywhere), `list` (sidebar/dashboard), `agent_terminal` (raw PTY / shell
+tabs), `agent_transcript` (parsed transcript). A chord is a `key` with optional
+`ctrl+` / `alt+` / `shift+` modifiers (e.g. `ctrl+k`, `shift+tab`, `G`, `space`,
+`enter`, `esc`). Map a chord to an action name (press `?` for the full list —
+`quit`, `select_next`, `attach`, `approve`, `toggle_transcript`, …), or to
+`none` to remove a default. The composer, spawn field, palette query, and the
+positional `1`–`9` answer keys are not remappable.
+
 ## Running
 
 ```sh
