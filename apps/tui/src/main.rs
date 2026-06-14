@@ -9,10 +9,12 @@
 
 mod app;
 mod claudemon;
+mod config;
 mod daemons;
 mod library;
 mod profiles;
 mod terminal;
+mod theme;
 mod types;
 mod ui;
 
@@ -60,9 +62,10 @@ async fn main() -> Result<()> {
     let claudemon = claudemon::Claudemon::new(cli.claudemon_url.clone());
     let profiles = profiles::load();
     let library = library::load();
+    let config = config::load();
 
     let mut terminal = setup_terminal()?;
-    let res = run(&mut terminal, cli.claudemon_url, claudemon, profiles, library).await;
+    let res = run(&mut terminal, cli.claudemon_url, claudemon, profiles, library, config).await;
     restore_terminal(&mut terminal)?;
     res
 }
@@ -73,11 +76,12 @@ async fn run(
     claudemon: claudemon::Claudemon,
     profiles: Vec<profiles::Profile>,
     library: Vec<library::LibraryItem>,
+    config: config::Config,
 ) -> Result<()> {
     let mut daemon_rx = claudemon::spawn_events(events_url);
     let (msg_tx, mut msg_rx) = mpsc::unbounded_channel::<AppMsg>();
     let (pty_tx, mut pty_rx) = mpsc::unbounded_channel::<claudemon::PtyChunk>();
-    let mut app = App::new(claudemon, profiles, library, msg_tx, pty_tx);
+    let mut app = App::new(claudemon, profiles, library, config, msg_tx, pty_tx);
 
     let mut keys = EventStream::new();
     // A steady tick so toasts expire and the "working…" indicator stays live

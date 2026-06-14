@@ -15,9 +15,11 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::claudemon::{Claudemon, PtyChunk};
+use crate::config::Config;
 use crate::library::LibraryItem;
 use crate::profiles::Profile;
 use crate::terminal::Term;
+use crate::theme::Theme;
 use crate::types::{Agent, Turn};
 
 use tasks::{fetch_agents, fetch_transcript};
@@ -172,6 +174,8 @@ pub struct App {
 
     pub profiles: Vec<Profile>,
     pub library: Vec<LibraryItem>,
+    /// Resolved color theme; every renderer references it instead of literals.
+    pub theme: Theme,
     pub spawn_form: Option<SpawnForm>,
     pub palette: Option<Palette>,
 
@@ -221,6 +225,7 @@ impl App {
         claudemon: Claudemon,
         profiles: Vec<Profile>,
         library: Vec<LibraryItem>,
+        config: Config,
         tx: UnboundedSender<AppMsg>,
         pty_tx: UnboundedSender<PtyChunk>,
     ) -> Self {
@@ -230,6 +235,7 @@ impl App {
             pty_tx,
             profiles,
             library,
+            theme: config.theme,
             spawn_form: None,
             palette: None,
             connected: false,
@@ -572,7 +578,7 @@ mod tests {
         // Points at an unused port; the background stream tasks just fail and
         // retry harmlessly, which is fine for exercising app state.
         let cm = Claudemon::new("http://127.0.0.1:59999".into());
-        App::new(cm, Vec::new(), Vec::new(), tx, ptx)
+        App::new(cm, Vec::new(), Vec::new(), Config::default(), tx, ptx)
     }
 
     fn agent(id: &str) -> Agent {

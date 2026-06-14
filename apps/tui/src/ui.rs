@@ -1,6 +1,9 @@
 //! ratatui rendering. One entry point, [`render`], takes `&mut App` because it
 //! resolves the transcript's follow-to-bottom flag into a concrete scroll
 //! offset clamped to the content height — the only state the renderer writes.
+//!
+//! Colors come from `app.theme` (see `theme.rs`); no widget references a literal
+//! color. Leaf helpers that don't get an `&App` take an explicit `&Theme`.
 
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -9,16 +12,10 @@ use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
 
 use crate::app::{App, ChatMode, TabKind, View};
+use crate::theme::Theme;
 use crate::types::{Agent, Part, Role};
 use serde_json::Value;
 use tui_term::widget::PseudoTerminal;
-
-// Palette roughly matching the /remote client.
-const ACCENT: Color = Color::Rgb(110, 168, 254);
-const OK: Color = Color::Rgb(78, 201, 168);
-const WARN: Color = Color::Rgb(224, 179, 65);
-const BAD: Color = Color::Rgb(224, 108, 117);
-const DIM: Color = Color::Rgb(139, 145, 156);
 
 pub fn render(f: &mut Frame, app: &mut App) {
     let root = Layout::default()
@@ -54,25 +51,26 @@ pub fn render(f: &mut Frame, app: &mut App) {
 // ── header ──────────────────────────────────────────────────────────────────
 
 fn render_header(f: &mut Frame, area: Rect, app: &App) {
+    let t = &app.theme;
     let (dot, dot_color, status) = if app.connected {
-        ("●", OK, "connected")
+        ("●", t.ok, "connected")
     } else {
-        ("●", BAD, "reconnecting…")
+        ("●", t.bad, "reconnecting…")
     };
     let mut spans = vec![
-        Span::styled(" workspacer ", Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)),
-        Span::styled("· tui", Style::default().fg(DIM)),
+        Span::styled(" workspacer ", Style::default().fg(t.accent).add_modifier(Modifier::BOLD)),
+        Span::styled("· tui", Style::default().fg(t.dim)),
     ];
     if let Some(toast) = app.toast() {
         spans.push(Span::raw("   "));
-        spans.push(Span::styled(toast.to_string(), Style::default().fg(WARN)));
+        spans.push(Span::styled(toast.to_string(), Style::default().fg(t.warn)));
     }
     let left = Paragraph::new(Line::from(spans));
     f.render_widget(left, area);
 
     let right = Paragraph::new(Line::from(vec![
         Span::styled(format!("{dot} "), Style::default().fg(dot_color)),
-        Span::styled(format!("{status} "), Style::default().fg(DIM)),
+        Span::styled(format!("{status} "), Style::default().fg(t.dim)),
     ]))
     .right_aligned();
     f.render_widget(right, area);
@@ -81,38 +79,39 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
 // ── sidebar ──────────────────────────────────────────────────────────────────
 
 fn render_sidebar(f: &mut Frame, area: Rect, app: &App) {
+    let t = &app.theme;
     let block = Block::default()
         .borders(Borders::ALL)
         .title(format!(" agents ({}) ", app.agents.len()))
-        .border_style(Style::default().fg(DIM));
+        .border_style(Style::default().fg(t.dim));
 
     // Pinned Dashboard row, then one row per agent.
     let mut items: Vec<ListItem> = Vec::with_capacity(app.agents.len() + 1);
     items.push(ListItem::new(vec![
         Line::from(vec![
-            Span::styled("▣ ", Style::default().fg(ACCENT)),
+            Span::styled("▣ ", Style::default().fg(t.accent)),
             Span::styled("Dashboard", Style::default().add_modifier(Modifier::BOLD)),
         ]),
-        Line::from(Span::styled("overview", Style::default().fg(DIM))),
+        Line::from(Span::styled("overview", Style::default().fg(t.dim))),
     ]));
     items.extend(app.agents.iter().map(|a| {
         let marker = if a.is_waiting() {
-            Span::styled("● ", Style::default().fg(WARN))
+            Span::styled("● ", Style::default().fg(t.warn))
         } else if a.is_busy() {
-            Span::styled("● ", Style::default().fg(ACCENT))
+            Span::styled("● ", Style::default().fg(t.accent))
         } else {
-            Span::styled("· ", Style::default().fg(DIM))
+            Span::styled("· ", Style::default().fg(t.dim))
         };
         let name = Line::from(vec![
             marker,
             Span::styled(a.short_cwd(), Style::default().add_modifier(Modifier::BOLD)),
         ]);
-        let meta = Line::from(Span::styled(meta_line(a), Style::default().fg(DIM)));
+        let meta = Line::from(Span::styled(meta_line(a), Style::default().fg(t.dim)));
         ListItem::new(vec![name, meta])
     }));
 
     let list = List::new(items).block(block).highlight_style(
-        Style::default().bg(Color::Rgb(29, 32, 38)).add_modifier(Modifier::BOLD),
+        Style::default().bg(t.selection_bg).add_modifier(Modifier::BOLD),
     );
     let mut state = ListState::default();
     state.select(Some(app.selected));
@@ -148,26 +147,29 @@ fn badge(state: &str) -> String {
     s.to_lowercase()
 }
 
-fn state_color(state: &str) -> Color {
+/// Map a session state to a theme role color: waiting/input → warn, error → bad,
+/// everything else → ok.
+fn state_color(t: &Theme, state: &str) -> Color {
     match state.to_lowercase().as_str() {
-        "input" | "waiting" => WARN,
-        "error" => BAD,
-        _ => OK,
+        "input" | "waiting" => t.warn,
+        "error" => t.bad,
+        _ => t.ok,
     }
 }
 
 // ── detail (list view right pane) ─────────────────────────────────────────────
 
 fn render_detail(f: &mut Frame, area: Rect, app: &App) {
+    let t = &app.theme;
     let block = Block::default()
         .borders(Borders::ALL)
         .title(" details ")
-        .border_style(Style::default().fg(DIM));
+        .border_style(Style::default().fg(t.dim));
 
     let Some(a) = app.selected_agent() else {
         let p = Paragraph::new(Line::from(Span::styled(
             "select an agent — enter to open",
-            Style::default().fg(DIM),
+            Style::default().fg(t.dim),
         )))
         .block(block);
         f.render_widget(p, area);
@@ -175,43 +177,44 @@ fn render_detail(f: &mut Frame, area: Rect, app: &App) {
     };
 
     let mut lines: Vec<Line> = vec![
-        kv("cwd", a.cwd_str()),
+        kv(t, "cwd", a.cwd_str()),
         Line::from(vec![
-            Span::styled("state  ", Style::default().fg(DIM)),
-            Span::styled(badge(a.state()), Style::default().fg(state_color(a.state())).add_modifier(Modifier::BOLD)),
+            Span::styled("state  ", Style::default().fg(t.dim)),
+            Span::styled(badge(a.state()), Style::default().fg(state_color(t, a.state())).add_modifier(Modifier::BOLD)),
         ]),
     ];
     if let Some(u) = &a.usage {
         if let Some(m) = &u.model {
-            lines.push(kv("model", m));
+            lines.push(kv(t, "model", m));
         }
         if u.context_limit > 0 && u.context_tokens > 0 {
             let pct = (u.context_tokens as f64 / u.context_limit as f64 * 100.0).round();
             lines.push(kv(
+                t,
                 "context",
                 &format!("{} / {} ({pct:.0}%)", u.context_tokens, u.context_limit),
             ));
         }
         if u.cost_usd > 0.0 {
-            lines.push(kv("cost", &format!("${:.2}", u.cost_usd)));
+            lines.push(kv(t, "cost", &format!("${:.2}", u.cost_usd)));
         }
     }
     if a.tool_calls > 0 {
-        lines.push(kv("tools", &a.tool_calls.to_string()));
+        lines.push(kv(t, "tools", &a.tool_calls.to_string()));
     }
     if let Some(ev) = a.last_event.as_deref().filter(|e| !e.is_empty()) {
-        lines.push(kv("event", ev));
+        lines.push(kv(t, "event", ev));
     }
     lines.push(Line::raw(""));
-    lines.extend(ask_lines(a, area.width.saturating_sub(2)));
+    lines.extend(ask_lines(t, a, area.width.saturating_sub(2)));
 
     let p = Paragraph::new(lines).block(block).wrap(ratatui::widgets::Wrap { trim: false });
     f.render_widget(p, area);
 }
 
-fn kv<'a>(k: &'a str, v: &str) -> Line<'a> {
+fn kv<'a>(t: &Theme, k: &'a str, v: &str) -> Line<'a> {
     Line::from(vec![
-        Span::styled(format!("{k:<7}"), Style::default().fg(DIM)),
+        Span::styled(format!("{k:<7}"), Style::default().fg(t.dim)),
         Span::raw(v.to_string()),
     ])
 }
@@ -224,30 +227,30 @@ fn approval_input(raw: &Value) -> String {
 }
 
 /// The pending approval / question block, shared by the detail and chat panes.
-fn ask_lines(a: &Agent, width: u16) -> Vec<Line<'static>> {
+fn ask_lines(t: &Theme, a: &Agent, width: u16) -> Vec<Line<'static>> {
     let w = width.max(10) as usize;
     let mut out = Vec::new();
     if let Some((tool, raw)) = a.approval() {
         out.push(Line::from(Span::styled(
             format!("⚠ wants to run {tool}"),
-            Style::default().fg(WARN).add_modifier(Modifier::BOLD),
+            Style::default().fg(t.warn).add_modifier(Modifier::BOLD),
         )));
         let pretty = approval_input(raw);
         for line in pretty.lines().take(12) {
             for piece in wrap(line, w) {
-                out.push(Line::from(Span::styled(piece, Style::default().fg(DIM))));
+                out.push(Line::from(Span::styled(piece, Style::default().fg(t.dim))));
             }
         }
         out.push(Line::raw(""));
         out.push(Line::from(Span::styled(
             "[y]es  [n]o  [a]lways",
-            Style::default().fg(OK),
+            Style::default().fg(t.ok),
         )));
     } else if let Some(qs) = a.questions() {
         if let Some(q) = qs.first() {
             out.push(Line::from(Span::styled(
                 q.header.clone().unwrap_or_else(|| "Question".into()),
-                Style::default().fg(WARN).add_modifier(Modifier::BOLD),
+                Style::default().fg(t.warn).add_modifier(Modifier::BOLD),
             )));
             for piece in wrap(&q.question, w) {
                 out.push(Line::raw(piece));
@@ -256,14 +259,14 @@ fn ask_lines(a: &Agent, width: u16) -> Vec<Line<'static>> {
             if qs.len() == 1 && !q.multi_select && !q.options.is_empty() {
                 for (i, o) in q.options.iter().enumerate().take(9) {
                     out.push(Line::from(vec![
-                        Span::styled(format!(" {}. ", i + 1), Style::default().fg(ACCENT)),
+                        Span::styled(format!(" {}. ", i + 1), Style::default().fg(t.accent)),
                         Span::raw(o.label.clone()),
                     ]));
                     if let Some(desc) = o.description.as_ref().filter(|d| !d.is_empty()) {
                         for piece in wrap(desc, w.saturating_sub(4)) {
                             out.push(Line::from(Span::styled(
                                 format!("    {piece}"),
-                                Style::default().fg(DIM),
+                                Style::default().fg(t.dim),
                             )));
                         }
                     }
@@ -271,12 +274,12 @@ fn ask_lines(a: &Agent, width: u16) -> Vec<Line<'static>> {
                 out.push(Line::raw(""));
                 out.push(Line::from(Span::styled(
                     "press 1-9 to answer, or i to type",
-                    Style::default().fg(DIM),
+                    Style::default().fg(t.dim),
                 )));
             } else {
                 out.push(Line::from(Span::styled(
                     "press i to type your answer",
-                    Style::default().fg(DIM),
+                    Style::default().fg(t.dim),
                 )));
             }
         }
@@ -294,7 +297,10 @@ fn render_chat(f: &mut Frame, area: Rect, app: &mut App) {
         .unwrap_or_else(|| " session ended ".into());
 
     // Reserve space for the ask block (if any) and the composer.
-    let ask = agent.as_ref().map(|a| ask_lines(a, area.width.saturating_sub(2))).unwrap_or_default();
+    let ask = agent
+        .as_ref()
+        .map(|a| ask_lines(&app.theme, a, area.width.saturating_sub(2)))
+        .unwrap_or_default();
     let ask_h = if ask.is_empty() { 0 } else { (ask.len() as u16 + 2).min(area.height / 2) };
     let composer_h = 3;
 
@@ -322,18 +328,18 @@ fn render_chat(f: &mut Frame, area: Rect, app: &mut App) {
         .borders(Borders::ALL)
         .title(title)
         .title_bottom(if working {
-            Line::from(Span::styled(" working… ", Style::default().fg(ACCENT)))
+            Line::from(Span::styled(" working… ", Style::default().fg(app.theme.accent)))
         } else {
             Line::from("")
         })
-        .border_style(Style::default().fg(DIM));
+        .border_style(Style::default().fg(app.theme.dim));
     let transcript = Paragraph::new(lines).block(block).scroll((app.chat_scroll, 0));
     f.render_widget(transcript, rows[0]);
 
     if ask_h > 0 {
         let block = Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(WARN));
+            .border_style(Style::default().fg(app.theme.warn));
         f.render_widget(Paragraph::new(ask).block(block), rows[1]);
     }
 
@@ -341,10 +347,11 @@ fn render_chat(f: &mut Frame, area: Rect, app: &mut App) {
 }
 
 fn render_composer(f: &mut Frame, area: Rect, app: &App, agent: &Option<Agent>) {
+    let t = &app.theme;
     let (label, label_color) = if app.insert_mode {
-        ("INSERT", ACCENT)
+        ("INSERT", t.accent)
     } else {
-        ("NORMAL", DIM)
+        ("NORMAL", t.dim)
     };
     let answering = app.insert_mode && agent.as_ref().is_some_and(|a| a.has_question());
     let hint = if answering { "answer" } else { "message" };
@@ -352,9 +359,9 @@ fn render_composer(f: &mut Frame, area: Rect, app: &App, agent: &Option<Agent>) 
         .borders(Borders::ALL)
         .title(Line::from(vec![
             Span::styled(format!(" {label} "), Style::default().fg(label_color).add_modifier(Modifier::BOLD)),
-            Span::styled(format!("{hint} "), Style::default().fg(DIM)),
+            Span::styled(format!("{hint} "), Style::default().fg(t.dim)),
         ]))
-        .border_style(Style::default().fg(if app.insert_mode { ACCENT } else { DIM }));
+        .border_style(Style::default().fg(if app.insert_mode { t.accent } else { t.dim }));
     let text = if app.insert_mode {
         format!("{}▏", app.input)
     } else if app.input.is_empty() {
@@ -363,7 +370,7 @@ fn render_composer(f: &mut Frame, area: Rect, app: &App, agent: &Option<Agent>) 
         app.input.clone()
     };
     let style = if !app.insert_mode && app.input.is_empty() {
-        Style::default().fg(DIM)
+        Style::default().fg(t.dim)
     } else {
         Style::default()
     };
@@ -372,22 +379,23 @@ fn render_composer(f: &mut Frame, area: Rect, app: &App, agent: &Option<Agent>) 
 
 /// Build the fully-wrapped, styled transcript lines for the current turns.
 fn transcript_lines(app: &App, width: usize) -> Vec<Line<'static>> {
+    let t = &app.theme;
     let w = width.max(10);
     let mut out: Vec<Line> = Vec::new();
     if app.turns.is_empty() {
-        out.push(Line::from(Span::styled("no messages yet", Style::default().fg(DIM))));
+        out.push(Line::from(Span::styled("no messages yet", Style::default().fg(t.dim))));
         return out;
     }
     for turn in &app.turns {
         let (label, color) = match turn.role {
-            Role::User => ("▍ you", ACCENT),
-            Role::Assistant => ("▍ claude", OK),
+            Role::User => ("▍ you", t.accent),
+            Role::Assistant => ("▍ claude", t.ok),
         };
         out.push(Line::from(Span::styled(label, Style::default().fg(color).add_modifier(Modifier::BOLD))));
         for part in &turn.parts {
             match part {
-                Part::Text(t) => {
-                    for paragraph in t.split('\n') {
+                Part::Text(text) => {
+                    for paragraph in text.split('\n') {
                         if paragraph.is_empty() {
                             out.push(Line::raw(""));
                         } else {
@@ -404,7 +412,7 @@ fn transcript_lines(app: &App, width: usize) -> Vec<Line<'static>> {
                         format!("⚙ {name} · {summary}")
                     };
                     for piece in wrap(&text, w) {
-                        out.push(Line::from(Span::styled(piece, Style::default().fg(DIM))));
+                        out.push(Line::from(Span::styled(piece, Style::default().fg(t.dim))));
                     }
                 }
             }
@@ -417,15 +425,16 @@ fn transcript_lines(app: &App, width: usize) -> Vec<Line<'static>> {
 // ── terminal view (raw PTY) ───────────────────────────────────────────────────
 
 fn render_terminal(f: &mut Frame, area: Rect, app: &mut App) {
+    let (accent, dim) = (app.theme.accent, app.theme.dim);
     let title = app
         .chat_agent()
         .map(|a| format!(" {} ", a.short_cwd()))
         .unwrap_or_else(|| " session ended ".into());
-    let border = if app.term_attached() { ACCENT } else { DIM };
+    let border = if app.term_attached() { accent } else { dim };
     let bottom = if app.term_attached() {
-        Line::from(Span::styled(" ● attached — Ctrl-] to detach ", Style::default().fg(ACCENT)))
+        Line::from(Span::styled(" ● attached — Ctrl-] to detach ", Style::default().fg(accent)))
     } else {
-        Line::from(Span::styled(" i/enter to attach · t transcript ", Style::default().fg(DIM)))
+        Line::from(Span::styled(" i/enter to attach · t transcript ", Style::default().fg(dim)))
     };
     let block = Block::default()
         .borders(Borders::ALL)
@@ -455,7 +464,7 @@ fn render_terminal(f: &mut Frame, area: Rect, app: &mut App) {
         None => {
             let p = Paragraph::new(Line::from(Span::styled(
                 "starting terminal…",
-                Style::default().fg(DIM),
+                Style::default().fg(dim),
             )))
             .block(block);
             f.render_widget(p, area);
@@ -481,28 +490,30 @@ fn render_agent(f: &mut Frame, area: Rect, app: &mut App) {
 }
 
 fn render_tab_bar(f: &mut Frame, area: Rect, app: &App) {
+    let t = &app.theme;
     let Some(ws) = app.workspace() else { return };
     let mut spans = Vec::new();
     for (i, tab) in ws.tabs.iter().enumerate() {
         let style = if i == ws.active {
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+            Style::default().fg(t.accent).add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(DIM)
+            Style::default().fg(t.dim)
         };
         spans.push(Span::styled(format!(" {} ", tab.title), style));
-        spans.push(Span::styled("│", Style::default().fg(DIM)));
+        spans.push(Span::styled("│", Style::default().fg(t.dim)));
     }
-    spans.push(Span::styled("  T:term  [ ]:tabs  w:close", Style::default().fg(DIM)));
+    spans.push(Span::styled("  T:term  [ ]:tabs  w:close", Style::default().fg(t.dim)));
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 // ── dashboard ──────────────────────────────────────────────────────────────────
 
 fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
+    let t = &app.theme;
     let block = Block::default()
         .borders(Borders::ALL)
         .title(" dashboard ")
-        .border_style(Style::default().fg(ACCENT));
+        .border_style(Style::default().fg(t.accent));
 
     let total = app.agents.len();
     let waiting = app.agents.iter().filter(|a| a.is_waiting()).count();
@@ -513,20 +524,20 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
     let mut lines = vec![
         Line::from(Span::styled(
             format!("workspacer · {total} agent{}", if total == 1 { "" } else { "s" }),
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
         )),
         Line::raw(""),
         Line::from(vec![
-            Span::styled("needs you ", Style::default().fg(DIM)),
-            Span::styled(format!("{waiting}"), Style::default().fg(WARN).add_modifier(Modifier::BOLD)),
-            Span::styled("    working ", Style::default().fg(DIM)),
-            Span::styled(format!("{busy}"), Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)),
-            Span::styled("    idle ", Style::default().fg(DIM)),
-            Span::styled(format!("{idle}"), Style::default().fg(OK)),
+            Span::styled("needs you ", Style::default().fg(t.dim)),
+            Span::styled(format!("{waiting}"), Style::default().fg(t.warn).add_modifier(Modifier::BOLD)),
+            Span::styled("    working ", Style::default().fg(t.dim)),
+            Span::styled(format!("{busy}"), Style::default().fg(t.accent).add_modifier(Modifier::BOLD)),
+            Span::styled("    idle ", Style::default().fg(t.dim)),
+            Span::styled(format!("{idle}"), Style::default().fg(t.ok)),
         ]),
         Line::from(vec![
-            Span::styled("total cost ", Style::default().fg(DIM)),
-            Span::styled(format!("${cost:.2}"), Style::default().fg(OK)),
+            Span::styled("total cost ", Style::default().fg(t.dim)),
+            Span::styled(format!("${cost:.2}"), Style::default().fg(t.ok)),
         ]),
         Line::raw(""),
     ];
@@ -534,27 +545,27 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
     // Compact roster, attention first (the agents are already sorted that way).
     for a in &app.agents {
         let marker = if a.is_waiting() {
-            Span::styled("● ", Style::default().fg(WARN))
+            Span::styled("● ", Style::default().fg(t.warn))
         } else if a.is_busy() {
-            Span::styled("● ", Style::default().fg(ACCENT))
+            Span::styled("● ", Style::default().fg(t.accent))
         } else {
-            Span::styled("· ", Style::default().fg(DIM))
+            Span::styled("· ", Style::default().fg(t.dim))
         };
         let mut row = vec![
             marker,
             Span::styled(format!("{:<28}", crate::types::truncate(a.cwd_str(), 28)), Style::default()),
             Span::styled(
                 format!("{:<10}", a.state()),
-                Style::default().fg(state_color(a.state())),
+                Style::default().fg(state_color(t, a.state())),
             ),
         ];
         if let Some(u) = &a.usage {
             if u.context_limit > 0 && u.context_tokens > 0 {
                 let pct = (u.context_tokens as f64 / u.context_limit as f64 * 100.0).round();
-                row.push(Span::styled(format!(" {pct:.0}%"), Style::default().fg(DIM)));
+                row.push(Span::styled(format!(" {pct:.0}%"), Style::default().fg(t.dim)));
             }
             if u.cost_usd > 0.0 {
-                row.push(Span::styled(format!("  ${:.2}", u.cost_usd), Style::default().fg(DIM)));
+                row.push(Span::styled(format!("  ${:.2}", u.cost_usd), Style::default().fg(t.dim)));
             }
         }
         lines.push(Line::from(row));
@@ -562,7 +573,7 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
     if total == 0 {
         lines.push(Line::from(Span::styled(
             "no sessions yet — press c to spawn an agent",
-            Style::default().fg(DIM),
+            Style::default().fg(t.dim),
         )));
     }
 
@@ -573,6 +584,7 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
 // ── spawn modal ───────────────────────────────────────────────────────────────
 
 fn render_spawn_modal(f: &mut Frame, area: Rect, app: &App) {
+    let t = &app.theme;
     let Some(form) = app.spawn_form.as_ref() else { return };
 
     let w = area.width.saturating_sub(8).min(72).max(20);
@@ -589,17 +601,17 @@ fn render_spawn_modal(f: &mut Frame, area: Rect, app: &App) {
     let mut lines = vec![
         Line::raw(""),
         Line::from(vec![
-            Span::styled("  cwd      ", Style::default().fg(DIM)),
+            Span::styled("  cwd      ", Style::default().fg(t.dim)),
             Span::raw(form.cwd.clone()),
-            Span::styled("▏", Style::default().fg(ACCENT)),
+            Span::styled("▏", Style::default().fg(t.accent)),
         ]),
         Line::from(vec![
-            Span::styled("  profile  ", Style::default().fg(DIM)),
-            Span::styled("‹ ", Style::default().fg(ACCENT)),
+            Span::styled("  profile  ", Style::default().fg(t.dim)),
+            Span::styled("‹ ", Style::default().fg(t.accent)),
             Span::styled(profile_name.to_string(), Style::default().add_modifier(Modifier::BOLD)),
-            Span::styled(" ›", Style::default().fg(ACCENT)),
-            Span::styled(format!("  {}/{}", form.profile_idx + 1, n), Style::default().fg(DIM)),
-            Span::styled(extra, Style::default().fg(DIM)),
+            Span::styled(" ›", Style::default().fg(t.accent)),
+            Span::styled(format!("  {}/{}", form.profile_idx + 1, n), Style::default().fg(t.dim)),
+            Span::styled(extra, Style::default().fg(t.dim)),
         ]),
     ];
 
@@ -609,19 +621,19 @@ fn render_spawn_modal(f: &mut Frame, area: Rect, app: &App) {
         let shown = crate::types::truncate(&joined, inner_w.saturating_sub(4));
         lines.push(Line::from(Span::styled(
             format!("  {} {}", form.completions.len(), "matches:"),
-            Style::default().fg(DIM),
+            Style::default().fg(t.dim),
         )));
-        lines.push(Line::from(Span::styled(format!("  {shown}"), Style::default().fg(ACCENT))));
+        lines.push(Line::from(Span::styled(format!("  {shown}"), Style::default().fg(t.accent))));
     }
 
     // When seeding a library prompt, show what will be inserted.
     if let Some(prompt) = form.initial_prompt.as_ref() {
         let first = prompt.lines().next().unwrap_or("");
         lines.push(Line::from(vec![
-            Span::styled("  prompt   ", Style::default().fg(DIM)),
+            Span::styled("  prompt   ", Style::default().fg(t.dim)),
             Span::styled(
                 crate::types::truncate(first, inner_w.saturating_sub(12)),
-                Style::default().fg(OK),
+                Style::default().fg(t.ok),
             ),
         ]));
     }
@@ -629,7 +641,7 @@ fn render_spawn_modal(f: &mut Frame, area: Rect, app: &App) {
     lines.push(Line::raw(""));
     lines.push(Line::from(Span::styled(
         "  type a path · tab complete · ↑↓ profile · enter spawn · esc cancel",
-        Style::default().fg(DIM),
+        Style::default().fg(t.dim),
     )));
 
     let h = (lines.len() as u16 + 2).min(area.height);
@@ -645,13 +657,14 @@ fn render_spawn_modal(f: &mut Frame, area: Rect, app: &App) {
     let block = Block::default()
         .borders(Borders::ALL)
         .title(" new agent ")
-        .border_style(Style::default().fg(ACCENT));
+        .border_style(Style::default().fg(t.accent));
     f.render_widget(Paragraph::new(lines).block(block), rect);
 }
 
 // ── command palette ─────────────────────────────────────────────────────────
 
 fn render_palette(f: &mut Frame, area: Rect, app: &App) {
+    let t = &app.theme;
     let Some(p) = app.palette.as_ref() else { return };
 
     let w = area.width.saturating_sub(8).min(76).max(24);
@@ -669,9 +682,9 @@ fn render_palette(f: &mut Frame, area: Rect, app: &App) {
 
     let inner_w = w.saturating_sub(2) as usize;
     let mut lines = vec![Line::from(vec![
-        Span::styled("› ", Style::default().fg(ACCENT)),
+        Span::styled("› ", Style::default().fg(t.accent)),
         Span::raw(p.query.clone()),
-        Span::styled("▏", Style::default().fg(ACCENT)),
+        Span::styled("▏", Style::default().fg(t.accent)),
     ])];
 
     // Scroll the list so the selection stays visible.
@@ -681,12 +694,12 @@ fn render_palette(f: &mut Frame, area: Rect, app: &App) {
         let selected = i == p.selected;
         let marker = if selected { "❯ " } else { "  " };
         let label_style = if selected {
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+            Style::default().fg(t.accent).add_modifier(Modifier::BOLD)
         } else {
             Style::default()
         };
         let mut spans = vec![
-            Span::styled(marker, Style::default().fg(ACCENT)),
+            Span::styled(marker, Style::default().fg(t.accent)),
             Span::styled(item.label.clone(), label_style),
         ];
         if !item.hint.is_empty() {
@@ -694,14 +707,14 @@ fn render_palette(f: &mut Frame, area: Rect, app: &App) {
             if room > 4 {
                 spans.push(Span::styled(
                     format!("  {}", crate::types::truncate(&item.hint, room)),
-                    Style::default().fg(DIM),
+                    Style::default().fg(t.dim),
                 ));
             }
         }
         lines.push(Line::from(spans));
     }
     if visible.is_empty() {
-        lines.push(Line::from(Span::styled("no matches", Style::default().fg(DIM))));
+        lines.push(Line::from(Span::styled("no matches", Style::default().fg(t.dim))));
     }
 
     let block = Block::default()
@@ -709,9 +722,9 @@ fn render_palette(f: &mut Frame, area: Rect, app: &App) {
         .title(" command palette ")
         .title_bottom(Line::from(Span::styled(
             " ↑↓ move · enter run · esc close ",
-            Style::default().fg(DIM),
+            Style::default().fg(t.dim),
         )))
-        .border_style(Style::default().fg(ACCENT));
+        .border_style(Style::default().fg(t.accent));
     f.render_widget(Paragraph::new(lines).block(block), rect);
 }
 
@@ -736,7 +749,7 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
         "i type · j/k scroll · t terminal · [ ] tabs · T term · y/n/a · 1-9 · esc back"
     };
     f.render_widget(
-        Paragraph::new(Line::from(Span::styled(format!(" {hint}"), Style::default().fg(DIM)))),
+        Paragraph::new(Line::from(Span::styled(format!(" {hint}"), Style::default().fg(app.theme.dim)))),
         area,
     );
 }
@@ -747,123 +760,120 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
 mod tests {
     use super::*;
 
-    // Pin the exact Color values so a future palette or enum refactor is forced
-    // to make a conscious decision.  state_color() takes the *state()* string
-    // (already lowercased internally), and applies .to_lowercase() itself.
-
-    const OK:     Color = Color::Rgb(78,  201, 168);
-    const WARN:   Color = Color::Rgb(224, 179, 65);
-    const BAD:    Color = Color::Rgb(224, 108, 117);
+    // state_color() maps a state string to a theme role. These pin the mapping
+    // (input/waiting → warn, error → bad, else → ok) against the default theme,
+    // so a future palette change can't silently change which *role* a state uses.
 
     fn sc(s: &str) -> Color {
-        state_color(s)
+        state_color(&Theme::default(), s)
+    }
+    fn ok() -> Color {
+        Theme::default().ok
+    }
+    fn warn() -> Color {
+        Theme::default().warn
+    }
+    fn bad() -> Color {
+        Theme::default().bad
     }
 
     // ── modes that claudemon actually emits ──────────────────────────────────
 
-    /// "input" — user's turn; renders as WARN (amber), same as "waiting".
+    /// "input" — user's turn; renders as warn (amber), same as "waiting".
     #[test]
     fn state_color_input_is_warn() {
-        assert_eq!(sc("input"), WARN);
+        assert_eq!(sc("input"), warn());
     }
 
-    /// "approval" — tool approval pending; not in an explicit arm, falls to OK.
+    /// "approval" — tool approval pending; not in an explicit arm, falls to ok.
     #[test]
     fn state_color_approval_is_ok() {
-        assert_eq!(sc("approval"), OK);
+        assert_eq!(sc("approval"), ok());
     }
 
-    /// "question" — structured question; falls to OK.
+    /// "question" — structured question; falls to ok.
     #[test]
     fn state_color_question_is_ok() {
-        assert_eq!(sc("question"), OK);
+        assert_eq!(sc("question"), ok());
     }
 
-    /// "responding" — generating a turn; falls to OK.
+    /// "responding" — generating a turn; falls to ok.
     #[test]
     fn state_color_responding_is_ok() {
-        assert_eq!(sc("responding"), OK);
+        assert_eq!(sc("responding"), ok());
     }
 
-    /// "stopped" — session ended; falls to OK.
+    /// "stopped" — session ended; falls to ok.
     #[test]
     fn state_color_stopped_is_ok() {
-        assert_eq!(sc("stopped"), OK);
+        assert_eq!(sc("stopped"), ok());
     }
 
-    /// "unknown" — emitted by Agent::state() when mode is absent; falls to OK.
+    /// "unknown" — emitted by Agent::state() when mode is absent; falls to ok.
     #[test]
     fn state_color_unknown_is_ok() {
-        assert_eq!(sc("unknown"), OK);
+        assert_eq!(sc("unknown"), ok());
     }
 
     /// "other" — emitted by Agent::state() for any unrecognised AgentMode;
-    /// falls to OK (catch-all).
+    /// falls to ok (catch-all).
     #[test]
     fn state_color_other_is_ok() {
-        assert_eq!(sc("other"), OK);
+        assert_eq!(sc("other"), ok());
     }
 
     // ── aliased and legacy strings ───────────────────────────────────────────
 
-    /// "waiting" — alias for "input" in state_color(); also yields WARN.
+    /// "waiting" — alias for "input" in state_color(); also yields warn.
     #[test]
     fn state_color_waiting_alias_is_warn() {
-        assert_eq!(sc("waiting"), WARN);
+        assert_eq!(sc("waiting"), warn());
     }
 
-    /// "thinking", "running", "streaming" — daemon never emits these; the
-    /// dead ACCENT arm was removed, so they now fall to the OK catch-all.
+    /// "thinking", "running", "streaming" — daemon never emits these; they fall
+    /// to the ok catch-all.
     #[test]
     fn state_color_removed_dead_branches_fall_to_ok() {
-        assert_eq!(sc("thinking"),  OK, "thinking falls to OK after dead branch removal");
-        assert_eq!(sc("running"),   OK, "running falls to OK after dead branch removal");
-        assert_eq!(sc("streaming"), OK, "streaming falls to OK after dead branch removal");
+        assert_eq!(sc("thinking"), ok());
+        assert_eq!(sc("running"), ok());
+        assert_eq!(sc("streaming"), ok());
     }
 
-    /// "error" — explicit BAD arm is still present.
+    /// "error" — explicit bad arm is still present.
     #[test]
     fn state_color_error_is_bad() {
-        assert_eq!(sc("error"), BAD);
+        assert_eq!(sc("error"), bad());
     }
 
     /// state_color() normalises to lowercase before matching.
     #[test]
     fn state_color_case_insensitive() {
-        assert_eq!(sc("INPUT"),  WARN,   "uppercase INPUT must also be WARN");
-        assert_eq!(sc("Error"),  BAD,    "mixed-case Error must also be BAD");
-        assert_eq!(sc("STOPPED"), OK,    "uppercase STOPPED must also be OK");
+        assert_eq!(sc("INPUT"), warn(), "uppercase INPUT must also be warn");
+        assert_eq!(sc("Error"), bad(), "mixed-case Error must also be bad");
+        assert_eq!(sc("STOPPED"), ok(), "uppercase STOPPED must also be ok");
     }
 
     /// Exhaustive table for all known inputs.
     #[test]
     fn state_color_table() {
         let cases: &[(&str, Color)] = &[
-            // daemon-emitted modes
-            ("input",      WARN),
-            ("approval",   OK),
-            ("question",   OK),
-            ("responding", OK),
-            ("stopped",    OK),
-            ("unknown",    OK),
-            ("other",      OK),
-            // "waiting" alias preserved
-            ("waiting",    WARN),
-            // formerly ACCENT dead branches, now OK after removal
-            ("thinking",   OK),
-            ("running",    OK),
-            ("streaming",  OK),
-            // explicit BAD arm
-            ("error",      BAD),
-            // catch-all
-            ("",           OK),
-            ("anything",   OK),
+            ("input", warn()),
+            ("approval", ok()),
+            ("question", ok()),
+            ("responding", ok()),
+            ("stopped", ok()),
+            ("unknown", ok()),
+            ("other", ok()),
+            ("waiting", warn()),
+            ("thinking", ok()),
+            ("running", ok()),
+            ("streaming", ok()),
+            ("error", bad()),
+            ("", ok()),
+            ("anything", ok()),
         ];
         for (state, want) in cases {
-            assert_eq!(
-                sc(state), *want,
-                "state_color({state:?}) expected {want:?}"
-            );
+            assert_eq!(sc(state), *want, "state_color({state:?}) expected {want:?}");
         }
     }
 }
