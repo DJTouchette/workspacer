@@ -113,7 +113,7 @@ export function useSessionLifecycle({
         // Include canvas so a spatial-mode drag (which only changes t.canvas)
         // isn't deduped away and actually persists across reloads.
         + ag.tabs.map((t) => t.id + t.title + (t.canvas ? `${t.canvas.x},${t.canvas.y},${t.canvas.w},${t.canvas.h}` : '')
-          + t.panes.map((p) => p.id + p.type + (p.url || '')).join()).join()),
+          + t.panes.map((p) => p.id + p.type + (p.url || '') + (p.notes || '')).join()).join()),
     });
     if (!force && hash === lastSaveHashRef.current) return;
     lastSaveHashRef.current = hash;
