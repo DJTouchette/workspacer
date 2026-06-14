@@ -13,12 +13,22 @@ TUI       := apps/tui
 CLAUDEMON := services/claudemon
 HUB       := services/hub
 
-.PHONY: dev install build build-desktop build-hub build-claudemon build-tui \
-        test test-desktop test-hub package clean
+.PHONY: dev dev-tui run-tui install build build-desktop build-hub build-claudemon build-tui \
+        test test-desktop test-hub test-tui package clean
 
 ## dev: run the desktop app in dev mode (Vite + Electron) with remote sharing on
 dev:
 	cd $(DESKTOP) && npm run dev:share
+
+## dev-tui: run wks-tui (debug); builds claudemon first so the TUI can auto-spawn it.
+##          Pass flags with ARGS, e.g. `make dev-tui ARGS="--no-spawn"`
+dev-tui:
+	cd $(CLAUDEMON) && cargo build
+	cd $(TUI) && cargo run -- $(ARGS)
+
+## run-tui: run wks-tui (release); builds release claudemon + tui first
+run-tui: build-claudemon build-tui
+	cd $(TUI) && cargo run --release -- $(ARGS)
 
 ## install: install desktop JS dependencies
 install:
@@ -40,13 +50,16 @@ build-tui:
 	cd $(TUI) && cargo build --release
 
 ## test: run all test suites
-test: test-desktop test-hub
+test: test-desktop test-hub test-tui
 
 test-desktop:
 	cd $(DESKTOP) && npm test
 
 test-hub:
 	cd $(HUB) && go test -race ./...
+
+test-tui:
+	cd $(TUI) && cargo test
 
 ## package: build daemons + produce desktop installers (electron-builder)
 package:
