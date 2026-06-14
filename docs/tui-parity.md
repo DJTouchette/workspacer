@@ -123,15 +123,16 @@ transcript usage fallback). Done.
 - ✗ `summarize` action — **dropped**: the Haiku summarizer was removed entirely
   (it spawned phantom sessions); there's nothing to call.
 
-## Phase 6 — Test depth & polish
+## Phase 6 — Test depth & polish ☑
 
-Today only terminal key-encoding + type-parsing units exist (`features.md` flags
-the TUI suite as 🟡 Partial).
-
-- ☐ App-state tests for each new view (review, notes, statusline precedence).
-- ☐ Error/empty states (no git repo, detached session, daemon down) rendered
-  cleanly rather than blank — the terminal analogue of the desktop ErrorBoundary
-  /EmptyState pass.
+- ☑ App-state tests: review open/close, open-review-on-Dashboard no-op, respawn
+  refusing a running agent, statusline apply+prune, notes load, and the git-error
+  state (set + cleared on success). 74 TUI tests total now.
+- ☑ Error/empty states: the review pane shows a clear "git unavailable" message
+  with the daemon's reason (e.g. *not inside a git work tree*) instead of a blank
+  "working tree clean" — `ReviewState.error`, fed by `AppMsg::GitError`. Other
+  empty/disconnected states were already handled (header "reconnecting…", "no
+  messages yet", "no sessions yet — press c to spawn").
 
 ## Phase 7 — Settings (config: themes + keybindings) ☑
 
@@ -190,3 +191,7 @@ we'd add) · ✗ analytics history (no claudemon endpoint; would need new backen
   (`turns_from_conversation`) so tool results render inline (`↳`); tab-bar git
   inspector (`⎇ branch ±changed`). summarize action dropped (summarizer removed).
   Verified live via tmux (tool output + inspector ±N). 68 TUI tests pass.
+- 2026-06-14 — Phase 6 done: review `git unavailable` error state
+  (`ReviewState.error` ← `AppMsg::GitError`) so a non-repo cwd reads clearly;
+  +6 app-state tests (review/respawn/statusline/notes/git-error). 74 TUI tests
+  pass. **All roadmap phases (1–7) now complete.**

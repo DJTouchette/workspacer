@@ -1086,6 +1086,17 @@ fn render_review_files(f: &mut Frame, area: Rect, t: &Theme, r: &crate::app::Rev
         .borders(Borders::ALL)
         .title(" files ")
         .border_style(Style::default().fg(t.dim));
+    if let Some(err) = &r.error {
+        let p = Paragraph::new(vec![
+            Line::from(Span::styled("git unavailable", Style::default().fg(t.bad).add_modifier(Modifier::BOLD))),
+            Line::raw(""),
+            Line::from(Span::styled(err.clone(), Style::default().fg(t.dim))),
+        ])
+        .wrap(ratatui::widgets::Wrap { trim: false })
+        .block(block);
+        f.render_widget(p, area);
+        return;
+    }
     if r.files.is_empty() {
         let p = Paragraph::new(Line::from(Span::styled(
             "working tree clean",

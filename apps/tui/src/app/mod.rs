@@ -42,6 +42,8 @@ pub enum AppMsg {
     GitDiff { cwd: String, path: String, staged: bool, diff: String },
     /// Lightweight branch + changed-file count for the open agent's inspector.
     GitSummary { cwd: String, branch: Option<String>, changed: usize },
+    /// A git read failed for a work tree (e.g. not a repo) — shown in review.
+    GitError { cwd: String, message: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -203,6 +205,9 @@ pub struct ReviewState {
     pub staged_view: bool,
     /// When `Some`, the user is composing a commit message.
     pub commit_msg: Option<String>,
+    /// Set when the status fetch failed — e.g. the cwd isn't a git work tree —
+    /// so the pane says so instead of looking like a clean repo.
+    pub error: Option<String>,
 }
 
 impl ReviewState {
@@ -216,6 +221,7 @@ impl ReviewState {
             diff_scroll: 0,
             staged_view: false,
             commit_msg: None,
+            error: None,
         }
     }
 
@@ -383,6 +389,13 @@ impl App {
             AppMsg::GitSummary { cwd, branch, changed } => {
                 self.git_summary.insert(cwd, (branch, changed));
             }
+            AppMsg::GitError { cwd, message } => {
+                if let Some(r) = self.review.as_mut() {
+                    if r.cwd == cwd {
+                        r.error = Some(message);
+                    }
+                }
+            }
         }
     }
 
@@ -406,6 +419,7 @@ impl App {
         if r.cwd != cwd {
             return;
         }
+        r.error = None;
         r.branch = branch;
         r.files = files;
         if r.selected >= r.files.len() {
@@ -881,6 +895,81 @@ mod tests {
 
     fn agent(id: &str) -> Agent {
         serde_json::from_value(serde_json::json!({ "session_id": id, "mode": "responding" })).unwrap()
+    }
+
+    fn agent_cwd(id: &str, cwd: &str, mode: &str) -> Agent {
+        serde_json::from_value(serde_json::json!({ "session_id": id, "cwd": cwd, "mode": mode }))
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn review_opens_for_selected_agent_and_closes() {
+        let mut app = test_app();
+        app.set_agents(vec![agent_cwd("s1", "/repo", "responding")]);
+        app.selected = 1;
+        app.open_review();
+        assert_eq!(app.review.as_ref().map(|r| r.cwd.as_str()), Some("/repo"));
+        app.close_review();
+        assert!(app.review.is_none());
+    }
+
+    #[tokio::test]
+    async fn open_review_on_dashboard_row_is_noop() {
+        let mut app = test_app();
+        app.set_agents(vec![agent_cwd("s1", "/repo", "responding")]);
+        app.selected = 0; // Dashboard row — no agent
+        app.open_review();
+        assert!(app.review.is_none());
+        assert_eq!(app.toast(), Some("no working directory for this agent"));
+    }
+
+    #[tokio::test]
+    async fn respawn_refuses_a_running_agent() {
+        let mut app = test_app();
+        app.set_agents(vec![agent_cwd("s1", "/repo", "responding")]);
+        app.selected = 1;
+        app.respawn();
+        assert_eq!(app.toast(), Some("agent is still running"));
+    }
+
+    #[test]
+    fn git_error_surfaces_in_open_review() {
+        let mut app = test_app();
+        app.review = Some(ReviewState::new("/repo".into()));
+        app.apply_msg(AppMsg::GitError {
+            cwd: "/repo".into(),
+            message: "cwd is not inside a git work tree".into(),
+        });
+        assert_eq!(
+            app.review.as_ref().and_then(|r| r.error.as_deref()),
+            Some("cwd is not inside a git work tree")
+        );
+        // A successful status clears the error.
+        app.apply_msg(AppMsg::GitStatus { cwd: "/repo".into(), branch: Some("main".into()), files: vec![] });
+        assert!(app.review.as_ref().unwrap().error.is_none());
+    }
+
+    #[test]
+    fn status_line_applied_and_pruned_with_session() {
+        let mut app = test_app();
+        app.set_agents(vec![agent("s1")]);
+        app.apply_status_line(
+            "s1".into(),
+            StatusLine { context_used_pct: Some(50.0), ..Default::default() },
+        );
+        assert!(app.status_lines.contains_key("s1"));
+        app.set_agents(vec![]); // session gone → statusline pruned
+        assert!(!app.status_lines.contains_key("s1"));
+    }
+
+    #[tokio::test]
+    async fn notes_open_loads_existing_text() {
+        let mut app = test_app();
+        app.set_agents(vec![agent_cwd("s1", "/repo", "responding")]);
+        app.selected = 1;
+        app.notes.insert("/repo".into(), "remember this".into());
+        app.open_notes();
+        assert_eq!(app.notes_view.as_ref().map(|n| n.text.as_str()), Some("remember this"));
     }
 
     #[tokio::test]

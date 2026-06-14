@@ -38,7 +38,10 @@ pub(super) async fn fetch_git_status(cm: &Claudemon, tx: &UnboundedSender<AppMsg
             let _ = tx.send(AppMsg::GitStatus { cwd, branch, files });
         }
         Err(e) => {
-            let _ = tx.send(AppMsg::Toast(format!("git status: {e}")));
+            // Surface in the review pane (e.g. "not inside a git work tree")
+            // instead of a fleeting toast, so an empty list isn't mistaken for
+            // a clean repo.
+            let _ = tx.send(AppMsg::GitError { cwd, message: e.to_string() });
         }
     }
 }
