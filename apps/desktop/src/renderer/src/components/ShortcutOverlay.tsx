@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react';
+import { formatCombo } from '../lib/shortcuts';
 
 interface ShortcutOverlayProps {
   visible: boolean;
@@ -53,13 +54,6 @@ const SHORTCUT_DISPLAY: { section: string; items: { action: string; label: strin
   },
 ];
 
-function formatCombo(combo: string): string {
-  return combo
-    .split('+')
-    .map(p => p.charAt(0).toUpperCase() + p.slice(1))
-    .join('+');
-}
-
 const ShortcutOverlay: React.FC<ShortcutOverlayProps> = ({ visible, onClose, mode = 'default', leader = 'ctrl', shortcuts = {} }) => {
   useEffect(() => {
     if (!visible) return;
@@ -98,8 +92,8 @@ const ShortcutOverlay: React.FC<ShortcutOverlayProps> = ({ visible, onClose, mod
           borderRadius: 'var(--wks-radius-md)',
           boxShadow: '0 16px 48px var(--wks-glass-shadow), inset 0 0 0 1.5px var(--wks-glass-highlight)',
           padding: '12px 16px',
-          minWidth: '320px',
-          maxWidth: '440px',
+          width: 'min(440px, 92vw)',
+          boxSizing: 'border-box',
         }}
         onClick={(e) => e.stopPropagation()}
       >

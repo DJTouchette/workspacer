@@ -6,8 +6,9 @@ import type { LibraryItem, LibraryAction } from '../types/library';
 import { runLibraryItem } from '../lib/libraryBus';
 import {
   PaneIcon, Globe, Puzzle, Blocks, Brain, Bot, Zap, BarChart3, LayoutGrid, FolderOpen, Plus, Smartphone,
-  type LucideIcon,
+  Columns3, Settings, Star, type LucideIcon,
 } from './icons';
+import { shortcutFor } from '../lib/shortcuts';
 
 // ── Unified palette item ──
 
@@ -25,7 +26,7 @@ export interface PaletteItem {
   name: string;
   description?: string;
   icon: React.ReactNode;
-  category: 'action' | 'app' | 'plugin' | 'library';
+  category: 'action' | 'command' | 'app' | 'plugin' | 'library';
   /** For actions: the pane type to create */
   paneType?: PaneType;
   /** For actions: whether to prompt for folder (Claude) */
@@ -38,18 +39,22 @@ export interface PaletteItem {
   pluginPane?: PluginPane;
   /** For library: the prompt/skill to run */
   libraryItem?: LibraryItem;
+  /** For commands: invoked directly on select (toggles, dialogs, etc.) */
+  run?: () => void;
+  /** Keybinding action id — used to show the shortcut badge on the row. */
+  shortcut?: string;
 }
 
 // ── Built-in actions ──
 
 export const builtInActions: PaletteItem[] = [
-  { id: 'new-claude', name: 'New Claude Code', description: 'AI-powered coding assistant', icon: <PaneIcon type="claude" size={16} />, category: 'action', paneType: 'claude', pickFolder: true },
-  { id: 'new-terminal', name: 'New Terminal', description: 'Shell terminal', icon: <PaneIcon type="terminal" size={16} />, category: 'action', paneType: 'terminal' },
-  { id: 'new-browser', name: 'New Browser', description: 'Web browser tab', icon: <PaneIcon type="browser" size={16} />, category: 'action', paneType: 'browser' },
+  { id: 'new-claude', name: 'New Claude Code', description: 'AI-powered coding assistant', icon: <PaneIcon type="claude" size={16} />, category: 'action', paneType: 'claude', pickFolder: true, shortcut: 'new-claude' },
+  { id: 'new-terminal', name: 'New Terminal', description: 'Shell terminal', icon: <PaneIcon type="terminal" size={16} />, category: 'action', paneType: 'terminal', shortcut: 'new-terminal' },
+  { id: 'new-browser', name: 'New Browser', description: 'Web browser tab', icon: <PaneIcon type="browser" size={16} />, category: 'action', paneType: 'browser', shortcut: 'new-browser' },
   { id: 'new-review', name: 'Review Changes', description: 'Git diff & status for this agent', icon: <PaneIcon type="review" size={16} />, category: 'action', paneType: 'review' },
   { id: 'new-notes', name: 'Notes', description: 'Markdown scratchpad', icon: <PaneIcon type="notes" size={16} />, category: 'action', paneType: 'notes' },
-  { id: 'new-editor', name: 'Open Editor', description: "Browse the agent's folder and edit files", icon: <PaneIcon type="editor" size={16} />, category: 'action', paneType: 'editor' },
-  { id: 'open-library', name: 'Library', description: 'Reusable prompts & skills', icon: <PaneIcon type="library" size={16} />, category: 'action', paneType: 'library' },
+  { id: 'new-editor', name: 'Open Editor', description: "Browse the agent's folder and edit files", icon: <PaneIcon type="editor" size={16} />, category: 'action', paneType: 'editor', shortcut: 'open-file' },
+  { id: 'open-library', name: 'Library', description: 'Reusable prompts & skills', icon: <PaneIcon type="library" size={16} />, category: 'action', paneType: 'library', shortcut: 'library-picker' },
 ];
 
 // ── Props ──
@@ -87,9 +92,25 @@ interface CommandPaletteProps {
   onOpenAskPane?: () => void;
   /** Open a file in an Editor pane (prompts for a file first). */
   onOpenFile?: () => void;
+  /** Resolved keybindings (config merged with defaults) — drives shortcut badges. */
+  shortcuts?: Record<string, string>;
+  /** Spawn a new agent (opens the spawn dialog). */
+  onSpawnAgent?: () => void;
+  /** Toggle the left sidebar. */
+  onToggleSidebar?: () => void;
+  /** Toggle the Triage Inbox drawer. */
+  onToggleInbox?: () => void;
+  /** Toggle the Fleet Deck overlay. */
+  onToggleFleet?: () => void;
+  /** Save the current workspace session. */
+  onSaveSession?: () => void;
+  /** Open the Settings pane. */
+  onOpenSettings?: () => void;
+  /** Toggle the keyboard-shortcuts help overlay. */
+  onToggleHelp?: () => void;
 }
 
-const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = 'tab', agentCwd, onClose, onLaunchApp, onAddTab, onSplitPane, pluginPanes = [], onOpenPlugin, onInstallPlugin, onManagePlugins, libraryItems = [], restrictTo, onOpenLibrary, onSwitchSession, onOpenAnalytics, onOpenLayouts, onOpenRemote, onOpenAskPane, onOpenFile }) => {
+const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = 'tab', agentCwd, onClose, onLaunchApp, onAddTab, onSplitPane, pluginPanes = [], onOpenPlugin, onInstallPlugin, onManagePlugins, libraryItems = [], restrictTo, onOpenLibrary, onSwitchSession, onOpenAnalytics, onOpenLayouts, onOpenRemote, onOpenAskPane, onOpenFile, shortcuts = {}, onSpawnAgent, onToggleSidebar, onToggleInbox, onToggleFleet, onSaveSession, onOpenSettings, onToggleHelp }) => {
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [profilePicker, setProfilePicker] = useState<{ folder: string; profiles: any[]; paneType: PaneType } | null>(null);
@@ -106,11 +127,37 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
     libraryItem: it,
   })), [libraryItems]);
 
-  // Build unified item list: actions, then apps, then plugin panes, then library.
+  // Global commands (toggles & dialogs). Each is surfaced only when its
+  // handler is wired, so the palette gives a clickable, searchable, shortcut-
+  // labelled path to actions that were previously keyboard-only.
+  const commandActions: PaletteItem[] = useMemo(() => {
+    const out: PaletteItem[] = [];
+    const add = (id: string, name: string, description: string, icon: React.ReactNode, run: (() => void) | undefined, shortcut?: string) => {
+      if (run) out.push({ id, name, description, icon, category: 'command', run, shortcut });
+    };
+    add('cmd-spawn-agent', 'Spawn Agent', 'Start a new Claude Code agent', <Plus size={16} strokeWidth={2} />, onSpawnAgent, 'spawn-agent');
+    add('cmd-ask-fleet', 'Ask the Fleet', 'Pose a question to a supervisor agent', <Brain size={16} strokeWidth={1.75} />, onOpenAskPane);
+    add('cmd-toggle-sidebar', 'Toggle Sidebar', 'Show or hide the agent sidebar', <Columns3 size={16} strokeWidth={1.75} />, onToggleSidebar, 'toggle-sidebar');
+    add('cmd-toggle-inbox', 'Toggle Inbox', 'Open or close the triage inbox', <Star size={16} strokeWidth={1.75} />, onToggleInbox, 'toggle-inbox');
+    add('cmd-toggle-fleet', 'Toggle Fleet Deck', 'Cross-agent radar overlay', <LayoutGrid size={16} strokeWidth={1.75} />, onToggleFleet, 'toggle-fleet');
+    add('cmd-analytics', 'Analytics', 'Session usage & cost', <BarChart3 size={16} strokeWidth={1.75} />, onOpenAnalytics);
+    add('cmd-layouts', 'Layouts…', 'Apply or save a layout template', <LayoutGrid size={16} strokeWidth={1.75} />, onOpenLayouts);
+    add('cmd-switch-session', 'Switch Session…', 'Open another saved workspace session', <FolderOpen size={16} strokeWidth={1.75} />, onSwitchSession);
+    add('cmd-save-session', 'Save Session', 'Persist the current workspace', <FolderOpen size={16} strokeWidth={1.75} />, onSaveSession, 'save-session');
+    add('cmd-remote', 'Remote Control…', 'Share this workspace to your phone', <Smartphone size={16} strokeWidth={1.75} />, onOpenRemote);
+    add('cmd-manage-plugins', 'Manage Plugins…', 'Installed plugins & sidecars', <Blocks size={16} strokeWidth={1.75} />, onManagePlugins);
+    add('cmd-install-plugin', 'Install Plugin…', 'Install a plugin from GitHub', <Plus size={16} strokeWidth={2} />, onInstallPlugin);
+    add('cmd-settings', 'Settings', 'App preferences', <Settings size={16} strokeWidth={1.75} />, onOpenSettings, 'settings');
+    add('cmd-help', 'Keyboard Shortcuts', 'Show the shortcuts reference', <Brain size={16} strokeWidth={1.75} />, onToggleHelp, 'toggle-help');
+    return out;
+  }, [onSpawnAgent, onOpenAskPane, onToggleSidebar, onToggleInbox, onToggleFleet, onOpenAnalytics, onOpenLayouts, onSwitchSession, onSaveSession, onOpenRemote, onManagePlugins, onInstallPlugin, onOpenSettings, onToggleHelp]);
+
+  // Build unified item list: actions, commands, then apps, plugin panes, library.
   const items: PaletteItem[] = useMemo(() => {
     if (restrictTo === 'library') return libItems;
     return [
       ...builtInActions,
+      ...commandActions,
       ...apps.map((app, i) => ({
         id: `app-${i}`,
         name: app.name,
@@ -130,7 +177,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
       })),
       ...libItems,
     ];
-  }, [apps, pluginPanes, libItems, restrictTo]);
+  }, [apps, pluginPanes, libItems, restrictTo, commandActions]);
 
   // Remember what had focus before we opened so we can hand it back — but only
   // when the palette is *dismissed* (Escape / click-away). When the user picks
@@ -185,6 +232,11 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
   }, [filtered.length, selectedIndex]);
 
   const activateItem = useCallback(async (item: PaletteItem, libraryAction?: LibraryAction) => {
+    if (item.run) {
+      item.run();
+      onClose();
+      return;
+    }
     if (item.id === 'open-library' && onOpenLibrary) {
       onOpenLibrary();
       onClose();
@@ -272,7 +324,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
         onClick={() => { setProfilePicker(null); dismiss(); }}
       >
         <div
-          style={{ backgroundColor: 'var(--wks-glass-strong)', backdropFilter: 'blur(var(--wks-glass-blur)) saturate(170%)', WebkitBackdropFilter: 'blur(var(--wks-glass-blur)) saturate(170%)', border: '1px solid var(--wks-glass-border)', borderRadius: 'var(--wks-radius-lg)', width: 340, maxHeight: 320, overflow: 'hidden', boxShadow: '0 16px 48px var(--wks-glass-shadow), inset 0 0 0 1.5px var(--wks-glass-highlight)', display: 'flex', flexDirection: 'column' }}
+          style={{ backgroundColor: 'var(--wks-glass-strong)', backdropFilter: 'blur(var(--wks-glass-blur)) saturate(170%)', WebkitBackdropFilter: 'blur(var(--wks-glass-blur)) saturate(170%)', border: '1px solid var(--wks-glass-border)', borderRadius: 'var(--wks-radius-lg)', width: 'min(340px, 94vw)', boxSizing: 'border-box', maxHeight: 320, overflow: 'hidden', boxShadow: '0 16px 48px var(--wks-glass-shadow), inset 0 0 0 1.5px var(--wks-glass-highlight)', display: 'flex', flexDirection: 'column' }}
           onClick={e => e.stopPropagation()}
         >
           <div style={{ padding: '12px 16px 8px', fontSize: '0.75rem', fontWeight: 600, color: 'var(--wks-text-secondary)', borderBottom: '1px solid var(--wks-border)' }}>
@@ -311,6 +363,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
 
   // Group filtered items by category for visual separation
   const actions = filtered.filter(i => i.category === 'action');
+  const commandItems = filtered.filter(i => i.category === 'command');
   const appItems = filtered.filter(i => i.category === 'app');
   const pluginItems = filtered.filter(i => i.category === 'plugin');
   const libraryFiltered = filtered.filter(i => i.category === 'library');
@@ -335,7 +388,8 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
           WebkitBackdropFilter: 'blur(var(--wks-glass-blur)) saturate(170%)',
           border: '1px solid var(--wks-glass-border)',
           borderRadius: 'var(--wks-radius-lg)',
-          width: '440px',
+          width: 'min(440px, 94vw)',
+          boxSizing: 'border-box',
           maxHeight: '420px',
           display: 'flex',
           flexDirection: 'column',
@@ -391,6 +445,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
               <PaletteRow
                 key={item.id}
                 item={item}
+                shortcut={shortcutFor(item.shortcut, shortcuts)}
                 selected={globalIdx === selectedIndex}
                 onActivate={() => activateItem(item)}
                 onHover={() => setSelectedIndex(globalIdx)}
@@ -417,54 +472,29 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
             );
           })}
 
-          {restrictTo !== 'library' && (onSwitchSession || onOpenAnalytics || onOpenLayouts || onOpenRemote || onOpenAskPane) && (
-            <>
-              <div style={{ padding: '6px 12px 2px', fontSize: '0.55rem', color: 'var(--wks-text-disabled)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                Workspace
-              </div>
-              {onOpenAskPane && <CommandRow icon={<Brain size={16} strokeWidth={1.75} />} label="Ask the fleet" onClick={onOpenAskPane} />}
-              {onOpenAnalytics && <CommandRow icon={<BarChart3 size={16} strokeWidth={1.75} />} label="Analytics" onClick={onOpenAnalytics} />}
-              {onOpenLayouts && <CommandRow icon={<LayoutGrid size={16} strokeWidth={1.75} />} label="Layouts…" onClick={onOpenLayouts} />}
-              {onSwitchSession && <CommandRow icon={<FolderOpen size={16} strokeWidth={1.75} />} label="Switch session…" onClick={onSwitchSession} />}
-              {onOpenRemote && <CommandRow icon={<Smartphone size={16} strokeWidth={1.75} />} label="Remote control…" onClick={onOpenRemote} />}
-            </>
+          {commandItems.length > 0 && (
+            <div style={{ padding: '6px 12px 2px', fontSize: '0.55rem', color: 'var(--wks-text-disabled)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              Commands
+            </div>
           )}
 
-          {(pluginItems.length > 0 || onInstallPlugin || onManagePlugins) && (
+          {commandItems.map(item => {
+            const globalIdx = filtered.indexOf(item);
+            return (
+              <PaletteRow
+                key={item.id}
+                item={item}
+                shortcut={shortcutFor(item.shortcut, shortcuts)}
+                selected={globalIdx === selectedIndex}
+                onActivate={() => activateItem(item)}
+                onHover={() => setSelectedIndex(globalIdx)}
+              />
+            );
+          })}
+
+          {pluginItems.length > 0 && (
             <div style={{ padding: '6px 12px 2px', fontSize: '0.55rem', color: 'var(--wks-text-disabled)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
               Plugins
-            </div>
-          )}
-
-          {onManagePlugins && (
-            <div
-              onClick={() => { onManagePlugins(); }}
-              style={{
-                display: 'flex', alignItems: 'center', gap: '10px',
-                padding: '7px 12px', margin: '0 4px', borderRadius: 'var(--wks-radius-sm)', cursor: 'pointer',
-                color: 'var(--wks-text-muted)',
-              }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--wks-bg-selected)'; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'; }}
-            >
-              <span style={{ display: 'flex', justifyContent: 'center', width: '20px', flexShrink: 0 }}><Blocks size={16} strokeWidth={1.75} /></span>
-              <span style={{ fontSize: '0.78rem' }}>Manage plugins…</span>
-            </div>
-          )}
-
-          {onInstallPlugin && (
-            <div
-              onClick={() => { onInstallPlugin(); }}
-              style={{
-                display: 'flex', alignItems: 'center', gap: '10px',
-                padding: '7px 12px', margin: '0 4px', borderRadius: 'var(--wks-radius-sm)', cursor: 'pointer',
-                color: 'var(--wks-text-muted)',
-              }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--wks-bg-selected)'; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'; }}
-            >
-              <span style={{ display: 'flex', justifyContent: 'center', width: '20px', flexShrink: 0 }}><Plus size={16} strokeWidth={2} /></span>
-              <span style={{ fontSize: '0.78rem' }}>Install from GitHub…</span>
             </div>
           )}
 
@@ -520,7 +550,8 @@ const PaletteRow: React.FC<{
   selected: boolean;
   onActivate: () => void;
   onHover: () => void;
-}> = ({ item, selected, onActivate, onHover }) => (
+  shortcut?: string;
+}> = ({ item, selected, onActivate, onHover, shortcut }) => (
   <div
     onClick={onActivate}
     onMouseEnter={onHover}
@@ -554,23 +585,27 @@ const PaletteRow: React.FC<{
         </div>
       )}
     </div>
+    {shortcut && <Kbd>{shortcut}</Kbd>}
   </div>
 );
 
-const CommandRow: React.FC<{ icon: React.ReactNode; label: string; onClick: () => void }> = ({ icon, label, onClick }) => (
-  <div
-    onClick={onClick}
+/** Compact keyboard-shortcut chip shown on the right of a palette row. */
+const Kbd: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <span
     style={{
-      display: 'flex', alignItems: 'center', gap: '10px',
-      padding: '7px 12px', margin: '0 4px', borderRadius: 'var(--wks-radius-sm)', cursor: 'pointer',
-      color: 'var(--wks-text-muted)',
+      flexShrink: 0,
+      fontSize: '0.6rem',
+      fontFamily: 'var(--claude-mono-font, monospace)',
+      color: 'var(--wks-text-tertiary)',
+      background: 'var(--wks-bg-input)',
+      border: '1px solid var(--wks-border-input)',
+      borderRadius: 4,
+      padding: '1px 6px',
+      whiteSpace: 'nowrap',
     }}
-    onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--wks-bg-selected)'; }}
-    onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'; }}
   >
-    <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '20px', flexShrink: 0 }}>{icon}</span>
-    <span style={{ fontSize: '0.78rem' }}>{label}</span>
-  </div>
+    {children}
+  </span>
 );
 
 export default CommandPalette;

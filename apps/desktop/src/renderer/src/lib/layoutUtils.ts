@@ -21,3 +21,14 @@ export function tilingColumns(count: number): number {
   if (count <= 6) return 3;
   return Math.ceil(Math.sqrt(count));
 }
+
+/**
+ * Resolve the effective nav-bar height. The app reserves `navHeight + 8px` of
+ * top margin for content, so App.tsx and NavBar.tsx MUST agree — this is the
+ * single source of truth. Clamps to a usable range so a stray config value
+ * (0, 1, or 9999) can't clip panes or eat the viewport.
+ */
+export function resolveNavHeight(configHeight: number | undefined, isSmallScreen: boolean): number {
+  const floor = isSmallScreen ? 44 : 32; // fingertip-friendly on phones
+  return Math.min(Math.max(configHeight || 34, floor), 80);
+}

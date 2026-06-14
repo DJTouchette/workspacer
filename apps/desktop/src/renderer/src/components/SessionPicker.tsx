@@ -76,8 +76,10 @@ const SessionPicker: React.FC<SessionPickerProps> = ({ sessions, onNewSession, o
           border: '1px solid var(--wks-glass-border)',
           borderRadius: 'var(--wks-radius-lg)',
           padding: '20px 24px',
-          minWidth: '340px',
-          maxWidth: '450px',
+          // Phone-safe: never wider than the viewport (was a hard 340px min that
+          // overflowed on narrow screens).
+          width: 'min(450px, 92vw)',
+          boxSizing: 'border-box',
           maxHeight: '70vh',
           boxShadow: '0 16px 48px var(--wks-glass-shadow), inset 0 0 0 1.5px var(--wks-glass-highlight)',
           display: 'flex',

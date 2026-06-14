@@ -27,7 +27,7 @@ const blankDraft = (): Draft => ({
 });
 
 const LibraryPane: React.FC<Props> = ({ cwd }) => {
-  const { items, save, remove } = useLibrary(cwd);
+  const { items, loaded, save, remove } = useLibrary(cwd);
   const [query, setQuery] = useState('');
   const [scopeFilter, setScopeFilter] = useState<'all' | LibraryScope>('all');
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -174,7 +174,12 @@ const LibraryPane: React.FC<Props> = ({ cwd }) => {
       </div>
 
       <div style={{ overflow: 'auto', padding: 12 }}>
-        {filtered.length === 0 && (
+        {!loaded && (
+          <div style={{ textAlign: 'center', color: 'var(--wks-text-faint)', padding: 40, fontSize: '0.78rem' }}>
+            Loading…
+          </div>
+        )}
+        {loaded && filtered.length === 0 && (
           <div style={{ textAlign: 'center', color: 'var(--wks-text-faint)', padding: 40, fontSize: '0.78rem' }}>
             {items.length === 0 ? 'No items yet. Click + New to create one.' : 'No matches.'}
           </div>

@@ -132,6 +132,16 @@ const TreeDir: React.FC<{
         <span style={{ width: 10, display: 'inline-block', color: 'var(--wks-text-disabled)' }}>{open ? '▾' : '▸'}</span>
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</span>
       </div>
+      {open && entries === null && (
+        <div style={{ padding: '1px 6px', paddingLeft: indent + 14, color: 'var(--wks-text-disabled)', fontStyle: 'italic' }}>
+          Loading…
+        </div>
+      )}
+      {open && entries?.length === 0 && (
+        <div style={{ padding: '1px 6px', paddingLeft: indent + 14, color: 'var(--wks-text-disabled)', fontStyle: 'italic' }}>
+          empty
+        </div>
+      )}
       {open && entries?.map((e) =>
         e.isDir ? (
           <TreeDir key={e.path} path={e.path} name={e.name} depth={depth + 1} activePath={activePath} onOpen={onOpen} />

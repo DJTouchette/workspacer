@@ -10,6 +10,7 @@ import { ChevronRight, Folder, FolderOpen } from 'lucide-react';
 import { claudeColors as colors } from '../claude-shared';
 import type { FileStatus, NumstatEntry } from '../../lib/gitQueries';
 import { ensureReviewStyles } from './reviewStyles';
+import { ContextMenu, ContextMenuItem } from '../ContextMenu';
 
 /** One selectable entry in the tree (a changed file in one section). */
 export interface TreeEntry {
@@ -163,22 +164,6 @@ const FileTree: React.FC<FileTreeProps> = ({
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
   const [menu, setMenu] = useState<{ x: number; y: number; entry: TreeEntry } | null>(null);
 
-  // Dismiss the context menu on any outside interaction.
-  React.useEffect(() => {
-    if (!menu) return;
-    const close = () => setMenu(null);
-    window.addEventListener('click', close);
-    window.addEventListener('contextmenu', close);
-    window.addEventListener('keydown', close);
-    window.addEventListener('blur', close);
-    return () => {
-      window.removeEventListener('click', close);
-      window.removeEventListener('contextmenu', close);
-      window.removeEventListener('keydown', close);
-      window.removeEventListener('blur', close);
-    };
-  }, [menu]);
-
   const toggle = (path: string) => {
     setCollapsed((prev) => {
       const next = new Set(prev);
@@ -318,37 +303,9 @@ const FileTree: React.FC<FileTreeProps> = ({
     <div style={{ paddingBottom: 2 }}>
       {renderChildren(tree, 0)}
       {menu && onOpenInEditor && (
-        <div
-          style={{
-            position: 'fixed',
-            top: menu.y,
-            left: menu.x,
-            zIndex: 1000,
-            minWidth: 150,
-            padding: 4,
-            borderRadius: 8,
-            background: 'var(--wks-bg-elevated, #222)',
-            border: '1px solid var(--wks-border-subtle)',
-            boxShadow: 'var(--wks-shadow, 0 6px 24px rgba(0,0,0,0.4))',
-            fontSize: '0.74rem',
-          }}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <button
-            type="button"
-            onClick={() => { onOpenInEditor(menu.entry); setMenu(null); }}
-            style={{
-              display: 'block', width: '100%', textAlign: 'left',
-              padding: '5px 10px', borderRadius: 5, border: 'none',
-              background: 'transparent', color: 'var(--wks-text-primary)',
-              cursor: 'pointer', font: 'inherit',
-            }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--wks-bg-hover, rgba(255,255,255,0.06))')}
-            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-          >
-            Open in editor
-          </button>
-        </div>
+        <ContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)}>
+          <ContextMenuItem label="Open in editor" onClick={() => { onOpenInEditor(menu.entry); setMenu(null); }} />
+        </ContextMenu>
       )}
     </div>
   );

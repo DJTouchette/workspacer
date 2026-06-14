@@ -78,7 +78,7 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
             <div style={{ fontSize: '0.78rem', marginTop: 6 }}>Spawn an agent and it'll appear here as a live card.</div>
           </div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: 18, alignItems: 'start' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(360px, 100%), 1fr))', gap: 18, alignItems: 'start' }}>
             {sorted.map((agent) => (
               <AgentCard key={agent.id} agent={agent} snapshot={agent.sessionId ? snapshotBySession[agent.sessionId] : undefined} />
             ))}

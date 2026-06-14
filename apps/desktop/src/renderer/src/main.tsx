@@ -6,11 +6,16 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
 import { ConfigProvider } from './contexts/ConfigContext'
+import ErrorBoundary from './components/ErrorBoundary'
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>
-    <ConfigProvider>
-      <App />
-    </ConfigProvider>
+    {/* Last-resort boundary: a crash above the app shell still shows a
+        recoverable screen instead of a blank window. */}
+    <ErrorBoundary label="Workspacer" variant="region">
+      <ConfigProvider>
+        <App />
+      </ConfigProvider>
+    </ErrorBoundary>
   </React.StrictMode>,
 )

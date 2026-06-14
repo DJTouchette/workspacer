@@ -1,7 +1,10 @@
-import { useRef, useCallback, useState, useEffect } from 'react';
+import { useRef, useCallback, useState, useEffect, useMemo } from 'react';
 import './App.css';
 import NavBar from './components/NavBar';
 import SideBar, { SIDEBAR_WIDTH } from './components/SideBar';
+import ErrorBoundary from './components/ErrorBoundary';
+import { EmptyState } from './components/PaneMessage';
+import { resolveNavHeight } from './lib/layoutUtils';
 import PluginInstallDialog from './components/PluginInstallDialog';
 import { usePlugins } from './hooks/usePlugins';
 import { useUiEventBus } from './hooks/useUiEventBus';
@@ -28,10 +31,10 @@ import { useLibrary } from './hooks/useLibrary';
 import { useLayoutSync, type HydrationResult } from './hooks/useLayoutSync';
 import { useAgentManager, GLOBAL_WORKSPACE_ID } from './hooks/useAgentManager';
 import type { PaneType, AgentWorkspace, ViewMode, ViewLevel } from './types/pane';
-import type { SessionAmbientState, SessionUsage, ClaudeSessionSnapshot } from './types/claudeSession';
+import type { SessionAmbientState, ClaudeSessionSnapshot } from './types/claudeSession';
 import { useKeyboardNav } from './hooks/useKeyboardNav';
 import { useIsSmallScreen } from './hooks/useMediaQuery';
-import { useConfig } from './hooks/useConfig';
+import { useConfig, DEFAULT_CONFIG } from './hooks/useConfig';
 import { useTheme } from './hooks/useTheme';
 import { useSessionLifecycle } from './hooks/useSessionLifecycle';
 import { usePluginHotkeys } from './hooks/usePluginHotkeys';
@@ -221,29 +224,22 @@ function App() {
   // already re-renders on every status update, so storing the snapshot here is
   // no extra render churn; it just stops throwing the rich payload away.)
   const [statusBySession, setStatusBySession] = useState<Record<string, SessionAmbientState>>({});
-  const [usageBySession, setUsageBySession] = useState<Record<string, SessionUsage>>({});
   const [snapshotBySession, setSnapshotBySession] = useState<Record<string, ClaudeSessionSnapshot>>({});
   useEffect(() => {
     let cancelled = false;
     window.electronAPI.getAllClaudeSessions().then((sessions: any[]) => {
       if (cancelled) return;
       const map: Record<string, SessionAmbientState> = {};
-      const usage: Record<string, SessionUsage> = {};
       const snaps: Record<string, ClaudeSessionSnapshot> = {};
       for (const s of sessions) {
         map[s.sessionId] = s.ambientState;
-        if (s.usage) usage[s.sessionId] = s.usage;
         snaps[s.sessionId] = s;
       }
       setStatusBySession(map);
-      setUsageBySession(usage);
       setSnapshotBySession(snaps);
     }).catch(() => {});
     const unsub = window.electronAPI.onClaudeSessionUpdate((sessionId: string, snapshot: any) => {
       setStatusBySession((prev) => ({ ...prev, [sessionId]: snapshot.ambientState }));
-      if (snapshot.usage) {
-        setUsageBySession((prev) => ({ ...prev, [sessionId]: snapshot.usage }));
-      }
       setSnapshotBySession((prev) => ({ ...prev, [sessionId]: snapshot }));
     });
     return () => { cancelled = true; unsub(); };
@@ -397,6 +393,12 @@ function App() {
 
   const kbMode = config.keybindings?.mode ?? 'default';
   const kbLeader = config.keybindings?.leader ?? 'ctrl';
+  // Defaults merged under any user overrides, so shortcut badges/labels always
+  // render even when the saved config only carries a partial map.
+  const resolvedShortcuts = useMemo(
+    () => ({ ...DEFAULT_CONFIG.keybindings?.shortcuts, ...config.keybindings?.shortcuts }),
+    [config.keybindings?.shortcuts],
+  );
 
   const activeTab = getActiveTab();
 
@@ -788,7 +790,7 @@ function App() {
   // --- Render ---
   // Phones get a taller bar so the (fattened) touch targets fit; this height
   // also drives the content top-offset below, so the two stay in sync.
-  const navHeight = Math.max(config.ui.navBarHeight || 34, isSmallScreen ? 44 : 32);
+  const navHeight = resolveNavHeight(config.ui.navBarHeight, isSmallScreen);
 
   const rawViewMode = config.panes?.viewMode as string | undefined;
   const viewMode: ViewMode =
@@ -838,11 +840,12 @@ function App() {
         />
       )}
       {!sidebarCollapsed && (
+        <ErrorBoundary label="Sidebar" variant="region">
         <SideBar
           agents={agents}
           activeAgentId={activeAgentId}
           statusBySession={statusBySession}
-          usageBySession={usageBySession}
+          snapshotBySession={snapshotBySession}
           onSelectAgent={(id) => { handleSelectAgent(id); if (sidebarOverlay) setSidebarCollapsed(true); }}
           onSpawnAgent={() => setShowSpawnDialog(true)}
           onTerminateAgent={terminateAgent}
@@ -854,6 +857,7 @@ function App() {
           onOpenRemote={() => setShowRemote(true)}
           onToggleCollapse={() => setSidebarCollapsed(true)}
         />
+        </ErrorBoundary>
       )}
       {sidebarCollapsed && (
         <button
@@ -876,6 +880,7 @@ function App() {
         >»</button>
       )}
 
+      <ErrorBoundary label="Tab bar" variant="region">
       <NavBar
         tabs={tabs}
         activeTabId={activeTabId}
@@ -893,6 +898,7 @@ function App() {
         onRunScript={handleRunScript}
         onSaveScripts={handleSaveScripts}
       />
+      </ErrorBoundary>
 
       <div className="app-content" style={{
         // Small gap between the tab bar and the top of the panes.
@@ -911,6 +917,7 @@ function App() {
                 key={agent.id}
                 style={{ display: isActiveAgent ? 'block' : 'none', height: '100%' }}
               >
+                <ErrorBoundary label="Workspace" variant="region" resetKeys={[agent.id]}>
                 <ScrollContainer
                   ref={isActiveAgent ? scrollContainerRef : undefined}
                   agentActive={isActiveAgent}
@@ -936,33 +943,27 @@ function App() {
                   spawnSupervisor={spawnSupervisor}
                   onJumpToAgent={handleJumpToAgent}
                 />
+                </ErrorBoundary>
               </div>
             );
           })
         ) : (
-          <div style={{
-            height: '100%', display: 'flex', flexDirection: 'column',
-            alignItems: 'center', justifyContent: 'center', gap: 12,
-            color: 'var(--wks-text-muted)', textAlign: 'center', padding: 24,
-          }}>
-            <div style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--wks-text-secondary)' }}>
-              No agent selected
-            </div>
-            <div style={{ fontSize: '0.8rem', maxWidth: 360, lineHeight: 1.5 }}>
-              Spawn an agent to start a Claude Code session. It stays running until you terminate it,
-              and its tabs &amp; panes are remembered.
-            </div>
-            <button
-              onClick={() => setShowSpawnDialog(true)}
-              style={{
-                marginTop: 4, fontSize: '0.8rem', fontFamily: 'inherit', fontWeight: 600,
-                cursor: 'pointer', background: 'var(--wks-accent)', color: 'var(--wks-text-on-accent, #fff)',
-                border: 'none', borderRadius: 4, padding: '8px 16px',
-              }}
-            >
-              + Spawn agent
-            </button>
-          </div>
+          <EmptyState
+            title="No agent selected"
+            hint="Spawn an agent to start a Claude Code session. It stays running until you terminate it, and its tabs & panes are remembered."
+            action={
+              <button
+                onClick={() => setShowSpawnDialog(true)}
+                style={{
+                  fontSize: '0.8rem', fontFamily: 'inherit', fontWeight: 600,
+                  cursor: 'pointer', background: 'var(--wks-accent)', color: 'var(--wks-text-on-accent, #fff)',
+                  border: 'none', borderRadius: 4, padding: '8px 16px',
+                }}
+              >
+                + Spawn agent
+              </button>
+            }
+          />
         )}
       </div>
 
@@ -971,7 +972,7 @@ function App() {
         onClose={closeHelp}
         mode={kbMode}
         leader={kbLeader}
-        shortcuts={config.keybindings?.shortcuts}
+        shortcuts={resolvedShortcuts}
       />
 
       <CommandPalette
@@ -1006,6 +1007,14 @@ function App() {
         onOpenRemote={() => { setShowCommandPalette(false); setShowRemote(true); }}
         onOpenAskPane={openAskPane}
         onOpenFile={() => { setShowCommandPalette(false); openFileInEditor(); }}
+        shortcuts={resolvedShortcuts}
+        onSpawnAgent={() => { setShowCommandPalette(false); setShowSpawnDialog(true); }}
+        onToggleSidebar={() => { setShowCommandPalette(false); setSidebarCollapsed((v) => !v); }}
+        onToggleInbox={() => { setShowCommandPalette(false); setInboxOpen((v) => !v); }}
+        onToggleFleet={() => { setShowCommandPalette(false); toggleFleet(); }}
+        onSaveSession={() => { setShowCommandPalette(false); saveCurrentSession(); }}
+        onOpenSettings={() => { setShowCommandPalette(false); openSettings(); }}
+        onToggleHelp={() => { setShowCommandPalette(false); toggleHelp(); }}
       />
 
       <LibraryHost

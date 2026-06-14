@@ -1,7 +1,9 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState } from 'react';
 import { AgentWorkspace } from '../types/pane';
-import type { SessionAmbientState, SessionUsage } from '../types/claudeSession';
+import type { SessionAmbientState, ClaudeSessionSnapshot } from '../types/claudeSession';
+import { deriveSessionStats } from '../lib/sessionStats';
 import HubStatus from './HubStatus';
+import { ContextMenu, ContextMenuItem } from './ContextMenu';
 
 export const SIDEBAR_WIDTH = 196;
 
@@ -42,8 +44,12 @@ interface SideBarProps {
   activeAgentId: string;
   /** sessionId → live ambient state, from claudeSessionStore. */
   statusBySession: Record<string, SessionAmbientState>;
-  /** sessionId → token / cost / context usage, parsed from the transcript. */
-  usageBySession: Record<string, SessionUsage>;
+  /**
+   * sessionId → full live snapshot. The per-agent context bar derives its
+   * numbers from this via `deriveSessionStats`, the same source the agent
+   * pane's status bar uses, so the two can never disagree.
+   */
+  snapshotBySession: Record<string, ClaudeSessionSnapshot>;
   onSelectAgent: (id: string) => void;
   onSpawnAgent: () => void;
   onTerminateAgent: (id: string) => void;
@@ -66,7 +72,7 @@ const SideBar: React.FC<SideBarProps> = ({
   agents,
   activeAgentId,
   statusBySession,
-  usageBySession,
+  snapshotBySession,
   onSelectAgent,
   onSpawnAgent,
   onTerminateAgent,
@@ -87,19 +93,9 @@ const SideBar: React.FC<SideBarProps> = ({
     const s = a.sessionId ? statusBySession[a.sessionId] : undefined;
     return n + (s === 'thinking' || s === 'streaming' ? 1 : 0);
   }, 0);
-  const [contextMenu, setContextMenu] = useState<{ agentId: string; y: number } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ agentId: string; x: number; y: number } | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
-  const cmRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!contextMenu) return;
-    const handler = (e: MouseEvent) => {
-      if (cmRef.current && !cmRef.current.contains(e.target as Node)) setContextMenu(null);
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [contextMenu]);
 
   const commitRename = () => {
     if (renamingId && renameValue.trim()) onRenameAgent(renamingId, renameValue.trim());
@@ -244,12 +240,12 @@ const SideBar: React.FC<SideBarProps> = ({
             const state = agent.sessionId ? statusBySession[agent.sessionId] : undefined;
             const { color, label } = statusVisual(state);
             const isRenaming = renamingId === agent.id;
-            const usage = agent.sessionId ? usageBySession[agent.sessionId] : undefined;
-            const ctxFrac = usage && usage.contextLimit > 0
-              ? Math.min(1, usage.contextTokens / usage.contextLimit)
-              : 0;
-            const usageTip = usage
-              ? `\n${fmtTokens(usage.contextTokens)} / ${fmtTokens(usage.contextLimit)} context · ${fmtUSD(usage.costUSD)}${usage.model ? ` · ${usage.model.replace(/^claude-/, '')}` : ''}`
+            const snap = agent.sessionId ? snapshotBySession[agent.sessionId] : undefined;
+            const stats = deriveSessionStats(snap);
+            const hasCtx = stats.ctxPct !== undefined;
+            const ctxFrac = hasCtx ? Math.min(1, stats.ctxPct! / 100) : 0;
+            const usageTip = hasCtx
+              ? `\n${Math.round(stats.ctxPct!)}% context${stats.tokens !== undefined ? ` · ${fmtTokens(stats.tokens)} tok` : ''}${stats.costUSD !== undefined ? ` · ${fmtUSD(stats.costUSD)}` : ''}${stats.model ? ` · ${stats.model}` : ''}`
               : '';
 
             return (
@@ -259,7 +255,7 @@ const SideBar: React.FC<SideBarProps> = ({
                 onContextMenu={(e) => {
                   e.preventDefault();
                   if (isGlobal) return; // Overview can't be renamed/terminated
-                  setContextMenu({ agentId: agent.id, y: e.clientY });
+                  setContextMenu({ agentId: agent.id, x: e.clientX, y: e.clientY });
                 }}
                 style={{
                   width: indent ? 'calc(100% - 24px)' : 'calc(100% - 12px)',
@@ -329,13 +325,13 @@ const SideBar: React.FC<SideBarProps> = ({
                     <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {isGlobal ? 'Dashboards & plugins' : agent.sessionId ? label : 'Stopped — click to respawn'}
                     </span>
-                    {usage && usage.contextTokens > 0 && (
+                    {hasCtx && (
                       <span style={{ marginLeft: 'auto', flexShrink: 0, color: contextColor(ctxFrac), fontVariantNumeric: 'tabular-nums' }}>
                         {Math.round(ctxFrac * 100)}%
                       </span>
                     )}
                   </span>
-                  {usage && usage.contextTokens > 0 && (
+                  {hasCtx && (
                     <span style={{
                       height: 3, borderRadius: 2, marginTop: 1,
                       backgroundColor: 'var(--wks-border-subtle, #2a2a2a)',
@@ -397,22 +393,8 @@ const SideBar: React.FC<SideBarProps> = ({
 
       {/* Context menu */}
       {contextMenu && (
-        <div
-          ref={cmRef}
-          style={{
-            position: 'fixed',
-            left: `${SIDEBAR_WIDTH + 4}px`,
-            top: contextMenu.y,
-            backgroundColor: 'var(--wks-bg-surface)',
-            border: '1px solid var(--wks-border-input)',
-            borderRadius: '4px',
-            padding: '4px 0',
-            zIndex: 10000,
-            minWidth: '140px',
-            boxShadow: '0 4px 12px var(--wks-shadow)',
-          }}
-        >
-          <SideMenuItem
+        <ContextMenu x={contextMenu.x} y={contextMenu.y} minWidth={140} onClose={() => setContextMenu(null)}>
+          <ContextMenuItem
             label="Rename"
             onClick={() => {
               const agent = agents.find((a) => a.id === contextMenu.agentId);
@@ -421,7 +403,7 @@ const SideBar: React.FC<SideBarProps> = ({
               setContextMenu(null);
             }}
           />
-          <SideMenuItem
+          <ContextMenuItem
             label="Terminate"
             danger
             onClick={() => {
@@ -430,7 +412,7 @@ const SideBar: React.FC<SideBarProps> = ({
               onTerminateAgent(id);
             }}
           />
-        </div>
+        </ContextMenu>
       )}
     </div>
   );
@@ -446,26 +428,6 @@ function mcBtnStyle(active: boolean): React.CSSProperties {
     color: active ? 'var(--wks-text-primary)' : 'var(--wks-text-secondary)',
     boxSizing: 'border-box',
   };
-}
-
-function SideMenuItem({ label, onClick, danger }: { label: string; onClick: () => void; danger?: boolean }) {
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        display: 'block', width: '100%', padding: '5px 12px', margin: 0,
-        border: 'none', borderRadius: 0, cursor: 'pointer',
-        fontSize: '0.7rem', fontFamily: 'inherit', fontWeight: 400,
-        backgroundColor: 'transparent',
-        color: danger ? 'var(--wks-danger, #e05555)' : 'var(--wks-text-tertiary)',
-        textAlign: 'left', height: 'auto', lineHeight: '1.4',
-      }}
-      onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--wks-bg-selected)'; }}
-      onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'; }}
-    >
-      {label}
-    </button>
-  );
 }
 
 export default SideBar;

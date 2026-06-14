@@ -3,6 +3,8 @@ import { PaneType, TabConfig, ViewMode } from '../types/pane';
 import { useConfig, ScriptEntry } from '../hooks/useConfig';
 import { useIsSmallScreen } from '../hooks/useMediaQuery';
 import { PaneIcon, Play, Settings, Plus, Columns3, LayoutGrid, Rows3 } from './icons';
+import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from './ContextMenu';
+import { resolveNavHeight } from '../lib/layoutUtils';
 
 interface NavBarProps {
   tabs: TabConfig[];
@@ -39,9 +41,7 @@ interface SessionPickerState {
 const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab, onCloseTab, onRenameTab, onSplitTab, onMoveTab, viewMode = 'tabs', onToggleViewMode, leftOffset = 0, cwd, scripts = [], onRunScript, onSaveScripts }) => {
   const { config } = useConfig();
   const isSmallScreen = useIsSmallScreen();
-  // Keep this formula identical to App.tsx's navHeight — the app reserves
-  // navHeight + 8px of top margin for content, so a mismatch would clip panes.
-  const navHeight = Math.max(config.ui.navBarHeight || 34, isSmallScreen ? 44 : 32);
+  const navHeight = resolveNavHeight(config.ui.navBarHeight, isSmallScreen);
   // On Windows the native caption buttons (min/max/close) are drawn by the
   // titleBarOverlay in the top-right corner. Reserve that strip so the
   // right-aligned controls (view-mode toggle, scripts) don't slide under them.
@@ -57,17 +57,13 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
   const [managingScripts, setManagingScripts] = useState(false);
   const [scriptDraft, setScriptDraft] = useState<ScriptEntry[]>([]);
   const menuRef = useRef<HTMLDivElement>(null);
-  const tabMenuRef = useRef<HTMLDivElement>(null);
   const scriptMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!showMenu && !tabContextMenu && !managingScripts) return;
+    if (!showMenu && !managingScripts) return;
     const handler = (e: MouseEvent) => {
       if (showMenu && menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setShowMenu(false);
-      }
-      if (tabContextMenu && tabMenuRef.current && !tabMenuRef.current.contains(e.target as Node)) {
-        setTabContextMenu(null);
       }
       if (managingScripts && scriptMenuRef.current && !scriptMenuRef.current.contains(e.target as Node)) {
         setManagingScripts(false);
@@ -414,7 +410,7 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
             onClick={e => e.stopPropagation()}
             style={{
               backgroundColor: 'var(--wks-bg-raised)', border: '1px solid var(--wks-border-input)',
-              borderRadius: 8, width: 320, padding: '12px 0', maxHeight: 300,
+              borderRadius: 8, width: 'min(320px, 92vw)', boxSizing: 'border-box', padding: '12px 0', maxHeight: 300,
               boxShadow: '0 8px 32px var(--wks-shadow)',
             }}
           >
@@ -472,7 +468,7 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
             onClick={e => e.stopPropagation()}
             style={{
               backgroundColor: 'var(--wks-bg-raised)', border: '1px solid var(--wks-border-input)',
-              borderRadius: 8, width: 400, padding: '12px 0', maxHeight: 420,
+              borderRadius: 8, width: 'min(400px, 92vw)', boxSizing: 'border-box', padding: '12px 0', maxHeight: 420,
               boxShadow: '0 8px 32px var(--wks-shadow)',
               display: 'flex', flexDirection: 'column',
             }}
@@ -539,35 +535,21 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
       )}
       {/* Tab context menu */}
       {tabContextMenu && (
-        <div
-          ref={tabMenuRef}
-          style={{
-            position: 'fixed',
-            top: tabContextMenu.y,
-            left: tabContextMenu.x,
-            backgroundColor: 'var(--wks-bg-surface)',
-            border: '1px solid var(--wks-border-input)',
-            borderRadius: '4px',
-            padding: '4px 0',
-            zIndex: 10000,
-            minWidth: '140px',
-            boxShadow: '0 4px 12px var(--wks-shadow)',
-          }}
-        >
-          <MenuButton label="Rename" onClick={() => { setTabContextMenu(null); onRenameTab?.(tabContextMenu.tabId); }} />
-          <MenuButton label="Split — Terminal" onClick={() => { setTabContextMenu(null); onSplitTab?.(tabContextMenu.tabId, 'terminal'); }} />
-          <MenuButton label="Split — Claude" onClick={() => { setTabContextMenu(null); onSplitTab?.(tabContextMenu.tabId, 'claude'); }} />
-          <MenuButton label="Split — Browser" onClick={() => { setTabContextMenu(null); onSplitTab?.(tabContextMenu.tabId, 'browser'); }} />
-          <div style={{ height: '1px', backgroundColor: 'var(--wks-border)', margin: '4px 0' }} />
+        <ContextMenu x={tabContextMenu.x} y={tabContextMenu.y} minWidth={140} onClose={() => setTabContextMenu(null)}>
+          <ContextMenuItem label="Rename" onClick={() => { setTabContextMenu(null); onRenameTab?.(tabContextMenu.tabId); }} />
+          <ContextMenuItem label="Split — Terminal" onClick={() => { setTabContextMenu(null); onSplitTab?.(tabContextMenu.tabId, 'terminal'); }} />
+          <ContextMenuItem label="Split — Claude" onClick={() => { setTabContextMenu(null); onSplitTab?.(tabContextMenu.tabId, 'claude'); }} />
+          <ContextMenuItem label="Split — Browser" onClick={() => { setTabContextMenu(null); onSplitTab?.(tabContextMenu.tabId, 'browser'); }} />
+          <ContextMenuSeparator />
           {tabContextMenu.tabIdx > 0 && (
-            <MenuButton label="Move left" onClick={() => { setTabContextMenu(null); onMoveTab?.(tabContextMenu.tabId, tabContextMenu.tabIdx - 1); }} />
+            <ContextMenuItem label="Move left" onClick={() => { setTabContextMenu(null); onMoveTab?.(tabContextMenu.tabId, tabContextMenu.tabIdx - 1); }} />
           )}
           {tabContextMenu.tabIdx < tabs.length - 1 && (
-            <MenuButton label="Move right" onClick={() => { setTabContextMenu(null); onMoveTab?.(tabContextMenu.tabId, tabContextMenu.tabIdx + 1); }} />
+            <ContextMenuItem label="Move right" onClick={() => { setTabContextMenu(null); onMoveTab?.(tabContextMenu.tabId, tabContextMenu.tabIdx + 1); }} />
           )}
-          <div style={{ height: '1px', backgroundColor: 'var(--wks-border)', margin: '4px 0' }} />
-          <MenuButton label="Close" onClick={() => { setTabContextMenu(null); onCloseTab?.(tabContextMenu.tabId); }} />
-        </div>
+          <ContextMenuSeparator />
+          <ContextMenuItem label="Close" danger onClick={() => { setTabContextMenu(null); onCloseTab?.(tabContextMenu.tabId); }} />
+        </ContextMenu>
       )}
     </nav>
   );
@@ -615,7 +597,10 @@ const ScriptManager: React.FC<{
       style={{
         position: 'fixed', top: `${navHeight + 2}px`, right: '10px',
         backgroundColor: 'var(--wks-bg-surface)', border: '1px solid var(--wks-border-input)',
-        borderRadius: '6px', padding: '10px', zIndex: 10000, width: '380px',
+        // Never wider than the viewport (was a hard 380px that ran off the left
+        // edge under ~400px).
+        borderRadius: '6px', padding: '10px', zIndex: 10000,
+        width: 'min(380px, calc(100vw - 20px))', boxSizing: 'border-box',
         boxShadow: '0 6px 20px var(--wks-shadow)',
         display: 'flex', flexDirection: 'column', gap: '6px',
       }}

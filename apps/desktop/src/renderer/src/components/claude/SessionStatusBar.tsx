@@ -1,5 +1,6 @@
 import React from 'react';
 import type { ClaudeSessionSnapshot } from '../../types/claudeSession';
+import { deriveSessionStats } from '../../lib/sessionStats';
 
 /**
  * A compact, single-line status readout — Workspacer's in-app equivalent of
@@ -47,28 +48,9 @@ interface Props {
 }
 
 export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd }) => {
-  const sl = snapshot?.statusLine;
-  const usage = snapshot?.usage;
-
   const dir = baseName(cwd || snapshot?.cwd);
-  const model = sl?.modelDisplay ?? (usage?.model ? usage.model.replace(/^claude-/, '') : undefined);
-
-  // Context %: prefer Claude's own number, else derive from transcript usage.
-  const ctxPct =
-    sl?.contextUsedPct ??
-    (usage && usage.contextLimit > 0 ? (usage.contextTokens / usage.contextLimit) * 100 : undefined);
-
-  // Total tokens: statusLine carries cumulative in+out; fall back to usage.
-  const tokens =
-    sl?.totalInputTokens !== undefined
-      ? (sl.totalInputTokens ?? 0) + (sl.totalOutputTokens ?? 0)
-      : usage
-        ? usage.totalInputTokens + usage.totalOutputTokens
-        : undefined;
-
-  const cost = sl?.costUSD ?? usage?.costUSD;
-  const five = sl?.fiveHourPct;
-  const seven = sl?.sevenDayPct;
+  const { model, ctxPct, tokens, costUSD: cost, fiveHourPct: five, sevenDayPct: seven } =
+    deriveSessionStats(snapshot);
 
   // Until the first reading arrives, render nothing so the toolbar stays clean.
   const hasAny = model || ctxPct !== undefined || tokens !== undefined || cost !== undefined;

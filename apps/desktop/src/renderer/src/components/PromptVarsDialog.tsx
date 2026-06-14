@@ -33,7 +33,7 @@ const PromptVarsDialog: React.FC<Props> = ({ title, vars, onSubmit, onCancel }) 
       onClick={onCancel}
     >
       <div
-        style={{ backgroundColor: 'var(--wks-bg-raised)', border: '1px solid var(--wks-border-input)', borderRadius: 8, width: 480, maxHeight: '72vh', overflow: 'auto', boxShadow: '0 8px 32px var(--wks-shadow)', padding: 16 }}
+        style={{ backgroundColor: 'var(--wks-bg-raised)', border: '1px solid var(--wks-border-input)', borderRadius: 8, width: 'min(480px, 92vw)', boxSizing: 'border-box', maxHeight: '72vh', overflow: 'auto', boxShadow: '0 8px 32px var(--wks-shadow)', padding: 16 }}
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => {
           if (e.key === 'Escape') { e.preventDefault(); onCancel(); }

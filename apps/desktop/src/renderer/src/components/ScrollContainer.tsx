@@ -1,5 +1,6 @@
 import React, { useRef, useState, useCallback, useEffect, useImperativeHandle, forwardRef, Suspense } from 'react';
 import Pane from './Pane';
+import ErrorBoundary from './ErrorBoundary';
 import { PaneConfig, PaneType, TabConfig, CanvasRect, ViewMode, AgentWorkspace } from '../types/pane';
 import TerminalPane from '../panes/TerminalPane';
 import ClaudePane from '../panes/ClaudePane';
@@ -40,6 +41,11 @@ function defaultCanvas(index: number): CanvasRect {
 }
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+
+// Spatial-canvas grid: snap card position/size to this world-unit grid so cards
+// line up instead of landing on fractional pixels after a drag.
+const SNAP = 20;
+const snap = (v: number) => Math.round(v / SNAP) * SNAP;
 
 /** POSIX single-quote a path so it's safe as a terminal-editor argument. */
 function shellQuote(p: string): string {
@@ -306,7 +312,9 @@ function TilingLayout({
               hideHeader={single}
               hideActiveBorder={single}
             >
-              {renderPaneContent(pane, liveActive, callbacks)}
+              <ErrorBoundary label={pane.title || pane.type} resetKeys={[pane.id]}>
+                {renderPaneContent(pane, liveActive, callbacks)}
+              </ErrorBoundary>
             </Pane>
           </div>
         );
@@ -515,11 +523,11 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
         const wdx = dx / it.zoom;
         const wdy = dy / it.zoom;
         if (it.kind === 'move') {
-          setLiveRect({ tabId: it.tabId!, rect: { ...o, x: o.x + wdx, y: o.y + wdy } });
+          setLiveRect({ tabId: it.tabId!, rect: { ...o, x: snap(o.x + wdx), y: snap(o.y + wdy) } });
         } else {
           setLiveRect({
             tabId: it.tabId!,
-            rect: { ...o, w: Math.max(280, o.w + wdx), h: Math.max(180, o.h + wdy) },
+            rect: { ...o, w: Math.max(280, snap(o.w + wdx)), h: Math.max(180, snap(o.h + wdy)) },
           });
         }
       };
