@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { useAttention } from '../contexts/AttentionContext';
 import { AttentionCard } from './attention/AttentionCard';
 import { SNOOZE_MINUTES } from '../contexts/AttentionContext';
@@ -20,12 +21,22 @@ const InboxDrawer: React.FC = () => {
   } = useAttention();
   const listRef = useRef<HTMLDivElement>(null);
 
+  // Windowed feed: only the visible cards (plus a little overscan) are in the
+  // DOM, so a 100+-item inbox stays smooth. Heights vary by item type
+  // (approval / question / summary), so we measure each card dynamically.
+  const virtualizer = useVirtualizer({
+    count: feed.length,
+    getScrollElement: () => listRef.current,
+    estimateSize: () => 112,
+    overscan: 6,
+  });
+
   // Keep the selected card scrolled into view as you j/k through the feed.
   useEffect(() => {
     if (!inboxOpen || !selectedItem) return;
-    const el = listRef.current?.querySelector(`[data-attention-sig="${selectedItem.signature}"]`);
-    el?.scrollIntoView({ block: 'nearest' });
-  }, [inboxOpen, selectedItem]);
+    const idx = feed.findIndex((it) => it.signature === selectedItem.signature);
+    if (idx >= 0) virtualizer.scrollToIndex(idx, { align: 'auto' });
+  }, [inboxOpen, selectedItem, feed, virtualizer]);
 
   // Keyboard triage — only while the drawer is open and you're not typing into
   // an input (e.g. the question picker's custom-answer field).
@@ -111,8 +122,8 @@ const InboxDrawer: React.FC = () => {
           <Hint k="j/k" t="move" /><Hint k="y/n" t="approve" /><Hint k="1-9" t="answer" /><Hint k="o" t="open" /><Hint k="e" t="dismiss" /><Hint k="s" t="snooze" />
         </div>
 
-        {/* Feed */}
-        <div ref={listRef} style={{ flex: 1, overflowY: 'auto', padding: '4px 14px 18px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+        {/* Feed (windowed) */}
+        <div ref={listRef} style={{ flex: 1, overflowY: 'auto', padding: '4px 14px 18px' }}>
           {feed.length === 0 ? (
             <div style={{ marginTop: 64, textAlign: 'center', color: 'var(--wks-text-faint)' }}>
               <div style={{ fontSize: '2rem', marginBottom: 8 }}>✓</div>
@@ -122,9 +133,21 @@ const InboxDrawer: React.FC = () => {
               </div>
             </div>
           ) : (
-            feed.map((it) => (
-              <AttentionCard key={it.signature} item={it} selected={selectedItem?.signature === it.signature} />
-            ))
+            <div style={{ position: 'relative', width: '100%', height: virtualizer.getTotalSize() }}>
+              {virtualizer.getVirtualItems().map((v) => {
+                const it = feed[v.index];
+                return (
+                  <div
+                    key={it.signature}
+                    data-index={v.index}
+                    ref={virtualizer.measureElement}
+                    style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${v.start}px)`, paddingBottom: 12 }}
+                  >
+                    <AttentionCard item={it} selected={selectedItem?.signature === it.signature} />
+                  </div>
+                );
+              })}
+            </div>
           )}
         </div>
       </div>

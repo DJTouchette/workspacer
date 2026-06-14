@@ -84,7 +84,10 @@ Status legend: ☐ todo · ◐ in progress · ☑ done · ✗ won't do
 - ◐ Inconsistent coverage: good (Inbox, Fleet, SideBar, scripts). Fixed: Editor
   file tree empty, Library loading/empty, "No agent selected" (shared `EmptyState`).
   Remaining: new Notes pane placeholder.
-- ☐ No first-run / onboarding affordance.
+- ☑ First-run onboarding — `components/Onboarding.tsx` shows a dismissible welcome
+  (spawn + the user's actual shortcuts for palette/inbox/fleet/settings/help) when
+  there are no agents and `config.onboardingDismissed` isn't set; falls back to the
+  plain "No agent selected" empty state once dismissed.
 
 ## Accessibility & input
 
@@ -109,7 +112,10 @@ Status legend: ☐ todo · ◐ in progress · ☑ done · ✗ won't do
 
 ## Scale / performance
 
-- ☐ No virtualization in FleetDeck (slow 50+ agents) or InboxDrawer feed (100+ items).
+- ☑ Virtualization — FleetDeck (row-windowed responsive grid) and the InboxDrawer
+  feed (dynamic-height list) now use `@tanstack/react-virtual`, so 50+ agents /
+  100+ items stay smooth. Test harness (`tests/setup.ts`) gives jsdom a fake
+  viewport + firing ResizeObserver so virtualized lists render under test.
 - ☐ Pane headers re-render on every status update (no memoization).
 
 ---

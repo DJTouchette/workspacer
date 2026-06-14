@@ -102,6 +102,8 @@ export interface Config {
     /** Restore the most recent session automatically on launch (skip the picker). */
     autoResume: boolean;
   };
+  /** Set once the user dismisses the first-run welcome; absent/false shows it. */
+  onboardingDismissed?: boolean;
   claude?: {
     /** Which view a Claude pane opens in by default: rich 'gui' or raw 'terminal'. */
     defaultView: 'gui' | 'terminal';

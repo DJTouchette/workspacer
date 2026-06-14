@@ -4,6 +4,7 @@ import NavBar from './components/NavBar';
 import SideBar, { SIDEBAR_WIDTH } from './components/SideBar';
 import ErrorBoundary from './components/ErrorBoundary';
 import { EmptyState } from './components/PaneMessage';
+import Onboarding from './components/Onboarding';
 import { resolveNavHeight } from './lib/layoutUtils';
 import PluginInstallDialog from './components/PluginInstallDialog';
 import { usePlugins } from './hooks/usePlugins';
@@ -947,6 +948,12 @@ function App() {
               </div>
             );
           })
+        ) : !config.onboardingDismissed ? (
+          <Onboarding
+            onSpawn={() => setShowSpawnDialog(true)}
+            onDismiss={() => saveConfig({ onboardingDismissed: true })}
+            shortcuts={config.keybindings?.shortcuts ?? {}}
+          />
         ) : (
           <EmptyState
             title="No agent selected"
