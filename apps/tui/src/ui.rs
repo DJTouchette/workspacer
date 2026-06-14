@@ -382,6 +382,11 @@ fn render_composer(f: &mut Frame, area: Rect, app: &App, agent: &Option<Agent>) 
 }
 
 /// Build the fully-wrapped, styled transcript lines for the current turns.
+///
+/// Consecutive tool-only assistant turns are coalesced into one compact
+/// "N tool calls · …" line so a workflow's long tool runs don't flood the view
+/// (the terminal analogue of the desktop's grouped WorkCard). Turns that carry
+/// text render in full.
 fn transcript_lines(app: &App, width: usize) -> Vec<Line<'static>> {
     let t = &app.theme;
     let w = width.max(10);
@@ -390,7 +395,21 @@ fn transcript_lines(app: &App, width: usize) -> Vec<Line<'static>> {
         out.push(Line::from(Span::styled("no messages yet", Style::default().fg(t.dim))));
         return out;
     }
+    let mut run: Vec<(String, String)> = Vec::new();
     for turn in &app.turns {
+        let tool_only = turn.role == Role::Assistant
+            && !turn.parts.is_empty()
+            && turn.parts.iter().all(|p| matches!(p, Part::Tool { .. }));
+        if tool_only {
+            for p in &turn.parts {
+                if let Part::Tool { name, summary } = p {
+                    run.push((name.clone(), summary.clone()));
+                }
+            }
+            continue;
+        }
+        flush_tool_run(&mut out, &mut run, t, w);
+
         let (label, color) = match turn.role {
             Role::User => ("▍ you", t.accent),
             Role::Assistant => ("▍ claude", t.ok),
@@ -423,7 +442,64 @@ fn transcript_lines(app: &App, width: usize) -> Vec<Line<'static>> {
         }
         out.push(Line::raw(""));
     }
+    flush_tool_run(&mut out, &mut run, t, w);
     out
+}
+
+/// Emit the buffered run of consecutive tool calls and clear it: a single
+/// detailed `⚙ name · summary` line for one call, or a collapsed
+/// `⚙ N tool calls · names` summary for several.
+fn flush_tool_run(out: &mut Vec<Line<'static>>, run: &mut Vec<(String, String)>, t: &Theme, w: usize) {
+    if run.is_empty() {
+        return;
+    }
+    let text = if run.len() == 1 {
+        let (name, summary) = &run[0];
+        if summary.is_empty() {
+            format!("⚙ {name}")
+        } else {
+            format!("⚙ {name} · {summary}")
+        }
+    } else {
+        let names: Vec<&str> = run.iter().map(|(n, _)| n.as_str()).collect();
+        format!("⚙ {} tool calls · {}", run.len(), summarize_tool_names(&names))
+    };
+    for piece in wrap(&text, w) {
+        out.push(Line::from(Span::styled(piece, Style::default().fg(t.dim))));
+    }
+    out.push(Line::raw(""));
+    run.clear();
+}
+
+/// "Read ×4, Edit ×3, Bash, Grep ×2 +2 more" — per-tool counts in first-seen
+/// order, capped so the collapsed line stays short.
+fn summarize_tool_names(names: &[&str]) -> String {
+    use std::collections::HashMap;
+    let mut order: Vec<&str> = Vec::new();
+    let mut counts: HashMap<&str, usize> = HashMap::new();
+    for &n in names {
+        if !counts.contains_key(n) {
+            order.push(n);
+        }
+        *counts.entry(n).or_insert(0) += 1;
+    }
+    const MAX: usize = 6;
+    let mut parts: Vec<String> = order
+        .iter()
+        .take(MAX)
+        .map(|&n| {
+            let c = counts[n];
+            if c > 1 {
+                format!("{n} ×{c}")
+            } else {
+                n.to_string()
+            }
+        })
+        .collect();
+    if order.len() > MAX {
+        parts.push(format!("+{} more", order.len() - MAX));
+    }
+    parts.join(", ")
 }
 
 // ── terminal view (raw PTY) ───────────────────────────────────────────────────
@@ -924,6 +1000,24 @@ mod tests {
         assert_eq!(sc("INPUT"), warn(), "uppercase INPUT must also be warn");
         assert_eq!(sc("Error"), bad(), "mixed-case Error must also be bad");
         assert_eq!(sc("STOPPED"), ok(), "uppercase STOPPED must also be ok");
+    }
+
+    #[test]
+    fn summarize_tool_names_counts_in_first_seen_order() {
+        let names = ["Read", "Read", "Bash", "Read", "Edit"];
+        assert_eq!(summarize_tool_names(&names), "Read ×3, Bash, Edit");
+    }
+
+    #[test]
+    fn summarize_tool_names_caps_with_more() {
+        let names = ["A", "B", "C", "D", "E", "F", "G", "H"];
+        // 6 shown + "+2 more".
+        assert_eq!(summarize_tool_names(&names), "A, B, C, D, E, F, +2 more");
+    }
+
+    #[test]
+    fn summarize_tool_names_single() {
+        assert_eq!(summarize_tool_names(&["Grep"]), "Grep");
     }
 
     /// Exhaustive table for all known inputs.

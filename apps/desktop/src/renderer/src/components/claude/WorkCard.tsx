@@ -61,17 +61,25 @@ function summarizeWork(calls: ToolCall[]): WorkSummary {
  * tool call that spawned them.
  *
  * `live` marks the most recent card while Claude is still working: it
- * defaults to expanded, then auto-collapses once when work moves on.
+ * defaults to expanded, then auto-collapses once when work moves on — except
+ * for cards that contain a workflow/subagent run, which stay collapsed so the
+ * rich run cards (not a flood of raw tool calls) are what you see while a
+ * workflow is going.
  */
 export const WorkCard: React.FC<{
   toolCalls: ToolCall[];
   subagentByToolId?: Map<string, SubagentInfo>;
   workflowByToolId?: Map<string, WorkflowRunInfo>;
   live?: boolean;
-  /** Session id used to request a Haiku intent summary (omit to disable). */
-  sessionId?: string;
-}> = ({ toolCalls, subagentByToolId, workflowByToolId, live, sessionId }) => {
-  const [expanded, setExpanded] = useState(!!live);
+}> = ({ toolCalls, subagentByToolId, workflowByToolId, live }) => {
+  // A card that spawned a workflow/subagent run shows that run via its rich
+  // card (surfaced even when collapsed); don't auto-expand into the raw tool
+  // list, which is the "bunch of tool calls" flood during a workflow.
+  const hasOrchestration = useMemo(
+    () => toolCalls.some(tc => workflowByToolId?.has(tc.id) || subagentByToolId?.has(tc.id)),
+    [toolCalls, workflowByToolId, subagentByToolId],
+  );
+  const [expanded, setExpanded] = useState(!!live && !hasOrchestration);
   const wasLive = useRef(!!live);
   useEffect(() => {
     if (wasLive.current && !live) setExpanded(false);
