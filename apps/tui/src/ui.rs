@@ -52,9 +52,48 @@ pub fn render(f: &mut Frame, app: &mut App) {
     if app.palette.is_some() {
         render_palette(f, f.area(), app);
     }
+    if app.rename.is_some() {
+        render_rename(f, f.area(), app);
+    }
     if app.help {
         render_help(f, f.area(), app);
     }
+}
+
+fn render_rename(f: &mut Frame, area: Rect, app: &App) {
+    let t = &app.theme;
+    let Some(form) = app.rename.as_ref() else { return };
+    let w = area.width.saturating_sub(8).min(60).max(20);
+    let lines = vec![
+        Line::raw(""),
+        Line::from(vec![
+            Span::styled("  name  ", Style::default().fg(t.dim)),
+            Span::raw(form.input.clone()),
+            Span::styled("▏", Style::default().fg(t.accent)),
+        ]),
+        Line::from(Span::styled(
+            format!("  {}", crate::types::truncate(&form.cwd, w.saturating_sub(4) as usize)),
+            Style::default().fg(t.dim),
+        )),
+        Line::raw(""),
+        Line::from(Span::styled(
+            "  enter save · empty clears · esc cancel",
+            Style::default().fg(t.dim),
+        )),
+    ];
+    let h = lines.len() as u16 + 2;
+    let rect = Rect {
+        x: area.x + (area.width.saturating_sub(w)) / 2,
+        y: area.y + (area.height.saturating_sub(h)) / 2,
+        width: w,
+        height: h.min(area.height),
+    };
+    f.render_widget(ratatui::widgets::Clear, rect);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" rename agent ")
+        .border_style(Style::default().fg(t.accent));
+    f.render_widget(Paragraph::new(lines).block(block), rect);
 }
 
 // ── header ──────────────────────────────────────────────────────────────────
@@ -113,7 +152,7 @@ fn render_sidebar(f: &mut Frame, area: Rect, app: &App) {
         };
         let name = Line::from(vec![
             marker,
-            Span::styled(a.short_cwd(), Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled(app.agent_name(a), Style::default().add_modifier(Modifier::BOLD)),
         ]);
         let stats = derive_stats(a, app.status_lines.get(&a.session_id));
         let meta = Line::from(Span::styled(meta_line(a, &stats), Style::default().fg(t.dim)));
@@ -316,7 +355,7 @@ fn render_chat(f: &mut Frame, area: Rect, app: &mut App) {
     let agent = app.chat_agent().cloned();
     let title = agent
         .as_ref()
-        .map(|a| format!(" {} ", a.short_cwd()))
+        .map(|a| format!(" {} ", app.agent_name(a)))
         .unwrap_or_else(|| " session ended ".into());
 
     // Reserve space for the ask block (if any) and the composer.
@@ -527,7 +566,7 @@ fn render_terminal(f: &mut Frame, area: Rect, app: &mut App) {
     let (accent, dim) = (app.theme.accent, app.theme.dim);
     let title = app
         .chat_agent()
-        .map(|a| format!(" {} ", a.short_cwd()))
+        .map(|a| format!(" {} ", app.agent_name(a)))
         .unwrap_or_else(|| " session ended ".into());
     let border = if app.term_attached() { accent } else { dim };
     let bottom = if app.term_attached() {
@@ -675,7 +714,7 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
         };
         let mut row = vec![
             marker,
-            Span::styled(format!("{:<28}", crate::types::truncate(a.cwd_str(), 28)), Style::default()),
+            Span::styled(format!("{:<28}", crate::types::truncate(&app.agent_name(a), 28)), Style::default()),
             Span::styled(
                 format!("{:<10}", a.state()),
                 Style::default().fg(state_color(t, a.state())),
@@ -1043,7 +1082,9 @@ fn render_review_diff(f: &mut Frame, area: Rect, t: &Theme, r: &crate::app::Revi
 fn render_footer(f: &mut Frame, area: Rect, app: &App) {
     let in_agent = matches!(app.view, View::Agent { .. });
     let on_shell = matches!(app.active_tab().map(|t| t.kind), Some(TabKind::Shell));
-    let hint = if app.review.as_ref().is_some_and(|r| r.commit_msg.is_some()) {
+    let hint = if app.rename.is_some() {
+        "type a name · enter save · esc cancel"
+    } else if app.review.as_ref().is_some_and(|r| r.commit_msg.is_some()) {
         "type message · enter commit · esc cancel"
     } else if app.review.is_some() {
         "j/k file · J/K scroll · t staged · s stage · u unstage · a all · c commit · P push · esc back"

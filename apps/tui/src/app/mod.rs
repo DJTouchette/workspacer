@@ -102,6 +102,13 @@ pub struct SpawnForm {
     pub initial_prompt: Option<String>,
 }
 
+/// State of the rename overlay: a single text field editing the custom display
+/// name for an agent's cwd.
+pub struct RenameForm {
+    pub cwd: String,
+    pub input: String,
+}
+
 /// What a command-palette entry does when chosen.
 #[derive(Debug, Clone)]
 pub enum PaletteAction {
@@ -225,6 +232,10 @@ pub struct App {
     pub palette: Option<Palette>,
     /// The git review pane, when open (a modal over the agent view).
     pub review: Option<ReviewState>,
+    /// The rename overlay, when open.
+    pub rename: Option<RenameForm>,
+    /// Custom per-cwd display names (persisted); empty when none set.
+    pub names: HashMap<String, String>,
 
     pub connected: bool,
     pub should_quit: bool,
@@ -291,6 +302,8 @@ impl App {
             spawn_form: None,
             palette: None,
             review: None,
+            rename: None,
+            names: crate::names::load(),
             connected: false,
             should_quit: false,
             chat_mode: ChatMode::Terminal,
@@ -521,6 +534,16 @@ impl App {
 
     pub fn dashboard_selected(&self) -> bool {
         self.selected == 0
+    }
+
+    /// The display name for an agent: a user-set custom name for its cwd, else
+    /// the short cwd.
+    pub fn agent_name(&self, a: &Agent) -> String {
+        self.names
+            .get(a.cwd_str())
+            .filter(|s| !s.is_empty())
+            .cloned()
+            .unwrap_or_else(|| a.short_cwd())
     }
 
     pub fn selected_agent(&self) -> Option<&Agent> {

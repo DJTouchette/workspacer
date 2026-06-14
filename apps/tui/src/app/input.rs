@@ -9,7 +9,7 @@ use crate::keys::{Action, Chord, Context};
 use crate::profiles;
 
 use super::tasks::{bracketed_paste, complete_path, fetch_agents, seed_prompt};
-use super::{App, AppMsg, ChatMode, PaletteAction, PaletteItem, SpawnForm, TabKind, View, Workspace, Tab};
+use super::{App, AppMsg, ChatMode, PaletteAction, PaletteItem, RenameForm, SpawnForm, TabKind, View, Workspace, Tab};
 
 impl App {
     // ── top-level dispatcher ──────────────────────────────────────────────
@@ -32,6 +32,11 @@ impl App {
         }
         if self.palette.is_some() {
             self.handle_palette_key(key);
+            return;
+        }
+        // The rename overlay captures text until enter/esc.
+        if self.rename.is_some() {
+            self.handle_rename_key(key);
             return;
         }
         // The review pane is a modal over the agent view with its own keys.
@@ -108,6 +113,8 @@ impl App {
                 }
             }
             OpenReview => self.open_review(),
+            RenameAgent => self.open_rename(),
+            Respawn => self.respawn(),
             NewAgent => self.open_spawn(),
             NewTerminal => self.new_terminal_tab(),
             CloseTab => self.close_tab(),
@@ -211,6 +218,51 @@ impl App {
         }
     }
 
+    /// Open the rename overlay for the targeted agent, prefilled with its
+    /// current custom name (if any).
+    pub(super) fn open_rename(&mut self) {
+        let Some(agent) = self.target_agent() else { return };
+        let cwd = agent.cwd_str().to_string();
+        if cwd.is_empty() {
+            self.set_toast("no working directory to name");
+            return;
+        }
+        let input = self.names.get(&cwd).cloned().unwrap_or_default();
+        self.rename = Some(RenameForm { cwd, input });
+    }
+
+    fn handle_rename_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => self.rename = None,
+            KeyCode::Enter => self.submit_rename(),
+            KeyCode::Backspace => {
+                if let Some(f) = self.rename.as_mut() {
+                    f.input.pop();
+                }
+            }
+            KeyCode::Char(c) => {
+                if let Some(f) = self.rename.as_mut() {
+                    f.input.push(c);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Save the rename: store (or clear, when blank) the cwd's custom name and
+    /// persist the map.
+    fn submit_rename(&mut self) {
+        let Some(form) = self.rename.take() else { return };
+        let name = form.input.trim().to_string();
+        if name.is_empty() {
+            self.names.remove(&form.cwd);
+        } else {
+            self.names.insert(form.cwd.clone(), name);
+        }
+        crate::names::save(&self.names);
+        self.set_toast("Renamed");
+    }
+
     pub(super) fn handle_spawn_key(&mut self, key: KeyEvent) {
         let n = self.profiles.len();
         let Some(form) = self.spawn_form.as_mut() else { return };
@@ -253,7 +305,7 @@ impl App {
         // Jump to a live agent.
         for a in &self.agents {
             items.push(PaletteItem {
-                label: format!("Go to {}", a.short_cwd()),
+                label: format!("Go to {}", self.agent_name(a)),
                 hint: a.state().to_string(),
                 action: PaletteAction::OpenAgent(a.session_id.clone()),
             });
@@ -523,14 +575,25 @@ impl App {
             self.set_toast("no profile selected");
             return;
         };
+        let initial_prompt = form.initial_prompt.clone();
         self.spawn_form = None;
+        self.spawn_agent_in(cwd, profile, initial_prompt);
+    }
 
+    /// Spawn a fresh Claude session in `cwd` with `profile`, optionally seeding a
+    /// prompt once it reaches its input prompt. Shared by the spawn modal and the
+    /// respawn action.
+    pub(super) fn spawn_agent_in(
+        &self,
+        cwd: String,
+        profile: profiles::Profile,
+        initial_prompt: Option<String>,
+    ) {
         // Pin the session id up front so claude's transcript file, claudemon's
         // id, and the id we track all agree — no cwd-based guessing.
         let session_id = uuid::Uuid::new_v4().to_string();
         let argv = profiles::build_argv(&profile, None, false, &session_id);
         let env = profiles::build_env(&profile);
-        let initial_prompt = form.initial_prompt.clone();
         let claudemon = self.claudemon.clone();
         let tx = self.tx.clone();
         tokio::spawn(async move {
@@ -549,6 +612,34 @@ impl App {
                 seed_prompt(&claudemon, &tx, &sid, &prompt).await;
             }
         });
+    }
+
+    /// Restart a stopped agent: spawn a fresh Claude in its cwd with the default
+    /// profile. (claudemon keeps the old stopped session in its list until it's
+    /// pruned; this adds a live one in the same directory.)
+    pub(super) fn respawn(&mut self) {
+        let Some(agent) = self.target_agent() else { return };
+        if agent.state() != "stopped" {
+            self.set_toast("agent is still running");
+            return;
+        }
+        let cwd = agent.cwd_str().to_string();
+        if cwd.is_empty() {
+            self.set_toast("no working directory");
+            return;
+        }
+        let Some(profile) = self
+            .profiles
+            .iter()
+            .find(|p| p.is_default)
+            .or_else(|| self.profiles.first())
+            .cloned()
+        else {
+            self.set_toast("no profile available");
+            return;
+        };
+        self.set_toast("Respawning…");
+        self.spawn_agent_in(cwd, profile, None);
     }
 
     pub(super) fn close_chat(&mut self) {

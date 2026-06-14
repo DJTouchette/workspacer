@@ -68,6 +68,9 @@ planned in later phases (see the repo's TUI plan).
   answer.
 - **Messaging** — send a prompt to an agent that's at an input prompt.
 - **Signals** — `x` interrupt (SIGINT), `X` stop (SIGTERM).
+- **Rename / respawn** — `e` gives an agent a custom name (per project / cwd,
+  persisted to `~/.config/workspacer/tui-names.json`); `S` respawns a stopped
+  agent with a fresh Claude in its working directory.
 - **Reconnect** — survives claudemon restarting; the header shows connection state.
 
 ## Keys (vim-first)
@@ -84,6 +87,9 @@ planned in later phases (see the repo's TUI plan).
 | `m` | jump to the next agent needing attention |
 | `y` / `n` / `a` | approve / deny / always (if it has a pending approval) |
 | `1`–`9` | answer a pending question |
+| `e` | rename (a custom per-project name, persisted) |
+| `S` | respawn a stopped agent (fresh Claude in its cwd) |
+| `R` | open the git review pane |
 | `r` | refresh |
 | `q` | quit |
 

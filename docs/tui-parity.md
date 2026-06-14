@@ -88,13 +88,18 @@ transcript usage fallback). Done.
   first, transcript `Usage` fallback. Used in the sidebar, detail, and dashboard.
 - ☑ 5h/7d rate-limit windows on the Dashboard (colour-coded) + the detail pane.
 
-## Phase 3 — Agent management
+## Phase 3 — Agent management ☑ (reorder deferred)
 
-- ☐ Terminate (already have SIGTERM via `X`) + explicit **respawn** of a stopped
-  agent (re-spawn with the same argv/cwd).
-- ☐ **Rename** — local display-name overlay (TUI-side map; no daemon support
-  needed). Persist to the TUI config dir.
-- ☐ Sidebar reorder (optional; local ordering).
+- ☑ Terminate (SIGTERM via `X`) + **respawn** (`S`) — spawns a fresh Claude in a
+  stopped agent's cwd with the default profile (claudemon assigns a new session
+  id; the old stopped one lingers until pruned — the TUI can't re-point a card
+  the way the desktop does).
+- ☑ **Rename** (`e`) — a per-cwd custom name overlay, persisted to
+  `~/.config/workspacer/tui-names.json` (`names.rs`), surfaced in the sidebar,
+  chat/terminal title, dashboard roster, and palette. Keyed by cwd so it
+  survives a respawn / daemon restart.
+- ✗ Sidebar reorder — **deferred**: it would fight the attention-first sort
+  (waiting agents float to the top), which is a core part of the dashboard UX.
 
 ## Phase 4 — Notes & overview
 
@@ -170,3 +175,6 @@ we'd add) · ✗ analytics history (no claudemon endpoint; would need new backen
 - 2026-06-14 — Phase 2 (authoritative statusline) done: `/statusline/stream`
   subscription, `StatusLine` per session, `derive_stats` precedence wired into
   sidebar/detail/dashboard, 5h/7d rate-limit windows. 66 TUI tests pass.
+- 2026-06-14 — Phase 3 (agent management) done: rename (`e`, persisted per-cwd
+  via `names.rs`) + respawn (`S`) of stopped agents (extracted `spawn_agent_in`).
+  Sidebar reorder deferred (conflicts with attention sort). 66 TUI tests pass.
