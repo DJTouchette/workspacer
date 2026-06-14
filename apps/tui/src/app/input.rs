@@ -5,6 +5,7 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use crate::keys::{Action, Chord, Context};
 use crate::profiles;
 
 use super::tasks::{bracketed_paste, complete_path, fetch_agents, seed_prompt};
@@ -14,7 +15,17 @@ impl App {
     // ── top-level dispatcher ──────────────────────────────────────────────
 
     pub fn handle_key(&mut self, key: KeyEvent) {
-        // Modals capture everything while open.
+        // The help overlay swallows input: any key dismisses it (Ctrl-C still
+        // quits, so a stuck overlay can never trap the user).
+        if self.help {
+            if is_ctrl_c(&key) {
+                self.should_quit = true;
+            } else {
+                self.help = false;
+            }
+            return;
+        }
+        // Text-entry / raw modes capture keys literally — before the keymap.
         if self.spawn_form.is_some() {
             self.handle_spawn_key(key);
             return;
@@ -29,20 +40,98 @@ impl App {
             self.handle_terminal_key(key);
             return;
         }
-        // Otherwise Ctrl-C quits.
-        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
-            self.should_quit = true;
+        // The composer captures characters when typing a message/answer.
+        if matches!(self.view, View::Agent { .. }) && self.insert_mode {
+            self.handle_insert_key(key);
             return;
         }
-        // Ctrl-K opens the command palette from anywhere (when not attached).
-        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('k') {
-            self.open_palette();
+
+        let chord = Chord::from_event(&key);
+        // Global bindings (palette / quit / help) win in every non-text view.
+        if let Some(action) = self.keymap.action(Context::Global, chord) {
+            self.dispatch_action(action);
             return;
         }
+        // Numeric answer keys are positional, not remappable.
+        if let KeyCode::Char(c @ '1'..='9') = key.code {
+            if !key.modifiers.contains(KeyModifiers::CONTROL) {
+                self.answer_option(c);
+                return;
+            }
+        }
+        if let Some(action) = self.keymap.action(self.key_context(), chord) {
+            self.dispatch_action(action);
+        }
+    }
+
+    /// Which binding table the current view uses.
+    fn key_context(&self) -> Context {
         match &self.view {
-            View::List => self.handle_list_key(key),
-            View::Agent { .. } if self.insert_mode => self.handle_insert_key(key),
-            View::Agent { .. } => self.handle_agent_key(key),
+            View::List => Context::List,
+            View::Agent { .. } => {
+                let on_shell = matches!(self.active_tab().map(|t| t.kind), Some(TabKind::Shell));
+                if on_shell || self.chat_mode == ChatMode::Terminal {
+                    Context::AgentTerminal
+                } else {
+                    Context::AgentTranscript
+                }
+            }
+        }
+    }
+
+    /// Execute a resolved keymap action. Actions are semantic; a few check the
+    /// active tab so they no-op where they don't apply (e.g. transcript toggle
+    /// on a shell tab).
+    fn dispatch_action(&mut self, action: Action) {
+        use Action::*;
+        match action {
+            Quit => self.should_quit = true,
+            Back => self.close_chat(),
+            Refresh => self.on_changed(),
+            Help => self.help = true,
+            Palette => self.open_palette(),
+            SelectNext => self.select_next(),
+            SelectPrev => self.select_prev(),
+            SelectFirst => self.selected = 0,
+            SelectLast => self.selected = self.agents.len(),
+            JumpAttention => self.jump_to_attention(),
+            OpenAgent => self.open_agent(),
+            OpenAgentTerminal => {
+                if self.selected_agent().is_some() {
+                    self.open_agent();
+                    self.new_terminal_tab();
+                }
+            }
+            NewAgent => self.open_spawn(),
+            NewTerminal => self.new_terminal_tab(),
+            CloseTab => self.close_tab(),
+            TabNext => self.tab_next(),
+            TabPrev => self.tab_prev(),
+            ToggleTranscript => {
+                let on_shell = matches!(self.active_tab().map(|t| t.kind), Some(TabKind::Shell));
+                if !on_shell {
+                    self.toggle_chat_mode();
+                }
+            }
+            Attach => {
+                if self.open_session_id().is_some() {
+                    self.term_attached = true;
+                }
+            }
+            InsertMode => self.insert_mode = true,
+            ScrollDown => {
+                self.chat_follow = false;
+                self.chat_scroll = self.chat_scroll.saturating_add(1);
+            }
+            ScrollUp => {
+                self.chat_follow = false;
+                self.chat_scroll = self.chat_scroll.saturating_sub(1);
+            }
+            Approve => self.approve("yes", "Approved"),
+            Deny => self.approve("no", "Denied"),
+            ApproveAlways => self.approve("always", "Approved (always)"),
+            Interrupt => self.signal("SIGINT", "Interrupted"),
+            Stop => self.signal("SIGTERM", "Stopped"),
         }
     }
 
@@ -58,114 +147,6 @@ impl App {
         tokio::spawn(async move {
             let _ = cm.input_bytes(&sid, &bytes).await;
         });
-    }
-
-    pub(super) fn handle_list_key(&mut self, key: KeyEvent) {
-        match key.code {
-            KeyCode::Char('q') => self.should_quit = true,
-            KeyCode::Char('j') | KeyCode::Down => self.select_next(),
-            KeyCode::Char('k') | KeyCode::Up => self.select_prev(),
-            KeyCode::Char('g') => self.selected = 0,
-            KeyCode::Char('G') => self.selected = self.agents.len(),
-            KeyCode::Char('m') => self.jump_to_attention(),
-            KeyCode::Char('c') => self.open_spawn(),
-            KeyCode::Char('r') => self.refresh(),
-            // Enter on the Dashboard row is a no-op (it's a live preview); on an
-            // agent it opens that agent's tabs.
-            KeyCode::Enter | KeyCode::Char('l') => self.open_agent(),
-            // Open the selected agent straight into a fresh terminal tab.
-            KeyCode::Char('T') => {
-                if self.selected_agent().is_some() {
-                    self.open_agent();
-                    self.new_terminal_tab();
-                }
-            }
-            KeyCode::Char('y') => self.approve("yes", "Approved"),
-            KeyCode::Char('n') => self.approve("no", "Denied"),
-            KeyCode::Char('a') => self.approve("always", "Approved (always)"),
-            KeyCode::Char(c @ '1'..='9') => self.answer_option(c),
-            _ => {}
-        }
-    }
-
-    pub(super) fn handle_agent_key(&mut self, key: KeyEvent) {
-        // Keys common to every tab/mode.
-        match key.code {
-            KeyCode::Char('q') => {
-                self.should_quit = true;
-                return;
-            }
-            KeyCode::Esc | KeyCode::Char('h') => {
-                self.close_chat();
-                return;
-            }
-            KeyCode::Char('c') => {
-                self.open_spawn();
-                return;
-            }
-            // Tab management.
-            KeyCode::Char(']') | KeyCode::Tab => {
-                self.tab_next();
-                return;
-            }
-            KeyCode::Char('[') | KeyCode::BackTab => {
-                self.tab_prev();
-                return;
-            }
-            KeyCode::Char('T') => {
-                self.new_terminal_tab();
-                return;
-            }
-            KeyCode::Char('w') => {
-                self.close_tab();
-                return;
-            }
-            _ => {}
-        }
-        // Shell tabs are always raw terminals — no transcript toggle.
-        let on_shell = matches!(self.active_tab().map(|t| t.kind), Some(TabKind::Shell));
-        if key.code == KeyCode::Char('t') && !on_shell {
-            self.toggle_chat_mode();
-            return;
-        }
-        match self.chat_mode {
-            _ if on_shell => match key.code {
-                KeyCode::Char('i') | KeyCode::Enter => self.term_attached = true,
-                KeyCode::Char('x') => self.signal("SIGINT", "Interrupted"),
-                KeyCode::Char('X') => self.signal("SIGTERM", "Stopped"),
-                _ => {}
-            },
-            ChatMode::Terminal => match key.code {
-                // Attach: hand the keyboard to Claude's terminal.
-                KeyCode::Char('i') | KeyCode::Enter => {
-                    if self.open_session_id().is_some() {
-                        self.term_attached = true;
-                    }
-                }
-                KeyCode::Char('x') => self.signal("SIGINT", "Interrupted"),
-                KeyCode::Char('X') => self.signal("SIGTERM", "Stopped"),
-                _ => {}
-            },
-            ChatMode::Transcript => match key.code {
-                KeyCode::Char('i') => self.insert_mode = true,
-                KeyCode::Char('j') | KeyCode::Down => {
-                    self.chat_follow = false;
-                    self.chat_scroll = self.chat_scroll.saturating_add(1);
-                }
-                KeyCode::Char('k') | KeyCode::Up => {
-                    self.chat_follow = false;
-                    self.chat_scroll = self.chat_scroll.saturating_sub(1);
-                }
-                KeyCode::Char('r') => self.on_changed(),
-                KeyCode::Char('y') => self.approve("yes", "Approved"),
-                KeyCode::Char('n') => self.approve("no", "Denied"),
-                KeyCode::Char('a') => self.approve("always", "Approved (always)"),
-                KeyCode::Char('x') => self.signal("SIGINT", "Interrupted"),
-                KeyCode::Char('X') => self.signal("SIGTERM", "Stopped"),
-                KeyCode::Char(c @ '1'..='9') => self.answer_option(c),
-                _ => {}
-            },
-        }
     }
 
     pub(super) fn handle_spawn_key(&mut self, key: KeyEvent) {
@@ -584,4 +565,10 @@ impl App {
         });
         self.input.clear();
     }
+}
+
+/// Ctrl-C, the universal escape hatch — honored even while the help overlay is
+/// up so the user can always quit.
+fn is_ctrl_c(key: &KeyEvent) -> bool {
+    key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c')
 }

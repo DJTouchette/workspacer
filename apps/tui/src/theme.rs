@@ -100,7 +100,6 @@ impl Theme {
 }
 
 /// Names of the built-in presets, for the help overlay / docs.
-#[allow(dead_code)] // surfaced by the keybinding/help overlay (next commit)
 pub const BUILTINS: &[&str] = &["default", "nord", "gruvbox", "ansi"];
 
 /// Parse a color from a config string: `#rrggbb` / `rrggbb` hex, an ANSI color

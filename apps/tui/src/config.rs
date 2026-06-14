@@ -15,12 +15,14 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 
+use crate::keys::{Context, Keymap};
 use crate::theme::{self, Theme};
 
-/// Resolved, ready-to-use config. Grows a `keymap` field when keybindings land.
+/// Resolved, ready-to-use config.
 #[derive(Debug, Clone, Default)]
 pub struct Config {
     pub theme: Theme,
+    pub keymap: Keymap,
 }
 
 /// The on-disk shape. All fields optional and defaulted so partial files (and
@@ -33,6 +35,10 @@ struct RawConfig {
     /// Per-role color overrides applied on top of the chosen preset.
     #[serde(default)]
     colors: HashMap<String, String>,
+    /// Keybinding overrides, keyed by context name then chord → action.
+    /// e.g. `{"list": {"x": "quit"}, "global": {"f1": "help"}}`.
+    #[serde(default)]
+    keys: HashMap<String, HashMap<String, String>>,
 }
 
 impl RawConfig {
@@ -48,7 +54,23 @@ impl RawConfig {
                 theme.set_role(role, color);
             }
         }
-        Config { theme }
+
+        let mut keymap = Keymap::default();
+        for (ctx_name, binds) in &self.keys {
+            let Some(ctx) = Context::from_name(ctx_name) else {
+                eprintln!("wks-tui: unknown key context {ctx_name:?} in tui.json — skipped");
+                continue;
+            };
+            for (chord, action) in binds {
+                if !keymap.set(ctx, chord, action) {
+                    eprintln!(
+                        "wks-tui: bad binding {ctx_name}.{chord:?} = {action:?} in tui.json — skipped"
+                    );
+                }
+            }
+        }
+
+        Config { theme, keymap }
     }
 }
 
@@ -116,8 +138,36 @@ mod tests {
 
     #[test]
     fn unknown_top_level_keys_are_ignored() {
-        // Forward-compat: a future "keys" section won't break this version.
-        let cfg = resolve(r#"{"theme":"gruvbox","keys":{"list":{"q":"quit"}}}"#);
+        // Forward-compat: a future unknown section won't break this version.
+        let cfg = resolve(r#"{"theme":"gruvbox","future_section":{"a":1}}"#);
         assert_eq!(cfg.theme, Theme::preset("gruvbox").unwrap());
+    }
+
+    #[test]
+    fn key_overrides_apply() {
+        use crate::keys::{Action, Chord, Context};
+        let cfg = resolve(r#"{"keys":{"list":{"x":"quit","q":"none"}}}"#);
+        assert_eq!(
+            cfg.keymap.action(Context::List, Chord::parse("x").unwrap()),
+            Some(Action::Quit)
+        );
+        // "none" unbinds the default.
+        assert_eq!(cfg.keymap.action(Context::List, Chord::parse("q").unwrap()), None);
+        // Untouched defaults survive.
+        assert_eq!(
+            cfg.keymap.action(Context::List, Chord::parse("j").unwrap()),
+            Some(Action::SelectNext)
+        );
+    }
+
+    #[test]
+    fn bad_bindings_skipped_not_fatal() {
+        use crate::keys::{Chord, Context};
+        // Unknown context, unparseable chord, unknown action — all ignored.
+        let cfg = resolve(
+            r#"{"keys":{"nope":{"a":"quit"},"list":{"boguskey":"quit","z":"frobnicate"}}}"#,
+        );
+        // The valid default for "z" context-free: z isn't a default in list, so None.
+        assert_eq!(cfg.keymap.action(Context::List, Chord::parse("z").unwrap()), None);
     }
 }

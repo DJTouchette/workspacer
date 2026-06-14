@@ -16,6 +16,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::claudemon::{Claudemon, PtyChunk};
 use crate::config::Config;
+use crate::keys::Keymap;
 use crate::library::LibraryItem;
 use crate::profiles::Profile;
 use crate::terminal::Term;
@@ -176,6 +177,10 @@ pub struct App {
     pub library: Vec<LibraryItem>,
     /// Resolved color theme; every renderer references it instead of literals.
     pub theme: Theme,
+    /// Resolved keybindings; `input.rs` dispatches every key through this.
+    pub keymap: Keymap,
+    /// Whether the keybinding/help overlay is open.
+    pub help: bool,
     pub spawn_form: Option<SpawnForm>,
     pub palette: Option<Palette>,
 
@@ -236,6 +241,8 @@ impl App {
             profiles,
             library,
             theme: config.theme,
+            keymap: config.keymap,
+            help: false,
             spawn_form: None,
             palette: None,
             connected: false,

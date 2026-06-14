@@ -11,6 +11,7 @@ mod app;
 mod claudemon;
 mod config;
 mod daemons;
+mod keys;
 mod library;
 mod profiles;
 mod terminal;

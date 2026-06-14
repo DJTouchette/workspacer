@@ -12,6 +12,7 @@ use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
 
 use crate::app::{App, ChatMode, TabKind, View};
+use crate::keys::{Action, Context};
 use crate::theme::Theme;
 use crate::types::{Agent, Part, Role};
 use serde_json::Value;
@@ -45,6 +46,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
     }
     if app.palette.is_some() {
         render_palette(f, f.area(), app);
+    }
+    if app.help {
+        render_help(f, f.area(), app);
     }
 }
 
@@ -728,6 +732,75 @@ fn render_palette(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(Paragraph::new(lines).block(block), rect);
 }
 
+// ── help / keybindings overlay ────────────────────────────────────────────────
+
+/// Friendly label for an action (snake_case → spaced).
+fn action_label(a: Action) -> String {
+    a.name().replace('_', " ")
+}
+
+/// A two-column block of `chord  action` rows for one context, generated from
+/// the live keymap so it can never drift from what the keys actually do.
+fn binding_lines(t: &Theme, app: &App, title: &str, ctx: Context) -> Vec<Line<'static>> {
+    let mut out = vec![Line::from(Span::styled(
+        title.to_string(),
+        Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
+    ))];
+    for (chord, action) in app.keymap.bindings(ctx) {
+        out.push(Line::from(vec![
+            Span::styled(format!("  {chord:<10}"), Style::default().fg(t.ok)),
+            Span::styled(action_label(action), Style::default().fg(t.dim)),
+        ]));
+    }
+    out.push(Line::raw(""));
+    out
+}
+
+fn render_help(f: &mut Frame, area: Rect, app: &App) {
+    let t = &app.theme;
+    let w = area.width.saturating_sub(6).min(64).max(24);
+
+    let mut lines = vec![Line::from(Span::styled(
+        "Keybindings — edit ~/.config/workspacer/tui.json to remap",
+        Style::default().fg(t.dim),
+    ))];
+    lines.push(Line::raw(""));
+    lines.extend(binding_lines(t, app, "global", Context::Global));
+    lines.extend(binding_lines(t, app, "sidebar / dashboard", Context::List));
+    lines.extend(binding_lines(t, app, "agent · terminal", Context::AgentTerminal));
+    lines.extend(binding_lines(t, app, "agent · transcript", Context::AgentTranscript));
+    lines.push(Line::from(vec![
+        Span::styled("answer keys ", Style::default().fg(t.dim)),
+        Span::styled("1-9", Style::default().fg(t.ok)),
+        Span::styled("  (positional, not remappable)", Style::default().fg(t.dim)),
+    ]));
+    lines.push(Line::raw(""));
+    lines.push(Line::from(vec![
+        Span::styled("themes: ", Style::default().fg(t.dim)),
+        Span::styled(crate::theme::BUILTINS.join(", "), Style::default().fg(t.accent)),
+    ]));
+
+    // Cap height to the viewport; the box scrolls via Paragraph if it overflows.
+    let h = (lines.len() as u16 + 2).min(area.height.saturating_sub(2));
+    let rect = Rect {
+        x: area.x + (area.width.saturating_sub(w)) / 2,
+        y: area.y + (area.height.saturating_sub(h)) / 2,
+        width: w,
+        height: h,
+    };
+    f.render_widget(ratatui::widgets::Clear, rect);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" help ")
+        .title_bottom(Line::from(Span::styled(
+            " any key to close ",
+            Style::default().fg(t.dim),
+        )))
+        .border_style(Style::default().fg(t.accent));
+    f.render_widget(Paragraph::new(lines).block(block), rect);
+}
+
 // ── footer ────────────────────────────────────────────────────────────────────
 
 fn render_footer(f: &mut Frame, area: Rect, app: &App) {
@@ -738,15 +811,15 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
     } else if app.term_attached() {
         "● attached — keys go to Claude · Ctrl-] to detach"
     } else if !in_agent {
-        "j/k move · enter open · ^K palette · T term · c new · m attention · q quit"
+        "j/k move · enter open · ^K palette · T term · c new · m attention · ? help · q quit"
     } else if app.insert_mode {
         "enter send · esc normal"
     } else if on_shell {
-        "i attach · [ ] tabs · T term · w close · x/X stop · esc back · q quit"
+        "i attach · [ ] tabs · T term · w close · x/X stop · ? help · esc back"
     } else if app.chat_mode == ChatMode::Terminal {
-        "i attach · t transcript · [ ] tabs · T term · w close · esc back · q quit"
+        "i attach · t transcript · [ ] tabs · T term · w close · ? help · esc back"
     } else {
-        "i type · j/k scroll · t terminal · [ ] tabs · T term · y/n/a · 1-9 · esc back"
+        "i type · j/k scroll · t terminal · [ ] tabs · y/n/a · 1-9 · ? help · esc back"
     };
     f.render_widget(
         Paragraph::new(Line::from(Span::styled(format!(" {hint}"), Style::default().fg(app.theme.dim)))),
