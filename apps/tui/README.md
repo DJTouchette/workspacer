@@ -53,7 +53,12 @@ planned in later phases (see the repo's TUI plan).
   to the top, with state badge, model, context % and cost. Model/context/cost
   are derived from each session's transcript, the same way the desktop app does.
 - **Chat view** — the selected agent's transcript (text + tool calls), live as
-  it streams.
+  it streams. Long runs of consecutive tool calls (e.g. during a workflow)
+  collapse into one compact `N tool calls · …` line.
+- **Review pane** — `R` opens a git review of the agent's work tree (backed by
+  claudemon's git API, like the desktop Review pane): branch + changed files on
+  the left, the selected file's colourised unified diff on the right. Stage /
+  unstage / commit / push without leaving the terminal.
 - **Approvals** — `y` / `n` / `a` to approve, deny, or always-approve a pending
   permission prompt.
 - **Questions** — `1`–`9` to pick an `AskUserQuestion` option, or type a free
@@ -121,6 +126,21 @@ only `Ctrl-]` is intercepted.
 | `↑` / `↓` | cycle the Claude profile |
 | `enter` | spawn |
 | `esc` | cancel |
+
+**Review pane** (`R` — from the sidebar or an open agent)
+
+| Key | Action |
+|-----|--------|
+| `j` / `k` | select previous / next changed file |
+| `J` / `K` | scroll the diff by a line |
+| `Ctrl-d` / `Ctrl-u` (or PageDn/Up) | scroll the diff by a chunk |
+| `t` | toggle staged ⇄ unstaged diff |
+| `s` / `u` | stage / unstage the selected file |
+| `a` | stage everything |
+| `c` | commit (type a message, `enter` to commit) |
+| `P` | push |
+| `r` | refresh status |
+| `esc` / `h` / `q` | close the review |
 
 ## Configuration
 

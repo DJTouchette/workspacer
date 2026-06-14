@@ -34,6 +34,11 @@ impl App {
             self.handle_palette_key(key);
             return;
         }
+        // The review pane is a modal over the agent view with its own keys.
+        if self.review.is_some() {
+            self.handle_review_key(key);
+            return;
+        }
         // When attached to the live terminal, every key goes to Claude (so
         // Ctrl-C interrupts the agent, not the TUI). Ctrl-] detaches.
         if self.term_attached() {
@@ -102,6 +107,7 @@ impl App {
                     self.new_terminal_tab();
                 }
             }
+            OpenReview => self.open_review(),
             NewAgent => self.open_spawn(),
             NewTerminal => self.new_terminal_tab(),
             CloseTab => self.close_tab(),
@@ -147,6 +153,62 @@ impl App {
         tokio::spawn(async move {
             let _ = cm.input_bytes(&sid, &bytes).await;
         });
+    }
+
+    /// Keys for the git review pane (a modal over the agent view). Bypasses the
+    /// keymap — this pane owns all its keys, including a commit-message composer.
+    fn handle_review_key(&mut self, key: KeyEvent) {
+        // Commit-message composer captures characters until enter/esc.
+        if self.review.as_ref().is_some_and(|r| r.commit_msg.is_some()) {
+            match key.code {
+                KeyCode::Esc => {
+                    if let Some(r) = self.review.as_mut() {
+                        r.commit_msg = None;
+                    }
+                }
+                KeyCode::Enter => self.review_submit_commit(),
+                KeyCode::Backspace => {
+                    if let Some(m) = self.review.as_mut().and_then(|r| r.commit_msg.as_mut()) {
+                        m.pop();
+                    }
+                }
+                KeyCode::Char(c) => {
+                    if let Some(m) = self.review.as_mut().and_then(|r| r.commit_msg.as_mut()) {
+                        m.push(c);
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('h') | KeyCode::Char('R') | KeyCode::Char('q') => {
+                self.close_review()
+            }
+            KeyCode::Char('j') | KeyCode::Down => self.review_select(1),
+            KeyCode::Char('k') | KeyCode::Up => self.review_select(-1),
+            // Diff scroll: J/K by a line, Ctrl-D/U or PageDn/Up by a chunk.
+            KeyCode::Char('J') => self.review_scroll(1),
+            KeyCode::Char('K') => self.review_scroll(-1),
+            KeyCode::Char('d') if ctrl => self.review_scroll(10),
+            KeyCode::Char('u') if ctrl => self.review_scroll(-10),
+            KeyCode::PageDown => self.review_scroll(10),
+            KeyCode::PageUp => self.review_scroll(-10),
+            KeyCode::Char('t') => self.review_toggle_staged(),
+            KeyCode::Char('s') => self.review_stage(),
+            KeyCode::Char('u') => self.review_unstage(),
+            KeyCode::Char('a') => self.review_stage_all(),
+            KeyCode::Char('c') => {
+                if let Some(r) = self.review.as_mut() {
+                    r.commit_msg = Some(String::new());
+                }
+            }
+            KeyCode::Char('P') => self.review_push(),
+            KeyCode::Char('r') => self.review_reload(),
+            _ => {}
+        }
     }
 
     pub(super) fn handle_spawn_key(&mut self, key: KeyEvent) {

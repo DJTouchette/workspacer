@@ -32,6 +32,30 @@ pub(super) async fn fetch_transcript(cm: &Claudemon, tx: &UnboundedSender<AppMsg
     }
 }
 
+pub(super) async fn fetch_git_status(cm: &Claudemon, tx: &UnboundedSender<AppMsg>, cwd: String) {
+    match cm.git_status(&cwd).await {
+        Ok((branch, files)) => {
+            let _ = tx.send(AppMsg::GitStatus { cwd, branch, files });
+        }
+        Err(e) => {
+            let _ = tx.send(AppMsg::Toast(format!("git status: {e}")));
+        }
+    }
+}
+
+pub(super) async fn fetch_git_diff(
+    cm: &Claudemon,
+    tx: &UnboundedSender<AppMsg>,
+    cwd: String,
+    path: String,
+    staged: bool,
+    untracked: bool,
+) {
+    if let Ok(diff) = cm.git_diff(&cwd, &path, staged, untracked).await {
+        let _ = tx.send(AppMsg::GitDiff { cwd, path, staged, diff });
+    }
+}
+
 /// Wrap text in bracketed-paste markers so a multi-line prompt is inserted into
 /// Claude's input as one paste (newlines stay newlines instead of submitting).
 pub(super) fn bracketed_paste(text: &str) -> Vec<u8> {

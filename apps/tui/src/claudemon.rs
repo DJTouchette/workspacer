@@ -209,6 +209,72 @@ impl Claudemon {
             .ok_or_else(|| anyhow!("spawn response missing session_id"))
     }
 
+    // ── git (review pane) ───────────────────────────────────────────────────
+
+    /// Branch + changed files for a work tree. Returns `(branch, files)`.
+    pub async fn git_status(&self, cwd: &str) -> Result<(Option<String>, Vec<crate::types::FileStatus>)> {
+        let v = self
+            .get_json(&format!("/git/status?cwd={}", encode(cwd)))
+            .await?;
+        let branch = v.get("branch").and_then(|b| b.as_str()).map(str::to_string);
+        let files = v
+            .get("files")
+            .cloned()
+            .and_then(|f| serde_json::from_value(f).ok())
+            .unwrap_or_default();
+        Ok((branch, files))
+    }
+
+    /// Raw unified diff text for a path (or the whole tree when `path` is empty).
+    /// `staged` selects index-vs-HEAD; `untracked` renders a new file as
+    /// all-added (requires a path).
+    pub async fn git_diff(&self, cwd: &str, path: &str, staged: bool, untracked: bool) -> Result<String> {
+        let mut q = format!("/git/diff?cwd={}&staged={staged}", encode(cwd));
+        if !path.is_empty() {
+            q.push_str(&format!("&path={}", encode(path)));
+        }
+        if untracked {
+            q.push_str("&untracked=true");
+        }
+        let v = self.get_json(&q).await?;
+        Ok(v.get("diff").and_then(|d| d.as_str()).unwrap_or("").to_string())
+    }
+
+    pub async fn git_stage(&self, cwd: &str, path: Option<&str>) -> Result<()> {
+        let mut body = json!({ "cwd": cwd });
+        if let Some(p) = path {
+            body["path"] = json!(p);
+        }
+        self.git_action_ok("/git/stage", &body).await
+    }
+
+    pub async fn git_unstage(&self, cwd: &str, path: Option<&str>) -> Result<()> {
+        let mut body = json!({ "cwd": cwd });
+        if let Some(p) = path {
+            body["path"] = json!(p);
+        }
+        self.git_action_ok("/git/unstage", &body).await
+    }
+
+    pub async fn git_commit(&self, cwd: &str, message: &str) -> Result<()> {
+        self.git_action_ok("/git/commit", &json!({ "cwd": cwd, "message": message })).await
+    }
+
+    pub async fn git_push(&self, cwd: &str) -> Result<()> {
+        self.git_action_ok("/git/push", &json!({ "cwd": cwd })).await
+    }
+
+    /// POST a git action and surface `{ ok:false, error }` as an `Err` so the UI
+    /// can toast the git failure (e.g. "nothing to commit", push rejected).
+    async fn git_action_ok(&self, path: &str, body: &Value) -> Result<()> {
+        let resp = self.post_json(path, body).await?;
+        if resp.get("ok").and_then(|b| b.as_bool()) == Some(false) {
+            let err = resp.get("error").and_then(|e| e.as_str()).unwrap_or("git failed");
+            return Err(anyhow!("{}", err.trim()));
+        }
+        Ok(())
+    }
+
     // ── HTTP plumbing ───────────────────────────────────────────────────────
 
     async fn get_json(&self, path: &str) -> Result<Value> {
@@ -348,6 +414,23 @@ fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|w| w == needle)
 }
 
+/// Minimal percent-encoding for a query-string *value*. Keeps the unreserved
+/// set plus `/` (paths are common and `/` is legal in a query), encodes
+/// everything else — enough to carry cwd/path values (spaces, `&`, `=`, `#`,
+/// unicode) safely to claudemon's `Query` extractor.
+fn encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
 /// Pull `host` and `port` out of a `http://host:port` base.
 fn split_host_port(base: &str) -> (String, u16) {
     let stripped = base
@@ -413,6 +496,14 @@ mod tests {
     fn host_port_parsing() {
         assert_eq!(split_host_port("http://127.0.0.1:7891"), ("127.0.0.1".into(), 7891));
         assert_eq!(split_host_port("http://localhost:9/"), ("localhost".into(), 9));
+    }
+
+    #[test]
+    fn encode_preserves_paths_and_escapes_specials() {
+        assert_eq!(encode("/home/u/rune-lang"), "/home/u/rune-lang");
+        assert_eq!(encode("with space"), "with%20space");
+        assert_eq!(encode("a&b=c#d"), "a%26b%3Dc%23d");
+        assert_eq!(encode("src/lib.rs"), "src/lib.rs");
     }
 
     /// Live round-trip: spawn `cat` in a PTY, stream its output, send input,

@@ -31,6 +31,7 @@ pub enum Action {
     JumpAttention,
     OpenAgent,
     OpenAgentTerminal,
+    OpenReview,
     // agent / tabs
     NewAgent,
     NewTerminal,
@@ -68,6 +69,7 @@ impl Action {
             JumpAttention => "jump_attention",
             OpenAgent => "open_agent",
             OpenAgentTerminal => "open_agent_terminal",
+            OpenReview => "open_review",
             NewAgent => "new_agent",
             NewTerminal => "new_terminal",
             CloseTab => "close_tab",
@@ -101,6 +103,7 @@ impl Action {
             "jump_attention" => JumpAttention,
             "open_agent" => OpenAgent,
             "open_agent_terminal" => OpenAgentTerminal,
+            "open_review" => OpenReview,
             "new_agent" => NewAgent,
             "new_terminal" => NewTerminal,
             "close_tab" => CloseTab,
@@ -352,6 +355,7 @@ impl Keymap {
                 ("enter", OpenAgent),
                 ("l", OpenAgent),
                 ("T", OpenAgentTerminal),
+                ("R", OpenReview),
                 ("y", Approve),
                 ("n", Deny),
                 ("a", ApproveAlways),
@@ -371,6 +375,7 @@ impl Keymap {
             ("shift+tab", TabPrev),
             ("T", NewTerminal),
             ("w", CloseTab),
+            ("R", OpenReview),
         ];
 
         let mut terminal = build(agent_shared);

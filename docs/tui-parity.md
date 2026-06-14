@@ -57,20 +57,25 @@ persistence. These need either a new claudemon endpoint or a TUI-local store.
 
 ---
 
-## Phase 1 — Git review/diff (flagship gap, fully backed)
+## Phase 1 — Git review/diff (flagship gap, fully backed) ☑
 
-The single biggest desktop feature the TUI lacks, and claudemon exposes the whole
-API. Self-contained.
+The single biggest desktop feature the TUI lacked, and claudemon exposes the whole
+API. Self-contained. Done.
 
-- ☐ `Claudemon` methods: `git_status`, `git_diff`, `git_numstat`, `git_stage`,
-  `git_unstage`, `git_commit`, `git_push` (cwd as query param).
-- ☐ Types for status entries (path, staged/unstaged/untracked) + parsed unified diff.
-- ☐ Surface as a **`TabKind::Review`** (or a `ChatMode` on the Claude tab — decide):
-  left = file list (j/k, staged/unstaged sections), right = unified diff with
-  scroll; syntax-free first, colourised +/- lines.
-- ☐ Mutations: stage/unstage (`s`/`u`), commit (`C` → message composer), push (`P`).
-- ☐ Command-palette entry "Review changes" + a key from the agent view.
-- ☐ Tests: status/diff parsing, stage/unstage state transitions.
+- ☑ `Claudemon` methods: `git_status`, `git_diff`, `git_stage`, `git_unstage`,
+  `git_commit`, `git_push` (cwd/path as percent-encoded query params; a small
+  `encode()` helper). `git_numstat` left for the Phase 5 inspector strip.
+- ☑ `types::FileStatus` (path, orig_path, staged/unstaged codes, untracked).
+- ☑ Surfaced as a **modal over the agent view** (`App.review: Option<ReviewState>`,
+  opened with `R` from the sidebar or an agent — `Action::OpenReview`) rather than
+  a tab, to avoid entangling the terminal/tab lifecycle: left = file list (j/k),
+  right = colourised unified diff (scroll J/K · Ctrl-d/u), `t` toggles
+  staged⇄unstaged.
+- ☑ Mutations: stage/unstage (`s`/`u`), stage-all (`a`), commit (`c` → composer),
+  push (`P`); failures toast the git error.
+- ☑ Tests: `FileStatus` parsing (via serde), `encode()` query-escaping. (Live
+  diff round-trip is covered by claudemon's own git tests.)
+- ◐ Remaining nicety: a command-palette "Review changes" entry (currently `R` only).
 
 ## Phase 2 — Authoritative statusline
 
@@ -156,3 +161,8 @@ we'd add) · ✗ analytics history (no claudemon endpoint; would need new backen
   theme system (`theme.rs`/`config.rs`), configurable keybindings (`keys.rs`,
   `input.rs` refactored to keymap dispatch), and a `?` help overlay. 60 TUI
   tests pass; clean build. Config documented in `apps/tui/README.md`.
+- 2026-06-14 — Phase 1 (git review pane) done: claudemon git client methods +
+  `FileStatus`, `ReviewState` modal opened with `R`, file list + colourised diff,
+  stage/unstage/all/commit/push. Also coalesced consecutive tool-only turns in
+  the transcript into one compact line (matches the desktop WorkCard). 64 TUI
+  tests pass; clean build.

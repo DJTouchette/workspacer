@@ -32,10 +32,15 @@ pub fn render(f: &mut Frame, app: &mut App) {
         .split(root[1]);
 
     render_sidebar(f, body[0], app);
-    match &app.view {
-        View::List if app.dashboard_selected() => render_dashboard(f, body[1], app),
-        View::List => render_detail(f, body[1], app),
-        View::Agent { .. } => render_agent(f, body[1], app),
+    if app.review.is_some() {
+        // The review pane takes the whole content column (it wants the width).
+        render_review(f, body[1], app);
+    } else {
+        match &app.view {
+            View::List if app.dashboard_selected() => render_dashboard(f, body[1], app),
+            View::List => render_detail(f, body[1], app),
+            View::Agent { .. } => render_agent(f, body[1], app),
+        }
     }
 
     render_footer(f, root[2], app);
@@ -877,12 +882,137 @@ fn render_help(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(Paragraph::new(lines).block(block), rect);
 }
 
+// ── git review pane ───────────────────────────────────────────────────────────
+
+fn render_review(f: &mut Frame, area: Rect, app: &App) {
+    let t = &app.theme;
+    let Some(r) = app.review.as_ref() else { return };
+
+    let branch = r.branch.as_deref().unwrap_or("(detached)");
+    let view = if r.staged_view { "staged" } else { "unstaged" };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" review · {branch} · {view} ({} files) ", r.files.len()))
+        .border_style(Style::default().fg(t.accent));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let composing = r.commit_msg.is_some();
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(if composing { 3 } else { 0 })])
+        .split(inner);
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(36), Constraint::Min(20)])
+        .split(rows[0]);
+
+    render_review_files(f, cols[0], t, r);
+    render_review_diff(f, cols[1], t, r);
+
+    if composing {
+        let msg = r.commit_msg.as_deref().unwrap_or("");
+        let p = Paragraph::new(Line::from(vec![
+            Span::styled("commit ", Style::default().fg(t.accent).add_modifier(Modifier::BOLD)),
+            Span::raw(format!("{msg}▏")),
+        ]))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" message · enter commit · esc cancel ")
+                .border_style(Style::default().fg(t.accent)),
+        );
+        f.render_widget(p, rows[1]);
+    }
+}
+
+fn render_review_files(f: &mut Frame, area: Rect, t: &Theme, r: &crate::app::ReviewState) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" files ")
+        .border_style(Style::default().fg(t.dim));
+    if r.files.is_empty() {
+        let p = Paragraph::new(Line::from(Span::styled(
+            "working tree clean",
+            Style::default().fg(t.dim),
+        )))
+        .block(block);
+        f.render_widget(p, area);
+        return;
+    }
+    let items: Vec<ListItem> = r
+        .files
+        .iter()
+        .map(|file| {
+            let staged = file.staged.trim();
+            let unstaged = file.unstaged.trim();
+            let sc = if staged.is_empty() { '·' } else { staged.chars().next().unwrap() };
+            let uc = if unstaged.is_empty() { '·' } else { unstaged.chars().next().unwrap() };
+            ListItem::new(Line::from(vec![
+                Span::styled(format!("{sc}"), Style::default().fg(t.ok)),
+                Span::styled(format!("{uc} "), Style::default().fg(t.warn)),
+                Span::styled(crate::types::truncate(&file.display_path(), 30), Style::default()),
+            ]))
+        })
+        .collect();
+    let list = List::new(items)
+        .block(block)
+        .highlight_style(Style::default().bg(t.selection_bg).add_modifier(Modifier::BOLD));
+    let mut state = ListState::default();
+    state.select(Some(r.selected));
+    f.render_stateful_widget(list, area, &mut state);
+}
+
+fn render_review_diff(f: &mut Frame, area: Rect, t: &Theme, r: &crate::app::ReviewState) {
+    let path = r.selected_file().map(|file| file.path.as_str()).unwrap_or("");
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" {} ", if path.is_empty() { "diff" } else { path }))
+        .border_style(Style::default().fg(t.dim));
+
+    if r.diff.trim().is_empty() {
+        let msg = if r.files.is_empty() { "nothing to review" } else { "no changes in this view" };
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(msg, Style::default().fg(t.dim)))).block(block),
+            area,
+        );
+        return;
+    }
+
+    let lines: Vec<Line> = r
+        .diff
+        .lines()
+        .map(|line| {
+            let style = if line.starts_with("@@") {
+                Style::default().fg(t.accent)
+            } else if line.starts_with("+++") || line.starts_with("---") || line.starts_with("diff ") || line.starts_with("index ") {
+                Style::default().fg(t.dim)
+            } else if line.starts_with('+') {
+                Style::default().fg(t.ok)
+            } else if line.starts_with('-') {
+                Style::default().fg(t.bad)
+            } else {
+                Style::default()
+            };
+            Line::from(Span::styled(line.to_string(), style))
+        })
+        .collect();
+    f.render_widget(
+        Paragraph::new(lines).block(block).scroll((r.diff_scroll, 0)),
+        area,
+    );
+}
+
 // ── footer ────────────────────────────────────────────────────────────────────
 
 fn render_footer(f: &mut Frame, area: Rect, app: &App) {
     let in_agent = matches!(app.view, View::Agent { .. });
     let on_shell = matches!(app.active_tab().map(|t| t.kind), Some(TabKind::Shell));
-    let hint = if app.spawn_form.is_some() {
+    let hint = if app.review.as_ref().is_some_and(|r| r.commit_msg.is_some()) {
+        "type message · enter commit · esc cancel"
+    } else if app.review.is_some() {
+        "j/k file · J/K scroll · t staged · s stage · u unstage · a all · c commit · P push · esc back"
+    } else if app.spawn_form.is_some() {
         "type path · tab complete · ↑↓ profile · enter spawn · esc cancel"
     } else if app.term_attached() {
         "● attached — keys go to Claude · Ctrl-] to detach"

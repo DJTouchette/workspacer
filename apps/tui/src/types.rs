@@ -176,6 +176,34 @@ impl Agent {
     }
 }
 
+/// One changed file from claudemon's `GET /git/status`. `staged`/`unstaged` are
+/// the porcelain XY status codes (e.g. "M", "A", "D", "?", " ").
+#[derive(Debug, Clone, Deserialize)]
+pub struct FileStatus {
+    pub path: String,
+    #[serde(default)]
+    pub orig_path: Option<String>,
+    #[serde(default)]
+    pub staged: String,
+    #[serde(default)]
+    pub unstaged: String,
+}
+
+impl FileStatus {
+    /// Untracked files have no index/HEAD baseline — they diff as all-added.
+    pub fn is_untracked(&self) -> bool {
+        self.staged == "?" || self.unstaged == "?"
+    }
+
+    /// Display name: `orig → path` for renames/copies, else just `path`.
+    pub fn display_path(&self) -> String {
+        match &self.orig_path {
+            Some(orig) => format!("{orig} → {}", self.path),
+            None => self.path.clone(),
+        }
+    }
+}
+
 /// A rendered transcript turn — a role plus its text/tool parts, after the
 /// noise (tool results, thinking, system reminders) has been filtered out.
 #[derive(Debug, Clone)]
