@@ -55,9 +55,12 @@ planned in later phases (see the repo's TUI plan).
   Claude shows itself), falling back to transcript-derived usage when it hasn't
   arrived yet. The Dashboard also shows 5h/7d rate-limit windows when Claude
   reports them (Pro/Max).
-- **Chat view** — the selected agent's transcript (text + tool calls), live as
-  it streams. Long runs of consecutive tool calls (e.g. during a workflow)
-  collapse into one compact `N tool calls · …` line.
+- **Chat view** — the selected agent's parsed conversation (from claudemon's
+  `/conversation`), live as it streams: text, tool calls **with their output**
+  (a dimmed `↳` snippet, red on error), and inline diffs' summaries. Long runs of
+  consecutive tool calls (e.g. during a workflow) collapse into one compact
+  `N tool calls · …` line. An open agent's tab bar shows a git inspector
+  (`⎇ branch ±changed`).
 - **Review pane** — `R` opens a git review of the agent's work tree (backed by
   claudemon's git API, like the desktop Review pane): branch + changed files on
   the left, the selected file's colourised unified diff on the right. Stage /

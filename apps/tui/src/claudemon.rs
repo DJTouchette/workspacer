@@ -59,8 +59,10 @@ impl Claudemon {
         Ok(serde_json::from_value(v).unwrap_or_default())
     }
 
-    pub async fn transcript(&self, session_id: &str) -> Result<Value> {
-        self.get_json(&format!("/sessions/{session_id}/transcript")).await
+    /// Parsed conversation (`{ items: [...] }`) — richer than `/transcript`
+    /// (carries tool results / work-log items joined to their calls).
+    pub async fn conversation(&self, session_id: &str) -> Result<Value> {
+        self.get_json(&format!("/sessions/{session_id}/conversation")).await
     }
 
     /// The session's current mode (unknown/input/responding/approval/...), or

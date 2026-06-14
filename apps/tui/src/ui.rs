@@ -456,15 +456,15 @@ fn transcript_lines(app: &App, width: usize) -> Vec<Line<'static>> {
         out.push(Line::from(Span::styled("no messages yet", Style::default().fg(t.dim))));
         return out;
     }
-    let mut run: Vec<(String, String)> = Vec::new();
+    let mut run: Vec<(String, String, Option<String>)> = Vec::new();
     for turn in &app.turns {
         let tool_only = turn.role == Role::Assistant
             && !turn.parts.is_empty()
             && turn.parts.iter().all(|p| matches!(p, Part::Tool { .. }));
         if tool_only {
             for p in &turn.parts {
-                if let Part::Tool { name, summary } = p {
-                    run.push((name.clone(), summary.clone()));
+                if let Part::Tool { name, summary, result } = p {
+                    run.push((name.clone(), summary.clone(), result.clone()));
                 }
             }
             continue;
@@ -489,7 +489,7 @@ fn transcript_lines(app: &App, width: usize) -> Vec<Line<'static>> {
                         }
                     }
                 }
-                Part::Tool { name, summary } => {
+                Part::Tool { name, summary, result } => {
                     let text = if summary.is_empty() {
                         format!("⚙ {name}")
                     } else {
@@ -497,6 +497,9 @@ fn transcript_lines(app: &App, width: usize) -> Vec<Line<'static>> {
                     };
                     for piece in wrap(&text, w) {
                         out.push(Line::from(Span::styled(piece, Style::default().fg(t.dim))));
+                    }
+                    if let Some(res) = result {
+                        push_tool_result(&mut out, res, t, w);
                     }
                 }
             }
@@ -507,26 +510,49 @@ fn transcript_lines(app: &App, width: usize) -> Vec<Line<'static>> {
     out
 }
 
+/// Render a tool's result as a dimmed, indented `↳` snippet (red when it's an
+/// error). Already truncated to ~200 chars upstream; cap at a few lines.
+fn push_tool_result(out: &mut Vec<Line<'static>>, res: &str, t: &Theme, w: usize) {
+    let color = if res.starts_with("error: ") { t.bad } else { t.dim };
+    for (i, line) in res.lines().take(3).enumerate() {
+        let prefix = if i == 0 { "  ↳ " } else { "    " };
+        for piece in wrap(line, w.saturating_sub(4)) {
+            out.push(Line::from(Span::styled(format!("{prefix}{piece}"), Style::default().fg(color))));
+        }
+    }
+}
+
 /// Emit the buffered run of consecutive tool calls and clear it: a single
 /// detailed `⚙ name · summary` line for one call, or a collapsed
 /// `⚙ N tool calls · names` summary for several.
-fn flush_tool_run(out: &mut Vec<Line<'static>>, run: &mut Vec<(String, String)>, t: &Theme, w: usize) {
+fn flush_tool_run(
+    out: &mut Vec<Line<'static>>,
+    run: &mut Vec<(String, String, Option<String>)>,
+    t: &Theme,
+    w: usize,
+) {
     if run.is_empty() {
         return;
     }
-    let text = if run.len() == 1 {
-        let (name, summary) = &run[0];
-        if summary.is_empty() {
+    if run.len() == 1 {
+        let (name, summary, result) = &run[0];
+        let text = if summary.is_empty() {
             format!("⚙ {name}")
         } else {
             format!("⚙ {name} · {summary}")
+        };
+        for piece in wrap(&text, w) {
+            out.push(Line::from(Span::styled(piece, Style::default().fg(t.dim))));
+        }
+        if let Some(res) = result {
+            push_tool_result(out, res, t, w);
         }
     } else {
-        let names: Vec<&str> = run.iter().map(|(n, _)| n.as_str()).collect();
-        format!("⚙ {} tool calls · {}", run.len(), summarize_tool_names(&names))
-    };
-    for piece in wrap(&text, w) {
-        out.push(Line::from(Span::styled(piece, Style::default().fg(t.dim))));
+        let names: Vec<&str> = run.iter().map(|(n, _, _)| n.as_str()).collect();
+        let text = format!("⚙ {} tool calls · {}", run.len(), summarize_tool_names(&names));
+        for piece in wrap(&text, w) {
+            out.push(Line::from(Span::styled(piece, Style::default().fg(t.dim))));
+        }
     }
     out.push(Line::raw(""));
     run.clear();
@@ -644,6 +670,15 @@ fn render_tab_bar(f: &mut Frame, area: Rect, app: &App) {
         spans.push(Span::styled("│", Style::default().fg(t.dim)));
     }
     spans.push(Span::styled("  T:term  [ ]:tabs  w:close", Style::default().fg(t.dim)));
+    // Inspector: branch + changed-file count for the open agent's work tree.
+    if let Some((branch, changed)) = app.chat_agent().and_then(|a| app.git_summary.get(a.cwd_str())) {
+        if let Some(b) = branch {
+            spans.push(Span::styled(format!("   ⎇ {b}"), Style::default().fg(t.dim)));
+        }
+        if *changed > 0 {
+            spans.push(Span::styled(format!(" ±{changed}"), Style::default().fg(t.warn)));
+        }
+    }
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 

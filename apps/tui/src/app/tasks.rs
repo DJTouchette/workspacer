@@ -10,7 +10,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::claudemon::Claudemon;
 use crate::profiles;
-use crate::types::turns_from_transcript;
+use crate::types::turns_from_conversation;
 
 use super::{AppMsg, SpawnForm};
 
@@ -26,8 +26,8 @@ pub(super) async fn fetch_agents(cm: &Claudemon, tx: &UnboundedSender<AppMsg>) {
 }
 
 pub(super) async fn fetch_transcript(cm: &Claudemon, tx: &UnboundedSender<AppMsg>, session_id: String) {
-    if let Ok(v) = cm.transcript(&session_id).await {
-        let turns = turns_from_transcript(&v);
+    if let Ok(v) = cm.conversation(&session_id).await {
+        let turns = turns_from_conversation(&v);
         let _ = tx.send(AppMsg::Transcript { session_id, turns });
     }
 }
@@ -40,6 +40,12 @@ pub(super) async fn fetch_git_status(cm: &Claudemon, tx: &UnboundedSender<AppMsg
         Err(e) => {
             let _ = tx.send(AppMsg::Toast(format!("git status: {e}")));
         }
+    }
+}
+
+pub(super) async fn fetch_git_summary(cm: &Claudemon, tx: &UnboundedSender<AppMsg>, cwd: String) {
+    if let Ok((branch, files)) = cm.git_status(&cwd).await {
+        let _ = tx.send(AppMsg::GitSummary { cwd, branch, changed: files.len() });
     }
 }
 

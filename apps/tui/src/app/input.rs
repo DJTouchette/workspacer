@@ -530,6 +530,8 @@ impl App {
     pub(super) fn open_agent(&mut self) {
         let Some(agent) = self.selected_agent() else { return };
         let id = agent.session_id.clone();
+        let cwd = agent.cwd_str().to_string();
+        self.load_git_summary(cwd);
         self.view = View::Agent { id: id.clone() };
         self.workspaces.entry(id.clone()).or_insert_with(|| Workspace {
             tabs: vec![Tab { title: "claude".into(), session_id: id.clone(), kind: TabKind::Claude }],

@@ -112,14 +112,16 @@ transcript usage fallback). Done.
 - ◐ Recent/favourite spawn dirs (MRU) — deferred; the spawn modal's path
   completion already covers most of this.
 
-## Phase 5 — Inspector & richer conversation
+## Phase 5 — Inspector & richer conversation ☑
 
-- ☐ Switch the transcript path to `/conversation` for tool-result / work-log
-  fidelity (inline diffs, tool output) closer to the desktop GUI pane.
-- ☐ Inspector strip: files-changed count (git numstat) + usage, shown alongside
-  an open agent. (Workflows/subagents telemetry is **not** in claudemon REST —
-  out of scope until it is.)
-- ☐ `summarize` action — palette/key to drop a Haiku summary into the view.
+- ☑ Switched the parsed view from `/transcript` to `/conversation`
+  (`turns_from_conversation`): a `tool_result` attaches to its `tool_use` by id,
+  so tool **output** renders inline as a dimmed `↳` snippet (red on error).
+  Consecutive same-role items coalesce into turns; injected meta is filtered.
+- ☑ Inspector strip on an open agent's tab bar: `⎇ branch ±changed` (cheap
+  `git_status` fetched on open, cached per cwd via `AppMsg::GitSummary`).
+- ✗ `summarize` action — **dropped**: the Haiku summarizer was removed entirely
+  (it spawned phantom sessions); there's nothing to call.
 
 ## Phase 6 — Test depth & polish
 
@@ -184,3 +186,7 @@ we'd add) · ✗ analytics history (no claudemon endpoint; would need new backen
 - 2026-06-14 — Phase 4 (notes) done: `N` per-cwd markdown scratchpad modal
   (`notes.rs`), append-style edit, persisted. Verified live via tmux (open/edit/
   save/persist round-trip). MRU spawn dirs deferred. 66 TUI tests pass.
+- 2026-06-14 — Phase 5 done: parsed view switched to `/conversation`
+  (`turns_from_conversation`) so tool results render inline (`↳`); tab-bar git
+  inspector (`⎇ branch ±changed`). summarize action dropped (summarizer removed).
+  Verified live via tmux (tool output + inspector ±N). 68 TUI tests pass.

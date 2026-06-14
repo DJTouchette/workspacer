@@ -270,58 +270,77 @@ pub enum Role {
 #[derive(Debug, Clone)]
 pub enum Part {
     Text(String),
-    Tool { name: String, summary: String },
+    /// A tool call. `result` is the (truncated) tool output once it lands,
+    /// prefixed with `error: ` when the tool failed.
+    Tool { name: String, summary: String, result: Option<String> },
 }
 
-/// Parse claudemon's transcript payload (`{ messages: [...] }`) into renderable
-/// turns. Content is a plain string or an array of content blocks.
-pub fn turns_from_transcript(tx: &Value) -> Vec<Turn> {
-    let messages = tx
-        .get("messages")
-        .and_then(|m| m.as_array())
-        .cloned()
-        .unwrap_or_default();
+/// Parse claudemon's `/conversation` payload (`{ items: [...] }`) into renderable
+/// turns. Items are a flat, `kind`-tagged stream (user_message / assistant_text
+/// / tool_use / tool_result / usage); consecutive same-role items coalesce into
+/// one turn, and a `tool_result` attaches back to its `tool_use` by id — so the
+/// parsed view shows tool *output*, not just the call (richer than the old
+/// transcript path).
+pub fn turns_from_conversation(v: &Value) -> Vec<Turn> {
+    use std::collections::HashMap;
+    let items = v.get("items").and_then(|i| i.as_array()).cloned().unwrap_or_default();
 
-    let mut out = Vec::new();
-    for m in &messages {
-        let role = match m.get("role").and_then(|r| r.as_str()) {
-            Some("assistant") => Role::Assistant,
-            Some("user") => Role::User,
-            _ => continue,
-        };
+    let mut turns: Vec<Turn> = Vec::new();
+    // tool_use id → (turn index, part index), so a later result can attach.
+    let mut tool_loc: HashMap<String, (usize, usize)> = HashMap::new();
 
-        let blocks: Vec<Value> = match m.get("content") {
-            Some(Value::Array(a)) => a.clone(),
-            other => vec![serde_json::json!({
-                "type": "text",
-                "text": other.and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            })],
-        };
-
-        let mut parts = Vec::new();
-        for b in &blocks {
-            let ty = b.get("type").and_then(|t| t.as_str()).unwrap_or("");
-            match ty {
-                "text" => {
-                    let text = b.get("text").and_then(|t| t.as_str()).unwrap_or("").trim().to_string();
-                    if text.is_empty() || is_meta_noise(&text) {
-                        continue;
-                    }
-                    parts.push(Part::Text(text));
-                }
-                "tool_use" if role == Role::Assistant => {
-                    let name = b.get("name").and_then(|n| n.as_str()).unwrap_or("tool").to_string();
-                    let summary = tool_summary(b.get("input"));
-                    parts.push(Part::Tool { name, summary });
-                }
-                _ => {}
-            }
+    // Append a part to the open turn, starting a new turn on a role change.
+    let push = |turns: &mut Vec<Turn>, role: Role, part: Part| -> (usize, usize) {
+        if turns.last().map(|t| t.role) != Some(role) {
+            turns.push(Turn { role, parts: Vec::new() });
         }
-        if !parts.is_empty() {
-            out.push(Turn { role, parts });
+        let ti = turns.len() - 1;
+        turns[ti].parts.push(part);
+        (ti, turns[ti].parts.len() - 1)
+    };
+
+    for item in &items {
+        match item.get("kind").and_then(|k| k.as_str()).unwrap_or("") {
+            "user_message" => {
+                let text = item.get("text").and_then(|t| t.as_str()).unwrap_or("").trim();
+                if text.is_empty() || is_meta_noise(text) {
+                    continue;
+                }
+                push(&mut turns, Role::User, Part::Text(text.to_string()));
+            }
+            "assistant_text" => {
+                let text = item.get("text").and_then(|t| t.as_str()).unwrap_or("").trim();
+                if text.is_empty() {
+                    continue;
+                }
+                push(&mut turns, Role::Assistant, Part::Text(text.to_string()));
+            }
+            "tool_use" => {
+                let name = item.get("name").and_then(|n| n.as_str()).unwrap_or("tool").to_string();
+                let summary = tool_summary(item.get("input"));
+                let loc = push(&mut turns, Role::Assistant, Part::Tool { name, summary, result: None });
+                if let Some(id) = item.get("id").and_then(|i| i.as_str()).filter(|s| !s.is_empty()) {
+                    tool_loc.insert(id.to_string(), loc);
+                }
+            }
+            "tool_result" => {
+                let tid = item.get("tool_use_id").and_then(|t| t.as_str()).unwrap_or("");
+                let content = item.get("content").and_then(|c| c.as_str()).unwrap_or("").trim();
+                let is_error = item.get("is_error").and_then(|e| e.as_bool()).unwrap_or(false);
+                if content.is_empty() {
+                    continue;
+                }
+                if let Some(&(ti, pi)) = tool_loc.get(tid) {
+                    if let Some(Part::Tool { result, .. }) = turns.get_mut(ti).and_then(|t| t.parts.get_mut(pi)) {
+                        let snippet = truncate(content, 200);
+                        *result = Some(if is_error { format!("error: {snippet}") } else { snippet });
+                    }
+                }
+            }
+            _ => {} // usage and any future kinds
         }
     }
-    out
+    turns
 }
 
 /// Slash-command echoes, injected reminders, and background-task notifications
@@ -442,6 +461,51 @@ mod tests {
         assert_eq!(d.model.as_deref(), Some("Opus 4.8"));
         assert_eq!(d.context_pct, Some(73.0));
         assert_eq!(d.cost, Some(12.5));
+    }
+
+    #[test]
+    fn conversation_groups_turns_and_attaches_tool_results() {
+        let v = serde_json::json!({ "items": [
+            { "kind": "user_message", "text": "do it" },
+            { "kind": "assistant_text", "text": "on it" },
+            { "kind": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "ls"} },
+            { "kind": "tool_result", "tool_use_id": "t1", "content": "a\nb\nc", "is_error": false },
+            { "kind": "usage", "usage": {} },
+            { "kind": "tool_use", "id": "t2", "name": "Edit", "input": {"file_path": "/x.rs"} },
+            { "kind": "tool_result", "tool_use_id": "t2", "content": "boom", "is_error": true },
+        ]});
+        let turns = turns_from_conversation(&v);
+        assert_eq!(turns.len(), 2, "one user turn, one coalesced assistant turn");
+        assert_eq!(turns[0].role, Role::User);
+        assert_eq!(turns[1].role, Role::Assistant);
+        // assistant turn: text + 2 tools (usage skipped, results attached, not parts)
+        let parts = &turns[1].parts;
+        assert_eq!(parts.len(), 3);
+        match &parts[1] {
+            Part::Tool { name, result, .. } => {
+                assert_eq!(name, "Bash");
+                assert_eq!(result.as_deref(), Some("a\nb\nc"));
+            }
+            other => panic!("expected Bash tool, got {other:?}"),
+        }
+        match &parts[2] {
+            Part::Tool { name, result, .. } => {
+                assert_eq!(name, "Edit");
+                assert_eq!(result.as_deref(), Some("error: boom"), "errors prefixed");
+            }
+            other => panic!("expected Edit tool, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn conversation_filters_injected_meta_user_text() {
+        let v = serde_json::json!({ "items": [
+            { "kind": "user_message", "text": "<system-reminder>noise</system-reminder>" },
+            { "kind": "user_message", "text": "real" },
+        ]});
+        let turns = turns_from_conversation(&v);
+        assert_eq!(turns.len(), 1);
+        assert!(matches!(&turns[0].parts[0], Part::Text(t) if t == "real"));
     }
 
     #[test]

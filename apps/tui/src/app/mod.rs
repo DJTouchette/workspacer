@@ -40,6 +40,8 @@ pub enum AppMsg {
     GitStatus { cwd: String, branch: Option<String>, files: Vec<FileStatus> },
     /// A file's unified diff for the review pane.
     GitDiff { cwd: String, path: String, staged: bool, diff: String },
+    /// Lightweight branch + changed-file count for the open agent's inspector.
+    GitSummary { cwd: String, branch: Option<String>, changed: usize },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -249,6 +251,8 @@ pub struct App {
     pub notes_view: Option<NotesState>,
     /// Per-cwd scratchpad text (persisted).
     pub notes: HashMap<String, String>,
+    /// Inspector cache: cwd → (branch, changed-file count), for the open agent.
+    pub git_summary: HashMap<String, (Option<String>, usize)>,
 
     pub connected: bool,
     pub should_quit: bool,
@@ -319,6 +323,7 @@ impl App {
             names: crate::names::load(),
             notes_view: None,
             notes: crate::notes::load(),
+            git_summary: HashMap::new(),
             connected: false,
             should_quit: false,
             chat_mode: ChatMode::Terminal,
@@ -375,7 +380,21 @@ impl App {
             AppMsg::GitDiff { cwd, path, staged, diff } => {
                 self.apply_git_diff(cwd, path, staged, diff)
             }
+            AppMsg::GitSummary { cwd, branch, changed } => {
+                self.git_summary.insert(cwd, (branch, changed));
+            }
         }
+    }
+
+    /// Fetch the branch + changed-file count for an agent's cwd (the inspector
+    /// strip). Cheap; called when opening an agent.
+    pub(super) fn load_git_summary(&self, cwd: String) {
+        if cwd.is_empty() {
+            return;
+        }
+        let cm = self.claudemon.clone();
+        let tx = self.tx.clone();
+        tokio::spawn(async move { tasks::fetch_git_summary(&cm, &tx, cwd).await });
     }
 
     // ── git review pane ─────────────────────────────────────────────────────
