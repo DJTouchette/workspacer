@@ -101,13 +101,16 @@ transcript usage fallback). Done.
 - ✗ Sidebar reorder — **deferred**: it would fight the attention-first sort
   (waiting agents float to the top), which is a core part of the dashboard UX.
 
-## Phase 4 — Notes & overview
+## Phase 4 — Notes & overview ☑ (MRU deferred)
 
-- ☐ **Notes pane** — per-agent markdown scratchpad as a `TabKind::Notes`, edited
-  in-TUI, persisted to the TUI config dir keyed by cwd (desktop persists per
-  session; we approximate by cwd since that's the stable agent identity).
-- ☐ **Overview/Dashboard upgrade** — rate-limit card (from Phase 2 statusline),
-  recent/favourite dirs to spawn into (from a TUI-local MRU of spawn cwds).
+- ☑ **Notes pane** — per-agent markdown scratchpad opened with `N` (a modal,
+  not a tab — consistent with review/rename), edited in-TUI (append-style:
+  type / newline / backspace; `esc` saves), persisted per cwd to
+  `~/.config/workspacer/tui-notes.json` (`notes.rs`). No mid-text cursor yet
+  (it's a scratchpad); a full editor is a later nicety.
+- ☑ **Dashboard rate-limit card** — done in Phase 2.
+- ◐ Recent/favourite spawn dirs (MRU) — deferred; the spawn modal's path
+  completion already covers most of this.
 
 ## Phase 5 — Inspector & richer conversation
 
@@ -178,3 +181,6 @@ we'd add) · ✗ analytics history (no claudemon endpoint; would need new backen
 - 2026-06-14 — Phase 3 (agent management) done: rename (`e`, persisted per-cwd
   via `names.rs`) + respawn (`S`) of stopped agents (extracted `spawn_agent_in`).
   Sidebar reorder deferred (conflicts with attention sort). 66 TUI tests pass.
+- 2026-06-14 — Phase 4 (notes) done: `N` per-cwd markdown scratchpad modal
+  (`notes.rs`), append-style edit, persisted. Verified live via tmux (open/edit/
+  save/persist round-trip). MRU spawn dirs deferred. 66 TUI tests pass.

@@ -14,6 +14,7 @@ mod daemons;
 mod keys;
 mod library;
 mod names;
+mod notes;
 mod profiles;
 mod terminal;
 mod theme;

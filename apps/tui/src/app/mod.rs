@@ -109,6 +109,15 @@ pub struct RenameForm {
     pub input: String,
 }
 
+/// State of the notes scratchpad overlay (a per-cwd markdown note).
+pub struct NotesState {
+    pub cwd: String,
+    pub text: String,
+    /// True while typing (append-style editing); false is read/scroll mode.
+    pub editing: bool,
+    pub scroll: u16,
+}
+
 /// What a command-palette entry does when chosen.
 #[derive(Debug, Clone)]
 pub enum PaletteAction {
@@ -236,6 +245,10 @@ pub struct App {
     pub rename: Option<RenameForm>,
     /// Custom per-cwd display names (persisted); empty when none set.
     pub names: HashMap<String, String>,
+    /// The notes scratchpad overlay, when open.
+    pub notes_view: Option<NotesState>,
+    /// Per-cwd scratchpad text (persisted).
+    pub notes: HashMap<String, String>,
 
     pub connected: bool,
     pub should_quit: bool,
@@ -304,6 +317,8 @@ impl App {
             review: None,
             rename: None,
             names: crate::names::load(),
+            notes_view: None,
+            notes: crate::notes::load(),
             connected: false,
             should_quit: false,
             chat_mode: ChatMode::Terminal,

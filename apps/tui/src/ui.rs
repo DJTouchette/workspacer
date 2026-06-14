@@ -55,6 +55,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
     if app.rename.is_some() {
         render_rename(f, f.area(), app);
     }
+    if app.notes_view.is_some() {
+        render_notes(f, f.area(), app);
+    }
     if app.help {
         render_help(f, f.area(), app);
     }
@@ -956,6 +959,49 @@ fn render_help(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(Paragraph::new(lines).block(block), rect);
 }
 
+// ── notes scratchpad ──────────────────────────────────────────────────────────
+
+fn render_notes(f: &mut Frame, area: Rect, app: &App) {
+    let t = &app.theme;
+    let Some(n) = app.notes_view.as_ref() else { return };
+
+    let w = area.width.saturating_sub(6).min(76).max(24);
+    let h = area.height.saturating_sub(4).min(24).max(6);
+    let rect = Rect {
+        x: area.x + (area.width.saturating_sub(w)) / 2,
+        y: area.y + (area.height.saturating_sub(h)) / 2,
+        width: w,
+        height: h,
+    };
+    f.render_widget(ratatui::widgets::Clear, rect);
+
+    let mode = if n.editing { "editing" } else { "notes" };
+    let bottom = if n.editing {
+        " esc save · enter newline "
+    } else {
+        " i edit · j/k scroll · esc close "
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" {mode} · {} ", crate::types::truncate(&n.cwd, w.saturating_sub(12) as usize)))
+        .title_bottom(Line::from(Span::styled(bottom, Style::default().fg(t.dim))))
+        .border_style(Style::default().fg(t.accent));
+
+    let body = if n.text.is_empty() && !n.editing {
+        Paragraph::new(Line::from(Span::styled(
+            "empty — press i to write",
+            Style::default().fg(t.dim),
+        )))
+    } else {
+        // Show a trailing cursor while editing.
+        let text = if n.editing { format!("{}▏", n.text) } else { n.text.clone() };
+        Paragraph::new(text)
+            .wrap(ratatui::widgets::Wrap { trim: false })
+            .scroll((n.scroll, 0))
+    };
+    f.render_widget(body.block(block), rect);
+}
+
 // ── git review pane ───────────────────────────────────────────────────────────
 
 fn render_review(f: &mut Frame, area: Rect, app: &App) {
@@ -1082,7 +1128,11 @@ fn render_review_diff(f: &mut Frame, area: Rect, t: &Theme, r: &crate::app::Revi
 fn render_footer(f: &mut Frame, area: Rect, app: &App) {
     let in_agent = matches!(app.view, View::Agent { .. });
     let on_shell = matches!(app.active_tab().map(|t| t.kind), Some(TabKind::Shell));
-    let hint = if app.rename.is_some() {
+    let hint = if app.notes_view.as_ref().is_some_and(|n| n.editing) {
+        "type notes · enter newline · esc save"
+    } else if app.notes_view.is_some() {
+        "i edit · j/k scroll · esc close"
+    } else if app.rename.is_some() {
         "type a name · enter save · esc cancel"
     } else if app.review.as_ref().is_some_and(|r| r.commit_msg.is_some()) {
         "type message · enter commit · esc cancel"

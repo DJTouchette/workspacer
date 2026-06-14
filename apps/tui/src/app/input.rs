@@ -9,7 +9,7 @@ use crate::keys::{Action, Chord, Context};
 use crate::profiles;
 
 use super::tasks::{bracketed_paste, complete_path, fetch_agents, seed_prompt};
-use super::{App, AppMsg, ChatMode, PaletteAction, PaletteItem, RenameForm, SpawnForm, TabKind, View, Workspace, Tab};
+use super::{App, AppMsg, ChatMode, NotesState, PaletteAction, PaletteItem, RenameForm, SpawnForm, TabKind, View, Workspace, Tab};
 
 impl App {
     // ── top-level dispatcher ──────────────────────────────────────────────
@@ -37,6 +37,11 @@ impl App {
         // The rename overlay captures text until enter/esc.
         if self.rename.is_some() {
             self.handle_rename_key(key);
+            return;
+        }
+        // The notes scratchpad is a modal with view/edit modes.
+        if self.notes_view.is_some() {
+            self.handle_notes_key(key);
             return;
         }
         // The review pane is a modal over the agent view with its own keys.
@@ -113,6 +118,7 @@ impl App {
                 }
             }
             OpenReview => self.open_review(),
+            OpenNotes => self.open_notes(),
             RenameAgent => self.open_rename(),
             Respawn => self.respawn(),
             NewAgent => self.open_spawn(),
@@ -261,6 +267,88 @@ impl App {
         }
         crate::names::save(&self.names);
         self.set_toast("Renamed");
+    }
+
+    // ── notes scratchpad ────────────────────────────────────────────────────
+
+    pub(super) fn open_notes(&mut self) {
+        let Some(agent) = self.target_agent() else { return };
+        let cwd = agent.cwd_str().to_string();
+        if cwd.is_empty() {
+            self.set_toast("no working directory for notes");
+            return;
+        }
+        let text = self.notes.get(&cwd).cloned().unwrap_or_default();
+        self.notes_view = Some(NotesState { cwd, text, editing: false, scroll: 0 });
+    }
+
+    fn handle_notes_key(&mut self, key: KeyEvent) {
+        let editing = self.notes_view.as_ref().is_some_and(|n| n.editing);
+        if editing {
+            match key.code {
+                // esc leaves edit mode (stays in the pane) and saves.
+                KeyCode::Esc => {
+                    if let Some(n) = self.notes_view.as_mut() {
+                        n.editing = false;
+                    }
+                    self.save_notes();
+                }
+                KeyCode::Enter => {
+                    if let Some(n) = self.notes_view.as_mut() {
+                        n.text.push('\n');
+                    }
+                }
+                KeyCode::Backspace => {
+                    if let Some(n) = self.notes_view.as_mut() {
+                        n.text.pop();
+                    }
+                }
+                KeyCode::Char(c) => {
+                    if let Some(n) = self.notes_view.as_mut() {
+                        n.text.push(c);
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
+        match key.code {
+            KeyCode::Char('i') | KeyCode::Char('e') | KeyCode::Enter => {
+                if let Some(n) = self.notes_view.as_mut() {
+                    n.editing = true;
+                }
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                if let Some(n) = self.notes_view.as_mut() {
+                    n.scroll = n.scroll.saturating_add(1);
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                if let Some(n) = self.notes_view.as_mut() {
+                    n.scroll = n.scroll.saturating_sub(1);
+                }
+            }
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('h') => self.close_notes(),
+            _ => {}
+        }
+    }
+
+    fn close_notes(&mut self) {
+        self.save_notes();
+        self.notes_view = None;
+    }
+
+    /// Persist the open note (clearing the entry when blank).
+    fn save_notes(&mut self) {
+        let Some(n) = self.notes_view.as_ref() else { return };
+        let cwd = n.cwd.clone();
+        let text = n.text.trim_end().to_string();
+        if text.is_empty() {
+            self.notes.remove(&cwd);
+        } else {
+            self.notes.insert(cwd, text);
+        }
+        crate::notes::save(&self.notes);
     }
 
     pub(super) fn handle_spawn_key(&mut self, key: KeyEvent) {

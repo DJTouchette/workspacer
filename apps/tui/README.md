@@ -71,6 +71,8 @@ planned in later phases (see the repo's TUI plan).
 - **Rename / respawn** — `e` gives an agent a custom name (per project / cwd,
   persisted to `~/.config/workspacer/tui-names.json`); `S` respawns a stopped
   agent with a fresh Claude in its working directory.
+- **Notes** — `N` opens a per-project markdown scratchpad (`i` to edit, `esc` to
+  save), persisted per cwd to `~/.config/workspacer/tui-notes.json`.
 - **Reconnect** — survives claudemon restarting; the header shows connection state.
 
 ## Keys (vim-first)
@@ -90,6 +92,7 @@ planned in later phases (see the repo's TUI plan).
 | `e` | rename (a custom per-project name, persisted) |
 | `S` | respawn a stopped agent (fresh Claude in its cwd) |
 | `R` | open the git review pane |
+| `N` | open the notes scratchpad |
 | `r` | refresh |
 | `q` | quit |
 
