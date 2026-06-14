@@ -222,25 +222,6 @@ class ClaudemonSessionClient {
     await this.postJSON(`/sessions/${sessionId}/gate`, { on });
   }
 
-  /** Ask claudemon for a one-line Haiku summary of a work batch. `claudeArgv`
-   *  is the resolved `claude` launcher (binary resolution stays Electron-side).
-   *  Returns null on any failure so the caller falls back to the mechanical
-   *  summary. */
-  async summarize(sessionId: string, steps: string[], claudeArgv: string[]): Promise<string | null> {
-    try {
-      const res = await fetch(`${CLAUDEMON_API_URL}/sessions/${sessionId}/summarize`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ steps, claude_argv: claudeArgv }),
-      });
-      if (!res.ok) return null;
-      const body = await res.json() as { summary?: string | null };
-      return body.summary ?? null;
-    } catch {
-      return null;
-    }
-  }
-
   async getTranscript(sessionId: string): Promise<any> {
     const res = await fetch(`${CLAUDEMON_API_URL}/sessions/${sessionId}/transcript`);
     if (!res.ok) return { messages: [] };

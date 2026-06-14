@@ -36,7 +36,6 @@ export const IPC = {
   CLAUDE_ATTACH: 'claude:attach',
   CLAUDE_DETACH: 'claude:detach',
   CLAUDE_GATE: 'claude:gate',
-  CLAUDE_SUMMARIZE: 'claude:summarize',
   CLAUDE_PORT: 'claude:port',       // push (main → renderer, MessagePort)
 
   // ── Claude session store (snapshots) ──

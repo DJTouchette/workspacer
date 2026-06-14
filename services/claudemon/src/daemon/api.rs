@@ -73,7 +73,6 @@ pub fn router(state: ApiState) -> Router {
         .route("/sessions/:id/output", get(get_output))
         .route("/sessions/:id/stream", get(stream_bytes))
         .route("/sessions/:id/transcript", get(get_transcript))
-        .route("/sessions/:id/summarize", post(post_summarize))
         .route("/sessions/:id/conversation", get(get_conversation))
         .route("/conversation/stream", get(conversation_stream))
         .route("/events", get(event_stream))
@@ -517,121 +516,6 @@ async fn get_transcript(
             tracing::warn!(?err, "transcript read failed");
             (StatusCode::INTERNAL_SERVER_ERROR, "transcript read failed").into_response()
         }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct SummarizePayload {
-    /// One-line descriptions of the tool calls in the work batch
-    /// (e.g. `Bash(grep ...)`, `Read(foo.rs)`), in timeline order.
-    steps: Vec<String>,
-    /// The resolved `claude` launcher argv (e.g. `["claude"]` or
-    /// `["cmd.exe","/c","claude"]`). The caller (Electron) owns binary
-    /// resolution; we append the print-mode flags. Falls back to `claude`.
-    #[serde(default)]
-    claude_argv: Option<Vec<String>>,
-    /// Working directory for the helper process (defaults to the session's).
-    #[serde(default)]
-    cwd: Option<String>,
-}
-
-/// One-shot intent summary of a batch of tool calls, produced by a cheap
-/// headless `claude -p --model claude-haiku-4-5` call. This is a *side* call —
-/// it never touches the live session's transcript or context; it just labels
-/// what the agent was doing for the UI's work cards. Auth is inherited from
-/// the user's existing Claude Code credentials (~/.claude), same as any spawn.
-///
-/// Returns `{ "summary": "..." }` on success, or `{ "summary": null }` on any
-/// failure (timeout, non-zero exit, empty output) so the client falls back to
-/// the mechanical summary without surfacing an error.
-async fn post_summarize(
-    State(store): State<SessionStore>,
-    Path(id): Path<String>,
-    Json(payload): Json<SummarizePayload>,
-) -> impl IntoResponse {
-    let session = store.get(&id);
-    if session.is_none() {
-        return (StatusCode::NOT_FOUND, "session not found").into_response();
-    }
-    if payload.steps.is_empty() {
-        return Json(json!({ "summary": Value::Null })).into_response();
-    }
-
-    let prompt = build_summary_prompt(&payload.steps);
-    let mut argv = payload
-        .claude_argv
-        .filter(|a| !a.is_empty())
-        .unwrap_or_else(|| vec!["claude".to_string()]);
-    argv.extend([
-        "-p".to_string(),
-        prompt,
-        "--model".to_string(),
-        "claude-haiku-4-5".to_string(),
-    ]);
-
-    let cwd = payload
-        .cwd
-        .or_else(|| session.and_then(|s| s.cwd))
-        .unwrap_or_else(|| ".".to_string());
-
-    let mut cmd = tokio::process::Command::new(&argv[0]);
-    cmd.args(&argv[1..]).current_dir(&cwd);
-    cmd.stdin(std::process::Stdio::null());
-
-    // Haiku is fast, but `claude` has a cold-start cost — cap the wait so a
-    // hung helper never blocks the UI's request.
-    let output = match tokio::time::timeout(Duration::from_secs(25), cmd.output()).await {
-        Ok(Ok(out)) => out,
-        Ok(Err(err)) => {
-            tracing::warn!(?err, "summarize: claude spawn failed");
-            return Json(json!({ "summary": Value::Null })).into_response();
-        }
-        Err(_) => {
-            tracing::warn!("summarize: claude timed out");
-            return Json(json!({ "summary": Value::Null })).into_response();
-        }
-    };
-
-    if !output.status.success() {
-        tracing::warn!(code = ?output.status.code(), "summarize: claude exited non-zero");
-        return Json(json!({ "summary": Value::Null })).into_response();
-    }
-
-    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let summary = clean_summary(&text);
-    Json(json!({ "summary": summary })).into_response()
-}
-
-/// Build the Haiku prompt: a tight instruction plus the step list.
-fn build_summary_prompt(steps: &[String]) -> String {
-    let mut p = String::from(
-        "You are labeling a batch of tool calls a coding agent just ran, for a UI. \
-         In ONE short sentence (max ~12 words), say what the agent was actually doing — \
-         the intent, not a list. No preamble, no quotes, no trailing period. \
-         Tool calls:\n",
-    );
-    for s in steps {
-        p.push_str("- ");
-        p.push_str(s);
-        p.push('\n');
-    }
-    p
-}
-
-/// Defensive cleanup: take the first non-empty line, strip wrapping quotes and
-/// a trailing period. Returns null for empty output so the client falls back.
-fn clean_summary(text: &str) -> Value {
-    let line = text.lines().map(str::trim).find(|l| !l.is_empty());
-    match line {
-        Some(l) => {
-            let trimmed = l.trim_matches('"').trim_end_matches('.').trim();
-            if trimmed.is_empty() {
-                Value::Null
-            } else {
-                Value::String(trimmed.to_string())
-            }
-        }
-        None => Value::Null,
     }
 }
 

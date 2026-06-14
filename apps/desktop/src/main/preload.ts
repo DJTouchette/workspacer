@@ -171,9 +171,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     }),
   claudeGate: (sessionId: string, on: boolean): Promise<void> =>
     ipcRenderer.invoke(IPC.CLAUDE_GATE, sessionId, on),
-  /** One-line Haiku summary of a work batch; resolves null on failure. */
-  claudeSummarize: (sessionId: string, steps: string[]): Promise<string | null> =>
-    ipcRenderer.invoke(IPC.CLAUDE_SUMMARIZE, sessionId, steps),
 
   /** Same shape as onTerminalOutput — works on the Claude byte port. */
   onClaudeOutput: (sessionId: string, callback: (data: string) => void): (() => void) => {

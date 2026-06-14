@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { ToolCall, SubagentInfo, WorkflowRunInfo } from '../../types/claudeSession';
-import { claudeColors as colors, WorkLogEntry, formatToolSummary } from '../claude-shared';
+import { claudeColors as colors, WorkLogEntry } from '../claude-shared';
 import { DiffView, hasDiff } from './DiffView';
 import { SubagentRow } from './SubagentRow';
 import { WorkflowRunCard } from './WorkflowRunCard';
@@ -9,11 +9,6 @@ import { AgentSpinner } from './WorkflowAgentRow';
 const EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'NotebookEdit']);
 const CMD_TOOLS = new Set(['Bash', 'PowerShell']);
 const SEARCH_TOOLS = new Set(['Grep', 'Glob']);
-
-/** Auto-request a Haiku intent summary only for batches at least this big —
- *  small batches read fine from the mechanical summary, and each summary is a
- *  (cheap) Haiku call, so we don't spend one on every two-step card. */
-const SUMMARY_MIN_STEPS = 4;
 
 interface WorkSummary {
   text: string;
@@ -84,22 +79,6 @@ export const WorkCard: React.FC<{
   }, [live]);
 
   const summary = useMemo(() => summarizeWork(toolCalls), [toolCalls]);
-
-  // Haiku intent summary: once a big batch finishes, ask the daemon for a
-  // one-line "what was it doing" label. Fetched at most once per card; failure
-  // leaves the mechanical summary in place.
-  const [intent, setIntent] = useState<string | null>(null);
-  const requestedRef = useRef(false);
-  const stepCount = toolCalls.length;
-  useEffect(() => {
-    if (live || requestedRef.current) return;
-    if (!sessionId || stepCount < SUMMARY_MIN_STEPS) return;
-    requestedRef.current = true;
-    const steps = toolCalls.map(tc => formatToolSummary(tc).call);
-    window.electronAPI.claudeSummarize(sessionId, steps)
-      .then(s => { if (s) setIntent(s); })
-      .catch(() => { /* fall back to the mechanical summary */ });
-  }, [live, sessionId, stepCount, toolCalls]);
   const anyRunning = live || toolCalls.some(tc => tc.status === 'running');
 
   // Running agent/workflow cards surface even while the card is collapsed —
@@ -152,14 +131,7 @@ export const WorkCard: React.FC<{
         <span style={{ color: colors.text, fontWeight: 600, flexShrink: 0 }}>
           {toolCalls.length} step{toolCalls.length !== 1 ? 's' : ''}
         </span>
-        {intent ? (
-          <span
-            title={summary.text || undefined}
-            style={{ color: colors.textBright, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}
-          >
-            {intent}
-          </span>
-        ) : summary.text ? (
+        {summary.text ? (
           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
             {summary.text}
           </span>

@@ -53,7 +53,6 @@ export interface ElectronAPI {
   attachClaude: (paneId: string, sessionId: string) => Promise<string>;
   detachClaude: (paneId: string) => Promise<void>;
   claudeGate: (sessionId: string, on: boolean) => Promise<void>;
-  claudeSummarize: (sessionId: string, steps: string[]) => Promise<string | null>;
   claudeWrite: (sessionId: string, data: string) => void;
   onClaudeOutput: (sessionId: string, callback: (data: string) => void) => () => void;
 
