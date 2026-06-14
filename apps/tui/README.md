@@ -50,8 +50,11 @@ planned in later phases (see the repo's TUI plan).
   profile; spawns a fresh session via claudemon. Model and skip-permissions ride
   along in the profile's args, as in the desktop app.
 - **Agent sidebar** — every live session, sorted so the ones needing you float
-  to the top, with state badge, model, context % and cost. Model/context/cost
-  are derived from each session's transcript, the same way the desktop app does.
+  to the top, with state badge, model, context % and cost. These prefer Claude's
+  authoritative **statusLine** (streamed live from claudemon — same numbers
+  Claude shows itself), falling back to transcript-derived usage when it hasn't
+  arrived yet. The Dashboard also shows 5h/7d rate-limit windows when Claude
+  reports them (Pro/Max).
 - **Chat view** — the selected agent's transcript (text + tool calls), live as
   it streams. Long runs of consecutive tool calls (e.g. during a workflow)
   collapse into one compact `N tool calls · …` line.

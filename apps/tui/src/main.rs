@@ -79,7 +79,8 @@ async fn run(
     library: Vec<library::LibraryItem>,
     config: config::Config,
 ) -> Result<()> {
-    let mut daemon_rx = claudemon::spawn_events(events_url);
+    let mut daemon_rx = claudemon::spawn_events(events_url.clone());
+    let mut status_rx = claudemon::spawn_status_lines(events_url);
     let (msg_tx, mut msg_rx) = mpsc::unbounded_channel::<AppMsg>();
     let (pty_tx, mut pty_rx) = mpsc::unbounded_channel::<claudemon::PtyChunk>();
     let mut app = App::new(claudemon, profiles, library, config, msg_tx, pty_tx);
@@ -115,6 +116,10 @@ async fn run(
             },
             chunk = pty_rx.recv() => match chunk {
                 Some(c) => app.feed_pty(c),
+                None => {}
+            },
+            sl = status_rx.recv() => match sl {
+                Some(msg) => app.apply_status_line(msg.session_id, msg.status_line),
                 None => {}
             },
             _ = tick.tick() => {}

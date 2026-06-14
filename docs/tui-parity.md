@@ -80,12 +80,13 @@ API. Self-contained. Done.
 ## Phase 2 — Authoritative statusline
 
 Consistency win mirroring the desktop `deriveSessionStats` fix (statusLine first,
-transcript usage fallback).
+transcript usage fallback). Done.
 
-- ☐ Subscribe to `/statusline/stream`; hold latest `StatusLine` per session.
-- ☐ Prefer statusLine context%/cost/model in the sidebar + dashboard; keep
-  transcript `Usage` as fallback when statusLine absent.
-- ☐ Surface 5h/7d rate-limit windows (Dashboard footer / agent header).
+- ☑ Subscribe to `/statusline/stream` (`claudemon::spawn_status_lines`, own
+  reconnect loop); hold latest `StatusLine` per session on `App.status_lines`.
+- ☑ `types::derive_stats(agent, statusline?)` — statusLine context%/cost/model
+  first, transcript `Usage` fallback. Used in the sidebar, detail, and dashboard.
+- ☑ 5h/7d rate-limit windows on the Dashboard (colour-coded) + the detail pane.
 
 ## Phase 3 — Agent management
 
@@ -166,3 +167,6 @@ we'd add) · ✗ analytics history (no claudemon endpoint; would need new backen
   stage/unstage/all/commit/push. Also coalesced consecutive tool-only turns in
   the transcript into one compact line (matches the desktop WorkCard). 64 TUI
   tests pass; clean build.
+- 2026-06-14 — Phase 2 (authoritative statusline) done: `/statusline/stream`
+  subscription, `StatusLine` per session, `derive_stats` precedence wired into
+  sidebar/detail/dashboard, 5h/7d rate-limit windows. 66 TUI tests pass.

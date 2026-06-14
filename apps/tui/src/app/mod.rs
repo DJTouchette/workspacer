@@ -21,7 +21,7 @@ use crate::library::LibraryItem;
 use crate::profiles::Profile;
 use crate::terminal::Term;
 use crate::theme::Theme;
-use crate::types::{Agent, FileStatus, Turn};
+use crate::types::{Agent, FileStatus, StatusLine, Turn};
 
 use tasks::{fetch_agents, fetch_git_diff, fetch_git_status, fetch_transcript};
 
@@ -249,6 +249,9 @@ pub struct App {
 
     /// Agents, kept sorted with the ones needing attention first.
     pub agents: Vec<Agent>,
+    /// Claude's authoritative statusLine per session (context%/cost/model/rate
+    /// limits), streamed live; preferred over transcript usage when present.
+    pub status_lines: HashMap<String, StatusLine>,
     pub selected: usize,
 
     pub view: View,
@@ -298,6 +301,7 @@ impl App {
             term_attached: false,
             term_resize: None,
             agents: Vec::new(),
+            status_lines: HashMap::new(),
             selected: 0,
             view: View::List,
             turns: Vec::new(),
@@ -412,12 +416,19 @@ impl App {
         let live: HashSet<String> = self.agents.iter().map(|a| a.session_id.clone()).collect();
         self.prune_terminals(&live);
         self.no_terminal.retain(|sid| live.contains(sid));
+        self.status_lines.retain(|sid, _| live.contains(sid));
         // Drop workspaces whose agent is gone (shell tabs may persist as their
         // own sessions, but the agent grouping is no longer meaningful).
         self.workspaces.retain(|agent_id, _| live.contains(agent_id));
     }
 
     // ── daemon reactions ──────────────────────────────────────────────────
+
+    /// Fold a live statusLine tick into the per-session map (the renderer reads
+    /// it via `derive_stats`).
+    pub fn apply_status_line(&mut self, session_id: String, status_line: StatusLine) {
+        self.status_lines.insert(session_id, status_line);
+    }
 
     pub fn on_connected(&mut self) {
         self.connected = true;

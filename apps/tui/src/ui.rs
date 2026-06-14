@@ -14,7 +14,7 @@ use ratatui::Frame;
 use crate::app::{App, ChatMode, TabKind, View};
 use crate::keys::{Action, Context};
 use crate::theme::Theme;
-use crate::types::{Agent, Part, Role};
+use crate::types::{derive_stats, Agent, DerivedStats, Part, Role};
 use serde_json::Value;
 use tui_term::widget::PseudoTerminal;
 
@@ -115,7 +115,8 @@ fn render_sidebar(f: &mut Frame, area: Rect, app: &App) {
             marker,
             Span::styled(a.short_cwd(), Style::default().add_modifier(Modifier::BOLD)),
         ]);
-        let meta = Line::from(Span::styled(meta_line(a), Style::default().fg(t.dim)));
+        let stats = derive_stats(a, app.status_lines.get(&a.session_id));
+        let meta = Line::from(Span::styled(meta_line(a, &stats), Style::default().fg(t.dim)));
         ListItem::new(vec![name, meta])
     }));
 
@@ -127,20 +128,19 @@ fn render_sidebar(f: &mut Frame, area: Rect, app: &App) {
     f.render_stateful_widget(list, area, &mut state);
 }
 
-fn meta_line(a: &Agent) -> String {
+fn meta_line(a: &Agent, stats: &DerivedStats) -> String {
     let mut s = badge(a.state());
-    if let Some(u) = &a.usage {
-        if let Some(m) = &u.model {
-            s.push_str(&format!("  {}", short_model(m)));
-        }
-        if u.context_limit > 0 && u.context_tokens > 0 {
-            let pct = (u.context_tokens as f64 / u.context_limit as f64 * 100.0).round();
-            s.push_str(&format!("  {pct:.0}% ctx"));
-        }
-        if u.cost_usd > 0.0 {
-            s.push_str(&format!("  ${:.2}", u.cost_usd));
-        }
-    } else if a.tool_calls > 0 {
+    if let Some(m) = &stats.model {
+        s.push_str(&format!("  {}", short_model(m)));
+    }
+    if let Some(p) = stats.context_pct {
+        s.push_str(&format!("  {p:.0}% ctx"));
+    }
+    if let Some(c) = stats.cost {
+        s.push_str(&format!("  ${c:.2}"));
+    }
+    // No usage/statusLine yet — fall back to a raw tool-call count.
+    if stats.model.is_none() && stats.context_pct.is_none() && stats.cost.is_none() && a.tool_calls > 0 {
         s.push_str(&format!("  {} tools", a.tool_calls));
     }
     s
@@ -163,6 +163,17 @@ fn state_color(t: &Theme, state: &str) -> Color {
         "input" | "waiting" => t.warn,
         "error" => t.bad,
         _ => t.ok,
+    }
+}
+
+/// Colour a rate-limit percentage: ok < 75% < warn < 90% < bad.
+fn rate_color(t: &Theme, pct: f64) -> Color {
+    if pct >= 90.0 {
+        t.bad
+    } else if pct >= 75.0 {
+        t.warn
+    } else {
+        t.ok
     }
 }
 
@@ -192,20 +203,23 @@ fn render_detail(f: &mut Frame, area: Rect, app: &App) {
             Span::styled(badge(a.state()), Style::default().fg(state_color(t, a.state())).add_modifier(Modifier::BOLD)),
         ]),
     ];
-    if let Some(u) = &a.usage {
-        if let Some(m) = &u.model {
-            lines.push(kv(t, "model", m));
+    let stats = derive_stats(a, app.status_lines.get(&a.session_id));
+    if let Some(m) = &stats.model {
+        lines.push(kv(t, "model", m));
+    }
+    if let Some(p) = stats.context_pct {
+        lines.push(kv(t, "context", &format!("{p:.0}%")));
+    }
+    if let Some(c) = stats.cost {
+        lines.push(kv(t, "cost", &format!("${c:.2}")));
+    }
+    // Account-wide rate-limit windows, when Claude reports them (Pro/Max).
+    if let Some(sl) = app.status_lines.get(&a.session_id) {
+        if let Some(p) = sl.five_hour_pct {
+            lines.push(kv(t, "5h", &format!("{p:.0}% used")));
         }
-        if u.context_limit > 0 && u.context_tokens > 0 {
-            let pct = (u.context_tokens as f64 / u.context_limit as f64 * 100.0).round();
-            lines.push(kv(
-                t,
-                "context",
-                &format!("{} / {} ({pct:.0}%)", u.context_tokens, u.context_limit),
-            ));
-        }
-        if u.cost_usd > 0.0 {
-            lines.push(kv(t, "cost", &format!("${:.2}", u.cost_usd)));
+        if let Some(p) = sl.seven_day_pct {
+            lines.push(kv(t, "7d", &format!("{p:.0}% used")));
         }
     }
     if a.tool_calls > 0 {
@@ -604,7 +618,17 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
     let waiting = app.agents.iter().filter(|a| a.is_waiting()).count();
     let busy = app.agents.iter().filter(|a| a.is_busy()).count();
     let idle = total.saturating_sub(waiting + busy);
-    let cost: f64 = app.agents.iter().filter_map(|a| a.usage.as_ref()).map(|u| u.cost_usd).sum();
+    let cost: f64 = app
+        .agents
+        .iter()
+        .filter_map(|a| derive_stats(a, app.status_lines.get(&a.session_id)).cost)
+        .sum();
+    // Rate limits are account-wide (identical across sessions) — show the first
+    // session that reports them.
+    let rate = app
+        .status_lines
+        .values()
+        .find(|s| s.five_hour_pct.is_some() || s.seven_day_pct.is_some());
 
     let mut lines = vec![
         Line::from(Span::styled(
@@ -624,8 +648,21 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
             Span::styled("total cost ", Style::default().fg(t.dim)),
             Span::styled(format!("${cost:.2}"), Style::default().fg(t.ok)),
         ]),
-        Line::raw(""),
     ];
+    if let Some(s) = rate {
+        let mut spans = vec![Span::styled("rate limit ", Style::default().fg(t.dim))];
+        if let Some(p) = s.five_hour_pct {
+            spans.push(Span::styled(format!("5h {p:.0}%"), Style::default().fg(rate_color(t, p))));
+        }
+        if let Some(p) = s.seven_day_pct {
+            spans.push(Span::styled(
+                format!("   7d {p:.0}%"),
+                Style::default().fg(rate_color(t, p)),
+            ));
+        }
+        lines.push(Line::from(spans));
+    }
+    lines.push(Line::raw(""));
 
     // Compact roster, attention first (the agents are already sorted that way).
     for a in &app.agents {
@@ -644,14 +681,12 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
                 Style::default().fg(state_color(t, a.state())),
             ),
         ];
-        if let Some(u) = &a.usage {
-            if u.context_limit > 0 && u.context_tokens > 0 {
-                let pct = (u.context_tokens as f64 / u.context_limit as f64 * 100.0).round();
-                row.push(Span::styled(format!(" {pct:.0}%"), Style::default().fg(t.dim)));
-            }
-            if u.cost_usd > 0.0 {
-                row.push(Span::styled(format!("  ${:.2}", u.cost_usd), Style::default().fg(t.dim)));
-            }
+        let stats = derive_stats(a, app.status_lines.get(&a.session_id));
+        if let Some(p) = stats.context_pct {
+            row.push(Span::styled(format!(" {p:.0}%"), Style::default().fg(t.dim)));
+        }
+        if let Some(c) = stats.cost {
+            row.push(Span::styled(format!("  ${c:.2}"), Style::default().fg(t.dim)));
         }
         lines.push(Line::from(row));
     }

@@ -9,6 +9,7 @@
 
 use anyhow::{anyhow, Result};
 use base64::Engine as _;
+use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -332,6 +333,82 @@ pub fn spawn_events(base: String) -> mpsc::UnboundedReceiver<DaemonEvent> {
         }
     });
     rx
+}
+
+/// One authoritative statusLine tick for a session (model / context% / cost /
+/// rate limits), streamed from `/statusline/stream`.
+#[derive(Debug)]
+pub struct StatusLineMsg {
+    pub session_id: String,
+    pub status_line: crate::types::StatusLine,
+}
+
+/// The `/statusline/stream` frame shape (claudemon's `StatusLineUpdate`).
+#[derive(Deserialize)]
+struct StatusLineFrame {
+    session_id: String,
+    status_line: crate::types::StatusLine,
+}
+
+/// Subscribe to `/statusline/stream`, emitting a [`StatusLineMsg`] per tick.
+/// Owns its own reconnect loop with backoff, like [`spawn_events`].
+pub fn spawn_status_lines(base: String) -> mpsc::UnboundedReceiver<StatusLineMsg> {
+    let (tx, rx) = mpsc::unbounded_channel();
+    tokio::spawn(async move {
+        let mut backoff = std::time::Duration::from_millis(500);
+        loop {
+            let _ = status_line_connect(&base, &tx).await;
+            tokio::time::sleep(backoff).await;
+            backoff = (backoff * 2).min(std::time::Duration::from_secs(8));
+        }
+    });
+    rx
+}
+
+async fn status_line_connect(base: &str, tx: &mpsc::UnboundedSender<StatusLineMsg>) -> Result<()> {
+    let (host, port) = split_host_port(base);
+    let mut stream = TcpStream::connect((host.as_str(), port)).await?;
+    let req = format!(
+        "GET /statusline/stream HTTP/1.1\r\nHost: {host}:{port}\r\nAccept: text/event-stream\r\n\
+         Connection: keep-alive\r\n\r\n"
+    );
+    stream.write_all(req.as_bytes()).await?;
+    stream.flush().await?;
+
+    let mut buf: Vec<u8> = Vec::new();
+    let mut headers_done = false;
+    let mut tmp = [0u8; 8192];
+    loop {
+        let n = stream.read(&mut tmp).await?;
+        if n == 0 {
+            return Ok(());
+        }
+        buf.extend_from_slice(&tmp[..n]);
+
+        if !headers_done {
+            match find(&buf, b"\r\n\r\n") {
+                Some(i) => {
+                    buf.drain(..i + 4);
+                    headers_done = true;
+                }
+                None => continue,
+            }
+        }
+
+        for frame in drain_sse_frames(&mut buf) {
+            let text = String::from_utf8_lossy(&frame);
+            for line in text.lines() {
+                if let Some(data) = line.strip_prefix("data:") {
+                    if let Ok(f) = serde_json::from_str::<StatusLineFrame>(data.trim()) {
+                        let _ = tx.send(StatusLineMsg {
+                            session_id: f.session_id,
+                            status_line: f.status_line,
+                        });
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Hold one SSE connection, forwarding a `Changed` per data frame. Returns when

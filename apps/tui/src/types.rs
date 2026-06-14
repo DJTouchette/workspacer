@@ -23,6 +23,55 @@ pub struct Usage {
     pub cost_usd: f64,
 }
 
+/// Claude's authoritative statusLine telemetry, streamed from claudemon's
+/// `/statusline/stream`. Every field is optional (Claude omits some, and
+/// rate-limit data only exists for Pro/Max accounts). Preferred over the
+/// transcript-derived [`Usage`] when present — see [`derive_stats`].
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct StatusLine {
+    #[serde(default)]
+    pub model_display: Option<String>,
+    /// `context_window.used_percentage` (0–100).
+    #[serde(default)]
+    pub context_used_pct: Option<f64>,
+    /// Claude's own authoritative session cost.
+    #[serde(default)]
+    pub cost_usd: Option<f64>,
+    /// 5h rate-limit window used %, 0–100 (Pro/Max only).
+    #[serde(default)]
+    pub five_hour_pct: Option<f64>,
+    /// 7d rate-limit window used %, 0–100 (Pro/Max only).
+    #[serde(default)]
+    pub seven_day_pct: Option<f64>,
+}
+
+/// Model / context-% / cost for a session, resolving claudemon's authoritative
+/// statusLine first and falling back to transcript-derived [`Usage`] — the
+/// terminal analogue of the desktop `deriveSessionStats` precedence.
+#[derive(Debug, Default, Clone)]
+pub struct DerivedStats {
+    pub model: Option<String>,
+    pub context_pct: Option<f64>,
+    pub cost: Option<f64>,
+}
+
+pub fn derive_stats(agent: &Agent, sl: Option<&StatusLine>) -> DerivedStats {
+    let model = sl
+        .and_then(|s| s.model_display.clone())
+        .or_else(|| agent.usage.as_ref().and_then(|u| u.model.clone()));
+    let context_pct = sl.and_then(|s| s.context_used_pct).or_else(|| {
+        agent.usage.as_ref().and_then(|u| {
+            (u.context_limit > 0 && u.context_tokens > 0)
+                .then(|| u.context_tokens as f64 / u.context_limit as f64 * 100.0)
+        })
+    });
+    let cost = sl
+        .and_then(|s| s.cost_usd)
+        .filter(|c| *c > 0.0)
+        .or_else(|| agent.usage.as_ref().map(|u| u.cost_usd).filter(|c| *c > 0.0));
+    DerivedStats { model, context_pct, cost }
+}
+
 /// The mode a Claude session can be in, mirroring claudemon's `SessionMode`.
 ///
 /// Uses `#[serde(rename_all = "snake_case")]` to match the wire format claudemon
@@ -364,6 +413,43 @@ mod tests {
         }]);
         let agents: Vec<Agent> = serde_json::from_value(json).unwrap();
         assert!(agents[0].usage.is_none());
+    }
+
+    #[test]
+    fn derive_stats_prefers_statusline_then_falls_back_to_usage() {
+        let agent: Agent = serde_json::from_value(serde_json::json!({
+            "session_id": "s",
+            "mode": "responding",
+            "usage": { "model": "claude-sonnet-4-6", "context_tokens": 50_000,
+                       "context_limit": 200_000, "cost_usd": 1.0 }
+        }))
+        .unwrap();
+
+        // No statusLine → transcript usage fallback (25% ctx, $1.00).
+        let d = derive_stats(&agent, None);
+        assert_eq!(d.model.as_deref(), Some("claude-sonnet-4-6"));
+        assert_eq!(d.context_pct, Some(25.0));
+        assert_eq!(d.cost, Some(1.0));
+
+        // statusLine present → its authoritative values win.
+        let sl = StatusLine {
+            model_display: Some("Opus 4.8".into()),
+            context_used_pct: Some(73.0),
+            cost_usd: Some(12.5),
+            ..Default::default()
+        };
+        let d = derive_stats(&agent, Some(&sl));
+        assert_eq!(d.model.as_deref(), Some("Opus 4.8"));
+        assert_eq!(d.context_pct, Some(73.0));
+        assert_eq!(d.cost, Some(12.5));
+    }
+
+    #[test]
+    fn derive_stats_empty_when_nothing_known() {
+        let agent: Agent =
+            serde_json::from_value(serde_json::json!({ "session_id": "s" })).unwrap();
+        let d = derive_stats(&agent, None);
+        assert!(d.model.is_none() && d.context_pct.is_none() && d.cost.is_none());
     }
 
     #[test]
