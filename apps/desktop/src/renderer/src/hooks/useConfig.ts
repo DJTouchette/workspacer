@@ -71,8 +71,8 @@ export interface NotificationsConfig {
 }
 
 export interface EditorConfig {
-  /** Editor-pane engine: in-app 'codemirror', or your $EDITOR in a 'terminal'. */
-  engine: 'codemirror' | 'terminal';
+  /** Editor-pane engine: in-app 'monaco', or your $EDITOR in a 'terminal'. */
+  engine: 'monaco' | 'terminal';
   /** Command for the 'terminal' engine; the file path is appended as its last arg. */
   terminalCommand: string;
 }

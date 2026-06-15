@@ -207,7 +207,7 @@ export interface AppConfig {
     sound: boolean;
   };
   editor: {
-    engine: 'codemirror' | 'terminal';
+    engine: 'monaco' | 'terminal';
     terminalCommand: string;
   };
   claude: {

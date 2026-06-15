@@ -101,8 +101,8 @@ interface Config {
     autoResume: boolean;
   };
   editor: {
-    /** Editor-pane engine: in-app 'codemirror', or your $EDITOR in a 'terminal'. */
-    engine: 'codemirror' | 'terminal';
+    /** Editor-pane engine: in-app 'monaco', or your $EDITOR in a 'terminal'. */
+    engine: 'monaco' | 'terminal';
     /** Command for the 'terminal' engine; the file path is appended as its last arg. */
     terminalCommand: string;
   };
@@ -214,7 +214,7 @@ function defaultConfig(): Config {
       sound: false,
     },
     editor: {
-      engine: 'codemirror',
+      engine: 'monaco',
       terminalCommand: 'nvim',
     },
     claude: {
@@ -292,7 +292,10 @@ class ConfigService {
     try {
       const data = fs.readFileSync(configPath, 'utf-8');
       const parsed = yaml.load(data) as Partial<Config>;
-      return deepMerge(defaults, parsed);
+      const merged = deepMerge(defaults, parsed) as Config;
+      // Back-compat: the in-app editor engine was renamed 'codemirror' → 'monaco'.
+      if ((merged.editor?.engine as string) === 'codemirror') merged.editor.engine = 'monaco';
+      return merged;
     } catch {
       // No config file — write defaults
       this.writeDefaults();
