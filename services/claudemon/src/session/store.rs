@@ -122,6 +122,30 @@ impl SessionStore {
         }
     }
 
+    /// Repopulate the in-memory session list from persisted rows at startup,
+    /// marking each as [`SessionMode::Stopped`]. The processes themselves are
+    /// gone (they were the previous daemon's children), but the rows let clients
+    /// see prior agents again and resume them — a respawn launches
+    /// `claude --resume <id>`, and because we pin `--session-id` at spawn the row
+    /// id doubles as claude's transcript uuid, so the conversation reopens rather
+    /// than starting blank. A live entry (none exist at boot) always wins.
+    pub fn hydrate(&self, sessions: Vec<crate::store::RestoredSession>) {
+        for s in sessions {
+            self.states.entry(s.id.clone()).or_insert_with(|| {
+                let mut st = SessionState::new(s.id.clone(), s.cwd.clone());
+                st.mode = SessionMode::Stopped;
+                st.tool_calls = s.tool_calls;
+                if let Ok(t) = OffsetDateTime::from_unix_timestamp(s.created_at) {
+                    st.started_at = t;
+                }
+                if let Ok(t) = OffsetDateTime::from_unix_timestamp(s.last_event_at) {
+                    st.updated_at = t;
+                }
+                st
+            });
+        }
+    }
+
     // --- deferred-hook gateway ----------------------------------------------
 
     pub fn set_gate(&self, session_id: &str, on: bool) {
@@ -448,6 +472,39 @@ mod tests {
     fn handle() -> WrapperHandle {
         let (tx, _rx) = mpsc::unbounded_channel();
         WrapperHandle { tx }
+    }
+
+    #[test]
+    fn hydrate_restores_sessions_as_stopped_without_clobbering_live() {
+        let store = SessionStore::new();
+        // A live session already present before hydration (e.g. an early hook).
+        store.ingest(hook("SessionStart", "live", "/work/live"));
+
+        store.hydrate(vec![
+            crate::store::RestoredSession {
+                id: "restored".into(),
+                cwd: Some("/work/restored".into()),
+                tool_calls: 7,
+                created_at: 1000,
+                last_event_at: 2000,
+            },
+            // Same id as the live one — must NOT overwrite it back to stopped.
+            crate::store::RestoredSession {
+                id: "live".into(),
+                cwd: Some("/work/live".into()),
+                tool_calls: 0,
+                created_at: 1,
+                last_event_at: 2,
+            },
+        ]);
+
+        let restored = store.get("restored").expect("restored session present");
+        assert_eq!(restored.mode, SessionMode::Stopped);
+        assert_eq!(restored.cwd.as_deref(), Some("/work/restored"));
+        assert_eq!(restored.tool_calls, 7);
+
+        let live = store.get("live").expect("live session present");
+        assert_ne!(live.mode, SessionMode::Stopped, "live entry must win over hydrate");
     }
 
     // A pinned spawn (claude launched with `--session-id` == our id) must keep

@@ -122,6 +122,30 @@ impl Db {
         })
     }
 
+    /// Load the most recently active persisted sessions so the daemon can
+    /// repopulate its in-memory list after a restart. Ordered newest-first and
+    /// capped at `limit` — the table is never pruned, so hydrating all of it
+    /// would flood the list with ancient sessions. Newest-first means the agents
+    /// you actually had open come back; the long tail stays in the DB.
+    pub fn load_recent_sessions(&self, limit: usize) -> Result<Vec<RestoredSession>> {
+        let guard = self.conn.lock().expect("db mutex poisoned");
+        let mut stmt = guard.prepare(
+            "SELECT id, cwd, tool_call_count, created_at, last_event_at
+             FROM sessions ORDER BY last_event_at DESC LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit as i64], |r| {
+            let cwd: String = r.get(1)?;
+            Ok(RestoredSession {
+                id: r.get(0)?,
+                cwd: (!cwd.is_empty()).then_some(cwd),
+                tool_calls: r.get::<_, i64>(2)?.max(0) as u64,
+                created_at: r.get(3)?,
+                last_event_at: r.get(4)?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+    }
+
     /// Sweep for working sessions that have been silent long enough to count
     /// as stuck (spec §11, IDLE_STUCK_SECONDS). One transaction per session
     /// that gets an item; sessions already flagged are no-ops.
@@ -179,6 +203,15 @@ pub struct ClassifyOutcome {
 pub struct IdleHit {
     pub session_id: String,
     pub item_id: String,
+}
+
+/// A persisted session row, restored into the in-memory store on daemon boot.
+pub struct RestoredSession {
+    pub id: String,
+    pub cwd: Option<String>,
+    pub tool_calls: u64,
+    pub created_at: i64,
+    pub last_event_at: i64,
 }
 
 #[derive(Default)]
@@ -773,5 +806,29 @@ mod tests {
         let mut p = std::env::temp_dir();
         p.push(format!("claudemon-test-{}.db", uuid::Uuid::new_v4()));
         p
+    }
+
+    #[test]
+    fn load_recent_sessions_is_newest_first_and_capped() {
+        let tmp = tempfile_path();
+        let db = Db::open(&tmp).unwrap();
+        // Insert three sessions with increasing last_event_at via SessionStart
+        // (carries its own timestamp).
+        for (i, sid) in ["old", "mid", "new"].iter().enumerate() {
+            let mut e = ev("SessionStart", sid);
+            e.timestamp = OffsetDateTime::from_unix_timestamp(1000 + i as i64 * 10).ok();
+            db.record_event(&e).unwrap();
+        }
+        let all = db.load_recent_sessions(10).unwrap();
+        assert_eq!(
+            all.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+            ["new", "mid", "old"],
+            "newest last_event_at first"
+        );
+        assert_eq!(all[0].cwd.as_deref(), Some("/tmp/proj"));
+
+        let capped = db.load_recent_sessions(2).unwrap();
+        assert_eq!(capped.len(), 2);
+        assert_eq!(capped[0].id, "new");
     }
 }

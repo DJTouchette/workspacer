@@ -15,6 +15,11 @@ use crate::session::{conversation, ConversationStore, HookEvent, SessionStore};
 use crate::store::items::{ItemBroadcaster, ItemChange};
 use crate::store::Db;
 
+/// How many recent sessions to restore into the live list on startup. Newest
+/// first; the rest stay in the DB. Generous enough to cover any realistic set
+/// of open agents without flooding the UI with stale history.
+const SESSION_HYDRATE_LIMIT: usize = 100;
+
 pub struct ServeConfig {
     pub host: String,
     pub hook_port: u16,
@@ -27,6 +32,21 @@ pub async fn run(cfg: ServeConfig) -> Result<()> {
     let db = Db::open(&cfg.db_path)
         .with_context(|| format!("opening db at {}", cfg.db_path.display()))?;
     tracing::info!(db = %cfg.db_path.display(), "sqlite store ready");
+
+    // Repopulate the in-memory list from the DB so sessions survive a daemon
+    // restart: prior agents reappear (as stopped) and can be resumed with
+    // `claude --resume <id>`. Bounded to the most-recent window — the table is
+    // never pruned, so we don't want to surface the entire history.
+    match db.load_recent_sessions(SESSION_HYDRATE_LIMIT) {
+        Ok(sessions) if !sessions.is_empty() => {
+            let count = sessions.len();
+            store.hydrate(sessions);
+            tracing::info!(count, "hydrated prior sessions from db");
+        }
+        Ok(_) => {}
+        Err(err) => tracing::warn!(?err, "hydrating sessions from db failed"),
+    }
+
     let items_broadcaster = ItemBroadcaster::new();
 
     // Persistence runs out-of-band: subscribe to the raw-hook broadcast and

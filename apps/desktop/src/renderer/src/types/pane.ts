@@ -90,6 +90,11 @@ export interface AgentWorkspace {
   /** claudemon session id once spawned. Undefined means the agent is stopped
    *  (e.g. the daemon session ended or didn't survive a restart). */
   sessionId?: string;
+  /** The session id this agent last held, retained after it stops so a respawn
+   *  can `claude --resume <id>` and reopen the prior conversation instead of
+   *  starting blank. Doubles as claude's transcript uuid (we pin `--session-id`
+   *  at spawn). Cleared once a fresh, non-resumed session takes over. */
+  lastSessionId?: string;
   /** Marks a supervisor agent — spawned with the workspacer MCP facade so it can
    *  observe and coordinate the other agents. Rendered nested under its parent. */
   kind?: 'supervisor';

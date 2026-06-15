@@ -667,7 +667,7 @@ impl App {
         };
         let initial_prompt = form.initial_prompt.clone();
         self.spawn_form = None;
-        self.spawn_agent_in(cwd, profile, initial_prompt);
+        self.spawn_agent_in(cwd, profile, initial_prompt, None);
     }
 
     /// Spawn a fresh Claude session in `cwd` with `profile`, optionally seeding a
@@ -678,18 +678,25 @@ impl App {
         cwd: String,
         profile: profiles::Profile,
         initial_prompt: Option<String>,
+        resume_session_id: Option<String>,
     ) {
-        // Pin the session id up front so claude's transcript file, claudemon's
-        // id, and the id we track all agree — no cwd-based guessing.
-        let session_id = uuid::Uuid::new_v4().to_string();
-        let argv = profiles::build_argv(&profile, None, false, &session_id);
+        // Resuming reuses the prior session id (which is also claude's transcript
+        // uuid, since we pin `--session-id` at spawn) and passes it as `--resume`
+        // so claude reopens that conversation. A fresh spawn mints a new id and
+        // pins it up front so claude's transcript file, claudemon's id, and the
+        // id we track all agree — no cwd-based guessing.
+        let resume = resume_session_id.is_some();
+        let session_id =
+            resume_session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let argv = profiles::build_argv(&profile, None, false, &session_id, resume);
         let env = profiles::build_env(&profile);
         let claudemon = self.claudemon.clone();
         let tx = self.tx.clone();
         tokio::spawn(async move {
             let sid = match claudemon.spawn(argv, cwd, env, &session_id).await {
                 Ok(sid) => {
-                    let _ = tx.send(AppMsg::Toast("Spawned agent".into()));
+                    let verb = if resume { "Resumed" } else { "Spawned" };
+                    let _ = tx.send(AppMsg::Toast(format!("{verb} agent")));
                     fetch_agents(&claudemon, &tx).await;
                     sid
                 }
@@ -704,15 +711,19 @@ impl App {
         });
     }
 
-    /// Restart a stopped agent: spawn a fresh Claude in its cwd with the default
-    /// profile. (claudemon keeps the old stopped session in its list until it's
-    /// pruned; this adds a live one in the same directory.)
+    /// Restart a stopped agent by resuming its conversation: spawn
+    /// `claude --resume <id>` in its cwd with the default profile. The id is the
+    /// agent's own session id, which doubles as claude's transcript uuid (we pin
+    /// `--session-id` at spawn), so claude reopens the prior conversation instead
+    /// of starting blank. (claudemon keeps the old stopped session in its list
+    /// until it's pruned; this adds a live one in the same directory.)
     pub(super) fn respawn(&mut self) {
         let Some(agent) = self.target_agent() else { return };
         if agent.state() != "stopped" {
             self.set_toast("agent is still running");
             return;
         }
+        let session_id = agent.session_id.clone();
         let cwd = agent.cwd_str().to_string();
         if cwd.is_empty() {
             self.set_toast("no working directory");
@@ -728,8 +739,8 @@ impl App {
             self.set_toast("no profile available");
             return;
         };
-        self.set_toast("Respawning…");
-        self.spawn_agent_in(cwd, profile, None);
+        self.set_toast("Resuming…");
+        self.spawn_agent_in(cwd, profile, None, Some(session_id));
     }
 
     pub(super) fn close_chat(&mut self) {

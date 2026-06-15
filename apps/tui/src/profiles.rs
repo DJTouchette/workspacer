@@ -68,7 +68,11 @@ fn read_file() -> Option<Vec<Profile>> {
 /// `<uuid>.jsonl` — the same id we hand to claudemon and track here. Without it,
 /// claudemon would have to guess the transcript by cwd and could serve the wrong
 /// one when several agents share a directory. Pass "" to skip (non-claude spawns).
-pub fn build_argv(profile: &Profile, model: Option<&str>, skip_permissions: bool, session_id: &str) -> Vec<String> {
+///
+/// When `resume` is set, the same id is passed as `--resume <uuid>` instead so
+/// claude reopens that transcript (its conversation) rather than starting blank.
+/// `--resume` and `--session-id` are mutually exclusive, so resume wins.
+pub fn build_argv(profile: &Profile, model: Option<&str>, skip_permissions: bool, session_id: &str, resume: bool) -> Vec<String> {
     let claude = std::env::var("WKS_CLAUDE_BIN").unwrap_or_else(|_| "claude".into());
     let mut argv = vec![claude];
     argv.extend(profile.extra_args.iter().cloned());
@@ -90,13 +94,20 @@ pub fn build_argv(profile: &Profile, model: Option<&str>, skip_permissions: bool
         argv.push("--dangerously-skip-permissions".into());
     }
 
-    let pins_id = profile
-        .extra_args
-        .iter()
-        .any(|a| a == "--session-id" || a.starts_with("--session-id="));
-    if !session_id.is_empty() && !pins_id {
-        argv.push("--session-id".into());
-        argv.push(session_id.into());
+    if resume {
+        if !session_id.is_empty() {
+            argv.push("--resume".into());
+            argv.push(session_id.into());
+        }
+    } else {
+        let pins_id = profile
+            .extra_args
+            .iter()
+            .any(|a| a == "--session-id" || a.starts_with("--session-id="));
+        if !session_id.is_empty() && !pins_id {
+            argv.push("--session-id".into());
+            argv.push(session_id.into());
+        }
     }
     argv
 }
@@ -139,6 +150,22 @@ pub fn normalize_cwd(p: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resume_uses_resume_flag_not_session_id() {
+        let p = Profile::default_profile();
+        let argv = build_argv(&p, None, false, "abc-123", true);
+        assert!(argv.windows(2).any(|w| w == ["--resume", "abc-123"]));
+        assert!(!argv.iter().any(|a| a == "--session-id"));
+    }
+
+    #[test]
+    fn fresh_spawn_uses_session_id_not_resume() {
+        let p = Profile::default_profile();
+        let argv = build_argv(&p, None, false, "abc-123", false);
+        assert!(argv.windows(2).any(|w| w == ["--session-id", "abc-123"]));
+        assert!(!argv.iter().any(|a| a == "--resume"));
+    }
 
     #[test]
     fn normalize_strips_trailing_slashes() {

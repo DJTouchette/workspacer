@@ -169,17 +169,22 @@ export function useAgentManager() {
   const respawnAgent = useCallback(async (agentId: string) => {
     const agent = agentsRef.current.find((a) => a.id === agentId);
     if (!agent) return;
+    // Resume the prior conversation rather than starting blank: the id the agent
+    // last held doubles as claude's transcript uuid (we pin `--session-id` at
+    // spawn), so `--resume <id>` reopens it. `spawnClaude` returns that same id.
+    const resumeSessionId = agent.lastSessionId;
     let sessionId: string | undefined;
     try {
-      sessionId = await window.electronAPI.spawnClaude({ cwd: agent.cwd, profileId: agent.profileId, model: agent.model, skipPermissions: agent.skipPermissions, cols: 120, rows: 32 });
+      sessionId = await window.electronAPI.spawnClaude({ cwd: agent.cwd, profileId: agent.profileId, model: agent.model, skipPermissions: agent.skipPermissions, resumeSessionId, cols: 120, rows: 32 });
     } catch (err) {
       console.error('[Agent] respawn failed:', err);
     }
     if (!sessionId) return;
-    const oldSession = agent.sessionId;
+    const oldSession = agent.sessionId ?? agent.lastSessionId;
     mutateAgent(agentId, (a) => ({
       ...a,
       sessionId,
+      lastSessionId: undefined,
       tabs: a.tabs.map((t) => ({
         ...t,
         panes: t.panes.map((p) =>
@@ -266,7 +271,9 @@ export function useAgentManager() {
    */
   const reconcileAgents = useCallback((liveSessionIds: Set<string>) => {
     setAgents((prev) => prev.map((a) =>
-      a.sessionId && !liveSessionIds.has(a.sessionId) ? { ...a, sessionId: undefined } : a,
+      a.sessionId && !liveSessionIds.has(a.sessionId)
+        ? { ...a, sessionId: undefined, lastSessionId: a.sessionId }
+        : a,
     ));
   }, []);
 
