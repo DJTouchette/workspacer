@@ -142,6 +142,24 @@ export function createWebBackend(token: string): ElectronAPI {
     writeFile: (filePath, contents) => client.call<{ ok: boolean }>('fs.write', { path: filePath, contents }),
     readDir: (dirPath) => client.call<{ path: string; entries: { name: string; path: string; isDir: boolean }[] }>('fs.listEntries', { path: dirPath }),
 
+    // Start the host-side watch, then subscribe to the bus topic that watch
+    // publishes (fs.changed, payload { path, eventType }) and filter by path.
+    // Unsub stops the watch and drops the bus subscription.
+    watchFile: (path, onChange) => {
+      client.call('fs.watch', { path }).catch(() => {});
+      const off = client.subscribe('fs.changed', (ev) => {
+        const info = (ev.data ?? {}) as { path?: string; eventType?: 'change' | 'rename' };
+        if (info.path === path && info.eventType) onChange({ path: info.path, eventType: info.eventType });
+      });
+      return () => {
+        off();
+        client.call('fs.unwatch', { path }).catch(() => {});
+      };
+    },
+
+    searchProject: (opts) =>
+      client.call<{ results: { file: string; matches: { line: number; column: number; text: string }[] }[]; truncated: boolean }>('search.project', opts),
+
     // ── Config ───────────────────────────────────────────────────────────
     getConfig: () => client.call<AppConfig>('config.get', {}),
     reloadConfig: () => client.call<AppConfig>('config.reload', {}),

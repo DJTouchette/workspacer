@@ -285,6 +285,35 @@ contextBridge.exposeInMainWorld('electronAPI', {
   readDir: (dirPath: string): Promise<{ path: string; entries: { name: string; path: string; isDir: boolean }[] }> =>
     ipcRenderer.invoke(IPC.FILE_LIST_DIR, dirPath),
 
+  // Watch a single file. Starts the watch in main and listens on the push
+  // channel, filtering by path so multiple watchers on different files don't
+  // cross-talk. Returns an unsubscribe that stops the watch + drops the listener.
+  watchFile: (
+    path: string,
+    onChange: (info: { path: string; eventType: 'change' | 'rename' }) => void,
+  ): (() => void) => {
+    ipcRenderer.invoke(IPC.FILE_WATCH, path);
+    const handler = (_event: Electron.IpcRendererEvent, info: { path: string; eventType: 'change' | 'rename' }) => {
+      if (info.path === path) onChange(info);
+    };
+    ipcRenderer.on(IPC.FILE_CHANGED, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.FILE_CHANGED, handler);
+      ipcRenderer.invoke(IPC.FILE_UNWATCH, path);
+    };
+  },
+
+  // Project-wide text search (ripgrep), for the editor's search sidebar.
+  searchProject: (opts: {
+    query: string;
+    cwd: string;
+    caseSensitive?: boolean;
+    wholeWord?: boolean;
+    regex?: boolean;
+    maxResults?: number;
+  }): Promise<{ results: { file: string; matches: { line: number; column: number; text: string }[] }[]; truncated: boolean }> =>
+    ipcRenderer.invoke(IPC.SEARCH_PROJECT, opts),
+
 
   // Browser cookie import (Chrome or Edge)
   importChromeCookies: (domainFilter?: string[], method?: 'cdp' | 'direct', browser?: 'chrome' | 'edge'): Promise<{ imported: number; skipped: number; errors: string[] }> =>

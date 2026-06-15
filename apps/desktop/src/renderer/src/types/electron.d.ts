@@ -119,6 +119,22 @@ export interface ElectronAPI {
   writeFile: (filePath: string, contents: string) => Promise<{ ok: boolean }>;
   readDir: (dirPath: string) => Promise<{ path: string; entries: { name: string; path: string; isDir: boolean }[] }>;
 
+  // Watch a single file for external changes; returns an unsubscribe function.
+  watchFile: (
+    path: string,
+    onChange: (info: { path: string; eventType: 'change' | 'rename' }) => void,
+  ) => () => void;
+
+  // Project-wide text search (ripgrep). Paths are absolute; line/column 1-based.
+  searchProject: (opts: {
+    query: string;
+    cwd: string;
+    caseSensitive?: boolean;
+    wholeWord?: boolean;
+    regex?: boolean;
+    maxResults?: number;
+  }) => Promise<{ results: { file: string; matches: { line: number; column: number; text: string }[] }[]; truncated: boolean }>;
+
   // Host filesystem browsing (web folder picker). Optional: only the web build
   // implements it — the desktop uses native OS dialogs instead.
   fsListDir?: (path?: string) => Promise<{ path: string; parent: string; home: string; dirs: string[] }>;

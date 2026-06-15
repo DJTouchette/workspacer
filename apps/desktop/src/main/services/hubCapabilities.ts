@@ -22,6 +22,8 @@ import { sessionHistory } from './sessionHistory';
 import { layoutService } from './layoutService';
 import { listClaudeSessionsForDir } from './claudeSessionList';
 import { readTextFile, writeTextFile, listDir } from './fileService';
+import { startWatch, stopWatch } from './fileWatchService';
+import { searchProject } from './searchService';
 import * as terminalShare from './terminalShare';
 import { IPC } from '../shared/ipcChannels';
 import type { SessionData, LayoutInput, ProfileUpdate } from '../shared/ipcTypes';
@@ -436,5 +438,30 @@ export function registerHubCapabilities(): void {
     const { path: p } = (params ?? {}) as { path?: string };
     if (!p) throw new Error('fs.listEntries requires a path');
     return listDir(p);
+  });
+
+  // ── File watch (editor external-change detection, web client) ──────────
+  // Starts/stops a host-side watch; the watcher's global emit sink (installed in
+  // ipc.ts) mirrors every change onto the bus as a `fs.changed` event carrying
+  // { path, eventType }, which webBackend subscribes to and filters by path.
+  registerCapability('fs.watch', (params: unknown) => {
+    const { path: p } = (params ?? {}) as { path?: string };
+    if (!p) throw new Error('fs.watch requires a path');
+    startWatch(p);
+    return { ok: true };
+  });
+  registerCapability('fs.unwatch', (params: unknown) => {
+    const { path: p } = (params ?? {}) as { path?: string };
+    if (!p) throw new Error('fs.unwatch requires a path');
+    stopWatch(p);
+    return { ok: true };
+  });
+
+  // ── Project search (editor search sidebar, web client) ─────────────────
+  // Same ripgrep backend as the search:project IPC.
+  registerCapability('search.project', (params: unknown) => {
+    const opts = (params ?? {}) as Parameters<typeof searchProject>[0];
+    if (!opts.query) throw new Error('search.project requires { query, cwd }');
+    return searchProject(opts);
   });
 }

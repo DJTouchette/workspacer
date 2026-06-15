@@ -720,6 +720,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
           subagentByToolId={toolIdToSubagent}
           workflowByToolId={toolIdToWorkflow}
           live={isStreaming && endIdx === conversation.length - 1}
+          cwd={cwd}
         />
       );
       pendingWork = null;

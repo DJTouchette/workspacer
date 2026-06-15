@@ -97,6 +97,12 @@ export const IPC = {
   FILE_READ: 'file:read',
   FILE_WRITE: 'file:write',
   FILE_LIST_DIR: 'file:listDir',
+  FILE_WATCH: 'file:watch',
+  FILE_UNWATCH: 'file:unwatch',
+  FILE_CHANGED: 'file:changed', // push (main → renderer)
+
+  // ── Project search (editor search sidebar) ──
+  SEARCH_PROJECT: 'search:project',
 
   // ── Browser cookies ──
   CHROME_COOKIES_IMPORT: 'chrome-cookies:import',

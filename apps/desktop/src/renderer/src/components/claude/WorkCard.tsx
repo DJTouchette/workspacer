@@ -5,6 +5,7 @@ import { DiffView, hasDiff } from './DiffView';
 import { SubagentRow } from './SubagentRow';
 import { WorkflowRunCard } from './WorkflowRunCard';
 import { AgentSpinner } from './WorkflowAgentRow';
+import { requestOpenInEditor } from '../../lib/editorBus';
 
 const EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'NotebookEdit']);
 const CMD_TOOLS = new Set(['Bash', 'PowerShell']);
@@ -15,6 +16,7 @@ interface WorkSummary {
   added: number;
   removed: number;
   failed: number;
+  editedFiles: string[];
 }
 
 /** Collapse a run of tool calls into a one-line human summary. */
@@ -51,7 +53,7 @@ function summarizeWork(calls: ToolCall[]): WorkSummary {
   if (agents > 0) parts.push(`${agents} agent${agents !== 1 ? 's' : ''}`);
   if (other > 0) parts.push(`${other} other`);
 
-  return { text: parts.join(' · '), added, removed, failed };
+  return { text: parts.join(' · '), added, removed, failed, editedFiles: [...editedFiles] };
 }
 
 /**
@@ -71,7 +73,8 @@ export const WorkCard: React.FC<{
   subagentByToolId?: Map<string, SubagentInfo>;
   workflowByToolId?: Map<string, WorkflowRunInfo>;
   live?: boolean;
-}> = ({ toolCalls, subagentByToolId, workflowByToolId, live }) => {
+  cwd?: string;
+}> = ({ toolCalls, subagentByToolId, workflowByToolId, live, cwd }) => {
   // A card that spawned a workflow/subagent run shows that run via its rich
   // card (surfaced even when collapsed); don't auto-expand into the raw tool
   // list, which is the "bunch of tool calls" flood during a workflow.
@@ -80,9 +83,10 @@ export const WorkCard: React.FC<{
     [toolCalls, workflowByToolId, subagentByToolId],
   );
   const [expanded, setExpanded] = useState(!!live && !hasOrchestration);
+  const [filesOpen, setFilesOpen] = useState(false);
   const wasLive = useRef(!!live);
   useEffect(() => {
-    if (wasLive.current && !live) setExpanded(false);
+    if (wasLive.current && !live) { setExpanded(false); setFilesOpen(false); }
     wasLive.current = !!live;
   }, [live]);
 
@@ -139,11 +143,33 @@ export const WorkCard: React.FC<{
         <span style={{ color: colors.text, fontWeight: 600, flexShrink: 0 }}>
           {toolCalls.length} step{toolCalls.length !== 1 ? 's' : ''}
         </span>
-        {summary.text ? (
-          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
-            {summary.text}
+        {summary.editedFiles.length > 0 && (
+          <span
+            onClick={e => { e.stopPropagation(); setFilesOpen(f => !f); }}
+            title={filesOpen ? 'Hide changed files' : 'Show changed files'}
+            style={{
+              color: filesOpen ? colors.accent : colors.muted,
+              cursor: 'pointer',
+              flexShrink: 0,
+              textDecoration: 'none',
+              borderBottom: `1px dotted ${filesOpen ? colors.accent : colors.mutedDim}`,
+            }}
+          >
+            {summary.editedFiles.length} file{summary.editedFiles.length !== 1 ? 's' : ''} changed
           </span>
-        ) : null}
+        )}
+        {/* Rest of summary (commands, reads, searches, etc.) excluding the files-changed part */}
+        {(() => {
+          const rest = summary.text
+            .split(' · ')
+            .filter(p => !/^\d+ files? changed$/.test(p))
+            .join(' · ');
+          return rest ? (
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
+              {rest}
+            </span>
+          ) : null;
+        })()}
         <div style={{ flex: 1 }} />
         {(summary.added > 0 || summary.removed > 0) && (
           <span style={{ fontFamily: 'var(--claude-mono-font, monospace)', fontSize: '0.62rem', flexShrink: 0 }}>
@@ -154,6 +180,60 @@ export const WorkCard: React.FC<{
         )}
         <span style={{ color: colors.mutedDim, fontSize: '0.6rem', flexShrink: 0 }}>{expanded ? '▾' : '▸'}</span>
       </div>
+
+      {filesOpen && !expanded && summary.editedFiles.length > 0 && (
+        <div style={{
+          borderTop: `1px solid ${colors.borderSubtle}`,
+          padding: '4px 10px 6px 10px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 1,
+        }}>
+          {summary.editedFiles.map(filePath => {
+            const basename = filePath.replace(/\\/g, '/').split('/').pop() ?? filePath;
+            const dir = filePath.replace(/\\/g, '/').split('/').slice(0, -1).join('/');
+            return (
+              <button
+                key={filePath}
+                title={filePath}
+                onClick={() => requestOpenInEditor({ path: filePath, cwd })}
+                style={{
+                  display: 'flex',
+                  alignItems: 'baseline',
+                  gap: 6,
+                  background: 'none',
+                  border: 'none',
+                  padding: '2px 4px',
+                  borderRadius: 4,
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  width: '100%',
+                  color: colors.accent,
+                  fontSize: '0.68rem',
+                  fontFamily: 'var(--claude-mono-font, monospace)',
+                  transition: 'background 0.1s',
+                }}
+                onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(255,255,255,0.06)'; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'none'; }}
+              >
+                <span style={{ flexShrink: 0 }}>{basename}</span>
+                {dir && (
+                  <span style={{
+                    color: colors.mutedDim,
+                    fontSize: '0.6rem',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    minWidth: 0,
+                  }}>
+                    {dir}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {visibleWhenCollapsed.length > 0 && (
         <div style={{ padding: '0 10px 6px 10px' }}>

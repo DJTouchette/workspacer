@@ -17,6 +17,8 @@ import { importChromeCookies, importChromeCookiesViaCDP } from './services/chrom
 import { claudeProfiles } from './services/claudeProfiles';
 import { listClaudeSessionsForDir } from './services/claudeSessionList';
 import { readTextFile, writeTextFile, listDir } from './services/fileService';
+import { startWatch, stopWatch, setEmitSink } from './services/fileWatchService';
+import { searchProject } from './services/searchService';
 import { HUB_HTTP_URL, getHubToken, getRemoteShareInfo } from './services/hubDaemon';
 import { publishToHub, isHubConnected, callHub } from './services/hubClient';
 import { IPC } from './shared/ipcChannels';
@@ -35,6 +37,17 @@ function detectDefaultShell(): string {
 export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   claudemonSessionClient.setMainWindow(mainWindow);
   libraryService.setMainWindow(mainWindow);
+
+  // One file watcher serves both transports: push the coalesced change to the
+  // desktop renderer (file:changed) AND mirror it onto the hub bus (fs.changed)
+  // so the web client — which subscribes there via the fs.watch capability —
+  // sees the same event. publishToHub is a no-op when remote sharing is off.
+  setEmitSink(({ path, eventType }) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(IPC.FILE_CHANGED, { path, eventType });
+    }
+    publishToHub({ type: 'fs.changed', data: { path, eventType } });
+  });
 
   // ── Library (reusable prompts + skills) ──
   ipcMain.handle(IPC.LIBRARY_LIST, (_event, cwd?: string) => libraryService.list(cwd));
@@ -294,6 +307,15 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     writeTextFile(filePath, contents),
   );
   ipcMain.handle(IPC.FILE_LIST_DIR, (_event, dirPath: string) => listDir(dirPath));
+
+  // Watch a single file for external changes. Changes are pushed back via the
+  // FILE_CHANGED channel (and the hub bus) by the sink installed above.
+  ipcMain.handle(IPC.FILE_WATCH, (_event, filePath: string) => { startWatch(filePath); });
+  ipcMain.handle(IPC.FILE_UNWATCH, (_event, filePath: string) => { stopWatch(filePath); });
+
+  // Project-wide search (editor search sidebar), backed by ripgrep.
+  ipcMain.handle(IPC.SEARCH_PROJECT, (_event, opts: Parameters<typeof searchProject>[0]) =>
+    searchProject(opts));
 
   // Dialog
   ipcMain.handle(IPC.DIALOG_PICK_FOLDER, async (_event, defaultPath?: string) => {
