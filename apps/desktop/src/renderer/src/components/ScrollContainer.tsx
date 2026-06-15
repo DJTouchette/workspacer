@@ -114,7 +114,7 @@ interface PaneCallbacks {
   onUrlChange?: (paneId: string, url: string) => void;
   onNotesChange?: (paneId: string, notes: string) => void;
   /** Editor-pane engine + terminal command, from config.editor. */
-  editorEngine?: 'codemirror' | 'terminal';
+  editorEngine?: 'monaco' | 'terminal';
   editorTerminalCommand?: string;
   tabs?: TabConfig[];
   onNavigateToTab?: (tabId: string) => void;
@@ -150,7 +150,7 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
       );
     case 'editor':
       // The 'terminal' engine just runs the user's editor in a PTY pane; the
-      // 'codemirror' engine is the in-app editor. Chosen live from config.
+      // 'monaco' engine is the in-app editor. Chosen live from config.
       if (callbacks.editorEngine === 'terminal') {
         const editorCmd = callbacks.editorTerminalCommand || 'nvim';
         const cmd = pane.filePath
@@ -340,7 +340,7 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
     const { config } = useConfig();
     const peek = config.panes?.peek ?? 80;
     const gap = config.panes?.gap ?? 16;
-    const editorEngine = config.editor?.engine ?? 'codemirror';
+    const editorEngine = config.editor?.engine ?? 'monaco';
     const editorTerminalCommand = config.editor?.terminalCommand ?? 'nvim';
     const spatial = viewMode === 'spatial';
     const stacked = viewMode === 'stacked';
