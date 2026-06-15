@@ -353,7 +353,7 @@ function App() {
   // Open an Editor pane. In an agent, it roots a file-tree sidebar at the
   // agent's working dir (the whole project) — open with no file and browse, or
   // pass a filePath to open that file with the tree alongside. Outside an agent
-  // (no cwd) we fall back to the OS file picker. Engine (Monaco vs terminal)
+  // (no cwd) we fall back to the OS file picker. Engine (CodeMirror vs terminal)
   // is decided at render time from config.editor.engine.
   const openFileInEditor = useCallback(async (filePath?: string) => {
     let target = filePath;

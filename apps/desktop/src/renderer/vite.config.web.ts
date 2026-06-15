@@ -19,7 +19,6 @@ export default defineConfig({
         manualChunks: {
           react: ['react', 'react-dom'],
           xterm: ['@xterm/xterm', '@xterm/addon-fit', '@xterm/addon-web-fonts', '@xterm/addon-webgl'],
-          monaco: ['monaco-editor'],
         },
       },
     },

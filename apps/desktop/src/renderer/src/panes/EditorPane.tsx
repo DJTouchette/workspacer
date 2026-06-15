@@ -1,86 +1,79 @@
 /**
- * EditorPane — an in-app code editor (Monaco) for a single file.
+ * EditorPane — an in-app code editor (CodeMirror 6) for a single file.
  *
  * Files are read/written through the app's main-process file backend
  * (window.electronAPI.readFile / writeFile), which works on desktop (IPC) and
- * remote/web (hub fs.read/fs.write capability). The editor is the 'monaco'
+ * remote/web (hub fs.read/fs.write capability). The editor is the 'codemirror'
  * engine; the 'terminal' engine ($EDITOR in a PTY) is handled in ScrollContainer.
  *
- * No-remount: like the terminal/browser panes, the Monaco editor is created
+ * No-remount: like the terminal/browser panes, the CodeMirror view is created
  * once on mount and kept alive across view-mode changes (ScrollContainer holds
- * stable keys). Only geometry/visibility changes around it — `automaticLayout`
- * resizes the editor when its container does, including when a hidden pane is
- * shown again on agent switch.
+ * stable keys). Only geometry/visibility changes around it.
  */
 import React, { useEffect, useRef, useState } from 'react';
-import * as monaco from 'monaco-editor';
-import { initVimMode } from 'monaco-vim';
-import './../lib/monacoSetup'; // side-effect: wire Monaco's web workers for Vite
+import { EditorView, basicSetup } from 'codemirror';
+import { EditorState, Compartment } from '@codemirror/state';
+import { keymap } from '@codemirror/view';
+import { indentWithTab } from '@codemirror/commands';
+import { languages } from '@codemirror/language-data';
+import { syntaxHighlighting, HighlightStyle } from '@codemirror/language';
+import { tags as t } from '@lezer/highlight';
+import { vim } from '@replit/codemirror-vim';
 import { useConfig } from '../hooks/useConfig';
 import { useTheme } from '../hooks/useTheme';
 import { isLightTheme, type Theme } from '../themes';
 
-/** Monaco's `defineTheme` only accepts hex colors (no CSS vars), so the editor
- *  is themed from the active theme's ANSI terminal palette — all hex — which
- *  also keeps the editor's look matched to the integrated terminal across every
- *  app theme rather than a generic dark/light preset. Token rule foregrounds
- *  must be hex WITHOUT the leading '#'. */
-const THEME_NAME = 'wks';
-function defineMonacoTheme(theme: Theme): void {
+/** A syntax palette built from the active theme's ANSI terminal colors, so the
+ *  editor's highlighting matches the integrated terminal and every app theme
+ *  exactly — not a generic dark/light preset. */
+function buildHighlightStyle(theme: Theme): HighlightStyle {
   const c = theme.terminal;
-  const h = (s: string) => s.replace('#', '');
-  monaco.editor.defineTheme(THEME_NAME, {
-    base: isLightTheme(theme) ? 'vs' : 'vs-dark',
-    inherit: true,
-    rules: [
-      { token: '', foreground: h(c.foreground) },
-      { token: 'keyword', foreground: h(c.magenta) },
-      { token: 'keyword.control', foreground: h(c.magenta) },
-      { token: 'string', foreground: h(c.green) },
-      { token: 'string.escape', foreground: h(c.cyan) },
-      { token: 'regexp', foreground: h(c.cyan) },
-      { token: 'number', foreground: h(c.yellow) },
-      { token: 'constant', foreground: h(c.brightYellow) },
-      { token: 'comment', foreground: h(c.brightBlack), fontStyle: 'italic' },
-      { token: 'type', foreground: h(c.cyan) },
-      { token: 'type.identifier', foreground: h(c.cyan) },
-      { token: 'namespace', foreground: h(c.cyan) },
-      { token: 'function', foreground: h(c.blue) },
-      { token: 'identifier', foreground: h(c.foreground) },
-      { token: 'variable', foreground: h(c.foreground) },
-      { token: 'variable.predefined', foreground: h(c.brightYellow) },
-      { token: 'attribute.name', foreground: h(c.brightCyan) },
-      { token: 'attribute.value', foreground: h(c.foreground) },
-      { token: 'tag', foreground: h(c.red) },
-      { token: 'metatag', foreground: h(c.red) },
-      { token: 'annotation', foreground: h(c.brightYellow) },
-      { token: 'delimiter', foreground: h(c.brightBlack) },
-      { token: 'operator', foreground: h(c.brightBlack) },
-    ],
-    colors: {
-      'editor.background': c.background,
-      'editor.foreground': c.foreground,
-      'editorCursor.foreground': c.cursor,
-      'editor.selectionBackground': c.selectionBackground,
-      'editor.lineHighlightBackground': c.black,
-      'editorLineNumber.foreground': c.brightBlack,
-      'editorLineNumber.activeForeground': c.foreground,
-      'editorIndentGuide.background': c.black,
-      'editorWhitespace.foreground': c.brightBlack,
-    },
-  });
+  return HighlightStyle.define([
+    { tag: [t.keyword, t.moduleKeyword, t.controlKeyword, t.operatorKeyword, t.definitionKeyword], color: c.magenta },
+    { tag: [t.string, t.special(t.string), t.docString], color: c.green },
+    { tag: [t.regexp, t.escape, t.character], color: c.cyan },
+    { tag: [t.number, t.bool, t.null, t.atom], color: c.yellow },
+    { tag: [t.comment, t.lineComment, t.blockComment, t.meta], color: c.brightBlack, fontStyle: 'italic' },
+    { tag: [t.function(t.variableName), t.function(t.propertyName), t.labelName], color: c.blue },
+    { tag: [t.typeName, t.className, t.namespace], color: c.cyan },
+    { tag: [t.propertyName, t.attributeName], color: c.brightCyan },
+    { tag: [t.constant(t.variableName), t.standard(t.name)], color: c.brightYellow },
+    { tag: [t.variableName, t.attributeValue], color: c.foreground },
+    { tag: [t.operator, t.punctuation, t.separator, t.bracket, t.derefOperator], color: c.brightBlack },
+    { tag: [t.tagName, t.angleBracket], color: c.red },
+    { tag: [t.heading], color: c.blue, fontWeight: 'bold' },
+    { tag: [t.strong], fontWeight: 'bold' },
+    { tag: [t.emphasis], fontStyle: 'italic' },
+    { tag: [t.link, t.url], color: c.cyan, textDecoration: 'underline' },
+    { tag: [t.invalid], color: c.brightRed },
+  ]);
 }
 
-/** Resolve a Monaco language id from a file path via Monaco's language
- *  registry (extension, then exact filename); falls back to plain text. */
-function languageForFile(path: string): string {
-  const name = basename(path);
-  const ext = '.' + (name.split('.').pop() || '').toLowerCase();
-  for (const l of monaco.languages.getLanguages()) {
-    if (l.extensions?.some((e) => e.toLowerCase() === ext)) return l.id;
-    if (l.filenames?.some((f) => f === name)) return l.id;
-  }
-  return 'plaintext';
+/** Editor chrome (background, text, gutter, selection, cursor) driven by the
+ *  app's --wks-* tokens — so it updates live with the theme — plus the
+ *  theme-matched ANSI syntax palette above. */
+function themeExtensions(theme: Theme) {
+  const chrome = EditorView.theme(
+    {
+      '&': { height: '100%', color: 'var(--wks-text-primary)', backgroundColor: 'var(--wks-bg-base)' },
+      '.cm-content': { caretColor: 'var(--wks-accent)' },
+      '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--wks-accent)' },
+      '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection': {
+        backgroundColor: 'var(--wks-bg-selected)',
+      },
+      '.cm-gutters': { backgroundColor: 'var(--wks-bg-base)', color: 'var(--wks-text-disabled)', border: 'none' },
+      '.cm-activeLine': { backgroundColor: 'var(--wks-bg-hover)' },
+      '.cm-activeLineGutter': { backgroundColor: 'var(--wks-bg-hover)', color: 'var(--wks-text-muted)' },
+      '.cm-foldGutter, .cm-lineNumbers': { color: 'var(--wks-text-disabled)' },
+      '.cm-selectionMatch': { backgroundColor: 'var(--wks-accent-bg)' },
+      '.cm-matchingBracket, &.cm-focused .cm-matchingBracket': { backgroundColor: 'var(--wks-accent-bg)', outline: '1px solid var(--wks-accent)' },
+      '.cm-tooltip': { backgroundColor: 'var(--wks-bg-elevated)', border: '1px solid var(--wks-border-subtle)', color: 'var(--wks-text-primary)' },
+      '.cm-panels': { backgroundColor: 'var(--wks-bg-raised)', color: 'var(--wks-text-primary)' },
+      '.cm-scroller': { overflow: 'auto' },
+    },
+    { dark: !isLightTheme(theme) },
+  );
+  return [chrome, syntaxHighlighting(buildHighlightStyle(theme))];
 }
 
 interface EditorPaneProps {
@@ -97,13 +90,6 @@ interface DirEntry { name: string; path: string; isDir: boolean; }
 
 function basename(p: string): string {
   return p.split(/[\\/]/).pop() || p;
-}
-
-/** Keep Ctrl/Cmd-S from reaching the app's global "save session" binding. */
-function stopSaveBubble(e: KeyboardEvent): void {
-  if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
-    e.stopPropagation();
-  }
 }
 
 /** One directory level in the tree — lazily lists its children when expanded. */
@@ -210,9 +196,9 @@ const EditorPane: React.FC<EditorPaneProps> = ({ filePath, cwd }) => {
   const vimMode = config.keybindings?.mode === 'vim';
 
   const hostRef = useRef<HTMLDivElement>(null);
-  const statusBarRef = useRef<HTMLDivElement>(null);
-  const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
-  const vimRef = useRef<{ dispose(): void } | null>(null);
+  const viewRef = useRef<EditorView | null>(null);
+  const langCompartment = useRef(new Compartment());
+  const themeCompartment = useRef(new Compartment());
   // Latest persisted contents, to compute the dirty flag and to skip no-op saves.
   const savedRef = useRef<string>('');
 
@@ -231,9 +217,9 @@ const EditorPane: React.FC<EditorPaneProps> = ({ filePath, cwd }) => {
 
   const doSave = useRef<() => void>(() => {});
   doSave.current = () => {
-    const editor = editorRef.current;
-    if (!editor || !openFile || saving) return;
-    const contents = editor.getValue();
+    const view = viewRef.current;
+    if (!view || !openFile || saving) return;
+    const contents = view.state.doc.toString();
     if (contents === savedRef.current) return; // nothing changed
     setSaving(true);
     window.electronAPI
@@ -246,7 +232,7 @@ const EditorPane: React.FC<EditorPaneProps> = ({ filePath, cwd }) => {
       .finally(() => setSaving(false));
   };
 
-  // Create the editor once, load the file, set the right language up front.
+  // Create the editor once, load the file, lazily swap in the right language.
   useEffect(() => {
     if (!hostRef.current || !openFile) return;
     let disposed = false;
@@ -259,35 +245,47 @@ const EditorPane: React.FC<EditorPaneProps> = ({ filePath, cwd }) => {
         if (disposed || !hostRef.current) return;
         savedRef.current = res.contents;
 
-        defineMonacoTheme(theme);
-        const editor = monaco.editor.create(hostRef.current, {
-          value: res.contents,
-          language: languageForFile(openFile),
-          theme: THEME_NAME,
-          automaticLayout: true, // resize with the container (incl. show-on-switch)
-          minimap: { enabled: false },
-          scrollBeyondLastLine: false,
-          fontFamily: 'var(--wks-mono, ui-monospace, monospace)',
-          fontSize: 13,
-          tabSize: 2,
-          renderWhitespace: 'selection',
+        const saveKeys = keymap.of([
+          { key: 'Mod-s', preventDefault: true, run: () => { doSave.current(); return true; } },
+          indentWithTab,
+        ]);
+        const extensions = [
+          ...(vimMode ? [vim()] : []), // vim must come first
+          basicSetup,
+          langCompartment.current.of([]),
+          themeCompartment.current.of(themeExtensions(theme)),
+          saveKeys,
+          // Stop Ctrl-S bubbling to the app's global "save session" binding.
+          EditorView.domEventHandlers({
+            keydown: (e) => {
+              if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
+                e.stopPropagation();
+              }
+              return false;
+            },
+          }),
+          EditorView.updateListener.of((u) => {
+            if (u.docChanged) {
+              setDirty(u.state.doc.toString() !== savedRef.current);
+            }
+          }),
+        ];
+
+        viewRef.current = new EditorView({
+          state: EditorState.create({ doc: res.contents, extensions }),
+          parent: hostRef.current,
         });
-        editorRef.current = editor;
-
-        // Ctrl/Cmd-S saves. Monaco consumes the key, but the app's global
-        // "save session" binding listens on document keydown — stop Ctrl-S from
-        // bubbling there too.
-        editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => doSave.current());
-        hostRef.current.addEventListener('keydown', stopSaveBubble, true);
-
-        editor.onDidChangeModelContent(() => {
-          setDirty(editor.getValue() !== savedRef.current);
-        });
-
-        if (vimMode) {
-          vimRef.current = initVimMode(editor, statusBarRef.current);
-        }
         setStatus('ready');
+
+        // Resolve the language for this extension and reconfigure when ready.
+        const desc = languages.find((l) => l.extensions.includes(basename(openFile).split('.').pop() || ''));
+        if (desc) {
+          desc.load().then((support) => {
+            if (!disposed && viewRef.current) {
+              viewRef.current.dispatch({ effects: langCompartment.current.reconfigure(support) });
+            }
+          }).catch(() => { /* unknown language — plain text is fine */ });
+        }
       })
       .catch((err: unknown) => {
         if (disposed) return;
@@ -295,24 +293,21 @@ const EditorPane: React.FC<EditorPaneProps> = ({ filePath, cwd }) => {
         setStatus('error');
       });
 
-    const host = hostRef.current;
     return () => {
       disposed = true;
-      host?.removeEventListener('keydown', stopSaveBubble, true);
-      vimRef.current?.dispose();
-      vimRef.current = null;
-      editorRef.current?.dispose();
-      editorRef.current = null;
+      viewRef.current?.destroy();
+      viewRef.current = null;
     };
     // Re-create only when the open file changes (engine/vim changes remount the pane).
   }, [openFile, vimMode]);
 
-  // Re-theme on app theme change without rebuilding the editor: redefining the
-  // named theme updates its ANSI-matched palette and re-applies it live.
+  // Re-theme on app theme change without rebuilding the editor. The chrome uses
+  // --wks-* vars (updates for free); this swaps in the new theme's ANSI-matched
+  // syntax palette.
   useEffect(() => {
-    if (!editorRef.current) return;
-    defineMonacoTheme(theme);
-    monaco.editor.setTheme(THEME_NAME);
+    viewRef.current?.dispatch({
+      effects: themeCompartment.current.reconfigure(themeExtensions(theme)),
+    });
   }, [theme]);
 
   const name = openFile ? basename(openFile) : 'No file';
@@ -355,24 +350,10 @@ const EditorPane: React.FC<EditorPaneProps> = ({ filePath, cwd }) => {
             Could not open <code>{name}</code>:<br />{error}
           </div>
         )}
-        {/* Monaco host — hidden (not unmounted) on error/no-file so the editor keeps its state. */}
+        {/* CodeMirror host — hidden (not unmounted) on error/no-file so the view keeps its state. */}
         <div
           ref={hostRef}
           style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: openFile && status !== 'error' ? 'block' : 'none' }}
-        />
-        {/* Vim status/command line (`:`, `/`, mode) — only shown in vim mode. */}
-        <div
-          ref={statusBarRef}
-          style={{
-            flex: '0 0 auto',
-            display: vimMode && openFile && status !== 'error' ? 'block' : 'none',
-            padding: '1px 8px',
-            fontFamily: 'var(--wks-mono, ui-monospace, monospace)',
-            fontSize: '0.65rem',
-            color: 'var(--wks-text-secondary)',
-            background: 'var(--wks-bg-raised)',
-            borderTop: '1px solid var(--wks-border-subtle)',
-          }}
         />
       </div>
     </div>
