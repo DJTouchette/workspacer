@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useConfig } from '../hooks/useConfig';
 import { useAttention } from '../contexts/AttentionContext';
 import { Home, Star, Plus } from '../components/icons';
@@ -118,16 +118,32 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
   const { counts } = useAttention();
   const [snaps, setSnaps] = useState<Snap[]>([]);
 
+  const pendingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const refresh = useCallback(() => {
     window.electronAPI.getAllClaudeSessions?.()
       .then((s: any[]) => setSnaps(Array.isArray(s) ? s : []))
       .catch(() => {});
   }, []);
+  // Throttle the per-update refresh to at most once per 1000 ms (trailing) so
+  // streaming agents (~9 updates/s) don't trigger a fetch storm.
+  const throttledRefresh = useCallback(() => {
+    if (pendingRef.current !== null) return;
+    pendingRef.current = setTimeout(() => {
+      pendingRef.current = null;
+      refresh();
+    }, 1000);
+  }, [refresh]);
   useEffect(() => {
     refresh();
-    const off = window.electronAPI.onClaudeSessionUpdate?.(() => refresh());
-    return () => off?.();
-  }, [refresh]);
+    const off = window.electronAPI.onClaudeSessionUpdate?.(() => throttledRefresh());
+    return () => {
+      off?.();
+      if (pendingRef.current !== null) {
+        clearTimeout(pendingRef.current);
+        pendingRef.current = null;
+      }
+    };
+  }, [refresh, throttledRefresh]);
 
   const recent = config.directories?.recent ?? [];
   const favourites = config.directories?.favourites ?? [];

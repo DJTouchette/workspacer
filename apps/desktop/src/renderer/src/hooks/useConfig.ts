@@ -129,7 +129,7 @@ export const DEFAULT_CONFIG: Config = {
     shells: [],
     fontFamily: '"JetBrainsMono Nerd Font Mono", "JetBrainsMono NF", "CaskaydiaMono Nerd Font Mono", "CaskaydiaMono NF", monospace',
     fontSize: 14,
-    scrollback: 5000,
+    scrollback: 1500,
     cursorBlink: true,
     cursorStyle: 'block',
   },
