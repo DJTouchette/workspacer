@@ -113,7 +113,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
     }
   }, []);
 
-  const { sessionId, isReady, write, resize, attachToTerminal, startSession } = useClaudeSpawn({
+  const { sessionId, isReady, spawnError, write, resize, attachToTerminal, startSession, retry } = useClaudeSpawn({
     paneId,
     cwd,
     profileId,
@@ -122,6 +122,20 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
     onExit: handleExit,
     defer: true,
   });
+
+  // After a grace period with no session, surface the hook-config hint in the
+  // connecting empty state (most spawns connect in well under this). Reset the
+  // timer whenever we start fresh (no session, no error).
+  const [showHookHint, setShowHookHint] = useState(false);
+  useEffect(() => {
+    if (sessionId || spawnError) {
+      setShowHookHint(false);
+      return;
+    }
+    setShowHookHint(false);
+    const id = setTimeout(() => setShowHookHint(true), 10000);
+    return () => clearTimeout(id);
+  }, [sessionId, spawnError]);
 
   const { session } = useClaudeSession({ ptySessionId: sessionId, active: isActive });
 
@@ -794,8 +808,8 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
             subagents.filter(s => s.status === 'running').length +
             workflows.flatMap(w => w.agents).filter(a => a.status === 'running').length;
           return liveAgents > 0 ? (
-            <span style={{ fontSize: '0.55rem', color: '#c084fc' }}>
-              {liveAgents} subagent(s)
+            <span style={{ fontSize: '0.55rem', color: 'var(--wks-purple, #c084fc)' }}>
+              {liveAgents} subagent{liveAgents !== 1 ? 's' : ''}
             </span>
           ) : null;
         })()}
@@ -923,13 +937,43 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
                 margin: '0 auto',
               }}>
                 {/* Empty states */}
-                {conversation.length === 0 && !session && (
+                {conversation.length === 0 && !session && spawnError && (
                   <div style={{ textAlign: 'center', marginTop: 60, color: colors.mutedDim }}>
-                    <div style={{ fontSize: '2rem', marginBottom: 12, opacity: 0.4 }}>{'◆'}</div>
-                    <div style={{ fontSize: '0.8rem', color: colors.muted }}>Claude Code session starting...</div>
+                    <div style={{ fontSize: '0.8rem', color: colors.error }}>Couldn’t start Claude</div>
                     <div style={{ fontSize: '0.7rem', marginTop: 6, color: colors.mutedDim }}>
-                      Waiting for hook events. Make sure hooks are configured in ~/.claude/settings.json
+                      {spawnError.message || 'The Claude session failed to start.'}
                     </div>
+                    <button
+                      onClick={retry}
+                      style={{
+                        marginTop: 14,
+                        fontSize: '0.7rem',
+                        fontWeight: 600,
+                        padding: '4px 16px',
+                        borderRadius: 6,
+                        border: `1px solid ${colors.accent}`,
+                        backgroundColor: 'transparent',
+                        color: colors.accent,
+                        cursor: 'pointer',
+                        fontFamily: 'inherit',
+                      }}
+                    >
+                      Retry
+                    </button>
+                  </div>
+                )}
+
+                {conversation.length === 0 && !session && !spawnError && (
+                  <div style={{ textAlign: 'center', marginTop: 60, color: colors.mutedDim }}>
+                    <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
+                      <StreamingDots />
+                    </div>
+                    <div style={{ fontSize: '0.8rem', color: colors.muted }}>Connecting to Claude…</div>
+                    {showHookHint && (
+                      <div style={{ fontSize: '0.7rem', marginTop: 6, color: colors.mutedDim }}>
+                        Still connecting — make sure hooks are configured in ~/.claude/settings.json
+                      </div>
+                    )}
                   </div>
                 )}
 

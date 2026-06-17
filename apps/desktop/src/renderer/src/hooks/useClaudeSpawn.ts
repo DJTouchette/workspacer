@@ -27,6 +27,8 @@ interface UseClaudeSpawnReturn {
   /** claudemon canonical session_id (null until spawn resolves) */
   sessionId: string | null;
   isReady: boolean;
+  /** Set when spawn/attach failed; null while pending or on success. */
+  spawnError: Error | null;
   /** Write raw bytes/string straight to claude's stdin via MessagePort. */
   write: (data: string) => void;
   /** Resize the session's PTY (debounced). */
@@ -34,6 +36,8 @@ interface UseClaudeSpawnReturn {
   attachToTerminal: (term: Terminal) => void;
   /** Manually spawn the claude session at known dimensions (defer mode). */
   startSession: (cols: number, rows: number) => void;
+  /** Re-run the init/start path after a failed spawn (clears spawnError). */
+  retry: () => void;
 }
 
 export function useClaudeSpawn({
@@ -47,6 +51,10 @@ export function useClaudeSpawn({
 }: UseClaudeSpawnOptions): UseClaudeSpawnReturn {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [isReady, setIsReady] = useState(false);
+  const [spawnError, setSpawnError] = useState<Error | null>(null);
+  /** Last dimensions passed to startSession, so retry can re-spawn at the
+   *  same size without the caller re-supplying them. */
+  const lastDimsRef = useRef<{ cols?: number; rows?: number }>({});
   /** True if this pane attached to an existing session (vs spawned its own).
    *  Determines unmount cleanup: attached panes detach, owners close (SIGTERM). */
   const isAttachedRef = useRef(false);
@@ -97,6 +105,8 @@ export function useClaudeSpawn({
   }, []);
 
   const initSession = useCallback(async (cols?: number, rows?: number) => {
+    lastDimsRef.current = { cols, rows };
+    setSpawnError(null);
     try {
       let id: string;
       let viewerKey: string;
@@ -152,11 +162,20 @@ export function useClaudeSpawn({
       setIsReady(true);
     } catch (err) {
       console.error('[useClaudeSpawn] spawn failed:', err);
+      if (mountedRef.current) {
+        setSpawnError(err instanceof Error ? err : new Error(String(err)));
+      }
     }
   }, []);
 
   const startSession = useCallback((cols: number, rows: number) => {
     if (sessionIdRef.current) return;
+    initSession(cols, rows);
+  }, [initSession]);
+
+  const retry = useCallback(() => {
+    if (sessionIdRef.current) return;
+    const { cols, rows } = lastDimsRef.current;
     initSession(cols, rows);
   }, [initSession]);
 
@@ -195,9 +214,11 @@ export function useClaudeSpawn({
   return {
     sessionId,
     isReady,
+    spawnError,
     write,
     resize,
     attachToTerminal,
     startSession,
+    retry,
   };
 }
