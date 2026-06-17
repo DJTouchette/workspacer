@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { Config } from '../../hooks/useConfig';
 import { themes, darkTheme, toHex } from '../../themes';
 import { Section, Row, ModeButton, SearchableSelect } from './primitives';
@@ -16,21 +16,42 @@ function prettyThemeLabel(id: string): string {
 const AppearanceSection: React.FC<AppearanceSectionProps> = ({ config, save }) => {
   const activeTheme = themes[config.ui.theme] ?? darkTheme;
   const borderHex = toHex(config.ui.borderColor || activeTheme.borderActive || activeTheme.accent);
+  const [saved, setSaved] = useState(false);
+  const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const themeOptions = React.useMemo(
     () => Object.entries(themes).map(([id, t]) => ({ value: id, label: prettyThemeLabel(id), swatch: t.accent })),
     [],
   );
 
+  const saveWithFeedback = useCallback(async (partial: Partial<Config>) => {
+    await save(partial);
+    setSaved(true);
+    if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+    savedTimerRef.current = setTimeout(() => setSaved(false), 1500);
+  }, [save]);
+
   return (
     <Section title="Appearance">
+      {/* Saved feedback chip */}
+      {saved && (
+        <div style={{
+          display: 'inline-flex', alignItems: 'center', gap: '4px',
+          fontSize: '0.6rem', color: 'var(--wks-accent)',
+          background: 'var(--wks-bg-selected)', border: '1px solid var(--wks-accent)',
+          borderRadius: '10px', padding: '1px 8px', marginBottom: '6px',
+          animation: 'wks-fade-in 0.15s ease',
+        }}>
+          Saved ✓
+        </div>
+      )}
       <Row label="Theme">
         <SearchableSelect
           value={config.ui.theme}
           options={themeOptions}
           /* Switching theme re-adopts that theme's own corner style and
            * border color (overrides cleared). */
-          onChange={(themeName) => save({ ui: { ...config.ui, theme: themeName, cornerStyle: '', borderColor: '' } })}
+          onChange={(themeName) => saveWithFeedback({ ui: { ...config.ui, theme: themeName, cornerStyle: '', borderColor: '' } })}
         />
       </Row>
       <Row label="Corners">
@@ -38,22 +59,22 @@ const AppearanceSection: React.FC<AppearanceSectionProps> = ({ config, save }) =
           <ModeButton
             label="Theme"
             active={!config.ui.cornerStyle}
-            onClick={() => save({ ui: { ...config.ui, cornerStyle: '' } })}
+            onClick={() => saveWithFeedback({ ui: { ...config.ui, cornerStyle: '' } })}
           />
           <ModeButton
             label="Rounded"
             active={config.ui.cornerStyle === 'rounded'}
-            onClick={() => save({ ui: { ...config.ui, cornerStyle: 'rounded' } })}
+            onClick={() => saveWithFeedback({ ui: { ...config.ui, cornerStyle: 'rounded' } })}
           />
           <ModeButton
             label="Soft"
             active={config.ui.cornerStyle === 'soft'}
-            onClick={() => save({ ui: { ...config.ui, cornerStyle: 'soft' } })}
+            onClick={() => saveWithFeedback({ ui: { ...config.ui, cornerStyle: 'soft' } })}
           />
           <ModeButton
             label="Square"
             active={config.ui.cornerStyle === 'square'}
-            onClick={() => save({ ui: { ...config.ui, cornerStyle: 'square' } })}
+            onClick={() => saveWithFeedback({ ui: { ...config.ui, cornerStyle: 'square' } })}
           />
         </div>
       </Row>
@@ -65,7 +86,7 @@ const AppearanceSection: React.FC<AppearanceSectionProps> = ({ config, save }) =
           <input
             type="color"
             value={borderHex}
-            onChange={(e) => save({ ui: { ...config.ui, borderColor: e.target.value } })}
+            onChange={(e) => saveWithFeedback({ ui: { ...config.ui, borderColor: e.target.value } })}
             title="Focused-pane border color"
             style={{
               width: '28px', height: '24px', padding: 0, cursor: 'pointer',
@@ -77,7 +98,7 @@ const AppearanceSection: React.FC<AppearanceSectionProps> = ({ config, save }) =
             <ModeButton
               label="Theme"
               active={false}
-              onClick={() => save({ ui: { ...config.ui, borderColor: '' } })}
+              onClick={() => saveWithFeedback({ ui: { ...config.ui, borderColor: '' } })}
             />
           )}
         </div>

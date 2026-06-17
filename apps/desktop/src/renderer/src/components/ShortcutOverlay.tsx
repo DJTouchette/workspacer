@@ -44,6 +44,17 @@ const SHORTCUT_DISPLAY: { section: string; items: { action: string; label: strin
     ],
   },
   {
+    section: 'Panels & Overlays',
+    items: [
+      { action: 'toggle-sidebar', label: 'Toggle sidebar' },
+      { action: 'toggle-terminal', label: 'Toggle terminal panel' },
+      { action: 'toggle-inbox', label: 'Toggle triage inbox' },
+      { action: 'toggle-fleet', label: 'Toggle fleet deck' },
+      { action: 'toggle-inspector', label: 'Toggle inspector (Claude pane)' },
+      { action: 'library-picker', label: 'Library picker' },
+    ],
+  },
+  {
     section: 'Tools',
     items: [
       { action: 'command-palette', label: 'Command palette' },

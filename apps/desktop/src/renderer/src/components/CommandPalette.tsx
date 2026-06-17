@@ -152,12 +152,20 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
     return out;
   }, [onSpawnAgent, onOpenAskPane, onToggleSidebar, onToggleInbox, onToggleFleet, onOpenAnalytics, onOpenLayouts, onSwitchSession, onSaveSession, onOpenRemote, onManagePlugins, onInstallPlugin, onOpenSettings, onToggleHelp]);
 
-  // Build unified item list: actions, commands, then apps, plugin panes, library.
+  // "Keyboard Shortcuts" is always pinned at the top (regardless of query) so
+  // help is immediately discoverable. It is sourced from commandActions so it
+  // still respects whether the handler is wired.
+  const pinnedHelpItem: PaletteItem | null = useMemo(() => {
+    if (restrictTo === 'library') return null;
+    return commandActions.find(a => a.id === 'cmd-help') ?? null;
+  }, [commandActions, restrictTo]);
+
+  // Build unified item list: actions, commands (minus the pinned one), then apps, plugin panes, library.
   const items: PaletteItem[] = useMemo(() => {
     if (restrictTo === 'library') return libItems;
     return [
       ...builtInActions,
-      ...commandActions,
+      ...commandActions.filter(a => a.id !== 'cmd-help'),
       ...apps.map((app, i) => ({
         id: `app-${i}`,
         name: app.name,
@@ -427,9 +435,38 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
 
         {/* Results */}
         <div style={{ overflow: 'auto', padding: '0 4px 8px' }}>
+          {/* Pinned shortcut-help entry — always visible at the top (outside the filtered list) */}
+          {pinnedHelpItem && !restrictTo && (
+            <PaletteRow
+              item={pinnedHelpItem}
+              shortcut={shortcutFor(pinnedHelpItem.shortcut, shortcuts)}
+              selected={false}
+              onActivate={() => activateItem(pinnedHelpItem)}
+              onHover={() => {}}
+            />
+          )}
+
           {filtered.length === 0 && (
             <div style={{ padding: '12px', fontSize: '0.7rem', color: 'var(--wks-text-faint)', textAlign: 'center' }}>
-              No results found
+              {query ? (
+                <>
+                  No results for &ldquo;{query}&rdquo;
+                  {onOpenSettings && (
+                    <>
+                      {' · '}
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => { onOpenSettings(); onClose(); }}
+                        onKeyDown={(e) => { if (e.key === 'Enter') { onOpenSettings(); onClose(); } }}
+                        style={{ color: 'var(--wks-accent)', cursor: 'pointer', textDecoration: 'underline' }}
+                      >
+                        Open Settings to add custom apps
+                      </span>
+                    </>
+                  )}
+                </>
+              ) : 'No results found'}
             </div>
           )}
 

@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef } from 'react';
-import { Config } from '../../hooks/useConfig';
+import { Config, DEFAULT_CONFIG } from '../../hooks/useConfig';
 import { Section, Row, ModeButton } from './primitives';
 
 const defaultShortcuts: [string, string][] = [
@@ -52,11 +52,17 @@ const SHORTCUT_LABELS: Record<string, string> = {
   'quick-split': 'Quick Split (clone)',
   'close-pane': 'Close Pane',
   'command-palette': 'Command Palette',
+  'library-picker': 'Library Picker',
   'open-file': 'Open File (editor)',
   'settings': 'Settings',
   'save-session': 'Save Session',
   'rename-tab': 'Rename Tab',
   'toggle-help': 'Toggle Help',
+  'toggle-terminal': 'Toggle Terminal Panel',
+  'toggle-sidebar': 'Toggle Sidebar',
+  'toggle-inbox': 'Toggle Inbox',
+  'toggle-fleet': 'Toggle Fleet Deck',
+  'toggle-inspector': 'Toggle Inspector (Claude pane)',
   'prev-tab': 'Previous Tab',
   'next-tab': 'Next Tab',
   'nav-left': 'Navigate Left',
@@ -66,7 +72,6 @@ const SHORTCUT_LABELS: Record<string, string> = {
   'prev-agent': 'Previous Agent',
   'next-agent': 'Next Agent',
   'spawn-agent': 'Spawn Agent',
-  'toggle-inspector': 'Toggle Inspector (Claude pane)',
 };
 
 const ShortcutEditor: React.FC<{ config: Config; save: (partial: Partial<Config>) => Promise<Config> }> = ({ config, save }) => {
@@ -96,16 +101,7 @@ const ShortcutEditor: React.FC<{ config: Config; save: (partial: Partial<Config>
   }, [config.keybindings, currentShortcuts, save]);
 
   const handleReset = useCallback((action: string) => {
-    const defaults: Record<string, string> = {
-      'new-terminal': 'ctrl+t', 'new-browser': 'ctrl+n', 'new-claude': 'ctrl+j',
-      'split': 'ctrl+d', 'quick-split': 'ctrl+shift+d', 'close-pane': 'ctrl+w',
-      'command-palette': 'ctrl+k', 'open-file': 'ctrl+e', 'settings': 'ctrl+,', 'save-session': 'ctrl+s',
-      'rename-tab': 'f2', 'toggle-help': 'ctrl+?', 'prev-tab': 'ctrl+[',
-      'next-tab': 'ctrl+]', 'nav-left': 'ctrl+h', 'nav-right': 'ctrl+l',
-      'nav-up': 'ctrl+shift+k', 'nav-down': 'ctrl+shift+j',
-      'prev-agent': 'ctrl+alt+arrowup', 'next-agent': 'ctrl+alt+arrowdown',
-      'spawn-agent': 'ctrl+alt+n', 'toggle-inspector': 'ctrl+shift+e',
-    };
+    const defaults = DEFAULT_CONFIG.keybindings.shortcuts ?? {};
     const updated = { ...currentShortcuts, [action]: defaults[action] ?? '' };
     save({ keybindings: { ...config.keybindings, shortcuts: updated } });
   }, [config.keybindings, currentShortcuts, save]);
