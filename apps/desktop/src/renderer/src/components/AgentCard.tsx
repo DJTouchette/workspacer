@@ -4,6 +4,7 @@ import type { ClaudeSessionSnapshot, SessionAmbientState } from '../types/claude
 import { formatToolSummary } from './claude-shared';
 import { QuestionPicker } from './claude/QuestionPicker';
 import { useAttention } from '../contexts/AttentionContext';
+import { usePageVisible } from '../hooks/usePageVisible';
 
 function fmtTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -70,6 +71,7 @@ interface Props {
  */
 export const AgentCard: React.FC<Props> = ({ agent, snapshot }) => {
   const { openAgent, approve, answer, sendMessage, feed } = useAttention();
+  const pageVisible = usePageVisible();
   const state = snapshot?.ambientState;
   const v = stateVisual(agent.sessionId ? state : undefined);
   const usage = snapshot?.usage;
@@ -109,7 +111,7 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot }) => {
         background: 'var(--wks-bg-surface)',
         border: `1.5px solid ${v.color}`,
         boxShadow: v.pulse ? `0 0 0 1px ${v.color}` : '0 4px 16px var(--wks-shadow)',
-        animation: v.pulse ? 'fleetPulse 1.8s ease-in-out infinite' : undefined,
+        animation: v.pulse && pageVisible ? 'fleetPulse 1.8s ease-in-out infinite' : undefined,
         transition: 'transform 0.1s ease, box-shadow 0.12s ease',
       }}
       onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.transform = 'translateY(-2px)'; }}

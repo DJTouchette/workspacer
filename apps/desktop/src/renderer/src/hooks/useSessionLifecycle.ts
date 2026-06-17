@@ -6,6 +6,7 @@
 import { useRef, useCallback, useState, useEffect, type MutableRefObject, type Dispatch, type SetStateAction } from 'react';
 import type { AgentWorkspace } from '../types/pane';
 import { migrateSessionData } from '../App';
+import { usePageVisible } from './usePageVisible';
 
 interface UseSessionLifecycleOptions {
   configLoaded: boolean;
@@ -52,6 +53,7 @@ export function useSessionLifecycle({
   // Claude session id; used to resolve "which pane shows this session".
   const [ptyMapping, setPtyMapping] = useState<Record<string, string>>({});
   const lastSaveHashRef = useRef<string>('');
+  const pageVisible = usePageVisible();
 
   const handlePtyReady = useCallback((paneId: string, ptySessionId: string) => {
     setPtyMapping((prev) => (prev[paneId] === ptySessionId ? prev : { ...prev, [paneId]: ptySessionId }));
@@ -123,10 +125,10 @@ export function useSessionLifecycle({
   }, [agents, activeAgentId, sessionName, sessionPhase, ptyMapping]);
 
   useEffect(() => {
-    if (sessionPhase !== 'active') return;
+    if (sessionPhase !== 'active' || !pageVisible) return;
     const interval = setInterval(saveCurrentSession, 30000);
     return () => clearInterval(interval);
-  }, [sessionPhase, saveCurrentSession]);
+  }, [sessionPhase, pageVisible, saveCurrentSession]);
 
   useEffect(() => {
     const handler = () => saveCurrentSession();

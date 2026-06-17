@@ -1,5 +1,6 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { AnalyticsSummary, AnalyticsBucket, SessionHistoryRecord } from '../types/analytics';
+import { usePageVisible } from '../hooks/usePageVisible';
 
 function basename(p: string): string {
   return p ? (p.replace(/[/\\]+$/, '').split(/[/\\]/).pop() || p) : '(none)';
@@ -95,6 +96,8 @@ const Empty: React.FC = () => (
 const AnalyticsPane: React.FC<{ title?: string }> = () => {
   const [summary, setSummary] = useState<AnalyticsSummary | null>(null);
   const [recent, setRecent] = useState<SessionHistoryRecord[]>([]);
+  const pageVisible = usePageVisible();
+  const wasHiddenRef = useRef(false);
 
   const refresh = useCallback(() => {
     window.electronAPI.analyticsSummary?.().then(setSummary).catch(() => {});
@@ -102,10 +105,24 @@ const AnalyticsPane: React.FC<{ title?: string }> = () => {
   }, []);
 
   useEffect(() => {
-    refresh();
+    if (!pageVisible) {
+      wasHiddenRef.current = true;
+      return;
+    }
+    // Refresh immediately when becoming visible after being hidden.
+    if (wasHiddenRef.current) {
+      wasHiddenRef.current = false;
+      refresh();
+    }
     const t = setInterval(refresh, 15000);
     return () => clearInterval(t);
-  }, [refresh]);
+  }, [pageVisible, refresh]);
+
+  // Initial load on mount.
+  useEffect(() => {
+    refresh();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const t = summary?.totals;
 
