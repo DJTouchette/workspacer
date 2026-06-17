@@ -24,6 +24,9 @@ export const NeedsYouDock: React.FC<{
 
   const accent = hasQuestion ? colors.accent : colors.error;
   const label = hasQuestion ? 'Claude is asking you' : 'Approval needed';
+  // When several questions are queued, show "1 of N" so the dock reads as a
+  // sequence rather than going blank as each is answered/optimistically dismissed.
+  const total = hasQuestion ? questions!.length : 0;
 
   return (
     <div style={{
@@ -54,6 +57,11 @@ export const NeedsYouDock: React.FC<{
             animation: 'claudePulseDot 1.4s ease-in-out infinite',
           }} />
           {label}
+          {total > 1 && (
+            <span style={{ marginLeft: 'auto', color: colors.muted, fontWeight: 600, letterSpacing: 0, textTransform: 'none' }}>
+              1 of {total}
+            </span>
+          )}
         </div>
         {hasQuestion ? (
           <QuestionPicker questions={questions!} onAnswer={onAnswer} />

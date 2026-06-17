@@ -8,10 +8,12 @@ import { useNowTicker } from './useNowTicker';
 export const WorkflowRunCard: React.FC<{ run: WorkflowRunInfo }> = ({ run }) => {
   const running = run.status === 'running';
   const [expanded, setExpanded] = useState(running);
-  // Auto-collapse once when the run finishes; user can re-expand
+  // Auto-collapse once when a run finishes SUCCESSFULLY; user can re-expand. A
+  // failed run stays open so the failure (and which agent failed) is visible.
   const prevStatus = useRef(run.status);
   useEffect(() => {
-    if (prevStatus.current === 'running' && run.status !== 'running') setExpanded(false);
+    if (prevStatus.current === 'running' && run.status === 'completed') setExpanded(false);
+    if (prevStatus.current === 'running' && run.status === 'failed') setExpanded(true);
     prevStatus.current = run.status;
   }, [run.status]);
 

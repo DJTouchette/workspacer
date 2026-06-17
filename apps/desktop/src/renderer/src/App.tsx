@@ -1,4 +1,5 @@
 import { useRef, useCallback, useState, useEffect, useMemo } from 'react';
+import { ChevronRight } from 'lucide-react';
 import './App.css';
 import NavBar from './components/NavBar';
 import SideBar, { SIDEBAR_WIDTH } from './components/SideBar';
@@ -27,6 +28,7 @@ import BottomTerminalPanel from './components/BottomTerminalPanel';
 import InboxDrawer from './components/InboxDrawer';
 import FleetDeck from './components/FleetDeck';
 import { AttentionProvider } from './contexts/AttentionContext';
+import { useAttentionFeed } from './hooks/useAttentionFeed';
 import type { Layout, LayoutAgent } from './types/layout';
 import { useLibrary } from './hooks/useLibrary';
 import { useLayoutSync, type HydrationResult } from './hooks/useLayoutSync';
@@ -497,21 +499,35 @@ function App() {
   const handleNextAgent = useCallback(() => goToAgent(1), [goToAgent]);
   const handleSpawnAgentShortcut = useCallback(() => setShowSpawnDialog(true), []);
 
-  // Jump to the next agent that's blocked on you (approval / input), cycling
-  // from the current one. No-op if nothing needs you.
+  // The single cross-agent attention feed — lifted here so the SAME instance
+  // (its dismiss/snooze state included) drives goToNextAttention below and the
+  // SideBar / Inbox / Fleet via AttentionProvider. This is the spine.
+  const attention = useAttentionFeed(snapshotBySession, agents);
+
+  // Brief "all clear" pulse on the sidebar header when goToNextAttention finds
+  // nothing — the only feedback we have without a toast system.
+  const [noAttentionFlash, setNoAttentionFlash] = useState(false);
+  const noAttentionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Jump to the next item in the SORTED attention feed (priority order), wrapping
+  // around starting just after the active agent so all kinds — question / stuck /
+  // error / done as well as approvals — are reachable. Flashes if nothing needs you.
   const goToNextAttention = useCallback(() => {
-    if (agents.length === 0) return;
-    const needsMe = (a: AgentWorkspace) => {
-      const s = a.sessionId ? statusBySession[a.sessionId] : undefined;
-      return s === 'waiting_approval' || s === 'waiting_input';
-    };
-    const startIdx = agents.findIndex((a) => a.id === activeAgentId);
-    const base = startIdx < 0 ? 0 : startIdx;
-    for (let off = 1; off <= agents.length; off++) {
-      const cand = agents[(base + off) % agents.length];
-      if (needsMe(cand)) { handleSelectAgent(cand.id); return; }
+    const feed = attention.items;
+    if (feed.length === 0) {
+      setNoAttentionFlash(true);
+      if (noAttentionTimer.current) clearTimeout(noAttentionTimer.current);
+      noAttentionTimer.current = setTimeout(() => setNoAttentionFlash(false), 1100);
+      return;
     }
-  }, [agents, activeAgentId, statusBySession, handleSelectAgent]);
+    // Walk the feed in priority order, but rotate so we start AFTER the active
+    // agent's items — pressing the key repeatedly cycles through everything.
+    const firstForActive = feed.findIndex((it) => it.agentId === activeAgentId);
+    const rotateBy = firstForActive < 0 ? 0 : firstForActive + 1;
+    const ordered = [...feed.slice(rotateBy), ...feed.slice(0, rotateBy)];
+    const next = ordered.find((it) => it.agentId !== activeAgentId) ?? feed[0];
+    handleSelectAgent(next.agentId);
+  }, [attention.items, activeAgentId, handleSelectAgent]);
 
   // Tell main which agent session is on screen so notifications can skip the
   // one you're watching.
@@ -827,6 +843,9 @@ function App() {
       viewLevel={viewLevel}
       setViewLevel={setViewLevel}
       onOpenAgent={handleSelectAgent}
+      onRespawnAgent={respawnAgent}
+      onSpawnAgent={() => setShowSpawnDialog(true)}
+      attention={attention}
     >
     <div className="app-root">
       {!sidebarCollapsed && sidebarOverlay && (
@@ -857,6 +876,8 @@ function App() {
           viewLevel={viewLevel}
           onOpenRemote={() => setShowRemote(true)}
           onToggleCollapse={() => setSidebarCollapsed(true)}
+          onToggleHelp={toggleHelp}
+          noAttentionFlash={noAttentionFlash}
         />
         </ErrorBoundary>
       )}
@@ -878,7 +899,7 @@ function App() {
             // @ts-ignore — keep it clickable over the draggable navbar region
             WebkitAppRegion: 'no-drag',
           }}
-        >»</button>
+        ><ChevronRight size={16} strokeWidth={2} /></button>
       )}
 
       <ErrorBoundary label="Tab bar" variant="region">

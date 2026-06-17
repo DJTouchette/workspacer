@@ -1,7 +1,10 @@
 import React, { useState } from 'react';
+import { Plus, ChevronLeft, HelpCircle } from 'lucide-react';
 import { AgentWorkspace } from '../types/pane';
 import type { SessionAmbientState, ClaudeSessionSnapshot } from '../types/claudeSession';
+import type { AttentionItem, AttentionKind } from '../types/attention';
 import { deriveSessionStats } from '../lib/sessionStats';
+import { useAttention } from '../contexts/AttentionContext';
 import HubStatus from './HubStatus';
 import { ContextMenu, ContextMenuItem } from './ContextMenu';
 
@@ -39,6 +42,23 @@ function statusVisual(state: SessionAmbientState | undefined): { color: string; 
   }
 }
 
+/** A top attention item tints the row dot and shows a tiny kind glyph. */
+const KIND_GLYPH: Record<AttentionKind, string> = {
+  approval: '!', question: '?', error: '×', stuck: '◷', bigdiff: '±', done: '✓',
+};
+const KIND_COLOR: Record<AttentionKind, string> = {
+  approval: 'var(--wks-warning, #e0a000)',
+  question: 'var(--wks-accent, #4a9eff)',
+  error: 'var(--wks-danger, #e05555)',
+  stuck: 'var(--wks-warning, #e0a000)',
+  bigdiff: 'var(--wks-warning, #e0a000)',
+  done: 'var(--wks-success, #3fb950)',
+};
+const KIND_VISUAL_LABEL: Record<AttentionKind, string> = {
+  approval: 'Needs approval', question: 'Question', error: 'Error',
+  stuck: 'Stuck', bigdiff: 'Review changes', done: 'Finished',
+};
+
 interface SideBarProps {
   agents: AgentWorkspace[];
   activeAgentId: string;
@@ -66,6 +86,10 @@ interface SideBarProps {
   onOpenRemote?: () => void;
   /** Collapse the sidebar (so panes take the full width). */
   onToggleCollapse?: () => void;
+  /** Toggle the keyboard-shortcuts help overlay (footer "?" button). */
+  onToggleHelp?: () => void;
+  /** Brief flash on the header when "next attention" found nothing to jump to. */
+  noAttentionFlash?: boolean;
 }
 
 const SideBar: React.FC<SideBarProps> = ({
@@ -83,12 +107,15 @@ const SideBar: React.FC<SideBarProps> = ({
   viewLevel,
   onOpenRemote,
   onToggleCollapse,
+  onToggleHelp,
+  noAttentionFlash,
 }) => {
-  // Aggregate live counts for the header summary.
-  const needYouCount = agents.reduce((n, a) => {
-    const s = a.sessionId ? statusBySession[a.sessionId] : undefined;
-    return n + (s === 'waiting_approval' || s === 'waiting_input' ? 1 : 0);
-  }, 0);
+  // Counts come from the single attention feed (the spine), not a parallel
+  // reduction over statusBySession — so the header can never disagree with the
+  // Inbox / Fleet. needsYou counts approval/question/stuck/error items.
+  const { counts, topByAgent } = useAttention();
+  const needYouCount = counts.needsYou;
+  // "working" still reflects live ambient state (not an attention kind).
   const workingCount = agents.reduce((n, a) => {
     const s = a.sessionId ? statusBySession[a.sessionId] : undefined;
     return n + (s === 'thinking' || s === 'streaming' ? 1 : 0);
@@ -140,7 +167,15 @@ const SideBar: React.FC<SideBarProps> = ({
         gap: 6,
       }}>
         <span>Agents</span>
-        {needYouCount > 0 && (
+        {noAttentionFlash && (
+          <span style={{
+            color: 'var(--wks-success, #3fb950)', letterSpacing: 0, textTransform: 'none',
+            fontWeight: 600, transition: 'opacity 0.2s',
+          }}>
+            all clear
+          </span>
+        )}
+        {!noAttentionFlash && needYouCount > 0 && (
           <span
             onClick={onOpenInbox ?? onJumpToAttention}
             title="Open the Triage Inbox"
@@ -155,7 +190,7 @@ const SideBar: React.FC<SideBarProps> = ({
             {needYouCount} need you
           </span>
         )}
-        {needYouCount === 0 && workingCount > 0 && (
+        {!noAttentionFlash && needYouCount === 0 && workingCount > 0 && (
           <span style={{
             color: 'var(--wks-accent, #4a9eff)',
             letterSpacing: 0,
@@ -176,7 +211,7 @@ const SideBar: React.FC<SideBarProps> = ({
               border: 'none', borderRadius: 5, cursor: 'pointer',
               background: 'transparent', color: 'var(--wks-text-faint)', fontSize: '0.9rem', lineHeight: 1,
             }}
-          >«</button>
+          ><ChevronLeft size={15} strokeWidth={2} /></button>
         )}
       </div>
 
@@ -188,12 +223,16 @@ const SideBar: React.FC<SideBarProps> = ({
           style={mcBtnStyle(false)}
         >
           <span>Inbox</span>
-          {needYouCount > 0 && (
+          {counts.total > 0 && (
+            // Amber when something genuinely needs you; muted green when the inbox
+            // only holds finished / review items (nothing blocking).
             <span style={{
               marginLeft: 'auto', minWidth: 16, height: 16, padding: '0 4px', borderRadius: 8,
               display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-              background: 'var(--wks-warning, #e0a000)', color: '#1a1a1a', fontSize: '0.6rem', fontWeight: 700,
-            }}>{needYouCount}</span>
+              background: needYouCount > 0 ? 'var(--wks-warning, #e0a000)' : 'var(--wks-success, #3fb950)',
+              color: '#1a1a1a', fontSize: '0.6rem', fontWeight: 700,
+              opacity: needYouCount > 0 ? 1 : 0.85,
+            }}>{needYouCount > 0 ? needYouCount : counts.total}</span>
           )}
         </button>
         <button
@@ -238,7 +277,13 @@ const SideBar: React.FC<SideBarProps> = ({
             const isGlobal = !!agent.global;
             const isSupervisor = agent.kind === 'supervisor';
             const state = agent.sessionId ? statusBySession[agent.sessionId] : undefined;
-            const { color, label } = statusVisual(state);
+            const base = statusVisual(state);
+            // The agent's most-urgent open attention item (if any) tints the dot
+            // and adds a tiny kind glyph, so the row collapses to ~5 readable states.
+            const top: AttentionItem | undefined = topByAgent.get(agent.id);
+            const color = top ? KIND_COLOR[top.kind] : base.color;
+            const label = top ? KIND_VISUAL_LABEL[top.kind] : base.label;
+            const glyph = top ? KIND_GLYPH[top.kind] : '';
             const isRenaming = renamingId === agent.id;
             const snap = agent.sessionId ? snapshotBySession[agent.sessionId] : undefined;
             const stats = deriveSessionStats(snap);
@@ -283,6 +328,16 @@ const SideBar: React.FC<SideBarProps> = ({
                   <span style={{ width: 8, flexShrink: 0, textAlign: 'center', fontSize: '0.7rem', lineHeight: 1 }}>▦</span>
                 ) : isSupervisor ? (
                   <span style={{ width: 8, flexShrink: 0, textAlign: 'center', fontSize: '0.65rem', lineHeight: 1 }}>🧭</span>
+                ) : glyph ? (
+                  <span
+                    title={label}
+                    style={{
+                      width: 10, height: 10, flexShrink: 0,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      color, fontSize: '0.62rem', fontWeight: 800, lineHeight: 1,
+                      textShadow: `0 0 6px ${color}`,
+                    }}
+                  >{glyph}</span>
                 ) : (
                   <span
                     style={{
@@ -384,9 +439,29 @@ const SideBar: React.FC<SideBarProps> = ({
         }}
         title="Spawn a new agent"
       >
-        <span style={{ width: 8, display: 'inline-flex', justifyContent: 'center', fontSize: '0.95rem' }}>+</span>
+        <span style={{ width: 8, display: 'inline-flex', justifyContent: 'center' }}><Plus size={13} strokeWidth={2.2} /></span>
         <span>Spawn agent</span>
       </button>
+
+      {/* Footer: persistent help affordance so onboarding guidance is always
+          re-enterable (re-uses the existing keyboard-shortcuts overlay). */}
+      {onToggleHelp && (
+        <button
+          onClick={onToggleHelp}
+          title="Keyboard shortcuts & help"
+          style={{
+            width: 'calc(100% - 8px)', margin: '0 4px 6px', padding: '6px 8px',
+            display: 'flex', alignItems: 'center', gap: 8,
+            border: '1px solid var(--wks-glass-border)', borderRadius: 6, cursor: 'pointer',
+            fontSize: '0.72rem', fontFamily: 'inherit', fontWeight: 600,
+            background: 'transparent', color: 'var(--wks-text-muted)',
+            textAlign: 'left', boxSizing: 'border-box',
+          }}
+        >
+          <span style={{ width: 8, display: 'inline-flex', justifyContent: 'center' }}><HelpCircle size={13} strokeWidth={2} /></span>
+          <span>Help &amp; shortcuts</span>
+        </button>
+      )}
 
       {/* Hub bus status — sits in-flow at the bottom of the sidebar */}
       <HubStatus onOpenRemote={onOpenRemote} />

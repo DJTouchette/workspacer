@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import React from 'react';
 import { AttentionProvider } from '../../src/contexts/AttentionContext';
+import { useAttentionFeed } from '../../src/hooks/useAttentionFeed';
 import InboxDrawer from '../../src/components/InboxDrawer';
 import FleetDeck from '../../src/components/FleetDeck';
 import type { AgentWorkspace } from '../../src/types/pane';
@@ -29,9 +30,12 @@ const snapshotBySession: Record<string, any> = {
   },
 };
 
-function renderSurfaces(viewLevel: 'fleet' | 'piloting' = 'fleet') {
-  const onOpenAgent = vi.fn();
-  render(
+// The feed is lifted to App in production, so the test mirrors that: a tiny
+// harness calls the real useAttentionFeed and passes the same instance to the
+// provider, keeping the test exercising real snapshot-derived attention.
+function Harness({ viewLevel, onOpenAgent }: { viewLevel: 'fleet' | 'piloting'; onOpenAgent: (id: string) => void }) {
+  const attention = useAttentionFeed(snapshotBySession, agents);
+  return (
     <AttentionProvider
       agents={agents}
       activeAgentId="a1"
@@ -42,11 +46,17 @@ function renderSurfaces(viewLevel: 'fleet' | 'piloting' = 'fleet') {
       viewLevel={viewLevel}
       setViewLevel={vi.fn()}
       onOpenAgent={onOpenAgent}
+      attention={attention}
     >
       <InboxDrawer />
       <FleetDeck top={40} left={196} />
-    </AttentionProvider>,
+    </AttentionProvider>
   );
+}
+
+function renderSurfaces(viewLevel: 'fleet' | 'piloting' = 'fleet') {
+  const onOpenAgent = vi.fn();
+  render(<Harness viewLevel={viewLevel} onOpenAgent={onOpenAgent} />);
   return { onOpenAgent };
 }
 

@@ -13,6 +13,12 @@ const KIND_VISUAL: Record<AttentionKind, { label: string; color: string }> = {
   done:     { label: 'Finished', color: 'var(--wks-success, #3fb950)' },
 };
 
+/** Last path segment, for the compact cwd footer (full path stays in the title). */
+function basename(p?: string): string {
+  if (!p) return '';
+  return p.replace(/[/\\]+$/, '').split(/[/\\]/).pop() || p;
+}
+
 function relTime(ts: number): string {
   const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
   if (s < 60) return `${s}s`;
@@ -32,8 +38,11 @@ interface Props {
  * can't drift, and resolves via the by-sessionId actions on AttentionContext.
  */
 export const AttentionCard: React.FC<Props> = ({ item, selected }) => {
-  const { approve, answer, openAgent, dismiss, snooze, setSelectedSig } = useAttention();
+  const { approve, answer, openAgent, dismiss, snooze, setSelectedSig, respawn, reviewFile } = useAttention();
   const v = KIND_VISUAL[item.kind];
+  // Finished / big-diff cards close the loop with review + respawn affordances.
+  const canReview = item.kind === 'done' || item.kind === 'bigdiff';
+  const canRespawn = item.kind === 'done';
 
   return (
     <div
@@ -76,10 +85,12 @@ export const AttentionCard: React.FC<Props> = ({ item, selected }) => {
       {/* Footer: triage actions */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px', borderTop: '1px solid var(--wks-glass-border)', background: 'var(--wks-glass-strong)' }}>
         <CardBtn label="Open" hint="o" onClick={() => openAgent(item.agentId)} />
+        {canReview && <CardBtn label="Review" onClick={() => reviewFile(item.cwd)} />}
+        {canRespawn && <CardBtn label="Respawn" onClick={() => { respawn(item.agentId); openAgent(item.agentId); }} />}
         <CardBtn label="Snooze" hint="s" onClick={() => snooze(item.signature, SNOOZE_MINUTES)} />
         <CardBtn label="Dismiss" hint="e" onClick={() => dismiss(item.signature)} />
         <span style={{ marginLeft: 'auto', fontSize: '0.62rem', color: 'var(--wks-text-faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 180 }} title={item.cwd}>
-          {item.cwd}
+          {basename(item.cwd)}
         </span>
       </div>
     </div>

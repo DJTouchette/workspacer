@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from 'react';
+import { CheckCircle2 } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useAttention } from '../contexts/AttentionContext';
 import { AttentionCard } from './attention/AttentionCard';
@@ -126,7 +127,9 @@ const InboxDrawer: React.FC = () => {
         <div ref={listRef} style={{ flex: 1, overflowY: 'auto', padding: '4px 14px 18px' }}>
           {feed.length === 0 ? (
             <div style={{ marginTop: 64, textAlign: 'center', color: 'var(--wks-text-faint)' }}>
-              <div style={{ fontSize: '2rem', marginBottom: 8 }}>✓</div>
+              <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 8, color: 'var(--wks-success, #3fb950)' }}>
+                <CheckCircle2 size={30} strokeWidth={1.75} />
+              </div>
               <div style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--wks-text-secondary)' }}>Inbox zero</div>
               <div style={{ fontSize: '0.72rem', marginTop: 4, lineHeight: 1.5, maxWidth: 240, marginInline: 'auto' }}>
                 No agent needs you right now. Approvals, questions, and finished runs will surface here.

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { X } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useAttention } from '../contexts/AttentionContext';
 import { AgentCard } from './AgentCard';
@@ -33,29 +34,67 @@ interface Props {
  */
 const FleetDeck: React.FC<Props> = ({ top, left }) => {
   ensureFleetKeyframes();
-  const { agents, snapshotBySession, feed, counts, setViewLevel } = useAttention();
+  const {
+    agents, snapshotBySession, counts, setViewLevel, topByAgent,
+    spawnAgent, approve, answer, openAgent,
+  } = useAttention();
 
   const realAgents = useMemo(() => agents.filter((a) => !a.global), [agents]);
 
-  // Agent → most-urgent open-item priority (drives buoyancy above bare state).
-  const topPriorityByAgent = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const it of feed) m.set(it.agentId, Math.max(m.get(it.agentId) ?? 0, it.priority));
-    return m;
-  }, [feed]);
-
+  // Agent → most-urgent open item, shared with the SideBar via the attention
+  // feed (topByAgent) so both surfaces buoy cards by the same rule.
   const sorted = useMemo(() => {
     return [...realAgents].sort((a, b) => {
-      const sa = agentAttentionScore(a.sessionId ? snapshotBySession[a.sessionId]?.ambientState : undefined, topPriorityByAgent.get(a.id) ?? 0);
-      const sb = agentAttentionScore(b.sessionId ? snapshotBySession[b.sessionId]?.ambientState : undefined, topPriorityByAgent.get(b.id) ?? 0);
+      const sa = agentAttentionScore(a.sessionId ? snapshotBySession[a.sessionId]?.ambientState : undefined, topByAgent.get(a.id)?.priority ?? 0);
+      const sb = agentAttentionScore(b.sessionId ? snapshotBySession[b.sessionId]?.ambientState : undefined, topByAgent.get(b.id)?.priority ?? 0);
       return sb - sa;
     });
-  }, [realAgents, snapshotBySession, topPriorityByAgent]);
+  }, [realAgents, snapshotBySession, topByAgent]);
 
   const working = realAgents.filter((a) => {
     const s = a.sessionId ? snapshotBySession[a.sessionId]?.ambientState : undefined;
     return s === 'thinking' || s === 'streaming';
   }).length;
+
+  // j/k card selection (needy-first order == `sorted`), with y/n/1-9 acting on the
+  // selected agent's top attention item — kept entirely within the deck.
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Keep selection valid as the fleet re-sorts / agents come and go.
+  useEffect(() => {
+    if (sorted.length === 0) { if (selectedId !== null) setSelectedId(null); return; }
+    if (!selectedId || !sorted.some((a) => a.id === selectedId)) setSelectedId(sorted[0].id);
+  }, [sorted, selectedId]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      if (sorted.length === 0) return;
+      const stop = () => { e.preventDefault(); e.stopPropagation(); };
+      const idx = selectedId ? sorted.findIndex((a) => a.id === selectedId) : -1;
+
+      if (e.key === 'j' || e.key === 'ArrowDown') { stop(); const n = Math.min(sorted.length - 1, (idx < 0 ? -1 : idx) + 1); setSelectedId(sorted[n].id); return; }
+      if (e.key === 'k' || e.key === 'ArrowUp') { stop(); const n = Math.max(0, (idx < 0 ? 0 : idx) - 1); setSelectedId(sorted[n].id); return; }
+
+      if (idx < 0) return;
+      const top = topByAgent.get(sorted[idx].id);
+      if (!top) {
+        if (e.key === 'Enter') { stop(); openAgent(sorted[idx].id); }
+        return;
+      }
+      if (e.key === 'Enter') { stop(); openAgent(top.agentId); return; }
+      if (top.payload.type === 'approval') {
+        if (e.key === 'y') { stop(); approve(top, 'yes'); return; }
+        if (e.key === 'n') { stop(); approve(top, 'no'); return; }
+      }
+      if (top.payload.type === 'question') {
+        const n = parseInt(e.key, 10);
+        if (n >= 1 && n <= 9 && n <= (top.payload.questions[0]?.options.length ?? 0)) { stop(); answer(top, { option: n }); return; }
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [sorted, selectedId, topByAgent, approve, answer, openAgent]);
 
   // Windowed grid: track the content width so we can pack cards into rows, then
   // virtualize the rows — only on-screen cards (plus overscan) are in the DOM,
@@ -90,11 +129,19 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
           {working > 0 && <Stat label="working" value={working} color="var(--wks-accent, #4a9eff)" />}
         </div>
         <div style={{ flex: 1 }} />
+        <span style={{ fontSize: '0.62rem', color: 'var(--wks-text-faint)', display: 'inline-flex', gap: 6 }}>
+          <span><kbd style={kbdStyle}>j</kbd>/<kbd style={kbdStyle}>k</kbd> move</span>
+          <span><kbd style={kbdStyle}>y</kbd>/<kbd style={kbdStyle}>n</kbd> approve</span>
+          <span><kbd style={kbdStyle}>1-9</kbd> answer</span>
+        </span>
         <button onClick={() => setViewLevel('piloting')} title="Back to agent (Esc)" style={{
+          display: 'inline-flex', alignItems: 'center', gap: 6,
           fontSize: '0.72rem', fontFamily: 'inherit', fontWeight: 600, cursor: 'pointer',
           border: '1px solid var(--wks-glass-border)', borderRadius: 6, padding: '5px 12px',
           background: 'var(--wks-bg-surface)', color: 'var(--wks-text-secondary)',
-        }}>Exit fleet ⏎</button>
+        }}>
+          <X size={13} strokeWidth={2} /> Exit fleet <kbd style={kbdStyle}>Esc</kbd>
+        </button>
       </div>
 
       {/* Card grid (windowed by row) */}
@@ -103,6 +150,16 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
           <div style={{ marginTop: 80, textAlign: 'center', color: 'var(--wks-text-faint)' }}>
             <div style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--wks-text-secondary)' }}>No agents in the fleet</div>
             <div style={{ fontSize: '0.78rem', marginTop: 6 }}>Spawn an agent and it'll appear here as a live card.</div>
+            <button
+              onClick={spawnAgent}
+              style={{
+                marginTop: 16, fontSize: '0.8rem', fontFamily: 'inherit', fontWeight: 700, cursor: 'pointer',
+                background: 'var(--wks-accent)', color: 'var(--wks-text-on-accent, #fff)',
+                border: 'none', borderRadius: 6, padding: '8px 16px',
+              }}
+            >
+              + Spawn agent
+            </button>
           </div>
         ) : (
           <div style={{ position: 'relative', width: '100%', height: rowVirtualizer.getTotalSize() }}>
@@ -122,7 +179,18 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
                   }}
                 >
                   {rowAgents.map((agent) => (
-                    <AgentCard key={agent.id} agent={agent} snapshot={agent.sessionId ? snapshotBySession[agent.sessionId] : undefined} />
+                    <div
+                      key={agent.id}
+                      onMouseDown={() => setSelectedId(agent.id)}
+                      style={{
+                        borderRadius: 'var(--wks-radius-lg, 12px)',
+                        outline: selectedId === agent.id ? '2px solid var(--wks-accent, #4a9eff)' : '2px solid transparent',
+                        outlineOffset: 2,
+                        transition: 'outline-color 0.12s',
+                      }}
+                    >
+                      <AgentCard agent={agent} snapshot={agent.sessionId ? snapshotBySession[agent.sessionId] : undefined} />
+                    </div>
                   ))}
                 </div>
               );
@@ -132,6 +200,11 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
       </div>
     </div>
   );
+};
+
+const kbdStyle: React.CSSProperties = {
+  fontSize: '0.58rem', color: 'var(--wks-text-secondary)', border: '1px solid var(--wks-glass-border)',
+  borderRadius: 3, padding: '0 3px', fontFamily: 'monospace',
 };
 
 const Stat: React.FC<{ label: string; value: number; color?: string }> = ({ label, value, color }) => (

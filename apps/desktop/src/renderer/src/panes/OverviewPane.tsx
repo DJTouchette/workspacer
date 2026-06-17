@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useConfig } from '../hooks/useConfig';
+import { useAttention } from '../contexts/AttentionContext';
 import { Home, Star, Plus } from '../components/icons';
 
 interface Snap {
@@ -112,6 +113,9 @@ const DirRow: React.FC<{ dir: string; fav: boolean; onSpawn: () => void; onToggl
 
 const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[] }> = ({ agents: workspaceAgents = [] }) => {
   const { config, save } = useConfig();
+  // "Need you" comes from the single attention feed (the spine), not a parallel
+  // ambient-state count, so this stat matches the SideBar / Inbox / Fleet exactly.
+  const { counts } = useAttention();
   const [snaps, setSnaps] = useState<Snap[]>([]);
 
   const refresh = useCallback(() => {
@@ -138,7 +142,7 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
 
   const agents = workspaceAgents.length;
   const working = own.filter((s) => s.ambientState === 'thinking' || s.ambientState === 'streaming').length;
-  const needsYou = own.filter((s) => s.ambientState === 'waiting_approval' || s.ambientState === 'waiting_input').length;
+  const needsYou = counts.needsYou;
   const totalCost = own.reduce((n, s) => n + (s.usage?.costUSD ?? 0), 0);
 
   const spawnIn = (cwd: string) => {

@@ -30,9 +30,40 @@ function lastAssistant(snap: ClaudeSessionSnapshot): string {
   return '';
 }
 
+/** Newlines in a string field, used to estimate a diff's line count. */
+function lineCount(s: unknown): number {
+  if (typeof s !== 'string' || !s) return 0;
+  return s.split('\n').length;
+}
+
+/** Rough added+removed line estimate across an agent's file changes. */
+function diffSize(snap: ClaudeSessionSnapshot): { lines: number; files: number } {
+  const changes = snap.fileChanges ?? [];
+  const files = new Set<string>();
+  let lines = 0;
+  for (const ch of changes) {
+    files.add(ch.path);
+    const inp = ch.input ?? {};
+    // Edit: new_string + old_string; Write: content. Multi-edit: edits[].
+    lines += lineCount(inp.new_string) + lineCount(inp.old_string) + lineCount(inp.content);
+    if (Array.isArray(inp.edits)) {
+      for (const e of inp.edits) lines += lineCount(e?.new_string) + lineCount(e?.old_string);
+    }
+  }
+  return { lines, files: files.size };
+}
+
+/** Idle/threshold knobs for the heuristic kinds — kept conservative to avoid noise. */
+const BIGDIFF_LINES = 80;          // added+removed lines before a review nudge
+const STUCK_MS = 5 * 60_000;       // an unanswered question idle this long is "stuck"
+const ERROR_RECENT_MS = 5 * 60_000; // only surface a trailing tool error this fresh
+
 export interface AttentionFeed {
   items: AttentionItem[];
   counts: { total: number; needsYou: number; byKind: Record<AttentionKind, number> };
+  /** agentId → that agent's single most-urgent open item (priority order). Shared
+   *  by the Fleet Deck (card buoyancy) and the SideBar (per-row dot + glyph). */
+  topByAgent: Map<string, AttentionItem>;
   dismiss: (signature: string) => void;
   snooze: (signature: string, minutes: number) => void;
 }
@@ -122,9 +153,12 @@ export function useAttentionFeed(
         });
       }
 
+      const idle = snap.ambientState === 'idle' || snap.ambientState === 'waiting_input';
+      const blocked = !!snap.pendingApproval || !!(snap.pendingQuestions?.length);
+
       if (enabled('done')) {
         const doneAt = doneAtRef.current.get(sid);
-        if (doneAt && !snap.pendingApproval && !(snap.pendingQuestions?.length)) {
+        if (doneAt && !blocked) {
           const sig = `${sid}:done:${doneAt}`;
           out.push({
             ...base, id: sig, signature: sig, kind: 'done', priority: KIND_PRIORITY.done,
@@ -132,6 +166,55 @@ export function useAttentionFeed(
             title: 'Finished', detail: lastAssistant(snap) || 'Agent is idle and ready for review',
             payload: { type: 'summary', summary: lastAssistant(snap) },
           });
+        }
+      }
+
+      // bigdiff — an idle agent left a large unreviewed change behind.
+      if (enabled('bigdiff') && idle && !blocked) {
+        const { lines, files } = diffSize(snap);
+        if (lines > BIGDIFF_LINES) {
+          const sig = `${sid}:bigdiff:${files}:${Math.round(lines / 20)}`;
+          out.push({
+            ...base, id: sig, signature: sig, kind: 'bigdiff', priority: KIND_PRIORITY.bigdiff,
+            createdAt: doneAtRef.current.get(sid) ?? snap.lastActivity ?? Date.now(), status: 'open',
+            title: 'Large change to review',
+            detail: `${files} file${files === 1 ? '' : 's'}, ±${lines} lines`,
+            payload: { type: 'summary', summary: `${files} files, ±${lines} lines` },
+          });
+        }
+      }
+
+      // stuck — a question that's been sitting unanswered for a while.
+      if (enabled('stuck') && snap.pendingQuestions?.length) {
+        const since = snap.lastActivity ?? 0;
+        if (since && now - since > STUCK_MS) {
+          const sig = `${sid}:stuck:${hash(snap.pendingQuestions.map((q) => q.question).join('|'))}`;
+          out.push({
+            ...base, id: sig, signature: sig, kind: 'stuck', priority: KIND_PRIORITY.stuck,
+            createdAt: since, status: 'open',
+            title: 'Waiting on you',
+            detail: snap.pendingQuestions[0]?.question || 'An unanswered question is holding this agent.',
+            payload: { type: 'summary', summary: 'Agent has been waiting for a while' },
+          });
+        }
+      }
+
+      // error — the agent's most recent tool call failed.
+      if (enabled('error') && idle && !blocked) {
+        const calls = snap.completedToolCalls ?? [];
+        const last = calls[calls.length - 1];
+        if (last && last.status === 'failed') {
+          const at = last.completedAt ?? last.startedAt ?? snap.lastActivity ?? Date.now();
+          if (Date.now() - at < ERROR_RECENT_MS) {
+            const sig = `${sid}:error:${last.id}`;
+            out.push({
+              ...base, id: sig, signature: sig, kind: 'error', priority: KIND_PRIORITY.error,
+              createdAt: at, status: 'open',
+              title: `${last.name} failed`,
+              detail: typeof last.response === 'string' ? last.response.split('\n')[0].slice(0, 120) : 'Last tool call errored.',
+              payload: { type: 'summary', summary: `${last.name} failed` },
+            });
+          }
         }
       }
     }
@@ -150,6 +233,13 @@ export function useAttentionFeed(
     return { total: items.length, needsYou, byKind };
   }, [items]);
 
+  // items is already sorted most-urgent-first, so the first hit per agent wins.
+  const topByAgent = useMemo(() => {
+    const m = new Map<string, AttentionItem>();
+    for (const it of items) if (!m.has(it.agentId)) m.set(it.agentId, it);
+    return m;
+  }, [items]);
+
   const dismiss = useCallback((signature: string) => {
     setDismissed((prev) => { const n = new Set(prev); n.add(signature); return n; });
   }, []);
@@ -157,5 +247,5 @@ export function useAttentionFeed(
     setSnoozedUntil((prev) => { const n = new Map(prev); n.set(signature, Date.now() + minutes * 60_000); return n; });
   }, []);
 
-  return { items, counts, dismiss, snooze };
+  return { items, counts, topByAgent, dismiss, snooze };
 }

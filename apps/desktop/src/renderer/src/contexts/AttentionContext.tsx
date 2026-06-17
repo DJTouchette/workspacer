@@ -1,9 +1,10 @@
-import React, { createContext, useContext, useCallback, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useContext, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AgentWorkspace, ViewLevel } from '../types/pane';
 import type { AttentionItem, AttentionKind } from '../types/attention';
 import type { ClaudeSessionSnapshot } from '../types/claudeSession';
-import { useAttentionFeed } from '../hooks/useAttentionFeed';
+import type { AttentionFeed } from '../hooks/useAttentionFeed';
 import { resolveApproval, resolveAnswer, resolveReply } from '../lib/resolveAttention';
+import { requestReviewFile } from '../lib/reviewBus';
 
 interface AttentionContextValue {
   agents: AgentWorkspace[];
@@ -11,6 +12,8 @@ interface AttentionContextValue {
   snapshotBySession: Record<string, ClaudeSessionSnapshot>;
   feed: AttentionItem[];
   counts: { total: number; needsYou: number; byKind: Record<AttentionKind, number> };
+  /** agentId → that agent's most-urgent open item; shared by SideBar + FleetDeck. */
+  topByAgent: Map<string, AttentionItem>;
 
   // Inbox drawer
   inboxOpen: boolean;
@@ -35,6 +38,12 @@ interface AttentionContextValue {
   snooze: (sig: string, minutes: number) => void;
   /** Focus an agent's full workspace (closes the inbox, drops to piloting). */
   openAgent: (agentId: string) => void;
+  /** Re-spawn a stopped agent (wires App's respawnAgent). */
+  respawn: (agentId: string) => void;
+  /** Reveal a changed file in the Review pane (wires reviewBus.requestReviewFile). */
+  reviewFile: (cwd: string | undefined, path?: string) => void;
+  /** Open the spawn-agent flow (wires App's spawn dialog). */
+  spawnAgent: () => void;
 }
 
 const AttentionContext = createContext<AttentionContextValue | null>(null);
@@ -58,24 +67,36 @@ interface ProviderProps {
   viewLevel: ViewLevel;
   setViewLevel: (v: ViewLevel) => void;
   onOpenAgent: (agentId: string) => void;
-  enabledKinds?: Partial<Record<AttentionKind, boolean>>;
+  /** Re-spawn a stopped agent (App's respawnAgent). */
+  onRespawnAgent?: (agentId: string) => void;
+  /** Open the spawn-agent flow (App's spawn dialog). */
+  onSpawnAgent?: () => void;
+  /** The single shared attention feed, lifted to App so the same instance
+   *  drives goToNextAttention, the SideBar header, the Inbox and the Fleet. */
+  attention: AttentionFeed;
   children: React.ReactNode;
 }
 
 export const AttentionProvider: React.FC<ProviderProps> = ({
   agents, activeAgentId, snapshotBySession, inboxOpen, openInbox, closeInbox,
-  viewLevel, setViewLevel, onOpenAgent, enabledKinds, children,
+  viewLevel, setViewLevel, onOpenAgent, onRespawnAgent, onSpawnAgent, attention, children,
 }) => {
-  const { items: feed, counts, dismiss, snooze } = useAttentionFeed(snapshotBySession, agents, { enabledKinds });
+  const { items: feed, counts, topByAgent, dismiss, snooze } = attention;
   const [selectedSig, setSelectedSig] = useState<string | null>(null);
+  // Remember the selected card's index so that when it resolves out from under
+  // us we can advance to the NEXT item (same slot) rather than snapping to top.
+  const prevIndexRef = useRef(0);
 
-  // Keep a valid selection as the feed shifts: default to the top card, and if
-  // the selected card resolves out from under us, fall back to the new top.
+  // Keep a valid selection as the feed shifts. If the selected card is still
+  // present, just track its index; if it resolved away, advance to the item now
+  // occupying its old slot (clamped) so triage flows downward like email.
   useEffect(() => {
-    if (feed.length === 0) { if (selectedSig !== null) setSelectedSig(null); return; }
-    if (!selectedSig || !feed.some((it) => it.signature === selectedSig)) {
-      setSelectedSig(feed[0].signature);
-    }
+    if (feed.length === 0) { if (selectedSig !== null) setSelectedSig(null); prevIndexRef.current = 0; return; }
+    const idx = selectedSig ? feed.findIndex((it) => it.signature === selectedSig) : -1;
+    if (idx >= 0) { prevIndexRef.current = idx; return; }
+    const next = Math.min(prevIndexRef.current, feed.length - 1);
+    prevIndexRef.current = next;
+    setSelectedSig(feed[next].signature);
   }, [feed, selectedSig]);
 
   const selectedItem = useMemo(
@@ -118,12 +139,26 @@ export const AttentionProvider: React.FC<ProviderProps> = ({
     closeInbox();
   }, [onOpenAgent, setViewLevel, closeInbox]);
 
+  const respawn = useCallback((agentId: string) => {
+    onRespawnAgent?.(agentId);
+  }, [onRespawnAgent]);
+
+  const reviewFile = useCallback((cwd: string | undefined, path?: string) => {
+    // No specific file → point the Review pane at the repo (cwd) so it loads the
+    // working-tree diff; ReviewPane selects the file when a concrete path is given.
+    requestReviewFile({ cwd, path: path ?? cwd ?? '' });
+  }, []);
+
+  const spawnAgent = useCallback(() => {
+    onSpawnAgent?.();
+  }, [onSpawnAgent]);
+
   const value: AttentionContextValue = {
-    agents, activeAgentId, snapshotBySession, feed, counts,
+    agents, activeAgentId, snapshotBySession, feed, counts, topByAgent,
     inboxOpen, openInbox, closeInbox,
     selectedSig, setSelectedSig, moveSelection, selectedItem,
     viewLevel, setViewLevel,
-    approve, answer, reply, sendMessage, dismiss, snooze, openAgent,
+    approve, answer, reply, sendMessage, dismiss, snooze, openAgent, respawn, reviewFile, spawnAgent,
   };
 
   return <AttentionContext.Provider value={value}>{children}</AttentionContext.Provider>;
