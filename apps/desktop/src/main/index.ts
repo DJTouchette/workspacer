@@ -61,8 +61,10 @@ function saveFontCache(entries: FontCacheEntry[]): void {
   } catch {}
 }
 
-/** Discover Nerd Font files (with disk cache) and inject @font-face CSS */
-function injectNerdFonts(win: BrowserWindow): void {
+/** Discover Nerd Font files (with disk cache) and inject @font-face CSS.
+ *  Runs fully async so font-dir scanning (incl. /usr/share/fonts) never
+ *  blocks the main thread on first launch. */
+async function injectNerdFonts(win: BrowserWindow): Promise<void> {
   let entries: FontCacheEntry[];
   const cached = loadFontCache();
 
@@ -73,12 +75,13 @@ function injectNerdFonts(win: BrowserWindow): void {
     entries = [];
     for (const dir of discoverFontDirs()) {
       try {
-        if (!fs.existsSync(dir)) continue;
-        for (const file of fs.readdirSync(dir)) {
+        await fs.promises.access(dir).catch(() => { throw new Error('skip'); });
+        const files = await fs.promises.readdir(dir);
+        for (const file of files) {
           if (!/NerdFont.*-Regular\.(ttf|otf)$/i.test(file)) continue;
           const fullPath = path.join(dir, file);
           try {
-            const stat = fs.statSync(fullPath);
+            const stat = await fs.promises.stat(fullPath);
             entries.push({ file, fullPath, mtime: stat.mtimeMs });
           } catch {}
         }
@@ -106,7 +109,7 @@ function injectNerdFonts(win: BrowserWindow): void {
     }
   }
 
-  if (css) {
+  if (css && !win.isDestroyed()) {
     win.webContents.insertCSS(css).then(() => {
       console.log(`[Fonts] injected ${css.split('@font-face').length - 1} @font-face rules`);
     });
@@ -124,8 +127,11 @@ protocol.registerSchemesAsPrivileged([
 
 // Cap renderer heap to avoid runaway memory (512 MB per renderer)
 app.commandLine.appendSwitch('js-flags', '--max-old-space-size=512');
-// Keep timers running when window is backgrounded (terminals/streaming need this)
-app.commandLine.appendSwitch('disable-background-timer-throttling');
+// Background timer throttling is intentionally left ENABLED (the default).
+// Main-process daemons and SSE bridges are unaffected (they run in the Node.js
+// event loop, not in Chromium renderer timers). The renderer self-throttles via
+// usePageVisible; disabling Chromium's throttling kept hidden windows fully awake
+// and wasted CPU on an otherwise mostly-idle app.
 // Disable renderer code integrity checks for faster startup on Windows
 if (process.platform === 'win32') {
   app.commandLine.appendSwitch('disable-features', 'RendererCodeIntegrity');
@@ -249,10 +255,13 @@ function createWindow(): void {
     }
   });
 
-  // Inject Nerd Font @font-face rules once the page DOM is ready
+  // Inject Nerd Font @font-face rules once the page DOM is ready.
+  // Invoked non-blocking — async font-dir scanning must not stall the main thread.
   mainWindow.webContents.on('dom-ready', () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
-      injectNerdFonts(mainWindow);
+      injectNerdFonts(mainWindow).catch((err) =>
+        console.error('[Fonts] discovery failed:', err)
+      );
     }
   });
 

@@ -18,7 +18,9 @@ export default defineConfig({
       output: {
         manualChunks: {
           react: ['react', 'react-dom'],
-          xterm: ['@xterm/xterm', '@xterm/addon-fit', '@xterm/addon-web-fonts', '@xterm/addon-webgl'],
+          xterm: ['@xterm/xterm', '@xterm/addon-fit', '@xterm/addon-web-fonts'],
+          codemirror: ['@codemirror/commands', '@codemirror/language', '@codemirror/language-data', '@codemirror/state', '@codemirror/theme-one-dark', '@codemirror/view', '@lezer/highlight', '@replit/codemirror-vim', 'codemirror'],
+          shiki: ['@shikijs/core', '@shikijs/engine-javascript'],
         },
       },
     },

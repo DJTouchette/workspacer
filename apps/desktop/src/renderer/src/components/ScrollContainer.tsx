@@ -2,12 +2,12 @@ import React, { useRef, useState, useCallback, useEffect, useImperativeHandle, f
 import Pane from './Pane';
 import ErrorBoundary from './ErrorBoundary';
 import { PaneConfig, PaneType, TabConfig, CanvasRect, ViewMode, AgentWorkspace } from '../types/pane';
-import TerminalPane from '../panes/TerminalPane';
-import ClaudePane from '../panes/ClaudePane';
 import { useConfig } from '../hooks/useConfig';
 import { tilingColumns } from '../lib/layoutUtils';
 
 // Lazy-load pane types that aren't needed on initial render
+const TerminalPane = React.lazy(() => import('../panes/TerminalPane'));
+const ClaudePane = React.lazy(() => import('../panes/ClaudePane'));
 const BrowserPane = React.lazy(() => import('../panes/BrowserPane'));
 const NotesPane = React.lazy(() => import('../panes/NotesPane'));
 const EditorPane = React.lazy(() => import('../panes/EditorPane'));
@@ -133,9 +133,17 @@ interface PaneCallbacks {
 function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneCallbacks) {
   switch (pane.type) {
     case 'terminal':
-      return <TerminalPane paneId={pane.id} title={pane.title} isActive={isActive} shell={pane.shell} cwd={pane.cwd} initialCommand={pane.initialCommand} onPtyReady={callbacks.onPtyReady} />;
+      return (
+        <Suspense fallback={<PaneFallback />}>
+          <TerminalPane paneId={pane.id} title={pane.title} isActive={isActive} shell={pane.shell} cwd={pane.cwd} initialCommand={pane.initialCommand} onPtyReady={callbacks.onPtyReady} />
+        </Suspense>
+      );
     case 'claude':
-      return <ClaudePane paneId={pane.id} title={pane.title} isActive={isActive} cwd={pane.cwd} profileId={pane.profileId} resumeSessionId={pane.resumeSessionId} attachSessionId={pane.attachSessionId} initialPrompt={pane.initialPrompt} onPtyReady={callbacks.onPtyReady} />;
+      return (
+        <Suspense fallback={<PaneFallback />}>
+          <ClaudePane paneId={pane.id} title={pane.title} isActive={isActive} cwd={pane.cwd} profileId={pane.profileId} resumeSessionId={pane.resumeSessionId} attachSessionId={pane.attachSessionId} initialPrompt={pane.initialPrompt} onPtyReady={callbacks.onPtyReady} />
+        </Suspense>
+      );
     case 'browser':
       return (
         <Suspense fallback={<PaneFallback />}>
@@ -156,7 +164,11 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
         const cmd = pane.filePath
           ? `${editorCmd} ${shellQuote(pane.filePath)}`
           : pane.cwd ? `${editorCmd} .` : undefined;
-        return <TerminalPane paneId={pane.id} title={pane.title} isActive={isActive} cwd={pane.cwd} initialCommand={cmd} onPtyReady={callbacks.onPtyReady} />;
+        return (
+          <Suspense fallback={<PaneFallback />}>
+            <TerminalPane paneId={pane.id} title={pane.title} isActive={isActive} cwd={pane.cwd} initialCommand={cmd} onPtyReady={callbacks.onPtyReady} />
+          </Suspense>
+        );
       }
       return (
         <Suspense fallback={<PaneFallback />}>

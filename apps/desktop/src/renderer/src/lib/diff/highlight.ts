@@ -178,6 +178,12 @@ function getHighlighter(): Promise<HighlighterCore> {
       langs: [],
       engine: createJavaScriptRegexEngine({ forgiving: true }),
     });
+    // Kick off the cpp grammar (637 kB) during an idle frame so the parse cost
+    // doesn't block the first C++ diff render.
+    highlighterPromise.then(() => {
+      const ric = typeof requestIdleCallback !== 'undefined' ? requestIdleCallback : (cb: () => void) => setTimeout(cb, 200);
+      ric(() => { ensureLang('cpp').catch(() => {}); });
+    });
   }
   return highlighterPromise;
 }

@@ -1,6 +1,9 @@
-import React, { useState, useEffect } from 'react';
-import TerminalPane from '../panes/TerminalPane';
+import React, { useState, useEffect, Suspense, lazy } from 'react';
 import { SIDEBAR_WIDTH } from './SideBar';
+
+// Lazy so the heavy xterm chunk only loads when the bottom terminal is first
+// opened — not at app startup. (ScrollContainer lazy-loads TerminalPane too.)
+const TerminalPane = lazy(() => import('../panes/TerminalPane'));
 
 interface Props {
   visible: boolean;
@@ -49,12 +52,14 @@ const BottomTerminalPanel: React.FC<Props> = ({ visible, onClose, cwd, left = SI
       {/* No header/title bar — toggle with Ctrl+`. */}
       <div style={{ flex: 1, minHeight: 0 }}>
         {mounted && (
-          <TerminalPane
-            paneId="__bottom_terminal__"
-            title="Terminal"
-            isActive={visible}
-            cwd={cwd}
-          />
+          <Suspense fallback={null}>
+            <TerminalPane
+              paneId="__bottom_terminal__"
+              title="Terminal"
+              isActive={visible}
+              cwd={cwd}
+            />
+          </Suspense>
         )}
       </div>
     </div>
