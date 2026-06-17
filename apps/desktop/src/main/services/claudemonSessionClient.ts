@@ -10,6 +10,7 @@
 import { BrowserWindow, MessageChannelMain, MessagePortMain } from 'electron';
 import { CLAUDEMON_API_URL } from './claudemonDaemon';
 import { consumeSseStream } from '../lib/sseConsumer';
+import { IPC } from '../shared/ipcChannels';
 
 const BACKOFF_INITIAL_MS = 200;
 const BACKOFF_MAX_MS = 5000;
@@ -170,11 +171,31 @@ class ClaudemonSessionClient {
             try { stream.port.postMessage(binStr); } catch {}
           }
         },
-        onError(err) {
+        onError: (err) => {
           console.warn(
             `[claudemonSessionClient] stream ${stream.sessionId} error, retrying:`,
             err,
           );
+          // On stream error, check whether the session still exists in
+          // claudemon. A 404 means the PTY process exited and the daemon
+          // dropped the session — fire terminal:exit so the renderer can
+          // mark the pane dead. Only the owner fires the event (attached
+          // viewers don't control session lifecycle).
+          if (stream.kind === 'owner' && !stream.stopped) {
+            fetch(`${CLAUDEMON_API_URL}/sessions/${stream.sessionId}`)
+              .then((res) => {
+                if (res.status === 404 && !stream.stopped) {
+                  stream.stopped = true;
+                  try { stream.abort.abort(); } catch {}
+                  this.streams.delete(stream.viewerKey);
+                  const win = this.mainWindow;
+                  if (win && !win.isDestroyed()) {
+                    win.webContents.send(IPC.TERMINAL_EXIT, stream.sessionId);
+                  }
+                }
+              })
+              .catch(() => { /* best-effort: network hiccup, let the backoff retry */ });
+          }
         },
       },
     );

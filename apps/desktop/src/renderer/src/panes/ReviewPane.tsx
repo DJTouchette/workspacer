@@ -430,7 +430,7 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive }) => {
   if (!cwd) {
     return (
       <Centered>
-        <span style={{ fontSize: '1.5rem' }}>&#129518;</span>
+        <FileX2 size={28} style={{ color: colors.muted, opacity: 0.7 }} />
         <span>No working directory for this pane.</span>
       </Centered>
     );
@@ -571,22 +571,43 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive }) => {
           </div>
         )}
 
-        <div className="wks-review-scroll" style={{ overflowY: 'auto', flex: 1 }}>
-          {error && (
-            <div
+        {error && (
+          <div
+            style={{
+              margin: '0 0 0 0',
+              padding: '8px 10px',
+              borderBottom: `1px solid ${colors.borderSubtle}`,
+              background: 'color-mix(in srgb, var(--wks-error) 10%, transparent)',
+              color: colors.error,
+              fontSize: '0.7rem',
+              lineHeight: 1.45,
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: 6,
+              flexShrink: 0,
+            }}
+          >
+            <span style={{ flex: 1 }}>{error}</span>
+            <button
+              onClick={() => setError('')}
+              aria-label="Dismiss error"
               style={{
-                margin: 8,
-                padding: '8px 10px',
-                borderRadius: 6,
-                background: 'color-mix(in srgb, var(--wks-error) 10%, transparent)',
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
                 color: colors.error,
-                fontSize: '0.7rem',
-                lineHeight: 1.45,
+                padding: 0,
+                lineHeight: 1,
+                fontSize: '0.85rem',
+                flexShrink: 0,
+                opacity: 0.8,
               }}
             >
-              {error}
-            </div>
-          )}
+              ×
+            </button>
+          </div>
+        )}
+        <div className="wks-review-scroll" style={{ overflowY: 'auto', flex: 1 }}>
           {!error && totalChanges === 0 && !loadingStatus && (
             <Centered>
               <CheckCircle2 size={22} style={{ color: colors.success, opacity: 0.85 }} />
@@ -824,7 +845,12 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive }) => {
             </Centered>
           ) : !parsed || (parsed.hunks.length === 0 && !parsed.binary) ? (
             <Centered>
-              <span style={{ color: colors.muted }}>No textual diff to show.</span>
+              <FileX2 size={22} style={{ color: colors.muted, opacity: 0.6 }} />
+              <span style={{ color: colors.muted }}>
+                {parsed && diffText
+                  ? 'No textual changes — file renamed or metadata-only.'
+                  : 'No textual diff to show.'}
+              </span>
             </Centered>
           ) : parsed.binary ? (
             <Centered>
