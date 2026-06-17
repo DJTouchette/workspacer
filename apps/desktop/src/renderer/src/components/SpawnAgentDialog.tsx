@@ -1,9 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { deriveAgentName } from '../hooks/useAgentManager';
+import type { LibraryItem } from '../types/library';
+
+interface SpawnProfile { id: string; name: string; mcpItemIds?: string[] }
 
 interface SpawnAgentDialogProps {
   defaultCwd: string;
-  onSpawn: (opts: { cwd: string; name?: string; profileId?: string; model?: string; skipPermissions?: boolean; resumeSessionId?: string }) => void;
+  onSpawn: (opts: { cwd: string; name?: string; profileId?: string; model?: string; skipPermissions?: boolean; mcpItemIds?: string[]; resumeSessionId?: string }) => void;
   onCancel: () => void;
 }
 
@@ -12,8 +15,13 @@ const CUSTOM = '__custom__';
 const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, onSpawn, onCancel }) => {
   const [cwd, setCwd] = useState(defaultCwd);
   const [name, setName] = useState('');
-  const [profiles, setProfiles] = useState<Array<{ id: string; name: string }>>([]);
+  const [profiles, setProfiles] = useState<SpawnProfile[]>([]);
   const [profileId, setProfileId] = useState<string>('');
+
+  // MCP servers available in the Library, and the per-spawn selection. Pre-filled
+  // from the chosen profile's default loadout; overridable here.
+  const [mcpItems, setMcpItems] = useState<LibraryItem[]>([]);
+  const [mcpSel, setMcpSel] = useState<string[]>([]);
 
   // Model selection. `modelSel` is the dropdown value (''=Default, an alias/id,
   // or the CUSTOM sentinel); `customModel` holds the free-text id when CUSTOM.
@@ -51,6 +59,9 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, onSpawn
     window.electronAPI.claudeProfilesList?.()
       .then((list: any[]) => setProfiles(list ?? []))
       .catch(() => {});
+    window.electronAPI.libraryList?.(defaultCwd || undefined)
+      .then((list) => setMcpItems((list ?? []).filter((it) => it.kind === 'mcp')))
+      .catch(() => {});
     window.electronAPI.claudeListModels?.()
       .then((res) => {
         if (!res) return;
@@ -66,6 +77,33 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, onSpawn
       .catch(() => {});
   }, []);
 
+  // Re-list MCP servers when the directory settles — project-scoped servers
+  // live under the chosen cwd's .workspacer/library.
+  useEffect(() => {
+    const dir = cwd.trim();
+    let cancelled = false;
+    const handle = setTimeout(() => {
+      window.electronAPI.libraryList?.(dir || undefined)
+        .then((list) => { if (!cancelled) setMcpItems((list ?? []).filter((it) => it.kind === 'mcp')); })
+        .catch(() => {});
+    }, 250);
+    return () => { cancelled = true; clearTimeout(handle); };
+  }, [cwd]);
+
+  // Pre-fill the MCP selection from the chosen profile's default loadout.
+  useEffect(() => {
+    const p = profiles.find((x) => x.id === profileId);
+    setMcpSel(p?.mcpItemIds ?? []);
+  }, [profileId, profiles]);
+
+  // Drop any selected server that no longer exists (e.g. cwd changed).
+  useEffect(() => {
+    setMcpSel((sel) => sel.filter((id) => mcpItems.some((it) => it.id === id)));
+  }, [mcpItems]);
+
+  const toggleMcp = (id: string) =>
+    setMcpSel((sel) => (sel.includes(id) ? sel.filter((x) => x !== id) : [...sel, id]));
+
   const resolvedModel = modelSel === CUSTOM ? customModel.trim() : modelSel;
 
   const browse = async () => {
@@ -75,7 +113,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, onSpawn
 
   const submit = () => {
     if (!cwd.trim()) return;
-    onSpawn({ cwd: cwd.trim(), name: name.trim() || undefined, profileId: profileId || undefined, model: resolvedModel || undefined, skipPermissions, resumeSessionId: resumeSessionId || undefined });
+    onSpawn({ cwd: cwd.trim(), name: name.trim() || undefined, profileId: profileId || undefined, model: resolvedModel || undefined, skipPermissions, mcpItemIds: mcpSel.length ? mcpSel : undefined, resumeSessionId: resumeSessionId || undefined });
   };
 
   const placeholderName = cwd.trim() ? deriveAgentName(cwd.trim()) : 'agent';
@@ -182,6 +220,33 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, onSpawn
                 <option key={p.id} value={p.id}>{p.name}</option>
               ))}
             </select>
+          </Field>
+        )}
+
+        {mcpItems.length > 0 && (
+          <Field label="MCP servers (optional)">
+            <div style={{
+              display: 'flex', flexDirection: 'column', gap: 2,
+              maxHeight: 132, overflowY: 'auto',
+              border: '1px solid var(--wks-border-input)', borderRadius: 4, padding: 4,
+            }}>
+              {mcpItems.map((it) => (
+                <label key={it.id} title={it.description || it.id} style={{
+                  display: 'flex', alignItems: 'center', gap: 8, padding: '4px 6px',
+                  borderRadius: 4, cursor: 'pointer', fontSize: '0.75rem',
+                  color: 'var(--wks-text-primary)',
+                }}>
+                  <input type="checkbox" checked={mcpSel.includes(it.id)} onChange={() => toggleMcp(it.id)} style={{ cursor: 'pointer' }} />
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.title}</span>
+                  <span style={{ fontSize: '0.6rem', color: 'var(--wks-text-faint)' }}>
+                    {it.mcp?.url ? (it.mcp.type === 'sse' ? 'sse' : 'http') : 'stdio'}
+                  </span>
+                </label>
+              ))}
+            </div>
+            <div style={{ color: 'var(--wks-text-faint)', fontSize: '0.62rem', marginTop: 3 }}>
+              Only the checked servers are exposed to this session (--strict-mcp-config).
+            </div>
           </Field>
         )}
 

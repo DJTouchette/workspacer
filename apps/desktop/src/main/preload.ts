@@ -140,7 +140,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke(IPC.LAYOUTS_DELETE, id),
 
   // ── Claude sessions (delegated to claudemon daemon) ──
-  spawnClaude: (opts: { cwd?: string; profileId?: string; model?: string; skipPermissions?: boolean; resumeSessionId?: string; cols?: number; rows?: number; supervisor?: boolean; label?: string; parentSessionId?: string }): Promise<string> =>
+  spawnClaude: (opts: { cwd?: string; profileId?: string; model?: string; skipPermissions?: boolean; resumeSessionId?: string; cols?: number; rows?: number; supervisor?: boolean; label?: string; parentSessionId?: string; mcpItemIds?: string[] }): Promise<string> =>
     ipcRenderer.invoke(IPC.CLAUDE_SPAWN, opts),
   claudeListModels: (): Promise<{ defaultModel: string; skipPermissionsDefault: boolean; aliases: Array<{ value: string; label: string }>; seen: string[] }> =>
     ipcRenderer.invoke(IPC.CLAUDE_LIST_MODELS),
@@ -198,8 +198,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Claude profiles
   claudeProfilesList: (): Promise<ProfileUpdate[]> => ipcRenderer.invoke(IPC.CLAUDE_PROFILES_LIST),
-  claudeProfilesAdd: (name: string, configDir: string, extraArgs: string[]): Promise<ProfileUpdate> =>
-    ipcRenderer.invoke(IPC.CLAUDE_PROFILES_ADD, name, configDir, extraArgs),
+  claudeProfilesAdd: (name: string, configDir: string, extraArgs: string[], mcpItemIds?: string[]): Promise<ProfileUpdate> =>
+    ipcRenderer.invoke(IPC.CLAUDE_PROFILES_ADD, name, configDir, extraArgs, mcpItemIds),
   claudeProfilesUpdate: (id: string, updates: ProfileUpdate): Promise<ProfileUpdate> =>
     ipcRenderer.invoke(IPC.CLAUDE_PROFILES_UPDATE, id, updates),
   claudeProfilesRemove: (id: string): Promise<void> =>

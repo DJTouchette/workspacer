@@ -8,6 +8,7 @@
 import { app } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
+import type { McpServerConfig } from './libraryService';
 
 /** System prompt injected into every supervisor session. */
 export const SUPERVISOR_SYSTEM_PROMPT =
@@ -35,4 +36,58 @@ export function supervisorMcpConfigPath(): string {
   }
   cachedPath = filePath;
   return filePath;
+}
+
+/** One selected MCP server: a stable key (the library item id) + its config. */
+export interface SessionMcpServer {
+  id: string;
+  mcp: McpServerConfig;
+}
+
+/** Translate a stored McpServerConfig into Claude Code's `mcpServers` entry. */
+function toClaudeEntry(cfg: McpServerConfig): Record<string, unknown> | null {
+  // URL-based servers (http/sse) — `type` + `url` are required.
+  if (cfg.url && cfg.url.trim()) {
+    const entry: Record<string, unknown> = { type: cfg.type === 'sse' ? 'sse' : 'http', url: cfg.url.trim() };
+    if (cfg.headers && Object.keys(cfg.headers).length) entry.headers = cfg.headers;
+    return entry;
+  }
+  // Local (stdio) servers — `command` is required; `type` may be omitted.
+  if (cfg.command && cfg.command.trim()) {
+    const entry: Record<string, unknown> = { command: cfg.command.trim() };
+    if (cfg.args && cfg.args.length) entry.args = cfg.args;
+    if (cfg.env && Object.keys(cfg.env).length) entry.env = cfg.env;
+    return entry;
+  }
+  return null; // incomplete — skip it
+}
+
+/**
+ * Write a per-session `--mcp-config` JSON for the given selected servers and
+ * return its path plus the `mcp__<id>` tool globs to pre-allow. The server's
+ * key in the config (and thus its tool prefix) is the library item id, so it's
+ * stable across sessions. Returns null when nothing valid was selected.
+ *
+ * The file is keyed by session id under `<userData>/session-mcp/` so concurrent
+ * sessions don't clobber each other; it's rewritten on every (re)spawn.
+ */
+export function buildSessionMcpConfig(
+  sessionId: string,
+  servers: SessionMcpServer[],
+): { path: string; toolNames: string[] } | null {
+  const mcpServers: Record<string, unknown> = {};
+  const toolNames: string[] = [];
+  for (const s of servers) {
+    const entry = toClaudeEntry(s.mcp);
+    if (!entry) continue;
+    mcpServers[s.id] = entry;
+    toolNames.push(`mcp__${s.id}`);
+  }
+  if (!toolNames.length) return null;
+
+  const dir = path.join(app.getPath('userData'), 'session-mcp');
+  fs.mkdirSync(dir, { recursive: true });
+  const filePath = path.join(dir, `${sessionId}.json`);
+  fs.writeFileSync(filePath, JSON.stringify({ mcpServers }, null, 2), 'utf8');
+  return { path: filePath, toolNames };
 }

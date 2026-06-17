@@ -126,6 +126,8 @@ export function useAgentManager() {
     profileId?: string;
     model?: string;
     skipPermissions?: boolean;
+    /** Library item ids (kind 'mcp') to load for this session. */
+    mcpItemIds?: string[];
     initialPrompt?: string;
     /** Resume an existing Claude session (`--resume <id>`) instead of starting fresh. */
     resumeSessionId?: string;
@@ -139,7 +141,7 @@ export function useAgentManager() {
     const cwd = opts.cwd;
     let sessionId: string | undefined;
     try {
-      sessionId = await window.electronAPI.spawnClaude({ cwd, profileId: opts.profileId, model: opts.model, skipPermissions: opts.skipPermissions, resumeSessionId: opts.resumeSessionId, supervisor: opts.supervisor, cols: 120, rows: 32 });
+      sessionId = await window.electronAPI.spawnClaude({ cwd, profileId: opts.profileId, model: opts.model, skipPermissions: opts.skipPermissions, mcpItemIds: opts.mcpItemIds, resumeSessionId: opts.resumeSessionId, supervisor: opts.supervisor, cols: 120, rows: 32 });
     } catch (err) {
       console.error('[Agent] spawn failed:', err);
     }
@@ -153,6 +155,7 @@ export function useAgentManager() {
       profileId: opts.profileId,
       model: opts.model,
       skipPermissions: opts.skipPermissions,
+      mcpItemIds: opts.mcpItemIds,
       sessionId,
       kind: opts.kind,
       parentId: opts.parentId,
@@ -175,7 +178,7 @@ export function useAgentManager() {
     const resumeSessionId = agent.lastSessionId;
     let sessionId: string | undefined;
     try {
-      sessionId = await window.electronAPI.spawnClaude({ cwd: agent.cwd, profileId: agent.profileId, model: agent.model, skipPermissions: agent.skipPermissions, resumeSessionId, cols: 120, rows: 32 });
+      sessionId = await window.electronAPI.spawnClaude({ cwd: agent.cwd, profileId: agent.profileId, model: agent.model, skipPermissions: agent.skipPermissions, mcpItemIds: agent.mcpItemIds, resumeSessionId, cols: 120, rows: 32 });
     } catch (err) {
       console.error('[Agent] respawn failed:', err);
     }

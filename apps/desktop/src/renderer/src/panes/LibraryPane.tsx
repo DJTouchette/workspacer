@@ -3,13 +3,15 @@ import { useLibrary } from '../hooks/useLibrary';
 import { runLibraryItem } from '../lib/libraryBus';
 import MarkdownEditor from '../components/MarkdownEditor';
 import { Zap } from '../components/icons';
-import type { LibraryItem, LibraryKind, LibraryScope, LibraryAction, LibrarySaveInput } from '../types/library';
+import type { LibraryItem, LibraryKind, LibraryScope, LibraryAction, LibrarySaveInput, McpServerConfig } from '../types/library';
 
 interface Props {
   title?: string;
   /** Project root for project-scoped items (falls back to the app cwd). */
   cwd?: string;
 }
+
+type McpTransport = 'stdio' | 'http' | 'sse';
 
 type Draft = {
   original?: LibraryItem;
@@ -20,11 +22,46 @@ type Draft = {
   tags: string;
   action: LibraryAction;
   body: string;
+  // MCP fields (kind 'mcp') — flat strings for editing; parsed on save.
+  mcpType: McpTransport;
+  mcpCommand: string;
+  mcpArgs: string;     // one arg per line
+  mcpEnv: string;      // KEY=VALUE per line
+  mcpUrl: string;
+  mcpHeaders: string;  // Header: value per line
 };
 
 const blankDraft = (): Draft => ({
   scope: 'global', title: '', kind: 'prompt', description: '', tags: '', action: 'insert', body: '',
+  mcpType: 'stdio', mcpCommand: '', mcpArgs: '', mcpEnv: '', mcpUrl: '', mcpHeaders: '',
 });
+
+/** Parse "KEY=VALUE" lines into a record (blank/invalid lines skipped). */
+function parseKeyVal(text: string, sep: string): Record<string, string> | undefined {
+  const out: Record<string, string> = {};
+  for (const line of text.split('\n')) {
+    const t = line.trim();
+    if (!t) continue;
+    const i = t.indexOf(sep);
+    if (i <= 0) continue;
+    out[t.slice(0, i).trim()] = t.slice(i + sep.length).trim();
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+/** Build an McpServerConfig from the draft's flat MCP fields. */
+function draftToMcp(d: Draft): McpServerConfig {
+  if (d.mcpType === 'http' || d.mcpType === 'sse') {
+    return { type: d.mcpType, url: d.mcpUrl.trim(), headers: parseKeyVal(d.mcpHeaders, ':') };
+  }
+  const args = d.mcpArgs.split('\n').map((s) => s.trim()).filter(Boolean);
+  return {
+    type: 'stdio',
+    command: d.mcpCommand.trim(),
+    args: args.length ? args : undefined,
+    env: parseKeyVal(d.mcpEnv, '='),
+  };
+}
 
 const LibraryPane: React.FC<Props> = ({ cwd }) => {
   const { items, loaded, save, remove } = useLibrary(cwd);
@@ -44,15 +81,25 @@ const LibraryPane: React.FC<Props> = ({ cwd }) => {
     );
   }, [items, query, scopeFilter]);
 
-  const startEdit = (it: LibraryItem) => setDraft({
-    original: it, scope: it.scope, title: it.title, kind: it.kind,
-    description: it.description ?? '', tags: (it.tags ?? []).join(', '),
-    action: it.action ?? 'insert', body: it.body,
-  });
+  const startEdit = (it: LibraryItem) => {
+    const m = it.mcp ?? {};
+    setDraft({
+      original: it, scope: it.scope, title: it.title, kind: it.kind,
+      description: it.description ?? '', tags: (it.tags ?? []).join(', '),
+      action: it.action ?? 'insert', body: it.body,
+      mcpType: (m.url ? (m.type === 'sse' ? 'sse' : 'http') : 'stdio'),
+      mcpCommand: m.command ?? '',
+      mcpArgs: (m.args ?? []).join('\n'),
+      mcpEnv: Object.entries(m.env ?? {}).map(([k, v]) => `${k}=${v}`).join('\n'),
+      mcpUrl: m.url ?? '',
+      mcpHeaders: Object.entries(m.headers ?? {}).map(([k, v]) => `${k}: ${v}`).join('\n'),
+    });
+  };
 
   const saveDraft = async () => {
     if (!draft || !draft.title.trim()) return;
     const isClaude = draft.scope === 'claude';
+    const isMcp = draft.kind === 'mcp';
     const input: LibrarySaveInput = {
       scope: draft.scope,
       id: draft.original?.id,
@@ -61,7 +108,8 @@ const LibraryPane: React.FC<Props> = ({ cwd }) => {
       // tags/action aren't part of Claude Code's frontmatter format
       description: draft.description.trim() || undefined,
       tags: isClaude ? undefined : draft.tags.split(',').map((t) => t.trim()).filter(Boolean),
-      action: isClaude ? undefined : draft.action,
+      action: isClaude || isMcp ? undefined : draft.action,
+      mcp: isMcp ? draftToMcp(draft) : undefined,
       body: draft.body,
       cwd,
     };
@@ -90,12 +138,13 @@ const LibraryPane: React.FC<Props> = ({ cwd }) => {
           <Field label="Title">
             <input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} style={inputStyle} placeholder="Refactor for testability" />
           </Field>
-          <div style={{ display: 'grid', gridTemplateColumns: draft.scope === 'claude' ? '1fr 1fr' : '1fr 1fr 1fr', gap: 10 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: (draft.scope === 'claude' || draft.kind === 'mcp') ? '1fr 1fr' : '1fr 1fr 1fr', gap: 10 }}>
             <Field label="Kind">
               <select value={draft.kind} onChange={(e) => setDraft({ ...draft, kind: e.target.value as LibraryKind })} style={inputStyle}>
                 {draft.scope !== 'claude' && <option value="prompt">prompt</option>}
                 <option value="skill">skill</option>
                 <option value="agent">agent</option>
+                {draft.scope !== 'claude' && <option value="mcp">mcp</option>}
               </select>
             </Field>
             <Field label="Scope">
@@ -103,8 +152,8 @@ const LibraryPane: React.FC<Props> = ({ cwd }) => {
                 value={draft.scope}
                 onChange={(e) => {
                   const scope = e.target.value as LibraryScope;
-                  // .claude only stores skills and agents, never prompts
-                  const kind = scope === 'claude' && draft.kind === 'prompt' ? 'skill' : draft.kind;
+                  // .claude only stores skills and agents, never prompts or mcp
+                  const kind = scope === 'claude' && (draft.kind === 'prompt' || draft.kind === 'mcp') ? 'skill' : draft.kind;
                   setDraft({ ...draft, scope, kind });
                 }}
                 style={inputStyle}
@@ -114,7 +163,7 @@ const LibraryPane: React.FC<Props> = ({ cwd }) => {
                 <option value="claude">claude (.claude/)</option>
               </select>
             </Field>
-            {draft.scope !== 'claude' && (
+            {draft.scope !== 'claude' && draft.kind !== 'mcp' && (
               <Field label="Default action">
                 <select value={draft.action} onChange={(e) => setDraft({ ...draft, action: e.target.value as LibraryAction })} style={inputStyle}>
                   <option value="insert">insert</option>
@@ -132,14 +181,27 @@ const LibraryPane: React.FC<Props> = ({ cwd }) => {
               <input value={draft.tags} onChange={(e) => setDraft({ ...draft, tags: e.target.value })} style={inputStyle} placeholder="refactor, tests" />
             </Field>
           )}
-          <Field label="Body — supports {{cwd}}, {{selection}}, {{clipboard}} + form fields">
-            <MarkdownEditor
-              value={draft.body}
-              onChange={(body) => setDraft({ ...draft, body })}
-              placeholder="The prompt or skill text…"
-            />
-            <FormFieldLegend />
-          </Field>
+          {draft.kind === 'mcp' ? (
+            <>
+              <McpFields draft={draft} setDraft={setDraft} />
+              <Field label="Notes (optional)">
+                <MarkdownEditor
+                  value={draft.body}
+                  onChange={(body) => setDraft({ ...draft, body })}
+                  placeholder="What this server is for, setup steps…"
+                />
+              </Field>
+            </>
+          ) : (
+            <Field label="Body — supports {{cwd}}, {{selection}}, {{clipboard}} + form fields">
+              <MarkdownEditor
+                value={draft.body}
+                onChange={(body) => setDraft({ ...draft, body })}
+                placeholder="The prompt or skill text…"
+              />
+              <FormFieldLegend />
+            </Field>
+          )}
           {draft.scope === 'project' && (
             <div style={{ fontSize: '0.62rem', color: 'var(--wks-text-faint)', marginTop: 4 }}>
               Project items save to <code>{cwd ? `${cwd}/.workspacer/library/` : '.workspacer/library/'}</code>
@@ -191,9 +253,11 @@ const LibraryPane: React.FC<Props> = ({ cwd }) => {
               <span style={kindBadge(it.kind)}>{it.kind}</span>
               <span style={scopeBadge(it.scope)}>{it.scope}</span>
               <div style={{ flex: 1 }} />
-              <button onClick={() => runLibraryItem(it, 'insert')} style={miniBtn} title="Insert into focused agent">Insert</button>
-              <button onClick={() => runLibraryItem(it, 'spawn')} style={miniBtn} title="Spawn a new agent with this">Spawn</button>
-              <button onClick={() => runLibraryItem(it, 'copy')} style={miniBtn} title="Copy to clipboard">Copy</button>
+              {it.kind !== 'mcp' && <>
+                <button onClick={() => runLibraryItem(it, 'insert')} style={miniBtn} title="Insert into focused agent">Insert</button>
+                <button onClick={() => runLibraryItem(it, 'spawn')} style={miniBtn} title="Spawn a new agent with this">Spawn</button>
+                <button onClick={() => runLibraryItem(it, 'copy')} style={miniBtn} title="Copy to clipboard">Copy</button>
+              </>}
               <button onClick={() => startEdit(it)} style={miniBtn}>Edit</button>
               <button
                 onClick={() => {
@@ -207,7 +271,9 @@ const LibraryPane: React.FC<Props> = ({ cwd }) => {
             </div>
             {it.description && <div style={{ fontSize: '0.68rem', color: 'var(--wks-text-secondary)', marginTop: 3 }}>{it.description}</div>}
             <div style={{ fontSize: '0.62rem', color: 'var(--wks-text-faint)', marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontFamily: 'var(--wks-mono, ui-monospace, monospace)' }}>
-              {it.body.replace(/\s+/g, ' ').slice(0, 120)}
+              {it.kind === 'mcp'
+                ? (it.mcp?.url || [it.mcp?.command, ...(it.mcp?.args ?? [])].filter(Boolean).join(' ') || '(no endpoint set)')
+                : it.body.replace(/\s+/g, ' ').slice(0, 120)}
             </div>
             {it.tags && it.tags.length > 0 && (
               <div style={{ display: 'flex', gap: 4, marginTop: 5, flexWrap: 'wrap' }}>
@@ -233,6 +299,45 @@ const Field: React.FC<{ label: string; children: React.ReactNode }> = ({ label, 
     {children}
   </div>
 );
+
+/** Editor for an MCP server's connection config. `stdio` launches a local
+ *  process; `http`/`sse` connect to a URL. */
+const McpFields: React.FC<{ draft: Draft; setDraft: (d: Draft) => void }> = ({ draft, setDraft }) => {
+  const isUrl = draft.mcpType === 'http' || draft.mcpType === 'sse';
+  return (
+    <>
+      <Field label="Transport">
+        <select value={draft.mcpType} onChange={(e) => setDraft({ ...draft, mcpType: e.target.value as McpTransport })} style={inputStyle}>
+          <option value="stdio">stdio (local process)</option>
+          <option value="http">http (URL)</option>
+          <option value="sse">sse (URL)</option>
+        </select>
+      </Field>
+      {isUrl ? (
+        <>
+          <Field label="URL">
+            <input value={draft.mcpUrl} onChange={(e) => setDraft({ ...draft, mcpUrl: e.target.value })} style={inputStyle} placeholder="https://example.com/mcp" />
+          </Field>
+          <Field label="Headers (one per line — Header: value)">
+            <textarea value={draft.mcpHeaders} onChange={(e) => setDraft({ ...draft, mcpHeaders: e.target.value })} style={textareaStyle} rows={3} placeholder={'Authorization: Bearer abc123'} spellCheck={false} />
+          </Field>
+        </>
+      ) : (
+        <>
+          <Field label="Command">
+            <input value={draft.mcpCommand} onChange={(e) => setDraft({ ...draft, mcpCommand: e.target.value })} style={inputStyle} placeholder="npx" spellCheck={false} />
+          </Field>
+          <Field label="Args (one per line)">
+            <textarea value={draft.mcpArgs} onChange={(e) => setDraft({ ...draft, mcpArgs: e.target.value })} style={textareaStyle} rows={3} placeholder={'-y\n@modelcontextprotocol/server-filesystem\n/path'} spellCheck={false} />
+          </Field>
+          <Field label="Env (one per line — KEY=value)">
+            <textarea value={draft.mcpEnv} onChange={(e) => setDraft({ ...draft, mcpEnv: e.target.value })} style={textareaStyle} rows={2} placeholder={'API_KEY=...'} spellCheck={false} />
+          </Field>
+        </>
+      )}
+    </>
+  );
+};
 
 /** Cheat-sheet for the {{?…}} form-field syntax, shown under the body editor.
  *  When an item with these tokens runs, a form pops up to collect the values. */
@@ -272,6 +377,12 @@ const inputStyle: React.CSSProperties = {
   width: '100%', fontFamily: 'inherit', fontSize: '0.75rem', padding: '6px 8px', borderRadius: 5, outline: 'none',
   background: 'var(--wks-bg-input)', color: 'var(--wks-text-primary)', border: '1px solid var(--wks-border-input)', boxSizing: 'border-box',
 };
+const textareaStyle: React.CSSProperties = {
+  width: '100%', fontFamily: 'var(--wks-mono, ui-monospace, monospace)', fontSize: '0.72rem',
+  padding: '6px 8px', borderRadius: 5, outline: 'none', resize: 'vertical',
+  background: 'var(--wks-bg-input)', color: 'var(--wks-text-primary)',
+  border: '1px solid var(--wks-border-input)', boxSizing: 'border-box',
+};
 const cardStyle: React.CSSProperties = {
   border: '1px solid var(--wks-border)', borderRadius: 8, padding: '8px 10px', marginBottom: 8, background: 'var(--wks-bg-raised)',
 };
@@ -303,6 +414,7 @@ function kindBadge(kind: LibraryKind): React.CSSProperties {
     prompt: { bg: 'rgba(96,165,250,0.18)', fg: '#60a5fa' },
     skill: { bg: 'rgba(192,132,252,0.18)', fg: '#c084fc' },
     agent: { bg: 'rgba(74,222,128,0.18)', fg: '#4ade80' },
+    mcp: { bg: 'rgba(251,146,60,0.18)', fg: '#fb923c' },
   };
   const { bg, fg } = palette[kind] ?? palette.prompt;
   return { fontSize: '0.55rem', padding: '1px 6px', borderRadius: 999, fontWeight: 700, textTransform: 'uppercase',

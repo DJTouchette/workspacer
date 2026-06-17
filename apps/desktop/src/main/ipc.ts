@@ -12,7 +12,7 @@ import { listClaudeModels } from './services/claudeModels';
 import { agentNotifier } from './services/agentNotifier';
 import { claudemonSessionClient } from './services/claudemonSessionClient';
 import { buildClaudeArgv } from './services/claudeResolver';
-import { supervisorMcpConfigPath, SUPERVISOR_SYSTEM_PROMPT } from './services/mcpConfig';
+import { supervisorMcpConfigPath, SUPERVISOR_SYSTEM_PROMPT, buildSessionMcpConfig } from './services/mcpConfig';
 import { importChromeCookies, importChromeCookiesViaCDP } from './services/chromeCookieImport';
 import { claudeProfiles } from './services/claudeProfiles';
 import { listClaudeSessionsForDir } from './services/claudeSessionList';
@@ -85,7 +85,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     claudemonSessionClient.close(id));
 
   // ── Claude sessions (delegated to claudemon) ──
-  ipcMain.handle(IPC.CLAUDE_SPAWN, async (_event, opts: { cwd?: string; profileId?: string; model?: string; skipPermissions?: boolean; resumeSessionId?: string; cols?: number; rows?: number; supervisor?: boolean; label?: string; parentSessionId?: string }) => {
+  ipcMain.handle(IPC.CLAUDE_SPAWN, async (_event, opts: { cwd?: string; profileId?: string; model?: string; skipPermissions?: boolean; resumeSessionId?: string; cols?: number; rows?: number; supervisor?: boolean; label?: string; parentSessionId?: string; mcpItemIds?: string[] }) => {
     const profile = opts.profileId ? claudeProfiles.getProfile(opts.profileId) : undefined;
     const env: Record<string, string> = {};
     if (profile?.configDir) {
@@ -98,6 +98,21 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     // Record name/parent before the session registers so adopted cards are
     // enriched from the very first hook event.
     claudeSessionStore.setSpawnMeta(sessionId, { label: opts.label, parentSessionId: opts.parentSessionId });
+
+    // Per-spawn MCP servers selected from the Library (kind 'mcp'). Resolve the
+    // chosen item ids to their configs, write a session-scoped --mcp-config, and
+    // pre-allow their tools. `--strict-mcp-config` so the session sees exactly
+    // these servers, not the user's global ones. Skipped for supervisors, which
+    // get the workspacer facade config instead.
+    let userMcp: { path: string; toolNames: string[] } | null = null;
+    if (!opts.supervisor && opts.mcpItemIds && opts.mcpItemIds.length) {
+      const wanted = new Set(opts.mcpItemIds);
+      const servers = libraryService.list(opts.cwd)
+        .filter((it) => it.kind === 'mcp' && it.mcp && wanted.has(it.id))
+        .map((it) => ({ id: it.id, mcp: it.mcp! }));
+      userMcp = buildSessionMcpConfig(sessionId, servers);
+    }
+
     const argv = buildClaudeArgv({
       extraArgs: profile?.extraArgs,
       resumeSessionId: opts.resumeSessionId,
@@ -112,6 +127,12 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
         mcpConfig: supervisorMcpConfigPath(),
         appendSystemPrompt: `${SUPERVISOR_SYSTEM_PROMPT}\n\nYour own workspacer session id is ${sessionId}. When you spawn worker agents with spawn_agent, pass parentSessionId:"${sessionId}" and a short label so they appear nested under you in the UI.`,
         allowedTools: ['mcp__workspacer'],
+      }),
+      // User-selected MCP servers (non-supervisor sessions).
+      ...(userMcp && {
+        mcpConfig: userMcp.path,
+        strictMcpConfig: true,
+        allowedTools: userMcp.toolNames,
       }),
     });
     const cwd = opts.cwd ?? process.env.HOME ?? os.homedir();
@@ -346,8 +367,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     listClaudeSessionsForDir(cwd));
 
   ipcMain.handle(IPC.CLAUDE_PROFILES_LIST, () => claudeProfiles.getProfiles());
-  ipcMain.handle(IPC.CLAUDE_PROFILES_ADD, (_event, name: string, configDir: string, extraArgs: string[]) =>
-    claudeProfiles.addProfile(name, configDir, extraArgs));
+  ipcMain.handle(IPC.CLAUDE_PROFILES_ADD, (_event, name: string, configDir: string, extraArgs: string[], mcpItemIds?: string[]) =>
+    claudeProfiles.addProfile(name, configDir, extraArgs, mcpItemIds ?? []));
   ipcMain.handle(IPC.CLAUDE_PROFILES_UPDATE, (_event, id: string, updates: ProfileUpdate) =>
     claudeProfiles.updateProfile(id, updates));
   ipcMain.handle(IPC.CLAUDE_PROFILES_REMOVE, (_event, id: string) =>

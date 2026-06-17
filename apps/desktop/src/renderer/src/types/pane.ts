@@ -87,6 +87,9 @@ export interface AgentWorkspace {
   model?: string;
   /** Whether this agent was spawned with `--dangerously-skip-permissions`. */
   skipPermissions?: boolean;
+  /** Library item ids (kind 'mcp') this agent was spawned with. Re-passed on
+   *  respawn so the same servers reload. */
+  mcpItemIds?: string[];
   /** claudemon session id once spawned. Undefined means the agent is stopped
    *  (e.g. the daemon session ended or didn't survive a restart). */
   sessionId?: string;

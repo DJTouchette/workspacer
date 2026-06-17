@@ -419,7 +419,7 @@ function App() {
     saveConfig({ directories: { recent, favourites: config.directories?.favourites ?? [] } });
   }, [config.directories, saveConfig]);
 
-  const handleSpawnAgent = useCallback((opts: { cwd: string; name?: string; profileId?: string; model?: string; skipPermissions?: boolean; resumeSessionId?: string }) => {
+  const handleSpawnAgent = useCallback((opts: { cwd: string; name?: string; profileId?: string; model?: string; skipPermissions?: boolean; mcpItemIds?: string[]; resumeSessionId?: string }) => {
     setShowSpawnDialog(false);
     // Remember the picked model + skip-permissions choice so they stick next time.
     window.electronAPI.saveConfig({

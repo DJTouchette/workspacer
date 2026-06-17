@@ -27,8 +27,23 @@ import { getConfigDir } from './configService';
 import { slugLibrary } from '../lib/fileUtils';
 
 export type LibraryScope = 'global' | 'project' | 'claude';
-export type LibraryKind = 'prompt' | 'skill' | 'agent';
+export type LibraryKind = 'prompt' | 'skill' | 'agent' | 'mcp';
 export type LibraryAction = 'insert' | 'spawn' | 'copy';
+
+/**
+ * An MCP server definition, in Claude Code's `mcpServers` shape. A `stdio`
+ * server launches a local process (`command`/`args`/`env`); an `http`/`sse`
+ * server connects to a URL (`url`/`headers`). Stored in an item's `mcp:`
+ * frontmatter block when kind === 'mcp'.
+ */
+export interface McpServerConfig {
+  type?: 'stdio' | 'http' | 'sse';
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
+}
 
 export interface LibraryItem {
   id: string;            // filename slug (no extension)
@@ -39,6 +54,8 @@ export interface LibraryItem {
   tags?: string[];
   /** Default action when the item is picked. */
   action?: LibraryAction;
+  /** MCP server config — present only when kind === 'mcp'. */
+  mcp?: McpServerConfig;
   body: string;          // the prompt/skill text (may contain {{templates}})
   path: string;          // absolute file path
 }
@@ -71,11 +88,24 @@ function parseFrontmatter(raw: string): { data: Record<string, any>; body: strin
   return { data: {}, body: raw };
 }
 
-function serialize(item: Pick<LibraryItem, 'title' | 'kind' | 'description' | 'tags' | 'action' | 'body'>): string {
+/** Strip empty/undefined keys so the persisted `mcp:` block stays tidy. */
+function cleanMcp(cfg: McpServerConfig): McpServerConfig {
+  const out: McpServerConfig = {};
+  if (cfg.type) out.type = cfg.type;
+  if (cfg.command && cfg.command.trim()) out.command = cfg.command.trim();
+  if (Array.isArray(cfg.args) && cfg.args.length) out.args = cfg.args.map(String);
+  if (cfg.env && Object.keys(cfg.env).length) out.env = cfg.env;
+  if (cfg.url && cfg.url.trim()) out.url = cfg.url.trim();
+  if (cfg.headers && Object.keys(cfg.headers).length) out.headers = cfg.headers;
+  return out;
+}
+
+function serialize(item: Pick<LibraryItem, 'title' | 'kind' | 'description' | 'tags' | 'action' | 'mcp' | 'body'>): string {
   const fm: Record<string, any> = { title: item.title, kind: item.kind };
   if (item.description) fm.description = item.description;
   if (item.tags && item.tags.length) fm.tags = item.tags;
   if (item.action) fm.action = item.action;
+  if (item.kind === 'mcp' && item.mcp) fm.mcp = cleanMcp(item.mcp);
   const head = yaml.dump(fm, { lineWidth: -1 }).trimEnd();
   return `---\n${head}\n---\n\n${item.body.replace(/\s+$/, '')}\n`;
 }
@@ -94,9 +124,14 @@ function readDir(dir: string, scope: LibraryScope): LibraryItem[] {
       const raw = fs.readFileSync(full, 'utf-8');
       const { data, body } = parseFrontmatter(raw);
       const id = slug(name.replace(/\.md$/i, ''));
-      const kind: LibraryKind = data.kind === 'skill' || data.kind === 'agent' ? data.kind : 'prompt';
+      const kind: LibraryKind =
+        data.kind === 'skill' || data.kind === 'agent' || data.kind === 'mcp' ? data.kind : 'prompt';
       const action: LibraryAction | undefined =
         data.action === 'insert' || data.action === 'spawn' || data.action === 'copy' ? data.action : undefined;
+      const mcp =
+        kind === 'mcp' && data.mcp && typeof data.mcp === 'object'
+          ? cleanMcp(data.mcp as McpServerConfig)
+          : undefined;
       items.push({
         id,
         scope,
@@ -105,6 +140,7 @@ function readDir(dir: string, scope: LibraryScope): LibraryItem[] {
         description: typeof data.description === 'string' ? data.description : undefined,
         tags: Array.isArray(data.tags) ? data.tags.map(String) : undefined,
         action,
+        mcp,
         body: body.replace(/^\s*\n/, ''),
         path: full,
       });
@@ -209,6 +245,7 @@ class LibraryService {
     description?: string;
     tags?: string[];
     action?: LibraryAction;
+    mcp?: McpServerConfig;
     body: string;
     cwd?: string;
   }): LibraryItem {
@@ -223,6 +260,7 @@ class LibraryService {
     return {
       id, scope: input.scope, title: input.title, kind: input.kind,
       description: input.description, tags: input.tags, action: input.action,
+      mcp: input.kind === 'mcp' && input.mcp ? cleanMcp(input.mcp) : undefined,
       body: input.body, path: full,
     };
   }
@@ -340,6 +378,14 @@ class LibraryService {
           '',
           'Begin by mapping the change surface for: {{?Target to refactor?}}',
         ].join('\n'),
+      }), 'utf-8');
+      fs.writeFileSync(path.join(dir, 'context7-mcp.md'), serialize({
+        title: 'Context7 (MCP)',
+        kind: 'mcp',
+        description: 'Example MCP server — up-to-date library docs. Select it at spawn to expose its tools.',
+        tags: ['docs', 'example'],
+        mcp: { type: 'stdio', command: 'npx', args: ['-y', '@upstash/context7-mcp'] },
+        body: 'An example MCP server entry. Edit the command/args (or switch to an http URL), then pick it in the spawn dialog to load it for a session.',
       }), 'utf-8');
     } catch {
       /* seeding is best-effort */
