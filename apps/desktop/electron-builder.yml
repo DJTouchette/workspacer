@@ -16,6 +16,9 @@ files:
 
 asarUnpack:
   - node_modules/better-sqlite3/**
+  # ripgrep binary must live outside the asar so it can be executed.
+  - node_modules/@vscode/ripgrep/**
+  - node_modules/@vscode/ripgrep-*/**
 
 electronLanguages:
   - en-US

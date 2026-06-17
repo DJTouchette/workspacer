@@ -13,6 +13,30 @@
  */
 import { execFile } from 'child_process';
 import * as path from 'path';
+import * as fs from 'fs';
+import { rgPath as bundledRgPath } from '@vscode/ripgrep';
+
+/**
+ * Absolute path to the ripgrep binary we shell out to.
+ *
+ * We ship @vscode/ripgrep's prebuilt binary rather than relying on a system
+ * `rg`: a GUI-launched Electron app inherits a stripped PATH and usually can't
+ * find one, so bare `execFile('rg')` fails with ENOENT (the "search does
+ * nothing" bug this replaces).
+ *
+ * In a packaged build the dependency lives inside app.asar, which can't be
+ * executed — electron-builder unpacks it to app.asar.unpacked (see
+ * electron-builder.yml asarUnpack), so rewrite the path accordingly. If the
+ * bundled binary is somehow missing, fall back to a PATH lookup so dev still
+ * works.
+ */
+const RG_BIN: string = (() => {
+  const unpacked = bundledRgPath.replace(/\bapp\.asar\b/, 'app.asar.unpacked');
+  try {
+    if (fs.existsSync(unpacked)) return unpacked;
+  } catch { /* fall through */ }
+  return 'rg';
+})();
 
 /** Hard cap on total matches returned when the caller doesn't specify one. */
 const DEFAULT_MAX_RESULTS = 500;
@@ -71,16 +95,21 @@ export async function searchProject(opts: SearchProjectOpts): Promise<SearchProj
   else args.push('--smart-case');
   if (opts.wholeWord) args.push('-w');
   if (!opts.regex) args.push('-F');
-  args.push('--', query);
+  // Pattern then search root. The trailing '.' (relative to `cwd`) is REQUIRED:
+  // with no path argument and no controlling TTY (always the case under
+  // execFile), ripgrep reads from stdin instead of the directory and returns
+  // nothing — the original "search does nothing" bug.
+  args.push('--', query, '.');
 
   const stdout = await new Promise<string>((resolve, reject) => {
     execFile(
-      'rg',
+      RG_BIN,
       args,
       { cwd, timeout: EXEC_TIMEOUT_MS, maxBuffer: EXEC_MAX_BUFFER, encoding: 'utf8' },
       (err, out) => {
         // rg exits 1 when there were simply no matches — that's success here.
-        // Exit >=2 is a real error (bad pattern, unreadable cwd, rg missing).
+        // Exit >=2 is a real error (bad pattern, unreadable cwd); ENOENT means
+        // the bundled binary was lost and the PATH fallback found nothing.
         const code = (err as { code?: number } | null)?.code;
         if (err && code !== 1) {
           reject(new Error(`ripgrep failed (exit ${code}): ${err.message}`));
