@@ -9,6 +9,35 @@ import { useTheme } from '../hooks/useTheme';
 import { claudeColors as colors, ensureKeyframes } from '../components/claude-shared';
 import { quoteFontFamily, fitWithRetry, isTermVisible, refitAndRepaint } from '../lib/terminalUtils';
 
+/**
+ * MEMORY: dispose the xterm.js instance (canvas + scrollback buffer) of a pane
+ * that has been off-screen for longer than DISPOSE_HIDDEN_TERMINALS_MS, and
+ * re-create it when it scrolls back into view. The React component and its DOM
+ * container node STAY MOUNTED throughout; the backend PTY process is NOT killed
+ * (no CloseTerminal on hide — only on real unmount, as today).
+ *
+ * DEFAULT: false. The clean re-show path requires the renderer to re-open the
+ * PTY byte stream so claudemon replays its output ring buffer into the fresh
+ * xterm. usePTY (which this lane does NOT own) keeps the SSE byte stream alive
+ * across hide/show and exposes only `attachToTerminal(term)`, which just
+ * repoints `termRef` for *future* live bytes — it does NOT re-subscribe, so the
+ * daemon's replay snapshot is never re-fetched. Re-creating the xterm here would
+ * therefore yield a BLANK terminal that only shows new output, losing all prior
+ * scrollback/screen contents. Shipping that would violate the no-data-loss
+ * constraint, so the behaviour is implemented but gated off by default.
+ *
+ * TO ENABLE (usePTY follow-up, separate lane): add a `resubscribe()` (or make
+ * `attachToTerminal` re-open the byte stream via a fresh
+ * `window.electronAPI.onTerminalOutput(id, ...)` / re-spawn of the SSE
+ * consumer) so a new subscriber triggers claudemon's snapshot replay
+ * (services/claudemon: stream_bytes -> snapshot_and_subscribe emits the output
+ * ring buffer as the first SSE frame, then live bytes). Call that after the new
+ * xterm is opened in recreateTerminal(), then flip this flag to true.
+ */
+const DISPOSE_HIDDEN_TERMINALS = false;
+/** How long a pane must stay off-screen before its xterm is disposed. */
+const DISPOSE_HIDDEN_TERMINALS_MS = 60_000;
+
 interface TerminalPaneProps {
   paneId: string;
   title: string;
@@ -31,9 +60,31 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
   const isActiveRef = useRef(isActive);
   isActiveRef.current = isActive;
 
+  // ── DISPOSE_HIDDEN_TERMINALS bookkeeping ──
+  // Disposes the per-instance teardown for the live xterm (data/resize/binary
+  // listeners + ResizeObserver) so we can tear it down on hide and rebuild on
+  // show without unmounting the component.
+  const instanceCleanupRef = useRef<(() => void) | null>(null);
+  // True once the PTY has been started (first real terminal build). Re-creating
+  // the xterm after a hide must NOT start a second PTY.
+  const ptyStartedRef = useRef(false);
+  // True while the xterm instance has been disposed for memory savings but the
+  // component (and PTY) are still alive.
+  const xtermDisposedRef = useRef(false);
+  // Timer that fires once the pane has been off-screen past the threshold.
+  const hiddenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const intersectionObserverRef = useRef<IntersectionObserver | null>(null);
+
   const { config } = useConfig();
   const termCfg = config.terminal;
   const { terminalTheme } = useTheme();
+
+  // Current config/theme readable from the stable build callback below without
+  // forcing it to re-create on every config change.
+  const termCfgRef = useRef(termCfg);
+  termCfgRef.current = termCfg;
+  const terminalThemeRef = useRef(terminalTheme);
+  terminalThemeRef.current = terminalTheme;
 
   const handleExit = useCallback(() => {
     if (terminalRef.current) {
@@ -56,21 +107,25 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
     }
   }, [sessionId, paneId, onPtyReady]);
 
-  // Initialize xterm.js terminal
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container || initializedRef.current) return;
-    initializedRef.current = true;
+  // Build a fresh xterm.js instance into the (still-mounted) container, wire up
+  // all listeners, and attach it to the live PTY. Returns a cleanup function
+  // that tears down THIS instance (listeners + observer + term.dispose) without
+  // touching the PTY. Used both for the initial build and — when
+  // DISPOSE_HIDDEN_TERMINALS is on — for re-creating after an off-screen
+  // disposal. `isFirstBuild` is true only for the very first build, which is the
+  // one that starts the PTY; re-creations re-attach to the already-live PTY.
+  const buildTerminal = useCallback((container: HTMLDivElement, isFirstBuild: boolean): (() => void) => {
+    const termCfgNow = termCfgRef.current;
 
     const term = new Terminal({
-      cursorBlink: termCfg.cursorBlink,
-      fontSize: termCfg.fontSize,
-      fontFamily: quoteFontFamily(termCfg.fontFamily),
-      theme: terminalTheme,
+      cursorBlink: termCfgNow.cursorBlink,
+      fontSize: termCfgNow.fontSize,
+      fontFamily: quoteFontFamily(termCfgNow.fontFamily),
+      theme: terminalThemeRef.current,
       allowProposedApi: true,
-      scrollback: termCfg.scrollback,
+      scrollback: termCfgNow.scrollback,
       convertEol: false,
-      cursorStyle: termCfg.cursorStyle as 'block' | 'underline' | 'bar',
+      cursorStyle: termCfgNow.cursorStyle as 'block' | 'underline' | 'bar',
       drawBoldTextInBrightColors: true,
     });
 
@@ -87,8 +142,19 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
     webFontsAddon.loadFonts().then(() => {
       term.open(container);
       try { fitAddon.fit(); } catch {}
-      // NOW create the PTY with the correct dimensions
-      startPTY(term.cols, term.rows);
+      if (isFirstBuild && !ptyStartedRef.current) {
+        // NOW create the PTY with the correct dimensions
+        ptyStartedRef.current = true;
+        startPTY(term.cols, term.rows);
+      } else {
+        // Re-attaching to an already-live PTY after an off-screen disposal.
+        // Push the current geometry so the daemon reflows correctly. The
+        // daemon replays its output ring buffer to a NEW byte-stream
+        // subscriber — but usePTY does not currently re-subscribe on
+        // attachToTerminal, so prior contents only return once usePTY grows a
+        // resubscribe path (see DISPOSE_HIDDEN_TERMINALS note above).
+        resize(term.cols, term.rows);
+      }
       // The synchronous term.focus() below runs before the terminal is opened
       // into the DOM, so it's a no-op for a freshly-created pane (e.g. from the
       // command palette). Re-assert focus here now that it's actually attached.
@@ -161,6 +227,8 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
     // doesn't fit a zero-size box.
     fitWithRetry(fitAddon, container);
 
+    // Point the PTY output stream at this xterm instance. On a re-build this
+    // repoints usePTY's term ref so live bytes flow to the new instance.
     attachToTerminal(term);
 
     const onDataDisposable = term.onData((data) => {
@@ -194,6 +262,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
 
     term.focus();
 
+    // Per-instance cleanup: tears down THIS xterm only. Does NOT touch the PTY.
     return () => {
       onDataDisposable.dispose();
       onBinaryDisposable.dispose();
@@ -207,9 +276,100 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
       term.dispose();
       terminalRef.current = null;
       fitAddonRef.current = null;
+    };
+    // termCfg/theme are read via refs so this callback stays stable across
+    // config changes; the deps are the stable usePTY functions.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [attachToTerminal, write, resize, startPTY]);
+
+  // Dispose the live xterm instance (canvas + scrollback) while keeping the DOM
+  // container and the PTY alive. Safe to call when already disposed.
+  const disposeTerminal = useCallback(() => {
+    if (xtermDisposedRef.current) return;
+    if (instanceCleanupRef.current) {
+      instanceCleanupRef.current();
+      instanceCleanupRef.current = null;
+    }
+    xtermDisposedRef.current = true;
+  }, []);
+
+  // Re-create the xterm instance into the still-mounted container and re-attach
+  // to the live PTY. Safe to call when not currently disposed (no-op).
+  const recreateTerminal = useCallback(() => {
+    if (!xtermDisposedRef.current) return;
+    const container = containerRef.current;
+    if (!container) return;
+    xtermDisposedRef.current = false;
+    instanceCleanupRef.current = buildTerminal(container, /* isFirstBuild */ false);
+  }, [buildTerminal]);
+
+  // Initialize xterm.js terminal (first build — starts the PTY).
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || initializedRef.current) return;
+    initializedRef.current = true;
+
+    instanceCleanupRef.current = buildTerminal(container, /* isFirstBuild */ true);
+
+    return () => {
+      // Full unmount: tear down the live instance (if any) and reset flags so a
+      // remount rebuilds cleanly. The PTY teardown is owned by usePTY's own
+      // unmount cleanup — we do NOT CloseTerminal here.
+      if (instanceCleanupRef.current) {
+        instanceCleanupRef.current();
+        instanceCleanupRef.current = null;
+      }
+      xtermDisposedRef.current = false;
       initializedRef.current = false;
     };
-  }, [attachToTerminal, write, resize]);
+  }, [buildTerminal]);
+
+  // ── Off-screen disposal lifecycle (gated behind DISPOSE_HIDDEN_TERMINALS) ──
+  // Watch the pane's own container with an IntersectionObserver. When it has
+  // been off-screen continuously for longer than DISPOSE_HIDDEN_TERMINALS_MS,
+  // dispose the xterm instance to free the canvas + scrollback memory. When it
+  // returns to view, immediately re-create it and re-attach to the live PTY.
+  // The DOM node and the backend PTY stay alive throughout.
+  useEffect(() => {
+    if (!DISPOSE_HIDDEN_TERMINALS) return;
+    const container = containerRef.current;
+    if (!container || typeof IntersectionObserver === 'undefined') return;
+
+    const clearHiddenTimer = () => {
+      if (hiddenTimerRef.current) {
+        clearTimeout(hiddenTimerRef.current);
+        hiddenTimerRef.current = null;
+      }
+    };
+
+    const observer = new IntersectionObserver((entries) => {
+      const entry = entries[entries.length - 1];
+      if (!entry) return;
+      const onScreen = entry.isIntersecting && entry.intersectionRatio > 0;
+      if (onScreen) {
+        // Back in view: cancel any pending disposal and rebuild if needed.
+        clearHiddenTimer();
+        if (xtermDisposedRef.current) recreateTerminal();
+      } else {
+        // Off-screen: arm the disposal timer (idempotent — don't re-arm if
+        // already pending or already disposed).
+        if (xtermDisposedRef.current || hiddenTimerRef.current) return;
+        hiddenTimerRef.current = setTimeout(() => {
+          hiddenTimerRef.current = null;
+          disposeTerminal();
+        }, DISPOSE_HIDDEN_TERMINALS_MS);
+      }
+    }, { threshold: 0 });
+
+    observer.observe(container);
+    intersectionObserverRef.current = observer;
+
+    return () => {
+      clearHiddenTimer();
+      observer.disconnect();
+      intersectionObserverRef.current = null;
+    };
+  }, [disposeTerminal, recreateTerminal]);
 
   // Focus/blur terminal when pane becomes active/inactive + re-fit on focus
   useEffect(() => {
