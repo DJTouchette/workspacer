@@ -76,7 +76,7 @@ export interface WorkflowWatcherUpdate {
 
 // ── Internals ──
 
-const TICK_MS = 1000;
+const TICK_MS = 2500;
 /** Stop ticking this long after the last hook-event poke (unless a run is live). */
 const IDLE_AFTER_MS = 60_000;
 /** Most-recent runs kept in the snapshot. */

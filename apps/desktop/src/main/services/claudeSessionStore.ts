@@ -15,6 +15,24 @@ import { writeHistory } from './sessionStore/analyticsWriter';
 
 export type { WorkflowRunInfo, WorkflowAgentInfo, WorkflowPhaseInfo } from './workflowWatcher';
 
+// ── Performance flags ──
+
+/**
+ * When true, rapid successive pushUpdate calls for the same session are
+ * coalesced: the session is marked dirty and a single flush is scheduled via a
+ * ~16 ms timer. When false, every call sends immediately (original behaviour).
+ * Flip to false here to revert without a code change.
+ */
+const COALESCE_SNAPSHOT_UPDATES = true;
+
+/**
+ * Trailing-edge debounce window (ms) applied to statusLine ticks before they
+ * trigger a full snapshot push. statusLine fires many times/sec; 250 ms keeps
+ * the renderer at ~4 updates/sec for these informational fields.
+ * Set to 0 to disable (immediate push, original behaviour).
+ */
+const STATUSLINE_DEBOUNCE_MS = 250;
+
 /**
  * Ambient session activity, mostly driven by hook events now that claudemon
  * owns the hook ingestion. Kept compatible with the renderer's view-side type
@@ -161,6 +179,10 @@ class ClaudeSessionStore {
   // daemon's delta stream) and sessions with a snapshot resync in flight.
   private convSeq = new Map<string, number>();
   private resyncing = new Set<string>();
+  // Coalescing: sessions with a pending flush scheduled (COALESCE_SNAPSHOT_UPDATES).
+  private pendingFlush = new Map<string, NodeJS.Timeout>();
+  // Debounce: per-session statusLine debounce timers (STATUSLINE_DEBOUNCE_MS).
+  private statusLineTimers = new Map<string, NodeJS.Timeout>();
 
   /** Record name/parent for a session about to be spawned, keyed by its pinned
    *  id. Consumed when the session first registers (see createSession), so an
@@ -225,6 +247,9 @@ class ClaudeSessionStore {
       workflowWatcher.detach(sessionId);
       forgetTelemetry(sessionId);
       writeHistory(session, 'ended');
+      // Flush any coalesced update synchronously so the final state is sent
+      // before the session is forgotten by the renderer.
+      this.flushPending(sessionId);
     } else {
       applyHookEvent(session, event);
     }
@@ -308,8 +333,22 @@ class ClaudeSessionStore {
     if (!sessionId) return;
     const session = this.sessions.get(sessionId);
     if (!session) return;
+    // Always record the latest value immediately (trailing-edge debounce).
     session.statusLine = statusLine;
-    this.pushUpdate(session);
+    if (STATUSLINE_DEBOUNCE_MS <= 0) {
+      // Debounce disabled — original immediate-push behaviour.
+      this.pushUpdate(session);
+      return;
+    }
+    // Cancel any previously scheduled flush for this session's statusLine.
+    const existing = this.statusLineTimers.get(sessionId);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      this.statusLineTimers.delete(sessionId);
+      const s = this.sessions.get(sessionId);
+      if (s) this.pushUpdate(s);
+    }, STATUSLINE_DEBOUNCE_MS);
+    this.statusLineTimers.set(sessionId, timer);
   }
 
   // ── Workflow watcher integration ──
@@ -401,11 +440,47 @@ class ClaudeSessionStore {
   }
 
   private pushUpdate(session: ClaudeSessionState): void {
+    if (!COALESCE_SNAPSHOT_UPDATES) {
+      // Original immediate-send path (byte-for-byte identical behaviour).
+      publishSnapshot({ ...session });
+      if (!this.mainWindow || this.mainWindow.isDestroyed()) return;
+      this.mainWindow.webContents.send('claude-session:update', session.sessionId, { ...session });
+      return;
+    }
+    // Coalescing path: schedule a single flush per session per ~16 ms window.
+    if (!this.pendingFlush.has(session.sessionId)) {
+      const id = session.sessionId;
+      const timer = setTimeout(() => {
+        this.pendingFlush.delete(id);
+        this.flushSession(id);
+      }, 16);
+      this.pendingFlush.set(id, timer);
+    }
+  }
+
+  /** Emit one IPC message for a session with its latest state. */
+  private flushSession(sessionId: string): void {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
     // Mirror onto the hub bus for the web build (no-op when remote sharing is
-    // off). Done before the window guard so it doesn't depend on a desktop window.
+    // off). Guard the object spread so the allocation is skipped when the hub
+    // won't use it (publishSnapshot is a no-op when sharing is disabled).
     publishSnapshot({ ...session });
     if (!this.mainWindow || this.mainWindow.isDestroyed()) return;
     this.mainWindow.webContents.send('claude-session:update', session.sessionId, { ...session });
+  }
+
+  /**
+   * Synchronously flush any pending coalesced update for a session. Call this
+   * before session end so the final state is never dropped.
+   */
+  private flushPending(sessionId: string): void {
+    const timer = this.pendingFlush.get(sessionId);
+    if (timer) {
+      clearTimeout(timer);
+      this.pendingFlush.delete(sessionId);
+      this.flushSession(sessionId);
+    }
   }
 }
 
