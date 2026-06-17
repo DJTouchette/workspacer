@@ -120,6 +120,7 @@ export const Composer: React.FC<ComposerProps> = ({
           />
           <button
             onClick={onSend}
+            disabled={!canSend}
             style={{
               width: 28,
               height: 28,

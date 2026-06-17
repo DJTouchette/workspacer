@@ -411,10 +411,10 @@ function chip(active: boolean): React.CSSProperties {
 }
 function kindBadge(kind: LibraryKind): React.CSSProperties {
   const palette: Record<LibraryKind, { bg: string; fg: string }> = {
-    prompt: { bg: 'rgba(96,165,250,0.18)', fg: '#60a5fa' },
-    skill: { bg: 'rgba(192,132,252,0.18)', fg: '#c084fc' },
-    agent: { bg: 'rgba(74,222,128,0.18)', fg: '#4ade80' },
-    mcp: { bg: 'rgba(251,146,60,0.18)', fg: '#fb923c' },
+    prompt: { bg: 'rgba(96,165,250,0.18)', fg: 'var(--wks-accent-text)' },
+    skill: { bg: 'rgba(192,132,252,0.18)', fg: 'var(--wks-purple, #c084fc)' },
+    agent: { bg: 'rgba(74,222,128,0.18)', fg: 'var(--wks-success)' },
+    mcp: { bg: 'rgba(251,146,60,0.18)', fg: 'var(--wks-warning)' },
   };
   const { bg, fg } = palette[kind] ?? palette.prompt;
   return { fontSize: '0.55rem', padding: '1px 6px', borderRadius: 999, fontWeight: 700, textTransform: 'uppercase',

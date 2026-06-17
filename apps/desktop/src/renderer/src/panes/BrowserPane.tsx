@@ -299,8 +299,8 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive, init
         display: 'flex',
         flexDirection: 'column',
         height: '100%',
-        backgroundColor: '#121214',
-        color: '#e4e4e7',
+        backgroundColor: 'var(--wks-bg-base)',
+        color: 'var(--wks-text-primary)',
         fontFamily: 'Inter, system-ui, sans-serif',
         fontSize: '12px',
       }}
@@ -313,8 +313,8 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive, init
             alignItems: 'center',
             gap: '3px',
             padding: '3px 6px',
-            backgroundColor: '#1a1a1e',
-            borderBottom: '1px solid #2a2a30',
+            backgroundColor: 'var(--wks-bg-surface)',
+            borderBottom: '1px solid var(--wks-border)',
           }}
         >
           <button
@@ -351,16 +351,16 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive, init
               padding: '0 8px',
               fontSize: '11px',
               fontFamily: 'JetBrainsMono NF, JetBrainsMono Nerd Font, monospace',
-              backgroundColor: '#0e0e10',
-              color: '#e4e4e7',
-              border: '1px solid #2a2a30',
+              backgroundColor: 'var(--wks-bg-input)',
+              color: 'var(--wks-text-primary)',
+              border: '1px solid var(--wks-border)',
               borderRadius: '3px',
               outline: 'none',
             }}
-            onFocus={(e) => { e.currentTarget.style.borderColor = '#60a5fa'; }}
-            onBlur={(e) => { e.currentTarget.style.borderColor = '#2a2a30'; }}
+            onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--wks-accent-text)'; }}
+            onBlur={(e) => { e.currentTarget.style.borderColor = 'var(--wks-border)'; }}
           />
-          <button onClick={handleGo} title="Navigate" style={{ ...navBtnStyle, backgroundColor: '#2563eb', color: '#e4e4e7', fontWeight: 600, padding: '0 8px', width: 'auto' }}>Go</button>
+          <button onClick={handleGo} title="Navigate" style={{ ...navBtnStyle, backgroundColor: 'var(--wks-accent)', color: 'var(--wks-text-primary)', fontWeight: 600, padding: '0 8px', width: 'auto' }}>Go</button>
           <button onClick={handleOpenExternal} title="Open in system browser" style={navBtnStyle}>&#x2197;</button>
           <button
             onClick={handleSyncChromeCookies}
@@ -379,8 +379,8 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive, init
               flexWrap: 'wrap',
               gap: '2px',
               padding: '2px 6px',
-              backgroundColor: '#16161a',
-              borderBottom: '1px solid #2a2a30',
+              backgroundColor: 'var(--wks-bg-base)',
+              borderBottom: '1px solid var(--wks-border)',
             }}
           >
             {bookmarks.map((bm, i) => (
@@ -392,16 +392,16 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive, init
                   height: '20px',
                   padding: '0 6px',
                   fontSize: '10px',
-                  backgroundColor: '#1e1e22',
-                  color: '#a0b4e6',
-                  border: '1px solid #2a2a30',
+                  backgroundColor: 'var(--wks-bg-raised)',
+                  color: 'var(--wks-accent-text)',
+                  border: '1px solid var(--wks-border)',
                   borderRadius: '2px',
                   cursor: 'pointer',
                   whiteSpace: 'nowrap',
                   lineHeight: '1',
                 }}
-                onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#2a2a30'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#1e1e22'; }}
+                onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--wks-bg-hover)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'var(--wks-bg-raised)'; }}
               >
                 {bm.name}
               </button>
@@ -414,7 +414,7 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive, init
       {loading && (
         <div style={{
           height: '2px',
-          backgroundColor: '#2563eb',
+          backgroundColor: 'var(--wks-accent)',
         }} />
       )}
 
@@ -426,7 +426,7 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive, init
           flexDirection: 'column',
           alignItems: 'center',
           justifyContent: 'center',
-          backgroundColor: '#121214',
+          backgroundColor: 'var(--wks-bg-base)',
           color: 'rgb(100, 100, 115)',
           gap: '8px',
         }}>
@@ -458,9 +458,9 @@ const navBtnStyle: React.CSSProperties = {
   width: '24px',
   padding: 0,
   fontSize: '12px',
-  backgroundColor: '#27272a',
-  color: '#a1a1aa',
-  border: '1px solid #2a2a30',
+  backgroundColor: 'var(--wks-bg-raised)',
+  color: 'var(--wks-text-secondary)',
+  border: '1px solid var(--wks-border)',
   borderRadius: '3px',
   cursor: 'pointer',
   display: 'flex',

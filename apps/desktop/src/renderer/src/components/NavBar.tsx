@@ -149,7 +149,7 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
                   ? 'var(--wks-text-primary)'
                   : 'var(--wks-text-muted)',
                 opacity: hasHibernated && !isActive ? 0.4 : 1,
-                transition: 'none',
+                transition: 'background-color 0.1s, color 0.1s',
               }}
               onMouseEnter={(e) => {
                 if (!isActive) {
@@ -190,9 +190,9 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                padding: 0,
+                gap: 1,
+                padding: '0 4px',
                 margin: '0 0 0 2px',
-                width: '26px',
                 height: '26px',
                 lineHeight: '1',
                 border: 'none',
@@ -203,7 +203,7 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
                 fontWeight: 400,
                 backgroundColor: 'transparent',
                 color: 'var(--wks-text-faint)',
-                transition: 'none',
+                transition: 'background-color 0.1s, color 0.1s',
               }}
               onMouseEnter={(e) => {
                 (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--wks-bg-hover)';
@@ -216,6 +216,7 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
               title="New terminal (Ctrl+T) | Right-click for more"
             >
               <Plus size={15} strokeWidth={2} />
+              <span style={{ fontSize: '0.5rem', lineHeight: 1, opacity: 0.6 }}>▾</span>
             </button>
 
             {showMenu && (

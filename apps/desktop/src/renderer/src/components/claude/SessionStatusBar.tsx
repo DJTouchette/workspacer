@@ -69,8 +69,8 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd }) => {
         whiteSpace: 'nowrap',
       }}
     >
-      {dir && <span style={{ color: 'var(--wks-accent-soft, #6cb6ff)', fontWeight: 600 }}>{dir}</span>}
-      {model && (<><Sep /><span style={{ color: 'var(--wks-text-secondary, #b08fe0)' }}>{model}</span></>)}
+      {dir && <span style={{ color: 'var(--wks-accent-text)', fontWeight: 600 }}>{dir}</span>}
+      {model && (<><Sep /><span style={{ color: 'var(--wks-text-secondary)' }}>{model}</span></>)}
       {ctxPct !== undefined && (
         <>
           <Sep />
@@ -82,7 +82,7 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd }) => {
       {(tokens !== undefined || cost !== undefined) && (
         <>
           <Sep />
-          <span style={{ color: 'var(--wks-accent-soft, #6cb6ff)', fontVariantNumeric: 'tabular-nums' }}>
+          <span style={{ color: 'var(--wks-accent-text)', fontVariantNumeric: 'tabular-nums' }}>
             {tokens !== undefined ? `tok:${fmtTokens(tokens)}` : ''}
             {cost !== undefined ? ` ${fmtUSD(cost)}` : ''}
           </span>
@@ -91,7 +91,7 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd }) => {
       {(five !== undefined || seven !== undefined) && (
         <>
           <Sep />
-          <span style={{ color: 'var(--wks-info, #4a9eff)', fontVariantNumeric: 'tabular-nums' }}>
+          <span style={{ color: 'var(--wks-text-secondary)', fontVariantNumeric: 'tabular-nums' }}>
             {five !== undefined ? `5h:${Math.round(five)}%` : ''}
             {seven !== undefined ? ` 7d:${Math.round(seven)}%` : ''}
           </span>

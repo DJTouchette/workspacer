@@ -3,6 +3,7 @@ import { Config } from '../../hooks/useConfig';
 import { Section, Row } from './primitives';
 
 function ChromeCookieSyncRow() {
+  const isWindows = window.electronAPI?.platform === 'win32';
   const [syncing, setSyncing] = useState(false);
   const [lastResult, setLastResult] = useState<string | null>(null);
   const [restrictDomains, setRestrictDomains] = useState(true);
@@ -44,6 +45,14 @@ function ChromeCookieSyncRow() {
       setSyncing(false);
     }
   }, [restrictDomains, browser]);
+
+  if (!isWindows) {
+    return (
+      <div style={{ fontSize: '0.55rem', color: 'var(--wks-text-disabled)' }}>
+        Cookie import from Chrome/Edge is available on Windows only.
+      </div>
+    );
+  }
 
   return (
     <>

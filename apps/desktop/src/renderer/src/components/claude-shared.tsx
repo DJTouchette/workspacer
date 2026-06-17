@@ -32,7 +32,7 @@ export const badgeColors: Record<string, string> = {
   idle: claudeColors.success,
   thinking: claudeColors.warning,
   streaming: claudeColors.accent,
-  waiting_input: '#c084fc',
+  waiting_input: 'var(--wks-purple, #c084fc)',
   waiting_approval: claudeColors.error,
 };
 

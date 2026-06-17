@@ -69,7 +69,7 @@ const HubStatus: React.FC<{ onOpenRemote?: () => void }> = ({ onOpenRemote }) =>
             background: 'transparent', border: 'none', padding: 2, cursor: 'pointer',
             color: 'var(--wks-text-faint)', borderRadius: 4,
           }}
-          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-tertiary)'; }}
+          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-primary)'; }}
           onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-faint)'; }}
         >
           <Smartphone size={12} />

@@ -73,6 +73,7 @@ export interface Theme {
   success: string;
   error: string;
   warning: string;
+  purple?: string;
 
   // Overlay / shadow
   overlay: string;
@@ -133,6 +134,7 @@ export const darkTheme: Theme = {
   claudeDivider: 'rgba(255, 255, 255, 0.05)',
   claudeBorder: 'rgba(255, 255, 255, 0.06)',
   claudeBorderSubtle: 'rgba(255, 255, 255, 0.04)',
+  purple: '#c084fc',
   terminal: {
     background: '#1e1e22',
     foreground: '#e4e4e7',
@@ -197,6 +199,7 @@ export const lightTheme: Theme = {
   claudeDivider: 'rgba(0, 0, 0, 0.06)',
   claudeBorder: 'rgba(0, 0, 0, 0.08)',
   claudeBorderSubtle: 'rgba(0, 0, 0, 0.04)',
+  purple: '#9333ea',
   terminal: {
     background: '#fafafa',
     foreground: '#18181b',
@@ -1384,6 +1387,7 @@ export function cssVarsOf(theme: Theme): Record<string, string> {
     '--wks-success': theme.success,
     '--wks-error': theme.error,
     '--wks-warning': theme.warning,
+    '--wks-purple': theme.purple ?? '#c084fc',
     '--wks-overlay': theme.overlay,
     '--wks-shadow': theme.shadow,
     '--wks-scrollbar-thumb': theme.scrollbarThumb,

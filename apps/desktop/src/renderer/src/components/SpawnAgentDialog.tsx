@@ -37,6 +37,13 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, onSpawn
 
   useEffect(() => { setCwd(defaultCwd); }, [defaultCwd]);
 
+  // Close on Escape regardless of which inner element has focus.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); onCancel(); } };
+    window.addEventListener('keydown', handler, true);
+    return () => window.removeEventListener('keydown', handler, true);
+  }, [onCancel]);
+
   // Discover resumable sessions whenever the directory settles (debounced).
   useEffect(() => {
     const dir = cwd.trim();
