@@ -1,4 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 /**
  * Viewport-clamped context menu. Anchors at a point (typically the mouse
@@ -77,7 +78,13 @@ export function ContextMenu({ x, y, onClose, children, minWidth = 150, zIndex = 
     };
   }, [onClose]);
 
-  return (
+  // Portal to <body> so the menu escapes any ancestor stacking context or
+  // `transform`/`backdrop-filter` containing block (the sidebar & navbar both
+  // use frosted-glass blur). Without this, `position: fixed` is measured
+  // relative to that ancestor — which slid the navbar's tab menu into the
+  // middle of the screen — and the menu's z-index is trapped below sibling
+  // panes instead of floating above everything.
+  return createPortal(
     <div
       ref={ref}
       role="menu"
@@ -100,7 +107,8 @@ export function ContextMenu({ x, y, onClose, children, minWidth = 150, zIndex = 
       onContextMenu={(e) => e.preventDefault()}
     >
       {children}
-    </div>
+    </div>,
+    document.body,
   );
 }
 
