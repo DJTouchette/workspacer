@@ -138,6 +138,12 @@ export interface ClaudeArgvOptions {
   /** Absolute path to an MCP config JSON file (`--mcp-config <path>`). */
   mcpConfig?: string;
   /**
+   * Pass `--strict-mcp-config` so the session sees ONLY the servers in
+   * `mcpConfig`, ignoring the user's global `~/.claude.json` servers. Used for
+   * per-spawn server selection where "exactly these" is the intent.
+   */
+  strictMcpConfig?: boolean;
+  /**
    * Comma-joined tool glob(s) to pre-allow without a permission prompt.
    * Each entry is passed as a single comma-separated value to `--allowedTools`.
    * Example: `['mcp__workspacer']` → `--allowedTools mcp__workspacer`.
@@ -167,6 +173,7 @@ export function buildClaudeArgv(opts: ClaudeArgvOptions = {}): string[] {
   // Supervisor / MCP extras — appended after profile args so they always land.
   if (opts.mcpConfig) {
     argv.push('--mcp-config', opts.mcpConfig);
+    if (opts.strictMcpConfig) argv.push('--strict-mcp-config');
   }
   if (opts.allowedTools && opts.allowedTools.length) {
     argv.push('--allowedTools', opts.allowedTools.join(','));

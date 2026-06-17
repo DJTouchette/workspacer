@@ -1,5 +1,5 @@
 import type { PluginManifest } from './plugin';
-import type { LibraryItem, LibrarySaveInput } from './library';
+import type { LibraryItem, LibrarySaveInput, LibraryKind } from './library';
 import type { AnalyticsSummary, SessionHistoryRecord } from './analytics';
 import type { Layout, LayoutAgent } from './layout';
 import type {
@@ -42,7 +42,7 @@ export interface ElectronAPI {
   onTerminalExit: (callback: (id: string) => void) => () => void;
 
   // Claude sessions (delegated to claudemon daemon)
-  spawnClaude: (opts: { cwd?: string; profileId?: string; model?: string; skipPermissions?: boolean; resumeSessionId?: string; cols?: number; rows?: number; supervisor?: boolean }) => Promise<string>;
+  spawnClaude: (opts: { cwd?: string; profileId?: string; model?: string; skipPermissions?: boolean; resumeSessionId?: string; cols?: number; rows?: number; supervisor?: boolean; mcpItemIds?: string[] }) => Promise<string>;
   claudeListModels: () => Promise<{ defaultModel: string; skipPermissionsDefault: boolean; aliases: Array<{ value: string; label: string }>; seen: string[] }>;
   claudeMessage: (sessionId: string, text: string) => Promise<{ ok: boolean; mode?: string }>;
   claudeApprove: (sessionId: string, decision: 'yes' | 'no' | 'always', reason?: string) => Promise<void>;
@@ -82,7 +82,7 @@ export interface ElectronAPI {
 
   // Claude profiles
   claudeProfilesList: () => Promise<ClaudeProfile[]>;
-  claudeProfilesAdd: (name: string, configDir: string, extraArgs: string[]) => Promise<ClaudeProfile>;
+  claudeProfilesAdd: (name: string, configDir: string, extraArgs: string[], mcpItemIds?: string[]) => Promise<ClaudeProfile>;
   claudeProfilesUpdate: (id: string, updates: ProfileUpdate) => Promise<ClaudeProfile>;
   claudeProfilesRemove: (id: string) => Promise<void>;
   getClaudeSession: (sessionId: string) => Promise<ClaudeSessionSnapshot | null>;
@@ -106,7 +106,7 @@ export interface ElectronAPI {
   // Library (reusable prompts + skills)
   libraryList: (cwd?: string) => Promise<LibraryItem[]>;
   librarySave: (input: LibrarySaveInput) => Promise<LibraryItem>;
-  libraryRemove: (scope: 'global' | 'project' | 'claude', id: string, cwd?: string, kind?: 'prompt' | 'skill' | 'agent') => Promise<void>;
+  libraryRemove: (scope: 'global' | 'project' | 'claude', id: string, cwd?: string, kind?: LibraryKind) => Promise<void>;
   onLibraryChanged: (callback: () => void) => () => void;
 
   // App info

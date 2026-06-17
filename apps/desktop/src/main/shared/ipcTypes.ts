@@ -257,6 +257,8 @@ export interface SessionAgentData {
   profileId?: string;
   model?: string;
   skipPermissions?: boolean;
+  /** Library item ids (kind 'mcp') this agent was spawned with — re-passed on respawn. */
+  mcpItemIds?: string[];
   sessionId?: string;
   tabs: SessionTabData[];
   activeTabId: string;
@@ -317,6 +319,8 @@ export interface ClaudeProfile {
   name: string;
   configDir: string;
   extraArgs: string[];
+  /** Library item ids (kind 'mcp') loaded by default when spawning with this profile. */
+  mcpItemIds?: string[];
   isDefault: boolean;
 }
 

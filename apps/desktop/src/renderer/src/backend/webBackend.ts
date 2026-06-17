@@ -180,7 +180,7 @@ export function createWebBackend(token: string): ElectronAPI {
     // ── Claude discovery / profiles ──────────────────────────────────────
     claudeListSessionsForDir: (cwd) => client.call('claude.sessionsForDir', { cwd }),
     claudeProfilesList: () => client.call<ClaudeProfile[]>('claude.profiles.list', {}),
-    claudeProfilesAdd: (name, configDir, extraArgs) => client.call<ClaudeProfile>('claude.profiles.add', { name, configDir, extraArgs }),
+    claudeProfilesAdd: (name, configDir, extraArgs, mcpItemIds) => client.call<ClaudeProfile>('claude.profiles.add', { name, configDir, extraArgs, mcpItemIds }),
     claudeProfilesUpdate: (id, updates) => client.call<ClaudeProfile>('claude.profiles.update', { id, updates }),
     claudeProfilesRemove: (id) => client.call<void>('claude.profiles.remove', { id }).then(() => {}),
     getClaudeSession: (sessionId) => client.call<ClaudeSessionSnapshot | null>('sessions.snapshot', { sessionId }),

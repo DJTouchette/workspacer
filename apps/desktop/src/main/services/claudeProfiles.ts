@@ -14,6 +14,9 @@ export interface ClaudeProfile {
   configDir: string;
   /** Extra CLI args, e.g. ["--dangerously-skip-permissions"] */
   extraArgs: string[];
+  /** Library item ids (kind 'mcp') to load by default when spawning with this
+   *  profile. The spawn dialog pre-fills from these and lets the user override. */
+  mcpItemIds?: string[];
   /** Is this the default profile? */
   isDefault: boolean;
 }
@@ -50,12 +53,13 @@ class ClaudeProfileService {
     return this.profiles.find(p => p.isDefault) ?? this.profiles[0];
   }
 
-  addProfile(name: string, configDir: string, extraArgs: string[]): ClaudeProfile {
+  addProfile(name: string, configDir: string, extraArgs: string[], mcpItemIds: string[] = []): ClaudeProfile {
     const profile: ClaudeProfile = {
       id: crypto.randomUUID(),
       name,
       configDir: configDir.trim(),
       extraArgs,
+      mcpItemIds,
       isDefault: this.profiles.length === 0,
     };
     this.profiles.push(profile);
@@ -69,6 +73,7 @@ class ClaudeProfileService {
     if (updates.name !== undefined) profile.name = updates.name;
     if (updates.configDir !== undefined) profile.configDir = updates.configDir.trim();
     if (updates.extraArgs !== undefined) profile.extraArgs = updates.extraArgs;
+    if (updates.mcpItemIds !== undefined) profile.mcpItemIds = updates.mcpItemIds;
     if (updates.isDefault) {
       // Unset other defaults
       for (const p of this.profiles) p.isDefault = p.id === id;

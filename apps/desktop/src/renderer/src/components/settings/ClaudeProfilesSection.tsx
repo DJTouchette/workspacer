@@ -1,19 +1,22 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { Section, SmallButton, inputStyle } from './primitives';
+import type { LibraryItem } from '../../types/library';
 
 interface ClaudeProfile {
   id: string;
   name: string;
   configDir: string;
   extraArgs: string[];
+  mcpItemIds?: string[];
   isDefault: boolean;
 }
 
 const ProfileEditForm: React.FC<{
   name: string; configDir: string; args: string;
+  mcpItems: LibraryItem[]; mcpSel: string[]; onToggleMcp: (id: string) => void;
   onNameChange: (v: string) => void; onConfigDirChange: (v: string) => void; onArgsChange: (v: string) => void;
   onSave: () => void; onCancel: () => void;
-}> = ({ name, configDir, args, onNameChange, onConfigDirChange, onArgsChange, onSave, onCancel }) => (
+}> = ({ name, configDir, args, mcpItems, mcpSel, onToggleMcp, onNameChange, onConfigDirChange, onArgsChange, onSave, onCancel }) => (
   <div style={{
     display: 'flex', flexDirection: 'column', gap: '4px', padding: '8px',
     backgroundColor: 'var(--wks-bg-surface)', borderRadius: '4px', border: '1px solid var(--wks-border-input)',
@@ -26,6 +29,22 @@ const ProfileEditForm: React.FC<{
       style={{ ...inputStyle, fontFamily: 'monospace' }}
       onKeyDown={e => { if (e.key === 'Enter') onSave(); }}
     />
+    {mcpItems.length > 0 && (
+      <div>
+        <div style={{ fontSize: '0.55rem', color: 'var(--wks-text-disabled)', textTransform: 'uppercase', letterSpacing: '0.04em', margin: '4px 0 2px' }}>
+          Default MCP servers
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 1, maxHeight: 120, overflowY: 'auto' }}>
+          {mcpItems.map(it => (
+            <label key={it.id} title={it.description || it.id} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.65rem', color: 'var(--wks-text-secondary)', cursor: 'pointer', padding: '1px 0' }}>
+              <input type="checkbox" checked={mcpSel.includes(it.id)} onChange={() => onToggleMcp(it.id)} style={{ cursor: 'pointer' }} />
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.title}</span>
+              <span style={{ fontSize: '0.5rem', color: 'var(--wks-text-faint)' }}>{it.scope}</span>
+            </label>
+          ))}
+        </div>
+      </div>
+    )}
     <div style={{ display: 'flex', gap: '4px', justifyContent: 'flex-end' }}>
       <SmallButton label="Cancel" onClick={onCancel} />
       <SmallButton label="Save" onClick={onSave} primary />
@@ -39,12 +58,22 @@ const ClaudeProfilesSection: React.FC = () => {
   const [editName, setEditName] = useState('');
   const [editConfigDir, setEditConfigDir] = useState('');
   const [editArgs, setEditArgs] = useState('');
+  const [editMcp, setEditMcp] = useState<string[]>([]);
+  const [mcpItems, setMcpItems] = useState<LibraryItem[]>([]);
 
   const load = useCallback(() => {
     window.electronAPI.claudeProfilesList().then(p => setProfiles(p as ClaudeProfile[]));
   }, []);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    window.electronAPI.libraryList?.()
+      .then(list => setMcpItems((list ?? []).filter(it => it.kind === 'mcp')))
+      .catch(() => {});
+  }, []);
+
+  const toggleMcp = (id: string) =>
+    setEditMcp(sel => (sel.includes(id) ? sel.filter(x => x !== id) : [...sel, id]));
 
   const startEdit = (profile?: ClaudeProfile) => {
     if (profile) {
@@ -52,11 +81,13 @@ const ClaudeProfilesSection: React.FC = () => {
       setEditName(profile.name);
       setEditConfigDir(profile.configDir);
       setEditArgs(profile.extraArgs.join(' '));
+      setEditMcp(profile.mcpItemIds ?? []);
     } else {
       setEditing('new');
       setEditName('');
       setEditConfigDir('');
       setEditArgs('');
+      setEditMcp([]);
     }
   };
 
@@ -65,9 +96,9 @@ const ClaudeProfilesSection: React.FC = () => {
   const saveEdit = async () => {
     const args = editArgs.trim() ? editArgs.trim().split(/\s+/) : [];
     if (editing === 'new') {
-      await window.electronAPI.claudeProfilesAdd(editName || 'Profile', editConfigDir, args);
+      await window.electronAPI.claudeProfilesAdd(editName || 'Profile', editConfigDir, args, editMcp);
     } else if (editing) {
-      await window.electronAPI.claudeProfilesUpdate(editing, { name: editName, configDir: editConfigDir, extraArgs: args });
+      await window.electronAPI.claudeProfilesUpdate(editing, { name: editName, configDir: editConfigDir, extraArgs: args, mcpItemIds: editMcp });
     }
     setEditing(null);
     load();
@@ -91,6 +122,7 @@ const ClaudeProfilesSection: React.FC = () => {
             {editing === p.id ? (
               <ProfileEditForm
                 name={editName} configDir={editConfigDir} args={editArgs}
+                mcpItems={mcpItems} mcpSel={editMcp} onToggleMcp={toggleMcp}
                 onNameChange={setEditName} onConfigDirChange={setEditConfigDir} onArgsChange={setEditArgs}
                 onSave={saveEdit} onCancel={cancelEdit}
               />
@@ -133,6 +165,7 @@ const ClaudeProfilesSection: React.FC = () => {
         {editing === 'new' ? (
           <ProfileEditForm
             name={editName} configDir={editConfigDir} args={editArgs}
+            mcpItems={mcpItems} mcpSel={editMcp} onToggleMcp={toggleMcp}
             onNameChange={setEditName} onConfigDirChange={setEditConfigDir} onArgsChange={setEditArgs}
             onSave={saveEdit} onCancel={cancelEdit}
           />

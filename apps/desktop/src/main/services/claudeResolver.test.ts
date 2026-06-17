@@ -270,4 +270,33 @@ describe('buildClaudeArgv', () => {
       expect(skipIdx).toBeLessThan(sessionIdx);
     });
   });
+
+  describe('mcpConfig + strictMcpConfig', () => {
+    it('emits --mcp-config <path> when mcpConfig is set', () => {
+      const argv = buildClaudeArgv({ mcpConfig: '/tmp/session-mcp/abc.json' });
+      const idx = argv.indexOf('--mcp-config');
+      expect(idx).toBeGreaterThan(-1);
+      expect(argv[idx + 1]).toBe('/tmp/session-mcp/abc.json');
+    });
+
+    it('does NOT emit --mcp-config or --strict-mcp-config when mcpConfig is unset', () => {
+      const argv = buildClaudeArgv({ strictMcpConfig: true });
+      expect(argv).not.toContain('--mcp-config');
+      expect(argv).not.toContain('--strict-mcp-config');
+    });
+
+    it('adds --strict-mcp-config only alongside an mcpConfig', () => {
+      const argv = buildClaudeArgv({ mcpConfig: '/tmp/x.json', strictMcpConfig: true });
+      expect(argv).toContain('--strict-mcp-config');
+      const cfgIdx = argv.indexOf('--mcp-config');
+      const strictIdx = argv.indexOf('--strict-mcp-config');
+      expect(cfgIdx).toBeLessThan(strictIdx);
+    });
+
+    it('omits --strict-mcp-config when strictMcpConfig is false', () => {
+      const argv = buildClaudeArgv({ mcpConfig: '/tmp/x.json' });
+      expect(argv).toContain('--mcp-config');
+      expect(argv).not.toContain('--strict-mcp-config');
+    });
+  });
 });
