@@ -56,9 +56,24 @@ export function renderInlineMarkdown(text: string): React.ReactNode[] {
   return nodes.length > 0 ? nodes : [text];
 }
 
+// Module-level LRU cache for parsed markdown — bounded to 300 entries so
+// identical content (completed turns) never re-parses across re-renders.
+const MD_CACHE_MAX = 300;
+const mdCache = new Map<string, React.ReactNode[]>();
+function mdCachePut(key: string, value: React.ReactNode[]): React.ReactNode[] {
+  if (mdCache.size >= MD_CACHE_MAX) {
+    // Evict oldest entry (Map iteration order = insertion order)
+    mdCache.delete(mdCache.keys().next().value!);
+  }
+  mdCache.set(key, value);
+  return value;
+}
+
 /** Parse a markdown string into structured blocks */
 export function parseMarkdownBlocks(text: string): React.ReactNode[] {
   if (!text) return [];
+  const cached = mdCache.get(text);
+  if (cached) return cached;
 
   const lines = text.split('\n');
   const blocks: React.ReactNode[] = [];
@@ -238,7 +253,7 @@ export function parseMarkdownBlocks(text: string): React.ReactNode[] {
     }
   }
 
-  return blocks;
+  return mdCachePut(text, blocks);
 }
 
 /** Convenience component wrapper around parseMarkdownBlocks. */

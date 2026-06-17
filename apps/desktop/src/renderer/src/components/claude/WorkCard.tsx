@@ -68,7 +68,7 @@ function summarizeWork(calls: ToolCall[]): WorkSummary {
  * rich run cards (not a flood of raw tool calls) are what you see while a
  * workflow is going.
  */
-export const WorkCard: React.FC<{
+const WorkCardInner: React.FC<{
   toolCalls: ToolCall[];
   subagentByToolId?: Map<string, SubagentInfo>;
   workflowByToolId?: Map<string, WorkflowRunInfo>;
@@ -266,3 +266,5 @@ export const WorkCard: React.FC<{
     </div>
   );
 };
+
+export const WorkCard = React.memo(WorkCardInner);

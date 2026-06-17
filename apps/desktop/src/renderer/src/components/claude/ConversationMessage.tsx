@@ -1,12 +1,19 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import type { ConversationTurn } from '../../types/claudeSession';
 import { claudeColors as colors } from '../claude-shared';
 import { parseMarkdownBlocks } from '../markdown';
 import { InlineWorkLog } from './InlineWorkLog';
 import { DiffView, hasDiff } from './DiffView';
 
-export const ConversationMessage: React.FC<{ turn: ConversationTurn; isLast?: boolean }> = ({ turn, isLast }) => {
+const ConversationMessageInner: React.FC<{ turn: ConversationTurn; isLast?: boolean }> = ({ turn, isLast }) => {
   const isUser = turn.role === 'user';
+  // Memoize per content string; module-level LRU cache in markdown.tsx also
+  // deduplicates across instances, so this just avoids the map lookup overhead
+  // on re-renders where turn.content hasn't changed.
+  const parsedContent = useMemo(
+    () => (turn.content ? parseMarkdownBlocks(turn.content) : null),
+    [turn.content],
+  );
 
   if (isUser) {
     return (
@@ -100,16 +107,18 @@ export const ConversationMessage: React.FC<{ turn: ConversationTurn; isLast?: bo
         </div>
       ))}
 
-      {turn.content ? (
+      {parsedContent ? (
         <div style={{
           paddingLeft: 4,
           fontSize: '0.8rem',
           lineHeight: 1.6,
           color: colors.text,
         }}>
-          {parseMarkdownBlocks(turn.content)}
+          {parsedContent}
         </div>
       ) : null}
     </div>
   );
 };
+
+export const ConversationMessage = React.memo(ConversationMessageInner);

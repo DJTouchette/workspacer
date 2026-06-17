@@ -4,7 +4,7 @@ import { WorkLogEntry } from '../claude-shared';
 import { WorkflowRunCard } from './WorkflowRunCard';
 import { SubagentRow } from './SubagentRow';
 
-export const InlineWorkLog: React.FC<{
+const InlineWorkLogInner: React.FC<{
   toolCalls: ToolCall[];
   subagents?: SubagentInfo[];
   workflows?: WorkflowRunInfo[];
@@ -19,3 +19,5 @@ export const InlineWorkLog: React.FC<{
     </div>
   );
 };
+
+export const InlineWorkLog = React.memo(InlineWorkLogInner);

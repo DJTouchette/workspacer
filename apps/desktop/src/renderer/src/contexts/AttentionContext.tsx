@@ -153,13 +153,29 @@ export const AttentionProvider: React.FC<ProviderProps> = ({
     onSpawnAgent?.();
   }, [onSpawnAgent]);
 
-  const value: AttentionContextValue = {
-    agents, activeAgentId, snapshotBySession, feed, counts, topByAgent,
-    inboxOpen, openInbox, closeInbox,
-    selectedSig, setSelectedSig, moveSelection, selectedItem,
-    viewLevel, setViewLevel,
+  // Split the context into a STABLE actions bundle and the volatile data so the
+  // memo deps stay honest. Every action below is already useCallback'd, so this
+  // object only changes when one of those identities does (effectively never
+  // after mount) — action-only consumers don't churn on feed ticks.
+  const actions = useMemo(() => ({
+    openInbox, closeInbox, setSelectedSig, moveSelection, setViewLevel,
     approve, answer, reply, sendMessage, dismiss, snooze, openAgent, respawn, reviewFile, spawnAgent,
-  };
+  }), [
+    openInbox, closeInbox, moveSelection, setViewLevel,
+    approve, answer, reply, sendMessage, dismiss, snooze, openAgent, respawn, reviewFile, spawnAgent,
+  ]);
+
+  // Public shape stays flat + backward-compatible (the attention test and every
+  // consumer read these keys directly off useAttention()). Memoized so the
+  // Provider value identity is stable across renders that don't change inputs.
+  const value: AttentionContextValue = useMemo(() => ({
+    agents, activeAgentId, snapshotBySession, feed, counts, topByAgent,
+    inboxOpen, selectedSig, selectedItem, viewLevel,
+    ...actions,
+  }), [
+    agents, activeAgentId, snapshotBySession, feed, counts, topByAgent,
+    inboxOpen, selectedSig, selectedItem, viewLevel, actions,
+  ]);
 
   return <AttentionContext.Provider value={value}>{children}</AttentionContext.Provider>;
 };

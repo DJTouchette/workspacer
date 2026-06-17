@@ -1,4 +1,4 @@
-import { useRef, useCallback, useState, useEffect, useMemo } from 'react';
+import { useRef, useCallback, useState, useEffect, useMemo, lazy, Suspense, memo } from 'react';
 import { ChevronRight } from 'lucide-react';
 import './App.css';
 import NavBar from './components/NavBar';
@@ -15,7 +15,9 @@ import { EDITOR_OPEN_FILE_EVENT } from './lib/editorBus';
 import { useUiCommands } from './hooks/useUiCommands';
 import type { PluginPane } from './types/plugin';
 import SpawnAgentDialog from './components/SpawnAgentDialog';
-import RemoteShareDialog from './components/RemoteShareDialog';
+// Lazy-loaded so qrcode.react (pulled in by RemoteShareDialog) stays off the
+// startup bundle — it only mounts when the user opens the share panel.
+const RemoteShareDialog = lazy(() => import('./components/RemoteShareDialog'));
 import WebFolderPicker from './components/WebFolderPicker';
 import ScrollContainer, { ScrollContainerRef } from './components/ScrollContainer';
 import ShortcutOverlay from './components/ShortcutOverlay';
@@ -33,7 +35,7 @@ import type { Layout, LayoutAgent } from './types/layout';
 import { useLibrary } from './hooks/useLibrary';
 import { useLayoutSync, type HydrationResult } from './hooks/useLayoutSync';
 import { useAgentManager, GLOBAL_WORKSPACE_ID } from './hooks/useAgentManager';
-import type { PaneType, AgentWorkspace, ViewMode, ViewLevel } from './types/pane';
+import type { PaneType, AgentWorkspace, ViewMode, ViewLevel, TabConfig } from './types/pane';
 import type { SessionAmbientState, ClaudeSessionSnapshot } from './types/claudeSession';
 import { useKeyboardNav } from './hooks/useKeyboardNav';
 import { useIsSmallScreen } from './hooks/useMediaQuery';
@@ -87,6 +89,86 @@ export function migrateSessionData(
   // Null / empty data → empty session.
   return { agents: [], activeAgentId: '', name: 'Default' };
 }
+
+/** Stable per-agent callbacks/props, bundled once in App so the memo below holds. */
+interface AgentViewHandlers {
+  onTabFocus: (tabId: string) => void;
+  onPaneClose: (tabId: string, paneId: string) => void;
+  onPaneFocus: (tabId: string, paneId: string) => void;
+  onTabRename: (tabId: string, title: string) => void;
+  onTabMove: (tabId: string, toIndex: number) => void;
+  onTabCanvasChange: (tabId: string, canvas: TabConfig['canvas']) => void;
+  onPtyReady: (paneId: string, ptySessionId: string) => void;
+  onUrlChange: (tabId: string, paneId: string, url: string) => void;
+  onNotesChange: (tabId: string, paneId: string, notes: string) => void;
+  onNavigateToTab: (tabId: string) => void;
+  onAddTab: (type: PaneType, shell?: string, label?: string, cwd?: string, profileId?: string, resumeSessionId?: string, attachSessionId?: string) => void;
+  spawnSupervisor: (opts: { question: string; parentId?: string }) => Promise<string>;
+  onJumpToAgent: (agentId: string) => void;
+}
+
+interface AgentWorkspaceViewProps {
+  agent: AgentWorkspace;
+  isActiveAgent: boolean;
+  scrollContainerRef: React.Ref<ScrollContainerRef>;
+  viewMode: ViewMode;
+  ptyMapping: Record<string, string>;
+  renameSignal: number;
+  workspaceAgents: { sessionId?: string }[];
+  appCwd: string;
+  allAgents: AgentWorkspace[];
+  handlers: AgentViewHandlers;
+}
+
+/**
+ * One agent's mounted workspace. React.memo'd so a snapshot/state change scoped
+ * to agent X reconciles only X's subtree instead of cascading into every other
+ * mounted agent's ScrollContainer. The no-remount constraint is preserved: the
+ * `display:none` wrapper lives here and stays mounted for inactive agents.
+ *
+ * For the memo to actually hold, every prop must be stable across unrelated
+ * renders — App passes a single bundled `handlers` object plus memoized
+ * arrays, so the only props that move for agent X are X's own `agent`/active
+ * flag (and the genuinely-shared `allAgents`/`ptyMapping`/`viewMode`).
+ */
+const AgentWorkspaceView = memo(function AgentWorkspaceView({
+  agent, isActiveAgent, scrollContainerRef, viewMode, ptyMapping, renameSignal,
+  workspaceAgents, appCwd, allAgents, handlers,
+}: AgentWorkspaceViewProps) {
+  return (
+    <div
+      style={{ display: isActiveAgent ? 'block' : 'none', height: '100%' }}
+    >
+      <ErrorBoundary label="Workspace" variant="region" resetKeys={[agent.id]}>
+      <ScrollContainer
+        ref={isActiveAgent ? scrollContainerRef : undefined}
+        agentActive={isActiveAgent}
+        tabs={agent.tabs}
+        activeTabId={agent.activeTabId}
+        onTabFocus={handlers.onTabFocus}
+        onPaneClose={handlers.onPaneClose}
+        onPaneFocus={handlers.onPaneFocus}
+        onTabRename={handlers.onTabRename}
+        onTabMove={handlers.onTabMove}
+        viewMode={viewMode}
+        onTabCanvasChange={handlers.onTabCanvasChange}
+        onPtyReady={handlers.onPtyReady}
+        onUrlChange={handlers.onUrlChange}
+        onNotesChange={handlers.onNotesChange}
+        onNavigateToTab={handlers.onNavigateToTab}
+        onAddTab={handlers.onAddTab}
+        ptyMapping={ptyMapping}
+        renameSignal={renameSignal}
+        workspaceAgents={workspaceAgents}
+        appCwd={appCwd}
+        allAgents={allAgents}
+        spawnSupervisor={handlers.spawnSupervisor}
+        onJumpToAgent={handlers.onJumpToAgent}
+      />
+      </ErrorBoundary>
+    </div>
+  );
+});
 
 function App() {
   const { config, loaded: configLoaded, save: saveConfig } = useConfig();
@@ -242,11 +324,50 @@ function App() {
       setSnapshotBySession(snaps);
     }).catch(() => {});
     const unsub = window.electronAPI.onClaudeSessionUpdate((sessionId: string, snapshot: any) => {
+      // An ended session will never tick again, so drop its (full-transcript)
+      // snapshot + status rather than leaving it pinned in memory forever.
+      if (snapshot.status === 'ended') {
+        setStatusBySession((prev) => {
+          if (!(sessionId in prev)) return prev;
+          const { [sessionId]: _drop, ...rest } = prev;
+          return rest;
+        });
+        setSnapshotBySession((prev) => {
+          if (!(sessionId in prev)) return prev;
+          const { [sessionId]: _drop, ...rest } = prev;
+          return rest;
+        });
+        return;
+      }
       setStatusBySession((prev) => ({ ...prev, [sessionId]: snapshot.ambientState }));
       setSnapshotBySession((prev) => ({ ...prev, [sessionId]: snapshot }));
     });
     return () => { cancelled = true; unsub(); };
   }, []);
+
+  // Drop a terminated agent's session snapshot/status from the promoted maps.
+  // useAgentManager.terminateAgent removes the agent + closes the daemon session
+  // but doesn't own these App-level maps, so without this they'd hold the dead
+  // session's full transcript for the rest of the app's lifetime.
+  const pruneSession = useCallback((sessionId: string | undefined) => {
+    if (!sessionId) return;
+    setStatusBySession((prev) => {
+      if (!(sessionId in prev)) return prev;
+      const { [sessionId]: _drop, ...rest } = prev;
+      return rest;
+    });
+    setSnapshotBySession((prev) => {
+      if (!(sessionId in prev)) return prev;
+      const { [sessionId]: _drop, ...rest } = prev;
+      return rest;
+    });
+  }, []);
+
+  const handleTerminateAgent = useCallback((agentId: string) => {
+    const sid = agents.find((a) => a.id === agentId)?.sessionId;
+    void terminateAgent(agentId);
+    pruneSession(sid);
+  }, [agents, terminateAgent, pruneSession]);
 
   // Auto-adopt any live daemon session that has no AgentWorkspace yet (e.g. one
   // spawned externally via the MCP facade or by another agent). Gated on the
@@ -832,6 +953,41 @@ function App() {
     [splitTab, activeAgent],
   );
 
+  // Stable inputs for the per-agent workspace views. `workspaceAgents` was being
+  // rebuilt inline in every render of every agent's ScrollContainer, giving each
+  // a fresh-identity array prop; lifting it here (recomputed only when the agent
+  // session set changes) is what lets the AgentWorkspaceView memo actually hold,
+  // so a snapshot for agent X no longer reconciles every other agent's subtree.
+  const workspaceAgents = useMemo(
+    () => agents.filter((a) => !a.global).map((a) => ({ sessionId: a.sessionId })),
+    // Only the (ordered) session ids matter to consumers; depending on `agents`
+    // directly would defeat the memo since that ref changes on any tab edit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [agents.filter((a) => !a.global).map((a) => a.sessionId ?? '').join(',')],
+  );
+
+  // Bundle the stable per-agent callbacks/props once so the memoized wrapper
+  // sees a single stable object instead of ~14 individually-threaded props.
+  const agentViewHandlers = useMemo(() => ({
+    onTabFocus: handleTabFocus,
+    onPaneClose: handlePaneClose,
+    onPaneFocus: handlePaneFocus,
+    onTabRename: renameTab,
+    onTabMove: moveTab,
+    onTabCanvasChange: updateTabCanvas,
+    onPtyReady: handlePtyReady,
+    onUrlChange: handleUrlChange,
+    onNotesChange: handleNotesChange,
+    onNavigateToTab: handleTabClick,
+    onAddTab: handleAddTab,
+    spawnSupervisor,
+    onJumpToAgent: handleJumpToAgent,
+  }), [
+    handleTabFocus, handlePaneClose, handlePaneFocus, renameTab, moveTab,
+    updateTabCanvas, handlePtyReady, handleUrlChange, handleNotesChange,
+    handleTabClick, handleAddTab, spawnSupervisor, handleJumpToAgent,
+  ]);
+
   return (
     <AttentionProvider
       agents={agents}
@@ -868,7 +1024,7 @@ function App() {
           snapshotBySession={snapshotBySession}
           onSelectAgent={(id) => { handleSelectAgent(id); if (sidebarOverlay) setSidebarCollapsed(true); }}
           onSpawnAgent={() => setShowSpawnDialog(true)}
-          onTerminateAgent={terminateAgent}
+          onTerminateAgent={handleTerminateAgent}
           onRenameAgent={renameAgent}
           onJumpToAttention={goToNextAttention}
           onOpenInbox={openInbox}
@@ -932,43 +1088,21 @@ function App() {
           // switching agents never unmounts a Claude pane (which would detach
           // its viewer and clear the terminal). Only the active agent's
           // container is shown and wired to the scroll ref.
-          agents.map((agent) => {
-            const isActiveAgent = agent.id === activeAgentId;
-            return (
-              <div
-                key={agent.id}
-                style={{ display: isActiveAgent ? 'block' : 'none', height: '100%' }}
-              >
-                <ErrorBoundary label="Workspace" variant="region" resetKeys={[agent.id]}>
-                <ScrollContainer
-                  ref={isActiveAgent ? scrollContainerRef : undefined}
-                  agentActive={isActiveAgent}
-                  tabs={agent.tabs}
-                  activeTabId={agent.activeTabId}
-                  onTabFocus={handleTabFocus}
-                  onPaneClose={handlePaneClose}
-                  onPaneFocus={handlePaneFocus}
-                  onTabRename={renameTab}
-                  onTabMove={moveTab}
-                  viewMode={viewMode}
-                  onTabCanvasChange={updateTabCanvas}
-                  onPtyReady={handlePtyReady}
-                  onUrlChange={handleUrlChange}
-                  onNotesChange={handleNotesChange}
-                  onNavigateToTab={handleTabClick}
-                  onAddTab={handleAddTab}
-                  ptyMapping={ptyMapping}
-                  renameSignal={renameSignal}
-                  workspaceAgents={agents.filter((a) => !a.global).map((a) => ({ sessionId: a.sessionId }))}
-                  appCwd={appCwd}
-                  allAgents={agents}
-                  spawnSupervisor={spawnSupervisor}
-                  onJumpToAgent={handleJumpToAgent}
-                />
-                </ErrorBoundary>
-              </div>
-            );
-          })
+          agents.map((agent) => (
+            <AgentWorkspaceView
+              key={agent.id}
+              agent={agent}
+              isActiveAgent={agent.id === activeAgentId}
+              scrollContainerRef={scrollContainerRef}
+              viewMode={viewMode}
+              ptyMapping={ptyMapping}
+              renameSignal={renameSignal}
+              workspaceAgents={workspaceAgents}
+              appCwd={appCwd}
+              allAgents={agents}
+              handlers={agentViewHandlers}
+            />
+          ))
         ) : !config.onboardingDismissed ? (
           <Onboarding
             onSpawn={() => setShowSpawnDialog(true)}
@@ -1057,7 +1191,9 @@ function App() {
       )}
 
       {showRemote && (
-        <RemoteShareDialog onClose={() => setShowRemote(false)} />
+        <Suspense fallback={null}>
+          <RemoteShareDialog onClose={() => setShowRemote(false)} />
+        </Suspense>
       )}
 
       {/* Host filesystem browser for the web build's pickFolder (inert on desktop). */}

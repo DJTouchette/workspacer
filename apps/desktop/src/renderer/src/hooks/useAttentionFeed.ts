@@ -3,6 +3,7 @@ import type { AgentWorkspace } from '../types/pane';
 import type { AttentionItem, AttentionKind } from '../types/attention';
 import type { ClaudeSessionSnapshot } from '../types/claudeSession';
 import { KIND_PRIORITY, sortItems } from '../lib/attentionRouter';
+import { usePageVisible } from './usePageVisible';
 
 /** Stable string hash (djb2) for building idempotent item signatures. */
 function hash(s: string): string {
@@ -91,6 +92,7 @@ export function useAttentionFeed(
   const [dismissed, setDismissed] = useState<Set<string>>(() => new Set());
   const [snoozedUntil, setSnoozedUntil] = useState<Map<string, number>>(() => new Map());
   const [now, setNow] = useState(() => Date.now());
+  const pageVisible = usePageVisible();
 
   // working→idle "done" detection needs memory of each session's prior state.
   const prevStateRef = useRef<Map<string, string>>(new Map());
@@ -116,11 +118,45 @@ export function useAttentionFeed(
     if (changed) setDoneTick((t) => t + 1);
   }, [snapshotBySession]);
 
-  // Snooze-expiry ticker (also re-surfaces snoozed items when their time is up).
+  // Prune per-session memory for sessions that no longer exist (terminated
+  // agents / ended sessions). Without this the done-detection refs and the
+  // dismissed/snoozed sets grow unbounded across a long-running app. Keyed on
+  // the live session set so it runs whenever sessions appear or disappear.
+  const liveSessionKey = Object.keys(snapshotBySession).sort().join(',');
   useEffect(() => {
+    const live = new Set(Object.keys(snapshotBySession));
+    for (const sid of prevStateRef.current.keys()) if (!live.has(sid)) prevStateRef.current.delete(sid);
+    for (const sid of doneAtRef.current.keys()) if (!live.has(sid)) doneAtRef.current.delete(sid);
+    // dismissed/snoozed are keyed by item signature, which is prefixed with the
+    // sessionId (`${sid}:kind:…`), so a dead session's entries start with `sid:`.
+    setDismissed((prev) => {
+      let mutated = false;
+      const n = new Set<string>();
+      for (const sig of prev) {
+        if (live.has(sig.split(':')[0])) n.add(sig); else mutated = true;
+      }
+      return mutated ? n : prev;
+    });
+    setSnoozedUntil((prev) => {
+      let mutated = false;
+      const n = new Map<string, number>();
+      for (const [sig, t] of prev) {
+        if (live.has(sig.split(':')[0])) n.set(sig, t); else mutated = true;
+      }
+      return mutated ? n : prev;
+    });
+  }, [liveSessionKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Snooze-expiry ticker (also re-surfaces snoozed items when their time is up).
+  // Only armed when something is actually snoozed — with nothing snoozed there's
+  // nothing whose expiry could change the feed, so the timer would burn CPU
+  // recomputing the same feed every 5s forever. Also paused while the window is
+  // hidden (the app should idle toward ~0% CPU when switched away).
+  useEffect(() => {
+    if (snoozedUntil.size === 0 || !pageVisible) return;
     const i = setInterval(() => setNow(Date.now()), 5000);
     return () => clearInterval(i);
-  }, []);
+  }, [snoozedUntil.size, pageVisible]);
 
   const items = useMemo(() => {
     const out: AttentionItem[] = [];

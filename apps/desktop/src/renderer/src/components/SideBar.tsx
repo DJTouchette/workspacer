@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
 import { Plus, ChevronLeft, HelpCircle } from 'lucide-react';
 import { AgentWorkspace } from '../types/pane';
 import type { SessionAmbientState, ClaudeSessionSnapshot } from '../types/claudeSession';
@@ -123,6 +123,24 @@ const SideBar: React.FC<SideBarProps> = ({
   const [contextMenu, setContextMenu] = useState<{ agentId: string; x: number; y: number } | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
+
+  // Per-session derived stats, memoized by the *snapshot object identity* so a
+  // tick on one agent's session doesn't recompute deriveSessionStats for every
+  // other row. The snapshotBySession map is replaced wholesale on each update,
+  // but the unchanged sessions keep their prior snapshot object references, so
+  // we reuse the cached stats for those and only recompute the one that moved.
+  const statsCacheRef = useRef<WeakMap<ClaudeSessionSnapshot, ReturnType<typeof deriveSessionStats>>>(new WeakMap());
+  const statsBySession = useMemo(() => {
+    const cache = statsCacheRef.current;
+    const out: Record<string, ReturnType<typeof deriveSessionStats>> = {};
+    for (const [sid, snap] of Object.entries(snapshotBySession)) {
+      if (!snap) continue;
+      let stats = cache.get(snap);
+      if (!stats) { stats = deriveSessionStats(snap); cache.set(snap, stats); }
+      out[sid] = stats;
+    }
+    return out;
+  }, [snapshotBySession]);
 
   const commitRename = () => {
     if (renamingId && renameValue.trim()) onRenameAgent(renamingId, renameValue.trim());
@@ -286,7 +304,7 @@ const SideBar: React.FC<SideBarProps> = ({
             const glyph = top ? KIND_GLYPH[top.kind] : '';
             const isRenaming = renamingId === agent.id;
             const snap = agent.sessionId ? snapshotBySession[agent.sessionId] : undefined;
-            const stats = deriveSessionStats(snap);
+            const stats = (agent.sessionId && statsBySession[agent.sessionId]) || deriveSessionStats(snap);
             const hasCtx = stats.ctxPct !== undefined;
             const ctxFrac = hasCtx ? Math.min(1, stats.ctxPct! / 100) : 0;
             const usageTip = hasCtx

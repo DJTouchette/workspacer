@@ -51,7 +51,7 @@ export const agentStatusIcon = (status: WorkflowAgentInfo['status']): React.Reac
 
 // ── WorkflowAgentRow ──
 
-export const WorkflowAgentRow: React.FC<{ agent: WorkflowAgentInfo; now: number }> = ({ agent, now }) => {
+const WorkflowAgentRowInner: React.FC<{ agent: WorkflowAgentInfo; now: number }> = ({ agent, now }) => {
   const running = agent.status === 'running';
   const title = agent.label ?? agent.promptPreview ?? agent.id;
   const duration = agent.durationMs ?? (running && agent.startedAt ? now - agent.startedAt : undefined);
@@ -85,3 +85,8 @@ export const WorkflowAgentRow: React.FC<{ agent: WorkflowAgentInfo; now: number 
     </div>
   );
 };
+
+// Memoized: finished rows (durationMs set, status !== 'running') don't change
+// and won't re-render when the parent's 1Hz `now` tick fires — only running
+// rows receive a meaningful `now` update and actually need to re-render.
+export const WorkflowAgentRow = React.memo(WorkflowAgentRowInner);
