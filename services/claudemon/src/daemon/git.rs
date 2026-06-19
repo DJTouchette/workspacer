@@ -98,11 +98,20 @@ async fn run_git(cwd: &str, args: &[&str]) -> std::io::Result<(bool, String, Str
     ))
 }
 
-/// True only when `cwd` exists and sits inside a git work tree.
-async fn is_work_tree(cwd: &str) -> bool {
-    match run_git(cwd, &["rev-parse", "--is-inside-work-tree"]).await {
-        Ok((true, stdout, _)) => stdout.trim() == "true",
-        _ => false,
+/// Resolve `cwd` to its git work-tree root, or `None` when `cwd` isn't inside
+/// one. Every git command below runs from this root rather than `cwd` itself,
+/// because `git status`/`diff --numstat` emit *repo-root-relative* paths while
+/// `git diff`/`add` interpret a pathspec relative to the *current directory*.
+/// Run from a subdirectory those two conventions disagree, so a root-relative
+/// path silently matches nothing and the diff comes back empty. Anchoring at
+/// the root keeps both ends speaking the same path language.
+async fn work_root(cwd: &str) -> Option<String> {
+    match run_git(cwd, &["rev-parse", "--show-toplevel"]).await {
+        Ok((true, stdout, _)) => {
+            let root = stdout.trim();
+            (!root.is_empty()).then(|| root.to_string())
+        }
+        _ => None,
     }
 }
 
@@ -137,11 +146,11 @@ fn parse_porcelain(stdout: &str) -> Vec<FileStatus> {
 }
 
 pub async fn get_status(Query(q): Query<StatusQuery>) -> impl IntoResponse {
-    if !is_work_tree(&q.cwd).await {
+    let Some(root) = work_root(&q.cwd).await else {
         return (StatusCode::BAD_REQUEST, "cwd is not inside a git work tree").into_response();
-    }
+    };
 
-    let files = match run_git(&q.cwd, &["status", "--porcelain"]).await {
+    let files = match run_git(&root, &["status", "--porcelain"]).await {
         Ok((true, stdout, _)) => parse_porcelain(&stdout),
         Ok((false, _, stderr)) => {
             tracing::warn!(stderr, "git status failed");
@@ -155,7 +164,7 @@ pub async fn get_status(Query(q): Query<StatusQuery>) -> impl IntoResponse {
 
     // Branch name is best-effort: a detached HEAD or fresh repo may not have
     // one, in which case we just report null rather than failing the request.
-    let branch = match run_git(&q.cwd, &["rev-parse", "--abbrev-ref", "HEAD"]).await {
+    let branch = match run_git(&root, &["rev-parse", "--abbrev-ref", "HEAD"]).await {
         Ok((true, stdout, _)) => {
             let name = stdout.trim().to_string();
             (!name.is_empty() && name != "HEAD").then_some(name)
@@ -167,9 +176,9 @@ pub async fn get_status(Query(q): Query<StatusQuery>) -> impl IntoResponse {
 }
 
 pub async fn get_diff(Query(q): Query<DiffQuery>) -> impl IntoResponse {
-    if !is_work_tree(&q.cwd).await {
+    let Some(root) = work_root(&q.cwd).await else {
         return (StatusCode::BAD_REQUEST, "cwd is not inside a git work tree").into_response();
-    }
+    };
 
     if q.untracked {
         let Some(path) = q.path.as_deref() else {
@@ -178,7 +187,7 @@ pub async fn get_diff(Query(q): Query<DiffQuery>) -> impl IntoResponse {
         // `--no-index` exits 1 when the files differ — the expected case here —
         // so success is "produced output", not "exit 0". git special-cases the
         // literal "/dev/null" on every platform, including Windows.
-        return match run_git(&q.cwd, &["diff", "--no-index", "--", "/dev/null", path]).await {
+        return match run_git(&root, &["diff", "--no-index", "--", "/dev/null", path]).await {
             Ok((ok, stdout, stderr)) => {
                 if ok || !stdout.is_empty() {
                     Json(json!({ "diff": stdout })).into_response()
@@ -205,7 +214,7 @@ pub async fn get_diff(Query(q): Query<DiffQuery>) -> impl IntoResponse {
         args.push(path);
     }
 
-    match run_git(&q.cwd, &args).await {
+    match run_git(&root, &args).await {
         Ok((true, stdout, _)) => Json(json!({ "diff": stdout })).into_response(),
         Ok((false, _, stderr)) => {
             tracing::warn!(stderr, "git diff failed");
@@ -263,16 +272,16 @@ fn parse_numstat(stdout: &str) -> Vec<NumstatEntry> {
 }
 
 pub async fn get_numstat(Query(q): Query<NumstatQuery>) -> impl IntoResponse {
-    if !is_work_tree(&q.cwd).await {
+    let Some(root) = work_root(&q.cwd).await else {
         return (StatusCode::BAD_REQUEST, "cwd is not inside a git work tree").into_response();
-    }
+    };
 
     let mut args: Vec<&str> = vec!["diff", "--numstat"];
     if q.staged {
         args.push("--staged");
     }
 
-    match run_git(&q.cwd, &args).await {
+    match run_git(&root, &args).await {
         Ok((true, stdout, _)) => Json(json!({ "files": parse_numstat(&stdout) })).into_response(),
         Ok((false, _, stderr)) => {
             tracing::warn!(stderr, "git diff --numstat failed");
@@ -289,11 +298,11 @@ pub async fn get_numstat(Query(q): Query<NumstatQuery>) -> impl IntoResponse {
 /// On a non-zero git exit we return 422 with git's stderr so the renderer can
 /// surface the real reason (nothing staged, no upstream, merge conflict, …).
 async fn git_action(cwd: &str, args: &[&str], what: &str) -> axum::response::Response {
-    if !is_work_tree(cwd).await {
+    let Some(root) = work_root(cwd).await else {
         return (StatusCode::BAD_REQUEST, "cwd is not inside a git work tree").into_response();
-    }
+    };
 
-    match run_git(cwd, args).await {
+    match run_git(&root, args).await {
         Ok((true, stdout, _)) => Json(json!({ "ok": true, "output": stdout })).into_response(),
         Ok((false, _, stderr)) => {
             tracing::warn!(action = what, stderr = %stderr, "git action failed");
