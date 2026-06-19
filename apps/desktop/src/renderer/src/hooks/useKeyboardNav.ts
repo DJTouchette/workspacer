@@ -1,48 +1,40 @@
 import { useEffect, useCallback, useRef } from 'react';
 import { PaneType, TabConfig } from '../types/pane';
 import { tilingColumns } from '../lib/layoutUtils';
+import { buildChordTree, chordNodeAt } from '../lib/shortcuts';
 
-const CHORD_TIMEOUT = 500;
+const CHORD_TIMEOUT = 1500;
 
-type ChordState = 'idle' | 'waiting';
-
-const MODIFIER_NAMES = new Set(['ctrl', 'alt', 'shift', 'meta']);
+const MODIFIER_KEY_NAMES = new Set(['Control', 'Alt', 'Shift', 'Meta']);
 const KEY_TO_CODE: Record<string, string> = { space: 'Space', '`': 'Backquote' };
 
-function parseKeyCombo(combo: string): { match: (e: KeyboardEvent) => boolean; isModifierOnly: boolean } {
-  const parts = combo.toLowerCase().split('+');
-  const lastPart = parts[parts.length - 1];
-  const isModifierOnly = parts.length === 1 && MODIFIER_NAMES.has(lastPart);
-
-  if (isModifierOnly) {
-    const modKeyMap: Record<string, string> = { ctrl: 'Control', alt: 'Alt', shift: 'Shift', meta: 'Meta' };
-    const expectedKey = modKeyMap[lastPart];
-    return { isModifierOnly: true, match: (e) => e.key === expectedKey };
-  }
-
-  const key = lastPart;
+/** Build a predicate matching a single keydown against a combo like "ctrl+shift+p". */
+function comboMatcher(combo: string): (e: KeyboardEvent) => boolean {
+  const parts = combo.toLowerCase().trim().split('+');
+  const key = parts[parts.length - 1];
   const needsCtrl = parts.includes('ctrl');
   const needsAlt = parts.includes('alt');
   const needsShift = parts.includes('shift');
   const needsMeta = parts.includes('meta');
   const expectedCode = KEY_TO_CODE[key];
-
-  return {
-    isModifierOnly: false,
-    match: (e) => {
-      const keyMatch = expectedCode ? e.code === expectedCode : (e.key === ' ' ? 'space' : e.key.toLowerCase()) === key;
-      return keyMatch && e.ctrlKey === needsCtrl && e.altKey === needsAlt && e.shiftKey === needsShift && e.metaKey === needsMeta;
-    },
+  return (e) => {
+    const keyMatch = expectedCode
+      ? e.code === expectedCode
+      : (e.key === ' ' ? 'space' : e.key.toLowerCase()) === key;
+    return keyMatch && e.ctrlKey === needsCtrl && e.altKey === needsAlt && e.shiftKey === needsShift && e.metaKey === needsMeta;
   };
 }
 
-/** Pre-parsed shortcut matchers, keyed by action name. */
-function buildShortcutMatchers(shortcuts: Record<string, string>): Record<string, (e: KeyboardEvent) => boolean> {
-  const matchers: Record<string, (e: KeyboardEvent) => boolean> = {};
+/** Matchers for direct (non-prefix) bindings only; prefix chords are handled by
+ *  the chord tree. */
+function buildDirectMatchers(shortcuts: Record<string, string>): Record<string, (e: KeyboardEvent) => boolean> {
+  const out: Record<string, (e: KeyboardEvent) => boolean> = {};
   for (const [action, combo] of Object.entries(shortcuts)) {
-    matchers[action] = parseKeyCombo(combo).match;
+    const trimmed = (combo ?? '').trim();
+    if (!trimmed || /^prefix\s/i.test(trimmed)) continue;
+    out[action] = comboMatcher(trimmed);
   }
-  return matchers;
+  return out;
 }
 
 interface UseKeyboardNavOptions {
@@ -60,9 +52,12 @@ interface UseKeyboardNavOptions {
   setActivePane: (tabId: string, paneId: string) => void;
   onToggleHelp: () => void;
   onRenameTab?: () => void;
-  keybindingsMode?: 'default' | 'vim';
-  leaderKey?: string;
-  onChordStateChange?: (state: ChordState) => void;
+  /** Workspace prefix combo (e.g. 'ctrl+space'); bindings of the form
+   *  'prefix <key> [<key>…]' fire as a (possibly nested) chord after it. */
+  prefix?: string;
+  /** Reports the live chord path: null when idle, [] at the root after the
+   *  prefix, ['t'] inside the Tab submenu, etc. Drives the chord hint. */
+  onChordPathChange?: (path: string[] | null) => void;
   onOpenSettings?: () => void;
   onSaveSession?: () => void;
   onOpenCommandPalette?: () => void;
@@ -76,6 +71,7 @@ interface UseKeyboardNavOptions {
   onToggleSidebar?: () => void;
   onToggleInbox?: () => void;
   onToggleFleet?: () => void;
+  onCycleViewMode?: () => void;
   shortcuts?: Record<string, string>;
 }
 
@@ -94,9 +90,8 @@ export function useKeyboardNav({
   setActivePane,
   onToggleHelp,
   onRenameTab,
-  keybindingsMode = 'default',
-  leaderKey = 'ctrl',
-  onChordStateChange,
+  prefix = 'ctrl+space',
+  onChordPathChange,
   onOpenSettings,
   onSaveSession,
   onOpenCommandPalette,
@@ -109,16 +104,18 @@ export function useKeyboardNav({
   onToggleSidebar,
   onToggleInbox,
   onToggleFleet,
+  onCycleViewMode,
   onSpawnAgent,
   shortcuts = {},
 }: UseKeyboardNavOptions) {
-  const matchersRef = useRef(buildShortcutMatchers(shortcuts));
-  // Update matchers when shortcuts change
-  matchersRef.current = buildShortcutMatchers(shortcuts);
-  const chordRef = useRef<{ state: ChordState; timeoutId: ReturnType<typeof setTimeout> | null }>({
-    state: 'idle', timeoutId: null,
+  const directRef = useRef(buildDirectMatchers(shortcuts));
+  directRef.current = buildDirectMatchers(shortcuts);
+  const treeRef = useRef(buildChordTree(shortcuts));
+  treeRef.current = buildChordTree(shortcuts);
+  // path === null → idle; [] → prefix armed (root); ['t'] → inside Tab submenu.
+  const chordRef = useRef<{ path: string[] | null; timeoutId: ReturnType<typeof setTimeout> | null }>({
+    path: null, timeoutId: null,
   });
-  const modTapRef = useRef<{ pressed: boolean; usedInCombo: boolean }>({ pressed: false, usedInCombo: false });
 
   // Tab navigation
   const goToTab = useCallback((index: number) => {
@@ -161,203 +158,149 @@ export function useKeyboardNav({
   }, [activeTab, setActivePane]);
 
   useEffect(() => {
-    const leaderConfig = parseKeyCombo(leaderKey);
+    const prefixMatch = comboMatcher(prefix);
 
     const cancelChord = () => {
       if (chordRef.current.timeoutId) clearTimeout(chordRef.current.timeoutId);
-      chordRef.current = { state: 'idle', timeoutId: null };
-      onChordStateChange?.('idle');
+      chordRef.current = { path: null, timeoutId: null };
+      onChordPathChange?.(null);
     };
 
-    const startChord = () => {
-      chordRef.current.state = 'waiting';
-      onChordStateChange?.('waiting');
+    // Enter/move to a chord path (root = []), (re)arming the idle timeout so a
+    // half-typed chord doesn't linger forever.
+    const setChordPath = (path: string[]) => {
+      if (chordRef.current.timeoutId) clearTimeout(chordRef.current.timeoutId);
+      chordRef.current.path = path;
+      onChordPathChange?.(path);
       chordRef.current.timeoutId = setTimeout(cancelChord, CHORD_TIMEOUT);
     };
 
-    const executeChordAction = (key: string) => {
-      const num = parseInt(key, 10);
-      if (num >= 1 && num <= 9) { goToTab(num - 1); }
-      else if (key === 'h') goToPrevTab();
-      else if (key === 'l') goToNextTab();
-      else if (key === 'H') {
-        const idx = tabs.findIndex((t) => t.id === activeTabId);
-        if (idx > 0) moveTab(activeTabId, idx - 1);
-      }
-      else if (key === 'L') {
-        const idx = tabs.findIndex((t) => t.id === activeTabId);
-        if (idx < tabs.length - 1) moveTab(activeTabId, idx + 1);
-      }
-      else if (key === 'n') {
-        const newId = addTab('terminal');
-        requestAnimationFrame(() => scrollToTab(newId));
-      }
-      else if (key === 'b') {
-        const newId = addTab('browser');
-        requestAnimationFrame(() => scrollToTab(newId));
-      }
-      else if (key === 'q') removeTab(activeTabId);
-      // Agents (vertical sidebar): k/j move up/down, a spawns, m → next that
-      // needs me (approval / input).
-      else if (key === 'k') onPrevAgent?.();
-      else if (key === 'j') onNextAgent?.();
-      else if (key === 'm') onNextAttention?.();
-      else if (key === 'i') onToggleInbox?.();
-      else if (key === 'f') onToggleFleet?.();
-      else if (key === 'a') onSpawnAgent?.();
-      else if (key === 'r') onRenameTab?.();
-      else if (key === '?') onToggleHelp();
-      else if (key === 's') onSaveSession?.();
-      else if (key === 'd') {
-        onOpenSplitPalette?.();
-      }
-      else if (key === 'D') {
-        if (activeTab) {
-          const activePane = activeTab.panes.find(p => p.id === activeTab.activePaneId);
-          const splitType = activePane?.type ?? 'terminal';
-          splitTab(activeTab.id, splitType, undefined, activePane?.shell, undefined, undefined, activePane?.cwd);
+    /**
+     * Run an action. Returns true if this hook owns and handled it. Actions it
+     * doesn't own (library-picker, toggle-inspector — handled by their own
+     * focus-scoped listeners) return false so the event isn't consumed here.
+     */
+    const executeAction = (action: string): boolean => {
+      switch (action) {
+        case 'new-terminal': { const id = addTab('terminal'); requestAnimationFrame(() => scrollToTab(id)); return true; }
+        case 'new-browser': { const id = addTab('browser'); requestAnimationFrame(() => scrollToTab(id)); return true; }
+        case 'new-claude': { const id = addTab('claude'); requestAnimationFrame(() => scrollToTab(id)); return true; }
+        case 'split': onOpenSplitPalette?.(); return true;
+        case 'quick-split': {
+          if (activeTab) {
+            const activePane = activeTab.panes.find((p) => p.id === activeTab.activePaneId);
+            const splitType = activePane?.type ?? 'terminal';
+            splitTab(activeTab.id, splitType, undefined, activePane?.shell, undefined, undefined, activePane?.cwd);
+          }
+          return true;
         }
+        case 'close-pane': {
+          if (activeTab) {
+            if (activeTab.panes.length <= 1) removeTab(activeTabId);
+            else removePane(activeTabId, activeTab.activePaneId);
+          }
+          return true;
+        }
+        case 'rename-tab': onRenameTab?.(); return true;
+        case 'toggle-help': onToggleHelp(); return true;
+        case 'nav-left': navigatePane('left'); return true;
+        case 'nav-right': navigatePane('right'); return true;
+        case 'nav-up': navigatePane('up'); return true;
+        case 'nav-down': navigatePane('down'); return true;
+        case 'prev-tab': goToPrevTab(); return true;
+        case 'next-tab': goToNextTab(); return true;
+        case 'move-tab-left': {
+          const idx = tabs.findIndex((t) => t.id === activeTabId);
+          if (idx > 0) moveTab(activeTabId, idx - 1);
+          return true;
+        }
+        case 'move-tab-right': {
+          const idx = tabs.findIndex((t) => t.id === activeTabId);
+          if (idx >= 0 && idx < tabs.length - 1) moveTab(activeTabId, idx + 1);
+          return true;
+        }
+        case 'cycle-view': onCycleViewMode?.(); return true;
+        case 'settings': onOpenSettings?.(); return true;
+        case 'save-session': onSaveSession?.(); return true;
+        case 'command-palette': onOpenCommandPalette?.(); return true;
+        case 'open-file': onOpenFile?.(); return true;
+        case 'prev-agent': onPrevAgent?.(); return true;
+        case 'next-agent': onNextAgent?.(); return true;
+        case 'next-attention': onNextAttention?.(); return true;
+        case 'spawn-agent': onSpawnAgent?.(); return true;
+        case 'toggle-terminal': onToggleTerminal?.(); return true;
+        case 'toggle-sidebar': onToggleSidebar?.(); return true;
+        case 'toggle-inbox': onToggleInbox?.(); return true;
+        case 'toggle-fleet': onToggleFleet?.(); return true;
+        default: return false; // not owned here
       }
-    };
-
-    const handleKeyUp = (e: KeyboardEvent) => {
-      if (keybindingsMode !== 'vim' || !leaderConfig.isModifierOnly) return;
-      if (leaderConfig.match(e) && modTapRef.current.pressed && !modTapRef.current.usedInCombo) {
-        modTapRef.current.pressed = false;
-        if (chordRef.current.state === 'idle') startChord();
-      }
-      modTapRef.current.pressed = false;
     };
 
     const handler = (e: KeyboardEvent) => {
-      const m = matchersRef.current;
+      // Don't hijack keys while the settings rebind input is capturing.
+      const isCapture = e.target instanceof HTMLElement && e.target.dataset.leaderCapture === 'true';
+      if (isCapture) return;
 
-      // --- Global shortcuts (both modes) ---
-      if (m['settings']?.(e)) { e.preventDefault(); e.stopPropagation(); onOpenSettings?.(); return; }
-      if (m['save-session']?.(e)) { e.preventDefault(); e.stopPropagation(); onSaveSession?.(); return; }
-      if (m['command-palette']?.(e)) { e.preventDefault(); e.stopPropagation(); onOpenCommandPalette?.(); return; }
-      if (m['open-file']?.(e)) { e.preventDefault(); e.stopPropagation(); onOpenFile?.(); return; }
-      if (m['prev-agent']?.(e)) { e.preventDefault(); e.stopPropagation(); onPrevAgent?.(); return; }
-      if (m['next-agent']?.(e)) { e.preventDefault(); e.stopPropagation(); onNextAgent?.(); return; }
-      if (m['next-attention']?.(e)) { e.preventDefault(); e.stopPropagation(); onNextAttention?.(); return; }
-      if (m['spawn-agent']?.(e)) { e.preventDefault(); e.stopPropagation(); onSpawnAgent?.(); return; }
-      if (m['toggle-terminal']?.(e)) { e.preventDefault(); e.stopPropagation(); onToggleTerminal?.(); return; }
-      if (m['toggle-sidebar']?.(e)) { e.preventDefault(); e.stopPropagation(); onToggleSidebar?.(); return; }
-      if (m['toggle-inbox']?.(e)) { e.preventDefault(); e.stopPropagation(); onToggleInbox?.(); return; }
-      if (m['toggle-fleet']?.(e)) { e.preventDefault(); e.stopPropagation(); onToggleFleet?.(); return; }
+      const path = chordRef.current.path;
 
-      // --- Vim chord handling ---
-      if (keybindingsMode === 'vim') {
-        const isLeaderCapture = e.target instanceof HTMLElement && e.target.dataset.leaderCapture === 'true';
+      // 1. Chord in progress: walk the tree. Groups descend a level; leaves fire.
+      if (path !== null) {
+        if (MODIFIER_KEY_NAMES.has(e.key)) return; // wait for the real key
+        e.preventDefault(); e.stopPropagation();
 
-        if (leaderConfig.isModifierOnly && !isLeaderCapture) {
-          if (leaderConfig.match(e)) {
-            modTapRef.current = { pressed: true, usedInCombo: false };
-            return;
-          } else if (modTapRef.current.pressed) {
-            modTapRef.current.usedInCombo = true;
-          }
-        }
-
-        if (chordRef.current.state === 'waiting') {
-          if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) return;
-          e.preventDefault(); e.stopPropagation();
-          cancelChord();
-          executeChordAction(e.key);
+        if (e.key === 'Escape') { cancelChord(); return; }
+        if (e.key === 'Backspace') {
+          if (path.length === 0) cancelChord();
+          else setChordPath(path.slice(0, -1)); // pop up one submenu
           return;
         }
 
-        if (!leaderConfig.isModifierOnly && !isLeaderCapture && leaderConfig.match(e)) {
-          e.preventDefault(); e.stopPropagation(); startChord(); return;
+        const node = chordNodeAt(treeRef.current, path);
+        const child = node?.children.find((c) => comboMatcher(c.step)(e));
+        if (!child) { cancelChord(); return; } // unknown key cancels (which-key style)
+
+        if (child.node.children.length > 0) {
+          setChordPath([...path, child.step]); // descend into submenu
+        } else if (child.node.action) {
+          cancelChord();
+          executeAction(child.node.action);
+        } else {
+          cancelChord();
+        }
+        return;
+      }
+
+      // 2. Prefix pressed → arm the chord at the root.
+      if (prefixMatch(e)) { e.preventDefault(); e.stopPropagation(); setChordPath([]); return; }
+
+      // 3. Direct bindings. Only consume the event for actions we own; let the
+      //    rest (e.g. toggle-inspector, library-picker) reach their listeners.
+      for (const [action, matcher] of Object.entries(directRef.current)) {
+        if (matcher(e)) {
+          if (executeAction(action)) { e.preventDefault(); e.stopPropagation(); }
+          return;
         }
       }
 
-      // --- Config-driven shortcuts ---
-      if (m['new-terminal']?.(e)) {
-        e.preventDefault(); e.stopPropagation();
-        const newId = addTab('terminal');
-        requestAnimationFrame(() => scrollToTab(newId));
-        return;
-      }
-      if (m['new-browser']?.(e)) {
-        e.preventDefault(); e.stopPropagation();
-        const newId = addTab('browser');
-        requestAnimationFrame(() => scrollToTab(newId));
-        return;
-      }
-      if (m['new-claude']?.(e)) {
-        e.preventDefault(); e.stopPropagation();
-        const newId = addTab('claude');
-        requestAnimationFrame(() => scrollToTab(newId));
-        return;
-      }
-      if (m['split']?.(e)) {
-        e.preventDefault(); e.stopPropagation();
-        onOpenSplitPalette?.();
-        return;
-      }
-      if (m['quick-split']?.(e)) {
-        e.preventDefault(); e.stopPropagation();
-        if (activeTab) {
-          const activePane = activeTab.panes.find(p => p.id === activeTab.activePaneId);
-          const splitType = activePane?.type ?? 'terminal';
-          splitTab(activeTab.id, splitType, undefined, activePane?.shell, undefined, undefined, activePane?.cwd);
-        }
-        return;
-      }
-      if (m['close-pane']?.(e)) {
-        e.preventDefault(); e.stopPropagation();
-        if (activeTab) {
-          if (activeTab.panes.length <= 1) {
-            removeTab(activeTabId);
-          } else {
-            removePane(activeTabId, activeTab.activePaneId);
-          }
-        }
-        return;
-      }
-      if (m['rename-tab']?.(e)) {
-        e.preventDefault(); e.stopPropagation();
-        if (onRenameTab) onRenameTab();
-        return;
-      }
-      if (m['toggle-help']?.(e)) {
-        e.preventDefault(); e.stopPropagation(); onToggleHelp(); return;
-      }
-      if (m['nav-left']?.(e)) { e.preventDefault(); e.stopPropagation(); navigatePane('left'); return; }
-      if (m['nav-right']?.(e)) { e.preventDefault(); e.stopPropagation(); navigatePane('right'); return; }
-      if (m['nav-up']?.(e)) { e.preventDefault(); e.stopPropagation(); navigatePane('up'); return; }
-      if (m['nav-down']?.(e)) { e.preventDefault(); e.stopPropagation(); navigatePane('down'); return; }
-      if (m['prev-tab']?.(e)) { e.preventDefault(); e.stopPropagation(); goToPrevTab(); return; }
-      if (m['next-tab']?.(e)) { e.preventDefault(); e.stopPropagation(); goToNextTab(); return; }
-
-      // Ctrl+1-9 : jump to tab (always hardcoded — too dynamic to configure)
-      if (e.ctrlKey && !e.shiftKey && !e.altKey) {
+      // 4. Ctrl+1-9 : jump to tab (universal, terminal-safe; kept hardcoded).
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey) {
         const num = parseInt(e.key, 10);
-        if (num >= 1 && num <= 9) {
-          e.preventDefault(); e.stopPropagation(); goToTab(num - 1); return;
-        }
+        if (num >= 1 && num <= 9) { e.preventDefault(); e.stopPropagation(); goToTab(num - 1); return; }
       }
-      // Ctrl+Shift+1-9 : move tab to position
-      if (e.ctrlKey && e.shiftKey && !e.altKey) {
+      // 5. Ctrl+Shift+1-9 : move tab to position.
+      if (e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey) {
         const digitMatch = e.code?.match(/^Digit(\d)$/);
         if (digitMatch) {
           const num = parseInt(digitMatch[1], 10);
-          if (num >= 1 && num <= 9) {
-            e.preventDefault(); e.stopPropagation();
-            moveTab(activeTabId, num - 1);
-            return;
-          }
+          if (num >= 1 && num <= 9) { e.preventDefault(); e.stopPropagation(); moveTab(activeTabId, num - 1); return; }
         }
       }
     };
 
     window.addEventListener('keydown', handler, true);
-    window.addEventListener('keyup', handleKeyUp, true);
     return () => {
       window.removeEventListener('keydown', handler, true);
-      window.removeEventListener('keyup', handleKeyUp, true);
       cancelChord();
     };
-  }, [goToTab, goToPrevTab, goToNextTab, navigatePane, addTab, splitTab, removeTab, removePane, moveTab, tabs, activeTabId, activeTab, scrollToTab, onToggleHelp, onRenameTab, keybindingsMode, leaderKey, onChordStateChange, onOpenSettings, onSaveSession, onOpenCommandPalette, onOpenSplitPalette, onPrevAgent, onNextAgent, onNextAttention, onSpawnAgent, onToggleInbox, onToggleFleet]);
+  }, [goToTab, goToPrevTab, goToNextTab, navigatePane, addTab, splitTab, removeTab, removePane, moveTab, tabs, activeTabId, activeTab, scrollToTab, onToggleHelp, onRenameTab, prefix, onChordPathChange, onOpenSettings, onSaveSession, onOpenCommandPalette, onOpenSplitPalette, onOpenFile, onPrevAgent, onNextAgent, onNextAttention, onSpawnAgent, onToggleTerminal, onToggleSidebar, onToggleInbox, onToggleFleet, onCycleViewMode]);
 }

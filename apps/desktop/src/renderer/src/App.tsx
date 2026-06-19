@@ -21,6 +21,7 @@ const RemoteShareDialog = lazy(() => import('./components/RemoteShareDialog'));
 import WebFolderPicker from './components/WebFolderPicker';
 import ScrollContainer, { ScrollContainerRef } from './components/ScrollContainer';
 import ShortcutOverlay from './components/ShortcutOverlay';
+import ChordHint from './components/ChordHint';
 import SessionPicker from './components/SessionPicker';
 import CommandPalette from './components/CommandPalette';
 import LayoutsDialog from './components/LayoutsDialog';
@@ -217,7 +218,7 @@ function App() {
   const scrollContainerRef = useRef<ScrollContainerRef>(null);
   const [showHelp, setShowHelp] = useState(false);
   const [renameSignal, setRenameSignal] = useState(0);
-  const [chordState, setChordState] = useState<'idle' | 'waiting'>('idle');
+  const [chordPath, setChordPath] = useState<string[] | null>(null);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   const [paletteMode, setPaletteMode] = useState<'tab' | 'split'>('tab');
   const [paletteRestrict, setPaletteRestrict] = useState<'library' | undefined>(undefined);
@@ -515,8 +516,8 @@ function App() {
     }
   }, [tabs, addTabWithConfig, setActiveTabId, scrollToTab]);
 
-  const kbMode = config.keybindings?.mode ?? 'default';
-  const kbLeader = config.keybindings?.leader ?? 'ctrl';
+  const kbPrefix = config.keybindings?.prefix ?? 'ctrl+space';
+  const kbChordHints = config.keybindings?.chordHints ?? true;
   // Defaults merged under any user overrides, so shortcut badges/labels always
   // render even when the saved config only carries a partial map.
   const resolvedShortcuts = useMemo(
@@ -710,6 +711,11 @@ function App() {
     return () => cancelAnimationFrame(raf);
   }, [activeAgentId, tabs, activeTabId]);
 
+  // toggleViewMode is defined further down (depends on derived viewMode), so
+  // the keyboard hook reaches it through a ref to avoid a use-before-init.
+  const cycleViewModeRef = useRef<() => void>(() => {});
+  const cycleViewMode = useCallback(() => cycleViewModeRef.current(), []);
+
   useKeyboardNav({
     tabs,
     activeTabId,
@@ -725,9 +731,8 @@ function App() {
     setActivePane,
     onToggleHelp: toggleHelp,
     onRenameTab: useCallback(() => setRenameSignal((s) => s + 1), []),
-    keybindingsMode: kbMode,
-    leaderKey: kbLeader,
-    onChordStateChange: setChordState,
+    prefix: kbPrefix,
+    onChordPathChange: setChordPath,
     onOpenSettings: openSettings,
     onSaveSession: saveCurrentSession,
     onOpenCommandPalette: useCallback(() => { setPaletteRestrict(undefined); setPaletteMode('tab'); setShowCommandPalette(true); }, []),
@@ -741,7 +746,8 @@ function App() {
     onToggleSidebar: useCallback(() => setSidebarCollapsed((v) => !v), []),
     onToggleInbox: toggleInbox,
     onToggleFleet: toggleFleet,
-    shortcuts: config.keybindings?.shortcuts ?? {},
+    onCycleViewMode: cycleViewMode,
+    shortcuts: resolvedShortcuts,
   });
 
   // Escape exits the Fleet Deck back to piloting (when the inbox isn't capturing).
@@ -942,6 +948,7 @@ function App() {
     const next = order[(order.indexOf(viewMode) + 1) % order.length];
     saveConfig({ panes: { ...config.panes, viewMode: next } });
   }, [viewMode, config.panes, saveConfig]);
+  cycleViewModeRef.current = toggleViewMode;
 
   const handleNavBarRename = useCallback(
     (tabId: string) => { setActiveTabId(tabId); setRenameSignal((s) => s + 1); },
@@ -1132,8 +1139,7 @@ function App() {
       <ShortcutOverlay
         visible={showHelp}
         onClose={closeHelp}
-        mode={kbMode}
-        leader={kbLeader}
+        prefix={kbPrefix}
         shortcuts={resolvedShortcuts}
       />
 
@@ -1170,6 +1176,7 @@ function App() {
         onOpenAskPane={openAskPane}
         onOpenFile={() => { setShowCommandPalette(false); openFileInEditor(); }}
         shortcuts={resolvedShortcuts}
+        prefix={kbPrefix}
         onSpawnAgent={() => { setShowCommandPalette(false); setShowSpawnDialog(true); }}
         onToggleSidebar={() => { setShowCommandPalette(false); setSidebarCollapsed((v) => !v); }}
         onToggleInbox={() => { setShowCommandPalette(false); setInboxOpen((v) => !v); }}
@@ -1239,23 +1246,12 @@ function App() {
         />
       )}
 
-      {chordState === 'waiting' && (
-        <div style={{
-          position: 'fixed',
-          bottom: '16px',
-          right: '16px',
-          backgroundColor: 'var(--wks-accent)',
-          color: 'var(--wks-text-on-accent)',
-          fontSize: '0.65rem',
-          fontWeight: 700,
-          fontFamily: 'monospace',
-          padding: '2px 8px',
-          borderRadius: '3px',
-          zIndex: 200,
-        }}>
-          -- CMD --
-        </div>
-      )}
+      <ChordHint
+        path={chordPath}
+        prefix={kbPrefix}
+        shortcuts={resolvedShortcuts}
+        showOptions={kbChordHints}
+      />
 
       {/* Fleet Deck — cross-agent radar overlay. Sits OVER the still-mounted
           per-agent workspaces, so entering/leaving never remounts a pane. */}

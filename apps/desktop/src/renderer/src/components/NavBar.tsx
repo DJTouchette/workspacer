@@ -106,10 +106,12 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
           alignItems: 'center',
           gap: '2px',
           flex: 1,
-          // Empty in stacked mode → let that area drag the window.
+          // Draggable container: the empty space after the tabs must move the
+          // window. Interactive children (tab buttons, add-tab) opt back out
+          // with their own `no-drag` below.
           // @ts-ignore
-          WebkitAppRegion: showTabStrip ? 'no-drag' : 'drag',
-          appRegion: showTabStrip ? 'no-drag' : 'drag',
+          WebkitAppRegion: 'drag',
+          appRegion: 'drag',
           overflow: 'hidden',
         }}
       >
@@ -150,6 +152,9 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
                   : 'var(--wks-text-muted)',
                 opacity: hasHibernated && !isActive ? 0.4 : 1,
                 transition: 'background-color 0.1s, color 0.1s',
+                // @ts-ignore
+                WebkitAppRegion: 'no-drag',
+                appRegion: 'no-drag',
               }}
               onMouseEnter={(e) => {
                 if (!isActive) {
@@ -179,7 +184,16 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
         })}
 
         {showTabStrip && onAddTab && (
-          <div ref={menuRef} style={{ position: 'relative', display: 'inline-flex' }}>
+          <div
+            ref={menuRef}
+            style={{
+              position: 'relative',
+              display: 'inline-flex',
+              // @ts-ignore
+              WebkitAppRegion: 'no-drag',
+              appRegion: 'no-drag',
+            }}
+          >
             <button
               onClick={() => onAddTab('terminal')}
               onContextMenu={(e) => {

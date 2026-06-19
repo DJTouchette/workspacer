@@ -10,6 +10,7 @@ interface EditorSectionProps {
 const EditorSection: React.FC<EditorSectionProps> = ({ config, save }) => {
   const editorCfg = config.editor ?? { engine: 'codemirror' as const, terminalCommand: 'nvim' };
   const engine = editorCfg.engine;
+  const vim = editorCfg.vim ?? false;
 
   return (
     <Section title="Editor">
@@ -29,9 +30,22 @@ const EditorSection: React.FC<EditorSectionProps> = ({ config, save }) => {
       </Row>
       <div style={{ fontSize: '0.55rem', color: 'var(--wks-text-disabled)' }}>
         How the Editor pane opens files. <strong>CodeMirror</strong> is an in-app code editor
-        (syntax, Vim mode when keybindings are Vim, Ctrl+S to save). <strong>Terminal</strong> runs
-        your own editor in a PTY pane.
+        (syntax, Ctrl+S to save). <strong>Terminal</strong> runs your own editor in a PTY pane.
       </div>
+
+      {engine === 'codemirror' && (
+        <>
+          <Row label="Vim mode">
+            <div style={{ display: 'flex', gap: 4 }}>
+              <ModeButton label="On" active={vim} onClick={() => save({ editor: { ...editorCfg, vim: true } })} />
+              <ModeButton label="Off" active={!vim} onClick={() => save({ editor: { ...editorCfg, vim: false } })} />
+            </div>
+          </Row>
+          <div style={{ fontSize: '0.55rem', color: 'var(--wks-text-disabled)' }}>
+            Vim keybindings inside the CodeMirror editor. Independent of the workspace keybindings.
+          </div>
+        </>
+      )}
 
       {engine === 'terminal' && (
         <>

@@ -62,7 +62,7 @@ vi.mock('../../src/hooks/useConfig', () => ({
       panes: { peek: 80, gap: 16, insertPosition: 'after' },
       browser: { hibernateAfter: 300 },
       apps: [],
-      keybindings: { mode: 'default', leader: 'ctrl' },
+      keybindings: { prefix: 'ctrl+space' },
     },
     reload: vi.fn(),
   }),

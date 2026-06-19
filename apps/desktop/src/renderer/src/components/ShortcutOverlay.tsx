@@ -1,11 +1,11 @@
 import React, { useEffect } from 'react';
-import { formatCombo } from '../lib/shortcuts';
+import { formatBinding } from '../lib/shortcuts';
 
 interface ShortcutOverlayProps {
   visible: boolean;
   onClose: () => void;
-  mode?: 'default' | 'vim';
-  leader?: string;
+  /** Workspace prefix combo, used to render 'prefix …' chords. */
+  prefix?: string;
   shortcuts?: Record<string, string>;
 }
 
@@ -15,6 +15,7 @@ const SHORTCUT_DISPLAY: { section: string; items: { action: string; label: strin
     items: [
       { action: 'prev-agent', label: 'Previous agent' },
       { action: 'next-agent', label: 'Next agent' },
+      { action: 'next-attention', label: 'Jump to agent needing you' },
       { action: 'spawn-agent', label: 'Spawn agent' },
     ],
   },
@@ -24,10 +25,13 @@ const SHORTCUT_DISPLAY: { section: string; items: { action: string; label: strin
       { action: '_ctrl_1_9', label: 'Jump to tab' },
       { action: 'prev-tab', label: 'Previous tab' },
       { action: 'next-tab', label: 'Next tab' },
-      { action: 'nav-left', label: 'Navigate pane left' },
-      { action: 'nav-right', label: 'Navigate pane right' },
-      { action: 'nav-up', label: 'Navigate pane up' },
-      { action: 'nav-down', label: 'Navigate pane down' },
+      { action: 'move-tab-left', label: 'Move tab left' },
+      { action: 'move-tab-right', label: 'Move tab right' },
+      { action: 'cycle-view', label: 'Cycle view mode' },
+      { action: 'nav-left', label: 'Focus pane left' },
+      { action: 'nav-right', label: 'Focus pane right' },
+      { action: 'nav-up', label: 'Focus pane up' },
+      { action: 'nav-down', label: 'Focus pane down' },
     ],
   },
   {
@@ -65,7 +69,7 @@ const SHORTCUT_DISPLAY: { section: string; items: { action: string; label: strin
   },
 ];
 
-const ShortcutOverlay: React.FC<ShortcutOverlayProps> = ({ visible, onClose, mode = 'default', leader = 'ctrl', shortcuts = {} }) => {
+const ShortcutOverlay: React.FC<ShortcutOverlayProps> = ({ visible, onClose, prefix = 'ctrl+space', shortcuts = {} }) => {
   useEffect(() => {
     if (!visible) return;
     const handler = (e: KeyboardEvent) => {
@@ -80,8 +84,6 @@ const ShortcutOverlay: React.FC<ShortcutOverlayProps> = ({ visible, onClose, mod
   }, [visible, onClose]);
 
   if (!visible) return null;
-
-  const title = mode === 'vim' ? 'Keyboard Shortcuts (Vim Mode)' : 'Keyboard Shortcuts';
 
   return (
     <div
@@ -112,7 +114,13 @@ const ShortcutOverlay: React.FC<ShortcutOverlayProps> = ({ visible, onClose, mod
           fontSize: '0.75rem', fontWeight: 600, color: 'var(--wks-text-secondary)',
           marginBottom: '8px', borderBottom: '1px solid var(--wks-border)', paddingBottom: '6px',
         }}>
-          {title}
+          Keyboard Shortcuts
+        </div>
+
+        <div style={{
+          fontSize: '0.62rem', color: 'var(--wks-text-faint)', marginBottom: '10px',
+        }}>
+          Prefix is <code style={{ fontFamily: 'monospace', color: 'var(--wks-text-tertiary)' }}>{formatBinding(prefix)}</code> — press it, then the key.
         </div>
 
         {SHORTCUT_DISPLAY.map((section) => (
@@ -126,15 +134,9 @@ const ShortcutOverlay: React.FC<ShortcutOverlayProps> = ({ visible, onClose, mod
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.72rem' }}>
               <tbody>
                 {section.items.map(({ action, label }) => {
-                  let combo: string;
-                  if (action === '_ctrl_1_9') {
-                    combo = 'Ctrl+1-9';
-                  } else {
-                    combo = formatCombo(shortcuts[action] ?? action);
-                  }
-
-                  // Show vim chord equivalent if in vim mode
-                  const vimChord = mode === 'vim' ? getVimChord(action, leader) : null;
+                  const combo = action === '_ctrl_1_9'
+                    ? 'Ctrl+1-9'
+                    : formatBinding(shortcuts[action] ?? action, prefix);
 
                   return (
                     <tr key={action}>
@@ -143,11 +145,6 @@ const ShortcutOverlay: React.FC<ShortcutOverlayProps> = ({ visible, onClose, mod
                         fontFamily: 'monospace', fontSize: '0.65rem', whiteSpace: 'nowrap',
                       }}>
                         {combo}
-                        {vimChord && (
-                          <span style={{ color: 'var(--wks-text-faint)', marginLeft: '6px' }}>
-                            / {vimChord}
-                          </span>
-                        )}
                       </td>
                       <td style={{ padding: '2px 0', color: 'var(--wks-text-muted)' }}>
                         {label}
@@ -170,25 +167,5 @@ const ShortcutOverlay: React.FC<ShortcutOverlayProps> = ({ visible, onClose, mod
     </div>
   );
 };
-
-function getVimChord(action: string, leader: string): string | null {
-  const map: Record<string, string> = {
-    'prev-agent': 'k',
-    'next-agent': 'j',
-    'spawn-agent': 'a',
-    'prev-tab': 'h',
-    'next-tab': 'l',
-    'new-terminal': 'n',
-    'new-browser': 'b',
-    'split': 'd',
-    'close-pane': 'q',
-    'rename-tab': 'r',
-    'toggle-help': '?',
-    'save-session': 's',
-  };
-  const key = map[action];
-  if (!key) return null;
-  return `${leader} → ${key}`;
-}
 
 export default ShortcutOverlay;

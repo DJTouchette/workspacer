@@ -196,8 +196,8 @@ export interface AppConfig {
     default: Array<{ id: string; type: string; title: string; width: number; order: number }>;
   };
   keybindings: {
-    mode: string;
-    leader: string;
+    prefix: string;
+    chordHints?: boolean;
     shortcuts: Record<string, string>;
   };
   notifications: {
@@ -209,6 +209,7 @@ export interface AppConfig {
   editor: {
     engine: 'codemirror' | 'terminal';
     terminalCommand: string;
+    vim?: boolean;
   };
   claude: {
     defaultModel: string;

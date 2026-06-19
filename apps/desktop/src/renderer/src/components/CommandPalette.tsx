@@ -94,6 +94,8 @@ interface CommandPaletteProps {
   onOpenFile?: () => void;
   /** Resolved keybindings (config merged with defaults) — drives shortcut badges. */
   shortcuts?: Record<string, string>;
+  /** Workspace prefix combo, for rendering 'prefix …' chord badges. */
+  prefix?: string;
   /** Spawn a new agent (opens the spawn dialog). */
   onSpawnAgent?: () => void;
   /** Toggle the left sidebar. */
@@ -110,7 +112,7 @@ interface CommandPaletteProps {
   onToggleHelp?: () => void;
 }
 
-const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = 'tab', agentCwd, onClose, onLaunchApp, onAddTab, onSplitPane, pluginPanes = [], onOpenPlugin, onInstallPlugin, onManagePlugins, libraryItems = [], restrictTo, onOpenLibrary, onSwitchSession, onOpenAnalytics, onOpenLayouts, onOpenRemote, onOpenAskPane, onOpenFile, shortcuts = {}, onSpawnAgent, onToggleSidebar, onToggleInbox, onToggleFleet, onSaveSession, onOpenSettings, onToggleHelp }) => {
+const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = 'tab', agentCwd, onClose, onLaunchApp, onAddTab, onSplitPane, pluginPanes = [], onOpenPlugin, onInstallPlugin, onManagePlugins, libraryItems = [], restrictTo, onOpenLibrary, onSwitchSession, onOpenAnalytics, onOpenLayouts, onOpenRemote, onOpenAskPane, onOpenFile, shortcuts = {}, prefix = 'ctrl+space', onSpawnAgent, onToggleSidebar, onToggleInbox, onToggleFleet, onSaveSession, onOpenSettings, onToggleHelp }) => {
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [profilePicker, setProfilePicker] = useState<{ folder: string; profiles: any[]; paneType: PaneType } | null>(null);
@@ -439,7 +441,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
           {pinnedHelpItem && !restrictTo && (
             <PaletteRow
               item={pinnedHelpItem}
-              shortcut={shortcutFor(pinnedHelpItem.shortcut, shortcuts)}
+              shortcut={shortcutFor(pinnedHelpItem.shortcut, shortcuts, prefix)}
               selected={false}
               onActivate={() => activateItem(pinnedHelpItem)}
               onHover={() => {}}
@@ -482,7 +484,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
               <PaletteRow
                 key={item.id}
                 item={item}
-                shortcut={shortcutFor(item.shortcut, shortcuts)}
+                shortcut={shortcutFor(item.shortcut, shortcuts, prefix)}
                 selected={globalIdx === selectedIndex}
                 onActivate={() => activateItem(item)}
                 onHover={() => setSelectedIndex(globalIdx)}
@@ -521,7 +523,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
               <PaletteRow
                 key={item.id}
                 item={item}
-                shortcut={shortcutFor(item.shortcut, shortcuts)}
+                shortcut={shortcutFor(item.shortcut, shortcuts, prefix)}
                 selected={globalIdx === selectedIndex}
                 onActivate={() => activateItem(item)}
                 onHover={() => setSelectedIndex(globalIdx)}

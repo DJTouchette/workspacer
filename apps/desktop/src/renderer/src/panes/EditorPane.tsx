@@ -202,7 +202,7 @@ const FileTree: React.FC<{ root: string; activePath?: string; onOpen: (p: string
 const EditorPane: React.FC<EditorPaneProps> = ({ filePath, cwd }) => {
   const { config } = useConfig();
   const { theme } = useTheme();
-  const vimMode = config.keybindings?.mode === 'vim';
+  const vimMode = config.editor?.vim ?? false;
 
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);

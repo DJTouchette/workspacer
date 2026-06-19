@@ -54,8 +54,7 @@ function makeConfig(override: Partial<Config> = {}): Config {
       hibernateAfter: 300,
     },
     keybindings: {
-      mode: 'default',
-      leader: 'ctrl',
+      prefix: 'ctrl+space',
       shortcuts: {},
     },
     notifications: {

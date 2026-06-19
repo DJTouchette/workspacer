@@ -64,8 +64,10 @@ interface Config {
     default: Array<{ id: string; type: string; title: string; width: number; order: number }>;
   };
   keybindings: {
-    mode: string;
-    leader: string;
+    /** Workspace prefix combo (default 'ctrl+space'). */
+    prefix: string;
+    /** Expand the chord indicator into a which-key cheatsheet. Default true. */
+    chordHints?: boolean;
     shortcuts: Record<string, string>;
   };
   notifications: {
@@ -105,6 +107,8 @@ interface Config {
     engine: 'codemirror' | 'terminal';
     /** Command for the 'terminal' engine; the file path is appended as its last arg. */
     terminalCommand: string;
+    /** Vim keybindings inside the CodeMirror editor. */
+    vim?: boolean;
   };
 }
 
@@ -125,6 +129,52 @@ function defaultShells(): ShellOption[] {
     { name: 'fish', path: '/usr/bin/fish', label: 'Fish' },
   ];
 }
+
+/**
+ * Default keybindings, prefix-forward. Values are either direct combos
+ * (terminal-safe keys only) or prefix chords ('prefix <key>' — press the
+ * workspace prefix, then the key). Kept in sync with the renderer's
+ * DEFAULT_SHORTCUTS (hooks/useConfig.ts).
+ */
+const DEFAULT_SHORTCUTS: Record<string, string> = {
+  // Direct, terminal-safe
+  'command-palette': 'ctrl+shift+p',
+  'next-agent': 'ctrl+tab',
+  'prev-agent': 'ctrl+shift+tab',
+  'next-attention': 'ctrl+shift+space',
+  'spawn-agent': 'ctrl+shift+n',
+  'settings': 'ctrl+,',
+  'save-session': 'ctrl+shift+s',
+  'open-file': 'ctrl+shift+o',
+  'toggle-help': 'f1',
+  'toggle-terminal': 'ctrl+`',
+  'toggle-sidebar': 'ctrl+shift+b',
+  'toggle-inbox': 'ctrl+shift+i',
+  'toggle-fleet': 'ctrl+shift+f',
+  'toggle-inspector': 'ctrl+shift+e',
+  'library-picker': 'ctrl+shift+l',
+  // Prefix chords (Ctrl+Space then …), grouped into submenus
+  // New ▸
+  'new-terminal': 'prefix n t',
+  'new-claude': 'prefix n c',
+  'new-browser': 'prefix n b',
+  // Tab ▸
+  'prev-tab': 'prefix t [',
+  'next-tab': 'prefix t ]',
+  'move-tab-left': 'prefix t ,',
+  'move-tab-right': 'prefix t .',
+  'rename-tab': 'prefix t r',
+  'close-pane': 'prefix t w',
+  // Pane ▸
+  'split': 'prefix p s',
+  'quick-split': 'prefix p c',
+  'nav-left': 'prefix p h',
+  'nav-down': 'prefix p j',
+  'nav-up': 'prefix p k',
+  'nav-right': 'prefix p l',
+  // Top-level leaf
+  'cycle-view': 'prefix v',
+};
 
 function defaultConfig(): Config {
   return {
@@ -174,38 +224,9 @@ function defaultConfig(): Config {
       ],
     },
     keybindings: {
-      mode: 'default',
-      leader: 'ctrl',
-      shortcuts: {
-        'new-terminal': 'ctrl+t',
-        'new-browser': 'ctrl+n',
-        'new-claude': 'ctrl+j',
-        'split': 'ctrl+d',
-        'quick-split': 'ctrl+shift+d',
-        'close-pane': 'ctrl+w',
-        'command-palette': 'ctrl+k',
-        'open-file': 'ctrl+e',
-        'library-picker': 'ctrl+l',
-        'toggle-terminal': 'ctrl+`',
-        'toggle-sidebar': 'ctrl+b',
-        'toggle-inbox': 'ctrl+shift+a',
-        'toggle-fleet': 'ctrl+shift+f',
-        'toggle-inspector': 'ctrl+shift+e',
-        'settings': 'ctrl+,',
-        'save-session': 'ctrl+s',
-        'rename-tab': 'f2',
-        'toggle-help': 'ctrl+?',
-        'prev-tab': 'ctrl+[',
-        'next-tab': 'ctrl+]',
-        'nav-left': 'ctrl+h',
-        'nav-right': 'ctrl+shift+l',
-        'nav-up': 'ctrl+shift+k',
-        'nav-down': 'ctrl+shift+j',
-        'prev-agent': 'ctrl+alt+arrowup',
-        'next-agent': 'ctrl+alt+arrowdown',
-        'next-attention': 'ctrl+alt+arrowright',
-        'spawn-agent': 'ctrl+alt+n',
-      },
+      prefix: 'ctrl+space',
+      chordHints: true,
+      shortcuts: { ...DEFAULT_SHORTCUTS },
     },
     notifications: {
       enabled: true,
@@ -278,6 +299,31 @@ function deepMerge(target: any, source: any): any {
   return result;
 }
 
+/**
+ * One-time migration from the old keybindings schema (mode/leader + Ctrl-letter
+ * map) to the prefix-forward scheme. The old defaults were written to disk on
+ * first run, so without this every existing user would keep the legacy bindings
+ * (and their terminal-stealing Ctrl+L/D/S). Resets keybindings wholesale and,
+ * if the user had Vim keybinding mode on, preserves it as editor Vim.
+ */
+function migrateKeybindings(cfg: Config): Config {
+  const kb = cfg.keybindings as { mode?: string; leader?: string; prefix?: string } | undefined;
+  const isLegacy = !!kb && (kb.mode !== undefined || kb.leader !== undefined || !kb.prefix);
+  if (!isLegacy) return cfg;
+
+  const hadVim = kb?.mode === 'vim';
+  cfg.keybindings = { prefix: 'ctrl+space', chordHints: true, shortcuts: { ...DEFAULT_SHORTCUTS } };
+  if (hadVim) cfg.editor = { ...cfg.editor, vim: true };
+
+  try {
+    fs.mkdirSync(getConfigDir(), { recursive: true });
+    fs.writeFileSync(getConfigFilePath(), yaml.dump(cfg, { lineWidth: -1 }), 'utf-8');
+  } catch (err) {
+    console.error('[ConfigService] keybindings migration write failed:', err);
+  }
+  return cfg;
+}
+
 class ConfigService {
   private config: Config;
 
@@ -292,7 +338,8 @@ class ConfigService {
     try {
       const data = fs.readFileSync(configPath, 'utf-8');
       const parsed = yaml.load(data) as Partial<Config>;
-      return deepMerge(defaults, parsed);
+      const merged = deepMerge(defaults, parsed) as Config;
+      return migrateKeybindings(merged);
     } catch {
       // No config file — write defaults
       this.writeDefaults();

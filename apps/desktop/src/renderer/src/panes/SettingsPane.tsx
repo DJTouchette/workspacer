@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { useConfig } from '../hooks/useConfig';
 import AppearanceSection from '../components/settings/AppearanceSection';
 import LayoutSection from '../components/settings/LayoutSection';
+import TerminalSection from '../components/settings/TerminalSection';
 import KeybindingsSection from '../components/settings/KeybindingsSection';
 import NotificationsSection from '../components/settings/NotificationsSection';
 import SessionSection from '../components/settings/SessionSection';
@@ -17,6 +18,7 @@ interface SettingsPaneProps {
 const SECTION_KEYWORDS: Record<string, string[]> = {
   appearance: ['appearance', 'theme', 'color', 'corner', 'border', 'font', 'dark', 'light'],
   layout: ['layout', 'pane', 'tab', 'split', 'gap', 'width', 'view'],
+  terminal: ['terminal', 'shell', 'bash', 'pwsh', 'powershell', 'zsh', 'fish', 'console'],
   keybindings: ['keybinding', 'keyboard', 'shortcut', 'hotkey', 'vim', 'leader', 'bind'],
   notifications: ['notification', 'alert', 'sound', 'done', 'notify'],
   session: ['session', 'resume', 'restore', 'auto'],
@@ -40,6 +42,7 @@ const SettingsPane: React.FC<SettingsPaneProps> = ({ title }) => {
   const show = useMemo(() => ({
     appearance: sectionVisible('appearance', q),
     layout: sectionVisible('layout', q),
+    terminal: sectionVisible('terminal', q),
     keybindings: sectionVisible('keybindings', q),
     notifications: sectionVisible('notifications', q),
     session: sectionVisible('session', q),
@@ -97,6 +100,9 @@ const SettingsPane: React.FC<SettingsPaneProps> = ({ title }) => {
 
       {/* Layout section */}
       {show.layout && <LayoutSection config={config} save={save} />}
+
+      {/* Terminal section */}
+      {show.terminal && <TerminalSection config={config} save={save} />}
 
       {/* Keybindings section */}
       {show.keybindings && <KeybindingsSection config={config} save={save} />}
