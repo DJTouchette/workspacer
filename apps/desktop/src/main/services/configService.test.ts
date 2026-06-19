@@ -148,8 +148,8 @@ describe('deepMerge semantics – via configService.saveConfig', () => {
 
     // The changed shortcut
     expect(cfg.keybindings.shortcuts['new-terminal']).toBe('ctrl+shift+t');
-    // Other shortcuts survive (prefix chord default)
-    expect(cfg.keybindings.shortcuts['close-pane']).toBe('prefix w');
+    // Other shortcuts survive (grouped prefix chord default)
+    expect(cfg.keybindings.shortcuts['close-pane']).toBe('prefix t w');
     // Sibling keys of shortcuts survive
     expect(cfg.keybindings.prefix).toBe('ctrl+space');
   });

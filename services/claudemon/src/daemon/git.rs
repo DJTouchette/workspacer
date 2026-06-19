@@ -115,24 +115,32 @@ async fn work_root(cwd: &str) -> Option<String> {
     }
 }
 
-/// Parse `git status --porcelain` (v1) output into structured rows.
+/// Parse `git status --porcelain -z` output into structured rows.
 ///
-/// Each line is `XY <path>`, where X is the staged (index) status and Y the
-/// unstaged (work tree) status. Renames/copies look like `R  old -> new`.
+/// Each entry is `XY <path>` terminated by NUL, where X is the staged (index)
+/// status and Y the unstaged (work tree) status. The `-z` format never quotes
+/// or escapes paths (unlike the default, which wraps unusual paths — unicode,
+/// spaces-with-specials — in `"…"` and would otherwise leak a stray quote into
+/// the filename and break the diff lookup). For a rename/copy the destination
+/// path is this entry and the original path is the *next* NUL-terminated token.
 fn parse_porcelain(stdout: &str) -> Vec<FileStatus> {
     let mut files = Vec::new();
-    for line in stdout.lines() {
+    let mut iter = stdout.split('\0');
+    while let Some(entry) = iter.next() {
         // Need at least "XY <path>" — two status chars, a space, then a path.
-        if line.len() < 4 {
+        if entry.len() < 4 {
             continue;
         }
-        let staged = line[0..1].to_string();
-        let unstaged = line[1..2].to_string();
-        let rest = line[3..].trim_end_matches('\r');
+        let staged = entry[0..1].to_string();
+        let unstaged = entry[1..2].to_string();
+        let path = entry[3..].to_string();
 
-        let (orig_path, path) = match rest.split_once(" -> ") {
-            Some((orig, new)) => (Some(orig.to_string()), new.to_string()),
-            None => (None, rest.to_string()),
+        // Rename/copy: the source path follows as a separate token (no " -> ").
+        let is_move = matches!(staged.as_str(), "R" | "C") || matches!(unstaged.as_str(), "R" | "C");
+        let orig_path = if is_move {
+            iter.next().map(|s| s.to_string())
+        } else {
+            None
         };
 
         files.push(FileStatus {
@@ -150,7 +158,7 @@ pub async fn get_status(Query(q): Query<StatusQuery>) -> impl IntoResponse {
         return (StatusCode::BAD_REQUEST, "cwd is not inside a git work tree").into_response();
     };
 
-    let files = match run_git(&root, &["status", "--porcelain"]).await {
+    let files = match run_git(&root, &["status", "--porcelain", "-z"]).await {
         Ok((true, stdout, _)) => parse_porcelain(&stdout),
         Ok((false, _, stderr)) => {
             tracing::warn!(stderr, "git status failed");
@@ -276,7 +284,9 @@ pub async fn get_numstat(Query(q): Query<NumstatQuery>) -> impl IntoResponse {
         return (StatusCode::BAD_REQUEST, "cwd is not inside a git work tree").into_response();
     };
 
-    let mut args: Vec<&str> = vec!["diff", "--numstat"];
+    // `core.quotepath=false` keeps unicode paths unquoted so they match the
+    // (NUL-unquoted) paths from `git status`.
+    let mut args: Vec<&str> = vec!["-c", "core.quotepath=false", "diff", "--numstat"];
     if q.staged {
         args.push("--staged");
     }
@@ -368,7 +378,7 @@ mod tests {
 
     #[test]
     fn parses_modified_and_untracked() {
-        let out = " M src/main.rs\n?? new.txt\nM  staged.rs\n";
+        let out = " M src/main.rs\0?? new.txt\0M  staged.rs\0";
         let files = parse_porcelain(out);
         assert_eq!(
             files,
@@ -397,7 +407,9 @@ mod tests {
 
     #[test]
     fn parses_rename() {
-        let files = parse_porcelain("R  old/name.rs -> new/name.rs\n");
+        // Under -z the destination is the entry; the source follows as its own
+        // NUL-terminated token (no " -> " arrow).
+        let files = parse_porcelain("R  new/name.rs\0old/name.rs\0");
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].path, "new/name.rs");
         assert_eq!(files[0].orig_path.as_deref(), Some("old/name.rs"));
@@ -405,8 +417,18 @@ mod tests {
     }
 
     #[test]
-    fn skips_blank_and_short_lines() {
-        assert!(parse_porcelain("\n\nx\n").is_empty());
+    fn parses_unicode_path_without_quotes() {
+        // -z output is never quoted, so a unicode path arrives verbatim — no
+        // surrounding double-quote leaking into the filename.
+        let files = parse_porcelain(" M src/\u{0444}\u{0430}\u{0439}\u{043b}.rs\0");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "src/\u{0444}\u{0430}\u{0439}\u{043b}.rs");
+        assert!(!files[0].path.contains('"'));
+    }
+
+    #[test]
+    fn skips_blank_and_short_tokens() {
+        assert!(parse_porcelain("\0\0x\0").is_empty());
     }
 
     #[test]

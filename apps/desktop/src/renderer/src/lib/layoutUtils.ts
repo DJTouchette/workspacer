@@ -32,3 +32,18 @@ export function resolveNavHeight(configHeight: number | undefined, isSmallScreen
   const floor = isSmallScreen ? 44 : 32; // fingertip-friendly on phones
   return Math.min(Math.max(configHeight || 34, floor), 80);
 }
+
+/**
+ * Height (px) of the Windows native caption-button overlay (the titleBarOverlay
+ * configured in main/index.ts). Right-anchored, top:0 panels add this as top
+ * padding so their header controls (close ✕, etc.) don't sit underneath the
+ * min/maximize/close buttons. Zero off Windows.
+ *
+ * Keep in sync with `titleBarOverlay.height` in apps/desktop/src/main/index.ts.
+ */
+export const WINDOWS_CAPTION_HEIGHT = 28;
+export function captionInsetTop(): number {
+  return typeof window !== 'undefined' && window.electronAPI?.platform === 'win32'
+    ? WINDOWS_CAPTION_HEIGHT
+    : 0;
+}

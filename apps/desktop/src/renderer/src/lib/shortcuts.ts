@@ -72,6 +72,7 @@ export const ACTION_LABELS: Record<string, string> = {
   'toggle-fleet': 'Toggle fleet deck',
   'toggle-inspector': 'Toggle inspector',
   'library-picker': 'Library picker',
+  'open-review': 'Review changes',
   'command-palette': 'Command palette',
   'save-session': 'Save session',
   'settings': 'Settings',

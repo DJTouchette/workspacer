@@ -72,6 +72,7 @@ interface UseKeyboardNavOptions {
   onToggleInbox?: () => void;
   onToggleFleet?: () => void;
   onCycleViewMode?: () => void;
+  onOpenReview?: () => void;
   shortcuts?: Record<string, string>;
 }
 
@@ -105,6 +106,7 @@ export function useKeyboardNav({
   onToggleInbox,
   onToggleFleet,
   onCycleViewMode,
+  onOpenReview,
   onSpawnAgent,
   shortcuts = {},
 }: UseKeyboardNavOptions) {
@@ -220,6 +222,7 @@ export function useKeyboardNav({
           return true;
         }
         case 'cycle-view': onCycleViewMode?.(); return true;
+        case 'open-review': onOpenReview?.(); return true;
         case 'settings': onOpenSettings?.(); return true;
         case 'save-session': onSaveSession?.(); return true;
         case 'command-palette': onOpenCommandPalette?.(); return true;
@@ -302,5 +305,5 @@ export function useKeyboardNav({
       window.removeEventListener('keydown', handler, true);
       cancelChord();
     };
-  }, [goToTab, goToPrevTab, goToNextTab, navigatePane, addTab, splitTab, removeTab, removePane, moveTab, tabs, activeTabId, activeTab, scrollToTab, onToggleHelp, onRenameTab, prefix, onChordPathChange, onOpenSettings, onSaveSession, onOpenCommandPalette, onOpenSplitPalette, onOpenFile, onPrevAgent, onNextAgent, onNextAttention, onSpawnAgent, onToggleTerminal, onToggleSidebar, onToggleInbox, onToggleFleet, onCycleViewMode]);
+  }, [goToTab, goToPrevTab, goToNextTab, navigatePane, addTab, splitTab, removeTab, removePane, moveTab, tabs, activeTabId, activeTab, scrollToTab, onToggleHelp, onRenameTab, prefix, onChordPathChange, onOpenSettings, onSaveSession, onOpenCommandPalette, onOpenSplitPalette, onOpenFile, onPrevAgent, onNextAgent, onNextAttention, onSpawnAgent, onToggleTerminal, onToggleSidebar, onToggleInbox, onToggleFleet, onCycleViewMode, onOpenReview]);
 }

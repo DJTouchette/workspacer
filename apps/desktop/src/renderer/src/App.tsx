@@ -516,6 +516,21 @@ function App() {
     }
   }, [tabs, addTabWithConfig, setActiveTabId, scrollToTab]);
 
+  // Open (or focus) a Review/changes pane for the active agent's work tree.
+  const openReview = useCallback(() => {
+    for (const tab of tabs) {
+      const pane = tab.panes.find((p) => p.type === 'review');
+      if (pane) {
+        setActiveTabId(tab.id);
+        setActivePane(tab.id, pane.id);
+        scrollToTab(tab.id);
+        return;
+      }
+    }
+    const newId = addTabWithConfig('review', 'Review', undefined, undefined, undefined, activeAgent?.cwd);
+    requestAnimationFrame(() => scrollToTab(newId));
+  }, [tabs, activeAgent, addTabWithConfig, setActiveTabId, setActivePane, scrollToTab]);
+
   const kbPrefix = config.keybindings?.prefix ?? 'ctrl+space';
   const kbChordHints = config.keybindings?.chordHints ?? true;
   // Defaults merged under any user overrides, so shortcut badges/labels always
@@ -747,6 +762,7 @@ function App() {
     onToggleInbox: toggleInbox,
     onToggleFleet: toggleFleet,
     onCycleViewMode: cycleViewMode,
+    onOpenReview: openReview,
     shortcuts: resolvedShortcuts,
   });
 

@@ -44,6 +44,7 @@ const SHORTCUT_DISPLAY: { section: string; items: { action: string; label: strin
       { action: 'quick-split', label: 'Quick split (clone)' },
       { action: 'close-pane', label: 'Close pane / tab' },
       { action: 'open-file', label: 'Open file in editor' },
+      { action: 'open-review', label: 'Review changes (git)' },
       { action: 'rename-tab', label: 'Rename tab' },
     ],
   },

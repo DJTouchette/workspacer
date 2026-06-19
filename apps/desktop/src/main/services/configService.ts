@@ -153,6 +153,7 @@ const DEFAULT_SHORTCUTS: Record<string, string> = {
   'toggle-fleet': 'ctrl+shift+f',
   'toggle-inspector': 'ctrl+shift+e',
   'library-picker': 'ctrl+shift+l',
+  'open-review': 'ctrl+shift+g',
   // Prefix chords (Ctrl+Space then …), grouped into submenus
   // New ▸
   'new-terminal': 'prefix n t',

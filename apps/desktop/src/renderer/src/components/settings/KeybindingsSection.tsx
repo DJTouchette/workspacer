@@ -29,6 +29,7 @@ const SHORTCUT_LABELS: Record<string, string> = {
   'quick-split': 'Quick Split (clone)',
   'close-pane': 'Close Pane',
   'open-file': 'Open File (editor)',
+  'open-review': 'Review Changes',
   'rename-tab': 'Rename Tab',
   // Panels & tools
   'toggle-sidebar': 'Toggle Sidebar',

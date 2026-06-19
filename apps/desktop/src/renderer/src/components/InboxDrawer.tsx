@@ -4,6 +4,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { useAttention } from '../contexts/AttentionContext';
 import { AttentionCard } from './attention/AttentionCard';
 import { SNOOZE_MINUTES } from '../contexts/AttentionContext';
+import { captionInsetTop } from '../lib/layoutUtils';
 
 const DRAWER_WIDTH = 440;
 
@@ -104,8 +105,8 @@ const InboxDrawer: React.FC = () => {
           transition: 'transform 0.18s cubic-bezier(0.32, 0.72, 0, 1)',
         }}
       >
-        {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px 10px' }}>
+        {/* Header — pad past the Windows caption buttons so the close ✕ clears them. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: `${14 + captionInsetTop()}px 16px 10px` }}>
           <div style={{ fontSize: '0.95rem', fontWeight: 800, color: 'var(--wks-text-primary)', letterSpacing: '-0.01em' }}>Inbox</div>
           {counts.needsYou > 0 ? (
             <span style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--wks-warning, #e0a000)' }}>{counts.needsYou} need you</span>

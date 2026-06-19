@@ -3,6 +3,7 @@ import { useLibrary } from '../hooks/useLibrary';
 import { runLibraryItem } from '../lib/libraryBus';
 import { Zap } from './icons';
 import type { LibraryItem, LibraryScope, LibraryKind } from '../types/library';
+import { captionInsetTop } from '../lib/layoutUtils';
 
 interface Props {
   visible: boolean;
@@ -78,8 +79,8 @@ const LibrarySidePanel: React.FC<Props> = ({ visible, onClose, cwd }) => {
         overflow: 'hidden',
       }}
     >
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 14px', borderBottom: '1px solid var(--wks-glass-border)' }}>
+      {/* Header — clear the Windows caption buttons (titleBarOverlay). */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: `${12 + captionInsetTop()}px 14px 12px`, borderBottom: '1px solid var(--wks-glass-border)' }}>
         <Zap size={15} strokeWidth={1.9} />
         <span style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--wks-text-primary)' }}>Library</span>
         <div style={{ flex: 1 }} />
