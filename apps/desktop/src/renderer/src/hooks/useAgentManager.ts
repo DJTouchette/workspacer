@@ -252,11 +252,17 @@ export function useAgentManager() {
   const terminateAgent = useCallback(async (agentId: string) => {
     const agent = agentsRef.current.find((a) => a.id === agentId);
     if (agent?.global) return; // the Overview workspace is permanent
-    setAgents((prev) => prev.filter((a) => a.id !== agentId));
+    // Compute the post-removal list synchronously from `prev` so we never
+    // read the stale agentsRef (which is updated asynchronously in an effect).
+    let fallbackId: string | undefined;
+    setAgents((prev) => {
+      const next = prev.filter((a) => a.id !== agentId);
+      fallbackId = next[0]?.id ?? '';
+      return next;
+    });
     setActiveAgentId((cur) => {
       if (cur !== agentId) return cur;
-      const rest = agentsRef.current.filter((a) => a.id !== agentId);
-      return rest[0]?.id ?? '';
+      return fallbackId ?? '';
     });
     if (agent?.sessionId) {
       try { await window.electronAPI.claudeClose(agent.sessionId); } catch { /* already gone */ }

@@ -357,8 +357,11 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
   // ── File drag & drop ──
 
   // Global drag & drop — document + window level with dropEffect to tell
-  // Electron/Chromium this is a valid drop target (prevents 🚫 cursor)
+  // Electron/Chromium this is a valid drop target (prevents 🚫 cursor).
+  // Only the active pane registers listeners so panes don't compete and
+  // isDragOver / dragCounterRef can't get stuck on an inactive pane.
   useEffect(() => {
+    if (!isActive) return;
     const onDragOver = (e: DragEvent) => {
       e.preventDefault();
       e.stopPropagation();
@@ -406,7 +409,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
       window.removeEventListener('dragover', onDragOver);
       window.removeEventListener('drop', onDrop);
     };
-  }, []);
+  }, [isActive]);
 
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
     const paths = extractFilePaths(e.clipboardData);
@@ -907,11 +910,11 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
           }}
         />
 
-        {/* GUI view */}
-        {viewMode === 'gui' && (
-          <div style={{
+        {/* GUI view — always mounted; visibility toggled via CSS so scroll
+            position, visibleCount, and optimisticMessages survive GUI↔Term. */}
+        <div style={{
             height: '100%',
-            display: 'flex',
+            display: viewMode === 'gui' ? 'flex' : 'none',
             flexDirection: 'column',
             overflow: 'hidden',
           }}>
@@ -1077,7 +1080,6 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
               inputRef={inputRef}
             />
           </div>
-        )}
       </div>
 
       {/* Inspector rail — files / workflows / agents / usage. Sibling of the

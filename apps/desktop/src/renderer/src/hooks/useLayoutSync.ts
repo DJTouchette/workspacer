@@ -79,6 +79,12 @@ export function useLayoutSync({
   const lastSyncedRef = useRef<string | null>(null);
   const hydratedRef = useRef(false);
   const pushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Always-current copies so the debounced timer callback reads the latest
+  // state rather than the stale closure from the render that scheduled it.
+  const agentsRef = useRef<AgentWorkspace[]>(agents);
+  const activeAgentIdRef = useRef<string>(activeAgentId);
+  agentsRef.current = agents;
+  activeAgentIdRef.current = activeAgentId;
 
   // ── hydrate + subscribe ─────────────────────────────────────────────────
   useEffect(() => {
@@ -137,8 +143,17 @@ export function useLayoutSync({
 
     if (pushTimerRef.current) clearTimeout(pushTimerRef.current);
     pushTimerRef.current = setTimeout(() => {
+      // Read from refs so the debounced push always uses the *latest* state,
+      // not the stale closure captured when the timer was scheduled.
+      const latestAgents = agentsRef.current;
+      const latestActiveAgentId = activeAgentIdRef.current;
+      const latestJson = project(latestAgents, latestActiveAgentId);
+      // Update the echo-suppression marker to the projection we're actually
+      // sending so an incoming broadcast of this exact payload is still
+      // recognised as our own echo.
+      lastSyncedRef.current = latestJson;
       window.electronAPI
-        .layoutSet({ agents, activeAgentId })
+        .layoutSet({ agents: latestAgents, activeAgentId: latestActiveAgentId })
         .then((doc: LayoutDoc) => {
           if (doc?.version != null) {
             appliedVersionRef.current = Math.max(appliedVersionRef.current, doc.version);
@@ -146,7 +161,7 @@ export function useLayoutSync({
         })
         .catch(() => {
           // Push failed — drop the optimistic marker so the next change retries.
-          if (lastSyncedRef.current === json) lastSyncedRef.current = null;
+          if (lastSyncedRef.current === latestJson) lastSyncedRef.current = null;
         });
     }, PUSH_DEBOUNCE_MS);
   }, [agents, activeAgentId, enabled, sessionPhase]);
