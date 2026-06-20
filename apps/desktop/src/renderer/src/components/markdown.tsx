@@ -60,6 +60,12 @@ export function renderInlineMarkdown(text: string): React.ReactNode[] {
 // identical content (completed turns) never re-parses across re-renders.
 const MD_CACHE_MAX = 300;
 const mdCache = new Map<string, React.ReactNode[]>();
+
+/** Clear the module-level markdown cache (call on session switch). */
+export function clearMdCache(): void {
+  mdCache.clear();
+}
+
 function mdCachePut(key: string, value: React.ReactNode[]): React.ReactNode[] {
   if (mdCache.size >= MD_CACHE_MAX) {
     // Evict oldest entry (Map iteration order = insertion order)

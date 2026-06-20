@@ -272,7 +272,7 @@ export const InspectorRail: React.FC<{
               <div style={{ fontSize: '0.68rem', color: colors.muted, lineHeight: 1.9, marginTop: 4, fontVariantNumeric: 'tabular-nums' }}>
                 {inTok !== undefined && <div>Input tokens<span style={{ float: 'right', color: colors.text }}>{fmtTokens(inTok) || '0'}</span></div>}
                 {outTok !== undefined && <div>Output tokens<span style={{ float: 'right', color: colors.text }}>{fmtTokens(outTok) || '0'}</span></div>}
-                {cost !== undefined && <div>Cost<span style={{ float: 'right', color: colors.text }}>${cost.toFixed(2)}</span></div>}
+                {cost !== undefined && Number.isFinite(cost) && <div>Cost<span style={{ float: 'right', color: colors.text }}>${cost.toFixed(2)}</span></div>}
                 {session && <div>Tool calls<span style={{ float: 'right', color: colors.text }}>{session.totalToolCalls}</span></div>}
               </div>
             </div>

@@ -18,6 +18,8 @@ import {
 import { RefreshCw } from '../components/icons';
 import { PanelRight } from 'lucide-react';
 import { quoteFontFamily, isTermVisible, refitAndRepaint } from '../lib/terminalUtils';
+import ErrorBoundary from '../components/ErrorBoundary';
+import { clearMdCache } from '../components/markdown';
 
 // ── Sub-components ──
 import { InlineWorkLog } from '../components/claude/InlineWorkLog';
@@ -154,6 +156,12 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
       onPtyReady(paneId, sessionId);
     }
   }, [sessionId, paneId, onPtyReady]);
+
+  // Clear the module-level markdown cache on session switch so stale ReactNode
+  // trees from a previous session don't occupy memory or produce key collisions.
+  useEffect(() => {
+    clearMdCache();
+  }, [sessionId]);
 
   // Library: receive a prompt/skill inserted from the library. Targeted by
   // sessionId/paneId, or delivered to the active pane when untargeted.
@@ -1014,7 +1022,9 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
                 )}
 
                 {/* Rendered conversation messages with dividers */}
-                {renderedConversation}
+                <ErrorBoundary label="Conversation" resetKeys={[sessionId]}>
+                  {renderedConversation}
+                </ErrorBoundary>
 
                 {/* Live work not yet absorbed into the timeline: in-flight tool
                     calls plus agents/workflows that hooks reported before the

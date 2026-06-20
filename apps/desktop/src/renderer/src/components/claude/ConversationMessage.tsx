@@ -94,13 +94,13 @@ const ConversationMessageInner: React.FC<{ turn: ConversationTurn; isLast?: bool
             {tc.input?.file_path?.split(/[/\\]/).pop() ?? 'new file'}
           </div>
           <div style={{ margin: 0, fontSize: '0.7rem', fontFamily: 'var(--claude-mono-font, monospace)' }}>
-            {tc.input.content.slice(0, 2000).split('\n').map((line: string, i: number) => (
-              <div key={i} style={{ display: 'flex', lineHeight: 1.5 }}>
+            {(tc.input?.content?.slice(0, 2000) ?? '').split('\n').map((line: string, i: number) => (
+              <div key={`${i}-${line.slice(0, 24)}`} style={{ display: 'flex', lineHeight: 1.5 }}>
                 <span style={{ color: 'rgba(150,230,170,0.35)', userSelect: 'none', width: 36, minWidth: 36, textAlign: 'right', padding: '0 6px 0 0', fontSize: '0.6rem', borderRight: '1px solid rgba(74,222,128,0.1)' }}>{i + 1}</span>
                 <span style={{ color: 'rgb(150, 230, 170)', padding: '0 8px', whiteSpace: 'pre-wrap', wordBreak: 'break-all', flex: 1 }}>{line}</span>
               </div>
             ))}
-            {tc.input.content.length > 2000 && (
+            {(tc.input?.content?.length ?? 0) > 2000 && (
               <div style={{ padding: '2px 8px 2px 44px', color: colors.muted, fontSize: '0.65rem' }}>...</div>
             )}
           </div>

@@ -19,7 +19,7 @@ export const QuestionPicker: React.FC<{
       animation: 'claudeFadeIn 0.2s ease-out',
     }}>
       {questions.map((q, qi) => (
-        <div key={qi} style={{ marginBottom: qi < questions.length - 1 ? 12 : 0 }}>
+        <div key={q.question} style={{ marginBottom: qi < questions.length - 1 ? 12 : 0 }}>
           {q.header && (
             <div style={{ fontSize: '0.6rem', color: colors.mutedDim, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>
               {q.header}
@@ -29,9 +29,9 @@ export const QuestionPicker: React.FC<{
             {q.question}
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {q.options.map((opt, oi) => (
+            {(q.options ?? []).map((opt, oi) => (
               <button
-                key={oi}
+                key={opt.label}
                 onClick={() => onAnswer({ option: oi + 1 })}
                 style={{
                   textAlign: 'left',

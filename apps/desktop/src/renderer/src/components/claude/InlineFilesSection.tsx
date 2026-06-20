@@ -40,10 +40,10 @@ export const InlineFilesSection: React.FC<{ fileChanges: FileChange[] }> = ({ fi
       </div>
       {expanded && (
         <div style={{ padding: '0 10px 6px 10px' }}>
-          {fileChanges.slice(-20).map((fc, i) => {
+          {fileChanges.slice(-20).map((fc) => {
             const filename = fc.path.split('/').pop() ?? fc.path;
             return (
-              <div key={i} style={{ fontSize: '0.7rem', padding: '1px 0', display: 'flex', gap: 6, alignItems: 'center' }}>
+              <div key={`${fc.path}-${fc.timestamp}`} style={{ fontSize: '0.7rem', padding: '1px 0', display: 'flex', gap: 6, alignItems: 'center' }}>
                 <span style={{ color: fc.toolName === 'Write' ? colors.success : colors.warning, fontWeight: 600, width: 10, textAlign: 'center' }}>
                   {fc.toolName === 'Write' ? '+' : '~'}
                 </span>

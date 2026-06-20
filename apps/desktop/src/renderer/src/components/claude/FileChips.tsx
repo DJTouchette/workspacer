@@ -7,7 +7,7 @@ export const FileChips: React.FC<{ files: AttachedFile[]; onRemove: (idx: number
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, padding: '0 0 4px 0' }}>
       {files.map((f, i) => (
-        <span key={i} style={{
+        <span key={f.path} style={{
           display: 'inline-flex',
           alignItems: 'center',
           gap: 4,

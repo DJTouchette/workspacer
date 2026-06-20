@@ -19,8 +19,8 @@ export const WorkflowRunCard: React.FC<{ run: WorkflowRunInfo }> = ({ run }) => 
 
   const now = useNowTicker(running);
   const finished = run.agents.filter(a => a.status === 'done' || a.status === 'failed').length;
-  const elapsed = running ? now - run.startedAt : run.durationMs;
-  const tokens = run.totalTokens ?? run.agents.reduce((sum, a) => sum + a.tokens, 0);
+  const elapsed = running && run.startedAt ? now - run.startedAt : run.durationMs;
+  const tokens = run.totalTokens ?? run.agents.reduce((sum, a) => sum + (a.tokens ?? 0), 0);
 
   // Group agents by phase. phaseTitle is only known once the final state file
   // lands, so live agents render as a flat list until then.
