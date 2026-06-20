@@ -50,6 +50,11 @@ export class SessionUsageAccumulator {
     u.costUSD += turnCostUSD(u.model, usage);
   }
 
+  /** Remove all per-session state for a session that has been evicted. */
+  forget(sessionId: string): void {
+    this.lastUsageKey.delete(sessionId);
+  }
+
   /** Persist a concrete model id to config the first time we see it, so the
    *  spawn dropdown can offer it across restarts. */
   private rememberModel(model: string): void {

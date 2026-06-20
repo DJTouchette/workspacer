@@ -259,7 +259,10 @@ class ClaudeSessionStore {
       // before the session is forgotten by the renderer.
       this.flushPending(sessionId);
       // Evict the session entry after a grace period so the map doesn't grow unboundedly.
-      setTimeout(() => { this.sessions.delete(sessionId); }, 30_000).unref();
+      setTimeout(() => {
+        this.sessions.delete(sessionId);
+        this.usageAccumulator.forget(sessionId);
+      }, 30_000).unref();
     } else {
       applyHookEvent(session, event);
     }
@@ -293,6 +296,11 @@ class ClaudeSessionStore {
     }
 
     const lastSeq = this.convSeq.get(sessionId) ?? 0;
+    if (!delta.reset && delta.items.length === 0) {
+      // Empty heartbeat — update stored seq and skip gap/resync logic entirely.
+      this.convSeq.set(sessionId, delta.seq);
+      return;
+    }
     if (!delta.reset && delta.seq !== lastSeq + delta.items.length) {
       // Missed frames — rebuild from the daemon's snapshot.
       void this.resyncConversation(sessionId);

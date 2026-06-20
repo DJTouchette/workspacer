@@ -172,20 +172,24 @@ export class DatabaseService {
     const currentVersion = current?.v ?? 0;
 
     if (currentVersion < 1) {
-      db.exec(MIGRATION_V1);
-      db.prepare('INSERT INTO _migrations (version, applied_at) VALUES (?, ?)').run(
-        1,
-        new Date().toISOString(),
-      );
+      db.transaction(() => {
+        db.exec(MIGRATION_V1);
+        db.prepare('INSERT INTO _migrations (version, applied_at) VALUES (?, ?)').run(
+          1,
+          new Date().toISOString(),
+        );
+      })();
       console.log('[DatabaseService] applied migration v1');
     }
 
     if (currentVersion < 2) {
-      db.exec(MIGRATION_V2);
-      db.prepare('INSERT INTO _migrations (version, applied_at) VALUES (?, ?)').run(
-        2,
-        new Date().toISOString(),
-      );
+      db.transaction(() => {
+        db.exec(MIGRATION_V2);
+        db.prepare('INSERT INTO _migrations (version, applied_at) VALUES (?, ?)').run(
+          2,
+          new Date().toISOString(),
+        );
+      })();
       console.log('[DatabaseService] applied migration v2');
     }
   }
