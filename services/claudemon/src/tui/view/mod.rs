@@ -525,11 +525,9 @@ fn badge_token(mode: SessionMode) -> (&'static str, Style) {
 }
 
 fn short_id(id: &str) -> String {
-    if id.len() <= 8 {
-        id.to_string()
-    } else {
-        format!("{}…", &id[..8])
-    }
+    id.char_indices()
+        .nth(8)
+        .map_or_else(|| id.to_string(), |(i, _)| format!("{}…", &id[..i]))
 }
 
 fn ago(t: &OffsetDateTime) -> String {

@@ -350,10 +350,11 @@ impl App {
         };
         match self.client.post(&url).json(&body).send().await {
             Ok(r) if r.status().is_success() => {
+                let short: String = id.chars().take(8).collect();
                 self.toast(format!(
                     "{} {}",
                     if yes { "approved" } else { "denied" },
-                    &id[..8]
+                    short
                 ));
             }
             Ok(r) => {

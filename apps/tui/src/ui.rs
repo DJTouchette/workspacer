@@ -382,7 +382,7 @@ fn render_chat(f: &mut Frame, area: Rect, app: &mut App) {
     let inner_w = rows[0].width.saturating_sub(2);
     let lines = transcript_lines(app, inner_w as usize);
     let viewport = rows[0].height.saturating_sub(2);
-    let max_scroll = (lines.len() as u16).saturating_sub(viewport);
+    let max_scroll = (lines.len().min(u16::MAX as usize) as u16).saturating_sub(viewport);
     if app.chat_follow {
         app.chat_scroll = max_scroll;
     } else {

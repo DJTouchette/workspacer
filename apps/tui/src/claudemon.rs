@@ -128,6 +128,8 @@ impl Claudemon {
         session_id: &str,
         sink: &mpsc::UnboundedSender<PtyChunk>,
     ) -> Result<StreamEnd> {
+        const MAX_BUF: usize = 4 * 1024 * 1024;
+
         let (host, port) = split_host_port(&self.base);
         let mut stream = TcpStream::connect((host.as_str(), port)).await?;
         let req = format!(
@@ -146,6 +148,9 @@ impl Claudemon {
                 return Ok(StreamEnd::Disconnected);
             }
             buf.extend_from_slice(&tmp[..n]);
+            if buf.len() > MAX_BUF {
+                return Err(anyhow!("stream buffer overflow"));
+            }
 
             if !headers_done {
                 match find(&buf, b"\r\n\r\n") {
@@ -325,11 +330,18 @@ pub fn spawn_events(base: String) -> mpsc::UnboundedReceiver<DaemonEvent> {
     tokio::spawn(async move {
         let mut backoff = std::time::Duration::from_millis(500);
         loop {
-            if sse_connect(&base, &tx).await.is_ok() {
-                // Clean EOF — retry quickly.
-                backoff = std::time::Duration::from_millis(500);
+            let was_connected = match sse_connect(&base, &tx).await {
+                Ok(connected) => {
+                    // Clean EOF — retry quickly.
+                    backoff = std::time::Duration::from_millis(500);
+                    connected
+                }
+                Err(_) => false,
+            };
+            // Only pulse Disconnected if we actually told the UI we were Connected.
+            if was_connected {
+                let _ = tx.send(DaemonEvent::Disconnected);
             }
-            let _ = tx.send(DaemonEvent::Disconnected);
             tokio::time::sleep(backoff).await;
             backoff = (backoff * 2).min(std::time::Duration::from_secs(8));
         }
@@ -368,6 +380,8 @@ pub fn spawn_status_lines(base: String) -> mpsc::UnboundedReceiver<StatusLineMsg
 }
 
 async fn status_line_connect(base: &str, tx: &mpsc::UnboundedSender<StatusLineMsg>) -> Result<()> {
+    const MAX_BUF: usize = 4 * 1024 * 1024;
+
     let (host, port) = split_host_port(base);
     let mut stream = TcpStream::connect((host.as_str(), port)).await?;
     let req = format!(
@@ -386,10 +400,23 @@ async fn status_line_connect(base: &str, tx: &mpsc::UnboundedSender<StatusLineMs
             return Ok(());
         }
         buf.extend_from_slice(&tmp[..n]);
+        if buf.len() > MAX_BUF {
+            return Err(anyhow!("stream buffer overflow"));
+        }
 
         if !headers_done {
             match find(&buf, b"\r\n\r\n") {
                 Some(i) => {
+                    let headers = String::from_utf8_lossy(&buf[..i]);
+                    let code = headers
+                        .lines()
+                        .next()
+                        .and_then(|l| l.split_whitespace().nth(1))
+                        .and_then(|c| c.parse::<u16>().ok())
+                        .unwrap_or(0);
+                    if !(200..300).contains(&code) {
+                        return Err(anyhow!("HTTP {code}"));
+                    }
                     buf.drain(..i + 4);
                     headers_done = true;
                 }
@@ -414,8 +441,11 @@ async fn status_line_connect(base: &str, tx: &mpsc::UnboundedSender<StatusLineMs
 }
 
 /// Hold one SSE connection, forwarding a `Changed` per data frame. Returns when
-/// the stream ends or errors.
-async fn sse_connect(base: &str, tx: &mpsc::UnboundedSender<DaemonEvent>) -> Result<()> {
+/// the stream ends or errors. Returns `Ok(true)` if `Connected` was emitted,
+/// `Ok(false)` if the connection failed before that point.
+async fn sse_connect(base: &str, tx: &mpsc::UnboundedSender<DaemonEvent>) -> Result<bool> {
+    const MAX_BUF: usize = 4 * 1024 * 1024;
+
     let (host, port) = split_host_port(base);
     let mut stream = TcpStream::connect((host.as_str(), port)).await?;
     let req = format!(
@@ -424,23 +454,40 @@ async fn sse_connect(base: &str, tx: &mpsc::UnboundedSender<DaemonEvent>) -> Res
     );
     stream.write_all(req.as_bytes()).await?;
     stream.flush().await?;
-    let _ = tx.send(DaemonEvent::Connected);
+    // NOTE: Connected is sent AFTER we confirm a 2xx response below.
 
     let mut buf: Vec<u8> = Vec::new();
     let mut headers_done = false;
+    let mut was_connected = false;
     let mut tmp = [0u8; 8192];
     loop {
         let n = stream.read(&mut tmp).await?;
         if n == 0 {
-            return Ok(()); // EOF
+            return Ok(was_connected); // EOF
         }
         buf.extend_from_slice(&tmp[..n]);
+        if buf.len() > MAX_BUF {
+            return Err(anyhow!("stream buffer overflow"));
+        }
 
         if !headers_done {
             match find(&buf, b"\r\n\r\n") {
                 Some(i) => {
+                    let headers = String::from_utf8_lossy(&buf[..i]);
+                    let code = headers
+                        .lines()
+                        .next()
+                        .and_then(|l| l.split_whitespace().nth(1))
+                        .and_then(|c| c.parse::<u16>().ok())
+                        .unwrap_or(0);
+                    if !(200..300).contains(&code) {
+                        return Err(anyhow!("HTTP {code}"));
+                    }
                     buf.drain(..i + 4);
                     headers_done = true;
+                    // Confirmed 2xx — safe to signal Connected.
+                    let _ = tx.send(DaemonEvent::Connected);
+                    was_connected = true;
                 }
                 None => continue,
             }

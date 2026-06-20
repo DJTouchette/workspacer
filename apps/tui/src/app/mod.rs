@@ -712,7 +712,11 @@ impl App {
 
     pub(super) fn review_scroll(&mut self, delta: i32) {
         if let Some(r) = self.review.as_mut() {
-            r.diff_scroll = (r.diff_scroll as i32 + delta).max(0) as u16;
+            r.diff_scroll = if delta >= 0 {
+                r.diff_scroll.saturating_add(delta as u16)
+            } else {
+                r.diff_scroll.saturating_sub((-delta) as u16)
+            };
         }
     }
 

@@ -29,7 +29,13 @@ static THEME: Lazy<Theme> = Lazy::new(|| {
     ts.themes
         .get("base16-ocean.dark")
         .cloned()
-        .expect("syntect ships base16-ocean.dark")
+        .unwrap_or_else(|| {
+            ts.themes
+                .values()
+                .next()
+                .cloned()
+                .expect("syntect has at least one built-in theme")
+        })
 });
 
 /// Map a file path's extension to the language token syntect uses for
