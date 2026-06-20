@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AlertTriangle } from './icons';
 
 interface PluginInstallDialogProps {
@@ -16,6 +16,12 @@ const PluginInstallDialog: React.FC<PluginInstallDialogProps> = ({ onClose, onIn
   const [url, setUrl] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); onClose(); } };
+    window.addEventListener('keydown', handler, true);
+    return () => window.removeEventListener('keydown', handler, true);
+  }, [onClose]);
 
   const install = async () => {
     const trimmed = url.trim();

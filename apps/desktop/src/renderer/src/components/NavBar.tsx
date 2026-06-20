@@ -57,6 +57,8 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
   const [managingScripts, setManagingScripts] = useState(false);
   const [scriptDraft, setScriptDraft] = useState<ScriptEntry[]>([]);
   const menuRef = useRef<HTMLDivElement>(null);
+  const addTabBtnRef = useRef<HTMLButtonElement>(null);
+  const [menuLeft, setMenuLeft] = useState(0);
   const scriptMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -71,7 +73,7 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
-  }, [showMenu, tabContextMenu, managingScripts]);
+  }, [showMenu, managingScripts]);
 
   return (
     <nav
@@ -195,9 +197,15 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
             }}
           >
             <button
+              ref={addTabBtnRef}
               onClick={() => onAddTab('terminal')}
               onContextMenu={(e) => {
                 e.preventDefault();
+                if (addTabBtnRef.current) {
+                  const rect = addTabBtnRef.current.getBoundingClientRect();
+                  const left = Math.min(rect.left, window.innerWidth - 170);
+                  setMenuLeft(Math.max(0, left));
+                }
                 setShowMenu((v) => !v);
               }}
               style={{
@@ -238,6 +246,7 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
                 style={{
                   position: 'fixed',
                   top: `${navHeight}px`,
+                  left: `${menuLeft}px`,
                   backgroundColor: 'var(--wks-bg-surface)',
                   border: '1px solid var(--wks-border-input)',
                   borderRadius: '4px',
@@ -460,7 +469,7 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
                 </span>
                 <div style={{ flex: 1 }}>
                   <div style={{ color: 'var(--wks-text-primary)', fontWeight: 500 }}>{p.name}</div>
-                  {p.extraArgs.length > 0 && (
+                  {p.extraArgs?.length > 0 && (
                     <div style={{ fontSize: '0.58rem', color: 'var(--wks-text-faint)', fontFamily: 'monospace' }}>{p.extraArgs.join(' ')}</div>
                   )}
                 </div>

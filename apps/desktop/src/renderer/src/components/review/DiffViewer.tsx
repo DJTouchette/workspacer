@@ -253,7 +253,7 @@ const DiffViewer: React.FC<DiffViewerProps> = ({ diff, path }) => {
       <div
         style={{
           height: virtualizer.getTotalSize(),
-          minWidth: `calc(${diff.maxLineLength}ch + ${numCh * 2}ch + 60px)`,
+          minWidth: `calc(${Math.min(diff.maxLineLength, 500)}ch + ${numCh * 2}ch + 60px)`,
           width: '100%',
           position: 'relative',
         }}

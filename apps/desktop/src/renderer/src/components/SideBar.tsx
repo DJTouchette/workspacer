@@ -145,6 +145,7 @@ const SideBar: React.FC<SideBarProps> = ({
   const commitRename = () => {
     if (renamingId && renameValue.trim()) onRenameAgent(renamingId, renameValue.trim());
     setRenamingId(null);
+    setRenameValue('');
   };
 
   return (
@@ -374,7 +375,7 @@ const SideBar: React.FC<SideBarProps> = ({
                       onBlur={commitRename}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter') commitRename();
-                        if (e.key === 'Escape') setRenamingId(null);
+                        if (e.key === 'Escape') { setRenamingId(null); setRenameValue(''); }
                         e.stopPropagation();
                       }}
                       onClick={(e) => e.stopPropagation()}

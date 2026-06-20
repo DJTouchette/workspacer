@@ -31,10 +31,17 @@ const LayoutsDialog: React.FC<Props> = ({ agentCount, onSaveCurrent, onRestore, 
   const save = () => {
     const n = name.trim();
     if (!n) return;
-    onSaveCurrent(n);
+    // onSaveCurrent is typed void but may return a Promise at runtime; await it
+    // so we only reload after the write completes. If it doesn't return a
+    // Promise (void), we fall back to a 500 ms delay — wider than 150 ms to
+    // tolerate slow IPC without a race.
+    const result = onSaveCurrent(n) as unknown;
     setName('');
-    // give the main process a beat to write, then refresh the list
-    setTimeout(reload, 150);
+    if (result instanceof Promise) {
+      result.then(reload).catch(() => {});
+    } else {
+      setTimeout(reload, 500);
+    }
   };
 
   const del = (id: string) => {

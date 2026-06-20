@@ -36,8 +36,8 @@ const RemoteShareDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
   }, [onClose]);
 
   const copy = async (label: string, text: string) => {

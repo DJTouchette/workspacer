@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { Config, AppEntry } from '../../hooks/useConfig';
 import { Section, SmallButton, inputStyle } from './primitives';
 
@@ -9,6 +9,7 @@ interface AppsSectionProps {
 
 const AppsSection: React.FC<AppsSectionProps> = ({ config, save }) => {
   const [apps, setApps] = useState<AppEntry[]>(config.apps ?? []);
+  useEffect(() => { setApps(config.apps ?? []); }, [config.apps]);
   const [editingAppIndex, setEditingAppIndex] = useState<number | null>(null);
   const [editName, setEditName] = useState('');
   const [editUrl, setEditUrl] = useState('');
