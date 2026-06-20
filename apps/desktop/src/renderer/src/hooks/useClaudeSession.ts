@@ -80,16 +80,28 @@ export function useClaudeSession({ ptySessionId, active = true }: UseClaudeSessi
     };
   }, []);
 
+  // Incremented each time ptySessionId changes so a stale async response
+  // (from an earlier id) is silently dropped instead of overwriting newer state.
+  const generationRef = useRef(0);
+
   useEffect(() => {
     if (!ptySessionId) return;
+    const gen = ++generationRef.current;
     window.electronAPI.getClaudeSession(ptySessionId).then((snap) => {
+      if (gen !== generationRef.current) return; // stale or unmounted
       if (snap) setSession(snap as ClaudeSessionSnapshot);
     });
+    return () => {
+      // Increment so any in-flight promise from this ptySessionId is ignored
+      generationRef.current++;
+    };
   }, [ptySessionId]);
 
   const refresh = useCallback(() => {
     if (!idRef.current) return;
+    const gen = ++generationRef.current;
     window.electronAPI.getClaudeSession(idRef.current).then((snap) => {
+      if (gen !== generationRef.current) return; // stale or unmounted
       if (snap) setSession(snap as ClaudeSessionSnapshot);
     });
   }, []);

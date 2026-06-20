@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PluginManifest, PluginPane, PluginHotkey } from '../types/plugin';
 import { pluginPaneURL } from '../types/plugin';
 
@@ -10,18 +10,39 @@ import { pluginPaneURL } from '../types/plugin';
 export function usePlugins(): { plugins: PluginManifest[]; panes: PluginPane[]; hotkeys: PluginHotkey[] } {
   const [plugins, setPlugins] = useState<PluginManifest[]>([]);
 
+  // Sequence counter so only the latest in-flight fetch's result is applied.
+  const fetchSeqRef = useRef(0);
+  // Debounce timer for bursts of plugin.* events.
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const refresh = useCallback(() => {
+    const seq = ++fetchSeqRef.current;
     window.electronAPI.listHubPlugins?.()
-      .then((list) => setPlugins(Array.isArray(list) ? list : []))
+      .then((list) => {
+        if (seq !== fetchSeqRef.current) return; // superseded by a later fetch
+        setPlugins(Array.isArray(list) ? list : []);
+      })
       .catch(() => {});
   }, []);
 
   useEffect(() => {
     refresh();
     const off = window.electronAPI.onHubEvent?.((ev) => {
-      if (ev.type?.startsWith('plugin.')) refresh();
+      if (!ev.type?.startsWith('plugin.')) return;
+      // Trailing debounce: coalesce a burst of plugin.* events into one refresh.
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = setTimeout(() => {
+        debounceTimerRef.current = null;
+        refresh();
+      }, 150);
     });
-    return () => off?.();
+    return () => {
+      off?.();
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+        debounceTimerRef.current = null;
+      }
+    };
   }, [refresh]);
 
   const panes = useMemo<PluginPane[]>(

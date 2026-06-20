@@ -102,14 +102,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Per-terminal output via MessagePort — waits for port, then connects callback
   onTerminalOutput: (id: string, callback: (data: string) => void): (() => void) => {
+    let cancelled = false;
     let handler: ((event: any) => void) | null = null;
     let portRef: IPort | null = null;
     getPort(id).then((port) => {
+      if (cancelled) { port.close(); return; }
       portRef = port;
       handler = (event: any) => callback(event.data);
       port.addEventListener('message', handler);
     });
     return () => {
+      cancelled = true;
       if (portRef && handler) portRef.removeEventListener('message', handler);
     };
   },
@@ -199,14 +202,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   /** Same shape as onTerminalOutput — works on the Claude byte port. */
   onClaudeOutput: (sessionId: string, callback: (data: string) => void): (() => void) => {
+    let cancelled = false;
     let handler: ((event: any) => void) | null = null;
     let portRef: IPort | null = null;
     getPort(sessionId).then((port) => {
+      if (cancelled) { port.close(); return; }
       portRef = port;
       handler = (event: any) => callback(event.data);
       port.addEventListener('message', handler);
     });
     return () => {
+      cancelled = true;
       if (portRef && handler) portRef.removeEventListener('message', handler);
     };
   },
