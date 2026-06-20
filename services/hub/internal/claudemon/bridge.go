@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -146,5 +147,11 @@ func parseSSE(ctx context.Context, r io.Reader, emit func(name string, data []by
 			data = append(data, chunk...)
 		}
 	}
-	return sc.Err()
+	// Flush any trailing event that arrived without a final blank line.
+	flush()
+	if err := sc.Err(); err != nil {
+		log.Printf("claudemon/bridge: SSE scanner error: %v", err)
+		return err
+	}
+	return nil
 }

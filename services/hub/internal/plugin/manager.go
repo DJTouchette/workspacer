@@ -48,6 +48,13 @@ func (m *Manager) Add(mf Manifest) {
 	}
 
 	m.mu.Lock()
+	if prev, ok := m.plugins[mf.ID]; ok && prev.sup != nil {
+		// Stop the previous supervisor before replacing it to avoid a goroutine
+		// leak. Unlock first so Stop can acquire the mutex if needed.
+		m.mu.Unlock()
+		prev.sup.Stop()
+		m.mu.Lock()
+	}
 	m.plugins[mf.ID] = l
 	m.mu.Unlock()
 

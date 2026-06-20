@@ -91,11 +91,22 @@ func New(spec Spec, pub Publisher) *Supervisor {
 	}
 }
 
-// Start launches the manage loop in the background. Idempotent-ish: call Stop
-// before Start again.
+// Start launches the manage loop in the background. Idempotent: if the
+// supervisor is already running, Start is a no-op. Call Stop before starting
+// again with different settings.
 func (s *Supervisor) Start() {
-	ctx, cancel := context.WithCancel(context.Background())
 	s.mu.Lock()
+	if s.done != nil {
+		select {
+		case <-s.done:
+			// Previous run has finished; allow a fresh start below.
+		default:
+			// Still running — do nothing.
+			s.mu.Unlock()
+			return
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
 	s.done = make(chan struct{})
 	done := s.done

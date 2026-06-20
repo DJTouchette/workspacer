@@ -5,6 +5,7 @@ package event
 
 import (
 	"encoding/json"
+	"log"
 	"strings"
 	"time"
 )
@@ -50,7 +51,10 @@ func MatchesAny(patterns []string, typ string) bool {
 func New(typ, source string, data any) Envelope {
 	var raw json.RawMessage
 	if data != nil {
-		if b, err := json.Marshal(data); err == nil {
+		b, err := json.Marshal(data)
+		if err != nil {
+			log.Printf("event.New: failed to marshal data for type %q: %v", typ, err)
+		} else {
 			raw = b
 		}
 	}
