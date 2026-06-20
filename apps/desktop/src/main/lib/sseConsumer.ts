@@ -68,6 +68,8 @@ export async function consumeSseStream(
   } = opts;
 
   let backoff = backoffInitialMs;
+  /** Minimum open duration (ms) before a clean EOF resets backoff. */
+  const MIN_PRODUCTIVE_MS = 5000;
 
   while (!signal.aborted) {
     try {
@@ -82,6 +84,8 @@ export async function consumeSseStream(
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
+      let firstFrameSeen = false;
+      const connectedAt = Date.now();
 
       while (!signal.aborted) {
         const { done, value } = await reader.read();
@@ -119,12 +123,17 @@ export async function consumeSseStream(
             }
           }
           if (dataLines.length === 0) continue;
+          firstFrameSeen = true;
           onFrame(dataLines.join(joinWith));
         }
       }
 
-      // Clean EOF — reset backoff for next connection.
-      backoff = backoffInitialMs;
+      // Only reset backoff after a productive connection (delivered at least one
+      // frame, or stayed open long enough). A server that closes immediately on
+      // every attempt would otherwise cause a hot reconnect loop.
+      if (firstFrameSeen || Date.now() - connectedAt >= MIN_PRODUCTIVE_MS) {
+        backoff = backoffInitialMs;
+      }
     } catch (err) {
       if (signal.aborted) return;
       if (onError) onError(err);

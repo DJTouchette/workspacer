@@ -12,16 +12,28 @@ interface IPort {
   removeEventListener(type: string, listener: (event: any) => void): void;
 }
 
+interface PortWaiter {
+  resolve: (port: IPort) => void;
+  reject: (err: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
 const terminalPorts = new Map<string, IPort>();
-const portWaiters = new Map<string, Array<(port: IPort) => void>>();
+const portWaiters = new Map<string, Array<PortWaiter>>();
+
+/** Timeout (ms) before a getPort() promise is rejected if the port never arrives. */
+const PORT_TIMEOUT_MS = 10_000;
 
 function deliverPort(id: string, port: IPort): void {
   terminalPorts.set(id, port);
   port.start();
   const waiters = portWaiters.get(id);
   if (waiters) {
-    for (const resolve of waiters) resolve(port);
     portWaiters.delete(id);
+    for (const { resolve, timer } of waiters) {
+      clearTimeout(timer);
+      resolve(port);
+    }
   }
 }
 
@@ -45,9 +57,22 @@ ipcRenderer.on(IPC.CLAUDE_PORT, (event, payload: { sessionId: string; viewerKey?
 function getPort(id: string): Promise<IPort> {
   const existing = terminalPorts.get(id);
   if (existing) return Promise.resolve(existing);
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      const list = portWaiters.get(id);
+      if (list) {
+        const remaining = list.filter(w => w.timer !== timer);
+        if (remaining.length > 0) {
+          portWaiters.set(id, remaining);
+        } else {
+          portWaiters.delete(id);
+        }
+      }
+      reject(new Error(`getPort timeout: port for '${id}' never arrived`));
+    }, PORT_TIMEOUT_MS);
+    const waiter: PortWaiter = { resolve, reject, timer };
     const list = portWaiters.get(id) ?? [];
-    list.push(resolve);
+    list.push(waiter);
     portWaiters.set(id, list);
   });
 }

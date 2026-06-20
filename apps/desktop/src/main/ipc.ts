@@ -34,6 +34,8 @@ function detectDefaultShell(): string {
   return process.env.SHELL || '/bin/sh';
 }
 
+let ipcHandlersRegistered = false;
+
 export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   claudemonSessionClient.setMainWindow(mainWindow);
   libraryService.setMainWindow(mainWindow);
@@ -48,6 +50,11 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     }
     publishToHub({ type: 'fs.changed', data: { path, eventType } });
   });
+
+  // ipcMain.handle registrations throw if a channel is already registered.
+  // Guard so a second createWindow() call (macOS dock 'activate') is safe.
+  if (ipcHandlersRegistered) return;
+  ipcHandlersRegistered = true;
 
   // ── Library (reusable prompts + skills) ──
   ipcMain.handle(IPC.LIBRARY_LIST, (_event, cwd?: string) => libraryService.list(cwd));

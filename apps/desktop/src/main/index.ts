@@ -14,8 +14,10 @@ import { startClaudemonConversationBridge, stopClaudemonConversationBridge } fro
 import { startHub, stopHub } from './services/hubDaemon';
 import { setHubMainWindow, startHubClient, stopHubClient } from './services/hubClient';
 import { stopAllTerminals } from './services/terminalShare';
+import { workflowWatcher } from './services/workflowWatcher';
 import { registerHubCapabilities } from './services/hubCapabilities';
 import { database } from './services/db';
+import { IPC } from './shared/ipcChannels';
 
 // Font file registry: filename → absolute path (populated during discovery)
 const fontFileMap = new Map<string, string>();
@@ -343,8 +345,9 @@ app.whenReady().then(() => {
 app.on('before-quit', () => {
   // Signal renderer to save session before quit
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('app:before-quit');
+    mainWindow.webContents.send(IPC.APP_BEFORE_QUIT);
   }
+  workflowWatcher.detachAll();
   stopAllTerminals();
   stopClaudemonHookBridge();
   stopClaudemonStatusLineBridge();
@@ -357,6 +360,7 @@ app.on('before-quit', () => {
 
 app.on('window-all-closed', () => {
   claudemonSessionClient.closeAll();
+  workflowWatcher.detachAll();
   stopAllTerminals();
   stopClaudemonHookBridge();
   stopClaudemonStatusLineBridge();

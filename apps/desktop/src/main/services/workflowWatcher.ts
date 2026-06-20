@@ -17,6 +17,7 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
+import vm from 'node:vm';
 
 // ── Public types (mirrored in src/renderer/src/types/claudeSession.ts) ──
 
@@ -210,8 +211,8 @@ function parseScriptMeta(scriptText: string): { name?: string; description?: str
   }
   if (end === -1) return null;
   try {
-    // eslint-disable-next-line no-new-func
-    const obj = new Function(`return (${scriptText.slice(start, end + 1)})`)();
+    const literalText = scriptText.slice(start, end + 1);
+    const obj = vm.runInNewContext('(' + literalText + ')', Object.create(null), { timeout: 50, microtaskMode: 'afterEvaluate' });
     if (!obj || typeof obj !== 'object') return null;
     return {
       name: typeof obj.name === 'string' ? obj.name : undefined,
@@ -314,6 +315,7 @@ class WorkflowWatcher {
   private ensureTimer(watch: SessionWatch): void {
     if (watch.timer) return;
     watch.timer = setInterval(() => this.tick(watch), TICK_MS);
+    watch.timer.unref();
     // Run one immediately so a fresh attach/poke reflects state without delay
     this.tick(watch);
   }

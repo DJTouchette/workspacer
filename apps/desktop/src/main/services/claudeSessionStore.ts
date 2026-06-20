@@ -157,6 +157,8 @@ export interface ClaudeSessionState {
   // named and nested under the agent that spawned them.
   label?: string;
   parentSessionId?: string;
+  /** Guards against double history writes (Stop 1500ms timeout vs SessionEnd). */
+  historyWritten?: boolean;
 }
 
 // Serialisable snapshot sent over IPC
@@ -239,17 +241,25 @@ class ClaudeSessionStore {
       // Delayed history write: the final assistant message may still be in
       // flight on the conversation stream (claudemon keeps tailing briefly
       // after Stop), so give it a moment to land before snapshotting.
+      // Guard with historyWritten so a SessionEnd that races doesn't double-write.
       setTimeout(() => {
+        if (session!.historyWritten) return;
+        session!.historyWritten = true;
         writeHistory(session!, 'active');
       }, 1500);
     } else if (hookName === 'SessionEnd') {
       applySessionEndEvent(session);
       workflowWatcher.detach(sessionId);
       forgetTelemetry(sessionId);
-      writeHistory(session, 'ended');
+      if (!session.historyWritten) {
+        session.historyWritten = true;
+        writeHistory(session, 'ended');
+      }
       // Flush any coalesced update synchronously so the final state is sent
       // before the session is forgotten by the renderer.
       this.flushPending(sessionId);
+      // Evict the session entry after a grace period so the map doesn't grow unboundedly.
+      setTimeout(() => { this.sessions.delete(sessionId); }, 30_000).unref();
     } else {
       applyHookEvent(session, event);
     }
