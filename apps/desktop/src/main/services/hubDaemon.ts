@@ -207,16 +207,21 @@ function launch(bin: string): Promise<void> {
     if (info.appUrl) console.log(`[hub] full app (real renderer): ${info.appUrl}`);
   }
 
+  // AbortController so a fast-exiting daemon cancels the health-check poll
+  // instead of spinning for the full HEALTH_TIMEOUT_MS.
+  const healthAbort = new AbortController();
+
   child.stdout?.on('data', d => process.stdout.write(`[hub] ${d}`));
   child.stderr?.on('data', d => process.stderr.write(`[hub] ${d}`));
   child.on('exit', (code, signal) => {
     console.log(`[hub] exited code=${code} signal=${signal}`);
     child = null;
     readyPromise = null;
+    healthAbort.abort(); // cancel any in-progress health poll
     if (!intentionalStop) scheduleRestart(bin);
   });
 
-  readyPromise = waitForHealthShared(`http://127.0.0.1:${PORT}/health`, HEALTH_TIMEOUT_MS, 'hub')
+  readyPromise = waitForHealthShared(`http://127.0.0.1:${PORT}/health`, HEALTH_TIMEOUT_MS, 'hub', healthAbort.signal)
     .then(() => { backoff.reset(); });
   return readyPromise;
 }
@@ -237,6 +242,7 @@ function scheduleRestart(bin: string): void {
 
 export function stopHub(): void {
   intentionalStop = true;
+  backoff.reset(); // clear failure counter so the next startHub() begins fresh
   if (child) {
     try { child.kill(); } catch {}
     child = null;

@@ -66,16 +66,21 @@ function launch(bin: string): Promise<void> {
     windowsHide: true,
   });
 
+  // AbortController so a fast-exiting daemon cancels the health-check poll
+  // instead of spinning for the full HEALTH_TIMEOUT_MS.
+  const healthAbort = new AbortController();
+
   child.stdout?.on('data', d => process.stdout.write(`[claudemon] ${d}`));
   child.stderr?.on('data', d => process.stderr.write(`[claudemon] ${d}`));
   child.on('exit', (code, signal) => {
     console.log(`[claudemon] exited code=${code} signal=${signal}`);
     child = null;
     readyPromise = null;
+    healthAbort.abort(); // cancel any in-progress health poll
     if (!intentionalStop) scheduleRestart(bin);
   });
 
-  readyPromise = waitForHealthShared(`http://127.0.0.1:${API_PORT}/health`, HEALTH_TIMEOUT_MS, 'claudemon')
+  readyPromise = waitForHealthShared(`http://127.0.0.1:${API_PORT}/health`, HEALTH_TIMEOUT_MS, 'claudemon', healthAbort.signal)
     .then(() => { backoff.reset(); });
   return readyPromise;
 }
@@ -123,6 +128,7 @@ export function runClaudemonInit(): Promise<void> {
 
 export function stopClaudemon(): void {
   intentionalStop = true;
+  backoff.reset(); // clear failure counter so the next startClaudemon() begins fresh
   if (child) {
     try { child.kill(); } catch {}
     child = null;

@@ -39,7 +39,10 @@ export function killStaleListener(port: number, label: string): void {
         }
       }
     } else {
-      const out = execSync(`lsof -ti :${port}`, { encoding: 'utf-8', timeout: 3000 });
+      // On macOS, lsof may not be on the packaged app's PATH; prefer the known
+      // absolute path. On Linux /usr/bin/lsof is standard.
+      const lsof = process.platform === 'darwin' ? '/usr/sbin/lsof' : 'lsof';
+      const out = execSync(`${lsof} -ti :${port}`, { encoding: 'utf-8', timeout: 3000 });
       for (const line of out.trim().split('\n')) {
         const pid = parseInt(line, 10);
         if (pid && pid !== process.pid) {
@@ -56,21 +59,29 @@ export function killStaleListener(port: number, label: string): void {
 // ── waitForHealth ────────────────────────────────────────────────────────────
 
 /**
- * Poll `url` until it returns HTTP 200 OK, or until `timeoutMs` elapses.
+ * Poll `url` until it returns HTTP 200 OK, until `timeoutMs` elapses, or until
+ * `signal` is aborted (e.g. because the daemon exited before becoming healthy).
  * `label` appears in the error message, e.g. "claudemon" or "hub".
  */
 export async function waitForHealth(
   url: string,
   timeoutMs: number,
   label: string,
+  signal?: AbortSignal,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   let lastErr: unknown = null;
   while (Date.now() < deadline) {
+    if (signal?.aborted) {
+      throw new Error(`${label} health check cancelled (daemon exited early)`);
+    }
     try {
-      const res = await fetch(url);
+      const res = await fetch(url, { signal });
       if (res.ok) return;
     } catch (err) {
+      if (signal?.aborted) {
+        throw new Error(`${label} health check cancelled (daemon exited early)`);
+      }
       lastErr = err;
     }
     await new Promise((r) => setTimeout(r, 100));

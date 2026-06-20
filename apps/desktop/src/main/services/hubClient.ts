@@ -100,6 +100,11 @@ function handleCall(id: string, method: string, params: unknown): void {
 
 function connect(): void {
   if (stopped) return;
+  // Remove listeners from the old socket before creating a new one so they
+  // don't accumulate across reconnects.
+  if (ws) {
+    ws.removeAllListeners();
+  }
   // When remote auth is on the hub rejects /bus without the token; the local
   // client presents it too. No token configured → URL is unchanged.
   const token = getHubToken();
@@ -182,7 +187,10 @@ export function publishToHub(ev: { type: string; source?: string; data?: unknown
 }
 
 export function startHubClient(): void {
+  // Idempotent: if ws is already live, skip re-starting.
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
   stopped = false;
+  backoff = 200; // reset backoff on each explicit start
   connect();
 }
 
@@ -190,4 +198,10 @@ export function stopHubClient(): void {
   stopped = true;
   try { ws?.close(); } catch { /* noop */ }
   ws = null;
+  // Drain all in-flight outbound calls so their timers don't leak.
+  for (const [id, c] of pending) {
+    clearTimeout(c.timer);
+    c.reject(new Error('hub stopped'));
+    pending.delete(id);
+  }
 }

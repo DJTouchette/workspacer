@@ -13,6 +13,8 @@ import { consumeSseStream } from '../lib/sseConsumer';
 let abort: AbortController | null = null;
 
 export async function startClaudemonStatusLineBridge(): Promise<void> {
+  // Idempotent: if already running, skip re-starting.
+  if (abort) return;
   abort = new AbortController();
   const url = `${CLAUDEMON_API_URL}/statusline/stream`;
   console.log(`[claudemon-statusline] subscribed to ${url}`);
@@ -22,8 +24,14 @@ export async function startClaudemonStatusLineBridge(): Promise<void> {
     backoffMaxMs: 5000,
     joinWith: '\n',
     onFrame(dataString) {
+      let update: any;
       try {
-        const update = JSON.parse(dataString);
+        update = JSON.parse(dataString);
+      } catch (err) {
+        console.warn('[claudemon-statusline] malformed JSON frame, skipping:', err);
+        return;
+      }
+      try {
         const sl = update.status_line ?? {};
         // Map the wire (snake_case) shape to the renderer's camelCase type.
         claudeSessionStore.applyStatusLine(update.session_id, {

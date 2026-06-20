@@ -87,14 +87,8 @@ export async function consumeSseStream(
       let firstFrameSeen = false;
       const connectedAt = Date.now();
 
-      while (!signal.aborted) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-
-        // Support both LF-only (\n\n) and CRLF (\r\n\r\n) frame terminators.
-        // Current servers only emit \n\n; CRLF handling is inert but correct.
-        let sep: number;
+      /** Extract and emit all complete SSE frames from the current buffer. */
+      function flushBuffer(): void {
         while (!signal.aborted) {
           const lfIdx = buffer.indexOf('\n\n');
           const crlfIdx = buffer.indexOf('\r\n\r\n');
@@ -109,9 +103,8 @@ export async function consumeSseStream(
             buffer = buffer.slice(crlfIdx + 4);
           } else {
             // LF terminator
-            sep = lfIdx;
-            frame = buffer.slice(0, sep);
-            buffer = buffer.slice(sep + 2);
+            frame = buffer.slice(0, lfIdx);
+            buffer = buffer.slice(lfIdx + 2);
           }
 
           const dataLines: string[] = [];
@@ -126,6 +119,26 @@ export async function consumeSseStream(
           firstFrameSeen = true;
           onFrame(dataLines.join(joinWith));
         }
+      }
+
+      while (!signal.aborted) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        // Support both LF-only (\n\n) and CRLF (\r\n\r\n) frame terminators.
+        // Current servers only emit \n\n; CRLF handling is inert but correct.
+        flushBuffer();
+      }
+
+      // After a clean EOF, flush any trailing frame that didn't end with a
+      // double-newline terminator (servers sometimes omit the final \n\n).
+      // Only attempt a flush if there's non-whitespace content left and the
+      // buffer contains a data: line — avoids emitting empty frames.
+      if (!signal.aborted && buffer.trim() && buffer.includes('data:')) {
+        // Synthesize a terminator so the existing split logic fires cleanly.
+        buffer += '\n\n';
+        flushBuffer();
       }
 
       // Only reset backoff after a productive connection (delivered at least one

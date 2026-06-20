@@ -15,6 +15,8 @@ import { consumeSseStream } from '../lib/sseConsumer';
 let abort: AbortController | null = null;
 
 export async function startClaudemonConversationBridge(): Promise<void> {
+  // Idempotent: if already running, skip re-starting.
+  if (abort) return;
   abort = new AbortController();
   const url = `${CLAUDEMON_API_URL}/conversation/stream`;
   console.log(`[claudemon-conversation] subscribed to ${url}`);
@@ -24,9 +26,15 @@ export async function startClaudemonConversationBridge(): Promise<void> {
     backoffMaxMs: 5000,
     joinWith: '\n',
     onFrame(dataString) {
+      let delta: unknown;
       try {
-        const delta = JSON.parse(dataString);
-        claudeSessionStore.applyConversationDelta(delta);
+        delta = JSON.parse(dataString);
+      } catch (err) {
+        console.warn('[claudemon-conversation] malformed JSON frame, skipping:', err);
+        return;
+      }
+      try {
+        claudeSessionStore.applyConversationDelta(delta as Parameters<typeof claudeSessionStore.applyConversationDelta>[0]);
       } catch (err) {
         console.error('[claudemon-conversation] bad frame', err);
       }

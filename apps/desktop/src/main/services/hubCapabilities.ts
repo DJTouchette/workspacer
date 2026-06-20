@@ -130,7 +130,7 @@ export function registerHubCapabilities(): void {
         allowedTools: ['mcp__workspacer'],
       }),
     });
-    const resolvedCwd = cwd ?? process.env.HOME ?? os.homedir();
+    const resolvedCwd = cwd && fs.existsSync(cwd) ? cwd : (process.env.HOME ?? os.homedir());
     const id = await claudemonSessionClient.spawn({ argv, cwd: resolvedCwd, cols, rows, env, sessionId });
     return { sessionId: id };
   });

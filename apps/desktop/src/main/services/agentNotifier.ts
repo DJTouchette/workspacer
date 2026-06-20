@@ -42,6 +42,9 @@ class AgentNotifier {
 
   setMainWindow(win: BrowserWindow): void {
     this.mainWindow = win;
+    // Remove any prior focus listener from a previous window to prevent
+    // duplicate handlers accumulating across setMainWindow calls.
+    win.removeAllListeners('focus');
     // Stop the taskbar flashing as soon as the user looks at the window.
     win.on('focus', () => {
       try { win.flashFrame(false); } catch { /* noop */ }
