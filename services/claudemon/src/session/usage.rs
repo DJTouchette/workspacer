@@ -54,7 +54,19 @@ fn rates_for(model: Option<&str>) -> Rates {
 
 /// Tokens occupying the window this turn: input + both cache tiers.
 fn context_tokens_of(usage: &Value) -> u64 {
-    let n = |k: &str| usage.get(k).and_then(|v| v.as_u64()).unwrap_or(0);
+    let n = |k: &str| {
+        let v = usage.get(k);
+        match v {
+            None => 0,
+            Some(val) => match val.as_u64() {
+                Some(n) => n,
+                None => {
+                    tracing::warn!(field = k, raw = %val, "usage field present but not a valid u64; treating as 0");
+                    0
+                }
+            },
+        }
+    };
     n("input_tokens") + n("cache_creation_input_tokens") + n("cache_read_input_tokens")
 }
 
@@ -72,7 +84,19 @@ fn context_limit_for(model: Option<&str>, observed: u64) -> u64 {
 /// USD cost of one turn. Cache writes cost 1.25× input, reads 0.1×.
 fn turn_cost_usd(model: Option<&str>, usage: &Value) -> f64 {
     let r = rates_for(model);
-    let n = |k: &str| usage.get(k).and_then(|v| v.as_u64()).unwrap_or(0) as f64;
+    let n = |k: &str| {
+        let v = usage.get(k);
+        match v {
+            None => 0_f64,
+            Some(val) => match val.as_u64() {
+                Some(n) => n as f64,
+                None => {
+                    tracing::warn!(field = k, raw = %val, "usage field present but not a valid u64; treating as 0");
+                    0_f64
+                }
+            },
+        }
+    };
     let dollars = n("input_tokens") * r.input
         + n("cache_creation_input_tokens") * (r.input * 1.25)
         + n("cache_read_input_tokens") * (r.input * 0.1)

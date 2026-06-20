@@ -168,10 +168,11 @@ pub async fn run_with_daemon(argv: Vec<String>, daemon_ws: &str) -> Result<()> {
             match stdin.read(&mut buf) {
                 Ok(0) => break,
                 Ok(n) => {
-                    let chunk = buf[..n].to_vec();
-                    let pty = pty_for_stdin.clone();
-                    let handle = tokio::runtime::Handle::current();
-                    let _ = handle.block_on(pty::write_bytes(&pty, &chunk));
+                    // Already on a blocking thread — write synchronously rather
+                    // than re-entering the async runtime via block_on.
+                    if pty::write_bytes_blocking(&pty_for_stdin, &buf[..n]).is_err() {
+                        break;
+                    }
                 }
                 Err(_) => break,
             }

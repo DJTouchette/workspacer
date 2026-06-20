@@ -343,6 +343,8 @@ impl SessionStore {
 
     pub fn deregister_wrapper(&self, session_id: &str) {
         self.wrappers.remove(session_id);
+        self.buffers.remove(session_id);
+        self.bytes_tx.remove(session_id);
         let synthetic = HookEvent {
             event: "SessionEnd".to_string(),
             session_id: session_id.to_string(),
@@ -377,8 +379,9 @@ impl SessionStore {
         self.buffers
             .entry(session_id.to_string())
             .or_insert_with(|| Arc::new(Mutex::new(OutputBuffer::new(OUTPUT_BUFFER_CAP))));
-        let (tx, _) = broadcast::channel(BYTE_BROADCAST_CAPACITY);
-        self.bytes_tx.insert(session_id.to_string(), tx);
+        self.bytes_tx
+            .entry(session_id.to_string())
+            .or_insert_with(|| broadcast::channel(BYTE_BROADCAST_CAPACITY).0);
         self.pending_spawns_by_cwd
             .insert(cwd.to_string(), session_id.to_string());
         let _ = self.update_tx.send(SessionUpdate {

@@ -83,7 +83,7 @@ pub async fn handle(
     // daemon → child input pump (mpsc<WrapperMessage> → PTY)
     let (input_tx, mut input_rx) = mpsc::unbounded_channel::<WrapperMessage>();
     let pty_for_input = pty_handle.clone();
-    tokio::spawn(async move {
+    let input_task = tokio::spawn(async move {
         while let Some(msg) = input_rx.recv().await {
             match msg {
                 WrapperMessage::Input { bytes } => {
@@ -115,6 +115,9 @@ pub async fn handle(
     let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     if let Err(err) = pty::start_reader(&pty_handle, out_tx) {
         tracing::error!(?err, "start_reader failed");
+        // Kill the child and abort the input pump so nothing leaks.
+        let _ = pty::signal_child(&pty_handle, crate::protocol::Signal::Sigkill);
+        input_task.abort();
         return (StatusCode::INTERNAL_SERVER_ERROR, "could not start PTY reader")
             .into_response();
     }

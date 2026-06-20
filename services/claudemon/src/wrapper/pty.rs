@@ -105,6 +105,20 @@ pub async fn write_bytes(handle: &PtyHandle, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// Synchronous PTY write for callers already running on a blocking thread.
+///
+/// The async `write_bytes` dispatches a `spawn_blocking`; calling it via
+/// `Handle::block_on` from inside another blocking thread re-enters the runtime
+/// (deadlocks on a current-thread runtime, exhausts the blocking pool on a
+/// multi-thread one). The stdin pump is already on its own `spawn_blocking`
+/// thread, so it writes directly to the PTY writer here instead.
+pub fn write_bytes_blocking(handle: &PtyHandle, bytes: &[u8]) -> Result<()> {
+    let mut w = handle.writer.lock().expect("PTY writer mutex poisoned");
+    w.write_all(bytes)?;
+    w.flush()?;
+    Ok(())
+}
+
 /// Deliver a real process signal to the PTY child.
 ///
 /// SIGINT is intentionally NOT handled here — callers send the Ctrl-C byte

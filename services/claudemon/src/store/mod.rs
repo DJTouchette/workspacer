@@ -164,14 +164,21 @@ impl Db {
         };
 
         let mut hits = Vec::new();
-        for (session_id, last_event_at) in candidates {
+        for (session_id, _last_event_at) in candidates {
             let mut guard = self.conn.lock().expect("db mutex poisoned");
             let tx = guard.transaction()?;
-            let open_items = load_open_items_tx(&tx, &session_id)?;
-            let snapshot = SessionSnapshot {
-                state: SessionState::Working,
-                last_event_at_unix: last_event_at,
+            // Re-read the session's current state inside the per-session
+            // transaction to avoid a TOCTOU: another event may have changed
+            // state (e.g. SessionEnd) between the candidate SELECT and now.
+            let snapshot = match load_session_snapshot_tx(&tx, &session_id) {
+                Ok(s) => s,
+                Err(_) => continue,
             };
+            if snapshot.state != SessionState::Working {
+                // No longer working — skip; don't create a spurious Stuck item.
+                continue;
+            }
+            let open_items = load_open_items_tx(&tx, &session_id)?;
             if let Some(item) = classifier::classify_idle(&snapshot, &open_items, now_unix) {
                 let item_id = insert_item_tx(&tx, &session_id, now_unix, &item)?;
                 update_session_state_tx(&tx, &session_id, SessionState::Stuck, now_unix)?;
@@ -373,7 +380,10 @@ fn load_session_snapshot_tx(tx: &Transaction<'_>, session_id: &str) -> Result<Se
         params![session_id],
         |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
-    let state = SessionState::from_str(&state_str).unwrap_or(SessionState::Working);
+    let state = SessionState::from_str(&state_str).unwrap_or_else(|| {
+        tracing::warn!(value = %state_str, "unrecognised session state string; defaulting to Working");
+        SessionState::Working
+    });
     Ok(SessionSnapshot {
         state,
         last_event_at_unix: last_event_at,

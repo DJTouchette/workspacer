@@ -96,11 +96,29 @@ pub async fn run(cfg: ServeConfig) -> Result<()> {
         }
     });
 
-    tokio::select! {
-        _ = hook_task => {},
-        _ = api_task => {},
-        _ = tokio::signal::ctrl_c() => {
-            tracing::info!("shutting down");
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut sigterm = signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
+        tokio::select! {
+            _ = hook_task => {},
+            _ = api_task => {},
+            _ = tokio::signal::ctrl_c() => {
+                tracing::info!("shutting down");
+            }
+            _ = sigterm.recv() => {
+                tracing::info!("received SIGTERM, shutting down");
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        tokio::select! {
+            _ = hook_task => {},
+            _ = api_task => {},
+            _ = tokio::signal::ctrl_c() => {
+                tracing::info!("shutting down");
+            }
         }
     }
 

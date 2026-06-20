@@ -166,7 +166,10 @@ pub async fn run_with_port(dry_run: bool, hook_port: u16) -> Result<()> {
 /// Idempotent: once our `STATUS_TAG` is present we leave the entry alone (this
 /// also prevents double-wrapping). `padding` and other keys are preserved.
 fn merge_status_line(doc: &mut Value, hook_port: u16) -> bool {
-    let obj = doc.as_object_mut().expect("settings must be an object");
+    let Some(obj) = doc.as_object_mut() else {
+        tracing::warn!("settings.json top-level value is not an object; skipping statusLine merge");
+        return false;
+    };
     let existing = obj.get("statusLine");
 
     // Already ours → idempotent no-op (also guards against re-wrapping).
@@ -202,12 +205,26 @@ fn merge_status_line(doc: &mut Value, hook_port: u16) -> bool {
 /// document and the list of events that changed (empty if everything was
 /// already present).
 fn merge_hooks(mut doc: Value, our_command: &str) -> (Value, Vec<String>) {
-    let obj = doc.as_object_mut().expect("settings must be an object");
+    if !doc.is_object() {
+        tracing::warn!("settings.json top-level value is not an object; skipping hooks merge");
+        return (doc, Vec::new());
+    }
+    let obj = doc.as_object_mut().expect("checked above");
+    // Ensure `hooks` key exists as an object; if it already exists but is not
+    // an object (malformed file), skip rather than panic.
+    let hooks_is_object = obj
+        .get("hooks")
+        .map_or(true, |v| v.is_object());
+    if !hooks_is_object {
+        tracing::warn!("settings.json `hooks` value is not an object; skipping hooks merge");
+        return (doc, Vec::new());
+    }
+    let obj = doc.as_object_mut().expect("checked above");
     let hooks = obj
         .entry("hooks")
         .or_insert_with(|| Value::Object(Default::default()))
         .as_object_mut()
-        .expect("hooks must be an object");
+        .expect("checked above");
 
     let mut changed = Vec::new();
     for event in HOOK_EVENTS {
