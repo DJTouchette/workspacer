@@ -1,7 +1,33 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useConfig } from '../hooks/useConfig';
 import { useAttention } from '../contexts/AttentionContext';
+import { usePlugins } from '../hooks/usePlugins';
 import { Home, Star, Plus } from '../components/icons';
+
+/** Latest supervisor state per plugin id, from `sidecar.*` bus events.
+ *  (Mirrors PluginsManagerPane so the Overview grid shows the same status.) */
+function usePluginStates(): Record<string, string> {
+  const [states, setStates] = useState<Record<string, string>>({});
+  useEffect(() => {
+    const off = window.electronAPI.onHubEvent?.((ev) => {
+      if (!ev.type?.startsWith('sidecar.')) return;
+      const d = ev.data as { name?: string; state?: string } | undefined;
+      if (d?.name && d?.state) setStates((prev) => ({ ...prev, [d.name as string]: d.state as string }));
+    });
+    return () => off?.();
+  }, []);
+  return states;
+}
+
+function pluginStateColor(s: string | undefined): string {
+  switch (s) {
+    case 'healthy':
+    case 'running': return 'var(--wks-success, #3fb950)';
+    case 'unhealthy': return 'var(--wks-warning, #e0a000)';
+    case 'crashed': return 'var(--wks-danger, #e05555)';
+    default: return 'var(--wks-text-faint, #666)';
+  }
+}
 
 interface Snap {
   sessionId: string;
@@ -119,6 +145,8 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
   // "Need you" comes from the single attention feed (the spine), not a parallel
   // ambient-state count, so this stat matches the SideBar / Inbox / Fleet exactly.
   const { counts } = useAttention();
+  const { plugins } = usePlugins();
+  const pluginStates = usePluginStates();
   const [snaps, setSnaps] = useState<Snap[]>([]);
 
   const pendingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -205,6 +233,44 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
             not just workspacer's — they're global to the account). */}
         <RateLimitCard snaps={snaps} />
       </div>
+
+      {plugins.length > 0 && (
+        <Section title="Plugins">
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 12, padding: '0 2px' }}>
+            {plugins.map((p) => {
+              const hasServer = !!p.server;
+              const state = hasServer ? (pluginStates[p.id] ?? 'starting') : 'no server';
+              const color = pluginStateColor(hasServer ? pluginStates[p.id] : undefined);
+              const glyph = p.panes?.[0]?.icon || (p.name || p.id).charAt(0).toUpperCase();
+              return (
+                <div
+                  key={p.id}
+                  title={`${p.name || p.id}${hasServer ? ` — ${state}` : ''}`}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 12, padding: '13px 14px',
+                    background: 'var(--wks-bg-raised)', border: '1px solid var(--wks-border-subtle)',
+                    borderRadius: 'var(--wks-radius-md, 13px)',
+                  }}
+                >
+                  <span style={{
+                    width: 34, height: 34, borderRadius: 9, flexShrink: 0,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    background: 'var(--wks-bg-base)', border: '1px solid var(--wks-border-subtle)',
+                    fontSize: '0.95rem', color: 'var(--wks-accent)',
+                  }}>{glyph}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--wks-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name || p.id}</div>
+                    <div style={{ fontSize: '0.62rem', color: 'var(--wks-text-faint)', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {hasServer ? state : `${p.panes?.length ?? 0} pane${(p.panes?.length ?? 0) === 1 ? '' : 's'}`}
+                    </div>
+                  </div>
+                  {hasServer && <span style={{ width: 8, height: 8, borderRadius: 99, flexShrink: 0, background: color }} />}
+                </div>
+              );
+            })}
+          </div>
+        </Section>
+      )}
 
       {favourites.length > 0 && (
         <Section title="Favourites">

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AnalyticsSummary, AnalyticsBucket, SessionHistoryRecord } from '../types/analytics';
 import { usePageVisible } from '../hooks/usePageVisible';
 
@@ -154,6 +154,84 @@ const Empty: React.FC = () => (
   <div style={{ fontSize: '0.7rem', color: 'var(--wks-text-faint)', padding: '8px 0' }}>No data yet.</div>
 );
 
+/** Segmented Overview/Breakdown toggle (mockup style). */
+const SegBtn: React.FC<{ active: boolean; onClick: () => void; children: React.ReactNode }> = ({ active, onClick, children }) => (
+  <button
+    onClick={onClick}
+    style={{
+      border: 'none', borderRadius: 6, padding: '5px 13px', cursor: 'pointer',
+      fontFamily: 'inherit', fontSize: '0.72rem', fontWeight: 600,
+      background: active ? 'var(--wks-bg-selected)' : 'transparent',
+      color: active ? 'var(--wks-text-primary)' : 'var(--wks-text-faint)',
+    }}
+  >{children}</button>
+);
+
+interface AgentAgg { name: string; model: string | null; tokens: number; tools: number; costUSD: number; }
+
+type BreakdownMetric = 'cost' | 'tokens';
+
+const BD_COLS = '1.4fr 1fr 0.8fr 0.6fr 0.8fr 1.3fr 0.8fr';
+
+/** Cost per million tokens — the efficiency readout. */
+function fmtPerM(costUSD: number, tokens: number): string {
+  if (tokens <= 0) return '—';
+  return fmtUSD(costUSD / (tokens / 1_000_000));
+}
+
+/** Mockup "Breakdown": per-agent grid (model · tokens · tools · $/M · share bar ·
+ *  cost) capped with a Total row. The share bar + sort follow the chosen metric
+ *  (cost or tokens), aggregated from recent session records. */
+const BreakdownTable: React.FC<{ rows: AgentAgg[]; metric: BreakdownMetric }> = ({ rows, metric }) => {
+  if (rows.length === 0) return <Empty />;
+  const valueOf = (r: AgentAgg) => (metric === 'tokens' ? r.tokens : r.costUSD);
+  const totalCost = rows.reduce((s, r) => s + r.costUSD, 0);
+  const totalTokens = rows.reduce((s, r) => s + r.tokens, 0);
+  const totalTools = rows.reduce((s, r) => s + r.tools, 0);
+  const totalMetric = Math.max(0.0001, metric === 'tokens' ? totalTokens : totalCost);
+  const ranked = [...rows].sort((a, b) => valueOf(b) - valueOf(a));
+  const cell: React.CSSProperties = { fontSize: '0.72rem', color: 'var(--wks-text-secondary)', fontVariantNumeric: 'tabular-nums', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
+  const numCell: React.CSSProperties = { ...cell, textAlign: 'right' };
+  // Faintly emphasise whichever raw-value column the share is keyed to.
+  const hot = (col: BreakdownMetric): React.CSSProperties => (col === metric ? { color: 'var(--wks-text-primary)', fontWeight: 600 } : {});
+  return (
+    <div style={{ background: 'var(--wks-bg-raised)', border: '1px solid var(--wks-border-subtle)', borderRadius: 'var(--wks-radius-md, 14px)', overflow: 'hidden' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: BD_COLS, gap: 14, padding: '11px 16px', fontSize: '0.56rem', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--wks-text-faint)' }}>
+        <span>Agent</span><span>Model</span><span style={{ textAlign: 'right' }}>Tokens</span><span style={{ textAlign: 'right' }}>Tools</span><span style={{ textAlign: 'right' }}>$/M</span><span>Share</span><span style={{ textAlign: 'right' }}>Cost</span>
+      </div>
+      {ranked.map((r, i) => {
+        const share = Math.round((valueOf(r) / totalMetric) * 100);
+        const color = MODEL_COLORS[i % MODEL_COLORS.length];
+        return (
+          <div key={r.name} style={{ display: 'grid', gridTemplateColumns: BD_COLS, gap: 14, alignItems: 'center', padding: '12px 16px', borderTop: '1px solid var(--wks-border-subtle)' }}>
+            <span style={{ ...cell, color: 'var(--wks-text-primary)', fontWeight: 600 }} title={r.name}>{r.name}</span>
+            <span style={cell}>{shortModel(r.model)}</span>
+            <span style={{ ...numCell, ...hot('tokens') }}>{fmtTokens(r.tokens)}</span>
+            <span style={numCell}>{r.tools}</span>
+            <span style={numCell}>{fmtPerM(r.costUSD, r.tokens)}</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+              <span style={{ flex: 1, height: 6, borderRadius: 99, background: 'var(--wks-bg-base)', overflow: 'hidden' }}>
+                <span style={{ display: 'block', height: '100%', borderRadius: 99, background: color, width: `${Math.max(2, share)}%` }} />
+              </span>
+              <span style={{ fontSize: '0.64rem', color: 'var(--wks-text-faint)', minWidth: 30, fontVariantNumeric: 'tabular-nums' }}>{share}%</span>
+            </span>
+            <span style={{ ...numCell, color: 'var(--wks-accent)', ...hot('cost') }}>{fmtUSD(r.costUSD)}</span>
+          </div>
+        );
+      })}
+      <div style={{ display: 'grid', gridTemplateColumns: BD_COLS, gap: 14, alignItems: 'center', padding: '12px 16px', borderTop: '1px solid var(--wks-border)', background: 'var(--wks-bg-base)' }}>
+        <span style={{ fontSize: '0.74rem', fontWeight: 700, color: 'var(--wks-text-primary)' }}>Total</span>
+        <span />
+        <span style={numCell}>{fmtTokens(totalTokens)}</span>
+        <span style={numCell}>{totalTools}</span>
+        <span style={numCell}>{fmtPerM(totalCost, totalTokens)}</span>
+        <span />
+        <span style={{ textAlign: 'right', fontSize: '0.78rem', fontWeight: 700, color: 'var(--wks-accent)', fontVariantNumeric: 'tabular-nums' }}>{fmtUSD(totalCost)}</span>
+      </div>
+    </div>
+  );
+};
+
 const AnalyticsPane: React.FC<{ title?: string }> = () => {
   const [summary, setSummary] = useState<AnalyticsSummary | null>(null);
   const [recent, setRecent] = useState<SessionHistoryRecord[]>([]);
@@ -185,44 +263,93 @@ const AnalyticsPane: React.FC<{ title?: string }> = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const [usageView, setUsageView] = useState<'overview' | 'breakdown'>(() => {
+    try { return localStorage.getItem('wks-usage-view') === 'breakdown' ? 'breakdown' : 'overview'; } catch { return 'overview'; }
+  });
+  const pickUsageView = (v: 'overview' | 'breakdown') => {
+    setUsageView(v);
+    try { localStorage.setItem('wks-usage-view', v); } catch { /* private mode */ }
+  };
+  const [bdMetric, setBdMetric] = useState<BreakdownMetric>(() => {
+    try { return localStorage.getItem('wks-breakdown-metric') === 'tokens' ? 'tokens' : 'cost'; } catch { return 'cost'; }
+  });
+  const pickBdMetric = (v: BreakdownMetric) => {
+    setBdMetric(v);
+    try { localStorage.setItem('wks-breakdown-metric', v); } catch { /* private mode */ }
+  };
+
   const t = summary?.totals;
   const byDay = summary?.byDay ?? [];
   const periodSpend = byDay.reduce((sum, d) => sum + d.costUSD, 0);
   const weekSpend = byDay.slice(-7).reduce((sum, d) => sum + d.costUSD, 0);
+
+  // Per-agent breakdown, rolled up from recent session records (which carry the
+  // model / tool / cost detail the day/project buckets don't).
+  const agentRows = useMemo<AgentAgg[]>(() => {
+    const m = new Map<string, AgentAgg>();
+    for (const r of recent) {
+      const name = r.agentName || basename(r.cwd);
+      const e = m.get(name) ?? { name, model: r.model, tokens: 0, tools: 0, costUSD: 0 };
+      e.tokens += r.inputTokens + r.outputTokens;
+      e.tools += r.toolCalls;
+      e.costUSD += r.costUSD;
+      if (!e.model && r.model) e.model = r.model;
+      m.set(name, e);
+    }
+    return [...m.values()].sort((a, b) => b.costUSD - a.costUSD);
+  }, [recent]);
 
   return (
     <div style={{ height: '100%', overflow: 'auto', padding: '18px 20px', background: 'var(--wks-bg-base)' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 11, marginBottom: 18 }}>
         <div style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--wks-text-primary)' }}>Usage &amp; cost</div>
         <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-secondary)', fontVariantNumeric: 'tabular-nums' }}>last 30 days · all agents</div>
-        <button onClick={refresh} style={refreshBtn} title="Refresh">↻</button>
+        <div style={{ flex: 1 }} />
+        <div style={{ display: 'flex', alignSelf: 'center', background: 'var(--wks-bg-surface)', border: '1px solid var(--wks-border-subtle)', borderRadius: 8, padding: 3 }}>
+          <SegBtn active={usageView === 'overview'} onClick={() => pickUsageView('overview')}>Overview</SegBtn>
+          <SegBtn active={usageView === 'breakdown'} onClick={() => pickUsageView('breakdown')}>Breakdown</SegBtn>
+        </div>
+        <button onClick={refresh} style={{ ...refreshBtn, alignSelf: 'center', marginLeft: 0 }} title="Refresh">↻</button>
       </div>
 
-      {/* Totals */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 14 }}>
-        <Stat label="Sessions" value={String(t?.sessions ?? 0)} />
-        <Stat label="Total cost" value={fmtUSD(t?.costUSD ?? 0)} color="var(--wks-accent)" sub={`${fmtUSD(weekSpend)} this week`} />
-        <Stat label="Tokens" value={fmtTokens((t?.inputTokens ?? 0) + (t?.outputTokens ?? 0))} />
-        <Stat label="Tool calls" value={fmtTokens(t?.toolCalls ?? 0)} />
-        <Stat label="Workflow runs" value={String(t?.workflowRuns ?? 0)} />
-        <Stat label="Active time" value={fmtDuration(t?.durationMs ?? 0)} />
-      </div>
+      {usageView === 'overview' ? (
+        <>
+          {/* Totals */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 14 }}>
+            <Stat label="Sessions" value={String(t?.sessions ?? 0)} />
+            <Stat label="Total cost" value={fmtUSD(t?.costUSD ?? 0)} color="var(--wks-accent)" sub={`${fmtUSD(weekSpend)} this week`} />
+            <Stat label="Tokens" value={fmtTokens((t?.inputTokens ?? 0) + (t?.outputTokens ?? 0))} />
+            <Stat label="Tool calls" value={fmtTokens(t?.toolCalls ?? 0)} />
+            <Stat label="Workflow runs" value={String(t?.workflowRuns ?? 0)} />
+            <Stat label="Active time" value={fmtDuration(t?.durationMs ?? 0)} />
+          </div>
 
-      {/* Daily spend + model share — mockup 1.7fr / 1fr split */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(280px, 1.7fr) minmax(220px, 1fr)', gap: 12, marginBottom: 14 }}>
-        <ChartCard title="Daily spend" caption={`${fmtUSD(periodSpend)} this period`}>
-          <CostBars data={summary?.byDay ?? []} />
-        </ChartCard>
-        <ChartCard title="By model">
-          <ModelShare rows={summary?.byModel ?? []} />
-        </ChartCard>
-      </div>
+          {/* Daily spend + model share — mockup 1.7fr / 1fr split */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(280px, 1.7fr) minmax(220px, 1fr)', gap: 12, marginBottom: 14 }}>
+            <ChartCard title="Daily spend" caption={`${fmtUSD(periodSpend)} this period`}>
+              <CostBars data={summary?.byDay ?? []} />
+            </ChartCard>
+            <ChartCard title="By model">
+              <ModelShare rows={summary?.byModel ?? []} />
+            </ChartCard>
+          </div>
+        </>
+      ) : (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, margin: '18px 0 8px' }}>
+            <span style={{ fontSize: '0.62rem', color: 'var(--wks-text-faint)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>By agent</span>
+            <div style={{ display: 'flex', background: 'var(--wks-bg-surface)', border: '1px solid var(--wks-border-subtle)', borderRadius: 8, padding: 3 }}>
+              <SegBtn active={bdMetric === 'cost'} onClick={() => pickBdMetric('cost')}>Cost</SegBtn>
+              <SegBtn active={bdMetric === 'tokens'} onClick={() => pickBdMetric('tokens')}>Tokens</SegBtn>
+            </div>
+          </div>
+          <BreakdownTable rows={agentRows} metric={bdMetric} />
 
-      <SectionTitle>By project</SectionTitle>
-      <BucketTable rows={summary?.byProject ?? []} labelOf={basename} header="Project" />
+          <SectionTitle>By project</SectionTitle>
+          <BucketTable rows={summary?.byProject ?? []} labelOf={basename} header="Project" />
 
-      <SectionTitle>Recent sessions</SectionTitle>
-      {recent.length === 0 ? <Empty /> : (
+          <SectionTitle>Recent sessions</SectionTitle>
+          {recent.length === 0 ? <Empty /> : (
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.7rem' }}>
           <thead>
             <tr style={{ color: 'var(--wks-text-faint)', textAlign: 'left' }}>
@@ -252,6 +379,8 @@ const AnalyticsPane: React.FC<{ title?: string }> = () => {
             ))}
           </tbody>
         </table>
+          )}
+        </>
       )}
     </div>
   );
