@@ -68,10 +68,8 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd }) => {
   const { model, ctxPct, tokens, costUSD: cost, fiveHourPct: five, sevenDayPct: seven } =
     deriveSessionStats(snapshot);
 
-  // Tool calls (cumulative) + subagents — counted off the live snapshot, not the
-  // statusLine channel.
-  const toolCount = (snapshot?.completedToolCalls?.length ?? 0) + (snapshot?.activeToolCalls?.length ?? 0);
-  const subCount = snapshot?.subagents?.length ?? 0;
+  // (Tool-call + subagent counts live in the ClaudePane toolbar alongside this
+  // bar — kept there so the numbers aren't shown twice.)
 
   // Until the first reading arrives, render nothing so the toolbar stays clean.
   const hasAny = model || ctxPct !== undefined || tokens !== undefined || cost !== undefined;
@@ -119,24 +117,6 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd }) => {
           <span style={{ color: 'var(--wks-text-secondary)', fontVariantNumeric: 'tabular-nums' }}>
             {five !== undefined && (<><span style={{ color: 'var(--wks-text-faint)' }}>5h </span>{Math.round(five)}%</>)}
             {seven !== undefined && (<> <span style={{ color: 'var(--wks-text-faint)' }}>7d </span>{Math.round(seven)}%</>)}
-          </span>
-        </>
-      )}
-      {toolCount > 0 && (
-        <>
-          <Sep />
-          <span style={{ fontVariantNumeric: 'tabular-nums' }}>
-            <span style={{ color: 'var(--wks-text-secondary)' }}>{toolCount}</span>
-            <span style={{ color: 'var(--wks-text-faint)' }}> tools</span>
-          </span>
-        </>
-      )}
-      {subCount > 0 && (
-        <>
-          <Sep />
-          <span style={{ fontVariantNumeric: 'tabular-nums' }}>
-            <span style={{ color: 'var(--wks-text-secondary)' }}>{subCount}</span>
-            <span style={{ color: 'var(--wks-text-faint)' }}> subagent{subCount === 1 ? '' : 's'}</span>
           </span>
         </>
       )}
