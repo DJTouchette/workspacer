@@ -14,7 +14,7 @@ interface HubEvent {
  * the IPC-forwarded hub stream — no prop threading. Sits at the bottom of the
  * sidebar. Proof that claudemon → hub → main → renderer round-trips.
  */
-const HubStatus: React.FC<{ onOpenRemote?: () => void }> = ({ onOpenRemote }) => {
+const HubStatus: React.FC<{ onOpenRemote?: () => void; compact?: boolean }> = ({ onOpenRemote, compact }) => {
   const [connected, setConnected] = useState(false);
   const [count, setCount] = useState(0);
   const [last, setLast] = useState<HubEvent | null>(null);
@@ -35,6 +35,24 @@ const HubStatus: React.FC<{ onOpenRemote?: () => void }> = ({ onOpenRemote }) =>
   const title = connected
     ? `hub connected · ${count} events${last ? `\nlast: ${last.type} (${last.source})` : ''}`
     : 'hub disconnected';
+
+  // Rail mode: just the status dot, centered — the full readout has no room.
+  if (compact) {
+    return (
+      <div title={title} style={{
+        flexShrink: 0, boxSizing: 'border-box',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        width: '100%', padding: '8px 0 10px',
+        borderTop: '1px solid var(--wks-border-subtle)', background: 'var(--wks-bg-input)',
+        userSelect: 'none',
+      }}>
+        <span style={{
+          width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+          backgroundColor: color, boxShadow: connected ? `0 0 6px ${color}` : 'none',
+        }} />
+      </div>
+    );
+  }
 
   return (
     <div

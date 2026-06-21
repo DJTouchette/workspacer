@@ -26,17 +26,17 @@ function shortModel(m: string | null): string {
   return m.replace(/^claude-/, '').replace(/-\d{6,}$/, '');
 }
 
-const Stat: React.FC<{ label: string; value: string; color?: string }> = ({ label, value, color }) => (
+/** Stat tile — mockup "Usage" card: uppercase mono label on top, large mono
+ *  value, optional sub-line beneath. Flat panel surface, not glass. */
+const Stat: React.FC<{ label: string; value: string; sub?: string; color?: string }> = ({ label, value, sub, color }) => (
   <div style={{
-    flex: 1, minWidth: 120, padding: '12px 14px', borderRadius: 'var(--wks-radius-md)',
-    background: 'var(--wks-glass-bg)',
-    backdropFilter: 'blur(var(--wks-glass-blur)) saturate(150%)',
-    WebkitBackdropFilter: 'blur(var(--wks-glass-blur)) saturate(150%)',
-    border: '1px solid var(--wks-glass-border)',
-    boxShadow: 'inset 0 0 0 1.5px var(--wks-glass-highlight)',
+    flex: 1, minWidth: 120, padding: '15px 16px', borderRadius: 'var(--wks-radius-md, 13px)',
+    background: 'var(--wks-bg-raised)',
+    border: '1px solid var(--wks-border-subtle)',
   }}>
-    <div style={{ fontSize: '1.4rem', fontWeight: 700, color: color || 'var(--wks-text-primary)', fontVariantNumeric: 'tabular-nums' }}>{value}</div>
-    <div style={{ fontSize: '0.6rem', color: 'var(--wks-text-faint)', textTransform: 'uppercase', letterSpacing: '0.05em', marginTop: 2 }}>{label}</div>
+    <div style={{ fontSize: '0.6rem', color: 'var(--wks-text-faint)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{label}</div>
+    <div style={{ fontSize: '1.5rem', fontWeight: 700, color: color || 'var(--wks-text-primary)', fontVariantNumeric: 'tabular-nums', marginTop: 8 }}>{value}</div>
+    {sub && <div style={{ fontSize: '0.62rem', color: 'var(--wks-text-secondary)', marginTop: 3, fontVariantNumeric: 'tabular-nums' }}>{sub}</div>}
   </div>
 );
 
@@ -44,22 +44,83 @@ const SectionTitle: React.FC<{ children: React.ReactNode }> = ({ children }) => 
   <div style={{ fontSize: '0.62rem', color: 'var(--wks-text-faint)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600, margin: '18px 0 8px' }}>{children}</div>
 );
 
-/** Horizontal bars for cost across days. */
+/** Panel for a card-style chart block (mockup "Daily spend" / "By model"). */
+const ChartCard: React.FC<{ title: string; caption?: string; children: React.ReactNode; style?: React.CSSProperties }> = ({ title, caption, children, style }) => (
+  <div style={{
+    background: 'var(--wks-bg-raised)', border: '1px solid var(--wks-border-subtle)',
+    borderRadius: 'var(--wks-radius-md, 14px)', padding: '17px 18px 15px', ...style,
+  }}>
+    <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6, gap: 12 }}>
+      <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--wks-text-primary)' }}>{title}</span>
+      {caption && <span style={{ fontSize: '0.62rem', color: 'var(--wks-text-faint)', fontVariantNumeric: 'tabular-nums' }}>{caption}</span>}
+    </div>
+    {children}
+  </div>
+);
+
+/** Vertical gradient bars for cost across days (mockup "Daily spend").
+ *  Day labels render sparsely so 30 buckets stay readable. */
 const CostBars: React.FC<{ data: AnalyticsBucket[] }> = ({ data }) => {
   const max = Math.max(0.0001, ...data.map((d) => d.costUSD));
   if (data.length === 0) return <Empty />;
+  // Label roughly six evenly-spaced days so a 30-bar series doesn't crowd.
+  const step = Math.max(1, Math.ceil(data.length / 6));
+  const dayLabel = (key: string): string => {
+    const d = new Date(key);
+    return Number.isNaN(d.getTime()) ? key.slice(5) : `${d.getMonth() + 1}/${d.getDate()}`;
+  };
   return (
-    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 90, padding: '4px 0' }}>
-      {data.map((d) => (
-        <div key={d.key} title={`${d.key}: ${fmtUSD(d.costUSD)} · ${d.sessions} sessions`}
-          style={{ flex: 1, minWidth: 4, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', height: '100%' }}>
-          <div style={{
-            height: `${Math.max(2, (d.costUSD / max) * 100)}%`,
-            background: 'var(--wks-accent)', borderRadius: '2px 2px 0 0', opacity: 0.85,
-          }} />
+    <>
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, height: 150, marginTop: 12 }}>
+        {data.map((d) => (
+          <div key={d.key} title={`${d.key}: ${fmtUSD(d.costUSD)} · ${d.sessions} sessions`}
+            style={{ flex: 1, minWidth: 3, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', height: '100%' }}>
+            <div style={{
+              height: `${Math.max(2, (d.costUSD / max) * 100)}%`,
+              background: 'linear-gradient(180deg, var(--wks-accent), color-mix(in srgb, var(--wks-accent) 45%, var(--wks-bg-base)))',
+              borderRadius: '5px 5px 0 0',
+            }} />
+          </div>
+        ))}
+      </div>
+      <div style={{ display: 'flex', gap: 4, marginTop: 7 }}>
+        {data.map((d, i) => (
+          <span key={d.key} style={{ flex: 1, minWidth: 3, textAlign: 'center', fontSize: '0.58rem', color: 'var(--wks-text-faint)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+            {i % step === 0 ? dayLabel(d.key) : ''}
+          </span>
+        ))}
+      </div>
+    </>
+  );
+};
+
+/** Stable per-model colour pool drawn from the active theme. */
+const MODEL_COLORS = ['var(--wks-accent)', 'var(--wks-purple)', 'var(--wks-busy)', 'var(--wks-success)', 'var(--wks-warning)', 'var(--wks-error)'];
+
+/** Mockup "By model": a stacked share bar over a legend of name / share% / cost. */
+const ModelShare: React.FC<{ rows: AnalyticsBucket[] }> = ({ rows }) => {
+  if (rows.length === 0) return <Empty />;
+  const total = Math.max(0.0001, rows.reduce((sum, r) => sum + r.costUSD, 0));
+  const ranked = [...rows].sort((a, b) => b.costUSD - a.costUSD);
+  const withMeta = ranked.map((r, i) => ({
+    ...r, color: MODEL_COLORS[i % MODEL_COLORS.length], share: Math.round((r.costUSD / total) * 100),
+  }));
+  return (
+    <>
+      <div style={{ display: 'flex', height: 12, borderRadius: 99, overflow: 'hidden', background: 'var(--wks-bg-base)', marginBottom: 4 }}>
+        {withMeta.map((m) => (
+          <span key={m.key} title={`${shortModel(m.key)} · ${m.share}%`} style={{ background: m.color, width: `${(m.costUSD / total) * 100}%` }} />
+        ))}
+      </div>
+      {withMeta.map((m) => (
+        <div key={m.key} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 0', borderTop: '1px solid var(--wks-border-subtle)' }}>
+          <span style={{ width: 9, height: 9, borderRadius: 3, flex: 'none', background: m.color }} />
+          <span style={{ flex: 1, fontSize: '0.78rem', color: 'var(--wks-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m.key}>{shortModel(m.key)}</span>
+          <span style={{ fontSize: '0.7rem', color: 'var(--wks-text-faint)', fontVariantNumeric: 'tabular-nums' }}>{m.share}%</span>
+          <span style={{ fontSize: '0.7rem', color: 'var(--wks-accent)', fontWeight: 600, minWidth: 54, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtUSD(m.costUSD)}</span>
         </div>
       ))}
-    </div>
+    </>
   );
 };
 
@@ -125,38 +186,40 @@ const AnalyticsPane: React.FC<{ title?: string }> = () => {
   }, []);
 
   const t = summary?.totals;
+  const byDay = summary?.byDay ?? [];
+  const periodSpend = byDay.reduce((sum, d) => sum + d.costUSD, 0);
+  const weekSpend = byDay.slice(-7).reduce((sum, d) => sum + d.costUSD, 0);
 
   return (
     <div style={{ height: '100%', overflow: 'auto', padding: '18px 20px', background: 'var(--wks-bg-base)' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-        <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--wks-text-primary)' }}>Analytics</div>
-        <div style={{ fontSize: '0.62rem', color: 'var(--wks-text-faint)' }}>across all recorded sessions</div>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 11, marginBottom: 18 }}>
+        <div style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--wks-text-primary)' }}>Usage &amp; cost</div>
+        <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-secondary)', fontVariantNumeric: 'tabular-nums' }}>last 30 days · all agents</div>
         <button onClick={refresh} style={refreshBtn} title="Refresh">↻</button>
       </div>
 
       {/* Totals */}
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 14 }}>
         <Stat label="Sessions" value={String(t?.sessions ?? 0)} />
-        <Stat label="Total cost" value={fmtUSD(t?.costUSD ?? 0)} color="var(--wks-accent)" />
+        <Stat label="Total cost" value={fmtUSD(t?.costUSD ?? 0)} color="var(--wks-accent)" sub={`${fmtUSD(weekSpend)} this week`} />
         <Stat label="Tokens" value={fmtTokens((t?.inputTokens ?? 0) + (t?.outputTokens ?? 0))} />
         <Stat label="Tool calls" value={fmtTokens(t?.toolCalls ?? 0)} />
         <Stat label="Workflow runs" value={String(t?.workflowRuns ?? 0)} />
         <Stat label="Active time" value={fmtDuration(t?.durationMs ?? 0)} />
       </div>
 
-      <SectionTitle>Cost over time (last 30 days)</SectionTitle>
-      <CostBars data={summary?.byDay ?? []} />
-
-      <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', alignItems: 'flex-start' }}>
-        <div style={{ flex: 1, minWidth: 280 }}>
-          <SectionTitle>By project</SectionTitle>
-          <BucketTable rows={summary?.byProject ?? []} labelOf={basename} header="Project" />
-        </div>
-        <div style={{ flex: 1, minWidth: 280 }}>
-          <SectionTitle>By model</SectionTitle>
-          <BucketTable rows={summary?.byModel ?? []} labelOf={shortModel} header="Model" />
-        </div>
+      {/* Daily spend + model share — mockup 1.7fr / 1fr split */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(280px, 1.7fr) minmax(220px, 1fr)', gap: 12, marginBottom: 14 }}>
+        <ChartCard title="Daily spend" caption={`${fmtUSD(periodSpend)} this period`}>
+          <CostBars data={summary?.byDay ?? []} />
+        </ChartCard>
+        <ChartCard title="By model">
+          <ModelShare rows={summary?.byModel ?? []} />
+        </ChartCard>
       </div>
+
+      <SectionTitle>By project</SectionTitle>
+      <BucketTable rows={summary?.byProject ?? []} labelOf={basename} header="Project" />
 
       <SectionTitle>Recent sessions</SectionTitle>
       {recent.length === 0 ? <Empty /> : (

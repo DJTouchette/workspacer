@@ -64,11 +64,17 @@ export const Composer: React.FC<ComposerProps> = ({
           alignItems: 'flex-end',
           gap: 6,
           padding: '6px 6px 6px 10px',
-          borderRadius: 14,
-          border: `1px solid ${attachedFiles.length > 0 ? colors.accent : colors.border}`,
-          backgroundColor: 'rgba(255, 255, 255, 0.03)',
+          borderRadius: 13,
+          border: `1px solid ${attachedFiles.length > 0 ? colors.accent : 'var(--wks-border-input)'}`,
+          backgroundColor: 'var(--wks-bg-input)',
+          boxShadow: 'inset 0 1px 0 var(--wks-glass-highlight)',
           transition: 'border-color 0.15s',
         }}>
+          <span aria-hidden style={{
+            alignSelf: 'center', flexShrink: 0,
+            fontFamily: 'var(--wks-font-mono)', fontSize: '0.95rem', fontWeight: 700,
+            color: colors.accent, lineHeight: 1, marginBottom: 1,
+          }}>{'›'}</span>
           <button
             onClick={onPickFiles}
             title="Attach files"

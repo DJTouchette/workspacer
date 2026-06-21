@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { PaneType, TabConfig, ViewMode } from '../types/pane';
-import { useConfig, ScriptEntry } from '../hooks/useConfig';
+import { useConfig, ScriptEntry, Config } from '../hooks/useConfig';
+import { themes, darkTheme } from '../themes';
 import { useIsSmallScreen } from '../hooks/useMediaQuery';
 import { PaneIcon, Play, Settings, Plus, Columns3, LayoutGrid, Rows3 } from './icons';
 import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from './ContextMenu';
@@ -39,7 +40,7 @@ interface SessionPickerState {
 }
 
 const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab, onCloseTab, onRenameTab, onSplitTab, onMoveTab, viewMode = 'tabs', onToggleViewMode, leftOffset = 0, cwd, scripts = [], onRunScript, onSaveScripts }) => {
-  const { config } = useConfig();
+  const { config, save } = useConfig();
   const isSmallScreen = useIsSmallScreen();
   const navHeight = resolveNavHeight(config.ui.navBarHeight, isSmallScreen);
   // On Windows the native caption buttons (min/max/close) are drawn by the
@@ -86,11 +87,8 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
         height: `${navHeight}px`,
         display: 'flex',
         alignItems: 'center',
-        backgroundColor: 'var(--wks-glass-strong)',
-        backdropFilter: 'blur(var(--wks-glass-blur)) saturate(160%)',
-        WebkitBackdropFilter: 'blur(var(--wks-glass-blur)) saturate(160%)',
-        borderBottom: '1px solid var(--wks-glass-border)',
-        boxShadow: 'inset 0 1px 0 var(--wks-glass-highlight)',
+        backgroundColor: 'var(--wks-bg-raised)',
+        borderBottom: '1px solid var(--wks-border-subtle)',
         paddingTop: 0,
         paddingBottom: 0,
         paddingLeft: 10,
@@ -135,20 +133,21 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
                 display: 'flex',
                 alignItems: 'center',
                 gap: '6px',
-                padding: '2px 10px',
+                padding: '0 13px',
                 margin: 0,
                 width: 'auto',
-                height: '26px',
+                height: '28px',
                 lineHeight: '1',
                 border: 'none',
-                borderRadius: 'var(--wks-radius-pill)',
+                borderRadius: 'var(--wks-radius-md)',
                 cursor: 'pointer',
-                fontSize: '0.75rem',
+                fontSize: '0.8rem',
                 fontFamily: 'inherit',
-                fontWeight: isActive ? 600 : 400,
+                fontWeight: isActive ? 600 : 500,
                 backgroundColor: isActive
-                  ? 'var(--wks-bg-selected)'
+                  ? 'var(--wks-accent-bg)'
                   : 'transparent',
+                boxShadow: isActive ? 'inset 0 0 0 1px var(--wks-accent-glow)' : 'none',
                 color: isActive
                   ? 'var(--wks-text-primary)'
                   : 'var(--wks-text-muted)',
@@ -213,12 +212,12 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
                 alignItems: 'center',
                 justifyContent: 'center',
                 gap: 1,
-                padding: '0 4px',
-                margin: '0 0 0 2px',
-                height: '26px',
+                padding: '0 6px',
+                margin: '0 0 0 4px',
+                height: '28px',
                 lineHeight: '1',
                 border: 'none',
-                borderRadius: 'var(--wks-radius-pill)',
+                borderRadius: 'var(--wks-radius-md)',
                 cursor: 'pointer',
                 fontSize: '0.9rem',
                 fontFamily: 'inherit',
@@ -306,6 +305,10 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
         )}
       </div>
 
+      {/* Theme switcher — current theme's accent/purple/blue swatch + name,
+          with a dropdown to pick any theme. Mirrors the mockup's right cluster. */}
+      <ThemeSwitcher config={config} save={save} />
+
       {/* View-mode toggle (tabs → spatial → stacked). Outside the scrolling
           tab cluster so it stays visible no matter how many tabs are open. */}
       {onToggleViewMode && (() => {
@@ -319,10 +322,11 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
             title={`View: ${labels[viewMode]} — click for ${labels[nextOf[viewMode]]}`}
             style={{
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              padding: 0, margin: '0 6px 0 4px', width: '26px', height: '26px',
-              lineHeight: '1', border: 'none', borderRadius: 'var(--wks-radius-pill)',
+              padding: 0, margin: '0 6px 0 4px', width: '28px', height: '28px',
+              lineHeight: '1', border: 'none', borderRadius: 'var(--wks-radius-md)',
               cursor: 'pointer', fontFamily: 'inherit', flexShrink: 0,
-              backgroundColor: active ? 'var(--wks-bg-selected)' : 'transparent',
+              backgroundColor: active ? 'var(--wks-accent-bg)' : 'transparent',
+              boxShadow: active ? 'inset 0 0 0 1px var(--wks-accent-glow)' : 'none',
               color: active ? 'var(--wks-text-primary)' : 'var(--wks-text-faint)',
               // @ts-ignore
               WebkitAppRegion: 'no-drag',
@@ -576,6 +580,93 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
         </ContextMenu>
       )}
     </nav>
+  );
+};
+
+/** "tokyo-night" → "Tokyo Night". */
+function prettyThemeLabel(id: string): string {
+  return id.split('-').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+}
+
+/** Right-cluster theme picker: a pill showing the active theme's 3-dot swatch
+ *  and name; clicking opens a dropdown of every theme. Wired through config so
+ *  the choice persists (and re-adopts that theme's corners/border). */
+const ThemeSwitcher: React.FC<{ config: Config; save: (p: Partial<Config>) => Promise<Config> }> = ({ config, save }) => {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const [pos, setPos] = useState<{ left: number; top: number }>({ left: 0, top: 0 });
+  const active = themes[config.ui.theme] ?? darkTheme;
+  const dots = [active.accent, active.terminal.magenta, active.terminal.blue];
+
+  useEffect(() => {
+    if (!open) return;
+    const h = (e: MouseEvent) => { if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, [open]);
+
+  const toggle = () => {
+    if (btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      setPos({ left: Math.max(8, Math.min(r.right - 200, window.innerWidth - 208)), top: r.bottom + 4 });
+    }
+    setOpen((v) => !v);
+  };
+  const pick = (id: string) => { setOpen(false); void save({ ui: { ...config.ui, theme: id, cornerStyle: '', borderColor: '' } }); };
+  const dot = (c: string) => <span style={{ width: 8, height: 8, borderRadius: 99, background: c, flexShrink: 0 }} />;
+
+  return (
+    <div
+      ref={wrapRef}
+      style={{ position: 'relative', display: 'inline-flex', flexShrink: 0, WebkitAppRegion: 'no-drag', appRegion: 'no-drag' } as React.CSSProperties}
+    >
+      <button
+        ref={btnRef}
+        onClick={toggle}
+        title="Switch theme"
+        style={{
+          display: 'flex', alignItems: 'center', gap: 7, height: 28, padding: '0 10px',
+          border: '1px solid var(--wks-border-subtle)', background: 'var(--wks-bg-base)',
+          borderRadius: 'var(--wks-radius-md)', cursor: 'pointer', color: 'var(--wks-text-tertiary)',
+          fontFamily: 'inherit', fontSize: '0.72rem', fontWeight: 600,
+        }}
+        onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-primary)'; (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-accent-glow)'; }}
+        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-tertiary)'; (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-border-subtle)'; }}
+      >
+        <span style={{ display: 'flex', gap: 3 }}>{dots.map((c, i) => <React.Fragment key={i}>{dot(c)}</React.Fragment>)}</span>
+        <span style={{ whiteSpace: 'nowrap' }}>{prettyThemeLabel(config.ui.theme || 'dark')}</span>
+      </button>
+      {open && (
+        <div style={{
+          position: 'fixed', left: pos.left, top: pos.top, width: 200, maxHeight: 360, overflowY: 'auto',
+          background: 'var(--wks-bg-surface)', border: '1px solid var(--wks-border-input)', borderRadius: 8,
+          padding: '4px 0', zIndex: 10000, boxShadow: '0 8px 28px var(--wks-shadow)',
+        }}>
+          {Object.entries(themes).map(([id, t]) => {
+            const isCur = id === config.ui.theme;
+            return (
+              <button
+                key={id}
+                onClick={() => pick(id)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '6px 12px', border: 'none',
+                  background: isCur ? 'var(--wks-bg-selected)' : 'transparent',
+                  color: isCur ? 'var(--wks-text-primary)' : 'var(--wks-text-tertiary)',
+                  cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.72rem', textAlign: 'left',
+                }}
+                onMouseEnter={(e) => { if (!isCur) (e.currentTarget as HTMLElement).style.background = 'var(--wks-bg-hover)'; }}
+                onMouseLeave={(e) => { if (!isCur) (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
+              >
+                <span style={{ display: 'flex', gap: 3 }}>{dot(t.accent)}{dot(t.terminal.magenta)}{dot(t.terminal.blue)}</span>
+                <span style={{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{prettyThemeLabel(id)}</span>
+                {isCur && <span style={{ color: 'var(--wks-accent)', fontSize: '0.7rem' }}>✓</span>}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 };
 

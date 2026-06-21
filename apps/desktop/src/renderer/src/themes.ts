@@ -74,6 +74,10 @@ export interface Theme {
   error: string;
   warning: string;
   purple?: string;
+  /** "Busy / actively working" accent (streaming + thinking). Distinct from the
+   *  brand accent so an agent mid-run reads differently from idle. Defaults to
+   *  `accent` when omitted. */
+  busy?: string;
 
   // Overlay / shadow
   overlay: string;
@@ -1000,16 +1004,16 @@ export const everforestTheme: Theme = {
   name: 'everforest',
   corners: 'soft',
   bgBase: '#2d353b',
-  bgRaised: '#2f373d',
-  bgSurface: '#343f44',
-  bgElevated: '#3d484d',
-  bgHeader: '#343f44',
+  bgRaised: '#272e33',
+  bgSurface: '#2f373d',
+  bgElevated: '#333c43',
+  bgHeader: '#272e33',
   bgInput: '#232a2e',
-  bgHover: '#3d484d',
-  bgSelected: '#475258',
+  bgHover: '#333c43',
+  bgSelected: '#3a454a',
   bgTerminal: '#2d353b',
-  border: '#475258',
-  borderSubtle: '#3d484d',
+  border: '#444f55',
+  borderSubtle: '#374149',
   borderInput: '#4f585e',
   textPrimary: '#d3c6aa',
   textSecondary: '#c3bca0',
@@ -1021,6 +1025,7 @@ export const everforestTheme: Theme = {
   accentText: '#a7c080',
   accentGlow: 'rgba(167, 192, 128, 0.2)',
   accentBg: 'rgba(167, 192, 128, 0.15)',
+  busy: '#e69875',
   success: '#a7c080',
   error: '#e67e80',
   warning: '#dbbc7f',
@@ -1388,6 +1393,7 @@ export function cssVarsOf(theme: Theme): Record<string, string> {
     '--wks-error': theme.error,
     '--wks-warning': theme.warning,
     '--wks-purple': theme.purple ?? '#c084fc',
+    '--wks-busy': theme.busy ?? theme.accent,
     '--wks-overlay': theme.overlay,
     '--wks-shadow': theme.shadow,
     '--wks-scrollbar-thumb': theme.scrollbarThumb,

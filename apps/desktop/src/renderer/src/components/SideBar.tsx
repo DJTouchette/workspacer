@@ -1,5 +1,5 @@
 import React, { useState, useRef, useMemo } from 'react';
-import { Plus, ChevronLeft, HelpCircle } from 'lucide-react';
+import { Plus, ChevronLeft, ChevronRight, HelpCircle } from 'lucide-react';
 import { AgentWorkspace } from '../types/pane';
 import type { SessionAmbientState, ClaudeSessionSnapshot } from '../types/claudeSession';
 import type { AttentionItem, AttentionKind } from '../types/attention';
@@ -8,7 +8,9 @@ import { useAttention } from '../contexts/AttentionContext';
 import HubStatus from './HubStatus';
 import { ContextMenu, ContextMenuItem } from './ContextMenu';
 
-export const SIDEBAR_WIDTH = 196;
+export const SIDEBAR_WIDTH = 268;
+/** Width of the collapsed monogram rail (desktop). */
+export const SIDEBAR_RAIL_WIDTH = 74;
 
 /** 142345 → "142k", 1_200_000 → "1.2M". */
 function fmtTokens(n: number): string {
@@ -35,8 +37,8 @@ function statusVisual(state: SessionAmbientState | undefined): { color: string; 
   switch (state) {
     case 'waiting_approval': return { color: 'var(--wks-warning, #e0a000)', label: 'Needs approval' };
     case 'waiting_input': return { color: 'var(--wks-warning, #e0a000)', label: 'Waiting for input' };
-    case 'thinking': return { color: 'var(--wks-accent, #4a9eff)', label: 'Thinking' };
-    case 'streaming': return { color: 'var(--wks-accent, #4a9eff)', label: 'Working' };
+    case 'thinking': return { color: 'var(--wks-busy, var(--wks-accent, #4a9eff))', label: 'Thinking' };
+    case 'streaming': return { color: 'var(--wks-busy, var(--wks-accent, #4a9eff))', label: 'Working' };
     case 'idle': return { color: 'var(--wks-success, #3fb950)', label: 'Idle' };
     default: return { color: 'var(--wks-text-faint, #666)', label: 'Stopped' };
   }
@@ -84,8 +86,10 @@ interface SideBarProps {
   viewLevel?: 'fleet' | 'piloting';
   /** Open the remote-control (phone sharing) panel. */
   onOpenRemote?: () => void;
-  /** Collapse the sidebar (so panes take the full width). */
+  /** Collapse/expand the sidebar (toggles between the full panel and the rail). */
   onToggleCollapse?: () => void;
+  /** Render the compact monogram rail instead of the full panel. */
+  collapsed?: boolean;
   /** Toggle the keyboard-shortcuts help overlay (footer "?" button). */
   onToggleHelp?: () => void;
   /** Brief flash on the header when "next attention" found nothing to jump to. */
@@ -109,6 +113,7 @@ const SideBar: React.FC<SideBarProps> = ({
   onToggleCollapse,
   onToggleHelp,
   noAttentionFlash,
+  collapsed,
 }) => {
   // Counts come from the single attention feed (the spine), not a parallel
   // reduction over statusBySession — so the header can never disagree with the
@@ -148,6 +153,139 @@ const SideBar: React.FC<SideBarProps> = ({
     setRenameValue('');
   };
 
+  // Shared chrome for both layouts — glass surface, rounded inner corners.
+  const surfaceStyle: React.CSSProperties = {
+    position: 'absolute',
+    top: 0, left: 0, bottom: 0,
+    display: 'flex',
+    flexDirection: 'column',
+    backgroundColor: 'var(--wks-bg-raised)',
+    borderRight: '1px solid var(--wks-border-subtle)',
+    borderTopRightRadius: 'var(--wks-radius-lg)',
+    borderBottomRightRadius: 'var(--wks-radius-lg)',
+    overflow: 'hidden',
+    zIndex: 100,
+    userSelect: 'none',
+    boxSizing: 'border-box',
+  };
+
+  // ── Collapsed monogram rail ───────────────────────────────────────────────
+  // A 74px rail that keeps every agent reachable with one click. Tiles mirror
+  // the full panel's monogram + status-dot vocabulary so the two read as one UI.
+  if (collapsed) {
+    const railTile = (agent: AgentWorkspace) => {
+      const isActive = agent.id === activeAgentId;
+      const isGlobal = !!agent.global;
+      const isSupervisor = agent.kind === 'supervisor';
+      const state = agent.sessionId ? statusBySession[agent.sessionId] : undefined;
+      const base = statusVisual(state);
+      const top: AttentionItem | undefined = topByAgent.get(agent.id);
+      const color = top ? KIND_COLOR[top.kind] : base.color;
+      const label = top ? KIND_VISUAL_LABEL[top.kind] : base.label;
+      const glyph = top ? KIND_GLYPH[top.kind] : '';
+      const working = state === 'thinking' || state === 'streaming';
+      const tileLetter = ((agent.name.match(/[a-z0-9]/i)?.[0]) || agent.name.charAt(0) || '?').toUpperCase();
+      return (
+        <button
+          key={agent.id}
+          onClick={() => onSelectAgent(agent.id)}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            if (isGlobal) return;
+            setContextMenu({ agentId: agent.id, x: e.clientX, y: e.clientY });
+          }}
+          title={isGlobal ? 'Overview' : `${agent.name} — ${label}`}
+          style={{
+            position: 'relative', width: 40, height: 40, flexShrink: 0,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            borderRadius: 11, cursor: 'pointer', padding: 0,
+            background: isActive ? 'var(--wks-accent-bg)' : 'var(--wks-bg-base)',
+            border: `1px solid ${isActive ? 'var(--wks-accent-glow)' : 'var(--wks-border-subtle)'}`,
+            boxShadow: working && !isGlobal ? '0 0 0 1px color-mix(in srgb, var(--wks-busy) 40%, transparent)' : 'none',
+            transition: 'border-color 0.12s, background 0.12s',
+          }}
+        >
+          {isGlobal ? (
+            <span style={{ fontSize: '0.95rem', color: 'var(--wks-text-tertiary)', lineHeight: 1 }}>▦</span>
+          ) : isSupervisor ? (
+            <span style={{ fontSize: '0.9rem', lineHeight: 1 }}>🧭</span>
+          ) : (
+            <span style={{ fontFamily: 'var(--wks-font-mono)', fontSize: '0.9rem', fontWeight: 700, color: 'var(--wks-text-primary)', lineHeight: 1 }}>{tileLetter}</span>
+          )}
+          {!isGlobal && (glyph ? (
+            <span style={{
+              position: 'absolute', right: -3, bottom: -3, width: 14, height: 14,
+              borderRadius: 99, background: 'var(--wks-bg-raised)', border: '2px solid var(--wks-bg-raised)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              color, fontSize: '0.55rem', fontWeight: 800, lineHeight: 1, textShadow: `0 0 6px ${color}`,
+            }}>{glyph}</span>
+          ) : (
+            <span style={{
+              position: 'absolute', right: -3, bottom: -3, width: 11, height: 11,
+              borderRadius: 99, backgroundColor: color, border: '2px solid var(--wks-bg-raised)',
+              boxShadow: working ? `0 0 8px ${color}` : 'none',
+              animation: working ? 'wks-pulse 1.6s ease-in-out infinite' : 'none',
+            }} />
+          ))}
+        </button>
+      );
+    };
+
+    return (
+      <div style={{ ...surfaceStyle, width: `${SIDEBAR_RAIL_WIDTH}px`, alignItems: 'center', paddingTop: '8px', gap: '8px' }}>
+        <button
+          onClick={onToggleCollapse}
+          title="Expand sidebar (Ctrl+B)"
+          style={{
+            width: 28, height: 28, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            border: 'none', borderRadius: 7, cursor: 'pointer',
+            background: 'transparent', color: 'var(--wks-text-faint)',
+          }}
+        ><ChevronRight size={16} strokeWidth={2} /></button>
+
+        <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', padding: '2px 0', width: '100%' }}>
+          {agents.map(railTile)}
+        </div>
+
+        <button
+          onClick={onSpawnAgent}
+          title="Spawn a new agent (Ctrl+Shift+N)"
+          style={{
+            width: 40, height: 40, flexShrink: 0, margin: '4px 0 10px',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            border: 'none', borderRadius: 11, cursor: 'pointer',
+            background: 'var(--wks-accent)', color: 'var(--wks-bg-raised)',
+          }}
+        ><Plus size={18} strokeWidth={2.5} /></button>
+
+        <HubStatus onOpenRemote={onOpenRemote} compact />
+
+        {contextMenu && (
+          <ContextMenu x={contextMenu.x} y={contextMenu.y} minWidth={140} onClose={() => setContextMenu(null)}>
+            <ContextMenuItem
+              label="Rename"
+              onClick={() => {
+                const agent = agents.find((a) => a.id === contextMenu.agentId);
+                setRenameValue(agent?.name ?? '');
+                setRenamingId(contextMenu.agentId);
+                setContextMenu(null);
+              }}
+            />
+            <ContextMenuItem
+              label="Terminate"
+              danger
+              onClick={() => {
+                const id = contextMenu.agentId;
+                setContextMenu(null);
+                onTerminateAgent(id);
+              }}
+            />
+          </ContextMenu>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div style={{
       position: 'absolute',
@@ -155,13 +293,10 @@ const SideBar: React.FC<SideBarProps> = ({
       width: `${SIDEBAR_WIDTH}px`,
       display: 'flex',
       flexDirection: 'column',
-      paddingTop: '8px',
+      paddingTop: '6px',
       gap: '2px',
-      backgroundColor: 'var(--wks-glass-strong)',
-      backdropFilter: 'blur(var(--wks-glass-blur)) saturate(160%)',
-      WebkitBackdropFilter: 'blur(var(--wks-glass-blur)) saturate(160%)',
-      borderRight: '1px solid var(--wks-glass-border)',
-      boxShadow: 'inset -1px 0 0 var(--wks-glass-highlight)',
+      backgroundColor: 'var(--wks-bg-raised)',
+      borderRight: '1px solid var(--wks-border-subtle)',
       // Round the inner (right) corners with the active corner style — the left
       // edge stays flush to the window (rounded by the app shell). Square corner
       // style resolves these to 0.
@@ -175,7 +310,7 @@ const SideBar: React.FC<SideBarProps> = ({
       boxSizing: 'border-box',
     }}>
       <div style={{
-        padding: '4px 12px 8px',
+        padding: '10px 14px 10px 16px',
         fontSize: '0.6rem',
         fontWeight: 700,
         letterSpacing: '0.08em',
@@ -187,10 +322,7 @@ const SideBar: React.FC<SideBarProps> = ({
       }}>
         <span>Agents</span>
         {noAttentionFlash && (
-          <span style={{
-            color: 'var(--wks-success, #3fb950)', letterSpacing: 0, textTransform: 'none',
-            fontWeight: 600, transition: 'opacity 0.2s',
-          }}>
+          <span style={pillStyle('var(--wks-success, #3fb950)')}>
             all clear
           </span>
         )}
@@ -199,23 +331,17 @@ const SideBar: React.FC<SideBarProps> = ({
             onClick={onOpenInbox ?? onJumpToAttention}
             title="Open the Triage Inbox"
             style={{
-              color: 'var(--wks-warning, #e0a000)',
+              ...pillStyle('var(--wks-warning, #e0a000)'),
               cursor: (onOpenInbox ?? onJumpToAttention) ? 'pointer' : 'default',
-              letterSpacing: 0,
-              textTransform: 'none',
-              fontWeight: 600,
             }}
           >
+            <span style={dotStyle('var(--wks-warning, #e0a000)', true)} />
             {needYouCount} need you
           </span>
         )}
         {!noAttentionFlash && needYouCount === 0 && workingCount > 0 && (
-          <span style={{
-            color: 'var(--wks-accent, #4a9eff)',
-            letterSpacing: 0,
-            textTransform: 'none',
-            fontWeight: 600,
-          }}>
+          <span style={pillStyle('var(--wks-busy, var(--wks-accent-text, #4a9eff))')}>
+            <span style={dotStyle('var(--wks-busy, var(--wks-accent-text, #4a9eff))', true)} />
             {workingCount} working
           </span>
         )}
@@ -234,12 +360,18 @@ const SideBar: React.FC<SideBarProps> = ({
         )}
       </div>
 
-      {/* Mission Control: the cross-agent surfaces — always reachable. */}
-      <div style={{ display: 'flex', gap: 6, padding: '2px 6px 6px' }}>
+      {/* Mission Control: the cross-agent surfaces — always reachable. A single
+          segmented control (one bordered track, two flush buttons) per design. */}
+      <div style={{
+        display: 'flex', gap: 4, margin: '2px 12px 10px', padding: 4,
+        background: 'var(--wks-bg-base)',
+        border: '1px solid var(--wks-border-subtle)',
+        borderRadius: 'var(--wks-radius-lg)',
+      }}>
         <button
           onClick={onOpenInbox}
           title="Triage Inbox (Ctrl+Shift+A)"
-          style={mcBtnStyle(false)}
+          style={segBtnStyle(false)}
         >
           <span>Inbox</span>
           {counts.total > 0 && (
@@ -249,7 +381,7 @@ const SideBar: React.FC<SideBarProps> = ({
               marginLeft: 'auto', minWidth: 16, height: 16, padding: '0 4px', borderRadius: 8,
               display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
               background: needYouCount > 0 ? 'var(--wks-warning, #e0a000)' : 'var(--wks-success, #3fb950)',
-              color: '#1a1a1a', fontSize: '0.6rem', fontWeight: 700,
+              color: 'var(--wks-bg-base, #1a1a1a)', fontFamily: 'var(--wks-font-mono)', fontSize: '0.6rem', fontWeight: 700,
               opacity: needYouCount > 0 ? 1 : 0.85,
             }}>{needYouCount > 0 ? needYouCount : counts.total}</span>
           )}
@@ -257,13 +389,13 @@ const SideBar: React.FC<SideBarProps> = ({
         <button
           onClick={onToggleFleet}
           title="Fleet Deck (Ctrl+Shift+F)"
-          style={mcBtnStyle(viewLevel === 'fleet')}
+          style={segBtnStyle(viewLevel === 'fleet')}
         >
           Fleet
         </button>
       </div>
 
-      <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px', padding: '2px 0' }}>
+      <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '7px', padding: '2px 0' }}>
         {agents.length === 0 && (
           <div style={{ padding: '8px 12px', fontSize: '0.7rem', color: 'var(--wks-text-faint)', lineHeight: 1.5 }}>
             No agents yet. Spawn one to start a Claude Code session.
@@ -311,6 +443,10 @@ const SideBar: React.FC<SideBarProps> = ({
             const usageTip = hasCtx
               ? `\n${Math.round(stats.ctxPct!)}% context${stats.tokens !== undefined ? ` · ${fmtTokens(stats.tokens)} tok` : ''}${stats.costUSD !== undefined ? ` · ${fmtUSD(stats.costUSD)}` : ''}${stats.model ? ` · ${stats.model}` : ''}`
               : '';
+            const working = state === 'thinking' || state === 'streaming';
+            // First alphanumeric of the name, for the monogram tile.
+            const tileLetter = ((agent.name.match(/[a-z0-9]/i)?.[0]) || agent.name.charAt(0) || '?').toUpperCase();
+            const statusText = isGlobal ? 'Dashboards & plugins' : agent.sessionId ? label : 'Stopped — click to respawn';
 
             return (
               <button
@@ -321,100 +457,135 @@ const SideBar: React.FC<SideBarProps> = ({
                   if (isGlobal) return; // Overview can't be renamed/terminated
                   setContextMenu({ agentId: agent.id, x: e.clientX, y: e.clientY });
                 }}
+                onMouseEnter={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--wks-bg-elevated)'; }}
+                onMouseLeave={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'; }}
                 style={{
-                  width: indent ? 'calc(100% - 24px)' : 'calc(100% - 12px)',
-                  margin: indent ? '0 6px 0 18px' : '0 6px',
-                  padding: '9px 11px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '9px',
-                  borderRadius: 'var(--wks-radius-md)',
+                  position: 'relative',
+                  width: indent ? 'calc(100% - 36px)' : 'calc(100% - 24px)',
+                  margin: indent ? '0 12px 0 24px' : '0 12px',
+                  padding: '11px 13px',
+                  display: 'block',
+                  borderRadius: 'var(--wks-radius-lg)',
                   cursor: 'pointer',
-                  fontSize: indent ? '0.78rem' : '0.85rem',
                   fontFamily: 'inherit',
-                  fontWeight: isActive ? 600 : 500,
-                  backgroundColor: isActive ? 'var(--wks-bg-selected)' : 'var(--wks-bg-surface)',
-                  color: isActive ? 'var(--wks-text-primary)' : 'var(--wks-text-secondary)',
-                  border: `1px solid ${isActive ? 'var(--wks-accent)' : 'var(--wks-glass-border)'}`,
+                  backgroundColor: 'transparent',
+                  color: 'var(--wks-text-secondary)',
+                  border: '1px solid transparent',
                   textAlign: 'left',
                   boxSizing: 'border-box',
-                  transition: 'border-color 0.12s, background-color 0.12s',
+                  transition: 'background-color 0.12s, box-shadow 0.2s',
+                  // Working agents get a soft "busy" halo (mockup), independent of selection.
+                  boxShadow: working && !isGlobal
+                    ? '0 0 0 1px color-mix(in srgb, var(--wks-busy) 32%, transparent), 0 6px 20px -12px var(--wks-busy)'
+                    : 'none',
                   opacity: indent ? 0.9 : 1,
                 }}
                 title={isGlobal ? 'Overview — cross-agent dashboards & plugin panes' : `${agent.name} — ${label}\n${agent.cwd}${usageTip}`}
               >
-                {isGlobal ? (
-                  <span style={{ width: 8, flexShrink: 0, textAlign: 'center', fontSize: '0.7rem', lineHeight: 1 }}>▦</span>
-                ) : isSupervisor ? (
-                  <span style={{ width: 8, flexShrink: 0, textAlign: 'center', fontSize: '0.65rem', lineHeight: 1 }}>🧭</span>
-                ) : glyph ? (
-                  <span
-                    title={label}
-                    style={{
-                      width: 10, height: 10, flexShrink: 0,
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      color, fontSize: '0.62rem', fontWeight: 800, lineHeight: 1,
-                      textShadow: `0 0 6px ${color}`,
-                    }}
-                  >{glyph}</span>
-                ) : (
-                  <span
-                    style={{
-                      width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
-                      backgroundColor: color,
-                      boxShadow: state && state !== 'idle' ? `0 0 6px ${color}` : 'none',
-                    }}
-                  />
+                {isActive && (
+                  <>
+                    <span style={{
+                      position: 'absolute', inset: 0, borderRadius: 'var(--wks-radius-lg)',
+                      background: 'var(--wks-accent-bg)', border: '1px solid var(--wks-accent-glow)',
+                      pointerEvents: 'none',
+                    }} />
+                    <span style={{
+                      position: 'absolute', left: 0, top: 13, bottom: 13, width: 3,
+                      borderRadius: 99, background: 'var(--wks-accent)',
+                    }} />
+                  </>
                 )}
-                <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '1px' }}>
-                  {isRenaming ? (
-                    <input
-                      autoFocus
-                      value={renameValue}
-                      onChange={(e) => setRenameValue(e.target.value)}
-                      onBlur={commitRename}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') commitRename();
-                        if (e.key === 'Escape') { setRenamingId(null); setRenameValue(''); }
-                        e.stopPropagation();
-                      }}
-                      onClick={(e) => e.stopPropagation()}
-                      style={{
-                        width: '100%', fontSize: '0.75rem', fontFamily: 'inherit',
-                        background: 'var(--wks-bg-base)', color: 'var(--wks-text-primary)',
-                        border: '1px solid var(--wks-accent)', borderRadius: 3, padding: '1px 4px',
-                        boxSizing: 'border-box',
-                      }}
-                    />
-                  ) : (
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {agent.name}
+                <span style={{ position: 'relative', display: 'block' }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
+                    {/* Monogram tile with corner status badge */}
+                    <span style={{
+                      position: 'relative', width: 30, height: 30, flexShrink: 0,
+                      borderRadius: 9, background: 'var(--wks-bg-base)',
+                      border: '1px solid var(--wks-border-subtle)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}>
+                      {isGlobal ? (
+                        <span style={{ fontSize: '0.85rem', color: 'var(--wks-text-tertiary)', lineHeight: 1 }}>▦</span>
+                      ) : isSupervisor ? (
+                        <span style={{ fontSize: '0.78rem', lineHeight: 1 }}>🧭</span>
+                      ) : (
+                        <span style={{ fontFamily: 'var(--wks-font-mono)', fontSize: '0.8125rem', fontWeight: 700, color: 'var(--wks-text-primary)', lineHeight: 1 }}>{tileLetter}</span>
+                      )}
+                      {!isGlobal && (glyph ? (
+                        <span title={label} style={{
+                          position: 'absolute', right: -3, bottom: -3, width: 13, height: 13,
+                          borderRadius: 99, background: 'var(--wks-bg-raised)',
+                          border: '2px solid var(--wks-bg-raised)',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          color, fontSize: '0.5rem', fontWeight: 800, lineHeight: 1,
+                          textShadow: `0 0 6px ${color}`,
+                        }}>{glyph}</span>
+                      ) : (
+                        <span style={{
+                          position: 'absolute', right: -3, bottom: -3, width: 11, height: 11,
+                          borderRadius: 99, backgroundColor: color,
+                          border: '2px solid var(--wks-bg-raised)',
+                          boxShadow: working ? `0 0 8px ${color}` : 'none',
+                          animation: working ? 'wks-pulse 1.6s ease-in-out infinite' : 'none',
+                        }} />
+                      ))}
                     </span>
-                  )}
-                  <span style={{
-                    fontSize: '0.67rem', color: 'var(--wks-text-faint)',
-                    display: 'flex', alignItems: 'baseline', gap: 4,
-                    overflow: 'hidden', whiteSpace: 'nowrap',
-                  }}>
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {isGlobal ? 'Dashboards & plugins' : agent.sessionId ? label : 'Stopped — click to respawn'}
-                    </span>
-                    {hasCtx && (
-                      <span style={{ marginLeft: 'auto', flexShrink: 0, color: contextColor(ctxFrac), fontVariantNumeric: 'tabular-nums' }}>
-                        {Math.round(ctxFrac * 100)}%
+                    {/* Name + percentage / status */}
+                    <span style={{ minWidth: 0, flex: 1 }}>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        {isRenaming ? (
+                          <input
+                            autoFocus
+                            value={renameValue}
+                            onChange={(e) => setRenameValue(e.target.value)}
+                            onBlur={commitRename}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') commitRename();
+                              if (e.key === 'Escape') { setRenamingId(null); setRenameValue(''); }
+                              e.stopPropagation();
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                            style={{
+                              flex: 1, minWidth: 0, fontSize: '0.8rem', fontFamily: 'inherit',
+                              background: 'var(--wks-bg-base)', color: 'var(--wks-text-primary)',
+                              border: '1px solid var(--wks-accent)', borderRadius: 4, padding: '1px 4px',
+                              boxSizing: 'border-box',
+                            }}
+                          />
+                        ) : (
+                          <span style={{
+                            flex: 1, minWidth: 0, fontSize: indent ? '0.8125rem' : '0.875rem',
+                            fontWeight: 600, color: 'var(--wks-text-primary)',
+                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', lineHeight: 1.3,
+                          }}>
+                            {agent.name}
+                          </span>
+                        )}
+                        {hasCtx && (
+                          <span style={{ flexShrink: 0, fontFamily: 'var(--wks-font-mono)', fontSize: '0.75rem', fontWeight: 700, color: contextColor(ctxFrac), fontVariantNumeric: 'tabular-nums' }}>
+                            {Math.round(ctxFrac * 100)}%
+                          </span>
+                        )}
                       </span>
-                    )}
+                      <span style={{
+                        display: 'block', marginTop: 3,
+                        fontFamily: 'var(--wks-font-mono)', fontSize: '0.6875rem',
+                        color: isGlobal ? 'var(--wks-text-faint)' : color,
+                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                      }}>
+                        {statusText}
+                      </span>
+                    </span>
                   </span>
                   {hasCtx && (
                     <span style={{
-                      height: 3, borderRadius: 2, marginTop: 1,
-                      backgroundColor: 'var(--wks-border-subtle, #2a2a2a)',
-                      overflow: 'hidden', display: 'block',
+                      display: 'block', height: 3, borderRadius: 99, marginTop: 11,
+                      background: 'var(--wks-bg-base)', overflow: 'hidden',
                     }}>
                       <span style={{
-                        display: 'block', height: '100%',
+                        display: 'block', height: '100%', borderRadius: 99,
                         width: `${Math.max(2, ctxFrac * 100)}%`,
-                        backgroundColor: contextColor(ctxFrac),
+                        background: contextColor(ctxFrac),
                       }} />
                     </span>
                   )}
@@ -436,30 +607,44 @@ const SideBar: React.FC<SideBarProps> = ({
         })()}
       </div>
 
-      {/* Spawn button */}
+      {/* Spawn button — solid affordance with an accent icon chip + kbd hint. */}
       <button
         onClick={onSpawnAgent}
         style={{
-          width: 'calc(100% - 8px)',
-          margin: '4px 4px 8px',
+          width: 'calc(100% - 24px)',
+          margin: '4px 12px 10px',
           padding: '8px',
           display: 'flex',
           alignItems: 'center',
-          gap: '8px',
-          border: '1px dashed var(--wks-border-input)',
-          borderRadius: '6px',
+          gap: '11px',
+          border: '1px solid var(--wks-border-subtle)',
+          borderRadius: 'var(--wks-radius-lg)',
           cursor: 'pointer',
-          fontSize: '0.75rem',
+          fontSize: '0.8125rem',
+          fontWeight: 600,
           fontFamily: 'inherit',
-          backgroundColor: 'transparent',
-          color: 'var(--wks-text-muted)',
+          backgroundColor: 'var(--wks-bg-elevated)',
+          color: 'var(--wks-text-primary)',
           textAlign: 'left',
           boxSizing: 'border-box',
+          transition: 'border-color 0.14s',
         }}
-        title="Spawn a new agent"
+        onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-accent)'; }}
+        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-border-subtle)'; }}
+        title="Spawn a new agent (Ctrl+Shift+N)"
       >
-        <span style={{ width: 8, display: 'inline-flex', justifyContent: 'center' }}><Plus size={13} strokeWidth={2.2} /></span>
-        <span>Spawn agent</span>
+        <span style={{
+          flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+          width: 28, height: 28, borderRadius: 8,
+          background: 'var(--wks-accent)', color: 'var(--wks-bg-raised)',
+        }}><Plus size={16} strokeWidth={2.5} /></span>
+        <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', lineHeight: 1.25, minWidth: 0 }}>
+          <span style={{ whiteSpace: 'nowrap' }}>Spawn agent</span>
+          <span style={{
+            fontFamily: 'var(--wks-font-mono)', fontSize: '0.625rem', fontWeight: 500,
+            color: 'var(--wks-text-faint)', whiteSpace: 'nowrap',
+          }}>Ctrl+Shift+N</span>
+        </span>
       </button>
 
       {/* Footer: persistent help affordance so onboarding guidance is always
@@ -512,15 +697,36 @@ const SideBar: React.FC<SideBarProps> = ({
   );
 };
 
-function mcBtnStyle(active: boolean): React.CSSProperties {
+/** A flush button inside the Inbox/Fleet segmented track. */
+function segBtnStyle(active: boolean): React.CSSProperties {
   return {
-    flex: 1, display: 'flex', alignItems: 'center', gap: 6,
+    flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
     padding: '6px 10px', borderRadius: 'var(--wks-radius-md)', cursor: 'pointer',
-    fontSize: '0.72rem', fontFamily: 'inherit', fontWeight: 600,
-    border: `1px solid ${active ? 'var(--wks-accent)' : 'var(--wks-glass-border)'}`,
-    background: active ? 'var(--wks-bg-selected)' : 'var(--wks-bg-surface)',
-    color: active ? 'var(--wks-text-primary)' : 'var(--wks-text-secondary)',
+    fontSize: '0.8125rem', fontFamily: 'inherit', fontWeight: 600,
+    border: 'none',
+    background: active ? 'var(--wks-bg-elevated)' : 'transparent',
+    color: active ? 'var(--wks-text-primary)' : 'var(--wks-text-tertiary)',
+    boxShadow: active ? '0 1px 2px var(--wks-shadow)' : 'none',
     boxSizing: 'border-box',
+  };
+}
+
+/** Header status pill (e.g. "1 working") — soft chip tinted to match its own
+ *  status color (green/amber), with a live dot. */
+function pillStyle(color: string): React.CSSProperties {
+  return {
+    display: 'inline-flex', alignItems: 'center', gap: 6,
+    padding: '2px 8px', borderRadius: 'var(--wks-radius-pill)',
+    background: `color-mix(in srgb, ${color} 16%, transparent)`, color,
+    fontFamily: 'var(--wks-font-mono)', fontSize: '0.625rem', fontWeight: 600,
+    letterSpacing: 0, textTransform: 'none', whiteSpace: 'nowrap',
+  };
+}
+
+function dotStyle(color: string, pulse: boolean): React.CSSProperties {
+  return {
+    width: 6, height: 6, borderRadius: '50%', flexShrink: 0, background: color,
+    animation: pulse ? 'wks-pulse 1.8s ease-in-out infinite' : 'none',
   };
 }
 

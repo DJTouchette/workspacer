@@ -105,7 +105,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
   // Set CSS variable for mono font
   useEffect(() => {
     if (typeof document !== 'undefined') {
-      document.documentElement.style.setProperty('--claude-mono-font', termCfg.fontFamily || 'monospace');
+      document.documentElement.style.setProperty('--claude-mono-font', termCfg.fontFamily || 'var(--wks-font-mono)');
     }
   }, [termCfg.fontFamily]);
 

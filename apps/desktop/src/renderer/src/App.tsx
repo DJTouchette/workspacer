@@ -2,7 +2,7 @@ import { useRef, useCallback, useState, useEffect, useMemo, lazy, Suspense, memo
 import { ChevronRight } from 'lucide-react';
 import './App.css';
 import NavBar from './components/NavBar';
-import SideBar, { SIDEBAR_WIDTH } from './components/SideBar';
+import SideBar, { SIDEBAR_WIDTH, SIDEBAR_RAIL_WIDTH } from './components/SideBar';
 import ErrorBoundary from './components/ErrorBoundary';
 import { EmptyState } from './components/PaneMessage';
 import Onboarding from './components/Onboarding';
@@ -241,12 +241,13 @@ function App() {
       setSidebarCollapsed(isSmallScreen);
     }
   }, [isSmallScreen]);
-  // Layout offsets: panes go full-width when the sidebar is collapsed; the navbar
-  // keeps a small left inset so the floating "show sidebar" button has room.
-  // On small screens the sidebar overlays the content, so we never reserve space.
+  // Layout offsets. On small screens the sidebar overlays the content, so we
+  // never reserve space (navbar keeps a small inset for the floating toggle).
+  // On desktop, collapsing shrinks the panel to a 74px monogram rail that still
+  // reserves its column, rather than fully hiding.
   const sidebarOverlay = isSmallScreen;
-  const contentLeft = sidebarCollapsed || sidebarOverlay ? 0 : SIDEBAR_WIDTH;
-  const navLeft = sidebarCollapsed || sidebarOverlay ? 36 : SIDEBAR_WIDTH;
+  const contentLeft = sidebarOverlay ? 0 : (sidebarCollapsed ? SIDEBAR_RAIL_WIDTH : SIDEBAR_WIDTH);
+  const navLeft = sidebarOverlay ? 36 : (sidebarCollapsed ? SIDEBAR_RAIL_WIDTH : SIDEBAR_WIDTH);
 
   // App working directory (used as the default cwd for the spawn dialog + the
   // Library's fallback project root).
@@ -1027,7 +1028,7 @@ function App() {
       attention={attention}
     >
     <div className="app-root">
-      {!sidebarCollapsed && sidebarOverlay && (
+      {sidebarOverlay && !sidebarCollapsed && (
         <div
           onClick={() => setSidebarCollapsed(true)}
           style={{
@@ -1038,7 +1039,9 @@ function App() {
           }}
         />
       )}
-      {!sidebarCollapsed && (
+      {/* Desktop always shows the sidebar (a rail when collapsed); mobile shows
+          the full panel as an overlay only while expanded. */}
+      {(!sidebarOverlay || !sidebarCollapsed) && (
         <ErrorBoundary label="Sidebar" variant="region">
         <SideBar
           agents={agents}
@@ -1054,13 +1057,14 @@ function App() {
           onToggleFleet={toggleFleet}
           viewLevel={viewLevel}
           onOpenRemote={() => setShowRemote(true)}
-          onToggleCollapse={() => setSidebarCollapsed(true)}
+          onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
           onToggleHelp={toggleHelp}
           noAttentionFlash={noAttentionFlash}
+          collapsed={!sidebarOverlay && sidebarCollapsed}
         />
         </ErrorBoundary>
       )}
-      {sidebarCollapsed && (
+      {sidebarOverlay && sidebarCollapsed && (
         <button
           onClick={() => setSidebarCollapsed(false)}
           title="Show sidebar (Ctrl+B)"

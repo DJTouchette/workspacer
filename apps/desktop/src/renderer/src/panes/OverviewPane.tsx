@@ -68,24 +68,27 @@ const RateLimitCard: React.FC<{ snaps: Snap[] }> = ({ snaps }) => {
 
   return (
     <div style={{
-      flex: 1, minWidth: 220, padding: '10px 14px', borderRadius: 10,
-      background: 'var(--wks-bg-surface)', border: '1px solid var(--wks-border-subtle)',
+      flex: 1, minWidth: 220, padding: '15px 16px', borderRadius: 'var(--wks-radius-md, 13px)',
+      background: 'var(--wks-bg-raised)', border: '1px solid var(--wks-border-subtle)',
       display: 'flex', flexDirection: 'column', gap: 6,
     }}>
-      <div style={{ fontSize: '0.6rem', color: 'var(--wks-text-faint)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Account usage</div>
+      <div style={{ fontSize: '0.6rem', color: 'var(--wks-text-faint)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Account usage</div>
       <Row label="5h" pct={best.fiveHourPct} reset={best.fiveHourResetsAt} />
       <Row label="7d" pct={best.sevenDayPct} reset={best.sevenDayResetsAt} />
     </div>
   );
 };
 
-const Stat: React.FC<{ label: string; value: string; color?: string }> = ({ label, value, color }) => (
+/** Stat tile — mockup "Overview" card: uppercase mono label on top, large
+ *  mono value, optional sub-line. Matches the Usage pane's Stat exactly. */
+const Stat: React.FC<{ label: string; value: string; sub?: string; color?: string }> = ({ label, value, sub, color }) => (
   <div style={{
-    flex: 1, minWidth: 110, padding: '12px 14px', borderRadius: 10,
-    background: 'var(--wks-bg-surface)', border: '1px solid var(--wks-border-subtle)',
+    flex: 1, minWidth: 130, padding: '15px 16px', borderRadius: 'var(--wks-radius-md, 13px)',
+    background: 'var(--wks-bg-raised)', border: '1px solid var(--wks-border-subtle)',
   }}>
-    <div style={{ fontSize: '1.5rem', fontWeight: 700, color: color || 'var(--wks-text-primary)', fontVariantNumeric: 'tabular-nums' }}>{value}</div>
-    <div style={{ fontSize: '0.6rem', color: 'var(--wks-text-faint)', textTransform: 'uppercase', letterSpacing: '0.05em', marginTop: 2 }}>{label}</div>
+    <div style={{ fontSize: '0.6rem', color: 'var(--wks-text-faint)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{label}</div>
+    <div style={{ fontSize: '1.5rem', fontWeight: 700, color: color || 'var(--wks-text-primary)', fontVariantNumeric: 'tabular-nums', marginTop: 8 }}>{value}</div>
+    {sub && <div style={{ fontSize: '0.62rem', color: 'var(--wks-text-secondary)', marginTop: 3, fontVariantNumeric: 'tabular-nums' }}>{sub}</div>}
   </div>
 );
 
@@ -176,9 +179,12 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
 
   return (
     <div style={{ height: '100%', overflow: 'auto', background: 'var(--wks-bg-base)', color: 'var(--wks-text-primary)', padding: 18 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 11, marginBottom: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '1.05rem', fontWeight: 700 }}>
           <Home size={18} strokeWidth={1.9} /> Workspace
+        </div>
+        <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-secondary)', fontVariantNumeric: 'tabular-nums' }}>
+          {agents} agent{agents === 1 ? '' : 's'} · {working} working · {needsYou} need{needsYou === 1 ? 's' : ''} you
         </div>
         <button
           onClick={browse}
@@ -190,11 +196,11 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
         >＋ New agent…</button>
       </div>
 
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 22 }}>
-        <Stat label="Agents" value={String(agents)} />
-        <Stat label="Working" value={String(working)} color={working ? 'var(--wks-accent, #4a9eff)' : undefined} />
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 22 }}>
+        <Stat label="Agents" value={String(agents)} sub={working ? `${working} working` : 'all idle'} />
+        <Stat label="Working" value={String(working)} color={working ? 'var(--wks-busy, var(--wks-accent, #4a9eff))' : undefined} />
         <Stat label="Need you" value={String(needsYou)} color={needsYou ? 'var(--wks-warning, #e0a000)' : undefined} />
-        <Stat label="Total cost" value={fmtUSD(totalCost)} />
+        <Stat label="Total cost" value={fmtUSD(totalCost)} sub="this session" />
         {/* Account-wide 5h/7d rate-limit windows (scanned across all sessions,
             not just workspacer's — they're global to the account). */}
         <RateLimitCard snaps={snaps} />

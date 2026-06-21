@@ -1,8 +1,40 @@
 /* Workspacer App Styles */
 
+/* ─────────────────────────────────────────────────────────────────────────
+ * Bundled fonts (offline-safe — no CDN). Hanken Grotesk is the UI typeface,
+ * JetBrains Mono the monospace used for status readouts, code, and data.
+ * Both are variable fonts; one file covers the whole 400–700 weight range.
+ * ──────────────────────────────────────────────────────────────────────── */
+@font-face {
+  font-family: "Hanken Grotesk";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("./assets/fonts/HankenGrotesk-Variable.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("./assets/fonts/JetBrainsMono-Variable.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: italic;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("./assets/fonts/JetBrainsMono-Italic.woff2") format("woff2");
+}
+
 /* Design-token fallbacks — JS (applyTheme/applyCorners) overrides these at
  * runtime; these keep the first paint sane. */
 :root {
+  /* UI monospace — used by status bars, labels, and code-ish chrome. The
+   * terminal/code font is set separately (--claude-mono-font, from the user's
+   * terminal config); this is the chrome default and the global fallback. */
+  --wks-font-mono: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Code",
+    "Roboto Mono", monospace;
   --wks-radius-sm: 5px;
   --wks-radius-md: 8px;
   --wks-radius-lg: 12px;
@@ -56,9 +88,15 @@ html, body {
     radial-gradient(120% 100% at 100% 100%, var(--wks-glass-tint), transparent 55%);
   background-attachment: fixed;
   color: var(--wks-text-primary);
-  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto",
-    "Oxygen", "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue",
-    sans-serif;
+  font-family: "Hanken Grotesk", "Inter", -apple-system, BlinkMacSystemFont,
+    "Segoe UI", "Roboto", "Oxygen", "Ubuntu", "Cantarell", "Fira Sans",
+    "Droid Sans", "Helvetica Neue", sans-serif;
+}
+
+/* Soft attention pulse for live status dots (sidebar / HUD). */
+@keyframes wks-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.82); }
 }
 
 /* Shared frosted-glass surface. Apply alongside per-element layout styles. */

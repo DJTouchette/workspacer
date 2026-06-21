@@ -29,18 +29,34 @@ function ctxColor(pct: number): string {
   if (pct >= 50) return 'var(--wks-warning, #e0a000)';
   return 'var(--wks-success, #3fb950)';
 }
-function bar(pct: number): string {
-  const filled = Math.max(0, Math.min(10, Math.round((pct / 100) * 10)));
-  return `[${'#'.repeat(filled)}${'-'.repeat(10 - filled)}]`;
-}
 function baseName(p: string | undefined): string {
   if (!p) return '';
   return p.replace(/[/\\]+$/, '').split(/[/\\]/).pop() || p;
 }
 
+/** A thin vertical rule between HUD groups, replacing the ASCII pipe. */
 const Sep: React.FC = () => (
-  <span style={{ color: 'var(--wks-text-disabled, #555)', opacity: 0.6 }}>|</span>
+  <span style={{ width: 1, height: 15, flexShrink: 0, background: 'var(--wks-border, #555)', opacity: 0.7 }} />
 );
+
+/** Segmented 10-tick context gauge — filled ticks take the threshold color. */
+const CtxBar: React.FC<{ pct: number }> = ({ pct }) => {
+  const filled = Math.max(0, Math.min(10, Math.round((pct / 100) * 10)));
+  const color = ctxColor(pct);
+  return (
+    <span style={{ display: 'inline-flex', gap: 2, alignItems: 'center' }}>
+      {Array.from({ length: 10 }, (_, i) => (
+        <span
+          key={i}
+          style={{
+            width: 4, height: 11, borderRadius: 1,
+            background: i < filled ? color : 'var(--wks-bg-elevated, #444)',
+          }}
+        />
+      ))}
+    </span>
+  );
+};
 
 interface Props {
   snapshot?: ClaudeSessionSnapshot | null;
@@ -64,8 +80,8 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd }) => {
         gap: 7,
         minWidth: 0,
         overflow: 'hidden',
-        fontFamily: 'var(--claude-mono-font, monospace)',
-        fontSize: '0.58rem',
+        fontFamily: 'var(--wks-font-mono, var(--claude-mono-font, monospace))',
+        fontSize: '0.64rem',
         whiteSpace: 'nowrap',
       }}
     >
@@ -74,17 +90,21 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd }) => {
       {ctxPct !== undefined && (
         <>
           <Sep />
-          <span style={{ color: ctxColor(ctxPct), fontVariantNumeric: 'tabular-nums' }}>
-            ctx:{bar(ctxPct)} {Math.round(ctxPct)}%
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: ctxColor(ctxPct), fontVariantNumeric: 'tabular-nums' }}>
+            <span style={{ color: 'var(--wks-text-faint)' }}>ctx</span>
+            <CtxBar pct={ctxPct} />
+            {Math.round(ctxPct)}%
           </span>
         </>
       )}
       {(tokens !== undefined || cost !== undefined) && (
         <>
           <Sep />
-          <span style={{ color: 'var(--wks-accent-text)', fontVariantNumeric: 'tabular-nums' }}>
-            {tokens !== undefined ? `tok:${fmtTokens(tokens)}` : ''}
-            {cost !== undefined ? ` ${fmtUSD(cost)}` : ''}
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontVariantNumeric: 'tabular-nums' }}>
+            {tokens !== undefined && (
+              <span><span style={{ color: 'var(--wks-text-faint)' }}>tok </span><span style={{ color: 'var(--wks-text-secondary)' }}>{fmtTokens(tokens)}</span></span>
+            )}
+            {cost !== undefined && <span style={{ color: 'var(--wks-accent-text)' }}>{fmtUSD(cost)}</span>}
           </span>
         </>
       )}
@@ -92,8 +112,8 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd }) => {
         <>
           <Sep />
           <span style={{ color: 'var(--wks-text-secondary)', fontVariantNumeric: 'tabular-nums' }}>
-            {five !== undefined ? `5h:${Math.round(five)}%` : ''}
-            {seven !== undefined ? ` 7d:${Math.round(seven)}%` : ''}
+            {five !== undefined && (<><span style={{ color: 'var(--wks-text-faint)' }}>5h </span>{Math.round(five)}%</>)}
+            {seven !== undefined && (<> <span style={{ color: 'var(--wks-text-faint)' }}>7d </span>{Math.round(seven)}%</>)}
           </span>
         </>
       )}
