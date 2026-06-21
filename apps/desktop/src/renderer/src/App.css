@@ -112,8 +112,10 @@ html, body {
 
 .app-content {
   flex: 1;
-  margin-top: 28px; /* NavBar height */
-  margin-bottom: 4px; /* room for pane border */
+  margin-top: 28px; /* NavBar height (overridden inline to the live navHeight) */
+  /* Panes are full-bleed/flush (mockup layout); split panes carry their own
+   * inset margin, so the content area needs no bottom gutter. */
+  margin-bottom: 0;
   overflow: hidden;
 }
 

@@ -19,6 +19,10 @@ interface PaneProps {
   /** Don't show the focused/accent border — used when a tab has a single pane,
    *  where indicating "which pane is focused" is meaningless. */
   hideActiveBorder?: boolean;
+  /** Full-bleed: drop the card margin/radius/border/shadow so the pane sits
+   *  flush edge-to-edge under the tab bar (matches the mockup). Used for
+   *  single-pane tabs; split panes keep their card framing. */
+  flush?: boolean;
   children: React.ReactNode;
 }
 
@@ -35,6 +39,7 @@ const Pane: React.FC<PaneProps> = ({
   renameSignal,
   hideHeader,
   hideActiveBorder,
+  flush,
   children,
 }) => {
   const { config } = useConfig();
@@ -125,18 +130,22 @@ const Pane: React.FC<PaneProps> = ({
       style={{
         flex: 1,
         minWidth: 0,
-        height: 'calc(100% - 8px)',
+        height: flush ? '100%' : 'calc(100% - 8px)',
         display: 'flex',
         flexDirection: 'column',
-        borderRadius: 'var(--wks-radius-lg)',
+        borderRadius: flush ? 0 : 'var(--wks-radius-lg)',
         overflow: 'hidden',
-        margin: '4px 8px',
-        border: isActive && !hideActiveBorder
-          ? '1px solid var(--wks-border-active)'
-          : '1px solid var(--wks-glass-border)',
-        boxShadow: isActive && !hideActiveBorder
-          ? 'inset 0 0 0 1.5px var(--wks-glass-highlight), 0 0 0 1px var(--wks-accent-glow), 0 10px 34px var(--wks-glass-shadow)'
-          : 'inset 0 0 0 1.5px var(--wks-glass-highlight), 0 6px 22px var(--wks-glass-shadow)',
+        margin: flush ? 0 : '4px 8px',
+        border: flush
+          ? 'none'
+          : isActive && !hideActiveBorder
+            ? '1px solid var(--wks-border-active)'
+            : '1px solid var(--wks-glass-border)',
+        boxShadow: flush
+          ? 'none'
+          : isActive && !hideActiveBorder
+            ? 'inset 0 0 0 1.5px var(--wks-glass-highlight), 0 0 0 1px var(--wks-accent-glow), 0 10px 34px var(--wks-glass-shadow)'
+            : 'inset 0 0 0 1.5px var(--wks-glass-highlight), 0 6px 22px var(--wks-glass-shadow)',
         transition: 'none',
         flexShrink: 0,
         position: 'relative',

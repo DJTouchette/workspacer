@@ -323,6 +323,7 @@ function TilingLayout({
               renameSignal={single ? renameSignal : undefined}
               hideHeader={single}
               hideActiveBorder={single}
+              flush={single}
             >
               <ErrorBoundary label={pane.title || pane.type} resetKeys={[pane.id]}>
                 {renderPaneContent(pane, liveActive, callbacks)}

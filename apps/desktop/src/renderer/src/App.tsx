@@ -1108,8 +1108,8 @@ function App() {
       </ErrorBoundary>
 
       <div className="app-content" style={{
-        // Small gap between the tab bar and the top of the panes.
-        marginTop: `${navHeight + 8}px`,
+        // Panes sit flush under the tab bar's divider (mockup layout).
+        marginTop: `${navHeight}px`,
         marginLeft: `${contentLeft}px`,
       }}>
         {agents.length > 0 ? (
@@ -1278,7 +1278,7 @@ function App() {
       {/* Fleet Deck — cross-agent radar overlay. Sits OVER the still-mounted
           per-agent workspaces, so entering/leaving never remounts a pane. */}
       {viewLevel === 'fleet' && agents.some((a) => !a.global) && (
-        <FleetDeck top={navHeight + 8} left={contentLeft} />
+        <FleetDeck top={navHeight} left={contentLeft} />
       )}
 
       {/* Triage Inbox — top-level drawer, reachable from any agent. */}
