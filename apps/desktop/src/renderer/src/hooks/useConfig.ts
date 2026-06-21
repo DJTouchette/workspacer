@@ -18,6 +18,9 @@ export interface UIConfig {
   borderRadius: number;
   navBarHeight: number;
   paneHeaderHeight: number;
+  /** Show the composer's send (↑) button. When off, Enter still sends — useful
+   *  if the button gets in the way of input. Optional; absent = on. */
+  showComposerSend?: boolean;
 }
 
 export interface TerminalConfig {
@@ -179,6 +182,7 @@ export const DEFAULT_CONFIG: Config = {
     borderRadius: 8,
     navBarHeight: 34,
     paneHeaderHeight: 22,
+    showComposerSend: true,
   },
   terminal: {
     shell: '',

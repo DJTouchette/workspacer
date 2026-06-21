@@ -21,7 +21,7 @@ const SECTION_KEYWORDS: Record<string, string[]> = {
   terminal: ['terminal', 'shell', 'bash', 'pwsh', 'powershell', 'zsh', 'fish', 'console'],
   keybindings: ['keybinding', 'keyboard', 'shortcut', 'hotkey', 'vim', 'leader', 'bind'],
   notifications: ['notification', 'alert', 'sound', 'done', 'notify'],
-  session: ['session', 'resume', 'restore', 'auto'],
+  session: ['session', 'resume', 'restore', 'auto', 'composer', 'send', 'button', 'claude', 'view'],
   browser: ['browser', 'homepage', 'bookmark', 'hibernate', 'web'],
   editor: ['editor', 'file', 'open'],
   apps: ['app', 'url', 'launch', 'custom'],

@@ -1088,6 +1088,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
               onRemoveFile={removeAttachedFile}
               dimmed={!!(dockApproval || dockQuestions)}
               inputRef={inputRef}
+              showSendButton={config.ui.showComposerSend !== false}
             />
           </div>
       </div>

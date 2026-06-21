@@ -170,6 +170,7 @@ export interface AppConfig {
     borderRadius: number;
     navBarHeight: number;
     paneHeaderHeight: number;
+    showComposerSend?: boolean;
   };
   terminal: {
     shell: string;

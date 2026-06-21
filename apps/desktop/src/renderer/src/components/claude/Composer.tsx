@@ -17,6 +17,8 @@ export interface ComposerProps {
   /** Visually recede while a needs-you prompt is docked above. */
   dimmed?: boolean;
   inputRef?: React.RefObject<HTMLTextAreaElement>;
+  /** Show the send (↑) button. When false, Enter still sends. Defaults to true. */
+  showSendButton?: boolean;
 }
 
 /**
@@ -34,6 +36,7 @@ export const Composer: React.FC<ComposerProps> = ({
   onRemoveFile,
   dimmed,
   inputRef,
+  showSendButton = true,
 }) => {
   const fallbackRef = useRef<HTMLTextAreaElement>(null);
   const taRef = inputRef ?? fallbackRef;
@@ -124,29 +127,31 @@ export const Composer: React.FC<ComposerProps> = ({
               maxHeight: MAX_COMPOSER_HEIGHT,
             }}
           />
-          <button
-            onClick={onSend}
-            disabled={!canSend}
-            style={{
-              width: 28,
-              height: 28,
-              borderRadius: '50%',
-              border: 'none',
-              backgroundColor: canSend ? colors.accent : 'rgba(255,255,255,0.06)',
-              color: canSend ? '#0d0d10' : colors.mutedDim,
-              cursor: canSend ? 'pointer' : 'default',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: '0.85rem',
-              fontWeight: 700,
-              flexShrink: 0,
-              transition: 'background-color 0.15s, color 0.15s',
-            }}
-            aria-label="Send message"
-          >
-            {'↑'}
-          </button>
+          {showSendButton && (
+            <button
+              onClick={onSend}
+              disabled={!canSend}
+              style={{
+                width: 28,
+                height: 28,
+                borderRadius: '50%',
+                border: 'none',
+                backgroundColor: canSend ? colors.accent : 'rgba(255,255,255,0.06)',
+                color: canSend ? '#0d0d10' : colors.mutedDim,
+                cursor: canSend ? 'pointer' : 'default',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '0.85rem',
+                fontWeight: 700,
+                flexShrink: 0,
+                transition: 'background-color 0.15s, color 0.15s',
+              }}
+              aria-label="Send message"
+            >
+              {'↑'}
+            </button>
+          )}
         </div>
       </div>
     </div>

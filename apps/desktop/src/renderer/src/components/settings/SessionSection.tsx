@@ -40,6 +40,16 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
         Which view a Claude pane opens in. The rich GUI shows the conversation, work cards,
         and inspector; Terminal is the raw Claude Code TUI. Toggle any time from the pane's top bar.
       </div>
+
+      <CheckRow
+        label="Show the composer send button"
+        checked={config.ui.showComposerSend !== false}
+        onChange={(v) => save({ ui: { ...config.ui, showComposerSend: v } })}
+      />
+      <div style={{ fontSize: '0.55rem', color: 'var(--wks-text-disabled)' }}>
+        The ↑ button next to the message box. Off keeps the box clean — Enter still sends
+        (Shift+Enter for a newline).
+      </div>
     </Section>
   );
 };

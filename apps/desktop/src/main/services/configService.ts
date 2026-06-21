@@ -38,6 +38,7 @@ interface Config {
     borderRadius: number;
     navBarHeight: number;
     paneHeaderHeight: number;
+    showComposerSend?: boolean;
   };
   terminal: {
     shell: string;
@@ -189,6 +190,7 @@ function defaultConfig(): Config {
       borderRadius: 8,
       navBarHeight: 34,
       paneHeaderHeight: 22,
+      showComposerSend: true,
     },
     terminal: {
       shell: '',
