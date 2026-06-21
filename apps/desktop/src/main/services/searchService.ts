@@ -14,7 +14,28 @@
 import { execFile } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
-import { rgPath as bundledRgPath } from '@vscode/ripgrep';
+
+/**
+ * Resolve @vscode/ripgrep's prebuilt binary path.
+ *
+ * @vscode/ripgrep is ESM-only (and exports `rgPath` via a platform-specific
+ * optional dependency), so a static `import` of it breaks our CommonJS main
+ * build with ERR_REQUIRE_ESM. We replicate its tiny resolution logic here with
+ * CommonJS `require.resolve` instead: find the prebuilt `rg` inside the
+ * per-platform package (`@vscode/ripgrep-<platform>-<arch>`). Returns undefined
+ * if the optional dependency isn't installed for this platform, in which case we
+ * fall back to a PATH lookup below.
+ */
+function resolveBundledRgPath(): string | undefined {
+  const arch = process.env.npm_config_arch || process.arch;
+  const binaryName = process.platform === 'win32' ? 'rg.exe' : 'rg';
+  const platformPkg = `@vscode/ripgrep-${process.platform}-${arch}`;
+  try {
+    return require.resolve(`${platformPkg}/bin/${binaryName}`);
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Absolute path to the ripgrep binary we shell out to.
@@ -31,10 +52,13 @@ import { rgPath as bundledRgPath } from '@vscode/ripgrep';
  * works.
  */
 const RG_BIN: string = (() => {
-  const unpacked = bundledRgPath.replace(/\bapp\.asar\b/, 'app.asar.unpacked');
-  try {
-    if (fs.existsSync(unpacked)) return unpacked;
-  } catch { /* fall through */ }
+  const bundledRgPath = resolveBundledRgPath();
+  if (bundledRgPath) {
+    const unpacked = bundledRgPath.replace(/\bapp\.asar\b/, 'app.asar.unpacked');
+    try {
+      if (fs.existsSync(unpacked)) return unpacked;
+    } catch { /* fall through */ }
+  }
   return 'rg';
 })();
 
