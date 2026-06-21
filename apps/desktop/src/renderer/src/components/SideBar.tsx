@@ -207,7 +207,7 @@ const SideBar: React.FC<SideBarProps> = ({
             borderRadius: 11, cursor: 'pointer', padding: 0,
             background: isActive ? 'var(--wks-accent-bg)' : 'var(--wks-bg-base)',
             border: `1px solid ${isActive ? 'var(--wks-accent-glow)' : 'var(--wks-border-subtle)'}`,
-            boxShadow: working && !isGlobal ? '0 0 0 1px color-mix(in srgb, var(--wks-busy) 40%, transparent)' : 'none',
+            boxShadow: working && !isGlobal ? '0 0 0 1px color-mix(in srgb, var(--wks-busy) 24%, transparent)' : 'none',
             transition: 'border-color 0.12s, background 0.12s',
           }}
         >
@@ -223,13 +223,13 @@ const SideBar: React.FC<SideBarProps> = ({
               position: 'absolute', right: -3, bottom: -3, width: 14, height: 14,
               borderRadius: 99, background: 'var(--wks-bg-raised)', border: '2px solid var(--wks-bg-raised)',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              color, fontSize: '0.55rem', fontWeight: 800, lineHeight: 1, textShadow: `0 0 6px ${color}`,
+              color, fontSize: '0.55rem', fontWeight: 800, lineHeight: 1, textShadow: `0 0 3px ${color}`,
             }}>{glyph}</span>
           ) : (
             <span style={{
               position: 'absolute', right: -3, bottom: -3, width: 11, height: 11,
               borderRadius: 99, backgroundColor: color, border: '2px solid var(--wks-bg-raised)',
-              boxShadow: working ? `0 0 8px ${color}` : 'none',
+              boxShadow: working ? `0 0 4px ${color}` : 'none',
               animation: working ? 'wks-pulse 1.6s ease-in-out infinite' : 'none',
             }} />
           ))}
@@ -480,9 +480,10 @@ const SideBar: React.FC<SideBarProps> = ({
                   textAlign: 'left',
                   boxSizing: 'border-box',
                   transition: 'background-color 0.12s, box-shadow 0.2s',
-                  // Working agents get a soft "busy" halo (mockup), independent of selection.
+                  // Working agents get a faint "busy" ring (mockup), independent of
+                  // selection — subtle so inactive rows don't read as glowing.
                   boxShadow: working && !isGlobal
-                    ? '0 0 0 1px color-mix(in srgb, var(--wks-busy) 32%, transparent), 0 6px 20px -12px var(--wks-busy)'
+                    ? '0 0 0 1px color-mix(in srgb, var(--wks-busy) 20%, transparent)'
                     : 'none',
                   opacity: indent ? 0.9 : 1,
                 }}
@@ -524,14 +525,14 @@ const SideBar: React.FC<SideBarProps> = ({
                           border: '2px solid var(--wks-bg-raised)',
                           display: 'flex', alignItems: 'center', justifyContent: 'center',
                           color, fontSize: '0.5rem', fontWeight: 800, lineHeight: 1,
-                          textShadow: `0 0 6px ${color}`,
+                          textShadow: `0 0 3px ${color}`,
                         }}>{glyph}</span>
                       ) : (
                         <span style={{
                           position: 'absolute', right: -3, bottom: -3, width: 11, height: 11,
                           borderRadius: 99, backgroundColor: color,
                           border: '2px solid var(--wks-bg-raised)',
-                          boxShadow: working ? `0 0 8px ${color}` : 'none',
+                          boxShadow: working ? `0 0 4px ${color}` : 'none',
                           animation: working ? 'wks-pulse 1.6s ease-in-out infinite' : 'none',
                         }} />
                       ))}
