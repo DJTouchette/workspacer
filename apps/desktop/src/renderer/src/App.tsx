@@ -312,6 +312,13 @@ function App() {
   // no extra render churn; it just stops throwing the rich payload away.)
   const [statusBySession, setStatusBySession] = useState<Record<string, SessionAmbientState>>({});
   const [snapshotBySession, setSnapshotBySession] = useState<Record<string, ClaudeSessionSnapshot>>({});
+  // Daemon sessions that were already alive when Workspacer launched. claudemon
+  // outlives the app, so these are leftovers from a previous run. They must NOT
+  // be auto-adopted as orphan cards — the user reaches them only by explicitly
+  // resuming a saved session. Auto-adoption is for sessions that appear *after*
+  // launch (spawned via the MCP facade or by another agent). null until the
+  // first session list resolves, so adoption waits rather than guessing empty.
+  const preexistingSessionIdsRef = useRef<Set<string> | null>(null);
   useEffect(() => {
     let cancelled = false;
     window.electronAPI.getAllClaudeSessions().then((sessions: any[]) => {
@@ -322,9 +329,17 @@ function App() {
         map[s.sessionId] = s.ambientState;
         snaps[s.sessionId] = s;
       }
+      if (preexistingSessionIdsRef.current === null) {
+        preexistingSessionIdsRef.current = new Set(sessions.map((s) => s.sessionId));
+      }
       setStatusBySession(map);
       setSnapshotBySession(snaps);
-    }).catch(() => {});
+    }).catch(() => {
+      // No daemon / empty list: nothing pre-existed, so adoption can proceed.
+      if (!cancelled && preexistingSessionIdsRef.current === null) {
+        preexistingSessionIdsRef.current = new Set();
+      }
+    });
     const unsub = window.electronAPI.onClaudeSessionUpdate((sessionId: string, snapshot: any) => {
       // An ended session will never tick again, so drop its (full-transcript)
       // snapshot + status rather than leaving it pinned in memory forever.
@@ -377,12 +392,19 @@ function App() {
   // about to be loaded from the saved session file.
   const adoptedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    // Wait until the initial session-restore has completed (phase leaves 'loading').
-    if (sessionPhase === 'loading') return;
+    // Only adopt once a session is actually running (not while loading or while
+    // the picker is up — adopting behind the picker is what surfaced leftover
+    // daemon sessions as orphan cards on a fresh, un-resumed launch).
+    if (sessionPhase !== 'active') return;
+    // Wait until we know which sessions pre-existed this launch (see ref above).
+    const preexisting = preexistingSessionIdsRef.current;
+    if (preexisting === null) return;
     for (const [sessionId, snapshot] of Object.entries(snapshotBySession)) {
       // Skip ended sessions and already-adopted ones.
       if (snapshot.status === 'ended') continue;
       if (adoptedRef.current.has(sessionId)) continue;
+      // Skip leftovers from a previous run — reachable only via explicit resume.
+      if (preexisting.has(sessionId)) continue;
       // Skip if some agent already owns this session.
       if (agents.some((a) => a.sessionId === sessionId)) continue;
       // Mark as adopted before calling to avoid redundant calls from re-renders.
