@@ -55,7 +55,8 @@ export const Composer: React.FC<ComposerProps> = ({
   return (
     <div style={{
       borderTop: `1px solid ${colors.border}`,
-      padding: '8px 16px 10px 16px',
+      background: 'var(--wks-bg-raised)',
+      padding: '10px 16px 9px 16px',
       flexShrink: 0,
       opacity: dimmed ? 0.55 : 1,
       transition: 'opacity 0.15s',
@@ -152,6 +153,15 @@ export const Composer: React.FC<ComposerProps> = ({
               {'↑'}
             </button>
           )}
+        </div>
+        {/* Key hints (mockup) — subtle, and the discoverable cue for Enter-to-send
+            when the send button is hidden. */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 10, marginTop: 6, padding: '0 3px',
+          fontFamily: 'var(--wks-font-mono, monospace)', fontSize: '0.6rem', color: colors.mutedDim,
+        }}>
+          <span><span style={{ color: colors.muted }}>⏎</span> send</span>
+          <span><span style={{ color: colors.muted }}>⇧⏎</span> newline</span>
         </div>
       </div>
     </div>
