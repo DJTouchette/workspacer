@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from 'react';
 import { useConfig } from './useConfig';
-import { themes, darkTheme, applyTheme, applyCorners, cornersOf } from '../themes';
+import { themes, darkTheme, applyTheme, applyCorners, cornersOf, titleBarOverlayOf } from '../themes';
 import type { Theme, TerminalTheme } from '../themes';
 
 export function useTheme(): { theme: Theme; terminalTheme: TerminalTheme } {
@@ -15,6 +15,11 @@ export function useTheme(): { theme: Theme; terminalTheme: TerminalTheme } {
 
   useEffect(() => {
     applyTheme(theme);
+    // Repaint the Windows native caption buttons to match the themed title bar.
+    if (window.electronAPI?.platform === 'win32') {
+      const { color, symbolColor } = titleBarOverlayOf(theme);
+      window.electronAPI.setTitleBarOverlay(color, symbolColor);
+    }
   }, [theme]);
 
   useEffect(() => {

@@ -45,6 +45,11 @@ function resolveBundledRgPath(): string | undefined {
  * find one, so bare `execFile('rg')` fails with ENOENT (the "search does
  * nothing" bug this replaces).
  *
+ * @vscode/ripgrep is now ESM-only and can't be `require()`d from our CommonJS
+ * main bundle, so we resolve the platform binary ourselves the same way the
+ * module does (its only job): require.resolve the platform-specific subpackage
+ * (@vscode/ripgrep-<platform>-<arch>), which lives in optionalDependencies.
+ *
  * In a packaged build the dependency lives inside app.asar, which can't be
  * executed — electron-builder unpacks it to app.asar.unpacked (see
  * electron-builder.yml asarUnpack), so rewrite the path accordingly. If the

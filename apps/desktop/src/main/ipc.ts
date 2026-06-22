@@ -68,6 +68,20 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     agentNotifier.setActiveSession(sessionId);
   });
 
+  // The Windows native caption buttons (min/max/close) live in a titleBarOverlay
+  // whose color is fixed at window-creation time. The renderer re-paints it to
+  // match the active theme so the buttons blend into the title bar. No-op off
+  // Windows, where setTitleBarOverlay is unavailable.
+  ipcMain.on(IPC.WINDOW_SET_OVERLAY, (_event, opts: { color: string; symbolColor: string }) => {
+    if (process.platform !== 'win32') return;
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    try {
+      mainWindow.setTitleBarOverlay({ color: opts.color, symbolColor: opts.symbolColor });
+    } catch (err: any) {
+      console.error('[IPC] window:setOverlay failed:', err?.message);
+    }
+  });
+
   // ── Generic terminal (non-Claude shells) — routed through claudemon ──
   ipcMain.handle(IPC.TERMINAL_CREATE, async (_event, shell: string, cwd?: string, cols?: number, rows?: number) => {
     try {

@@ -82,6 +82,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // (the Windows titleBarOverlay caption buttons live in the top-right corner).
   platform: process.platform,
 
+  // Re-color the Windows native caption buttons to match the active theme.
+  // No-op off Windows (the main handler guards too).
+  setTitleBarOverlay: (color: string, symbolColor: string): void =>
+    ipcRenderer.send(IPC.WINDOW_SET_OVERLAY, { color, symbolColor }),
+
   // Terminal — control messages stay on IPC, I/O goes through MessagePort
   createTerminal: (shell: string, cwd?: string, cols?: number, rows?: number): Promise<string> =>
     ipcRenderer.invoke(IPC.TERMINAL_CREATE, shell, cwd, cols, rows),

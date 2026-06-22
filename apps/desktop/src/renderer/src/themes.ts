@@ -1407,6 +1407,23 @@ export function cssVarsOf(theme: Theme): Record<string, string> {
   };
 }
 
+/** Colors for the Windows native caption buttons (titleBarOverlay). Electron
+ *  needs an opaque color, but the navbar is translucent "glass-strong" over the
+ *  base — so we flatten that glass onto the base to get the perceived navbar
+ *  color, and use the theme's secondary text for the min/max/close glyphs. This
+ *  is what lets the native buttons blend into the themed title bar. */
+export function titleBarOverlayOf(theme: Theme): { color: string; symbolColor: string } {
+  const alpha = isLightTheme(theme) ? 0.86 : 0.78; // mirrors --wks-glass-strong
+  const fg = parseRgb(theme.bgElevated);
+  const bg = parseRgb(theme.bgBase);
+  if (fg && bg) {
+    const blend = fg.map((c, i) => Math.round(c * alpha + bg[i] * (1 - alpha)));
+    const color = '#' + blend.map((c) => Math.max(0, Math.min(255, c)).toString(16).padStart(2, '0')).join('');
+    return { color, symbolColor: toHex(theme.textSecondary) };
+  }
+  return { color: toHex(theme.bgElevated), symbolColor: toHex(theme.textSecondary) };
+}
+
 /** Perceived lightness of the theme, from its base background. Drives the
  *  guest page's `color-scheme` so native controls/scrollbars match. */
 export function isLightTheme(theme: Theme): boolean {

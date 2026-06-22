@@ -113,6 +113,9 @@ export function createWebBackend(token: string): ElectronAPI {
   const api: ElectronAPI = {
     platform: 'web' as unknown as NodeJS.Platform,
 
+    // No native window chrome in the browser mirror.
+    setTitleBarOverlay: () => {},
+
     // ── Shell terminals ──────────────────────────────────────────────────
     createTerminal: (shell, cwd, cols, rows) =>
       client.call<{ sessionId: string }>('terminals.create', { shell, cwd, cols, rows }).then((r) => r.sessionId),

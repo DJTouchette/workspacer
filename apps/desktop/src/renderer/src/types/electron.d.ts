@@ -33,6 +33,9 @@ export interface ElectronAPI {
   // Host OS — 'win32' | 'darwin' | 'linux' | …
   platform: NodeJS.Platform;
 
+  // Re-color the Windows native caption buttons to match the active theme.
+  setTitleBarOverlay: (color: string, symbolColor: string) => void;
+
   // Terminal (non-Claude shells) — control on IPC, I/O on MessagePort
   createTerminal: (shell: string, cwd?: string, cols?: number, rows?: number, profileId?: string, resumeSessionId?: string) => Promise<string>;
   writeTerminal: (id: string, data: string) => void;

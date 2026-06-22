@@ -109,6 +109,9 @@ export const IPC = {
 
   // ── App lifecycle ──
   APP_BEFORE_QUIT: 'app:before-quit', // push (main → renderer)
+
+  // ── Window chrome (Windows native caption-button overlay) ──
+  WINDOW_SET_OVERLAY: 'window:setOverlay', // send (renderer → main)
 } as const;
 
 export type IpcChannelKey = keyof typeof IPC;

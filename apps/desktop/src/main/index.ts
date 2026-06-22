@@ -182,8 +182,10 @@ function createWindow(): void {
     transparent: transparentShell,
     frame: false,
     titleBarStyle: 'hidden',
+    // Initial colors approximate the default dark theme's title bar; the
+    // renderer repaints this to the active theme on mount (window:setOverlay).
     titleBarOverlay: process.platform === 'win32' ? {
-      color: '#141418',
+      color: '#1f1e22',
       symbolColor: '#c8c8d2',
       height: 28,
     } : undefined,
