@@ -51,7 +51,7 @@ const ChordHint: React.FC<ChordHintProps> = ({ path, prefix, shortcuts, showOpti
       }}>
         <span style={{
           padding: '1px 6px', borderRadius: '3px',
-          backgroundColor: 'var(--wks-accent)', color: 'var(--wks-text-on-accent)',
+          backgroundColor: 'var(--wks-accent)', color: 'var(--wks-text-on-accent, #fff)',
         }}>
           {formatBinding(prefix)}
         </span>
