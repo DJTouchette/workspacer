@@ -27,6 +27,9 @@ export const DEFAULT_SHORTCUTS: Record<string, string> = {
   'toggle-inspector': 'ctrl+shift+e',
   'library-picker': 'ctrl+shift+l',
   'open-review': 'ctrl+shift+g',
+  // ── Digit-range bindings: the modifier + any of 1–9 ──
+  'jump-tab': 'ctrl+1-9',
+  'move-tab': 'ctrl+shift+1-9',
   // ── Prefix chords (Ctrl+Space then …), grouped into submenus ──
   // New ▸
   'new-terminal': 'prefix n t',

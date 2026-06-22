@@ -1,48 +1,9 @@
 import React, { useState, useCallback, useRef } from 'react';
 import { Config, DEFAULT_CONFIG } from '../../hooks/useConfig';
-import { formatBinding } from '../../lib/shortcuts';
+import { formatBinding, ACTION_SECTIONS, DIGIT_RANGE_ACTIONS, DIGIT_RANGE_TOKEN } from '../../lib/shortcuts';
 import { Section, Row, ModeButton } from './primitives';
 
 // ── Shortcut Editor ──
-
-const SHORTCUT_LABELS: Record<string, string> = {
-  // Agents
-  'prev-agent': 'Previous Agent',
-  'next-agent': 'Next Agent',
-  'next-attention': 'Jump to Agent Needing You',
-  'spawn-agent': 'Spawn Agent',
-  // Navigation
-  'prev-tab': 'Previous Tab',
-  'next-tab': 'Next Tab',
-  'move-tab-left': 'Move Tab Left',
-  'move-tab-right': 'Move Tab Right',
-  'cycle-view': 'Cycle View Mode',
-  'nav-left': 'Focus Pane Left',
-  'nav-right': 'Focus Pane Right',
-  'nav-up': 'Focus Pane Up',
-  'nav-down': 'Focus Pane Down',
-  // Tabs & panes
-  'new-terminal': 'New Terminal',
-  'new-browser': 'New Browser',
-  'new-claude': 'New Claude',
-  'split': 'Split Pane',
-  'quick-split': 'Quick Split (clone)',
-  'close-pane': 'Close Pane',
-  'open-file': 'Open File (editor)',
-  'open-review': 'Review Changes',
-  'rename-tab': 'Rename Tab',
-  // Panels & tools
-  'toggle-sidebar': 'Toggle Sidebar',
-  'toggle-terminal': 'Toggle Terminal Panel',
-  'toggle-inbox': 'Toggle Inbox',
-  'toggle-fleet': 'Toggle Fleet Deck',
-  'toggle-inspector': 'Toggle Inspector (Claude pane)',
-  'library-picker': 'Library Picker',
-  'command-palette': 'Command Palette',
-  'save-session': 'Save Session',
-  'settings': 'Settings',
-  'toggle-help': 'Toggle Help',
-};
 
 /** Build a combo string from a keyboard event (e.g. "ctrl+shift+p"). */
 function comboFromEvent(e: React.KeyboardEvent): string {
@@ -71,6 +32,18 @@ const ShortcutEditor: React.FC<{ config: Config; save: (partial: Partial<Config>
     if (['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) return;
 
     const combo = comboFromEvent(e);
+
+    // Digit-range actions (jump-tab/move-tab) bind to a modifier + any of 1–9.
+    // Capture the modifiers off the pressed digit, then normalize to "…+1-9".
+    if (DIGIT_RANGE_ACTIONS.has(action)) {
+      const m = /(\d)$/.exec(combo);
+      if (!m) return; // wait until a digit is pressed
+      const value = combo.slice(0, m.index) + DIGIT_RANGE_TOKEN;
+      save({ keybindings: { ...config.keybindings, shortcuts: { ...currentShortcuts, [action]: value } } });
+      setCapturing(null);
+      setChordPending(false);
+      return;
+    }
 
     // First press matches the prefix → arm chord capture (don't save yet).
     if (!chordPending && combo === prefix.toLowerCase().trim()) {
@@ -102,11 +75,19 @@ const ShortcutEditor: React.FC<{ config: Config; save: (partial: Partial<Config>
         Press a key combo for a direct binding, or press the prefix first then a key for a chord.
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-        {Object.entries(SHORTCUT_LABELS).map(([action, label]) => {
+        {ACTION_SECTIONS.flatMap((section) => [
+          <div key={`hdr-${section.section}`} style={{
+            fontSize: '0.58rem', fontWeight: 600, color: 'var(--wks-text-faint)',
+            textTransform: 'uppercase', letterSpacing: '0.04em', padding: '8px 0 2px',
+          }}>
+            {section.section}
+          </div>,
+          ...section.items.map(({ action, label }) => {
           const isCapturing = capturing === action;
           const combo = currentShortcuts[action] ?? '';
           const display = isCapturing
-            ? (chordPending ? `${formatBinding(prefix)} then…` : 'Press keys…')
+            ? (DIGIT_RANGE_ACTIONS.has(action) ? 'Press modifier + digit…'
+              : chordPending ? `${formatBinding(prefix)} then…` : 'Press keys…')
             : (combo ? formatBinding(combo, prefix) : '—');
           return (
             <div key={action} style={{
@@ -146,7 +127,8 @@ const ShortcutEditor: React.FC<{ config: Config; save: (partial: Partial<Config>
               </div>
             </div>
           );
-        })}
+          }),
+        ])}
       </div>
     </div>
   );

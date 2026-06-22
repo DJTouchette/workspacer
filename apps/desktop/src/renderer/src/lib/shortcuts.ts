@@ -42,42 +42,102 @@ export function formatBinding(combo: string, prefix?: string): string {
  * with defaults) shortcuts map. Returns undefined when the action has no
  * binding, so callers can omit the badge entirely.
  */
-/** Short, human labels for each bindable action. Shared by the help overlay,
- *  the settings editor, and the chord hint. */
-export const ACTION_LABELS: Record<string, string> = {
-  'prev-agent': 'Previous agent',
-  'next-agent': 'Next agent',
-  'next-attention': 'Agent needing you',
-  'spawn-agent': 'Spawn agent',
-  'prev-tab': 'Previous tab',
-  'next-tab': 'Next tab',
-  'move-tab-left': 'Move tab left',
-  'move-tab-right': 'Move tab right',
-  'cycle-view': 'Cycle view mode',
-  'nav-left': 'Focus pane left',
-  'nav-right': 'Focus pane right',
-  'nav-up': 'Focus pane up',
-  'nav-down': 'Focus pane down',
-  'new-terminal': 'New terminal',
-  'new-browser': 'New browser',
-  'new-claude': 'New Claude',
-  'split': 'Split pane',
-  'quick-split': 'Quick split',
-  'close-pane': 'Close pane',
-  'open-file': 'Open file',
-  'rename-tab': 'Rename tab',
-  'toggle-sidebar': 'Toggle sidebar',
-  'toggle-terminal': 'Toggle terminal',
-  'toggle-inbox': 'Toggle inbox',
-  'toggle-fleet': 'Toggle fleet deck',
-  'toggle-inspector': 'Toggle inspector',
-  'library-picker': 'Library picker',
-  'open-review': 'Review changes',
-  'command-palette': 'Command palette',
-  'save-session': 'Save session',
-  'settings': 'Settings',
-  'toggle-help': 'Toggle help',
-};
+/** Metadata for one bindable action. The single source of truth: the chord
+ *  hint, help overlay, and settings editor all derive their labels, grouping,
+ *  and ordering from this — add an action here and it shows up everywhere. */
+export interface ActionMeta {
+  /** Action id, matching the keys of the shortcuts config map. */
+  action: string;
+  /** Short, human label. */
+  label: string;
+  /** Grouping bucket for the help overlay and settings editor. */
+  section: string;
+  /** Bound to a digit RANGE (1-9) rather than a single key — e.g. Ctrl+1-9.
+   *  These live outside the chord tree and direct-matcher map (see below). */
+  digitRange?: boolean;
+}
+
+/** The canonical action list, in display order, grouped by section. */
+export const ACTION_REGISTRY: ActionMeta[] = [
+  // Agents
+  { action: 'prev-agent', label: 'Previous agent', section: 'Agents' },
+  { action: 'next-agent', label: 'Next agent', section: 'Agents' },
+  { action: 'next-attention', label: 'Agent needing you', section: 'Agents' },
+  { action: 'spawn-agent', label: 'Spawn agent', section: 'Agents' },
+  // Navigation
+  { action: 'jump-tab', label: 'Jump to tab', section: 'Navigation', digitRange: true },
+  { action: 'move-tab', label: 'Move tab to slot', section: 'Navigation', digitRange: true },
+  { action: 'prev-tab', label: 'Previous tab', section: 'Navigation' },
+  { action: 'next-tab', label: 'Next tab', section: 'Navigation' },
+  { action: 'move-tab-left', label: 'Move tab left', section: 'Navigation' },
+  { action: 'move-tab-right', label: 'Move tab right', section: 'Navigation' },
+  { action: 'cycle-view', label: 'Cycle view mode', section: 'Navigation' },
+  { action: 'nav-left', label: 'Focus pane left', section: 'Navigation' },
+  { action: 'nav-right', label: 'Focus pane right', section: 'Navigation' },
+  { action: 'nav-up', label: 'Focus pane up', section: 'Navigation' },
+  { action: 'nav-down', label: 'Focus pane down', section: 'Navigation' },
+  // Tabs & Panes
+  { action: 'new-terminal', label: 'New terminal', section: 'Tabs & Panes' },
+  { action: 'new-browser', label: 'New browser', section: 'Tabs & Panes' },
+  { action: 'new-claude', label: 'New Claude', section: 'Tabs & Panes' },
+  { action: 'split', label: 'Split pane', section: 'Tabs & Panes' },
+  { action: 'quick-split', label: 'Quick split', section: 'Tabs & Panes' },
+  { action: 'close-pane', label: 'Close pane', section: 'Tabs & Panes' },
+  { action: 'open-file', label: 'Open file', section: 'Tabs & Panes' },
+  { action: 'open-review', label: 'Review changes', section: 'Tabs & Panes' },
+  { action: 'rename-tab', label: 'Rename tab', section: 'Tabs & Panes' },
+  // Panels & Overlays
+  { action: 'toggle-sidebar', label: 'Toggle sidebar', section: 'Panels & Overlays' },
+  { action: 'toggle-terminal', label: 'Toggle terminal', section: 'Panels & Overlays' },
+  { action: 'toggle-inbox', label: 'Toggle inbox', section: 'Panels & Overlays' },
+  { action: 'toggle-fleet', label: 'Toggle fleet deck', section: 'Panels & Overlays' },
+  { action: 'toggle-inspector', label: 'Toggle inspector', section: 'Panels & Overlays' },
+  { action: 'library-picker', label: 'Library picker', section: 'Panels & Overlays' },
+  // Tools
+  { action: 'command-palette', label: 'Command palette', section: 'Tools' },
+  { action: 'save-session', label: 'Save session', section: 'Tools' },
+  { action: 'settings', label: 'Settings', section: 'Tools' },
+  { action: 'toggle-help', label: 'Toggle help', section: 'Tools' },
+];
+
+/** action id → label, derived from the registry. */
+export const ACTION_LABELS: Record<string, string> =
+  Object.fromEntries(ACTION_REGISTRY.map((a) => [a.action, a.label]));
+
+/** The registry grouped into sections, preserving registry order. Drives the
+ *  help overlay and the settings editor. */
+export const ACTION_SECTIONS: { section: string; items: ActionMeta[] }[] = (() => {
+  const order: string[] = [];
+  const bySection = new Map<string, ActionMeta[]>();
+  for (const a of ACTION_REGISTRY) {
+    if (!bySection.has(a.section)) { bySection.set(a.section, []); order.push(a.section); }
+    bySection.get(a.section)!.push(a);
+  }
+  return order.map((section) => ({ section, items: bySection.get(section)! }));
+})();
+
+/** The token marking a digit-range binding ("ctrl+1-9" → Ctrl plus any of 1–9). */
+export const DIGIT_RANGE_TOKEN = '1-9';
+
+/** Action ids bound to a digit range rather than a single key. */
+export const DIGIT_RANGE_ACTIONS = new Set(
+  ACTION_REGISTRY.filter((a) => a.digitRange).map((a) => a.action),
+);
+
+export interface DigitRangeCombo { ctrl: boolean; alt: boolean; shift: boolean; meta: boolean; }
+
+/** Parse "ctrl+shift+1-9" into its modifier flags; null if it isn't a
+ *  digit-range combo. The pressed digit (1–9) is supplied at match time. */
+export function parseDigitRangeCombo(combo: string | undefined): DigitRangeCombo | null {
+  const parts = (combo ?? '').toLowerCase().trim().split('+');
+  if (parts[parts.length - 1] !== DIGIT_RANGE_TOKEN) return null;
+  return {
+    ctrl: parts.includes('ctrl'),
+    alt: parts.includes('alt'),
+    shift: parts.includes('shift'),
+    meta: parts.includes('meta'),
+  };
+}
 
 /** Labels for chord group nodes, keyed by the space-joined step path (e.g. 't'
  *  → 'Tab'). Falls back to the raw key when a group has no label. */

@@ -1,7 +1,7 @@
 import { useEffect, useCallback, useRef } from 'react';
 import { PaneType, TabConfig } from '../types/pane';
 import { tilingColumns } from '../lib/layoutUtils';
-import { buildChordTree, chordNodeAt } from '../lib/shortcuts';
+import { buildChordTree, chordNodeAt, parseDigitRangeCombo, DigitRangeCombo } from '../lib/shortcuts';
 
 const CHORD_TIMEOUT = 1500;
 
@@ -31,10 +31,21 @@ function buildDirectMatchers(shortcuts: Record<string, string>): Record<string, 
   const out: Record<string, (e: KeyboardEvent) => boolean> = {};
   for (const [action, combo] of Object.entries(shortcuts)) {
     const trimmed = (combo ?? '').trim();
-    if (!trimmed || /^prefix\s/i.test(trimmed)) continue;
+    // Prefix chords go through the chord tree; digit-range bindings (ctrl+1-9)
+    // are matched separately since the trailing "1-9" isn't a single key.
+    if (!trimmed || /^prefix\s/i.test(trimmed) || parseDigitRangeCombo(trimmed)) continue;
     out[action] = comboMatcher(trimmed);
   }
   return out;
+}
+
+/** Match a digit-range spec against a keydown; returns the pressed digit (1–9)
+ *  or null. Uses e.code so Shift-modified digits ("!") still resolve to 1. */
+function matchDigitRange(spec: DigitRangeCombo | null, e: KeyboardEvent): number | null {
+  if (!spec) return null;
+  if (e.ctrlKey !== spec.ctrl || e.altKey !== spec.alt || e.shiftKey !== spec.shift || e.metaKey !== spec.meta) return null;
+  const m = e.code?.match(/^Digit([1-9])$/);
+  return m ? parseInt(m[1], 10) : null;
 }
 
 interface UseKeyboardNavOptions {
@@ -114,6 +125,16 @@ export function useKeyboardNav({
   directRef.current = buildDirectMatchers(shortcuts);
   const treeRef = useRef(buildChordTree(shortcuts));
   treeRef.current = buildChordTree(shortcuts);
+  // Parsed digit-range bindings (e.g. ctrl+1-9). Reassigned each render like the
+  // matchers above so the handler always sees the current config.
+  const numberKeysRef = useRef({
+    jump: parseDigitRangeCombo(shortcuts['jump-tab']),
+    move: parseDigitRangeCombo(shortcuts['move-tab']),
+  });
+  numberKeysRef.current = {
+    jump: parseDigitRangeCombo(shortcuts['jump-tab']),
+    move: parseDigitRangeCombo(shortcuts['move-tab']),
+  };
   // path === null → idle; [] → prefix armed (root); ['t'] → inside Tab submenu.
   const chordRef = useRef<{ path: string[] | null; timeoutId: ReturnType<typeof setTimeout> | null }>({
     path: null, timeoutId: null,
@@ -285,19 +306,14 @@ export function useKeyboardNav({
         }
       }
 
-      // 4. Ctrl+1-9 : jump to tab (universal, terminal-safe; kept hardcoded).
-      if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey) {
-        const num = parseInt(e.key, 10);
-        if (num >= 1 && num <= 9) { e.preventDefault(); e.stopPropagation(); goToTab(num - 1); return; }
-      }
-      // 5. Ctrl+Shift+1-9 : move tab to position.
-      if (e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey) {
-        const digitMatch = e.code?.match(/^Digit(\d)$/);
-        if (digitMatch) {
-          const num = parseInt(digitMatch[1], 10);
-          if (num >= 1 && num <= 9) { e.preventDefault(); e.stopPropagation(); moveTab(activeTabId, num - 1); return; }
-        }
-      }
+      // 4. Digit-range bindings (jump to tab / move tab to slot). Config-driven
+      //    via shortcuts['jump-tab'] / ['move-tab'] (defaults Ctrl+1-9 /
+      //    Ctrl+Shift+1-9). Exact-modifier match, so the two never collide.
+      const { jump, move } = numberKeysRef.current;
+      const jumpN = matchDigitRange(jump, e);
+      if (jumpN !== null) { e.preventDefault(); e.stopPropagation(); goToTab(jumpN - 1); return; }
+      const moveN = matchDigitRange(move, e);
+      if (moveN !== null) { e.preventDefault(); e.stopPropagation(); moveTab(activeTabId, moveN - 1); return; }
     };
 
     window.addEventListener('keydown', handler, true);
