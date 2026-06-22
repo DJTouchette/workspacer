@@ -158,7 +158,15 @@ pub async fn get_status(Query(q): Query<StatusQuery>) -> impl IntoResponse {
         return (StatusCode::BAD_REQUEST, "cwd is not inside a git work tree").into_response();
     };
 
-    let files = match run_git(&root, &["status", "--porcelain", "-z"]).await {
+    // `--untracked-files=all` lists every untracked file individually. Without
+    // it, git collapses a fully-untracked directory into one `dir/` entry, and
+    // the review pane would then ask for an untracked diff of a directory —
+    // `git diff --no-index /dev/null dir/` makes git look for `dir/null` (the
+    // basename of `/dev/null` inside the dir) and fail. Expanding to files keeps
+    // every entry a real file, matching how editors show untracked content.
+    let files = match run_git(&root, &["status", "--porcelain", "-z", "--untracked-files=all"])
+        .await
+    {
         Ok((true, stdout, _)) => parse_porcelain(&stdout),
         Ok((false, _, stderr)) => {
             tracing::warn!(stderr, "git status failed");
@@ -192,6 +200,12 @@ pub async fn get_diff(Query(q): Query<DiffQuery>) -> impl IntoResponse {
         let Some(path) = q.path.as_deref() else {
             return (StatusCode::BAD_REQUEST, "untracked diff requires a path").into_response();
         };
+        // A directory has no single-file diff: `git diff --no-index /dev/null dir/`
+        // makes git hunt for `dir/null` and fail. Status uses `--untracked-files=all`
+        // so this shouldn't happen, but guard rather than emit a confusing error.
+        if path.ends_with('/') || path.ends_with('\\') {
+            return (StatusCode::BAD_REQUEST, "untracked diff path is a directory").into_response();
+        }
         // `--no-index` exits 1 when the files differ — the expected case here —
         // so success is "produced output", not "exit 0". git special-cases the
         // literal "/dev/null" on every platform, including Windows.
