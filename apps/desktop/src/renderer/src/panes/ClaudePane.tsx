@@ -76,6 +76,9 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const termInitRef = useRef(false);
+  // Guards the one-shot session spawn so the visible-fit retry loop below can't
+  // start it twice (sessionId only lands async, after the spawn resolves).
+  const sessionStartedRef = useRef(false);
   const conversationEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const contentAreaRef = useRef<HTMLDivElement>(null);
@@ -98,6 +101,11 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
 
   const { terminalTheme } = useTheme();
   const termCfg = config.terminal;
+
+  // Mirror viewMode into a ref so the run-once xterm-init effect can read the
+  // current view without re-running (and re-spawning) on every toggle.
+  const viewModeRef = useRef(viewMode);
+  viewModeRef.current = viewMode;
 
   // Inject keyframes
   useEffect(() => { ensureKeyframes(); }, []);
@@ -219,8 +227,31 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
 
     webFontsAddon.loadFonts().then(() => {
       term.open(container);
-      try { fitAddon.fit(); } catch {}
-      startSession(term.cols, term.rows);
+
+      // Spawn only once the terminal is laid out at its real, visible size.
+      // claude --resume (and an attach replay) re-render the WHOLE transcript
+      // wrapped to the PTY width the daemon is told at spawn — fitting a hidden
+      // or not-yet-laid-out 0×0 container bakes that replay in at the wrong
+      // width, producing a garbled screen that no later refit can reflow.
+      // While the terminal is the visible surface we wait for a real fit; if
+      // it's hidden by design (GUI default view) its glyphs aren't what the
+      // user sees, so we spawn promptly and let a later refit+resize repaint.
+      let attempts = 0;
+      const MAX_ATTEMPTS = 15; // ~1.5s of 100ms retries before giving up
+      const startWhenSized = () => {
+        if (sessionStartedRef.current || !termInitRef.current) return;
+        const visible = isTermVisible(container);
+        if (visible) { try { fitAddon.fit(); } catch {} }
+        const guiHidden = viewModeRef.current === 'gui' && !visible;
+        if (visible || guiHidden || attempts >= MAX_ATTEMPTS) {
+          sessionStartedRef.current = true;
+          startSession(term.cols, term.rows);
+          return;
+        }
+        attempts++;
+        setTimeout(startWhenSized, 100);
+      };
+      startWhenSized();
     });
 
     term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
@@ -287,6 +318,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
       terminalRef.current = null;
       fitAddonRef.current = null;
       termInitRef.current = false;
+      sessionStartedRef.current = false;
     };
   }, [attachToTerminal, write, resize]);
 
