@@ -1,6 +1,10 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import type { Config } from '../hooks/useConfig';
-import { DEFAULT_CONFIG } from '../hooks/useConfig';
+// Import DEFAULT_CONFIG from the leaf module (NOT ../hooks/useConfig) so this
+// context isn't in an import cycle with the useConfig hook — the cycle could
+// duplicate this module under Vite HMR and break lazy-loaded panes with
+// "useConfig must be used inside <ConfigProvider>".
+import { DEFAULT_CONFIG } from '../hooks/configDefaults';
 
 // ---------------------------------------------------------------------------
 // Context shape — mirrors the useConfig return value exactly.

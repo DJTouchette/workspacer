@@ -124,106 +124,12 @@ export interface Config {
 }
 
 /**
- * Default keybindings, prefix-forward. Two kinds of value:
- *  - direct combos ('ctrl+shift+p') — only terminal-safe keys live here, so a
- *    focused terminal/Claude TUI keeps Ctrl+C/D/L/S/W/etc. for itself.
- *  - prefix chords ('prefix n') — press the workspace prefix (Ctrl+Space),
- *    then the key. All structural tab/pane ops live behind the prefix.
+ * Default keybindings + config live in ./configDefaults (a dependency leaf) so
+ * this module stays out of an import cycle with ConfigContext. Re-exported here
+ * so existing `import { DEFAULT_CONFIG } from '../hooks/useConfig'` callers keep
+ * working unchanged.
  */
-export const DEFAULT_SHORTCUTS: Record<string, string> = {
-  // ── Direct, terminal-safe ──
-  'command-palette': 'ctrl+shift+p',
-  'next-agent': 'ctrl+tab',
-  'prev-agent': 'ctrl+shift+tab',
-  'next-attention': 'ctrl+shift+space',
-  'spawn-agent': 'ctrl+shift+n',
-  'settings': 'ctrl+,',
-  'save-session': 'ctrl+shift+s',
-  'open-file': 'ctrl+shift+o',
-  'toggle-help': 'f1',
-  'toggle-terminal': 'ctrl+`',
-  'toggle-sidebar': 'ctrl+shift+b',
-  'toggle-inbox': 'ctrl+shift+i',
-  'toggle-fleet': 'ctrl+shift+f',
-  'toggle-inspector': 'ctrl+shift+e',
-  'library-picker': 'ctrl+shift+l',
-  'open-review': 'ctrl+shift+g',
-  // ── Prefix chords (Ctrl+Space then …), grouped into submenus ──
-  // New ▸
-  'new-terminal': 'prefix n t',
-  'new-claude': 'prefix n c',
-  'new-browser': 'prefix n b',
-  // Tab ▸
-  'prev-tab': 'prefix t [',
-  'next-tab': 'prefix t ]',
-  'move-tab-left': 'prefix t ,',
-  'move-tab-right': 'prefix t .',
-  'rename-tab': 'prefix t r',
-  'close-pane': 'prefix t w',
-  // Pane ▸
-  'split': 'prefix p s',
-  'quick-split': 'prefix p c',
-  'nav-left': 'prefix p h',
-  'nav-down': 'prefix p j',
-  'nav-up': 'prefix p k',
-  'nav-right': 'prefix p l',
-  // Top-level leaf
-  'cycle-view': 'prefix v',
-};
-
-export const DEFAULT_CONFIG: Config = {
-  ui: {
-    animations: false,
-    theme: 'dark',
-    cornerStyle: '',
-    borderColor: '',
-    fontFamily: 'Inter, system-ui, sans-serif',
-    fontSize: 14,
-    borderRadius: 8,
-    navBarHeight: 34,
-    paneHeaderHeight: 22,
-    showComposerSend: true,
-  },
-  terminal: {
-    shell: '',
-    shells: [],
-    fontFamily: '"JetBrainsMono Nerd Font Mono", "JetBrainsMono NF", "CaskaydiaMono Nerd Font Mono", "CaskaydiaMono NF", monospace',
-    fontSize: 14,
-    scrollback: 1500,
-    cursorBlink: true,
-    cursorStyle: 'block',
-  },
-  panes: {
-    defaultWidth: 800,
-    gap: 16,
-    peek: 80,
-    insertPosition: 'after',
-    tabPosition: 'top',
-    viewMode: 'tabs',
-    viewLevel: 'piloting',
-    default: [],
-  },
-  browser: {
-    homepage: 'https://google.com',
-    bookmarks: [],
-    hibernateAfter: 300,
-  },
-  keybindings: {
-    prefix: 'ctrl+space',
-    chordHints: true,
-    shortcuts: { ...DEFAULT_SHORTCUTS },
-  },
-  notifications: {
-    enabled: true,
-    notifyDone: true,
-    onlyWhenUnwatched: true,
-    sound: false,
-  },
-  scripts: {},
-  apps: [],
-  session: { autoResume: false },
-  claude: { defaultView: 'terminal' },
-};
+export { DEFAULT_SHORTCUTS, DEFAULT_CONFIG } from './configDefaults';
 
 /**
  * Access the application config.
