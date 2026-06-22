@@ -471,105 +471,88 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive }) => {
     <div
       style={{
         display: 'flex',
+        flexDirection: 'column',
         height: '100%',
         backgroundColor: colors.bg,
         color: colors.text,
         fontFamily: 'inherit',
+        padding: '14px 18px',
+        boxSizing: 'border-box',
+        gap: 12,
       }}
     >
-      {/* Left: file tree */}
-      <div
-        style={{
-          width: 290,
-          flexShrink: 0,
-          borderRight: `1px solid ${colors.borderSubtle}`,
-          background: 'var(--wks-bg-surface, transparent)',
-          display: 'flex',
-          flexDirection: 'column',
-          overflow: 'hidden',
-        }}
-      >
-        {/* Branch + actions */}
+      {/* Header — title + branch / change summary + actions (mockup "Reviewing changes"). */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexShrink: 0 }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: '0.95rem', fontWeight: 700, color: colors.textBright }}>Reviewing changes</div>
+          <div style={{ fontFamily: 'var(--wks-font-mono, monospace)', fontSize: '0.7rem', color: colors.muted, marginTop: 3, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', minWidth: 0 }}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, minWidth: 0 }} title={cwd}>
+              <GitBranch size={11} style={{ flexShrink: 0, color: colors.accent }} />
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{status?.branch ?? 'detached'}</span>
+            </span>
+            {totalChanges > 0 && (
+              <>
+                <span>· {totalChanges} file{totalChanges === 1 ? '' : 's'}</span>
+                <span style={{ fontVariantNumeric: 'tabular-nums' }}>
+                  <span style={{ color: colors.success }}>+{totals.added}</span>{' '}
+                  <span style={{ color: colors.error }}>−{totals.deleted}</span>
+                </span>
+              </>
+            )}
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+          <button
+            onClick={() => void refresh()}
+            disabled={loadingStatus}
+            title="Refresh"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 13px', borderRadius: 9, border: `1px solid ${colors.borderSubtle}`, background: 'var(--wks-bg-elevated)', color: colors.muted, cursor: 'pointer', fontSize: '0.74rem', fontFamily: 'inherit', fontWeight: 600 }}
+          >
+            <RefreshCw size={13} className={loadingStatus ? 'wks-review-spin' : undefined} /> Refresh
+          </button>
+          <button
+            onClick={() => void runAction((dir) => git.push(dir))}
+            disabled={busy}
+            title="git push"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 14px', borderRadius: 9, border: 'none', background: colors.accent, color: 'var(--wks-claude-bg)', cursor: 'pointer', fontSize: '0.74rem', fontFamily: 'inherit', fontWeight: 700 }}
+          >
+            <ArrowUp size={13} /> Push
+          </button>
+        </div>
+      </div>
+
+      {/* Panel — file tree + diff in one rounded bordered surface (mockup). */}
+      <div style={{ flex: 1, minHeight: 0, display: 'flex', border: `1px solid ${colors.borderSubtle}`, borderRadius: 13, overflow: 'hidden', background: 'var(--wks-bg-surface, transparent)' }}>
+        {/* Left: file tree */}
+        <div
+          style={{
+            width: 264,
+            flexShrink: 0,
+            borderRight: `1px solid ${colors.borderSubtle}`,
+            background: 'var(--wks-bg-base)',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+          }}
+        >
+        {/* Changed files header */}
         <div
           style={{
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 8,
-            padding: '8px 10px',
+            gap: 7,
+            padding: '9px 12px',
             borderBottom: `1px solid ${colors.borderSubtle}`,
+            fontFamily: 'var(--wks-font-mono, monospace)',
+            fontSize: '0.58rem',
+            textTransform: 'uppercase',
+            letterSpacing: '0.08em',
+            color: colors.muted,
           }}
         >
-          <span
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 6,
-              minWidth: 0,
-              fontSize: '0.72rem',
-              fontWeight: 600,
-              color: colors.textBright,
-              border: `1px solid ${colors.borderSubtle}`,
-              borderRadius: 12,
-              padding: '2px 10px',
-            }}
-            title={cwd}
-          >
-            <GitBranch size={11} style={{ flexShrink: 0, color: colors.accent }} />
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {status?.branch ?? 'detached'}
-            </span>
-          </span>
-          <div style={{ display: 'flex', gap: 2, flexShrink: 0 }}>
-            <button
-              className="wks-icon-btn"
-              onClick={() => void runAction((dir) => git.push(dir))}
-              disabled={busy}
-              title="git push"
-            >
-              <ArrowUp size={14} />
-            </button>
-            <button
-              className="wks-icon-btn"
-              onClick={() => void refresh()}
-              disabled={loadingStatus}
-              title="Refresh"
-            >
-              <RefreshCw size={13} className={loadingStatus ? 'wks-review-spin' : undefined} />
-            </button>
-          </div>
+          <span>Changed files</span>
+          <span style={{ color: colors.textBright }}>{totalChanges}</span>
         </div>
-
-        {/* Change summary */}
-        {totalChanges > 0 && (
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              padding: '7px 12px',
-              borderBottom: `1px solid ${colors.borderSubtle}`,
-              fontSize: '0.66rem',
-              color: colors.muted,
-            }}
-          >
-            <span style={{ flex: 1 }}>
-              {totalChanges} file{totalChanges === 1 ? '' : 's'} changed
-            </span>
-            <span
-              style={{
-                fontFamily: 'var(--wks-font-mono, monospace)',
-                fontVariantNumeric: 'tabular-nums',
-                display: 'inline-flex',
-                gap: 5,
-              }}
-            >
-              <span style={{ color: colors.success }}>+{totals.added}</span>
-              <span style={{ color: colors.error }}>−{totals.deleted}</span>
-            </span>
-            <DiffStatBlocks added={totals.added} deleted={totals.deleted} />
-          </div>
-        )}
 
         {error && (
           <div
@@ -860,6 +843,7 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive }) => {
           ) : (
             <DiffViewer diff={parsed} path={selection.path} />
           )}
+        </div>
         </div>
       </div>
     </div>
