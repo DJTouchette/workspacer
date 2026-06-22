@@ -40,28 +40,37 @@ export function SmallButton({ label, onClick, primary, danger }: { label: string
 
 export function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div style={{ marginBottom: '20px' }}>
+    <div style={{ marginBottom: '26px', animation: 'wks-fade-in 0.2s ease' }}>
       <div style={{
-        fontSize: '0.7rem',
+        fontFamily: 'var(--wks-font-mono, monospace)',
+        fontSize: '0.6rem',
         fontWeight: 600,
-        color: 'var(--wks-text-tertiary)',
-        marginBottom: '8px',
-        paddingBottom: '4px',
-        borderBottom: '1px solid var(--wks-border)',
+        color: 'var(--wks-text-faint)',
+        textTransform: 'uppercase',
+        letterSpacing: '0.12em',
+        marginBottom: '2px',
       }}>
         {title}
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+      <div style={{ display: 'flex', flexDirection: 'column' }}>
         {children}
       </div>
     </div>
   );
 }
 
+/** A divided settings row: bold label left, control right. Hairline on top so
+ *  stacked rows read as a clean list (mockup). */
+const rowFrame: React.CSSProperties = {
+  display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px',
+  padding: '11px 0', borderTop: '1px solid var(--wks-border-subtle)',
+};
+const rowLabel: React.CSSProperties = { fontSize: '0.78rem', fontWeight: 500, color: 'var(--wks-text-primary)' };
+
 export function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-      <span style={{ fontSize: '0.7rem', color: 'var(--wks-text-muted)' }}>{label}</span>
+    <div style={rowFrame}>
+      <span style={rowLabel}>{label}</span>
       {children}
     </div>
   );
@@ -69,19 +78,14 @@ export function Row({ label, children }: { label: string; children: React.ReactN
 
 export function CheckRow({ label, checked, onChange, disabled }: { label: string; checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
   return (
-    <label
-      style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.45 : 1,
-      }}
-    >
-      <span style={{ fontSize: '0.7rem', color: 'var(--wks-text-muted)' }}>{label}</span>
+    <label style={{ ...rowFrame, cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.45 : 1 }}>
+      <span style={rowLabel}>{label}</span>
       <input
         type="checkbox"
         checked={checked}
         disabled={disabled}
         onChange={(e) => onChange(e.target.checked)}
-        style={{ accentColor: 'var(--wks-accent)', cursor: disabled ? 'default' : 'pointer' }}
+        style={{ accentColor: 'var(--wks-accent)', cursor: disabled ? 'default' : 'pointer', width: 15, height: 15, flexShrink: 0 }}
       />
     </label>
   );

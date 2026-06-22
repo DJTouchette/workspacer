@@ -4,13 +4,13 @@ import { ApprovalPrompt } from '../claude/ApprovalPrompt';
 import { QuestionPicker } from '../claude/QuestionPicker';
 import { useAttention, SNOOZE_MINUTES } from '../../contexts/AttentionContext';
 
-const KIND_VISUAL: Record<AttentionKind, { label: string; color: string }> = {
-  approval: { label: 'Needs approval', color: 'var(--wks-error, #f87171)' },
-  question: { label: 'Question', color: 'var(--wks-accent, #4a9eff)' },
-  error:    { label: 'Error', color: 'var(--wks-error, #f87171)' },
-  stuck:    { label: 'Stuck', color: 'var(--wks-warning, #e0a000)' },
-  bigdiff:  { label: 'Review', color: 'var(--wks-warning, #e0a000)' },
-  done:     { label: 'Finished', color: 'var(--wks-success, #3fb950)' },
+const KIND_VISUAL: Record<AttentionKind, { label: string; color: string; glyph: string }> = {
+  approval: { label: 'Needs approval', color: 'var(--wks-error, #f87171)', glyph: '!' },
+  question: { label: 'Question', color: 'var(--wks-accent, #4a9eff)', glyph: '?' },
+  error:    { label: 'Error', color: 'var(--wks-error, #f87171)', glyph: '×' },
+  stuck:    { label: 'Stuck', color: 'var(--wks-warning, #e0a000)', glyph: '…' },
+  bigdiff:  { label: 'Review', color: 'var(--wks-warning, #e0a000)', glyph: '±' },
+  done:     { label: 'Finished', color: 'var(--wks-success, #3fb950)', glyph: '✓' },
 };
 
 /** Last path segment, for the compact cwd footer (full path stays in the title). */
@@ -57,9 +57,15 @@ export const AttentionCard: React.FC<Props> = ({ item, selected }) => {
         transition: 'border-color 0.12s, box-shadow 0.12s',
       }}
     >
-      {/* Header: kind dot + agent + relative time */}
+      {/* Header: kind badge + label + agent + relative time */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 12px', borderBottom: '1px solid var(--wks-glass-border)' }}>
-        <span style={{ width: 8, height: 8, borderRadius: '50%', background: v.color, flexShrink: 0, boxShadow: `0 0 6px ${v.color}` }} />
+        <span style={{
+          width: 17, height: 17, borderRadius: 5, flexShrink: 0,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: `color-mix(in srgb, ${v.color} 18%, transparent)`,
+          border: `1px solid color-mix(in srgb, ${v.color} 45%, transparent)`,
+          color: v.color, fontSize: '0.62rem', fontWeight: 800, lineHeight: 1,
+        }}>{v.glyph}</span>
         <span style={{ fontSize: '0.72rem', fontWeight: 700, color: v.color, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{v.label}</span>
         <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--wks-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {item.agentName}

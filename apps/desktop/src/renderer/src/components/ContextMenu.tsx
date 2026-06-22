@@ -2,6 +2,33 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 /**
+ * Injected-once CSS for the context menu. The menu portals to <body>, which
+ * lives OUTSIDE .app-root — so it never inherits the app's UI font or our
+ * hover transitions. We set both here explicitly: a pop-in entrance and an
+ * accent hover that nudges the item rightward (the "jazz").
+ */
+const CTX_STYLE_ID = 'wks-context-menu-styles';
+function ensureContextMenuStyles(): void {
+  if (typeof document === 'undefined' || document.getElementById(CTX_STYLE_ID)) return;
+  const style = document.createElement('style');
+  style.id = CTX_STYLE_ID;
+  style.textContent = `
+@keyframes wks-ctx-pop { from { opacity: 0; transform: translateY(-6px) scale(0.97); } to { opacity: 1; transform: none; } }
+.wks-ctx-menu {
+  font-family: "Hanken Grotesk", "Inter", system-ui, -apple-system, sans-serif;
+  animation: wks-ctx-pop 0.14s cubic-bezier(0.16, 1, 0.3, 1);
+  transform-origin: top left;
+}
+.wks-ctx-item {
+  transition: background 0.1s ease, color 0.1s ease, padding-left 0.12s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.wks-ctx-item:hover:not(:disabled) { background: var(--wks-accent-bg); color: var(--wks-text-primary); padding-left: 18px; }
+.wks-ctx-item.wks-ctx-danger:hover:not(:disabled) { background: color-mix(in srgb, var(--wks-error) 15%, transparent); color: var(--wks-error); }
+`;
+  document.head.appendChild(style);
+}
+
+/**
  * Viewport-clamped context menu. Anchors at a point (typically the mouse
  * `clientX`/`clientY` of a right-click) and shifts/flips itself so it never
  * renders off-screen — the long-standing bug where menus opened near the
@@ -27,6 +54,7 @@ export interface ContextMenuProps {
 const VIEWPORT_MARGIN = 6;
 
 export function ContextMenu({ x, y, onClose, children, minWidth = 150, zIndex = 10000 }: ContextMenuProps) {
+  ensureContextMenuStyles();
   const ref = useRef<HTMLDivElement>(null);
   // Start at the raw anchor; clamp once we know our measured size.
   const [pos, setPos] = useState<{ left: number; top: number }>({ left: x, top: y });
@@ -88,18 +116,21 @@ export function ContextMenu({ x, y, onClose, children, minWidth = 150, zIndex = 
     <div
       ref={ref}
       role="menu"
+      className="wks-ctx-menu"
       style={{
         position: 'fixed',
         left: pos.left,
         top: pos.top,
         minWidth,
         zIndex,
-        padding: '4px 0',
-        borderRadius: 'var(--wks-radius-md, 6px)',
-        background: 'var(--wks-bg-surface)',
-        border: '1px solid var(--wks-border-input)',
-        boxShadow: '0 6px 24px var(--wks-shadow)',
-        fontSize: '0.74rem',
+        padding: '5px',
+        borderRadius: 'var(--wks-radius-lg, 12px)',
+        background: 'var(--wks-glass-strong, var(--wks-bg-elevated))',
+        backdropFilter: 'blur(var(--wks-glass-blur, 12px)) saturate(160%)',
+        WebkitBackdropFilter: 'blur(var(--wks-glass-blur, 12px)) saturate(160%)',
+        border: '1px solid var(--wks-glass-border, var(--wks-border-input))',
+        boxShadow: '0 12px 34px var(--wks-glass-shadow, var(--wks-shadow)), inset 0 1px 0 var(--wks-glass-highlight)',
+        fontSize: '0.76rem',
         // Hide until clamped so the off-screen first paint is never visible.
         visibility: measured ? 'visible' : 'hidden',
       }}
@@ -127,13 +158,15 @@ export function ContextMenuItem({
     <button
       type="button"
       role="menuitem"
+      className={`wks-ctx-item${danger ? ' wks-ctx-danger' : ''}`}
       disabled={disabled}
       onClick={onClick}
       style={{
         display: 'block',
         width: '100%',
         textAlign: 'left',
-        padding: '5px 12px',
+        padding: '6px 11px',
+        borderRadius: 'var(--wks-radius-md, 7px)',
         border: 'none',
         background: 'transparent',
         color: disabled
@@ -143,13 +176,8 @@ export function ContextMenuItem({
             : 'var(--wks-text-primary)',
         cursor: disabled ? 'default' : 'pointer',
         font: 'inherit',
+        fontWeight: 500,
         whiteSpace: 'nowrap',
-      }}
-      onMouseEnter={(e) => {
-        if (!disabled) (e.currentTarget as HTMLElement).style.background = 'var(--wks-bg-hover)';
-      }}
-      onMouseLeave={(e) => {
-        (e.currentTarget as HTMLElement).style.background = 'transparent';
       }}
     >
       {label}
@@ -158,18 +186,19 @@ export function ContextMenuItem({
 }
 
 export function ContextMenuSeparator() {
-  return <div style={{ height: 1, background: 'var(--wks-border)', margin: '4px 0' }} />;
+  return <div style={{ height: 1, background: 'var(--wks-glass-border, var(--wks-border))', margin: '5px 7px' }} />;
 }
 
 export function ContextMenuLabel({ children }: { children: React.ReactNode }) {
   return (
     <div
       style={{
-        padding: '2px 12px',
+        padding: '3px 11px 4px',
+        fontFamily: 'var(--wks-font-mono, monospace)',
         fontSize: '0.55rem',
-        color: 'var(--wks-text-disabled)',
+        color: 'var(--wks-text-faint)',
         textTransform: 'uppercase',
-        letterSpacing: '0.05em',
+        letterSpacing: '0.08em',
       }}
     >
       {children}

@@ -60,40 +60,51 @@ const SettingsPane: React.FC<SettingsPaneProps> = ({ title }) => {
         height: '100%',
         backgroundColor: 'var(--wks-bg-base)',
         color: 'var(--wks-text-secondary)',
-        fontFamily: 'Inter, system-ui, sans-serif',
+        fontFamily: '"Hanken Grotesk", Inter, system-ui, sans-serif',
         fontSize: '12px',
         overflow: 'auto',
-        padding: '16px 24px',
+        padding: '22px 26px',
       }}
     >
-      <h2 style={{ fontSize: '0.9rem', fontWeight: 600, margin: '0 0 10px 0', color: 'var(--wks-text-primary)' }}>
+      <div style={{ width: '100%', maxWidth: 760, margin: '0 auto' }}>
+      <h2 style={{ fontSize: '1.05rem', fontWeight: 700, margin: '0 0 14px 0', color: 'var(--wks-text-primary)', letterSpacing: '-0.01em' }}>
         Settings
       </h2>
 
-      {/* Section filter */}
-      <input
-        type="search"
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        placeholder="Filter sections..."
-        spellCheck={false}
+      {/* Section filter — rounded pill with a search glyph (mockup). */}
+      <div
         style={{
-          width: '100%',
-          height: '28px',
-          padding: '0 10px',
-          marginBottom: '14px',
-          fontSize: '0.72rem',
-          fontFamily: 'inherit',
-          backgroundColor: 'var(--wks-bg-input)',
-          color: 'var(--wks-text-primary)',
-          border: '1px solid var(--wks-border-input)',
-          borderRadius: 'var(--wks-radius-sm)',
-          outline: 'none',
-          boxSizing: 'border-box',
+          display: 'flex', alignItems: 'center', gap: '9px',
+          padding: '0 13px', marginBottom: '24px',
+          background: 'var(--wks-bg-raised)',
+          border: '1px solid var(--wks-border-subtle)',
+          borderRadius: '11px',
+          transition: 'border-color 0.15s',
         }}
-        onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--wks-accent)'; }}
-        onBlur={(e) => { e.currentTarget.style.borderColor = 'var(--wks-border-input)'; }}
-      />
+        onFocus={(e) => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-accent-glow)'; }}
+        onBlur={(e) => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-border-subtle)'; }}
+      >
+        <span aria-hidden style={{ color: 'var(--wks-text-faint)', fontSize: '0.85rem', flexShrink: 0 }}>⌕</span>
+        <input
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Filter settings…"
+          spellCheck={false}
+          style={{
+            flex: 1,
+            height: '38px',
+            padding: 0,
+            fontSize: '0.8rem',
+            fontFamily: 'inherit',
+            backgroundColor: 'transparent',
+            color: 'var(--wks-text-primary)',
+            border: 'none',
+            outline: 'none',
+            boxSizing: 'border-box',
+          }}
+        />
+      </div>
 
       {/* Appearance section */}
       {show.appearance && <AppearanceSection config={config} save={save} />}
@@ -131,6 +142,7 @@ const SettingsPane: React.FC<SettingsPaneProps> = ({ title }) => {
           No sections match &ldquo;{q}&rdquo;
         </div>
       )}
+      </div>
     </div>
   );
 };
