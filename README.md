@@ -12,35 +12,44 @@ apps/
   tui/         wks-tui — Rust terminal client over the hub bus
 services/
   claudemon/   Rust daemon: ingests Claude Code hook events, owns session
-               state, parses transcripts
-  hub/         Go control-plane / event bus + MCP facade — plugins and remote
-               clients broker events here
+               state, and streams conversation transcripts
+  hub/         Go control-plane: event bus, process supervisor, capability
+               router, plugin system, and an MCP facade (cmd/mcp)
 docs/          specs and design notes
 ```
 
 The desktop app spawns and supervises `claudemon` and `hub` as child
-processes; `wks-tui` and remote/web clients connect to the same `hub` bus.
+processes. `wks-tui` and remote/web clients connect to the same `hub` bus, so a
+session running on one client can be observed and driven from another.
 
 ## Quick start
 
 ```bash
-make install      # install desktop JS deps
-make dev          # run the desktop app (Vite + Electron)   — or: ./dev
+make install      # install desktop JS deps (root + renderer workspaces)
+make dev          # run the desktop app with remote sharing on
 ```
 
-`make dev` (and `./dev`) auto-build the `hub` binary first; the running app
-builds/locates `claudemon` and `hub` from `services/` automatically.
+`make dev` runs `npm run dev:share`, which builds the `hub` binary, starts the
+Vite renderer, launches Electron with hot reload, and enables remote sharing
+(the hub binds a token-authed web endpoint — the URL + token show up in the
+app's Hub status). Use `./dev` for the same dev loop *without* remote sharing.
+
+`claudemon` is built separately — run `make build-claudemon` once (or
+`make build`) before the app can spawn Claude sessions.
 
 ## Common tasks (from the repo root)
 
 | Command                  | What it does                                        |
 | ------------------------ | --------------------------------------------------- |
-| `make dev` / `./dev`     | Desktop app in dev mode (hot reload)                |
+| `make dev`               | Desktop app in dev mode + remote sharing            |
+| `./dev`                  | Desktop app in dev mode (no remote sharing)         |
+| `make dev-tui`           | Run wks-tui (debug); builds claudemon first         |
+| `make run-tui`           | Run wks-tui (release); builds claudemon + tui first |
 | `make build`             | Build all four components                           |
-| `make build-hub`         | Build the Go hub + mcp binaries                     |
+| `make build-hub`         | Build the Go `hub` + `mcp` binaries                 |
 | `make build-claudemon`   | `cargo build --release` for claudemon               |
 | `make build-tui`         | `cargo build --release` for wks-tui                 |
-| `make test`              | Desktop + hub test suites                           |
+| `make test`              | Desktop + hub + tui test suites                     |
 | `make package`           | Build daemons + produce desktop installers          |
 | `make clean`             | Remove build artifacts across all components        |
 
