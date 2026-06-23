@@ -80,7 +80,7 @@ func TestFacadeRoutesToolToHub(t *testing.T) {
 	busURL := strings.Replace(hub.URL, "http", "ws", 1) + "/bus"
 
 	// Provider answering the methods our tools call.
-	fakeProvider(t, ctx, busURL, []string{"agents.list", "agents.spawn", "agents.sendMessage"})
+	fakeProvider(t, ctx, busURL, []string{"agents.list", "agents.spawn", "agents.sendMessage", "config.save"})
 
 	// Facade wired to the hub.
 	client := busclient.New(busURL, "")
@@ -107,6 +107,17 @@ func TestFacadeRoutesToolToHub(t *testing.T) {
 	if !hasTool(tools.Tools, "spawn_agent") || !hasTool(tools.Tools, "list_agents") {
 		t.Fatalf("expected spawn_agent + list_agents in %v", toolNames(tools.Tools))
 	}
+	// The expanded surface: a representative sample of the parity tools should
+	// now be registered (observe, fs, config, profiles, library, analytics).
+	for _, want := range []string{
+		"get_snapshot", "list_models", "read_file", "write_file", "search_project",
+		"get_config", "save_config", "list_profiles", "list_library", "analytics_summary",
+		"set_approval_gate", "list_saved_sessions", "list_layouts",
+	} {
+		if !hasTool(tools.Tools, want) {
+			t.Errorf("expected tool %q in expanded surface: %v", want, toolNames(tools.Tools))
+		}
+	}
 
 	// Call spawn_agent; the provider echoes method+params back through the chain.
 	res, err := cs.CallTool(ctx, &mcp.CallToolParams{
@@ -125,6 +136,27 @@ func TestFacadeRoutesToolToHub(t *testing.T) {
 	}
 	if !strings.Contains(text, `"cwd":"/tmp/x"`) {
 		t.Errorf("result did not carry params: %s", text)
+	}
+
+	// Object-passthrough tool: the whole arguments object forwards verbatim as
+	// the capability params (a nested config patch the model couldn't type as a
+	// struct).
+	res2, err := cs.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "save_config",
+		Arguments: map[string]any{"ui": map[string]any{"guiFontScale": 1.3}},
+	})
+	if err != nil {
+		t.Fatalf("CallTool save_config: %v", err)
+	}
+	if res2.IsError {
+		t.Fatalf("save_config returned error: %v", textOf(res2))
+	}
+	t2 := textOf(res2)
+	if !strings.Contains(t2, `"method":"config.save"`) {
+		t.Errorf("save_config did not route to config.save: %s", t2)
+	}
+	if !strings.Contains(t2, `"guiFontScale":1.3`) {
+		t.Errorf("save_config did not carry nested params: %s", t2)
 	}
 }
 
