@@ -2,15 +2,15 @@
  * The `/supervise` skill: the fleet-supervisor's loop, shipped with the app and
  * installed (idempotently) as a personal Claude Code skill the moment a
  * supervisor session is spawned. Keeping it a real skill — not just system-prompt
- * text — means the user can read and edit it (`~/.claude/skills/supervise/SKILL.md`),
- * and the supervisor invokes it as `/supervise` and re-runs it on a loop.
+ * text — means the user can read and edit it (`~/.claude/skills/supervise/`), and
+ * the supervisor invokes it as `/supervise` and re-runs it on a loop.
  *
- * It is generic/static: per-session parameters (which summarizer model to spawn,
- * the loop cadence) are read at runtime from the workspacer config via the
- * `get_config` MCP tool, with the values also echoed into the supervisor's
- * system prompt as a fallback. Nothing here is assumed by the rest of the app —
- * the skill only does anything inside a supervisor session that has the
- * `mcp__workspacer__*` tools.
+ * The skill ships with a parsing helper (`fleet.mjs`) installed alongside it.
+ * The supervisor runs that script for read-heavy work — fleet status, new
+ * conversation turns, a worker's reply — so the raw JSON is parsed
+ * deterministically in a subprocess and never enters the supervisor's context.
+ * The `mcp__workspacer__*` tools remain the control plane (spawn, message,
+ * notify, approve). Nothing here is assumed by the rest of the app.
  */
 
 import * as os from 'os';
@@ -29,10 +29,33 @@ description: Coordinate the Workspacer agent fleet — watch every running agent
 You are the Workspacer fleet supervisor. Your job is to keep a live picture of
 every other agent and to surface anything that needs the human — without doing
 their coding for them, and without burning your own context reading raw
-transcripts. You offload that reading to cheap summarizer workers.
+transcripts. You offload the reading to a cheap summarizer worker and to a
+bundled parsing script.
 
 If you do **not** have the \`mcp__workspacer__*\` tools, stop: this skill does
 nothing outside a supervisor session.
+
+## Helpers — parse with the script, act with the tools
+
+A Node helper is installed next to this skill. Run it with Bash; it prints
+compact, already-parsed text (no JSON), so use it for READS instead of pulling
+raw tool output into your context:
+
+\`\`\`
+node "$HOME/.claude/skills/supervise/fleet.mjs" status
+node "$HOME/.claude/skills/supervise/fleet.mjs" convo <sessionId> --since <seq>
+node "$HOME/.claude/skills/supervise/fleet.mjs" reply <sessionId>
+\`\`\`
+
+- \`status\` — one line per session: id, mode, what it's blocked on, context use, cwd.
+- \`convo <id> --since <seq>\` — prints \`seq=<latest>\` then only the turns after
+  \`<seq>\`, condensed. Omit \`--since\` for the whole conversation.
+- \`reply <id>\` — just that session's latest assistant message (how you read a
+  worker's digest).
+
+Use the \`mcp__workspacer__*\` tools for ACTIONS: spawn_agent, send_message,
+notify, approve, answer. (\`list_agents\` / \`get_conversation\` exist too, but
+prefer the script for routine reads.)
 
 ## 0. Settings
 
@@ -62,34 +85,32 @@ cost down; only spawn another if the first dies.
 
 Keep a per-agent cursor: the last conversation \`seq\` you have digested.
 
-1. \`list_agents\` to see the fleet (ids, state, model, context use, and any
-   \`pendingApproval\` / \`pendingQuestions\`). Ignore your own session and the
-   digest worker.
-2. Decide who actually changed. For each agent, call
-   \`get_conversation({ sessionId, sinceSeq: <last seq you saw> })\` — this returns
-   ONLY the items after that seq, plus the latest \`seq\`. If \`items\` is empty,
-   nothing changed: skip it. Otherwise it's cheap, and you can pass the new items
-   straight to the worker (or, for a deeper read, have the worker pull the full
-   transcript itself). Always advance your cursor to the returned \`seq\`.
-3. Ask the digest worker to summarize only the changed agents (it does the
-   reading, so this costs *its* context, not yours):
+1. Run \`fleet.mjs status\` to see the fleet and who is blocked. Ignore your own
+   session and the digest worker.
+2. For each agent, run \`fleet.mjs convo <id> --since <last seq>\`. The first line
+   is \`seq=<latest>\`; advance your cursor to it. If it prints \`(no new turns)\`,
+   skip the agent — nothing changed.
+3. Hand the new turns to the digest worker (it does the heavy reading, so it
+   costs *its* context, not yours):
    \`\`\`
    send_message(<digestWorkerId>,
-     "Here are the new turns for session <id> since I last looked: <the items>. " +
+     "New turns for session <id>:\\n<paste the convo output>\\n" +
      "Update your running digest and reply with <=3 lines: GOAL / NOW / BLOCKED-ON (or 'not blocked').")
    \`\`\`
-   Then poll \`get_snapshot(<digestWorkerId>)\` until its latest assistant turn
-   holds the digest, and record it.
+   Then read its answer with \`fleet.mjs reply <digestWorkerId>\` (poll until it
+   has replied). For a deeper read, instead tell the worker to call
+   get_transcript for the session itself.
 4. Maintain a short fleet status from those digests. When the user asks "what's
    everyone doing?", answer from this — don't re-read transcripts yourself.
 
 ## 3. Decisions — the important part
 
-When an agent shows a \`pendingApproval\` or \`pendingQuestions\`, it is blocked on a
-human. Assemble everything needed to decide and send ONE enriched notification:
+When \`status\` shows an agent \`blocked=approval:...\` or \`blocked=question\`, it is
+waiting on a human. Assemble everything needed to decide and send ONE enriched
+notification:
 
-- The approval's tool + input (e.g. the exact command or the diff), or the
-  question + its options — these are already on \`list_agents\` / \`get_snapshot\`.
+- What it wants to do (the command / diff / the question + options) — from
+  \`status\` and \`convo\`, or \`get_snapshot\` for the exact tool input.
 - A one-line "why now" from that agent's latest digest.
 - Your read on the risk and a recommendation.
 
@@ -117,26 +138,120 @@ priority trigger — run a pass immediately, focusing on the named session, and
 notify the human with the context + your recommendation.
 `;
 
-/** Absolute path to the installed skill file. */
-function skillPath(): string {
-  return path.join(os.homedir(), '.claude', 'skills', SKILL_NAME, 'SKILL.md');
+// The parsing helper. Written deliberately free of backticks, ${...} and
+// backslash escapes so it survives verbatim inside this template literal.
+const FLEET_SCRIPT = `#!/usr/bin/env node
+// fleet.mjs — parsing helper for the /supervise skill. Talks to claudemon's
+// local REST API and prints compact, already-parsed text so the supervisor
+// never has to reason over raw JSON. Zero dependencies (Node 18+ global fetch).
+//
+//   node fleet.mjs status                  fleet overview (mode, blocked, ctx, cwd)
+//   node fleet.mjs convo <id> [--since N]   latest seq + only the turns after N
+//   node fleet.mjs reply <id>               that session's latest assistant message
+//
+// Override the daemon URL with the CLAUDEMON_API_URL env var.
+
+const BASE = process.env.CLAUDEMON_API_URL || 'http://127.0.0.1:7891';
+
+async function getJSON(p) {
+  const res = await fetch(BASE + p);
+  if (!res.ok) throw new Error(p + ' -> HTTP ' + res.status);
+  return res.json();
+}
+
+function trunc(s, n) {
+  s = String(s == null ? '' : s).trim();
+  return s.length > n ? s.slice(0, n) + '...' : s;
+}
+
+function lineOf(it) {
+  if (it.kind === 'user_message') return 'user: ' + trunc(it.text, 500);
+  if (it.kind === 'assistant_text') return 'assistant: ' + trunc(it.text, 500);
+  if (it.kind === 'tool_use') return 'tool: ' + it.name + ' ' + trunc(JSON.stringify(it.input || {}), 200);
+  if (it.kind === 'tool_result') return 'result' + (it.is_error ? '(error)' : '') + ': ' + trunc(it.content, 300);
+  return null; // usage etc.
+}
+
+function blockedOf(p) {
+  if (!p) return '-';
+  if (p.kind === 'approval') return 'approval:' + (p.tool || '?');
+  if (p.kind === 'question') return 'question';
+  return p.kind || '?';
+}
+
+async function status() {
+  const sessions = await getJSON('/sessions');
+  if (!Array.isArray(sessions) || sessions.length === 0) { console.log('(no sessions)'); return; }
+  for (const s of sessions) {
+    let ctx = '-';
+    if (s.status_line && s.status_line.context_used_pct != null) ctx = Math.round(s.status_line.context_used_pct) + '%';
+    else if (s.usage && s.usage.contextTokens != null) ctx = s.usage.contextTokens + 'tok';
+    console.log('session:' + s.session_id + '  mode=' + s.mode + '  blocked=' + blockedOf(s.pending) + '  ctx=' + ctx + '  cwd=' + (s.cwd || '-'));
+  }
+}
+
+async function convo(id, since) {
+  if (!id) throw new Error('convo needs <id>');
+  const q = since != null ? ('?since=' + encodeURIComponent(since)) : '';
+  const data = await getJSON('/sessions/' + encodeURIComponent(id) + '/conversation' + q);
+  console.log('seq=' + (data.seq || 0));
+  const items = Array.isArray(data.items) ? data.items : [];
+  let n = 0;
+  for (const it of items) { const l = lineOf(it); if (l) { console.log(l); n++; } }
+  if (n === 0) console.log('(no new turns)');
+}
+
+async function reply(id) {
+  if (!id) throw new Error('reply needs <id>');
+  const data = await getJSON('/sessions/' + encodeURIComponent(id) + '/conversation');
+  const items = Array.isArray(data.items) ? data.items : [];
+  for (let i = items.length - 1; i >= 0; i--) {
+    if (items[i].kind === 'assistant_text') { console.log(items[i].text); return; }
+  }
+  console.log('(no reply yet)');
+}
+
+const argv = process.argv.slice(2);
+const cmd = argv[0];
+const si = argv.indexOf('--since');
+const sinceVal = si >= 0 ? argv[si + 1] : undefined;
+
+(async () => {
+  try {
+    if (cmd === 'status') await status();
+    else if (cmd === 'convo') await convo(argv[1], sinceVal);
+    else if (cmd === 'reply') await reply(argv[1]);
+    else { console.error('usage: fleet.mjs status | convo <id> [--since N] | reply <id>'); process.exit(2); }
+  } catch (e) { console.error(String((e && e.message) || e)); process.exit(1); }
+})();
+`;
+
+/** Directory the skill (and its helpers) are installed into. */
+function skillDir(): string {
+  return path.join(os.homedir(), '.claude', 'skills', SKILL_NAME);
+}
+
+/** Write `file` only if its content changed, to avoid churning the user's files
+ *  (and any editor/watcher) on every spawn. Best-effort. */
+function writeIfChanged(file: string, content: string): void {
+  let current = '';
+  try { current = fs.readFileSync(file, 'utf8'); } catch { /* not installed yet */ }
+  if (current !== content) fs.writeFileSync(file, content, 'utf8');
 }
 
 /**
- * Write the `/supervise` skill to the user's personal Claude Code skills dir,
- * creating or refreshing it so the supervisor always runs the current version.
- * Best-effort: a failure here just means the supervisor falls back to its system
- * prompt. Safe to call on every supervisor spawn.
+ * Install the `/supervise` skill (SKILL.md + the fleet.mjs parsing helper) into
+ * the user's personal Claude Code skills dir, refreshing them so the supervisor
+ * always runs the current version. Best-effort: a failure just means the
+ * supervisor falls back to its system prompt / the MCP tools. Safe to call on
+ * every supervisor spawn.
  */
 export function installSupervisorSkill(): void {
   try {
-    const file = skillPath();
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    // Only rewrite when the content changed, to avoid churning the user's file
-    // (and any editor watching it) on every spawn.
-    let current = '';
-    try { current = fs.readFileSync(file, 'utf8'); } catch { /* not installed yet */ }
-    if (current !== SKILL_BODY) fs.writeFileSync(file, SKILL_BODY, 'utf8');
+    const dir = skillDir();
+    fs.mkdirSync(dir, { recursive: true });
+    writeIfChanged(path.join(dir, 'SKILL.md'), SKILL_BODY);
+    writeIfChanged(path.join(dir, 'fleet.mjs'), FLEET_SCRIPT);
   } catch {
     /* installing the skill is best-effort */
   }
