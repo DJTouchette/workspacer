@@ -89,6 +89,9 @@ func newServer(c *busclient.Client) *mcp.Server {
 	addTool[transcriptIn](s, c, "get_transcript",
 		"Fetch a session's transcript so you can see the context behind a pending approval or question before acting.",
 		"sessions.transcript")
+	addTool[conversationIn](s, c, "get_conversation",
+		"Fetch a session's parsed conversation items plus the latest sequence number. Pass sinceSeq to get ONLY the items after that sequence — cheap incremental polling. Track the returned seq per session and pass it back as sinceSeq next time so you only ever digest new turns, never the whole transcript.",
+		"sessions.conversation")
 	addTool[sessionIn](s, c, "get_snapshot",
 		"Get the full live snapshot for one session: conversation turns, tool calls, usage/cost, subagents, workflow runs, and any pending approval/question. Heavier than list_agents — use it to inspect a single agent in depth.",
 		"sessions.snapshot")
@@ -286,6 +289,11 @@ type transcriptIn struct {
 
 type sessionIn struct {
 	SessionID string `json:"sessionId" jsonschema:"the target session id"`
+}
+
+type conversationIn struct {
+	SessionID string `json:"sessionId" jsonschema:"the target session id"`
+	SinceSeq  *int   `json:"sinceSeq,omitempty" jsonschema:"return only items after this sequence number; omit for the full history"`
 }
 
 type cwdIn struct {

@@ -58,21 +58,29 @@ spawn_agent({
 supervisor — it just reads transcripts and answers you. Reusing one worker keeps
 cost down; only spawn another if the first dies.
 
-## 2. Each pass
+## 2. Each pass — work incrementally
+
+Keep a per-agent cursor: the last conversation \`seq\` you have digested.
 
 1. \`list_agents\` to see the fleet (ids, state, model, context use, and any
    \`pendingApproval\` / \`pendingQuestions\`). Ignore your own session and the
    digest worker.
-2. For each agent that has made progress since you last looked, ask the digest
-   worker to summarize it (it reads the transcript itself, so this costs *its*
-   context, not yours):
+2. Decide who actually changed. For each agent, call
+   \`get_conversation({ sessionId, sinceSeq: <last seq you saw> })\` — this returns
+   ONLY the items after that seq, plus the latest \`seq\`. If \`items\` is empty,
+   nothing changed: skip it. Otherwise it's cheap, and you can pass the new items
+   straight to the worker (or, for a deeper read, have the worker pull the full
+   transcript itself). Always advance your cursor to the returned \`seq\`.
+3. Ask the digest worker to summarize only the changed agents (it does the
+   reading, so this costs *its* context, not yours):
    \`\`\`
    send_message(<digestWorkerId>,
-     "Call get_transcript for session <id>. Reply with <=3 lines: GOAL / NOW / BLOCKED-ON (or 'not blocked').")
+     "Here are the new turns for session <id> since I last looked: <the items>. " +
+     "Update your running digest and reply with <=3 lines: GOAL / NOW / BLOCKED-ON (or 'not blocked').")
    \`\`\`
    Then poll \`get_snapshot(<digestWorkerId>)\` until its latest assistant turn
    holds the digest, and record it.
-3. Maintain a short fleet status from those digests. When the user asks "what's
+4. Maintain a short fleet status from those digests. When the user asks "what's
    everyone doing?", answer from this — don't re-read transcripts yourself.
 
 ## 3. Decisions — the important part
@@ -95,12 +103,18 @@ notify({
 Always write a referenced session as \`session:<sessionId>\` so the UI links it.
 Don't approve or answer on the human's behalf unless they've told you to.
 
-## 4. Loop
+## 4. Loop + wakes
 
 Run a pass, then schedule the next one ~\`pollSeconds\` apart so you keep watching.
 Prefer the \`/loop\` skill if it's available (\`/loop <pollSeconds>s /supervise\`);
 otherwise re-invoke \`/supervise\` after each pass. Keep passes cheap: only
-re-summarize agents that actually changed, and lean on the digest worker.
+re-summarize agents that actually changed (your seq cursors tell you who did),
+and lean on the digest worker.
+
+You may also be **woken between passes**: when an agent blocks on a decision,
+workspacer sends you a message starting with \`[supervisor]\`. Treat that as a
+priority trigger — run a pass immediately, focusing on the named session, and
+notify the human with the context + your recommendation.
 `;
 
 /** Absolute path to the installed skill file. */

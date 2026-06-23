@@ -519,15 +519,37 @@ async fn get_transcript(
     }
 }
 
-/// Parsed conversation snapshot for one session: full item history + the
-/// sequence number of the last item, so a client can join the delta stream
-/// without gaps.
+#[derive(Debug, Deserialize)]
+struct ConversationQuery {
+    /// Return only items *after* this sequence number (1-based). Lets a client
+    /// poll cheap incremental deltas — e.g. a supervisor digesting just the new
+    /// turns since it last looked, instead of the whole transcript every time.
+    since: Option<u64>,
+}
+
+/// Parsed conversation snapshot for one session: item history + the sequence
+/// number of the last item, so a client can join the delta stream without gaps.
+/// With `?since=N`, only items after sequence N are returned (the `seq` field is
+/// still the latest, so the client advances its cursor to it).
 async fn get_conversation(
     State(conv): State<ConversationStore>,
     Path(id): Path<String>,
+    Query(q): Query<ConversationQuery>,
 ) -> impl IntoResponse {
-    let (seq, items) = conv.snapshot(&id).unwrap_or((0, Vec::new()));
+    let (seq, mut items) = conv.snapshot(&id).unwrap_or((0, Vec::new()));
+    if let Some(since) = q.since {
+        let skip = items_skip(seq, items.len(), since);
+        items.drain(0..skip);
+    }
     Json(json!({ "session_id": id, "seq": seq, "items": items }))
+}
+
+/// How many leading items to drop so only those with sequence > `since` remain,
+/// given a window of `len` items ending at sequence `seq`. The first item's
+/// sequence is `seq - len + 1`. Clamped to `[0, len]`.
+fn items_skip(seq: u64, len: usize, since: u64) -> usize {
+    let first_seq = seq.saturating_sub(len as u64).saturating_add(1);
+    (since.saturating_add(1).saturating_sub(first_seq) as usize).min(len)
 }
 
 /// Global SSE feed of conversation deltas across all sessions — the content
@@ -711,4 +733,23 @@ async fn items_stream(
         }
     });
     Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::items_skip;
+
+    #[test]
+    fn items_skip_window() {
+        // 5 items, seq=5, no resets → first item's seq is 1.
+        assert_eq!(items_skip(5, 5, 0), 0); // since 0 → keep all
+        assert_eq!(items_skip(5, 5, 3), 3); // since 3 → keep items 4,5
+        assert_eq!(items_skip(5, 5, 5), 5); // since 5 → keep none
+        assert_eq!(items_skip(5, 5, 9), 5); // since beyond seq → keep none
+        // A trimmed window (e.g. after items were consumed): seq=10, len=4 →
+        // first item's seq is 7.
+        assert_eq!(items_skip(10, 4, 6), 0); // since older than window → keep all
+        assert_eq!(items_skip(10, 4, 8), 2); // since 8 → keep items 9,10
+        assert_eq!(items_skip(0, 0, 0), 0); // empty
+    }
 }

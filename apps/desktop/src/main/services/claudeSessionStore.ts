@@ -1,6 +1,7 @@
 import * as path from 'path';
 import { BrowserWindow } from 'electron';
 import { agentNotifier } from './agentNotifier';
+import { supervisorNudge } from './supervisorNudge';
 import {
   workflowWatcher,
   type WorkflowRunInfo,
@@ -157,6 +158,9 @@ export interface ClaudeSessionState {
   // named and nested under the agent that spawned them.
   label?: string;
   parentSessionId?: string;
+  /** True for fleet-supervisor sessions — they get nudged when another agent
+   *  blocks on a decision (see supervisorNudge). */
+  isSupervisor?: boolean;
   /** Guards against double history writes (Stop 1500ms timeout vs SessionEnd). */
   historyWritten?: boolean;
 }
@@ -176,7 +180,7 @@ class ClaudeSessionStore {
   private usageAccumulator = new SessionUsageAccumulator();
   // Pre-spawn metadata keyed by pinned session id. Recorded before the first
   // hook arrives so adopted cards carry a name and parent from the start.
-  private spawnMeta = new Map<string, { label?: string; parentSessionId?: string }>();
+  private spawnMeta = new Map<string, { label?: string; parentSessionId?: string; isSupervisor?: boolean }>();
   // Last-applied conversation sequence per session (gap detection for the
   // daemon's delta stream) and sessions with a snapshot resync in flight.
   private convSeq = new Map<string, number>();
@@ -189,9 +193,16 @@ class ClaudeSessionStore {
   /** Record name/parent for a session about to be spawned, keyed by its pinned
    *  id. Consumed when the session first registers (see createSession), so an
    *  adopted card can be named and nested under its spawner. */
-  setSpawnMeta(sessionId: string, meta: { label?: string; parentSessionId?: string }): void {
+  setSpawnMeta(sessionId: string, meta: { label?: string; parentSessionId?: string; isSupervisor?: boolean }): void {
     if (!sessionId) return;
     this.spawnMeta.set(sessionId, meta);
+  }
+
+  /** Session ids currently marked as supervisors (live sessions only). */
+  supervisorSessionIds(): string[] {
+    const ids: string[] = [];
+    for (const s of this.sessions.values()) if (s.isSupervisor) ids.push(s.sessionId);
+    return ids;
   }
 
   setMainWindow(win: BrowserWindow): void {
@@ -268,6 +279,15 @@ class ClaudeSessionStore {
     }
 
     agentNotifier.notifyOnTransition(session, prevAmbient);
+
+    // Event-driven supervisor wake: when this agent just entered a real decision
+    // point (approval or question), nudge any supervisor so it surfaces it now
+    // rather than on its next poll. No-op when no supervisor is running.
+    const isBlocked = (s: SessionAmbientState) => s === 'waiting_approval' || s === 'waiting_input';
+    if (isBlocked(session.ambientState) && !isBlocked(prevAmbient)) {
+      supervisorNudge.onBlock(session, session.pendingApproval ? 'approval' : 'question', this.supervisorSessionIds());
+    }
+
     this.mergeWatcherData(session);
     this.pushUpdate(session);
   }
@@ -451,6 +471,7 @@ class ClaudeSessionStore {
     if (meta) {
       session.label = meta.label;
       session.parentSessionId = meta.parentSessionId;
+      session.isSupervisor = meta.isSupervisor;
       this.spawnMeta.delete(sessionId);
     }
     this.sessions.set(sessionId, session);

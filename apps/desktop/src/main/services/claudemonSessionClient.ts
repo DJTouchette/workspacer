@@ -249,6 +249,16 @@ class ClaudemonSessionClient {
     return res.json();
   }
 
+  /** Parsed conversation items + the latest sequence number. Pass `sinceSeq` to
+   *  fetch only items after that sequence — cheap incremental polling. */
+  async getConversation(sessionId: string, sinceSeq?: number): Promise<{ seq: number; items: any[] }> {
+    const qs = typeof sinceSeq === 'number' ? `?since=${sinceSeq}` : '';
+    const res = await fetch(`${CLAUDEMON_API_URL}/sessions/${sessionId}/conversation${qs}`);
+    if (!res.ok) return { seq: 0, items: [] };
+    const data = (await res.json()) as { seq?: number; items?: unknown };
+    return { seq: data.seq ?? 0, items: Array.isArray(data.items) ? data.items : [] };
+  }
+
   async getSession(sessionId: string): Promise<any> {
     const res = await fetch(`${CLAUDEMON_API_URL}/sessions/${sessionId}`);
     if (!res.ok) return null;

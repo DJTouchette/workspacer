@@ -119,7 +119,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     const sessionId = opts.resumeSessionId || randomUUID();
     // Record name/parent before the session registers so adopted cards are
     // enriched from the very first hook event.
-    claudeSessionStore.setSpawnMeta(sessionId, { label: opts.label, parentSessionId: opts.parentSessionId });
+    claudeSessionStore.setSpawnMeta(sessionId, { label: opts.label, parentSessionId: opts.parentSessionId, isSupervisor: opts.supervisor });
 
     // Per-spawn MCP servers selected from the Library (kind 'mcp'). Resolve the
     // chosen item ids to their configs, write a session-scoped --mcp-config, and

@@ -115,7 +115,7 @@ export function registerHubCapabilities(): void {
     const sessionId = resumeSessionId || randomUUID();
     // Record name/parent before the session registers so adopted cards are
     // enriched from the very first hook event.
-    claudeSessionStore.setSpawnMeta(sessionId, { label, parentSessionId });
+    claudeSessionStore.setSpawnMeta(sessionId, { label, parentSessionId, isSupervisor: supervisor });
 
     // Supervisors install the /supervise skill and default to the configured
     // supervisor model. Facade workers (mcpFacade) get the tools but no loop.
@@ -230,6 +230,15 @@ export function registerHubCapabilities(): void {
     const { sessionId } = (params ?? {}) as { sessionId?: string };
     if (!sessionId) throw new Error('sessions.transcript requires { sessionId }');
     return claudemonSessionClient.getTranscript(sessionId);
+  });
+
+  // Read-only: parsed conversation items + latest sequence number. With
+  // sinceSeq, returns only items after that sequence — cheap incremental polling
+  // so a supervisor digests just the new turns since it last looked.
+  registerCapability('sessions.conversation', async (params: unknown) => {
+    const { sessionId, sinceSeq } = (params ?? {}) as { sessionId?: string; sinceSeq?: number };
+    if (!sessionId) throw new Error('sessions.conversation requires { sessionId }');
+    return claudemonSessionClient.getConversation(sessionId, typeof sinceSeq === 'number' ? sinceSeq : undefined);
   });
 
   // Live terminal mirror: a remote opening the terminal view attaches here,
