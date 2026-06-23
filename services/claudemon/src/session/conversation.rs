@@ -254,6 +254,18 @@ pub fn items_from_row(value: &Value) -> Vec<ConversationItem> {
     if value.get("isMeta").and_then(Value::as_bool).unwrap_or(false) {
         return out;
     }
+    // Sub-agent steps (Task tool / workflow agents) are written into the same
+    // transcript tagged `isSidechain: true`. They belong to the sub-agent's own
+    // run — surfaced separately via the subagent/workflow cards — not the main
+    // timeline. Without this, every tool call a sub-agent makes (Bash, Read, …)
+    // floods the conversation as orphaned rows under the spawning Agent card.
+    if value
+        .get("isSidechain")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return out;
+    }
     let row_type = value.get("type").and_then(Value::as_str).unwrap_or("");
     let ts = value
         .get("timestamp")
@@ -448,6 +460,46 @@ mod tests {
         assert!(matches!(&items[0], ConversationItem::Usage { model: Some(m), message_id: Some(id), .. } if m == "claude-fable-5" && id == "msg_1"));
         assert!(matches!(&items[1], ConversationItem::AssistantText { text, .. } if text == "I'll read the file."));
         assert!(matches!(&items[2], ConversationItem::ToolUse { id, name, .. } if id == "tu_2" && name == "Read"));
+    }
+
+    #[test]
+    fn sidechain_rows_are_skipped() {
+        // A sub-agent's tool_use (Task tool / workflow agent), tagged
+        // isSidechain, must not flatten into the main conversation — those rows
+        // belong to the sub-agent's own run, surfaced via the agent cards.
+        let tool_use = json!({
+            "type": "assistant",
+            "isSidechain": true,
+            "message": {
+                "role": "assistant",
+                "content": [
+                    { "type": "tool_use", "id": "tu_x", "name": "Bash", "input": { "command": "ls" } }
+                ]
+            }
+        });
+        assert!(items_from_row(&tool_use).is_empty(), "sidechain tool_use must be dropped");
+
+        let text = json!({
+            "type": "assistant",
+            "isSidechain": true,
+            "message": { "role": "assistant", "content": [{ "type": "text", "text": "subagent thinking" }] }
+        });
+        assert!(items_from_row(&text).is_empty(), "sidechain text must be dropped");
+
+        // The spawning Agent tool_use lives in the MAIN (non-sidechain) turn and
+        // must still surface so its card anchors.
+        let main_agent = json!({
+            "type": "assistant",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    { "type": "tool_use", "id": "tu_a", "name": "Agent", "input": { "description": "explore" } }
+                ]
+            }
+        });
+        let items = items_from_row(&main_agent);
+        assert_eq!(items.len(), 1);
+        assert!(matches!(&items[0], ConversationItem::ToolUse { name, .. } if name == "Agent"));
     }
 
     #[test]
