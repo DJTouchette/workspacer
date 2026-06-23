@@ -837,117 +837,6 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
       color: colors.text,
       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
     }}>
-      {/* Toolbar */}
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 8,
-        padding: '3px 10px',
-        backgroundColor: colors.bgToolbar,
-        borderBottom: `1px solid ${colors.border}`,
-        minHeight: 26,
-        flexShrink: 0,
-      }}>
-        <StatusBadge session={session} approvalDismissed={!!(pendingApproval && pendingApproval.timestamp <= approvalDismissedAt)} />
-
-        {/* In-app status line — model · ctx · tok/cost · 5h/7d (replaces the
-            old working-timer + directory readouts). */}
-        <SessionStatusBar snapshot={session} cwd={cwd} />
-
-        {session && (
-          <span style={{ fontSize: '0.55rem', color: colors.mutedDim }}>
-            {session.totalToolCalls} tools
-          </span>
-        )}
-
-        {(() => {
-          const liveAgents =
-            subagents.filter(s => s.status === 'running').length +
-            workflows.flatMap(w => w.agents).filter(a => a.status === 'running').length;
-          return liveAgents > 0 ? (
-            <span style={{ fontSize: '0.55rem', color: 'var(--wks-purple, #c084fc)' }}>
-              {liveAgents} subagent{liveAgents !== 1 ? 's' : ''}
-            </span>
-          ) : null;
-        })()}
-
-        {attachedFiles.length > 0 && (
-          <span style={{ fontSize: '0.55rem', color: colors.accent }}>
-            {attachedFiles.length} file{attachedFiles.length !== 1 ? 's' : ''} attached
-          </span>
-        )}
-
-        <div style={{ flex: 1 }} />
-
-        {/* Redraw — clears the rare backdrop-filter compositing garble */}
-        <button
-          onClick={forceRepaint}
-          title="Redraw pane (fixes occasional rendering glitches)"
-          style={{
-            ...toggleBtnStyle,
-            display: 'flex',
-            alignItems: 'center',
-            backgroundColor: 'transparent',
-            color: colors.mutedDim,
-          }}
-        >
-          <RefreshCw size={13} strokeWidth={1.9} />
-        </button>
-
-        {/* Attach files */}
-        <button
-          onClick={openFilePicker}
-          title="Attach files"
-          style={{
-            ...toggleBtnStyle,
-            backgroundColor: 'transparent',
-            color: colors.mutedDim,
-            fontSize: '0.7rem',
-          }}
-        >
-          +
-        </button>
-
-        {/* Inspector rail toggle — available in both GUI and Terminal mode */}
-        <button
-          onClick={toggleRail}
-          title={railOpen ? 'Hide inspector' : 'Show inspector (files / workflows / agents / usage)'}
-          style={{
-            ...toggleBtnStyle,
-            display: 'flex',
-            alignItems: 'center',
-            backgroundColor: railOpen ? 'var(--wks-accent-bg)' : 'transparent',
-            color: railOpen ? colors.accent : colors.mutedDim,
-          }}
-        >
-          <PanelRight size={13} strokeWidth={1.9} />
-        </button>
-
-        {/* View mode toggle */}
-        <div style={{ display: 'flex', gap: 2 }}>
-          <button
-            onClick={() => setViewMode('gui')}
-            style={{
-              ...toggleBtnStyle,
-              backgroundColor: viewMode === 'gui' ? 'var(--wks-accent-bg)' : 'transparent',
-              color: viewMode === 'gui' ? colors.accent : colors.mutedDim,
-            }}
-          >
-            GUI
-          </button>
-          <button
-            onClick={() => setViewMode('terminal')}
-            style={{
-              ...toggleBtnStyle,
-              backgroundColor: viewMode === 'terminal' ? 'var(--wks-accent-bg)' : 'transparent',
-              color: viewMode === 'terminal' ? colors.accent : colors.mutedDim,
-            }}
-          >
-            Term
-          </button>
-        </div>
-      </div>
-
       {/* Content + inspector rail row — the rail is a sibling of the content
           area (not nested in the GUI view) so it stays put across GUI/Term. */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'row', overflow: 'hidden' }}>
@@ -971,7 +860,11 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
             display: viewMode === 'gui' ? 'flex' : 'none',
             flexDirection: 'column',
             overflow: 'hidden',
-          }}>
+            // Drives the conversation/markdown font scaling (see ConversationMessage
+            // + markdown.tsx). Defaults to 1 elsewhere, so the shared markdown
+            // renderer (Library, etc.) is unaffected.
+            ['--claude-gui-font-scale' as string]: config.ui.guiFontScale ?? 1.15,
+          } as React.CSSProperties}>
             {/* Conversation scroll area */}
             <div
               ref={scrollContainerRef}
@@ -1142,6 +1035,119 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
       {/* Inspector rail — files / workflows / agents / usage. Sibling of the
           content area, so it persists in both GUI and Terminal mode. */}
       {railOpen && <InspectorRail session={session} onClose={toggleRail} />}
+      </div>
+
+      {/* Status / control bar — pinned to the bottom of the pane (below the
+          content area, so it sits under the composer in GUI and under the
+          terminal in Term), IDE/CLI status-line style. */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        padding: '3px 10px',
+        backgroundColor: colors.bgToolbar,
+        borderTop: `1px solid ${colors.border}`,
+        minHeight: 26,
+        flexShrink: 0,
+      }}>
+        <StatusBadge session={session} approvalDismissed={!!(pendingApproval && pendingApproval.timestamp <= approvalDismissedAt)} />
+
+        {/* In-app status line — model · ctx · tok/cost · 5h/7d (replaces the
+            old working-timer + directory readouts). */}
+        <SessionStatusBar snapshot={session} cwd={cwd} />
+
+        {session && (
+          <span style={{ fontSize: '0.55rem', color: colors.mutedDim }}>
+            {session.totalToolCalls} tools
+          </span>
+        )}
+
+        {(() => {
+          const liveAgents =
+            subagents.filter(s => s.status === 'running').length +
+            workflows.flatMap(w => w.agents).filter(a => a.status === 'running').length;
+          return liveAgents > 0 ? (
+            <span style={{ fontSize: '0.55rem', color: 'var(--wks-purple, #c084fc)' }}>
+              {liveAgents} subagent{liveAgents !== 1 ? 's' : ''}
+            </span>
+          ) : null;
+        })()}
+
+        {attachedFiles.length > 0 && (
+          <span style={{ fontSize: '0.55rem', color: colors.accent }}>
+            {attachedFiles.length} file{attachedFiles.length !== 1 ? 's' : ''} attached
+          </span>
+        )}
+
+        <div style={{ flex: 1 }} />
+
+        {/* Redraw — clears the rare backdrop-filter compositing garble */}
+        <button
+          onClick={forceRepaint}
+          title="Redraw pane (fixes occasional rendering glitches)"
+          style={{
+            ...toggleBtnStyle,
+            display: 'flex',
+            alignItems: 'center',
+            backgroundColor: 'transparent',
+            color: colors.mutedDim,
+          }}
+        >
+          <RefreshCw size={13} strokeWidth={1.9} />
+        </button>
+
+        {/* Attach files */}
+        <button
+          onClick={openFilePicker}
+          title="Attach files"
+          style={{
+            ...toggleBtnStyle,
+            backgroundColor: 'transparent',
+            color: colors.mutedDim,
+            fontSize: '0.7rem',
+          }}
+        >
+          +
+        </button>
+
+        {/* Inspector rail toggle — available in both GUI and Terminal mode */}
+        <button
+          onClick={toggleRail}
+          title={railOpen ? 'Hide inspector' : 'Show inspector (files / workflows / agents / usage)'}
+          style={{
+            ...toggleBtnStyle,
+            display: 'flex',
+            alignItems: 'center',
+            backgroundColor: railOpen ? 'var(--wks-accent-bg)' : 'transparent',
+            color: railOpen ? colors.accent : colors.mutedDim,
+          }}
+        >
+          <PanelRight size={13} strokeWidth={1.9} />
+        </button>
+
+        {/* View mode toggle */}
+        <div style={{ display: 'flex', gap: 2 }}>
+          <button
+            onClick={() => setViewMode('gui')}
+            style={{
+              ...toggleBtnStyle,
+              backgroundColor: viewMode === 'gui' ? 'var(--wks-accent-bg)' : 'transparent',
+              color: viewMode === 'gui' ? colors.accent : colors.mutedDim,
+            }}
+          >
+            GUI
+          </button>
+          <button
+            onClick={() => setViewMode('terminal')}
+            style={{
+              ...toggleBtnStyle,
+              backgroundColor: viewMode === 'terminal' ? 'var(--wks-accent-bg)' : 'transparent',
+              color: viewMode === 'terminal' ? colors.accent : colors.mutedDim,
+            }}
+          >
+            Term
+          </button>
+        </div>
       </div>
     </div>
   );

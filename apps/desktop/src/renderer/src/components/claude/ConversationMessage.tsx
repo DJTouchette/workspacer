@@ -30,7 +30,7 @@ const ConversationMessageInner: React.FC<{ turn: ConversationTurn }> = ({ turn }
         }}>
           <pre style={{
             margin: 0,
-            fontSize: '0.8rem',
+            fontSize: 'calc(0.8rem * var(--claude-gui-font-scale, 1))',
             lineHeight: 1.6,
             color: colors.text,
             fontFamily: 'var(--claude-mono-font, monospace)',
@@ -56,7 +56,7 @@ const ConversationMessageInner: React.FC<{ turn: ConversationTurn }> = ({ turn }
       {parsedContent ? (
         <div style={{
           paddingLeft: 4,
-          fontSize: '0.8rem',
+          fontSize: 'calc(0.8rem * var(--claude-gui-font-scale, 1))',
           lineHeight: 1.6,
           color: colors.text,
         }}>

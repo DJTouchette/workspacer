@@ -65,6 +65,7 @@ export const DEFAULT_CONFIG: Config = {
     navBarHeight: 34,
     paneHeaderHeight: 22,
     showComposerSend: true,
+    guiFontScale: 1.15,
   },
   terminal: {
     shell: '',

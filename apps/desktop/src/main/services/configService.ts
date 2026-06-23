@@ -39,6 +39,8 @@ interface Config {
     navBarHeight: number;
     paneHeaderHeight: number;
     showComposerSend?: boolean;
+    /** Font scale for the GUI conversation view (1 = original size). */
+    guiFontScale?: number;
   };
   terminal: {
     shell: string;
@@ -191,6 +193,7 @@ function defaultConfig(): Config {
       navBarHeight: 34,
       paneHeaderHeight: 22,
       showComposerSend: true,
+      guiFontScale: 1.15,
     },
     terminal: {
       shell: '',

@@ -21,6 +21,9 @@ export interface UIConfig {
   /** Show the composer's send (↑) button. When off, Enter still sends — useful
    *  if the button gets in the way of input. Optional; absent = on. */
   showComposerSend?: boolean;
+  /** Font scale for the GUI conversation view (1 = original size). Optional;
+   *  absent = the default scale. */
+  guiFontScale?: number;
 }
 
 export interface TerminalConfig {

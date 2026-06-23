@@ -171,6 +171,7 @@ export interface AppConfig {
     navBarHeight: number;
     paneHeaderHeight: number;
     showComposerSend?: boolean;
+    guiFontScale?: number;
   };
   terminal: {
     shell: string;

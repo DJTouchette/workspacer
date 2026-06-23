@@ -20,7 +20,7 @@ const CodeBlock: React.FC<{ code: string; info?: string }> = ({ code, info }) =>
     <div style={{ margin: '6px 0' }}>
       {info && (
         <div style={{
-          fontSize: '0.6rem',
+          fontSize: 'calc(0.6rem * var(--claude-gui-font-scale, 1))',
           color: colors.muted,
           backgroundColor: 'rgba(255,255,255,0.04)',
           padding: '2px 10px',
@@ -36,7 +36,7 @@ const CodeBlock: React.FC<{ code: string; info?: string }> = ({ code, info }) =>
         padding: '10px 12px',
         backgroundColor: 'rgba(0, 0, 0, 0.3)',
         borderRadius: info ? '0 0 6px 6px' : '6px',
-        fontSize: '0.75rem',
+        fontSize: 'calc(0.75rem * var(--claude-gui-font-scale, 1))',
         lineHeight: 1.5,
         color: 'rgb(190, 200, 220)',
         fontFamily: 'var(--claude-mono-font, monospace)',
@@ -231,7 +231,7 @@ function renderTable(key: number, header: string[] | null, rows: string[][], ali
     <div key={key} style={{ margin: '8px 0', overflowX: 'auto' }}>
       <table style={{
         borderCollapse: 'collapse',
-        fontSize: '0.75rem',
+        fontSize: 'calc(0.75rem * var(--claude-gui-font-scale, 1))',
         lineHeight: 1.5,
         minWidth: '100%',
       }}>
@@ -356,7 +356,7 @@ export function parseMarkdownBlocks(text: string): React.ReactNode[] {
       const sizes: Record<number, string> = { 1: '0.95rem', 2: '0.88rem', 3: '0.82rem', 4: '0.78rem' };
       blocks.push(
         <div key={key++} style={{
-          fontSize: sizes[level] ?? '0.78rem',
+          fontSize: `calc(${sizes[level] ?? '0.78rem'} * var(--claude-gui-font-scale, 1))`,
           fontWeight: 700,
           color: colors.textBright,
           margin: `${level === 1 ? 12 : 8}px 0 4px 0`,
