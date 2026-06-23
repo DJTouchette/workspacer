@@ -87,6 +87,12 @@ export const AttentionProvider: React.FC<ProviderProps> = ({
   // us we can advance to the NEXT item (same slot) rather than snapping to top.
   const prevIndexRef = useRef(0);
 
+  // Latest feed, so openAgent can clear an agent's items without taking `feed`
+  // as a dependency — that would rebuild the stable actions bundle on every
+  // feed tick (see the actions memo note below).
+  const feedRef = useRef(feed);
+  feedRef.current = feed;
+
   // Keep a valid selection as the feed shifts. If the selected card is still
   // present, just track its index; if it resolved away, advance to the item now
   // occupying its old slot (clamped) so triage flows downward like email.
@@ -134,10 +140,17 @@ export const AttentionProvider: React.FC<ProviderProps> = ({
   }, []);
 
   const openAgent = useCallback((agentId: string) => {
+    // Opening an agent IS the triage action for it: clear that agent's inbox
+    // items so they don't linger after you've gone to deal with them. The live
+    // approval/question prompts still appear in the agent's own pane, and any
+    // genuinely new request (different signature) will resurface here later.
+    for (const it of feedRef.current) {
+      if (it.agentId === agentId) dismiss(it.signature);
+    }
     onOpenAgent(agentId);
     setViewLevel('piloting');
     closeInbox();
-  }, [onOpenAgent, setViewLevel, closeInbox]);
+  }, [dismiss, onOpenAgent, setViewLevel, closeInbox]);
 
   const respawn = useCallback((agentId: string) => {
     onRespawnAgent?.(agentId);

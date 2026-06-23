@@ -94,4 +94,15 @@ describe('Mission Control surfaces', () => {
     fireEvent.click(screen.getByText('Builder agent'));
     expect(onOpenAgent).toHaveBeenCalledWith('a2');
   });
+
+  it("clears an agent's inbox items when you open it", () => {
+    const { onOpenAgent } = renderSurfaces();
+    // The Refactor agent (sess-1) has an approval card in the inbox.
+    expect(screen.getByText('Permission Required: Bash')).toBeInTheDocument();
+    // Opening it from the card footer is the triage action.
+    fireEvent.click(screen.getAllByText('Open')[0]);
+    expect(onOpenAgent).toHaveBeenCalledWith('a1');
+    // Its item is dismissed, so the card no longer lingers in the inbox.
+    expect(screen.queryByText('Permission Required: Bash')).not.toBeInTheDocument();
+  });
 });
