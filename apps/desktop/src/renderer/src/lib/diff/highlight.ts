@@ -146,6 +146,17 @@ export function langForPath(path: string): string | null {
   return LANG_BY_EXT[ext] ?? null;
 }
 
+/** Grammar id for a fenced-code info string (e.g. "ts", "tsx", "bash",
+ *  "typescript"), or null when unknown. Accepts grammar ids directly and
+ *  common file-extension / shorthand aliases. */
+export function langForInfo(info: string): string | null {
+  const id = info.trim().toLowerCase().split(/\s+/)[0];
+  if (!id) return null;
+  if (id in LANG_LOADERS) return id;        // already a grammar id (typescript, tsx, …)
+  if (id === 'shell' || id === 'console') return 'shellscript';
+  return LANG_BY_EXT[id] ?? null;           // treat as extension / alias (ts, py, sh, …)
+}
+
 const DARK_THEME = 'github-dark-default';
 const LIGHT_THEME = 'github-light-default';
 

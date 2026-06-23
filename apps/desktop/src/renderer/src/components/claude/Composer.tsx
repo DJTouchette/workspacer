@@ -61,11 +61,11 @@ export const Composer: React.FC<ComposerProps> = ({
       opacity: dimmed ? 0.55 : 1,
       transition: 'opacity 0.15s',
     }}>
-      <div style={{ maxWidth: 720, margin: '0 auto' }}>
+      <div style={{ maxWidth: 1040, margin: '0 auto' }}>
         <FileChips files={attachedFiles} onRemove={onRemoveFile} />
         <div style={{
           display: 'flex',
-          alignItems: 'flex-end',
+          alignItems: 'center',
           gap: 6,
           padding: '6px 6px 6px 10px',
           borderRadius: 13,
@@ -77,12 +77,13 @@ export const Composer: React.FC<ComposerProps> = ({
           <span aria-hidden style={{
             alignSelf: 'center', flexShrink: 0,
             fontFamily: 'var(--wks-font-mono)', fontSize: '0.95rem', fontWeight: 700,
-            color: colors.accent, lineHeight: 1, marginBottom: 1,
+            color: colors.accent, lineHeight: 1,
           }}>{'›'}</span>
           <button
             onClick={onPickFiles}
             title="Attach files"
             style={{
+              alignSelf: 'center',
               width: 24,
               height: 24,
               borderRadius: '50%',
@@ -96,7 +97,6 @@ export const Composer: React.FC<ComposerProps> = ({
               fontSize: '1rem',
               flexShrink: 0,
               padding: 0,
-              marginBottom: 2,
             }}
           >
             +
@@ -109,7 +109,10 @@ export const Composer: React.FC<ComposerProps> = ({
             onChange={(e) => onChange(e.target.value)}
             onPaste={onPaste}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
+              // Enter sends; Shift+Enter inserts a newline. Guard against IME
+              // composition (e.g. accent/CJK candidate windows) where Enter
+              // commits the candidate rather than submitting the message.
+              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
                 onSend();
               }
@@ -117,6 +120,10 @@ export const Composer: React.FC<ComposerProps> = ({
             style={{
               flex: 1,
               fontSize: '0.8rem',
+              // border-box so the auto-grow height (set to scrollHeight) matches
+              // the text exactly; otherwise the padding inflates the box and the
+              // top-aligned text rides above the centered buttons.
+              boxSizing: 'border-box',
               padding: '4px 0',
               border: 'none',
               backgroundColor: 'transparent',

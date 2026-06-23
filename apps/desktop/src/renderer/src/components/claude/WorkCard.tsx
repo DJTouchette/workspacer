@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { ToolCall, SubagentInfo, WorkflowRunInfo } from '../../types/claudeSession';
 import { claudeColors as colors, WorkLogEntry } from '../claude-shared';
-import { DiffView, hasDiff } from './DiffView';
+import { DiffView, hasDiff, ReadView, hasRead } from './DiffView';
 import { SubagentRow } from './SubagentRow';
 import { WorkflowRunCard } from './WorkflowRunCard';
 import { AgentSpinner } from './WorkflowAgentRow';
@@ -62,19 +62,22 @@ function summarizeWork(calls: ToolCall[]): WorkSummary {
  * diffs; subagent and workflow runs render as rich cards anchored at the
  * tool call that spawned them.
  *
- * `live` marks the most recent card while Claude is still working: it
- * defaults to expanded, then auto-collapses once when work moves on — except
- * for cards that contain a workflow/subagent run, which stay collapsed so the
- * rich run cards (not a flood of raw tool calls) are what you see while a
- * workflow is going.
+ * `live` marks the most recent card while Claude is still working and `isLast`
+ * marks the most recent card overall; either keeps the card expanded so the
+ * latest step stays open at a glance. A card auto-collapses once it's
+ * superseded (a newer card appears). Cards that contain a workflow/subagent run
+ * stay collapsed regardless, so the rich run cards (not a flood of raw tool
+ * calls) are what you see while a workflow is going.
  */
 const WorkCardInner: React.FC<{
   toolCalls: ToolCall[];
   subagentByToolId?: Map<string, SubagentInfo>;
   workflowByToolId?: Map<string, WorkflowRunInfo>;
   live?: boolean;
+  /** The most recent work card in the timeline — kept open after work ends. */
+  isLast?: boolean;
   cwd?: string;
-}> = ({ toolCalls, subagentByToolId, workflowByToolId, live, cwd }) => {
+}> = ({ toolCalls, subagentByToolId, workflowByToolId, live, isLast, cwd }) => {
   // A card that spawned a workflow/subagent run shows that run via its rich
   // card (surfaced even when collapsed); don't auto-expand into the raw tool
   // list, which is the "bunch of tool calls" flood during a workflow.
@@ -82,13 +85,17 @@ const WorkCardInner: React.FC<{
     () => toolCalls.some(tc => workflowByToolId?.has(tc.id) || subagentByToolId?.has(tc.id)),
     [toolCalls, workflowByToolId, subagentByToolId],
   );
-  const [expanded, setExpanded] = useState(!!live && !hasOrchestration);
+  // Open while this is the live/last card; collapse once a newer card supersedes
+  // it. (Orchestration cards stay closed so their rich run cards lead instead.)
+  const active = (!!live || !!isLast) && !hasOrchestration;
+  const [expanded, setExpanded] = useState(active);
   const [filesOpen, setFilesOpen] = useState(false);
-  const wasLive = useRef(!!live);
+  const wasActive = useRef(active);
   useEffect(() => {
-    if (wasLive.current && !live) { setExpanded(false); setFilesOpen(false); }
-    wasLive.current = !!live;
-  }, [live]);
+    if (wasActive.current && !active) { setExpanded(false); setFilesOpen(false); }
+    else if (!wasActive.current && active) { setExpanded(true); }
+    wasActive.current = active;
+  }, [active]);
 
   const summary = useMemo(() => summarizeWork(toolCalls), [toolCalls]);
   const anyRunning = live || toolCalls.some(tc => tc.status === 'running');
@@ -257,6 +264,9 @@ const WorkCardInner: React.FC<{
                     newStr={tc.input?.new_string ?? ''}
                     filePath={tc.input?.file_path}
                   />
+                )}
+                {hasRead(tc) && (
+                  <ReadView response={String(tc.response)} filePath={tc.input?.file_path} />
                 )}
               </React.Fragment>
             );

@@ -37,7 +37,7 @@ export const NeedsYouDock: React.FC<{
       overflowY: 'auto',
       animation: 'claudeSlideUp 0.18s ease-out',
     }}>
-      <div style={{ maxWidth: 720, margin: '0 auto', padding: '6px 16px 2px 16px' }}>
+      <div style={{ maxWidth: 1040, margin: '0 auto', padding: '6px 16px 2px 16px' }}>
         <div style={{
           display: 'flex',
           alignItems: 'center',

@@ -763,13 +763,12 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
     // Seed prevRole from turn before the window so the first divider renders correctly
     let prevRole: string | null = startIdx > 0 ? conversation[startIdx - 1].role : null;
 
-    const isToolTurn = (t: ConversationTurn) =>
-      t.role === 'assistant' && (t.toolCalls?.length ?? 0) > 0 && !t.content;
-
     let pendingWork: { calls: ToolCall[]; keyStart: number; endIdx: number } | null = null;
+    const workCardIdxs: number[] = []; // positions of WorkCards in `items`
     const flushWork = () => {
       if (!pendingWork) return;
       const { calls, keyStart, endIdx } = pendingWork;
+      workCardIdxs.push(items.length);
       items.push(
         <WorkCard
           key={`work-${keyStart}`}
@@ -785,33 +784,48 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
 
     visibleTurns.forEach((turn, vi) => {
       const gi = startIdx + vi; // global index for stable keys
-      if (isToolTurn(turn)) {
+      const calls = turn.toolCalls ?? [];
+
+      if (turn.role === 'user') {
+        flushWork();
+        if (gi > 0) items.push(<TurnDivider key={`div-${gi}`} />);
+        items.push(<ConversationMessage key={`msg-${gi}`} turn={turn} />);
+        prevRole = 'user';
+        return;
+      }
+
+      // Assistant turn. Text introduces the work that follows it, so close any
+      // prior work card above the message, render the text, then open a fresh
+      // card seeded with this turn's tool calls. Consecutive text-less tool
+      // turns keep appending to that same card — so a run of tool calls always
+      // reads as one collapsible card between two things Claude said, never a
+      // flat flood of rows trailing the message.
+      if (turn.content) {
+        flushWork();
+        if (prevRole === 'user' && gi > 0) items.push(<TurnDivider key={`div-${gi}`} />);
+        items.push(<ConversationMessage key={`msg-${gi}`} turn={turn} />);
+        if (calls.length > 0) pendingWork = { calls: [...calls], keyStart: gi, endIdx: gi };
+      } else if (calls.length > 0) {
         if (!pendingWork) {
           if (prevRole === 'user' && gi > 0) items.push(<TurnDivider key={`div-${gi}`} />);
           pendingWork = { calls: [], keyStart: gi, endIdx: gi };
         }
-        pendingWork.calls.push(...(turn.toolCalls ?? []));
+        pendingWork.calls.push(...calls);
         pendingWork.endIdx = gi;
-        prevRole = 'assistant';
-        return;
       }
-      flushWork();
-      if (turn.role === 'assistant' && prevRole === 'user' && gi > 0) {
-        items.push(<TurnDivider key={`div-${gi}`} />);
-      }
-      items.push(
-        <ConversationMessage
-          key={`msg-${gi}`}
-          turn={turn}
-          isLast={gi === conversation.length - 1}
-        />
-      );
-      prevRole = turn.role;
+      prevRole = 'assistant';
     });
     flushWork();
 
+    // Keep the most recent work card expanded after work ends, so the latest
+    // step stays open without a click. Older cards collapse as usual.
+    if (workCardIdxs.length > 0) {
+      const lastIdx = workCardIdxs[workCardIdxs.length - 1];
+      items[lastIdx] = React.cloneElement(items[lastIdx] as React.ReactElement, { isLast: true });
+    }
+
     return items;
-  }, [conversation, visibleCount, toolIdToSubagent, toolIdToWorkflow, isStreaming, sessionId]);
+  }, [conversation, visibleCount, toolIdToSubagent, toolIdToWorkflow, isStreaming, sessionId, cwd]);
 
   return (
     <div style={{
@@ -976,7 +990,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
             >
               {/* Centered content container */}
               <div style={{
-                maxWidth: 720,
+                maxWidth: 1040,
                 margin: '0 auto',
               }}>
                 {/* Empty states */}
