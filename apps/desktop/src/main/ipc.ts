@@ -12,7 +12,8 @@ import { listClaudeModels } from './services/claudeModels';
 import { agentNotifier } from './services/agentNotifier';
 import { claudemonSessionClient } from './services/claudemonSessionClient';
 import { buildClaudeArgv } from './services/claudeResolver';
-import { supervisorMcpConfigPath, SUPERVISOR_SYSTEM_PROMPT, buildSessionMcpConfig } from './services/mcpConfig';
+import { facadeSpawnArgs, buildSessionMcpConfig } from './services/mcpConfig';
+import { installSupervisorSkill } from './services/supervisorSkill';
 import { importChromeCookies, importChromeCookiesViaCDP } from './services/chromeCookieImport';
 import { claudeProfiles } from './services/claudeProfiles';
 import { listClaudeSessionsForDir } from './services/claudeSessionList';
@@ -106,7 +107,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     claudemonSessionClient.close(id));
 
   // ── Claude sessions (delegated to claudemon) ──
-  ipcMain.handle(IPC.CLAUDE_SPAWN, async (_event, opts: { cwd?: string; profileId?: string; model?: string; skipPermissions?: boolean; resumeSessionId?: string; cols?: number; rows?: number; supervisor?: boolean; label?: string; parentSessionId?: string; mcpItemIds?: string[] }) => {
+  ipcMain.handle(IPC.CLAUDE_SPAWN, async (_event, opts: { cwd?: string; profileId?: string; model?: string; skipPermissions?: boolean; resumeSessionId?: string; cols?: number; rows?: number; supervisor?: boolean; mcpFacade?: boolean; label?: string; parentSessionId?: string; mcpItemIds?: string[] }) => {
     const profile = opts.profileId ? claudeProfiles.getProfile(opts.profileId) : undefined;
     const env: Record<string, string> = {};
     if (profile?.configDir) {
@@ -125,8 +126,12 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     // pre-allow their tools. `--strict-mcp-config` so the session sees exactly
     // these servers, not the user's global ones. Skipped for supervisors, which
     // get the workspacer facade config instead.
+    // Sessions with the workspacer MCP facade (full supervisors, or plain
+    // facade workers a supervisor spawns) take the facade config instead of the
+    // user's library MCP servers.
+    const wantsFacade = opts.supervisor || opts.mcpFacade;
     let userMcp: { path: string; toolNames: string[] } | null = null;
-    if (!opts.supervisor && opts.mcpItemIds && opts.mcpItemIds.length) {
+    if (!wantsFacade && opts.mcpItemIds && opts.mcpItemIds.length) {
       const wanted = new Set(opts.mcpItemIds);
       const servers = libraryService.list(opts.cwd)
         .filter((it) => it.kind === 'mcp' && it.mcp && wanted.has(it.id))
@@ -134,22 +139,31 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       userMcp = buildSessionMcpConfig(sessionId, servers);
     }
 
+    // Supervisors: install the /supervise skill and default to the configured
+    // supervisor model when none was passed explicitly.
+    const supCfg = configService.getConfig().supervisor;
+    let model = opts.model;
+    if (opts.supervisor) {
+      installSupervisorSkill();
+      if (!model) model = supCfg?.model || undefined;
+    }
+
     const argv = buildClaudeArgv({
       extraArgs: profile?.extraArgs,
       resumeSessionId: opts.resumeSessionId,
-      model: opts.model,
+      model,
       skipPermissions: opts.skipPermissions,
       sessionId,
-      // Supervisor sessions get the MCP facade config + pre-allowed tools +
-      // role prompt injected so the agent can observe and drive the fleet.
-      // Also tell the supervisor its own session id so it can pass parentSessionId
-      // when spawning workers, making them appear nested in the UI.
-      ...(opts.supervisor && {
-        mcpConfig: supervisorMcpConfigPath(),
-        appendSystemPrompt: `${SUPERVISOR_SYSTEM_PROMPT}\n\nYour own workspacer session id is ${sessionId}. When you spawn worker agents with spawn_agent, pass parentSessionId:"${sessionId}" and a short label so they appear nested under you in the UI.`,
-        allowedTools: ['mcp__workspacer'],
-      }),
-      // User-selected MCP servers (non-supervisor sessions).
+      // Facade sessions get the MCP config + pre-allowed tools + a role prompt.
+      // A supervisor also learns its session id and is kicked into /supervise;
+      // a plain facade worker just gets the tools.
+      ...(wantsFacade && facadeSpawnArgs({
+        sessionId,
+        supervisor: opts.supervisor,
+        summarizerModel: supCfg?.summarizerModel,
+        pollSeconds: supCfg?.pollSeconds,
+      })),
+      // User-selected MCP servers (non-facade sessions).
       ...(userMcp && {
         mcpConfig: userMcp.path,
         strictMcpConfig: true,

@@ -93,6 +93,16 @@ interface Config {
     /** Which view a Claude pane opens in by default: rich 'gui' or raw 'terminal'. */
     defaultView: 'gui' | 'terminal';
   };
+  /** Optional fleet-supervisor settings. The supervisor is opt-in (spawned via
+   *  "Ask the Fleet"); nothing here is assumed present by the rest of the app. */
+  supervisor: {
+    /** Coordinator model for supervisor sessions ('' = the app/Claude default). */
+    model: string;
+    /** Cheap model the supervisor spawns for transcript digests (e.g. 'sonnet'). */
+    summarizerModel: string;
+    /** How often (seconds) the supervisor's loop re-sweeps the fleet. */
+    pollSeconds: number;
+  };
   /** Directories surfaced in the Overview pane for quick agent launching. */
   directories: {
     recent: string[];
@@ -249,6 +259,11 @@ function defaultConfig(): Config {
       seenModels: [],
       skipPermissionsDefault: false,
       defaultView: 'terminal',
+    },
+    supervisor: {
+      model: '',
+      summarizerModel: 'sonnet',
+      pollSeconds: 45,
     },
     directories: {
       recent: [],

@@ -124,6 +124,17 @@ export interface Config {
     /** Concrete model ids seen across sessions, surfaced in the spawn dropdown. */
     seenModels?: string[];
   };
+  /** Optional fleet-supervisor settings (opt-in; absent = sensible defaults). */
+  supervisor?: SupervisorConfig;
+}
+
+export interface SupervisorConfig {
+  /** Coordinator model for supervisor sessions ('' = the app/Claude default). */
+  model?: string;
+  /** Cheap model the supervisor spawns for transcript digests (e.g. 'sonnet'). */
+  summarizerModel?: string;
+  /** How often (seconds) the supervisor's loop re-sweeps the fleet. */
+  pollSeconds?: number;
 }
 
 /**

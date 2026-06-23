@@ -27,7 +27,8 @@ import { searchProject } from './searchService';
 import * as terminalShare from './terminalShare';
 import { IPC } from '../shared/ipcChannels';
 import type { SessionData, LayoutInput, ProfileUpdate } from '../shared/ipcTypes';
-import { supervisorMcpConfigPath, SUPERVISOR_SYSTEM_PROMPT } from './mcpConfig';
+import { facadeSpawnArgs } from './mcpConfig';
+import { installSupervisorSkill } from './supervisorSkill';
 
 // Mirror of ipc.ts's shell detection so a capability-spawned terminal picks the
 // same default shell a UI-spawned one would. Kept local to avoid importing the
@@ -91,7 +92,7 @@ export function registerHubCapabilities(): void {
   // capabilities. The session runs headless in claudemon; a desktop pane can
   // attach to it later via the normal attach flow.
   registerCapability('agents.spawn', async (params: unknown) => {
-    const { cwd, profileId, model, skipPermissions, resumeSessionId, cols, rows, supervisor, label, parentSessionId } =
+    const { cwd, profileId, model, skipPermissions, resumeSessionId, cols, rows, supervisor, mcpFacade, label, parentSessionId } =
       (params ?? {}) as {
         cwd?: string;
         profileId?: string;
@@ -101,6 +102,7 @@ export function registerHubCapabilities(): void {
         cols?: number;
         rows?: number;
         supervisor?: boolean;
+        mcpFacade?: boolean;
         label?: string;
         parentSessionId?: string;
       };
@@ -114,21 +116,29 @@ export function registerHubCapabilities(): void {
     // Record name/parent before the session registers so adopted cards are
     // enriched from the very first hook event.
     claudeSessionStore.setSpawnMeta(sessionId, { label, parentSessionId });
+
+    // Supervisors install the /supervise skill and default to the configured
+    // supervisor model. Facade workers (mcpFacade) get the tools but no loop.
+    const supCfg = configService.getConfig().supervisor;
+    let resolvedModel = model;
+    if (supervisor) {
+      installSupervisorSkill();
+      if (!resolvedModel) resolvedModel = supCfg?.model || undefined;
+    }
     const argv = buildClaudeArgv({
       extraArgs: profile?.extraArgs,
       resumeSessionId,
-      model,
+      model: resolvedModel,
       skipPermissions,
       sessionId,
-      // Supervisor sessions get the MCP facade config + pre-allowed tools +
-      // role prompt injected so the agent can observe and drive the fleet.
-      // Also tell the supervisor its own session id so it can pass parentSessionId
-      // when spawning workers, making them appear nested in the UI.
-      ...(supervisor && {
-        mcpConfig: supervisorMcpConfigPath(),
-        appendSystemPrompt: `${SUPERVISOR_SYSTEM_PROMPT}\n\nYour own workspacer session id is ${sessionId}. When you spawn worker agents with spawn_agent, pass parentSessionId:"${sessionId}" and a short label so they appear nested under you in the UI.`,
-        allowedTools: ['mcp__workspacer'],
-      }),
+      // Full supervisor, or a plain facade worker — both get the MCP facade
+      // config + pre-allowed tools; only a supervisor gets the /supervise loop.
+      ...((supervisor || mcpFacade) && facadeSpawnArgs({
+        sessionId,
+        supervisor,
+        summarizerModel: supCfg?.summarizerModel,
+        pollSeconds: supCfg?.pollSeconds,
+      })),
     });
     const resolvedCwd = cwd && fs.existsSync(cwd) ? cwd : (process.env.HOME ?? os.homedir());
     const id = await claudemonSessionClient.spawn({ argv, cwd: resolvedCwd, cols, rows, env, sessionId });

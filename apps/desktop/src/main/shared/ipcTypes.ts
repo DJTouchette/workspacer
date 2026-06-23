@@ -219,6 +219,11 @@ export interface AppConfig {
     skipPermissionsDefault: boolean;
     defaultView: 'gui' | 'terminal';
   };
+  supervisor: {
+    model: string;
+    summarizerModel: string;
+    pollSeconds: number;
+  };
   directories: {
     recent: string[];
     favourites: string[];

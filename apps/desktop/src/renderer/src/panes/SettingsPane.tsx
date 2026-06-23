@@ -10,6 +10,7 @@ import BrowserSection from '../components/settings/BrowserSection';
 import EditorSection from '../components/settings/EditorSection';
 import AppsSection from '../components/settings/AppsSection';
 import ClaudeProfilesSection from '../components/settings/ClaudeProfilesSection';
+import SupervisorSection from '../components/settings/SupervisorSection';
 
 interface SettingsPaneProps {
   title: string;
@@ -26,6 +27,7 @@ const SECTION_KEYWORDS: Record<string, string[]> = {
   editor: ['editor', 'file', 'open'],
   apps: ['app', 'url', 'launch', 'custom'],
   profiles: ['profile', 'claude', 'model', 'api'],
+  supervisor: ['supervisor', 'fleet', 'agent', 'summarize', 'digest', 'model', 'notify'],
 };
 
 function sectionVisible(key: string, q: string): boolean {
@@ -50,6 +52,7 @@ const SettingsPane: React.FC<SettingsPaneProps> = ({ title }) => {
     editor: sectionVisible('editor', q),
     apps: sectionVisible('apps', q),
     profiles: sectionVisible('profiles', q),
+    supervisor: sectionVisible('supervisor', q),
   }), [q]);
 
   return (
@@ -135,6 +138,9 @@ const SettingsPane: React.FC<SettingsPaneProps> = ({ title }) => {
 
       {/* Claude Profiles section */}
       {show.profiles && <ClaudeProfilesSection />}
+
+      {/* Supervisor section */}
+      {show.supervisor && <SupervisorSection config={config} save={save} />}
 
       {/* No-match state */}
       {q && !Object.values(show).some(Boolean) && (

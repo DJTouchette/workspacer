@@ -26,6 +26,50 @@ const MCP_CONFIG_CONTENTS = JSON.stringify(
   2,
 );
 
+/**
+ * Build the argv fragment that grants a spawned session the workspacer MCP
+ * facade (--mcp-config + pre-allowed tools + an --append-system-prompt note).
+ *
+ * Two flavours:
+ *  - supervisor: the full fleet-coordination role + a kick to run /supervise on
+ *    a loop, parameterised with the configured summarizer model + cadence.
+ *  - plain facade worker (supervisor:false): just a short note that it has the
+ *    tools — used for the cheap summarizer workers a supervisor spawns, which
+ *    read transcripts themselves (so they need the facade) but must NOT loop or
+ *    coordinate.
+ *
+ * Centralised here so the desktop (ipc) and bus (hubCapabilities) spawn paths
+ * stay identical.
+ */
+export function facadeSpawnArgs(opts: {
+  sessionId: string;
+  supervisor?: boolean;
+  summarizerModel?: string;
+  pollSeconds?: number;
+}): { mcpConfig: string; allowedTools: string[]; appendSystemPrompt: string } {
+  const idNote = `Your own workspacer session id is ${opts.sessionId}.`;
+  if (!opts.supervisor) {
+    return {
+      mcpConfig: supervisorMcpConfigPath(),
+      allowedTools: ['mcp__workspacer'],
+      appendSystemPrompt:
+        `You have the workspacer MCP tools (mcp__workspacer__*) to observe the agent fleet. ${idNote} ` +
+        `You may be asked to call get_transcript for another session and reply with a concise, structured digest of what that agent is doing and whether it is blocked. ` +
+        `Do not spawn or coordinate other agents.`,
+    };
+  }
+  const summarizer = (opts.summarizerModel ?? '').trim() || 'sonnet';
+  const poll = opts.pollSeconds && opts.pollSeconds > 0 ? opts.pollSeconds : 45;
+  return {
+    mcpConfig: supervisorMcpConfigPath(),
+    allowedTools: ['mcp__workspacer'],
+    appendSystemPrompt:
+      `${SUPERVISOR_SYSTEM_PROMPT}\n\n${idNote} When you spawn worker agents with spawn_agent, pass parentSessionId:"${opts.sessionId}" and a short label so they appear nested under you in the UI.\n\n` +
+      `Run the /supervise skill now to begin watching the fleet, and keep it running on a loop (about every ${poll}s). ` +
+      `Spawn your transcript-summarizer workers with model "${summarizer}" and mcpFacade:true so they can read transcripts themselves without consuming your context.`,
+  };
+}
+
 let cachedPath: string | undefined;
 
 /**
