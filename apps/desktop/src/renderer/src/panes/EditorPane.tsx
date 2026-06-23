@@ -20,6 +20,12 @@ import { languages } from '@codemirror/language-data';
 import { syntaxHighlighting, HighlightStyle } from '@codemirror/language';
 import { tags as t } from '@lezer/highlight';
 import { vim } from '@replit/codemirror-vim';
+import {
+  ChevronRight, Folder, FolderOpen, RotateCw,
+  File, FileCode, FileJson, FileText, FileType, FileTerminal, FileCog,
+  FileImage, FileAudio, FileVideo, FileArchive, FileSpreadsheet,
+  Braces, Database, type LucideIcon,
+} from 'lucide-react';
 import { useConfig } from '../hooks/useConfig';
 import { useTheme } from '../hooks/useTheme';
 import { isLightTheme, type Theme } from '../themes';
@@ -94,6 +100,49 @@ function basename(p: string): string {
   return p.split(/[\\/]/).pop() || p;
 }
 
+/** Pick a Lucide icon + a subtle tint for a file, by name/extension. Colors are
+ *  muted so they read as accents inside the tree rather than shouting. */
+function fileIcon(name: string): { Icon: LucideIcon; color: string } {
+  const lower = name.toLowerCase();
+  const ext = lower.includes('.') ? lower.split('.').pop()! : '';
+  // A few well-known filenames first.
+  if (lower === 'dockerfile') return { Icon: FileCode, color: '#4aa3df' };
+  if (lower.endsWith('.lock') || lower === 'package-lock.json' || lower === 'yarn.lock' || lower === 'pnpm-lock.yaml')
+    return { Icon: FileCog, color: '#9aa0a6' };
+  if (lower.startsWith('.env')) return { Icon: FileCog, color: '#caa15a' };
+  switch (ext) {
+    case 'ts': case 'tsx': case 'mts': case 'cts': return { Icon: FileCode, color: '#4aa3df' };
+    case 'js': case 'jsx': case 'mjs': case 'cjs': return { Icon: FileCode, color: '#e6c94a' };
+    case 'json': case 'jsonc': return { Icon: Braces, color: '#e6c94a' };
+    case 'rs': return { Icon: FileCode, color: '#dd8855' };
+    case 'go': return { Icon: FileCode, color: '#4ad0e0' };
+    case 'py': return { Icon: FileCode, color: '#5b9bd5' };
+    case 'rb': return { Icon: FileCode, color: '#d65b5b' };
+    case 'java': case 'kt': case 'kts': return { Icon: FileCode, color: '#d68a5b' };
+    case 'c': case 'h': case 'cpp': case 'cc': case 'hpp': case 'cs': return { Icon: FileCode, color: '#7aa6d6' };
+    case 'php': return { Icon: FileCode, color: '#8a7fd6' };
+    case 'css': case 'scss': case 'sass': case 'less': return { Icon: FileType, color: '#c77dbb' };
+    case 'html': case 'htm': case 'xml': case 'svg': return { Icon: FileCode, color: '#dd8855' };
+    case 'vue': case 'svelte': return { Icon: FileCode, color: '#5fbf7f' };
+    case 'md': case 'mdx': case 'markdown': case 'rst': return { Icon: FileText, color: '#9aa0a6' };
+    case 'txt': case 'log': return { Icon: FileText, color: '#9aa0a6' };
+    case 'sh': case 'bash': case 'zsh': case 'fish': return { Icon: FileTerminal, color: '#8bc34a' };
+    case 'yml': case 'yaml': case 'toml': case 'ini': case 'conf': case 'cfg': return { Icon: FileCog, color: '#9aa0a6' };
+    case 'png': case 'jpg': case 'jpeg': case 'gif': case 'webp': case 'ico': case 'bmp': case 'avif':
+      return { Icon: FileImage, color: '#b083e0' };
+    case 'mp3': case 'wav': case 'flac': case 'ogg': case 'm4a': return { Icon: FileAudio, color: '#b083e0' };
+    case 'mp4': case 'mov': case 'mkv': case 'webm': case 'avi': return { Icon: FileVideo, color: '#b083e0' };
+    case 'zip': case 'tar': case 'gz': case 'tgz': case 'rar': case '7z': case 'bz2':
+      return { Icon: FileArchive, color: '#caa15a' };
+    case 'csv': case 'tsv': case 'xlsx': case 'xls': return { Icon: FileSpreadsheet, color: '#8bc34a' };
+    case 'sql': case 'db': case 'sqlite': return { Icon: Database, color: '#4ad0e0' };
+    default: return { Icon: File, color: 'var(--wks-text-disabled)' };
+  }
+}
+
+/** Horizontal indent per tree depth (px). */
+const TREE_INDENT = 12;
+
 /** Move the cursor to (1-based) line `n` and scroll it into view, clamping to
  *  the document's line count. Best-effort: no-op if the view/line is invalid. */
 function scrollToLine(view: EditorView, n: number) {
@@ -129,53 +178,68 @@ const TreeDir: React.FC<{
       .finally(() => setLoading(false));
   }, [open, path, entries, loading]);
 
-  const indent = 6 + depth * 12;
+  const rowPad = 8 + depth * TREE_INDENT;
+  const childPad = 8 + (depth + 1) * TREE_INDENT;
   return (
     <>
       <div
         onClick={() => setOpen((o) => !o)}
         title={name}
         style={{
-          display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer',
-          padding: '1px 6px', paddingLeft: indent, whiteSpace: 'nowrap', overflow: 'hidden',
-          textOverflow: 'ellipsis', color: 'var(--wks-text-secondary)',
+          display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer',
+          height: 22, padding: `0 8px 0 ${rowPad}px`, margin: '0 4px', borderRadius: 6,
+          whiteSpace: 'nowrap', overflow: 'hidden', userSelect: 'none',
+          color: 'var(--wks-text-secondary)',
         }}
         onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--wks-bg-hover)')}
         onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
       >
-        <span style={{ width: 10, display: 'inline-block', color: 'var(--wks-text-disabled)' }}>{open ? '▾' : '▸'}</span>
-        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</span>
+        <ChevronRight
+          size={12}
+          style={{ flexShrink: 0, opacity: 0.6, transition: 'transform 0.12s ease', transform: open ? 'rotate(90deg)' : 'none' }}
+        />
+        {open
+          ? <FolderOpen size={13} style={{ flexShrink: 0, color: 'var(--wks-text-muted)' }} />
+          : <Folder size={13} style={{ flexShrink: 0, color: 'var(--wks-text-muted)' }} />}
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', fontWeight: 500 }}>{name}</span>
       </div>
       {open && entries === null && (
-        <div style={{ padding: '1px 6px', paddingLeft: indent + 14, color: 'var(--wks-text-disabled)', fontStyle: 'italic' }}>
+        <div style={{ padding: `0 6px`, paddingLeft: childPad + 18, lineHeight: '20px', color: 'var(--wks-text-disabled)', fontStyle: 'italic' }}>
           Loading…
         </div>
       )}
       {open && entries?.length === 0 && (
-        <div style={{ padding: '1px 6px', paddingLeft: indent + 14, color: 'var(--wks-text-disabled)', fontStyle: 'italic' }}>
+        <div style={{ padding: `0 6px`, paddingLeft: childPad + 18, lineHeight: '20px', color: 'var(--wks-text-disabled)', fontStyle: 'italic' }}>
           empty
         </div>
       )}
       {open && entries?.map((e) =>
         e.isDir ? (
           <TreeDir key={e.path} path={e.path} name={e.name} depth={depth + 1} activePath={activePath} onOpen={onOpen} />
-        ) : (
-          <div
-            key={e.path}
-            onClick={() => onOpen(e.path)}
-            title={e.name}
-            style={{
-              padding: '1px 6px', paddingLeft: 6 + (depth + 1) * 12 + 14, cursor: 'pointer',
-              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-              color: e.path === activePath ? 'var(--wks-text-primary)' : 'var(--wks-text-muted)',
-              background: e.path === activePath ? 'var(--wks-bg-selected)' : 'transparent',
-            }}
-            onMouseEnter={(ev) => { if (e.path !== activePath) ev.currentTarget.style.background = 'var(--wks-bg-hover)'; }}
-            onMouseLeave={(ev) => { if (e.path !== activePath) ev.currentTarget.style.background = 'transparent'; }}
-          >
-            {e.name}
-          </div>
-        ),
+        ) : (() => {
+          const { Icon, color } = fileIcon(e.name);
+          const active = e.path === activePath;
+          return (
+            <div
+              key={e.path}
+              onClick={() => onOpen(e.path)}
+              title={e.name}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
+                height: 22, padding: `0 8px 0 ${childPad + 17}px`, margin: '0 4px', borderRadius: 6,
+                whiteSpace: 'nowrap', overflow: 'hidden',
+                color: active ? 'var(--wks-text-primary)' : 'var(--wks-text-muted)',
+                background: active ? 'var(--wks-bg-selected)' : 'transparent',
+                fontWeight: active ? 600 : 400,
+              }}
+              onMouseEnter={(ev) => { if (!active) ev.currentTarget.style.background = 'var(--wks-bg-hover)'; }}
+              onMouseLeave={(ev) => { if (!active) ev.currentTarget.style.background = 'transparent'; }}
+            >
+              <Icon size={13} style={{ flexShrink: 0, color, opacity: 0.9 }} />
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{e.name}</span>
+            </div>
+          );
+        })(),
       )}
     </>
   );
@@ -185,14 +249,27 @@ const TreeDir: React.FC<{
 const FileTree: React.FC<{ root: string; activePath?: string; onOpen: (p: string) => void }> = ({ root, activePath, onOpen }) => {
   const [reloadKey, setReloadKey] = useState(0);
   return (
-    <div style={{ flex: 1, minHeight: 0, overflow: 'auto', paddingBottom: 8 }}>
+    <div style={{
+      flex: 1, minHeight: 0, overflow: 'auto', paddingBottom: 8,
+      fontFamily: 'var(--wks-font-sans, sans-serif)', fontSize: '0.74rem',
+    }}>
       <div style={{
-        display: 'flex', alignItems: 'center', padding: '2px 8px', position: 'sticky', top: 0,
+        display: 'flex', alignItems: 'center', padding: '3px 10px', position: 'sticky', top: 0, zIndex: 1,
         background: 'var(--wks-bg-raised)',
         color: 'var(--wks-text-disabled)', fontSize: '0.55rem',
+        textTransform: 'uppercase', letterSpacing: '0.06em',
       }}>
+        <span>Explorer</span>
         <div style={{ flex: 1 }} />
-        <span onClick={() => setReloadKey((k) => k + 1)} title="Refresh" style={{ cursor: 'pointer' }}>⟳</span>
+        <span
+          onClick={() => setReloadKey((k) => k + 1)}
+          title="Refresh"
+          style={{ cursor: 'pointer', display: 'inline-flex', opacity: 0.7 }}
+          onMouseEnter={(e) => (e.currentTarget.style.opacity = '1')}
+          onMouseLeave={(e) => (e.currentTarget.style.opacity = '0.7')}
+        >
+          <RotateCw size={11} />
+        </span>
       </div>
       <TreeDir key={reloadKey} path={root} name={basename(root)} depth={0} activePath={activePath} defaultOpen onOpen={onOpen} />
     </div>

@@ -35,6 +35,10 @@
    * terminal config); this is the chrome default and the global fallback. */
   --wks-font-mono: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Code",
     "Roboto Mono", monospace;
+  /* UI sans — the app's primary typeface (matches <body>). Use for chrome that
+   * should read as UI rather than code (e.g. the editor file tree). */
+  --wks-font-sans: "Hanken Grotesk", "Inter", -apple-system, BlinkMacSystemFont,
+    "Segoe UI", Roboto, sans-serif;
   --wks-radius-sm: 5px;
   --wks-radius-md: 8px;
   --wks-radius-lg: 12px;
