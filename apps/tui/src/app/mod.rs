@@ -317,6 +317,15 @@ pub struct App {
     /// How many stopped orphans the last [`set_agents`] hid (for the title).
     pub hidden_count: usize,
 
+    /// Full live session set (orphan-filtered) — the source of truth for
+    /// lifecycle and by-id lookups. `agents` is the `/`-filtered projection of
+    /// this that the sidebar and selection use.
+    pub all_agents: Vec<Agent>,
+    /// Active sidebar filter query (`/`); `None` means no filter. `filter_editing`
+    /// is true while the query is being typed.
+    pub filter: Option<String>,
+    pub filter_editing: bool,
+
     /// Agents, in a stable order: existing rows stay put across polls and new
     /// sessions are appended at the end (matches the Electron app).
     pub agents: Vec<Agent>,
@@ -390,6 +399,9 @@ impl App {
             seen_live: HashSet::new(),
             show_all_sessions: false,
             hidden_count: 0,
+            all_agents: Vec::new(),
+            filter: None,
+            filter_editing: false,
             agents: Vec::new(),
             status_lines: HashMap::new(),
             selected: 0,
@@ -517,12 +529,12 @@ impl App {
         // re-sorting (e.g. floating waiting agents up) and making rows jump.
         // State changes are still visible via the per-row markers.
         let order: HashMap<&str, usize> = self
-            .agents
+            .all_agents
             .iter()
             .enumerate()
             .map(|(i, a)| (a.session_id.as_str(), i))
             .collect();
-        let next = self.agents.len();
+        let next = self.all_agents.len();
         list.sort_by_key(|a| order.get(a.session_id.as_str()).copied().unwrap_or(next));
 
         // Drop orphans: on restart, claudemon hydrates up to 100 prior sessions
@@ -543,19 +555,15 @@ impl App {
         }
         self.hidden_count = total - list.len();
 
-        // Preserve selection on the same session id where possible.
-        let prev_id = self.agents.get(self.selected).map(|a| a.session_id.clone());
-        self.agents = list;
-        if let Some(id) = prev_id {
-            if let Some(i) = self.agents.iter().position(|a| a.session_id == id) {
-                self.selected = i;
-            }
-        }
-        if self.selected >= self.agents.len() {
-            self.selected = self.agents.len().saturating_sub(1);
-        }
-        // Drop warm terminals (and no-PTY marks) for sessions that have gone away.
-        let live: HashSet<String> = self.agents.iter().map(|a| a.session_id.clone()).collect();
+        // `all_agents` is the live source of truth (lifecycle, by-id lookups);
+        // `agents` is the text-filtered view the sidebar/selection use.
+        self.all_agents = list;
+        self.apply_filter();
+
+        // Drop warm terminals (and no-PTY marks) for sessions that have gone
+        // away — keyed off the full live set, NOT the filtered view (a session
+        // merely hidden by the `/` filter is still alive).
+        let live: HashSet<String> = self.all_agents.iter().map(|a| a.session_id.clone()).collect();
         self.prune_terminals(&live);
         self.no_terminal.retain(|sid| live.contains(sid));
         self.status_lines.retain(|sid, _| live.contains(sid));
@@ -577,6 +585,41 @@ impl App {
         if self.jump_idx >= self.jumplist.len() {
             self.jump_idx = self.jumplist.len().saturating_sub(1);
         }
+    }
+
+    /// Rebuild the filtered `agents` view from `all_agents`, preserving the
+    /// selected agent by id where possible. Called on every poll and on every
+    /// `/`-filter keystroke.
+    pub(super) fn apply_filter(&mut self) {
+        let sel_id = self.selected_agent().map(|a| a.session_id.clone());
+        self.agents = match self.filter.as_deref() {
+            Some(q) if !q.is_empty() => {
+                let needle = q.to_lowercase();
+                self.all_agents
+                    .iter()
+                    .filter(|a| self.agent_matches(a, &needle))
+                    .cloned()
+                    .collect()
+            }
+            _ => self.all_agents.clone(),
+        };
+        self.selected = match sel_id {
+            Some(id) => self
+                .agents
+                .iter()
+                .position(|a| a.session_id == id)
+                .map(|i| i + 1)
+                .unwrap_or(0),
+            None => 0,
+        };
+    }
+
+    /// Whether an agent matches the sidebar filter `needle` (already lowercase):
+    /// a subsequence match against its name, cwd, or state.
+    fn agent_matches(&self, a: &Agent, needle: &str) -> bool {
+        fuzzy_match(needle, &self.agent_name(a).to_lowercase())
+            || fuzzy_match(needle, &a.cwd_str().to_lowercase())
+            || fuzzy_match(needle, a.state())
     }
 
     // ── daemon reactions ──────────────────────────────────────────────────
@@ -703,9 +746,11 @@ impl App {
     }
 
     /// The agent/session the active tab points at (may be a shell session).
+    /// Resolved against the full set so an agent hidden by the `/` filter (but
+    /// still open in a pane) keeps rendering.
     pub fn chat_agent(&self) -> Option<&Agent> {
         let sid = self.chat_session_id()?;
-        self.agents.iter().find(|a| a.session_id == sid)
+        self.all_agents.iter().find(|a| a.session_id == sid)
     }
 
     // ── async actions (fire-and-forget; results arrive as AppMsg) ───────────
@@ -1235,6 +1280,44 @@ mod tests {
         ]);
         assert_eq!(app.agents.len(), 2);
         assert_eq!(app.hidden_count, 0);
+    }
+
+    #[tokio::test]
+    async fn sidebar_filter_narrows_and_preserves_the_full_set() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = test_app();
+        app.set_agents(vec![
+            agent_cwd("s1", "/work/alpha", "responding"),
+            agent_cwd("s2", "/work/beta", "responding"),
+            agent_cwd("s3", "/other/gamma", "responding"),
+        ]);
+        assert_eq!(app.agents.len(), 3);
+
+        // Filter by a cwd subsequence — the view narrows, the full set is intact.
+        app.open_filter();
+        assert!(app.filter_editing);
+        for c in "beta".chars() {
+            app.handle_filter_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+        assert_eq!(app.agents.len(), 1);
+        assert_eq!(app.agents[0].session_id, "s2");
+        assert_eq!(app.all_agents.len(), 3, "filter is a view; full set is untouched");
+
+        // A poll while filtered keeps the filter applied.
+        app.handle_filter_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(!app.filter_editing);
+        app.set_agents(vec![
+            agent_cwd("s1", "/work/alpha", "responding"),
+            agent_cwd("s2", "/work/beta", "responding"),
+        ]);
+        assert_eq!(app.agents.len(), 1);
+        assert_eq!(app.agents[0].session_id, "s2");
+
+        // Esc clears the filter and restores the full view.
+        app.open_filter();
+        app.handle_filter_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(app.filter.is_none());
+        assert_eq!(app.agents.len(), 2);
     }
 
     #[tokio::test]

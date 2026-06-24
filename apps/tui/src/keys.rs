@@ -67,6 +67,7 @@ pub enum Action {
     JumpForward,
     // sidebar
     ToggleStopped,
+    OpenFilter,
 }
 
 impl Action {
@@ -116,6 +117,7 @@ impl Action {
             JumpBack => "jump_back",
             JumpForward => "jump_forward",
             ToggleStopped => "toggle_stopped",
+            OpenFilter => "filter",
         }
     }
 
@@ -164,6 +166,7 @@ impl Action {
             "jump_back" => JumpBack,
             "jump_forward" => JumpForward,
             "toggle_stopped" => ToggleStopped,
+            "filter" => OpenFilter,
             _ => return None,
         })
     }
@@ -521,6 +524,7 @@ impl Keymap {
                 ("g", SelectFirst),
                 ("G", SelectLast),
                 ("m", JumpAttention),
+                ("/", OpenFilter),
                 ("c", NewAgent),
                 ("r", Refresh),
                 ("enter", OpenAgent),

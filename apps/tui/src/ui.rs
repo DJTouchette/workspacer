@@ -138,10 +138,20 @@ fn render_sidebar(f: &mut Frame, area: Rect, app: &App) {
     } else {
         format!(" agents ({}) ", app.agents.len())
     };
-    let block = Block::default()
+    let editing = app.filter_editing;
+    let mut block = Block::default()
         .borders(Borders::ALL)
         .title(title)
-        .border_style(Style::default().fg(t.dim));
+        .border_style(Style::default().fg(if editing { t.accent } else { t.dim }));
+    // Show the active `/` filter along the bottom edge (with a cursor while
+    // it's being typed).
+    if let Some(q) = &app.filter {
+        let txt = if editing { format!(" /{q}▏ ") } else { format!(" /{q} ") };
+        block = block.title_bottom(Line::from(Span::styled(
+            txt,
+            Style::default().fg(if editing { t.accent } else { t.dim }),
+        )));
+    }
 
     // Pinned Dashboard row, then one row per agent.
     let mut items: Vec<ListItem> = Vec::with_capacity(app.agents.len() + 1);
@@ -686,7 +696,7 @@ fn render_panes(f: &mut Frame, area: Rect, app: &mut App) {
 /// A non-focused tile: the agent's live terminal, read-only, dim-bordered.
 fn render_watch_pane(f: &mut Frame, area: Rect, app: &mut App, sid: &str) {
     let (dim, warn) = (app.theme.dim, app.theme.warn);
-    let agent = app.agents.iter().find(|a| a.session_id == sid);
+    let agent = app.all_agents.iter().find(|a| a.session_id == sid);
     let name = agent
         .map(|a| app.agent_name(a))
         .unwrap_or_else(|| "session ended".into());
@@ -780,12 +790,13 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
         .title(" dashboard ")
         .border_style(Style::default().fg(t.accent));
 
-    let total = app.agents.len();
-    let waiting = app.agents.iter().filter(|a| a.is_waiting()).count();
-    let busy = app.agents.iter().filter(|a| a.is_busy()).count();
+    // Fleet totals reflect the whole live set, not the `/`-filtered sidebar view.
+    let total = app.all_agents.len();
+    let waiting = app.all_agents.iter().filter(|a| a.is_waiting()).count();
+    let busy = app.all_agents.iter().filter(|a| a.is_busy()).count();
     let idle = total.saturating_sub(waiting + busy);
     let cost: f64 = app
-        .agents
+        .all_agents
         .iter()
         .filter_map(|a| derive_stats(a, app.status_lines.get(&a.session_id)).cost)
         .sum();
@@ -830,8 +841,8 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
     }
     lines.push(Line::raw(""));
 
-    // Compact roster, attention first (the agents are already sorted that way).
-    for a in &app.agents {
+    // Compact roster over the whole fleet (the dashboard ignores the sidebar filter).
+    for a in &app.all_agents {
         let marker = if a.is_waiting() {
             Span::styled("● ", Style::default().fg(t.warn))
         } else if a.is_busy() {
@@ -1345,8 +1356,10 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
         "type path · tab complete · ↑↓ profile · enter spawn · esc cancel"
     } else if app.term_attached() {
         "● attached — keys go to Claude · Ctrl-] to detach"
+    } else if app.filter_editing {
+        "type to filter · enter keep · esc clear"
     } else if !in_agent {
-        "j/k move · enter open · ^K palette · T term · c new · m attention · ? help · q quit"
+        "j/k move · / filter · enter open · ^K palette · c new · m attention · ? help · q quit"
     } else if app.insert_mode {
         "enter send · esc normal"
     } else if on_shell {
@@ -1363,6 +1376,7 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
         || app.review.is_some()
         || app.spawn_form.is_some()
         || app.term_attached()
+        || app.filter_editing
         || (in_agent && app.insert_mode);
     let line = if in_text {
         format!(" {hint}")

@@ -63,6 +63,10 @@ planned in later phases (see the repo's TUI plan).
   `m` jump-to-attention, `S` respawn, `?` help, `q` quit. Bindings are multi-key
   sequences — remap them in `tui.json` with whitespace-separated chords (e.g.
   `"<leader> x": "quit"`). `esc` cancels a half-typed sequence.
+- **Filter the sidebar** — `/` opens a live fuzzy filter (subsequence match over
+  name / cwd / state). Type to narrow the list as you go; `enter` keeps the
+  filter and returns to `j`/`k` navigation, `esc` clears it. The filter is just a
+  view — the open agent, splits, pins and fleet totals all still see the full set.
 - **Harpoon (pinned agents) + jumps** — pin the agents you're juggling and
   teleport between them. `<leader>h` pins/unpins the current agent (a `⚓N` badge
   shows its slot in the sidebar); `<leader>1`…`<leader>9` jump straight to a

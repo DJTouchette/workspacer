@@ -49,6 +49,11 @@ impl App {
             self.handle_review_key(key);
             return;
         }
+        // The sidebar filter captures keys literally while it's being typed.
+        if self.filter_editing {
+            self.handle_filter_key(key);
+            return;
+        }
         // When attached to the live terminal, every key goes to Claude (so
         // Ctrl-C interrupts the agent, not the TUI). Ctrl-] detaches.
         if self.term_attached() {
@@ -192,6 +197,50 @@ impl App {
             JumpBack => self.jump_history(-1),
             JumpForward => self.jump_history(1),
             ToggleStopped => self.toggle_stopped(),
+            OpenFilter => self.open_filter(),
+        }
+    }
+
+    // ── sidebar filter (`/`) ──────────────────────────────────────────────
+
+    /// Start (or resume) typing the sidebar filter.
+    pub(super) fn open_filter(&mut self) {
+        self.filter_editing = true;
+        if self.filter.is_none() {
+            self.filter = Some(String::new());
+        }
+    }
+
+    /// Keys while the `/` filter input is active. Live-filters as you type;
+    /// `enter` keeps the filter and returns to navigation, `esc` clears it.
+    pub(super) fn handle_filter_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                self.filter = None;
+                self.filter_editing = false;
+                self.apply_filter();
+            }
+            KeyCode::Enter => {
+                self.filter_editing = false;
+                // An empty query is the same as no filter.
+                if self.filter.as_deref().is_some_and(str::is_empty) {
+                    self.filter = None;
+                }
+                self.apply_filter();
+            }
+            KeyCode::Backspace => {
+                if let Some(q) = self.filter.as_mut() {
+                    q.pop();
+                }
+                self.apply_filter();
+            }
+            KeyCode::Char(c) => {
+                if let Some(q) = self.filter.as_mut() {
+                    q.push(c);
+                }
+                self.apply_filter();
+            }
+            _ => {}
         }
     }
 
@@ -443,8 +492,9 @@ impl App {
             PaletteItem { label: "New terminal".into(), hint: "shell tab".into(), action: PaletteAction::NewTerminal },
             PaletteItem { label: "Dashboard".into(), hint: "overview".into(), action: PaletteAction::Dashboard },
         ];
-        // Jump to a live agent.
-        for a in &self.agents {
+        // Jump to a live agent (the full set, so the palette reaches agents the
+        // `/` filter is hiding).
+        for a in &self.all_agents {
             items.push(PaletteItem {
                 label: format!("Go to {}", self.agent_name(a)),
                 hint: a.state().to_string(),
@@ -514,9 +564,9 @@ impl App {
                 self.selected = 0;
             }
             PaletteAction::OpenAgent(sid) => {
-                if let Some(i) = self.agents.iter().position(|a| a.session_id == sid) {
-                    self.selected = i + 1;
-                    self.open_agent();
+                // Open by id (works even if the `/` filter is hiding it).
+                if self.all_agents.iter().any(|a| a.session_id == sid) {
+                    self.open_single(sid, true);
                 }
             }
             PaletteAction::Insert(body) => {
@@ -673,7 +723,7 @@ impl App {
             self.set_toast("no alternate agent");
             return;
         };
-        if !self.agents.iter().any(|a| a.session_id == alt) {
+        if !self.all_agents.iter().any(|a| a.session_id == alt) {
             self.set_toast("alternate agent is gone");
             return;
         }
@@ -698,8 +748,9 @@ impl App {
     // ── window splits (panes) ─────────────────────────────────────────────
 
     /// First agent not already tiled, for bringing another agent into view.
+    /// Uses the full set so splits can pull in agents the `/` filter hides.
     fn next_untiled_agent(&self) -> Option<String> {
-        self.agents
+        self.all_agents
             .iter()
             .map(|a| &a.session_id)
             .find(|sid| !self.tiles.contains(sid))
