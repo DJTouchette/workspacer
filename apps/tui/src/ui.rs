@@ -11,7 +11,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
 
-use crate::app::{App, ChatMode, TabKind, View};
+use crate::app::{App, ChatMode, SplitDir, TabKind, View};
 use crate::keys::{Action, Context};
 use crate::theme::Theme;
 use crate::types::{derive_stats, Agent, DerivedStats, Part, Role};
@@ -39,7 +39,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
         match &app.view {
             View::List if app.dashboard_selected() => render_dashboard(f, body[1], app),
             View::List => render_detail(f, body[1], app),
-            View::Agent { .. } => render_agent(f, body[1], app),
+            View::Agent { .. } => render_panes(f, body[1], app),
         }
     }
 
@@ -615,14 +615,12 @@ fn render_terminal(f: &mut Frame, area: Rect, app: &mut App) {
 
     // Keep the open emulator sized to the pane; remember a size change so the
     // main loop can tell claudemon to reflow the real PTY.
-    let mut changed = None;
-    if let Some(term) = sid.as_ref().and_then(|s| app.terms.get_mut(s)) {
-        if term.resize(inner.height, inner.width) {
-            changed = Some((inner.width, inner.height)); // (cols, rows)
+    if let Some(s) = sid.as_ref() {
+        if let Some(term) = app.terms.get_mut(s) {
+            if term.resize(inner.height, inner.width) {
+                app.term_resizes.insert(s.clone(), (inner.width, inner.height)); // (cols, rows)
+            }
         }
-    }
-    if changed.is_some() {
-        app.term_resize = changed;
     }
 
     match sid.as_ref().and_then(|s| app.terms.get(s)) {
@@ -637,6 +635,82 @@ fn render_terminal(f: &mut Frame, area: Rect, app: &mut App) {
             )))
             .block(block);
             f.render_widget(p, area);
+        }
+    }
+}
+
+// ── window splits (tiled panes) ────────────────────────────────────────────────
+
+/// The content area when an agent is open. With a single tile it's just the
+/// agent view; with more, it tiles each agent — the focused one fully
+/// interactive, the rest a live read-only terminal.
+fn render_panes(f: &mut Frame, area: Rect, app: &mut App) {
+    if app.tiles.len() <= 1 {
+        render_agent(f, area, app);
+        return;
+    }
+    let dir = match app.split_dir {
+        SplitDir::Columns => Direction::Horizontal,
+        SplitDir::Rows => Direction::Vertical,
+    };
+    let n = app.tiles.len() as u32;
+    let cells = Layout::default()
+        .direction(dir)
+        .constraints((0..n).map(|_| Constraint::Ratio(1, n)).collect::<Vec<_>>())
+        .split(area);
+    // Clone the tile list so we can hand `render_agent` a `&mut App`.
+    let tiles = app.tiles.clone();
+    let focus = app.tile_focus;
+    for (i, sid) in tiles.iter().enumerate() {
+        if i == focus {
+            render_agent(f, cells[i], app);
+        } else {
+            render_watch_pane(f, cells[i], app, sid);
+        }
+    }
+}
+
+/// A non-focused tile: the agent's live terminal, read-only, dim-bordered.
+fn render_watch_pane(f: &mut Frame, area: Rect, app: &mut App, sid: &str) {
+    let (dim, warn) = (app.theme.dim, app.theme.warn);
+    let agent = app.agents.iter().find(|a| a.session_id == sid);
+    let name = agent
+        .map(|a| app.agent_name(a))
+        .unwrap_or_else(|| "session ended".into());
+    let waiting = agent.is_some_and(|a| a.is_waiting());
+    // A waiting agent gets an amber marker so it still draws the eye when it's
+    // not the focused pane.
+    let title = Line::from(vec![
+        Span::styled(if waiting { " ● " } else { " " }, Style::default().fg(warn)),
+        Span::styled(format!("{name} "), Style::default().fg(dim)),
+    ]);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .title_bottom(Line::from(Span::styled(" Ctrl-w w to focus ", Style::default().fg(dim))))
+        .border_style(Style::default().fg(if waiting { warn } else { dim }));
+    let inner = block.inner(area);
+
+    if let Some(term) = app.terms.get_mut(sid) {
+        if term.resize(inner.height, inner.width) {
+            app.term_resizes.insert(sid.to_string(), (inner.width, inner.height));
+        }
+    }
+    match app.terms.get(sid) {
+        Some(term) => {
+            let pty = PseudoTerminal::new(term.screen()).block(block);
+            f.render_widget(pty, area);
+        }
+        None => {
+            let msg = if app.no_terminal.contains(sid) {
+                "transcript only — Ctrl-w w to read"
+            } else {
+                "starting terminal…"
+            };
+            f.render_widget(
+                Paragraph::new(Line::from(Span::styled(msg, Style::default().fg(dim)))).block(block),
+                area,
+            );
         }
     }
 }
@@ -1255,11 +1329,11 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
     } else if app.insert_mode {
         "enter send · esc normal"
     } else if on_shell {
-        "i attach · [ ] tabs · T term · w close · x/X stop · ? help · esc back"
+        "i attach · [ ] tabs · T term · ^w split · w close · x/X stop · esc back"
     } else if app.chat_mode == ChatMode::Terminal {
-        "i attach · t transcript · [ ] tabs · T term · w close · ? help · esc back"
+        "i attach · t transcript · [ ] tabs · ^w split · w close · ? help · esc back"
     } else {
-        "i type · j/k scroll · t terminal · [ ] tabs · y/n/a · 1-9 · ? help · esc back"
+        "i type · j/k scroll · t terminal · ^w split · y/n/a · 1-9 · ? help · esc back"
     };
     // In any normal/navigation mode (not a text field or raw terminal), point at
     // the leader menu so it's discoverable.

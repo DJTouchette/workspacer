@@ -92,6 +92,14 @@ pub enum ChatMode {
     Transcript,
 }
 
+/// How tiled panes are arranged when more than one agent is on screen.
+/// `Columns` = side by side (vim `Ctrl-w v`); `Rows` = stacked (`Ctrl-w s`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SplitDir {
+    Columns,
+    Rows,
+}
+
 /// State of the "spawn a new agent" modal. Profile-centric: a working directory
 /// plus a chosen profile (which carries model / skip-permissions in its args).
 #[derive(Debug, Clone)]
@@ -277,9 +285,17 @@ pub struct App {
     /// Tabs per open agent, keyed by the agent's (Claude) session id.
     pub workspaces: HashMap<String, Workspace>,
     pub term_attached: bool,
-    /// A pending `(cols, rows)` to push to claudemon after the next draw, set
-    /// when the pane resized the open emulator.
-    pub term_resize: Option<(u16, u16)>,
+    /// Pending `(cols, rows)` per session id, pushed to claudemon after the next
+    /// draw whenever a (focused or watch) pane resized that session's emulator.
+    pub term_resizes: HashMap<String, (u16, u16)>,
+
+    /// Agents tiled in the content area (their session ids). 0/1 entries render
+    /// as a single pane (today's behavior); 2+ tile the content. `tile_focus`
+    /// is the interactive pane — it stays in sync with `View::Agent { id }`; the
+    /// others render their live terminal read-only. See [`SplitDir`].
+    pub tiles: Vec<String>,
+    pub tile_focus: usize,
+    pub split_dir: SplitDir,
 
     /// Agents, in a stable order: existing rows stay put across polls and new
     /// sessions are appended at the end (matches the Electron app).
@@ -343,7 +359,10 @@ impl App {
             no_terminal: HashSet::new(),
             workspaces: HashMap::new(),
             term_attached: false,
-            term_resize: None,
+            term_resizes: HashMap::new(),
+            tiles: Vec::new(),
+            tile_focus: 0,
+            split_dir: SplitDir::Columns,
             agents: Vec::new(),
             status_lines: HashMap::new(),
             selected: 0,
@@ -497,6 +516,12 @@ impl App {
         // Drop workspaces whose agent is gone (shell tabs may persist as their
         // own sessions, but the agent grouping is no longer meaningful).
         self.workspaces.retain(|agent_id, _| live.contains(agent_id));
+        // Drop tiled panes whose session vanished, and keep the focus in range.
+        self.tiles.retain(|sid| live.contains(sid));
+        if self.tile_focus >= self.tiles.len() {
+            self.tile_focus = self.tiles.len().saturating_sub(1);
+        }
+        self.term_resizes.retain(|sid, _| live.contains(sid));
     }
 
     // ── daemon reactions ──────────────────────────────────────────────────
@@ -543,11 +568,15 @@ impl App {
     /// Push a pending PTY resize to claudemon (called after each draw, since the
     /// renderer is what learns the pane size). Reflows Claude's TUI to the pane.
     pub fn flush_term_resize(&mut self) {
-        let Some((cols, rows)) = self.term_resize.take() else { return };
-        let Some(sid) = self.open_session_id() else { return };
+        if self.term_resizes.is_empty() {
+            return;
+        }
+        let pending: Vec<(String, (u16, u16))> = self.term_resizes.drain().collect();
         let cm = self.claudemon.clone();
         tokio::spawn(async move {
-            let _ = cm.resize(&sid, cols, rows).await;
+            for (sid, (cols, rows)) in pending {
+                let _ = cm.resize(&sid, cols, rows).await;
+            }
         });
     }
 
@@ -1035,5 +1064,66 @@ mod tests {
         app.close_tab(); // closes the active shell tab
         assert_eq!(app.workspace().unwrap().tabs.len(), 1);
         assert_eq!(app.chat_session_id().as_deref(), Some("s1"));
+    }
+
+    #[tokio::test]
+    async fn splits_tile_focus_and_collapse() {
+        let mut app = test_app();
+        app.set_agents(vec![agent("s1"), agent("s2"), agent("s3")]);
+        app.selected = 1; // first agent (s1)
+        app.open_agent();
+        assert_eq!(app.tiles, vec!["s1".to_string()]);
+        assert_eq!(app.tile_focus, 0);
+
+        // Split brings the next untiled agent into a new pane and focuses it.
+        app.split_pane(SplitDir::Columns);
+        assert_eq!(app.tiles, vec!["s1".to_string(), "s2".to_string()]);
+        assert_eq!(app.tile_focus, 1);
+        assert_eq!(app.open_agent_id(), Some("s2"));
+
+        // Focus wraps around the tiles.
+        app.focus_pane(1);
+        assert_eq!(app.tile_focus, 0);
+        assert_eq!(app.open_agent_id(), Some("s1"));
+
+        // A third split, then close the focused pane.
+        app.focus_pane(-1); // back to s2
+        app.split_pane(SplitDir::Rows);
+        assert_eq!(app.tiles, vec!["s1".to_string(), "s2".to_string(), "s3".to_string()]);
+        assert_eq!(app.tile_focus, 2);
+        app.close_pane();
+        assert_eq!(app.tiles, vec!["s1".to_string(), "s2".to_string()]);
+
+        // only_pane keeps just the focused tile; the last close leaves the view.
+        app.only_pane();
+        assert_eq!(app.tiles.len(), 1);
+        app.close_pane();
+        assert_eq!(app.view, View::List);
+        assert!(app.tiles.is_empty());
+    }
+
+    #[tokio::test]
+    async fn split_with_no_other_agent_toasts() {
+        let mut app = test_app();
+        app.set_agents(vec![agent("s1")]);
+        app.selected = 1;
+        app.open_agent();
+        app.split_pane(SplitDir::Columns);
+        assert_eq!(app.tiles.len(), 1);
+        assert_eq!(app.toast(), Some("no other agent to split"));
+    }
+
+    #[tokio::test]
+    async fn tiles_prune_when_a_session_vanishes() {
+        let mut app = test_app();
+        app.set_agents(vec![agent("s1"), agent("s2")]);
+        app.selected = 1;
+        app.open_agent();
+        app.split_pane(SplitDir::Columns); // tiles = [s1, s2], focus s2
+        assert_eq!(app.tiles.len(), 2);
+        // s2 goes away — its tile drops and focus stays in range.
+        app.set_agents(vec![agent("s1")]);
+        assert_eq!(app.tiles, vec!["s1".to_string()]);
+        assert!(app.tile_focus < app.tiles.len());
     }
 }

@@ -53,6 +53,13 @@ pub enum Action {
     ApproveAlways,
     Interrupt,
     Stop,
+    // window splits (panes)
+    SplitRight,
+    SplitDown,
+    FocusNextPane,
+    FocusPrevPane,
+    ClosePane,
+    OnlyPane,
 }
 
 impl Action {
@@ -91,6 +98,12 @@ impl Action {
             ApproveAlways => "approve_always",
             Interrupt => "interrupt",
             Stop => "stop",
+            SplitRight => "split_right",
+            SplitDown => "split_down",
+            FocusNextPane => "focus_next_pane",
+            FocusPrevPane => "focus_prev_pane",
+            ClosePane => "close_pane",
+            OnlyPane => "only_pane",
         }
     }
 
@@ -128,6 +141,12 @@ impl Action {
             "approve_always" => ApproveAlways,
             "interrupt" => Interrupt,
             "stop" => Stop,
+            "split_right" => SplitRight,
+            "split_down" => SplitDown,
+            "focus_next_pane" => FocusNextPane,
+            "focus_prev_pane" => FocusPrevPane,
+            "close_pane" => ClosePane,
+            "only_pane" => OnlyPane,
             _ => return None,
         })
     }
@@ -538,6 +557,29 @@ impl Keymap {
             ("X", Stop),
         ]));
         tables.insert(Context::AgentTranscript, transcript);
+
+        // Window commands — vim's `Ctrl-w` prefix, in both agent contexts. Lets
+        // you tile agents side by side and move focus between them. These are
+        // multi-key sequences, so they also surface in the which-key popup.
+        let window_cmds: &[(&str, Action)] = &[
+            ("v", SplitRight),
+            ("s", SplitDown),
+            ("w", FocusNextPane),
+            ("W", FocusPrevPane),
+            ("l", FocusNextPane),
+            ("h", FocusPrevPane),
+            ("q", ClosePane),
+            ("c", ClosePane),
+            ("o", OnlyPane),
+        ];
+        let ctrl_w = Chord::parse("ctrl+w").expect("valid ctrl+w chord");
+        for ctx in [Context::AgentTerminal, Context::AgentTranscript] {
+            let table = tables.entry(ctx).or_default();
+            for (s, a) in window_cmds {
+                let chord = Chord::parse(s).expect("valid window-command chord");
+                table.insert(vec![ctrl_w, chord], *a);
+            }
+        }
 
         // Leader menu — the which-key popup. `<leader>` then one key. Lives in
         // Global so it's reachable from every non-text view; the actions no-op

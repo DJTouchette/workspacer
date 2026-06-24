@@ -9,7 +9,7 @@ use crate::keys::{Action, Chord, Context, KeyMatch};
 use crate::profiles;
 
 use super::tasks::{bracketed_paste, complete_path, fetch_agents, seed_prompt};
-use super::{App, AppMsg, ChatMode, NotesState, PaletteAction, PaletteItem, RenameForm, SpawnForm, TabKind, View, Workspace, Tab};
+use super::{App, AppMsg, ChatMode, NotesState, PaletteAction, PaletteItem, RenameForm, SplitDir, SpawnForm, TabKind, View, Workspace, Tab};
 
 impl App {
     // ── top-level dispatcher ──────────────────────────────────────────────
@@ -170,6 +170,12 @@ impl App {
             ApproveAlways => self.approve("always", "Approved (always)"),
             Interrupt => self.signal("SIGINT", "Interrupted"),
             Stop => self.signal("SIGTERM", "Stopped"),
+            SplitRight => self.split_pane(SplitDir::Columns),
+            SplitDown => self.split_pane(SplitDir::Rows),
+            FocusNextPane => self.focus_pane(1),
+            FocusPrevPane => self.focus_pane(-1),
+            ClosePane => self.close_pane(),
+            OnlyPane => self.only_pane(),
         }
     }
 
@@ -549,7 +555,21 @@ impl App {
     pub(super) fn open_agent(&mut self) {
         let Some(agent) = self.selected_agent() else { return };
         let id = agent.session_id.clone();
-        let cwd = agent.cwd_str().to_string();
+        // Opening from the sidebar resets the layout to a single pane.
+        self.tiles = vec![id.clone()];
+        self.tile_focus = 0;
+        self.focus_agent(id);
+    }
+
+    /// Make `id` the interactive (focused) agent: sync the view, ensure its
+    /// workspace exists, and warm its terminal. Shared by open / split / focus.
+    pub(super) fn focus_agent(&mut self, id: String) {
+        let cwd = self
+            .agents
+            .iter()
+            .find(|a| a.session_id == id)
+            .map(|a| a.cwd_str().to_string())
+            .unwrap_or_default();
         self.load_git_summary(cwd);
         self.view = View::Agent { id: id.clone() };
         self.workspaces.entry(id.clone()).or_insert_with(|| Workspace {
@@ -557,6 +577,76 @@ impl App {
             active: 0,
         });
         self.enter_active_tab();
+    }
+
+    // ── window splits (panes) ─────────────────────────────────────────────
+
+    /// First agent not already tiled, for bringing another agent into view.
+    fn next_untiled_agent(&self) -> Option<String> {
+        self.agents
+            .iter()
+            .map(|a| &a.session_id)
+            .find(|sid| !self.tiles.contains(sid))
+            .cloned()
+    }
+
+    /// Split the focused pane: tile another agent beside/below it and move focus
+    /// to the new pane (vim's `Ctrl-w v` / `Ctrl-w s`). No-op outside an agent
+    /// view; capped so cells stay usable.
+    pub(super) fn split_pane(&mut self, dir: SplitDir) {
+        const MAX_TILES: usize = 4;
+        if self.open_agent_id().is_none() {
+            return;
+        }
+        if self.tiles.len() >= MAX_TILES {
+            self.set_toast("max splits reached");
+            return;
+        }
+        let Some(next) = self.next_untiled_agent() else {
+            self.set_toast("no other agent to split");
+            return;
+        };
+        self.split_dir = dir;
+        let at = (self.tile_focus + 1).min(self.tiles.len());
+        self.tiles.insert(at, next.clone());
+        self.tile_focus = at;
+        self.focus_agent(next);
+    }
+
+    /// Move focus to another tiled pane (wrapping). `delta` is +1 / -1.
+    pub(super) fn focus_pane(&mut self, delta: i32) {
+        let n = self.tiles.len();
+        if n <= 1 {
+            return;
+        }
+        let next = (self.tile_focus as i32 + delta).rem_euclid(n as i32) as usize;
+        self.tile_focus = next;
+        let id = self.tiles[next].clone();
+        self.focus_agent(id);
+    }
+
+    /// Close the focused pane. The last pane closing leaves the agent view.
+    pub(super) fn close_pane(&mut self) {
+        if self.tiles.len() <= 1 {
+            self.close_chat();
+            return;
+        }
+        self.tiles.remove(self.tile_focus);
+        if self.tile_focus >= self.tiles.len() {
+            self.tile_focus = self.tiles.len() - 1;
+        }
+        let id = self.tiles[self.tile_focus].clone();
+        self.focus_agent(id);
+    }
+
+    /// Keep only the focused pane (vim's `Ctrl-w o`).
+    pub(super) fn only_pane(&mut self) {
+        if self.tiles.len() <= 1 {
+            return;
+        }
+        let id = self.tiles[self.tile_focus].clone();
+        self.tiles = vec![id];
+        self.tile_focus = 0;
     }
 
     /// Set up rendering for whatever the active tab points at: warm its terminal
@@ -770,6 +860,8 @@ impl App {
         self.insert_mode = false;
         self.input.clear();
         self.turns.clear();
+        self.tiles.clear();
+        self.tile_focus = 0;
     }
 
     /// The agent a key action targets: the chat's agent when in chat, else the

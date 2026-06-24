@@ -35,6 +35,14 @@ planned in later phases (see the repo's TUI plan).
   Claude session; `T` opens a **terminal tab** (a real shell, spawned via
   claudemon, so it also shows in the system-wide list). `[` / `]` switch tabs,
   `w` closes one.
+- **Splits (windows)** — tile several agents at once with vim's `Ctrl-w` prefix:
+  `Ctrl-w v` splits the content into columns, `Ctrl-w s` into rows (each split
+  brings the next agent into view). `Ctrl-w w` / `Ctrl-w h`/`l` move focus,
+  `Ctrl-w o` keeps only the focused pane, `Ctrl-w q`/`c` closes it. The **focused**
+  pane is fully interactive (attach, transcript, tabs, approve); the others show
+  that agent's **live terminal read-only** (a waiting agent gets an amber border
+  so it still draws your eye). Capped at 4 tiles. The `Ctrl-w` menu also appears
+  in the which-key popup.
 - **Terminal path** — by default the chat view renders the agent's **raw PTY**
   (vt100), exactly like the Electron pane's terminal toggle: you see Claude's
   real terminal, live. Press `i`/`enter` to **attach** (your keystrokes go
