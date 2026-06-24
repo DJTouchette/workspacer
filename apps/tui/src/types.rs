@@ -185,6 +185,11 @@ impl Agent {
         self.mode == AgentMode::Responding
     }
 
+    /// True when the session has ended.
+    pub fn is_stopped(&self) -> bool {
+        self.mode == AgentMode::Stopped
+    }
+
     pub fn cwd_str(&self) -> &str {
         self.cwd.as_deref().unwrap_or("")
     }

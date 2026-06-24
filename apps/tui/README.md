@@ -71,7 +71,12 @@ planned in later phases (see the repo's TUI plan).
   `<leader>i` forward.
 - **Agent sidebar** — every live session in a stable order (rows stay put across
   polls; new sessions append at the end), with state badge, model, context % and
-  cost. These prefer Claude's
+  cost. Stopped sessions you never saw alive this run are hidden by default —
+  claudemon replays up to 100 prior sessions as `stopped` on restart, and that
+  history would otherwise flood the list. Ones that stop *while you're watching*
+  stay (so you can respawn them); `<leader>x` toggles the full history on/off and
+  the title shows how many are hidden (`agents (3 · +12 stopped)`). These prefer
+  Claude's
   authoritative **statusLine** (streamed live from claudemon — same numbers
   Claude shows itself), falling back to transcript-derived usage when it hasn't
   arrived yet. The Dashboard also shows 5h/7d rate-limit windows when Claude

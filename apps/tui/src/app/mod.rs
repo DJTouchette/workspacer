@@ -308,6 +308,15 @@ pub struct App {
     pub jumplist: Vec<String>,
     pub jump_idx: usize,
 
+    /// Session ids seen in a non-stopped mode this run. Used to hide hydrated
+    /// "orphan" sessions (stopped history claudemon replays on restart) while
+    /// keeping sessions that stopped while we watched them.
+    pub seen_live: HashSet<String>,
+    /// When true, the sidebar shows every session including stopped history.
+    pub show_all_sessions: bool,
+    /// How many stopped orphans the last [`set_agents`] hid (for the title).
+    pub hidden_count: usize,
+
     /// Agents, in a stable order: existing rows stay put across polls and new
     /// sessions are appended at the end (matches the Electron app).
     pub agents: Vec<Agent>,
@@ -378,6 +387,9 @@ impl App {
             prev_focus: None,
             jumplist: Vec::new(),
             jump_idx: 0,
+            seen_live: HashSet::new(),
+            show_all_sessions: false,
+            hidden_count: 0,
             agents: Vec::new(),
             status_lines: HashMap::new(),
             selected: 0,
@@ -512,6 +524,25 @@ impl App {
             .collect();
         let next = self.agents.len();
         list.sort_by_key(|a| order.get(a.session_id.as_str()).copied().unwrap_or(next));
+
+        // Drop orphans: on restart, claudemon hydrates up to 100 prior sessions
+        // from its db as `stopped`. We want a live dashboard, not that history,
+        // so hide stopped sessions we never saw alive this run — while keeping
+        // ones that stopped *while we were watching* (still respawnable). The
+        // `show_all_sessions` toggle reveals everything (e.g. to resume an old
+        // session).
+        for a in &list {
+            if !a.is_stopped() {
+                self.seen_live.insert(a.session_id.clone());
+            }
+        }
+        let total = list.len();
+        if !self.show_all_sessions {
+            let seen = &self.seen_live;
+            list.retain(|a| !a.is_stopped() || seen.contains(&a.session_id));
+        }
+        self.hidden_count = total - list.len();
+
         // Preserve selection on the same session id where possible.
         let prev_id = self.agents.get(self.selected).map(|a| a.session_id.clone());
         self.agents = list;
@@ -1176,6 +1207,34 @@ mod tests {
         assert_eq!(app.harpoon, vec!["s2".to_string()]);
         app.harpoon_jump(5);
         assert_eq!(app.toast(), Some("no agent pinned at 5"));
+    }
+
+    #[tokio::test]
+    async fn hides_hydrated_stopped_orphans() {
+        let mut app = test_app();
+        // A live agent plus two stopped orphans hydrated from history.
+        app.set_agents(vec![
+            agent_cwd("s1", "/repo", "responding"),
+            agent_cwd("old1", "/a", "stopped"),
+            agent_cwd("old2", "/b", "stopped"),
+        ]);
+        assert_eq!(app.agents.len(), 1);
+        assert_eq!(app.agents[0].session_id, "s1");
+        assert_eq!(app.hidden_count, 2);
+
+        // An agent we watched live stays visible once it stops (respawnable).
+        app.set_agents(vec![agent_cwd("s1", "/repo", "stopped")]);
+        assert_eq!(app.agents.len(), 1, "s1 was seen live, so it survives stopping");
+        assert_eq!(app.hidden_count, 0);
+
+        // Toggling show-all reveals stopped history again.
+        app.show_all_sessions = true;
+        app.set_agents(vec![
+            agent_cwd("s1", "/repo", "stopped"),
+            agent_cwd("old1", "/a", "stopped"),
+        ]);
+        assert_eq!(app.agents.len(), 2);
+        assert_eq!(app.hidden_count, 0);
     }
 
     #[tokio::test]

@@ -133,9 +133,14 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
 
 fn render_sidebar(f: &mut Frame, area: Rect, app: &App) {
     let t = &app.theme;
+    let title = if app.hidden_count > 0 {
+        format!(" agents ({} · +{} stopped) ", app.agents.len(), app.hidden_count)
+    } else {
+        format!(" agents ({}) ", app.agents.len())
+    };
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(format!(" agents ({}) ", app.agents.len()))
+        .title(title)
         .border_style(Style::default().fg(t.dim));
 
     // Pinned Dashboard row, then one row per agent.

@@ -191,7 +191,20 @@ impl App {
             AltAgent => self.alt_agent(),
             JumpBack => self.jump_history(-1),
             JumpForward => self.jump_history(1),
+            ToggleStopped => self.toggle_stopped(),
         }
+    }
+
+    /// Show / hide stopped (incl. hydrated history) sessions in the sidebar, then
+    /// re-pull so the change takes effect immediately.
+    pub(super) fn toggle_stopped(&mut self) {
+        self.show_all_sessions = !self.show_all_sessions;
+        self.set_toast(if self.show_all_sessions {
+            "Showing stopped sessions"
+        } else {
+            "Hiding stopped sessions"
+        });
+        self.refresh();
     }
 
     /// Forward a keystroke to the PTY, or detach on Ctrl-].

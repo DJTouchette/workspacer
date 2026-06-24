@@ -65,6 +65,8 @@ pub enum Action {
     AltAgent,
     JumpBack,
     JumpForward,
+    // sidebar
+    ToggleStopped,
 }
 
 impl Action {
@@ -113,6 +115,7 @@ impl Action {
             AltAgent => "alt_agent",
             JumpBack => "jump_back",
             JumpForward => "jump_forward",
+            ToggleStopped => "toggle_stopped",
         }
     }
 
@@ -160,6 +163,7 @@ impl Action {
             "alt_agent" => AltAgent,
             "jump_back" => JumpBack,
             "jump_forward" => JumpForward,
+            "toggle_stopped" => ToggleStopped,
             _ => return None,
         })
     }
@@ -619,6 +623,8 @@ impl Keymap {
             ("h", HarpoonToggle),
             ("o", JumpBack),
             ("i", JumpForward),
+            // Toggle showing stopped/history sessions in the sidebar.
+            ("x", ToggleStopped),
             ("?", Help),
             ("q", Quit),
         ];
