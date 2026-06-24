@@ -281,7 +281,8 @@ pub struct App {
     /// when the pane resized the open emulator.
     pub term_resize: Option<(u16, u16)>,
 
-    /// Agents, kept sorted with the ones needing attention first.
+    /// Agents, in a stable order: existing rows stay put across polls and new
+    /// sessions are appended at the end (matches the Electron app).
     pub agents: Vec<Agent>,
     /// Claude's authoritative statusLine per session (context%/cost/model/rate
     /// limits), streamed live; preferred over transcript usage when present.
@@ -460,8 +461,18 @@ impl App {
     }
 
     pub(super) fn set_agents(&mut self, mut list: Vec<Agent>) {
-        // Waiting agents float to the top, like the remote client's sort.
-        list.sort_by(|a, b| (b.is_waiting() as u8).cmp(&(a.is_waiting() as u8)));
+        // Keep a stable order, like the Electron app: agents stay where they are
+        // across polls and new sessions are appended at the end, rather than
+        // re-sorting (e.g. floating waiting agents up) and making rows jump.
+        // State changes are still visible via the per-row markers.
+        let order: HashMap<&str, usize> = self
+            .agents
+            .iter()
+            .enumerate()
+            .map(|(i, a)| (a.session_id.as_str(), i))
+            .collect();
+        let next = self.agents.len();
+        list.sort_by_key(|a| order.get(a.session_id.as_str()).copied().unwrap_or(next));
         // Preserve selection on the same session id where possible.
         let prev_id = self.agents.get(self.selected).map(|a| a.session_id.clone());
         self.agents = list;
