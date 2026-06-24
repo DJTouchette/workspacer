@@ -61,6 +61,8 @@ pub fn render(f: &mut Frame, app: &mut App) {
     if app.help {
         render_help(f, f.area(), app);
     }
+    // The which-key popup floats whenever a multi-key sequence is mid-flight.
+    render_whichkey(f, root[1], app);
 }
 
 fn render_rename(f: &mut Frame, area: Rect, app: &App) {
@@ -957,6 +959,11 @@ fn render_help(f: &mut Frame, area: Rect, app: &App) {
         "Keybindings — edit ~/.config/workspacer/tui.json to remap",
         Style::default().fg(t.dim),
     ))];
+    lines.push(Line::from(vec![
+        Span::styled("press ", Style::default().fg(t.dim)),
+        Span::styled(app.keymap.leader().display(), Style::default().fg(t.ok)),
+        Span::styled(" for the leader menu (which-key)", Style::default().fg(t.dim)),
+    ]));
     lines.push(Line::raw(""));
     lines.extend(binding_lines(t, app, "global", Context::Global));
     lines.extend(binding_lines(t, app, "sidebar / dashboard", Context::List));
@@ -992,6 +999,61 @@ fn render_help(f: &mut Frame, area: Rect, app: &App) {
         )))
         .border_style(Style::default().fg(t.accent));
     f.render_widget(Paragraph::new(lines).block(block), rect);
+}
+
+/// The which-key popup: when a multi-key sequence is in flight (e.g. after the
+/// leader), float a box listing the chords that can come next and what they do.
+/// Renders nothing when no sequence is pending or the prefix is a dead end.
+fn render_whichkey(f: &mut Frame, area: Rect, app: &App) {
+    if app.pending_keys.is_empty() {
+        return;
+    }
+    let t = &app.theme;
+    let ctxs = [Context::Global, app.key_context()];
+    let conts = app.keymap.continuations(&ctxs, &app.pending_keys);
+    if conts.is_empty() {
+        return;
+    }
+
+    let rows: Vec<Line> = conts
+        .iter()
+        .map(|c| {
+            let key = c.chord.display();
+            let label = match c.action {
+                Some(a) => action_label(a),
+                None => "▸ …".to_string(),
+            };
+            Line::from(vec![
+                Span::styled(format!(" {key:<7}"), Style::default().fg(t.accent).add_modifier(Modifier::BOLD)),
+                Span::styled(label, Style::default().fg(t.fg)),
+            ])
+        })
+        .collect();
+
+    let prefix = crate::keys::display_seq(&app.pending_keys);
+    let title = format!(" {prefix}… ");
+    let inner_w = rows
+        .iter()
+        .map(Line::width)
+        .max()
+        .unwrap_or(0)
+        .max(title.chars().count()) as u16;
+    let w = (inner_w + 2).clamp(16, area.width.saturating_sub(2));
+    let h = (rows.len() as u16 + 2).min(area.height.saturating_sub(1));
+    // Bottom-anchored, like which-key.nvim — out of the way of the content.
+    let rect = Rect {
+        x: area.x + (area.width.saturating_sub(w)) / 2,
+        y: area.y + area.height.saturating_sub(h),
+        width: w,
+        height: h,
+    };
+    f.render_widget(ratatui::widgets::Clear, rect);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .title_bottom(Line::from(Span::styled(" esc cancel ", Style::default().fg(t.dim))))
+        .border_style(Style::default().fg(t.accent));
+    f.render_widget(Paragraph::new(rows).block(block), rect);
 }
 
 // ── notes scratchpad ──────────────────────────────────────────────────────────
@@ -1199,8 +1261,21 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
     } else {
         "i type · j/k scroll · t terminal · [ ] tabs · y/n/a · 1-9 · ? help · esc back"
     };
+    // In any normal/navigation mode (not a text field or raw terminal), point at
+    // the leader menu so it's discoverable.
+    let in_text = app.notes_view.is_some()
+        || app.rename.is_some()
+        || app.review.is_some()
+        || app.spawn_form.is_some()
+        || app.term_attached()
+        || (in_agent && app.insert_mode);
+    let line = if in_text {
+        format!(" {hint}")
+    } else {
+        format!(" {hint} · {} menu", app.keymap.leader().display())
+    };
     f.render_widget(
-        Paragraph::new(Line::from(Span::styled(format!(" {hint}"), Style::default().fg(app.theme.dim)))),
+        Paragraph::new(Line::from(Span::styled(line, Style::default().fg(app.theme.dim)))),
         area,
     );
 }

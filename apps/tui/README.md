@@ -49,8 +49,15 @@ planned in later phases (see the repo's TUI plan).
 - **Spawn agents** — `c` opens a modal to pick a working directory and a Claude
   profile; spawns a fresh session via claudemon. Model and skip-permissions ride
   along in the profile's args, as in the desktop app.
-- **Agent sidebar** — every live session, sorted so the ones needing you float
-  to the top, with state badge, model, context % and cost. These prefer Claude's
+- **Leader menu (which-key)** — press the leader (`space` by default; set
+  `"leader"` in `tui.json`) to pop a menu of the next keys and what they do:
+  `p` palette, `a` new agent, `t` terminal, `n` notes, `r` rename, `g` review,
+  `m` jump-to-attention, `S` respawn, `?` help, `q` quit. Bindings are multi-key
+  sequences — remap them in `tui.json` with whitespace-separated chords (e.g.
+  `"<leader> x": "quit"`). `esc` cancels a half-typed sequence.
+- **Agent sidebar** — every live session in a stable order (rows stay put across
+  polls; new sessions append at the end), with state badge, model, context % and
+  cost. These prefer Claude's
   authoritative **statusLine** (streamed live from claudemon — same numbers
   Claude shows itself), falling back to transcript-derived usage when it hasn't
   arrived yet. The Dashboard also shows 5h/7d rate-limit windows when Claude

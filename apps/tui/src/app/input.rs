@@ -5,7 +5,7 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::keys::{Action, Chord, Context};
+use crate::keys::{Action, Chord, Context, KeyMatch};
 use crate::profiles;
 
 use super::tasks::{bracketed_paste, complete_path, fetch_agents, seed_prompt};
@@ -61,26 +61,45 @@ impl App {
             return;
         }
 
+        // Normal / navigation mode: feed the key into the pending sequence and
+        // let the keymap decide. This powers the leader (which-key) menu and any
+        // multi-key binding, while single-key bindings still fire on first press.
         let chord = Chord::from_event(&key);
-        // Global bindings (palette / quit / help) win in every non-text view.
-        if let Some(action) = self.keymap.action(Context::Global, chord) {
-            self.dispatch_action(action);
+
+        // Esc abandons a half-typed sequence — and only that; it doesn't also
+        // fire Esc's own binding.
+        if !self.pending_keys.is_empty() && key.code == KeyCode::Esc {
+            self.pending_keys.clear();
             return;
         }
-        // Numeric answer keys are positional, not remappable.
-        if let KeyCode::Char(c @ '1'..='9') = key.code {
-            if !key.modifiers.contains(KeyModifiers::CONTROL) {
-                self.answer_option(c);
-                return;
+
+        self.pending_keys.push(chord);
+        let ctxs = [Context::Global, self.key_context()];
+        match self.keymap.resolve(&ctxs, &self.pending_keys) {
+            KeyMatch::Action(action) => {
+                self.pending_keys.clear();
+                self.dispatch_action(action);
             }
-        }
-        if let Some(action) = self.keymap.action(self.key_context(), chord) {
-            self.dispatch_action(action);
+            // Keep collecting; the which-key popup renders from `pending_keys`.
+            KeyMatch::Pending => {}
+            KeyMatch::None => {
+                // Dead end. A lone unbound key falls back to the positional
+                // answer keys (1–9), which live outside the remappable keymap.
+                let was_single = self.pending_keys.len() == 1;
+                self.pending_keys.clear();
+                if was_single {
+                    if let KeyCode::Char(c @ '1'..='9') = key.code {
+                        if !key.modifiers.contains(KeyModifiers::CONTROL) {
+                            self.answer_option(c);
+                        }
+                    }
+                }
+            }
         }
     }
 
     /// Which binding table the current view uses.
-    fn key_context(&self) -> Context {
+    pub(crate) fn key_context(&self) -> Context {
         match &self.view {
             View::List => Context::List,
             View::Agent { .. } => {

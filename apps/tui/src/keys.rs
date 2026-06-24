@@ -282,10 +282,38 @@ fn key_name(code: KeyCode) -> String {
     }
 }
 
-/// The full set of bindings: one chord→action table per context.
+/// The outcome of feeding a key sequence to the keymap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyMatch {
+    /// The sequence is bound — fire this action.
+    Action(Action),
+    /// The sequence is a prefix of one or more longer bindings: collect more
+    /// keys. This is what pops the which-key menu.
+    Pending,
+    /// Not bound and not a prefix — a dead end.
+    None,
+}
+
+/// One reachable continuation from a pending prefix, for the which-key popup.
+#[derive(Debug, Clone, Copy)]
+pub struct Continuation {
+    /// The next chord to press.
+    pub chord: Chord,
+    /// `Some` when that chord completes a binding (a leaf); `None` when it only
+    /// leads deeper (a group — reserved for nested menus).
+    pub action: Option<Action>,
+}
+
+/// Render a chord sequence the way the user types it, e.g. `space f`.
+pub fn display_seq(seq: &[Chord]) -> String {
+    seq.iter().map(Chord::display).collect::<Vec<_>>().join(" ")
+}
+
+/// The full set of bindings: one (chord-sequence → action) table per context.
 #[derive(Debug, Clone)]
 pub struct Keymap {
-    tables: HashMap<Context, HashMap<Chord, Action>>,
+    tables: HashMap<Context, HashMap<Vec<Chord>, Action>>,
+    leader: Chord,
 }
 
 impl Default for Keymap {
@@ -295,9 +323,72 @@ impl Default for Keymap {
 }
 
 impl Keymap {
-    /// Resolve a chord in a context to its action, if bound.
+    /// The leader chord (`space` by default) — the prefix the which-key menu
+    /// hangs off.
+    pub fn leader(&self) -> Chord {
+        self.leader
+    }
+
+    /// Resolve a single chord in a context to its action — sugar for the
+    /// single-key path (and the tests). Only fires a length-1 binding that
+    /// isn't also a prefix of something longer.
+    #[allow(dead_code)]
     pub fn action(&self, ctx: Context, chord: Chord) -> Option<Action> {
-        self.tables.get(&ctx)?.get(&chord.normalized()).copied()
+        match self.resolve(&[ctx], &[chord.normalized()]) {
+            KeyMatch::Action(a) => Some(a),
+            _ => None,
+        }
+    }
+
+    /// Resolve a (possibly multi-chord) sequence against an ordered list of
+    /// contexts. Earlier contexts win an exact match; a longer binding reachable
+    /// in *any* context makes the sequence [`KeyMatch::Pending`] — we never fire
+    /// a short binding while a longer one is still reachable, which is how we
+    /// avoid needing vim's `timeoutlen` timer.
+    pub fn resolve(&self, ctxs: &[Context], seq: &[Chord]) -> KeyMatch {
+        let mut exact: Option<Action> = None;
+        let mut is_prefix = false;
+        for &ctx in ctxs {
+            let Some(table) = self.tables.get(&ctx) else { continue };
+            for (binding, action) in table {
+                if binding.as_slice() == seq {
+                    exact.get_or_insert(*action);
+                } else if binding.len() > seq.len() && binding.starts_with(seq) {
+                    is_prefix = true;
+                }
+            }
+        }
+        if is_prefix {
+            KeyMatch::Pending
+        } else if let Some(a) = exact {
+            KeyMatch::Action(a)
+        } else {
+            KeyMatch::None
+        }
+    }
+
+    /// The chords that can follow `prefix`, for the which-key popup. Deduped by
+    /// next chord and sorted by display.
+    pub fn continuations(&self, ctxs: &[Context], prefix: &[Chord]) -> Vec<Continuation> {
+        let mut by_chord: HashMap<Chord, Option<Action>> = HashMap::new();
+        for &ctx in ctxs {
+            let Some(table) = self.tables.get(&ctx) else { continue };
+            for (binding, action) in table {
+                if binding.len() > prefix.len() && binding.starts_with(prefix) {
+                    let next = binding[prefix.len()];
+                    let leaf = if binding.len() == prefix.len() + 1 { Some(*action) } else { None };
+                    // A concrete leaf shouldn't be shadowed by a deeper group on
+                    // the same chord; first writer wins and we only fill leaves.
+                    by_chord.entry(next).or_insert(leaf);
+                }
+            }
+        }
+        let mut out: Vec<Continuation> = by_chord
+            .into_iter()
+            .map(|(chord, action)| Continuation { chord, action })
+            .collect();
+        out.sort_by(|a, b| a.chord.display().cmp(&b.chord.display()));
+        out
     }
 
     /// All bindings for a context, for the help overlay (sorted by display).
@@ -305,41 +396,69 @@ impl Keymap {
         let mut v: Vec<(String, Action)> = self
             .tables
             .get(&ctx)
-            .map(|m| m.iter().map(|(c, a)| (c.display(), *a)).collect())
+            .map(|m| m.iter().map(|(seq, a)| (display_seq(seq), *a)).collect())
             .unwrap_or_default();
         v.sort_by(|a, b| a.0.cmp(&b.0));
         v
     }
 
-    /// Apply a single override. `action_name == "none"`/`"unbind"` removes the
-    /// binding. Returns `false` if the chord or action couldn't be parsed (so
-    /// the caller can warn) — an unparseable entry is skipped, never fatal.
-    pub fn set(&mut self, ctx: Context, chord_str: &str, action_name: &str) -> bool {
-        let Some(chord) = Chord::parse(chord_str) else { return false };
+    /// Apply a single override. The chord string may be a multi-key sequence:
+    /// whitespace-separated chords, with `<leader>` (or `leader`) standing in
+    /// for the leader chord — e.g. `"<leader> f"` or `"g g"`. `action_name ==
+    /// "none"`/`"unbind"`/`""` removes the binding. Returns `false` if the
+    /// sequence or action couldn't be parsed — an unparseable entry is skipped,
+    /// never fatal.
+    pub fn set(&mut self, ctx: Context, seq_str: &str, action_name: &str) -> bool {
+        let Some(seq) = self.parse_seq(seq_str) else { return false };
         let table = self.tables.entry(ctx).or_default();
         if matches!(action_name, "none" | "unbind" | "") {
-            table.remove(&chord);
+            table.remove(&seq);
             return true;
         }
         match Action::from_name(action_name) {
             Some(a) => {
-                table.insert(chord, a);
+                table.insert(seq, a);
                 true
             }
             None => false,
         }
     }
 
-    fn with_defaults() -> Keymap {
-        use Action::*;
-        let mut tables: HashMap<Context, HashMap<Chord, Action>> = HashMap::new();
+    /// Parse a binding string into a chord sequence. Tokens are whitespace-
+    /// separated; `<leader>`/`leader` expands to the configured leader chord.
+    fn parse_seq(&self, s: &str) -> Option<Vec<Chord>> {
+        let mut out = Vec::new();
+        for tok in s.split_whitespace() {
+            let chord = if tok.eq_ignore_ascii_case("<leader>") || tok.eq_ignore_ascii_case("leader") {
+                self.leader
+            } else {
+                Chord::parse(tok)?
+            };
+            out.push(chord);
+        }
+        if out.is_empty() {
+            None
+        } else {
+            Some(out)
+        }
+    }
 
-        // Helper: build a table from (chord-string, action) pairs. Default
-        // chord strings are all known-good, so a parse miss is a programmer bug.
-        let build = |pairs: &[(&str, Action)]| -> HashMap<Chord, Action> {
+    fn with_defaults() -> Keymap {
+        Keymap::with_leader(Chord::parse("space").expect("space is a valid chord"))
+    }
+
+    /// Build the default keymap with a specific leader chord.
+    pub fn with_leader(leader: Chord) -> Keymap {
+        use Action::*;
+        let mut tables: HashMap<Context, HashMap<Vec<Chord>, Action>> = HashMap::new();
+
+        // Helper: build a table from (chord-string, action) pairs as length-1
+        // sequences. Default chord strings are all known-good, so a parse miss
+        // is a programmer bug.
+        let build = |pairs: &[(&str, Action)]| -> HashMap<Vec<Chord>, Action> {
             pairs
                 .iter()
-                .map(|(s, a)| (Chord::parse(s).expect("valid default chord"), *a))
+                .map(|(s, a)| (vec![Chord::parse(s).expect("valid default chord")], *a))
                 .collect()
         };
 
@@ -420,7 +539,29 @@ impl Keymap {
         ]));
         tables.insert(Context::AgentTranscript, transcript);
 
-        Keymap { tables }
+        // Leader menu — the which-key popup. `<leader>` then one key. Lives in
+        // Global so it's reachable from every non-text view; the actions no-op
+        // where they don't apply. These are the discoverable, mnemonic verbs;
+        // the single-key bindings above stay for muscle memory.
+        let leader_menu: &[(&str, Action)] = &[
+            ("p", Palette),
+            ("a", NewAgent),
+            ("t", NewTerminal),
+            ("n", OpenNotes),
+            ("r", RenameAgent),
+            ("g", OpenReview),
+            ("m", JumpAttention),
+            ("S", Respawn),
+            ("?", Help),
+            ("q", Quit),
+        ];
+        let global = tables.entry(Context::Global).or_default();
+        for (s, a) in leader_menu {
+            let chord = Chord::parse(s).expect("valid leader-menu chord");
+            global.insert(vec![leader, chord], *a);
+        }
+
+        Keymap { tables, leader }
     }
 }
 
@@ -500,5 +641,48 @@ mod tests {
         // shift+tab canonicalizes to a BackTab display that reparses equal.
         let bt = Chord::parse("shift+tab").unwrap();
         assert_eq!(Chord::parse(&bt.display()).unwrap(), bt);
+    }
+
+    #[test]
+    fn leader_sequence_resolves() {
+        let km = Keymap::default();
+        let leader = km.leader();
+        let ctxs = [Context::Global, Context::List];
+        // The leader alone is a pending prefix (pops which-key), not an action.
+        assert_eq!(km.resolve(&ctxs, &[leader]), KeyMatch::Pending);
+        // <leader> p fires the palette.
+        let p = Chord::parse("p").unwrap();
+        assert_eq!(km.resolve(&ctxs, &[leader, p]), KeyMatch::Action(Action::Palette));
+        // An unbound continuation is a dead end.
+        let z = Chord::parse("z").unwrap();
+        assert_eq!(km.resolve(&ctxs, &[leader, z]), KeyMatch::None);
+        // A plain bound key still fires immediately — it isn't a prefix.
+        let j = Chord::parse("j").unwrap();
+        assert_eq!(km.resolve(&[Context::List], &[j]), KeyMatch::Action(Action::SelectNext));
+    }
+
+    #[test]
+    fn leader_menu_lists_continuations() {
+        let km = Keymap::default();
+        let conts = km.continuations(&[Context::Global, Context::List], &[km.leader()]);
+        // Every entry is a leaf (flat menu for now) and the palette is reachable.
+        assert!(conts.iter().all(|c| c.action.is_some()));
+        assert!(conts.iter().any(|c| c.action == Some(Action::Palette)));
+    }
+
+    #[test]
+    fn multi_key_override_parses_and_unbinds() {
+        let mut km = Keymap::default();
+        // A user-defined `g g`. Because `g` alone is the List default, a longer
+        // binding becomes reachable, so a lone `g` now waits (the documented
+        // no-timeout tradeoff) and the full sequence fires.
+        assert!(km.set(Context::List, "g g", "select_first"));
+        let g = Chord::parse("g").unwrap();
+        assert_eq!(km.resolve(&[Context::List], &[g]), KeyMatch::Pending);
+        assert_eq!(km.resolve(&[Context::List], &[g, g]), KeyMatch::Action(Action::SelectFirst));
+        // `<leader>` expands in override strings, and unbinding the sequence
+        // restores the lone-key behavior.
+        assert!(km.set(Context::List, "g g", "none"));
+        assert_eq!(km.resolve(&[Context::List], &[g]), KeyMatch::Action(Action::SelectFirst));
     }
 }

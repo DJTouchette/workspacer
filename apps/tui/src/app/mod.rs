@@ -16,7 +16,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::claudemon::{Claudemon, PtyChunk};
 use crate::config::Config;
-use crate::keys::Keymap;
+use crate::keys::{Chord, Keymap};
 use crate::library::LibraryItem;
 use crate::profiles::Profile;
 use crate::terminal::Term;
@@ -302,6 +302,10 @@ pub struct App {
     pub insert_mode: bool,
     pub input: String,
 
+    /// Chords typed so far toward a multi-key binding (e.g. after the leader).
+    /// Empty when no sequence is in flight; drives the which-key popup.
+    pub pending_keys: Vec<Chord>,
+
     pub(super) toast: Option<(String, Instant)>,
 }
 
@@ -349,6 +353,7 @@ impl App {
             chat_follow: false,
             insert_mode: false,
             input: String::new(),
+            pending_keys: Vec::new(),
             toast: None,
         }
     }

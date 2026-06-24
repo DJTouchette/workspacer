@@ -15,7 +15,7 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 
-use crate::keys::{Context, Keymap};
+use crate::keys::{Chord, Context, Keymap};
 use crate::theme::{self, Theme};
 
 /// Resolved, ready-to-use config.
@@ -35,8 +35,13 @@ struct RawConfig {
     /// Per-role color overrides applied on top of the chosen preset.
     #[serde(default)]
     colors: HashMap<String, String>,
-    /// Keybinding overrides, keyed by context name then chord → action.
-    /// e.g. `{"list": {"x": "quit"}, "global": {"f1": "help"}}`.
+    /// The leader chord for multi-key bindings / the which-key menu.
+    /// Defaults to `space`. e.g. `"leader": ","`.
+    #[serde(default)]
+    leader: Option<String>,
+    /// Keybinding overrides, keyed by context name then chord(-sequence) →
+    /// action. A sequence is whitespace-separated, and `<leader>` expands to the
+    /// leader chord — e.g. `{"list": {"x": "quit"}, "global": {"<leader> x": "quit"}}`.
     #[serde(default)]
     keys: HashMap<String, HashMap<String, String>>,
 }
@@ -55,7 +60,19 @@ impl RawConfig {
             }
         }
 
-        let mut keymap = Keymap::default();
+        // A custom leader rebuilds the defaults around it (so the which-key
+        // menu and `<leader>` overrides all hang off the same key); a bad value
+        // falls back to the default leader rather than failing.
+        let mut keymap = match self.leader.as_deref() {
+            Some(s) => match Chord::parse(s) {
+                Some(leader) => Keymap::with_leader(leader),
+                None => {
+                    eprintln!("wks-tui: bad leader {s:?} in tui.json — using default");
+                    Keymap::default()
+                }
+            },
+            None => Keymap::default(),
+        };
         for (ctx_name, binds) in &self.keys {
             let Some(ctx) = Context::from_name(ctx_name) else {
                 eprintln!("wks-tui: unknown key context {ctx_name:?} in tui.json — skipped");
