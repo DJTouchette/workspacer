@@ -60,6 +60,11 @@ pub enum Action {
     FocusPrevPane,
     ClosePane,
     OnlyPane,
+    // harpoon (pinned agents) + jump history
+    HarpoonToggle,
+    AltAgent,
+    JumpBack,
+    JumpForward,
 }
 
 impl Action {
@@ -104,6 +109,10 @@ impl Action {
             FocusPrevPane => "focus_prev_pane",
             ClosePane => "close_pane",
             OnlyPane => "only_pane",
+            HarpoonToggle => "harpoon_toggle",
+            AltAgent => "alt_agent",
+            JumpBack => "jump_back",
+            JumpForward => "jump_forward",
         }
     }
 
@@ -147,6 +156,10 @@ impl Action {
             "focus_prev_pane" => FocusPrevPane,
             "close_pane" => ClosePane,
             "only_pane" => OnlyPane,
+            "harpoon_toggle" => HarpoonToggle,
+            "alt_agent" => AltAgent,
+            "jump_back" => JumpBack,
+            "jump_forward" => JumpForward,
             _ => return None,
         })
     }
@@ -483,7 +496,14 @@ impl Keymap {
 
         tables.insert(
             Context::Global,
-            build(&[("ctrl+k", Palette), ("ctrl+c", Quit), ("?", Help)]),
+            build(&[
+                ("ctrl+k", Palette),
+                ("ctrl+c", Quit),
+                ("?", Help),
+                // Jump history + alternate agent, on their vim chords.
+                ("ctrl+o", JumpBack),
+                ("ctrl+6", AltAgent),
+            ]),
         );
 
         tables.insert(
@@ -594,6 +614,11 @@ impl Keymap {
             ("g", OpenReview),
             ("m", JumpAttention),
             ("S", Respawn),
+            // harpoon: pin the agent + jump history (1-9 jump to a pinned slot,
+            // handled positionally in input.rs).
+            ("h", HarpoonToggle),
+            ("o", JumpBack),
+            ("i", JumpForward),
             ("?", Help),
             ("q", Quit),
         ];

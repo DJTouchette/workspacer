@@ -63,6 +63,12 @@ planned in later phases (see the repo's TUI plan).
   `m` jump-to-attention, `S` respawn, `?` help, `q` quit. Bindings are multi-key
   sequences — remap them in `tui.json` with whitespace-separated chords (e.g.
   `"<leader> x": "quit"`). `esc` cancels a half-typed sequence.
+- **Harpoon (pinned agents) + jumps** — pin the agents you're juggling and
+  teleport between them. `<leader>h` pins/unpins the current agent (a `⚓N` badge
+  shows its slot in the sidebar); `<leader>1`…`<leader>9` jump straight to a
+  pinned slot. `Ctrl-^` toggles to the **alternate** agent (the one you were just
+  on), and `Ctrl-o` / `<leader>o` step **back** through your jump history with
+  `<leader>i` forward.
 - **Agent sidebar** — every live session in a stable order (rows stay put across
   polls; new sessions append at the end), with state badge, model, context % and
   cost. These prefer Claude's

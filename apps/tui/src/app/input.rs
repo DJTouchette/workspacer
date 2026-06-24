@@ -74,6 +74,17 @@ impl App {
         }
 
         self.pending_keys.push(chord);
+        // Leader + a digit teleports to a harpoon slot — positional, like the
+        // answer keys, so it isn't nine separate keymap entries.
+        if self.pending_keys.len() == 2 && self.pending_keys[0] == self.keymap.leader() {
+            if let KeyCode::Char(d @ '1'..='9') = key.code {
+                if !key.modifiers.contains(KeyModifiers::CONTROL) {
+                    self.pending_keys.clear();
+                    self.harpoon_jump((d as u8 - b'0') as usize);
+                    return;
+                }
+            }
+        }
         let ctxs = [Context::Global, self.key_context()];
         match self.keymap.resolve(&ctxs, &self.pending_keys) {
             KeyMatch::Action(action) => {
@@ -176,6 +187,10 @@ impl App {
             FocusPrevPane => self.focus_pane(-1),
             ClosePane => self.close_pane(),
             OnlyPane => self.only_pane(),
+            HarpoonToggle => self.harpoon_toggle(),
+            AltAgent => self.alt_agent(),
+            JumpBack => self.jump_history(-1),
+            JumpForward => self.jump_history(1),
         }
     }
 
@@ -562,8 +577,34 @@ impl App {
     }
 
     /// Make `id` the interactive (focused) agent: sync the view, ensure its
-    /// workspace exists, and warm its terminal. Shared by open / split / focus.
+    /// workspace exists, and warm its terminal. Records the move in the jump
+    /// history / alternate-agent. Shared by open / split / pane-focus.
     pub(super) fn focus_agent(&mut self, id: String) {
+        self.focus_agent_inner(id, true);
+    }
+
+    /// Focus `id`, optionally recording it in the jump history. `record` is
+    /// false when we're *navigating* the history itself (`Ctrl-o` / forward), so
+    /// stepping back and forth doesn't keep appending.
+    fn focus_agent_inner(&mut self, id: String, record: bool) {
+        if record {
+            if let Some(prev) = self.open_agent_id() {
+                if prev != id {
+                    let prev = prev.to_string();
+                    self.prev_focus = Some(prev);
+                    // Drop any forward history, then append the destination.
+                    self.jumplist.truncate(self.jump_idx + 1);
+                    if self.jumplist.last().map(String::as_str) != Some(id.as_str()) {
+                        self.jumplist.push(id.clone());
+                    }
+                    self.jump_idx = self.jumplist.len().saturating_sub(1);
+                }
+            } else if self.jumplist.last().map(String::as_str) != Some(id.as_str()) {
+                // First agent opened — seed the history.
+                self.jumplist.push(id.clone());
+                self.jump_idx = self.jumplist.len().saturating_sub(1);
+            }
+        }
         let cwd = self
             .agents
             .iter()
@@ -577,6 +618,68 @@ impl App {
             active: 0,
         });
         self.enter_active_tab();
+    }
+
+    // ── harpoon (pinned agents) + jump history ────────────────────────────
+
+    /// Open `id` as a single full-content pane (collapsing any splits), the way
+    /// a harpoon/jumplist teleport behaves.
+    fn open_single(&mut self, id: String, record: bool) {
+        self.tiles = vec![id.clone()];
+        self.tile_focus = 0;
+        self.focus_agent_inner(id, record);
+    }
+
+    /// Pin or unpin the target agent in the harpoon list.
+    pub(super) fn harpoon_toggle(&mut self) {
+        let Some(sid) = self.target_session() else {
+            self.set_toast("no agent to pin");
+            return;
+        };
+        if let Some(pos) = self.harpoon.iter().position(|s| s == &sid) {
+            self.harpoon.remove(pos);
+            self.set_toast("Unpinned");
+        } else {
+            self.harpoon.push(sid);
+            self.set_toast(format!("Pinned #{}", self.harpoon.len()));
+        }
+    }
+
+    /// Teleport to the 1-based harpoon slot, if it's filled.
+    pub(super) fn harpoon_jump(&mut self, slot: usize) {
+        let Some(sid) = slot.checked_sub(1).and_then(|i| self.harpoon.get(i)).cloned() else {
+            self.set_toast(format!("no agent pinned at {slot}"));
+            return;
+        };
+        self.open_single(sid, true);
+    }
+
+    /// Jump to the alternate agent (the one focused just before this one).
+    pub(super) fn alt_agent(&mut self) {
+        let Some(alt) = self.prev_focus.clone() else {
+            self.set_toast("no alternate agent");
+            return;
+        };
+        if !self.agents.iter().any(|a| a.session_id == alt) {
+            self.set_toast("alternate agent is gone");
+            return;
+        }
+        self.open_single(alt, true);
+    }
+
+    /// Step back / forward through the jump history.
+    pub(super) fn jump_history(&mut self, delta: i32) {
+        if self.jumplist.is_empty() {
+            return;
+        }
+        let target = self.jump_idx as i32 + delta;
+        if target < 0 || target as usize >= self.jumplist.len() {
+            self.set_toast(if delta < 0 { "start of jumps" } else { "end of jumps" });
+            return;
+        }
+        self.jump_idx = target as usize;
+        let id = self.jumplist[self.jump_idx].clone();
+        self.open_single(id, false);
     }
 
     // ── window splits (panes) ─────────────────────────────────────────────

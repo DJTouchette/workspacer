@@ -297,6 +297,17 @@ pub struct App {
     pub tile_focus: usize,
     pub split_dir: SplitDir,
 
+    /// Harpoon-style pinned agents (session ids), in slot order. `<leader>1..9`
+    /// teleports to a slot; the sidebar shows each pin's number.
+    pub harpoon: Vec<String>,
+    /// The agent focused just before the current one — vim's alternate buffer
+    /// (`Ctrl-^`).
+    pub prev_focus: Option<String>,
+    /// Visited-agent history for the jumplist (`Ctrl-o` / `<leader>i`);
+    /// `jump_idx` is the current position within it.
+    pub jumplist: Vec<String>,
+    pub jump_idx: usize,
+
     /// Agents, in a stable order: existing rows stay put across polls and new
     /// sessions are appended at the end (matches the Electron app).
     pub agents: Vec<Agent>,
@@ -363,6 +374,10 @@ impl App {
             tiles: Vec::new(),
             tile_focus: 0,
             split_dir: SplitDir::Columns,
+            harpoon: Vec::new(),
+            prev_focus: None,
+            jumplist: Vec::new(),
+            jump_idx: 0,
             agents: Vec::new(),
             status_lines: HashMap::new(),
             selected: 0,
@@ -522,6 +537,15 @@ impl App {
             self.tile_focus = self.tiles.len().saturating_sub(1);
         }
         self.term_resizes.retain(|sid, _| live.contains(sid));
+        // Pinned/alternate/jump history follow the live session set.
+        self.harpoon.retain(|sid| live.contains(sid));
+        if self.prev_focus.as_ref().is_some_and(|s| !live.contains(s)) {
+            self.prev_focus = None;
+        }
+        self.jumplist.retain(|sid| live.contains(sid));
+        if self.jump_idx >= self.jumplist.len() {
+            self.jump_idx = self.jumplist.len().saturating_sub(1);
+        }
     }
 
     // ── daemon reactions ──────────────────────────────────────────────────
@@ -1125,5 +1149,50 @@ mod tests {
         app.set_agents(vec![agent("s1")]);
         assert_eq!(app.tiles, vec!["s1".to_string()]);
         assert!(app.tile_focus < app.tiles.len());
+    }
+
+    #[tokio::test]
+    async fn harpoon_pin_jump_and_alternate() {
+        let mut app = test_app();
+        app.set_agents(vec![agent("s1"), agent("s2"), agent("s3")]);
+        app.selected = 1;
+        app.open_agent(); // s1
+        app.harpoon_toggle();
+        app.selected = 2;
+        app.open_agent(); // s2
+        app.harpoon_toggle();
+        assert_eq!(app.harpoon, vec!["s1".to_string(), "s2".to_string()]);
+
+        // Teleport to slot 1, then the alternate-agent toggles back and forth.
+        app.harpoon_jump(1);
+        assert_eq!(app.open_agent_id(), Some("s1"));
+        app.alt_agent();
+        assert_eq!(app.open_agent_id(), Some("s2"));
+        app.alt_agent();
+        assert_eq!(app.open_agent_id(), Some("s1"));
+
+        // Unpin the focused agent; an empty slot just toasts.
+        app.harpoon_toggle();
+        assert_eq!(app.harpoon, vec!["s2".to_string()]);
+        app.harpoon_jump(5);
+        assert_eq!(app.toast(), Some("no agent pinned at 5"));
+    }
+
+    #[tokio::test]
+    async fn jumplist_steps_back_and_forward() {
+        let mut app = test_app();
+        app.set_agents(vec![agent("s1"), agent("s2"), agent("s3")]);
+        app.selected = 1;
+        app.open_agent(); // s1
+        app.selected = 2;
+        app.open_agent(); // s2
+        app.selected = 3;
+        app.open_agent(); // s3
+        app.jump_history(-1);
+        assert_eq!(app.open_agent_id(), Some("s2"));
+        app.jump_history(-1);
+        assert_eq!(app.open_agent_id(), Some("s1"));
+        app.jump_history(1);
+        assert_eq!(app.open_agent_id(), Some("s2"));
     }
 }

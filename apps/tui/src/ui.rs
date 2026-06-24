@@ -155,10 +155,18 @@ fn render_sidebar(f: &mut Frame, area: Rect, app: &App) {
         } else {
             Span::styled("· ", Style::default().fg(t.dim))
         };
-        let name = Line::from(vec![
+        let mut name_spans = vec![
             marker,
             Span::styled(app.agent_name(a), Style::default().add_modifier(Modifier::BOLD)),
-        ]);
+        ];
+        // Harpoon pin badge: the 1-based slot, so `<leader>N` is discoverable.
+        if let Some(slot) = app.harpoon.iter().position(|s| s == &a.session_id) {
+            name_spans.push(Span::styled(
+                format!(" ⚓{}", slot + 1),
+                Style::default().fg(t.accent),
+            ));
+        }
+        let name = Line::from(name_spans);
         let stats = derive_stats(a, app.status_lines.get(&a.session_id));
         let meta = Line::from(Span::styled(meta_line(a, &stats), Style::default().fg(t.dim)));
         ListItem::new(vec![name, meta])
@@ -1089,7 +1097,7 @@ fn render_whichkey(f: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    let rows: Vec<Line> = conts
+    let mut rows: Vec<Line> = conts
         .iter()
         .map(|c| {
             let key = c.chord.display();
@@ -1103,6 +1111,14 @@ fn render_whichkey(f: &mut Frame, area: Rect, app: &App) {
             ])
         })
         .collect();
+    // The positional harpoon jumps (`<leader>1..9`) aren't in the keymap, so
+    // surface them as a hint when the leader prefix is up and pins exist.
+    if app.pending_keys == [app.keymap.leader()] && !app.harpoon.is_empty() {
+        rows.push(Line::from(vec![
+            Span::styled(format!(" {:<7}", "1-9"), Style::default().fg(t.accent).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("jump to pinned agent (⚓1-{})", app.harpoon.len()), Style::default().fg(t.fg)),
+        ]));
+    }
 
     let prefix = crate::keys::display_seq(&app.pending_keys);
     let title = format!(" {prefix}… ");
