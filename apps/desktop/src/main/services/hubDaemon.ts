@@ -112,7 +112,7 @@ export function getRemoteShareInfo(): RemoteShareInfo {
   return {
     enabled: REMOTE_ENABLED,
     token: HUB_TOKEN,
-    remoteUrl: `http://${host}:${PORT}/remote${q}`,
+    remoteUrl: `http://${host}:${PORT}/m${q}`,
     appUrl: hasWebApp ? `http://${host}:${PORT}/app/${q}` : '',
     busUrl: `ws://${host}:${PORT}/bus`,
   };

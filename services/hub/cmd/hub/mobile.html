@@ -1,0 +1,465 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover" />
+<meta name="theme-color" content="#0e0e11" />
+<meta name="format-detection" content="telephone=no" />
+<title>Workspacer Mobile</title>
+<style>
+  :root {
+    --bg: #0e0e11; --panel: #16161b; --panel2: #1d1d24; --line: #2a2a33;
+    --text: #e7e7ea; --dim: #9a9aa6; --faint: #6b6b76;
+    --accent: #e6c200; --accent-dim: #6b5e16;
+    --green: #57b85b; --blue: #5b9bd5; --amber: #e6a23c; --red: #e06c6c; --err: #e06c6c;
+    --radius: 14px;
+    --safe-t: env(safe-area-inset-top); --safe-b: env(safe-area-inset-bottom);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    overscroll-behavior-y: none;
+  }
+  #app { display: flex; flex-direction: column; height: 100dvh; }
+
+  /* Header */
+  header {
+    flex: 0 0 auto; display: flex; align-items: center; gap: 10px;
+    padding: calc(10px + var(--safe-t)) 16px 10px; background: var(--panel);
+    border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5;
+  }
+  header .back {
+    border: none; background: var(--panel2); color: var(--text);
+    width: 34px; height: 34px; border-radius: 10px; font-size: 18px;
+    display: none; align-items: center; justify-content: center; flex: 0 0 auto;
+  }
+  header.has-back .back { display: inline-flex; }
+  header h1 { font-size: 17px; margin: 0; font-weight: 650; flex: 1;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  header .sub { font-size: 12px; color: var(--dim); font-weight: 400; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--err); flex: 0 0 auto; }
+  .dot.on { background: var(--green); }
+
+  /* Scroll area */
+  main { flex: 1 1 auto; overflow-y: auto; -webkit-overflow-scrolling: touch;
+    padding: 12px 12px calc(12px + var(--safe-b)); }
+
+  /* Cards */
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 14px; margin-bottom: 10px;
+  }
+  .card.tap:active { background: var(--panel2); }
+  .row { display: flex; align-items: center; gap: 10px; }
+  .grow { flex: 1; min-width: 0; }
+  .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .path { color: var(--faint); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .meta { color: var(--dim); font-size: 12px; margin-top: 6px; display: flex; gap: 12px; flex-wrap: wrap; }
+
+  .badge { font-size: 11px; font-weight: 700; padding: 4px 9px; border-radius: 999px;
+    text-transform: uppercase; letter-spacing: .03em; flex: 0 0 auto; }
+  .b-idle { background: #23232b; color: var(--dim); }
+  .b-work { background: rgba(91,155,213,.16); color: var(--blue); }
+  .b-need { background: rgba(230,162,60,.18); color: var(--amber); }
+  .b-err  { background: rgba(224,108,108,.18); color: var(--red); }
+
+  .empty { text-align: center; color: var(--faint); padding: 48px 20px; }
+  .empty .big { font-size: 30px; margin-bottom: 8px; }
+
+  /* Decision card */
+  .decision .ctx {
+    background: var(--bg); border: 1px solid var(--line); border-radius: 10px;
+    padding: 10px; margin: 10px 0; font: 12.5px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--text); white-space: pre-wrap; word-break: break-word; max-height: 220px; overflow: auto;
+  }
+  .qtext { margin: 6px 0 10px; }
+  .btns { display: flex; gap: 8px; flex-wrap: wrap; }
+  button.act {
+    flex: 1 1 auto; min-width: 84px; min-height: 46px; border-radius: 11px; border: 1px solid var(--line);
+    background: var(--panel2); color: var(--text); font-size: 15px; font-weight: 600;
+  }
+  button.act:active { filter: brightness(1.3); }
+  button.yes { background: rgba(87,184,91,.18); border-color: var(--green); color: #b6e7b8; }
+  button.no  { background: rgba(224,108,108,.16); border-color: var(--red); color: #f0bcbc; }
+  button.always { background: rgba(230,194,0,.14); border-color: var(--accent-dim); color: #efe09a; }
+  button.opt { flex-basis: 100%; text-align: left; justify-content: flex-start; }
+
+  /* Chat */
+  .bubble { max-width: 84%; padding: 9px 12px; border-radius: 14px; margin: 6px 0;
+    white-space: pre-wrap; word-break: break-word; font-size: 14.5px; }
+  .bubble.user { margin-left: auto; background: #2b2f3a; border-bottom-right-radius: 5px; }
+  .bubble.asst { margin-right: auto; background: var(--panel); border: 1px solid var(--line); border-bottom-left-radius: 5px; }
+  .tool { color: var(--dim); font-size: 12.5px; margin: 5px 2px; font-family: ui-monospace, Menlo, monospace; }
+  .tool .err { color: var(--red); }
+
+  /* Composer */
+  .composer { flex: 0 0 auto; display: flex; gap: 8px; padding: 10px 12px calc(10px + var(--safe-b));
+    background: var(--panel); border-top: 1px solid var(--line); }
+  .composer textarea {
+    flex: 1; resize: none; max-height: 120px; min-height: 44px; padding: 11px 12px;
+    background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 12px;
+    font: inherit; outline: none;
+  }
+  .composer button { width: 48px; border-radius: 12px; border: none; background: var(--accent); color: #1a1505;
+    font-size: 20px; font-weight: 700; flex: 0 0 auto; }
+  .composer button:disabled { opacity: .4; }
+
+  /* Bottom tab bar */
+  nav {
+    flex: 0 0 auto; display: flex; background: var(--panel); border-top: 1px solid var(--line);
+    padding-bottom: var(--safe-b);
+  }
+  nav button {
+    flex: 1; border: none; background: none; color: var(--dim); padding: 9px 0 8px;
+    font-size: 11px; display: flex; flex-direction: column; align-items: center; gap: 3px; position: relative;
+  }
+  nav button .ico { font-size: 20px; line-height: 1; }
+  nav button.active { color: var(--accent); }
+  nav .pill { position: absolute; top: 4px; right: 50%; transform: translateX(22px);
+    background: var(--red); color: #fff; font-size: 10px; font-weight: 700; min-width: 17px;
+    height: 17px; border-radius: 9px; padding: 0 4px; display: none; align-items: center; justify-content: center; }
+  nav .pill.show { display: flex; }
+
+  /* Gate */
+  .gate { padding: 40px 22px; }
+  .gate h2 { margin: 0 0 6px; }
+  .gate p { color: var(--dim); margin: 0 0 18px; }
+  .gate input { width: 100%; padding: 13px; border-radius: 11px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--text); font-size: 15px; margin-bottom: 12px; }
+  .gate button { width: 100%; padding: 14px; border-radius: 11px; border: none;
+    background: var(--accent); color: #1a1505; font-size: 15px; font-weight: 700; }
+
+  .toast { position: fixed; left: 50%; bottom: calc(76px + var(--safe-b)); transform: translateX(-50%);
+    background: #2b2b34; color: var(--text); padding: 10px 16px; border-radius: 10px; font-size: 13px;
+    opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 20; border: 1px solid var(--line); }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header id="hdr">
+    <button class="back" id="back" aria-label="Back">‹</button>
+    <h1 id="title">Fleet<span class="sub" id="sub"></span></h1>
+    <span class="dot" id="dot"></span>
+  </header>
+  <main id="main"></main>
+  <div class="composer" id="composer" style="display:none">
+    <textarea id="msg" rows="1" placeholder="Message this agent…" autocomplete="off"></textarea>
+    <button id="send">↑</button>
+  </div>
+  <nav id="nav">
+    <button data-tab="fleet" class="active"><span class="ico">▦</span>Fleet</button>
+    <button data-tab="needs"><span class="ico">●</span>Needs You<span class="pill" id="needPill"></span></button>
+  </nav>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+(() => {
+  const qs = new URLSearchParams(location.search);
+  let token = qs.get('token') || sessionStorage.getItem('hubToken') || '';
+  if (token) sessionStorage.setItem('hubToken', token);
+
+  const $ = (id) => document.getElementById(id);
+  const main = $('main'), dot = $('dot'), titleEl = $('title'), subEl = $('sub');
+  const backBtn = $('back'), hdr = $('hdr'), nav = $('nav'), composer = $('composer');
+  const msgEl = $('msg'), sendBtn = $('send'), toastEl = $('toast'), needPill = $('needPill');
+
+  let ws = null, backoff = 500, calls = new Map(), callSeq = 0;
+  const sessions = new Map();          // sessionId -> agents.list row
+  let view = { name: 'fleet' };        // 'fleet' | 'needs' | { name:'chat', sessionId }
+  let convo = { seq: 0, items: [] };   // current chat conversation
+  let lastConvoKey = '';
+
+  // ── helpers ──────────────────────────────────────────────────────────────
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function basename(p) {
+    if (!p) return 'Agent';
+    const parts = String(p).replace(/[/\\]+$/, '').split(/[/\\]/);
+    return parts[parts.length - 1] || p;
+  }
+  function toast(m) {
+    toastEl.textContent = m; toastEl.classList.add('show');
+    clearTimeout(toast._t); toast._t = setTimeout(() => toastEl.classList.remove('show'), 2000);
+  }
+  function isBlocked(s) { return !!(s && (s.pendingApproval || (s.pendingQuestions && s.pendingQuestions.length))); }
+
+  function stateInfo(s) {
+    if (s.pendingApproval) return { cls: 'b-need', label: 'needs approval' };
+    if (s.pendingQuestions && s.pendingQuestions.length) return { cls: 'b-need', label: 'has a question' };
+    const st = (s.state || '').toLowerCase();
+    if (st === 'waiting_approval') return { cls: 'b-need', label: 'needs approval' };
+    if (st === 'waiting_input') return { cls: 'b-need', label: 'needs you' };
+    if (st === 'streaming') return { cls: 'b-work', label: 'working' };
+    if (st === 'thinking') return { cls: 'b-work', label: 'thinking' };
+    if (st === 'error') return { cls: 'b-err', label: 'error' };
+    return { cls: 'b-idle', label: 'idle' };
+  }
+  function ctxPct(s) {
+    if (s.contextLimit > 0 && s.contextTokens >= 0) return Math.round(100 * s.contextTokens / s.contextLimit) + '% ctx';
+    return '';
+  }
+
+  // ── transport ────────────────────────────────────────────────────────────
+  function wsURL() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${proto}//${location.host}/bus?token=${encodeURIComponent(token)}`;
+  }
+  function call(method, params) {
+    return new Promise((resolve, reject) => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return reject(new Error('offline'));
+      const id = 'c' + (++callSeq);
+      calls.set(id, { resolve, reject });
+      ws.send(JSON.stringify({ op: 'call', id, method, params: params || {} }));
+      setTimeout(() => { if (calls.has(id)) { calls.delete(id); reject(new Error('timeout')); } }, 12000);
+    });
+  }
+  async function doCall(method, params, okMsg) {
+    try { await call(method, params); if (okMsg) toast(okMsg); await refresh(); }
+    catch (e) { toast('Failed: ' + (e.message || e)); }
+  }
+
+  async function refresh() {
+    try {
+      const list = await call('agents.list', {});
+      sessions.clear();
+      for (const s of (list || [])) sessions.set(s.sessionId, s);
+      updateNeedPill();
+      if (view.name === 'fleet') renderFleet();
+      else if (view.name === 'needs') renderNeeds();
+      else if (view.name === 'chat') renderChatHeader();
+    } catch (e) { /* connection state shows it */ }
+  }
+  function updateNeedPill() {
+    let n = 0; for (const s of sessions.values()) if (isBlocked(s)) n++;
+    needPill.textContent = n; needPill.classList.toggle('show', n > 0);
+  }
+
+  // ── views ─────────────────────────────────────────────────────────────────
+  function setTab(tab) {
+    view = { name: tab };
+    for (const b of nav.querySelectorAll('button')) b.classList.toggle('active', b.dataset.tab === tab);
+    hdr.classList.remove('has-back'); composer.style.display = 'none'; nav.style.display = 'flex';
+    if (tab === 'fleet') { titleEl.firstChild.nodeValue = 'Fleet'; subEl.textContent = ''; renderFleet(); }
+    else { titleEl.firstChild.nodeValue = 'Needs You'; subEl.textContent = ''; renderNeeds(); }
+    main.scrollTop = 0;
+  }
+
+  function renderFleet() {
+    const list = [...sessions.values()];
+    if (!list.length) { main.innerHTML = emptyHtml('▦', 'No agents running', 'Spawn one from the desktop app.'); return; }
+    list.sort((a, b) => (isBlocked(b) - isBlocked(a)));
+    main.innerHTML = list.map(cardHtml).join('');
+    bindCards();
+  }
+  function cardHtml(s) {
+    const st = stateInfo(s);
+    const bits = [st.label === 'idle' ? '' : '', ctxPct(s), s.model ? esc(s.model) : ''].filter(Boolean);
+    return `<div class="card tap" data-id="${esc(s.sessionId)}">
+      <div class="row">
+        <div class="grow">
+          <div class="name">${esc(basename(s.cwd))}</div>
+          <div class="path">${esc(s.cwd || '')}</div>
+        </div>
+        <span class="badge ${st.cls}">${esc(st.label)}</span>
+      </div>
+      <div class="meta">${bits.map(b => `<span>${b}</span>`).join('')}</div>
+    </div>`;
+  }
+  function bindCards() {
+    for (const el of main.querySelectorAll('.card.tap')) el.onclick = () => openChat(el.dataset.id);
+  }
+
+  function renderNeeds() {
+    const list = [...sessions.values()].filter(isBlocked);
+    if (!list.length) { main.innerHTML = emptyHtml('✓', "You're all caught up", 'No agent is waiting on a decision.'); return; }
+    main.innerHTML = list.map(decisionHtml).join('');
+    bindDecisions();
+  }
+  function decisionHtml(s) {
+    const name = esc(basename(s.cwd));
+    let body;
+    if (s.pendingApproval) {
+      const a = s.pendingApproval;
+      const ctx = a.toolName + (a.toolInput ? '\n' + summarizeInput(a.toolInput) : '');
+      body = `<div class="ctx">${esc(ctx)}</div>
+        <div class="btns">
+          <button class="act yes" data-act="approve" data-d="yes">Approve</button>
+          <button class="act no" data-act="approve" data-d="no">Deny</button>
+          <button class="act always" data-act="approve" data-d="always">Always</button>
+        </div>`;
+    } else {
+      const q = (s.pendingQuestions && s.pendingQuestions[0]) || {};
+      const opts = (q.options || []).map((o, i) =>
+        `<button class="act opt" data-act="answer" data-opt="${i + 1}">${i + 1}. ${esc(o.label)}${o.description ? ' — ' + esc(o.description) : ''}</button>`).join('');
+      body = `<div class="qtext">${esc(q.question || 'Question')}</div>
+        <div class="btns">${opts}</div>
+        <div class="composer-inline btns" style="margin-top:8px">
+          <input class="ans-text" placeholder="Or type an answer…" style="flex:1;min-width:0;padding:11px;border-radius:11px;border:1px solid var(--line);background:var(--bg);color:var(--text);font:inherit" />
+          <button class="act" data-act="answer-text">Send</button>
+        </div>`;
+    }
+    return `<div class="card decision" data-id="${esc(s.sessionId)}">
+      <div class="row"><div class="grow"><div class="name">${name}</div>
+      <div class="path">${esc(s.cwd || '')}</div></div>
+      <span class="badge b-need">${s.pendingApproval ? 'approval' : 'question'}</span></div>
+      ${body}</div>`;
+  }
+  function summarizeInput(input) {
+    try {
+      if (typeof input === 'string') return input;
+      if (input.command) return '$ ' + input.command;
+      if (input.file_path) return input.file_path + (input.content ? '\n' + String(input.content).slice(0, 600) : '');
+      const j = JSON.stringify(input, null, 1);
+      return j.length > 800 ? j.slice(0, 800) + '…' : j;
+    } catch { return ''; }
+  }
+  function bindDecisions() {
+    for (const card of main.querySelectorAll('.card.decision')) {
+      const id = card.dataset.id;
+      for (const b of card.querySelectorAll('[data-act="approve"]'))
+        b.onclick = () => doCall('claude.approve', { sessionId: id, decision: b.dataset.d }, 'Sent: ' + b.dataset.d);
+      for (const b of card.querySelectorAll('[data-act="answer"]'))
+        b.onclick = () => doCall('claude.answer', { sessionId: id, option: Number(b.dataset.opt) }, 'Answered');
+      const at = card.querySelector('[data-act="answer-text"]');
+      if (at) at.onclick = () => {
+        const inp = card.querySelector('.ans-text'); const v = (inp.value || '').trim();
+        if (!v) return; doCall('claude.answer', { sessionId: id, text: v }, 'Answered');
+      };
+    }
+  }
+
+  function emptyHtml(icon, big, sub) {
+    return `<div class="empty"><div class="big">${icon}</div><div>${esc(big)}</div>
+      <div style="color:var(--faint);font-size:13px;margin-top:6px">${esc(sub)}</div></div>`;
+  }
+
+  // ── chat ────────────────────────────────────────────────────────────────
+  async function openChat(sessionId) {
+    view = { name: 'chat', sessionId };
+    convo = { seq: 0, items: [] }; lastConvoKey = '';
+    hdr.classList.add('has-back'); nav.style.display = 'none'; composer.style.display = 'flex';
+    renderChatHeader();
+    main.innerHTML = `<div class="empty">Loading…</div>`;
+    await loadConvo(true);
+  }
+  function renderChatHeader() {
+    if (view.name !== 'chat') return;
+    const s = sessions.get(view.sessionId);
+    titleEl.firstChild.nodeValue = s ? basename(s.cwd) : 'Agent';
+    subEl.textContent = s ? '  ' + stateInfo(s).label : '';
+  }
+  async function loadConvo(scroll) {
+    if (view.name !== 'chat') return;
+    try {
+      const data = await call('sessions.conversation', { sessionId: view.sessionId });
+      convo = { seq: data.seq || 0, items: Array.isArray(data.items) ? data.items : [] };
+      const key = convo.seq + ':' + convo.items.length;
+      if (key === lastConvoKey && !scroll) return;
+      lastConvoKey = key;
+      renderChat(scroll);
+    } catch (e) { main.innerHTML = `<div class="empty">Couldn't load conversation.</div>`; }
+  }
+  function renderChat(scroll) {
+    const s = sessions.get(view.sessionId);
+    let html = '';
+    // If this agent is blocked, surface the decision right at the top of the chat.
+    if (isBlocked(s)) html += decisionHtml(s);
+    for (const it of convo.items) {
+      if (it.kind === 'user_message') html += `<div class="bubble user">${esc(it.text)}</div>`;
+      else if (it.kind === 'assistant_text') html += `<div class="bubble asst">${esc(it.text)}</div>`;
+      else if (it.kind === 'tool_use') html += `<div class="tool">⚙ ${esc(it.name)} ${esc(shortArg(it.input))}</div>`;
+      else if (it.kind === 'tool_result' && it.is_error) html += `<div class="tool"><span class="err">✗ ${esc(String(it.content).slice(0, 140))}</span></div>`;
+    }
+    if (!convo.items.length && !isBlocked(s)) html = `<div class="empty">No messages yet.</div>`;
+    main.innerHTML = html;
+    if (isBlocked(s)) bindDecisions();
+    if (scroll) main.scrollTop = main.scrollHeight;
+  }
+  function shortArg(input) {
+    if (!input) return '';
+    if (typeof input === 'string') return input.slice(0, 60);
+    if (input.command) return String(input.command).slice(0, 60);
+    if (input.file_path) return basename(input.file_path);
+    if (input.description) return String(input.description).slice(0, 60);
+    return '';
+  }
+
+  function sendMessage() {
+    if (view.name !== 'chat') return;
+    const text = (msgEl.value || '').trim();
+    if (!text) return;
+    msgEl.value = ''; autosize();
+    call('agents.sendMessage', { sessionId: view.sessionId, text })
+      .then(() => { setTimeout(() => loadConvo(true), 400); })
+      .catch((e) => toast('Send failed: ' + (e.message || e)));
+  }
+  function autosize() { msgEl.style.height = 'auto'; msgEl.style.height = Math.min(msgEl.scrollHeight, 120) + 'px'; }
+
+  // ── events / connection ────────────────────────────────────────────────────
+  function setConnected(on) { dot.classList.toggle('on', on); }
+
+  function gate() {
+    nav.style.display = 'none'; composer.style.display = 'none'; hdr.classList.remove('has-back');
+    titleEl.firstChild.nodeValue = 'Workspacer'; subEl.textContent = '';
+    main.innerHTML = `<div class="gate"><h2>Token required</h2>
+      <p>Paste your workspacer remote token to connect.</p>
+      <input id="tok" placeholder="token" autocomplete="off" />
+      <button id="tokGo">Connect</button></div>`;
+    $('tokGo').onclick = () => {
+      const v = ($('tok').value || '').trim(); if (!v) return;
+      token = v; sessionStorage.setItem('hubToken', v); connect();
+    };
+    $('tok').addEventListener('keydown', e => { if (e.key === 'Enter') $('tokGo').click(); });
+  }
+
+  function connect() {
+    if (!token) return gate();
+    setConnected(false);
+    try { ws = new WebSocket(wsURL()); } catch { return scheduleReconnect(); }
+    ws.onopen = () => {
+      backoff = 500; setConnected(true);
+      ws.send(JSON.stringify({ op: 'subscribe', topics: ['agent.state_changed', 'agent.snapshot'] }));
+      if (view.name === 'fleet') setTab('fleet'); else refresh();
+      if (view.name === 'chat') loadConvo(true);
+    };
+    ws.onmessage = (ev) => {
+      let f; try { f = JSON.parse(ev.data); } catch { return; }
+      if (f.op === 'result') { const c = calls.get(f.id); if (c) { calls.delete(f.id); c.resolve(f.result); } }
+      else if (f.op === 'error' && f.id) { const c = calls.get(f.id); if (c) { calls.delete(f.id); c.reject(new Error(f.error || 'error')); } }
+      else if (f.op === 'event' && f.event) {
+        const t = f.event.type || '';
+        if (t === 'agent.state_changed' || t === 'agent.snapshot') {
+          refresh();
+          if (view.name === 'chat') loadConvo(false);
+        }
+      }
+    };
+    ws.onclose = (ev) => {
+      setConnected(false);
+      if (ev.code === 1008 || ev.code === 4401) { token = ''; sessionStorage.removeItem('hubToken'); return gate(); }
+      scheduleReconnect();
+    };
+    ws.onerror = () => { try { ws.close(); } catch {} };
+  }
+  function scheduleReconnect() { setTimeout(connect, backoff); backoff = Math.min(backoff * 2, 8000); }
+
+  // ── wiring ──────────────────────────────────────────────────────────────
+  for (const b of nav.querySelectorAll('button')) b.onclick = () => setTab(b.dataset.tab);
+  backBtn.onclick = () => setTab('fleet');
+  sendBtn.onclick = sendMessage;
+  msgEl.addEventListener('input', autosize);
+  msgEl.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  });
+
+  connect();
+})();
+</script>
+</body>
+</html>

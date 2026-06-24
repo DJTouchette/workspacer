@@ -93,6 +93,12 @@ func main() {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write(remoteHTML)
 	}))
+	// Mobile-first client (fleet / needs-you / chat) — the default phone entry.
+	// Same bus protocol + token guard as /remote.
+	srv.AddRoute("/m", guard(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write(mobileHTML)
+	}))
 	// Static xterm assets for the remote's live terminal mirror. Unguarded:
 	// they're public library code, and <script>/<link> tags can't carry the
 	// bus token. Long-cache since they're content-pinned to a vendored version.

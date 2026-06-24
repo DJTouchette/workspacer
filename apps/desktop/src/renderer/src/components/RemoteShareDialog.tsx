@@ -165,16 +165,16 @@ function EnabledState({
         Remote sharing is ON
       </div>
 
-      {/* Full app vs lite client. The full app is the real renderer served at
-          /app; lite is the single-page /remote client. */}
+      {/* Full app vs mobile client. The full app is the real renderer served at
+          /app; mobile is the mobile-first single-page client served at /m. */}
       {hasApp ? (
         <div style={{ display: 'flex', gap: 4, marginBottom: 14 }}>
           <ModeTab active={mode === 'app'} onClick={() => setMode('app')} title="The full Workspacer UI, in the browser">Full app</ModeTab>
-          <ModeTab active={mode === 'lite'} onClick={() => setMode('lite')} title="Lightweight single-page control client">Lite</ModeTab>
+          <ModeTab active={mode === 'lite'} onClick={() => setMode('lite')} title="Mobile-first client: fleet, decisions, and chat">Mobile</ModeTab>
         </div>
       ) : (
         <div style={{ fontSize: '0.66rem', color: 'var(--wks-text-faint)', marginBottom: 12, lineHeight: 1.5 }}>
-          Showing the lite client. Build the full app with{' '}
+          Showing the mobile client. Build the full app with{' '}
           <code style={inlineCode}>npm run build:renderer:web</code> and restart to share the full UI.
         </div>
       )}
@@ -186,7 +186,7 @@ function EnabledState({
         </div>
       </div>
       <div style={{ textAlign: 'center', fontSize: '0.68rem', color: 'var(--wks-text-muted)', marginBottom: 16 }}>
-        Scan with your phone's camera to open {mode === 'app' && hasApp ? 'the full app' : 'the control panel'}.
+        Scan with your phone's camera to open {mode === 'app' && hasApp ? 'the full app' : 'the mobile client'}.
       </div>
 
       <CopyRow label="Connection URL" value={activeUrl} display={activeUrl}
