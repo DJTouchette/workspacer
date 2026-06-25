@@ -11,6 +11,25 @@ use crate::profiles;
 use super::tasks::{bracketed_paste, complete_path, fetch_agents, seed_prompt};
 use super::{App, AppMsg, ChatMode, NotesState, PaletteAction, PaletteItem, RenameForm, SplitDir, SpawnForm, TabKind, View, Workspace, Tab};
 
+/// Ex-command verbs surfaced in the Ctrl-K palette as a "command" source — the
+/// fuzzy-findable mirror of the `:` command line. `(verb, description)`.
+const COMMAND_PALETTE: &[(&str, &str)] = &[
+    ("vsplit", "split window into columns"),
+    ("split", "split window into rows"),
+    ("only", "keep only the focused pane"),
+    ("close", "close the focused pane"),
+    ("spawn", "new agent"),
+    ("term", "new terminal tab"),
+    ("notes", "open the notes scratchpad"),
+    ("review", "open the git review"),
+    ("pin", "pin / unpin the agent (harpoon)"),
+    ("rename", "rename the agent"),
+    ("filter", "filter the sidebar"),
+    ("dashboard", "go to the dashboard"),
+    ("help", "keybindings"),
+    ("quit", "quit"),
+];
+
 impl App {
     // ── top-level dispatcher ──────────────────────────────────────────────
 
@@ -608,12 +627,21 @@ impl App {
             PaletteItem { label: "New terminal".into(), hint: "shell tab".into(), action: PaletteAction::NewTerminal },
             PaletteItem { label: "Dashboard".into(), hint: "overview".into(), action: PaletteAction::Dashboard },
         ];
+        // Commands — the `:`-line verbs, so Ctrl-K is a real command palette.
+        for (verb, desc) in COMMAND_PALETTE {
+            items.push(PaletteItem {
+                label: format!(": {verb}"),
+                hint: (*desc).to_string(),
+                action: PaletteAction::Command((*verb).to_string()),
+            });
+        }
         // Jump to a live agent (the full set, so the palette reaches agents the
-        // `/` filter is hiding).
+        // `/` filter is hiding). The cwd goes in the hint so fuzzy search finds
+        // an agent by its path, not just its short name.
         for a in &self.all_agents {
             items.push(PaletteItem {
                 label: format!("Go to {}", self.agent_name(a)),
-                hint: a.state().to_string(),
+                hint: format!("{}  {}", a.state(), a.cwd_str()),
                 action: PaletteAction::OpenAgent(a.session_id.clone()),
             });
         }
@@ -698,6 +726,7 @@ impl App {
                 });
             }
             PaletteAction::SpawnWithPrompt(body) => self.open_spawn_with_prompt(body),
+            PaletteAction::Command(cmd) => self.run_command(&cmd),
         }
     }
 

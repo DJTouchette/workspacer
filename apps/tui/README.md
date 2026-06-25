@@ -17,10 +17,11 @@ planned in later phases (see the repo's TUI plan).
 
 ## What it does today
 
-- **Command palette** — `Ctrl-K` opens a fuzzy launcher: start a new agent, open
-  a terminal, jump to the Dashboard, jump to any running agent, or insert a
-  **library** item into the focused agent. Type to filter, `↑`/`↓` to move,
-  `enter` to run.
+- **Command palette** — `Ctrl-K` opens a fuzzy launcher over several sources:
+  start a new agent, open a terminal, run any `:` **command** (`vsplit`, `pin`,
+  `review`, …), jump to any running agent (findable by its **cwd**, not just its
+  name), or insert a **library** item into the focused agent. Type to filter
+  (matches label + hint), `↑`/`↓` to move, `enter` to run.
 - **Library** — reusable prompts / skills / agents loaded from
   `~/.config/workspacer/library/*.md`, `~/.claude/skills/*/SKILL.md`, and
   `~/.claude/agents/*.md`. From the palette each item offers **Run in new

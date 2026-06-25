@@ -141,6 +141,8 @@ pub enum PaletteAction {
     Insert(String),
     /// Spawn a new agent seeded with this prompt.
     SpawnWithPrompt(String),
+    /// Run an ex command (the `:`-line verb), e.g. `vsplit`.
+    Command(String),
 }
 
 #[derive(Debug, Clone)]
@@ -172,7 +174,9 @@ impl Palette {
             .items
             .iter()
             .enumerate()
-            .filter(|(_, it)| fuzzy_match(&q, &it.label.to_lowercase()))
+            // Match across label + hint so agents are findable by cwd/state and
+            // commands by their description, not just the visible label.
+            .filter(|(_, it)| fuzzy_match(&q, &format!("{} {}", it.label, it.hint).to_lowercase()))
             .map(|(i, _)| i)
             .collect();
         if self.selected >= self.filtered.len() {
@@ -1354,6 +1358,28 @@ mod tests {
         press(&mut app, '2');
         press(&mut app, 'G');
         assert_eq!(app.selected, 2);
+    }
+
+    #[tokio::test]
+    async fn palette_has_commands_and_finds_agents_by_cwd() {
+        let mut app = test_app();
+        app.set_agents(vec![agent_cwd("s1", "/work/alpha", "responding")]);
+        app.open_palette();
+        let p = app.palette.as_mut().unwrap();
+
+        // The command source is present and fuzzy-findable.
+        p.query = "vsplit".into();
+        p.refilter();
+        assert!(p
+            .visible()
+            .any(|it| matches!(&it.action, PaletteAction::Command(c) if c == "vsplit")));
+
+        // An agent is findable by a substring of its cwd (in the hint).
+        p.query = "alpha".into();
+        p.refilter();
+        assert!(p
+            .visible()
+            .any(|it| matches!(&it.action, PaletteAction::OpenAgent(_))));
     }
 
     #[tokio::test]
