@@ -63,6 +63,10 @@ planned in later phases (see the repo's TUI plan).
   `m` jump-to-attention, `S` respawn, `?` help, `q` quit. Bindings are multi-key
   sequences — remap them in `tui.json` with whitespace-separated chords (e.g.
   `"<leader> x": "quit"`). `esc` cancels a half-typed sequence.
+- **Command line (`:`)** — vim's ex line for verbs that don't need a key:
+  `:q` quit, `:vsplit`/`:split`/`:only`/`:close` windows, `:spawn` / `:term`,
+  `:notes` / `:review` / `:pin`, `:rename <name>`, `:filter <query>`,
+  `:ls` (dashboard), `:help`. `enter` runs, `esc` cancels.
 - **Filter the sidebar** — `/` opens a live fuzzy filter (subsequence match over
   name / cwd / state). Type to narrow the list as you go; `enter` keeps the
   filter and returns to `j`/`k` navigation, `esc` clears it. The filter is just a

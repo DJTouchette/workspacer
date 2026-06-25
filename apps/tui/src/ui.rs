@@ -1340,6 +1340,21 @@ fn render_review_diff(f: &mut Frame, area: Rect, t: &Theme, r: &crate::app::Revi
 // ── footer ────────────────────────────────────────────────────────────────────
 
 fn render_footer(f: &mut Frame, area: Rect, app: &App) {
+    // The `:` command line takes over the footer while it's open.
+    if let Some(cmd) = &app.cmdline {
+        let chip = Span::styled(
+            " CMD ",
+            Style::default().bg(app.theme.accent).fg(Color::Black).add_modifier(Modifier::BOLD),
+        );
+        f.render_widget(
+            Paragraph::new(Line::from(vec![
+                chip,
+                Span::styled(format!(" :{cmd}▏"), Style::default().fg(app.theme.fg)),
+            ])),
+            area,
+        );
+        return;
+    }
     let in_agent = matches!(app.view, View::Agent { .. });
     let on_shell = matches!(app.active_tab().map(|t| t.kind), Some(TabKind::Shell));
     let hint = if app.notes_view.as_ref().is_some_and(|n| n.editing) {

@@ -68,6 +68,8 @@ pub enum Action {
     // sidebar
     ToggleStopped,
     OpenFilter,
+    // ex command line
+    OpenCmdline,
 }
 
 impl Action {
@@ -118,6 +120,7 @@ impl Action {
             JumpForward => "jump_forward",
             ToggleStopped => "toggle_stopped",
             OpenFilter => "filter",
+            OpenCmdline => "cmdline",
         }
     }
 
@@ -167,6 +170,7 @@ impl Action {
             "jump_forward" => JumpForward,
             "toggle_stopped" => ToggleStopped,
             "filter" => OpenFilter,
+            "cmdline" => OpenCmdline,
             _ => return None,
         })
     }
@@ -507,6 +511,7 @@ impl Keymap {
                 ("ctrl+k", Palette),
                 ("ctrl+c", Quit),
                 ("?", Help),
+                (":", OpenCmdline),
                 // Jump history + alternate agent, on their vim chords.
                 ("ctrl+o", JumpBack),
                 ("ctrl+6", AltAgent),

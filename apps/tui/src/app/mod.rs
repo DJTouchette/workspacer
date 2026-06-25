@@ -325,6 +325,8 @@ pub struct App {
     /// is true while the query is being typed.
     pub filter: Option<String>,
     pub filter_editing: bool,
+    /// The `:` ex-command line buffer; `Some` while it's open and capturing.
+    pub cmdline: Option<String>,
 
     /// Agents, in a stable order: existing rows stay put across polls and new
     /// sessions are appended at the end (matches the Electron app).
@@ -402,6 +404,7 @@ impl App {
             all_agents: Vec::new(),
             filter: None,
             filter_editing: false,
+            cmdline: None,
             agents: Vec::new(),
             status_lines: HashMap::new(),
             selected: 0,
@@ -1318,6 +1321,32 @@ mod tests {
         app.handle_filter_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         assert!(app.filter.is_none());
         assert_eq!(app.agents.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn ex_commands_dispatch() {
+        let mut app = test_app();
+        app.set_agents(vec![
+            agent_cwd("s1", "/work/alpha", "responding"),
+            agent_cwd("s2", "/work/beta", "responding"),
+        ]);
+        app.selected = 1;
+        app.open_agent();
+
+        app.run_command("vsplit");
+        assert_eq!(app.tiles.len(), 2, ":vsplit tiles another agent");
+        app.run_command("only");
+        assert_eq!(app.tiles.len(), 1, ":only collapses to one pane");
+
+        app.run_command("filter beta");
+        assert_eq!(app.filter.as_deref(), Some("beta"));
+        assert_eq!(app.agents.len(), 1);
+
+        app.run_command("nonsense");
+        assert_eq!(app.toast(), Some("unknown command: nonsense"));
+
+        app.run_command("q");
+        assert!(app.should_quit);
     }
 
     #[tokio::test]

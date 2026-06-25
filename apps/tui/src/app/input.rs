@@ -54,6 +54,11 @@ impl App {
             self.handle_filter_key(key);
             return;
         }
+        // The `:` ex-command line captures keys while it's open.
+        if self.cmdline.is_some() {
+            self.handle_cmdline_key(key);
+            return;
+        }
         // When attached to the live terminal, every key goes to Claude (so
         // Ctrl-C interrupts the agent, not the TUI). Ctrl-] detaches.
         if self.term_attached() {
@@ -198,6 +203,82 @@ impl App {
             JumpForward => self.jump_history(1),
             ToggleStopped => self.toggle_stopped(),
             OpenFilter => self.open_filter(),
+            OpenCmdline => self.cmdline = Some(String::new()),
+        }
+    }
+
+    // ── ex command line (`:`) ─────────────────────────────────────────────
+
+    /// Keys while the `:` command line is open. `enter` runs the command,
+    /// `esc` cancels.
+    fn handle_cmdline_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => self.cmdline = None,
+            KeyCode::Enter => {
+                let cmd = self.cmdline.take().unwrap_or_default();
+                self.run_command(&cmd);
+            }
+            KeyCode::Backspace => {
+                if let Some(c) = self.cmdline.as_mut() {
+                    c.pop();
+                }
+            }
+            KeyCode::Char(c) => {
+                if let Some(s) = self.cmdline.as_mut() {
+                    s.push(c);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Run an ex command. Verbs map to existing actions; unknown ones toast.
+    pub(super) fn run_command(&mut self, cmd: &str) {
+        let cmd = cmd.trim();
+        if cmd.is_empty() {
+            return;
+        }
+        let (verb, arg) = cmd.split_once(char::is_whitespace).unwrap_or((cmd, ""));
+        let arg = arg.trim();
+        match verb {
+            "q" | "quit" => self.should_quit = true,
+            "vs" | "vsplit" => self.split_pane(SplitDir::Columns),
+            "sp" | "split" => self.split_pane(SplitDir::Rows),
+            "on" | "only" => self.only_pane(),
+            "clo" | "close" => self.close_pane(),
+            "new" | "spawn" => self.open_spawn(),
+            "term" | "terminal" => self.new_terminal_tab(),
+            "notes" => self.open_notes(),
+            "review" => self.open_review(),
+            "pin" => self.harpoon_toggle(),
+            "help" | "h" => self.help = true,
+            "ls" | "dashboard" => {
+                self.view = View::List;
+                self.selected = 0;
+            }
+            "rename" => {
+                if arg.is_empty() {
+                    self.open_rename();
+                } else if let Some(cwd) = self.target_agent().map(|a| a.cwd_str().to_string()) {
+                    if cwd.is_empty() {
+                        self.set_toast("no working directory to name");
+                    } else {
+                        self.names.insert(cwd, arg.to_string());
+                        crate::names::save(&self.names);
+                        self.set_toast("Renamed");
+                    }
+                }
+            }
+            "filter" => {
+                if arg.is_empty() {
+                    self.open_filter();
+                } else {
+                    self.filter = Some(arg.to_string());
+                    self.filter_editing = false;
+                    self.apply_filter();
+                }
+            }
+            other => self.set_toast(format!("unknown command: {other}")),
         }
     }
 
