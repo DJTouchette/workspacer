@@ -1378,15 +1378,51 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
         || app.term_attached()
         || app.filter_editing
         || (in_agent && app.insert_mode);
-    let line = if in_text {
-        format!(" {hint}")
+    let body = if in_text {
+        format!(" {hint} ")
     } else {
         format!(" {hint} · {} menu", app.keymap.leader().display())
     };
+    // lualine-style mode chip on the left, then the contextual hint.
+    let (label, color) = mode_chip(app, in_agent, on_shell);
+    let chip = Span::styled(
+        format!(" {label} "),
+        Style::default().bg(color).fg(Color::Black).add_modifier(Modifier::BOLD),
+    );
     f.render_widget(
-        Paragraph::new(Line::from(Span::styled(line, Style::default().fg(app.theme.dim)))),
+        Paragraph::new(Line::from(vec![
+            chip,
+            Span::styled(body, Style::default().fg(app.theme.dim)),
+        ])),
         area,
     );
+}
+
+/// The current editing/navigation mode, as a (label, colour) chip for the
+/// footer — so the modal state is never ambiguous.
+fn mode_chip(app: &App, in_agent: bool, on_shell: bool) -> (&'static str, Color) {
+    let t = &app.theme;
+    if app.notes_view.as_ref().is_some_and(|n| n.editing) {
+        ("NOTES", t.ok)
+    } else if app.rename.is_some() {
+        ("RENAME", t.accent)
+    } else if app.review.as_ref().is_some_and(|r| r.commit_msg.is_some()) {
+        ("COMMIT", t.ok)
+    } else if app.review.is_some() {
+        ("REVIEW", t.accent)
+    } else if app.spawn_form.is_some() {
+        ("SPAWN", t.accent)
+    } else if app.term_attached() {
+        ("TERM", t.bad)
+    } else if app.filter_editing {
+        ("FILTER", t.accent)
+    } else if in_agent && app.insert_mode {
+        ("INSERT", t.ok)
+    } else if in_agent && on_shell {
+        ("SHELL", t.warn)
+    } else {
+        ("NORMAL", t.accent)
+    }
 }
 
 // ── state_color characterization tests ──────────────────────────────────────
