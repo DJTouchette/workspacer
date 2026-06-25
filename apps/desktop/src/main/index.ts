@@ -12,6 +12,7 @@ import { startClaudemonHookBridge, stopClaudemonHookBridge } from './services/cl
 import { startClaudemonStatusLineBridge, stopClaudemonStatusLineBridge } from './services/claudemonStatusLineBridge';
 import { startClaudemonConversationBridge, stopClaudemonConversationBridge } from './services/claudemonConversationBridge';
 import { startHub, stopHub } from './services/hubDaemon';
+import { startMcpFacade, stopMcpFacade } from './services/mcpFacadeDaemon';
 import { setHubMainWindow, startHubClient, stopHubClient } from './services/hubClient';
 import { stopAllTerminals } from './services/terminalShare';
 import { workflowWatcher } from './services/workflowWatcher';
@@ -227,7 +228,15 @@ function createWindow(): void {
       // so the bridge has a live /events source.
       registerHubCapabilities();
       startHub()
-        .then(() => startHubClient())
+        .then(() => {
+          startHubClient();
+          // The MCP facade bridges hub capabilities to MCP tools for supervisor
+          // sessions. Started after the hub so its bus connection has a target.
+          // Optional: a failure only costs the supervisor its action tools.
+          startMcpFacade().catch(err =>
+            console.error('[main] failed to start mcp facade — supervisors will lack action tools:', err)
+          );
+        })
         .catch(err => console.error('[main] failed to start hub:', err));
     })
     .catch(err => {
@@ -355,6 +364,7 @@ app.on('before-quit', () => {
   stopClaudemonStatusLineBridge();
   stopClaudemonConversationBridge();
   stopHubClient();
+  stopMcpFacade();
   stopHub();
   stopClaudemon();
   database.close();
@@ -368,6 +378,7 @@ app.on('window-all-closed', () => {
   stopClaudemonStatusLineBridge();
   stopClaudemonConversationBridge();
   stopHubClient();
+  stopMcpFacade();
   stopHub();
   stopClaudemon();
   app.quit();

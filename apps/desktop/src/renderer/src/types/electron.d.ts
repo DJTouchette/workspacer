@@ -114,6 +114,8 @@ export interface ElectronAPI {
 
   // App info
   getCwd: () => Promise<string>;
+  /** The dedicated supervisor home (~/.workspacer), created on demand. */
+  getSupervisorHome: () => Promise<string>;
 
   // Dialog
   pickFolder: (defaultPath?: string) => Promise<string | null>;

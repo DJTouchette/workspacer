@@ -13,7 +13,7 @@ import { agentNotifier } from './services/agentNotifier';
 import { claudemonSessionClient } from './services/claudemonSessionClient';
 import { buildClaudeArgv } from './services/claudeResolver';
 import { facadeSpawnArgs, buildSessionMcpConfig } from './services/mcpConfig';
-import { installSupervisorSkill } from './services/supervisorSkill';
+import { installSupervisorSkill, ensureSupervisorHome } from './services/supervisorSkill';
 import { importChromeCookies, importChromeCookiesViaCDP } from './services/chromeCookieImport';
 import { claudeProfiles } from './services/claudeProfiles';
 import { listClaudeSessionsForDir } from './services/claudeSessionList';
@@ -170,7 +170,10 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
         allowedTools: userMcp.toolNames,
       }),
     });
-    const cwd = opts.cwd ?? process.env.HOME ?? os.homedir();
+    // Fleet supervisors with no explicit cwd open in their dedicated home
+    // (~/.workspacer) rather than inheriting some agent's repo.
+    let cwd = opts.cwd || process.env.HOME || os.homedir();
+    if (opts.supervisor && !opts.cwd) cwd = ensureSupervisorHome();
     return claudemonSessionClient.spawn({ argv, cwd, cols: opts.cols, rows: opts.rows, env, sessionId });
   });
 
@@ -354,6 +357,13 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // App info
   ipcMain.handle(IPC.APP_GET_CWD, () => {
     return process.cwd();
+  });
+
+  // The dedicated supervisor home (~/.workspacer), created on demand. The
+  // renderer resolves this before spawning a fleet supervisor so its card cwd
+  // matches where the session actually opens.
+  ipcMain.handle(IPC.APP_SUPERVISOR_HOME, () => {
+    return ensureSupervisorHome();
   });
 
   // Files (editor pane). Errors (missing / too big / binary) reject the invoke,

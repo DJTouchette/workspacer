@@ -221,6 +221,7 @@ export function createWebBackend(token: string): ElectronAPI {
 
     // ── App info / dialogs ───────────────────────────────────────────────
     getCwd: () => client.call<string>('app.getCwd', {}),
+    getSupervisorHome: () => client.call<string>('app.supervisorHome', {}),
     // No native OS dialog over the bus (it'd open on the host, not the viewer).
     // pickFolder opens our in-app host filesystem browser (WebFolderPicker,
     // mounted in App) by dispatching an event it resolves; fsListDir backs it.

@@ -28,7 +28,7 @@ import * as terminalShare from './terminalShare';
 import { IPC } from '../shared/ipcChannels';
 import type { SessionData, LayoutInput, ProfileUpdate } from '../shared/ipcTypes';
 import { facadeSpawnArgs } from './mcpConfig';
-import { installSupervisorSkill } from './supervisorSkill';
+import { installSupervisorSkill, ensureSupervisorHome } from './supervisorSkill';
 
 // Mirror of ipc.ts's shell detection so a capability-spawned terminal picks the
 // same default shell a UI-spawned one would. Kept local to avoid importing the
@@ -140,7 +140,11 @@ export function registerHubCapabilities(): void {
         pollSeconds: supCfg?.pollSeconds,
       })),
     });
-    const resolvedCwd = cwd && fs.existsSync(cwd) ? cwd : (process.env.HOME ?? os.homedir());
+    // Fleet supervisors with no explicit cwd open in their dedicated home
+    // (~/.workspacer); everything else uses the given cwd or falls back to home.
+    const resolvedCwd = supervisor && !cwd
+      ? ensureSupervisorHome()
+      : (cwd && fs.existsSync(cwd) ? cwd : (process.env.HOME ?? os.homedir()));
     const id = await claudemonSessionClient.spawn({ argv, cwd: resolvedCwd, cols, rows, env, sessionId });
     return { sessionId: id };
   });
@@ -418,6 +422,7 @@ export function registerHubCapabilities(): void {
     return claudemonSessionClient.setGate(sessionId, !!on);
   });
   registerCapability('app.getCwd', () => process.cwd());
+  registerCapability('app.supervisorHome', () => ensureSupervisorHome());
 
   // ── Host filesystem browsing (web folder picker) ───────────────────────
   // The web client can't open a native OS dialog, so it browses the host's

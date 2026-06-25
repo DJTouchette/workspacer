@@ -34,6 +34,8 @@ linux:
       to: claudemon/claudemon
     - from: ../../services/hub/hub
       to: hub/hub
+    - from: ../../services/hub/mcp
+      to: hub/mcp
     - from: ../../services/hub/examples
       to: hub/examples
     - from: dist/web
@@ -48,6 +50,8 @@ win:
       to: claudemon/claudemon.exe
     - from: ../../services/hub/hub.exe
       to: hub/hub.exe
+    - from: ../../services/hub/mcp.exe
+      to: hub/mcp.exe
     - from: ../../services/hub/examples
       to: hub/examples
     - from: dist/web
@@ -62,6 +66,8 @@ mac:
       to: claudemon/claudemon
     - from: ../../services/hub/hub
       to: hub/hub
+    - from: ../../services/hub/mcp
+      to: hub/mcp
     - from: ../../services/hub/examples
       to: hub/examples
     - from: dist/web

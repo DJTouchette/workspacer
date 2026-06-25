@@ -15,6 +15,8 @@ export const PORTS = {
   claudemonApi: 7891,
   /** hub: control-plane event bus */
   hub: 7895,
+  /** mcp facade: exposes hub capabilities as MCP tools (the supervisor's control plane) */
+  mcpFacade: 7897,
 } as const;
 
 // ── killStaleListener ────────────────────────────────────────────────────────

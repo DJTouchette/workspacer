@@ -306,6 +306,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // App info
   getCwd: (): Promise<string> =>
     ipcRenderer.invoke(IPC.APP_GET_CWD),
+  getSupervisorHome: (): Promise<string> =>
+    ipcRenderer.invoke(IPC.APP_SUPERVISOR_HOME),
 
   // Dialog
   pickFolder: (defaultPath?: string): Promise<string | null> =>

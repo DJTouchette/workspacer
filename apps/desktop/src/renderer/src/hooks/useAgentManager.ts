@@ -206,16 +206,16 @@ export function useAgentManager() {
    */
   const spawnSupervisor = useCallback(async (opts: { question: string; parentId?: string; cwd?: string }): Promise<string> => {
     const name = deriveSupervisorName(opts.question);
-    // Resolve cwd: explicit > parent agent's cwd > first real agent's cwd > ''.
+    // A supervisor watches the whole fleet, so unless a cwd is given explicitly
+    // it opens in its dedicated home (~/.workspacer) rather than inheriting some
+    // agent's repo. Resolve it here so the card's cwd matches where the session
+    // actually opens. parentId is kept only for UI nesting.
     let cwd = opts.cwd;
-    if (!cwd && opts.parentId) {
-      cwd = agentsRef.current.find((a) => a.id === opts.parentId)?.cwd;
-    }
     if (!cwd) {
-      cwd = agentsRef.current.find((a) => !a.global)?.cwd ?? '';
+      try { cwd = await window.electronAPI.getSupervisorHome(); } catch { cwd = ''; }
     }
     return spawnAgent({
-      cwd,
+      cwd: cwd || '',
       name,
       kind: 'supervisor',
       parentId: opts.parentId,

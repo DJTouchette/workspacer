@@ -90,6 +90,7 @@ export const IPC = {
 
   // ── App / dialog ──
   APP_GET_CWD: 'app:getCwd',
+  APP_SUPERVISOR_HOME: 'app:supervisorHome',
   DIALOG_PICK_FOLDER: 'dialog:pickFolder',
   DIALOG_PICK_FILES: 'dialog:pickFiles',
 

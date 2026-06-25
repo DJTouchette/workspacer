@@ -231,6 +231,37 @@ function skillDir(): string {
   return path.join(os.homedir(), '.claude', 'skills', SKILL_NAME);
 }
 
+/**
+ * The supervisor's home directory: `~/.workspacer`. A fleet supervisor watches
+ * the whole fleet rather than living in any one project, so it opens here — a
+ * stable, neutral scratch space — instead of landing in some random agent's
+ * repo. Created (with a short README) on first use. Best-effort: if creation
+ * fails we fall back to the home dir. Shared by both spawn paths (ipc.ts and
+ * hubCapabilities.ts).
+ */
+export function ensureSupervisorHome(): string {
+  const dir = path.join(os.homedir(), '.workspacer');
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const readme = path.join(dir, 'README.md');
+    if (!fs.existsSync(readme)) {
+      fs.writeFileSync(
+        readme,
+        '# Workspacer supervisor home\n\n' +
+          'This directory is the working directory for fleet **supervisor** agents\n' +
+          'spawned from Workspacer (Ask the Fleet). They coordinate your other\n' +
+          'Claude Code agents via the workspacer MCP tools and use this folder as a\n' +
+          'neutral scratch space — notes, digests, etc. Safe to delete; it is\n' +
+          'recreated on the next supervisor spawn.\n',
+        'utf8',
+      );
+    }
+    return dir;
+  } catch {
+    return os.homedir();
+  }
+}
+
 /** Write `file` only if its content changed, to avoid churning the user's files
  *  (and any editor/watcher) on every spawn. Best-effort. */
 function writeIfChanged(file: string, content: string): void {
