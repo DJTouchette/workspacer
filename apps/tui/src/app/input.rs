@@ -76,11 +76,28 @@ impl App {
         // multi-key binding, while single-key bindings still fire on first press.
         let chord = Chord::from_event(&key);
 
-        // Esc abandons a half-typed sequence — and only that; it doesn't also
-        // fire Esc's own binding.
-        if !self.pending_keys.is_empty() && key.code == KeyCode::Esc {
+        // Esc abandons a half-typed sequence (or a pending count) — and only
+        // that; it doesn't also fire Esc's own binding.
+        if (!self.pending_keys.is_empty() || self.count.is_some()) && key.code == KeyCode::Esc {
             self.pending_keys.clear();
+            self.count = None;
             return;
+        }
+
+        // Vim count prefix: a leading digit accumulates a count for the next
+        // motion (e.g. `3j`). Skipped when a question is pending — there `1`-`9`
+        // answer it — and `0` only extends an existing count (never starts one).
+        if self.pending_keys.is_empty() && !self.target_has_question() {
+            if let KeyCode::Char(c @ '0'..='9') = key.code {
+                if !key.modifiers.contains(KeyModifiers::CONTROL) {
+                    let d = (c as u8 - b'0') as usize;
+                    if !(d == 0 && self.count.is_none()) {
+                        self.count =
+                            Some(self.count.unwrap_or(0).saturating_mul(10).saturating_add(d));
+                        return;
+                    }
+                }
+            }
         }
 
         self.pending_keys.push(chord);
@@ -139,16 +156,34 @@ impl App {
     /// on a shell tab).
     fn dispatch_action(&mut self, action: Action) {
         use Action::*;
+        // Consume any pending count: motions repeat / jump by it, every other
+        // action just clears it.
+        let count = self.count.take();
+        let n = count.unwrap_or(1);
         match action {
             Quit => self.should_quit = true,
             Back => self.close_chat(),
             Refresh => self.on_changed(),
             Help => self.help = true,
             Palette => self.open_palette(),
-            SelectNext => self.select_next(),
-            SelectPrev => self.select_prev(),
+            SelectNext => {
+                for _ in 0..n {
+                    self.select_next();
+                }
+            }
+            SelectPrev => {
+                for _ in 0..n {
+                    self.select_prev();
+                }
+            }
             SelectFirst => self.selected = 0,
-            SelectLast => self.selected = self.agents.len(),
+            // `G` goes to the last agent, or to agent N with a count (`5G`).
+            SelectLast => {
+                self.selected = match count {
+                    Some(c) => c.min(self.agents.len()),
+                    None => self.agents.len(),
+                };
+            }
             JumpAttention => self.jump_to_attention(),
             OpenAgent => self.open_agent(),
             OpenAgentTerminal => {
@@ -180,11 +215,11 @@ impl App {
             InsertMode => self.insert_mode = true,
             ScrollDown => {
                 self.chat_follow = false;
-                self.chat_scroll = self.chat_scroll.saturating_add(1);
+                self.chat_scroll = self.chat_scroll.saturating_add(n as u16);
             }
             ScrollUp => {
                 self.chat_follow = false;
-                self.chat_scroll = self.chat_scroll.saturating_sub(1);
+                self.chat_scroll = self.chat_scroll.saturating_sub(n as u16);
             }
             Approve => self.approve("yes", "Approved"),
             Deny => self.approve("no", "Denied"),
@@ -1126,6 +1161,12 @@ impl App {
             View::Agent { .. } => self.chat_agent(),
             View::List => self.selected_agent(),
         }
+    }
+
+    /// Whether the targeted agent has a pending question — if so, `1`-`9` answer
+    /// it rather than starting a vim count.
+    fn target_has_question(&self) -> bool {
+        self.target_agent().is_some_and(|a| a.has_question())
     }
 
     pub(super) fn approve(&mut self, decision: &str, ok: &str) {

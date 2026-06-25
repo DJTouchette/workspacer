@@ -63,6 +63,10 @@ planned in later phases (see the repo's TUI plan).
   `m` jump-to-attention, `S` respawn, `?` help, `q` quit. Bindings are multi-key
   sequences — remap them in `tui.json` with whitespace-separated chords (e.g.
   `"<leader> x": "quit"`). `esc` cancels a half-typed sequence.
+- **Vim counts** — prefix a motion with a number: `3j` / `3k` move three rows,
+  `5G` jumps to agent 5, and a count multiplies transcript scroll. Digits become
+  a count only when no question is pending (otherwise `1`-`9` still answer it);
+  the pending count shows in the footer.
 - **Command line (`:`)** — vim's ex line for verbs that don't need a key:
   `:q` quit, `:vsplit`/`:split`/`:only`/`:close` windows, `:spawn` / `:term`,
   `:notes` / `:review` / `:pin`, `:rename <name>`, `:filter <query>`,

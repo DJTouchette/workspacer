@@ -1400,17 +1400,19 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
     };
     // lualine-style mode chip on the left, then the contextual hint.
     let (label, color) = mode_chip(app, in_agent, on_shell);
-    let chip = Span::styled(
+    let mut spans = vec![Span::styled(
         format!(" {label} "),
         Style::default().bg(color).fg(Color::Black).add_modifier(Modifier::BOLD),
-    );
-    f.render_widget(
-        Paragraph::new(Line::from(vec![
-            chip,
-            Span::styled(body, Style::default().fg(app.theme.dim)),
-        ])),
-        area,
-    );
+    )];
+    // Pending vim count (e.g. while typing `12` before `G`).
+    if let Some(n) = app.count {
+        spans.push(Span::styled(
+            format!(" {n}"),
+            Style::default().fg(app.theme.warn).add_modifier(Modifier::BOLD),
+        ));
+    }
+    spans.push(Span::styled(body, Style::default().fg(app.theme.dim)));
+    f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 /// The current editing/navigation mode, as a (label, colour) chip for the

@@ -327,6 +327,9 @@ pub struct App {
     pub filter_editing: bool,
     /// The `:` ex-command line buffer; `Some` while it's open and capturing.
     pub cmdline: Option<String>,
+    /// A pending vim count prefix (e.g. `3` before `j`), applied to the next
+    /// motion and then cleared. `None` when no count is being typed.
+    pub count: Option<usize>,
 
     /// Agents, in a stable order: existing rows stay put across polls and new
     /// sessions are appended at the end (matches the Electron app).
@@ -405,6 +408,7 @@ impl App {
             filter: None,
             filter_editing: false,
             cmdline: None,
+            count: None,
             agents: Vec::new(),
             status_lines: HashMap::new(),
             selected: 0,
@@ -1321,6 +1325,35 @@ mod tests {
         app.handle_filter_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         assert!(app.filter.is_none());
         assert_eq!(app.agents.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn vim_count_repeats_and_jumps() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let press = |app: &mut App, c: char| {
+            app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
+        };
+        let mut app = test_app();
+        app.set_agents(vec![
+            agent("s1"),
+            agent("s2"),
+            agent("s3"),
+            agent("s4"),
+            agent("s5"),
+        ]);
+        app.selected = 0; // dashboard row
+
+        // `3j` moves the selection down three rows.
+        press(&mut app, '3');
+        assert_eq!(app.count, Some(3));
+        press(&mut app, 'j');
+        assert_eq!(app.selected, 3);
+        assert_eq!(app.count, None, "count clears after the motion");
+
+        // `2G` jumps to agent 2.
+        press(&mut app, '2');
+        press(&mut app, 'G');
+        assert_eq!(app.selected, 2);
     }
 
     #[tokio::test]
