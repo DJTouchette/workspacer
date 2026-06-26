@@ -212,6 +212,7 @@ export function createWebBackend(token: string): ElectronAPI {
     hubPublish: (event) => client.call<void>('__publish', event).then(() => {}).catch(() => {}),
     installPlugin: () => Promise.resolve({ ok: false, error: 'not available over hub' }),
     removePlugin: () => Promise.resolve({ ok: false, error: 'not available over hub' }),
+    setPluginEnabled: () => Promise.resolve({ ok: false, error: 'not available over hub' }),
 
     // ── Library ──────────────────────────────────────────────────────────
     libraryList: (cwd) => client.call('library.list', { cwd }),

@@ -35,6 +35,10 @@ export interface PluginManifest {
   capabilities?: string[];
   emits?: string[];
   consumes?: string[];
+  /** Install reference (GitHub URL / owner-repo) recorded at install time; enables one-click update. */
+  source?: string;
+  /** True when the plugin is installed but disabled (sidecar stopped, contributions withheld). */
+  disabled?: boolean;
 }
 
 /** A pane contribution resolved to a concrete webview URL. */

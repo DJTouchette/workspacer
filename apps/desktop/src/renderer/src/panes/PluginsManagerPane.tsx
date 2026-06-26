@@ -23,9 +23,21 @@ function stateColor(s: string | undefined): string {
     case 'running': return 'var(--wks-success, #3fb950)';
     case 'unhealthy': return 'var(--wks-warning, #e0a000)';
     case 'crashed': return 'var(--wks-danger, #e05555)';
-    case 'stopped': return 'var(--wks-text-faint, #666)';
+    case 'stopped':
+    case 'disabled': return 'var(--wks-text-faint, #666)';
     default: return 'var(--wks-text-faint, #666)';
   }
+}
+
+/** Shared style for the small per-plugin action buttons (Update / Enable / Remove). */
+function actionBtn(busy: boolean, danger?: boolean): React.CSSProperties {
+  return {
+    fontSize: '0.68rem', fontFamily: 'inherit', cursor: busy ? 'default' : 'pointer',
+    background: 'transparent',
+    color: danger ? 'var(--wks-danger, #e05555)' : 'var(--wks-text-secondary, var(--wks-text-primary))',
+    border: '1px solid var(--wks-border-input)', borderRadius: 4, padding: '3px 10px',
+    opacity: busy ? 0.5 : 1,
+  };
 }
 
 const PluginsManagerPane: React.FC<{ title?: string }> = () => {
@@ -39,6 +51,25 @@ const PluginsManagerPane: React.FC<{ title?: string }> = () => {
     setBusyId(id);
     try { await window.electronAPI.removePlugin?.(id); } finally { setBusyId(null); }
     // usePlugins refetches on the plugin.unloaded event.
+  };
+
+  // Reinstall from the recorded install source (download → build → reload).
+  const update = async (id: string, source: string) => {
+    setBusyId(id);
+    try {
+      const res = await window.electronAPI.installPlugin?.(source);
+      if (res && !res.ok) window.alert(`Update failed: ${res.error ?? 'unknown error'}`);
+    } finally { setBusyId(null); }
+    // usePlugins refetches on the plugin.loaded event.
+  };
+
+  // Toggle the plugin's disabled marker; the hub starts/stops the sidecar.
+  const toggle = async (id: string, currentlyDisabled: boolean) => {
+    setBusyId(id);
+    try {
+      const res = await window.electronAPI.setPluginEnabled?.(id, currentlyDisabled);
+      if (res && !res.ok) window.alert(`Failed to ${currentlyDisabled ? 'enable' : 'disable'}: ${res.error ?? 'unknown error'}`);
+    } finally { setBusyId(null); }
   };
 
   return (
@@ -69,30 +100,34 @@ const PluginsManagerPane: React.FC<{ title?: string }> = () => {
 
       <div style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
         {plugins.map((p) => {
-          const state = p.server ? (sidecar[p.id] ?? 'starting') : 'no server';
           const hasServer = !!p.server;
+          const state = p.disabled ? 'disabled' : hasServer ? (sidecar[p.id] ?? 'starting') : 'no server';
+          const busy = busyId === p.id;
           return (
             <div key={p.id} style={{
               border: '1px solid var(--wks-border-subtle)', borderRadius: 8, padding: 12,
-              background: 'var(--wks-bg-surface)',
+              background: 'var(--wks-bg-surface)', opacity: p.disabled ? 0.6 : 1,
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 {hasServer && (
-                  <span style={{ width: 9, height: 9, borderRadius: '50%', background: stateColor(sidecar[p.id]), flexShrink: 0 }} />
+                  <span style={{ width: 9, height: 9, borderRadius: '50%', background: stateColor(state), flexShrink: 0 }} />
                 )}
                 <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>{p.name || p.id}</span>
                 <span style={{ fontSize: '0.62rem', color: 'var(--wks-text-faint)' }}>{p.id}</span>
                 <span style={{ fontSize: '0.62rem', color: 'var(--wks-text-muted)', marginLeft: 6 }}>{state}</span>
-                <button
-                  onClick={() => remove(p.id)}
-                  disabled={busyId === p.id}
-                  style={{
-                    marginLeft: 'auto', fontSize: '0.68rem', fontFamily: 'inherit',
-                    cursor: busyId === p.id ? 'default' : 'pointer',
-                    background: 'transparent', color: 'var(--wks-danger, #e05555)',
-                    border: '1px solid var(--wks-border-input)', borderRadius: 4, padding: '3px 10px',
-                  }}
-                >{busyId === p.id ? 'Removing…' : 'Remove'}</button>
+                <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+                  {p.source && (
+                    <button onClick={() => update(p.id, p.source!)} disabled={busy} title={`Reinstall from ${p.source}`} style={actionBtn(busy)}>
+                      Update
+                    </button>
+                  )}
+                  <button onClick={() => toggle(p.id, !!p.disabled)} disabled={busy} style={actionBtn(busy)}>
+                    {p.disabled ? 'Enable' : 'Disable'}
+                  </button>
+                  <button onClick={() => remove(p.id)} disabled={busy} style={actionBtn(busy, true)}>
+                    {busy ? 'Removing…' : 'Remove'}
+                  </button>
+                </div>
               </div>
               <div style={{ marginTop: 8, display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: '0.62rem', color: 'var(--wks-text-muted)' }}>
                 <span>{(p.panes?.length ?? 0)} pane{(p.panes?.length ?? 0) === 1 ? '' : 's'}{p.panes?.length ? ': ' + p.panes.map((x) => x.title).join(', ') : ''}</span>

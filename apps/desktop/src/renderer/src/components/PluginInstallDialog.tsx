@@ -16,6 +16,8 @@ const PluginInstallDialog: React.FC<PluginInstallDialogProps> = ({ onClose, onIn
   const [url, setUrl] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Live install stage (downloading / extracting / building) from the hub bus.
+  const [stage, setStage] = useState<string | null>(null);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); onClose(); } };
@@ -23,11 +25,22 @@ const PluginInstallDialog: React.FC<PluginInstallDialogProps> = ({ onClose, onIn
     return () => window.removeEventListener('keydown', handler, true);
   }, [onClose]);
 
+  // Reflect the hub's install progress so a long build step isn't a frozen button.
+  useEffect(() => {
+    const off = window.electronAPI.onHubEvent?.((ev) => {
+      if (ev.type !== 'plugin.install.progress') return;
+      const d = ev.data as { stage?: string } | undefined;
+      if (d?.stage) setStage(d.stage);
+    });
+    return () => off?.();
+  }, []);
+
   const install = async () => {
     const trimmed = url.trim();
     if (!trimmed || busy) return;
     setBusy(true);
     setError(null);
+    setStage(null);
     try {
       const res = await window.electronAPI.installPlugin?.(trimmed);
       if (res?.ok) {
@@ -118,7 +131,7 @@ const PluginInstallDialog: React.FC<PluginInstallDialogProps> = ({ onClose, onIn
               color: (!url.trim() || busy) ? 'var(--wks-text-faint)' : 'var(--wks-text-on-accent, #fff)',
               border: 'none', borderRadius: 4, padding: '6px 14px', fontWeight: 600,
             }}
-          >{busy ? 'Installing…' : 'Install'}</button>
+          >{busy ? `${stage ? stage[0].toUpperCase() + stage.slice(1) : 'Installing'}…` : 'Install'}</button>
         </div>
       </div>
     </div>

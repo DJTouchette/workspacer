@@ -32,6 +32,27 @@ export function deriveAgentName(cwd: string): string {
   return parts[parts.length - 1] || cwd;
 }
 
+/**
+ * Re-point an agent-scope plugin pane's webview URL at a (possibly new) session.
+ * Agent-scope plugin panes carry the agent's sessionId/cwd as query params
+ * (baked in at open time by handleOpenPlugin); on respawn — which is also how a
+ * stopped agent is restored after an app restart — the session id changes, so
+ * without this the webview would query a dead session. Non-plugin / global
+ * panes (no sessionId param) are left untouched by the caller's guard. A
+ * non-URL value (e.g. about:blank) is returned unchanged.
+ */
+function withAgentContext(rawUrl: string, sessionId: string | undefined, cwd: string | undefined): string {
+  try {
+    const u = new URL(rawUrl);
+    if (sessionId) u.searchParams.set('sessionId', sessionId);
+    else u.searchParams.delete('sessionId');
+    if (cwd) u.searchParams.set('cwd', cwd);
+    return u.toString();
+  } catch {
+    return rawUrl;
+  }
+}
+
 /** Derive a short display name for a supervisor from its seed question.
  *  Produces e.g. "🧭 why is the build failing" (truncated to ~40 chars). */
 export function deriveSupervisorName(question: string): string {
@@ -190,11 +211,17 @@ export function useAgentManager() {
       lastSessionId: undefined,
       tabs: a.tabs.map((t) => ({
         ...t,
-        panes: t.panes.map((p) =>
-          p.type === 'claude' && (p.attachSessionId === oldSession || !p.attachSessionId)
-            ? { ...p, attachSessionId: sessionId, resumeSessionId: undefined }
-            : p,
-        ),
+        panes: t.panes.map((p) => {
+          if (p.type === 'claude' && (p.attachSessionId === oldSession || !p.attachSessionId)) {
+            return { ...p, attachSessionId: sessionId, resumeSessionId: undefined };
+          }
+          // Agent-scope plugin panes carry the session in their webview URL —
+          // re-resolve it to the fresh session so restored panes aren't stale.
+          if (p.type === 'plugin' && typeof p.url === 'string' && p.url.includes('sessionId=')) {
+            return { ...p, url: withAgentContext(p.url, sessionId, a.cwd) };
+          }
+          return p;
+        }),
       })),
     }));
   }, [mutateAgent]);

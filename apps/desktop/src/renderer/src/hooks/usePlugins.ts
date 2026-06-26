@@ -45,8 +45,10 @@ export function usePlugins(): { plugins: PluginManifest[]; panes: PluginPane[]; 
     };
   }, [refresh]);
 
+  // Disabled plugins stay in `plugins` (so the manager pane can show + re-enable
+  // them) but contribute no panes or hotkeys to the rest of the UI.
   const panes = useMemo<PluginPane[]>(
-    () => plugins.flatMap((p) =>
+    () => plugins.filter((p) => !p.disabled).flatMap((p) =>
       (p.panes ?? []).map((pane) => ({
         pluginId: p.id,
         type: pane.type,
@@ -60,7 +62,7 @@ export function usePlugins(): { plugins: PluginManifest[]; panes: PluginPane[]; 
   );
 
   const hotkeys = useMemo<PluginHotkey[]>(
-    () => plugins.flatMap((p) =>
+    () => plugins.filter((p) => !p.disabled).flatMap((p) =>
       (p.hotkeys ?? []).map((h) => ({
         pluginId: p.id,
         id: h.id,
