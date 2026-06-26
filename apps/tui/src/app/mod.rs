@@ -603,17 +603,19 @@ impl App {
     /// `/`-filter keystroke.
     pub(super) fn apply_filter(&mut self) {
         let sel_id = self.selected_agent().map(|a| a.session_id.clone());
-        self.agents = match self.filter.as_deref() {
-            Some(q) if !q.is_empty() => {
-                let needle = q.to_lowercase();
-                self.all_agents
-                    .iter()
-                    .filter(|a| self.agent_matches(a, &needle))
-                    .cloned()
-                    .collect()
-            }
-            _ => self.all_agents.clone(),
-        };
+        let needle = self.filter.as_deref().filter(|q| !q.is_empty()).map(str::to_lowercase);
+        self.agents = self
+            .all_agents
+            .iter()
+            // Hide TUI-spawned shells — they live inside their agent's tab bar,
+            // not as their own sidebar rows — and apply the `/` filter.
+            .filter(|a| !self.is_shell_session(&a.session_id))
+            .filter(|a| match &needle {
+                Some(q) => self.agent_matches(a, q),
+                None => true,
+            })
+            .cloned()
+            .collect();
         self.selected = match sel_id {
             Some(id) => self
                 .agents
@@ -623,6 +625,16 @@ impl App {
                 .unwrap_or(0),
             None => 0,
         };
+    }
+
+    /// Whether `sid` is a TUI-spawned shell (a `Shell` tab) rather than an
+    /// agent. Such sessions render inside their agent's tab bar, so they're kept
+    /// out of the sidebar / dashboard / agent pickers — but stay in `all_agents`
+    /// so the tab itself still resolves its title and terminal.
+    pub fn is_shell_session(&self, sid: &str) -> bool {
+        self.workspaces.values().any(|ws| {
+            ws.tabs.iter().any(|t| t.kind == TabKind::Shell && t.session_id == sid)
+        })
     }
 
     /// Whether an agent matches the sidebar filter `needle` (already lowercase):
@@ -1036,6 +1048,9 @@ impl App {
             if self.open_agent_id() == Some(agent_id.as_str()) {
                 self.enter_active_tab();
             }
+            // The new shell may already be in the agent list — re-filter so it
+            // drops out of the sidebar immediately, not on the next poll.
+            self.apply_filter();
         }
     }
 }
@@ -1358,6 +1373,25 @@ mod tests {
         press(&mut app, '2');
         press(&mut app, 'G');
         assert_eq!(app.selected, 2);
+    }
+
+    #[tokio::test]
+    async fn shell_sessions_are_hidden_from_the_sidebar() {
+        let mut app = test_app();
+        app.set_agents(vec![agent("s1")]);
+        app.selected = 1;
+        app.open_agent();
+        app.add_shell_tab("s1".into(), "sh-1".into());
+
+        // claudemon now also lists the shell session.
+        app.set_agents(vec![agent("s1"), agent("sh-1")]);
+        assert_eq!(app.all_agents.len(), 2, "the shell is still a live session");
+        assert_eq!(app.agents.len(), 1, "but it's hidden from the sidebar");
+        assert!(app.agents.iter().all(|a| a.session_id != "sh-1"));
+        assert!(app.is_shell_session("sh-1"));
+        // The shell tab still resolves (its terminal/title render, not "ended").
+        assert_eq!(app.chat_session_id().as_deref(), Some("sh-1"));
+        assert!(app.chat_agent().is_some());
     }
 
     #[tokio::test]

@@ -790,14 +790,14 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
         .title(" dashboard ")
         .border_style(Style::default().fg(t.accent));
 
-    // Fleet totals reflect the whole live set, not the `/`-filtered sidebar view.
-    let total = app.all_agents.len();
-    let waiting = app.all_agents.iter().filter(|a| a.is_waiting()).count();
-    let busy = app.all_agents.iter().filter(|a| a.is_busy()).count();
+    // Fleet totals reflect the whole live set (not the `/`-filtered sidebar view),
+    // but exclude TUI-spawned shells — they aren't agents.
+    let fleet = || app.all_agents.iter().filter(|a| !app.is_shell_session(&a.session_id));
+    let total = fleet().count();
+    let waiting = fleet().filter(|a| a.is_waiting()).count();
+    let busy = fleet().filter(|a| a.is_busy()).count();
     let idle = total.saturating_sub(waiting + busy);
-    let cost: f64 = app
-        .all_agents
-        .iter()
+    let cost: f64 = fleet()
         .filter_map(|a| derive_stats(a, app.status_lines.get(&a.session_id)).cost)
         .sum();
     // Rate limits are account-wide (identical across sessions) — show the first
@@ -841,8 +841,8 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
     }
     lines.push(Line::raw(""));
 
-    // Compact roster over the whole fleet (the dashboard ignores the sidebar filter).
-    for a in &app.all_agents {
+    // Compact roster over the whole fleet (ignores the sidebar filter, skips shells).
+    for a in app.all_agents.iter().filter(|a| !app.is_shell_session(&a.session_id)) {
         let marker = if a.is_waiting() {
             Span::styled("● ", Style::default().fg(t.warn))
         } else if a.is_busy() {

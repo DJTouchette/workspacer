@@ -639,6 +639,9 @@ impl App {
         // `/` filter is hiding). The cwd goes in the hint so fuzzy search finds
         // an agent by its path, not just its short name.
         for a in &self.all_agents {
+            if self.is_shell_session(&a.session_id) {
+                continue; // shells live in their agent's tab bar, not here
+            }
             items.push(PaletteItem {
                 label: format!("Go to {}", self.agent_name(a)),
                 hint: format!("{}  {}", a.state(), a.cwd_str()),
@@ -893,12 +896,13 @@ impl App {
     // ── window splits (panes) ─────────────────────────────────────────────
 
     /// First agent not already tiled, for bringing another agent into view.
-    /// Uses the full set so splits can pull in agents the `/` filter hides.
+    /// Uses the full set so splits can pull in agents the `/` filter hides, but
+    /// skips shells (they aren't standalone agents).
     fn next_untiled_agent(&self) -> Option<String> {
         self.all_agents
             .iter()
             .map(|a| &a.session_id)
-            .find(|sid| !self.tiles.contains(sid))
+            .find(|sid| !self.tiles.contains(sid) && !self.is_shell_session(sid))
             .cloned()
     }
 

@@ -88,7 +88,9 @@ planned in later phases (see the repo's TUI plan).
   claudemon replays up to 100 prior sessions as `stopped` on restart, and that
   history would otherwise flood the list. Ones that stop *while you're watching*
   stay (so you can respawn them); `<leader>x` toggles the full history on/off and
-  the title shows how many are hidden (`agents (3 · +12 stopped)`). These prefer
+  the title shows how many are hidden (`agents (3 · +12 stopped)`). TUI-spawned
+  **shell tabs** are also kept out of the sidebar (and the dashboard / pickers) —
+  they live inside their agent's tab bar, not as standalone rows. These prefer
   Claude's
   authoritative **statusLine** (streamed live from claudemon — same numbers
   Claude shows itself), falling back to transcript-derived usage when it hasn't
