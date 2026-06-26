@@ -19,8 +19,17 @@ type client struct {
 }
 
 func dialClient(t *testing.T, httpURL string) *client {
+	return dialClientToken(t, httpURL, "")
+}
+
+// dialClientToken connects presenting a ?token= (empty = none), so tests can
+// connect as the trusted host or as a capability-scoped plugin.
+func dialClientToken(t *testing.T, httpURL, token string) *client {
 	t.Helper()
 	wsURL := strings.Replace(httpURL, "http://", "ws://", 1) + "/bus"
+	if token != "" {
+		wsURL += "?token=" + token
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	c, _, err := websocket.Dial(ctx, wsURL, nil)
@@ -79,16 +88,15 @@ func rpcServerWith(t *testing.T) (string, *Server) {
 	return hs.URL, srv
 }
 
-// TestCallNotAuthorized pins the authorize-seam behavior: when a non-nil
-// authorize func returns false for a method the caller receives an "error"
-// frame whose Error field contains "not authorized".
+// TestCallNotAuthorized pins capability enforcement: a plugin connection (per-
+// plugin token) calling a capability it did NOT declare receives an "error"
+// frame whose Error contains "not authorized".
 func TestCallNotAuthorized(t *testing.T) {
 	url, srv := rpcServerWith(t)
+	srv.SetToken("host-secret")
+	srv.RegisterPluginToken("plug-tok", "test.plugin", []string{"agents.list"}) // not agents.spawn
 
-	// Block every method call so we never need a real provider.
-	srv.router.authorize = func(_ uint64, _ string) bool { return false }
-
-	caller := dialClient(t, url)
+	caller := dialClientToken(t, url, "plug-tok")
 	caller.send(Frame{Op: "call", ID: "auth1", Method: "agents.spawn"})
 	e := caller.readUntil("error")
 	if e.ID != "auth1" {
@@ -96,6 +104,42 @@ func TestCallNotAuthorized(t *testing.T) {
 	}
 	if !strings.Contains(e.Error, "not authorized") {
 		t.Fatalf("error = %q, want it to contain \"not authorized\"", e.Error)
+	}
+}
+
+// TestPluginMayCallDeclaredCapability is the allow path: a plugin calling a
+// capability it declared is routed to the provider normally.
+func TestPluginMayCallDeclaredCapability(t *testing.T) {
+	url, srv := rpcServerWith(t)
+	srv.SetToken("host-secret")
+	srv.RegisterPluginToken("plug-tok", "test.plugin", []string{"agents.spawn"})
+
+	provider := dialClientToken(t, url, "host-secret") // trusted host registers the method
+	provider.send(Frame{Op: "register", Methods: []string{"agents.spawn"}})
+	provider.readUntil("registered")
+	go func() {
+		f := provider.readUntil("call")
+		provider.send(Frame{Op: "result", ID: f.ID, Result: json.RawMessage(`{"ok":true}`)})
+	}()
+
+	caller := dialClientToken(t, url, "plug-tok")
+	caller.send(Frame{Op: "call", ID: "c1", Method: "agents.spawn"})
+	if r := caller.readUntil("result"); r.ID != "c1" {
+		t.Fatalf("correlation id = %q, want c1", r.ID)
+	}
+}
+
+// TestUnknownTokenRejected: with a host token set, a connection presenting
+// neither the host token nor a registered plugin token is refused at handshake.
+func TestUnknownTokenRejected(t *testing.T) {
+	url, srv := rpcServerWith(t)
+	srv.SetToken("host-secret")
+
+	wsURL := strings.Replace(url, "http://", "ws://", 1) + "/bus?token=bogus"
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, _, err := websocket.Dial(ctx, wsURL, nil); err == nil {
+		t.Fatal("expected dial with an unknown token to be rejected")
 	}
 }
 

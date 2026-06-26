@@ -39,6 +39,9 @@ export interface PluginManifest {
   source?: string;
   /** True when the plugin is installed but disabled (sidecar stopped, contributions withheld). */
   disabled?: boolean;
+  /** Per-plugin bus token, injected by the trusted host into this plugin's webview URL
+   *  so its page can connect to the hub bus scoped to its declared capabilities. */
+  busToken?: string;
 }
 
 /** A pane contribution resolved to a concrete webview URL. */
@@ -49,6 +52,8 @@ export interface PluginPane {
   icon?: string;
   url: string;
   scope: PluginPaneScope;
+  /** Per-plugin bus token to inject into the webview URL (see PluginManifest.busToken). */
+  busToken?: string;
 }
 
 /** A hotkey contribution flattened for binding. */

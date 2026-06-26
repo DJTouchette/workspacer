@@ -3,8 +3,8 @@
 //
 //   - events  — subscribe to topics; publish events (pub/sub, via the broker)
 //   - calls   — invoke capabilities other clients provide (request/reply, via
-//               the router): a provider registers method names, a caller calls
-//               them, the hub routes the call and its result between them.
+//     the router): a provider registers method names, a caller calls
+//     them, the hub routes the call and its result between them.
 //
 // The hub never implements capabilities; it routes them. That keeps the control
 // plane generic and is exactly the seam the MCP facade plugs into.
@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -43,17 +44,64 @@ type Frame struct {
 	Error   string          `json:"error,omitempty"`   // error
 }
 
+// pluginIdent is the identity a per-plugin bus token resolves to: which plugin,
+// and the set of capabilities (methods) it declared it may call.
+type pluginIdent struct {
+	id   string
+	caps map[string]bool
+}
+
 // Server adapts a broker (events) + router (calls) to HTTP/WebSocket.
 type Server struct {
 	broker *broker.Broker
 	router *router
 	extra  map[string]http.HandlerFunc
 	token  string // when non-empty, /bus + protected routes require this bearer token
+
+	// Per-plugin tokens: a connection presenting one is tagged as that plugin and
+	// may only call the capabilities it declared. The host token (s.token) is
+	// trusted (full access). Registered by the plugin manager.
+	ptMu         sync.RWMutex
+	pluginTokens map[string]pluginIdent
 }
 
 // NewServer wraps a broker.
 func NewServer(b *broker.Broker) *Server {
-	return &Server{broker: b, router: newRouter(), extra: map[string]http.HandlerFunc{}}
+	return &Server{broker: b, router: newRouter(), extra: map[string]http.HandlerFunc{}, pluginTokens: map[string]pluginIdent{}}
+}
+
+// RegisterPluginToken maps a per-plugin bus token to the plugin's id and the
+// capabilities it may call. Idempotent; called by the plugin manager on load.
+func (s *Server) RegisterPluginToken(token, pluginID string, caps []string) {
+	if token == "" {
+		return
+	}
+	set := make(map[string]bool, len(caps))
+	for _, c := range caps {
+		if c != "" {
+			set[c] = true
+		}
+	}
+	s.ptMu.Lock()
+	s.pluginTokens[token] = pluginIdent{id: pluginID, caps: set}
+	s.ptMu.Unlock()
+}
+
+// UnregisterPluginToken drops a plugin token (on unload/replace).
+func (s *Server) UnregisterPluginToken(token string) {
+	if token == "" {
+		return
+	}
+	s.ptMu.Lock()
+	delete(s.pluginTokens, token)
+	s.ptMu.Unlock()
+}
+
+func (s *Server) lookupPluginToken(token string) (pluginIdent, bool) {
+	s.ptMu.RLock()
+	defer s.ptMu.RUnlock()
+	pi, ok := s.pluginTokens[token]
+	return pi, ok
 }
 
 // SetToken sets the shared secret required to connect to /bus (and to call
@@ -77,17 +125,14 @@ func (s *Server) Authorized(r *http.Request) bool {
 	return r.URL.Query().Get("token") == s.token
 }
 
-// SetAuthorize installs a per-method RPC authorization callback. The function
-// receives the internal connection id of the caller and the method name, and
-// must return true to allow the call. Passing a nil function restores the
-// default allow-all behavior. This must be called before Handler() is invoked.
-//
-// Note: the /bus endpoint already enforces the bus token at the WebSocket
-// handshake, so every connected caller is already authenticated at the
-// transport level. SetAuthorize provides a finer-grained seam for per-method
-// capability tokens — future work that slots in here without touching callers.
-func (s *Server) SetAuthorize(fn func(callerID uint64, method string) bool) {
-	s.router.authorize = fn
+// presentedToken extracts the caller's token from an Authorization: Bearer
+// header or a ?token= query param (WebSocket handshakes can't set headers from
+// a browser, so webview clients use the query form).
+func presentedToken(r *http.Request) string {
+	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
+		return strings.TrimPrefix(h, "Bearer ")
+	}
+	return r.URL.Query().Get("token")
 }
 
 // RegisterLocal installs an in-process capability handler so the hub itself can
@@ -125,10 +170,23 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
-	if !s.Authorized(r) {
+	// Classify the connection by the token it presents:
+	//   - a registered per-plugin token → that plugin, restricted to its caps
+	//   - the host token (or no host token configured) → trusted, full access
+	//   - anything else → rejected
+	tok := presentedToken(r)
+	var trusted bool
+	var caps map[string]bool
+	var pluginID string
+	if pi, ok := s.lookupPluginToken(tok); ok {
+		caps, pluginID = pi.caps, pi.id
+	} else if s.token == "" || tok == s.token {
+		trusted = true
+	} else {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+
 	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
 	if err != nil {
 		return
@@ -140,7 +198,7 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 	// and to token-gated remote clients alike.
 	ws.SetReadLimit(64 << 20) // 64 MiB
 	ctx := r.Context()
-	cn := &conn{ws: ws, ctx: ctx}
+	cn := &conn{ws: ws, ctx: ctx, trusted: trusted, caps: caps, pluginID: pluginID}
 	s.router.addConn(cn)
 	defer cn.ws.CloseNow()
 
@@ -207,6 +265,19 @@ type conn struct {
 	ws      *websocket.Conn
 	ctx     context.Context
 	writeMu sync.Mutex
+
+	// Capability authorization, set at handshake. A trusted conn (host token) may
+	// call anything; a plugin conn may call only the methods in caps.
+	trusted  bool
+	caps     map[string]bool
+	pluginID string
+}
+
+// mayCall reports whether this connection is allowed to invoke method. Trusted
+// connections (the host / MCP facade) may call anything; a plugin may call only
+// the capabilities it declared in its manifest.
+func (cn *conn) mayCall(method string) bool {
+	return cn.trusted || cn.caps[method]
 }
 
 func (cn *conn) send(f Frame) error {

@@ -38,7 +38,7 @@ func (c *capture) waitFor(t *testing.T, typ string) event.Envelope {
 
 func TestManagerMetadataOnlyPlugin(t *testing.T) {
 	cap := newCapture()
-	m := NewManager(cap)
+	m := NewManager(cap, nil)
 	mf := Manifest{
 		ID: "acme.dash", APIVersion: "1",
 		Panes: []PaneContribution{{Type: "acme.dash", Title: "Dash"}},
@@ -69,7 +69,7 @@ func TestManagerMetadataOnlyPlugin(t *testing.T) {
 // open a TOCTOU window if a concurrent Remove raced between List and Remove.
 func TestManagerRemoveReturnsDir(t *testing.T) {
 	cap := newCapture()
-	m := NewManager(cap)
+	m := NewManager(cap, nil)
 
 	// Create a real temp dir so we can also verify RemoveAll works in the
 	// handler pattern (not done here, but the dir path must be non-empty).
@@ -104,7 +104,7 @@ func TestManagerRemoveReturnsDir(t *testing.T) {
 // A plugin WITH a server gets a real supervised sidecar.
 func TestManagerSpawnsSidecar(t *testing.T) {
 	cap := newCapture()
-	m := NewManager(cap)
+	m := NewManager(cap, nil)
 	m.Add(Manifest{
 		ID: "acme.svc", APIVersion: "1",
 		Server: &ServerSpec{Command: "sleep", Args: []string{"30"}},

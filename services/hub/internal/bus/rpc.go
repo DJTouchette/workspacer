@@ -22,9 +22,10 @@ const callTimeout = 30 * time.Second
 // the owning provider and the reply back to the caller, correlating by a global
 // id so different callers can reuse local ids freely.
 //
-// The hub never executes a capability — it only routes. Authorization is a seam
-// (authorize) defaulting to allow-all for now; capability tokens slot in here
-// without touching callers or providers.
+// The hub never executes a capability — it only routes. Authorization is per
+// connection: the bus tags each conn at handshake as trusted (host token) or as
+// a specific plugin (per-plugin token) with a fixed set of allowed capabilities;
+// call() consults that set via conn.mayCall.
 type router struct {
 	mu        sync.Mutex
 	connSeq   uint64
@@ -34,9 +35,6 @@ type router struct {
 	local     map[string]LocalHandler // method -> in-process handler (hub-owned)
 	pending   map[uint64]*pendingCall
 	timeout   time.Duration
-
-	// authorize reports whether the caller may invoke method. nil = allow all.
-	authorize func(callerID uint64, method string) bool
 }
 
 type pendingCall struct {
@@ -120,8 +118,8 @@ func (rt *router) call(caller *conn, f Frame) {
 		_ = caller.send(Frame{Op: "error", ID: f.ID, Error: "call missing method"})
 		return
 	}
-	if rt.authorize != nil && !rt.authorize(caller.id, f.Method) {
-		_ = caller.send(Frame{Op: "error", ID: f.ID, Error: "not authorized for " + f.Method})
+	if !caller.mayCall(f.Method) {
+		_ = caller.send(Frame{Op: "error", ID: f.ID, Error: "plugin not authorized for capability " + f.Method})
 		return
 	}
 

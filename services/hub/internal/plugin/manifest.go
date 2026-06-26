@@ -23,6 +23,10 @@ const APIVersion = "1"
 const (
 	sourceFile   = ".install-source"
 	disabledFile = ".disabled"
+	// busTokenFile holds the plugin's per-plugin bus token. Persisted so the
+	// token is stable across hub restarts — webview pane URLs (which carry it)
+	// stay valid across saved-layout restores.
+	busTokenFile = ".bus-token"
 )
 
 // Manifest is a plugin's plugin.json.

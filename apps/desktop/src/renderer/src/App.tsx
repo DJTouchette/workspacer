@@ -905,17 +905,16 @@ function App() {
       target = activeIsAgent ? activeAgent : undefined; // 'both'
     }
 
-    if (!target) {
-      openPaneIn(GLOBAL_WORKSPACE_ID, 'plugin', pane.title, pane.url);
-      return;
-    }
-    // Hand agent context to the plugin's webview.
-    const sep = pane.url.includes('?') ? '&' : '?';
+    // Build the webview URL: always inject the plugin's bus token (so its page
+    // can connect to the hub bus scoped to its capabilities), plus the agent's
+    // session/cwd for agent-scope panes.
     const params = new URLSearchParams();
-    if (target.sessionId) params.set('sessionId', target.sessionId);
-    if (target.cwd) params.set('cwd', target.cwd);
+    if (pane.busToken) params.set('busToken', pane.busToken);
+    if (target?.sessionId) params.set('sessionId', target.sessionId);
+    if (target?.cwd) params.set('cwd', target.cwd);
+    const sep = pane.url.includes('?') ? '&' : '?';
     const url = params.toString() ? `${pane.url}${sep}${params.toString()}` : pane.url;
-    openPaneIn(target.id, 'plugin', pane.title, url);
+    openPaneIn(target ? target.id : GLOBAL_WORKSPACE_ID, 'plugin', pane.title, url);
   }, [openPaneIn, activeAgent, agents]);
 
   // Bind plugin-contributed hotkeys + library-picker shortcut.

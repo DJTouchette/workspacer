@@ -61,7 +61,11 @@
   <script>
     // The dashboard speaks the hub bus protocol directly from the webview:
     // it subscribes to agent.* events and calls capabilities over one WebSocket.
-    const BUS = 'ws://127.0.0.1:7895/bus';
+    // The host injects this plugin's bus token as ?busToken=... in our URL; we
+    // present it on the connection so the hub scopes us to our declared
+    // capabilities. (Required: an unidentified connection is now refused.)
+    const BUS_TOKEN = new URLSearchParams(location.search).get('busToken') || '';
+    const BUS = 'ws://127.0.0.1:7895/bus' + (BUS_TOKEN ? '?token=' + encodeURIComponent(BUS_TOKEN) : '');
     let ws, connected = false, callSeq = 0;
     const pending = new Map();           // call id -> {resolve, reject}
     let agents = [];

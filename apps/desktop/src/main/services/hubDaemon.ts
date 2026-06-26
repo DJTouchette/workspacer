@@ -48,9 +48,14 @@ const BIND_ADDR = REMOTE_ENABLED
   ? (process.env.WORKSPACER_REMOTE_ADDR || `0.0.0.0:${PORT}`)
   : `127.0.0.1:${PORT}`;
 
-/** Load (or create + persist) the shared bus token. Empty unless remote is on. */
+/**
+ * Load (or create + persist) the hub bus token. Always set now — even on the
+ * localhost-only default — so the bus can distinguish the trusted host (this
+ * token) from plugin sidecars/webviews (their own per-plugin tokens) and reject
+ * unidentified connections. That's the basis of plugin capability enforcement.
+ * Remote sharing reuses the same token as the bearer secret.
+ */
 function loadOrCreateToken(): string {
-  if (!REMOTE_ENABLED) return '';
   const file = path.join(getConfigDir(), 'remote-token');
   try {
     const existing = fs.readFileSync(file, 'utf-8').trim();

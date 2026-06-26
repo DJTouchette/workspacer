@@ -1,6 +1,8 @@
 package plugin
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,11 +17,20 @@ type Publisher interface {
 	Publish(event.Envelope)
 }
 
+// TokenRegistrar lets the manager bind a per-plugin bus token to the plugin's
+// declared capabilities, so the bus can scope what each plugin may call. The bus
+// Server implements this. nil is allowed (capability enforcement disabled).
+type TokenRegistrar interface {
+	RegisterPluginToken(token, pluginID string, caps []string)
+	UnregisterPluginToken(token string)
+}
+
 // Manager owns the loaded plugins: it supervises their sidecars and announces
 // their contributions on the bus (plugin.loaded / plugin.unloaded), so the UI
 // can register the pane types and hotkeys they inject.
 type Manager struct {
 	pub Publisher
+	reg TokenRegistrar // may be nil (capability enforcement off)
 
 	mu      sync.Mutex
 	plugins map[string]*loaded
@@ -28,37 +39,88 @@ type Manager struct {
 type loaded struct {
 	manifest Manifest
 	sup      *supervisor.Supervisor // nil for metadata-only plugins
+	token    string                 // per-plugin bus token ("" if no sidecar/registrar)
 }
 
-// NewManager creates a manager that publishes lifecycle events to pub.
-func NewManager(pub Publisher) *Manager {
-	return &Manager{pub: pub, plugins: make(map[string]*loaded)}
+// NewManager creates a manager that publishes lifecycle events to pub and binds
+// per-plugin bus tokens via reg (nil to disable capability enforcement).
+func NewManager(pub Publisher, reg TokenRegistrar) *Manager {
+	return &Manager{pub: pub, reg: reg, plugins: make(map[string]*loaded)}
+}
+
+// loadOrCreatePluginToken returns the plugin's persisted bus token, minting and
+// writing one on first use. Stable across restarts so webview pane URLs stay
+// valid. Best-effort: a write failure still returns a usable in-memory token.
+func loadOrCreatePluginToken(dir string) string {
+	file := filepath.Join(dir, busTokenFile)
+	if existing := readSidecar(file); existing != "" {
+		return existing
+	}
+	buf := make([]byte, 24)
+	if _, err := rand.Read(buf); err != nil {
+		return ""
+	}
+	token := base64.RawURLEncoding.EncodeToString(buf)
+	_ = os.WriteFile(file, []byte(token), 0o600)
+	return token
+}
+
+// Tokens returns the per-plugin bus tokens keyed by plugin id, for the host to
+// inject into each plugin's webview URL. Only the trusted host can read these
+// (served on a token-guarded route).
+func (m *Manager) Tokens() map[string]string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make(map[string]string, len(m.plugins))
+	for id, l := range m.plugins {
+		if l.token != "" {
+			out[id] = l.token
+		}
+	}
+	return out
 }
 
 // Add registers a plugin: starts its sidecar (if any) and emits plugin.loaded.
 func (m *Manager) Add(mf Manifest) {
 	l := &loaded{manifest: mf}
 	if mf.Server != nil && !mf.Disabled {
+		// Mint/persist this plugin's bus token and bind it to its declared
+		// capabilities, then hand it to the sidecar via env (HUB_TOKEN). The
+		// sidecar — and the plugin's webview, which gets the same token injected
+		// into its pane URL by the host — connects with it and is scoped to caps.
+		var env []string
+		if m.reg != nil {
+			l.token = loadOrCreatePluginToken(mf.Dir)
+			if l.token != "" {
+				m.reg.RegisterPluginToken(l.token, mf.ID, mf.Capabilities)
+				env = []string{"HUB_TOKEN=" + l.token}
+			}
+		}
 		l.sup = supervisor.New(supervisor.Spec{
 			Name:      mf.ID,
 			Command:   mf.Server.Command,
 			Args:      mf.Server.Args,
 			Dir:       mf.Dir, // run the sidecar in its own plugin directory
+			Env:       env,
 			HealthURL: healthURL(mf.Server),
 		}, m.pub)
 		l.sup.Start()
 	}
 
 	m.mu.Lock()
-	if prev, ok := m.plugins[mf.ID]; ok && prev.sup != nil {
-		// Stop the previous supervisor before replacing it to avoid a goroutine
-		// leak. Unlock first so Stop can acquire the mutex if needed.
-		m.mu.Unlock()
-		prev.sup.Stop()
-		m.mu.Lock()
-	}
+	prev, hadPrev := m.plugins[mf.ID]
 	m.plugins[mf.ID] = l
 	m.mu.Unlock()
+	if hadPrev {
+		// Stop the previous supervisor (avoid a goroutine leak) and drop its token
+		// unless we reused the same one (a stable reload keeps the persisted token).
+		if prev.sup != nil {
+			prev.sup.Stop()
+		}
+		if m.reg != nil && prev.token != "" && prev.token != l.token {
+			m.reg.UnregisterPluginToken(prev.token)
+		}
+	}
 
 	m.pub.Publish(event.New("plugin.loaded", "hub", mf))
 }
@@ -85,6 +147,9 @@ func (m *Manager) Remove(id string) string {
 	}
 	if l.sup != nil {
 		l.sup.Stop()
+	}
+	if m.reg != nil && l.token != "" {
+		m.reg.UnregisterPluginToken(l.token)
 	}
 	m.pub.Publish(event.New("plugin.unloaded", "hub", map[string]string{"id": id}))
 	return l.manifest.Dir

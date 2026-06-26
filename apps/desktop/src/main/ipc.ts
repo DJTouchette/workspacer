@@ -182,7 +182,21 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     try {
       const res = await fetch(`${HUB_HTTP_URL}/plugins`);
       if (!res.ok) return [];
-      return await res.json();
+      const plugins = await res.json() as Array<{ id: string; [k: string]: unknown }>;
+      // Merge each plugin's per-plugin bus token (served only on the token-guarded
+      // /plugins/tokens, never on public /plugins) so the renderer can inject it
+      // into that plugin's webview URL. Best-effort: no tokens → webviews can't
+      // call capabilities, but the list still renders.
+      try {
+        const tokRes = await fetch(`${HUB_HTTP_URL}/plugins/tokens`, { headers: hubAuthHeaders() });
+        if (tokRes.ok) {
+          const tokens = await tokRes.json() as Record<string, string>;
+          for (const p of plugins) {
+            if (tokens[p.id]) (p as { busToken?: string }).busToken = tokens[p.id];
+          }
+        }
+      } catch { /* tokens unavailable — degrade to no webview capability calls */ }
+      return plugins;
     } catch {
       return [];
     }

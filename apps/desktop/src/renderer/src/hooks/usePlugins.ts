@@ -56,6 +56,7 @@ export function usePlugins(): { plugins: PluginManifest[]; panes: PluginPane[]; 
         icon: pane.icon,
         url: pluginPaneURL(p, pane),
         scope: pane.scope ?? 'both',
+        busToken: p.busToken,
       })),
     ),
     [plugins],

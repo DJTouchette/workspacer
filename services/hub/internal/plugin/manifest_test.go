@@ -23,10 +23,10 @@ func TestValidate(t *testing.T) {
 		t.Fatalf("expected valid: %v", err)
 	}
 	cases := []Manifest{
-		{APIVersion: "1"},                                                  // no id
-		{ID: "x", APIVersion: "0"},                                         // bad version
-		{ID: "x", APIVersion: "1", Server: &ServerSpec{}},                  // server no command
-		{ID: "x", APIVersion: "1", Panes: []PaneContribution{{Type: ""}}},  // empty pane type
+		{APIVersion: "1"},                                                               // no id
+		{ID: "x", APIVersion: "0"},                                                      // bad version
+		{ID: "x", APIVersion: "1", Server: &ServerSpec{}},                               // server no command
+		{ID: "x", APIVersion: "1", Panes: []PaneContribution{{Type: ""}}},               // empty pane type
 		{ID: "x", APIVersion: "1", Panes: []PaneContribution{{Type: "a"}, {Type: "a"}}}, // dup
 	}
 	for i, c := range cases {

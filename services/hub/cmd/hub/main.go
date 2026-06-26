@@ -50,13 +50,10 @@ func main() {
 		log.Printf("bus auth enabled (token required on /bus, /remote, /plugins/install, /plugins/remove)")
 	}
 
-	// Wire the RPC authorize seam. The /bus endpoint already enforces the bus
-	// token at the HTTP/WebSocket handshake level, so every connected caller is
-	// already authenticated. The authorize func is therefore permissive — it
-	// allows all method calls — but it is non-nil, which means the seam is
-	// active. Future per-method capability tokens slot in here without touching
-	// callers or providers.
-	srv.SetAuthorize(func(_ uint64, _ string) bool { return true })
+	// RPC authorization is per connection: the bus tags each caller at handshake
+	// (host token → trusted, per-plugin token → that plugin's declared caps) and
+	// gates calls accordingly. The plugin manager registers per-plugin tokens
+	// with srv below.
 
 	// Shared workspace layout document — the hub owns this so the desktop and
 	// the web remote mirror each other (tmux-style). Registered as in-process
@@ -82,12 +79,21 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Load + supervise plugins; expose their contributions at /plugins.
-	mgr := plugin.NewManager(b)
+	// Load + supervise plugins; expose their contributions at /plugins. The
+	// manager registers per-plugin bus tokens with srv so capability calls are
+	// scoped to what each plugin declared.
+	mgr := plugin.NewManager(b, srv)
 	srv.AddRoute("/plugins", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(mgr.List())
 	})
+	// Per-plugin bus tokens, keyed by plugin id. Token-guarded: only the trusted
+	// host may read them (it injects each into the matching plugin's webview URL).
+	// Never exposed on the public /plugins endpoint.
+	srv.AddRoute("/plugins/tokens", guard(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(mgr.Tokens())
+	}))
 	// Mobile / remote-control web client. Self-contained single page that talks
 	// the bus protocol over /bus. Token-guarded since it's the remote entrypoint.
 	srv.AddRoute("/remote", guard(func(w http.ResponseWriter, _ *http.Request) {

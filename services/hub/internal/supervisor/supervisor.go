@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -161,7 +162,7 @@ func (s *Supervisor) run(ctx context.Context) {
 		}
 
 		cmd := exec.CommandContext(ctx, s.spec.Command, s.spec.Args...)
-		cmd.Env = append(os.Environ(), s.spec.Env...)
+		cmd.Env = mergeEnv(os.Environ(), s.spec.Env)
 		cmd.Dir = s.spec.Dir
 		// Graceful stop: SIGTERM on cancel, SIGKILL if it lingers.
 		cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
@@ -242,6 +243,36 @@ func (s *Supervisor) ping(ctx context.Context) bool {
 	}
 	defer resp.Body.Close()
 	return resp.StatusCode == http.StatusOK
+}
+
+// mergeEnv returns base with extra applied as overrides: an extra "KEY=val"
+// replaces any same-KEY entry in base rather than appending a duplicate (whose
+// resolution by the child is platform-dependent). New keys are appended.
+func mergeEnv(base, extra []string) []string {
+	if len(extra) == 0 {
+		return base
+	}
+	out := append([]string{}, base...)
+	idx := make(map[string]int, len(out))
+	for i, kv := range out {
+		if eq := strings.IndexByte(kv, '='); eq >= 0 {
+			idx[kv[:eq]] = i
+		}
+	}
+	for _, kv := range extra {
+		eq := strings.IndexByte(kv, '=')
+		if eq < 0 {
+			out = append(out, kv)
+			continue
+		}
+		if i, ok := idx[kv[:eq]]; ok {
+			out[i] = kv
+		} else {
+			idx[kv[:eq]] = len(out)
+			out = append(out, kv)
+		}
+	}
+	return out
 }
 
 // sleepOrDone waits for d, returning false if ctx is cancelled first.
