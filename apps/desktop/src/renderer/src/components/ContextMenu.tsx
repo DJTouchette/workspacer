@@ -5,7 +5,9 @@ import { createPortal } from 'react-dom';
  * Injected-once CSS for the context menu. The menu portals to <body>, which
  * lives OUTSIDE .app-root — so it never inherits the app's UI font or our
  * hover transitions. We set both here explicitly: a pop-in entrance and an
- * accent hover that nudges the item rightward (the "jazz").
+ * accent hover that nudges the item rightward (the "jazz"), an accent bar that
+ * grows in on the left, and a brighter accent-tinted fill. The highlight also
+ * applies on keyboard focus (:focus-visible) so arrow/tab navigation shows it.
  */
 const CTX_STYLE_ID = 'wks-context-menu-styles';
 function ensureContextMenuStyles(): void {
@@ -20,10 +22,39 @@ function ensureContextMenuStyles(): void {
   transform-origin: top left;
 }
 .wks-ctx-item {
-  transition: background 0.1s ease, color 0.1s ease, padding-left 0.12s cubic-bezier(0.16, 1, 0.3, 1);
+  position: relative;
+  transition: background 0.12s ease, color 0.1s ease, padding-left 0.14s cubic-bezier(0.16, 1, 0.3, 1);
 }
-.wks-ctx-item:hover:not(:disabled) { background: var(--wks-accent-bg); color: var(--wks-text-primary); padding-left: 18px; }
-.wks-ctx-item.wks-ctx-danger:hover:not(:disabled) { background: color-mix(in srgb, var(--wks-error) 15%, transparent); color: var(--wks-error); }
+/* The accent bar — grows from the vertical center on hover/focus. */
+.wks-ctx-item::before {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 50%;
+  width: 3px;
+  height: 0;
+  transform: translateY(-50%);
+  border-radius: 2px;
+  background: var(--wks-accent);
+  transition: height 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+  pointer-events: none;
+}
+.wks-ctx-item:hover:not(:disabled),
+.wks-ctx-item:focus-visible:not(:disabled) {
+  background: color-mix(in srgb, var(--wks-accent) 16%, transparent);
+  color: var(--wks-text-primary);
+  padding-left: 18px;
+  outline: none;
+}
+.wks-ctx-item:hover:not(:disabled)::before,
+.wks-ctx-item:focus-visible:not(:disabled)::before { height: 58%; }
+.wks-ctx-item.wks-ctx-danger:hover:not(:disabled),
+.wks-ctx-item.wks-ctx-danger:focus-visible:not(:disabled) {
+  background: color-mix(in srgb, var(--wks-error) 15%, transparent);
+  color: var(--wks-error);
+}
+.wks-ctx-item.wks-ctx-danger:hover:not(:disabled)::before,
+.wks-ctx-item.wks-ctx-danger:focus-visible:not(:disabled)::before { background: var(--wks-error); }
 `;
   document.head.appendChild(style);
 }
