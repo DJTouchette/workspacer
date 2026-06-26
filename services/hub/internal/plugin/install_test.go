@@ -78,7 +78,7 @@ func TestInstallFromTarballHappy(t *testing.T) {
 	url := serveTarball(t, data)
 	dir := t.TempDir()
 
-	m, err := installFromTarball(dir, url, "fallback")
+	m, err := installFromTarball(dir, url, "fallback", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,10 +105,10 @@ func TestInstallReinstallOverwrites(t *testing.T) {
 			"index.html":  html,
 		}))
 	}
-	if _, err := installFromTarball(dir, mk("v1"), "r"); err != nil {
+	if _, err := installFromTarball(dir, mk("v1"), "r", nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := installFromTarball(dir, mk("v2"), "r"); err != nil {
+	if _, err := installFromTarball(dir, mk("v2"), "r", nil); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := os.ReadFile(filepath.Join(dir, "x-y", "index.html"))
@@ -122,7 +122,7 @@ func TestInstallRunsBuildCommand(t *testing.T) {
 		"plugin.json": `{"id":"b.uild","apiVersion":"1","install":["sh","-c","echo done > built.marker"]}`,
 	})
 	dir := t.TempDir()
-	if _, err := installFromTarball(dir, serveTarball(t, data), "b"); err != nil {
+	if _, err := installFromTarball(dir, serveTarball(t, data), "b", nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "b-uild", "built.marker")); err != nil {
@@ -133,7 +133,7 @@ func TestInstallRunsBuildCommand(t *testing.T) {
 func TestInstallNoManifest(t *testing.T) {
 	data := makeTarGz(t, "empty-main", map[string]string{"readme.md": "hi"})
 	dir := t.TempDir()
-	if _, err := installFromTarball(dir, serveTarball(t, data), "empty"); err == nil {
+	if _, err := installFromTarball(dir, serveTarball(t, data), "empty", nil); err == nil {
 		t.Error("expected error when archive has no plugin.json")
 	}
 }

@@ -10,7 +10,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::claudemon::Claudemon;
 use crate::profiles;
-use crate::types::turns_from_conversation;
+use crate::types::{search_lines, turns_from_conversation};
 
 use super::{AppMsg, SpawnForm};
 
@@ -30,6 +30,22 @@ pub(super) async fn fetch_transcript(cm: &Claudemon, tx: &UnboundedSender<AppMsg
         let turns = turns_from_conversation(&v);
         let _ = tx.send(AppMsg::Transcript { session_id, turns });
     }
+}
+
+/// Fetch a session's conversation and emit its searchable lines for the content
+/// index. Always sends a (possibly empty) result so the modal's `pending`
+/// counter still decrements when a fetch fails.
+pub(super) async fn fetch_search_index(
+    cm: &Claudemon,
+    tx: &UnboundedSender<AppMsg>,
+    session_id: String,
+    name: String,
+) {
+    let lines = match cm.conversation(&session_id).await {
+        Ok(v) => search_lines(&turns_from_conversation(&v)),
+        Err(_) => Vec::new(),
+    };
+    let _ = tx.send(AppMsg::SearchEntries { session_id, name, lines });
 }
 
 pub(super) async fn fetch_git_status(cm: &Claudemon, tx: &UnboundedSender<AppMsg>, cwd: String) {

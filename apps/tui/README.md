@@ -72,6 +72,11 @@ planned in later phases (see the repo's TUI plan).
   `:q` quit, `:vsplit`/`:split`/`:only`/`:close` windows, `:spawn` / `:term`,
   `:notes` / `:review` / `:pin`, `:rename <name>`, `:filter <query>`,
   `:ls` (dashboard), `:help`. `enter` runs, `esc` cancels.
+- **Content search (`<leader>/`)** — grep every agent's transcript at once.
+  Opening it indexes each session's conversation in the background (the title
+  shows progress); type to filter matching lines live, and `enter` jumps to that
+  agent's transcript. Also `:search` / `:grep`. (Searches transcript text;
+  file-body search would need a claudemon grep endpoint and isn't wired yet.)
 - **Filter the sidebar** — `/` opens a live fuzzy filter (subsequence match over
   name / cwd / state). Type to narrow the list as you go; `enter` keeps the
   filter and returns to `j`/`k` navigation, `esc` clears it. The filter is just a

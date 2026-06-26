@@ -8,8 +8,8 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::keys::{Action, Chord, Context, KeyMatch};
 use crate::profiles;
 
-use super::tasks::{bracketed_paste, complete_path, fetch_agents, seed_prompt};
-use super::{App, AppMsg, ChatMode, NotesState, PaletteAction, PaletteItem, RenameForm, SplitDir, SpawnForm, TabKind, View, Workspace, Tab};
+use super::tasks::{bracketed_paste, complete_path, fetch_agents, fetch_search_index, seed_prompt};
+use super::{App, AppMsg, ChatMode, NotesState, PaletteAction, PaletteItem, RenameForm, SearchState, SplitDir, SpawnForm, TabKind, View, Workspace, Tab};
 
 /// Ex-command verbs surfaced in the Ctrl-K palette as a "command" source — the
 /// fuzzy-findable mirror of the `:` command line. `(verb, description)`.
@@ -23,6 +23,7 @@ const COMMAND_PALETTE: &[(&str, &str)] = &[
     ("notes", "open the notes scratchpad"),
     ("review", "open the git review"),
     ("pin", "pin / unpin the agent (harpoon)"),
+    ("search", "search transcripts across all agents"),
     ("rename", "rename the agent"),
     ("filter", "filter the sidebar"),
     ("dashboard", "go to the dashboard"),
@@ -51,6 +52,11 @@ impl App {
         }
         if self.palette.is_some() {
             self.handle_palette_key(key);
+            return;
+        }
+        // The content-search modal captures keys while it's open.
+        if self.search.is_some() {
+            self.handle_search_key(key);
             return;
         }
         // The rename overlay captures text until enter/esc.
@@ -258,6 +264,86 @@ impl App {
             ToggleStopped => self.toggle_stopped(),
             OpenFilter => self.open_filter(),
             OpenCmdline => self.cmdline = Some(String::new()),
+            OpenSearch => self.open_search(),
+        }
+    }
+
+    // ── cross-agent content search ────────────────────────────────────────
+
+    /// Open the content-search modal and kick off indexing: fetch each non-shell
+    /// session's transcript in the background; lines stream in as `SearchEntries`.
+    pub(super) fn open_search(&mut self) {
+        let targets: Vec<(String, String)> = self
+            .all_agents
+            .iter()
+            .filter(|a| !self.is_shell_session(&a.session_id))
+            .map(|a| (a.session_id.clone(), self.agent_name(a)))
+            .collect();
+        self.search = Some(SearchState {
+            query: String::new(),
+            entries: Vec::new(),
+            matched: Vec::new(),
+            selected: 0,
+            pending: targets.len(),
+        });
+        for (sid, name) in targets {
+            let cm = self.claudemon.clone();
+            let tx = self.tx.clone();
+            tokio::spawn(async move { fetch_search_index(&cm, &tx, sid, name).await });
+        }
+    }
+
+    fn handle_search_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => self.search = None,
+            KeyCode::Enter => {
+                let sid = self
+                    .search
+                    .as_ref()
+                    .and_then(|s| s.chosen())
+                    .map(|h| h.session_id.clone());
+                if let Some(sid) = sid {
+                    self.search = None;
+                    self.open_session_transcript(sid);
+                }
+            }
+            KeyCode::Down => {
+                if let Some(s) = self.search.as_mut() {
+                    if !s.matched.is_empty() {
+                        s.selected = (s.selected + 1).min(s.matched.len() - 1);
+                    }
+                }
+            }
+            KeyCode::Up => {
+                if let Some(s) = self.search.as_mut() {
+                    s.selected = s.selected.saturating_sub(1);
+                }
+            }
+            KeyCode::Backspace => {
+                if let Some(s) = self.search.as_mut() {
+                    s.query.pop();
+                    s.rematch();
+                }
+            }
+            KeyCode::Char(c) => {
+                if let Some(s) = self.search.as_mut() {
+                    s.query.push(c);
+                    s.rematch();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Jump to a session and show its transcript (content search lands on text,
+    /// not the raw terminal).
+    fn open_session_transcript(&mut self, sid: String) {
+        self.open_single(sid, true);
+        if let Some(open) = self.chat_session_id() {
+            self.chat_mode = ChatMode::Transcript;
+            self.term_attached = false;
+            self.chat_follow = true;
+            self.load_transcript(open);
         }
     }
 
@@ -305,6 +391,7 @@ impl App {
             "notes" => self.open_notes(),
             "review" => self.open_review(),
             "pin" => self.harpoon_toggle(),
+            "search" | "grep" => self.open_search(),
             "help" | "h" => self.help = true,
             "ls" | "dashboard" => {
                 self.view = View::List;

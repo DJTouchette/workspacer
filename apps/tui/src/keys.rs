@@ -70,6 +70,8 @@ pub enum Action {
     OpenFilter,
     // ex command line
     OpenCmdline,
+    // cross-agent content search
+    OpenSearch,
 }
 
 impl Action {
@@ -121,6 +123,7 @@ impl Action {
             ToggleStopped => "toggle_stopped",
             OpenFilter => "filter",
             OpenCmdline => "cmdline",
+            OpenSearch => "search",
         }
     }
 
@@ -171,6 +174,7 @@ impl Action {
             "toggle_stopped" => ToggleStopped,
             "filter" => OpenFilter,
             "cmdline" => OpenCmdline,
+            "search" => OpenSearch,
             _ => return None,
         })
     }
@@ -634,6 +638,8 @@ impl Keymap {
             ("i", JumpForward),
             // Toggle showing stopped/history sessions in the sidebar.
             ("x", ToggleStopped),
+            // Cross-agent transcript content search.
+            ("/", OpenSearch),
             ("?", Help),
             ("q", Quit),
         ];

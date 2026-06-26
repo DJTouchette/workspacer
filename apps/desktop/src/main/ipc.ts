@@ -235,6 +235,20 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       return { ok: false, error: String((err as Error)?.message ?? err) };
     }
   });
+  ipcMain.handle(IPC.HUB_SET_PLUGIN_ENABLED, async (_event, args: { id: string; enabled: boolean }) => {
+    try {
+      const res = await fetch(`${HUB_HTTP_URL}/plugins/setEnabled`, {
+        method: 'POST',
+        headers: hubAuthHeaders(),
+        body: JSON.stringify(args),
+      });
+      const body = await res.json() as any;
+      if (!res.ok) return { ok: false, error: body?.error || `HTTP ${res.status}` };
+      return { ok: true, plugin: body };
+    } catch (err) {
+      return { ok: false, error: String((err as Error)?.message ?? err) };
+    }
+  });
 
   // Model choices for the spawn dialog. Dynamic by design: the aliases always
   // resolve to the latest model of each family (so they track Claude Code

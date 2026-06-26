@@ -105,6 +105,7 @@ export interface ElectronAPI {
   hubPublish: (event: { type: string; source?: string; data?: unknown }) => Promise<void>;
   installPlugin: (url: string) => Promise<{ ok: boolean; plugin?: PluginManifest; error?: string }>;
   removePlugin: (id: string) => Promise<{ ok: boolean; error?: string }>;
+  setPluginEnabled: (id: string, enabled: boolean) => Promise<{ ok: boolean; plugin?: PluginManifest; error?: string }>;
 
   // Library (reusable prompts + skills)
   libraryList: (cwd?: string) => Promise<LibraryItem[]>;

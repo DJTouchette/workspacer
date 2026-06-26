@@ -52,6 +52,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
     if app.palette.is_some() {
         render_palette(f, f.area(), app);
     }
+    if app.search.is_some() {
+        render_search(f, f.area(), app);
+    }
     if app.rename.is_some() {
         render_rename(f, f.area(), app);
     }
@@ -1019,6 +1022,81 @@ fn render_palette(f: &mut Frame, area: Rect, app: &App) {
         .title(" command palette ")
         .title_bottom(Line::from(Span::styled(
             " ↑↓ move · enter run · esc close ",
+            Style::default().fg(t.dim),
+        )))
+        .border_style(Style::default().fg(t.accent));
+    f.render_widget(Paragraph::new(lines).block(block), rect);
+}
+
+/// The cross-agent content-search modal: a query line plus matching transcript
+/// lines (agent name + snippet), with an indexing-progress note in the title.
+fn render_search(f: &mut Frame, area: Rect, app: &App) {
+    let t = &app.theme;
+    let Some(s) = app.search.as_ref() else { return };
+
+    let w = area.width.saturating_sub(8).clamp(36, 100);
+    let max_rows = area.height.saturating_sub(6).clamp(3, 16);
+    let shown = (s.matched.len() as u16).min(max_rows);
+    let body_rows = if s.matched.is_empty() { 1 } else { shown };
+    let h = (body_rows + 4).min(area.height);
+    let rect = Rect {
+        x: area.x + (area.width.saturating_sub(w)) / 2,
+        y: area.y + 2,
+        width: w,
+        height: h,
+    };
+    f.render_widget(ratatui::widgets::Clear, rect);
+
+    const NAME_COL: usize = 16;
+    let inner_w = w.saturating_sub(2) as usize;
+    let mut lines = vec![Line::from(vec![
+        Span::styled("/ ", Style::default().fg(t.accent)),
+        Span::raw(s.query.clone()),
+        Span::styled("▏", Style::default().fg(t.accent)),
+    ])];
+
+    let start = s.selected.saturating_sub(shown.saturating_sub(1) as usize);
+    for (offset, &idx) in s.matched.iter().skip(start).take(shown as usize).enumerate() {
+        let i = start + offset;
+        let hit = &s.entries[idx];
+        let selected = i == s.selected;
+        let marker = if selected { "❯ " } else { "  " };
+        let room = inner_w.saturating_sub(NAME_COL + 4);
+        let snippet = crate::types::truncate(hit.line.trim(), room.max(8));
+        let snippet_style = if selected {
+            Style::default().add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(t.fg)
+        };
+        lines.push(Line::from(vec![
+            Span::styled(marker, Style::default().fg(t.accent)),
+            Span::styled(
+                format!("{:<width$}", crate::types::truncate(&hit.name, NAME_COL), width = NAME_COL),
+                Style::default().fg(t.accent),
+            ),
+            Span::styled(format!("  {snippet}"), snippet_style),
+        ]));
+    }
+    if s.query.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "type to search every agent's transcript",
+            Style::default().fg(t.dim),
+        )));
+    } else if s.matched.is_empty() {
+        let msg = if s.pending > 0 { "indexing…" } else { "no matches" };
+        lines.push(Line::from(Span::styled(msg, Style::default().fg(t.dim))));
+    }
+
+    let title = if s.pending > 0 {
+        format!(" search · indexing {} more… ", s.pending)
+    } else {
+        format!(" search · {} matches ", s.matched.len())
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .title_bottom(Line::from(Span::styled(
+            " ↑↓ move · enter open transcript · esc close ",
             Style::default().fg(t.dim),
         )))
         .border_style(Style::default().fg(t.accent));

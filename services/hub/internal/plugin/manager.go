@@ -2,6 +2,8 @@ package plugin
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/djtouchette/workspacer-hub/internal/event"
@@ -36,7 +38,7 @@ func NewManager(pub Publisher) *Manager {
 // Add registers a plugin: starts its sidecar (if any) and emits plugin.loaded.
 func (m *Manager) Add(mf Manifest) {
 	l := &loaded{manifest: mf}
-	if mf.Server != nil {
+	if mf.Server != nil && !mf.Disabled {
 		l.sup = supervisor.New(supervisor.Spec{
 			Name:      mf.ID,
 			Command:   mf.Server.Command,
@@ -86,6 +88,44 @@ func (m *Manager) Remove(id string) string {
 	}
 	m.pub.Publish(event.New("plugin.unloaded", "hub", map[string]string{"id": id}))
 	return l.manifest.Dir
+}
+
+// SetEnabled toggles a plugin's disabled marker (<dir>/.disabled), then reloads
+// it so its sidecar is started or stopped and a plugin.loaded event refreshes
+// the UI. Returns the reloaded manifest. Disabling stops a running sidecar;
+// enabling starts it (if the plugin declares a server).
+func (m *Manager) SetEnabled(id string, enabled bool) (Manifest, error) {
+	m.mu.Lock()
+	l, ok := m.plugins[id]
+	dir := ""
+	if ok {
+		dir = l.manifest.Dir
+	}
+	m.mu.Unlock()
+	if !ok {
+		return Manifest{}, fmt.Errorf("plugin %q not found", id)
+	}
+	if dir == "" {
+		return Manifest{}, fmt.Errorf("plugin %q has no directory on disk", id)
+	}
+
+	marker := filepath.Join(dir, disabledFile)
+	if enabled {
+		if err := os.Remove(marker); err != nil && !os.IsNotExist(err) {
+			return Manifest{}, err
+		}
+	} else if err := os.WriteFile(marker, []byte("disabled\n"), 0o644); err != nil {
+		return Manifest{}, err
+	}
+
+	// Re-load so Disabled reflects the marker we just changed, then re-add:
+	// Add stops the previous sidecar and starts a new one only when enabled.
+	mf, err := Load(filepath.Join(dir, "plugin.json"))
+	if err != nil {
+		return Manifest{}, err
+	}
+	m.Add(mf)
+	return mf, nil
 }
 
 // Stop tears every plugin down (used on hub shutdown).

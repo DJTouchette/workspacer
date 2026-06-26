@@ -9,10 +9,21 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // APIVersion is the manifest schema version this hub understands.
 const APIVersion = "1"
+
+// Sidecar marker files the loader reads from a plugin's directory (not part of
+// the author's plugin.json):
+//   - sourceFile records the install reference, enabling one-click update.
+//   - disabledFile, when present, marks the plugin disabled (sidecar not started,
+//     contributions withheld) while keeping it installed.
+const (
+	sourceFile   = ".install-source"
+	disabledFile = ".disabled"
+)
 
 // Manifest is a plugin's plugin.json.
 type Manifest struct {
@@ -38,6 +49,16 @@ type Manifest struct {
 
 	// Dir is the directory the manifest was loaded from (set by the loader).
 	Dir string `json:"-"`
+
+	// Source is the install reference (GitHub URL / owner-repo) recorded at
+	// install time, so the UI can offer one-click update. Populated by the loader
+	// from <dir>/.install-source; empty for plugins dropped in by hand.
+	Source string `json:"source,omitempty"`
+
+	// Disabled reflects the presence of <dir>/.disabled: the plugin is installed
+	// but its sidecar isn't started and its panes/hotkeys are withheld. Populated
+	// by the loader.
+	Disabled bool `json:"disabled,omitempty"`
 }
 
 // ServerSpec describes the plugin's sidecar process.
@@ -51,7 +72,7 @@ type ServerSpec struct {
 // PaneContribution is a pane type the plugin injects into the UI. The host
 // renders it as a webview at http://127.0.0.1:<port><path>.
 type PaneContribution struct {
-	Type  string `json:"type"`  // unique pane type id, e.g. "acme.tracker"
+	Type  string `json:"type"` // unique pane type id, e.g. "acme.tracker"
 	Title string `json:"title"`
 	Icon  string `json:"icon,omitempty"`
 	Path  string `json:"path,omitempty"` // URL path, e.g. "/ui"
@@ -105,10 +126,27 @@ func Load(path string) (Manifest, error) {
 		return m, fmt.Errorf("%s: %w", path, err)
 	}
 	m.Dir = filepath.Dir(path)
+	// Loader-owned sidecar state (overrides anything an author put in plugin.json).
+	m.Source = readSidecar(filepath.Join(m.Dir, sourceFile))
+	m.Disabled = fileExists(filepath.Join(m.Dir, disabledFile))
 	if err := m.Validate(); err != nil {
 		return m, fmt.Errorf("%s: %w", path, err)
 	}
 	return m, nil
+}
+
+// readSidecar returns the trimmed contents of a sidecar marker file, or "".
+func readSidecar(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // LoadDir scans dir for <subdir>/plugin.json files. It returns the valid

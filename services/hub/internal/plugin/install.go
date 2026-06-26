@@ -21,7 +21,10 @@ import (
 // NOTE: this downloads and (via the Manager) RUNS code from the internet — the
 // caller is responsible for getting user consent. It's the trusted-install
 // model (like a VS Code extension), not a sandbox.
-func Install(pluginsDir, input string) (Manifest, error) {
+func Install(pluginsDir, input string, progress func(stage string)) (Manifest, error) {
+	if progress == nil {
+		progress = func(string) {}
+	}
 	if pluginsDir == "" {
 		return Manifest{}, fmt.Errorf("no plugins directory configured")
 	}
@@ -36,8 +39,14 @@ func Install(pluginsDir, input string) (Manifest, error) {
 
 	var lastErr error
 	for _, url := range urls {
-		m, err := installFromTarball(pluginsDir, url, name)
+		m, err := installFromTarball(pluginsDir, url, name, progress)
 		if err == nil {
+			// Record the install reference next to the plugin so the UI can offer
+			// one-click update. Best-effort: a missing source just disables update.
+			if writeErr := os.WriteFile(filepath.Join(m.Dir, sourceFile), []byte(input), 0o644); writeErr != nil {
+				return m, nil
+			}
+			m.Source = input
 			return m, nil
 		}
 		lastErr = err
@@ -85,13 +94,17 @@ func resolveTarballURLs(input string) (urls []string, name string, err error) {
 	return urls, name, nil
 }
 
-func installFromTarball(pluginsDir, tarballURL, fallbackName string) (Manifest, error) {
+func installFromTarball(pluginsDir, tarballURL, fallbackName string, progress func(stage string)) (Manifest, error) {
+	if progress == nil {
+		progress = func(string) {}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, tarballURL, nil)
 	if err != nil {
 		return Manifest{}, err
 	}
+	progress("downloading")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return Manifest{}, err
@@ -110,6 +123,7 @@ func installFromTarball(pluginsDir, tarballURL, fallbackName string) (Manifest, 
 
 	// GitHub tarballs wrap everything in a single top-level "<repo>-<ref>/" dir;
 	// strip it so the plugin's files land at the temp root.
+	progress("extracting")
 	if err := extractTarGz(resp.Body, tmp, 1); err != nil {
 		return Manifest{}, fmt.Errorf("extract: %w", err)
 	}
@@ -146,6 +160,7 @@ func installFromTarball(pluginsDir, tarballURL, fallbackName string) (Manifest, 
 	}
 
 	if len(final.Install) > 0 {
+		progress("building")
 		if err := runInstall(dest, final.Install); err != nil {
 			return Manifest{}, fmt.Errorf("install command failed: %w", err)
 		}

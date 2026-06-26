@@ -280,6 +280,46 @@ pub enum Part {
     Tool { name: String, summary: String, result: Option<String> },
 }
 
+/// Flatten a conversation's turns into searchable lines for content search:
+/// non-empty text lines plus a compact `name summary result` line per tool.
+/// Each line is clipped and the total is capped so a huge transcript can't blow
+/// up the index.
+pub fn search_lines(turns: &[Turn]) -> Vec<String> {
+    const MAX_LINES: usize = 3000;
+    const MAX_LEN: usize = 200;
+    let clip = |s: &str| -> String { s.chars().take(MAX_LEN).collect() };
+    let mut out = Vec::new();
+    for t in turns {
+        for p in &t.parts {
+            match p {
+                Part::Text(s) => {
+                    for line in s.lines() {
+                        let l = line.trim();
+                        if !l.is_empty() {
+                            out.push(clip(l));
+                        }
+                    }
+                }
+                Part::Tool { name, summary, result } => {
+                    let mut s = format!("{name} {summary}");
+                    if let Some(r) = result {
+                        s.push(' ');
+                        s.push_str(r);
+                    }
+                    let s = s.trim();
+                    if !s.is_empty() {
+                        out.push(clip(s));
+                    }
+                }
+            }
+            if out.len() >= MAX_LINES {
+                return out;
+            }
+        }
+    }
+    out
+}
+
 /// Parse claudemon's `/conversation` payload (`{ items: [...] }`) into renderable
 /// turns. Items are a flat, `kind`-tagged stream (user_message / assistant_text
 /// / tool_use / tool_result / usage); consecutive same-role items coalesce into

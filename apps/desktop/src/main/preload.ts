@@ -289,6 +289,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke(IPC.HUB_INSTALL_PLUGIN, url),
   removePlugin: (id: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke(IPC.HUB_REMOVE_PLUGIN, id),
+  setPluginEnabled: (id: string, enabled: boolean): Promise<{ ok: boolean; plugin?: unknown; error?: string }> =>
+    ipcRenderer.invoke(IPC.HUB_SET_PLUGIN_ENABLED, { id, enabled }),
 
   // ── Library (reusable prompts + skills) ──
   libraryList: (cwd?: string): Promise<unknown[]> =>

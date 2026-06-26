@@ -18,6 +18,7 @@ import (
 	"github.com/djtouchette/workspacer-hub/internal/broker"
 	"github.com/djtouchette/workspacer-hub/internal/bus"
 	"github.com/djtouchette/workspacer-hub/internal/claudemon"
+	"github.com/djtouchette/workspacer-hub/internal/event"
 	"github.com/djtouchette/workspacer-hub/internal/layout"
 	"github.com/djtouchette/workspacer-hub/internal/plugin"
 )
@@ -149,7 +150,12 @@ func main() {
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "missing url"})
 			return
 		}
-		m, err := plugin.Install(*pluginsDir, body.URL)
+		// Publish per-stage progress on the bus so the install dialog can show
+		// "downloading / extracting / building" instead of a frozen button.
+		progress := func(stage string) {
+			b.Publish(event.New("plugin.install.progress", "hub", map[string]string{"url": body.URL, "stage": stage}))
+		}
+		m, err := plugin.Install(*pluginsDir, body.URL, progress)
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
@@ -178,6 +184,28 @@ func main() {
 			}
 		}
 		_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+	}))
+	// Enable/disable a plugin without uninstalling it: toggles its .disabled
+	// marker and reloads it (starting/stopping the sidecar). Returns the manifest.
+	srv.AddRoute("/plugins/setEnabled", guard(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		var body struct {
+			ID      string `json:"id"`
+			Enabled bool   `json:"enabled"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ID == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "missing id"})
+			return
+		}
+		m, err := mgr.SetEnabled(body.ID, body.Enabled)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		log.Printf("plugin %s enabled=%v", body.ID, body.Enabled)
+		_ = json.NewEncoder(w).Encode(m)
 	}))
 	if *pluginsDir != "" {
 		manifests, errs := plugin.LoadDir(*pluginsDir)

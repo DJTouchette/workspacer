@@ -44,6 +44,8 @@ pub enum AppMsg {
     GitSummary { cwd: String, branch: Option<String>, changed: usize },
     /// A git read failed for a work tree (e.g. not a repo) — shown in review.
     GitError { cwd: String, message: String },
+    /// A session's transcript lines, for the content-search index.
+    SearchEntries { session_id: String, name: String, lines: Vec<String> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -150,6 +152,53 @@ pub struct PaletteItem {
     pub label: String,
     pub hint: String,
     pub action: PaletteAction,
+}
+
+/// One indexed transcript line, for cross-agent content search.
+#[derive(Debug, Clone)]
+pub struct SearchHit {
+    pub session_id: String,
+    pub name: String,
+    pub line: String,
+}
+
+/// State of the content-search modal: an index of transcript lines across the
+/// fleet, grep-filtered live by `query`. `pending` counts sessions still being
+/// fetched, so the UI can show that indexing is in progress.
+pub struct SearchState {
+    pub query: String,
+    pub entries: Vec<SearchHit>,
+    /// Indices into `entries` matching `query` (case-insensitive substring).
+    pub matched: Vec<usize>,
+    pub selected: usize,
+    pub pending: usize,
+}
+
+impl SearchState {
+    /// Re-run the grep over the index. An empty query matches nothing (a content
+    /// search dumping the whole corpus isn't useful).
+    pub fn rematch(&mut self) {
+        const MAX_RESULTS: usize = 300;
+        let q = self.query.to_lowercase();
+        self.matched = if q.is_empty() {
+            Vec::new()
+        } else {
+            self.entries
+                .iter()
+                .enumerate()
+                .filter(|(_, h)| h.line.to_lowercase().contains(&q))
+                .map(|(i, _)| i)
+                .take(MAX_RESULTS)
+                .collect()
+        };
+        if self.selected >= self.matched.len() {
+            self.selected = self.matched.len().saturating_sub(1);
+        }
+    }
+
+    pub fn chosen(&self) -> Option<&SearchHit> {
+        self.matched.get(self.selected).map(|&i| &self.entries[i])
+    }
 }
 
 /// The Ctrl-K command palette: a fuzzy launcher over actions, agents, and
@@ -331,6 +380,8 @@ pub struct App {
     pub filter_editing: bool,
     /// The `:` ex-command line buffer; `Some` while it's open and capturing.
     pub cmdline: Option<String>,
+    /// The cross-agent content-search modal; `Some` while it's open.
+    pub search: Option<SearchState>,
     /// A pending vim count prefix (e.g. `3` before `j`), applied to the next
     /// motion and then cleared. `None` when no count is being typed.
     pub count: Option<usize>,
@@ -412,6 +463,7 @@ impl App {
             filter: None,
             filter_editing: false,
             cmdline: None,
+            search: None,
             count: None,
             agents: Vec::new(),
             status_lines: HashMap::new(),
@@ -456,6 +508,21 @@ impl App {
             AppMsg::TerminalUnavailable(sid) => self.mark_no_terminal(sid),
             AppMsg::ShellSpawned { agent_id, session_id } => {
                 self.add_shell_tab(agent_id, session_id)
+            }
+            AppMsg::SearchEntries { session_id, name, lines } => {
+                // Fold a session's lines into the open search index (ignore if
+                // the modal was closed before the fetch returned).
+                if let Some(s) = self.search.as_mut() {
+                    for line in lines {
+                        s.entries.push(SearchHit {
+                            session_id: session_id.clone(),
+                            name: name.clone(),
+                            line,
+                        });
+                    }
+                    s.pending = s.pending.saturating_sub(1);
+                    s.rematch();
+                }
             }
             AppMsg::GitStatus { cwd, branch, files } => self.apply_git_status(cwd, branch, files),
             AppMsg::GitDiff { cwd, path, staged, diff } => {
@@ -1373,6 +1440,45 @@ mod tests {
         press(&mut app, '2');
         press(&mut app, 'G');
         assert_eq!(app.selected, 2);
+    }
+
+    #[tokio::test]
+    async fn content_search_indexes_and_matches() {
+        let mut app = test_app();
+        app.set_agents(vec![
+            agent_cwd("s1", "/a", "responding"),
+            agent_cwd("s2", "/b", "responding"),
+        ]);
+        app.open_search();
+        assert_eq!(app.search.as_ref().unwrap().pending, 2);
+
+        // Simulate the per-session index results streaming in.
+        app.apply_msg(AppMsg::SearchEntries {
+            session_id: "s1".into(),
+            name: "alpha".into(),
+            lines: vec!["hello world".into(), "foo bar".into()],
+        });
+        app.apply_msg(AppMsg::SearchEntries {
+            session_id: "s2".into(),
+            name: "beta".into(),
+            lines: vec!["another world entirely".into()],
+        });
+        {
+            let s = app.search.as_ref().unwrap();
+            assert_eq!(s.pending, 0);
+            assert_eq!(s.entries.len(), 3);
+            assert!(s.matched.is_empty(), "empty query matches nothing");
+        }
+
+        // A query greps across both agents' transcripts.
+        let s = app.search.as_mut().unwrap();
+        s.query = "world".into();
+        s.rematch();
+        assert_eq!(s.matched.len(), 2);
+        s.query = "foo".into();
+        s.rematch();
+        assert_eq!(s.matched.len(), 1);
+        assert_eq!(s.chosen().unwrap().session_id, "s1");
     }
 
     #[tokio::test]
