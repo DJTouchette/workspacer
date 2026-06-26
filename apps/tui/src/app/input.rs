@@ -928,19 +928,26 @@ impl App {
         self.focus_agent_inner(id, record);
     }
 
-    /// Pin or unpin the target agent in the harpoon list.
+    /// Pin or unpin the target agent — by its cwd, so the pin survives restarts
+    /// (see `crate::pins`). Persists and rebuilds the live harpoon.
     pub(super) fn harpoon_toggle(&mut self) {
-        let Some(sid) = self.target_session() else {
+        let Some(cwd) = self.target_agent().map(|a| a.cwd_str().to_string()) else {
             self.set_toast("no agent to pin");
             return;
         };
-        if let Some(pos) = self.harpoon.iter().position(|s| s == &sid) {
-            self.harpoon.remove(pos);
+        if cwd.is_empty() {
+            self.set_toast("no working directory to pin");
+            return;
+        }
+        if let Some(pos) = self.pinned_cwds.iter().position(|c| c == &cwd) {
+            self.pinned_cwds.remove(pos);
             self.set_toast("Unpinned");
         } else {
-            self.harpoon.push(sid);
-            self.set_toast(format!("Pinned #{}", self.harpoon.len()));
+            self.pinned_cwds.push(cwd);
+            self.set_toast(format!("Pinned #{}", self.pinned_cwds.len()));
         }
+        crate::pins::save(&self.pinned_cwds);
+        self.rebuild_harpoon();
     }
 
     /// Teleport to the 1-based harpoon slot, if it's filled.

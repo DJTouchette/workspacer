@@ -351,8 +351,12 @@ pub struct App {
     pub split_dir: SplitDir,
 
     /// Harpoon-style pinned agents (session ids), in slot order. `<leader>1..9`
-    /// teleports to a slot; the sidebar shows each pin's number.
+    /// teleports to a slot; the sidebar shows each pin's number. Derived each
+    /// poll from `pinned_cwds` resolved against the live sessions.
     pub harpoon: Vec<String>,
+    /// The persisted pins, as an ordered list of cwds (stable across restarts;
+    /// see [`crate::pins`]). The source of truth `harpoon` is rebuilt from.
+    pub pinned_cwds: Vec<String>,
     /// The agent focused just before the current one — vim's alternate buffer
     /// (`Ctrl-^`).
     pub prev_focus: Option<String>,
@@ -453,6 +457,7 @@ impl App {
             tile_focus: 0,
             split_dir: SplitDir::Columns,
             harpoon: Vec::new(),
+            pinned_cwds: crate::pins::load(),
             prev_focus: None,
             jumplist: Vec::new(),
             jump_idx: 0,
@@ -654,8 +659,10 @@ impl App {
             self.tile_focus = self.tiles.len().saturating_sub(1);
         }
         self.term_resizes.retain(|sid, _| live.contains(sid));
-        // Pinned/alternate/jump history follow the live session set.
-        self.harpoon.retain(|sid| live.contains(sid));
+        // Resolve the persisted pins against the live sessions (this also drops
+        // pins whose agent isn't currently running).
+        self.rebuild_harpoon();
+        // Alternate / jump history follow the live session set.
         if self.prev_focus.as_ref().is_some_and(|s| !live.contains(s)) {
             self.prev_focus = None;
         }
@@ -702,6 +709,23 @@ impl App {
         self.workspaces.values().any(|ws| {
             ws.tabs.iter().any(|t| t.kind == TabKind::Shell && t.session_id == sid)
         })
+    }
+
+    /// Rebuild the live `harpoon` (session ids) from the persisted `pinned_cwds`,
+    /// in pin order: each cwd resolves to whatever live session is in it, and
+    /// pins with no running agent are simply absent (so slot numbers stay
+    /// gap-free for what's actually reachable).
+    pub(super) fn rebuild_harpoon(&mut self) {
+        self.harpoon = self
+            .pinned_cwds
+            .iter()
+            .filter_map(|cwd| {
+                self.all_agents
+                    .iter()
+                    .find(|a| a.cwd_str() == cwd)
+                    .map(|a| a.session_id.clone())
+            })
+            .collect();
     }
 
     /// Whether an agent matches the sidebar filter `needle` (already lowercase):
@@ -1323,7 +1347,12 @@ mod tests {
     #[tokio::test]
     async fn harpoon_pin_jump_and_alternate() {
         let mut app = test_app();
-        app.set_agents(vec![agent("s1"), agent("s2"), agent("s3")]);
+        // Pins are keyed by cwd, so the agents need distinct working dirs.
+        app.set_agents(vec![
+            agent_cwd("s1", "/a", "responding"),
+            agent_cwd("s2", "/b", "responding"),
+            agent_cwd("s3", "/c", "responding"),
+        ]);
         app.selected = 1;
         app.open_agent(); // s1
         app.harpoon_toggle();
@@ -1331,6 +1360,7 @@ mod tests {
         app.open_agent(); // s2
         app.harpoon_toggle();
         assert_eq!(app.harpoon, vec!["s1".to_string(), "s2".to_string()]);
+        assert_eq!(app.pinned_cwds, vec!["/a".to_string(), "/b".to_string()]);
 
         // Teleport to slot 1, then the alternate-agent toggles back and forth.
         app.harpoon_jump(1);
@@ -1345,6 +1375,25 @@ mod tests {
         assert_eq!(app.harpoon, vec!["s2".to_string()]);
         app.harpoon_jump(5);
         assert_eq!(app.toast(), Some("no agent pinned at 5"));
+    }
+
+    #[tokio::test]
+    async fn pins_restore_by_cwd_across_sessions() {
+        let mut app = test_app();
+        // Simulate pins loaded from disk on startup (ordered cwds).
+        app.pinned_cwds = vec!["/work/alpha".into(), "/work/beta".into()];
+
+        // Nothing live yet → no resolvable pins.
+        app.set_agents(vec![]);
+        assert!(app.harpoon.is_empty());
+
+        // Agents reappear in those cwds with brand-new session ids — the pins
+        // resolve to them, in pin order (not agent order).
+        app.set_agents(vec![
+            agent_cwd("new-beta", "/work/beta", "responding"),
+            agent_cwd("new-alpha", "/work/alpha", "responding"),
+        ]);
+        assert_eq!(app.harpoon, vec!["new-alpha".to_string(), "new-beta".to_string()]);
     }
 
     #[tokio::test]

@@ -86,7 +86,9 @@ planned in later phases (see the repo's TUI plan).
   shows its slot in the sidebar); `<leader>1`…`<leader>9` jump straight to a
   pinned slot. `Ctrl-^` toggles to the **alternate** agent (the one you were just
   on), and `Ctrl-o` / `<leader>o` step **back** through your jump history with
-  `<leader>i` forward.
+  `<leader>i` forward. Pins are **persisted by cwd** (`tui-pins.json`), so they
+  survive a restart — each pin re-resolves to whatever agent is live in that
+  directory (same stable identity as names/notes).
 - **Agent sidebar** — every live session in a stable order (rows stay put across
   polls; new sessions append at the end), with state badge, model, context % and
   cost. Stopped sessions you never saw alive this run are hidden by default —
