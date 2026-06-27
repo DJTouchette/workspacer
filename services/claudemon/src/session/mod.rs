@@ -8,4 +8,4 @@ pub mod usage;
 pub use conversation::ConversationStore;
 #[allow(unused_imports)]
 pub use state::{HookEvent, SessionMode, SessionState, StatusLine};
-pub use store::SessionStore;
+pub use store::{MessageOutcome, SessionStore};

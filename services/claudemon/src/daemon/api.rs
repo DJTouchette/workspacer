@@ -18,7 +18,7 @@ use tokio_stream::{wrappers::BroadcastStream, StreamExt};
 use tower_http::cors::CorsLayer;
 
 use crate::protocol::WrapperMessage;
-use crate::session::{transcript, usage, ConversationStore, SessionMode, SessionStore};
+use crate::session::{transcript, usage, ConversationStore, MessageOutcome, SessionMode, SessionStore};
 use crate::store::items::{ItemAction, ItemBroadcaster, ItemChange, ListFilter};
 use crate::store::Db;
 
@@ -189,37 +189,31 @@ async fn post_message(
     Path(id): Path<String>,
     Json(payload): Json<MessagePayload>,
 ) -> impl IntoResponse {
-    let Some(state) = store.get(&id) else {
-        return (StatusCode::NOT_FOUND, "session not found").into_response();
-    };
-    if state.mode != SessionMode::Input {
-        return (
+    // The store owns the policy: send now when the prompt is up, otherwise
+    // queue and flush on the next `Input` transition (so the first message after
+    // spawn doesn't race the TUI's cold start). See `SessionStore::submit_message`.
+    match store.submit_message(&id, payload.text) {
+        MessageOutcome::Sent => Json(json!({ "ok": true })).into_response(),
+        MessageOutcome::Queued => Json(json!({ "ok": true, "queued": true })).into_response(),
+        MessageOutcome::Rejected(mode) => (
             StatusCode::CONFLICT,
             Json(json!({
                 "error": "session is not accepting chat input",
-                "mode": state.mode,
+                "mode": mode,
                 "expected": "input",
             })),
         )
-            .into_response();
+            .into_response(),
+        MessageOutcome::NoSession => {
+            (StatusCode::NOT_FOUND, "session not found").into_response()
+        }
+        MessageOutcome::NoWrapper => {
+            (StatusCode::NOT_FOUND, "no wrapper attached to that session").into_response()
+        }
+        MessageOutcome::WrapperGone => {
+            (StatusCode::GONE, "wrapper disconnected").into_response()
+        }
     }
-    let Some(handle) = store.wrapper(&id) else {
-        return (StatusCode::NOT_FOUND, "no wrapper attached to that session").into_response();
-    };
-
-    // Carriage return is what Claude Code's input field treats as submit.
-    let mut bytes = payload.text.into_bytes();
-    if !bytes.last().is_some_and(|b| *b == b'\r' || *b == b'\n') {
-        bytes.push(b'\r');
-    }
-    if handle
-        .tx
-        .send(WrapperMessage::Input { bytes: B64.encode(&bytes) })
-        .is_err()
-    {
-        return (StatusCode::GONE, "wrapper disconnected").into_response();
-    }
-    Json(json!({ "ok": true, "bytes": bytes.len() })).into_response()
 }
 
 #[derive(Debug, Deserialize)]

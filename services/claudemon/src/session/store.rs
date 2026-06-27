@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 
+use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use dashmap::DashMap;
 use serde_json::Value;
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
@@ -15,6 +16,10 @@ const HOOK_BROADCAST_CAPACITY: usize = 256;
 const STATUS_BROADCAST_CAPACITY: usize = 256;
 const OUTPUT_BUFFER_CAP: usize = 256 * 1024; // 256 KiB per session
 const BYTE_BROADCAST_CAPACITY: usize = 1024;
+/// Max chat messages held per session while it isn't yet accepting input.
+/// Bounds memory if a session never reaches `Input` (e.g. stuck on startup);
+/// the oldest is dropped past this. In practice the queue holds 0–1.
+const MAX_PENDING_MESSAGES: usize = 8;
 
 /// Per-session ring buffer of raw PTY bytes the child has produced so far.
 #[derive(Default)]
@@ -100,6 +105,33 @@ pub struct SessionStore {
     pending_spawns_by_cwd: Arc<DashMap<String, String>>,
     /// Alias map: claude's hook session_id → our canonical (spawn) session_id.
     aliases: Arc<DashMap<String, String>>,
+    /// Chat messages received via `/message` while the session wasn't yet in
+    /// `Input` mode — cold-start `Unknown`, or mid-turn `Responding`. Flushed
+    /// in order the instant the session transitions to `Input`, then sent as a
+    /// single atomic `line + \r` frame. This is what makes the first message
+    /// after spawn reliable instead of racing a raw PTY write against the TUI's
+    /// cold-start render (the "typed but not sent" bug).
+    pending_messages: Arc<DashMap<String, Vec<String>>>,
+}
+
+/// Outcome of a `/message` submission. Keeping the policy here (rather than in
+/// the HTTP handler) keeps the handler thin and lets the buffering behavior be
+/// unit-tested without standing up axum.
+#[derive(Debug, PartialEq, Eq)]
+pub enum MessageOutcome {
+    /// Written to the child immediately (session was in `Input`).
+    Sent,
+    /// Held until the session reaches `Input` (was `Unknown`/`Responding`).
+    Queued,
+    /// Session is in a mode that won't accept free chat (`Approval`,
+    /// `Question`, `Stopped`); the caller should use the matching endpoint.
+    Rejected(SessionMode),
+    /// No session with this id.
+    NoSession,
+    /// Session exists but has no wrapper attached to receive input.
+    NoWrapper,
+    /// The wrapper's channel is closed (process gone).
+    WrapperGone,
 }
 
 impl SessionStore {
@@ -119,6 +151,7 @@ impl SessionStore {
             decisions: Arc::new(DashMap::new()),
             pending_spawns_by_cwd: Arc::new(DashMap::new()),
             aliases: Arc::new(DashMap::new()),
+            pending_messages: Arc::new(DashMap::new()),
         }
     }
 
@@ -246,14 +279,25 @@ impl SessionStore {
         // session_id Workspacer (and other clients) already know about.
         let _ = self.hook_tx.send(event.clone());
 
-        let state = {
+        let (state, became_input, became_stopped) = {
             let mut entry = self
                 .states
                 .entry(event.session_id.clone())
                 .or_insert_with(|| SessionState::new(event.session_id.clone(), event.cwd.clone()));
+            let prev_mode = entry.mode;
             entry.apply(&event);
-            entry.clone()
+            let became_input =
+                entry.mode == SessionMode::Input && prev_mode != SessionMode::Input;
+            let became_stopped = entry.mode == SessionMode::Stopped;
+            (entry.clone(), became_input, became_stopped)
         };
+        // Drain or drop any queued chat messages — done outside the `states`
+        // entry lock above (flush touches `wrappers`, not `states`).
+        if became_input {
+            self.flush_pending_messages(&event.session_id);
+        } else if became_stopped {
+            self.clear_pending_messages(&event.session_id);
+        }
         let _ = self.update_tx.send(SessionUpdate {
             session_id: event.session_id.clone(),
             event: event.event.clone(),
@@ -400,11 +444,90 @@ impl SessionStore {
         self.wrappers.remove(session_id);
         self.buffers.remove(session_id);
         self.bytes_tx.remove(session_id);
+        self.pending_messages.remove(session_id);
         self.states.remove(session_id);
     }
 
     pub fn wrapper(&self, session_id: &str) -> Option<WrapperHandle> {
         self.wrappers.get(session_id).map(|h| h.clone())
+    }
+
+    // --- chat message submission --------------------------------------------
+
+    /// Submit a chat message. Sends it immediately when the session is ready
+    /// (`Input`), otherwise holds it until the session reaches `Input` and
+    /// flushes it then (`Unknown`/`Responding`). Modes that won't accept free
+    /// chat are rejected so the caller can use the right endpoint. See
+    /// [`MessageOutcome`].
+    pub fn submit_message(&self, session_id: &str, text: String) -> MessageOutcome {
+        let Some(mode) = self.states.get(session_id).map(|s| s.mode) else {
+            return MessageOutcome::NoSession;
+        };
+        match mode {
+            SessionMode::Input => self.send_message_now(session_id, text),
+            SessionMode::Unknown | SessionMode::Responding => {
+                self.enqueue_message(session_id, text);
+                // Guard the read-then-enqueue against a concurrent transition:
+                // if `ingest` flipped the session to `Input` after our mode read
+                // but before the enqueue, drain here. Both drains are atomic
+                // (`mem::take` under the shard lock), so this and the `ingest`
+                // flush can never double-send or lose the message.
+                if self.states.get(session_id).map(|s| s.mode) == Some(SessionMode::Input) {
+                    self.flush_pending_messages(session_id);
+                }
+                MessageOutcome::Queued
+            }
+            other => MessageOutcome::Rejected(other),
+        }
+    }
+
+    fn enqueue_message(&self, session_id: &str, text: String) {
+        let mut q = self
+            .pending_messages
+            .entry(session_id.to_string())
+            .or_default();
+        if q.len() >= MAX_PENDING_MESSAGES {
+            q.remove(0); // drop oldest — bound memory under a stuck session
+        }
+        q.push(text);
+    }
+
+    /// Drain and send queued messages in order. Called on the `Input`
+    /// transition. No-op when the queue is empty.
+    fn flush_pending_messages(&self, session_id: &str) {
+        let queued: Vec<String> = self
+            .pending_messages
+            .get_mut(session_id)
+            .map(|mut q| std::mem::take(&mut *q))
+            .unwrap_or_default();
+        for text in queued {
+            let _ = self.send_message_now(session_id, text);
+        }
+    }
+
+    fn clear_pending_messages(&self, session_id: &str) {
+        self.pending_messages.remove(session_id);
+    }
+
+    /// Encode a chat line — appending the `\r` that Claude Code's input field
+    /// treats as submit — and write it to the child as a single atomic input
+    /// frame, so the submit can't race a mid-flight redraw and get dropped.
+    fn send_message_now(&self, session_id: &str, text: String) -> MessageOutcome {
+        let Some(handle) = self.wrapper(session_id) else {
+            return MessageOutcome::NoWrapper;
+        };
+        let mut bytes = text.into_bytes();
+        if !bytes.last().is_some_and(|b| *b == b'\r' || *b == b'\n') {
+            bytes.push(b'\r');
+        }
+        if handle
+            .tx
+            .send(WrapperMessage::Input { bytes: B64.encode(&bytes) })
+            .is_err()
+        {
+            return MessageOutcome::WrapperGone;
+        }
+        MessageOutcome::Sent
     }
 
     pub async fn record_output(&self, session_id: &str, chunk: &[u8]) {
@@ -475,6 +598,86 @@ mod tests {
     fn handle() -> WrapperHandle {
         let (tx, _rx) = mpsc::unbounded_channel();
         WrapperHandle { tx }
+    }
+
+    /// A wrapper handle whose receiver is returned so tests can inspect the
+    /// input frames the store writes to the child.
+    fn handle_with_rx() -> (WrapperHandle, mpsc::UnboundedReceiver<WrapperMessage>) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        (WrapperHandle { tx }, rx)
+    }
+
+    /// Decode the next `Input` frame's bytes, asserting one is present.
+    fn next_input(rx: &mut mpsc::UnboundedReceiver<WrapperMessage>) -> Vec<u8> {
+        match rx.try_recv().expect("expected an Input frame") {
+            WrapperMessage::Input { bytes } => B64.decode(bytes).expect("valid base64"),
+            other => panic!("expected Input frame, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn message_sent_immediately_when_input() {
+        let store = SessionStore::new();
+        let (h, mut rx) = handle_with_rx();
+        store.register_wrapper("s1", "/w", h); // synthetic SessionStart → Input
+        assert_eq!(store.submit_message("s1", "hello".into()), MessageOutcome::Sent);
+        assert_eq!(next_input(&mut rx), b"hello\r", "line submitted with a CR");
+    }
+
+    #[test]
+    fn message_queued_in_unknown_flushes_on_session_start() {
+        let store = SessionStore::new();
+        let (h, mut rx) = handle_with_rx();
+        store.register_spawn("s1", "/w", h); // mode stays Unknown until SessionStart
+        assert_eq!(store.submit_message("s1", "hi".into()), MessageOutcome::Queued);
+        assert!(rx.try_recv().is_err(), "nothing written while queued");
+
+        // Claude's real SessionStart lands → Input → the queued line flushes.
+        store.ingest(hook("SessionStart", "s1", "/w"));
+        assert_eq!(next_input(&mut rx), b"hi\r");
+    }
+
+    #[test]
+    fn message_queued_in_responding_flushes_on_stop() {
+        let store = SessionStore::new();
+        let (h, mut rx) = handle_with_rx();
+        store.register_wrapper("s1", "/w", h); // Input
+        store.ingest(hook("UserPromptSubmit", "s1", "/w")); // → Responding
+        assert_eq!(store.submit_message("s1", "followup".into()), MessageOutcome::Queued);
+        assert!(rx.try_recv().is_err(), "held while Claude is responding");
+
+        store.ingest(hook("Stop", "s1", "/w")); // turn ends → Input → flush
+        assert_eq!(next_input(&mut rx), b"followup\r");
+    }
+
+    #[test]
+    fn message_rejected_when_awaiting_approval() {
+        let store = SessionStore::new();
+        let (h, mut rx) = handle_with_rx();
+        store.register_wrapper("s1", "/w", h); // Input
+        store.ingest(hook("PermissionRequest", "s1", "/w")); // → Approval
+        assert_eq!(
+            store.submit_message("s1", "no".into()),
+            MessageOutcome::Rejected(SessionMode::Approval),
+        );
+        assert!(rx.try_recv().is_err(), "chat is not written while awaiting approval");
+    }
+
+    #[test]
+    fn queued_message_dropped_when_session_ends() {
+        let store = SessionStore::new();
+        let (h, mut rx) = handle_with_rx();
+        store.register_spawn("s1", "/w", h); // Unknown
+        assert_eq!(store.submit_message("s1", "later".into()), MessageOutcome::Queued);
+
+        store.ingest(hook("SessionEnd", "s1", "/w")); // → Stopped, queue cleared
+        assert!(rx.try_recv().is_err(), "a stopped session drops its queued message");
+    }
+
+    #[test]
+    fn message_for_unknown_session_reports_no_session() {
+        let store = SessionStore::new();
+        assert_eq!(store.submit_message("ghost", "hi".into()), MessageOutcome::NoSession);
     }
 
     #[test]
