@@ -52,7 +52,14 @@ export class HubBusClient {
   private lastActivity = 0;
   private readonly reconnectHandlers = new Set<() => void>();
 
-  constructor(private readonly token: string) {}
+  /**
+   * @param token  bearer secret for the `/bus` gate.
+   * @param baseUrl  full `ws[s]://host:port/bus` URL to connect to. Omitted in
+   *   the web build, where the renderer is served by the hub itself and the URL
+   *   is derived from `location`. The Electron build passes the local hub's URL
+   *   explicitly, since there the renderer isn't served off the bus host.
+   */
+  constructor(private readonly token: string, private readonly baseUrl?: string) {}
 
   /** Bound so it can be added/removed as a DOM listener. The browser throttles a
    *  backgrounded tab's reconnect timer and suspends its socket, so we also
@@ -114,8 +121,9 @@ export class HubBusClient {
   }
 
   private wsURL(): string {
-    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    return `${proto}//${location.host}/bus?token=${encodeURIComponent(this.token)}`;
+    const base = this.baseUrl ?? `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/bus`;
+    const sep = base.includes('?') ? '&' : '?';
+    return `${base}${sep}token=${encodeURIComponent(this.token)}`;
   }
 
   private open(): void {

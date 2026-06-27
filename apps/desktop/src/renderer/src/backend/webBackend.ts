@@ -85,8 +85,8 @@ function streamPty(
   };
 }
 
-export function createWebBackend(token: string): ElectronAPI {
-  const client = new HubBusClient(token);
+export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
+  const client = new HubBusClient(token, busUrl);
   client.start();
 
   // Claude panes key their byte stream + input by a "viewerKey": the sessionId
@@ -215,7 +215,7 @@ export function createWebBackend(token: string): ElectronAPI {
     onLayoutChanged: (callback) =>
       client.subscribe('layout.changed', (ev) => callback(ev.data as { version: number; data: unknown })),
     getHubStatus: () => Promise.resolve({ connected: client.isConnected() }),
-    getRemoteInfo: () => Promise.resolve({ enabled: true, token, remoteUrl: location.href, appUrl: location.href, busUrl: '' }),
+    getRemoteInfo: () => Promise.resolve({ enabled: true, token, remoteUrl: location.href, appUrl: location.href, busUrl: '', desktopBus: false }),
     listHubPlugins: () => { warnOnce('listHubPlugins'); return Promise.resolve([]); },
     hubPublish: (event) => client.call<void>('__publish', event).then(() => {}).catch(() => {}),
     installPlugin: () => Promise.resolve({ ok: false, error: 'not available over hub' }),

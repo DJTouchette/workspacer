@@ -293,7 +293,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on(IPC.LAYOUT_CHANGED, handler);
     return () => ipcRenderer.removeListener(IPC.LAYOUT_CHANGED, handler);
   },
-  getRemoteInfo: (): Promise<{ enabled: boolean; token: string; remoteUrl: string; appUrl: string; busUrl: string }> =>
+  getRemoteInfo: (): Promise<{ enabled: boolean; token: string; remoteUrl: string; appUrl: string; busUrl: string; desktopBus: boolean }> =>
     ipcRenderer.invoke(IPC.HUB_GET_REMOTE_INFO),
   installPlugin: (url: string): Promise<{ ok: boolean; plugin?: unknown; error?: string }> =>
     ipcRenderer.invoke(IPC.HUB_INSTALL_PLUGIN, url),

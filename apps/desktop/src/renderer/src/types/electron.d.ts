@@ -100,7 +100,7 @@ export interface ElectronAPI {
   layoutGet: () => Promise<LayoutDoc>;
   layoutSet: (data: unknown) => Promise<LayoutDoc>;
   onLayoutChanged: (callback: (doc: LayoutDoc) => void) => () => void;
-  getRemoteInfo: () => Promise<{ enabled: boolean; token: string; remoteUrl: string; appUrl: string; busUrl: string }>;
+  getRemoteInfo: () => Promise<{ enabled: boolean; token: string; remoteUrl: string; appUrl: string; busUrl: string; desktopBus?: boolean }>;
   listHubPlugins: () => Promise<PluginManifest[]>;
   hubPublish: (event: { type: string; source?: string; data?: unknown }) => Promise<void>;
   installPlugin: (url: string) => Promise<{ ok: boolean; plugin?: PluginManifest; error?: string }>;

@@ -19,7 +19,7 @@ import * as crypto from 'crypto';
 import { spawn, ChildProcess } from 'child_process';
 import { app } from 'electron';
 import { CLAUDEMON_API_URL } from './claudemonDaemon';
-import { DELEGATE_CATALOG_TO_BRAIN } from './brainDelegation';
+import { DELEGATE_CATALOG_TO_BRAIN, DESKTOP_RENDERER_USES_BUS } from './brainDelegation';
 import { killStaleListener, waitForHealth as waitForHealthShared, PORTS, RestartBackoff } from '../lib/daemonUtils';
 import { getConfigDir } from './configService';
 
@@ -100,6 +100,9 @@ export interface RemoteShareInfo {
   appUrl: string;
   /** Bare bus URL (no token) for diagnostics. */
   busUrl: string;
+  /** Whether the desktop renderer should run on the hub bus (mirroring the TUI)
+   *  rather than pure IPC. The renderer reads this to pick its transport. */
+  desktopBus: boolean;
 }
 
 /** Location of the built web app (dist/web) the hub serves at /app/. */
@@ -121,6 +124,7 @@ export function getRemoteShareInfo(): RemoteShareInfo {
     remoteUrl: `http://${host}:${PORT}/m${q}`,
     appUrl: hasWebApp ? `http://${host}:${PORT}/app/${q}` : '',
     busUrl: `ws://${host}:${PORT}/bus`,
+    desktopBus: DESKTOP_RENDERER_USES_BUS,
   };
 }
 
