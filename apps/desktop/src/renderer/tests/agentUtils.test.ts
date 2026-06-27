@@ -25,4 +25,13 @@ describe('fmtTokens — magnitude boundary', () => {
     expect(fmtTokens(1500)).toBe('1.5k');
     expect(fmtTokens(2_000_000)).toBe('2.0M');
   });
+
+  it('drops the decimal for values that round up to the 10k boundary', () => {
+    // 9999 / 1000 = 9.999 → with 1 decimal renders "10.0k", which visually
+    // crosses the 10k threshold that is supposed to render decimal-free.
+    expect(fmtTokens(9999)).toBe('10k');
+    expect(fmtTokens(9950)).toBe('10k');
+    expect(fmtTokens(9949)).toBe('9.9k');
+    expect(fmtTokens(10_000)).toBe('10k');
+  });
 });

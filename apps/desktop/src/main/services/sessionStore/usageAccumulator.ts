@@ -10,10 +10,10 @@ import type { ClaudeSessionState } from '../claudeSessionStore';
 // ── SessionUsageAccumulator ───────────────────────────────────────────────────
 
 export class SessionUsageAccumulator {
-  // sessionId → last accounted assistant message id, so re-seen transcript
-  // lines (blocks of one message stream as separate entries) don't double-count
-  // cumulative cost / token totals.
-  private lastUsageKey = new Map<string, string>();
+  // sessionId → set of accounted assistant message ids, so re-seen transcript
+  // lines (streamed blocks of one message AND full replays during a conversation
+  // resync/reset) don't double-count cumulative cost / token totals.
+  private seenKeys = new Map<string, Set<string>>();
   // Concrete model ids we've already persisted to config, so we only write on
   // genuinely-new models. Lazily seeded from config on first use.
   private knownModels: Set<string> | null = null;
@@ -45,9 +45,14 @@ export class SessionUsageAccumulator {
     // limit must stay promoted even when a later turn's context is smaller.
     u.contextLimit = contextLimitFor(u.model, session.peakContext);
 
-    // Cumulative — only once per distinct message.
-    if (key && this.lastUsageKey.get(session.sessionId) === key) return;
-    if (key) this.lastUsageKey.set(session.sessionId, key);
+    // Cumulative — only once per distinct message, ever (idempotent under
+    // replay, not just consecutive dedup).
+    if (key) {
+      let seen = this.seenKeys.get(session.sessionId);
+      if (!seen) this.seenKeys.set(session.sessionId, (seen = new Set()));
+      if (seen.has(key)) return;
+      seen.add(key);
+    }
     u.totalInputTokens += ctx;
     u.totalOutputTokens += usage.output_tokens ?? 0;
     u.costUSD += turnCostUSD(u.model, usage);
@@ -55,7 +60,7 @@ export class SessionUsageAccumulator {
 
   /** Remove all per-session state for a session that has been evicted. */
   forget(sessionId: string): void {
-    this.lastUsageKey.delete(sessionId);
+    this.seenKeys.delete(sessionId);
   }
 
   /** Persist a concrete model id to config the first time we see it, so the

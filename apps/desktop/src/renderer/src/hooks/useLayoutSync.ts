@@ -40,8 +40,13 @@ export type HydrationResult = 'pending' | 'adopted' | 'empty';
 interface UseLayoutSyncOptions {
   agents: AgentWorkspace[];
   activeAgentId: string;
-  /** Replace local layout state wholesale (same path session-restore uses). */
-  loadAgentsFromSession: (agents: AgentWorkspace[], activeAgentId: string) => void;
+  /** Replace local layout state wholesale (same path session-restore uses).
+   *  Returns the *normalized* layout it stored (dedupe + global-injection +
+   *  active-id resolution applied) so the echo-breaker can mark against it. */
+  loadAgentsFromSession: (
+    agents: AgentWorkspace[],
+    activeAgentId: string,
+  ) => { agents: AgentWorkspace[]; activeAgentId: string } | void;
   sessionPhase: 'loading' | 'picker' | 'active';
   setSessionPhase: (phase: 'loading' | 'picker' | 'active') => void;
   /** Don't touch the hub until config has loaded (mirrors session lifecycle). */
@@ -113,9 +118,14 @@ export function useLayoutSync({
           onHydration('adopted');
         } else if (hasRealLayout(data) && data) {
           // Another client already populated the layout — adopt it and skip the
-          // local picker so this client comes up mirroring, not blank.
-          lastSyncedRef.current = project(data.agents, data.activeAgentId);
-          loadAgentsFromSession(data.agents, data.activeAgentId);
+          // local picker so this client comes up mirroring, not blank. Mark the
+          // echo-breaker against the *normalized* result loadAgentsFromSession
+          // produced, not the raw doc, so the adopted layout doesn't immediately
+          // bounce back to the hub as a spurious "local change".
+          const norm = loadAgentsFromSession(data.agents, data.activeAgentId);
+          lastSyncedRef.current = norm
+            ? project(norm.agents, norm.activeAgentId)
+            : project(data.agents, data.activeAgentId);
           setSessionPhase('active');
           onHydration('adopted');
         } else {
@@ -134,8 +144,10 @@ export function useLayoutSync({
       if (!data || !Array.isArray(data.agents)) return;
       const incoming = project(data.agents, data.activeAgentId);
       if (incoming === lastSyncedRef.current) return; // our own echo / identical
-      lastSyncedRef.current = incoming;
-      loadAgentsFromSession(data.agents, data.activeAgentId);
+      const norm = loadAgentsFromSession(data.agents, data.activeAgentId);
+      // Mark against the normalized result so the post-apply push effect sees
+      // local state as unchanged (no bounce-back to the hub).
+      lastSyncedRef.current = norm ? project(norm.agents, norm.activeAgentId) : incoming;
     });
 
     return () => {
@@ -159,8 +171,8 @@ export function useLayoutSync({
         if (!hasRealLayout(data) || !data) return;
         const incoming = project(data.agents, data.activeAgentId);
         if (incoming === lastSyncedRef.current) return; // our own echo / identical
-        lastSyncedRef.current = incoming;
-        loadAgentsFromSession(data.agents, data.activeAgentId);
+        const norm = loadAgentsFromSession(data.agents, data.activeAgentId);
+        lastSyncedRef.current = norm ? project(norm.agents, norm.activeAgentId) : incoming;
       })
       .catch(() => { /* hub still unreachable — the bus will retry */ });
   }, [enabled, loadAgentsFromSession]);

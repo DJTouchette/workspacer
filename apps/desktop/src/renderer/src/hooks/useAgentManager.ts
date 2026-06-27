@@ -330,11 +330,15 @@ export function useAgentManager() {
       return raw?.sessionId ? list.find((a) => a.sessionId === raw.sessionId)?.id : undefined;
     };
     const preferred = activeId || sessionAgents[0]?.id || '';
-    setActiveAgentId(
-      inList(preferred)
-        ? preferred
-        : survivorIdFor(preferred) || list.find((a) => !a.global)?.id || list[0]?.id || '',
-    );
+    const chosenActiveId = inList(preferred)
+      ? preferred
+      : survivorIdFor(preferred) || list.find((a) => !a.global)?.id || list[0]?.id || '';
+    setActiveAgentId(chosenActiveId);
+    // Return the *normalized* layout (post dedupe/global-injection/active-id
+    // resolution) so callers like useLayoutSync can record the echo-suppression
+    // marker against what local state actually became — not the raw input,
+    // which would otherwise look "changed" and bounce straight back to the hub.
+    return { agents: list, activeAgentId: chosenActiveId };
   }, []);
 
   /** Open a pane in a specific workspace (agent or the global Overview) and
