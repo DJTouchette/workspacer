@@ -65,7 +65,7 @@ export function createBridgedBackend(ipc: ElectronAPI, token: string, busUrl: st
     const fn = ipc[key];
     if (typeof fn === 'function') {
       // Bind to the preload object so its IPC closures keep their `this`.
-      (api as Record<string, unknown>)[key] = (fn as (...a: unknown[]) => unknown).bind(ipc);
+      (api as unknown as Record<string, unknown>)[key] = (fn as (...a: unknown[]) => unknown).bind(ipc);
     }
   }
 
