@@ -139,6 +139,7 @@ Capabilities registered today:
 | `config.get` / `reload` / `getPath` / `save` | `~/.config/workspacer/config.yaml` (defaults + deep-merge, like the app) |
 | `layouts.list` / `save` / `delete` | `~/.config/workspacer/layouts/*.yaml` |
 | `sessions.list` / `load` / `save` / `delete` | `~/.config/workspacer/sessions/*.yaml` (saved workspaces) |
+| `library.list` / `save` / `remove` | global/project markdown + `.claude/{skills,agents}` |
 | `app.getCwd` / `fs.listDir` / `fs.read` / `fs.write` | the host filesystem |
 
 It reuses the provider pattern from `examples/rivet-bridge`. The endgame is for
@@ -147,8 +148,7 @@ mirror each other by construction instead of duplicating logic across TS/Rust/Go
 
 **Not yet provided headlessly** (still app-only, deferred): the live PTY/event
 streams (`sessions.attachTerminal` & co — the byte stream needs a hub proxy, see
-the web client), `library.*` (multi-source markdown + frontmatter),
-`analytics.*`, `claude.sessionsForDir`, `fs.{listEntries,watch}`,
+the web client), `analytics.*`, `claude.sessionsForDir`, `fs.{listEntries,watch}`,
 `search.project`, `notifications.post`, and supervisor/`mcpFacade` spawn args.
 Saved-session `save` persists the blob as given — it skips the desktop's
 terminal-cwd enrichment, which needs the GUI's in-process pty→cwd map.

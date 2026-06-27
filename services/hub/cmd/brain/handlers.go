@@ -61,6 +61,9 @@ func (r *registry) methods() []string {
 		"sessions.load",
 		"sessions.save",
 		"sessions.delete",
+		"library.list",
+		"library.save",
+		"library.remove",
 		// host
 		"app.getCwd",
 		"fs.listDir",
@@ -136,6 +139,39 @@ func (r *registry) handle(ctx context.Context, method string, params json.RawMes
 		return r.savedSessionSave(params)
 	case "sessions.delete":
 		return r.savedSessionDelete(params)
+	case "library.list":
+		var p struct {
+			Cwd string `json:"cwd"`
+		}
+		if err := unmarshal(params, &p); err != nil {
+			return nil, err
+		}
+		return jsonResult(listLibrary(p.Cwd))
+	case "library.save":
+		var in libraryInput
+		if err := unmarshal(params, &in); err != nil {
+			return nil, err
+		}
+		item, err := saveLibrary(in)
+		if err != nil {
+			return nil, err
+		}
+		return jsonResult(item)
+	case "library.remove":
+		var p struct {
+			Scope string `json:"scope"`
+			ID    string `json:"id"`
+			Cwd   string `json:"cwd"`
+			Kind  string `json:"kind"`
+		}
+		if err := unmarshal(params, &p); err != nil {
+			return nil, err
+		}
+		if p.Scope == "" || p.ID == "" {
+			return nil, fmt.Errorf("library.remove requires { scope, id }")
+		}
+		removeLibrary(p.Scope, p.ID, p.Cwd, p.Kind)
+		return okResult()
 	case "app.getCwd":
 		return r.getCwd()
 	case "fs.listDir":

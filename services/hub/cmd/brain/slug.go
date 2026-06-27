@@ -13,6 +13,7 @@ import (
 var (
 	reSlugBad    = regexp.MustCompile(`[^a-z0-9_-]`)
 	reSlugDashes = regexp.MustCompile(`-+`)
+	reLibBad     = regexp.MustCompile(`[^a-z0-9_-]+`)
 )
 
 func slugify(name string, trimDashes bool, maxLen int, fallback string) string {
@@ -39,3 +40,14 @@ func slugLayout(name string) string { return slugify(name, true, 64, "layout") }
 
 // slugSession matches fileUtils.slugSession (no trim, max 64, no fallback).
 func slugSession(name string) string { return slugify(name, false, 64, "") }
+
+// slugLibrary matches fileUtils.slugLibrary: collapse runs of bad chars into one
+// '-', trim all leading/trailing dashes, fallback 'item', no length cap.
+func slugLibrary(s string) string {
+	out := reLibBad.ReplaceAllString(strings.ToLower(s), "-")
+	out = strings.Trim(out, "-")
+	if out == "" {
+		return "item"
+	}
+	return out
+}
