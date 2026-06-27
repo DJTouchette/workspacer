@@ -74,6 +74,8 @@
     flex: 1; font: inherit; color: var(--fg); background: var(--bg);
     border: 1px solid var(--line); border-radius: 9px; padding: 11px 12px;
     min-width: 0;
+    /* >=16px stops iOS WebKit from auto-zooming (and jolting the layout) on focus. */
+    font-size: 16px;
   }
   input[type=text]:focus { outline: none; border-color: var(--accent); }
   .send button { flex: 0 0 auto; }
@@ -126,7 +128,8 @@
   .ask .opt { text-align: left; font-weight: 500; }
   .ask .opt small { display: block; color: var(--dim); font-weight: 400; }
   #composer {
-    position: sticky; bottom: 0; background: var(--bg);
+    /* bottom:var(--kb) lifts the bar above the iOS keyboard (see keyboardInset). */
+    position: sticky; bottom: var(--kb, 0px); background: var(--bg);
     border-top: 1px solid var(--line); padding: 10px 0
       calc(10px + env(safe-area-inset-bottom)); margin-top: 14px;
     display: none; flex-direction: column; gap: 8px;
@@ -147,10 +150,10 @@
      now interactive — keystrokes are forwarded back to the PTY. */
   #termwrap { display: none; position: relative; }
   body.term-mode #termwrap { display: block; }
-  #term { height: 64vh; width: 100%; padding: 6px 4px 6px 8px;
+  #term { height: 64vh; height: 64dvh; width: 100%; padding: 6px 4px 6px 8px;
           background: #000; border: 1px solid var(--line); border-radius: var(--radius);
           overflow: hidden; }
-  @media (orientation: landscape) { #term { height: 80vh; } }
+  @media (orientation: landscape) { #term { height: 80vh; height: 80dvh; } }
   #term .xterm { height: 100%; }
   /* Let the terminal own vertical touch-scroll without dragging the page. */
   #term .xterm-viewport { touch-action: pan-y; }
@@ -834,6 +837,23 @@
     setTimeout(connect, backoff);
     backoff = Math.min(backoff * 2, 8000);
   }
+
+  // iOS: the software keyboard shrinks the *visual* viewport but not the layout
+  // viewport, so a sticky-bottom composer ends up hidden behind it and focusing
+  // an input scrolls the page oddly. Track the keyboard height as --kb and lift
+  // the composer by it. On Android the layout resizes with the keyboard, so the
+  // delta stays ~0 and this is a no-op there.
+  (function keyboardInset() {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const apply = () => {
+      const kb = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+      document.documentElement.style.setProperty('--kb', (kb > 80 ? kb : 0) + 'px');
+    };
+    vv.addEventListener('resize', apply);
+    vv.addEventListener('scroll', apply);
+    apply();
+  })();
 
   // Auth failures over plain HTTP upgrade surface as a close; if the very first
   // connect is rejected we fall back to the token gate above.
