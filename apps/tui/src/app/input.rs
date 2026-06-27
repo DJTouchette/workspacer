@@ -1204,19 +1204,17 @@ impl App {
         // so claude reopens that conversation. A fresh spawn mints a new id and
         // pins it up front so claude's transcript file, claudemon's id, and the
         // id we track all agree — no cwd-based guessing.
+        // The driver builds the argv (claudemon-direct) or hands the profile id to
+        // the brain (bus mode); either way it pins/returns the session id.
         let resume = resume_session_id.is_some();
-        let session_id =
-            resume_session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-        let argv = profiles::build_argv(&profile, None, false, &session_id, resume);
-        let env = profiles::build_env(&profile);
-        let claudemon = self.claudemon.clone();
+        let drv = self.driver();
         let tx = self.tx.clone();
         tokio::spawn(async move {
-            let sid = match claudemon.spawn(argv, cwd, env, &session_id).await {
+            let sid = match drv.spawn(cwd, &profile, resume_session_id).await {
                 Ok(sid) => {
                     let verb = if resume { "Resumed" } else { "Spawned" };
                     let _ = tx.send(AppMsg::Toast(format!("{verb} agent")));
-                    fetch_agents(&claudemon, &tx).await;
+                    fetch_agents(&drv.claudemon, &tx).await;
                     sid
                 }
                 Err(e) => {
@@ -1225,7 +1223,7 @@ impl App {
                 }
             };
             if let Some(prompt) = initial_prompt {
-                seed_prompt(&claudemon, &tx, &sid, &prompt).await;
+                seed_prompt(&drv.claudemon, &tx, &sid, &prompt).await;
             }
         });
     }

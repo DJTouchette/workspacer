@@ -257,6 +257,38 @@ impl Driver {
             None => self.claudemon.signal(sid, signal).await,
         }
     }
+
+    /// Spawn a fresh (or resumed) agent and return its session id. On the bus the
+    /// brain builds the argv from the profile id (so the TUI doesn't); claudemon-
+    /// direct builds it here, the way the TUI always has.
+    pub async fn spawn(
+        &self,
+        cwd: String,
+        profile: &crate::profiles::Profile,
+        resume_session_id: Option<String>,
+    ) -> Result<String> {
+        match &self.bus {
+            Some(b) => {
+                let mut params = json!({ "cwd": cwd, "profileId": profile.id });
+                if let Some(rid) = &resume_session_id {
+                    params["resumeSessionId"] = json!(rid);
+                }
+                let res = b.call("agents.spawn", params).await?;
+                res.get("sessionId")
+                    .and_then(|s| s.as_str())
+                    .map(String::from)
+                    .ok_or_else(|| anyhow!("agents.spawn returned no sessionId"))
+            }
+            None => {
+                let resume = resume_session_id.is_some();
+                let session_id =
+                    resume_session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                let argv = crate::profiles::build_argv(profile, None, false, &session_id, resume);
+                let env = crate::profiles::build_env(profile);
+                self.claudemon.spawn(argv, cwd, env, &session_id).await
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -314,11 +346,13 @@ mod tests {
         assert_eq!(ev.data["session_id"], json!("s1"));
     }
 
-    #[tokio::test]
-    async fn driver_routes_message_to_capability() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let (tx, mut rx) = mpsc::unbounded_channel::<(String, Value)>();
+    // A fake hub that answers every call with `result` and records (method,
+    // params) for the test to inspect.
+    fn recording_hub(
+        listener: TcpListener,
+        result: Value,
+    ) -> mpsc::UnboundedReceiver<(String, Value)> {
+        let (tx, rx) = mpsc::unbounded_channel();
         tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
             let ws = tokio_tungstenite::accept_async(stream).await.unwrap();
@@ -327,21 +361,31 @@ mod tests {
                 let v: Value = serde_json::from_str(&txt).unwrap();
                 if v.get("op").and_then(|o| o.as_str()) == Some("call") {
                     let id = v.get("id").and_then(|i| i.as_str()).unwrap_or("").to_string();
-                    let _ = write
-                        .send(Message::Text(json!({ "op": "result", "id": id, "result": {} }).to_string()))
-                        .await;
+                    let reply = json!({ "op": "result", "id": id, "result": result.clone() });
+                    let _ = write.send(Message::Text(reply.to_string())).await;
                     let method = v.get("method").and_then(|m| m.as_str()).unwrap_or("").to_string();
                     let _ = tx.send((method, v.get("params").cloned().unwrap_or(Value::Null)));
                 }
             }
         });
+        rx
+    }
 
+    fn bus_driver(addr: std::net::SocketAddr) -> Driver {
         let (client, _events) = BusClient::connect(format!("ws://{addr}/bus"), None);
-        let drv = Driver {
+        Driver {
             claudemon: crate::claudemon::Claudemon::new("http://unused".into()),
             bus: Some(client),
-        };
-        drv.message("s1", "hello").await.expect("message ok");
+        }
+    }
+
+    #[tokio::test]
+    async fn driver_routes_message_to_capability() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut rx = recording_hub(listener, json!({}));
+
+        bus_driver(addr).message("s1", "hello").await.expect("message ok");
 
         let (method, params) = tokio::time::timeout(Duration::from_secs(3), rx.recv())
             .await
@@ -350,5 +394,33 @@ mod tests {
         assert_eq!(method, "agents.sendMessage");
         assert_eq!(params["sessionId"], json!("s1"));
         assert_eq!(params["text"], json!("hello"));
+    }
+
+    #[tokio::test]
+    async fn driver_spawn_sends_profile_id_and_returns_session() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut rx = recording_hub(listener, json!({ "sessionId": "spawned-1" }));
+
+        let profile = crate::profiles::Profile {
+            id: "work".into(),
+            name: "Work".into(),
+            config_dir: String::new(),
+            extra_args: vec![],
+            is_default: false,
+        };
+        let sid = bus_driver(addr)
+            .spawn("/tmp/proj".into(), &profile, None)
+            .await
+            .expect("spawn ok");
+        assert_eq!(sid, "spawned-1");
+
+        let (method, params) = tokio::time::timeout(Duration::from_secs(3), rx.recv())
+            .await
+            .expect("call within 3s")
+            .expect("recorder open");
+        assert_eq!(method, "agents.spawn");
+        assert_eq!(params["cwd"], json!("/tmp/proj"));
+        assert_eq!(params["profileId"], json!("work"));
     }
 }
