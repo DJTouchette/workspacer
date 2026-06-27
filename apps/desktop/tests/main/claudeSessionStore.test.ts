@@ -210,6 +210,22 @@ describe('ClaudeSessionStore — handleHookEvent / getSnapshot / getAllSnapshots
       expect(snap.ambientState).toBe('streaming');
     });
 
+    it('is idempotent on tool_use_id — a re-delivered PreToolUse adds no duplicate card', () => {
+      const id = sid('pretool-dupe-1');
+      store.handleHookEvent(mkEvent('SessionStart', id));
+      const ev = mkEvent('PreToolUse', id, {
+        tool_name: 'Write',
+        tool_input: { file_path: '/src/a.ts' },
+        tool_use_id: 'tc-dupe',
+      });
+      store.handleHookEvent(ev);
+      store.handleHookEvent(ev); // replayed (e.g. after an SSE reconnect)
+      const snap = store.getSnapshot(id)!;
+      expect(snap.activeToolCalls).toHaveLength(1);
+      // File change is recorded once, not twice.
+      expect(snap.fileChanges.filter(f => f.path === '/src/a.ts')).toHaveLength(1);
+    });
+
     it('clears any stale pendingApproval when a new tool call starts', () => {
       const id = sid('pretool-clear-approval-1');
       store.handleHookEvent(mkEvent('SessionStart', id));
@@ -700,6 +716,27 @@ describe('ClaudeSessionStore — handleHookEvent / getSnapshot / getAllSnapshots
       const toolTurns = snap.conversation.filter(t => t.toolCalls?.some(tc => tc.id === 'tc-res-1'));
       expect(toolTurns).toHaveLength(1);
       expect(toolTurns[0].toolCalls![0].response).toBe('/home/user');
+    });
+
+    it('reaps an orphaned active tool call once the transcript carries its tool_use', () => {
+      const id = sid('conv-delta-reap');
+      store.handleHookEvent(mkEvent('SessionStart', id));
+      // A running tool whose PostToolUse hook never arrives (e.g. dropped on an
+      // SSE reconnect) — it would otherwise orphan at the bottom until Stop.
+      store.handleHookEvent(
+        mkEvent('PreToolUse', id, {
+          tool_name: 'Bash',
+          tool_input: { command: 'ls' },
+          tool_use_id: 'tc-orphan',
+        }),
+      );
+      expect(store.getSnapshot(id)!.activeToolCalls).toHaveLength(1);
+
+      // The authoritative transcript catches up with the same tool_use id.
+      store.applyConversationDelta(mkDelta(id, 1, [
+        { kind: 'tool_use', id: 'tc-orphan', name: 'Bash', input: { command: 'ls' } },
+      ], true));
+      expect(store.getSnapshot(id)!.activeToolCalls).toHaveLength(0);
     });
 
     it('applies usage items and dedups by message_id across deltas', () => {

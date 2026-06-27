@@ -127,13 +127,20 @@ export function applyConversationItems(
     }
   }
 
-  // Housekeeping: drop hook-tracked completedToolCalls already absorbed into
+  // Housekeeping: drop hook-tracked tool calls already absorbed into
   // conversation turns, so the live work log doesn't duplicate the timeline.
-  if (items.length > 0 && session.completedToolCalls.length > 0) {
+  // The transcript is authoritative, so this also reaps *active* calls whose
+  // PostToolUse hook was dropped (e.g. an SSE reconnect) — otherwise their
+  // spinners would orphan at the bottom until the next Stop.
+  if (
+    items.length > 0 &&
+    (session.completedToolCalls.length > 0 || session.activeToolCalls.length > 0)
+  ) {
     const convToolIds = new Set<string>();
     for (const turn of session.conversation) {
       if (turn.toolCalls) for (const tc of turn.toolCalls) convToolIds.add(tc.id);
     }
     session.completedToolCalls = session.completedToolCalls.filter(tc => !convToolIds.has(tc.id));
+    session.activeToolCalls = session.activeToolCalls.filter(tc => !convToolIds.has(tc.id));
   }
 }

@@ -6,6 +6,18 @@ import type { ClaudeSessionState, ToolCall } from '../claudeSessionStore';
 // session in-place (same as the original inline switch). The caller owns the
 // session object and handles side-effects (pushUpdate, watcher, notifier, etc.).
 
+// Safety caps so the live work log can't grow without bound if Stop (which
+// clears these) is never delivered — e.g. a session that dies mid-turn, or a
+// tool whose id never matches the transcript so housekeeping can't reap it.
+// Normal turns sit far below these; they only bound pathological cases.
+const MAX_ACTIVE_TOOL_CALLS = 50;
+const MAX_COMPLETED_TOOL_CALLS = 50;
+
+/** Keep only the most recent `max` entries, mutating in place. */
+function capInPlace<T>(arr: T[], max: number): void {
+  if (arr.length > max) arr.splice(0, arr.length - max);
+}
+
 export function applyHookEvent(session: ClaudeSessionState, event: any): void {
   const hookName: string = event.hook_event_name ?? event.type ?? '';
 
@@ -21,14 +33,29 @@ export function applyHookEvent(session: ClaudeSessionState, event: any): void {
 
     case 'PreToolUse': {
       session.ambientState = 'streaming';
+      const id: string =
+        event.tool_use_id ?? `tc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+
+      // Idempotent on tool_use_id: a re-delivered PreToolUse (e.g. after an SSE
+      // reconnect) must not spawn a second card for a tool we already track —
+      // that's a prime way active calls "pile up at the bottom". Skip the whole
+      // block so file changes aren't double-recorded either.
+      if (
+        session.activeToolCalls.some(t => t.id === id) ||
+        session.completedToolCalls.some(t => t.id === id)
+      ) {
+        break;
+      }
+
       const tc: ToolCall = {
-        id: event.tool_use_id ?? `tc-${Date.now()}`,
+        id,
         name: event.tool_name ?? 'unknown',
         input: event.tool_input ?? {},
         status: 'running',
         startedAt: Date.now(),
       };
       session.activeToolCalls.push(tc);
+      capInPlace(session.activeToolCalls, MAX_ACTIVE_TOOL_CALLS);
 
       // A new tool call invalidates any stale approval card from a prior
       // tool — the daemon gateway only parks one decision at a time.
@@ -67,6 +94,7 @@ export function applyHookEvent(session: ClaudeSessionState, event: any): void {
         completed.completedAt = Date.now();
         session.activeToolCalls = session.activeToolCalls.filter(t => t.id !== event.tool_use_id);
         session.completedToolCalls.push(completed);
+        capInPlace(session.completedToolCalls, MAX_COMPLETED_TOOL_CALLS);
         if (completed.name === 'AskUserQuestion') {
           session.pendingQuestions = null;
         }
@@ -81,6 +109,7 @@ export function applyHookEvent(session: ClaudeSessionState, event: any): void {
         failed.completedAt = Date.now();
         session.activeToolCalls = session.activeToolCalls.filter(t => t.id !== event.tool_use_id);
         session.completedToolCalls.push(failed);
+        capInPlace(session.completedToolCalls, MAX_COMPLETED_TOOL_CALLS);
       }
       break;
     }
