@@ -20,14 +20,15 @@ HUB       := services/hub
 dev:
 	cd $(DESKTOP) && npm run dev:share
 
-## dev-tui: run wks-tui (debug); builds claudemon first so the TUI can auto-spawn it.
-##          Pass flags with ARGS, e.g. `make dev-tui ARGS="--no-spawn"`
-dev-tui:
+## dev-tui: run wks-tui (debug); builds claudemon + hub/brain first so the TUI can
+##          auto-spawn claudemon and, with `--bus`, reach the hub's brain provider.
+##          Pass flags with ARGS, e.g. `make dev-tui ARGS="--bus ws://127.0.0.1:7895/bus"`
+dev-tui: build-hub
 	cd $(CLAUDEMON) && cargo build
 	cd $(TUI) && cargo run -- $(ARGS)
 
-## run-tui: run wks-tui (release); builds release claudemon + tui first
-run-tui: build-claudemon build-tui
+## run-tui: run wks-tui (release); builds release claudemon + hub/brain + tui first
+run-tui: build-claudemon build-hub build-tui
 	cd $(TUI) && cargo run --release -- $(ARGS)
 
 ## install: install desktop JS dependencies
