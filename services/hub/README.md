@@ -120,6 +120,40 @@ go run ./cmd/brain --hub ws://127.0.0.1:7895/bus --claudemon http://127.0.0.1:78
 # (pass --token / $HUB_TOKEN when the hub requires auth)
 ```
 
+### Letting the hub supervise it (one source of truth)
+
+You don't have to run the brain by hand — the hub can spawn and supervise it, so
+the bus always has a provider:
+
+```sh
+go run ./cmd/hub --brain-scope full      # headless: the brain provides the whole surface
+go run ./cmd/hub --brain-scope catalog   # alongside the app: brain owns only the file-backed subset
+go run ./cmd/hub                          # --brain-scope off (default): no brain
+```
+
+The hub passes its own bus URL/token/claudemon settings to the brain and restarts
+it on crash. `--brain-bin` overrides the binary path (default: a sibling `brain`
+next to the hub binary, then PATH — `make build-hub` puts it there).
+
+**`--scope` / `--brain-scope`** controls *which* capabilities the brain registers,
+because the bus router is single-owner per method: two providers for the same
+method would collide. So when the brain runs **next to the desktop app**, it
+takes scope `catalog` — the file-backed "source of truth" subset (config,
+profiles, library, layouts, saved sessions, models, session discovery, host file
+reads) — and the app keeps owning the live/enriched agent + streaming caps. Run
+**headless**, the brain takes `full` and provides everything.
+
+To make the desktop app a pure *consumer* of the brain for the catalog (one
+source of truth, nothing registered twice), three things are needed on the
+Electron side — left as a follow-up because they need a desktop build to verify:
+
+1. spawn the hub with `--brain-scope catalog` (and `--claudemon <url>`) in
+   `hubDaemon.ts`;
+2. stop registering the catalog methods in `hubCapabilities.ts` (guard those
+   `registerCapability` calls) so the brain is the only provider;
+3. ship the `brain` binary alongside `hub` in the package (`build:hub` +
+   electron-builder), so the supervised binary exists.
+
 Capabilities registered today:
 
 | Capability | Backed by |

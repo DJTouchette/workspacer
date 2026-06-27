@@ -78,6 +78,35 @@ func (r *registry) methods() []string {
 	}
 }
 
+// catalogMethods is the file-backed "source of truth" subset: config, profiles,
+// library, layouts, saved sessions, models, session discovery, and host file
+// reads. These are the capabilities the brain owns when it runs *alongside* the
+// desktop app (which keeps the live/enriched agent + streaming ones). Running
+// with --scope catalog registers only these, so there's exactly one provider per
+// method on the bus (the router is single-owner). The handler dispatch still
+// serves every method — scope only controls what's registered.
+func (r *registry) catalogMethods() []string {
+	return []string{
+		"config.get", "config.reload", "config.getPath", "config.save",
+		"claude.listModels",
+		"claude.profiles.list", "claude.profiles.add", "claude.profiles.update", "claude.profiles.remove",
+		"library.list", "library.save", "library.remove",
+		"layouts.list", "layouts.save", "layouts.delete",
+		"sessions.list", "sessions.load", "sessions.save", "sessions.delete",
+		"claude.sessionsForDir",
+		"fs.listDir", "fs.read", "fs.write", "fs.listEntries",
+	}
+}
+
+// methodsForScope selects the registration set. "catalog" → the file-backed
+// subset (run alongside the app); anything else → the full surface (headless).
+func (r *registry) methodsForScope(scope string) []string {
+	if scope == "catalog" {
+		return r.catalogMethods()
+	}
+	return r.methods()
+}
+
 // handle dispatches one capability call.
 func (r *registry) handle(ctx context.Context, method string, params json.RawMessage) (json.RawMessage, error) {
 	switch method {

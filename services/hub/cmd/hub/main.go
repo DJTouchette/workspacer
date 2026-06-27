@@ -21,6 +21,7 @@ import (
 	"github.com/djtouchette/workspacer-hub/internal/event"
 	"github.com/djtouchette/workspacer-hub/internal/layout"
 	"github.com/djtouchette/workspacer-hub/internal/plugin"
+	"github.com/djtouchette/workspacer-hub/internal/supervisor"
 )
 
 // defaultLayoutFile returns the path where the shared layout document is
@@ -41,6 +42,9 @@ func main() {
 	webappDir := flag.String("webapp-dir", os.Getenv("WORKSPACER_WEBAPP_DIR"), "directory of the built web app (dist/web) to serve at /app/ for full remote parity; empty = disabled")
 	token := flag.String("token", os.Getenv("HUB_TOKEN"), "shared secret required to reach /bus + mutating routes (empty = no auth, localhost-only default)")
 	layoutFile := flag.String("layout-file", defaultLayoutFile(), "path to persist the shared workspace layout document (empty = memory only)")
+	brainScope := flag.String("brain-scope", "off", "supervise the brain capability provider: off | full (whole surface, headless) | catalog (file-backed subset, when the desktop app owns the live caps)")
+	brainBin := flag.String("brain-bin", "", "path to the brain binary to supervise; empty = auto-detect (sibling of the hub binary, then PATH)")
+	claudemonURL := flag.String("claudemon", "http://127.0.0.1:7891", "claudemon API base URL the supervised brain talks to")
 	flag.Parse()
 
 	b := broker.New()
@@ -221,6 +225,30 @@ func main() {
 		log.Printf("loaded %d plugin(s) from %s", len(manifests), *pluginsDir)
 		mgr.AddAll(manifests)
 		defer mgr.Stop()
+	}
+
+	// Supervise the brain capability provider when asked. It's a separate process
+	// (the hub only routes), spawned with the hub's own bus/token/claudemon
+	// settings; the supervisor restarts it on crash and SIGTERMs it on shutdown.
+	if *brainScope != "off" {
+		bin := resolveBrainBin(*brainBin)
+		if bin == "" {
+			log.Printf("brain-scope=%s but no brain binary found (pass --brain-bin, or build it with `make build-hub`); not supervising", *brainScope)
+		} else {
+			var env []string
+			if *token != "" {
+				env = append(env, "HUB_TOKEN="+*token)
+			}
+			brainSup := supervisor.New(supervisor.Spec{
+				Name:    "brain",
+				Command: bin,
+				Args:    brainArgs(*addr, *claudemonURL, *brainScope),
+				Env:     env,
+			}, b)
+			brainSup.Start()
+			defer brainSup.Stop()
+			log.Printf("supervising brain (scope=%s) from %s", *brainScope, bin)
+		}
 	}
 
 	httpSrv := &http.Server{Addr: *addr, Handler: srv.Handler()}

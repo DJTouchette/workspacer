@@ -25,16 +25,18 @@ func main() {
 	hubURL := flag.String("hub", envOr("HUB_BUS_URL", "ws://127.0.0.1:7895/bus"), "hub bus WebSocket URL")
 	token := flag.String("token", os.Getenv("HUB_TOKEN"), "hub bus auth token (empty = no auth)")
 	claudemonURL := flag.String("claudemon", envOr("WKS_CLAUDEMON_URL", "http://127.0.0.1:7891"), "claudemon API base URL")
+	scope := flag.String("scope", envOr("WKS_BRAIN_SCOPE", "full"), "capability scope: full (everything, headless) | catalog (file-backed subset, run alongside the desktop app)")
 	flag.Parse()
 
 	reg := newRegistry(newClaudemonClient(*claudemonURL))
-	bus := newBusClient(*hubURL, *token, reg.methods(), reg.handle)
+	methods := reg.methodsForScope(*scope)
+	bus := newBusClient(*hubURL, *token, methods, reg.handle)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	log.Printf("brain: provider for %d capabilities → hub %s, claudemon %s",
-		len(reg.methods()), *hubURL, *claudemonURL)
+	log.Printf("brain: scope=%s, provider for %d capabilities → hub %s, claudemon %s",
+		*scope, len(methods), *hubURL, *claudemonURL)
 	bus.run(ctx)
 	log.Printf("brain: shutting down")
 }
