@@ -81,14 +81,19 @@ async fn main() -> Result<()> {
     let config = config::load();
 
     // Optionally connect to the hub bus (reconnecting in the background). When
-    // set, agent-driving calls route through it; otherwise the TUI is unchanged.
-    let bus = cli.bus.as_ref().map(|url| {
-        let (client, _events) = bus::BusClient::connect(url.clone(), cli.bus_token.clone());
-        client
-    });
+    // set, agent-driving calls route through it and the agent view is fed by
+    // agent.snapshot / agent.statusline events; otherwise the TUI is unchanged.
+    let (bus, bus_events) = match cli.bus.as_ref() {
+        Some(url) => {
+            let (client, events) = bus::BusClient::connect(url.clone(), cli.bus_token.clone());
+            let _ = client.subscribe(vec!["agent.snapshot".into(), "agent.statusline".into()]);
+            (Some(client), Some(events))
+        }
+        None => (None, None),
+    };
 
     let mut terminal = setup_terminal()?;
-    let res = run(&mut terminal, cli.claudemon_url, claudemon, bus, profiles, library, config).await;
+    let res = run(&mut terminal, cli.claudemon_url, claudemon, bus, bus_events, profiles, library, config).await;
     restore_terminal(&mut terminal)?;
     res
 }
@@ -98,6 +103,7 @@ async fn run(
     events_url: String,
     claudemon: claudemon::Claudemon,
     bus: Option<bus::BusClient>,
+    mut bus_events: Option<mpsc::UnboundedReceiver<bus::BusEvent>>,
     profiles: Vec<profiles::Profile>,
     library: Vec<library::LibraryItem>,
     config: config::Config,
@@ -108,6 +114,11 @@ async fn run(
     let (pty_tx, mut pty_rx) = mpsc::unbounded_channel::<claudemon::PtyChunk>();
     let mut app = App::new(claudemon, profiles, library, config, msg_tx, pty_tx);
     app.set_bus(bus);
+    // Seed the agent list from the bus when in bus mode (works even with no
+    // direct claudemon, e.g. a remote hub). Live updates arrive as events below.
+    if app.has_bus() {
+        app.refresh();
+    }
 
     let mut keys = EventStream::new();
     // A steady tick so toasts expire and the "working…" indicator stays live
@@ -144,6 +155,17 @@ async fn run(
             },
             sl = status_rx.recv() => match sl {
                 Some(msg) => app.apply_status_line(msg.session_id, msg.status_line),
+                None => {}
+            },
+            // Live agent view over the bus (snapshots + statusline). The pending()
+            // arm never fires when there's no bus, so this is inert off-bus.
+            bev = async {
+                match bus_events.as_mut() {
+                    Some(rx) => rx.recv().await,
+                    None => std::future::pending().await,
+                }
+            } => match bev {
+                Some(ev) => app.apply_bus_event(ev),
                 None => {}
             },
             _ = tick.tick() => {}

@@ -29,6 +29,8 @@ use tasks::{fetch_agents, fetch_git_diff, fetch_git_status, fetch_transcript};
 #[derive(Debug)]
 pub enum AppMsg {
     Agents(Vec<Agent>),
+    /// Full agent list fetched via the bus (seeds the snapshot map).
+    BusAgents(Vec<Agent>),
     Transcript { session_id: String, turns: Vec<Turn> },
     Toast(String),
     /// A session has no PTY to stream (external/observed-only) — fall back to
@@ -296,6 +298,9 @@ pub struct App {
     /// Optional hub-bus client. When set, agent-driving calls route through it
     /// (the TUI as a thin bus client); otherwise everything uses claudemon.
     pub(super) bus: Option<crate::bus::BusClient>,
+    /// In bus mode, the latest snapshot per session (seeded by `agents.list`,
+    /// updated by `agent.snapshot` events). The agent list is rebuilt from this.
+    pub(super) bus_snapshots: HashMap<String, Agent>,
     pub(super) tx: UnboundedSender<AppMsg>,
     /// Sender the PTY stream task pushes chunks into; the main loop drains it
     /// and calls [`App::feed_pty`].
@@ -433,6 +438,7 @@ impl App {
         Self {
             claudemon,
             bus: None,
+            bus_snapshots: HashMap::new(),
             tx,
             pty_tx,
             profiles,
@@ -520,6 +526,7 @@ impl App {
     pub fn apply_msg(&mut self, msg: AppMsg) {
         match msg {
             AppMsg::Agents(list) => self.set_agents(list),
+            AppMsg::BusAgents(list) => self.seed_bus_agents(list),
             AppMsg::Transcript { session_id, turns } => {
                 // Ignore late transcripts for a session we've navigated away from.
                 // While following, the renderer keeps us pinned to the bottom.
@@ -888,9 +895,62 @@ impl App {
     // ── async actions (fire-and-forget; results arrive as AppMsg) ───────────
 
     pub fn refresh(&self) {
-        let cm = self.claudemon.clone();
         let tx = self.tx.clone();
-        tokio::spawn(async move { fetch_agents(&cm, &tx).await });
+        if let Some(bus) = self.bus.clone() {
+            // Bus mode: re-seed the list from the brain instead of claudemon.
+            tokio::spawn(async move {
+                if let Ok(v) = bus.call("agents.list", serde_json::json!({})).await {
+                    if let Ok(list) = serde_json::from_value::<Vec<Agent>>(v) {
+                        let _ = tx.send(AppMsg::BusAgents(list));
+                    }
+                }
+            });
+        } else {
+            let cm = self.claudemon.clone();
+            tokio::spawn(async move { fetch_agents(&cm, &tx).await });
+        }
+    }
+
+    pub fn has_bus(&self) -> bool {
+        self.bus.is_some()
+    }
+
+    /// Seed the snapshot map from a full bus `agents.list` and render it.
+    pub(super) fn seed_bus_agents(&mut self, list: Vec<Agent>) {
+        self.connected = true; // a successful bus list means we're live
+        self.bus_snapshots = list
+            .iter()
+            .map(|a| (a.session_id.clone(), a.clone()))
+            .collect();
+        self.set_agents(list);
+    }
+
+    /// Upsert one `agent.snapshot` and re-render from the snapshot map.
+    pub(super) fn apply_bus_snapshot(&mut self, agent: Agent) {
+        self.bus_snapshots.insert(agent.session_id.clone(), agent);
+        let list: Vec<Agent> = self.bus_snapshots.values().cloned().collect();
+        self.set_agents(list);
+    }
+
+    /// Route a delivered bus event into the agent view.
+    pub fn apply_bus_event(&mut self, ev: crate::bus::BusEvent) {
+        match ev.topic.as_str() {
+            "agent.snapshot" => {
+                if let Ok(agent) = serde_json::from_value::<Agent>(ev.data) {
+                    self.apply_bus_snapshot(agent);
+                }
+            }
+            "agent.statusline" => {
+                let sid = ev.data.get("sessionId").and_then(|v| v.as_str()).map(String::from);
+                let sl = ev.data.get("statusLine").cloned();
+                if let (Some(sid), Some(sl)) = (sid, sl) {
+                    if let Ok(status) = serde_json::from_value::<StatusLine>(sl) {
+                        self.apply_status_line(sid, status);
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 
     pub(super) fn load_transcript(&self, session_id: String) {
@@ -1184,6 +1244,36 @@ mod tests {
     fn agent_cwd(id: &str, cwd: &str, mode: &str) -> Agent {
         serde_json::from_value(serde_json::json!({ "session_id": id, "cwd": cwd, "mode": mode }))
             .unwrap()
+    }
+
+    #[test]
+    fn bus_snapshot_upserts_into_agent_list() {
+        let mut app = test_app();
+        app.apply_bus_event(crate::bus::BusEvent {
+            topic: "agent.snapshot".into(),
+            data: serde_json::json!({ "session_id": "s1", "cwd": "/a", "mode": "responding" }),
+        });
+        assert!(app.bus_snapshots.contains_key("s1"));
+        assert_eq!(
+            app.agents.iter().map(|a| a.session_id.as_str()).collect::<Vec<_>>(),
+            vec!["s1"]
+        );
+
+        // A second snapshot for the same session updates in place — no duplicate.
+        app.apply_bus_event(crate::bus::BusEvent {
+            topic: "agent.snapshot".into(),
+            data: serde_json::json!({ "session_id": "s1", "cwd": "/a", "mode": "input" }),
+        });
+        assert_eq!(app.agents.len(), 1);
+    }
+
+    #[test]
+    fn seed_bus_agents_populates_list_and_map() {
+        let mut app = test_app();
+        app.seed_bus_agents(vec![agent("s1"), agent("s2")]);
+        assert_eq!(app.bus_snapshots.len(), 2);
+        assert_eq!(app.agents.len(), 2);
+        assert!(app.connected);
     }
 
     #[tokio::test]
