@@ -54,6 +54,13 @@ func (r *registry) methods() []string {
 		"config.reload",
 		"config.getPath",
 		"config.save",
+		"layouts.list",
+		"layouts.save",
+		"layouts.delete",
+		"sessions.list",
+		"sessions.load",
+		"sessions.save",
+		"sessions.delete",
 		// host
 		"app.getCwd",
 		"fs.listDir",
@@ -115,6 +122,20 @@ func (r *registry) handle(ctx context.Context, method string, params json.RawMes
 			return nil, err
 		}
 		return jsonResult(r.cfg.save(partial))
+	case "layouts.list":
+		return jsonResult(listLayouts())
+	case "layouts.save":
+		return r.layoutsSave(params)
+	case "layouts.delete":
+		return r.layoutsDelete(params)
+	case "sessions.list":
+		return jsonResult(listSavedSessions())
+	case "sessions.load":
+		return r.savedSessionLoad(params)
+	case "sessions.save":
+		return r.savedSessionSave(params)
+	case "sessions.delete":
+		return r.savedSessionDelete(params)
 	case "app.getCwd":
 		return r.getCwd()
 	case "fs.listDir":
@@ -467,6 +488,99 @@ func (r *registry) profilesRemove(raw json.RawMessage) (json.RawMessage, error) 
 	if err := removeProfile(p.ID); err != nil {
 		return nil, err
 	}
+	return okResult()
+}
+
+func (r *registry) layoutsSave(raw json.RawMessage) (json.RawMessage, error) {
+	var input map[string]any
+	if err := unmarshal(raw, &input); err != nil {
+		return nil, err
+	}
+	if str(input["name"]) == "" && str(input["id"]) == "" {
+		return nil, fmt.Errorf("layouts.save requires { name }")
+	}
+	layout, err := saveLayout(input)
+	if err != nil {
+		return nil, err
+	}
+	return jsonResult(layout)
+}
+
+func (r *registry) layoutsDelete(raw json.RawMessage) (json.RawMessage, error) {
+	var p struct {
+		ID string `json:"id"`
+	}
+	if err := unmarshal(raw, &p); err != nil {
+		return nil, err
+	}
+	if p.ID == "" {
+		return nil, fmt.Errorf("layouts.delete requires { id }")
+	}
+	removeLayout(p.ID)
+	return okResult()
+}
+
+func (r *registry) savedSessionLoad(raw json.RawMessage) (json.RawMessage, error) {
+	var p struct {
+		Filename string `json:"filename"`
+	}
+	if err := unmarshal(raw, &p); err != nil {
+		return nil, err
+	}
+	if p.Filename == "" {
+		return nil, fmt.Errorf("sessions.load requires { filename }")
+	}
+	s := loadSavedSession(p.Filename)
+	if s == nil {
+		return json.RawMessage("null"), nil // matches the app's null-on-missing
+	}
+	return jsonResult(s)
+}
+
+// savedSessionSave persists the session blob. It mirrors the app's two branches
+// (agent-centric vs legacy tabs) and stamps the timestamp, but does not perform
+// the desktop's terminal-cwd enrichment — that relies on the GUI's in-process
+// pty→cwd map; a headless caller passes cwds it already knows.
+func (r *registry) savedSessionSave(raw json.RawMessage) (json.RawMessage, error) {
+	var p map[string]any
+	if err := unmarshal(raw, &p); err != nil {
+		return nil, err
+	}
+	name := str(p["name"])
+	data := map[string]any{"name": name, "timestamp": nowISO()}
+	if agents, ok := p["agents"].([]any); ok {
+		if p["activeAgentId"] != nil {
+			data["activeAgentId"] = p["activeAgentId"]
+		}
+		data["agents"] = agents
+	} else {
+		if p["activeTabId"] != nil {
+			data["activeTabId"] = p["activeTabId"]
+		}
+		tabs := p["tabs"]
+		if tabs == nil {
+			tabs = []any{}
+		}
+		data["tabs"] = tabs
+	}
+	filename, err := saveSavedSession(name, data)
+	if err != nil {
+		return nil, err
+	}
+	return jsonResult(filename)
+}
+
+func (r *registry) savedSessionDelete(raw json.RawMessage) (json.RawMessage, error) {
+	var p struct {
+		Filename string `json:"filename"`
+	}
+	if err := unmarshal(raw, &p); err != nil {
+		return nil, err
+	}
+	if p.Filename == "" {
+		return nil, fmt.Errorf("sessions.delete requires { filename }")
+	}
+	deleteSavedSession(p.Filename)
 	return okResult()
 }
 
