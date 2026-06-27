@@ -448,8 +448,14 @@ export function parseMarkdownBlocks(text: string): React.ReactNode[] {
       continue;
     }
 
-    // Regular paragraph
-    const paraLines: string[] = [];
+    // Regular paragraph. Always consume the current line first: it has already
+    // fallen through every block type above, so it is paragraph content by
+    // definition. Consuming it unconditionally also guarantees `i` advances —
+    // otherwise a line that looks like a table start but was rejected above
+    // (e.g. a stray `|` over a `---`, or a drawn border with no body) would be
+    // skipped by the continuation guard below and spin the outer loop forever.
+    const paraLines: string[] = [lines[i]];
+    i++;
     while (
       i < lines.length &&
       lines[i].trim() !== '' &&
@@ -466,13 +472,11 @@ export function parseMarkdownBlocks(text: string): React.ReactNode[] {
       i++;
     }
 
-    if (paraLines.length > 0) {
-      blocks.push(
-        <p key={key++} style={{ margin: '3px 0', lineHeight: 1.6, wordBreak: 'break-word' }}>
-          {renderInlineMarkdown(paraLines.join('\n'))}
-        </p>
-      );
-    }
+    blocks.push(
+      <p key={key++} style={{ margin: '3px 0', lineHeight: 1.6, wordBreak: 'break-word' }}>
+        {renderInlineMarkdown(paraLines.join('\n'))}
+      </p>
+    );
   }
 
   return mdCachePut(text, blocks);
