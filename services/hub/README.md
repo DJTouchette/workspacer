@@ -135,7 +135,8 @@ Capabilities registered today:
 | `sessions.terminalInput` / `sessions.terminalResize` | claudemon `POST /sessions/:id/{input,resize}` |
 | `sessions.transcript` / `sessions.conversation` | claudemon `GET /sessions/:id/{transcript,conversation}` |
 | `claude.profiles.list` / `add` / `update` / `remove` | `~/.config/workspacer/claude-profiles.json` |
-| `claude.listModels` | static alias list (config-derived fields land with `config.*`) |
+| `claude.listModels` | static aliases + config defaults + live models from claudemon |
+| `config.get` / `reload` / `getPath` / `save` | `~/.config/workspacer/config.yaml` (defaults + deep-merge, like the app) |
 | `app.getCwd` / `fs.listDir` / `fs.read` / `fs.write` | the host filesystem |
 
 It reuses the provider pattern from `examples/rivet-bridge`. The endgame is for
@@ -144,10 +145,10 @@ mirror each other by construction instead of duplicating logic across TS/Rust/Go
 
 **Not yet provided headlessly** (still app-only, deferred): the live PTY/event
 streams (`sessions.attachTerminal` & co — the byte stream needs a hub proxy, see
-the web client), `config.*` / `layouts.*` / `sessions.{list,load,save,delete}` /
-`analytics.*` (the canonical YAML/blob shapes + defaults live in TS and want a
-careful port), `library.*`, `claude.sessionsForDir`, `fs.{listEntries,watch}`,
-`search.project`, `notifications.post`, and supervisor/`mcpFacade` spawn args.
+the web client), `layouts.*` / `sessions.{list,load,save,delete}` / `analytics.*`
+(YAML/blob shapes that want a careful port), `library.*`,
+`claude.sessionsForDir`, `fs.{listEntries,watch}`, `search.project`,
+`notifications.post`, and supervisor/`mcpFacade` spawn args.
 
 ## Protocol
 

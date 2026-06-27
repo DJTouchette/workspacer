@@ -17,11 +17,12 @@ import (
 // registry holds the dependencies the handlers close over and dispatches calls
 // by method name.
 type registry struct {
-	cm *claudemonClient
+	cm  *claudemonClient
+	cfg *configService
 }
 
 func newRegistry(cm *claudemonClient) *registry {
-	return &registry{cm: cm}
+	return &registry{cm: cm, cfg: newConfigService()}
 }
 
 // methods is the set of capabilities this provider registers on the bus. Names
@@ -49,6 +50,10 @@ func (r *registry) methods() []string {
 		"claude.profiles.update",
 		"claude.profiles.remove",
 		"claude.listModels",
+		"config.get",
+		"config.reload",
+		"config.getPath",
+		"config.save",
 		// host
 		"app.getCwd",
 		"fs.listDir",
@@ -97,7 +102,19 @@ func (r *registry) handle(ctx context.Context, method string, params json.RawMes
 	case "claude.profiles.remove":
 		return r.profilesRemove(params)
 	case "claude.listModels":
-		return jsonResult(listClaudeModels())
+		return jsonResult(r.listModels(ctx))
+	case "config.get":
+		return jsonResult(r.cfg.get())
+	case "config.reload":
+		return jsonResult(r.cfg.reload())
+	case "config.getPath":
+		return jsonResult(r.cfg.path())
+	case "config.save":
+		var partial map[string]any
+		if err := unmarshal(params, &partial); err != nil {
+			return nil, err
+		}
+		return jsonResult(r.cfg.save(partial))
 	case "app.getCwd":
 		return r.getCwd()
 	case "fs.listDir":
