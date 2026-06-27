@@ -119,8 +119,82 @@ func (c *claudemonClient) spawn(ctx context.Context, req spawnReq) (string, erro
 	return resp.SessionID, nil
 }
 
-func (c *claudemonClient) message(ctx context.Context, id, text string) error {
-	return c.postJSON(ctx, "/sessions/"+id+"/message", map[string]any{"text": text}, nil)
+func (c *claudemonClient) getSession(ctx context.Context, id string) (json.RawMessage, error) {
+	return c.getRaw(ctx, "/sessions/"+id)
+}
+
+// submitMessage posts a prompt. claudemon's mode-gated /message accepts it only
+// when the session is at an input prompt; mid-turn it replies 409. We report
+// that as ok=false (not an error) so the caller can fall back to typing into the
+// PTY, exactly as the desktop ClaudePane does. Other HTTP failures are errors.
+func (c *claudemonClient) submitMessage(ctx context.Context, id, text string) (ok bool, err error) {
+	buf, err := json.Marshal(map[string]any{"text": text})
+	if err != nil {
+		return false, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/sessions/"+id+"/message", bytes.NewReader(buf))
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	switch {
+	case resp.StatusCode < 300:
+		return true, nil
+	case resp.StatusCode == http.StatusConflict:
+		return false, nil // not accepting input — caller falls back to the PTY
+	default:
+		return false, fmt.Errorf("claudemon POST /sessions/%s/message: %s: %s", id, resp.Status, string(body))
+	}
+}
+
+// input writes raw text into the session's PTY (verbatim, no newline munging).
+// This is the write-side counterpart of the byte stream — how answers and
+// message fallbacks are typed in, mirroring claudemonSessionClient.input.
+func (c *claudemonClient) input(ctx context.Context, id, text string) error {
+	return c.postJSON(ctx, "/sessions/"+id+"/input", map[string]any{"text": text, "newline": false}, nil)
+}
+
+// gate toggles the approval gate (claudemon holds every permission prompt for an
+// explicit decision when on).
+func (c *claudemonClient) gate(ctx context.Context, id string, on bool) (json.RawMessage, error) {
+	var out json.RawMessage
+	err := c.postRaw(ctx, "/sessions/"+id+"/gate", map[string]any{"on": on}, &out)
+	return out, err
+}
+
+// postRaw posts JSON and captures the response body as raw JSON.
+func (c *claudemonClient) postRaw(ctx context.Context, path string, body any, out *json.RawMessage) error {
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+path, bytes.NewReader(buf))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("claudemon POST %s: %s: %s", path, resp.Status, string(raw))
+	}
+	if out != nil {
+		*out = json.RawMessage(raw)
+	}
+	return nil
 }
 
 func (c *claudemonClient) approve(ctx context.Context, id, decision, reason string) error {
@@ -131,12 +205,8 @@ func (c *claudemonClient) approve(ctx context.Context, id, decision, reason stri
 	return c.postJSON(ctx, "/sessions/"+id+"/approve", body, nil)
 }
 
-func (c *claudemonClient) answerOption(ctx context.Context, id string, option int) error {
-	return c.postJSON(ctx, "/sessions/"+id+"/answer", map[string]any{"option": option}, nil)
-}
-
-func (c *claudemonClient) answerText(ctx context.Context, id, text string) error {
-	return c.postJSON(ctx, "/sessions/"+id+"/answer", map[string]any{"text": text}, nil)
+func (c *claudemonClient) resize(ctx context.Context, id string, cols, rows int) error {
+	return c.postJSON(ctx, "/sessions/"+id+"/resize", map[string]any{"cols": cols, "rows": rows}, nil)
 }
 
 func (c *claudemonClient) signal(ctx context.Context, id, signal string) error {

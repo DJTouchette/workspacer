@@ -120,20 +120,34 @@ go run ./cmd/brain --hub ws://127.0.0.1:7895/bus --claudemon http://127.0.0.1:78
 # (pass --token / $HUB_TOKEN when the hub requires auth)
 ```
 
-Capabilities registered today (Phase 1 — the "spawn + drive + observe" loop):
+Capabilities registered today:
 
 | Capability | Backed by |
 | --- | --- |
-| `agents.list` | claudemon `GET /sessions` |
+| `agents.list` / `sessions.snapshots` | claudemon `GET /sessions` |
+| `sessions.snapshot` | claudemon `GET /sessions/:id` |
 | `agents.spawn` | profile→argv + claudemon `POST /sessions/spawn` |
-| `agents.sendMessage` | claudemon `POST /sessions/:id/message` |
-| `claude.approve` / `claude.answer` / `claude.signal` | claudemon `POST /sessions/:id/{approve,answer,signal}` |
+| `terminals.create` | shell argv + claudemon `POST /sessions/spawn` |
+| `agents.sendMessage` | claudemon `POST /sessions/:id/message`, PTY fallback on 409 |
+| `claude.approve` / `claude.signal` | claudemon `POST /sessions/:id/{approve,signal}` |
+| `claude.answer` | typed into the PTY (`option`/`text`/`answers[]`), like the app |
+| `claude.gate` | claudemon `POST /sessions/:id/gate` |
+| `sessions.terminalInput` / `sessions.terminalResize` | claudemon `POST /sessions/:id/{input,resize}` |
 | `sessions.transcript` / `sessions.conversation` | claudemon `GET /sessions/:id/{transcript,conversation}` |
-| `claude.profiles.list` | `~/.config/workspacer/claude-profiles.json` |
+| `claude.profiles.list` / `add` / `update` / `remove` | `~/.config/workspacer/claude-profiles.json` |
+| `claude.listModels` | static alias list (config-derived fields land with `config.*`) |
+| `app.getCwd` / `fs.listDir` / `fs.read` / `fs.write` | the host filesystem |
 
 It reuses the provider pattern from `examples/rivet-bridge`. The endgame is for
 every client (app, TUI, web, MCP) to be a thin caller of this one brain, so they
 mirror each other by construction instead of duplicating logic across TS/Rust/Go.
+
+**Not yet provided headlessly** (still app-only, deferred): the live PTY/event
+streams (`sessions.attachTerminal` & co — the byte stream needs a hub proxy, see
+the web client), `config.*` / `layouts.*` / `sessions.{list,load,save,delete}` /
+`analytics.*` (the canonical YAML/blob shapes + defaults live in TS and want a
+careful port), `library.*`, `claude.sessionsForDir`, `fs.{listEntries,watch}`,
+`search.project`, `notifications.post`, and supervisor/`mcpFacade` spawn args.
 
 ## Protocol
 

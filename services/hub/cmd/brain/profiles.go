@@ -18,11 +18,12 @@ import (
 // profile mirrors a claude-profiles.json entry. configDir becomes
 // CLAUDE_CONFIG_DIR; extraArgs is where --model / skip-permissions may be pinned.
 type profile struct {
-	ID        string   `json:"id"`
-	Name      string   `json:"name"`
-	ConfigDir string   `json:"configDir"`
-	ExtraArgs []string `json:"extraArgs"`
-	IsDefault bool     `json:"isDefault"`
+	ID         string   `json:"id"`
+	Name       string   `json:"name"`
+	ConfigDir  string   `json:"configDir"`
+	ExtraArgs  []string `json:"extraArgs"`
+	MCPItemIDs []string `json:"mcpItemIds,omitempty"`
+	IsDefault  bool     `json:"isDefault"`
 }
 
 type profilesFile struct {
@@ -71,6 +72,119 @@ func readProfilesFile() []profile {
 		return nil
 	}
 	return parsed.Profiles
+}
+
+// saveProfiles writes the profiles file in the same shape the app does:
+// { "profiles": [...] } with 2-space indent.
+func saveProfiles(ps []profile) error {
+	if err := os.MkdirAll(configDir(), 0o755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(map[string][]profile{"profiles": ps}, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(profilesPath(), data, 0o644)
+}
+
+// addProfile appends a new profile and persists it, mirroring
+// claudeProfiles.addProfile: a fresh uuid id, trimmed configDir, and isDefault
+// only when it's the first profile on disk.
+func addProfile(name, configDirVal string, extraArgs, mcpItemIDs []string) (*profile, error) {
+	if name == "" {
+		return nil, fmt.Errorf("claude.profiles.add requires { name }")
+	}
+	ps := readProfilesFile() // the raw file (no synthetic default), matching the app
+	id, err := newSessionID()
+	if err != nil {
+		return nil, err
+	}
+	if extraArgs == nil {
+		extraArgs = []string{}
+	}
+	p := profile{
+		ID:         id,
+		Name:       name,
+		ConfigDir:  strings.TrimSpace(configDirVal),
+		ExtraArgs:  extraArgs,
+		MCPItemIDs: mcpItemIDs,
+		IsDefault:  len(ps) == 0,
+	}
+	ps = append(ps, p)
+	if err := saveProfiles(ps); err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+// profileUpdate carries the mutable fields of a profile (id is immutable).
+type profileUpdate struct {
+	Name       *string  `json:"name"`
+	ConfigDir  *string  `json:"configDir"`
+	ExtraArgs  []string `json:"extraArgs"`
+	MCPItemIDs []string `json:"mcpItemIds"`
+	IsDefault  *bool    `json:"isDefault"`
+}
+
+func updateProfile(id string, u profileUpdate) (*profile, error) {
+	ps := readProfilesFile()
+	idx := -1
+	for i := range ps {
+		if ps[i].ID == id {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return nil, fmt.Errorf("profile %q not found", id)
+	}
+	if u.Name != nil {
+		ps[idx].Name = *u.Name
+	}
+	if u.ConfigDir != nil {
+		ps[idx].ConfigDir = strings.TrimSpace(*u.ConfigDir)
+	}
+	if u.ExtraArgs != nil {
+		ps[idx].ExtraArgs = u.ExtraArgs
+	}
+	if u.MCPItemIDs != nil {
+		ps[idx].MCPItemIDs = u.MCPItemIDs
+	}
+	if u.IsDefault != nil && *u.IsDefault {
+		for i := range ps {
+			ps[i].IsDefault = ps[i].ID == id
+		}
+	}
+	if err := saveProfiles(ps); err != nil {
+		return nil, err
+	}
+	return &ps[idx], nil
+}
+
+// removeProfile deletes a profile, refusing to remove the synthetic "default"
+// and keeping at least one default, mirroring claudeProfiles.removeProfile.
+func removeProfile(id string) error {
+	if id == "default" {
+		return nil
+	}
+	ps := readProfilesFile()
+	out := ps[:0]
+	for _, p := range ps {
+		if p.ID != id {
+			out = append(out, p)
+		}
+	}
+	hasDefault := false
+	for _, p := range out {
+		if p.IsDefault {
+			hasDefault = true
+			break
+		}
+	}
+	if !hasDefault && len(out) > 0 {
+		out[0].IsDefault = true
+	}
+	return saveProfiles(out)
 }
 
 func getProfile(id string) *profile {
