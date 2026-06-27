@@ -36,6 +36,8 @@ linux:
       to: hub/hub
     - from: ../../services/hub/mcp
       to: hub/mcp
+    - from: ../../services/hub/brain
+      to: hub/brain
     - from: ../../services/hub/examples
       to: hub/examples
     - from: dist/web
@@ -52,6 +54,8 @@ win:
       to: hub/hub.exe
     - from: ../../services/hub/mcp.exe
       to: hub/mcp.exe
+    - from: ../../services/hub/brain.exe
+      to: hub/brain.exe
     - from: ../../services/hub/examples
       to: hub/examples
     - from: dist/web
@@ -68,6 +72,8 @@ mac:
       to: hub/hub
     - from: ../../services/hub/mcp
       to: hub/mcp
+    - from: ../../services/hub/brain
+      to: hub/brain
     - from: ../../services/hub/examples
       to: hub/examples
     - from: dist/web

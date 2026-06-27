@@ -19,6 +19,7 @@ import * as crypto from 'crypto';
 import { spawn, ChildProcess } from 'child_process';
 import { app } from 'electron';
 import { CLAUDEMON_API_URL } from './claudemonDaemon';
+import { DELEGATE_CATALOG_TO_BRAIN } from './brainDelegation';
 import { killStaleListener, waitForHealth as waitForHealthShared, PORTS, RestartBackoff } from '../lib/daemonUtils';
 import { getConfigDir } from './configService';
 
@@ -193,6 +194,13 @@ function launch(bin: string): Promise<void> {
     '--addr', BIND_ADDR,
     '--claudemon-events', `${CLAUDEMON_API_URL}/events`,
     '--plugins-dir', pluginsDir,
+    // Have the hub supervise the headless brain provider. With delegation on it
+    // owns the file-backed "catalog" capabilities (main stops registering them —
+    // see hubCapabilities + brainDelegation); the brain binary ships next to the
+    // hub binary, so the hub auto-detects it. Off → no brain, main stays the
+    // provider (kill switch: WORKSPACER_NO_BRAIN=1).
+    '--brain-scope', DELEGATE_CATALOG_TO_BRAIN ? 'catalog' : 'off',
+    '--claudemon', CLAUDEMON_API_URL,
   ];
   if (HUB_TOKEN) hubArgs.push('--token', HUB_TOKEN);
   // Serve the full web app (real renderer) at /app/ when remote sharing is on

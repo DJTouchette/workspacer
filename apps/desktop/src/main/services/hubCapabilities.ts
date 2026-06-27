@@ -14,6 +14,7 @@ import { claudemonSessionClient } from './claudemonSessionClient';
 import { buildClaudeArgv } from './claudeResolver';
 import { claudeProfiles } from './claudeProfiles';
 import { registerCapability } from './hubClient';
+import { DELEGATE_CATALOG_TO_BRAIN } from './brainDelegation';
 import { configService } from './configService';
 import { listClaudeModels } from './claudeModels';
 import { libraryService } from './libraryService';
@@ -44,6 +45,14 @@ function detectDefaultShell(): string {
 }
 
 export function registerHubCapabilities(): void {
+  // `cat` registers a file-backed "catalog" capability — but no-ops when we
+  // delegate the catalog to the headless brain provider (the hub spawns it with
+  // --brain-scope catalog). The bus router is single-owner per method, so main
+  // must not also register these or the two providers would collide. The
+  // live/enriched agent + streaming caps below keep using registerCapability —
+  // main still owns those. See brainDelegation.ts.
+  const cat: typeof registerCapability = DELEGATE_CATALOG_TO_BRAIN ? () => {} : registerCapability;
+
   // Read-only: list live agents with light state. The bread-and-butter "what's
   // running?" call for any dashboard plugin or MCP client.
   registerCapability('agents.list', () =>
@@ -310,25 +319,25 @@ export function registerHubCapabilities(): void {
   // Mirror the CONFIG_* IPC handlers so the web renderer loads the real config
   // (theme, keybindings, pane settings) instead of falling back to defaults,
   // and can persist changes from the Settings pane.
-  registerCapability('config.get', () => configService.getConfig());
-  registerCapability('config.reload', () => configService.reloadConfig());
-  registerCapability('config.getPath', () => configService.getConfigPath());
-  registerCapability('config.save', (params: unknown) =>
+  cat('config.get', () => configService.getConfig());
+  cat('config.reload', () => configService.reloadConfig());
+  cat('config.getPath', () => configService.getConfigPath());
+  cat('config.save', (params: unknown) =>
     configService.saveConfig((params ?? {}) as Parameters<typeof configService.saveConfig>[0]));
 
   // ── Model picker (web parity) ──────────────────────────────────────────
-  registerCapability('claude.listModels', () => listClaudeModels());
+  cat('claude.listModels', () => listClaudeModels());
 
   // ── Saved sessions (workspace layouts) ─────────────────────────────────
   // Mirror the SESSION_* IPC handlers so the web client can list/load/save the
   // saved agent arrangements (the session picker).
-  registerCapability('sessions.list', () => sessionService.listSessions());
-  registerCapability('sessions.load', (params: unknown) => {
+  cat('sessions.list', () => sessionService.listSessions());
+  cat('sessions.load', (params: unknown) => {
     const { filename } = (params ?? {}) as { filename?: string };
     if (!filename) throw new Error('sessions.load requires { filename }');
     return sessionService.loadSession(filename);
   });
-  registerCapability('sessions.save', (params: unknown) => {
+  cat('sessions.save', (params: unknown) => {
     const data = (params ?? {}) as SessionData;
     const ptyMapping = data.ptyMapping || {};
     if (Array.isArray(data.agents)) {
@@ -350,7 +359,7 @@ export function registerHubCapabilities(): void {
       tabs: enrichedTabs,
     });
   });
-  registerCapability('sessions.delete', (params: unknown) => {
+  cat('sessions.delete', (params: unknown) => {
     const { filename } = (params ?? {}) as { filename?: string };
     if (!filename) throw new Error('sessions.delete requires { filename }');
     sessionService.deleteSession(filename);
@@ -358,9 +367,9 @@ export function registerHubCapabilities(): void {
   });
 
   // ── Layout templates ───────────────────────────────────────────────────
-  registerCapability('layouts.list', () => layoutService.list());
-  registerCapability('layouts.save', (params: unknown) => layoutService.save((params ?? {}) as LayoutInput));
-  registerCapability('layouts.delete', (params: unknown) => {
+  cat('layouts.list', () => layoutService.list());
+  cat('layouts.save', (params: unknown) => layoutService.save((params ?? {}) as LayoutInput));
+  cat('layouts.delete', (params: unknown) => {
     const { id } = (params ?? {}) as { id?: string };
     if (!id) throw new Error('layouts.delete requires { id }');
     layoutService.remove(id);
@@ -368,8 +377,8 @@ export function registerHubCapabilities(): void {
   });
 
   // ── Claude profiles ────────────────────────────────────────────────────
-  registerCapability('claude.profiles.list', () => claudeProfiles.getProfiles());
-  registerCapability('claude.profiles.add', (params: unknown) => {
+  cat('claude.profiles.list', () => claudeProfiles.getProfiles());
+  cat('claude.profiles.add', (params: unknown) => {
     const { name, configDir, extraArgs, mcpItemIds } = (params ?? {}) as { name?: string; configDir?: string; extraArgs?: string[]; mcpItemIds?: string[] };
     if (!name) throw new Error('claude.profiles.add requires { name }');
     // Forward mcpItemIds — the web/remote client sends the user's selected MCP
@@ -377,12 +386,12 @@ export function registerHubCapabilities(): void {
     // them, so profiles created remotely had no MCP servers.
     return claudeProfiles.addProfile(name, configDir ?? '', extraArgs ?? [], mcpItemIds ?? []);
   });
-  registerCapability('claude.profiles.update', (params: unknown) => {
+  cat('claude.profiles.update', (params: unknown) => {
     const { id, updates } = (params ?? {}) as { id?: string; updates?: ProfileUpdate };
     if (!id) throw new Error('claude.profiles.update requires { id, updates }');
     return claudeProfiles.updateProfile(id, updates ?? ({} as ProfileUpdate));
   });
-  registerCapability('claude.profiles.remove', (params: unknown) => {
+  cat('claude.profiles.remove', (params: unknown) => {
     const { id } = (params ?? {}) as { id?: string };
     if (!id) throw new Error('claude.profiles.remove requires { id }');
     claudeProfiles.removeProfile(id);
@@ -390,19 +399,19 @@ export function registerHubCapabilities(): void {
   });
 
   // ── Claude session discovery (resume picker) ───────────────────────────
-  registerCapability('claude.sessionsForDir', (params: unknown) => {
+  cat('claude.sessionsForDir', (params: unknown) => {
     const { cwd } = (params ?? {}) as { cwd?: string };
     if (!cwd) throw new Error('claude.sessionsForDir requires { cwd }');
     return listClaudeSessionsForDir(cwd);
   });
 
   // ── Library (reusable prompts + skills) ────────────────────────────────
-  registerCapability('library.list', (params: unknown) => {
+  cat('library.list', (params: unknown) => {
     const { cwd } = (params ?? {}) as { cwd?: string };
     return libraryService.list(cwd);
   });
-  registerCapability('library.save', (params: unknown) => libraryService.save((params ?? {}) as any));
-  registerCapability('library.remove', (params: unknown) => {
+  cat('library.save', (params: unknown) => libraryService.save((params ?? {}) as any));
+  cat('library.remove', (params: unknown) => {
     const { scope, id, cwd, kind } = (params ?? {}) as {
       scope?: 'global' | 'project' | 'claude'; id?: string; cwd?: string; kind?: 'prompt' | 'skill' | 'agent';
     };
@@ -431,7 +440,7 @@ export function registerHubCapabilities(): void {
   // The web client can't open a native OS dialog, so it browses the host's
   // directories through this to choose a working directory for a new agent.
   // Directories only (you spawn an agent *in* a folder); hidden entries skipped.
-  registerCapability('fs.listDir', (params: unknown) => {
+  cat('fs.listDir', (params: unknown) => {
     const { path: p } = (params ?? {}) as { path?: string };
     const home = os.homedir();
     const resolved = path.resolve(p && p.trim() ? p.replace(/^~/, home) : home);
@@ -450,18 +459,18 @@ export function registerHubCapabilities(): void {
   // ── File read/write (editor pane) ──────────────────────────────────────
   // Same backend as the file:read/file:write IPC, so the web/phone client edits
   // the same host files as the desktop. Errors propagate as a failed call.
-  registerCapability('fs.read', (params: unknown) => {
+  cat('fs.read', (params: unknown) => {
     const { path: p } = (params ?? {}) as { path?: string };
     if (!p) throw new Error('fs.read requires a path');
     return readTextFile(p);
   });
-  registerCapability('fs.write', (params: unknown) => {
+  cat('fs.write', (params: unknown) => {
     const { path: p, contents } = (params ?? {}) as { path?: string; contents?: string };
     if (!p) throw new Error('fs.write requires a path');
     return writeTextFile(p, contents ?? '');
   });
   // Files-included, gitignore-aware listing for the editor's file tree (web client).
-  registerCapability('fs.listEntries', (params: unknown) => {
+  cat('fs.listEntries', (params: unknown) => {
     const { path: p } = (params ?? {}) as { path?: string };
     if (!p) throw new Error('fs.listEntries requires a path');
     return listDir(p);
