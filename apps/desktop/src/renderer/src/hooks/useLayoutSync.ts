@@ -99,8 +99,19 @@ export function useLayoutSync({
       .then((doc: LayoutDoc) => {
         if (cancelled) return;
         const data = doc?.data as SharedLayout | null;
-        appliedVersionRef.current = doc?.version ?? -1;
-        if (hasRealLayout(data) && data) {
+        const version = doc?.version ?? -1;
+        // A live `layout.changed` broadcast can land and apply a newer document
+        // before this initial read resolves (the read captured an older
+        // snapshot). Such a read is stale: never regress the applied version,
+        // and don't let the older snapshot clobber the layout the broadcast
+        // already applied.
+        const stale = version < appliedVersionRef.current;
+        if (version > appliedVersionRef.current) appliedVersionRef.current = version;
+        if (stale) {
+          // A newer layout was already adopted via broadcast — we're mirroring.
+          setSessionPhase('active');
+          onHydration('adopted');
+        } else if (hasRealLayout(data) && data) {
           // Another client already populated the layout — adopt it and skip the
           // local picker so this client comes up mirroring, not blank.
           lastSyncedRef.current = project(data.agents, data.activeAgentId);
