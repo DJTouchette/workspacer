@@ -73,7 +73,7 @@ async fn main() -> Result<()> {
     // Bring up claudemon if it isn't running, before we take over the screen so
     // diagnostics print normally and the first request lands. The guard stops
     // it again on exit (only if we started it).
-    let _daemons = daemons::ensure(&cli.claudemon_url, !cli.no_spawn);
+    let _daemons = daemons::ensure(&cli.claudemon_url, cli.bus.as_deref(), !cli.no_spawn);
 
     let claudemon = claudemon::Claudemon::new(cli.claudemon_url.clone());
     let profiles = profiles::load();

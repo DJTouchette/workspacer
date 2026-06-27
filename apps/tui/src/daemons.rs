@@ -41,14 +41,29 @@ impl Drop for Daemons {
     }
 }
 
-/// Ensure claudemon is up, spawning it if missing. Returns a guard that stops
-/// whatever we started. No-ops when the URL isn't loopback or auto-spawn is off.
-pub fn ensure(claudemon_url: &str, enabled: bool) -> Daemons {
-    if !enabled || !is_loopback(claudemon_url) || port_open(CLAUDEMON_API_PORT) {
-        return Daemons::none();
-    }
+const HUB_BUS_PORT: u16 = 7895;
 
+/// Ensure the daemons the TUI needs are up, spawning what's missing. Always
+/// ensures claudemon; when `bus_url` is set (the TUI is a bus client), also
+/// ensures the hub + its supervised brain. Returns a guard that stops only what
+/// we started. No-ops when a URL isn't loopback or auto-spawn is off; an
+/// already-running daemon (Electron, or one you started) is left untouched.
+pub fn ensure(claudemon_url: &str, bus_url: Option<&str>, enabled: bool) -> Daemons {
     let mut daemons = Daemons::none();
+    if !enabled {
+        return daemons;
+    }
+    ensure_claudemon(&mut daemons, claudemon_url);
+    if let Some(bus) = bus_url {
+        ensure_hub(&mut daemons, bus, claudemon_url);
+    }
+    daemons
+}
+
+fn ensure_claudemon(daemons: &mut Daemons, claudemon_url: &str) {
+    if !is_loopback(claudemon_url) || port_open(CLAUDEMON_API_PORT) {
+        return; // remote, or already listening
+    }
     match claudemon_bin() {
         Some(bin) => match spawn(&bin, &[
             "serve",
@@ -69,7 +84,57 @@ pub fn ensure(claudemon_url: &str, enabled: bool) -> Daemons {
              or set WKS_CLAUDEMON_BIN. Staying in reconnect until it's reachable."
         ),
     }
-    daemons
+}
+
+/// Spawn the hub (with a full-scope brain) when the bus URL is loopback and
+/// nothing is already listening there. The hub auto-detects the sibling brain
+/// binary and bridges the given claudemon.
+fn ensure_hub(daemons: &mut Daemons, bus_url: &str, claudemon_url: &str) {
+    if !is_loopback(bus_url) {
+        return; // someone else owns a remote hub
+    }
+    let (addr, port) = parse_bus_addr(bus_url);
+    if port_open(port) {
+        return; // hub already up — leave it
+    }
+    match hub_bin() {
+        Some(bin) => {
+            let events = format!("{claudemon_url}/events");
+            let args: [&str; 8] = [
+                "--addr", &addr,
+                "--claudemon-events", &events,
+                "--brain-scope", "full",
+                "--claudemon", claudemon_url,
+            ];
+            match spawn(&bin, &args) {
+                Ok(child) => {
+                    eprintln!("[wks-tui] started hub + brain ({})", bin.display());
+                    daemons.children.push(("hub", child));
+                    wait_for_port(port, Duration::from_secs(5));
+                }
+                Err(e) => eprintln!("[wks-tui] could not start hub: {e}"),
+            }
+        }
+        None => eprintln!(
+            "[wks-tui] hub not found — build it (make build-hub) or set WKS_HUB_BIN. \
+             --bus calls will fail until it's reachable."
+        ),
+    }
+}
+
+/// Extract `host:port` and the port from a `ws://host:port/path` bus URL,
+/// defaulting the port to the hub's default when absent.
+fn parse_bus_addr(url: &str) -> (String, u16) {
+    let after = url.split("://").nth(1).unwrap_or(url);
+    let authority = after.split('/').next().unwrap_or("");
+    match authority.rsplit_once(':') {
+        Some((host, port)) => {
+            let p = port.parse().unwrap_or(HUB_BUS_PORT);
+            (format!("{host}:{p}"), p)
+        }
+        None if !authority.is_empty() => (format!("{authority}:{HUB_BUS_PORT}"), HUB_BUS_PORT),
+        None => (format!("127.0.0.1:{HUB_BUS_PORT}"), HUB_BUS_PORT),
+    }
 }
 
 fn spawn(bin: &Path, args: &[&str]) -> std::io::Result<Child> {
@@ -140,4 +205,35 @@ fn claudemon_bin() -> Option<PathBuf> {
         }
     }
     None
+}
+
+/// The hub binary lives at `services/hub/hub` (where `make build-hub` puts it,
+/// alongside the `brain` binary the hub auto-detects). Env override wins.
+fn hub_bin() -> Option<PathBuf> {
+    if let Ok(p) = std::env::var("WKS_HUB_BIN") {
+        return Some(PathBuf::from(p));
+    }
+    let name = if cfg!(windows) { "hub.exe" } else { "hub" };
+    let candidate = repo_root().join("services").join("hub").join(name);
+    candidate.exists().then_some(candidate)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_bus_addr_extracts_host_port() {
+        assert_eq!(parse_bus_addr("ws://127.0.0.1:7895/bus"), ("127.0.0.1:7895".into(), 7895));
+        assert_eq!(parse_bus_addr("ws://localhost:9000/bus"), ("localhost:9000".into(), 9000));
+        // No port → hub default.
+        assert_eq!(parse_bus_addr("ws://127.0.0.1/bus"), ("127.0.0.1:7895".into(), 7895));
+    }
+
+    #[test]
+    fn loopback_detects_local_bus_urls() {
+        assert!(is_loopback("ws://127.0.0.1:7895/bus"));
+        assert!(is_loopback("ws://localhost:7895/bus"));
+        assert!(!is_loopback("ws://example.com:7895/bus"));
+    }
 }
