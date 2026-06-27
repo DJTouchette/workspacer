@@ -531,14 +531,22 @@ func (r *registry) terminalInput(ctx context.Context, raw json.RawMessage) (json
 	var p struct {
 		SessionID string `json:"sessionId"`
 		Data      string `json:"data"`
+		BytesB64  string `json:"bytesB64"`
 	}
 	if err := unmarshal(raw, &p); err != nil {
 		return nil, err
 	}
 	if p.SessionID == "" {
-		return nil, fmt.Errorf("sessions.terminalInput requires { sessionId, data }")
+		return nil, fmt.Errorf("sessions.terminalInput requires { sessionId, data|bytesB64 }")
 	}
-	if err := r.cm.input(ctx, p.SessionID, p.Data); err != nil {
+	// Raw keystrokes come as base64 bytes; plain text uses the text path.
+	var err error
+	if p.BytesB64 != "" {
+		err = r.cm.inputBytes(ctx, p.SessionID, p.BytesB64)
+	} else {
+		err = r.cm.input(ctx, p.SessionID, p.Data)
+	}
+	if err != nil {
 		return nil, err
 	}
 	return okResult()

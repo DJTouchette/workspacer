@@ -486,9 +486,9 @@ impl App {
         }
         let Some(sid) = self.open_session_id() else { return };
         let Some(bytes) = crate::terminal::encode_key(&key) else { return };
-        let cm = self.claudemon.clone();
+        let drv = self.driver();
         tokio::spawn(async move {
-            let _ = cm.input_bytes(&sid, &bytes).await;
+            let _ = drv.terminal_input(&sid, &bytes).await;
         });
     }
 
@@ -808,11 +808,11 @@ impl App {
                     self.set_toast("open an agent's terminal to insert");
                     return;
                 };
-                let cm = self.claudemon.clone();
+                let drv = self.driver();
                 let bytes = bracketed_paste(&body);
                 self.set_toast("Inserted");
                 tokio::spawn(async move {
-                    let _ = cm.input_bytes(&sid, &bytes).await;
+                    let _ = drv.terminal_input(&sid, &bytes).await;
                 });
             }
             PaletteAction::SpawnWithPrompt(body) => self.open_spawn_with_prompt(body),

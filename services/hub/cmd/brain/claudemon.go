@@ -184,6 +184,12 @@ func (c *claudemonClient) input(ctx context.Context, id, text string) error {
 	return c.postJSON(ctx, "/sessions/"+id+"/input", map[string]any{"text": text, "newline": false}, nil)
 }
 
+// inputBytes writes raw base64-encoded bytes into the PTY — for terminal
+// keystrokes (arrows, Ctrl-C, Esc) that text encoding would mangle.
+func (c *claudemonClient) inputBytes(ctx context.Context, id, b64 string) error {
+	return c.postJSON(ctx, "/sessions/"+id+"/input", map[string]any{"bytes_b64": b64, "newline": false}, nil)
+}
+
 // gate toggles the approval gate (claudemon holds every permission prompt for an
 // explicit decision when on).
 func (c *claudemonClient) gate(ctx context.Context, id string, on bool) (json.RawMessage, error) {

@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
+use base64::Engine as _;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, oneshot};
@@ -289,6 +290,31 @@ impl Driver {
             }
         }
     }
+
+    /// Write raw keystroke bytes into a session's PTY. On the bus they go as
+    /// base64 (sessions.terminalInput); claudemon-direct uses the byte endpoint.
+    pub async fn terminal_input(&self, sid: &str, bytes: &[u8]) -> Result<()> {
+        match &self.bus {
+            Some(b) => {
+                let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
+                b.call("sessions.terminalInput", json!({ "sessionId": sid, "bytesB64": b64 }))
+                    .await
+                    .map(|_| ())
+            }
+            None => self.claudemon.input_bytes(sid, bytes).await,
+        }
+    }
+
+    /// Resize a session's PTY to the pane grid.
+    pub async fn resize(&self, sid: &str, cols: u16, rows: u16) -> Result<()> {
+        match &self.bus {
+            Some(b) => b
+                .call("sessions.terminalResize", json!({ "sessionId": sid, "cols": cols, "rows": rows }))
+                .await
+                .map(|_| ()),
+            None => self.claudemon.resize(sid, cols, rows).await,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -422,5 +448,22 @@ mod tests {
         assert_eq!(method, "agents.spawn");
         assert_eq!(params["cwd"], json!("/tmp/proj"));
         assert_eq!(params["profileId"], json!("work"));
+    }
+
+    #[tokio::test]
+    async fn driver_terminal_input_sends_base64_bytes() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut rx = recording_hub(listener, json!({}));
+
+        bus_driver(addr).terminal_input("s1", &[1, 2, 3]).await.expect("input ok");
+
+        let (method, params) = tokio::time::timeout(Duration::from_secs(3), rx.recv())
+            .await
+            .expect("call within 3s")
+            .expect("recorder open");
+        assert_eq!(method, "sessions.terminalInput");
+        assert_eq!(params["sessionId"], json!("s1"));
+        assert_eq!(params["bytesB64"], json!("AQID")); // base64([1,2,3])
     }
 }

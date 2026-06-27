@@ -86,7 +86,11 @@ async fn main() -> Result<()> {
     let (bus, bus_events) = match cli.bus.as_ref() {
         Some(url) => {
             let (client, events) = bus::BusClient::connect(url.clone(), cli.bus_token.clone());
-            let _ = client.subscribe(vec!["agent.snapshot".into(), "agent.statusline".into()]);
+            let _ = client.subscribe(vec![
+                "agent.snapshot".into(),
+                "agent.statusline".into(),
+                "pty.bytes.*".into(),
+            ]);
             (Some(client), Some(events))
         }
         None => (None, None),

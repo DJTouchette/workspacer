@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc::UnboundedSender;
 
+use base64::Engine as _;
 use crate::claudemon::{Claudemon, PtyChunk};
 use crate::config::Config;
 use crate::keys::{Chord, Keymap};
@@ -809,10 +810,10 @@ impl App {
             return;
         }
         let pending: Vec<(String, (u16, u16))> = self.term_resizes.drain().collect();
-        let cm = self.claudemon.clone();
+        let drv = self.driver();
         tokio::spawn(async move {
             for (sid, (cols, rows)) in pending {
-                let _ = cm.resize(&sid, cols, rows).await;
+                let _ = drv.resize(&sid, cols, rows).await;
             }
         });
     }
@@ -934,6 +935,18 @@ impl App {
 
     /// Route a delivered bus event into the agent view.
     pub fn apply_bus_event(&mut self, ev: crate::bus::BusEvent) {
+        // Live terminal bytes: pty.bytes.<sessionId>, base64 in the event data.
+        if let Some(sid) = ev.topic.strip_prefix("pty.bytes.") {
+            if let Some(b64) = ev.data.as_str() {
+                if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(b64) {
+                    self.feed_pty(crate::claudemon::PtyChunk {
+                        session_id: sid.to_string(),
+                        bytes,
+                    });
+                }
+            }
+            return;
+        }
         match ev.topic.as_str() {
             "agent.snapshot" => {
                 if let Ok(agent) = serde_json::from_value::<Agent>(ev.data) {
@@ -1144,6 +1157,33 @@ impl App {
             return;
         }
         self.terms.insert(session_id.clone(), Term::new());
+
+        // Bus mode: attach the lease (which replays the ring buffer) and keep it
+        // alive; the bytes arrive as pty.bytes.<id> events (see apply_bus_event).
+        if let Some(bus) = self.bus.clone() {
+            let sid = session_id.clone();
+            let handle = tokio::spawn(async move {
+                let _ = bus
+                    .call("sessions.attachTerminal", serde_json::json!({ "sessionId": sid }))
+                    .await;
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                    // A false keepalive means the lease lapsed — re-attach to re-prime.
+                    let lapsed = matches!(
+                        bus.call("sessions.terminalKeepalive", serde_json::json!({ "sessionId": sid })).await,
+                        Ok(v) if v.get("ok").and_then(|b| b.as_bool()) == Some(false)
+                    );
+                    if lapsed {
+                        let _ = bus
+                            .call("sessions.attachTerminal", serde_json::json!({ "sessionId": sid }))
+                            .await;
+                    }
+                }
+            });
+            self.term_tasks.insert(session_id, handle.abort_handle());
+            return;
+        }
+
         let cm = self.claudemon.clone();
         let pty_tx = self.pty_tx.clone();
         let msg_tx = self.tx.clone();
@@ -1274,6 +1314,18 @@ mod tests {
         assert_eq!(app.bus_snapshots.len(), 2);
         assert_eq!(app.agents.len(), 2);
         assert!(app.connected);
+    }
+
+    #[test]
+    fn pty_bytes_event_feeds_the_terminal() {
+        let mut app = test_app();
+        app.terms.insert("s1".into(), crate::terminal::Term::new());
+        app.apply_bus_event(crate::bus::BusEvent {
+            topic: "pty.bytes.s1".into(),
+            data: serde_json::json!(base64::engine::general_purpose::STANDARD.encode("hello")),
+        });
+        let screen = app.terms.get("s1").unwrap().screen();
+        assert!(screen.contents().contains("hello"), "got {:?}", screen.contents());
     }
 
     #[tokio::test]
