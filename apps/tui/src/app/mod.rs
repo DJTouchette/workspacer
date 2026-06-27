@@ -1268,7 +1268,21 @@ impl App {
 mod tests {
     use super::*;
 
+    /// Redirect the config dir to a per-process temp dir so tests never read or
+    /// write the real ~/.config/workspacer (pins/names/notes). Without this,
+    /// pin/note tests pollute the user's files and leak state across runs.
+    fn isolate_config() {
+        use std::sync::Once;
+        static ONCE: Once = Once::new();
+        ONCE.call_once(|| {
+            let dir = std::env::temp_dir().join(format!("wks-tui-test-{}", std::process::id()));
+            let _ = std::fs::create_dir_all(&dir);
+            std::env::set_var("XDG_CONFIG_HOME", &dir);
+        });
+    }
+
     fn test_app() -> App {
+        isolate_config();
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let (ptx, _prx) = tokio::sync::mpsc::unbounded_channel();
         // Points at an unused port; the background stream tasks just fail and
