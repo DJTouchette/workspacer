@@ -293,6 +293,9 @@ impl ReviewState {
 
 pub struct App {
     pub(super) claudemon: Claudemon,
+    /// Optional hub-bus client. When set, agent-driving calls route through it
+    /// (the TUI as a thin bus client); otherwise everything uses claudemon.
+    pub(super) bus: Option<crate::bus::BusClient>,
     pub(super) tx: UnboundedSender<AppMsg>,
     /// Sender the PTY stream task pushes chunks into; the main loop drains it
     /// and calls [`App::feed_pty`].
@@ -429,6 +432,7 @@ impl App {
     ) -> Self {
         Self {
             claudemon,
+            bus: None,
             tx,
             pty_tx,
             profiles,
@@ -481,6 +485,20 @@ impl App {
             input: String::new(),
             pending_keys: Vec::new(),
             toast: None,
+        }
+    }
+
+    /// Attach (or clear) the hub-bus client after construction.
+    pub fn set_bus(&mut self, bus: Option<crate::bus::BusClient>) {
+        self.bus = bus;
+    }
+
+    /// A cheap driver bound to the current claudemon + optional bus, for
+    /// agent-driving calls (message/approve/answer/signal).
+    pub(super) fn driver(&self) -> crate::bus::Driver {
+        crate::bus::Driver {
+            claudemon: self.claudemon.clone(),
+            bus: self.bus.clone(),
         }
     }
 

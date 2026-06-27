@@ -53,6 +53,17 @@ struct Cli {
     /// to a daemon started elsewhere (e.g. the Electron app).
     #[arg(long)]
     no_spawn: bool,
+
+    /// Hub bus URL (e.g. ws://127.0.0.1:7895/bus). When set, agent-driving calls
+    /// (message/approve/answer/signal) route through the hub's brain provider
+    /// instead of claudemon directly — the TUI as a thin bus client. Observation
+    /// (the agent list, terminals) still uses claudemon for now.
+    #[arg(long, env = "WKS_HUB_BUS")]
+    bus: Option<String>,
+
+    /// Auth token for the hub bus (when it requires one).
+    #[arg(long, env = "HUB_TOKEN")]
+    bus_token: Option<String>,
 }
 
 #[tokio::main]
@@ -69,8 +80,15 @@ async fn main() -> Result<()> {
     let library = library::load();
     let config = config::load();
 
+    // Optionally connect to the hub bus (reconnecting in the background). When
+    // set, agent-driving calls route through it; otherwise the TUI is unchanged.
+    let bus = cli.bus.as_ref().map(|url| {
+        let (client, _events) = bus::BusClient::connect(url.clone(), cli.bus_token.clone());
+        client
+    });
+
     let mut terminal = setup_terminal()?;
-    let res = run(&mut terminal, cli.claudemon_url, claudemon, profiles, library, config).await;
+    let res = run(&mut terminal, cli.claudemon_url, claudemon, bus, profiles, library, config).await;
     restore_terminal(&mut terminal)?;
     res
 }
@@ -79,6 +97,7 @@ async fn run(
     terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     events_url: String,
     claudemon: claudemon::Claudemon,
+    bus: Option<bus::BusClient>,
     profiles: Vec<profiles::Profile>,
     library: Vec<library::LibraryItem>,
     config: config::Config,
@@ -88,6 +107,7 @@ async fn run(
     let (msg_tx, mut msg_rx) = mpsc::unbounded_channel::<AppMsg>();
     let (pty_tx, mut pty_rx) = mpsc::unbounded_channel::<claudemon::PtyChunk>();
     let mut app = App::new(claudemon, profiles, library, config, msg_tx, pty_tx);
+    app.set_bus(bus);
 
     let mut keys = EventStream::new();
     // A steady tick so toasts expire and the "working…" indicator stays live

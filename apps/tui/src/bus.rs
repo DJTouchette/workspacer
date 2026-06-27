@@ -193,6 +193,72 @@ fn handle_frame(
     }
 }
 
+/// Routes agent-driving capability calls through the bus when connected, else
+/// straight to claudemon. The verbs here map 1:1 to brain capabilities with
+/// simple `{sessionId, …}` params; spawn (argv) and raw PTY input still go
+/// claudemon-direct (they need argv/bytes handling the bus path doesn't cover
+/// yet). Cheap to clone — both fields are handles.
+#[derive(Clone)]
+pub struct Driver {
+    pub claudemon: crate::claudemon::Claudemon,
+    pub bus: Option<BusClient>,
+}
+
+impl Driver {
+    pub async fn message(&self, sid: &str, text: &str) -> Result<()> {
+        match &self.bus {
+            Some(b) => b
+                .call("agents.sendMessage", json!({ "sessionId": sid, "text": text }))
+                .await
+                .map(|_| ()),
+            None => self.claudemon.message(sid, text).await,
+        }
+    }
+
+    pub async fn answer_text(&self, sid: &str, text: &str) -> Result<()> {
+        match &self.bus {
+            Some(b) => b
+                .call("claude.answer", json!({ "sessionId": sid, "text": text }))
+                .await
+                .map(|_| ()),
+            None => self.claudemon.answer_text(sid, text).await,
+        }
+    }
+
+    pub async fn answer_option(&self, sid: &str, option: u64) -> Result<()> {
+        match &self.bus {
+            Some(b) => b
+                .call("claude.answer", json!({ "sessionId": sid, "option": option }))
+                .await
+                .map(|_| ()),
+            None => self.claudemon.answer_option(sid, option).await,
+        }
+    }
+
+    pub async fn approve(&self, sid: &str, decision: &str, reason: Option<String>) -> Result<()> {
+        match &self.bus {
+            Some(b) => {
+                let mut params = json!({ "sessionId": sid, "decision": decision });
+                if let Some(r) = reason {
+                    params["reason"] = json!(r);
+                }
+                b.call("claude.approve", params).await.map(|_| ())
+            }
+            None => self.claudemon.approve(sid, decision, reason).await,
+        }
+    }
+
+    pub async fn signal(&self, sid: &str, signal: &str) -> Result<()> {
+        match &self.bus {
+            Some(b) => b
+                .call("claude.signal", json!({ "sessionId": sid, "signal": signal }))
+                .await
+                .map(|_| ()),
+            None => self.claudemon.signal(sid, signal).await,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,5 +312,43 @@ mod tests {
             .expect("event channel open");
         assert_eq!(ev.topic, "agent.snapshot");
         assert_eq!(ev.data["session_id"], json!("s1"));
+    }
+
+    #[tokio::test]
+    async fn driver_routes_message_to_capability() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel::<(String, Value)>();
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let (mut write, mut read) = ws.split();
+            while let Some(Ok(Message::Text(txt))) = read.next().await {
+                let v: Value = serde_json::from_str(&txt).unwrap();
+                if v.get("op").and_then(|o| o.as_str()) == Some("call") {
+                    let id = v.get("id").and_then(|i| i.as_str()).unwrap_or("").to_string();
+                    let _ = write
+                        .send(Message::Text(json!({ "op": "result", "id": id, "result": {} }).to_string()))
+                        .await;
+                    let method = v.get("method").and_then(|m| m.as_str()).unwrap_or("").to_string();
+                    let _ = tx.send((method, v.get("params").cloned().unwrap_or(Value::Null)));
+                }
+            }
+        });
+
+        let (client, _events) = BusClient::connect(format!("ws://{addr}/bus"), None);
+        let drv = Driver {
+            claudemon: crate::claudemon::Claudemon::new("http://unused".into()),
+            bus: Some(client),
+        };
+        drv.message("s1", "hello").await.expect("message ok");
+
+        let (method, params) = tokio::time::timeout(Duration::from_secs(3), rx.recv())
+            .await
+            .expect("call within 3s")
+            .expect("recorder open");
+        assert_eq!(method, "agents.sendMessage");
+        assert_eq!(params["sessionId"], json!("s1"));
+        assert_eq!(params["text"], json!("hello"));
     }
 }

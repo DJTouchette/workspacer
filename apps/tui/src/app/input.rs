@@ -1302,9 +1302,9 @@ impl App {
             return;
         }
         let sid = agent.session_id.clone();
-        let cm = self.claudemon.clone();
+        let drv = self.driver();
         let decision = decision.to_string();
-        self.dispatch(ok, async move { cm.approve(&sid, &decision, None).await });
+        self.dispatch(ok, async move { drv.approve(&sid, &decision, None).await });
     }
 
     /// Answer the first pending question with the option at 1-based key `c`.
@@ -1315,15 +1315,15 @@ impl App {
         }
         let option = (c as u8 - b'0') as u64; // '1'..='9' → 1..=9
         let sid = agent.session_id.clone();
-        let cm = self.claudemon.clone();
-        self.dispatch("Answered", async move { cm.answer_option(&sid, option).await });
+        let drv = self.driver();
+        self.dispatch("Answered", async move { drv.answer_option(&sid, option).await });
     }
 
     pub(super) fn signal(&mut self, signal: &str, ok: &str) {
         let Some(sid) = self.target_session() else { return };
-        let cm = self.claudemon.clone();
+        let drv = self.driver();
         let signal = signal.to_string();
-        self.dispatch(ok, async move { cm.signal(&sid, &signal).await });
+        self.dispatch(ok, async move { drv.signal(&sid, &signal).await });
     }
 
     /// Send the composer's contents — as an answer if the agent is on a
@@ -1336,12 +1336,12 @@ impl App {
         let Some(agent) = self.target_agent() else { return };
         let sid = agent.session_id.clone();
         let answering = agent.has_question();
-        let cm = self.claudemon.clone();
+        let drv = self.driver();
         self.dispatch("Sent", async move {
             if answering {
-                cm.answer_text(&sid, &text).await
+                drv.answer_text(&sid, &text).await
             } else {
-                cm.message(&sid, &text).await
+                drv.message(&sid, &text).await
             }
         });
         self.input.clear();
