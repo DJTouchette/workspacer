@@ -18,8 +18,9 @@ import (
 // registry holds the dependencies the handlers close over and dispatches calls
 // by method name.
 type registry struct {
-	cm  *claudemonClient
-	cfg *configService
+	cm    *claudemonClient
+	cfg   *configService
+	store *sessionStore // live session store (full scope only); nil → proxy claudemon
 }
 
 func newRegistry(cm *claudemonClient) *registry {
@@ -111,6 +112,9 @@ func (r *registry) methodsForScope(scope string) []string {
 func (r *registry) handle(ctx context.Context, method string, params json.RawMessage) (json.RawMessage, error) {
 	switch method {
 	case "agents.list":
+		if r.store != nil {
+			return jsonResult(r.store.all())
+		}
 		return r.cm.listSessions(ctx)
 	case "agents.spawn":
 		return r.spawn(ctx, params)
@@ -131,6 +135,9 @@ func (r *registry) handle(ctx context.Context, method string, params json.RawMes
 	case "sessions.conversation":
 		return r.conversation(ctx, params)
 	case "sessions.snapshots":
+		if r.store != nil {
+			return jsonResult(r.store.all())
+		}
 		return r.cm.listSessions(ctx)
 	case "sessions.snapshot":
 		return r.snapshot(ctx, params)
@@ -453,6 +460,11 @@ func (r *registry) snapshot(ctx context.Context, raw json.RawMessage) (json.RawM
 	}
 	if p.SessionID == "" {
 		return nil, fmt.Errorf("sessions.snapshot requires { sessionId }")
+	}
+	if r.store != nil {
+		if snap, ok := r.store.get(p.SessionID); ok {
+			return snap, nil
+		}
 	}
 	return r.cm.getSession(ctx, p.SessionID)
 }

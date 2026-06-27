@@ -14,6 +14,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"log"
 	"os"
@@ -28,12 +29,24 @@ func main() {
 	scope := flag.String("scope", envOr("WKS_BRAIN_SCOPE", "full"), "capability scope: full (everything, headless) | catalog (file-backed subset, run alongside the desktop app)")
 	flag.Parse()
 
-	reg := newRegistry(newClaudemonClient(*claudemonURL))
+	cm := newClaudemonClient(*claudemonURL)
+	reg := newRegistry(cm)
 	methods := reg.methodsForScope(*scope)
 	bus := newBusClient(*hubURL, *token, methods, reg.handle)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// In full scope the brain owns the live agent view: a session store fed by
+	// claudemon's /events stream, answering agents.list / sessions.snapshot* and
+	// pushing each change to the bus as an `agent.snapshot` event. (In catalog
+	// scope the desktop app owns this, so we skip it.)
+	if *scope != "catalog" {
+		store := newSessionStore()
+		store.onChange = func(_ string, snap json.RawMessage) { bus.publish("agent.snapshot", snap) }
+		reg.store = store
+		go runSessionStore(ctx, cm, store)
+	}
 
 	log.Printf("brain: scope=%s, provider for %d capabilities → hub %s, claudemon %s",
 		*scope, len(methods), *hubURL, *claudemonURL)

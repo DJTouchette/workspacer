@@ -161,6 +161,15 @@ func (b *busClient) handleCall(ctx context.Context, f frame) {
 	}
 }
 
+// publish emits a fire-and-forget event onto the bus. Best-effort: if we're not
+// connected yet (e.g. during initial seeding) the write fails and is dropped.
+func (b *busClient) publish(eventType string, data json.RawMessage) {
+	_ = b.write(context.Background(), frame{
+		Op:    "publish",
+		Event: &envelope{Type: eventType, Source: source, Data: data},
+	})
+}
+
 // write serializes a frame onto the connection.
 func (b *busClient) write(ctx context.Context, f frame) error {
 	data, err := json.Marshal(f)

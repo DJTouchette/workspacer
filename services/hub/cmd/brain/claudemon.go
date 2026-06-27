@@ -123,6 +123,23 @@ func (c *claudemonClient) getSession(ctx context.Context, id string) (json.RawMe
 	return c.getRaw(ctx, "/sessions/"+id)
 }
 
+// streamEvents follows claudemon's /events SSE stream, calling emit per frame.
+// Uses a no-timeout client — SSE is long-lived (the shared client's 30s timeout
+// would kill it).
+func (c *claudemonClient) streamEvents(ctx context.Context, emit func(name string, data []byte)) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/events", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "text/event-stream")
+	resp, err := (&http.Client{}).Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return parseSSE(ctx, resp.Body, emit)
+}
+
 // submitMessage posts a prompt. claudemon's mode-gated /message accepts it only
 // when the session is at an input prompt; mid-turn it replies 409. We report
 // that as ok=false (not an error) so the caller can fall back to typing into the
