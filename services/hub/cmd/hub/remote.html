@@ -202,6 +202,9 @@
   const main = $('main'), dot = $('dot'), statusEl = $('status'), toastEl = $('toast');
   const backBtn = $('back'), titleEl = $('title');
   let ws = null, backoff = 500, calls = new Map(), callSeq = 0;
+  let reconnectTimer = null;
+  let lastActivity = 0;            // ms of the last inbound frame; drives staleness check
+  const STALE_MS = 30000;
   const sessions = new Map(); // sessionId -> {sessionId, cwd, state, pendingApproval, ...}
 
   // View state: list of agents, or the chat for one of them.
@@ -782,12 +785,14 @@
 
   function connect() {
     if (!token) return gate();
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
     setConnected(false);
     statusEl.textContent = 'connecting…';
     try { ws = new WebSocket(wsURL()); } catch { return scheduleReconnect(); }
 
     ws.onopen = () => {
       backoff = 500;
+      lastActivity = Date.now();
       setConnected(true);
       ws.send(JSON.stringify({ op: 'subscribe', topics: ['agent.state_changed', 'workflow.*'] }));
       refresh();
@@ -801,6 +806,7 @@
       }
     };
     ws.onmessage = (ev) => {
+      lastActivity = Date.now();
       let f; try { f = JSON.parse(ev.data); } catch { return; }
       if (f.op === 'result') {
         const c = calls.get(f.id); if (c) { calls.delete(f.id); c.resolve(f.result); }
@@ -831,9 +837,27 @@
   }
 
   function scheduleReconnect() {
-    setTimeout(connect, backoff);
+    if (reconnectTimer) return;
+    reconnectTimer = setTimeout(() => { reconnectTimer = null; connect(); }, backoff);
     backoff = Math.min(backoff * 2, 8000);
   }
+
+  // Mobile/background browsers throttle the reconnect timer and suspend the
+  // socket, so on returning to the page we'd sit on a dead socket — and a frozen
+  // terminal — until a manual refresh. Reconnect immediately when the page is
+  // shown again or the network returns, unless the socket is provably still live.
+  // onopen re-attaches the PTY + re-pulls state, so this fully self-heals.
+  function wake() {
+    if (!token || document.visibilityState === 'hidden') return;
+    const live = ws && ws.readyState === WebSocket.OPEN && Date.now() - lastActivity < STALE_MS;
+    if (live) return;
+    backoff = 500;
+    try { if (ws) { ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null; ws.close(); } } catch {}
+    ws = null;
+    connect();
+  }
+  document.addEventListener('visibilitychange', wake);
+  window.addEventListener('online', wake);
 
   // Auth failures over plain HTTP upgrade surface as a close; if the very first
   // connect is rejected we fall back to the token gate above.
