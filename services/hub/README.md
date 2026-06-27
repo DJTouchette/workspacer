@@ -140,17 +140,32 @@ Capabilities registered today:
 | `layouts.list` / `save` / `delete` | `~/.config/workspacer/layouts/*.yaml` |
 | `sessions.list` / `load` / `save` / `delete` | `~/.config/workspacer/sessions/*.yaml` (saved workspaces) |
 | `library.list` / `save` / `remove` | global/project markdown + `.claude/{skills,agents}` |
-| `app.getCwd` / `fs.listDir` / `fs.read` / `fs.write` | the host filesystem |
+| `claude.sessionsForDir` | `~/.claude/projects/<encoded>/*.jsonl` (resume picker) |
+| `app.getCwd` / `app.supervisorHome` | host process cwd / `~/.workspacer` |
+| `fs.listDir` / `fs.listEntries` / `fs.read` / `fs.write` | the host filesystem (listEntries is gitignore-aware via `git check-ignore`) |
+| `search.project` | host `rg` (ripgrep), gitignore-aware |
+| `notifications.post` | logged + acked (no desktop to raise an OS notification) |
 
 It reuses the provider pattern from `examples/rivet-bridge`. The endgame is for
 every client (app, TUI, web, MCP) to be a thin caller of this one brain, so they
 mirror each other by construction instead of duplicating logic across TS/Rust/Go.
 
-**Not yet provided headlessly** (still app-only, deferred): the live PTY/event
-streams (`sessions.attachTerminal` & co — the byte stream needs a hub proxy, see
-the web client), `analytics.*`, `claude.sessionsForDir`, `fs.{listEntries,watch}`,
-`search.project`, `notifications.post`, and supervisor/`mcpFacade` spawn args.
-Saved-session `save` persists the blob as given — it skips the desktop's
+**Not yet provided headlessly** — what's left is genuinely coupled to the GUI
+process, not just unported:
+
+- **Live PTY/event streams** — `sessions.attachTerminal` / `keepalive` /
+  `detachTerminal` and `fs.watch` / `fs.unwatch`. The byte/event stream needs a
+  hub proxy (the web client's terminal share is the template). This is the
+  separate "streaming" phase and the real unlock for moving the TUI fully onto
+  the bus.
+- **`analytics.*`** — backed by the app's SQLite history DB, which is populated
+  by the desktop session store's capture at turn boundaries. Without that
+  capture pipeline there's nothing to serve, so the brain can't fake it.
+- **`agents.spawn` supervisor / `mcpFacade` extras** — installing the
+  `/supervise` skill and injecting the MCP-facade argv (mcpConfig/supervisorSkill)
+  is app-specific orchestration; the core spawn (profile→argv) is provided.
+
+Also: saved-session `save` persists the blob as given — it skips the desktop's
 terminal-cwd enrichment, which needs the GUI's in-process pty→cwd map.
 
 ## Protocol

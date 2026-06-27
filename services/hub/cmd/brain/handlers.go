@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 )
 
@@ -64,11 +65,16 @@ func (r *registry) methods() []string {
 		"library.list",
 		"library.save",
 		"library.remove",
+		"claude.sessionsForDir",
 		// host
 		"app.getCwd",
+		"app.supervisorHome",
 		"fs.listDir",
+		"fs.listEntries",
 		"fs.read",
 		"fs.write",
+		"search.project",
+		"notifications.post",
 	}
 }
 
@@ -172,14 +178,33 @@ func (r *registry) handle(ctx context.Context, method string, params json.RawMes
 		}
 		removeLibrary(p.Scope, p.ID, p.Cwd, p.Kind)
 		return okResult()
+	case "claude.sessionsForDir":
+		var p struct {
+			Cwd string `json:"cwd"`
+		}
+		if err := unmarshal(params, &p); err != nil {
+			return nil, err
+		}
+		if p.Cwd == "" {
+			return nil, fmt.Errorf("claude.sessionsForDir requires { cwd }")
+		}
+		return jsonResult(listClaudeSessionsForDir(p.Cwd))
 	case "app.getCwd":
 		return r.getCwd()
+	case "app.supervisorHome":
+		return jsonResult(supervisorHome())
 	case "fs.listDir":
 		return r.fsListDir(params)
+	case "fs.listEntries":
+		return r.fsListEntries(params)
 	case "fs.read":
 		return r.fsRead(params)
 	case "fs.write":
 		return r.fsWrite(params)
+	case "search.project":
+		return r.searchProject(ctx, params)
+	case "notifications.post":
+		return r.notify(params)
 	default:
 		return nil, fmt.Errorf("unknown method %q", method)
 	}
@@ -652,11 +677,57 @@ func (r *registry) fsRead(raw json.RawMessage) (json.RawMessage, error) {
 	if p.Path == "" {
 		return nil, fmt.Errorf("fs.read requires a path")
 	}
-	contents, err := readHostFile(p.Path)
+	res, err := readTextFile(p.Path)
 	if err != nil {
 		return nil, err
 	}
-	return jsonResult(contents)
+	return jsonResult(res)
+}
+
+func (r *registry) fsListEntries(raw json.RawMessage) (json.RawMessage, error) {
+	var p struct {
+		Path string `json:"path"`
+	}
+	if err := unmarshal(raw, &p); err != nil {
+		return nil, err
+	}
+	if p.Path == "" {
+		return nil, fmt.Errorf("fs.listEntries requires a path")
+	}
+	res, err := listEntries(p.Path)
+	if err != nil {
+		return nil, err
+	}
+	return jsonResult(res)
+}
+
+func (r *registry) searchProject(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
+	var opts searchOpts
+	if err := unmarshal(raw, &opts); err != nil {
+		return nil, err
+	}
+	if opts.Query == "" || opts.Cwd == "" {
+		return nil, fmt.Errorf("search.project requires { query, cwd }")
+	}
+	res, err := searchProject(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	return jsonResult(res)
+}
+
+// notify is best-effort headless: there's no desktop to raise an OS
+// notification, so we log it and ack. (A connected GUI still gets its own.)
+func (r *registry) notify(raw json.RawMessage) (json.RawMessage, error) {
+	var p struct {
+		Title string `json:"title"`
+		Body  string `json:"body"`
+	}
+	if err := unmarshal(raw, &p); err != nil {
+		return nil, err
+	}
+	log.Printf("brain: notification: %s — %s", firstNonEmpty(p.Title, "workspacer"), p.Body)
+	return okResult()
 }
 
 func (r *registry) fsWrite(raw json.RawMessage) (json.RawMessage, error) {

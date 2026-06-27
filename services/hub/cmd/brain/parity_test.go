@@ -255,9 +255,9 @@ func TestFsReadWriteRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var got string
-	if json.Unmarshal(res, &got); got != "hello" {
-		t.Fatalf("read back %q, want hello", got)
+	var got readFileResult
+	if json.Unmarshal(res, &got); got.Contents != "hello" || got.Size != 5 {
+		t.Fatalf("read back %+v, want contents hello size 5", got)
 	}
 }
 
