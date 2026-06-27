@@ -157,11 +157,16 @@ export async function searchProject(opts: SearchProjectOpts): Promise<SearchProj
 
   for (const line of stdout.split('\n')) {
     if (!line) continue;
-    if (total >= maxResults) { truncated = true; break; }
 
     let msg: { type?: string };
     try { msg = JSON.parse(line); } catch { continue; }
     if (msg.type !== 'match') continue;
+
+    // Cap check AFTER confirming this is a real match: a genuine, dropped match
+    // is the only thing that counts as truncation. Checking before the type
+    // guard let ripgrep's trailing `end`/`summary` messages flip the flag when
+    // the count landed exactly on maxResults (nothing was actually dropped).
+    if (total >= maxResults) { truncated = true; break; }
 
     const data = (msg as RgMatchMessage).data;
     const rel = data.path.text;

@@ -16,7 +16,7 @@ import { EditorState, Compartment } from '@codemirror/state';
 import { keymap } from '@codemirror/view';
 import { indentWithTab } from '@codemirror/commands';
 import { gotoLine } from '@codemirror/search';
-import { languages } from '@codemirror/language-data';
+import { languageForPath } from './editor/language';
 import { syntaxHighlighting, HighlightStyle } from '@codemirror/language';
 import { tags as t } from '@lezer/highlight';
 import { vim } from '@replit/codemirror-vim';
@@ -395,7 +395,7 @@ const EditorPane: React.FC<EditorPaneProps> = ({ filePath, cwd }) => {
         }
 
         // Resolve the language for this extension and reconfigure when ready.
-        const desc = languages.find((l) => l.extensions.includes(basename(openFile).split('.').pop() || ''));
+        const desc = languageForPath(openFile);
         if (desc) {
           desc.load().then((support) => {
             if (!disposed && viewRef.current) {

@@ -13,15 +13,16 @@ export interface ClaudeSessionSummary {
   summary: string;
 }
 
-/** Encode a directory path the same way Claude CLI does: replace path separators with -- */
+/** Encode a directory path the same way the Claude CLI names its per-project
+ *  transcript folder: every '/', '\\' and ':' becomes '-', with NO stripping —
+ *  so an absolute unix cwd '/foo/bar' encodes to '-foo-bar' (leading dash) and
+ *  'C:\\foo' to 'C--foo'. This must match claudemon's `encoded_cwd`
+ *  (services/claudemon/src/session/transcript.rs); stripping the leading slash
+ *  (as this did before) pointed every lookup at a non-existent folder, so the
+ *  resume picker came up empty on unix/macOS. A trailing separator is dropped
+ *  first since a real cwd never carries one. */
 function encodeDirName(dir: string): string {
-  // Normalize to forward slashes, strip trailing slash, then replace / with -
-  return dir
-    .replace(/\\/g, '/')
-    .replace(/^\//, '')
-    .replace(/\/$/, '')
-    .replace(/\//g, '-')
-    .replace(/:/g, '-');
+  return dir.replace(/[/\\]+$/, '').replace(/[/\\:]/g, '-');
 }
 
 export function listClaudeSessionsForDir(cwd: string): ClaudeSessionSummary[] {

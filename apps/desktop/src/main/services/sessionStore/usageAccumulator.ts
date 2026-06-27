@@ -40,7 +40,10 @@ export class SessionUsageAccumulator {
       u.model = model;
       this.rememberModel(model);
     }
-    u.contextLimit = contextLimitFor(u.model, ctx);
+    // Use the session's high-water mark, not just this turn: 1M mode is a
+    // session-level property, so once any turn has exceeded the 200k window the
+    // limit must stay promoted even when a later turn's context is smaller.
+    u.contextLimit = contextLimitFor(u.model, session.peakContext);
 
     // Cumulative — only once per distinct message.
     if (key && this.lastUsageKey.get(session.sessionId) === key) return;
