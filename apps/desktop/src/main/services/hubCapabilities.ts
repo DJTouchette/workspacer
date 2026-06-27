@@ -370,9 +370,12 @@ export function registerHubCapabilities(): void {
   // ── Claude profiles ────────────────────────────────────────────────────
   registerCapability('claude.profiles.list', () => claudeProfiles.getProfiles());
   registerCapability('claude.profiles.add', (params: unknown) => {
-    const { name, configDir, extraArgs } = (params ?? {}) as { name?: string; configDir?: string; extraArgs?: string[] };
+    const { name, configDir, extraArgs, mcpItemIds } = (params ?? {}) as { name?: string; configDir?: string; extraArgs?: string[]; mcpItemIds?: string[] };
     if (!name) throw new Error('claude.profiles.add requires { name }');
-    return claudeProfiles.addProfile(name, configDir ?? '', extraArgs ?? []);
+    // Forward mcpItemIds — the web/remote client sends the user's selected MCP
+    // servers here (matching the desktop IPC path); dropping it silently lost
+    // them, so profiles created remotely had no MCP servers.
+    return claudeProfiles.addProfile(name, configDir ?? '', extraArgs ?? [], mcpItemIds ?? []);
   });
   registerCapability('claude.profiles.update', (params: unknown) => {
     const { id, updates } = (params ?? {}) as { id?: string; updates?: ProfileUpdate };

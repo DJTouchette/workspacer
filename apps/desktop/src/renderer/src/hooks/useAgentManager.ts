@@ -319,8 +319,22 @@ export function useAgentManager() {
     // stops the multi-client "spawn one, get seven" accumulation.
     const list = withGlobalWorkspace(dedupeBySessionId(sessionAgents));
     setAgents(list);
-    // Prefer a real agent on load; fall back to the Overview workspace.
-    setActiveAgentId(activeId || sessionAgents[0]?.id || list[0]?.id || '');
+    // Choose an active id that actually survived dedupe. Both the caller's
+    // activeId and the raw sessionAgents[0] can point at a same-session
+    // duplicate that dedupe just dropped; selecting it would leave activeAgent
+    // undefined and blank the workspace. Map such an id to the surviving card
+    // for its session, else fall back to the first real agent (then Overview).
+    const inList = (id?: string) => !!id && list.some((a) => a.id === id);
+    const survivorIdFor = (id: string): string | undefined => {
+      const raw = sessionAgents.find((a) => a.id === id);
+      return raw?.sessionId ? list.find((a) => a.sessionId === raw.sessionId)?.id : undefined;
+    };
+    const preferred = activeId || sessionAgents[0]?.id || '';
+    setActiveAgentId(
+      inList(preferred)
+        ? preferred
+        : survivorIdFor(preferred) || list.find((a) => !a.global)?.id || list[0]?.id || '',
+    );
   }, []);
 
   /** Open a pane in a specific workspace (agent or the global Overview) and
