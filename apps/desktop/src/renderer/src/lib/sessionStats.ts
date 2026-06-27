@@ -39,7 +39,7 @@ export function deriveSessionStats(
 
   // Cumulative tokens: statusLine carries in+out; fall back to usage.
   const tokens =
-    sl?.totalInputTokens !== undefined
+    sl?.totalInputTokens !== undefined || sl?.totalOutputTokens !== undefined
       ? (sl.totalInputTokens ?? 0) + (sl.totalOutputTokens ?? 0)
       : usage
         ? usage.totalInputTokens + usage.totalOutputTokens

@@ -110,12 +110,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     let cancelled = false;
     let handler: ((event: any) => void) | null = null;
     let portRef: IPort | null = null;
-    getPort(id).then((port) => {
-      if (cancelled) { port.close(); return; }
-      portRef = port;
-      handler = (event: any) => callback(event.data);
-      port.addEventListener('message', handler);
-    });
+    getPort(id)
+      .then((port) => {
+        // Don't close on cancel: the port is cached in terminalPorts and shared
+        // with writeTerminal and any re-subscriber. Its lifecycle is owned by
+        // closeTerminal. Just skip attaching our listener.
+        if (cancelled) return;
+        portRef = port;
+        handler = (event: any) => callback(event.data);
+        port.addEventListener('message', handler);
+      })
+      .catch(() => {}); // port never arrived (timeout) — nothing to attach
     return () => {
       cancelled = true;
       if (portRef && handler) portRef.removeEventListener('message', handler);
@@ -210,12 +215,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     let cancelled = false;
     let handler: ((event: any) => void) | null = null;
     let portRef: IPort | null = null;
-    getPort(sessionId).then((port) => {
-      if (cancelled) { port.close(); return; }
-      portRef = port;
-      handler = (event: any) => callback(event.data);
-      port.addEventListener('message', handler);
-    });
+    getPort(sessionId)
+      .then((port) => {
+        // Don't close on cancel: the port is cached in terminalPorts and shared
+        // with claudeWrite and any re-subscriber. Its lifecycle is owned by
+        // detachClaude. Just skip attaching our listener.
+        if (cancelled) return;
+        portRef = port;
+        handler = (event: any) => callback(event.data);
+        port.addEventListener('message', handler);
+      })
+      .catch(() => {}); // port never arrived (timeout) — nothing to attach
     return () => {
       cancelled = true;
       if (portRef && handler) portRef.removeEventListener('message', handler);

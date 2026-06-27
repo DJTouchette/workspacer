@@ -352,10 +352,10 @@ class WorkflowWatcher {
     const subagentActivity: Record<string, SubagentActivity> = {};
     for (const [id, st] of watch.plainAgents) subagentActivity[id] = { ...st.activity };
 
-    const workflowAgentIds: string[] = [];
-    for (const run of watch.runs.values()) {
-      for (const id of run.agents.keys()) workflowAgentIds.push(id);
-    }
+    // Mirror the MAX_RUNS-sliced `runs` — agents of runs dropped from the
+    // snapshot must not stay suppressed (they'd vanish from both the run cards
+    // and the plain subagent list).
+    const workflowAgentIds: string[] = runs.flatMap(r => r.agents.map(a => a.id));
     return { runs, subagentActivity, workflowAgentIds };
   }
 

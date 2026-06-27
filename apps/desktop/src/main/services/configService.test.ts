@@ -189,13 +189,22 @@ describe('deepMerge semantics – via configService.saveConfig', () => {
   });
 
   it('source null/undefined values do not overwrite target (deepMerge guard)', () => {
-    // deepMerge checks `if (!source || typeof source !== 'object') return target`
-    // Passing an explicit null for a leaf via a cast
+    // A null leaf must NOT clobber the default — null means "unset", so the
+    // default value survives.
     configService.saveConfig({ ui: { theme: null } as any });
     const cfg = configService.getConfig();
-    // null is not an object so the else-branch fires: result[key] = null
-    // This characterizes the ACTUAL behavior (null replaces the value)
-    expect(cfg.ui.theme).toBeNull();
+    expect(cfg.ui.theme).toBe('dark');
+  });
+
+  it('an empty/null config section does not wipe that section\'s defaults', () => {
+    // A bare `ui:` line in config.yaml parses to { ui: null }. deepMerge must
+    // keep all ui defaults instead of replacing the section with null.
+    configService.saveConfig({ ui: null } as any);
+    const cfg = configService.getConfig();
+    expect(cfg.ui).not.toBeNull();
+    expect(cfg.ui.theme).toBe('dark');
+    expect(cfg.ui.animations).toBe(false);
+    expect(cfg.ui.fontSize).toBe(14);
   });
 
   it('deepMerge with null source returns target unchanged', () => {

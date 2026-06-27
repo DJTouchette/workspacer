@@ -7,7 +7,9 @@ export const fmtTokens = (n?: number): string => {
   // Guard against the 'k' branch's toFixed(0) rounding n/1000 up to 1000:
   // anything that would render as "1000k" (n/1000 >= 999.5) is promoted to M.
   if (n / 1000 >= 999.5) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1000) return `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k`;
+  // Decide precision from the value that will actually render: anything that
+  // rounds to >= 10k drops the decimal, so 9999 → "10k" not "10.0k".
+  if (n >= 1000) return `${(n / 1000).toFixed(Math.round(n / 100) / 10 >= 10 ? 0 : 1)}k`;
   return String(n);
 };
 

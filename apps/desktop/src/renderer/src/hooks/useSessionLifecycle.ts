@@ -114,7 +114,7 @@ export function useSessionLifecycle({
       g: payload.agents.map((ag) => ag.id + ag.name + (ag.sessionId || '') + ag.activeTabId
         // Include canvas so a spatial-mode drag (which only changes t.canvas)
         // isn't deduped away and actually persists across reloads.
-        + ag.tabs.map((t) => t.id + t.title + (t.canvas ? `${t.canvas.x},${t.canvas.y},${t.canvas.w},${t.canvas.h}` : '')
+        + ag.tabs.map((t) => t.id + t.title + (t.activePaneId || '') + (t.canvas ? `${t.canvas.x},${t.canvas.y},${t.canvas.w},${t.canvas.h}` : '')
           + t.panes.map((p) => p.id + p.type + (p.url || '') + (p.notes || '')).join()).join()),
     });
     if (!force && hash === lastSaveHashRef.current) return;

@@ -147,16 +147,43 @@ export function useAttentionFeed(
     });
   }, [liveSessionKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Snooze-expiry ticker (also re-surfaces snoozed items when their time is up).
-  // Only armed when something is actually snoozed — with nothing snoozed there's
-  // nothing whose expiry could change the feed, so the timer would burn CPU
-  // recomputing the same feed every 5s forever. Also paused while the window is
-  // hidden (the app should idle toward ~0% CPU when switched away).
+  // The ticker advances `now` whenever a time threshold could change the feed:
+  //  - a snooze still in the future (its expiry re-surfaces the item), or
+  //  - a pending question not yet aged into a `stuck` card.
+  // Without the question case, `now` would stay frozen and `stuck` could never
+  // fire when nothing happens to be snoozed. Gated off when there's no such
+  // pending work (and while hidden) so the app idles toward ~0% CPU.
+  const stuckEnabled = opts.enabledKinds?.stuck !== false;
+  const tickNeeded = useMemo(() => {
+    for (const t of snoozedUntil.values()) if (t > now) return true;
+    if (stuckEnabled) {
+      for (const agent of agents) {
+        if (agent.global || !agent.sessionId) continue;
+        const snap = snapshotBySession[agent.sessionId];
+        if (!snap?.pendingQuestions?.length) continue;
+        const since = snap.lastActivity ?? 0;
+        if (since && now - since <= STUCK_MS) return true; // could still cross the threshold
+      }
+    }
+    return false;
+  }, [snoozedUntil, now, agents, snapshotBySession, stuckEnabled]);
+
   useEffect(() => {
-    if (snoozedUntil.size === 0 || !pageVisible) return;
-    const i = setInterval(() => setNow(Date.now()), 5000);
+    if (!tickNeeded || !pageVisible) return;
+    const i = setInterval(() => {
+      setNow(Date.now());
+      // Drop expired snoozes so a single past snooze can't keep the ticker
+      // spinning forever (and so the entry doesn't leak across the app's life).
+      setSnoozedUntil((prev) => {
+        const t = Date.now();
+        let mutated = false;
+        const n = new Map<string, number>();
+        for (const [sig, until] of prev) { if (until > t) n.set(sig, until); else mutated = true; }
+        return mutated ? n : prev;
+      });
+    }, 5000);
     return () => clearInterval(i);
-  }, [snoozedUntil.size, pageVisible]);
+  }, [tickNeeded, pageVisible]);
 
   const items = useMemo(() => {
     const out: AttentionItem[] = [];

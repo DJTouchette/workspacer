@@ -46,3 +46,46 @@ describe('SessionUsageAccumulator.applyUsage — context limit', () => {
     expect(s.usage!.contextLimit).toBe(200_000);
   });
 });
+
+describe('SessionUsageAccumulator.applyUsage — replay must not double-count', () => {
+  let acc: SessionUsageAccumulator;
+  beforeEach(() => {
+    acc = new SessionUsageAccumulator();
+  });
+
+  it('is idempotent when the same messages are replayed (conversation resync/reset)', () => {
+    const s = mkSession();
+    acc.applyUsage(s, 'claude-sonnet-4-5', { input_tokens: 200, output_tokens: 30 }, 'm1');
+    acc.applyUsage(s, 'claude-sonnet-4-5', { input_tokens: 100, output_tokens: 10 }, 'm2');
+    expect(s.usage!.totalInputTokens).toBe(300);
+    expect(s.usage!.totalOutputTokens).toBe(40);
+    const costAfterFirstPass = s.usage!.costUSD;
+    expect(costAfterFirstPass).toBeGreaterThan(0);
+
+    // A resync rebuilds the conversation by replaying the SAME usage items.
+    // Totals and cost must stay put rather than doubling.
+    acc.applyUsage(s, 'claude-sonnet-4-5', { input_tokens: 200, output_tokens: 30 }, 'm1');
+    acc.applyUsage(s, 'claude-sonnet-4-5', { input_tokens: 100, output_tokens: 10 }, 'm2');
+    expect(s.usage!.totalInputTokens).toBe(300);
+    expect(s.usage!.totalOutputTokens).toBe(40);
+    expect(s.usage!.costUSD).toBeCloseTo(costAfterFirstPass, 10);
+  });
+
+  it('still dedups non-consecutive repeats interleaved with other messages', () => {
+    const s = mkSession();
+    acc.applyUsage(s, 'claude-sonnet-4-5', { input_tokens: 100, output_tokens: 10 }, 'm1');
+    acc.applyUsage(s, 'claude-sonnet-4-5', { input_tokens: 100, output_tokens: 10 }, 'm2');
+    acc.applyUsage(s, 'claude-sonnet-4-5', { input_tokens: 100, output_tokens: 10 }, 'm1'); // repeat of m1
+    expect(s.usage!.totalInputTokens).toBe(200);
+    expect(s.usage!.totalOutputTokens).toBe(20);
+  });
+
+  it('forget() lets a fresh session recount from zero', () => {
+    const s = mkSession();
+    acc.applyUsage(s, 'claude-sonnet-4-5', { input_tokens: 100, output_tokens: 10 }, 'm1');
+    acc.forget(s.sessionId);
+    s.usage = null;
+    acc.applyUsage(s, 'claude-sonnet-4-5', { input_tokens: 100, output_tokens: 10 }, 'm1');
+    expect(s.usage!.totalInputTokens).toBe(100);
+  });
+});

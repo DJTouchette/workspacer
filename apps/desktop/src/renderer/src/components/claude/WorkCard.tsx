@@ -20,7 +20,7 @@ interface WorkSummary {
 }
 
 /** Collapse a run of tool calls into a one-line human summary. */
-function summarizeWork(calls: ToolCall[]): WorkSummary {
+export function summarizeWork(calls: ToolCall[]): WorkSummary {
   const editedFiles = new Set<string>();
   let reads = 0, cmds = 0, searches = 0, agents = 0, workflows = 0, other = 0;
   let added = 0, removed = 0, failed = 0;
@@ -29,10 +29,17 @@ function summarizeWork(calls: ToolCall[]): WorkSummary {
     if (tc.status === 'failed') failed++;
     if (EDIT_TOOLS.has(tc.name)) {
       if (tc.input?.file_path) editedFiles.add(tc.input.file_path);
-      const old = tc.input?.old_string ?? '';
-      const nw = tc.input?.new_string ?? '';
-      if (old) removed += old.split('\n').length;
-      if (nw) added += nw.split('\n').length;
+      // MultiEdit carries its changes in an `edits` array rather than top-level
+      // old_string/new_string — sum across each sub-edit.
+      const edits = Array.isArray(tc.input?.edits)
+        ? tc.input.edits
+        : [{ old_string: tc.input?.old_string, new_string: tc.input?.new_string }];
+      for (const e of edits) {
+        const old = e?.old_string ?? '';
+        const nw = e?.new_string ?? '';
+        if (old) removed += old.split('\n').length;
+        if (nw) added += nw.split('\n').length;
+      }
     } else if (tc.name === 'Write') {
       if (tc.input?.file_path) editedFiles.add(tc.input.file_path);
       if (tc.input?.content) added += tc.input.content.split('\n').length;

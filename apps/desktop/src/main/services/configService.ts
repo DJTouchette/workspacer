@@ -304,6 +304,10 @@ function deepMerge(target: any, source: any): any {
   if (!source || typeof source !== 'object') return target;
   const result = { ...target };
   for (const key of Object.keys(source)) {
+    // A null/undefined source value means "unset" (e.g. a bare `ui:` line in
+    // YAML parses to { ui: null }). Skip it so the target's default survives
+    // instead of being wiped out.
+    if (source[key] === null || source[key] === undefined) continue;
     if (
       source[key] &&
       typeof source[key] === 'object' &&
