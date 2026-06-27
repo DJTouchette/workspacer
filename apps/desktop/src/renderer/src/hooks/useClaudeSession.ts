@@ -85,6 +85,13 @@ export function useClaudeSession({ ptySessionId, active = true }: UseClaudeSessi
   const generationRef = useRef(0);
 
   useEffect(() => {
+    // The tracked id changed (or cleared). Drop the previous session's snapshot
+    // immediately — otherwise a pane re-pointed at a session that has no
+    // snapshot yet, or detached to null, keeps rendering the old session's
+    // state (its status, pending prompts, etc.). The fetch below repopulates
+    // when the new id does have a snapshot.
+    setSession(null);
+    pendingRef.current = null;
     if (!ptySessionId) return;
     const gen = ++generationRef.current;
     window.electronAPI.getClaudeSession(ptySessionId).then((snap) => {
