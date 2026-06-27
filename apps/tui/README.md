@@ -1,15 +1,19 @@
 # wks-tui
 
-A terminal client for [workspacer](../README.md). It talks directly to the
-**claudemon** daemon's REST + SSE API, so it can monitor every live Claude agent
-and drive it from a terminal with no Electron window open. Only `claudemon`
-needs to be running.
+A terminal client for [workspacer](../README.md). It monitors every live Claude
+agent and drives it from a terminal with no Electron window open.
 
-> Why not the hub bus? The hub's `agents.*` / `claude.*` capabilities (what the
-> `/remote` web client calls) are registered by the **Electron main process** —
-> they don't exist when the desktop app isn't running. claudemon, by contrast,
-> exposes the full surface (list, transcript, approve/answer/message/signal,
-> spawn, `/events`) over loopback HTTP, so a standalone client uses it directly.
+By default it's a thin client of the **hub bus**: driving (message / approve /
+answer / signal / spawn), the agent list (`agent.snapshot` / `agent.statusline`),
+and the live terminal (`pty.bytes`) all flow through the hub's headless **brain**
+provider — the same capabilities the desktop app and `/remote` web client use, so
+every client mirrors one source of truth. For a loopback bus it auto-spawns the
+hub + brain (and claudemon), so it Just Works standalone.
+
+Pass `--direct` to bypass the bus and talk to **claudemon**'s REST + SSE API
+directly (the original standalone path) — useful when the hub binary isn't built
+or you want one fewer process. The TUI also falls back to this automatically if a
+loopback bus isn't reachable.
 
 This is the early TUI: agent monitoring, control, and spawning. Raw-PTY terminal
 panes, the workspace/tab model, library, analytics and the command palette are
@@ -247,16 +251,20 @@ cargo run --release
 
 ### Daemons
 
-`wks-tui` is a client of the `claudemon` daemon. When pointed at a **local**
-daemon (the default), on startup it launches claudemon if it isn't already
-listening — and stops it again on exit. So running it standalone Just Works; if
-the Electron app (or a claudemon you started by hand) is already up, that one is
-reused and left running.
+On startup the TUI launches whatever it needs that isn't already listening, on
+loopback, and stops it again on exit (a pre-existing one — the Electron app, or a
+daemon you started by hand — is reused and left running):
 
-This needs the claudemon binary built in-tree (`cargo build --release` in
-`claudemon/`). Override its location with `WKS_CLAUDEMON_BIN`, or pass
-`--no-spawn` to connect only to a daemon started elsewhere. Auto-spawn is
-skipped when `--claudemon-url` points at a non-loopback host.
+- **claudemon** always (the engine).
+- in the default **bus** mode, the **hub + brain** too (`make build-hub` puts the
+  `hub`/`brain` binaries in-tree; override the hub with `WKS_HUB_BIN`). Point at a
+  remote hub with `--bus ws://host:7895/bus`; auth with `--bus-token` / `HUB_TOKEN`.
+
+So running it standalone Just Works. With `--direct` only claudemon is needed.
+
+claudemon must be built in-tree (`cargo build --release` in `claudemon/`); override
+its location with `WKS_CLAUDEMON_BIN`, or `--no-spawn` to connect only to daemons
+started elsewhere. Auto-spawn is skipped for a non-loopback host.
 
 By default it talks to `http://127.0.0.1:7891`. Override with:
 

@@ -54,12 +54,16 @@ struct Cli {
     #[arg(long)]
     no_spawn: bool,
 
-    /// Hub bus URL (e.g. ws://127.0.0.1:7895/bus). When set, agent-driving calls
-    /// (message/approve/answer/signal) route through the hub's brain provider
-    /// instead of claudemon directly — the TUI as a thin bus client. Observation
-    /// (the agent list, terminals) still uses claudemon for now.
-    #[arg(long, env = "WKS_HUB_BUS")]
-    bus: Option<String>,
+    /// Hub bus URL. By default the TUI is a thin client of the hub's brain
+    /// provider — driving, the agent list, and terminals all flow over the bus
+    /// (it auto-spawns the hub + brain for a loopback URL). This overrides the
+    /// address; pass `--direct` to bypass the bus entirely.
+    #[arg(long, env = "WKS_HUB_BUS", default_value = "ws://127.0.0.1:7895/bus")]
+    bus: String,
+
+    /// Bypass the hub bus and talk to claudemon directly (the standalone path).
+    #[arg(long)]
+    direct: bool,
 
     /// Auth token for the hub bus (when it requires one).
     #[arg(long, env = "HUB_TOKEN")]
@@ -70,20 +74,35 @@ struct Cli {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    // Bring up claudemon if it isn't running, before we take over the screen so
-    // diagnostics print normally and the first request lands. The guard stops
-    // it again on exit (only if we started it).
-    let _daemons = daemons::ensure(&cli.claudemon_url, cli.bus.as_deref(), !cli.no_spawn);
+    // Bus by default; `--direct` opts back into talking to claudemon directly.
+    let mut bus_url = (!cli.direct).then(|| cli.bus.clone());
+
+    // Bring up claudemon (and, in bus mode, the hub + brain) if not already
+    // running, before we take over the screen. The guard stops what we started.
+    let _daemons = daemons::ensure(&cli.claudemon_url, bus_url.as_deref(), !cli.no_spawn);
+
+    // Robustness: if we'd use a loopback bus but nothing's listening (e.g. the
+    // hub binary isn't built), fall back to claudemon-direct so the TUI still
+    // works. An explicitly-remote bus is the user's responsibility — respected.
+    if let Some(url) = bus_url.clone() {
+        if daemons::loopback_bus_unreachable(&url) {
+            eprintln!(
+                "[wks-tui] hub bus not reachable at {url}; using claudemon directly \
+                 (build the hub with `make build-hub`, or run with --direct to silence this)"
+            );
+            bus_url = None;
+        }
+    }
 
     let claudemon = claudemon::Claudemon::new(cli.claudemon_url.clone());
     let profiles = profiles::load();
     let library = library::load();
     let config = config::load();
 
-    // Optionally connect to the hub bus (reconnecting in the background). When
-    // set, agent-driving calls route through it and the agent view is fed by
-    // agent.snapshot / agent.statusline events; otherwise the TUI is unchanged.
-    let (bus, bus_events) = match cli.bus.as_ref() {
+    // In bus mode the TUI is a thin bus client: driving routes through the brain,
+    // the agent view is fed by agent.snapshot/agent.statusline, and terminals by
+    // pty.bytes. `--direct` (or an unreachable bus) keeps the claudemon path.
+    let (bus, bus_events) = match bus_url.as_ref() {
         Some(url) => {
             let (client, events) = bus::BusClient::connect(url.clone(), cli.bus_token.clone());
             let _ = client.subscribe(vec![

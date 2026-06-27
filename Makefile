@@ -20,14 +20,15 @@ HUB       := services/hub
 dev:
 	cd $(DESKTOP) && npm run dev:share
 
-## dev-tui: run wks-tui (debug); builds claudemon + hub/brain first so the TUI can
-##          auto-spawn claudemon and, with `--bus`, reach the hub's brain provider.
-##          Pass flags with ARGS, e.g. `make dev-tui ARGS="--bus ws://127.0.0.1:7895/bus"`
+## dev-tui: run wks-tui (debug); builds claudemon + hub/brain first. The TUI now
+##          defaults to the hub bus (auto-spawning the hub + brain); pass
+##          `ARGS="--direct"` for the standalone claudemon-direct path.
 dev-tui: build-hub
 	cd $(CLAUDEMON) && cargo build
 	cd $(TUI) && cargo run -- $(ARGS)
 
-## run-tui: run wks-tui (release); builds release claudemon + hub/brain + tui first
+## run-tui: run wks-tui (release); builds release claudemon + hub/brain + tui first.
+##          Defaults to the bus; `ARGS="--direct"` for claudemon-direct.
 run-tui: build-claudemon build-hub build-tui
 	cd $(TUI) && cargo run --release -- $(ARGS)
 

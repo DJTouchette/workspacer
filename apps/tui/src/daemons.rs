@@ -122,6 +122,18 @@ fn ensure_hub(daemons: &mut Daemons, bus_url: &str, claudemon_url: &str) {
     }
 }
 
+/// True when `url` is a loopback bus we'd manage but nothing is listening — the
+/// signal to fall back to claudemon-direct (e.g. the hub binary isn't built). A
+/// remote bus is the user's responsibility, so it's never reported unreachable
+/// here (we respect it and let the client reconnect).
+pub fn loopback_bus_unreachable(url: &str) -> bool {
+    if !is_loopback(url) {
+        return false;
+    }
+    let (_, port) = parse_bus_addr(url);
+    !port_open(port)
+}
+
 /// Extract `host:port` and the port from a `ws://host:port/path` bus URL,
 /// defaulting the port to the hub's default when absent.
 fn parse_bus_addr(url: &str) -> (String, u16) {
@@ -235,5 +247,13 @@ mod tests {
         assert!(is_loopback("ws://127.0.0.1:7895/bus"));
         assert!(is_loopback("ws://localhost:7895/bus"));
         assert!(!is_loopback("ws://example.com:7895/bus"));
+    }
+
+    #[test]
+    fn unreachable_loopback_bus_triggers_fallback() {
+        // Port 1 on loopback isn't listening → fall back to direct.
+        assert!(loopback_bus_unreachable("ws://127.0.0.1:1/bus"));
+        // A remote bus is never reported unreachable (respected, not managed).
+        assert!(!loopback_bus_unreachable("ws://example.com:1/bus"));
     }
 }
