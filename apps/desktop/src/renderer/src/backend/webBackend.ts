@@ -102,6 +102,14 @@ export function createWebBackend(token: string): ElectronAPI {
   const reprimers = new Map<string, () => void>();
   const reprime = (sessionId: string): void => reprimers.get(sessionId)?.();
 
+  // After a reconnect the bus re-asserts topic subscriptions, but the per-stream
+  // attachTerminal call (which makes claudemon replay the current screen) is not
+  // re-issued — so every mirrored terminal would sit frozen until a manual
+  // refresh. Re-prime each live PTY stream to re-attach and repaint.
+  client.onReconnect(() => {
+    for (const reprime of reprimers.values()) reprime();
+  });
+
   // Fan hub events out to the renderer's onHubEvent subscribers. Full session
   // snapshots arrive as `agent.snapshot` events and are routed directly in
   // onClaudeSessionUpdate below.

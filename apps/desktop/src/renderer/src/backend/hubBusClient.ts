@@ -27,6 +27,10 @@ interface PendingCall {
 }
 
 const CALL_TIMEOUT_MS = 15000;
+// A socket that has seen no inbound frame for this long when the page returns to
+// the foreground is treated as a zombie (browsers suspend background sockets
+// without always firing onclose) and replaced with a fresh connection.
+const STALE_MS = 30000;
 
 export class HubBusClient {
   private ws: WebSocket | null = null;
@@ -41,14 +45,72 @@ export class HubBusClient {
   private backoff = 500;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private closedByUser = false;
+  /** True once any connection has succeeded — distinguishes the first connect
+   *  from a reconnect so reconnect handlers don't fire on initial mount. */
+  private hasConnectedOnce = false;
+  /** Wall-clock ms of the last inbound frame; drives the staleness check. */
+  private lastActivity = 0;
+  private readonly reconnectHandlers = new Set<() => void>();
 
   constructor(private readonly token: string) {}
+
+  /** Bound so it can be added/removed as a DOM listener. The browser throttles a
+   *  backgrounded tab's reconnect timer and suspends its socket, so we also
+   *  reconnect proactively the moment the page is shown again or the net is back. */
+  private readonly onWake = (): void => { this.wake(); };
 
   // ── connection lifecycle ──────────────────────────────────────────────
 
   start(): void {
     this.closedByUser = false;
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', this.onWake);
+    if (typeof window !== 'undefined') window.addEventListener('online', this.onWake);
     this.open();
+  }
+
+  /**
+   * Force an immediate reconnect when the page returns to the foreground or the
+   * network comes back, unless the current socket is provably live. Without this
+   * a tab left in the background sits on a dead/suspended socket — and a stale
+   * UI — until the user manually refreshes.
+   */
+  private wake(): void {
+    if (this.closedByUser) return;
+    // Only act when the page is actually visible (visibilitychange also fires on hide).
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+    const live =
+      this.ws?.readyState === WebSocket.OPEN && Date.now() - this.lastActivity < STALE_MS;
+    if (live) return;
+    this.backoff = 500;
+    if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
+    this.detachSocket();
+    this.open();
+  }
+
+  /**
+   * Detach handlers from the current socket and close it, so a zombie socket's
+   * late onclose/onerror can't perturb the fresh connection wake() opens next.
+   */
+  private detachSocket(): void {
+    const ws = this.ws;
+    this.ws = null;
+    if (!ws) return;
+    ws.onopen = null;
+    ws.onmessage = null;
+    ws.onerror = null;
+    ws.onclose = null;
+    try { ws.close(); } catch { /* ignore */ }
+    this.setConnected(false);
+  }
+
+  /**
+   * Fires after every successful *reconnect* (never the first connect). The bus
+   * re-asserts topic subscriptions on reconnect but does not replay the snapshots
+   * callers fetched once at mount, so listeners use this to re-sync that state.
+   */
+  onReconnect(handler: () => void): () => void {
+    this.reconnectHandlers.add(handler);
+    return () => this.reconnectHandlers.delete(handler);
   }
 
   private wsURL(): string {
@@ -66,6 +128,7 @@ export class HubBusClient {
 
     this.ws.onopen = () => {
       this.backoff = 500;
+      this.lastActivity = Date.now();
       this.setConnected(true);
       // Re-assert every active topic subscription after a (re)connect.
       for (const topic of this.subscriptions.keys()) this.sendSubscribe(topic, true);
@@ -73,6 +136,10 @@ export class HubBusClient {
       // (e.g. the renderer's initial getAllClaudeSessions / getConfig at mount).
       const queued = this.sendQueue.splice(0);
       for (const frame of queued) this.ws?.send(frame);
+      // Let callers re-sync after a reconnect (skipped on the very first connect,
+      // where the mount-time fetches already loaded current state).
+      if (this.hasConnectedOnce) { for (const h of this.reconnectHandlers) h(); }
+      this.hasConnectedOnce = true;
     };
 
     this.ws.onmessage = (ev) => this.onFrame(ev.data);
@@ -101,6 +168,8 @@ export class HubBusClient {
 
   stop(): void {
     this.closedByUser = true;
+    if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', this.onWake);
+    if (typeof window !== 'undefined') window.removeEventListener('online', this.onWake);
     if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
     try { this.ws?.close(); } catch { /* ignore */ }
     this.ws = null;
@@ -125,6 +194,8 @@ export class HubBusClient {
   // ── frames ────────────────────────────────────────────────────────────
 
   private onFrame(raw: unknown): void {
+    // Any inbound frame proves the socket is alive — feeds the staleness check.
+    this.lastActivity = Date.now();
     let f: { op?: string; id?: string; result?: unknown; error?: string; event?: HubEventEnvelope };
     try {
       f = JSON.parse(typeof raw === 'string' ? raw : '');

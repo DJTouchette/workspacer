@@ -24,9 +24,10 @@
  * The reducer stays in `useAgentManager`; this only moves bytes in and out, so
  * there is exactly one place that knows how to mutate a layout.
  */
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import type { AgentWorkspace } from '../types/pane';
 import type { LayoutDoc } from '../types/electron';
+import { useHubReconnect } from './useHubReconnect';
 
 /** The slice of app state that is shared across clients. */
 interface SharedLayout {
@@ -131,6 +132,28 @@ export function useLayoutSync({
       unsub();
     };
   }, [enabled, loadAgentsFromSession, setSessionPhase, onHydration]);
+
+  // On reconnect, re-pull the authoritative doc: we may have missed
+  // `layout.changed` broadcasts while the socket was down. Reuses the same
+  // version + echo guards as the live `layout.changed` path so only a genuinely
+  // newer document is adopted (last-writer-wins; the hub owns the doc).
+  const resyncOnReconnect = useCallback(() => {
+    if (!enabled) return;
+    window.electronAPI
+      .layoutGet()
+      .then((doc: LayoutDoc) => {
+        if (!doc || doc.version <= appliedVersionRef.current) return;
+        appliedVersionRef.current = doc.version;
+        const data = doc.data as SharedLayout | null;
+        if (!hasRealLayout(data) || !data) return;
+        const incoming = project(data.agents, data.activeAgentId);
+        if (incoming === lastSyncedRef.current) return; // our own echo / identical
+        lastSyncedRef.current = incoming;
+        loadAgentsFromSession(data.agents, data.activeAgentId);
+      })
+      .catch(() => { /* hub still unreachable — the bus will retry */ });
+  }, [enabled, loadAgentsFromSession]);
+  useHubReconnect(resyncOnReconnect);
 
   // ── push local changes ──────────────────────────────────────────────────
   useEffect(() => {
