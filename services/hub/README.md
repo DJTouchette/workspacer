@@ -146,9 +146,17 @@ persisted cwd→name renames in `~/.config/workspacer/tui-names.json` (the same
 file the TUI writes) — so a headless `agents.list` matches the desktop's
 named/nested view. Live cost/context follows claudemon's high-frequency
 `/statusline/stream` and is pushed on a lighter **`agent.statusline`** event
-(sessionId + status line) rather than re-publishing the whole snapshot. The
-remaining streaming step is PTY-over-bus (the live terminal); with it the TUI can
-drop its claudemon-direct path and become a thin bus client.
+(sessionId + status line) rather than re-publishing the whole snapshot.
+
+**PTY over the bus (the live terminal).** `sessions.attachTerminal` starts a
+lease-gated forwarder: one SSE consumer of claudemon's `/sessions/:id/stream`
+(base64 chunks, first frame replays the ring buffer), republished onto the bus as
+**`pty.bytes.<sessionId>`** events (chunks coalesced ~60fps to avoid flooding
+clients). `terminalKeepalive` refreshes the 20s lease; `detachTerminal` (or a
+lapsed lease, swept every 5s) stops it, so the brain never streams a session
+nobody is watching. Input/resize flow back through `sessions.terminalInput` /
+`terminalResize`. A port of the desktop's `terminalShare`. With this the TUI can
+drop its claudemon-direct path and become a thin bus client — the next step.
 
 **`--scope` / `--brain-scope`** controls *which* capabilities the brain registers,
 because the bus router is single-owner per method: two providers for the same

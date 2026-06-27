@@ -57,6 +57,11 @@ func main() {
 				bus.publish("agent.statusline", payload)
 			}
 		})
+		// PTY-over-bus: lease-gated terminal forwarders republishing claudemon's
+		// byte stream as pty.bytes.<sessionId> events.
+		term := newTerminalHub(cm, bus.publish)
+		reg.term = term
+		go term.sweep(ctx)
 	}
 
 	log.Printf("brain: scope=%s, provider for %d capabilities → hub %s, claudemon %s",

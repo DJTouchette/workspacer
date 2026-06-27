@@ -22,6 +22,7 @@ type registry struct {
 	cfg   *configService
 	store *sessionStore // live session store (full scope only); nil → proxy claudemon
 	meta  *metaStore    // spawn metadata (label/parent/supervisor) for enrichment
+	term  *terminalHub  // PTY-over-bus forwarders (full scope only)
 }
 
 func newRegistry(cm *claudemonClient) *registry {
@@ -47,6 +48,9 @@ func (r *registry) methods() []string {
 		"sessions.snapshot",
 		"sessions.terminalInput",
 		"sessions.terminalResize",
+		"sessions.attachTerminal",
+		"sessions.terminalKeepalive",
+		"sessions.detachTerminal",
 		// catalogs + config (file-backed)
 		"claude.profiles.list",
 		"claude.profiles.add",
@@ -146,6 +150,12 @@ func (r *registry) handle(ctx context.Context, method string, params json.RawMes
 		return r.terminalInput(ctx, params)
 	case "sessions.terminalResize":
 		return r.terminalResize(ctx, params)
+	case "sessions.attachTerminal":
+		return r.attachTerminal(params)
+	case "sessions.terminalKeepalive":
+		return r.terminalKeepalive(params)
+	case "sessions.detachTerminal":
+		return r.detachTerminal(params)
 	case "claude.profiles.list":
 		return jsonResult(loadProfiles())
 	case "claude.profiles.add":
@@ -693,6 +703,47 @@ func (r *registry) savedSessionDelete(raw json.RawMessage) (json.RawMessage, err
 		return nil, fmt.Errorf("sessions.delete requires { filename }")
 	}
 	deleteSavedSession(p.Filename)
+	return okResult()
+}
+
+func (r *registry) attachTerminal(raw json.RawMessage) (json.RawMessage, error) {
+	var p sessionParam
+	if err := unmarshal(raw, &p); err != nil {
+		return nil, err
+	}
+	if p.SessionID == "" {
+		return nil, fmt.Errorf("sessions.attachTerminal requires { sessionId }")
+	}
+	if r.term == nil {
+		return nil, fmt.Errorf("PTY streaming unavailable (catalog scope)")
+	}
+	r.term.attach(p.SessionID)
+	return okResult()
+}
+
+func (r *registry) terminalKeepalive(raw json.RawMessage) (json.RawMessage, error) {
+	var p sessionParam
+	if err := unmarshal(raw, &p); err != nil {
+		return nil, err
+	}
+	if p.SessionID == "" {
+		return nil, fmt.Errorf("sessions.terminalKeepalive requires { sessionId }")
+	}
+	ok := r.term != nil && r.term.keepalive(p.SessionID)
+	return jsonResult(map[string]bool{"ok": ok})
+}
+
+func (r *registry) detachTerminal(raw json.RawMessage) (json.RawMessage, error) {
+	var p sessionParam
+	if err := unmarshal(raw, &p); err != nil {
+		return nil, err
+	}
+	if p.SessionID == "" {
+		return nil, fmt.Errorf("sessions.detachTerminal requires { sessionId }")
+	}
+	if r.term != nil {
+		r.term.detach(p.SessionID)
+	}
 	return okResult()
 }
 
