@@ -262,10 +262,14 @@ class ClaudeSessionStore {
       applySessionEndEvent(session);
       workflowWatcher.detach(sessionId);
       forgetTelemetry(sessionId);
-      if (!session.historyWritten) {
-        session.historyWritten = true;
-        writeHistory(session, 'ended');
-      }
+      // Always finalize to 'ended'. A Stop event earlier in this turn may have
+      // already fired its delayed 'active' snapshot (setting historyWritten),
+      // but that row is non-terminal — the analytics record upsert is keyed by
+      // session_id, so writing 'ended' here overwrites it with the real
+      // ended_at. Setting historyWritten first also stops any still-pending
+      // Stop timer from reverting the row back to 'active' after us.
+      session.historyWritten = true;
+      writeHistory(session, 'ended');
       // Flush any coalesced update synchronously so the final state is sent
       // before the session is forgotten by the renderer.
       this.flushPending(sessionId);
