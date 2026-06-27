@@ -171,6 +171,9 @@
   const msgEl = $('msg'), sendBtn = $('send'), toastEl = $('toast'), needPill = $('needPill');
 
   let ws = null, backoff = 500, calls = new Map(), callSeq = 0;
+  let reconnectTimer = null;
+  let lastActivity = 0;            // ms of the last inbound frame; drives staleness check
+  const STALE_MS = 30000;
   const sessions = new Map();          // sessionId -> agents.list row
   let view = { name: 'fleet' };        // 'fleet' | 'needs' | { name:'chat', sessionId }
   let convo = { seq: 0, items: [] };   // current chat conversation
@@ -423,15 +426,19 @@
 
   function connect() {
     if (!token) return gate();
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
     setConnected(false);
     try { ws = new WebSocket(wsURL()); } catch { return scheduleReconnect(); }
     ws.onopen = () => {
-      backoff = 500; setConnected(true);
+      backoff = 500; lastActivity = Date.now(); setConnected(true);
       ws.send(JSON.stringify({ op: 'subscribe', topics: ['agent.state_changed', 'agent.snapshot'] }));
+      // Re-pull current state on every (re)connect — while the socket was down we
+      // missed the state_changed/snapshot events that normally keep us live.
       if (view.name === 'fleet') setTab('fleet'); else refresh();
       if (view.name === 'chat') loadConvo(true);
     };
     ws.onmessage = (ev) => {
+      lastActivity = Date.now();
       let f; try { f = JSON.parse(ev.data); } catch { return; }
       if (f.op === 'result') { const c = calls.get(f.id); if (c) { calls.delete(f.id); c.resolve(f.result); } }
       else if (f.op === 'error' && f.id) { const c = calls.get(f.id); if (c) { calls.delete(f.id); c.reject(new Error(f.error || 'error')); } }
@@ -450,7 +457,27 @@
     };
     ws.onerror = () => { try { ws.close(); } catch {} };
   }
-  function scheduleReconnect() { setTimeout(connect, backoff); backoff = Math.min(backoff * 2, 8000); }
+  function scheduleReconnect() {
+    if (reconnectTimer) return;
+    reconnectTimer = setTimeout(() => { reconnectTimer = null; connect(); }, backoff);
+    backoff = Math.min(backoff * 2, 8000);
+  }
+
+  // Mobile browsers throttle a backgrounded tab's reconnect timer and suspend
+  // its socket, so on returning to the page we'd sit on a dead socket (and stale
+  // fleet) until a manual refresh. Reconnect immediately when the page is shown
+  // again or the network returns, unless the socket is provably still live.
+  function wake() {
+    if (!token || document.visibilityState === 'hidden') return;
+    const live = ws && ws.readyState === WebSocket.OPEN && Date.now() - lastActivity < STALE_MS;
+    if (live) return;
+    backoff = 500;
+    try { if (ws) { ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null; ws.close(); } } catch {}
+    ws = null;
+    connect();
+  }
+  document.addEventListener('visibilitychange', wake);
+  window.addEventListener('online', wake);
 
   // ── wiring ──────────────────────────────────────────────────────────────
   for (const b of nav.querySelectorAll('button')) b.onclick = () => setTab(b.dataset.tab);

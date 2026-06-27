@@ -35,6 +35,7 @@ import { useAttentionFeed } from './hooks/useAttentionFeed';
 import type { Layout, LayoutAgent } from './types/layout';
 import { useLibrary } from './hooks/useLibrary';
 import { useLayoutSync, type HydrationResult } from './hooks/useLayoutSync';
+import { useHubReconnect } from './hooks/useHubReconnect';
 import { useAgentManager, GLOBAL_WORKSPACE_ID } from './hooks/useAgentManager';
 import type { PaneType, AgentWorkspace, ViewMode, ViewLevel, TabConfig } from './types/pane';
 import type { SessionAmbientState, ClaudeSessionSnapshot } from './types/claudeSession';
@@ -319,10 +320,12 @@ function App() {
   // launch (spawned via the MCP facade or by another agent). null until the
   // first session list resolves, so adoption waits rather than guessing empty.
   const preexistingSessionIdsRef = useRef<Set<string> | null>(null);
-  useEffect(() => {
-    let cancelled = false;
+  // Pull the full session list and promote each snapshot. Runs at mount and
+  // again on every hub reconnect — while the socket is down we miss
+  // `onClaudeSessionUpdate` ticks, so without this re-pull a web tab shows stale
+  // (or missing) sessions until a manual refresh.
+  const refreshSessionSnapshots = useCallback(() => {
     window.electronAPI.getAllClaudeSessions().then((sessions: any[]) => {
-      if (cancelled) return;
       const map: Record<string, SessionAmbientState> = {};
       const snaps: Record<string, ClaudeSessionSnapshot> = {};
       for (const s of sessions) {
@@ -336,10 +339,14 @@ function App() {
       setSnapshotBySession(snaps);
     }).catch(() => {
       // No daemon / empty list: nothing pre-existed, so adoption can proceed.
-      if (!cancelled && preexistingSessionIdsRef.current === null) {
+      if (preexistingSessionIdsRef.current === null) {
         preexistingSessionIdsRef.current = new Set();
       }
     });
+  }, []);
+  useHubReconnect(refreshSessionSnapshots);
+  useEffect(() => {
+    refreshSessionSnapshots();
     const unsub = window.electronAPI.onClaudeSessionUpdate((sessionId: string, snapshot: any) => {
       // An ended session will never tick again, so drop its (full-transcript)
       // snapshot + status rather than leaving it pinned in memory forever.
@@ -359,8 +366,8 @@ function App() {
       setStatusBySession((prev) => ({ ...prev, [sessionId]: snapshot.ambientState }));
       setSnapshotBySession((prev) => ({ ...prev, [sessionId]: snapshot }));
     });
-    return () => { cancelled = true; unsub(); };
-  }, []);
+    return () => { unsub(); };
+  }, [refreshSessionSnapshots]);
 
   // Drop a terminated agent's session snapshot/status from the promoted maps.
   // useAgentManager.terminateAgent removes the agent + closes the daemon session
