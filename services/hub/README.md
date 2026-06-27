@@ -101,6 +101,40 @@ session runs headless in claudemon and a desktop pane can attach to it later.
 Next milestones: per-method capability tokens (the `SetAuthorize` seam) →
 surfacing MCP-spawned sessions as panes in the UI automatically.
 
+## Headless brain (`cmd/brain`)
+
+The capabilities above (`agents.*`, `claude.*`, `sessions.*`) are normally
+*provided* by the Electron main process — so they only exist while the desktop
+app is running. That's why the TUI bypasses the hub and re-implements a slice of
+that logic itself.
+
+`cmd/brain` is a standalone **provider** that fills the gap: it connects to the
+hub bus and registers the core agent capabilities headlessly, backing each by
+claudemon's HTTP API plus the same profile/argv logic the app and TUI use. Run
+it (instead of, or alongside, the desktop app) and any caller — the MCP facade,
+the web client, a future thin TUI — gets the surface **without a GUI open**.
+
+```sh
+# hub + claudemon already running, then:
+go run ./cmd/brain --hub ws://127.0.0.1:7895/bus --claudemon http://127.0.0.1:7891
+# (pass --token / $HUB_TOKEN when the hub requires auth)
+```
+
+Capabilities registered today (Phase 1 — the "spawn + drive + observe" loop):
+
+| Capability | Backed by |
+| --- | --- |
+| `agents.list` | claudemon `GET /sessions` |
+| `agents.spawn` | profile→argv + claudemon `POST /sessions/spawn` |
+| `agents.sendMessage` | claudemon `POST /sessions/:id/message` |
+| `claude.approve` / `claude.answer` / `claude.signal` | claudemon `POST /sessions/:id/{approve,answer,signal}` |
+| `sessions.transcript` / `sessions.conversation` | claudemon `GET /sessions/:id/{transcript,conversation}` |
+| `claude.profiles.list` | `~/.config/workspacer/claude-profiles.json` |
+
+It reuses the provider pattern from `examples/rivet-bridge`. The endgame is for
+every client (app, TUI, web, MCP) to be a thin caller of this one brain, so they
+mirror each other by construction instead of duplicating logic across TS/Rust/Go.
+
 ## Protocol
 
 Clients open one WebSocket to `ws://<addr>/bus` and exchange JSON frames.
