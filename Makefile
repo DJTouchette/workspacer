@@ -41,7 +41,7 @@ build-desktop:
 	cd $(DESKTOP) && npm run build
 
 build-hub:
-	cd $(HUB) && go build -o . ./cmd/hub && go build -o . ./cmd/mcp
+	cd $(HUB) && go build -o . ./cmd/hub && go build -o . ./cmd/mcp && go build -o . ./cmd/brain
 
 build-claudemon:
 	cd $(CLAUDEMON) && cargo build --release
@@ -68,6 +68,6 @@ package:
 ## clean: remove build artifacts across components
 clean:
 	rm -rf $(DESKTOP)/dist $(DESKTOP)/release
-	rm -f $(HUB)/hub $(HUB)/hub.exe $(HUB)/mcp
+	rm -f $(HUB)/hub $(HUB)/hub.exe $(HUB)/mcp $(HUB)/mcp.exe $(HUB)/brain $(HUB)/brain.exe
 	cd $(CLAUDEMON) && cargo clean
 	cd $(TUI) && cargo clean
