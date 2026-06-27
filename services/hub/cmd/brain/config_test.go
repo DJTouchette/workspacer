@@ -5,7 +5,36 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
+
+func TestConfigGetReloadsOnExternalChange(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	c := newConfigService()
+	if ui := c.get()["ui"].(map[string]any); ui["theme"] != "dark" {
+		t.Fatalf("initial theme should be the default dark, got %v", ui["theme"])
+	}
+
+	// Simulate the desktop app rewriting config.yaml in its own process.
+	p := filepath.Join(dir, "workspacer", "config.yaml")
+	if err := os.WriteFile(p, []byte("ui:\n  theme: external\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Force a strictly newer mtime, independent of filesystem timestamp resolution.
+	future := time.Now().Add(2 * time.Second)
+	_ = os.Chtimes(p, future, future)
+
+	ui := c.get()["ui"].(map[string]any)
+	if ui["theme"] != "external" {
+		t.Fatalf("get() should reflect the external change, got %v", ui["theme"])
+	}
+	// Defaults still merge under the externally-written partial.
+	if c.get()["terminal"] == nil {
+		t.Error("defaults should still merge over the external file")
+	}
+}
 
 func TestDefaultConfigParses(t *testing.T) {
 	cfg := defaultConfig()

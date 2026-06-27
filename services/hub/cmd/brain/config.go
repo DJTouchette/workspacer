@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	yaml "gopkg.in/yaml.v3"
 )
@@ -127,16 +128,32 @@ func deepMerge(target, source map[string]any) map[string]any {
 }
 
 // configService caches the merged config and serializes access, since bus calls
-// are handled on concurrent goroutines. Mirrors the TS singleton.
+// are handled on concurrent goroutines. Mirrors the TS singleton — but, unlike a
+// single-process app, the desktop writes config.yaml in *its* process, so the
+// cache is mtime-gated: get() re-reads when the file changed underneath us, so a
+// remote client reading via the brain never sees stale config.
 type configService struct {
-	mu      sync.Mutex
-	current map[string]any
+	mu       sync.Mutex
+	current  map[string]any
+	loadedAt time.Time // mtime of config.yaml when `current` was loaded
 }
 
 func newConfigService() *configService {
 	c := &configService{}
+	c.mu.Lock()
 	c.current = c.loadFromDisk()
+	c.loadedAt = configMtime()
+	c.mu.Unlock()
 	return c
+}
+
+// configMtime is the config file's modification time, or the zero time when it's
+// absent (so a missing file never looks "newer" than a loaded cache).
+func configMtime() time.Time {
+	if st, err := os.Stat(configPath()); err == nil {
+		return st.ModTime()
+	}
+	return time.Time{}
 }
 
 func (c *configService) loadFromDisk() map[string]any {
@@ -160,23 +177,30 @@ func (c *configService) writeDefaults(defaults map[string]any) {
 func (c *configService) get() map[string]any {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	// Re-read when the file changed under us (e.g. the desktop app wrote a
+	// setting in its own process). mtime-gated, so the steady state is one stat.
+	if c.current == nil || configMtime().After(c.loadedAt) {
+		c.current = c.loadFromDisk()
+		c.loadedAt = configMtime()
+	}
 	return c.current
 }
 
 func (c *configService) reload() map[string]any {
-	cfg := c.loadFromDisk()
 	c.mu.Lock()
-	c.current = cfg
-	c.mu.Unlock()
-	return cfg
+	defer c.mu.Unlock()
+	c.current = c.loadFromDisk()
+	c.loadedAt = configMtime()
+	return c.current
 }
 
 func (c *configService) save(partial map[string]any) map[string]any {
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	merged := deepMerge(c.current, partial)
-	c.current = merged
-	c.mu.Unlock()
 	writeConfigYAML(merged)
+	c.current = merged
+	c.loadedAt = configMtime()
 	return merged
 }
 
