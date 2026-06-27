@@ -8,6 +8,7 @@
 //! the Electron main process, so a standalone client can't rely on them.)
 
 mod app;
+mod bus;
 mod claudemon;
 mod config;
 mod daemons;
