@@ -42,7 +42,10 @@ func main() {
 	// pushing each change to the bus as an `agent.snapshot` event. (In catalog
 	// scope the desktop app owns this, so we skip it.)
 	if *scope != "catalog" {
+		meta := newMetaStore()
+		reg.meta = meta
 		store := newSessionStore()
+		store.enrich = func(snap json.RawMessage) json.RawMessage { return enrichSnapshot(snap, meta) }
 		store.onChange = func(_ string, snap json.RawMessage) { bus.publish("agent.snapshot", snap) }
 		reg.store = store
 		go runSessionStore(ctx, cm, store)

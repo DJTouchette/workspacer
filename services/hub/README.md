@@ -140,9 +140,13 @@ follows claudemon's `/events` stream and keeps a live snapshot per session in
 memory: `agents.list` / `sessions.snapshot{,s}` answer from it, and every change
 is pushed to the bus as an **`agent.snapshot`** event, so clients render live
 instead of polling. (In catalog scope the desktop app owns this, so the brain
-skips it.) This is the first step of the *streaming phase* — the seam where
-name/parent enrichment and PTY streaming land, and what lets the TUI eventually
-drop its claudemon-direct path and become a thin bus client.
+skips it.) Snapshots are **enriched** with a custom name, parent, and supervisor
+flag — from spawn metadata (`label`/`parentSessionId` recorded at spawn) and the
+persisted cwd→name renames in `~/.config/workspacer/tui-names.json` (the same
+file the TUI writes) — so a headless `agents.list` matches the desktop's
+named/nested view. The remaining streaming steps are live statusline ticks and
+PTY-over-bus; together they let the TUI drop its claudemon-direct path and become
+a thin bus client.
 
 **`--scope` / `--brain-scope`** controls *which* capabilities the brain registers,
 because the bus router is single-owner per method: two providers for the same

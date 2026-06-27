@@ -19,6 +19,15 @@ type sessionStore struct {
 
 	// onChange is invoked (outside the lock) after a set, to publish the update.
 	onChange func(id string, snap json.RawMessage)
+	// enrich, if set, overlays name/parent/etc. onto each snapshot as it lands.
+	enrich func(json.RawMessage) json.RawMessage
+}
+
+func (s *sessionStore) applyEnrich(snap json.RawMessage) json.RawMessage {
+	if s.enrich == nil {
+		return snap
+	}
+	return s.enrich(snap)
 }
 
 func newSessionStore() *sessionStore {
@@ -28,13 +37,18 @@ func newSessionStore() *sessionStore {
 // seed replaces the whole store without firing onChange — used for the initial
 // snapshot so we don't publish a burst of events for pre-existing sessions.
 func (s *sessionStore) seed(snaps map[string]json.RawMessage) {
+	enriched := make(map[string]json.RawMessage, len(snaps))
+	for id, snap := range snaps {
+		enriched[id] = s.applyEnrich(snap)
+	}
 	s.mu.Lock()
-	s.m = snaps
+	s.m = enriched
 	s.mu.Unlock()
 }
 
 // set upserts one session and notifies (publishes) the change.
 func (s *sessionStore) set(id string, snap json.RawMessage) {
+	snap = s.applyEnrich(snap)
 	s.mu.Lock()
 	s.m[id] = snap
 	cb := s.onChange

@@ -21,6 +21,7 @@ type registry struct {
 	cm    *claudemonClient
 	cfg   *configService
 	store *sessionStore // live session store (full scope only); nil → proxy claudemon
+	meta  *metaStore    // spawn metadata (label/parent/supervisor) for enrichment
 }
 
 func newRegistry(cm *claudemonClient) *registry {
@@ -256,6 +257,9 @@ type spawnParams struct {
 	ResumeSessionID string `json:"resumeSessionId"`
 	Cols            int    `json:"cols"`
 	Rows            int    `json:"rows"`
+	Label           string `json:"label"`
+	ParentSessionID string `json:"parentSessionId"`
+	Supervisor      bool   `json:"supervisor"`
 }
 
 type sessionParam struct {
@@ -285,6 +289,12 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 		if sessionID, err = newSessionID(); err != nil {
 			return nil, err
 		}
+	}
+
+	// Record spawn metadata before the session registers, so the live store's
+	// enricher picks up the name/parent the moment claudemon reports SessionStart.
+	if r.meta != nil && (p.Label != "" || p.ParentSessionID != "" || p.Supervisor) {
+		r.meta.set(sessionID, spawnMeta{Label: p.Label, ParentSessionID: p.ParentSessionID, IsSupervisor: p.Supervisor})
 	}
 
 	cols, rows := p.Cols, p.Rows
