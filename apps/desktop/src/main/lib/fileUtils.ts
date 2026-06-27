@@ -46,17 +46,24 @@ export function slug(input: string, opts: SlugOpts = {}): string {
 
   let out = (input || '').toLowerCase();
 
+  const trimRe = charsetVariant === 'library' ? /^-+|-+$/g : /^-|-$/g;
   if (charsetVariant === 'library') {
     // libraryService: collapse runs of bad chars into a single '-' in one pass
     out = out.replace(/[^a-z0-9-_]+/g, '-');
-    if (trimDashes) out = out.replace(/^-+|-+$/g, '');
   } else {
     // layoutService / sessionService: single-char replace then deduplicate
     out = out.replace(/[^a-z0-9_-]/g, '-').replace(/-+/g, '-');
-    if (trimDashes) out = out.replace(/^-|-$/g, '');
   }
+  if (trimDashes) out = out.replace(trimRe, '');
 
   if (maxLen !== undefined) out = out.substring(0, maxLen);
+
+  // Re-trim after truncation: a cut can land on a '-' boundary and reintroduce
+  // a trailing dash. Without this, slug() is not idempotent
+  // (slug(slug(x)) !== slug(x)), which breaks any consumer that re-slugs a
+  // stored id — e.g. layoutService.remove re-slugged the id and unlinked a
+  // filename that didn't match what save() wrote, so the layout was undeletable.
+  if (trimDashes) out = out.replace(trimRe, '');
 
   if (!out && fallback !== undefined) return fallback;
   return out;

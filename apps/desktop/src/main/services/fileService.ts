@@ -48,7 +48,10 @@ export function listDir(dirPath: string): ListDirResult {
   if (dirents.length) {
     const names = dirents.map((e) => e.name).join('\n');
     try {
-      const out = execFileSync('git', ['check-ignore', '--stdin'], {
+      // core.quotePath=false keeps non-ASCII names unquoted so they match the
+      // decoded names fs.readdir returns (otherwise git emits e.g. "\303\251.log"
+      // and the ignore filter silently misses unicode-named files).
+      const out = execFileSync('git', ['-c', 'core.quotePath=false', 'check-ignore', '--stdin'], {
         cwd: resolved,
         input: names,
         encoding: 'utf8',

@@ -162,12 +162,14 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
     return commandActions.find(a => a.id === 'cmd-help') ?? null;
   }, [commandActions, restrictTo]);
 
-  // Build unified item list: actions, commands (minus the pinned one), then apps, plugin panes, library.
+  // Build unified item list. Order MUST match the visual group order rendered
+  // below (actions, apps, commands, plugins, library): keyboard nav advances
+  // selectedIndex through this array while each row highlights by its index in
+  // it, so any divergence makes Arrow keys jump rows instead of stepping.
   const items: PaletteItem[] = useMemo(() => {
     if (restrictTo === 'library') return libItems;
     return [
       ...builtInActions,
-      ...commandActions.filter(a => a.id !== 'cmd-help'),
       ...apps.map((app, i) => ({
         id: `app-${i}`,
         name: app.name,
@@ -177,6 +179,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
         url: app.url,
         app,
       })),
+      ...commandActions.filter(a => a.id !== 'cmd-help'),
       ...pluginPanes.map((p) => ({
         id: `plugin-${p.type}`,
         name: p.title,
