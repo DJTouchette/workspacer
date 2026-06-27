@@ -144,9 +144,11 @@ skips it.) Snapshots are **enriched** with a custom name, parent, and supervisor
 flag — from spawn metadata (`label`/`parentSessionId` recorded at spawn) and the
 persisted cwd→name renames in `~/.config/workspacer/tui-names.json` (the same
 file the TUI writes) — so a headless `agents.list` matches the desktop's
-named/nested view. The remaining streaming steps are live statusline ticks and
-PTY-over-bus; together they let the TUI drop its claudemon-direct path and become
-a thin bus client.
+named/nested view. Live cost/context follows claudemon's high-frequency
+`/statusline/stream` and is pushed on a lighter **`agent.statusline`** event
+(sessionId + status line) rather than re-publishing the whole snapshot. The
+remaining streaming step is PTY-over-bus (the live terminal); with it the TUI can
+drop its claudemon-direct path and become a thin bus client.
 
 **`--scope` / `--brain-scope`** controls *which* capabilities the brain registers,
 because the bus router is single-owner per method: two providers for the same

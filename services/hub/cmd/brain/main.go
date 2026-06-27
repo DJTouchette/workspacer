@@ -49,6 +49,14 @@ func main() {
 		store.onChange = func(_ string, snap json.RawMessage) { bus.publish("agent.snapshot", snap) }
 		reg.store = store
 		go runSessionStore(ctx, cm, store)
+		// Live cost/context: follow the high-frequency statusline stream and push
+		// a light `agent.statusline` event (sessionId + the status line) per tick.
+		go runStatusLines(ctx, cm, store, func(id string, sl json.RawMessage) {
+			payload, err := json.Marshal(map[string]any{"sessionId": id, "statusLine": sl})
+			if err == nil {
+				bus.publish("agent.statusline", payload)
+			}
+		})
 	}
 
 	log.Printf("brain: scope=%s, provider for %d capabilities → hub %s, claudemon %s",

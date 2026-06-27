@@ -58,6 +58,32 @@ func (s *sessionStore) set(id string, snap json.RawMessage) {
 	}
 }
 
+// updateStatusLine merges a fresh status_line into a known session's snapshot,
+// silently (no onChange) — statusline ticks are high-frequency, so they update
+// the store for polls/next-snapshot but are pushed on the lighter
+// `agent.statusline` event, not by re-publishing the whole snapshot. Unknown
+// sessions are skipped (nothing to merge into yet).
+func (s *sessionStore) updateStatusLine(id string, statusLine json.RawMessage) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	snap, ok := s.m[id]
+	if !ok {
+		return
+	}
+	var m map[string]any
+	if json.Unmarshal(snap, &m) != nil {
+		return
+	}
+	var sl any
+	if json.Unmarshal(statusLine, &sl) != nil {
+		return
+	}
+	m["status_line"] = sl
+	if out, err := json.Marshal(m); err == nil {
+		s.m[id] = out
+	}
+}
+
 func (s *sessionStore) get(id string) (json.RawMessage, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

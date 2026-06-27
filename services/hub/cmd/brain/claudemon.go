@@ -123,11 +123,10 @@ func (c *claudemonClient) getSession(ctx context.Context, id string) (json.RawMe
 	return c.getRaw(ctx, "/sessions/"+id)
 }
 
-// streamEvents follows claudemon's /events SSE stream, calling emit per frame.
-// Uses a no-timeout client — SSE is long-lived (the shared client's 30s timeout
-// would kill it).
-func (c *claudemonClient) streamEvents(ctx context.Context, emit func(name string, data []byte)) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/events", nil)
+// streamSSE follows an SSE endpoint, calling emit per frame. Uses a no-timeout
+// client — SSE is long-lived (the shared client's 30s timeout would kill it).
+func (c *claudemonClient) streamSSE(ctx context.Context, path string, emit func(name string, data []byte)) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+path, nil)
 	if err != nil {
 		return err
 	}
@@ -138,6 +137,14 @@ func (c *claudemonClient) streamEvents(ctx context.Context, emit func(name strin
 	}
 	defer resp.Body.Close()
 	return parseSSE(ctx, resp.Body, emit)
+}
+
+func (c *claudemonClient) streamEvents(ctx context.Context, emit func(name string, data []byte)) error {
+	return c.streamSSE(ctx, "/events", emit)
+}
+
+func (c *claudemonClient) streamStatusLines(ctx context.Context, emit func(name string, data []byte)) error {
+	return c.streamSSE(ctx, "/statusline/stream", emit)
 }
 
 // submitMessage posts a prompt. claudemon's mode-gated /message accepts it only

@@ -55,6 +55,45 @@ func runSessionStore(ctx context.Context, cm *claudemonClient, store *sessionSto
 	}
 }
 
+// runStatusLines follows claudemon's high-frequency /statusline/stream, merging
+// each tick into the store (silently) and handing it to publish for the light
+// `agent.statusline` event. Reconnects with backoff.
+func runStatusLines(ctx context.Context, cm *claudemonClient, store *sessionStore, publish func(id string, statusLine json.RawMessage)) {
+	backoff := time.Second
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		_ = cm.streamStatusLines(ctx, func(name string, data []byte) {
+			if name != "statusline" && name != "" {
+				return
+			}
+			var u struct {
+				SessionID  string          `json:"session_id"`
+				StatusLine json.RawMessage `json:"status_line"`
+			}
+			if json.Unmarshal(data, &u) != nil || u.SessionID == "" {
+				return
+			}
+			store.updateStatusLine(u.SessionID, u.StatusLine)
+			if publish != nil {
+				publish(u.SessionID, u.StatusLine)
+			}
+		})
+		if ctx.Err() != nil {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+		if backoff < 10*time.Second {
+			backoff *= 2
+		}
+	}
+}
+
 func seedStore(ctx context.Context, cm *claudemonClient, store *sessionStore) {
 	raw, err := cm.listSessions(ctx)
 	if err != nil {
