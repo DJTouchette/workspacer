@@ -1,6 +1,7 @@
 import React from 'react';
 import type { ClaudeSessionSnapshot } from '../../types/claudeSession';
 import { deriveSessionStats } from '../../lib/sessionStats';
+import { IconModel } from '../wksIcons';
 
 /**
  * A compact, single-line status readout — Workspacer's in-app equivalent of
@@ -89,7 +90,7 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd }) => {
       }}
     >
       {dir && <span style={{ color: 'var(--wks-accent-text)', fontWeight: 600 }}>{dir}</span>}
-      {model && (<><Sep /><span style={{ color: 'var(--wks-text-secondary)' }}>{model}</span></>)}
+      {model && (<><Sep /><span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--wks-text-secondary)' }}><IconModel size={12} strokeWidth={2} accent="currentColor" />{model}</span></>)}
       {ctxPct !== undefined && (
         <>
           <Sep />

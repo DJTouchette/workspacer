@@ -1,14 +1,13 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
-  GitBranch,
   RefreshCw,
   ArrowUp,
   CheckCircle2,
   Copy,
   Check,
   FileX2,
-  GitCommitHorizontal,
 } from 'lucide-react';
+import { IconBranch, IconCommit } from '../components/wksIcons';
 import { claudeColors as colors } from '../components/claude-shared';
 import { GitClient, type GitStatus, type NumstatEntry } from '../lib/gitQueries';
 import FileTree, { StatusChip, type TreeEntry } from '../components/review/FileTree';
@@ -487,7 +486,7 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive }) => {
           <div style={{ fontSize: '0.95rem', fontWeight: 700, color: colors.textBright }}>Reviewing changes</div>
           <div style={{ fontFamily: 'var(--wks-font-mono, monospace)', fontSize: '0.7rem', color: colors.muted, marginTop: 3, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', minWidth: 0 }}>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, minWidth: 0 }} title={cwd}>
-              <GitBranch size={11} style={{ flexShrink: 0, color: colors.accent }} />
+              <IconBranch size={12} strokeWidth={2.2} style={{ flexShrink: 0, color: colors.accent }} accent={colors.accent} />
               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{status?.branch ?? 'detached'}</span>
             </span>
             {totalChanges > 0 && (
@@ -709,7 +708,7 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive }) => {
               fontWeight: 600,
             }}
           >
-            <GitCommitHorizontal size={13} />
+            <IconCommit size={14} strokeWidth={2.2} accent="currentColor" />
             {`Commit${staged.length > 0 ? ` ${staged.length} file${staged.length > 1 ? 's' : ''}` : ''}`}
           </button>
         </div>
