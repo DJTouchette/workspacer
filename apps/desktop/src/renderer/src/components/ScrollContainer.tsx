@@ -143,7 +143,7 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
     case 'claude':
       return (
         <Suspense fallback={<PaneFallback />}>
-          <ClaudePane paneId={pane.id} title={pane.title} isActive={isActive} cwd={pane.cwd} profileId={pane.profileId} resumeSessionId={pane.resumeSessionId} attachSessionId={pane.attachSessionId} initialPrompt={pane.initialPrompt} onPtyReady={callbacks.onPtyReady} />
+          <ClaudePane paneId={pane.id} title={pane.title} isActive={isActive} cwd={pane.cwd} profileId={pane.profileId} provider={pane.provider} resumeSessionId={pane.resumeSessionId} attachSessionId={pane.attachSessionId} initialPrompt={pane.initialPrompt} onPtyReady={callbacks.onPtyReady} />
         </Suspense>
       );
     case 'browser':

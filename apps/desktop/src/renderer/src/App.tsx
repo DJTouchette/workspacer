@@ -37,7 +37,7 @@ import { useLibrary } from './hooks/useLibrary';
 import { useLayoutSync, type HydrationResult } from './hooks/useLayoutSync';
 import { useHubReconnect } from './hooks/useHubReconnect';
 import { useAgentManager, GLOBAL_WORKSPACE_ID } from './hooks/useAgentManager';
-import type { PaneType, AgentWorkspace, ViewMode, ViewLevel, TabConfig } from './types/pane';
+import type { PaneType, AgentWorkspace, AgentProvider, ViewMode, ViewLevel, TabConfig } from './types/pane';
 import type { SessionAmbientState, ClaudeSessionSnapshot } from './types/claudeSession';
 import { useKeyboardNav } from './hooks/useKeyboardNav';
 import { useIsSmallScreen } from './hooks/useMediaQuery';
@@ -622,12 +622,16 @@ function App() {
     saveConfig({ directories: { recent, favourites: config.directories?.favourites ?? [] } });
   }, [config.directories, saveConfig]);
 
-  const handleSpawnAgent = useCallback((opts: { cwd: string; name?: string; profileId?: string; model?: string; skipPermissions?: boolean; mcpItemIds?: string[]; resumeSessionId?: string }) => {
+  const handleSpawnAgent = useCallback((opts: { cwd: string; name?: string; provider?: AgentProvider; profileId?: string; model?: string; skipPermissions?: boolean; mcpItemIds?: string[]; resumeSessionId?: string }) => {
     setShowSpawnDialog(false);
-    // Remember the picked model + skip-permissions choice so they stick next time.
-    window.electronAPI.saveConfig({
-      claude: { defaultModel: opts.model ?? '', skipPermissionsDefault: opts.skipPermissions ?? false },
-    }).catch(() => {});
+    // Remember the picked model + skip-permissions choice so they stick next time
+    // — but only for Claude, so spawning a Codex/OpenCode agent doesn't clobber
+    // the saved Claude defaults (those options don't apply to other providers).
+    if ((opts.provider ?? 'claude') === 'claude') {
+      window.electronAPI.saveConfig({
+        claude: { defaultModel: opts.model ?? '', skipPermissionsDefault: opts.skipPermissions ?? false },
+      }).catch(() => {});
+    }
     recordRecentDir(opts.cwd);
     void spawnAgent(opts);
   }, [spawnAgent, recordRecentDir]);

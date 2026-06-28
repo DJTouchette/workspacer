@@ -1,20 +1,29 @@
 import React, { useEffect, useState } from 'react';
 import { deriveAgentName } from '../hooks/useAgentManager';
 import type { LibraryItem } from '../types/library';
+import type { AgentProvider } from '../types/pane';
 
 interface SpawnProfile { id: string; name: string; mcpItemIds?: string[] }
 
 interface SpawnAgentDialogProps {
   defaultCwd: string;
-  onSpawn: (opts: { cwd: string; name?: string; profileId?: string; model?: string; skipPermissions?: boolean; mcpItemIds?: string[]; resumeSessionId?: string }) => void;
+  onSpawn: (opts: { cwd: string; name?: string; provider?: AgentProvider; profileId?: string; model?: string; skipPermissions?: boolean; mcpItemIds?: string[]; resumeSessionId?: string }) => void;
   onCancel: () => void;
 }
 
 const CUSTOM = '__custom__';
 
+const PROVIDERS: { value: AgentProvider; label: string }[] = [
+  { value: 'claude', label: 'Claude Code' },
+  { value: 'codex', label: 'Codex' },
+  { value: 'opencode', label: 'OpenCode' },
+];
+
 const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, onSpawn, onCancel }) => {
   const [cwd, setCwd] = useState(defaultCwd);
   const [name, setName] = useState('');
+  const [provider, setProvider] = useState<AgentProvider>('claude');
+  const isClaude = provider === 'claude';
   const [profiles, setProfiles] = useState<SpawnProfile[]>([]);
   const [profileId, setProfileId] = useState<string>('');
 
@@ -120,7 +129,11 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, onSpawn
 
   const submit = () => {
     if (!cwd.trim()) return;
-    onSpawn({ cwd: cwd.trim(), name: name.trim() || undefined, profileId: profileId || undefined, model: resolvedModel || undefined, skipPermissions, mcpItemIds: mcpSel.length ? mcpSel : undefined, resumeSessionId: resumeSessionId || undefined });
+    // Claude-only options are dropped for other providers (they run their own
+    // TUI in Tier-1 and don't take Claude's profile/model/MCP/resume flags).
+    onSpawn(isClaude
+      ? { cwd: cwd.trim(), name: name.trim() || undefined, profileId: profileId || undefined, model: resolvedModel || undefined, skipPermissions, mcpItemIds: mcpSel.length ? mcpSel : undefined, resumeSessionId: resumeSessionId || undefined }
+      : { cwd: cwd.trim(), name: name.trim() || undefined, provider });
   };
 
   const placeholderName = cwd.trim() ? deriveAgentName(cwd.trim()) : 'agent';
@@ -176,7 +189,36 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, onSpawn
           />
         </Field>
 
-        {sessions.length > 0 && (
+        <Field label="Agent">
+          <div style={{ display: 'flex', gap: 4 }}>
+            {PROVIDERS.map((p) => {
+              const active = provider === p.value;
+              return (
+                <button
+                  key={p.value}
+                  onClick={() => setProvider(p.value)}
+                  style={{
+                    flex: 1, padding: '6px 8px', borderRadius: 6, cursor: 'pointer',
+                    fontSize: '0.72rem', fontFamily: 'inherit', fontWeight: 600,
+                    border: active ? '1px solid var(--wks-accent)' : '1px solid var(--wks-border-input)',
+                    background: active ? 'var(--wks-accent-bg)' : 'transparent',
+                    color: active ? 'var(--wks-accent-text, var(--wks-text-primary))' : 'var(--wks-text-tertiary)',
+                  }}
+                >
+                  {p.label}
+                </button>
+              );
+            })}
+          </div>
+          {!isClaude && (
+            <div style={{ color: 'var(--wks-text-faint)', fontSize: '0.62rem', marginTop: 5, lineHeight: 1.4 }}>
+              Runs the {PROVIDERS.find((p) => p.value === provider)?.label} CLI in a terminal. Live telemetry
+              (conversation, usage, approvals) is Claude-only for now.
+            </div>
+          )}
+        </Field>
+
+        {isClaude && sessions.length > 0 && (
           <Field label="Resume session (optional)">
             <select value={resumeSessionId} onChange={(e) => setResumeSessionId(e.target.value)} style={inputStyle}>
               <option value="">Start fresh</option>
@@ -189,6 +231,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, onSpawn
           </Field>
         )}
 
+        {isClaude && (
         <Field label="Model">
           <select value={modelSel} onChange={(e) => setModelSel(e.target.value)} style={inputStyle}>
             <option value="">Default (Claude Code setting)</option>
@@ -218,8 +261,9 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, onSpawn
             />
           )}
         </Field>
+        )}
 
-        {profiles.length > 0 && (
+        {isClaude && profiles.length > 0 && (
           <Field label="Profile (optional)">
             <select value={profileId} onChange={(e) => setProfileId(e.target.value)} style={inputStyle}>
               <option value="">Default</option>
@@ -230,7 +274,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, onSpawn
           </Field>
         )}
 
-        {mcpItems.length > 0 && (
+        {isClaude && mcpItems.length > 0 && (
           <Field label="MCP servers (optional)">
             <div style={{
               display: 'flex', flexDirection: 'column', gap: 2,
@@ -257,6 +301,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, onSpawn
           </Field>
         )}
 
+        {isClaude && (
         <label style={{
           display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 4, cursor: 'pointer',
         }}>
@@ -274,6 +319,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, onSpawn
             </div>
           </span>
         </label>
+        )}
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}>
           <button onClick={onCancel} style={secondaryBtnStyle}>Cancel</button>

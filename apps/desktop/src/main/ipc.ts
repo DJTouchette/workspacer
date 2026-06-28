@@ -13,6 +13,7 @@ import { listClaudeModels } from './services/claudeModels';
 import { agentNotifier } from './services/agentNotifier';
 import { claudemonSessionClient } from './services/claudemonSessionClient';
 import { buildClaudeArgv } from './services/claudeResolver';
+import { buildAgentArgv } from './services/agentProviders';
 import { facadeSpawnArgs, buildSessionMcpConfig } from './services/mcpConfig';
 import { installSupervisorSkill, ensureSupervisorHome } from './services/supervisorSkill';
 import { importChromeCookies, importChromeCookiesViaCDP } from './services/chromeCookieImport';
@@ -109,11 +110,19 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   // ── Claude sessions (delegated to claudemon) ──
   ipcMain.handle(IPC.CLAUDE_SPAWN, async (_event, opts: { cwd?: string; provider?: 'claude' | 'codex' | 'opencode'; profileId?: string; model?: string; skipPermissions?: boolean; resumeSessionId?: string; cols?: number; rows?: number; supervisor?: boolean; mcpFacade?: boolean; label?: string; parentSessionId?: string; mcpItemIds?: string[] }) => {
-    // Provider selects the coding-agent backend. Phase 0 accepts the field and
-    // threads it through the data model; the launch path still builds a Claude
-    // argv. Phase 1 branches here into a per-provider registry (binary + argv).
+    // Provider selects the coding-agent backend.
     const provider = opts.provider ?? 'claude';
-    void provider;
+    // Tier-1 for non-Claude agents: launch the agent's own interactive CLI in a
+    // PTY (no Claude MCP / facade / --session-id flags — those are Claude-specific).
+    // claudemon tracks it as a raw PTY session; the renderer renders it as a
+    // terminal (no hook/transcript telemetry yet — that's the managed adapter phase).
+    if (provider !== 'claude') {
+      const sid = randomUUID();
+      claudeSessionStore.setSpawnMeta(sid, { label: opts.label, parentSessionId: opts.parentSessionId });
+      const argv = buildAgentArgv({ provider });
+      const cwd = opts.cwd || process.env.HOME || os.homedir();
+      return claudemonSessionClient.spawn({ argv, cwd, cols: opts.cols, rows: opts.rows, env: {}, sessionId: sid });
+    }
     const profile = opts.profileId ? claudeProfiles.getProfile(opts.profileId) : undefined;
     const env: Record<string, string> = {};
     if (profile?.configDir) {
