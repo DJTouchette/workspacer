@@ -138,7 +138,9 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
     const add = (id: string, name: string, description: string, icon: React.ReactNode, run: (() => void) | undefined, shortcut?: string) => {
       if (run) out.push({ id, name, description, icon, category: 'command', run, shortcut });
     };
-    add('cmd-spawn-agent', 'Spawn Agent', 'Start a new Claude Code agent', <Plus size={16} strokeWidth={2} />, onSpawnAgent, 'spawn-agent');
+    // Note: agent spawning is surfaced via the prominent "New Claude Code"
+    // action (which opens the standard spawn dialog), so there's no separate
+    // "Spawn Agent" command here — that would be a redundant second entry.
     add('cmd-ask-fleet', 'Ask the Fleet', 'Pose a question to a supervisor agent', <Brain size={16} strokeWidth={1.75} />, onOpenAskPane);
     add('cmd-toggle-sidebar', 'Toggle Sidebar', 'Show or hide the agent sidebar', <Columns3 size={16} strokeWidth={1.75} />, onToggleSidebar, 'toggle-sidebar');
     add('cmd-toggle-inbox', 'Toggle Inbox', 'Open or close the triage inbox', <Star size={16} strokeWidth={1.75} />, onToggleInbox, 'toggle-inbox');
@@ -153,7 +155,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
     add('cmd-settings', 'Settings', 'App preferences', <Settings size={16} strokeWidth={1.75} />, onOpenSettings, 'settings');
     add('cmd-help', 'Keyboard Shortcuts', 'Show the shortcuts reference', <Brain size={16} strokeWidth={1.75} />, onToggleHelp, 'toggle-help');
     return out;
-  }, [onSpawnAgent, onOpenAskPane, onToggleSidebar, onToggleInbox, onToggleFleet, onOpenAnalytics, onOpenLayouts, onSwitchSession, onSaveSession, onOpenRemote, onManagePlugins, onInstallPlugin, onOpenSettings, onToggleHelp]);
+  }, [onOpenAskPane, onToggleSidebar, onToggleInbox, onToggleFleet, onOpenAnalytics, onOpenLayouts, onSwitchSession, onSaveSession, onOpenRemote, onManagePlugins, onInstallPlugin, onOpenSettings, onToggleHelp]);
 
   // "Keyboard Shortcuts" is always pinned at the top (regardless of query) so
   // help is immediately discoverable. It is sourced from commandActions so it
@@ -251,6 +253,14 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
       onClose();
       return;
     }
+    // "New Claude Code" spawns an agent — route it through the SAME standard
+    // spawn dialog as the sidebar + and the spawn hotkey, so spawning is
+    // consistent regardless of where it's triggered from.
+    if (item.id === 'new-claude' && onSpawnAgent) {
+      onSpawnAgent();
+      onClose();
+      return;
+    }
     if (item.id === 'open-library' && onOpenLibrary) {
       onOpenLibrary();
       onClose();
@@ -303,7 +313,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
       }
     }
     onClose();
-  }, [onLaunchApp, onAddTab, onSplitPane, onOpenPlugin, onClose, mode, onOpenLibrary, agentCwd]);
+  }, [onLaunchApp, onAddTab, onSplitPane, onOpenPlugin, onClose, mode, onOpenLibrary, onSpawnAgent, agentCwd]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Escape') {
