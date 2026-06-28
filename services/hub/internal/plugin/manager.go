@@ -6,11 +6,64 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
+	"github.com/djtouchette/workspacer-hub/internal/capspec"
 	"github.com/djtouchette/workspacer-hub/internal/event"
 	"github.com/djtouchette/workspacer-hub/internal/supervisor"
 )
+
+// pluginDirToken expands to a plugin's own install directory in a capability's
+// "paths" — the one symbolic root a plugin may always scope itself to.
+const pluginDirToken = "${pluginDir}"
+
+// grantsFor translates a manifest's declared capabilities into bus grants,
+// resolving each path-scoped capability's roots to concrete directories. The bus
+// canonicalizes and confines from there.
+func grantsFor(mf Manifest) []capspec.Grant {
+	out := make([]capspec.Grant, 0, len(mf.Capabilities))
+	for _, c := range mf.Capabilities {
+		if c.Method == "" {
+			continue
+		}
+		out = append(out, capspec.Grant{Method: c.Method, FSRoots: resolveRoots(c.Paths, mf.Dir)})
+	}
+	return out
+}
+
+// resolveRoots expands a capability's declared path scopes to concrete roots.
+// Unresolvable entries are dropped — a path-scoped grant that resolves to no
+// roots denies every call (fail closed), which is the safe outcome.
+func resolveRoots(paths []string, pluginDir string) []string {
+	if len(paths) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if r := expandScope(p, pluginDir); r != "" {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// expandScope resolves one path-scope entry. Supported: "${pluginDir}" (and
+// subpaths of it) and absolute paths. Anything else — a relative path or an
+// unknown token like "${agentCwd}" (dynamic, per-pane scopes aren't bound here
+// yet) — yields "" so it grants nothing.
+func expandScope(p, pluginDir string) string {
+	switch {
+	case p == pluginDirToken:
+		return pluginDir
+	case strings.HasPrefix(p, pluginDirToken+"/"):
+		return filepath.Join(pluginDir, filepath.FromSlash(strings.TrimPrefix(p, pluginDirToken+"/")))
+	case filepath.IsAbs(p):
+		return p
+	default:
+		return ""
+	}
+}
 
 // Publisher is the slice of the broker the manager needs.
 type Publisher interface {
@@ -18,10 +71,11 @@ type Publisher interface {
 }
 
 // TokenRegistrar lets the manager bind a per-plugin bus token to the plugin's
-// declared capabilities, so the bus can scope what each plugin may call. The bus
-// Server implements this. nil is allowed (capability enforcement disabled).
+// declared capability grants, so the bus can scope what each plugin may call and
+// confine its filesystem reach. The bus Server implements this. nil is allowed
+// (capability enforcement disabled).
 type TokenRegistrar interface {
-	RegisterPluginToken(token, pluginID string, caps []string)
+	RegisterPluginToken(token, pluginID string, grants []capspec.Grant)
 	UnregisterPluginToken(token string)
 }
 
@@ -92,7 +146,7 @@ func (m *Manager) Add(mf Manifest) {
 		if m.reg != nil {
 			l.token = loadOrCreatePluginToken(mf.Dir)
 			if l.token != "" {
-				m.reg.RegisterPluginToken(l.token, mf.ID, mf.Capabilities)
+				m.reg.RegisterPluginToken(l.token, mf.ID, grantsFor(mf))
 				env = []string{"HUB_TOKEN=" + l.token}
 			}
 		}

@@ -122,6 +122,12 @@ func (rt *router) call(caller *conn, f Frame) {
 		_ = caller.send(Frame{Op: "error", ID: f.ID, Error: "plugin not authorized for capability " + f.Method})
 		return
 	}
+	// Verb is allowed; now enforce argument scoping (e.g. a path-scoped fs.* call
+	// must stay within the plugin's granted roots). Fails closed.
+	if err := caller.authorize(f.Method, f.Params); err != nil {
+		_ = caller.send(Frame{Op: "error", ID: f.ID, Error: err.Error()})
+		return
+	}
 
 	// In-process handlers (hub-owned capabilities) take precedence over remote
 	// providers. Run off the read loop so a slow handler can't stall the caller's

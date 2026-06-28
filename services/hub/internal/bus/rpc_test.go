@@ -10,6 +10,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/djtouchette/workspacer-hub/internal/broker"
+	"github.com/djtouchette/workspacer-hub/internal/capspec"
 )
 
 // client is a tiny test wrapper around a bus WebSocket connection.
@@ -94,7 +95,7 @@ func rpcServerWith(t *testing.T) (string, *Server) {
 func TestCallNotAuthorized(t *testing.T) {
 	url, srv := rpcServerWith(t)
 	srv.SetToken("host-secret")
-	srv.RegisterPluginToken("plug-tok", "test.plugin", []string{"agents.list"}) // not agents.spawn
+	srv.RegisterPluginToken("plug-tok", "test.plugin", []capspec.Grant{{Method: "agents.list"}}) // not agents.spawn
 
 	caller := dialClientToken(t, url, "plug-tok")
 	caller.send(Frame{Op: "call", ID: "auth1", Method: "agents.spawn"})
@@ -112,7 +113,7 @@ func TestCallNotAuthorized(t *testing.T) {
 func TestPluginMayCallDeclaredCapability(t *testing.T) {
 	url, srv := rpcServerWith(t)
 	srv.SetToken("host-secret")
-	srv.RegisterPluginToken("plug-tok", "test.plugin", []string{"agents.spawn"})
+	srv.RegisterPluginToken("plug-tok", "test.plugin", []capspec.Grant{{Method: "agents.spawn"}})
 
 	provider := dialClientToken(t, url, "host-secret") // trusted host registers the method
 	provider.send(Frame{Op: "register", Methods: []string{"agents.spawn"}})

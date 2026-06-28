@@ -13,6 +13,7 @@ package bus
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/djtouchette/workspacer-hub/internal/broker"
+	"github.com/djtouchette/workspacer-hub/internal/capspec"
 	"github.com/djtouchette/workspacer-hub/internal/event"
 )
 
@@ -45,10 +47,19 @@ type Frame struct {
 }
 
 // pluginIdent is the identity a per-plugin bus token resolves to: which plugin,
-// and the set of capabilities (methods) it declared it may call.
+// and the grants it holds — the capabilities it may call, each with optional
+// filesystem scoping.
 type pluginIdent struct {
 	id   string
-	caps map[string]bool
+	caps map[string]capGrant
+}
+
+// capGrant is what a plugin token may do with one capability. fsRoots, when
+// non-empty, confines a path-scoped call (fs.*, search.project) to targets
+// inside one of these canonical roots; empty means the method carries no path to
+// confine (driving, observation, notifications, …).
+type capGrant struct {
+	fsRoots []string
 }
 
 // Server adapts a broker (events) + router (calls) to HTTP/WebSocket.
@@ -71,20 +82,39 @@ func NewServer(b *broker.Broker) *Server {
 }
 
 // RegisterPluginToken maps a per-plugin bus token to the plugin's id and the
-// capabilities it may call. Idempotent; called by the plugin manager on load.
-func (s *Server) RegisterPluginToken(token, pluginID string, caps []string) {
+// grants it holds. Filesystem roots are canonicalized once here (symlinks + ..
+// resolved) so the per-call containment check doesn't re-walk them; a root that
+// can't be canonicalized is dropped, since it can't safely grant anything.
+// Idempotent; called by the plugin manager on load.
+func (s *Server) RegisterPluginToken(token, pluginID string, grants []capspec.Grant) {
 	if token == "" {
 		return
 	}
-	set := make(map[string]bool, len(caps))
-	for _, c := range caps {
-		if c != "" {
-			set[c] = true
+	set := make(map[string]capGrant, len(grants))
+	for _, g := range grants {
+		if g.Method == "" {
+			continue
 		}
+		set[g.Method] = capGrant{fsRoots: canonRoots(g.FSRoots)}
 	}
 	s.ptMu.Lock()
 	s.pluginTokens[token] = pluginIdent{id: pluginID, caps: set}
 	s.ptMu.Unlock()
+}
+
+// canonRoots canonicalizes grant roots once at registration, dropping any that
+// don't resolve (a root that isn't a real path can't confine anything safely).
+func canonRoots(roots []string) []string {
+	if len(roots) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(roots))
+	for _, r := range roots {
+		if c, err := canonicalize(r); err == nil {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // UnregisterPluginToken drops a plugin token (on unload/replace).
@@ -176,7 +206,7 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 	//   - anything else → rejected
 	tok := presentedToken(r)
 	var trusted bool
-	var caps map[string]bool
+	var caps map[string]capGrant
 	var pluginID string
 	if pi, ok := s.lookupPluginToken(tok); ok {
 		caps, pluginID = pi.caps, pi.id
@@ -267,17 +297,57 @@ type conn struct {
 	writeMu sync.Mutex
 
 	// Capability authorization, set at handshake. A trusted conn (host token) may
-	// call anything; a plugin conn may call only the methods in caps.
+	// call anything; a plugin conn may call only the methods it was granted, and
+	// path-scoped ones only within their granted roots.
 	trusted  bool
-	caps     map[string]bool
+	caps     map[string]capGrant
 	pluginID string
 }
 
-// mayCall reports whether this connection is allowed to invoke method. Trusted
-// connections (the host / MCP facade) may call anything; a plugin may call only
-// the capabilities it declared in its manifest.
+// mayCall reports whether this connection is allowed to invoke method at all
+// (the verb check). Trusted connections (the host / MCP facade) may call
+// anything; a plugin may call only the capabilities it was granted. Argument
+// scoping (which paths) is a separate step — see authorize.
 func (cn *conn) mayCall(method string) bool {
-	return cn.trusted || cn.caps[method]
+	if cn.trusted {
+		return true
+	}
+	_, ok := cn.caps[method]
+	return ok
+}
+
+// authorize enforces argument-level scoping for a call mayCall already admitted.
+// Trusted conns are unrestricted. For a path-scoped method, the call's path is
+// canonicalized and must fall inside the grant's roots; anything that can't be
+// verified (missing field, no roots, resolution error) is denied — fail closed.
+// Non-path methods pass straight through.
+func (cn *conn) authorize(method string, params json.RawMessage) error {
+	if cn.trusted {
+		return nil
+	}
+	g, ok := cn.caps[method]
+	if !ok {
+		return fmt.Errorf("plugin not authorized for capability %s", method)
+	}
+	field, scoped := capspec.IsPathScoped(method)
+	if !scoped {
+		return nil // verb-only capability; mayCall already governs it
+	}
+	if len(g.fsRoots) == 0 {
+		return fmt.Errorf("%s: filesystem-scoped capability granted with no roots", method)
+	}
+	target, ok := paramString(params, field)
+	if !ok {
+		return fmt.Errorf("%s: missing %q for filesystem-scoped capability", method, field)
+	}
+	within, err := pathWithinRoots(g.fsRoots, target)
+	if err != nil {
+		return fmt.Errorf("%s: cannot resolve %q: %w", method, target, err)
+	}
+	if !within {
+		return fmt.Errorf("%s: path %q is outside the plugin's granted scope", method, target)
+	}
+	return nil
 }
 
 func (cn *conn) send(f Frame) error {

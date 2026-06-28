@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/djtouchette/workspacer-hub/internal/capspec"
 )
 
 // APIVersion is the manifest schema version this hub understands.
@@ -40,11 +42,11 @@ type Manifest struct {
 	Hotkeys []HotkeyContribution `json:"hotkeys,omitempty"`
 
 	// Provides: capabilities this plugin answers on the bus.
-	// Capabilities: capabilities it may call.
-	Provides     []string `json:"provides,omitempty"`
-	Capabilities []string `json:"capabilities,omitempty"`
-	Emits        []string `json:"emits,omitempty"`
-	Consumes     []string `json:"consumes,omitempty"`
+	// Capabilities: capabilities it may call (each optionally path-scoped).
+	Provides     []string     `json:"provides,omitempty"`
+	Capabilities []Capability `json:"capabilities,omitempty"`
+	Emits        []string     `json:"emits,omitempty"`
+	Consumes     []string     `json:"consumes,omitempty"`
 
 	// Install: a one-time setup command (argv) run in the plugin dir after a
 	// GitHub install — e.g. ["npm","install"] or ["go","build","-o","bin"].
@@ -63,6 +65,40 @@ type Manifest struct {
 	// but its sidecar isn't started and its panes/hotkeys are withheld. Populated
 	// by the loader.
 	Disabled bool `json:"disabled,omitempty"`
+}
+
+// Capability is one entry of a manifest's "capabilities": a bus method the
+// plugin may call, optionally confined to filesystem paths.
+//
+// Two JSON forms are accepted:
+//
+//	"agents.list"                                   // verb only, no path scope
+//	{ "method": "fs.read", "paths": ["${pluginDir}"] }  // path-scoped
+//
+// A filesystem-scoped method (fs.*, search.project — see capspec) MUST use the
+// object form and declare paths; the loader rejects an unscoped one, so a plugin
+// can never obtain unrestricted host filesystem access. Supported path tokens:
+// "${pluginDir}" (the plugin's own install dir) and absolute paths. Other tokens
+// resolve to nothing at registration and therefore grant nothing (fail closed).
+type Capability struct {
+	Method string   `json:"method"`
+	Paths  []string `json:"paths,omitempty"`
+}
+
+// UnmarshalJSON accepts either a bare string (verb-only) or the object form.
+func (c *Capability) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		c.Method, c.Paths = s, nil
+		return nil
+	}
+	type alias Capability // avoid recursing into this method
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	*c = Capability(a)
+	return nil
 }
 
 // ServerSpec describes the plugin's sidecar process.
@@ -115,6 +151,17 @@ func (m *Manifest) Validate() error {
 			return fmt.Errorf("duplicate pane type %q", p.Type)
 		}
 		seen[p.Type] = true
+	}
+	for _, c := range m.Capabilities {
+		if c.Method == "" {
+			return fmt.Errorf("capability with empty method")
+		}
+		// A filesystem-scoped capability must declare paths — otherwise it would
+		// grant unrestricted host filesystem access, which is exactly what the
+		// sandbox exists to prevent.
+		if _, scoped := capspec.IsPathScoped(c.Method); scoped && len(c.Paths) == 0 {
+			return fmt.Errorf("capability %q is filesystem-scoped and must declare \"paths\"", c.Method)
+		}
 	}
 	return nil
 }
