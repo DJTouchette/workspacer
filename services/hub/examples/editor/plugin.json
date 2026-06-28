@@ -7,7 +7,7 @@
     { "type": "workspacer.editor", "title": "Editor", "icon": "📝", "scope": "agent" }
   ],
   "hotkeys": [
-    { "id": "open-editor", "default": "ctrl+shift+e", "command": "open-pane:workspacer.editor" }
+    { "id": "open-editor", "default": "ctrl+shift+d", "command": "open-pane:workspacer.editor" }
   ],
   "capabilities": [
     { "method": "fs.listEntries", "paths": ["${agentCwd}"] },
