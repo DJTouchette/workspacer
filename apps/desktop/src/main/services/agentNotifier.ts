@@ -14,6 +14,7 @@
 
 import { BrowserWindow, Notification } from 'electron';
 import { configService } from './configService';
+import { appIconPath } from '../lib/appIcon';
 import type { ClaudeSessionState, SessionAmbientState } from './claudeSessionStore';
 
 const NEEDS_YOU: SessionAmbientState[] = ['waiting_approval', 'waiting_input'];
@@ -99,7 +100,8 @@ class AgentNotifier {
       : 'The agent is idle and ready for your next step.';
 
     if (Notification.isSupported()) {
-      const notification = new Notification({ title, body, silent: !cfg.sound });
+      const icon = appIconPath() ?? undefined;
+      const notification = new Notification({ title, body, silent: !cfg.sound, icon });
       notification.on('click', () => this.focusAgent(session.sessionId));
       notification.show();
     }

@@ -26,6 +26,7 @@ electronLanguages:
 # Sibling daemons live at <repo>/services/* — built by `npm run build:hub`
 # and `npm run build:claudemon` (both run by `npm run package`).
 linux:
+  icon: build/icon.png
   target:
     - AppImage
   category: Development
@@ -44,6 +45,7 @@ linux:
       to: web
 
 win:
+  icon: build/icon.ico
   target:
     - nsis
     - portable
@@ -62,6 +64,7 @@ win:
       to: web
 
 mac:
+  icon: build/icon.png
   target:
     - dmg
   category: public.app-category.developer-tools

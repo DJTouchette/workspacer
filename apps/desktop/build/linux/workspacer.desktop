@@ -1,10 +1,11 @@
 [Desktop Entry]
 Type=Application
-Name=workspacer
+Name=Workspacer
+Comment=Mission control for your Claude Code agent fleet
 Exec=workspacer
 Icon=workspacer
 Categories=Development;
 Terminal=false
-Keywords=wails
+Keywords=claude;agent;ai;coding;workspace;
 Version=1.0
-StartupNotify=false
+StartupNotify=true

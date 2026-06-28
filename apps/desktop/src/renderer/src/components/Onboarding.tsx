@@ -1,4 +1,5 @@
 import React from 'react';
+import { BrandMark, Wordmark } from './Brand';
 
 /**
  * First-run welcome, shown in the content area when there are no agents yet and
@@ -43,6 +44,17 @@ const Onboarding: React.FC<{
           animation: 'claudeFadeIn 0.2s ease-out',
         }}
       >
+        {/* Brand lockup — the { ▮ } mark + work{spacer} wordmark. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 18 }}>
+          <span style={{
+            width: 44, height: 44, flexShrink: 0,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: 'var(--wks-bg-base)', border: '1px solid var(--wks-border-subtle)',
+            borderRadius: 12,
+          }}><BrandMark size={24} blink /></span>
+          <Wordmark size={24} />
+        </div>
+
         <div style={{ fontSize: '1.25rem', fontWeight: 800, letterSpacing: '-0.01em', color: 'var(--wks-text-primary)' }}>
           Welcome to Workspacer
         </div>

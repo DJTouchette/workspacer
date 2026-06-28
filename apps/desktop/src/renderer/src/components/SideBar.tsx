@@ -1,6 +1,7 @@
 import React, { useState, useRef, useMemo } from 'react';
 import { Plus, ChevronLeft, ChevronRight, HelpCircle, BarChart2, Settings as SettingsIcon } from 'lucide-react';
 import { IconInbox, IconFleet, IconWorking } from './wksIcons';
+import { BrandMark, Wordmark } from './Brand';
 import { AgentWorkspace } from '../types/pane';
 import type { SessionAmbientState, ClaudeSessionSnapshot } from '../types/claudeSession';
 import type { AttentionItem, AttentionKind } from '../types/attention';
@@ -240,6 +241,16 @@ const SideBar: React.FC<SideBarProps> = ({
 
     return (
       <div style={{ ...surfaceStyle, width: `${SIDEBAR_RAIL_WIDTH}px`, alignItems: 'center', paddingTop: '8px', gap: '8px' }}>
+        <div
+          title="Workspacer"
+          style={{
+            width: 38, height: 38, flexShrink: 0, marginBottom: 2,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: 'var(--wks-bg-base)', border: '1px solid var(--wks-border-subtle)',
+            borderRadius: 11,
+          }}
+        ><BrandMark size={19} /></div>
+
         <button
           onClick={onToggleCollapse}
           title="Expand sidebar (Ctrl+B)"
@@ -316,8 +327,22 @@ const SideBar: React.FC<SideBarProps> = ({
       userSelect: 'none',
       boxSizing: 'border-box',
     }}>
+      {/* Brand header — the { ▮ } mark + work{spacer} wordmark. */}
       <div style={{
-        padding: '10px 14px 10px 16px',
+        display: 'flex', alignItems: 'center', gap: 10,
+        padding: '4px 14px 10px 16px',
+      }}>
+        <span style={{
+          width: 30, height: 30, flexShrink: 0,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: 'var(--wks-bg-base)', border: '1px solid var(--wks-border-subtle)',
+          borderRadius: 9,
+        }}><BrandMark size={17} blink /></span>
+        <Wordmark size={17} />
+      </div>
+
+      <div style={{
+        padding: '6px 14px 10px 16px',
         fontSize: '0.6rem',
         fontWeight: 700,
         letterSpacing: '0.08em',

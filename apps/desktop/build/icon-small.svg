@@ -1,0 +1,10 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <!-- Small-size variant of the workspacer mark (favicon ≤32px): wider gaps and
+       a heavier cursor so the three elements stay distinct when downscaled. -->
+  <rect width="1024" height="1024" rx="200" fill="#14181b"/>
+  <g fill="#a7c080" font-family="JetBrainsMono Nerd Font, JetBrains Mono, monospace" font-weight="700" font-size="560">
+    <text x="446" y="672" text-anchor="end">{</text>
+    <text x="578" y="672" text-anchor="start">}</text>
+  </g>
+  <rect x="476" y="372" width="72" height="280" rx="16" fill="#a7c080"/>
+</svg>

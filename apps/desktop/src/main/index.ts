@@ -18,6 +18,7 @@ import { stopAllTerminals } from './services/terminalShare';
 import { workflowWatcher } from './services/workflowWatcher';
 import { registerHubCapabilities } from './services/hubCapabilities';
 import { database } from './services/db';
+import { appIcon } from './lib/appIcon';
 import { IPC } from './shared/ipcChannels';
 
 // Font file registry: filename → absolute path (populated during discovery)
@@ -174,11 +175,15 @@ function createWindow(): void {
   // titleBarOverlay window controls need an opaque frame.
   const transparentShell = process.platform !== 'win32';
 
+  // Window/taskbar icon on Linux & Windows (macOS uses the bundle icon).
+  const windowIcon = appIcon();
+
   mainWindow = new BrowserWindow({
     width: 1600,
     height: 900,
     minWidth: 800,
     minHeight: 600,
+    ...(windowIcon ? { icon: windowIcon } : {}),
     backgroundColor: transparentShell ? '#00000000' : '#1b2636',
     transparent: transparentShell,
     frame: false,

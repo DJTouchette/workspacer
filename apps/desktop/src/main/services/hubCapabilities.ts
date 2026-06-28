@@ -14,6 +14,7 @@ import { claudemonSessionClient } from './claudemonSessionClient';
 import { buildClaudeArgv } from './claudeResolver';
 import { claudeProfiles } from './claudeProfiles';
 import { registerCapability } from './hubClient';
+import { appIconPath } from '../lib/appIcon';
 import { DELEGATE_CATALOG_TO_BRAIN } from './brainDelegation';
 import { configService } from './configService';
 import { listClaudeModels } from './claudeModels';
@@ -182,7 +183,7 @@ export function registerHubCapabilities(): void {
   // Surface an OS notification.
   registerCapability('notifications.post', (params: unknown) => {
     const { title, body } = (params ?? {}) as { title?: string; body?: string };
-    new Notification({ title: title || 'workspacer', body: body || '' }).show();
+    new Notification({ title: title || 'workspacer', body: body || '', icon: appIconPath() ?? undefined }).show();
     return { ok: true };
   });
 
