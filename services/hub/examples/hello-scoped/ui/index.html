@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hello (webview-only)</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { margin: 0; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+           background: #1e1e1e; color: #d4d4d4; padding: 16px; }
+    h1 { font-size: 14px; margin: 0 0 4px; }
+    p.sub { margin: 0 0 16px; color: #888; }
+    .status { padding: 4px 8px; border-radius: 4px; display: inline-block; margin-bottom: 12px; }
+    .ok { background: #1f3a24; color: #6fcf7f; }
+    .bad { background: #3a1f1f; color: #cf6f6f; }
+    ul { margin: 0; padding-left: 18px; }
+    code { color: #9cdcfe; }
+  </style>
+</head>
+<body>
+  <h1>👋 Hello, scoped world</h1>
+  <p class="sub">
+    A <strong>webview-only</strong> plugin: no sidecar process. The hub serves
+    this page; it talks to the bus with a token scoped to <code>agents.list</code>
+    only. Try anything else and the bus rejects it.
+  </p>
+  <div id="status" class="status bad">connecting…</div>
+  <div id="agents"></div>
+
+  <script>
+    // The trusted host injected our per-pane bus token into the URL. Same origin
+    // as this page (the hub), so the bus is reachable over a same-origin socket.
+    const token = new URLSearchParams(location.search).get('busToken') || '';
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${proto}//${location.host}/bus?token=${encodeURIComponent(token)}`);
+
+    const statusEl = document.getElementById('status');
+    const agentsEl = document.getElementById('agents');
+    let nextId = 1;
+    const pending = new Map();
+
+    function call(method, params = {}) {
+      return new Promise((resolve, reject) => {
+        const id = 'c' + nextId++;
+        pending.set(id, { resolve, reject });
+        ws.send(JSON.stringify({ op: 'call', id, method, params }));
+      });
+    }
+
+    ws.onopen = async () => {
+      statusEl.textContent = 'connected — calling agents.list';
+      statusEl.className = 'status ok';
+      try {
+        const agents = await call('agents.list');
+        render(agents);
+      } catch (e) {
+        statusEl.textContent = 'agents.list failed: ' + e.message;
+        statusEl.className = 'status bad';
+      }
+    };
+
+    ws.onmessage = (ev) => {
+      let f; try { f = JSON.parse(ev.data); } catch { return; }
+      if (f.op === 'result' && pending.has(f.id)) { pending.get(f.id).resolve(f.result); pending.delete(f.id); }
+      else if (f.op === 'error' && pending.has(f.id)) { pending.get(f.id).reject(new Error(f.error || 'error')); pending.delete(f.id); }
+    };
+
+    ws.onclose = () => { statusEl.textContent = 'disconnected'; statusEl.className = 'status bad'; };
+
+    function render(agents) {
+      const list = Array.isArray(agents) ? agents : [];
+      statusEl.textContent = `connected — ${list.length} agent(s)`;
+      if (!list.length) { agentsEl.innerHTML = '<p class="sub">No agents running.</p>'; return; }
+      agentsEl.innerHTML = '<ul>' + list.map((a) =>
+        `<li><code>${(a.sessionId || '?').slice(0, 8)}</code> — ${a.state || 'unknown'} — ${a.cwd || ''}</li>`
+      ).join('') + '</ul>';
+    }
+  </script>
+</body>
+</html>

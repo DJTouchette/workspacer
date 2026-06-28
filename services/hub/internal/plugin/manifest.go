@@ -41,6 +41,16 @@ type Manifest struct {
 	Panes   []PaneContribution   `json:"panes,omitempty"`
 	Hotkeys []HotkeyContribution `json:"hotkeys,omitempty"`
 
+	// UI: a subdirectory (relative to the plugin dir) of static assets the hub
+	// serves for this plugin's panes, at /plugins/ui/<id>/. Set it instead of
+	// `server` for a *webview-only* plugin — one with no sidecar process. The
+	// hub (trusted) serves the files; the webview talks to the bus with its
+	// scoped token. With nothing arbitrary to run, there is nothing to escape
+	// the bus through, so capability scoping fully confines it. Only the named
+	// subdir is exposed — the plugin's manifest and .bus-token (in the dir root)
+	// are not.
+	UI string `json:"ui,omitempty"`
+
 	// Provides: capabilities this plugin answers on the bus.
 	// Capabilities: capabilities it may call (each optionally path-scoped).
 	Provides     []string     `json:"provides,omitempty"`
@@ -151,6 +161,11 @@ func (m *Manifest) Validate() error {
 			return fmt.Errorf("duplicate pane type %q", p.Type)
 		}
 		seen[p.Type] = true
+	}
+	// A pane has to be served from somewhere: a sidecar (server) or hub-served
+	// static assets (ui). Without either, the webview would have no URL to load.
+	if len(m.Panes) > 0 && m.Server == nil && m.UI == "" {
+		return fmt.Errorf("plugin has panes but neither a server nor a ui directory to serve them")
 	}
 	for _, c := range m.Capabilities {
 		if c.Method == "" {

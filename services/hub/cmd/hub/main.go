@@ -24,6 +24,33 @@ import (
 	"github.com/djtouchette/workspacer-hub/internal/supervisor"
 )
 
+// uiDirResolver maps a plugin id to its hub-served static-UI directory.
+// *plugin.Manager implements it; the indirection keeps pluginUIHandler testable.
+type uiDirResolver interface {
+	UIDir(id string) (string, bool)
+}
+
+// pluginUIHandler serves a webview-only plugin's static assets from its declared
+// `ui` directory at /plugins/ui/<id>/…. http.Dir confines reads to that
+// directory (no `..` escape), and only that subdir is exposed, so a plugin's
+// manifest / .bus-token (in the dir root) are never served.
+func pluginUIHandler(res uiDirResolver) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		rest := strings.TrimPrefix(r.URL.Path, "/plugins/ui/")
+		id, _, _ := strings.Cut(rest, "/")
+		if id == "" {
+			http.NotFound(w, r)
+			return
+		}
+		dir, ok := res.UIDir(id)
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		http.StripPrefix("/plugins/ui/"+id+"/", http.FileServer(http.Dir(dir))).ServeHTTP(w, r)
+	}
+}
+
 // defaultLayoutFile returns the path where the shared layout document is
 // persisted across hub restarts: <user-config-dir>/workspacer-hub/layout.json,
 // falling back to the working directory if the config dir is unavailable.
@@ -142,6 +169,12 @@ func main() {
 		mgr.RevokePaneToken(body.Token)
 		_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 	}))
+	// Static UI for webview-only plugins (no sidecar): serve a plugin's declared
+	// `ui` directory at /plugins/ui/<id>/…. Unguarded like the sidecar plugins'
+	// own loopback UI servers — the real boundary is /bus, which is token-scoped.
+	// http.Dir confines reads to the ui directory (no `..` escape), and only that
+	// subdir is served, so the plugin's manifest / .bus-token stay private.
+	srv.AddRoute("/plugins/ui/", pluginUIHandler(mgr))
 	// Mobile / remote-control web client. Self-contained single page that talks
 	// the bus protocol over /bus. Token-guarded since it's the remote entrypoint.
 	srv.AddRoute("/remote", guard(func(w http.ResponseWriter, _ *http.Request) {

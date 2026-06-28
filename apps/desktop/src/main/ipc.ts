@@ -196,6 +196,11 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
           }
         }
       } catch { /* tokens unavailable — degrade to no webview capability calls */ }
+      // Tell the renderer where to load webview-only plugins' static UI from
+      // (it serves at <hub>/plugins/ui/<id>/). main knows the hub address.
+      for (const p of plugins) {
+        if ((p as { ui?: string }).ui) (p as { uiBase?: string }).uiBase = HUB_HTTP_URL;
+      }
       return plugins;
     } catch {
       return [];

@@ -228,21 +228,36 @@ func (m *Manager) Tokens() map[string]string {
 	return out
 }
 
+// UIDir returns the absolute directory of a webview-only plugin's hub-served
+// static assets, or ok=false if the plugin isn't loaded or declares no ui. The
+// hub's /plugins/ui route reads from here.
+func (m *Manager) UIDir(id string) (string, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	l, ok := m.plugins[id]
+	if !ok || l.manifest.UI == "" {
+		return "", false
+	}
+	return filepath.Join(l.manifest.Dir, filepath.FromSlash(l.manifest.UI)), true
+}
+
 // Add registers a plugin: starts its sidecar (if any) and emits plugin.loaded.
 func (m *Manager) Add(mf Manifest) {
 	l := &loaded{manifest: mf}
+	// Mint/persist a bus token and bind it to the plugin's declared capabilities
+	// whenever something will connect to the bus as this plugin — a sidecar
+	// (HUB_TOKEN env) or a webview pane (token injected into its URL by the host).
+	// A webview-only plugin has no sidecar but still needs a token for its pane.
+	if !mf.Disabled && m.reg != nil && (mf.Server != nil || len(mf.Panes) > 0) {
+		l.token = loadOrCreatePluginToken(mf.Dir)
+		if l.token != "" {
+			m.reg.RegisterPluginToken(l.token, mf.ID, grantsFor(mf))
+		}
+	}
 	if mf.Server != nil && !mf.Disabled {
-		// Mint/persist this plugin's bus token and bind it to its declared
-		// capabilities, then hand it to the sidecar via env (HUB_TOKEN). The
-		// sidecar — and the plugin's webview, which gets the same token injected
-		// into its pane URL by the host — connects with it and is scoped to caps.
 		var env []string
-		if m.reg != nil {
-			l.token = loadOrCreatePluginToken(mf.Dir)
-			if l.token != "" {
-				m.reg.RegisterPluginToken(l.token, mf.ID, grantsFor(mf))
-				env = []string{"HUB_TOKEN=" + l.token}
-			}
+		if l.token != "" {
+			env = []string{"HUB_TOKEN=" + l.token}
 		}
 		l.sup = supervisor.New(supervisor.Spec{
 			Name:      mf.ID,
