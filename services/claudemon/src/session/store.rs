@@ -436,6 +436,74 @@ impl SessionStore {
         state
     }
 
+    // --- managed (adapter-driven) sessions ----------------------------------
+    //
+    // A "managed" session is one whose telemetry comes from a provider adapter
+    // (OpenCode `serve`, Codex `app-server`) rather than Claude's hooks +
+    // transcript + statusLine. The adapter drives the state machine and
+    // conversation directly via the methods below; there is no PTY wrapper or
+    // byte buffer (observation is structured, not a terminal stream).
+
+    /// Register a managed session and announce it like a spawn. Starts in
+    /// `Input` (ready to accept a prompt). Idempotent on the id.
+    pub fn register_managed(&self, session_id: &str, cwd: &str) -> SessionState {
+        let state = {
+            let mut entry = self
+                .states
+                .entry(session_id.to_string())
+                .or_insert_with(|| SessionState::new(session_id.to_string(), Some(cwd.to_string())));
+            entry.mode = SessionMode::Input;
+            entry.clone()
+        };
+        let _ = self.update_tx.send(SessionUpdate {
+            session_id: session_id.to_string(),
+            event: "Spawn".to_string(),
+            state: state.clone(),
+        });
+        state
+    }
+
+    /// Drive a managed session's mode (and optional pending) directly, since
+    /// managed backends don't emit Claude hooks. Broadcasts a SessionUpdate.
+    /// Returns None if the session isn't registered.
+    pub fn set_managed_mode(
+        &self,
+        session_id: &str,
+        mode: SessionMode,
+        pending: Option<Pending>,
+    ) -> Option<SessionState> {
+        let state = {
+            let mut entry = self.states.get_mut(session_id)?;
+            entry.mode = mode;
+            entry.pending = pending;
+            entry.updated_at = OffsetDateTime::now_utc();
+            entry.clone()
+        };
+        let _ = self.update_tx.send(SessionUpdate {
+            session_id: session_id.to_string(),
+            event: "Managed".to_string(),
+            state: state.clone(),
+        });
+        Some(state)
+    }
+
+    /// Attach model/usage/cost telemetry to a managed session (the adapter's
+    /// equivalent of Claude's statusLine). Broadcasts on the status channel.
+    pub fn apply_status_line(&self, session_id: &str, status: StatusLine) -> Option<SessionState> {
+        let state = {
+            let mut entry = self.states.get_mut(session_id)?;
+            entry.status_line = Some(status.clone());
+            entry.updated_at = OffsetDateTime::now_utc();
+            entry.clone()
+        };
+        let _ = self.status_tx.send(StatusLineUpdate {
+            session_id: session_id.to_string(),
+            cwd: state.cwd.clone(),
+            status_line: status,
+        });
+        Some(state)
+    }
+
     /// Drop a previously-registered spawn that has not yet bound to a claude
     /// hook session. Used when /sessions/spawn fails after partial setup or
     /// the child exits before SessionStart fires.

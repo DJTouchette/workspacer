@@ -117,6 +117,31 @@ impl ConversationStore {
             .get(session_id)
             .map(|l| (l.seq, l.items.clone()))
     }
+
+    /// Append items for a *managed* session — one not backed by a transcript
+    /// file (e.g. the OpenCode / Codex adapters drive their conversation from a
+    /// live event stream). Maintains the same per-session seq + broadcast
+    /// contract as the transcript tailer, so existing clients consume managed
+    /// and Claude sessions identically. The first push for a session carries
+    /// `reset` so late joiners adopt history wholesale. No-op for empty items.
+    pub fn push(&self, session_id: &str, items: Vec<ConversationItem>) {
+        if items.is_empty() {
+            return;
+        }
+        let delta = {
+            let mut log = self.logs.entry(session_id.to_string()).or_default();
+            let reset = log.seq == 0;
+            log.items.extend(items.iter().cloned());
+            log.seq += items.len() as u64;
+            ConversationDelta {
+                session_id: session_id.to_string(),
+                seq: log.seq,
+                reset,
+                items,
+            }
+        };
+        let _ = self.tx.send(delta);
+    }
 }
 
 impl Default for ConversationStore {

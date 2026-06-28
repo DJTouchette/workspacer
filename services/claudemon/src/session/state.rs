@@ -139,7 +139,7 @@ pub enum Pending {
 /// rate-limit windows — none of which appear in hook payloads or the transcript.
 /// Every field is optional because Claude omits some (e.g. `rate_limits` only
 /// exists for Pro/Max accounts after the first API response).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct StatusLine {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_display: Option<String>,
