@@ -5,16 +5,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Hello (webview-only)</title>
   <style>
-    :root { color-scheme: dark; }
+    /* Colors use workspacer theme tokens (--wks-*), injected into plugin webviews
+       by the host so the page matches the app theme; the fallbacks keep it
+       readable when served standalone. The dark/light scheme follows the host
+       too, so we don't pin color-scheme here. */
     body { margin: 0; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
-           background: #1e1e1e; color: #d4d4d4; padding: 16px; }
+           background: var(--wks-bg-base, #1e1e1e); color: var(--wks-text-primary, #d4d4d4); padding: 16px; }
     h1 { font-size: 14px; margin: 0 0 4px; }
-    p.sub { margin: 0 0 16px; color: #888; }
-    .status { padding: 4px 8px; border-radius: 4px; display: inline-block; margin-bottom: 12px; }
-    .ok { background: #1f3a24; color: #6fcf7f; }
-    .bad { background: #3a1f1f; color: #cf6f6f; }
+    p.sub { margin: 0 0 16px; color: var(--wks-text-muted, #888); }
+    .status { padding: 4px 8px; border-radius: var(--wks-radius-sm, 4px); display: inline-block; margin-bottom: 12px; }
+    .ok { background: var(--wks-bg-raised, #1f3a24); color: var(--wks-success, #6fcf7f); }
+    .bad { background: var(--wks-bg-raised, #3a1f1f); color: var(--wks-error, #cf6f6f); }
     ul { margin: 0; padding-left: 18px; }
-    code { color: #9cdcfe; }
+    code { color: var(--wks-accent, #9cdcfe); }
   </style>
 </head>
 <body>
