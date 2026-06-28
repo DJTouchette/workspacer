@@ -22,7 +22,7 @@ use uuid::Uuid;
 
 use crate::protocol::WrapperMessage;
 use crate::session::store::WrapperHandle;
-use crate::session::SessionStore;
+use crate::session::{ConversationStore, SessionStore};
 use crate::wrapper::pty;
 
 #[derive(Debug, Deserialize)]
@@ -140,4 +140,60 @@ pub async fn handle(
     tracing::info!(%session_id, %cwd, argv=?payload.argv, "spawned in-daemon PTY");
 
     Json(json!({ "session_id": session_id, "cwd": cwd })).into_response()
+}
+
+/// `POST /sessions/spawn-managed` — spawn a *managed* (adapter-driven) session.
+///
+/// Unlike `/sessions/spawn` (a PTY), this runs a provider's own machine
+/// interface and translates its events into the session model. Currently only
+/// `opencode` (drives `opencode serve` + its `/event` SSE). The session id is
+/// registered up front and returned immediately; the adapter boots in the
+/// background, so the UI shows the agent while the server starts.
+#[derive(Debug, Deserialize)]
+pub struct SpawnManagedPayload {
+    /// Provider backend. Only `opencode` is supported today.
+    pub provider: String,
+    /// Working directory for the agent.
+    pub cwd: String,
+    /// Optional model override (provider-specific id).
+    #[serde(default)]
+    pub model: Option<String>,
+    /// Resolved launcher binary (the desktop resolves it on PATH); falls back to
+    /// the provider name.
+    #[serde(default)]
+    pub bin: Option<String>,
+    /// Caller-pinned session id, so every client converges on one card.
+    #[serde(default)]
+    pub session_id: Option<String>,
+}
+
+pub async fn handle_managed(
+    State(store): State<SessionStore>,
+    State(conv): State<ConversationStore>,
+    Json(payload): Json<SpawnManagedPayload>,
+) -> impl IntoResponse {
+    if payload.provider != "opencode" {
+        return (
+            StatusCode::BAD_REQUEST,
+            format!("unsupported managed provider: {}", payload.provider),
+        )
+            .into_response();
+    }
+    let session_id = payload
+        .session_id
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    let bin = payload.bin.unwrap_or_else(|| "opencode".to_string());
+
+    store.register_managed(&session_id, &payload.cwd);
+    crate::providers::opencode::spawn_session(
+        store.clone(),
+        conv.clone(),
+        session_id.clone(),
+        payload.cwd.clone(),
+        payload.model.clone(),
+        bin,
+    );
+    tracing::info!(%session_id, cwd = %payload.cwd, "spawned managed opencode session");
+
+    Json(json!({ "session_id": session_id, "cwd": payload.cwd })).into_response()
 }

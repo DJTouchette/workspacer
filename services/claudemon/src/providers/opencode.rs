@@ -14,11 +14,19 @@
 //! stream through `translate` + `apply` is wired in a follow-up (it needs a real
 //! `opencode` binary to validate end-to-end).
 
+use std::process::Stdio;
+use std::time::Duration;
+
+use anyhow::Context;
+use futures_util::StreamExt;
 use serde_json::Value;
 use time::OffsetDateTime;
+use tokio::process::Command;
+use tokio::sync::mpsc;
 
 use crate::session::conversation::ConversationItem;
-use crate::session::state::StatusLine;
+use crate::session::state::{Pending, SessionMode, StatusLine};
+use crate::session::{ConversationStore, SessionStore};
 
 /// A typed update distilled from one OpenCode event. Several can come from a
 /// single event (e.g. a part update is both "the agent is busy" and "here's
@@ -233,6 +241,284 @@ pub fn conversation_item(update: &OpenCodeUpdate) -> Option<ConversationItem> {
             timestamp: None,
         }),
         _ => None,
+    }
+}
+
+// ── Live client ─────────────────────────────────────────────────────────────
+//
+// Spawns `opencode serve`, creates a session, posts prompts, and pumps the
+// `/event` SSE stream through `translate` + `apply`. Driven entirely from one
+// background task; dropping the managed-input channel (via
+// `SessionStore::deregister_managed`) or the server exiting tears it down. The
+// networking here can't be unit-tested without a real `opencode` binary — the
+// pure `translate` above is where the behavior is pinned.
+
+/// Running tally of model/usage/cost across the session, for the status line.
+struct UsageAcc {
+    model: Option<String>,
+    input: Option<u64>,
+    output: Option<u64>,
+    cost: Option<f64>,
+}
+
+impl UsageAcc {
+    fn new() -> Self {
+        Self { model: None, input: None, output: None, cost: None }
+    }
+    fn merge(&mut self, model: Option<String>, input: Option<u64>, output: Option<u64>, cost: Option<f64>) {
+        if model.is_some() {
+            self.model = model;
+        }
+        // Tokens/cost arrive as per-message or per-step partials; take the max so
+        // the displayed totals never regress mid-turn.
+        if let Some(i) = input {
+            self.input = Some(self.input.map_or(i, |c| c.max(i)));
+        }
+        if let Some(o) = output {
+            self.output = Some(self.output.map_or(o, |c| c.max(o)));
+        }
+        if let Some(c) = cost {
+            self.cost = Some(self.cost.map_or(c, |p| p.max(c)));
+        }
+    }
+}
+
+/// Spawn and drive an OpenCode-managed session in the background. Returns
+/// immediately; the session's id is already registered in `store` by the
+/// caller, so the UI shows it even while `opencode serve` is still booting.
+pub fn spawn_session(
+    store: SessionStore,
+    conv: ConversationStore,
+    session_id: String,
+    cwd: String,
+    model: Option<String>,
+    bin: String,
+) {
+    tokio::spawn(async move {
+        if let Err(err) = run_session(&store, &conv, &session_id, &cwd, model, &bin).await {
+            tracing::warn!(?err, session = %session_id, "opencode managed session ended with error");
+        }
+        store.deregister_managed(&session_id);
+    });
+}
+
+async fn run_session(
+    store: &SessionStore,
+    conv: &ConversationStore,
+    session_id: &str,
+    cwd: &str,
+    model: Option<String>,
+    bin: &str,
+) -> anyhow::Result<()> {
+    // Pick a free loopback port for this server instance (each managed session
+    // gets its own `opencode serve`).
+    let port = {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")
+            .context("reserving a port for opencode serve")?;
+        listener.local_addr()?.port()
+    };
+
+    let mut child = Command::new(bin)
+        .arg("serve")
+        .arg("--hostname")
+        .arg("127.0.0.1")
+        .arg("--port")
+        .arg(port.to_string())
+        .current_dir(cwd)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .with_context(|| format!("spawning `{bin} serve`"))?;
+
+    let base = format!("http://127.0.0.1:{port}");
+    let client = reqwest::Client::new();
+
+    wait_healthy(&client, &base).await?;
+
+    // Create the OpenCode session (its own id, distinct from our canonical one).
+    let oc_id: String = {
+        let resp = client
+            .post(format!("{base}/session"))
+            .json(&serde_json::json!({}))
+            .send()
+            .await?
+            .error_for_status()?;
+        let v: Value = resp.json().await?;
+        v.get("id")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .context("opencode POST /session response missing `id`")?
+    };
+
+    // Route user prompts from `submit_message` to us.
+    let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+    store.register_managed_input(session_id, tx);
+
+    // Subscribe to the event stream.
+    let resp = client
+        .get(format!("{base}/event"))
+        .send()
+        .await?
+        .error_for_status()?;
+    let mut stream = resp.bytes_stream();
+
+    let mut buf: Vec<u8> = Vec::new();
+    let mut cur_mode = SessionMode::Input;
+    let mut acc = UsageAcc::new();
+
+    loop {
+        tokio::select! {
+            chunk = stream.next() => match chunk {
+                Some(Ok(bytes)) => {
+                    buf.extend_from_slice(&bytes);
+                    process_sse_buffer(&mut buf, store, conv, session_id, &mut cur_mode, &mut acc);
+                }
+                Some(Err(err)) => return Err(err.into()),
+                None => break,
+            },
+            msg = rx.recv() => match msg {
+                Some(text) => {
+                    // Optimistically echo the user message + flip to Responding so
+                    // the UI reacts instantly; the POST runs detached (the reply
+                    // streams back over SSE).
+                    conv.push(session_id, vec![ConversationItem::UserMessage { text: text.clone(), timestamp: None }]);
+                    if cur_mode != SessionMode::Responding {
+                        store.set_managed_mode(session_id, SessionMode::Responding, None);
+                        cur_mode = SessionMode::Responding;
+                    }
+                    let c = client.clone();
+                    let url = format!("{base}/session/{oc_id}/message");
+                    let mut body = serde_json::json!({ "parts": [ { "type": "text", "text": text } ] });
+                    if let Some(m) = &model {
+                        body["model"] = Value::String(m.clone());
+                    }
+                    tokio::spawn(async move {
+                        if let Err(err) = c.post(url).json(&body).send().await {
+                            tracing::warn!(?err, "opencode message POST failed");
+                        }
+                    });
+                }
+                None => break, // managed input dropped → session terminated
+            },
+            status = child.wait() => {
+                tracing::info!(?status, session = %session_id, "opencode serve exited");
+                break;
+            }
+        }
+    }
+
+    let _ = child.start_kill();
+    Ok(())
+}
+
+/// Poll `/global/health` until the server answers (or we give up after ~10s).
+async fn wait_healthy(client: &reqwest::Client, base: &str) -> anyhow::Result<()> {
+    for _ in 0..50 {
+        if let Ok(resp) = client.get(format!("{base}/global/health")).send().await {
+            if resp.status().is_success() {
+                return Ok(());
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    anyhow::bail!("opencode serve did not become healthy in time")
+}
+
+/// Drain complete `data:` lines out of the SSE byte buffer and apply them.
+fn process_sse_buffer(
+    buf: &mut Vec<u8>,
+    store: &SessionStore,
+    conv: &ConversationStore,
+    session_id: &str,
+    cur_mode: &mut SessionMode,
+    acc: &mut UsageAcc,
+) {
+    while let Some(pos) = buf.iter().position(|&b| b == b'\n') {
+        let line: Vec<u8> = buf.drain(..=pos).collect();
+        let s = String::from_utf8_lossy(&line);
+        let s = s.trim_end_matches(['\r', '\n']);
+        let Some(data) = s.strip_prefix("data:") else {
+            continue; // event:/id:/comment/blank — SSE framing we don't need
+        };
+        let data = data.trim();
+        if data.is_empty() {
+            continue;
+        }
+        if let Ok(value) = serde_json::from_str::<Value>(data) {
+            let updates = translate(&value);
+            if !updates.is_empty() {
+                apply_updates(store, conv, session_id, updates, cur_mode, acc);
+            }
+        }
+    }
+}
+
+/// Drive the stores from a batch of translated updates. Mode changes are
+/// debounced (Approval always re-applies since its `pending` can change);
+/// conversation items are pushed together; usage refreshes the status line.
+fn apply_updates(
+    store: &SessionStore,
+    conv: &ConversationStore,
+    session_id: &str,
+    updates: Vec<OpenCodeUpdate>,
+    cur_mode: &mut SessionMode,
+    acc: &mut UsageAcc,
+) {
+    let mut items = Vec::new();
+    let mut new_mode: Option<SessionMode> = None;
+    let mut pending: Option<Pending> = None;
+    let mut usage_changed = false;
+
+    for update in &updates {
+        match update {
+            OpenCodeUpdate::Idle => new_mode = Some(SessionMode::Input),
+            OpenCodeUpdate::Busy => {
+                if new_mode.is_none() {
+                    new_mode = Some(SessionMode::Responding);
+                }
+            }
+            OpenCodeUpdate::PermissionPending { tool, summary } => {
+                new_mode = Some(SessionMode::Approval);
+                // NOTE: surfacing the pending approval is accurate telemetry, but
+                // forwarding the user's decision back to OpenCode's permission API
+                // is a follow-up (Phase 4). OpenCode may auto-resolve per its own
+                // permission config in the meantime.
+                pending = Some(Pending::Approval {
+                    tool: tool.clone(),
+                    summary: summary.clone(),
+                    raw: Value::Null,
+                });
+            }
+            OpenCodeUpdate::Usage { model, input_tokens, output_tokens, cost_usd } => {
+                acc.merge(model.clone(), *input_tokens, *output_tokens, *cost_usd);
+                usage_changed = true;
+            }
+            OpenCodeUpdate::Error(msg) => {
+                tracing::debug!(session = %session_id, error = %msg, "opencode session error");
+            }
+            OpenCodeUpdate::AssistantText(_) | OpenCodeUpdate::UserText(_) | OpenCodeUpdate::ToolUse { .. } => {
+                if let Some(item) = conversation_item(update) {
+                    items.push(item);
+                }
+            }
+        }
+    }
+
+    if !items.is_empty() {
+        conv.push(session_id, items);
+    }
+    if let Some(mode) = new_mode {
+        if mode != *cur_mode || mode == SessionMode::Approval {
+            store.set_managed_mode(session_id, mode, pending);
+            *cur_mode = mode;
+        }
+    }
+    if usage_changed {
+        store.apply_status_line(
+            session_id,
+            status_from_usage(acc.model.clone(), acc.input, acc.output, acc.cost),
+        );
     }
 }
 

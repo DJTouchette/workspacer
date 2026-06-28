@@ -61,6 +61,7 @@ pub fn router(state: ApiState) -> Router {
     Router::new()
         .route("/sessions", get(list_sessions))
         .route("/sessions/spawn", post(crate::daemon::spawn::handle))
+        .route("/sessions/spawn-managed", post(crate::daemon::spawn::handle_managed))
         .route("/sessions/:id", get(get_session))
         .route("/sessions/:id/input", post(post_input))
         .route("/sessions/:id/message", post(post_message))

@@ -13,7 +13,7 @@ import { listClaudeModels } from './services/claudeModels';
 import { agentNotifier } from './services/agentNotifier';
 import { claudemonSessionClient } from './services/claudemonSessionClient';
 import { buildClaudeArgv } from './services/claudeResolver';
-import { buildAgentArgv } from './services/agentProviders';
+import { buildAgentArgv, resolveAgentBinary } from './services/agentProviders';
 import { facadeSpawnArgs, buildSessionMcpConfig } from './services/mcpConfig';
 import { installSupervisorSkill, ensureSupervisorHome } from './services/supervisorSkill';
 import { importChromeCookies, importChromeCookiesViaCDP } from './services/chromeCookieImport';
@@ -112,10 +112,18 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC.CLAUDE_SPAWN, async (_event, opts: { cwd?: string; provider?: 'claude' | 'codex' | 'opencode'; profileId?: string; model?: string; skipPermissions?: boolean; resumeSessionId?: string; cols?: number; rows?: number; supervisor?: boolean; mcpFacade?: boolean; label?: string; parentSessionId?: string; mcpItemIds?: string[] }) => {
     // Provider selects the coding-agent backend.
     const provider = opts.provider ?? 'claude';
-    // Tier-1 for non-Claude agents: launch the agent's own interactive CLI in a
-    // PTY (no Claude MCP / facade / --session-id flags — those are Claude-specific).
-    // claudemon tracks it as a raw PTY session; the renderer renders it as a
-    // terminal (no hook/transcript telemetry yet — that's the managed adapter phase).
+    // OpenCode (Tier-2 managed): claudemon runs `opencode serve` and drives the
+    // session over HTTP+SSE, translating its events into the shared session model
+    // (status, conversation, usage) — so it lights up the GUI / Fleet Deck like a
+    // Claude session, no PTY.
+    if (provider === 'opencode') {
+      const cwd = opts.cwd || process.env.HOME || os.homedir();
+      const bin = resolveAgentBinary('opencode');
+      return claudemonSessionClient.spawnManaged({ provider: 'opencode', cwd, model: opts.model, bin });
+    }
+    // Codex (Tier-1 PTY): launch its own interactive CLI in a PTY. claudemon
+    // tracks it as a raw PTY session; the renderer renders it as a terminal
+    // (managed Codex telemetry is a later phase).
     if (provider !== 'claude') {
       const sid = randomUUID();
       claudeSessionStore.setSpawnMeta(sid, { label: opts.label, parentSessionId: opts.parentSessionId });

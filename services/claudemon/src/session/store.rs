@@ -112,6 +112,10 @@ pub struct SessionStore {
     /// after spawn reliable instead of racing a raw PTY write against the TUI's
     /// cold-start render (the "typed but not sent" bug).
     pending_messages: Arc<DashMap<String, Vec<String>>>,
+    /// Managed (adapter-driven) sessions route user prompts here instead of to a
+    /// PTY: the provider adapter's driver task owns the receiver and forwards
+    /// each prompt to the agent's own API (e.g. OpenCode's POST message).
+    managed_inputs: Arc<DashMap<String, mpsc::UnboundedSender<String>>>,
 }
 
 /// Outcome of a `/message` submission. Keeping the policy here (rather than in
@@ -152,6 +156,7 @@ impl SessionStore {
             pending_spawns_by_cwd: Arc::new(DashMap::new()),
             aliases: Arc::new(DashMap::new()),
             pending_messages: Arc::new(DashMap::new()),
+            managed_inputs: Arc::new(DashMap::new()),
         }
     }
 
@@ -446,6 +451,11 @@ impl SessionStore {
 
     /// Register a managed session and announce it like a spawn. Starts in
     /// `Input` (ready to accept a prompt). Idempotent on the id.
+    ///
+    /// A managed session emits no PTY bytes, but we still create an (empty)
+    /// output buffer + byte channel so the renderer's viewer-attach path
+    /// (`/sessions/:id/stream`) works uniformly — it simply never receives any
+    /// bytes; the conversation/state/status streams carry the real telemetry.
     pub fn register_managed(&self, session_id: &str, cwd: &str) -> SessionState {
         let state = {
             let mut entry = self
@@ -455,6 +465,12 @@ impl SessionStore {
             entry.mode = SessionMode::Input;
             entry.clone()
         };
+        self.buffers
+            .entry(session_id.to_string())
+            .or_insert_with(|| Arc::new(Mutex::new(OutputBuffer::new(OUTPUT_BUFFER_CAP))));
+        self.bytes_tx
+            .entry(session_id.to_string())
+            .or_insert_with(|| broadcast::channel(BYTE_BROADCAST_CAPACITY).0);
         let _ = self.update_tx.send(SessionUpdate {
             session_id: session_id.to_string(),
             event: "Spawn".to_string(),
@@ -485,6 +501,34 @@ impl SessionStore {
             state: state.clone(),
         });
         Some(state)
+    }
+
+    /// Register the prompt channel for a managed session. Prompts submitted via
+    /// `submit_message` are forwarded here (the adapter's driver task owns the
+    /// receiver).
+    pub fn register_managed_input(&self, session_id: &str, tx: mpsc::UnboundedSender<String>) {
+        self.managed_inputs.insert(session_id.to_string(), tx);
+    }
+
+    /// Tear down a managed session: drop its prompt channel (signalling the
+    /// driver to stop) and mark it Stopped.
+    pub fn deregister_managed(&self, session_id: &str) {
+        self.managed_inputs.remove(session_id);
+        if let Some(mut entry) = self.states.get_mut(session_id) {
+            entry.mode = SessionMode::Stopped;
+            entry.updated_at = OffsetDateTime::now_utc();
+            let state = entry.clone();
+            drop(entry);
+            let _ = self.update_tx.send(SessionUpdate {
+                session_id: session_id.to_string(),
+                event: "SessionEnd".to_string(),
+                state,
+            });
+        }
+    }
+
+    fn managed_input(&self, session_id: &str) -> Option<mpsc::UnboundedSender<String>> {
+        self.managed_inputs.get(session_id).map(|e| e.clone())
     }
 
     /// Attach model/usage/cost telemetry to a managed session (the adapter's
@@ -528,6 +572,15 @@ impl SessionStore {
     /// chat are rejected so the caller can use the right endpoint. See
     /// [`MessageOutcome`].
     pub fn submit_message(&self, session_id: &str, text: String) -> MessageOutcome {
+        // Managed (adapter-driven) sessions forward the prompt to the provider's
+        // own API via the driver task — no PTY, no Input-mode gating.
+        if let Some(tx) = self.managed_input(session_id) {
+            return if tx.send(text).is_ok() {
+                MessageOutcome::Sent
+            } else {
+                MessageOutcome::WrapperGone
+            };
+        }
         let Some(mode) = self.states.get(session_id).map(|s| s.mode) else {
             return MessageOutcome::NoSession;
         };

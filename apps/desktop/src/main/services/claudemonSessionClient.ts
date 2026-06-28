@@ -76,6 +76,33 @@ class ClaudemonSessionClient {
     return sessionId;
   }
 
+  /** Spawn a *managed* (adapter-driven) session via POST /sessions/spawn-managed.
+   *  Unlike `spawn`, there's no PTY/byte stream — claudemon drives the provider's
+   *  own API (e.g. `opencode serve`) and the renderer observes via the session
+   *  snapshot/conversation/status streams like a Claude GUI session. */
+  async spawnManaged(args: {
+    provider: 'opencode';
+    cwd: string;
+    model?: string;
+    /** Resolved launcher binary (the desktop resolves it on PATH). */
+    bin?: string;
+    sessionId?: string;
+  }): Promise<string> {
+    const { sessionId: pinnedId, ...rest } = args;
+    const reqBody = { ...rest, ...(pinnedId ? { session_id: pinnedId } : {}) };
+    const res = await fetch(`${CLAUDEMON_API_URL}/sessions/spawn-managed`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(reqBody),
+    });
+    if (!res.ok) {
+      throw new Error(`spawn-managed failed: HTTP ${res.status} ${await res.text()}`);
+    }
+    const resBody = await res.json() as { session_id: string };
+    this.cwds.set(resBody.session_id, rest.cwd);
+    return resBody.session_id;
+  }
+
   /** Attach a viewer to an already-running daemon session — no spawn, no
    *  --resume. The renderer keys ports by paneId so multiple viewers can
    *  coexist (claudemon's pty.bytes channel is a tokio::broadcast). */

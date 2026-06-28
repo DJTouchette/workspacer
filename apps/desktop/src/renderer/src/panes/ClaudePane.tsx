@@ -63,18 +63,27 @@ const CONVERSATION_PAGE_SIZE = 60;
 
 const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, profileId, resumeSessionId, attachSessionId, initialPrompt, provider, onPtyReady }) => {
   const { config } = useConfig();
-  // Only Claude has the GUI (hooks/transcript telemetry). Other providers run
-  // their own TUI in the PTY, so they're hard-locked to the terminal view and
-  // every auto-switch-to-GUI below becomes a no-op (no GUI to switch to).
+  // Which surfaces this provider has:
+  //   claude   — GUI (hooks/transcript telemetry) + terminal (its PTY)
+  //   opencode — GUI only: a managed session driven by claudemon's adapter,
+  //              no PTY, so the terminal view has nothing to show
+  //   codex    — terminal only: Tier-1, runs its own TUI in the PTY (no
+  //              telemetry yet)
   const isClaude = (provider ?? 'claude') === 'claude';
+  const isManaged = provider === 'opencode';
+  const hasGui = isClaude || isManaged;
+  const hasTerminal = !isManaged;
+  const showViewToggle = hasGui && hasTerminal; // only Claude has both
   // A spawned-with-prompt pane always opens in GUI; otherwise honour the
   // configured default view (falls back to terminal until config loads).
   const [viewModeState, setViewModeState] = useState<ViewMode>(
     initialPrompt ? 'gui' : (config.claude?.defaultView ?? 'terminal'),
   );
   const noopSetView = useCallback((_v: React.SetStateAction<ViewMode>) => {}, []);
-  const viewMode: ViewMode = isClaude ? viewModeState : 'terminal';
-  const setViewMode = isClaude ? setViewModeState : noopSetView;
+  // Lock to the sole available surface when the provider doesn't offer both;
+  // any auto-switch below then becomes a no-op.
+  const viewMode: ViewMode = !hasGui ? 'terminal' : !hasTerminal ? 'gui' : viewModeState;
+  const setViewMode = showViewToggle ? setViewModeState : noopSetView;
   const [railOpen, setRailOpen] = useState(() => localStorage.getItem('wks-claude-rail') === '1');
   const [inputValue, setInputValue] = useState(initialPrompt ?? '');
   const [showScrollBtn, setShowScrollBtn] = useState(false);
@@ -1121,8 +1130,8 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
           <PanelRight size={13} strokeWidth={1.9} />
         </button>
 
-        {/* View mode toggle — Claude only (other providers have no GUI view). */}
-        <div style={{ display: isClaude ? 'flex' : 'none', gap: 2 }}>
+        {/* View mode toggle — only when the provider offers both surfaces (Claude). */}
+        <div style={{ display: showViewToggle ? 'flex' : 'none', gap: 2 }}>
           <button
             onClick={() => setViewMode('gui')}
             style={{
