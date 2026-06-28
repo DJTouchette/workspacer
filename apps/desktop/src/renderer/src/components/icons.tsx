@@ -31,21 +31,43 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { PaneType } from '../types/pane';
+import {
+  IconTerminal,
+  IconSettings,
+  IconOverview,
+  IconDiff,
+  IconPlugin,
+  IconUsage,
+  IconFile,
+} from './wksIcons';
 
-const PANE_ICONS: Record<PaneType, LucideIcon> = {
-  terminal: SquareTerminal,
+// Both lucide glyphs and the Workspacer pack components accept this prop shape,
+// so a pane can be backed by either set. A bare call signature (rather than
+// React.ComponentType) avoids lucide's ForwardRef `propTypes` variance clash.
+type IconComponent = (props: {
+  size?: number | string;
+  strokeWidth?: number;
+  className?: string;
+  style?: React.CSSProperties;
+  color?: string;
+}) => React.ReactNode;
+
+const PANE_ICONS: Record<PaneType, IconComponent> = {
+  // Pack glyphs where there's a clean equivalent; lucide for the rest
+  // (browser/notes/claude/library/ask/plugins have no pack counterpart).
+  terminal: IconTerminal,
   browser: Globe,
   notes: NotebookPen,
   claude: Sparkles,
-  settings: Settings,
-  review: Search,
-  plugin: Puzzle,
+  settings: IconSettings,
+  review: IconDiff,
+  plugin: IconPlugin,
   plugins: Blocks,
-  overview: LayoutGrid,
+  overview: IconOverview,
   library: Zap,
-  analytics: BarChart3,
+  analytics: IconUsage,
   ask: Brain,
-  editor: FileCode2,
+  editor: IconFile,
 };
 
 export interface IconProps {

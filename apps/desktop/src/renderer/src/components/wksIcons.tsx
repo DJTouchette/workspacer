@@ -7,12 +7,15 @@
 import React from 'react';
 
 export interface WksIconProps {
-  size?: number;
+  size?: number | string;
   strokeWidth?: number;
   className?: string;
   style?: React.CSSProperties;
   /** Color of the two-tone accent node/marks. Defaults to the theme accent. */
   accent?: string;
+  /** Accepted for drop-in parity with lucide icons; the glyph tints via
+   *  `currentColor` (set it through `style.color`), so this is ignored. */
+  color?: string;
 }
 
 /** Build an icon component from a children-renderer that receives the accent. */

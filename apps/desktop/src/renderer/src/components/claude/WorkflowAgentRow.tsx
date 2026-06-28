@@ -2,6 +2,7 @@ import React from 'react';
 import type { WorkflowAgentInfo } from '../../types/claudeSession';
 import { claudeColors as colors } from '../claude-shared';
 import { AGENT_PURPLE, fmtTokens, fmtDuration, shortModel } from './agentUtils';
+import { IconQueued, IconError, IconDone } from '../wksIcons';
 
 // ── Shared styles ──
 
@@ -39,13 +40,16 @@ export const AgentSpinner: React.FC<{ color?: string }> = ({ color = AGENT_PURPL
 export const agentStatusIcon = (status: WorkflowAgentInfo['status']): React.ReactNode => {
   switch (status) {
     case 'queued':
-      return <span style={{ color: colors.mutedDim, fontSize: '0.7rem', width: 12, textAlign: 'center', flexShrink: 0 }}>{'◌'}</span>;
+      // Pack "queued" clock — quiet/muted, no accent.
+      return <IconQueued size={12} strokeWidth={2.2} style={{ color: colors.mutedDim, flexShrink: 0 }} accent={colors.mutedDim} />;
     case 'running':
       return <AgentSpinner />;
     case 'failed':
-      return <span style={{ color: colors.error, fontSize: '0.7rem', width: 12, textAlign: 'center', flexShrink: 0 }}>{'✗'}</span>;
+      // Pack "error" triangle, tinted red.
+      return <IconError size={12} strokeWidth={2.2} style={{ color: colors.error, flexShrink: 0 }} />;
     default:
-      return <span style={{ color: colors.success, fontSize: '0.7rem', width: 12, textAlign: 'center', flexShrink: 0 }}>{'✓'}</span>;
+      // Pack "done" check-circle, tinted green.
+      return <IconDone size={12} strokeWidth={2.2} style={{ color: colors.success, flexShrink: 0 }} accent={colors.success} />;
   }
 };
 

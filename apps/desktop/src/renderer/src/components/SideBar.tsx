@@ -1,5 +1,6 @@
 import React, { useState, useRef, useMemo } from 'react';
 import { Plus, ChevronLeft, ChevronRight, HelpCircle, BarChart2, Settings as SettingsIcon } from 'lucide-react';
+import { IconInbox, IconFleet } from './wksIcons';
 import { AgentWorkspace } from '../types/pane';
 import type { SessionAmbientState, ClaudeSessionSnapshot } from '../types/claudeSession';
 import type { AttentionItem, AttentionKind } from '../types/attention';
@@ -379,6 +380,7 @@ const SideBar: React.FC<SideBarProps> = ({
           title="Triage Inbox (Ctrl+Shift+A)"
           style={segBtnStyle(false)}
         >
+          <IconInbox size={15} strokeWidth={2} />
           <span>Inbox</span>
           {counts.total > 0 && (
             // Amber when something genuinely needs you; muted green when the inbox
@@ -397,6 +399,7 @@ const SideBar: React.FC<SideBarProps> = ({
           title="Fleet Deck (Ctrl+Shift+F)"
           style={segBtnStyle(viewLevel === 'fleet')}
         >
+          <IconFleet size={15} strokeWidth={2} />
           Fleet
         </button>
       </div>
