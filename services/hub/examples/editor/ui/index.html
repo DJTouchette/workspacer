@@ -15,16 +15,15 @@
       font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
       background: var(--wks-bg-base, #1e1e1e); color: var(--wks-text-primary, #d4d4d4);
     }
-    header {
-      display: flex; align-items: center; gap: 8px;
-      padding: 6px 10px; border-bottom: 1px solid var(--wks-border, #333);
-      background: var(--wks-bg-header, #252526); font-size: 12px;
-    }
-    header .lock { color: var(--wks-success, #6fcf7f); }
-    header .root { color: var(--wks-accent, #9cdcfe); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    header .spacer { flex: 1; }
     .main { flex: 1; display: flex; min-height: 0; }
-    .side { width: 280px; flex-shrink: 0; display: flex; flex-direction: column; border-right: 1px solid var(--wks-border, #333); background: var(--wks-bg-surface, #1b1b1b); }
+    .side { width: 280px; flex-shrink: 0; display: flex; flex-direction: column; background: var(--wks-bg-surface, #1b1b1b); }
+    .side.collapsed { display: none; }
+    /* Drag handle between the sidebar and the editor. */
+    .resizer { flex: none; width: 4px; cursor: col-resize; background: var(--wks-border, #333); }
+    .resizer:hover, .resizer.dragging { background: var(--wks-accent, #0e639c); }
+    .side.collapsed + .resizer { display: none; }
+    .iconbtn { background: transparent; border: 0; color: var(--wks-text-muted, #888); padding: 2px; display: inline-flex; align-items: center; cursor: pointer; }
+    .iconbtn:hover { color: var(--wks-text-primary, #fff); }
     .tabs { display: flex; border-bottom: 1px solid var(--wks-border, #333); }
     .tabs button { flex: 1; border-radius: 0; border: 0; background: var(--wks-bg-surface, #1b1b1b); color: var(--wks-text-muted, #888); padding: 6px; cursor: pointer; }
     .tabs button.active { color: var(--wks-text-primary, #fff); background: var(--wks-bg-header, #252526); box-shadow: inset 0 -2px 0 var(--wks-accent, #0e639c); }
@@ -69,20 +68,17 @@
     .cm-editor.cm-focused { outline: none; }
     .cm-scroller { overflow: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
     .empty { margin: 16px; color: var(--wks-text-muted, #777); }
-    footer { padding: 4px 10px; border-top: 1px solid var(--wks-border, #333); background: var(--wks-bg-header, #252526); font-size: 11px; color: var(--wks-text-muted, #888); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    footer.bad { color: var(--wks-error, #cf6f6f); }
-    footer.ok { color: var(--wks-success, #6fcf7f); }
+    footer { display: flex; align-items: center; gap: 8px; padding: 4px 10px; border-top: 1px solid var(--wks-border, #333); background: var(--wks-bg-header, #252526); font-size: 11px; color: var(--wks-text-muted, #888); }
+    footer .spacer { flex: 1; }
+    footer #status { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    footer #status.bad { color: var(--wks-error, #cf6f6f); }
+    footer #status.ok { color: var(--wks-success, #6fcf7f); }
+    footer #conn { flex: none; color: var(--wks-text-faint, #666); }
   </style>
 </head>
 <body>
-  <header>
-    <span class="lock">🔒</span><span>sandboxed to</span>
-    <span class="root" id="root">…</span>
-    <span class="spacer"></span>
-    <span id="conn">connecting…</span>
-  </header>
   <div class="main">
-    <div class="side">
+    <div class="side" id="side">
       <div class="tabs">
         <button id="tabFiles" class="active">Files</button>
         <button id="tabSearch">Search</button>
@@ -99,8 +95,10 @@
         <div class="pane"><div id="searchResults"></div></div>
       </div>
     </div>
+    <div class="resizer" id="resizer" title="Drag to resize"></div>
     <div class="editor">
       <div class="filebar">
+        <button id="toggleSide" class="iconbtn" title="Toggle sidebar (⌘/Ctrl+B)"></button>
         <span class="name" id="filename">No file open</span>
         <span class="dirty" id="dirty"></span>
         <span class="spacer"></span>
@@ -114,7 +112,11 @@
       <div class="editArea" id="cmHost"></div>
     </div>
   </div>
-  <footer id="status">Reads, writes, and search are confined to the project above; anything outside is rejected by the bus.</footer>
+  <footer>
+    <span id="status"></span>
+    <span class="spacer"></span>
+    <span id="conn">connecting…</span>
+  </footer>
 
   <script src="cm.bundle.js"></script>
   <script>
@@ -150,9 +152,8 @@
     const $ = (id) => document.getElementById(id);
     const treeEl = $('tree'),
           nameEl = $('filename'), dirtyEl = $('dirty'), saveEl = $('save'),
-          statusEl = $('status'), connEl = $('conn'), rootEl = $('root'),
+          statusEl = $('status'), connEl = $('conn'),
           bannerEl = $('banner');
-    rootEl.textContent = cwd || '(no project — open the editor inside an agent)';
 
     let current = null;   // { path, name }
     let saved = '';       // last-saved contents
@@ -190,6 +191,7 @@
       "database": "<ellipse cx=\"12\" cy=\"5\" rx=\"9\" ry=\"3\" /><path d=\"M3 5V19A9 3 0 0 0 21 19V5\" /><path d=\"M3 12A9 3 0 0 0 21 12\" />",
       "plus": "<path d=\"M5 12h14\" /><path d=\"M12 5v14\" />",
       "search": "<path d=\"m21 21-4.34-4.34\" /><circle cx=\"11\" cy=\"11\" r=\"8\" />",
+      "panel-left": "<rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\" /><path d=\"M9 3v18\" />",
     };
     function svg(name, color) {
       const style = color ? ` style="color:${color}"` : '';
@@ -232,6 +234,41 @@
     // Icon-ify the toolbar buttons.
     $('newFile').innerHTML = svg('plus') + ' New';
     $('refresh').innerHTML = svg('rotate-cw');
+
+    // ── sidebar: collapse + resize (persisted in localStorage) ──────────────────
+    const sideEl = $('side'), resizerEl = $('resizer'), toggleEl = $('toggleSide');
+    toggleEl.innerHTML = svg('panel-left');
+    const LS_WIDTH = 'editor.sideWidth', LS_COLLAPSED = 'editor.sideCollapsed';
+    const lsGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+    const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+
+    const savedW = parseInt(lsGet(LS_WIDTH) || '', 10);
+    if (savedW >= 150 && savedW <= 700) sideEl.style.width = savedW + 'px';
+    if (lsGet(LS_COLLAPSED) === '1') sideEl.classList.add('collapsed');
+
+    function toggleSidebar() {
+      const collapsed = sideEl.classList.toggle('collapsed');
+      lsSet(LS_COLLAPSED, collapsed ? '1' : '0');
+    }
+    toggleEl.onclick = toggleSidebar;
+
+    resizerEl.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      resizerEl.classList.add('dragging');
+      const startX = e.clientX, startW = sideEl.getBoundingClientRect().width;
+      const onMove = (ev) => {
+        const w = Math.max(150, Math.min(700, startW + (ev.clientX - startX)));
+        sideEl.style.width = w + 'px';
+      };
+      const onUp = () => {
+        resizerEl.classList.remove('dragging');
+        lsSet(LS_WIDTH, String(Math.round(sideEl.getBoundingClientRect().width)));
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
 
     // ── CodeMirror editor ───────────────────────────────────────────────────────
     const CM = window.CM;
@@ -289,6 +326,7 @@
           CM.keymap.of([
             { key: 'Mod-s', preventDefault: true, run: () => { save(); return true; } },
             { key: 'Mod-p', preventDefault: true, run: () => { showView('search'); return true; } },
+            { key: 'Mod-b', preventDefault: true, run: () => { toggleSidebar(); return true; } },
             CM.indentWithTab,
             ...CM.closeBracketsKeymap, ...CM.defaultKeymap, ...CM.historyKeymap,
             ...CM.searchKeymap, ...CM.completionKeymap, ...CM.lintKeymap,
@@ -531,6 +569,7 @@
     window.addEventListener('keydown', (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); save(); }
       else if ((e.metaKey || e.ctrlKey) && e.key === 'p') { e.preventDefault(); showView('search'); }
+      else if ((e.metaKey || e.ctrlKey) && e.key === 'b') { e.preventDefault(); toggleSidebar(); }
     });
 
     // ── lifecycle ─────────────────────────────────────────────────────────────
