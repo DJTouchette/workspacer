@@ -39,6 +39,7 @@ import {
   IconPlugin,
   IconUsage,
   IconFile,
+  IconAgent,
 } from './wksIcons';
 
 // Both lucide glyphs and the Workspacer pack components accept this prop shape,
@@ -54,11 +55,11 @@ type IconComponent = (props: {
 
 const PANE_ICONS: Record<PaneType, IconComponent> = {
   // Pack glyphs where there's a clean equivalent; lucide for the rest
-  // (browser/notes/claude/library/ask/plugins have no pack counterpart).
+  // (browser/notes/library/ask/plugins have no pack counterpart).
   terminal: IconTerminal,
   browser: Globe,
   notes: NotebookPen,
-  claude: Sparkles,
+  claude: IconAgent,
   settings: IconSettings,
   review: IconDiff,
   plugin: IconPlugin,
