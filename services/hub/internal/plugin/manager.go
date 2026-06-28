@@ -11,6 +11,7 @@ import (
 
 	"github.com/djtouchette/workspacer-hub/internal/capspec"
 	"github.com/djtouchette/workspacer-hub/internal/event"
+	"github.com/djtouchette/workspacer-hub/internal/sandbox"
 	"github.com/djtouchette/workspacer-hub/internal/supervisor"
 )
 
@@ -112,6 +113,11 @@ type Manager struct {
 	// dynamic scopes resolved (e.g. ${agentCwd}). Tracked so they can be revoked
 	// on pane close and swept when their plugin is removed/stopped.
 	paneTokens map[string]string
+
+	// How sidecars are launched under OS-level filesystem confinement. Default
+	// best-effort (confine when the platform supports it, else run plain). Set by
+	// the hub from WORKSPACER_PLUGIN_SANDBOX.
+	sandboxMode sandbox.Mode
 }
 
 type loaded struct {
@@ -123,7 +129,46 @@ type loaded struct {
 // NewManager creates a manager that publishes lifecycle events to pub and binds
 // per-plugin bus tokens via reg (nil to disable capability enforcement).
 func NewManager(pub Publisher, reg TokenRegistrar) *Manager {
-	return &Manager{pub: pub, reg: reg, plugins: make(map[string]*loaded), paneTokens: make(map[string]string)}
+	return &Manager{
+		pub:         pub,
+		reg:         reg,
+		plugins:     make(map[string]*loaded),
+		paneTokens:  make(map[string]string),
+		sandboxMode: sandbox.ModeBestEffort,
+	}
+}
+
+// SetSandboxMode sets how sidecars are launched under filesystem confinement
+// (off / best-effort / enforce). Call before loading plugins.
+func (m *Manager) SetSandboxMode(mode sandbox.Mode) {
+	m.mu.Lock()
+	m.sandboxMode = mode
+	m.mu.Unlock()
+}
+
+// sandboxSidecar resolves how to launch mf's sidecar under the current mode,
+// emits a lifecycle event, and reports whether it should start at all (false
+// means refused — enforce mode on a platform with no confinement mechanism).
+func (m *Manager) sandboxSidecar(mf Manifest) (command string, args []string, run bool) {
+	m.mu.Lock()
+	mode := m.sandboxMode
+	m.mu.Unlock()
+	// A sidecar may write only its own plugin directory (a private temp is added
+	// by the mechanism). Reads stay open so it can load its interpreter/libraries.
+	res := sandbox.Wrap(mf.Server.Command, mf.Server.Args, sandbox.Policy{WriteRoots: []string{mf.Dir}})
+	switch sandbox.Decide(mode, res.Available) {
+	case sandbox.RunSandboxed:
+		m.pub.Publish(event.New("plugin.sandboxed", "hub", map[string]string{"id": mf.ID, "mechanism": res.Mechanism}))
+		return res.Path, res.Args, true
+	case sandbox.Refuse:
+		m.pub.Publish(event.New("plugin.sandbox.refused", "hub", map[string]string{"id": mf.ID, "reason": res.Note}))
+		return "", nil, false
+	default: // RunUnsandboxed
+		if mode != sandbox.ModeOff {
+			m.pub.Publish(event.New("plugin.unsandboxed", "hub", map[string]string{"id": mf.ID, "reason": res.Note}))
+		}
+		return mf.Server.Command, mf.Server.Args, true
+	}
 }
 
 // randomToken mints a fresh URL-safe bus token.
@@ -259,15 +304,21 @@ func (m *Manager) Add(mf Manifest) {
 		if l.token != "" {
 			env = []string{"HUB_TOKEN=" + l.token}
 		}
-		l.sup = supervisor.New(supervisor.Spec{
-			Name:      mf.ID,
-			Command:   mf.Server.Command,
-			Args:      mf.Server.Args,
-			Dir:       mf.Dir, // run the sidecar in its own plugin directory
-			Env:       env,
-			HealthURL: healthURL(mf.Server),
-		}, m.pub)
-		l.sup.Start()
+		// Launch under OS filesystem confinement (bwrap / sandbox-exec). In
+		// enforce mode on a platform without a mechanism, run is false and the
+		// sidecar is not started.
+		cmd, cmdArgs, run := m.sandboxSidecar(mf)
+		if run {
+			l.sup = supervisor.New(supervisor.Spec{
+				Name:      mf.ID,
+				Command:   cmd,
+				Args:      cmdArgs,
+				Dir:       mf.Dir, // run the sidecar in its own plugin directory
+				Env:       env,
+				HealthURL: healthURL(mf.Server),
+			}, m.pub)
+			l.sup.Start()
+		}
 	}
 
 	m.mu.Lock()

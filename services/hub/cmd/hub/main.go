@@ -21,6 +21,7 @@ import (
 	"github.com/djtouchette/workspacer-hub/internal/event"
 	"github.com/djtouchette/workspacer-hub/internal/layout"
 	"github.com/djtouchette/workspacer-hub/internal/plugin"
+	"github.com/djtouchette/workspacer-hub/internal/sandbox"
 	"github.com/djtouchette/workspacer-hub/internal/supervisor"
 )
 
@@ -114,6 +115,10 @@ func main() {
 	// manager registers per-plugin bus tokens with srv so capability calls are
 	// scoped to what each plugin declared.
 	mgr := plugin.NewManager(b, srv)
+	// Sidecars launch under OS filesystem confinement. WORKSPACER_PLUGIN_SANDBOX
+	// = off | best-effort (default) | enforce. Enforce refuses to start a sidecar
+	// on a platform with no confinement mechanism (fail closed).
+	mgr.SetSandboxMode(sandbox.ParseMode(os.Getenv("WORKSPACER_PLUGIN_SANDBOX")))
 	srv.AddRoute("/plugins", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(mgr.List())
