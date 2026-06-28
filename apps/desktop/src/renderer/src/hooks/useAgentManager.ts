@@ -1,5 +1,14 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { PaneConfig, PaneType, TabConfig, AgentWorkspace } from '../types/pane';
+import { PaneConfig, PaneType, TabConfig, AgentWorkspace, AgentProvider, resolveProvider } from '../types/pane';
+
+/** Human label for an agent provider (tab/pane titles). */
+export function providerLabel(provider: AgentProvider | undefined): string {
+  switch (resolveProvider(provider)) {
+    case 'codex': return 'Codex';
+    case 'opencode': return 'OpenCode';
+    default: return 'Claude';
+  }
+}
 import { agentIdForSession, dedupeBySessionId } from '../lib/agentIdentity';
 
 let nextId = 1;
@@ -66,19 +75,21 @@ export function deriveSupervisorName(question: string): string {
  * to the agent's daemon session as a viewer (the session itself was already
  * spawned, so the pane never owns its lifetime).
  */
-function defaultAgentTabs(sessionId: string | undefined, cwd: string, initialPrompt?: string): { tabs: TabConfig[]; activeTabId: string } {
+function defaultAgentTabs(sessionId: string | undefined, cwd: string, initialPrompt?: string, provider?: AgentProvider): { tabs: TabConfig[]; activeTabId: string } {
   const paneId = generateId('claude');
   const tabId = generateId('tab');
+  const label = providerLabel(provider);
   const pane: PaneConfig = {
     id: paneId,
     type: 'claude',
-    title: 'Claude',
+    title: label,
     cwd,
+    provider,
     attachSessionId: sessionId,
     initialPrompt,
   };
   return {
-    tabs: [{ id: tabId, title: 'Claude', panes: [pane], activePaneId: paneId, lastActiveAt: Date.now() }],
+    tabs: [{ id: tabId, title: label, panes: [pane], activePaneId: paneId, lastActiveAt: Date.now() }],
     activeTabId: tabId,
   };
 }
@@ -144,6 +155,8 @@ export function useAgentManager() {
   const spawnAgent = useCallback(async (opts: {
     cwd: string;
     name?: string;
+    /** Coding-agent backend to run. Defaults to 'claude'. */
+    provider?: AgentProvider;
     profileId?: string;
     model?: string;
     skipPermissions?: boolean;
@@ -162,17 +175,18 @@ export function useAgentManager() {
     const cwd = opts.cwd;
     let sessionId: string | undefined;
     try {
-      sessionId = await window.electronAPI.spawnClaude({ cwd, profileId: opts.profileId, model: opts.model, skipPermissions: opts.skipPermissions, mcpItemIds: opts.mcpItemIds, resumeSessionId: opts.resumeSessionId, supervisor: opts.supervisor, cols: 120, rows: 32 });
+      sessionId = await window.electronAPI.spawnClaude({ cwd, provider: opts.provider, profileId: opts.profileId, model: opts.model, skipPermissions: opts.skipPermissions, mcpItemIds: opts.mcpItemIds, resumeSessionId: opts.resumeSessionId, supervisor: opts.supervisor, cols: 120, rows: 32 });
     } catch (err) {
       console.error('[Agent] spawn failed:', err);
     }
-    const { tabs: agentTabs, activeTabId: agentActiveTab } = defaultAgentTabs(sessionId, cwd, opts.initialPrompt);
+    const { tabs: agentTabs, activeTabId: agentActiveTab } = defaultAgentTabs(sessionId, cwd, opts.initialPrompt, opts.provider);
     const agent: AgentWorkspace = {
       // Deterministic id when we have a session, so every client converges on one
       // card for it; fall back to a random id only if the spawn failed.
       id: sessionId ? agentIdForSession(sessionId) : generateId('agent'),
       name: opts.name?.trim() || deriveAgentName(cwd),
       cwd,
+      provider: opts.provider,
       profileId: opts.profileId,
       model: opts.model,
       skipPermissions: opts.skipPermissions,
@@ -199,7 +213,7 @@ export function useAgentManager() {
     const resumeSessionId = agent.lastSessionId;
     let sessionId: string | undefined;
     try {
-      sessionId = await window.electronAPI.spawnClaude({ cwd: agent.cwd, profileId: agent.profileId, model: agent.model, skipPermissions: agent.skipPermissions, mcpItemIds: agent.mcpItemIds, resumeSessionId, cols: 120, rows: 32 });
+      sessionId = await window.electronAPI.spawnClaude({ cwd: agent.cwd, provider: agent.provider, profileId: agent.profileId, model: agent.model, skipPermissions: agent.skipPermissions, mcpItemIds: agent.mcpItemIds, resumeSessionId, cols: 120, rows: 32 });
     } catch (err) {
       console.error('[Agent] respawn failed:', err);
     }

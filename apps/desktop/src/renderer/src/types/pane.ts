@@ -1,5 +1,15 @@
 export type PaneType = 'terminal' | 'browser' | 'notes' | 'claude' | 'settings' | 'review' | 'plugin' | 'plugins' | 'overview' | 'library' | 'analytics' | 'ask' | 'editor';
 
+/** Coding-agent backend an agent workspace / agent pane runs.
+ *  `undefined` is treated as `'claude'` for backward compatibility with sessions
+ *  and config that predate multi-provider support. See docs/multi-agent-providers.md. */
+export type AgentProvider = 'claude' | 'codex' | 'opencode';
+
+/** Normalize a possibly-undefined provider to the concrete default ('claude'). */
+export function resolveProvider(p: AgentProvider | undefined): AgentProvider {
+  return p ?? 'claude';
+}
+
 export interface PaneConfig {
   id: string;
   type: PaneType;
@@ -10,6 +20,8 @@ export interface PaneConfig {
   appMode?: boolean;
   hibernated?: boolean;
   profileId?: string;
+  /** Coding-agent backend for a 'claude'-type agent pane. undefined ⇒ 'claude'. */
+  provider?: AgentProvider;
   /** Claude session ID to resume (passed as --resume <id> to a NEW process). */
   resumeSessionId?: string;
   /** Claude session ID to attach to as a viewer — the session is already
@@ -86,6 +98,9 @@ export interface AgentWorkspace {
   global?: boolean;
   /** Working directory. Used as the default cwd for every pane opened here. */
   cwd: string;
+  /** Coding-agent backend this workspace runs. undefined ⇒ 'claude' (back-compat
+   *  for agents spawned before multi-provider support). */
+  provider?: AgentProvider;
   profileId?: string;
   /** Model passed as `--model` at spawn (alias or full id). '' / undefined = Claude default. */
   model?: string;

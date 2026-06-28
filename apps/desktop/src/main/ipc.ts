@@ -108,7 +108,12 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     claudemonSessionClient.close(id));
 
   // ── Claude sessions (delegated to claudemon) ──
-  ipcMain.handle(IPC.CLAUDE_SPAWN, async (_event, opts: { cwd?: string; profileId?: string; model?: string; skipPermissions?: boolean; resumeSessionId?: string; cols?: number; rows?: number; supervisor?: boolean; mcpFacade?: boolean; label?: string; parentSessionId?: string; mcpItemIds?: string[] }) => {
+  ipcMain.handle(IPC.CLAUDE_SPAWN, async (_event, opts: { cwd?: string; provider?: 'claude' | 'codex' | 'opencode'; profileId?: string; model?: string; skipPermissions?: boolean; resumeSessionId?: string; cols?: number; rows?: number; supervisor?: boolean; mcpFacade?: boolean; label?: string; parentSessionId?: string; mcpItemIds?: string[] }) => {
+    // Provider selects the coding-agent backend. Phase 0 accepts the field and
+    // threads it through the data model; the launch path still builds a Claude
+    // argv. Phase 1 branches here into a per-provider registry (binary + argv).
+    const provider = opts.provider ?? 'claude';
+    void provider;
     const profile = opts.profileId ? claudeProfiles.getProfile(opts.profileId) : undefined;
     const env: Record<string, string> = {};
     if (profile?.configDir) {
