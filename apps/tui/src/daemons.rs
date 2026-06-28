@@ -122,16 +122,60 @@ fn ensure_hub(daemons: &mut Daemons, bus_url: &str, claudemon_url: &str) {
     }
 }
 
-/// True when `url` is a loopback bus we'd manage but nothing is listening — the
-/// signal to fall back to claudemon-direct (e.g. the hub binary isn't built). A
-/// remote bus is the user's responsibility, so it's never reported unreachable
-/// here (we respect it and let the client reconnect).
-pub fn loopback_bus_unreachable(url: &str) -> bool {
+/// True when `url` is a loopback bus we'd manage but it isn't usable — the
+/// signal to fall back to claudemon-direct. Two ways to be unusable:
+///   * nothing is listening (e.g. the hub binary isn't built), or
+///   * something is listening but it rejects our token with 401 (e.g. the
+///     desktop owns the hub with a token we don't have / a stale one).
+/// Without the 401 check a token mismatch would leave the bus client retrying
+/// forever with an empty agent list — so we probe auth and fall back instead.
+/// A remote bus is the user's responsibility, so it's never reported
+/// unreachable here (we respect it and let the client reconnect).
+pub fn loopback_bus_unreachable(url: &str, token: Option<&str>) -> bool {
     if !is_loopback(url) {
         return false;
     }
-    let (_, port) = parse_bus_addr(url);
-    !port_open(port)
+    let (addr, port) = parse_bus_addr(url);
+    if !port_open(port) {
+        return true; // nothing listening
+    }
+    bus_auth_rejected(&addr, bus_path(url), token) // listening but 401s our token
+}
+
+/// The path component of a `ws://host:port/path` bus URL, defaulting to `/bus`.
+fn bus_path(url: &str) -> &str {
+    let after = url.split("://").nth(1).unwrap_or(url);
+    match after.find('/') {
+        Some(i) => &after[i..],
+        None => "/bus",
+    }
+}
+
+/// Probe whether the hub rejects this token with 401. The hub checks the token
+/// before the WebSocket upgrade, so a plain HTTP GET (no Upgrade headers) gets a
+/// 401 when auth fails and some other status (an upgrade error) when it passes —
+/// either way, a non-401 means our token is accepted. Any I/O hiccup is treated
+/// as "not rejected" so a flaky probe never spuriously drops us off the bus.
+fn bus_auth_rejected(addr: &str, path: &str, token: Option<&str>) -> bool {
+    use std::io::{Read, Write};
+    let Ok(sock) = addr.parse::<SocketAddr>() else { return false };
+    let Ok(mut stream) = TcpStream::connect_timeout(&sock, Duration::from_millis(300)) else {
+        return false;
+    };
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
+    let target = match token {
+        Some(t) if !t.is_empty() => format!("{path}?token={t}"),
+        _ => path.to_string(),
+    };
+    let req = format!("GET {target} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n");
+    if stream.write_all(req.as_bytes()).is_err() {
+        return false;
+    }
+    let mut buf = [0u8; 64];
+    let n = stream.read(&mut buf).unwrap_or(0);
+    // Status line looks like "HTTP/1.1 401 Unauthorized".
+    String::from_utf8_lossy(&buf[..n]).contains(" 401")
 }
 
 /// Extract `host:port` and the port from a `ws://host:port/path` bus URL,
@@ -252,8 +296,17 @@ mod tests {
     #[test]
     fn unreachable_loopback_bus_triggers_fallback() {
         // Port 1 on loopback isn't listening → fall back to direct.
-        assert!(loopback_bus_unreachable("ws://127.0.0.1:1/bus"));
+        assert!(loopback_bus_unreachable("ws://127.0.0.1:1/bus", None));
         // A remote bus is never reported unreachable (respected, not managed).
-        assert!(!loopback_bus_unreachable("ws://example.com:1/bus"));
+        assert!(!loopback_bus_unreachable("ws://example.com:1/bus", None));
+        // A token doesn't change the closed-port verdict.
+        assert!(loopback_bus_unreachable("ws://127.0.0.1:1/bus", Some("tok")));
+    }
+
+    #[test]
+    fn bus_path_extracts_path_with_default() {
+        assert_eq!(bus_path("ws://127.0.0.1:7895/bus"), "/bus");
+        assert_eq!(bus_path("ws://127.0.0.1:7895/custom/path"), "/custom/path");
+        assert_eq!(bus_path("ws://127.0.0.1:7895"), "/bus");
     }
 }

@@ -96,6 +96,20 @@ pub fn load() -> Config {
     read_file().unwrap_or_default().resolve()
 }
 
+/// The hub bus token the desktop app persists at `~/.config/workspacer/remote-token`
+/// (see `hubDaemon.ts`). When the desktop is running it owns the hub and guards
+/// `/bus` with this token, so a TUI joining that bus must present it or the
+/// WebSocket handshake is rejected with 401. Returns None when the file is
+/// absent (e.g. the desktop has never run / remote sharing off) — in which case
+/// the TUI either spawns its own token-less hub or talks to claudemon directly.
+/// Presenting this token to a token-less hub is harmless: the hub ignores it.
+pub fn hub_token() -> Option<String> {
+    let dirs = directories::BaseDirs::new()?;
+    let path = dirs.config_dir().join("workspacer").join("remote-token");
+    let token = std::fs::read_to_string(path).ok()?.trim().to_string();
+    (!token.is_empty()).then_some(token)
+}
+
 fn read_file() -> Option<RawConfig> {
     let dirs = directories::BaseDirs::new()?;
     let path = dirs.config_dir().join("workspacer").join("tui.json");

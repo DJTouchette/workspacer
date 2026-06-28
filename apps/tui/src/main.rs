@@ -77,6 +77,13 @@ async fn main() -> Result<()> {
     // Bus by default; `--direct` opts back into talking to claudemon directly.
     let mut bus_url = (!cli.direct).then(|| cli.bus.clone());
 
+    // When the desktop app is running it owns the hub and guards `/bus` with the
+    // token it persists at `~/.config/workspacer/remote-token`. An explicit
+    // `--bus-token`/`HUB_TOKEN` wins; otherwise discover that token so the TUI
+    // can join a desktop-owned bus instead of being rejected with 401 and
+    // hanging in reconnect. Harmless against a token-less hub (it's ignored).
+    let bus_token = cli.bus_token.clone().or_else(config::hub_token);
+
     // Bring up claudemon (and, in bus mode, the hub + brain) if not already
     // running, before we take over the screen. The guard stops what we started.
     let _daemons = daemons::ensure(&cli.claudemon_url, bus_url.as_deref(), !cli.no_spawn);
@@ -85,9 +92,9 @@ async fn main() -> Result<()> {
     // hub binary isn't built), fall back to claudemon-direct so the TUI still
     // works. An explicitly-remote bus is the user's responsibility — respected.
     if let Some(url) = bus_url.clone() {
-        if daemons::loopback_bus_unreachable(&url) {
+        if daemons::loopback_bus_unreachable(&url, bus_token.as_deref()) {
             eprintln!(
-                "[wks-tui] hub bus not reachable at {url}; using claudemon directly \
+                "[wks-tui] hub bus not usable at {url}; using claudemon directly \
                  (build the hub with `make build-hub`, or run with --direct to silence this)"
             );
             bus_url = None;
@@ -99,12 +106,14 @@ async fn main() -> Result<()> {
     let library = library::load();
     let config = config::load();
 
-    // In bus mode the TUI is a thin bus client: driving routes through the brain,
-    // the agent view is fed by agent.snapshot/agent.statusline, and terminals by
-    // pty.bytes. `--direct` (or an unreachable bus) keeps the claudemon path.
+    // In bus mode the TUI is a thin bus client: driving routes through the brain
+    // and terminals stream over pty.bytes. The agent *list* stays claudemon-owned
+    // (the bus serves the desktop's enriched, camelCase shape the TUI can't read),
+    // so agent.snapshot is just a nudge to re-pull. `--direct` (or an unreachable
+    // bus) keeps the pure claudemon path.
     let (bus, bus_events) = match bus_url.as_ref() {
         Some(url) => {
-            let (client, events) = bus::BusClient::connect(url.clone(), cli.bus_token.clone());
+            let (client, events) = bus::BusClient::connect(url.clone(), bus_token.clone());
             let _ = client.subscribe(vec![
                 "agent.snapshot".into(),
                 "agent.statusline".into(),
