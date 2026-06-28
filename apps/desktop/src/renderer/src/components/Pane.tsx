@@ -130,12 +130,14 @@ const Pane: React.FC<PaneProps> = ({
       style={{
         flex: 1,
         minWidth: 0,
-        height: flush ? '100%' : 'calc(100% - 8px)',
+        height: flush ? '100%' : 'calc(100% - 2px)',
         display: 'flex',
         flexDirection: 'column',
-        borderRadius: flush ? 0 : 'var(--wks-radius-lg)',
+        borderRadius: flush ? 0 : 'var(--wks-radius-md)',
         overflow: 'hidden',
-        margin: flush ? 0 : '4px 8px',
+        // Split panes sit almost flush: a 1px margin keeps adjacent cards from
+        // overlapping their borders without opening a visible gutter.
+        margin: flush ? 0 : '1px',
         border: flush
           ? 'none'
           : isActive && !hideActiveBorder

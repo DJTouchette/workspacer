@@ -287,7 +287,10 @@ function TilingLayout({
 
   const cellWidth = containerWidth / cols;
   const cellHeight = containerHeight / rows;
-  const gap = 2;
+  // Near-flush split gutter: the Pane card carries a 1px margin of its own, so
+  // the grid cells sit edge-to-edge and adjacent panes are separated only by
+  // that hairline + their borders.
+  const gap = 0;
 
   return (
     <>
