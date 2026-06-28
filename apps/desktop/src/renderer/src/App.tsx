@@ -253,6 +253,9 @@ function App() {
   // App working directory (used as the default cwd for the spawn dialog + the
   // Library's fallback project root).
   const appCwdRef = useRef<string>('');
+  // Latest plugin panes, mirrored into a ref so openFileInEditor (defined above
+  // usePlugins) can resolve the editor plugin at call time without reordering.
+  const pluginPanesRef = useRef<PluginPane[]>([]);
   const [appCwd, setAppCwd] = useState('');
   useEffect(() => {
     window.electronAPI.getCwd().then((cwd) => { appCwdRef.current = cwd; setAppCwd(cwd); }).catch(() => {});
@@ -504,11 +507,11 @@ function App() {
     return addTab(type, title, insertPosition, shell, url, appMode, cwd, profileId, resumeSessionId, attachSessionId, initialCommand, filePath);
   }, [addTab, insertPosition]);
 
-  // Open an Editor pane. In an agent, it roots a file-tree sidebar at the
-  // agent's working dir (the whole project) — open with no file and browse, or
-  // pass a filePath to open that file with the tree alongside. Outside an agent
-  // (no cwd) we fall back to the OS file picker. Engine (CodeMirror vs terminal)
-  // is decided at render time from config.editor.engine.
+  // Open the editor. The default (CodeMirror) engine is now the sandboxed editor
+  // *plugin* (workspacer.editor): we open its webview pane rooted at the project
+  // dir, optionally on a specific file. The 'terminal' engine is unchanged — it
+  // runs the user's $EDITOR (e.g. nvim) in a PTY pane. Outside an agent with no
+  // file we fall back to the OS file picker.
   const openFileInEditor = useCallback(async (filePath?: string) => {
     let target = filePath;
     if (!target && !activeAgent?.cwd) {
@@ -516,14 +519,38 @@ function App() {
       target = picked?.[0];
       if (!target) return;
     }
-    // Tree root: the agent's cwd when present (whole project), else the file's dir.
-    const dir = activeAgent?.cwd || (target ? target.replace(/[\\/][^\\/]*$/, '') : undefined);
+    const agentCwd = activeAgent && !activeAgent.global ? activeAgent.cwd : undefined;
+    // Scope/tree root: the project dir when the file is under it (or no file),
+    // else the file's own directory.
+    const dir = (agentCwd && (!target || target.startsWith(agentCwd)))
+      ? agentCwd
+      : (target ? target.replace(/[\\/][^\\/]*$/, '') : agentCwd);
     const title = target
       ? (target.split(/[\\/]/).pop() || 'Editor')
       : (dir ? (dir.split(/[\\/]/).pop() || 'Editor') : 'Editor');
-    const newId = addTabWithConfig('editor', title, undefined, undefined, undefined, dir, undefined, undefined, undefined, undefined, target);
-    requestAnimationFrame(() => scrollToTab(newId));
-  }, [activeAgent, addTabWithConfig, scrollToTab]);
+
+    // Terminal engine: open the user's editor in a PTY pane (the 'editor' pane
+    // type renders a TerminalPane — see ScrollContainer).
+    if ((config.editor?.engine ?? 'codemirror') === 'terminal') {
+      const newId = addTabWithConfig('editor', title, undefined, undefined, undefined, dir, undefined, undefined, undefined, undefined, target);
+      requestAnimationFrame(() => scrollToTab(newId));
+      return;
+    }
+
+    // Default: the editor plugin. PluginPane mints a bus token scoped to `dir`.
+    const editorPane = pluginPanesRef.current.find((p) => p.pluginId === 'workspacer.editor');
+    if (!editorPane) {
+      console.warn('[editor] the workspacer.editor plugin is not installed; cannot open the editor.');
+      return;
+    }
+    const params = new URLSearchParams();
+    if (dir) params.set('cwd', dir);
+    if (target) params.set('file', target);
+    const sep = editorPane.url.includes('?') ? '&' : '?';
+    const url = params.toString() ? `${editorPane.url}${sep}${params.toString()}` : editorPane.url;
+    const wsId = activeAgent && !activeAgent.global ? activeAgent.id : GLOBAL_WORKSPACE_ID;
+    openPaneIn(wsId, 'plugin', title, url, dir, editorPane.pluginId);
+  }, [activeAgent, config, addTabWithConfig, scrollToTab, openPaneIn]);
 
   // Open-in-editor requests (e.g. right-click in the Review pane's file tree).
   useEffect(() => {
@@ -825,6 +852,9 @@ function App() {
   }, [setActiveTabId, setActivePane]);
 
   const handleAddTab = useCallback((type: PaneType, shell?: string, label?: string, cwd?: string, profileId?: string, resumeSessionId?: string, attachSessionId?: string) => {
+    // The editor is opened through openFileInEditor (→ the editor plugin, or the
+    // terminal engine), so "New → Editor" / command-palette routes there too.
+    if (type === 'editor') { void openFileInEditor(); return; }
     // If opening a Claude session that already has a tab, navigate to it.
     const sessionId = resumeSessionId || attachSessionId;
     if (type === 'claude' && sessionId) {
@@ -846,7 +876,7 @@ function App() {
     const resolvedCwd = cwd || activeAgent?.cwd;
     const newId = addTabWithConfig(type, label, shell, undefined, undefined, resolvedCwd, profileId, resumeSessionId, attachSessionId);
     requestAnimationFrame(() => scrollToTab(newId));
-  }, [tabs, ptyMapping, activeAgent, addTabWithConfig, setActiveTabId, setActivePane, scrollToTab]);
+  }, [tabs, ptyMapping, activeAgent, addTabWithConfig, setActiveTabId, setActivePane, scrollToTab, openFileInEditor]);
 
   const handleSplitPane = useCallback((type: PaneType, shell?: string, label?: string, cwd?: string) => {
     if (!activeTabId) return;
@@ -894,6 +924,7 @@ function App() {
 
   // --- Plugins (contributed panes + hotkeys from the hub) ---
   const { panes: pluginPanes, hotkeys: pluginHotkeys } = usePlugins();
+  pluginPanesRef.current = pluginPanes; // let openFileInEditor resolve the editor plugin
   const [showInstallPlugin, setShowInstallPlugin] = useState(false);
 
   const handleOpenPlugin = useCallback((pane: PluginPane) => {

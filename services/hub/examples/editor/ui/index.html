@@ -124,6 +124,7 @@
     const params = new URLSearchParams(location.search);
     const token = params.get('busToken') || '';
     const cwd = params.get('cwd') || '';
+    const fileParam = params.get('file') || ''; // open this file on connect, if given
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${proto}//${location.host}/bus?token=${encodeURIComponent(token)}`);
 
@@ -577,6 +578,8 @@
       connEl.textContent = 'connected';
       subscribe('fs.changed');
       renderTree();
+      // Opened on a specific file (e.g. from a "reveal in editor" link).
+      if (fileParam) openFile(fileParam, fileParam.split('/').pop());
     };
     ws.onclose = () => { connEl.textContent = 'disconnected'; };
   </script>

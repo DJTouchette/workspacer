@@ -11,7 +11,6 @@ const ClaudePane = React.lazy(() => import('../panes/ClaudePane'));
 const BrowserPane = React.lazy(() => import('../panes/BrowserPane'));
 const PluginPane = React.lazy(() => import('../panes/PluginPane'));
 const NotesPane = React.lazy(() => import('../panes/NotesPane'));
-const EditorPane = React.lazy(() => import('../panes/EditorPane'));
 const SettingsPane = React.lazy(() => import('../panes/SettingsPane'));
 const ReviewPane = React.lazy(() => import('../panes/ReviewPane'));
 const PluginsManagerPane = React.lazy(() => import('../panes/PluginsManagerPane'));
@@ -158,8 +157,11 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
         </Suspense>
       );
     case 'editor':
-      // The 'terminal' engine just runs the user's editor in a PTY pane; the
-      // 'codemirror' engine is the in-app editor. Chosen live from config.
+      // The in-app editor is now the sandboxed editor *plugin* (opened as a
+      // 'plugin' pane via openFileInEditor). This 'editor' pane type only renders
+      // the 'terminal' engine — the user's $EDITOR in a PTY. A leftover
+      // codemirror 'editor' pane (e.g. from an old saved session) points the user
+      // at the plugin instead of rendering the removed in-app editor.
       if (callbacks.editorEngine === 'terminal') {
         const editorCmd = callbacks.editorTerminalCommand || 'nvim';
         const cmd = pane.filePath
@@ -172,9 +174,9 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
         );
       }
       return (
-        <Suspense fallback={<PaneFallback />}>
-          <EditorPane paneId={pane.id} title={pane.title} isActive={isActive} filePath={pane.filePath} cwd={pane.cwd} />
-        </Suspense>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--wks-text-faint)', fontSize: '0.8rem', textAlign: 'center', padding: 24 }}>
+          The editor is now a plugin. Reopen it from the command palette (Open Editor).
+        </div>
       );
     case 'settings':
       return <Suspense fallback={<PaneFallback />}><SettingsPane title={pane.title} /></Suspense>;
