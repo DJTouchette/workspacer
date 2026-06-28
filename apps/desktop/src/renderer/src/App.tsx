@@ -256,6 +256,11 @@ function App() {
   // Latest plugin panes, mirrored into a ref so openFileInEditor (defined above
   // usePlugins) can resolve the editor plugin at call time without reordering.
   const pluginPanesRef = useRef<PluginPane[]>([]);
+  // Latest active agent in a ref. Deferred openers (e.g. the command palette,
+  // which can hold a closure from when it was opened) read the *current* agent's
+  // cwd from here, so a new terminal reliably lands in the selected agent's dir.
+  const activeAgentRef = useRef(activeAgent);
+  activeAgentRef.current = activeAgent;
   const [appCwd, setAppCwd] = useState('');
   useEffect(() => {
     window.electronAPI.getCwd().then((cwd) => { appCwdRef.current = cwd; setAppCwd(cwd); }).catch(() => {});
@@ -872,17 +877,20 @@ function App() {
         }
       }
     }
-    // New panes inherit the active agent's working directory.
-    const resolvedCwd = cwd || activeAgent?.cwd;
+    // New panes inherit the active agent's working directory. Read it from the
+    // ref so a stale caller closure (e.g. the command palette) still resolves the
+    // currently-selected agent's cwd; fall back to the app's project root so a
+    // terminal opened with no agent (e.g. from the Overview) doesn't land in $HOME.
+    const resolvedCwd = cwd || activeAgentRef.current?.cwd || appCwdRef.current || undefined;
     const newId = addTabWithConfig(type, label, shell, undefined, undefined, resolvedCwd, profileId, resumeSessionId, attachSessionId);
     requestAnimationFrame(() => scrollToTab(newId));
-  }, [tabs, ptyMapping, activeAgent, addTabWithConfig, setActiveTabId, setActivePane, scrollToTab, openFileInEditor]);
+  }, [tabs, ptyMapping, addTabWithConfig, setActiveTabId, setActivePane, scrollToTab, openFileInEditor]);
 
   const handleSplitPane = useCallback((type: PaneType, shell?: string, label?: string, cwd?: string) => {
     if (!activeTabId) return;
-    const resolvedCwd = cwd || activeAgent?.cwd;
+    const resolvedCwd = cwd || activeAgentRef.current?.cwd;
     splitTab(activeTabId, type, label, shell, undefined, undefined, resolvedCwd);
-  }, [activeTabId, activeAgent, splitTab]);
+  }, [activeTabId, splitTab]);
 
   // Open a changed file in the Review pane (from the Claude pane's file list).
   // Focus an existing Review pane in the active agent if there is one, else

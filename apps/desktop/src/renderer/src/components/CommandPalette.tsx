@@ -293,10 +293,12 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
           onAddTab(item.paneType, undefined, undefined, folder);
         }
       } else {
+        // Carry the active agent's cwd explicitly so a new pane (e.g. a terminal)
+        // lands in the agent's directory regardless of timing.
         if (mode === 'split' && onSplitPane) {
-          onSplitPane(item.paneType);
+          onSplitPane(item.paneType, undefined, undefined, agentCwd || undefined);
         } else {
-          onAddTab(item.paneType);
+          onAddTab(item.paneType, undefined, undefined, agentCwd || undefined);
         }
       }
     }
