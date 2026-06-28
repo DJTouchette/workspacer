@@ -32,13 +32,24 @@
     .toolbar button { background: var(--wks-bg-raised, #2d2d2d); border-color: var(--wks-border, #3c3c3c); color: var(--wks-text-primary, #d4d4d4); padding: 1px 8px; }
     .pane { flex: 1; overflow: auto; }
     #tree, #searchResults { padding: 6px 0; user-select: none; }
-    .row { padding: 2px 8px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .row { display: flex; align-items: center; gap: 4px; padding: 2px 8px; cursor: pointer; white-space: nowrap; overflow: hidden; }
     .row:hover { background: var(--wks-bg-hover, #2a2d2e); }
     .row.active { background: var(--wks-bg-selected, #094771); }
-    .row .twist { display: inline-block; width: 12px; color: var(--wks-text-muted, #888); }
+    .row .twist { flex: none; width: 14px; height: 14px; display: inline-flex; color: var(--wks-text-muted, #888); transition: transform .12s; }
+    .row .twist.open { transform: rotate(90deg); }
+    .row .ficon { flex: none; display: inline-flex; }
+    .row .lbl { overflow: hidden; text-overflow: ellipsis; }
+    .icon { display: block; }
+    /* Themed scrollbars (Chromium/Electron). */
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--wks-scrollbar-thumb, #424242); border-radius: 6px; border: 2px solid transparent; background-clip: padding-box; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--wks-scrollbar-hover, #4f4f4f); border: 2px solid transparent; background-clip: padding-box; }
+    ::-webkit-scrollbar-corner { background: transparent; }
     #search { padding: 6px; border-bottom: 1px solid var(--wks-border-subtle, #2a2a2a); }
     #search input { width: 100%; font: inherit; background: var(--wks-bg-input, #3c3c3c); color: var(--wks-text-primary, #fff); border: 1px solid var(--wks-border-input, #555); border-radius: var(--wks-radius-sm, 4px); padding: 4px 6px; }
-    .sfile { padding: 3px 8px; color: var(--wks-accent, #9cdcfe); cursor: pointer; }
+    .sfile { display: flex; align-items: center; gap: 4px; padding: 3px 8px; color: var(--wks-accent, #9cdcfe); cursor: pointer; }
+    .toolbar button { display: inline-flex; align-items: center; gap: 4px; }
     .sfile:hover { background: var(--wks-bg-hover, #2a2d2e); }
     .smatch { padding: 1px 8px 1px 22px; cursor: pointer; color: var(--wks-text-secondary, #bbb); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .smatch:hover { background: var(--wks-bg-hover, #2a2d2e); }
@@ -85,8 +96,8 @@
       </div>
       <div id="filesView" style="display:flex;flex-direction:column;flex:1;min-height:0;">
         <div class="toolbar">
-          <button id="newFile" title="New file">＋ New</button>
-          <button id="refresh" title="Refresh">⟳</button>
+          <button id="newFile" title="New file">New</button>
+          <button id="refresh" title="Refresh"></button>
         </div>
         <div class="pane"><div id="tree"></div></div>
       </div>
@@ -167,6 +178,70 @@
       return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     }
 
+    // ── icons (Lucide, matching the built-in editor pane) ───────────────────────
+    const ICON = {
+      "folder": "<path d=\"M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z\" />",
+      "folder-open": "<path d=\"m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2\" />",
+      "chevron-right": "<path d=\"m9 18 6-6-6-6\" />",
+      "rotate-cw": "<path d=\"M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8\" /><path d=\"M21 3v5h-5\" />",
+      "file": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /><path d=\"M14 2v5a1 1 0 0 0 1 1h5\" />",
+      "file-code": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /><path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /><path d=\"M10 12.5 8 15l2 2.5\" /><path d=\"m14 12.5 2 2.5-2 2.5\" />",
+      "file-cog": "<path d=\"M15 8a1 1 0 0 1-1-1V2a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8z\" /><path d=\"M20 8v12a2 2 0 0 1-2 2h-4.182\" /><path d=\"m3.305 19.53.923-.382\" /><path d=\"M4 10.592V4a2 2 0 0 1 2-2h8\" /><path d=\"m4.228 16.852-.924-.383\" /><path d=\"m5.852 15.228-.383-.923\" /><path d=\"m5.852 20.772-.383.924\" /><path d=\"m8.148 15.228.383-.923\" /><path d=\"m8.53 21.696-.382-.924\" /><path d=\"m9.773 16.852.922-.383\" /><path d=\"m9.773 19.148.922.383\" /><circle cx=\"7\" cy=\"18\" r=\"3\" />",
+      "braces": "<path d=\"M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1\" /><path d=\"M16 21h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1\" />",
+      "file-type": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /><path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /><path d=\"M11 18h2\" /><path d=\"M12 12v6\" /><path d=\"M9 13v-.5a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 .5.5v.5\" />",
+      "file-text": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /><path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /><path d=\"M10 9H8\" /><path d=\"M16 13H8\" /><path d=\"M16 17H8\" />",
+      "file-terminal": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /><path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /><path d=\"m8 16 2-2-2-2\" /><path d=\"M12 18h4\" />",
+      "file-image": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /><path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /><circle cx=\"10\" cy=\"12\" r=\"2\" /><path d=\"m20 17-1.296-1.296a2.41 2.41 0 0 0-3.408 0L9 22\" />",
+      "file-audio": "<path d=\"M4 6.835V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2h-.343\" /><path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /><path d=\"M2 19a2 2 0 0 1 4 0v1a2 2 0 0 1-4 0v-4a6 6 0 0 1 12 0v4a2 2 0 0 1-4 0v-1a2 2 0 0 1 4 0\" />",
+      "file-video": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /><path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /><path d=\"M15.033 13.44a.647.647 0 0 1 0 1.12l-4.065 2.352a.645.645 0 0 1-.968-.56v-4.704a.645.645 0 0 1 .967-.56z\" />",
+      "file-archive": "<path d=\"M13.659 22H18a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v11.5\" /><path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /><path d=\"M8 12v-1\" /><path d=\"M8 18v-2\" /><path d=\"M8 7V6\" /><circle cx=\"8\" cy=\"20\" r=\"2\" />",
+      "file-spreadsheet": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /><path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /><path d=\"M8 13h2\" /><path d=\"M14 13h2\" /><path d=\"M8 17h2\" /><path d=\"M14 17h2\" />",
+      "database": "<ellipse cx=\"12\" cy=\"5\" rx=\"9\" ry=\"3\" /><path d=\"M3 5V19A9 3 0 0 0 21 19V5\" /><path d=\"M3 12A9 3 0 0 0 21 12\" />",
+      "plus": "<path d=\"M5 12h14\" /><path d=\"M12 5v14\" />",
+      "search": "<path d=\"m21 21-4.34-4.34\" /><circle cx=\"11\" cy=\"11\" r=\"8\" />",
+    };
+    function svg(name, color) {
+      const style = color ? ` style="color:${color}"` : '';
+      return `<svg class="icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"${style}>${ICON[name] || ICON.file}</svg>`;
+    }
+    // Pick an icon + tint by file name/extension — ported from the built-in editor.
+    function iconForFile(name) {
+      const lower = name.toLowerCase();
+      if (lower === 'dockerfile') return ['file-code', '#4aa3df'];
+      if (lower.endsWith('.lock') || lower === 'package-lock.json' || lower === 'yarn.lock' || lower === 'pnpm-lock.yaml') return ['file-cog', '#9aa0a6'];
+      if (lower.startsWith('.env')) return ['file-cog', '#caa15a'];
+      const ext = lower.includes('.') ? lower.split('.').pop() : '';
+      switch (ext) {
+        case 'ts': case 'tsx': case 'mts': case 'cts': return ['file-code', '#4aa3df'];
+        case 'js': case 'jsx': case 'mjs': case 'cjs': return ['file-code', '#e6c94a'];
+        case 'json': case 'jsonc': return ['braces', '#e6c94a'];
+        case 'rs': return ['file-code', '#dd8855'];
+        case 'go': return ['file-code', '#4ad0e0'];
+        case 'py': return ['file-code', '#5b9bd5'];
+        case 'rb': return ['file-code', '#d65b5b'];
+        case 'java': case 'kt': case 'kts': return ['file-code', '#d68a5b'];
+        case 'c': case 'h': case 'cpp': case 'cc': case 'hpp': case 'cs': return ['file-code', '#7aa6d6'];
+        case 'php': return ['file-code', '#8a7fd6'];
+        case 'css': case 'scss': case 'sass': case 'less': return ['file-type', '#c77dbb'];
+        case 'html': case 'htm': case 'xml': case 'svg': return ['file-code', '#dd8855'];
+        case 'vue': case 'svelte': return ['file-code', '#5fbf7f'];
+        case 'md': case 'mdx': case 'markdown': case 'rst': return ['file-text', '#9aa0a6'];
+        case 'txt': case 'log': return ['file-text', '#9aa0a6'];
+        case 'sh': case 'bash': case 'zsh': case 'fish': return ['file-terminal', '#8bc34a'];
+        case 'yml': case 'yaml': case 'toml': case 'ini': case 'conf': case 'cfg': return ['file-cog', '#9aa0a6'];
+        case 'png': case 'jpg': case 'jpeg': case 'gif': case 'webp': case 'ico': case 'bmp': case 'avif': return ['file-image', '#b083e0'];
+        case 'mp3': case 'wav': case 'flac': case 'ogg': case 'm4a': return ['file-audio', '#b083e0'];
+        case 'mp4': case 'mov': case 'mkv': case 'webm': case 'avi': return ['file-video', '#b083e0'];
+        case 'zip': case 'tar': case 'gz': case 'tgz': case 'rar': case '7z': case 'bz2': return ['file-archive', '#caa15a'];
+        case 'csv': case 'tsv': case 'xlsx': case 'xls': return ['file-spreadsheet', '#8bc34a'];
+        case 'sql': case 'db': case 'sqlite': return ['database', '#4ad0e0'];
+        default: return ['file', 'var(--wks-text-muted, #9aa0a6)'];
+      }
+    }
+    // Icon-ify the toolbar buttons.
+    $('newFile').innerHTML = svg('plus') + ' New';
+    $('refresh').innerHTML = svg('rotate-cw');
+
     // ── line-number gutter ──────────────────────────────────────────────────────
     function updateGutter() {
       const lines = textEl.value.split('\n').length;
@@ -190,6 +265,8 @@
       try { await renderLevel(cwd, 0, treeEl); }
       catch (e) { treeEl.innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`; }
     }
+    const FOLDER_TINT = 'var(--wks-accent, #9cdcfe)';
+    function fileIconHTML(name) { const [ic, col] = iconForFile(name); return svg(ic, col); }
     async function renderLevel(dirPath, depth, container) {
       const entries = await listDir(dirPath);
       for (const e of entries) {
@@ -198,16 +275,22 @@
         row.className = 'row';
         row.style.paddingLeft = (8 + depth * 14) + 'px';
         const isOpen = expanded.has(e.path);
-        row.innerHTML = `<span class="twist">${e.isDir ? (isOpen ? '▾' : '▸') : ''}</span>${e.isDir ? '📁' : '📄'} ${escapeHtml(e.name)}`;
+        const twist = e.isDir ? svg('chevron-right') : '';
+        const ficon = e.isDir ? svg(isOpen ? 'folder-open' : 'folder', FOLDER_TINT) : fileIconHTML(e.name);
+        row.innerHTML = `<span class="twist${isOpen ? ' open' : ''}">${twist}</span><span class="ficon">${ficon}</span><span class="lbl">${escapeHtml(e.name)}</span>`;
         container.appendChild(row);
         if (e.isDir) {
           const child = document.createElement('div');
           container.appendChild(child);
           if (isOpen) renderLevel(e.path, depth + 1, child).catch(() => {});
           row.onclick = async () => {
-            if (expanded.has(e.path)) { expanded.delete(e.path); child.innerHTML = ''; row.querySelector('.twist').textContent = '▸'; }
-            else {
-              expanded.add(e.path); row.querySelector('.twist').textContent = '▾'; child.innerHTML = '';
+            const twistEl = row.querySelector('.twist'), ficonEl = row.querySelector('.ficon');
+            if (expanded.has(e.path)) {
+              expanded.delete(e.path); child.innerHTML = '';
+              twistEl.classList.remove('open'); ficonEl.innerHTML = svg('folder', FOLDER_TINT);
+            } else {
+              expanded.add(e.path); child.innerHTML = '';
+              twistEl.classList.add('open'); ficonEl.innerHTML = svg('folder-open', FOLDER_TINT);
               try { await renderLevel(e.path, depth + 1, child); } catch (err) { setStatus(err.message, 'bad'); }
             }
           };
@@ -328,7 +411,8 @@
       for (const r of results) {
         const fileEl = document.createElement('div');
         fileEl.className = 'sfile';
-        fileEl.textContent = '📄 ' + r.file.replace(cwd.replace(/\/$/, '') + '/', '');
+        const rel = r.file.replace(cwd.replace(/\/$/, '') + '/', '');
+        fileEl.innerHTML = fileIconHTML(r.file.split('/').pop()) + `<span class="lbl">${escapeHtml(rel)}</span>`;
         fileEl.onclick = () => openFile(r.file, r.file.split('/').pop());
         resultsEl.appendChild(fileEl);
         for (const m of (r.matches || []).slice(0, 50)) {
