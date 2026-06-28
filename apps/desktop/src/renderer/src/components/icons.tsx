@@ -95,4 +95,9 @@ export {
   Clock,
   Rows3,
 };
+
+// Workspacer Icon Pack — the custom two-tone agent glyph set (panes, status,
+// actions, diff, tools). Available app-wide as named components, a name→glyph
+// registry (WKS_ICONS), and a data-driven <WksIcon name="…" /> renderer.
+export * from './wksIcons';
 export type { LucideIcon };
