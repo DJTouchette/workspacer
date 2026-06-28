@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { deriveAgentName } from '../hooks/useAgentManager';
+import { AgentLogo } from './agentLogos';
 import type { LibraryItem } from '../types/library';
 import type { AgentProvider } from '../types/pane';
 
@@ -200,11 +201,13 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, onSpawn
                   style={{
                     flex: 1, padding: '6px 8px', borderRadius: 6, cursor: 'pointer',
                     fontSize: '0.72rem', fontFamily: 'inherit', fontWeight: 600,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
                     border: active ? '1px solid var(--wks-accent)' : '1px solid var(--wks-border-input)',
                     background: active ? 'var(--wks-accent-bg)' : 'transparent',
                     color: active ? 'var(--wks-accent-text, var(--wks-text-primary))' : 'var(--wks-text-tertiary)',
                   }}
                 >
+                  <AgentLogo provider={p.value} size={14} style={{ flexShrink: 0, opacity: active ? 1 : 0.75 }} />
                   {p.label}
                 </button>
               );
