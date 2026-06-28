@@ -258,7 +258,7 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
                 <div style={{ padding: '2px 8px', fontSize: '0.55rem', color: 'var(--wks-text-disabled)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                   New Tab
                 </div>
-                <MenuButton label="Claude" onClick={async () => {
+                <MenuButton label="Claude" icon={<PaneIcon type="claude" size={13} />} onClick={async () => {
                   setShowMenu(false);
                   const folder = await window.electronAPI.pickFolder();
                   if (!folder) return;
@@ -281,8 +281,8 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
                   } catch {}
                   onAddTab('claude', undefined, undefined, folder);
                 }} />
-                <MenuButton label="Browser" onClick={() => { setShowMenu(false); onAddTab('browser'); }} />
-                <MenuButton label="Notes" onClick={() => { setShowMenu(false); onAddTab('notes'); }} />
+                <MenuButton label="Browser" icon={<PaneIcon type="browser" size={13} />} onClick={() => { setShowMenu(false); onAddTab('browser'); }} />
+                <MenuButton label="Notes" icon={<PaneIcon type="notes" size={13} />} onClick={() => { setShowMenu(false); onAddTab('notes'); }} />
 
                 <div style={{ height: '1px', backgroundColor: 'var(--wks-border)', margin: '4px 0' }} />
 
@@ -293,6 +293,7 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
                   <MenuButton
                     key={shell.name}
                     label={shell.label}
+                    icon={<PaneIcon type="terminal" size={13} />}
                     onClick={() => {
                       setShowMenu(false);
                       onAddTab('terminal', shell.path, shell.label);
@@ -319,7 +320,7 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
         return (
           <button
             onClick={onToggleViewMode}
-            title={`View: ${labels[viewMode]} — click for ${labels[nextOf[viewMode]]}`}
+            title={`View: ${labels[viewMode]} · click for ${labels[nextOf[viewMode]]}`}
             style={{
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               padding: 0, margin: '0 6px 0 4px', width: '28px', height: '28px',
@@ -565,9 +566,9 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
       {tabContextMenu && (
         <ContextMenu x={tabContextMenu.x} y={tabContextMenu.y} minWidth={140} onClose={() => setTabContextMenu(null)}>
           <ContextMenuItem label="Rename" onClick={() => { setTabContextMenu(null); onRenameTab?.(tabContextMenu.tabId); }} />
-          <ContextMenuItem label="Split — Terminal" onClick={() => { setTabContextMenu(null); onSplitTab?.(tabContextMenu.tabId, 'terminal'); }} />
-          <ContextMenuItem label="Split — Claude" onClick={() => { setTabContextMenu(null); onSplitTab?.(tabContextMenu.tabId, 'claude'); }} />
-          <ContextMenuItem label="Split — Browser" onClick={() => { setTabContextMenu(null); onSplitTab?.(tabContextMenu.tabId, 'browser'); }} />
+          <ContextMenuItem label="Split: Terminal" onClick={() => { setTabContextMenu(null); onSplitTab?.(tabContextMenu.tabId, 'terminal'); }} />
+          <ContextMenuItem label="Split: Claude" onClick={() => { setTabContextMenu(null); onSplitTab?.(tabContextMenu.tabId, 'claude'); }} />
+          <ContextMenuItem label="Split: Browser" onClick={() => { setTabContextMenu(null); onSplitTab?.(tabContextMenu.tabId, 'browser'); }} />
           <ContextMenuSeparator />
           {tabContextMenu.tabIdx > 0 && (
             <ContextMenuItem label="Move left" onClick={() => { setTabContextMenu(null); onMoveTab?.(tabContextMenu.tabId, tabContextMenu.tabIdx - 1); }} />
@@ -726,7 +727,7 @@ const ScriptManager: React.FC<{
 
       {draft.length === 0 && (
         <div style={{ fontSize: '0.65rem', color: 'var(--wks-text-faint)', padding: '4px 0' }}>
-          No scripts yet. Add one below — e.g. “Test” → <code style={{ fontFamily: 'monospace' }}>npm test</code>.
+          No scripts yet. Add one below, e.g. “Test” → <code style={{ fontFamily: 'monospace' }}>npm test</code>.
         </div>
       )}
 
@@ -796,12 +797,14 @@ const ScriptManager: React.FC<{
   );
 };
 
-function MenuButton({ label, onClick }: { label: string; onClick: () => void }) {
+function MenuButton({ label, icon, onClick }: { label: string; icon?: React.ReactNode; onClick: () => void }) {
   return (
     <button
       onClick={onClick}
       style={{
-        display: 'block',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '8px',
         width: '100%',
         padding: '4px 12px',
         margin: 0,
@@ -827,6 +830,7 @@ function MenuButton({ label, onClick }: { label: string; onClick: () => void }) 
         (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-tertiary)';
       }}
     >
+      {icon && <span style={{ display: 'flex', alignItems: 'center', opacity: 0.85 }}>{icon}</span>}
       {label}
     </button>
   );
