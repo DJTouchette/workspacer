@@ -157,6 +157,17 @@ html, body {
   background-color: var(--wks-bg-header);
 }
 
+/* Floating split control on flush (single-pane) tabs — hidden until the pane
+ * is hovered so it never clutters the flush look (an inline opacity override
+ * keeps it up while its menu is open). */
+.pane-split-floating {
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.pane-wrapper:hover .pane-split-floating {
+  opacity: 1;
+}
+
 /* ─────────────────────────────────────────────────────────────────────────
  * Phone / small-screen tuning. Mirrors SMALL_SCREEN_QUERY (max-width: 768px)
  * in useMediaQuery.ts — keep the breakpoints in sync. Applies to both the web

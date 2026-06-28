@@ -105,6 +105,7 @@ interface AgentViewHandlers {
   onNotesChange: (tabId: string, paneId: string, notes: string) => void;
   onNavigateToTab: (tabId: string) => void;
   onAddTab: (type: PaneType, shell?: string, label?: string, cwd?: string, profileId?: string, resumeSessionId?: string, attachSessionId?: string) => void;
+  onSplit: (tabId: string, type: PaneType) => void;
   spawnSupervisor: (opts: { question: string; parentId?: string }) => Promise<string>;
   onJumpToAgent: (agentId: string) => void;
 }
@@ -159,6 +160,7 @@ const AgentWorkspaceView = memo(function AgentWorkspaceView({
         onNotesChange={handlers.onNotesChange}
         onNavigateToTab={handlers.onNavigateToTab}
         onAddTab={handlers.onAddTab}
+        onSplit={handlers.onSplit}
         ptyMapping={ptyMapping}
         renameSignal={renameSignal}
         workspaceAgents={workspaceAgents}
@@ -1047,6 +1049,15 @@ function App() {
     (tabId: string, type: PaneType) => { splitTab(tabId, type, undefined, undefined, undefined, undefined, activeAgent?.cwd); },
     [splitTab, activeAgent],
   );
+  // In-pane split (the pane-header split button). Ref-based so it stays stable
+  // for the memoized agent-view handler bundle; inherits the agent's cwd (or
+  // the app cwd) just like the navbar split.
+  const handlePaneSplit = useCallback(
+    (tabId: string, type: PaneType) => {
+      splitTab(tabId, type, undefined, undefined, undefined, undefined, activeAgentRef.current?.cwd || appCwdRef.current || undefined);
+    },
+    [splitTab],
+  );
 
   // Stable inputs for the per-agent workspace views. `workspaceAgents` was being
   // rebuilt inline in every render of every agent's ScrollContainer, giving each
@@ -1075,12 +1086,13 @@ function App() {
     onNotesChange: handleNotesChange,
     onNavigateToTab: handleTabClick,
     onAddTab: handleAddTab,
+    onSplit: handlePaneSplit,
     spawnSupervisor,
     onJumpToAgent: handleJumpToAgent,
   }), [
     handleTabFocus, handlePaneClose, handlePaneFocus, renameTab, moveTab,
     updateTabCanvas, handlePtyReady, handleUrlChange, handleNotesChange,
-    handleTabClick, handleAddTab, spawnSupervisor, handleJumpToAgent,
+    handleTabClick, handleAddTab, handlePaneSplit, spawnSupervisor, handleJumpToAgent,
   ]);
 
   return (

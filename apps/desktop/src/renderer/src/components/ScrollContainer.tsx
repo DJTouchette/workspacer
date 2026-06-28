@@ -78,6 +78,8 @@ interface ScrollContainerProps {
   onNotesChange?: (tabId: string, paneId: string, notes: string) => void;
   onNavigateToTab?: (tabId: string) => void;
   onAddTab?: (type: PaneType, shell?: string, label?: string, cwd?: string, profileId?: string, resumeSessionId?: string, attachSessionId?: string) => void;
+  /** Split the given tab by appending a new pane of `type` (in-pane split button). */
+  onSplit?: (tabId: string, type: PaneType) => void;
   /** paneId → ptySessionId. For Claude panes, ptySessionId === Claude session id. */
   ptyMapping?: Record<string, string>;
   renameSignal?: number;
@@ -237,6 +239,7 @@ function TilingLayout({
   onTabMove,
   onTabRename,
   renameSignal,
+  onSplit,
 }: {
   panes: PaneConfig[];
   activePaneId: string;
@@ -257,6 +260,8 @@ function TilingLayout({
   onTabMove?: (delta: number) => void;
   onTabRename?: (title: string) => void;
   renameSignal?: number;
+  /** Split this tab by appending a pane of the chosen type (pane split button). */
+  onSplit?: (type: PaneType) => void;
 }) {
   const single = panes.length === 1;
   const count = panes.length;
@@ -331,6 +336,7 @@ function TilingLayout({
               hideHeader={single}
               hideActiveBorder={single}
               flush={single}
+              onSplit={onSplit}
             >
               <ErrorBoundary label={pane.title || pane.type} resetKeys={[pane.id]}>
                 {renderPaneContent(pane, liveActive, callbacks)}
@@ -355,7 +361,7 @@ interface Interaction {
 }
 
 const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
-  ({ tabs, activeTabId, onTabFocus, onPaneClose, onPaneFocus, onTabRename, onTabMove, onPtyReady, onUrlChange, onNotesChange, onNavigateToTab, onAddTab, ptyMapping, renameSignal, viewMode = 'tabs', onTabCanvasChange, agentActive = true, workspaceAgents, appCwd, allAgents, spawnSupervisor, onJumpToAgent }, ref) => {
+  ({ tabs, activeTabId, onTabFocus, onPaneClose, onPaneFocus, onTabRename, onTabMove, onPtyReady, onUrlChange, onNotesChange, onNavigateToTab, onAddTab, onSplit, ptyMapping, renameSignal, viewMode = 'tabs', onTabCanvasChange, agentActive = true, workspaceAgents, appCwd, allAgents, spawnSupervisor, onJumpToAgent }, ref) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const { config } = useConfig();
     const peek = config.panes?.peek ?? 80;
@@ -839,6 +845,7 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
                     onTabMove={onTabMove ? (delta) => handleTabMove(tab.id, delta) : undefined}
                     onTabRename={onTabRename ? (title) => onTabRename(tab.id, title) : undefined}
                     renameSignal={isActiveTab ? renameSignal : undefined}
+                    onSplit={onSplit ? (type) => onSplit(tab.id, type) : undefined}
                   />
                 </div>
 

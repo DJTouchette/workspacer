@@ -1,7 +1,19 @@
 import React, { useCallback, useRef, useState, useEffect } from 'react';
+import { Columns2 } from 'lucide-react';
 import { PaneType } from '../types/pane';
 import { useConfig } from '../hooks/useConfig';
 import { PaneIcon } from './icons';
+
+// Pane types offered by the in-pane split button. Mirrors the palette's
+// built-in actions (minus the special Library/Editor entries) so "split into…"
+// covers the same core set everywhere.
+const SPLIT_TYPES: { type: PaneType; label: string }[] = [
+  { type: 'claude', label: 'Claude Code' },
+  { type: 'terminal', label: 'Terminal' },
+  { type: 'browser', label: 'Browser' },
+  { type: 'notes', label: 'Notes' },
+  { type: 'review', label: 'Review' },
+];
 
 interface PaneProps {
   id: string;
@@ -23,6 +35,9 @@ interface PaneProps {
    *  flush edge-to-edge under the tab bar (matches the mockup). Used for
    *  single-pane tabs; split panes keep their card framing. */
   flush?: boolean;
+  /** Split the tab by adding a pane of the chosen type. When wired, a small
+   *  split button appears on the pane (in the header, or floating when flush). */
+  onSplit?: (type: PaneType) => void;
   children: React.ReactNode;
 }
 
@@ -40,12 +55,108 @@ const Pane: React.FC<PaneProps> = ({
   hideHeader,
   hideActiveBorder,
   flush,
+  onSplit,
   children,
 }) => {
   const { config } = useConfig();
   const headerHeight = config.ui.paneHeaderHeight || 22;
   const onMoveRef = useRef(onMove);
   onMoveRef.current = onMove;
+
+  const [splitMenuOpen, setSplitMenuOpen] = useState(false);
+  const splitRef = useRef<HTMLDivElement>(null);
+
+  // Close the split menu on outside-click / Escape.
+  useEffect(() => {
+    if (!splitMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (splitRef.current && !splitRef.current.contains(e.target as Node)) setSplitMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setSplitMenuOpen(false); };
+    document.addEventListener('mousedown', onDown, true);
+    document.addEventListener('keydown', onKey, true);
+    return () => {
+      document.removeEventListener('mousedown', onDown, true);
+      document.removeEventListener('keydown', onKey, true);
+    };
+  }, [splitMenuOpen]);
+
+  // The split control: a button that toggles a "split into…" type picker.
+  // Rendered inside the header when there is one, else floated over a flush
+  // (single) pane. Anchored in `splitRef` so outside-click detection covers
+  // both the button and its menu.
+  const splitControl = onSplit ? (
+    <div ref={splitRef} style={{ position: 'relative' }}>
+      <button
+        className="pane-split-control"
+        onClick={(e) => { e.stopPropagation(); setSplitMenuOpen((v) => !v); }}
+        title="Split pane"
+        style={{
+          background: 'none',
+          border: 'none',
+          color: splitMenuOpen ? 'var(--wks-text-primary)' : 'var(--wks-text-muted)',
+          cursor: 'pointer',
+          padding: '2px',
+          margin: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          borderRadius: '3px',
+          opacity: splitMenuOpen ? 1 : undefined,
+        }}
+        onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--wks-bg-hover)'; }}
+        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'; }}
+      >
+        <Columns2 size={13} strokeWidth={1.75} />
+      </button>
+      {splitMenuOpen && (
+        <div
+          role="menu"
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 4px)',
+            right: 0,
+            zIndex: 1100,
+            minWidth: '140px',
+            padding: '4px',
+            background: 'var(--wks-bg-elevated)',
+            border: '1px solid var(--wks-glass-border)',
+            borderRadius: 'var(--wks-radius-md)',
+            boxShadow: '0 8px 28px var(--wks-glass-shadow)',
+          }}
+        >
+          <div style={{ fontSize: '0.55rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--wks-text-faint)', padding: '2px 8px 4px' }}>
+            Split into
+          </div>
+          {SPLIT_TYPES.map(({ type, label }) => (
+            <button
+              key={type}
+              onClick={(e) => { e.stopPropagation(); setSplitMenuOpen(false); onSplit(type); }}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                width: '100%',
+                padding: '5px 8px',
+                background: 'none',
+                border: 'none',
+                borderRadius: '4px',
+                color: 'var(--wks-text-secondary)',
+                fontSize: '0.7rem',
+                cursor: 'pointer',
+                textAlign: 'left',
+              }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--wks-bg-hover)'; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'; }}
+            >
+              <PaneIcon type={type} size={13} />
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  ) : null;
 
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(title);
@@ -225,40 +336,65 @@ const Pane: React.FC<PaneProps> = ({
             </span>
           )}
         </div>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onClose(id);
-          }}
-          style={{
-            background: 'none',
-            border: 'none',
-            color: 'var(--wks-text-muted)',
-            cursor: 'pointer',
-            fontSize: '0.85rem',
-            padding: '0 4px',
-            margin: 0,
-            width: 'auto',
-            height: 'auto',
-            lineHeight: '1',
-            borderRadius: '3px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-          onMouseEnter={(e) => {
-            (e.target as HTMLElement).style.backgroundColor = 'var(--wks-bg-hover)';
-            (e.target as HTMLElement).style.color = 'var(--wks-text-primary)';
-          }}
-          onMouseLeave={(e) => {
-            (e.target as HTMLElement).style.backgroundColor = 'transparent';
-            (e.target as HTMLElement).style.color = 'var(--wks-text-muted)';
-          }}
-          title="Close pane"
-        >
-          &#x2715;
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
+          {splitControl}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onClose(id);
+            }}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: 'var(--wks-text-muted)',
+              cursor: 'pointer',
+              fontSize: '0.85rem',
+              padding: '0 4px',
+              margin: 0,
+              width: 'auto',
+              height: 'auto',
+              lineHeight: '1',
+              borderRadius: '3px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+            onMouseEnter={(e) => {
+              (e.target as HTMLElement).style.backgroundColor = 'var(--wks-bg-hover)';
+              (e.target as HTMLElement).style.color = 'var(--wks-text-primary)';
+            }}
+            onMouseLeave={(e) => {
+              (e.target as HTMLElement).style.backgroundColor = 'transparent';
+              (e.target as HTMLElement).style.color = 'var(--wks-text-muted)';
+            }}
+            title="Close pane"
+          >
+            &#x2715;
+          </button>
+        </div>
       </div>
+      )}
+
+      {/* Flush (single-pane) tabs have no header, so float the split control in
+          the top-right corner — hover-revealed via .pane-wrapper:hover. */}
+      {hideHeader && splitControl && (
+        <div
+          className="pane-split-floating"
+          style={{
+            position: 'absolute',
+            top: '4px',
+            right: '4px',
+            zIndex: 1002,
+            background: 'var(--wks-bg-elevated)',
+            borderRadius: '4px',
+            boxShadow: '0 2px 8px var(--wks-glass-shadow)',
+            // Keep it visible while the menu is open even if the cursor moves
+            // off the pane onto the popover.
+            opacity: splitMenuOpen ? 1 : undefined,
+          }}
+        >
+          {splitControl}
+        </div>
       )}
 
       <div
