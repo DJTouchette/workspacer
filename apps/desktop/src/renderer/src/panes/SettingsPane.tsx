@@ -11,6 +11,7 @@ import EditorSection from '../components/settings/EditorSection';
 import AppsSection from '../components/settings/AppsSection';
 import ClaudeProfilesSection from '../components/settings/ClaudeProfilesSection';
 import SupervisorSection from '../components/settings/SupervisorSection';
+import PluginsSection from '../components/settings/PluginsSection';
 
 interface SettingsPaneProps {
   title: string;
@@ -28,6 +29,7 @@ const SECTION_KEYWORDS: Record<string, string[]> = {
   apps: ['app', 'url', 'launch', 'custom'],
   profiles: ['profile', 'claude', 'model', 'api'],
   supervisor: ['supervisor', 'fleet', 'agent', 'summarize', 'digest', 'model', 'notify'],
+  plugins: ['plugin', 'extension', 'vim', 'editor', 'language', 'addon'],
 };
 
 function sectionVisible(key: string, q: string): boolean {
@@ -53,6 +55,7 @@ const SettingsPane: React.FC<SettingsPaneProps> = ({ title }) => {
     apps: sectionVisible('apps', q),
     profiles: sectionVisible('profiles', q),
     supervisor: sectionVisible('supervisor', q),
+    plugins: sectionVisible('plugins', q),
   }), [q]);
 
   return (
@@ -141,6 +144,9 @@ const SettingsPane: React.FC<SettingsPaneProps> = ({ title }) => {
 
       {/* Supervisor section */}
       {show.supervisor && <SupervisorSection config={config} save={save} />}
+
+      {/* Plugins section (settings contributed by installed plugins) */}
+      {show.plugins && <PluginsSection />}
 
       {/* No-match state */}
       {q && !Object.values(show).some(Boolean) && (

@@ -5,6 +5,7 @@ import { randomUUID } from 'crypto';
 import { configService } from './services/configService';
 import { libraryService } from './services/libraryService';
 import { sessionService } from './services/sessionService';
+import { pluginSettings } from './services/pluginSettingsService';
 import { sessionHistory } from './services/sessionHistory';
 import { layoutService } from './services/layoutService';
 import { claudeSessionStore } from './services/claudeSessionStore';
@@ -246,6 +247,13 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     } catch {
       return null;
     }
+  });
+  ipcMain.handle(IPC.HUB_PLUGIN_SETTINGS_GET, (_event, pluginId: string) => pluginSettings.get(pluginId));
+  ipcMain.handle(IPC.HUB_PLUGIN_SETTINGS_SET, (_event, pluginId: string, values: Record<string, unknown>) => {
+    const merged = pluginSettings.set(pluginId, values);
+    // Tell any open pane of this plugin to re-apply live (the bridge listens).
+    mainWindow.webContents.send(IPC.HUB_PLUGIN_SETTINGS_CHANGED, pluginId, merged);
+    return merged;
   });
   ipcMain.handle(IPC.HUB_PLUGIN_PANE_TOKEN_REVOKE, async (_event, token: string) => {
     try {

@@ -307,6 +307,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke(IPC.HUB_PLUGIN_PANE_TOKEN, pluginId, agentCwd),
   revokePluginPaneToken: (token: string): Promise<void> =>
     ipcRenderer.invoke(IPC.HUB_PLUGIN_PANE_TOKEN_REVOKE, token),
+  // Per-plugin settings (declared in the plugin manifest; values persisted here).
+  getPluginSettings: (pluginId: string): Promise<Record<string, unknown>> =>
+    ipcRenderer.invoke(IPC.HUB_PLUGIN_SETTINGS_GET, pluginId),
+  setPluginSettings: (pluginId: string, values: Record<string, unknown>): Promise<Record<string, unknown>> =>
+    ipcRenderer.invoke(IPC.HUB_PLUGIN_SETTINGS_SET, pluginId, values),
+  onPluginSettingsChanged: (callback: (pluginId: string, values: Record<string, unknown>) => void): (() => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, pluginId: string, values: Record<string, unknown>) => callback(pluginId, values);
+    ipcRenderer.on(IPC.HUB_PLUGIN_SETTINGS_CHANGED, handler);
+    return () => ipcRenderer.removeListener(IPC.HUB_PLUGIN_SETTINGS_CHANGED, handler);
+  },
 
   // ── Library (reusable prompts + skills) ──
   libraryList: (cwd?: string): Promise<unknown[]> =>

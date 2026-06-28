@@ -111,6 +111,12 @@ export interface ElectronAPI {
   pluginPaneToken?: (pluginId: string, agentCwd?: string) => Promise<string | null>;
   /** Revoke a pane token minted by pluginPaneToken (on pane close). */
   revokePluginPaneToken?: (token: string) => Promise<void>;
+  /** Saved values for a plugin's declared settings (defaults applied by the plugin). */
+  getPluginSettings?: (pluginId: string) => Promise<Record<string, unknown>>;
+  /** Persist (merge) plugin settings; returns the merged values. */
+  setPluginSettings?: (pluginId: string, values: Record<string, unknown>) => Promise<Record<string, unknown>>;
+  /** Fired when a plugin's settings change, so open panes re-apply them live. */
+  onPluginSettingsChanged?: (callback: (pluginId: string, values: Record<string, unknown>) => void) => () => void;
 
   // Library (reusable prompts + skills)
   libraryList: (cwd?: string) => Promise<LibraryItem[]>;

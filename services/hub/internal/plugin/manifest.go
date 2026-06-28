@@ -37,9 +37,10 @@ type Manifest struct {
 	Name       string `json:"name"`
 	APIVersion string `json:"apiVersion"`
 
-	Server  *ServerSpec          `json:"server,omitempty"`
-	Panes   []PaneContribution   `json:"panes,omitempty"`
-	Hotkeys []HotkeyContribution `json:"hotkeys,omitempty"`
+	Server   *ServerSpec          `json:"server,omitempty"`
+	Panes    []PaneContribution   `json:"panes,omitempty"`
+	Hotkeys  []HotkeyContribution `json:"hotkeys,omitempty"`
+	Settings []SettingDef         `json:"settings,omitempty"`
 
 	// UI: a subdirectory (relative to the plugin dir) of static assets the hub
 	// serves for this plugin's panes, at /plugins/ui/<id>/. Set it instead of
@@ -111,6 +112,27 @@ func (c *Capability) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// SettingDef declares one configurable setting a plugin exposes. The host renders
+// a control for it in Settings, persists the value, and delivers the current
+// values into the plugin's webview (window.__WKS_SETTINGS__ + a wks-settings
+// event), so a plugin can be configured without shipping its own settings UI.
+type SettingDef struct {
+	Key     string   `json:"key"`               // stable id, e.g. "vimMode"
+	Label   string   `json:"label"`             // human-readable label
+	Type    string   `json:"type"`              // boolean | number | string | select
+	Default any      `json:"default,omitempty"` // default value
+	Options []string `json:"options,omitempty"` // allowed values when type == "select"
+	Help    string   `json:"help,omitempty"`    // optional one-line description
+}
+
+// SettingType values.
+const (
+	SettingBoolean = "boolean"
+	SettingNumber  = "number"
+	SettingString  = "string"
+	SettingSelect  = "select"
+)
+
 // ServerSpec describes the plugin's sidecar process.
 type ServerSpec struct {
 	Command string   `json:"command"`
@@ -166,6 +188,25 @@ func (m *Manifest) Validate() error {
 	// static assets (ui). Without either, the webview would have no URL to load.
 	if len(m.Panes) > 0 && m.Server == nil && m.UI == "" {
 		return fmt.Errorf("plugin has panes but neither a server nor a ui directory to serve them")
+	}
+	keys := map[string]bool{}
+	for _, s := range m.Settings {
+		if s.Key == "" {
+			return fmt.Errorf("setting with empty key")
+		}
+		if keys[s.Key] {
+			return fmt.Errorf("duplicate setting key %q", s.Key)
+		}
+		keys[s.Key] = true
+		switch s.Type {
+		case SettingBoolean, SettingNumber, SettingString:
+		case SettingSelect:
+			if len(s.Options) == 0 {
+				return fmt.Errorf("setting %q is a select but declares no options", s.Key)
+			}
+		default:
+			return fmt.Errorf("setting %q has unknown type %q", s.Key, s.Type)
+		}
 	}
 	for _, c := range m.Capabilities {
 		if c.Method == "" {

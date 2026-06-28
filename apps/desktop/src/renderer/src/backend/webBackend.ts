@@ -225,6 +225,10 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     // guarded route); a web/remote client can't, so it keeps its existing token.
     pluginPaneToken: () => Promise.resolve(null),
     revokePluginPaneToken: () => Promise.resolve(),
+    // Plugin settings are host-persisted; the web client has no store of its own.
+    getPluginSettings: () => Promise.resolve({}),
+    setPluginSettings: (_pluginId: string, values: Record<string, unknown>) => Promise.resolve(values),
+    onPluginSettingsChanged: () => () => {},
 
     // ── Library ──────────────────────────────────────────────────────────
     libraryList: (cwd) => client.call('library.list', { cwd }),

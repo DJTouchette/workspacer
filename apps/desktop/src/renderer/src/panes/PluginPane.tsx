@@ -82,6 +82,7 @@ const PluginPane: React.FC<PluginPaneProps> = ({ paneId, title, isActive, url, h
       appMode={true}
       hibernated={hibernated}
       onUrlChange={() => {}}
+      pluginId={pluginId}
     />
   );
 };

@@ -62,6 +62,9 @@ export const IPC = {
   HUB_SET_PLUGIN_ENABLED: 'hub:setPluginEnabled',
   HUB_PLUGIN_PANE_TOKEN: 'hub:pluginPaneToken',
   HUB_PLUGIN_PANE_TOKEN_REVOKE: 'hub:pluginPaneTokenRevoke',
+  HUB_PLUGIN_SETTINGS_GET: 'hub:pluginSettingsGet',
+  HUB_PLUGIN_SETTINGS_SET: 'hub:pluginSettingsSet',
+  HUB_PLUGIN_SETTINGS_CHANGED: 'hub:pluginSettingsChanged', // push (main → renderer)
   HUB_EVENT: 'hub:event',           // push (main → renderer)
   HUB_STATUS: 'hub:status',         // push (main → renderer)
 

@@ -2,6 +2,7 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { useConfig } from '../hooks/useConfig';
 import { useTheme } from '../hooks/useTheme';
 import { webviewThemeCSS, webviewThemeJS } from '../lib/webviewTheme';
+import { webviewSettingsJS } from '../lib/webviewSettings';
 
 interface BrowserPaneProps {
   paneId: string;
@@ -11,6 +12,8 @@ interface BrowserPaneProps {
   appMode?: boolean;
   hibernated?: boolean;
   onUrlChange?: (url: string) => void;
+  /** Plugin panes: the contributing plugin's id, used to inject its settings. */
+  pluginId?: string;
 }
 
 interface Bookmark {
@@ -25,7 +28,7 @@ function normalizeUrl(input: string): string {
   return 'https://' + trimmed;
 }
 
-const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive, initialUrl, appMode, hibernated, onUrlChange }) => {
+const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive, initialUrl, appMode, hibernated, onUrlChange, pluginId }) => {
   const { config } = useConfig();
   const browserCfg = config.browser ?? { homepage: 'https://google.com', bookmarks: [] };
 
@@ -75,6 +78,30 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive, init
     applyWebviewTheme();
   }, [theme, applyWebviewTheme]);
 
+  // ── Settings bridge (plugin/appMode webviews only) ──
+  // Inject the plugin's saved settings as window.__WKS_SETTINGS__ + a
+  // wks-settings event, on load and whenever they change, so the plugin applies
+  // them live (e.g. the editor toggling vim mode) without a reload.
+  const applyWebviewSettings = useCallback(async () => {
+    if (!appMode || !pluginId) return;
+    const wv = webviewRef.current as any;
+    if (!wv || !readyRef.current) return;
+    try {
+      const values = (await window.electronAPI.getPluginSettings?.(pluginId)) ?? {};
+      await wv.executeJavaScript(webviewSettingsJS(values));
+    } catch { /* webview mid-navigation — re-applied on next dom-ready */ }
+  }, [appMode, pluginId]);
+  const applyWebviewSettingsRef = useRef(applyWebviewSettings);
+  applyWebviewSettingsRef.current = applyWebviewSettings;
+
+  useEffect(() => {
+    if (!pluginId) return;
+    const off = window.electronAPI.onPluginSettingsChanged?.((changedId) => {
+      if (changedId === pluginId) applyWebviewSettingsRef.current();
+    });
+    return () => off?.();
+  }, [pluginId]);
+
   // Attach webview event listeners once the element is ready
   useEffect(() => {
     const wv = webviewRef.current as any;
@@ -84,6 +111,8 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive, init
       readyRef.current = true;
       // Fresh document: theme first so the page doesn't flash unstyled
       applyWebviewThemeRef.current(true);
+      // Then the plugin's settings, so it configures itself on first paint.
+      applyWebviewSettingsRef.current();
       // Inject key forwarder once DOM is ready
       setTimeout(() => injectKeyForwarder(), 100);
     };

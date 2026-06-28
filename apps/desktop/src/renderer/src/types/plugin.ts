@@ -24,6 +24,18 @@ export interface PluginHotkeyContribution {
   command: string; // "open-pane:<type>" | "emit:<eventType>"
 }
 
+export type PluginSettingType = 'boolean' | 'number' | 'string' | 'select';
+
+/** One configurable setting a plugin declares; the host renders a control for it. */
+export interface PluginSettingDef {
+  key: string;
+  label: string;
+  type: PluginSettingType;
+  default?: unknown;
+  options?: string[]; // for type 'select'
+  help?: string;
+}
+
 export interface PluginManifest {
   id: string;
   name: string;
@@ -31,6 +43,7 @@ export interface PluginManifest {
   server?: PluginServerSpec;
   panes?: PluginPaneContribution[];
   hotkeys?: PluginHotkeyContribution[];
+  settings?: PluginSettingDef[];
   provides?: string[];
   capabilities?: string[];
   emits?: string[];
