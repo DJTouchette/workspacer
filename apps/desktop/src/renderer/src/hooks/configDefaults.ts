@@ -66,6 +66,7 @@ export const DEFAULT_CONFIG: Config = {
     paneHeaderHeight: 22,
     showComposerSend: true,
     guiFontScale: 1.15,
+    diffView: 'stacked',
   },
   terminal: {
     shell: '',

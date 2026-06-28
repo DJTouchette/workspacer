@@ -47,9 +47,16 @@ export const Composer: React.FC<ComposerProps> = ({
     const ta = taRef.current;
     if (!ta) return;
     ta.style.height = 'auto';
-    const next = Math.min(ta.scrollHeight, MAX_COMPOSER_HEIGHT);
+    // While the pane is hidden (display:none ancestor — e.g. before the first
+    // GUI switch) scrollHeight reads 0; collapsing the box to 0px there is what
+    // left the first message half-clipped. Leave it at the natural one-line
+    // height ('auto' + rows=1) and let a later measurement (once visible/typed)
+    // size it correctly.
+    const sh = ta.scrollHeight;
+    if (sh === 0) return;
+    const next = Math.min(sh, MAX_COMPOSER_HEIGHT);
     ta.style.height = `${next}px`;
-    ta.style.overflowY = ta.scrollHeight > MAX_COMPOSER_HEIGHT ? 'auto' : 'hidden';
+    ta.style.overflowY = sh > MAX_COMPOSER_HEIGHT ? 'auto' : 'hidden';
   }, [value, taRef]);
 
   return (
@@ -109,10 +116,15 @@ export const Composer: React.FC<ComposerProps> = ({
             onChange={(e) => onChange(e.target.value)}
             onPaste={onPaste}
             onKeyDown={(e) => {
-              // Enter sends; Shift+Enter inserts a newline. Guard against IME
-              // composition (e.g. accent/CJK candidate windows) where Enter
-              // commits the candidate rather than submitting the message.
-              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+              // Enter sends; Shift+Enter inserts a newline. Only treat Enter as
+              // an IME candidate-commit (not a send) when it's a real
+              // composition keystroke — keyCode 229 is the universal
+              // "IME is processing this" sentinel. On Linux/Electron (IBus/
+              // fcitx) `isComposing` alone spuriously reports true on the first
+              // Enter after focus, which swallowed the first message; gating on
+              // keyCode 229 too lets that genuine Enter through.
+              const ime = e.nativeEvent.isComposing && e.nativeEvent.keyCode === 229;
+              if (e.key === 'Enter' && !e.shiftKey && !ime) {
                 e.preventDefault();
                 onSend();
               }
@@ -132,6 +144,10 @@ export const Composer: React.FC<ComposerProps> = ({
               fontFamily: 'inherit',
               lineHeight: 1.5,
               resize: 'none',
+              // Floor at one line (lineHeight + vertical padding, border-box) so
+              // the box always shows a full line even if a measurement lands
+              // while hidden and reports 0.
+              minHeight: 'calc(1.5em + 8px)',
               maxHeight: MAX_COMPOSER_HEIGHT,
             }}
           />

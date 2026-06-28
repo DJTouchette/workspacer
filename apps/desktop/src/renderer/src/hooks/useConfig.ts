@@ -24,6 +24,9 @@ export interface UIConfig {
   /** Font scale for the GUI conversation view (1 = original size). Optional;
    *  absent = the default scale. */
   guiFontScale?: number;
+  /** How GUI diffs are laid out: 'stacked' (removed block then added block),
+   *  'inline' (interleaved unified), or 'split' (side-by-side). Absent = stacked. */
+  diffView?: 'stacked' | 'inline' | 'split';
 }
 
 export interface TerminalConfig {

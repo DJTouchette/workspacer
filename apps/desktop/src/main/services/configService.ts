@@ -41,6 +41,8 @@ interface Config {
     showComposerSend?: boolean;
     /** Font scale for the GUI conversation view (1 = original size). */
     guiFontScale?: number;
+    /** GUI diff layout: 'stacked' | 'inline' | 'split'. Absent = stacked. */
+    diffView?: 'stacked' | 'inline' | 'split';
   };
   terminal: {
     shell: string;
@@ -204,6 +206,7 @@ function defaultConfig(): Config {
       paneHeaderHeight: 22,
       showComposerSend: true,
       guiFontScale: 1.15,
+      diffView: 'stacked',
     },
     terminal: {
       shell: '',

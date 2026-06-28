@@ -172,6 +172,7 @@ export interface AppConfig {
     paneHeaderHeight: number;
     showComposerSend?: boolean;
     guiFontScale?: number;
+    diffView?: 'stacked' | 'inline' | 'split';
   };
   terminal: {
     shell: string;

@@ -14,10 +14,17 @@ const FONT_SCALES: { label: string; value: number }[] = [
   { label: 'XL', value: 1.5 },
 ];
 
+const DIFF_VIEWS: { label: string; value: 'stacked' | 'inline' | 'split' }[] = [
+  { label: 'Stacked', value: 'stacked' },
+  { label: 'Inline', value: 'inline' },
+  { label: 'Split', value: 'split' },
+];
+
 const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
   const autoResume = config.session?.autoResume ?? true;
   const defaultView = config.claude?.defaultView ?? 'terminal';
   const guiFontScale = config.ui.guiFontScale ?? 1.15;
+  const diffView = config.ui.diffView ?? 'stacked';
   return (
     <Section title="Session">
       <CheckRow
@@ -64,6 +71,23 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
       <div style={{ fontSize: '0.55rem', color: 'var(--wks-text-disabled)' }}>
         Size of the conversation text in the GUI view (messages, markdown, code blocks).
         Doesn't affect the terminal view.
+      </div>
+
+      <Row label="Diff layout">
+        <div style={{ display: 'flex', gap: 4 }}>
+          {DIFF_VIEWS.map((d) => (
+            <ModeButton
+              key={d.value}
+              label={d.label}
+              active={diffView === d.value}
+              onClick={() => save({ ui: { ...config.ui, diffView: d.value } })}
+            />
+          ))}
+        </div>
+      </Row>
+      <div style={{ fontSize: '0.55rem', color: 'var(--wks-text-disabled)' }}>
+        How file edits render in the GUI. Stacked shows all removed lines then all added;
+        Inline interleaves them as a unified diff; Split shows old and new side by side.
       </div>
 
       <CheckRow
