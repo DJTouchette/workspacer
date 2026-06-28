@@ -5,6 +5,7 @@ import { formatToolSummary } from './claude-shared';
 import { QuestionPicker } from './claude/QuestionPicker';
 import { useAttention } from '../contexts/AttentionContext';
 import { usePageVisible } from '../hooks/usePageVisible';
+import { StatusGlyph } from './statusGlyph';
 
 function fmtTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -123,7 +124,10 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot }) => {
         <span style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--wks-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {agent.kind === 'supervisor' && <span style={{ marginRight: 4 }}>🧭</span>}{agent.name}
         </span>
-        <span style={{ marginLeft: 'auto', fontSize: '0.7rem', fontWeight: 600, color: v.color, flexShrink: 0 }}>{v.label}</span>
+        <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.7rem', fontWeight: 600, color: v.color, flexShrink: 0 }}>
+          <StatusGlyph state={agent.sessionId ? state : undefined} size={13} strokeWidth={2.2} accent="currentColor" />
+          {v.label}
+        </span>
       </div>
 
       {/* Meta line: model · turns · last activity · folder */}

@@ -1,6 +1,6 @@
 import React, { useState, useRef, useMemo } from 'react';
 import { Plus, ChevronLeft, ChevronRight, HelpCircle, BarChart2, Settings as SettingsIcon } from 'lucide-react';
-import { IconInbox, IconFleet } from './wksIcons';
+import { IconInbox, IconFleet, IconWorking } from './wksIcons';
 import { AgentWorkspace } from '../types/pane';
 import type { SessionAmbientState, ClaudeSessionSnapshot } from '../types/claudeSession';
 import type { AttentionItem, AttentionKind } from '../types/attention';
@@ -348,7 +348,7 @@ const SideBar: React.FC<SideBarProps> = ({
         )}
         {!noAttentionFlash && needYouCount === 0 && workingCount > 0 && (
           <span style={pillStyle('var(--wks-busy, var(--wks-accent-text, #4a9eff))')}>
-            <span style={dotStyle('var(--wks-busy, var(--wks-accent-text, #4a9eff))', true)} />
+            <IconWorking size={12} strokeWidth={2.2} accent="currentColor" />
             {workingCount} working
           </span>
         )}

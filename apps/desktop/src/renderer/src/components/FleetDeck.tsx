@@ -3,6 +3,7 @@ import { X } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useAttention } from '../contexts/AttentionContext';
 import { AgentCard } from './AgentCard';
+import { StatusGlyph } from './statusGlyph';
 import { agentAttentionScore } from '../lib/attentionRouter';
 
 const CARD_MIN = 360; // matches the old minmax(360px) grid
@@ -230,7 +231,10 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
                       </span>
                     </td>
                     <td style={ltd}>
-                      <span style={{ fontSize: '0.62rem', fontWeight: 600, color: vis.color, border: `1px solid ${vis.color}`, borderRadius: 99, padding: '1px 9px', whiteSpace: 'nowrap' }}>{vis.label}</span>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.62rem', fontWeight: 600, color: vis.color, border: `1px solid ${vis.color}`, borderRadius: 99, padding: '1px 9px', whiteSpace: 'nowrap' }}>
+                        <StatusGlyph state={agent.sessionId ? snap?.ambientState : undefined} size={12} strokeWidth={2.2} accent="currentColor" />
+                        {vis.label}
+                      </span>
                     </td>
                     <td style={{ ...ltd, color: 'var(--wks-text-secondary)' }}>{usage?.model ? usage.model.replace(/^claude-/, '') : '—'}</td>
                     <td style={ltdNum}>{usage && usage.contextTokens > 0 ? fmtTokens(usage.contextTokens) : '—'}</td>
