@@ -397,38 +397,49 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
       return tab.canvas ?? defaultCanvas(index);
     }, [liveRect]);
 
+    // Latest tabs in a ref so a deferred scroll (which retries across frames)
+    // always sees the current set, even for a tab added the same tick.
+    const tabsRef = useRef(tabs);
+    tabsRef.current = tabs;
+
     const scrollToTab = useCallback((id: string) => {
-      const container = containerRef.current;
-      if (!container) return;
+      // A just-opened tab (e.g. from the command palette) may not be committed to
+      // the DOM on the first frame, so its element/index isn't found yet — which
+      // left the strip highlighting the new tab while the view stayed on the old
+      // pane. Retry across a few frames until the target exists.
+      let attempts = 0;
+      const attempt = () => {
+        const container = containerRef.current;
+        if (!container) return;
 
-      if (spatial) {
-        // Pan the canvas so the target card is centred in the viewport.
-        const index = tabs.findIndex((t) => t.id === id);
-        if (index < 0) return;
-        const tab = tabs[index];
-        const rect = tab.canvas ?? defaultCanvas(index);
-        const cx = container.clientWidth / 2;
-        const cy = container.clientHeight / 2;
-        setPan({
-          x: cx - (rect.x + rect.w / 2) * zoom,
-          y: cy - (rect.y + rect.h / 2) * zoom,
-        });
-        return;
-      }
+        if (spatial) {
+          // Pan the canvas so the target card is centred in the viewport.
+          const cur = tabsRef.current;
+          const index = cur.findIndex((t) => t.id === id);
+          if (index < 0) { if (attempts++ < 12) requestAnimationFrame(attempt); return; }
+          const tab = cur[index];
+          const rect = tab.canvas ?? defaultCanvas(index);
+          setPan({
+            x: container.clientWidth / 2 - (rect.x + rect.w / 2) * zoom,
+            y: container.clientHeight / 2 - (rect.y + rect.h / 2) * zoom,
+          });
+          return;
+        }
 
-      if (stacked) {
         const el = container.querySelector(`[data-tab-id="${id}"]`) as HTMLElement | null;
-        if (el) container.scrollTo({ top: Math.max(0, el.offsetTop - STK_TOP), behavior: 'instant' });
-        return;
-      }
+        if (!el) { if (attempts++ < 12) requestAnimationFrame(attempt); return; }
 
-      const tabEl = container.querySelector(`[data-tab-id="${id}"]`) as HTMLElement | null;
-      if (!tabEl) return;
-      const containerRect = container.getBoundingClientRect();
-      const tabRect = tabEl.getBoundingClientRect();
-      const scrollLeft = tabEl.offsetLeft - containerRect.width / 2 + tabRect.width / 2;
-      container.scrollTo({ left: scrollLeft, behavior: 'instant' });
-    }, [spatial, stacked, tabs, zoom]);
+        if (stacked) {
+          container.scrollTo({ top: Math.max(0, el.offsetTop - STK_TOP), behavior: 'instant' });
+          return;
+        }
+        const containerRect = container.getBoundingClientRect();
+        const tabRect = el.getBoundingClientRect();
+        const scrollLeft = el.offsetLeft - containerRect.width / 2 + tabRect.width / 2;
+        container.scrollTo({ left: scrollLeft, behavior: 'instant' });
+      };
+      attempt();
+    }, [spatial, stacked, zoom]);
 
     useImperativeHandle(ref, () => ({ scrollToTab }), [scrollToTab]);
 
