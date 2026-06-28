@@ -62,21 +62,29 @@ func TestValidate_RejectsUnscopedFilesystemCapability(t *testing.T) {
 
 func TestExpandScope(t *testing.T) {
 	dir := filepath.FromSlash("/plugins/acme")
+	cwd := filepath.FromSlash("/work/project")
+	bindings := map[string]string{"pluginDir": dir, "agentCwd": cwd}
 	cases := []struct {
 		in   string
 		want string
 	}{
 		{"${pluginDir}", dir},
 		{"${pluginDir}/data", filepath.Join(dir, "data")},
+		{"${agentCwd}", cwd},                           // bound dynamic scope resolves
+		{"${agentCwd}/src", filepath.Join(cwd, "src")}, // …with a subpath
 		{filepath.FromSlash("/abs/path"), filepath.FromSlash("/abs/path")},
 		{"relative/path", ""}, // relative → dropped
-		{"${agentCwd}", ""},   // dynamic token not bound here yet → dropped
-		{"${unknown}/x", ""},  // unknown token → dropped
+		{"${unknown}/x", ""},  // no such binding → dropped
+		{"${malformed", ""},   // no closing brace → dropped
 	}
 	for _, c := range cases {
-		if got := expandScope(c.in, dir); got != c.want {
+		if got := expandScope(c.in, bindings); got != c.want {
 			t.Errorf("expandScope(%q) = %q, want %q", c.in, got, c.want)
 		}
+	}
+	// With no agentCwd binding (the static load-time case), ${agentCwd} grants nothing.
+	if got := expandScope("${agentCwd}", map[string]string{"pluginDir": dir}); got != "" {
+		t.Errorf("unbound ${agentCwd} = %q, want \"\"", got)
 	}
 }
 

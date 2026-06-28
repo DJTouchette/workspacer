@@ -14,20 +14,30 @@ import (
 	"github.com/djtouchette/workspacer-hub/internal/supervisor"
 )
 
-// pluginDirToken expands to a plugin's own install directory in a capability's
-// "paths" — the one symbolic root a plugin may always scope itself to.
-const pluginDirToken = "${pluginDir}"
-
 // grantsFor translates a manifest's declared capabilities into bus grants,
-// resolving each path-scoped capability's roots to concrete directories. The bus
-// canonicalizes and confines from there.
+// resolving each path-scoped capability's roots against the plugin's own
+// directory. This is the static, load-time grant: dynamic scopes like
+// ${agentCwd} aren't bound here and so resolve to nothing — the static
+// per-plugin token gets no filesystem reach for them. PaneToken binds those
+// per open pane.
 func grantsFor(mf Manifest) []capspec.Grant {
+	return grantsWithBindings(mf, nil)
+}
+
+// grantsWithBindings resolves a manifest's capabilities into grants using the
+// plugin's directory plus any extra bindings the caller supplies (e.g.
+// {"agentCwd": "/path"} when minting a token for an agent-scoped pane).
+func grantsWithBindings(mf Manifest, extra map[string]string) []capspec.Grant {
+	bindings := map[string]string{"pluginDir": mf.Dir}
+	for k, v := range extra {
+		bindings[k] = v
+	}
 	out := make([]capspec.Grant, 0, len(mf.Capabilities))
 	for _, c := range mf.Capabilities {
 		if c.Method == "" {
 			continue
 		}
-		out = append(out, capspec.Grant{Method: c.Method, FSRoots: resolveRoots(c.Paths, mf.Dir)})
+		out = append(out, capspec.Grant{Method: c.Method, FSRoots: resolveRoots(c.Paths, bindings)})
 	}
 	return out
 }
@@ -35,34 +45,44 @@ func grantsFor(mf Manifest) []capspec.Grant {
 // resolveRoots expands a capability's declared path scopes to concrete roots.
 // Unresolvable entries are dropped — a path-scoped grant that resolves to no
 // roots denies every call (fail closed), which is the safe outcome.
-func resolveRoots(paths []string, pluginDir string) []string {
+func resolveRoots(paths []string, bindings map[string]string) []string {
 	if len(paths) == 0 {
 		return nil
 	}
 	out := make([]string, 0, len(paths))
 	for _, p := range paths {
-		if r := expandScope(p, pluginDir); r != "" {
+		if r := expandScope(p, bindings); r != "" {
 			out = append(out, r)
 		}
 	}
 	return out
 }
 
-// expandScope resolves one path-scope entry. Supported: "${pluginDir}" (and
-// subpaths of it) and absolute paths. Anything else — a relative path or an
-// unknown token like "${agentCwd}" (dynamic, per-pane scopes aren't bound here
-// yet) — yields "" so it grants nothing.
-func expandScope(p, pluginDir string) string {
-	switch {
-	case p == pluginDirToken:
-		return pluginDir
-	case strings.HasPrefix(p, pluginDirToken+"/"):
-		return filepath.Join(pluginDir, filepath.FromSlash(strings.TrimPrefix(p, pluginDirToken+"/")))
-	case filepath.IsAbs(p):
-		return p
-	default:
-		return ""
+// expandScope resolves one path-scope entry against the available bindings.
+// A "${name}" or "${name}/sub" token expands to the binding's value (joined with
+// the subpath); an absolute path passes through. Anything whose binding is
+// missing/empty — including a relative path or an as-yet-unbound token — yields
+// "" so it grants nothing.
+func expandScope(p string, bindings map[string]string) string {
+	if strings.HasPrefix(p, "${") {
+		end := strings.Index(p, "}")
+		if end < 0 {
+			return ""
+		}
+		base, ok := bindings[p[2:end]]
+		if !ok || base == "" {
+			return ""
+		}
+		rest := strings.TrimPrefix(p[end+1:], "/")
+		if rest == "" {
+			return base
+		}
+		return filepath.Join(base, filepath.FromSlash(rest))
 	}
+	if filepath.IsAbs(p) {
+		return p
+	}
+	return ""
 }
 
 // Publisher is the slice of the broker the manager needs.
@@ -88,6 +108,10 @@ type Manager struct {
 
 	mu      sync.Mutex
 	plugins map[string]*loaded
+	// Ephemeral per-pane tokens (token → plugin id), minted by PaneToken with
+	// dynamic scopes resolved (e.g. ${agentCwd}). Tracked so they can be revoked
+	// on pane close and swept when their plugin is removed/stopped.
+	paneTokens map[string]string
 }
 
 type loaded struct {
@@ -99,7 +123,78 @@ type loaded struct {
 // NewManager creates a manager that publishes lifecycle events to pub and binds
 // per-plugin bus tokens via reg (nil to disable capability enforcement).
 func NewManager(pub Publisher, reg TokenRegistrar) *Manager {
-	return &Manager{pub: pub, reg: reg, plugins: make(map[string]*loaded)}
+	return &Manager{pub: pub, reg: reg, plugins: make(map[string]*loaded), paneTokens: make(map[string]string)}
+}
+
+// randomToken mints a fresh URL-safe bus token.
+func randomToken() (string, error) {
+	buf := make([]byte, 24)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
+// PaneToken mints an ephemeral, capability-scoped bus token for one open pane of
+// a plugin, resolving the plugin's dynamic path scopes (e.g. ${agentCwd}) with
+// bindings the trusted host supplies for that pane. The host injects the
+// returned token into the pane's webview URL; the webview then has exactly the
+// plugin's capabilities, confined to this pane's resolved roots. Revoke it with
+// RevokePaneToken when the pane closes (it is also swept if the plugin is
+// removed or the manager stops). Requires capability enforcement (reg != nil).
+func (m *Manager) PaneToken(pluginID string, bindings map[string]string) (string, error) {
+	if m.reg == nil {
+		return "", fmt.Errorf("capability enforcement is off; pane tokens unavailable")
+	}
+	m.mu.Lock()
+	l, ok := m.plugins[pluginID]
+	m.mu.Unlock()
+	if !ok {
+		return "", fmt.Errorf("plugin %q is not loaded", pluginID)
+	}
+	tok, err := randomToken()
+	if err != nil {
+		return "", err
+	}
+	m.reg.RegisterPluginToken(tok, pluginID, grantsWithBindings(l.manifest, bindings))
+	m.mu.Lock()
+	m.paneTokens[tok] = pluginID
+	m.mu.Unlock()
+	return tok, nil
+}
+
+// RevokePaneToken drops an ephemeral pane token (on pane close). Safe to call
+// with an unknown or empty token.
+func (m *Manager) RevokePaneToken(token string) {
+	if token == "" {
+		return
+	}
+	m.mu.Lock()
+	_, ok := m.paneTokens[token]
+	delete(m.paneTokens, token)
+	m.mu.Unlock()
+	if ok && m.reg != nil {
+		m.reg.UnregisterPluginToken(token)
+	}
+}
+
+// revokePaneTokensFor sweeps every outstanding pane token of a plugin (called
+// when it's removed/stopped, so a closed plugin's panes can't keep calling).
+func (m *Manager) revokePaneTokensFor(pluginID string) {
+	m.mu.Lock()
+	var gone []string
+	for tok, id := range m.paneTokens {
+		if id == pluginID {
+			gone = append(gone, tok)
+			delete(m.paneTokens, tok)
+		}
+	}
+	m.mu.Unlock()
+	if m.reg != nil {
+		for _, tok := range gone {
+			m.reg.UnregisterPluginToken(tok)
+		}
+	}
 }
 
 // loadOrCreatePluginToken returns the plugin's persisted bus token, minting and
@@ -110,11 +205,10 @@ func loadOrCreatePluginToken(dir string) string {
 	if existing := readSidecar(file); existing != "" {
 		return existing
 	}
-	buf := make([]byte, 24)
-	if _, err := rand.Read(buf); err != nil {
+	token, err := randomToken()
+	if err != nil {
 		return ""
 	}
-	token := base64.RawURLEncoding.EncodeToString(buf)
 	_ = os.WriteFile(file, []byte(token), 0o600)
 	return token
 }
@@ -205,6 +299,7 @@ func (m *Manager) Remove(id string) string {
 	if m.reg != nil && l.token != "" {
 		m.reg.UnregisterPluginToken(l.token)
 	}
+	m.revokePaneTokensFor(id) // drop any open-pane tokens for this plugin
 	m.pub.Publish(event.New("plugin.unloaded", "hub", map[string]string{"id": id}))
 	return l.manifest.Dir
 }

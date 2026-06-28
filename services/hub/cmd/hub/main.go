@@ -98,6 +98,50 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(mgr.Tokens())
 	}))
+	// Mint an ephemeral, capability-scoped token for one open plugin pane, with
+	// dynamic scopes (e.g. ${agentCwd}) bound to this pane's agent. The trusted
+	// host calls this when it opens an agent-scoped plugin pane and injects the
+	// returned token into that pane's webview URL — so the webview gets the
+	// plugin's capabilities confined to that agent's working directory, instead
+	// of the static per-plugin token (which has no dynamic filesystem reach).
+	// Token-guarded: only the trusted host may mint.
+	srv.AddRoute("/plugins/pane-token", guard(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		var body struct {
+			PluginID string `json:"pluginId"`
+			AgentCwd string `json:"agentCwd"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.PluginID == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "missing pluginId"})
+			return
+		}
+		bindings := map[string]string{}
+		if body.AgentCwd != "" {
+			bindings["agentCwd"] = body.AgentCwd
+		}
+		tok, err := mgr.PaneToken(body.PluginID, bindings)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"token": tok})
+	}))
+	// Revoke a pane token when its pane closes. Token-guarded; idempotent.
+	srv.AddRoute("/plugins/pane-token/revoke", guard(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		var body struct {
+			Token string `json:"token"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Token == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "missing token"})
+			return
+		}
+		mgr.RevokePaneToken(body.Token)
+		_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+	}))
 	// Mobile / remote-control web client. Self-contained single page that talks
 	// the bus protocol over /bus. Token-guarded since it's the remote entrypoint.
 	srv.AddRoute("/remote", guard(func(w http.ResponseWriter, _ *http.Request) {
