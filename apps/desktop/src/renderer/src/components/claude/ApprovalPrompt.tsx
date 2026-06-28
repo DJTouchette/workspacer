@@ -1,6 +1,7 @@
 import React from 'react';
 import type { PendingApproval } from '../../types/claudeSession';
 import { claudeColors as colors, approvalBtnStyle } from '../claude-shared';
+import { IconApprove, IconReject } from '../wksIcons';
 
 export const ApprovalPrompt: React.FC<{ approval: PendingApproval; onRespond: (response: 'yes' | 'no') => void }> = ({ approval, onRespond }) => (
   <div style={{
@@ -30,8 +31,8 @@ export const ApprovalPrompt: React.FC<{ approval: PendingApproval; onRespond: (r
       {JSON.stringify(approval.toolInput, null, 2)}
     </pre>
     <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-      <button style={{...approvalBtnStyle(colors.success), position: 'relative', zIndex: 10}} onClick={(e) => { e.stopPropagation(); onRespond('yes'); }}>Allow</button>
-      <button style={{...approvalBtnStyle(colors.error), position: 'relative', zIndex: 10}} onClick={(e) => { e.stopPropagation(); onRespond('no'); }}>Deny</button>
+      <button style={{...approvalBtnStyle(colors.success), position: 'relative', zIndex: 10, display: 'inline-flex', alignItems: 'center', gap: 6}} onClick={(e) => { e.stopPropagation(); onRespond('yes'); }}><IconApprove size={14} strokeWidth={2.4} />Allow</button>
+      <button style={{...approvalBtnStyle(colors.error), position: 'relative', zIndex: 10, display: 'inline-flex', alignItems: 'center', gap: 6}} onClick={(e) => { e.stopPropagation(); onRespond('no'); }}><IconReject size={14} strokeWidth={2.4} />Deny</button>
     </div>
   </div>
 );
