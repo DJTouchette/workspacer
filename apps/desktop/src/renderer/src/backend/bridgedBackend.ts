@@ -3,29 +3,63 @@
  * hub bus instead of talking to claudemon directly.
  *
  * The renderer's contract (`window.electronAPI`) is one object, but its methods
- * fall into two planes:
+ * fall into three planes:
  *
- *   • data / orchestration / observation — spawning + driving agents, sessions,
- *     terminals, config, profiles, library, layouts, files, search. These have
- *     real hub-bus capabilities (served by the brain + main as providers), so in
- *     bus mode they route over the bus exactly like the web build does. One
- *     transport, one set of providers: desktop and web mirror each other.
+ *   • control + observation — spawning's siblings: driving agents (message,
+ *     approve, answer, signal, gate), live snapshots, config, profiles, library,
+ *     layouts, files, search. These have real hub-bus capabilities (brain + main
+ *     as providers), so they route over the bus exactly like the web build does.
+ *     This is the mirror that matters: desktop and web drive + observe agents
+ *     through the identical path.
+ *
+ *   • local terminal byte transport — the raw PTY byte streams and the lifecycle
+ *     that establishes them (create/spawn/attach/detach, output, write, resize,
+ *     close). On the web these MUST cross the network as `pty.bytes` events over
+ *     the bus (base64-framed through the hub) — there's no MessagePort across a
+ *     wire. On the desktop everything is local, so we keep these on the preload
+ *     IPC, which streams bytes over a direct MessagePort: no hub hop, no base64,
+ *     no coalescing latency. The bus PTY path is therefore web-only.
  *
  *   • host-only desktop concerns — native OS dialogs, plugin management, OS
  *     notifications / ambient focus, window chrome, browser cookie import, and
- *     the MessagePort terminal-exit signal. These have no bus equivalent (they
- *     need the Electron main process), so they stay on the real preload IPC.
+ *     the terminal-exit signal. These have no bus equivalent (they need the
+ *     Electron main process), so they stay on the real preload IPC.
  *
- * So this wraps the web (bus) backend and overrides just the host-only slice
- * with the preload's IPC implementations. Toggle the whole thing off with
- * WORKSPACER_DESKTOP_DIRECT=1 (see brainDelegation) to keep pure IPC.
+ * So this wraps the web (bus) backend and overrides the local-terminal and
+ * host-only slices with the preload's IPC implementations. Toggle the whole
+ * thing off with WORKSPACER_DESKTOP_DIRECT=1 (see brainDelegation) for pure IPC.
  */
 
 import type { ElectronAPI } from '../types/electron';
 import { createWebBackend } from './webBackend';
 
 /**
- * Methods that must keep using the Electron preload (IPC) even in bus mode —
+ * Local terminal byte transport — kept on the preload IPC so the desktop streams
+ * PTY bytes over a direct MessagePort instead of the bus's `pty.bytes` events
+ * (which exist for the web, where the bytes must cross a network). This is the
+ * whole create/spawn → attach → stream/write/resize → close lifecycle, since the
+ * MessagePort a viewer reads from is established by the IPC spawn/attach and torn
+ * down by the IPC close/detach; splitting it across transports would orphan the
+ * port. Driving (message/approve/answer/signal/gate) and observation
+ * (snapshots) are NOT here — they carry no bytes and stay on the bus mirror.
+ */
+const LOCAL_TERMINAL = [
+  'createTerminal', // shell PTY spawn → main delivers its MessagePort
+  'writeTerminal',
+  'resizeTerminal',
+  'closeTerminal',
+  'onTerminalOutput',
+  'spawnClaude', // claude session spawn → main delivers its byte MessagePort
+  'attachClaude', // viewer pane → its own MessagePort
+  'detachClaude',
+  'onClaudeOutput',
+  'claudeWrite',
+  'claudeResize',
+  'claudeClose',
+] as const satisfies readonly (keyof ElectronAPI)[];
+
+/**
+ * Host-only desktop concerns that must keep using the Electron preload (IPC) —
  * they reach native/OS/main-process facilities the bus doesn't expose.
  */
 const HOST_ONLY = [
@@ -61,7 +95,9 @@ export function createBridgedBackend(ipc: ElectronAPI, token: string, busUrl: st
   // uses to gate native-only chrome like the Windows titlebar overlay).
   api.platform = ipc.platform;
 
-  for (const key of HOST_ONLY) {
+  // Delegate the local-terminal and host-only slices back to the preload IPC;
+  // everything else stays on the bus (the web backend's implementation).
+  for (const key of [...LOCAL_TERMINAL, ...HOST_ONLY]) {
     const fn = ipc[key];
     if (typeof fn === 'function') {
       // Bind to the preload object so its IPC closures keep their `this`.
