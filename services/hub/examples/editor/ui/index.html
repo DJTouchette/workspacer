@@ -64,17 +64,10 @@
     .banner { padding: 4px 10px; background: var(--wks-bg-raised, #4a3a1a); color: var(--wks-warning, #e2c08d); border-left: 2px solid var(--wks-warning, #e2c08d); font-size: 12px; display: none; }
     .banner.show { display: flex; gap: 8px; align-items: center; }
     .banner button { padding: 0 8px; }
-    .editArea { flex: 1; display: flex; min-height: 0; }
-    .gutter {
-      padding: 10px 6px 10px 0; text-align: right; color: var(--wks-text-faint, #555);
-      background: var(--wks-bg-base, #1e1e1e);
-      overflow: hidden; user-select: none; white-space: pre; min-width: 40px;
-    }
-    textarea {
-      flex: 1; resize: none; border: 0; outline: none; padding: 10px;
-      font: inherit; background: var(--wks-bg-base, #1e1e1e); color: var(--wks-text-primary, #d4d4d4);
-      tab-size: 2; white-space: pre; overflow-wrap: normal;
-    }
+    .editArea { flex: 1; min-height: 0; overflow: hidden; }
+    .cm-editor { height: 100%; }
+    .cm-editor.cm-focused { outline: none; }
+    .cm-scroller { overflow: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
     .empty { margin: 16px; color: var(--wks-text-muted, #777); }
     footer { padding: 4px 10px; border-top: 1px solid var(--wks-border, #333); background: var(--wks-bg-header, #252526); font-size: 11px; color: var(--wks-text-muted, #888); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     footer.bad { color: var(--wks-error, #cf6f6f); }
@@ -118,14 +111,12 @@
         <button id="reload">Reload</button>
         <button id="dismiss">Keep mine</button>
       </div>
-      <div class="editArea">
-        <div class="gutter" id="gutter">1</div>
-        <textarea id="text" spellcheck="false" placeholder="Select a file from the tree…"></textarea>
-      </div>
+      <div class="editArea" id="cmHost"></div>
     </div>
   </div>
   <footer id="status">Reads, writes, and search are confined to the project above; anything outside is rejected by the bus.</footer>
 
+  <script src="cm.bundle.js"></script>
   <script>
     // ── bus client (calls + events) ─────────────────────────────────────────────
     const params = new URLSearchParams(location.search);
@@ -157,7 +148,7 @@
 
     // ── elements / state ────────────────────────────────────────────────────────
     const $ = (id) => document.getElementById(id);
-    const treeEl = $('tree'), textEl = $('text'), gutterEl = $('gutter'),
+    const treeEl = $('tree'),
           nameEl = $('filename'), dirtyEl = $('dirty'), saveEl = $('save'),
           statusEl = $('status'), connEl = $('conn'), rootEl = $('root'),
           bannerEl = $('banner');
@@ -170,7 +161,7 @@
 
     const setStatus = (msg, kind) => { statusEl.textContent = msg; statusEl.className = kind || ''; };
     function markDirty() {
-      const dirty = current && textEl.value !== saved;
+      const dirty = current && view.state.doc.toString() !== saved;
       dirtyEl.textContent = dirty ? '●' : '';
       saveEl.disabled = !dirty;
     }
@@ -242,15 +233,118 @@
     $('newFile').innerHTML = svg('plus') + ' New';
     $('refresh').innerHTML = svg('rotate-cw');
 
-    // ── line-number gutter ──────────────────────────────────────────────────────
-    function updateGutter() {
-      const lines = textEl.value.split('\n').length;
-      let s = '';
-      for (let i = 1; i <= lines; i++) s += i + '\n';
-      gutterEl.textContent = s || '1';
-      gutterEl.scrollTop = textEl.scrollTop;
+    // ── CodeMirror editor ───────────────────────────────────────────────────────
+    const CM = window.CM;
+    const langComp = new CM.Compartment();   // language by file extension
+    const vimComp = new CM.Compartment();    // vim mode (setting)
+    const tabComp = new CM.Compartment();    // tab size (setting)
+    const wrapComp = new CM.Compartment();   // soft wrap (setting)
+
+    // A dark syntax palette; colors read fine on the default themes.
+    const t = CM.tags;
+    const highlight = CM.HighlightStyle.define([
+      { tag: t.keyword, color: '#c586c0' },
+      { tag: [t.name, t.deleted, t.character, t.propertyName, t.macroName], color: '#9cdcfe' },
+      { tag: [t.function(t.variableName), t.labelName], color: '#dcdcaa' },
+      { tag: [t.color, t.constant(t.name), t.standard(t.name)], color: '#4fc1ff' },
+      { tag: [t.typeName, t.className, t.number, t.changed, t.annotation, t.modifier, t.self, t.namespace], color: '#4ec9b0' },
+      { tag: [t.operator, t.operatorKeyword, t.url, t.escape, t.regexp, t.link, t.special(t.string)], color: '#d4d4d4' },
+      { tag: [t.meta, t.comment], color: '#6a9955', fontStyle: 'italic' },
+      { tag: t.strong, fontWeight: 'bold' },
+      { tag: t.emphasis, fontStyle: 'italic' },
+      { tag: [t.string, t.inserted], color: '#ce9178' },
+      { tag: t.invalid, color: '#f44747' },
+    ]);
+    // Theme tied to the host's --wks-* tokens, so the editor matches the app.
+    const cmTheme = CM.EditorView.theme({
+      '&': { height: '100%', fontSize: '13px', color: 'var(--wks-text-primary, #d4d4d4)', backgroundColor: 'var(--wks-bg-base, #1e1e1e)' },
+      '.cm-content': { caretColor: 'var(--wks-text-primary, #fff)' },
+      '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--wks-text-primary, #fff)' },
+      '.cm-gutters': { backgroundColor: 'var(--wks-bg-base, #1e1e1e)', color: 'var(--wks-text-faint, #555)', border: 'none' },
+      '.cm-activeLineGutter': { backgroundColor: 'transparent', color: 'var(--wks-text-muted, #888)' },
+      '.cm-activeLine': { backgroundColor: 'var(--wks-bg-hover, #2a2d2e)' },
+      '.cm-selectionBackground, .cm-content ::selection': { backgroundColor: 'var(--wks-bg-selected, #094771)' },
+      '&.cm-focused .cm-selectionBackground': { backgroundColor: 'var(--wks-bg-selected, #094771)' },
+      '.cm-matchingBracket': { backgroundColor: 'var(--wks-bg-hover, #2a2d2e)', outline: '1px solid var(--wks-border-active, #888)' },
+    }, { dark: true });
+
+    const view = new CM.EditorView({
+      parent: $('cmHost'),
+      state: CM.EditorState.create({
+        doc: '',
+        extensions: [
+          vimComp.of([]), // must precede the keymaps to capture keys when on
+          CM.lineNumbers(),
+          CM.highlightActiveLineGutter(),
+          CM.highlightActiveLine(),
+          CM.highlightSpecialChars(),
+          CM.history(),
+          CM.drawSelection(),
+          CM.dropCursor(),
+          CM.indentOnInput(),
+          CM.bracketMatching(),
+          CM.closeBrackets(),
+          CM.highlightSelectionMatches(),
+          CM.syntaxHighlighting(highlight, { fallback: true }),
+          CM.keymap.of([
+            { key: 'Mod-s', preventDefault: true, run: () => { save(); return true; } },
+            { key: 'Mod-p', preventDefault: true, run: () => { showView('search'); return true; } },
+            CM.indentWithTab,
+            ...CM.closeBracketsKeymap, ...CM.defaultKeymap, ...CM.historyKeymap,
+            ...CM.searchKeymap, ...CM.completionKeymap, ...CM.lintKeymap,
+          ]),
+          langComp.of([]),
+          tabComp.of([CM.indentUnit.of('  '), CM.EditorState.tabSize.of(2)]),
+          wrapComp.of([]),
+          cmTheme,
+          CM.EditorView.updateListener.of((u) => { if (u.docChanged) markDirty(); }),
+        ],
+      }),
+    });
+
+    function setDoc(content) {
+      view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: content } });
     }
-    textEl.addEventListener('scroll', () => { gutterEl.scrollTop = textEl.scrollTop; });
+    // Map a file name to a CodeMirror language extension.
+    function langForFile(name) {
+      const lower = name.toLowerCase();
+      const ext = lower.includes('.') ? lower.split('.').pop() : lower;
+      const L = CM.langs;
+      switch (ext) {
+        case 'js': case 'jsx': case 'mjs': case 'cjs': return L.javascript({ jsx: true });
+        case 'ts': return L.javascript({ typescript: true });
+        case 'tsx': return L.javascript({ typescript: true, jsx: true });
+        case 'py': return L.python();
+        case 'rs': return L.rust();
+        case 'go': return L.go();
+        case 'json': case 'jsonc': return L.json();
+        case 'css': case 'scss': case 'less': return L.css();
+        case 'html': case 'htm': case 'vue': case 'svelte': return L.html();
+        case 'md': case 'markdown': case 'mdx': return L.markdown();
+        case 'c': case 'h': case 'cpp': case 'cc': case 'hpp': case 'cxx': return L.cpp();
+        case 'java': return L.java();
+        case 'php': return L.php();
+        case 'xml': case 'svg': return L.xml();
+        case 'yml': case 'yaml': return L.yaml();
+        case 'sql': return L.sql();
+        default: return [];
+      }
+    }
+
+    // ── settings (vim / tab size / soft wrap), live via the host bridge ──────────
+    function applySettings(s) {
+      s = s || {};
+      const vimOn = !!s.vimMode;
+      const tab = Number(s.tabSize) > 0 ? Math.min(8, Math.round(Number(s.tabSize))) : 2;
+      const wrap = !!s.lineWrap;
+      view.dispatch({ effects: [
+        vimComp.reconfigure(vimOn ? CM.vim() : []),
+        tabComp.reconfigure([CM.indentUnit.of(' '.repeat(tab)), CM.EditorState.tabSize.of(tab)]),
+        wrapComp.reconfigure(wrap ? CM.EditorView.lineWrapping : []),
+      ] });
+    }
+    applySettings(window.__WKS_SETTINGS__);
+    window.addEventListener('wks-settings', (e) => applySettings(e.detail));
 
     // ── file tree (lazy) ────────────────────────────────────────────────────────
     async function listDir(path) {
@@ -311,13 +405,16 @@
         const res = await call('fs.read', { path });
         current = { path, name: name || path.split('/').pop() };
         saved = (res && res.contents) || '';
-        textEl.value = saved;
+        view.dispatch({
+          changes: { from: 0, to: view.state.doc.length, insert: saved },
+          effects: langComp.reconfigure(langForFile(current.name)),
+        });
         nameEl.textContent = current.name;
         bannerEl.classList.remove('show');
         document.querySelectorAll('.row.active').forEach((r) => r.classList.remove('active'));
         if (row) row.classList.add('active');
-        updateGutter(); markDirty();
-        if (line) gotoLine(line);
+        markDirty();
+        if (line) gotoLine(line); else view.focus();
         setStatus(`Opened ${path} (${(res && res.size) || 0} bytes)`, 'ok');
         watch(path);
       } catch (e) {
@@ -325,19 +422,19 @@
       }
     }
     function gotoLine(line) {
-      const idx = textEl.value.split('\n').slice(0, Math.max(0, line - 1)).join('\n').length;
-      textEl.focus();
-      textEl.selectionStart = textEl.selectionEnd = idx + (line > 1 ? 1 : 0);
-      // Scroll roughly to the line.
-      const lineHeight = 18;
-      textEl.scrollTop = Math.max(0, (line - 3) * lineHeight);
-      gutterEl.scrollTop = textEl.scrollTop;
+      try {
+        const l = Math.max(1, Math.min(line, view.state.doc.lines));
+        const pos = view.state.doc.line(l).from;
+        view.dispatch({ selection: { anchor: pos }, scrollIntoView: true });
+        view.focus();
+      } catch { /* out-of-range line */ }
     }
     async function save() {
       if (!current) return;
       try {
-        await call('fs.write', { path: current.path, contents: textEl.value });
-        saved = textEl.value; markDirty();
+        const contents = view.state.doc.toString();
+        await call('fs.write', { path: current.path, contents });
+        saved = contents; markDirty();
         setStatus('Saved ' + current.path, 'ok');
       } catch (e) {
         setStatus('Write denied: ' + e.message, 'bad');
@@ -349,7 +446,7 @@
       if (ev.type !== 'fs.changed' || !current) return;
       const info = ev.data || {};
       if (info.path !== current.path) return;
-      if (textEl.value === saved) { reloadCurrent(); }
+      if (view.state.doc.toString() === saved) { reloadCurrent(); }
       else { bannerEl.classList.add('show'); }
     });
     async function reloadCurrent() {
@@ -357,7 +454,7 @@
       try {
         const res = await call('fs.read', { path: current.path });
         saved = (res && res.contents) || '';
-        textEl.value = saved; updateGutter(); markDirty();
+        setDoc(saved); markDirty();
         bannerEl.classList.remove('show');
         setStatus('Reloaded ' + current.path, 'ok');
       } catch (e) { setStatus('Reload failed: ' + e.message, 'bad'); }
@@ -427,20 +524,13 @@
     }
 
     // ── editing keys ────────────────────────────────────────────────────────────
-    textEl.addEventListener('input', () => { updateGutter(); markDirty(); });
+    // CodeMirror owns in-editor keys (incl. Mod-s save, Mod-p project search via
+    // its keymap). This window-level fallback covers focus outside the editor
+    // (e.g. the file tree); the calls are idempotent so a double-fire is harmless.
     saveEl.addEventListener('click', save);
     window.addEventListener('keydown', (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); save(); }
-      else if ((e.metaKey || e.ctrlKey) && (e.key === 'p' || e.key === 'f')) { e.preventDefault(); showView('search'); }
-    });
-    textEl.addEventListener('keydown', (e) => {
-      if (e.key === 'Tab') {
-        e.preventDefault();
-        const s = textEl.selectionStart, en = textEl.selectionEnd;
-        textEl.value = textEl.value.slice(0, s) + '  ' + textEl.value.slice(en);
-        textEl.selectionStart = textEl.selectionEnd = s + 2;
-        updateGutter(); markDirty();
-      }
+      else if ((e.metaKey || e.ctrlKey) && e.key === 'p') { e.preventDefault(); showView('search'); }
     });
 
     // ── lifecycle ─────────────────────────────────────────────────────────────

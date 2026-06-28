@@ -9,6 +9,11 @@
   "hotkeys": [
     { "id": "open-editor", "default": "ctrl+shift+d", "command": "open-pane:workspacer.editor" }
   ],
+  "settings": [
+    { "key": "vimMode", "label": "Vim mode", "type": "boolean", "default": false, "help": "Vim keybindings inside the editor." },
+    { "key": "tabSize", "label": "Tab size", "type": "number", "default": 2, "help": "Spaces per indent (1–8)." },
+    { "key": "lineWrap", "label": "Soft wrap", "type": "boolean", "default": false, "help": "Wrap long lines instead of scrolling." }
+  ],
   "capabilities": [
     { "method": "fs.listEntries", "paths": ["${agentCwd}"] },
     { "method": "fs.read", "paths": ["${agentCwd}"] },
