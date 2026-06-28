@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Editor</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      display: flex; flex-direction: column;
+      font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+      background: #1e1e1e; color: #d4d4d4;
+    }
+    header {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 10px; border-bottom: 1px solid #333; background: #252526;
+      font-size: 12px;
+    }
+    header .lock { color: #6fcf7f; }
+    header .root { color: #9cdcfe; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    header .spacer { flex: 1; }
+    .main { flex: 1; display: flex; min-height: 0; }
+    #tree {
+      width: 260px; flex-shrink: 0; overflow: auto; padding: 6px 0;
+      border-right: 1px solid #333; background: #1b1b1b; user-select: none;
+    }
+    .row { padding: 2px 8px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .row:hover { background: #2a2d2e; }
+    .row.active { background: #094771; }
+    .row .twist { display: inline-block; width: 12px; color: #888; }
+    .editor { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+    .filebar {
+      display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+      border-bottom: 1px solid #333; background: #252526; font-size: 12px;
+    }
+    .filebar .name { color: #d4d4d4; }
+    .filebar .dirty { color: #e2c08d; }
+    .filebar .spacer { flex: 1; }
+    button {
+      font: inherit; font-size: 12px; padding: 2px 10px; border-radius: 4px;
+      border: 1px solid #3c3c3c; background: #0e639c; color: #fff; cursor: pointer;
+    }
+    button:disabled { opacity: 0.5; cursor: default; }
+    textarea {
+      flex: 1; resize: none; border: 0; outline: none; padding: 10px;
+      font: inherit; background: #1e1e1e; color: #d4d4d4; tab-size: 2;
+    }
+    .empty { margin: auto; color: #777; text-align: center; padding: 24px; }
+    footer {
+      padding: 4px 10px; border-top: 1px solid #333; background: #252526;
+      font-size: 11px; color: #888; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    footer.bad { color: #cf6f6f; }
+    footer.ok { color: #6fcf7f; }
+  </style>
+</head>
+<body>
+  <header>
+    <span class="lock">🔒</span>
+    <span>sandboxed to</span>
+    <span class="root" id="root">…</span>
+    <span class="spacer"></span>
+    <span id="conn">connecting…</span>
+  </header>
+  <div class="main">
+    <div id="tree"></div>
+    <div class="editor">
+      <div class="filebar">
+        <span class="name" id="filename">No file open</span>
+        <span class="dirty" id="dirty"></span>
+        <span class="spacer"></span>
+        <button id="save" disabled>Save (⌘/Ctrl+S)</button>
+      </div>
+      <textarea id="text" spellcheck="false" placeholder="Select a file from the tree…"></textarea>
+    </div>
+  </div>
+  <footer id="status">The per-pane token confines every read and write to the project above. Anything outside is rejected by the bus.</footer>
+
+  <script>
+    // ── bus client ────────────────────────────────────────────────────────────
+    const params = new URLSearchParams(location.search);
+    const token = params.get('busToken') || '';
+    const cwd = params.get('cwd') || '';
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${proto}//${location.host}/bus?token=${encodeURIComponent(token)}`);
+
+    let seq = 1;
+    const pending = new Map();
+    function call(method, p = {}) {
+      return new Promise((resolve, reject) => {
+        const id = 'c' + seq++;
+        pending.set(id, { resolve, reject });
+        ws.send(JSON.stringify({ op: 'call', id, method, params: p }));
+      });
+    }
+    ws.onmessage = (ev) => {
+      let f; try { f = JSON.parse(ev.data); } catch { return; }
+      const c = f.id && pending.get(f.id);
+      if (!c) return;
+      pending.delete(f.id);
+      if (f.op === 'result') c.resolve(f.result);
+      else if (f.op === 'error') c.reject(new Error(f.error || 'error'));
+    };
+
+    // ── elements ──────────────────────────────────────────────────────────────
+    const $ = (id) => document.getElementById(id);
+    const treeEl = $('tree'), textEl = $('text'), nameEl = $('filename'),
+          dirtyEl = $('dirty'), saveEl = $('save'), statusEl = $('status'),
+          connEl = $('conn'), rootEl = $('root');
+
+    rootEl.textContent = cwd || '(no project — open the editor inside an agent)';
+
+    let current = null;   // { path } of the open file
+    let saved = '';       // last-saved contents
+    const expanded = new Set();
+
+    function setStatus(msg, kind) {
+      statusEl.textContent = msg;
+      statusEl.className = kind || '';
+    }
+    function markDirty() {
+      const dirty = current && textEl.value !== saved;
+      dirtyEl.textContent = dirty ? '●' : '';
+      saveEl.disabled = !dirty;
+    }
+
+    // ── file tree (lazy) ────────────────────────────────────────────────────────
+    async function listDir(path) {
+      const res = await call('fs.listEntries', { path });
+      const entries = (res && res.entries) || [];
+      // Directories first, then files; alphabetical within each.
+      entries.sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1));
+      return entries;
+    }
+
+    async function renderTree() {
+      treeEl.innerHTML = '';
+      if (!cwd) { treeEl.innerHTML = '<div class="empty">No project directory.</div>'; return; }
+      try {
+        await renderLevel(cwd, 0, treeEl);
+      } catch (e) {
+        treeEl.innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`;
+      }
+    }
+
+    async function renderLevel(dirPath, depth, container) {
+      const entries = await listDir(dirPath);
+      for (const e of entries) {
+        if (e.name.startsWith('.')) continue; // hide dotfiles for a tidy tree
+        const row = document.createElement('div');
+        row.className = 'row';
+        row.style.paddingLeft = (8 + depth * 14) + 'px';
+        const isOpen = expanded.has(e.path);
+        row.innerHTML = `<span class="twist">${e.isDir ? (isOpen ? '▾' : '▸') : ''}</span>${e.isDir ? '📁' : '📄'} ${escapeHtml(e.name)}`;
+        container.appendChild(row);
+
+        if (e.isDir) {
+          const child = document.createElement('div');
+          container.appendChild(child);
+          if (isOpen) renderLevel(e.path, depth + 1, child).catch(() => {});
+          row.onclick = async () => {
+            if (expanded.has(e.path)) { expanded.delete(e.path); child.innerHTML = ''; row.querySelector('.twist').textContent = '▸'; }
+            else {
+              expanded.add(e.path); row.querySelector('.twist').textContent = '▾';
+              child.innerHTML = '';
+              try { await renderLevel(e.path, depth + 1, child); }
+              catch (err) { setStatus(err.message, 'bad'); }
+            }
+          };
+        } else {
+          row.onclick = () => openFile(e.path, e.name, row);
+        }
+      }
+    }
+
+    // ── open / save ─────────────────────────────────────────────────────────────
+    async function openFile(path, name, row) {
+      try {
+        const res = await call('fs.read', { path });
+        current = { path };
+        saved = (res && res.contents) || '';
+        textEl.value = saved;
+        nameEl.textContent = name;
+        document.querySelectorAll('.row.active').forEach((r) => r.classList.remove('active'));
+        if (row) row.classList.add('active');
+        markDirty();
+        setStatus(`Opened ${path} (${(res && res.size) || 0} bytes)`, 'ok');
+      } catch (e) {
+        // A read the bus rejected as out-of-scope lands here — the sandbox at work.
+        setStatus('Read denied: ' + e.message, 'bad');
+      }
+    }
+
+    async function save() {
+      if (!current) return;
+      try {
+        await call('fs.write', { path: current.path, contents: textEl.value });
+        saved = textEl.value;
+        markDirty();
+        setStatus('Saved ' + current.path, 'ok');
+      } catch (e) {
+        setStatus('Write denied: ' + e.message, 'bad');
+      }
+    }
+
+    textEl.addEventListener('input', markDirty);
+    saveEl.addEventListener('click', save);
+    window.addEventListener('keydown', (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); save(); }
+    });
+    // Tab inserts an indent instead of moving focus.
+    textEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        const s = textEl.selectionStart, en = textEl.selectionEnd;
+        textEl.value = textEl.value.slice(0, s) + '  ' + textEl.value.slice(en);
+        textEl.selectionStart = textEl.selectionEnd = s + 2;
+        markDirty();
+      }
+    });
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
+    // ── lifecycle ─────────────────────────────────────────────────────────────
+    ws.onopen = () => { connEl.textContent = 'connected'; renderTree(); };
+    ws.onclose = () => { connEl.textContent = 'disconnected'; };
+  </script>
+</body>
+</html>

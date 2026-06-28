@@ -26,3 +26,6 @@ services/hub/brain.exe
 # untracked. Re-include the directory and its contents for this repo.
 !apps/desktop/src/renderer/src/components/claude/
 !apps/desktop/src/renderer/src/components/claude/**
+
+# Per-plugin bus tokens are minted at runtime; never commit them.
+.bus-token

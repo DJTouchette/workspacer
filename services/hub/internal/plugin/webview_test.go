@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/djtouchette/workspacer-hub/internal/capspec"
 	"github.com/djtouchette/workspacer-hub/internal/event"
 )
 
@@ -26,6 +27,49 @@ func TestExampleHelloScopedLoads(t *testing.T) {
 	// The declared ui dir should actually exist next to the manifest.
 	if _, statErr := os.Stat(filepath.Join(mf.Dir, mf.UI, "index.html")); statErr != nil {
 		t.Errorf("example ui/index.html missing: %v", statErr)
+	}
+}
+
+// The editor plugin is the canonical extraction: a webview-only plugin whose
+// filesystem capabilities are scoped to ${agentCwd}. Pin its shape — a token
+// minted for it on an agent must confine fs.* to that agent's project, and at
+// static load it must have no filesystem reach at all.
+func TestExampleEditorIsSandboxed(t *testing.T) {
+	path := filepath.Join("..", "..", "examples", "editor", "plugin.json")
+	mf, err := Load(path)
+	if err != nil {
+		t.Fatalf("loading the editor example: %v", err)
+	}
+	if mf.Server != nil || mf.UI == "" {
+		t.Fatal("the editor must be webview-only (ui, no server)")
+	}
+	// Every filesystem capability it declares must be scoped to ${agentCwd}.
+	fsCaps := 0
+	for _, c := range mf.Capabilities {
+		if _, scoped := capspec.IsPathScoped(c.Method); scoped {
+			fsCaps++
+			if len(c.Paths) != 1 || c.Paths[0] != "${agentCwd}" {
+				t.Errorf("capability %q scoped to %v, want [${agentCwd}]", c.Method, c.Paths)
+			}
+		}
+	}
+	if fsCaps == 0 {
+		t.Fatal("the editor should declare filesystem capabilities")
+	}
+
+	// Static load: ${agentCwd} unbound → no filesystem reach.
+	for _, g := range grantsFor(mf) {
+		if _, scoped := capspec.IsPathScoped(g.Method); scoped && len(g.FSRoots) != 0 {
+			t.Errorf("static grant for %q has roots %v, want none", g.Method, g.FSRoots)
+		}
+	}
+	// A pane token bound to an agent cwd → fs.* confined to that project.
+	for _, g := range grantsWithBindings(mf, map[string]string{"agentCwd": "/work/proj"}) {
+		if _, scoped := capspec.IsPathScoped(g.Method); scoped {
+			if len(g.FSRoots) != 1 || g.FSRoots[0] != "/work/proj" {
+				t.Errorf("pane grant for %q = %v, want [/work/proj]", g.Method, g.FSRoots)
+			}
+		}
 	}
 }
 
