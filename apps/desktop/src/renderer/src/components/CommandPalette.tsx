@@ -6,7 +6,7 @@ import type { LibraryItem, LibraryAction } from '../types/library';
 import { runLibraryItem } from '../lib/libraryBus';
 import {
   PaneIcon, Globe, Puzzle, Blocks, Brain, Bot, Zap, BarChart3, LayoutGrid, FolderOpen, Plus, Smartphone,
-  Columns3, Settings, Star, type LucideIcon,
+  Columns3, Settings, Star, IconSearch, type LucideIcon,
 } from './icons';
 import { shortcutFor } from '../lib/shortcuts';
 
@@ -424,8 +424,14 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Search input */}
-        <div style={{ padding: '12px 12px 8px' }}>
+        {/* Search input — leading pack search glyph */}
+        <div style={{ padding: '12px 12px 8px', position: 'relative' }}>
+          <IconSearch
+            size={15}
+            strokeWidth={2}
+            accent="currentColor"
+            style={{ position: 'absolute', left: '22px', top: '50%', transform: 'translateY(-50%)', color: 'var(--wks-text-faint)', pointerEvents: 'none' }}
+          />
           <input
             ref={inputRef}
             value={query}
@@ -436,7 +442,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
             style={{
               width: '100%',
               height: '32px',
-              padding: '0 12px',
+              padding: '0 12px 0 34px',
               fontSize: '0.8rem',
               fontFamily: 'inherit',
               backgroundColor: 'var(--wks-bg-input)',

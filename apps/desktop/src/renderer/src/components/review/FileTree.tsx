@@ -6,7 +6,8 @@
  */
 
 import React, { useMemo, useState } from 'react';
-import { ChevronRight, Folder, FolderOpen } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
+import { IconFolder } from '../wksIcons';
 import { claudeColors as colors } from '../claude-shared';
 import type { FileStatus, NumstatEntry } from '../../lib/gitQueries';
 import { ensureReviewStyles } from './reviewStyles';
@@ -175,7 +176,6 @@ const FileTree: React.FC<FileTreeProps> = ({
 
   const renderDir = (dir: DirNode, depth: number): React.ReactNode => {
     const isCollapsed = collapsed.has(dir.path);
-    const FolderIcon = isCollapsed ? Folder : FolderOpen;
     return (
       <React.Fragment key={dir.path}>
         <div
@@ -200,7 +200,7 @@ const FileTree: React.FC<FileTreeProps> = ({
             size={11}
             style={{ flexShrink: 0, transform: isCollapsed ? 'none' : 'rotate(90deg)' }}
           />
-          <FolderIcon size={12} style={{ flexShrink: 0, opacity: 0.8 }} />
+          <IconFolder size={13} strokeWidth={2} style={{ flexShrink: 0, opacity: 0.8 }} />
           <span
             style={{
               overflow: 'hidden',
