@@ -1,0 +1,432 @@
+//! Codex adapter — translate `codex app-server` notifications into claudemon's
+//! session model.
+//!
+//! Codex's app server speaks JSON-RPC 2.0 over stdio (newline-delimited JSON).
+//! We `thread/start` (model + cwd) for a thread, `turn/start` each user prompt,
+//! and consume the streamed notifications: `turn/started|completed|failed`,
+//! `item/started|completed` (commandExecution / fileChange / mcpToolCall / …),
+//! `item/agentMessage/delta` (streamed text), `thread/tokenUsage/updated`, and
+//! the approval requests (`item/commandExecution/requestApproval`,
+//! `item/fileChange/requestApproval`).
+//!
+//! The pure `translate(method, params)` is unit-tested; the live stdio client
+//! needs a real `codex` binary to validate end-to-end.
+
+use std::process::Stdio;
+
+use anyhow::Context;
+use serde_json::{json, Value};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::process::{ChildStdin, Command};
+use tokio::sync::mpsc;
+
+use super::{apply_updates, AgentUpdate, UsageAcc};
+use crate::session::conversation::ConversationItem;
+use crate::session::state::SessionMode;
+use crate::session::{ConversationStore, SessionStore};
+
+/// Translate one Codex app-server message (`method` + `params`) into typed
+/// updates. Pure and total: unknown methods / missing fields yield an
+/// empty/partial result.
+pub fn translate(method: &str, params: &Value) -> Vec<AgentUpdate> {
+    let mut out = Vec::new();
+    match method {
+        "turn/started" => out.push(AgentUpdate::Busy),
+        "turn/completed" => out.push(AgentUpdate::Idle),
+        "turn/failed" => {
+            let msg = params
+                .get("error")
+                .and_then(|e| e.get("message").or_else(|| e.get("data")))
+                .and_then(Value::as_str)
+                .or_else(|| params.get("message").and_then(Value::as_str))
+                .unwrap_or("turn failed");
+            out.push(AgentUpdate::Error(msg.to_string()));
+            out.push(AgentUpdate::Idle);
+        }
+        // Streamed assistant text. Reasoning/command-output deltas are skipped
+        // (kept out of the conversation to avoid noise).
+        "item/agentMessage/delta" => {
+            if let Some(text) = params
+                .get("delta")
+                .and_then(Value::as_str)
+                .or_else(|| params.get("text").and_then(Value::as_str))
+            {
+                if !text.is_empty() {
+                    out.push(AgentUpdate::AssistantText(text.to_string()));
+                }
+            }
+        }
+        "item/started" | "item/completed" => {
+            if let Some(item) = params.get("item") {
+                translate_item(method, item, &mut out);
+            }
+        }
+        "thread/tokenUsage/updated" => {
+            let u = params.get("usage").unwrap_or(params);
+            let input = u.get("input_tokens").and_then(Value::as_u64);
+            let output = u.get("output_tokens").and_then(Value::as_u64);
+            if input.is_some() || output.is_some() {
+                out.push(AgentUpdate::Usage {
+                    model: None,
+                    input_tokens: input,
+                    output_tokens: output,
+                    cost_usd: None,
+                });
+            }
+        }
+        "item/commandExecution/requestApproval" => {
+            let cmd = command_text(params);
+            out.push(AgentUpdate::PermissionPending {
+                tool: Some("command".into()),
+                summary: cmd,
+            });
+        }
+        "item/fileChange/requestApproval" => {
+            let path = params
+                .get("path")
+                .and_then(Value::as_str)
+                .or_else(|| params.get("item").and_then(|i| i.get("path")).and_then(Value::as_str))
+                .map(str::to_owned);
+            out.push(AgentUpdate::PermissionPending {
+                tool: Some("file change".into()),
+                summary: path,
+            });
+        }
+        _ => {}
+    }
+    out
+}
+
+/// Map a started/completed `item` to a tool-use update. Only `item/started`
+/// emits tool-uses (so a tool isn't recorded twice); assistant text arrives via
+/// `item/agentMessage/delta`, so completed agentMessage items are not re-emitted.
+fn translate_item(method: &str, item: &Value, out: &mut Vec<AgentUpdate>) {
+    if method != "item/started" {
+        return;
+    }
+    let ty = item
+        .get("type")
+        .and_then(Value::as_str)
+        .or_else(|| item.get("itemType").and_then(Value::as_str))
+        .unwrap_or("");
+    let id = item.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+    match ty {
+        "commandExecution" => {
+            let input = item
+                .get("command")
+                .cloned()
+                .map(|c| json!({ "command": c }))
+                .unwrap_or(Value::Null);
+            out.push(AgentUpdate::ToolUse { id, name: "shell".into(), input });
+        }
+        "fileChange" => {
+            let input = json!({ "path": item.get("path").cloned().unwrap_or(Value::Null) });
+            out.push(AgentUpdate::ToolUse { id, name: "apply_patch".into(), input });
+        }
+        "mcpToolCall" => {
+            let name = item
+                .get("tool")
+                .and_then(Value::as_str)
+                .or_else(|| item.get("name").and_then(Value::as_str))
+                .unwrap_or("mcp")
+                .to_string();
+            let input = item.get("arguments").or_else(|| item.get("input")).cloned().unwrap_or(Value::Null);
+            out.push(AgentUpdate::ToolUse { id, name, input });
+        }
+        "webSearch" => {
+            let input = item.get("query").cloned().map(|q| json!({ "query": q })).unwrap_or(Value::Null);
+            out.push(AgentUpdate::ToolUse { id, name: "web_search".into(), input });
+        }
+        _ => {}
+    }
+}
+
+/// The command string for an approval request, whether it's a plain string or a
+/// list of argv parts.
+fn command_text(params: &Value) -> Option<String> {
+    let cmd = params
+        .get("command")
+        .or_else(|| params.get("item").and_then(|i| i.get("command")))?;
+    match cmd {
+        Value::String(s) => Some(s.clone()),
+        Value::Array(parts) => Some(
+            parts
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join(" "),
+        ),
+        _ => None,
+    }
+}
+
+// ── Live client ─────────────────────────────────────────────────────────────
+
+/// Spawn and drive a Codex-managed session in the background. Returns
+/// immediately; the session id is already registered in `store` by the caller.
+pub fn spawn_session(
+    store: SessionStore,
+    conv: ConversationStore,
+    session_id: String,
+    cwd: String,
+    model: Option<String>,
+    bin: String,
+) {
+    tokio::spawn(async move {
+        if let Err(err) = run_session(&store, &conv, &session_id, &cwd, model, &bin).await {
+            tracing::warn!(?err, session = %session_id, "codex managed session ended with error");
+        }
+        store.deregister_managed(&session_id);
+    });
+}
+
+async fn run_session(
+    store: &SessionStore,
+    conv: &ConversationStore,
+    session_id: &str,
+    cwd: &str,
+    model: Option<String>,
+    bin: &str,
+) -> anyhow::Result<()> {
+    let mut child = Command::new(bin)
+        .arg("app-server")
+        .current_dir(cwd)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .with_context(|| format!("spawning `{bin} app-server`"))?;
+
+    let mut stdin = child.stdin.take().context("codex app-server: no stdin")?;
+    let stdout = child.stdout.take().context("codex app-server: no stdout")?;
+    let mut lines = BufReader::new(stdout).lines();
+
+    // Open a thread (handshake). Its id arrives in the response to id=1.
+    let mut start_params = json!({ "cwd": cwd });
+    if let Some(m) = &model {
+        start_params["model"] = Value::String(m.clone());
+    }
+    write_msg(&mut stdin, &json!({ "jsonrpc": "2.0", "id": 1, "method": "thread/start", "params": start_params })).await?;
+
+    let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+    store.register_managed_input(session_id, tx);
+
+    let mut thread_id: Option<String> = None;
+    let mut pending_prompts: Vec<String> = Vec::new();
+    let mut req_id: u64 = 1;
+    let mut cur_mode = SessionMode::Input;
+    let mut acc = UsageAcc::new();
+
+    loop {
+        tokio::select! {
+            line = lines.next_line() => match line {
+                Ok(Some(line)) => {
+                    if let Ok(value) = serde_json::from_str::<Value>(&line) {
+                        handle_message(
+                            &value, store, conv, session_id, &mut stdin,
+                            &mut thread_id, &mut pending_prompts, &mut req_id,
+                            &mut cur_mode, &mut acc,
+                        ).await;
+                    }
+                }
+                Ok(None) => break, // stdout closed → process gone
+                Err(err) => return Err(err.into()),
+            },
+            msg = rx.recv() => match msg {
+                Some(text) => {
+                    conv.push(session_id, vec![ConversationItem::UserMessage { text: text.clone(), timestamp: None }]);
+                    if cur_mode != SessionMode::Responding {
+                        store.set_managed_mode(session_id, SessionMode::Responding, None);
+                        cur_mode = SessionMode::Responding;
+                    }
+                    match &thread_id {
+                        Some(tid) => {
+                            req_id += 1;
+                            let _ = send_turn(&mut stdin, req_id, tid, &text).await;
+                        }
+                        // Thread not open yet — buffer until the handshake lands.
+                        None => pending_prompts.push(text),
+                    }
+                }
+                None => break, // managed input dropped → terminated
+            },
+            status = child.wait() => {
+                tracing::info!(?status, session = %session_id, "codex app-server exited");
+                break;
+            }
+        }
+    }
+
+    let _ = child.start_kill();
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn handle_message(
+    value: &Value,
+    store: &SessionStore,
+    conv: &ConversationStore,
+    session_id: &str,
+    stdin: &mut ChildStdin,
+    thread_id: &mut Option<String>,
+    pending_prompts: &mut Vec<String>,
+    req_id: &mut u64,
+    cur_mode: &mut SessionMode,
+    acc: &mut UsageAcc,
+) {
+    // A response to one of our requests (the thread/start handshake).
+    if value.get("id").is_some() && (value.get("result").is_some() || value.get("error").is_some()) {
+        if thread_id.is_none() {
+            if let Some(tid) = value
+                .get("result")
+                .and_then(|r| r.get("threadId").or_else(|| r.get("thread").and_then(|t| t.get("id"))))
+                .and_then(Value::as_str)
+            {
+                *thread_id = Some(tid.to_string());
+                // Flush any prompts that arrived before the thread opened.
+                for text in std::mem::take(pending_prompts) {
+                    *req_id += 1;
+                    let _ = send_turn(stdin, *req_id, tid, &text).await;
+                }
+            }
+        }
+        return;
+    }
+
+    let Some(method) = value.get("method").and_then(Value::as_str) else {
+        return;
+    };
+    let params = value.get("params").cloned().unwrap_or(Value::Null);
+
+    let updates = translate(method, &params);
+    if !updates.is_empty() {
+        apply_updates(store, conv, session_id, updates, cur_mode, acc);
+    }
+
+    // Server→client *requests* (they carry an id) must be answered or the agent
+    // blocks. Approval requests are auto-accepted for now — accurate decision
+    // forwarding from the UI is Phase 4. (Run Codex in a sandbox accordingly.)
+    if value.get("id").is_some() && method.ends_with("/requestApproval") {
+        let id = value.get("id").cloned().unwrap_or(Value::Null);
+        let _ = write_msg(stdin, &json!({ "jsonrpc": "2.0", "id": id, "result": { "decision": "accept" } })).await;
+    }
+}
+
+async fn send_turn(stdin: &mut ChildStdin, id: u64, thread_id: &str, text: &str) -> anyhow::Result<()> {
+    write_msg(
+        stdin,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "turn/start",
+            "params": { "threadId": thread_id, "input": [ { "type": "text", "text": text } ] }
+        }),
+    )
+    .await
+}
+
+/// Write one JSON-RPC message as a single newline-delimited line.
+async fn write_msg(stdin: &mut ChildStdin, value: &Value) -> anyhow::Result<()> {
+    let mut line = serde_json::to_vec(value)?;
+    line.push(b'\n');
+    stdin.write_all(&line).await?;
+    stdin.flush().await?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn turn_started_is_busy() {
+        assert_eq!(translate("turn/started", &json!({})), vec![AgentUpdate::Busy]);
+    }
+
+    #[test]
+    fn turn_completed_is_idle() {
+        assert_eq!(translate("turn/completed", &json!({})), vec![AgentUpdate::Idle]);
+    }
+
+    #[test]
+    fn turn_failed_is_error_then_idle() {
+        let p = json!({ "error": { "message": "nope" } });
+        assert_eq!(
+            translate("turn/failed", &p),
+            vec![AgentUpdate::Error("nope".into()), AgentUpdate::Idle]
+        );
+    }
+
+    #[test]
+    fn agent_message_delta_is_assistant_text() {
+        let p = json!({ "delta": "hi there" });
+        assert_eq!(
+            translate("item/agentMessage/delta", &p),
+            vec![AgentUpdate::AssistantText("hi there".into())]
+        );
+    }
+
+    #[test]
+    fn command_execution_item_started_is_tool_use() {
+        let p = json!({ "item": { "type": "commandExecution", "id": "i1", "command": ["bash", "-c", "ls"] } });
+        assert_eq!(
+            translate("item/started", &p),
+            vec![AgentUpdate::ToolUse {
+                id: "i1".into(),
+                name: "shell".into(),
+                input: json!({ "command": ["bash", "-c", "ls"] }),
+            }]
+        );
+    }
+
+    #[test]
+    fn item_completed_does_not_double_emit_tool_use() {
+        let p = json!({ "item": { "type": "commandExecution", "id": "i1", "command": "ls" } });
+        assert!(translate("item/completed", &p).is_empty());
+    }
+
+    #[test]
+    fn token_usage_maps_to_usage() {
+        let p = json!({ "usage": { "input_tokens": 1000, "output_tokens": 200, "cached_input_tokens": 50 } });
+        assert_eq!(
+            translate("thread/tokenUsage/updated", &p),
+            vec![AgentUpdate::Usage {
+                model: None,
+                input_tokens: Some(1000),
+                output_tokens: Some(200),
+                cost_usd: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn command_approval_request_is_pending_with_joined_argv() {
+        let p = json!({ "command": ["rm", "-rf", "build"] });
+        assert_eq!(
+            translate("item/commandExecution/requestApproval", &p),
+            vec![AgentUpdate::PermissionPending {
+                tool: Some("command".into()),
+                summary: Some("rm -rf build".into()),
+            }]
+        );
+    }
+
+    #[test]
+    fn file_change_approval_request_is_pending_with_path() {
+        let p = json!({ "path": "src/main.rs" });
+        assert_eq!(
+            translate("item/fileChange/requestApproval", &p),
+            vec![AgentUpdate::PermissionPending {
+                tool: Some("file change".into()),
+                summary: Some("src/main.rs".into()),
+            }]
+        );
+    }
+
+    #[test]
+    fn unknown_method_is_ignored() {
+        assert!(translate("session/whatever", &json!({ "x": 1 })).is_empty());
+        assert!(translate("item/reasoning/summaryTextDelta", &json!({ "delta": "thinking" })).is_empty());
+    }
+}

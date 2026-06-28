@@ -212,8 +212,8 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, onSpawn
           </div>
           {!isClaude && (
             <div style={{ color: 'var(--wks-text-faint)', fontSize: '0.62rem', marginTop: 5, lineHeight: 1.4 }}>
-              Runs the {PROVIDERS.find((p) => p.value === provider)?.label} CLI in a terminal. Live telemetry
-              (conversation, usage, approvals) is Claude-only for now.
+              Runs via claudemon's {PROVIDERS.find((p) => p.value === provider)?.label} adapter —
+              conversation and usage stream into the agent view. Approvals are auto-accepted for now.
             </div>
           )}
         </Field>

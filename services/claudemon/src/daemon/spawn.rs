@@ -172,7 +172,7 @@ pub async fn handle_managed(
     State(conv): State<ConversationStore>,
     Json(payload): Json<SpawnManagedPayload>,
 ) -> impl IntoResponse {
-    if payload.provider != "opencode" {
+    if payload.provider != "opencode" && payload.provider != "codex" {
         return (
             StatusCode::BAD_REQUEST,
             format!("unsupported managed provider: {}", payload.provider),
@@ -182,18 +182,31 @@ pub async fn handle_managed(
     let session_id = payload
         .session_id
         .unwrap_or_else(|| Uuid::new_v4().to_string());
-    let bin = payload.bin.unwrap_or_else(|| "opencode".to_string());
+    let bin = payload
+        .bin
+        .unwrap_or_else(|| payload.provider.clone());
 
     store.register_managed(&session_id, &payload.cwd);
-    crate::providers::opencode::spawn_session(
-        store.clone(),
-        conv.clone(),
-        session_id.clone(),
-        payload.cwd.clone(),
-        payload.model.clone(),
-        bin,
-    );
-    tracing::info!(%session_id, cwd = %payload.cwd, "spawned managed opencode session");
+    match payload.provider.as_str() {
+        "opencode" => crate::providers::opencode::spawn_session(
+            store.clone(),
+            conv.clone(),
+            session_id.clone(),
+            payload.cwd.clone(),
+            payload.model.clone(),
+            bin,
+        ),
+        "codex" => crate::providers::codex::spawn_session(
+            store.clone(),
+            conv.clone(),
+            session_id.clone(),
+            payload.cwd.clone(),
+            payload.model.clone(),
+            bin,
+        ),
+        _ => unreachable!(),
+    }
+    tracing::info!(%session_id, provider = %payload.provider, cwd = %payload.cwd, "spawned managed session");
 
     Json(json!({ "session_id": session_id, "cwd": payload.cwd })).into_response()
 }

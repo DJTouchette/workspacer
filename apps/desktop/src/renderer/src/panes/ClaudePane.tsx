@@ -64,13 +64,12 @@ const CONVERSATION_PAGE_SIZE = 60;
 const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, profileId, resumeSessionId, attachSessionId, initialPrompt, provider, onPtyReady }) => {
   const { config } = useConfig();
   // Which surfaces this provider has:
-  //   claude   — GUI (hooks/transcript telemetry) + terminal (its PTY)
-  //   opencode — GUI only: a managed session driven by claudemon's adapter,
-  //              no PTY, so the terminal view has nothing to show
-  //   codex    — terminal only: Tier-1, runs its own TUI in the PTY (no
-  //              telemetry yet)
+  //   claude            — GUI (hooks/transcript telemetry) + terminal (its PTY)
+  //   opencode / codex  — GUI only: managed sessions driven by claudemon's
+  //                       adapters (no PTY), so the terminal view has nothing
+  //                       to show
   const isClaude = (provider ?? 'claude') === 'claude';
-  const isManaged = provider === 'opencode';
+  const isManaged = provider === 'opencode' || provider === 'codex';
   const hasGui = isClaude || isManaged;
   const hasTerminal = !isManaged;
   const showViewToggle = hasGui && hasTerminal; // only Claude has both
