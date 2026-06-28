@@ -12,6 +12,10 @@
   "capabilities": [
     { "method": "fs.listEntries", "paths": ["${agentCwd}"] },
     { "method": "fs.read", "paths": ["${agentCwd}"] },
-    { "method": "fs.write", "paths": ["${agentCwd}"] }
-  ]
+    { "method": "fs.write", "paths": ["${agentCwd}"] },
+    { "method": "fs.watch", "paths": ["${agentCwd}"] },
+    { "method": "fs.unwatch", "paths": ["${agentCwd}"] },
+    { "method": "search.project", "paths": ["${agentCwd}"] }
+  ],
+  "consumes": ["fs.changed"]
 }
