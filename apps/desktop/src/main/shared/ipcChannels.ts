@@ -60,6 +60,8 @@ export const IPC = {
   HUB_INSTALL_PLUGIN: 'hub:installPlugin',
   HUB_REMOVE_PLUGIN: 'hub:removePlugin',
   HUB_SET_PLUGIN_ENABLED: 'hub:setPluginEnabled',
+  HUB_PLUGIN_PANE_TOKEN: 'hub:pluginPaneToken',
+  HUB_PLUGIN_PANE_TOKEN_REVOKE: 'hub:pluginPaneTokenRevoke',
   HUB_EVENT: 'hub:event',           // push (main → renderer)
   HUB_STATUS: 'hub:status',         // push (main → renderer)
 

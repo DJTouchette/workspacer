@@ -29,6 +29,10 @@ export interface PaneConfig {
   notes?: string;
   /** Editor panes only: absolute path of the file being edited. */
   filePath?: string;
+  /** Plugin panes only: the contributing plugin's id. Lets the pane mint an
+   *  ephemeral, agent-cwd-scoped bus token on mount (and revoke it on unmount)
+   *  instead of using the broader static per-plugin token. */
+  pluginId?: string;
 }
 
 /** Position + size of a tab's card on the spatial canvas, in world coordinates

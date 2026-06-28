@@ -72,6 +72,8 @@ const HOST_ONLY = [
   'installPlugin',
   'removePlugin',
   'setPluginEnabled',
+  'pluginPaneToken', // trusted-host mint via the hub's guarded route
+  'revokePluginPaneToken',
   'getRemoteInfo', // main owns the remote-share/token state
   'onBeforeQuit', // Electron app lifecycle
   'setActiveSession', // OS notification / ambient awareness

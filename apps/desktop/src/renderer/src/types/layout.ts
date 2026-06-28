@@ -6,6 +6,9 @@ export interface LayoutPane {
   url?: string;
   shell?: string;
   cwd?: string;
+  /** Plugin panes: the contributing plugin's id, so a restored pane can re-mint
+   *  its agent-cwd-scoped token. */
+  pluginId?: string;
 }
 
 export interface LayoutTab {

@@ -106,6 +106,11 @@ export interface ElectronAPI {
   installPlugin: (url: string) => Promise<{ ok: boolean; plugin?: PluginManifest; error?: string }>;
   removePlugin: (id: string) => Promise<{ ok: boolean; error?: string }>;
   setPluginEnabled: (id: string, enabled: boolean) => Promise<{ ok: boolean; plugin?: PluginManifest; error?: string }>;
+  /** Mint an ephemeral, capability-scoped bus token for an agent-scoped plugin
+   *  pane (confines the webview to the agent's cwd). null on failure. */
+  pluginPaneToken?: (pluginId: string, agentCwd?: string) => Promise<string | null>;
+  /** Revoke a pane token minted by pluginPaneToken (on pane close). */
+  revokePluginPaneToken?: (token: string) => Promise<void>;
 
   // Library (reusable prompts + skills)
   libraryList: (cwd?: string) => Promise<LibraryItem[]>;

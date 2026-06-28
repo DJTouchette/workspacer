@@ -221,6 +221,10 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     installPlugin: () => Promise.resolve({ ok: false, error: 'not available over hub' }),
     removePlugin: () => Promise.resolve({ ok: false, error: 'not available over hub' }),
     setPluginEnabled: () => Promise.resolve({ ok: false, error: 'not available over hub' }),
+    // Minting pane tokens is a trusted-host action (it talks to the hub's
+    // guarded route); a web/remote client can't, so it keeps its existing token.
+    pluginPaneToken: () => Promise.resolve(null),
+    revokePluginPaneToken: () => Promise.resolve(),
 
     // ── Library ──────────────────────────────────────────────────────────
     libraryList: (cwd) => client.call('library.list', { cwd }),

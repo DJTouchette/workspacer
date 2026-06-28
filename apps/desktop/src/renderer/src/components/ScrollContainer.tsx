@@ -9,6 +9,7 @@ import { tilingColumns } from '../lib/layoutUtils';
 const TerminalPane = React.lazy(() => import('../panes/TerminalPane'));
 const ClaudePane = React.lazy(() => import('../panes/ClaudePane'));
 const BrowserPane = React.lazy(() => import('../panes/BrowserPane'));
+const PluginPane = React.lazy(() => import('../panes/PluginPane'));
 const NotesPane = React.lazy(() => import('../panes/NotesPane'));
 const EditorPane = React.lazy(() => import('../panes/EditorPane'));
 const SettingsPane = React.lazy(() => import('../panes/SettingsPane'));
@@ -184,10 +185,11 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
         </Suspense>
       );
     case 'plugin':
-      // A plugin-injected pane: a webview onto the plugin sidecar's own UI.
+      // A plugin-injected pane: a webview onto the plugin's own UI. PluginPane
+      // mints/revokes an agent-cwd-scoped bus token around it (see PluginPane).
       return (
         <Suspense fallback={<PaneFallback />}>
-          <BrowserPane paneId={pane.id} title={pane.title} isActive={isActive} initialUrl={pane.url || 'about:blank'} appMode={true} hibernated={pane.hibernated} onUrlChange={() => {}} />
+          <PluginPane paneId={pane.id} title={pane.title} isActive={isActive} url={pane.url || 'about:blank'} hibernated={pane.hibernated} pluginId={pane.pluginId} cwd={pane.cwd} />
         </Suspense>
       );
     case 'plugins':

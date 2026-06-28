@@ -611,7 +611,7 @@ function App() {
         title: t.title,
         panes: t.panes
           .filter((p) => p.type !== 'settings')
-          .map((p) => ({ type: p.type, title: p.title, url: p.url, shell: p.shell, cwd: p.cwd })),
+          .map((p) => ({ type: p.type, title: p.title, url: p.url, shell: p.shell, cwd: p.cwd, pluginId: p.pluginId })),
       })),
     }));
   }, [agents]);
@@ -631,7 +631,7 @@ function App() {
       for (const tab of la.tabs) {
         for (const pane of tab.panes) {
           if (pane.type === 'claude') continue; // primary Claude tab already created
-          openPaneIn(agentId, pane.type as PaneType, pane.title, pane.url, pane.cwd ?? la.cwd);
+          openPaneIn(agentId, pane.type as PaneType, pane.title, pane.url, pane.cwd ?? la.cwd, pane.pluginId);
         }
       }
     }
@@ -921,7 +921,11 @@ function App() {
     if (target?.cwd) params.set('cwd', target.cwd);
     const sep = pane.url.includes('?') ? '&' : '?';
     const url = params.toString() ? `${pane.url}${sep}${params.toString()}` : pane.url;
-    openPaneIn(target ? target.id : GLOBAL_WORKSPACE_ID, 'plugin', pane.title, url);
+    // Pass the plugin id + the agent's cwd so an agent-scoped pane can mint an
+    // ephemeral token confined to that cwd on mount (see PluginPane). The static
+    // busToken stays baked into the URL as the fallback when minting is
+    // unavailable (e.g. the web build, or the hub momentarily unreachable).
+    openPaneIn(target ? target.id : GLOBAL_WORKSPACE_ID, 'plugin', pane.title, url, target?.cwd, pane.pluginId);
   }, [openPaneIn, activeAgent, agents]);
 
   // Bind plugin-contributed hotkeys + library-picker shortcut.

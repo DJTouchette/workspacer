@@ -223,6 +223,34 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     if (token) h['Authorization'] = `Bearer ${token}`;
     return h;
   };
+  // Mint an ephemeral, capability-scoped bus token for one agent-scoped plugin
+  // pane, with ${agentCwd} bound to that agent's working directory. The renderer
+  // injects it into the pane's webview URL so the plugin is confined to that
+  // project's files instead of getting the static per-plugin token's (broader)
+  // scope. Returns null on any failure — the renderer falls back to the static token.
+  ipcMain.handle(IPC.HUB_PLUGIN_PANE_TOKEN, async (_event, pluginId: string, agentCwd?: string) => {
+    try {
+      const res = await fetch(`${HUB_HTTP_URL}/plugins/pane-token`, {
+        method: 'POST',
+        headers: hubAuthHeaders(),
+        body: JSON.stringify({ pluginId, agentCwd: agentCwd ?? '' }),
+      });
+      if (!res.ok) return null;
+      const body = await res.json() as { token?: string };
+      return body?.token ?? null;
+    } catch {
+      return null;
+    }
+  });
+  ipcMain.handle(IPC.HUB_PLUGIN_PANE_TOKEN_REVOKE, async (_event, token: string) => {
+    try {
+      await fetch(`${HUB_HTTP_URL}/plugins/pane-token/revoke`, {
+        method: 'POST',
+        headers: hubAuthHeaders(),
+        body: JSON.stringify({ token }),
+      });
+    } catch { /* best-effort; the hub also sweeps pane tokens on plugin unload */ }
+  });
   ipcMain.handle(IPC.HUB_INSTALL_PLUGIN, async (_event, url: string) => {
     try {
       const res = await fetch(`${HUB_HTTP_URL}/plugins/install`, {
