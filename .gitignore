@@ -17,6 +17,11 @@ services/hub/mcp.exe
 services/hub/brain
 services/hub/brain.exe
 
+# root-level hub build output
+/hub/hub
+/hub/hub.exe
+/hub/hub.exe~
+
 # Committed binaries don't belong in source control (deleted from history going forward)
 /bin/
 /workspacer
