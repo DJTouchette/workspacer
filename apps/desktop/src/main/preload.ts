@@ -299,6 +299,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke(IPC.HUB_GET_REMOTE_INFO),
   installPlugin: (url: string): Promise<{ ok: boolean; plugin?: unknown; error?: string }> =>
     ipcRenderer.invoke(IPC.HUB_INSTALL_PLUGIN, url),
+  inspectPlugin: (url: string): Promise<{ ok: boolean; plugin?: unknown; error?: string }> =>
+    ipcRenderer.invoke(IPC.HUB_INSPECT_PLUGIN, url),
   listExamplePlugins: (): Promise<unknown[]> => ipcRenderer.invoke(IPC.HUB_LIST_EXAMPLES),
   installExamplePlugin: (id: string): Promise<{ ok: boolean; plugin?: unknown; error?: string }> =>
     ipcRenderer.invoke(IPC.HUB_INSTALL_EXAMPLE, id),

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { pluginRequirement, type PluginManifest } from '../types/plugin';
 import { AlertTriangle } from './icons';
 
 interface PluginInstallDialogProps {
@@ -8,9 +9,13 @@ interface PluginInstallDialogProps {
 }
 
 /**
- * Install a plugin from a GitHub URL. The hub downloads the repo tarball,
- * extracts it, runs any declared build step, and supervises its sidecar — i.e.
- * it RUNS code from the internet, so this dialog makes that explicit.
+ * Install a plugin from a GitHub URL, in two steps so the user isn't running
+ * unknown code blind:
+ *   1. Inspect — the hub downloads the repo and reads its plugin.json (no code
+ *      runs). We show what the plugin contributes and what it requires
+ *      (Go/Rust/Python/Node), so a build that needs a missing toolchain — or a
+ *      sidecar that needs a missing runtime — is flagged before committing.
+ *   2. Install — download again, run any build step, supervise the sidecar.
  */
 const PluginInstallDialog: React.FC<PluginInstallDialogProps> = ({ onClose, onInstalled }) => {
   const [url, setUrl] = useState('');
@@ -18,6 +23,8 @@ const PluginInstallDialog: React.FC<PluginInstallDialogProps> = ({ onClose, onIn
   const [error, setError] = useState<string | null>(null);
   // Live install stage (downloading / extracting / building) from the hub bus.
   const [stage, setStage] = useState<string | null>(null);
+  // The inspected manifest — once set, we show the preview/confirm step.
+  const [preview, setPreview] = useState<PluginManifest | null>(null);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); onClose(); } };
@@ -35,6 +42,27 @@ const PluginInstallDialog: React.FC<PluginInstallDialogProps> = ({ onClose, onIn
     return () => off?.();
   }, []);
 
+  // Step 1: download + read the manifest without installing.
+  const inspect = async () => {
+    const trimmed = url.trim();
+    if (!trimmed || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await window.electronAPI.inspectPlugin?.(trimmed);
+      if (res?.ok && res.plugin) {
+        setPreview(res.plugin);
+      } else {
+        setError(res?.error || 'Could not read the plugin');
+      }
+    } catch (e) {
+      setError(String((e as Error)?.message ?? e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Step 2: actually install (download → build → supervise).
   const install = async () => {
     const trimmed = url.trim();
     if (!trimmed || busy) return;
@@ -55,6 +83,8 @@ const PluginInstallDialog: React.FC<PluginInstallDialogProps> = ({ onClose, onIn
       setBusy(false);
     }
   };
+
+  const req = preview ? pluginRequirement(preview) : null;
 
   return (
     <div
@@ -80,22 +110,61 @@ const PluginInstallDialog: React.FC<PluginInstallDialogProps> = ({ onClose, onIn
         <div style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--wks-text-primary)', marginBottom: 4 }}>
           Install plugin from GitHub
         </div>
-        <div style={{ fontSize: '0.68rem', color: 'var(--wks-text-muted)', marginBottom: 14 }}>
-          Paste a repo URL or <code>owner/repo</code>. It must contain a <code>plugin.json</code>.
-        </div>
 
-        <input
-          autoFocus
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') install(); if (e.key === 'Escape') onClose(); }}
-          placeholder="https://github.com/owner/repo  or  owner/repo"
-          style={{
-            width: '100%', boxSizing: 'border-box', fontSize: '0.8rem', fontFamily: 'inherit',
-            background: 'var(--wks-bg-base)', color: 'var(--wks-text-primary)',
-            border: '1px solid var(--wks-border-input)', borderRadius: 4, padding: '7px 9px',
-          }}
-        />
+        {!preview ? (
+          <>
+            <div style={{ fontSize: '0.68rem', color: 'var(--wks-text-muted)', marginBottom: 14 }}>
+              Paste a repo URL or <code>owner/repo</code>. It must contain a <code>plugin.json</code>.
+            </div>
+            <input
+              autoFocus
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') inspect(); if (e.key === 'Escape') onClose(); }}
+              placeholder="https://github.com/owner/repo  or  owner/repo"
+              style={{
+                width: '100%', boxSizing: 'border-box', fontSize: '0.8rem', fontFamily: 'inherit',
+                background: 'var(--wks-bg-base)', color: 'var(--wks-text-primary)',
+                border: '1px solid var(--wks-border-input)', borderRadius: 4, padding: '7px 9px',
+              }}
+            />
+            <div style={{ marginTop: 12, fontSize: '0.62rem', color: 'var(--wks-text-faint)' }}>
+              We'll read its manifest first and show what it does before anything runs.
+            </div>
+          </>
+        ) : (
+          <>
+            <div style={{ fontSize: '0.68rem', color: 'var(--wks-text-muted)', marginBottom: 12 }}>
+              Review before installing — this will run the plugin's code on your machine.
+            </div>
+            <div style={{
+              border: '1px solid var(--wks-border-subtle)', borderRadius: 8, padding: 12,
+              background: 'var(--wks-bg-surface)',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>{preview.name || preview.id}</span>
+                <span style={{ fontSize: '0.6rem', color: 'var(--wks-text-faint)', border: '1px solid var(--wks-border-subtle)', borderRadius: 3, padding: '1px 5px' }}>
+                  {preview.server ? 'sidecar' : preview.ui ? 'webview' : 'plugin'}
+                </span>
+              </div>
+              <div style={{ fontSize: '0.62rem', color: 'var(--wks-text-faint)', marginTop: 2 }}>{preview.id}</div>
+              <div style={{ marginTop: 8, display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: '0.62rem', color: 'var(--wks-text-muted)' }}>
+                <span>{(preview.panes?.length ?? 0)} pane{(preview.panes?.length ?? 0) === 1 ? '' : 's'}{preview.panes?.length ? ': ' + preview.panes.map((x) => x.title).join(', ') : ''}</span>
+                {!!preview.capabilities?.length && <span>{preview.capabilities.length} capabilit{preview.capabilities.length === 1 ? 'y' : 'ies'}</span>}
+              </div>
+              {req && (
+                <div style={{
+                  marginTop: 8, fontSize: '0.64rem', fontWeight: 600,
+                  color: req.warn ? 'var(--wks-warning, #e0a000)' : 'var(--wks-success, #3fb950)',
+                  display: 'inline-flex', alignItems: 'center', gap: 5,
+                }}>
+                  {req.warn && <AlertTriangle size={12} strokeWidth={2} />}{req.label}
+                  {req.warn && <span style={{ fontWeight: 400, color: 'var(--wks-text-muted)' }}> — must be installed on this machine</span>}
+                </div>
+              )}
+            </div>
+          </>
+        )}
 
         <div style={{
           marginTop: 12, padding: '8px 10px', borderRadius: 5,
@@ -103,8 +172,7 @@ const PluginInstallDialog: React.FC<PluginInstallDialogProps> = ({ onClose, onIn
           fontSize: '0.65rem', lineHeight: 1.5, color: 'var(--wks-text-muted)',
         }}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, verticalAlign: 'text-bottom', color: 'var(--wks-danger, #e05555)', fontWeight: 600 }}><AlertTriangle size={12} strokeWidth={2} /> Runs code from the internet.</span>{' '}
-          Installing starts the plugin's server process on your machine — like a VS Code extension.
-          Only install plugins you trust.
+          Installing starts the plugin's process on your machine — like a VS Code extension. Only install plugins you trust.
         </div>
 
         {error && (
@@ -115,15 +183,16 @@ const PluginInstallDialog: React.FC<PluginInstallDialogProps> = ({ onClose, onIn
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 18 }}>
           <button
-            onClick={onClose}
+            onClick={preview ? () => { setPreview(null); setError(null); } : onClose}
+            disabled={busy}
             style={{
-              fontSize: '0.78rem', fontFamily: 'inherit', cursor: 'pointer',
+              fontSize: '0.78rem', fontFamily: 'inherit', cursor: busy ? 'default' : 'pointer',
               background: 'transparent', color: 'var(--wks-text-tertiary)',
               border: '1px solid var(--wks-border-input)', borderRadius: 4, padding: '6px 14px',
             }}
-          >Cancel</button>
+          >{preview ? 'Back' : 'Cancel'}</button>
           <button
-            onClick={install}
+            onClick={preview ? install : inspect}
             disabled={!url.trim() || busy}
             style={{
               fontSize: '0.78rem', fontFamily: 'inherit', cursor: (!url.trim() || busy) ? 'default' : 'pointer',
@@ -131,7 +200,9 @@ const PluginInstallDialog: React.FC<PluginInstallDialogProps> = ({ onClose, onIn
               color: (!url.trim() || busy) ? 'var(--wks-text-faint)' : 'var(--wks-text-on-accent, #fff)',
               border: 'none', borderRadius: 4, padding: '6px 14px', fontWeight: 600,
             }}
-          >{busy ? `${stage ? stage[0].toUpperCase() + stage.slice(1) : 'Installing'}…` : 'Install'}</button>
+          >{busy
+            ? (preview ? `${stage ? stage[0].toUpperCase() + stage.slice(1) : 'Installing'}…` : 'Reading…')
+            : (preview ? 'Install' : 'Continue')}</button>
         </div>
       </div>
     </div>

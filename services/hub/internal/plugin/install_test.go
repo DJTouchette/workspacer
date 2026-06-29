@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 )
 
@@ -173,6 +174,27 @@ func TestInstallFromDir(t *testing.T) {
 	// Re-adding overwrites cleanly.
 	if _, err := InstallFromDir(dir, src); err != nil {
 		t.Fatalf("re-add failed: %v", err)
+	}
+}
+
+func TestExpandPlatformTokens(t *testing.T) {
+	exe := ""
+	if runtime.GOOS == "windows" {
+		exe = ".exe"
+	}
+	got := expandPlatformTokens("./bin/${os}-${arch}/server${exe}")
+	want := "./bin/" + runtime.GOOS + "-" + runtime.GOARCH + "/server" + exe
+	if got != want {
+		t.Errorf("expandPlatformTokens = %q, want %q", got, want)
+	}
+	// A command with no tokens is returned unchanged.
+	if got := expandPlatformTokens("python3"); got != "python3" {
+		t.Errorf("unexpected change: %q", got)
+	}
+	// Slice form expands each element.
+	args := expandPlatformTokensAll([]string{"--bin", "x${exe}"})
+	if args[1] != "x"+exe {
+		t.Errorf("args expansion = %v", args)
 	}
 }
 

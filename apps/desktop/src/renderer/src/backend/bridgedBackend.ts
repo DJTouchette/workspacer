@@ -70,6 +70,7 @@ const HOST_ONLY = [
   'importChromeCookies', // reads the host browser profile
   'listHubPlugins', // plugin registry lives in main
   'installPlugin',
+  'inspectPlugin', // pre-install manifest preview via the hub's guarded route
   'listExamplePlugins', // bundled-example catalog lives in main
   'installExamplePlugin',
   'removePlugin',

@@ -240,6 +240,26 @@ func main() {
 			log.Printf("--webapp-dir %s has no index.html; /app disabled (run: npm run build:renderer:web)", *webappDir)
 		}
 	}
+	// Inspect a plugin before installing: download + read its manifest so the UI
+	// can show what it is and what it requires (Go/Rust/Python/Node) up front. No
+	// code is run and nothing is installed. Token-guarded like install — it makes
+	// the hub fetch an arbitrary URL.
+	srv.AddRoute("/plugins/inspect", guard(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		var body struct{ URL string }
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.URL == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "missing url"})
+			return
+		}
+		m, err := plugin.Inspect(body.URL)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(m)
+	}))
 	// Install a plugin from a GitHub URL: download → extract → load → supervise.
 	srv.AddRoute("/plugins/install", guard(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

@@ -303,6 +303,22 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       return { ok: false, error: String((err as Error)?.message ?? err) };
     }
   });
+  // Inspect a GitHub plugin before installing — returns its manifest so the
+  // install dialog can show what it is and what it requires up front. No install.
+  ipcMain.handle(IPC.HUB_INSPECT_PLUGIN, async (_event, url: string) => {
+    try {
+      const res = await fetch(`${HUB_HTTP_URL}/plugins/inspect`, {
+        method: 'POST',
+        headers: hubAuthHeaders(),
+        body: JSON.stringify({ url }),
+      });
+      const body = await res.json() as any;
+      if (!res.ok) return { ok: false, error: body?.error || `HTTP ${res.status}` };
+      return { ok: true, plugin: body };
+    } catch (err) {
+      return { ok: false, error: String((err as Error)?.message ?? err) };
+    }
+  });
   // Read-only catalog of bundled example plugins the user can add. Returns the
   // manifests as-is; the renderer derives each one's runtime requirement and
   // cross-references the installed list to show an "Added" state.

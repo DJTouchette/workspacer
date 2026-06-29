@@ -105,6 +105,8 @@ export interface ElectronAPI {
   listHubPlugins: () => Promise<PluginManifest[]>;
   hubPublish: (event: { type: string; source?: string; data?: unknown }) => Promise<void>;
   installPlugin: (url: string) => Promise<{ ok: boolean; plugin?: PluginManifest; error?: string }>;
+  /** Download + read a plugin's manifest without installing (pre-install preview). */
+  inspectPlugin: (url: string) => Promise<{ ok: boolean; plugin?: PluginManifest; error?: string }>;
   /** Read-only catalog of bundled example plugins the user can add. */
   listExamplePlugins: () => Promise<PluginManifest[]>;
   /** Add one bundled example by manifest id (copied from the app's examples dir). */

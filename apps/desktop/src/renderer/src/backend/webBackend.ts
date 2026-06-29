@@ -222,6 +222,7 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     listHubPlugins: () => { warnOnce('listHubPlugins'); return Promise.resolve([]); },
     hubPublish: (event) => client.call<void>('__publish', event).then(() => {}).catch(() => {}),
     installPlugin: () => Promise.resolve({ ok: false, error: 'not available over hub' }),
+    inspectPlugin: () => Promise.resolve({ ok: false, error: 'not available over hub' }),
     listExamplePlugins: () => { warnOnce('listExamplePlugins'); return Promise.resolve([]); },
     installExamplePlugin: () => Promise.resolve({ ok: false, error: 'not available over hub' }),
     removePlugin: () => Promise.resolve({ ok: false, error: 'not available over hub' }),

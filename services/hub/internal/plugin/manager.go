@@ -153,9 +153,14 @@ func (m *Manager) sandboxSidecar(mf Manifest) (command string, args []string, ru
 	m.mu.Lock()
 	mode := m.sandboxMode
 	m.mu.Unlock()
+	// Expand ${os}/${arch}/${exe} so a manifest can name a prebuilt per-platform
+	// binary (e.g. ./bin/${os}-${arch}/server${exe}) instead of a single command
+	// that only runs on the OS it was committed from.
+	cmd := expandPlatformTokens(mf.Server.Command)
+	cmdArgs := expandPlatformTokensAll(mf.Server.Args)
 	// A sidecar may write only its own plugin directory (a private temp is added
 	// by the mechanism). Reads stay open so it can load its interpreter/libraries.
-	res := sandbox.Wrap(mf.Server.Command, mf.Server.Args, sandbox.Policy{WriteRoots: []string{mf.Dir}})
+	res := sandbox.Wrap(cmd, cmdArgs, sandbox.Policy{WriteRoots: []string{mf.Dir}})
 	switch sandbox.Decide(mode, res.Available) {
 	case sandbox.RunSandboxed:
 		m.pub.Publish(event.New("plugin.sandboxed", "hub", map[string]string{"id": mf.ID, "mechanism": res.Mechanism}))
@@ -167,7 +172,7 @@ func (m *Manager) sandboxSidecar(mf Manifest) (command string, args []string, ru
 		if mode != sandbox.ModeOff {
 			m.pub.Publish(event.New("plugin.unsandboxed", "hub", map[string]string{"id": mf.ID, "reason": res.Note}))
 		}
-		return mf.Server.Command, mf.Server.Args, true
+		return cmd, cmdArgs, true
 	}
 }
 

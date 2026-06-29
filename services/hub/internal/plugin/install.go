@@ -10,9 +10,90 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
+
+// expandPlatformTokens substitutes ${os}, ${arch}, and ${exe} with the host's
+// GOOS, GOARCH, and the executable suffix (".exe" on Windows, "" elsewhere), so
+// a manifest can point at a prebuilt per-platform binary without per-OS forks,
+// e.g. server.command "./bin/${os}-${arch}/server${exe}".
+func expandPlatformTokens(s string) string {
+	exe := ""
+	if runtime.GOOS == "windows" {
+		exe = ".exe"
+	}
+	return strings.NewReplacer(
+		"${os}", runtime.GOOS,
+		"${arch}", runtime.GOARCH,
+		"${exe}", exe,
+	).Replace(s)
+}
+
+// expandPlatformTokensAll expands platform tokens in each element of ss.
+func expandPlatformTokensAll(ss []string) []string {
+	if len(ss) == 0 {
+		return ss
+	}
+	out := make([]string, len(ss))
+	for i, s := range ss {
+		out[i] = expandPlatformTokens(s)
+	}
+	return out
+}
+
+// Inspect downloads a plugin (GitHub URL / owner-repo / tarball) and returns its
+// manifest WITHOUT installing or running anything, so the UI can show what the
+// plugin is and what it requires before the user commits. The download is
+// extracted to a throwaway temp dir that's removed before returning.
+func Inspect(input string) (Manifest, error) {
+	urls, _, err := resolveTarballURLs(input)
+	if err != nil {
+		return Manifest{}, err
+	}
+	var lastErr error
+	for _, url := range urls {
+		m, err := inspectTarball(url)
+		if err == nil {
+			return m, nil
+		}
+		lastErr = err
+	}
+	return Manifest{}, lastErr
+}
+
+func inspectTarball(tarballURL string) (Manifest, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, tarballURL, nil)
+	if err != nil {
+		return Manifest{}, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return Manifest{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return Manifest{}, fmt.Errorf("download %s: HTTP %d", tarballURL, resp.StatusCode)
+	}
+	tmp, err := os.MkdirTemp("", "wks-inspect-")
+	if err != nil {
+		return Manifest{}, err
+	}
+	defer os.RemoveAll(tmp)
+	if err := extractTarGz(resp.Body, tmp, 1); err != nil {
+		return Manifest{}, fmt.Errorf("extract: %w", err)
+	}
+	src, err := locateManifestDir(tmp)
+	if err != nil {
+		return Manifest{}, err
+	}
+	// Dir points into the temp we're about to delete, but the UI only reads the
+	// declarative fields (id/name/server/install/panes), not Dir.
+	return Load(filepath.Join(src, "plugin.json"))
+}
 
 // Install fetches a plugin from a GitHub URL (or a direct .tar.gz URL),
 // extracts it into pluginsDir, runs its optional one-time install command, and
@@ -211,6 +292,7 @@ func installFromTarball(pluginsDir, tarballURL, fallbackName string, progress fu
 }
 
 func runInstall(dir string, argv []string) error {
+	argv = expandPlatformTokensAll(argv)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
