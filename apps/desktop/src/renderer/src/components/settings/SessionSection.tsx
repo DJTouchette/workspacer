@@ -20,9 +20,16 @@ const DIFF_VIEWS: { label: string; value: 'stacked' | 'inline' | 'split' }[] = [
   { label: 'Split', value: 'split' },
 ];
 
+const AGENT_PROVIDERS: { label: string; value: 'claude' | 'codex' | 'opencode' }[] = [
+  { label: 'Claude', value: 'claude' },
+  { label: 'Codex', value: 'codex' },
+  { label: 'OpenCode', value: 'opencode' },
+];
+
 const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
   const autoResume = config.session?.autoResume ?? true;
   const defaultView = config.claude?.defaultView ?? 'terminal';
+  const defaultProvider = config.agents?.defaultProvider ?? 'claude';
   const guiFontScale = config.ui.guiFontScale ?? 1.15;
   const diffView = config.ui.diffView ?? 'stacked';
   return (
@@ -35,6 +42,23 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
       <div style={{ fontSize: '0.55rem', color: 'var(--wks-text-disabled)' }}>
         Reopens your agents and tabs automatically. Off shows the session picker at startup.
         Switch sessions any time from the command palette (Ctrl+K → Switch session).
+      </div>
+
+      <Row label="Default agent">
+        <div style={{ display: 'flex', gap: 4 }}>
+          {AGENT_PROVIDERS.map((p) => (
+            <ModeButton
+              key={p.value}
+              label={p.label}
+              active={defaultProvider === p.value}
+              onClick={() => save({ agents: { ...config.agents, defaultProvider: p.value } })}
+            />
+          ))}
+        </div>
+      </Row>
+      <div style={{ fontSize: '0.55rem', color: 'var(--wks-text-disabled)' }}>
+        The coding agent pre-selected in the spawn dialog. Codex and OpenCode run via claudemon's
+        adapters with live telemetry; Claude is the default.
       </div>
 
       <Row label="Default Claude view">

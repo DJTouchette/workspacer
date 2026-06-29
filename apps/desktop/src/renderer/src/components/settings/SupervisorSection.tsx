@@ -1,6 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { Config } from '../../hooks/useConfig';
-import { Section, Row, SearchableSelect, SelectOption, inputStyle } from './primitives';
+import { Section, Row, SearchableSelect, SelectOption, ModeButton, inputStyle } from './primitives';
+
+const SUP_PROVIDERS: { value: 'claude' | 'codex' | 'opencode'; label: string }[] = [
+  { value: 'claude', label: 'Claude' },
+  { value: 'codex', label: 'Codex' },
+  { value: 'opencode', label: 'OpenCode' },
+];
 
 interface SupervisorSectionProps {
   config: Config;
@@ -43,6 +49,25 @@ const SupervisorSection: React.FC<SupervisorSectionProps> = ({ config, save }) =
         Optional. The fleet supervisor is an agent you start from “Ask the Fleet” that watches your
         other agents, summarizes what they’re doing (using cheap summarizer workers), and notifies you
         when a decision is needed. Nothing here runs unless you spawn one.
+      </div>
+
+      <Row label="Supervisor agent">
+        <div style={{ display: 'flex', gap: 4 }}>
+          {SUP_PROVIDERS.map((p) => (
+            <ModeButton
+              key={p.value}
+              label={p.label}
+              active={(sup.provider ?? 'claude') === p.value}
+              onClick={() => patch({ provider: p.value })}
+            />
+          ))}
+        </div>
+      </Row>
+      <div style={{ fontSize: '0.55rem', color: 'var(--wks-text-disabled)' }}>
+        Which CLI the supervisor runs on (also pickable when you launch one from “Ask the Fleet”).
+        Note: the workspacer MCP facade — the supervisor’s tools to observe and coordinate the
+        fleet — is Claude-only today, so a Codex/OpenCode supervisor runs the CLI but can’t yet
+        drive the fleet tools.
       </div>
 
       <Row label="Supervisor model">

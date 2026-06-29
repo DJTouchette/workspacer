@@ -245,7 +245,7 @@ export function useAgentManager() {
    * question, picks a sensible cwd, and calls `spawnAgent` with supervisor=true.
    * Returns the new agent id.
    */
-  const spawnSupervisor = useCallback(async (opts: { question: string; parentId?: string; cwd?: string }): Promise<string> => {
+  const spawnSupervisor = useCallback(async (opts: { question: string; parentId?: string; cwd?: string; provider?: AgentProvider }): Promise<string> => {
     const name = deriveSupervisorName(opts.question);
     // A supervisor watches the whole fleet, so unless a cwd is given explicitly
     // it opens in its dedicated home (~/.workspacer) rather than inheriting some
@@ -258,6 +258,7 @@ export function useAgentManager() {
     return spawnAgent({
       cwd: cwd || '',
       name,
+      provider: opts.provider,
       kind: 'supervisor',
       parentId: opts.parentId,
       supervisor: true,

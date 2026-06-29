@@ -8,6 +8,8 @@ interface SpawnProfile { id: string; name: string; mcpItemIds?: string[] }
 
 interface SpawnAgentDialogProps {
   defaultCwd: string;
+  /** Provider pre-selected in the picker (config.agents.defaultProvider). */
+  defaultProvider?: AgentProvider;
   onSpawn: (opts: { cwd: string; name?: string; provider?: AgentProvider; profileId?: string; model?: string; skipPermissions?: boolean; mcpItemIds?: string[]; resumeSessionId?: string }) => void;
   onCancel: () => void;
 }
@@ -20,10 +22,10 @@ const PROVIDERS: { value: AgentProvider; label: string }[] = [
   { value: 'opencode', label: 'OpenCode' },
 ];
 
-const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, onSpawn, onCancel }) => {
+const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, defaultProvider, onSpawn, onCancel }) => {
   const [cwd, setCwd] = useState(defaultCwd);
   const [name, setName] = useState('');
-  const [provider, setProvider] = useState<AgentProvider>('claude');
+  const [provider, setProvider] = useState<AgentProvider>(defaultProvider ?? 'claude');
   const isClaude = provider === 'claude';
   // Free-text model for non-Claude providers (their own id formats).
   const [providerModel, setProviderModel] = useState('');

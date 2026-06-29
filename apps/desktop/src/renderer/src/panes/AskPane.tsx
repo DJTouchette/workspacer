@@ -1,5 +1,7 @@
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
-import { AgentWorkspace } from '../types/pane';
+import { AgentWorkspace, AgentProvider } from '../types/pane';
+import { useConfig } from '../hooks/useConfig';
+import { AgentLogo } from '../components/agentLogos';
 import { ASK_PRESETS } from './askPresets';
 import { findSessionRefs } from './askLinks';
 
@@ -7,7 +9,7 @@ export interface AskPaneProps {
   /** The current fleet — used to resolve session:<id> links and to scope. */
   agents: AgentWorkspace[];
   /** Spawn a supervisor agent and send it the question. Returns new agent id. */
-  spawnSupervisor: (opts: { question: string; parentId?: string }) => Promise<string>;
+  spawnSupervisor: (opts: { question: string; parentId?: string; provider?: AgentProvider }) => Promise<string>;
   /** Navigate the app to a given agent workspace by its AgentWorkspace.id. */
   onJumpToAgent: (agentId: string) => void;
   /** When the Ask pane was opened scoped to a specific agent (AgentWorkspace.id),
@@ -88,10 +90,18 @@ const SupervisorRow: React.FC<{
 
 // ── main pane ─────────────────────────────────────────────────────────────────
 
+const SUP_PROVIDERS: { value: AgentProvider; label: string }[] = [
+  { value: 'claude', label: 'Claude' },
+  { value: 'codex', label: 'Codex' },
+  { value: 'opencode', label: 'OpenCode' },
+];
+
 const AskPane: React.FC<AskPaneProps> = ({ agents, spawnSupervisor, onJumpToAgent, scopeAgentId }) => {
   const prefix = useMemo(() => scopePrefix(scopeAgentId, agents), [scopeAgentId, agents]);
+  const { config } = useConfig();
 
   const [question, setQuestion] = useState<string>(prefix);
+  const [provider, setProvider] = useState<AgentProvider>(config.supervisor?.provider ?? 'claude');
   const [spawning, setSpawning] = useState(false);
   const [error, setError] = useState<string>('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -129,6 +139,7 @@ const AskPane: React.FC<AskPaneProps> = ({ agents, spawnSupervisor, onJumpToAgen
         const newId = await spawnSupervisor({
           question: trimmed,
           parentId: scopeAgentId,
+          provider,
         });
         setQuestion(prefix); // reset to prefix (or empty if no scope)
         onJumpToAgent(newId);
@@ -138,7 +149,7 @@ const AskPane: React.FC<AskPaneProps> = ({ agents, spawnSupervisor, onJumpToAgen
         setSpawning(false);
       }
     },
-    [spawning, spawnSupervisor, scopeAgentId, onJumpToAgent, prefix],
+    [spawning, spawnSupervisor, scopeAgentId, onJumpToAgent, prefix, provider],
   );
 
   const handleKeyDown = useCallback(
@@ -287,6 +298,39 @@ const AskPane: React.FC<AskPaneProps> = ({ agents, spawnSupervisor, onJumpToAgen
               'var(--wks-border-subtle, rgba(255,255,255,0.1))';
           }}
         />
+
+        {/* Supervisor agent picker */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: '0.7rem', color: 'var(--wks-text-tertiary)' }}>Run on</span>
+          <div style={{ display: 'flex', gap: 4 }}>
+            {SUP_PROVIDERS.map((p) => {
+              const active = provider === p.value;
+              return (
+                <button
+                  key={p.value}
+                  onClick={() => setProvider(p.value)}
+                  disabled={spawning}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 5,
+                    padding: '4px 9px', borderRadius: 6, cursor: spawning ? 'default' : 'pointer',
+                    fontSize: '0.7rem', fontFamily: 'inherit', fontWeight: 600,
+                    border: active ? '1px solid var(--wks-accent)' : '1px solid var(--wks-border-input)',
+                    background: active ? 'var(--wks-accent-bg)' : 'transparent',
+                    color: active ? 'var(--wks-accent-text, var(--wks-text-primary))' : 'var(--wks-text-tertiary)',
+                  }}
+                >
+                  <AgentLogo provider={p.value} size={13} style={{ flexShrink: 0, opacity: active ? 1 : 0.75 }} />
+                  {p.label}
+                </button>
+              );
+            })}
+          </div>
+          {provider !== 'claude' && (
+            <span style={{ fontSize: '0.6rem', color: 'var(--wks-text-faint)' }}>
+              fleet-coordination tools are Claude-only for now
+            </span>
+          )}
+        </div>
 
         {/* Error */}
         {error && (

@@ -1,4 +1,5 @@
 import { useConfigContext } from '../contexts/ConfigContext';
+import type { AgentProvider } from '../types/pane';
 
 export interface ShellOption {
   name: string;
@@ -127,6 +128,10 @@ export interface Config {
     /** Concrete model ids seen across sessions, surfaced in the spawn dropdown. */
     seenModels?: string[];
   };
+  /** Default coding-agent backend pre-selected in the spawn dialog. */
+  agents?: {
+    defaultProvider?: AgentProvider;
+  };
   /** Optional fleet-supervisor settings (opt-in; absent = sensible defaults). */
   supervisor?: SupervisorConfig;
 }
@@ -138,6 +143,10 @@ export interface SupervisorConfig {
   summarizerModel?: string;
   /** How often (seconds) the supervisor's loop re-sweeps the fleet. */
   pollSeconds?: number;
+  /** Coding-agent backend the supervisor runs on. undefined ⇒ 'claude'.
+   *  Non-Claude supervisors run the chosen CLI but the workspacer MCP facade
+   *  (the supervisor's fleet-coordination tools) is currently Claude-only. */
+  provider?: AgentProvider;
 }
 
 /**

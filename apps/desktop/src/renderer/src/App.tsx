@@ -106,7 +106,7 @@ interface AgentViewHandlers {
   onNavigateToTab: (tabId: string) => void;
   onAddTab: (type: PaneType, shell?: string, label?: string, cwd?: string, profileId?: string, resumeSessionId?: string, attachSessionId?: string) => void;
   onSplit: (tabId: string, type: PaneType) => void;
-  spawnSupervisor: (opts: { question: string; parentId?: string }) => Promise<string>;
+  spawnSupervisor: (opts: { question: string; parentId?: string; provider?: AgentProvider }) => Promise<string>;
   onJumpToAgent: (agentId: string) => void;
 }
 
@@ -1331,6 +1331,7 @@ function App() {
       {showSpawnDialog && (
         <SpawnAgentDialog
           defaultCwd={appCwdRef.current}
+          defaultProvider={config.agents?.defaultProvider}
           onSpawn={handleSpawnAgent}
           onCancel={() => setShowSpawnDialog(false)}
         />
