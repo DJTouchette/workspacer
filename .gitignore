@@ -10,12 +10,11 @@ target/
 
 # hub build artifacts (built by `npm run build:hub` / `npm run build:mcp`)
 services/hub/hub
-services/hub/hub.exe
-services/hub/hub.exe~
 services/hub/mcp
-services/hub/mcp.exe
 services/hub/brain
-services/hub/brain.exe
+services/hub/*.exe
+# Go renames a locked (running) binary to <name>.exe~ when it can't overwrite it.
+services/hub/*.exe~
 
 # root-level hub build output
 /hub/hub
