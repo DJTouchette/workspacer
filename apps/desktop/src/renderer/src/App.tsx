@@ -31,7 +31,7 @@ import BottomTerminalPanel from './components/BottomTerminalPanel';
 import InboxDrawer from './components/InboxDrawer';
 import FleetDeck from './components/FleetDeck';
 import { AttentionProvider } from './contexts/AttentionContext';
-import { useAttentionFeed } from './hooks/useAttentionFeed';
+import { useAttentionFeed, type AttentionFeed } from './hooks/useAttentionFeed';
 import type { Layout, LayoutAgent } from './types/layout';
 import { useLibrary } from './hooks/useLibrary';
 import { useLayoutSync, type HydrationResult } from './hooks/useLayoutSync';
@@ -607,7 +607,21 @@ function App() {
   const activeTab = getActiveTab();
 
   // --- Agent handlers (defined before useKeyboardNav so it can bind them) ---
+  // Latest attention feed, read via a ref so handleSelectAgent (defined before
+  // the feed) can clear an agent's items without depending on `attention`.
+  const attentionRef = useRef<AttentionFeed | null>(null);
   const handleSelectAgent = useCallback((id: string) => {
+    // Opening an agent IS triaging it: clear that agent's inbox notifications
+    // (sidebar dot/glyph + the "needs you" count) so they don't linger after
+    // you've clicked through to deal with it. A genuinely new request resurfaces
+    // later with a different signature. This is the single choke point for both
+    // the sidebar click and the Inbox/Fleet "open agent" action.
+    const att = attentionRef.current;
+    if (att) {
+      for (const it of att.items) {
+        if (it.agentId === id) att.dismiss(it.signature);
+      }
+    }
     setActiveAgentId(id);
     const agent = agents.find((a) => a.id === id);
     if (agent && !agent.sessionId) respawnAgent(id);
@@ -708,6 +722,9 @@ function App() {
   // (its dismiss/snooze state included) drives goToNextAttention below and the
   // SideBar / Inbox / Fleet via AttentionProvider. This is the spine.
   const attention = useAttentionFeed(snapshotBySession, agents);
+  // Expose the live feed to handleSelectAgent (declared above) so selecting an
+  // agent clears its notifications. Assigning a ref during render is safe here.
+  attentionRef.current = attention;
 
   // Brief "all clear" pulse on the sidebar header when goToNextAttention finds
   // nothing — the only feedback we have without a toast system.
