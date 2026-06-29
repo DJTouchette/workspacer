@@ -6,6 +6,8 @@ import { QuestionPicker } from './claude/QuestionPicker';
 import { useAttention } from '../contexts/AttentionContext';
 import { usePageVisible } from '../hooks/usePageVisible';
 import { StatusGlyph } from './statusGlyph';
+import { AgentLogo } from './agentLogos';
+import { shortModelLabel } from '../lib/modelLabel';
 
 function fmtTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -121,8 +123,11 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot }) => {
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '12px 14px 8px' }}>
         <span style={{ width: 10, height: 10, borderRadius: '50%', background: v.color, flexShrink: 0, boxShadow: state && state !== 'idle' ? `0 0 8px ${v.color}` : 'none' }} />
-        <span style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--wks-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {agent.kind === 'supervisor' && <span style={{ marginRight: 4 }}>🧭</span>}{agent.name}
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.95rem', fontWeight: 700, color: 'var(--wks-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {agent.kind === 'supervisor'
+            ? <span>🧭</span>
+            : <AgentLogo provider={agent.provider ?? 'claude'} size={14} style={{ color: 'var(--wks-text-tertiary)', flexShrink: 0 }} />}
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{agent.name}</span>
         </span>
         <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.7rem', fontWeight: 600, color: v.color, flexShrink: 0 }}>
           <StatusGlyph state={agent.sessionId ? state : undefined} size={13} strokeWidth={2.2} accent="currentColor" />
@@ -132,7 +137,7 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot }) => {
 
       {/* Meta line: model · turns · last activity · folder */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '0 14px 8px', fontSize: '0.66rem', color: 'var(--wks-text-faint)' }}>
-        {usage?.model && <span style={{ color: 'var(--wks-text-secondary)' }}>{usage.model.replace(/^claude-/, '')}</span>}
+        {usage?.model && <span style={{ color: 'var(--wks-text-secondary)' }}>{shortModelLabel(usage.model)}</span>}
         {turns > 0 && <span>· {turns} turn{turns > 1 ? 's' : ''}</span>}
         {snapshot?.lastActivity ? <span>· {relTime(snapshot.lastActivity)}</span> : null}
         {agent.cwd && <span style={{ marginLeft: 'auto', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '60%' }} title={agent.cwd}>{baseName(agent.cwd)}</span>}

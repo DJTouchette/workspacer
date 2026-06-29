@@ -25,6 +25,8 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, onSpawn
   const [name, setName] = useState('');
   const [provider, setProvider] = useState<AgentProvider>('claude');
   const isClaude = provider === 'claude';
+  // Free-text model for non-Claude providers (their own id formats).
+  const [providerModel, setProviderModel] = useState('');
   const [profiles, setProfiles] = useState<SpawnProfile[]>([]);
   const [profileId, setProfileId] = useState<string>('');
 
@@ -134,7 +136,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, onSpawn
     // TUI in Tier-1 and don't take Claude's profile/model/MCP/resume flags).
     onSpawn(isClaude
       ? { cwd: cwd.trim(), name: name.trim() || undefined, profileId: profileId || undefined, model: resolvedModel || undefined, skipPermissions, mcpItemIds: mcpSel.length ? mcpSel : undefined, resumeSessionId: resumeSessionId || undefined }
-      : { cwd: cwd.trim(), name: name.trim() || undefined, provider });
+      : { cwd: cwd.trim(), name: name.trim() || undefined, provider, model: providerModel.trim() || undefined });
   };
 
   const placeholderName = cwd.trim() ? deriveAgentName(cwd.trim()) : 'agent';
@@ -200,8 +202,8 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, onSpawn
                   onClick={() => setProvider(p.value)}
                   style={{
                     flex: 1, padding: '6px 8px', borderRadius: 6, cursor: 'pointer',
-                    fontSize: '0.72rem', fontFamily: 'inherit', fontWeight: 600,
                     display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                    fontSize: '0.72rem', fontFamily: 'inherit', fontWeight: 600,
                     border: active ? '1px solid var(--wks-accent)' : '1px solid var(--wks-border-input)',
                     background: active ? 'var(--wks-accent-bg)' : 'transparent',
                     color: active ? 'var(--wks-accent-text, var(--wks-text-primary))' : 'var(--wks-text-tertiary)',
@@ -220,6 +222,18 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, onSpawn
             </div>
           )}
         </Field>
+
+        {!isClaude && (
+          <Field label="Model (optional)">
+            <input
+              value={providerModel}
+              onChange={(e) => setProviderModel(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') onCancel(); }}
+              placeholder={provider === 'codex' ? 'gpt-5.4  (blank = Codex default)' : 'anthropic/claude-sonnet-4  (blank = OpenCode default)'}
+              style={inputStyle}
+            />
+          </Field>
+        )}
 
         {isClaude && sessions.length > 0 && (
           <Field label="Resume session (optional)">

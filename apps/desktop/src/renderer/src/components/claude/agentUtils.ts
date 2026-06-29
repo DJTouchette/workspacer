@@ -20,6 +20,6 @@ export const fmtDuration = (ms?: number): string => {
   return `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s`;
 };
 
-/** "claude-sonnet-4-6" to "sonnet-4-6" (enough to tell agents apart at a glance) */
-export const shortModel = (m?: string): string =>
-  m ? m.replace(/^claude-/, '').replace(/-\d{8}$/, '') : '';
+/** "claude-sonnet-4-6" to "sonnet-4-6" (enough to tell agents apart at a glance).
+ *  Provider-agnostic — see lib/modelLabel. */
+export { shortModelLabel as shortModel } from '../../lib/modelLabel';

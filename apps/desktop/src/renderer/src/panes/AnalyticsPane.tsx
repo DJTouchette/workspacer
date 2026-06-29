@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AnalyticsSummary, AnalyticsBucket, SessionHistoryRecord } from '../types/analytics';
 import { usePageVisible } from '../hooks/usePageVisible';
+import { shortModelLabel } from '../lib/modelLabel';
 
 function basename(p: string): string {
   return p ? (p.replace(/[/\\]+$/, '').split(/[/\\]/).pop() || p) : '(none)';
@@ -23,7 +24,7 @@ function fmtDuration(ms: number): string {
 }
 function shortModel(m: string | null): string {
   if (!m) return '(unknown)';
-  return m.replace(/^claude-/, '').replace(/-\d{6,}$/, '');
+  return shortModelLabel(m) || '(unknown)';
 }
 
 /** Stat tile — mockup "Usage" card: uppercase mono label on top, large mono

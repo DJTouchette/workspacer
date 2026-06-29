@@ -4,6 +4,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { useAttention } from '../contexts/AttentionContext';
 import { AgentCard } from './AgentCard';
 import { StatusGlyph } from './statusGlyph';
+import { shortModelLabel } from '../lib/modelLabel';
 import { agentAttentionScore } from '../lib/attentionRouter';
 
 const CARD_MIN = 360; // matches the old minmax(360px) grid
@@ -236,7 +237,7 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
                         {vis.label}
                       </span>
                     </td>
-                    <td style={{ ...ltd, color: 'var(--wks-text-secondary)' }}>{usage?.model ? usage.model.replace(/^claude-/, '') : '—'}</td>
+                    <td style={{ ...ltd, color: 'var(--wks-text-secondary)' }}>{usage?.model ? shortModelLabel(usage.model) : '—'}</td>
                     <td style={ltdNum}>{usage && usage.contextTokens > 0 ? fmtTokens(usage.contextTokens) : '—'}</td>
                     <td style={{ ...ltdNum, color: 'var(--wks-accent)' }}>{usage ? fmtUSD(usage.costUSD) : '—'}</td>
                   </tr>

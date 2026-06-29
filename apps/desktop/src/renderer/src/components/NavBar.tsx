@@ -4,6 +4,7 @@ import { useConfig, ScriptEntry, Config } from '../hooks/useConfig';
 import { themes, darkTheme } from '../themes';
 import { useIsSmallScreen } from '../hooks/useMediaQuery';
 import { PaneIcon, Play, Settings, Plus, Columns3, LayoutGrid, Rows3 } from './icons';
+import { AgentLogo } from './agentLogos';
 import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from './ContextMenu';
 import { resolveNavHeight } from '../lib/layoutUtils';
 
@@ -119,6 +120,7 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
           const isActive = tab.id === activeTabId;
           const singlePane = tab.panes.length === 1;
           const firstPaneType = tab.panes[0]?.type ?? 'terminal';
+          const firstPaneProvider = tab.panes[0]?.provider;
           const hasHibernated = tab.panes.some((p) => p.hibernated);
 
           return (
@@ -172,7 +174,7 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
               title={`${tab.title} (Ctrl+${idx + 1})`}
             >
               <span style={{ display: 'flex', alignItems: 'center' }}>
-                {singlePane ? <PaneIcon type={firstPaneType} size={13} /> : <Columns3 size={13} strokeWidth={1.75} />}
+                {singlePane ? (firstPaneType === 'claude' ? <AgentLogo provider={firstPaneProvider ?? 'claude'} size={13} /> : <PaneIcon type={firstPaneType} size={13} />) : <Columns3 size={13} strokeWidth={1.75} />}
               </span>
               <span>{tab.title}</span>
               {!singlePane && (
