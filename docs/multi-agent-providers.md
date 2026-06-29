@@ -1,4 +1,4 @@
-# Multi-agent providers (Claude Code · Codex · OpenCode)
+# Multi-agent providers (Claude Code · Codex · OpenCode · Pi)
 
 Status: **in progress** — phased. This doc is the architecture of record for making
 workspacer drive coding agents other than Claude Code.
@@ -57,9 +57,29 @@ integration is *cleaner*, not hackier:
   output_tokens, reasoning_output_tokens}`, `turn.failed`, `item.*`, `error`;
   resume via `codex exec resume`).
 
-Caveat: both CLIs move fast; pin/verify schemas at build time. Known Codex bug:
+### Pi — `pi --mode rpc`
+- The `@mariozechner/pi-coding-agent` harness. RPC mode speaks strict
+  **LF-delimited JSONL over stdio** (split on `\n` only — its own warning).
+- Drive: `{"type":"prompt","message":...}` per user turn (`steer`/`follow_up`/
+  `abort` also available); model via `--model` flag or `set_model`.
+- Observe: `agent_start`/`agent_end` + `turn_start`/`turn_end` (lifecycle),
+  `message_update` carrying an `assistantMessageEvent` (`text_delta` etc.),
+  `message_end`/`turn_end` (message object carries `usage`),
+  `tool_execution_start`/`_end`.
+- Approvals: Pi's core auto-runs tools; a permission *extension* prompts via the
+  bidirectional **Extension UI** protocol (`extension_ui_request` with a
+  `confirm`/`select` dialog → client replies `extension_ui_response`
+  `{confirmed}` / `{value}` / `{cancelled}`). YOLO accepts inline; otherwise the
+  request is surfaced and the user's /approve decision is forwarded.
+- MCP: reads the standard `.mcp.json` (`mcpServers`), so the workspacer facade
+  is registered as a remote `{type:"http", url}` entry.
+
+Caveat: these CLIs move fast; pin/verify schemas at build time. Known Codex bug:
 `--json` can be silently dropped when MCP servers are active (openai/codex#15451),
-which is one reason to prefer `app-server` over `exec --json`.
+which is one reason to prefer `app-server` over `exec --json`. Pi's approval
+forwarding depends on a permission extension being loaded (the core doesn't gate);
+the `select` reply guesses an "allow"-ish option, so live-verify against the
+extension in use.
 
 ## Target architecture — two seams
 
@@ -108,3 +128,6 @@ CodexAdapter     — spawn `codex app-server`; JSON-RPC over stdio;
   including approval/permission request bridging.
 - **Phase 4 — Polish.** Per-provider models/profiles/config, branding
   generalization (model-prefix stripping, labels), provider glyphs, approvals UI.
+- **Phase 5 — Tier-2 Pi adapter.** `PiAdapter` (`pi --mode rpc` JSONL stdio →
+  same model), with Extension-UI approval forwarding and `.mcp.json` facade
+  wiring. Pi joins as a first-class managed provider (`providers/pi.rs`).

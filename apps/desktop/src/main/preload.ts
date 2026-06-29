@@ -178,7 +178,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke(IPC.LAYOUTS_DELETE, id),
 
   // ── Claude sessions (delegated to claudemon daemon) ──
-  spawnClaude: (opts: { cwd?: string; provider?: 'claude' | 'codex' | 'opencode'; profileId?: string; model?: string; skipPermissions?: boolean; resumeSessionId?: string; cols?: number; rows?: number; supervisor?: boolean; label?: string; parentSessionId?: string; mcpItemIds?: string[] }): Promise<string> =>
+  spawnClaude: (opts: { cwd?: string; provider?: 'claude' | 'codex' | 'opencode' | 'pi'; profileId?: string; model?: string; skipPermissions?: boolean; resumeSessionId?: string; cols?: number; rows?: number; supervisor?: boolean; label?: string; parentSessionId?: string; mcpItemIds?: string[] }): Promise<string> =>
     ipcRenderer.invoke(IPC.CLAUDE_SPAWN, opts),
   claudeListModels: (): Promise<{ defaultModel: string; skipPermissionsDefault: boolean; aliases: Array<{ value: string; label: string }>; seen: string[] }> =>
     ipcRenderer.invoke(IPC.CLAUDE_LIST_MODELS),

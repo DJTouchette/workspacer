@@ -81,7 +81,7 @@ class ClaudemonSessionClient {
    *  own API (e.g. `opencode serve`) and the renderer observes via the session
    *  snapshot/conversation/status streams like a Claude GUI session. */
   async spawnManaged(args: {
-    provider: 'opencode' | 'codex';
+    provider: 'opencode' | 'codex' | 'pi';
     cwd: string;
     model?: string;
     /** Resolved launcher binary (the desktop resolves it on PATH). */

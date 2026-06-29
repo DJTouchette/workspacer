@@ -15,6 +15,7 @@
 
 pub mod codex;
 pub mod opencode;
+pub mod pi;
 
 /// Workspacer MCP facade wiring for a managed supervisor: the facade MCP server
 /// URL to register with the provider, and the role instructions to prepend to

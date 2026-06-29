@@ -64,6 +64,27 @@ export const OpenCodeLogo: React.FC<LogoProps> = ({ size = 14, className, style 
   </svg>
 );
 
+/** Pi mark (the pi-coding-agent harness) — a geometric π. Tints with currentColor. */
+export const PiLogo: React.FC<LogoProps> = ({ size = 14, className, style }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="currentColor"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    style={style}
+    aria-hidden="true"
+  >
+    {/* top bar */}
+    <rect x="4" y="5.5" width="16" height="2.6" rx="1.1" />
+    {/* left leg */}
+    <rect x="7" y="7.4" width="2.6" height="11.1" rx="1.1" />
+    {/* right leg (with a slight inward foot, like a serif π) */}
+    <rect x="14.4" y="7.4" width="2.6" height="11.1" rx="1.1" />
+  </svg>
+);
+
 export const AgentLogo: React.FC<{ provider: AgentProvider } & LogoProps> = ({
   provider,
   ...rest
@@ -75,6 +96,8 @@ export const AgentLogo: React.FC<{ provider: AgentProvider } & LogoProps> = ({
       return <OpenAILogo {...rest} />;
     case 'opencode':
       return <OpenCodeLogo {...rest} />;
+    case 'pi':
+      return <PiLogo {...rest} />;
     default:
       return null;
   }

@@ -6,6 +6,7 @@ export function providerLabel(provider: AgentProvider | undefined): string {
   switch (resolveProvider(provider)) {
     case 'codex': return 'Codex';
     case 'opencode': return 'OpenCode';
+    case 'pi': return 'Pi';
     default: return 'Claude';
   }
 }

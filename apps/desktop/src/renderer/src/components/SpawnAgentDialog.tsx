@@ -20,7 +20,17 @@ const PROVIDERS: { value: AgentProvider; label: string }[] = [
   { value: 'claude', label: 'Claude Code' },
   { value: 'codex', label: 'Codex' },
   { value: 'opencode', label: 'OpenCode' },
+  { value: 'pi', label: 'Pi' },
 ];
+
+/** Free-text model placeholder per managed provider (their own id formats). */
+function modelPlaceholder(provider: AgentProvider): string {
+  switch (provider) {
+    case 'codex': return 'gpt-5.4  (blank = Codex default)';
+    case 'pi': return 'claude-sonnet-4 / gpt-5  (blank = Pi default)';
+    default: return 'anthropic/claude-sonnet-4  (blank = OpenCode default)';
+  }
+}
 
 const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, defaultProvider, onSpawn, onCancel }) => {
   const [cwd, setCwd] = useState(defaultCwd);
@@ -231,7 +241,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, default
               value={providerModel}
               onChange={(e) => setProviderModel(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') onCancel(); }}
-              placeholder={provider === 'codex' ? 'gpt-5.4  (blank = Codex default)' : 'anthropic/claude-sonnet-4  (blank = OpenCode default)'}
+              placeholder={modelPlaceholder(provider)}
               style={inputStyle}
             />
           </Field>

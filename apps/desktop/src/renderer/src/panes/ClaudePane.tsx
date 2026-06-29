@@ -69,7 +69,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
   //                       adapters (no PTY), so the terminal view has nothing
   //                       to show
   const isClaude = (provider ?? 'claude') === 'claude';
-  const isManaged = provider === 'opencode' || provider === 'codex';
+  const isManaged = provider === 'opencode' || provider === 'codex' || provider === 'pi';
   const hasGui = isClaude || isManaged;
   const hasTerminal = !isManaged;
   const showViewToggle = hasGui && hasTerminal; // only Claude has both

@@ -20,10 +20,11 @@ const DIFF_VIEWS: { label: string; value: 'stacked' | 'inline' | 'split' }[] = [
   { label: 'Split', value: 'split' },
 ];
 
-const AGENT_PROVIDERS: { label: string; value: 'claude' | 'codex' | 'opencode' }[] = [
+const AGENT_PROVIDERS: { label: string; value: 'claude' | 'codex' | 'opencode' | 'pi' }[] = [
   { label: 'Claude', value: 'claude' },
   { label: 'Codex', value: 'codex' },
   { label: 'OpenCode', value: 'opencode' },
+  { label: 'Pi', value: 'pi' },
 ];
 
 const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {

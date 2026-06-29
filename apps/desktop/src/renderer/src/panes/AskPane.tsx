@@ -94,6 +94,7 @@ const SUP_PROVIDERS: { value: AgentProvider; label: string }[] = [
   { value: 'claude', label: 'Claude' },
   { value: 'codex', label: 'Codex' },
   { value: 'opencode', label: 'OpenCode' },
+  { value: 'pi', label: 'Pi' },
 ];
 
 const AskPane: React.FC<AskPaneProps> = ({ agents, spawnSupervisor, onJumpToAgent, scopeAgentId }) => {

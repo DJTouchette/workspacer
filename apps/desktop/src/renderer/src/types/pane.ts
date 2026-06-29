@@ -3,7 +3,7 @@ export type PaneType = 'terminal' | 'browser' | 'notes' | 'claude' | 'settings' 
 /** Coding-agent backend an agent workspace / agent pane runs.
  *  `undefined` is treated as `'claude'` for backward compatibility with sessions
  *  and config that predate multi-provider support. See docs/multi-agent-providers.md. */
-export type AgentProvider = 'claude' | 'codex' | 'opencode';
+export type AgentProvider = 'claude' | 'codex' | 'opencode' | 'pi';
 
 /** Normalize a possibly-undefined provider to the concrete default ('claude'). */
 export function resolveProvider(p: AgentProvider | undefined): AgentProvider {

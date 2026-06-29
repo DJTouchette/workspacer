@@ -12,7 +12,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { buildClaudeArgv, ClaudeArgvOptions } from './claudeResolver';
 
-export type AgentProvider = 'claude' | 'codex' | 'opencode';
+export type AgentProvider = 'claude' | 'codex' | 'opencode' | 'pi';
 
 /** First existing absolute path for any of `names` across PATH, else null. */
 function findOnPath(names: string[]): string | null {
@@ -41,7 +41,8 @@ function binNames(base: string): string[] {
  * freshly-installed CLI still works without a restart.
  */
 export function resolveAgentBinary(provider: Exclude<AgentProvider, 'claude'>): string {
-  const base = provider === 'codex' ? 'codex' : 'opencode';
+  // Binary name matches the provider id for every managed CLI (codex/opencode/pi).
+  const base = provider;
   return findOnPath(binNames(base)) ?? base;
 }
 

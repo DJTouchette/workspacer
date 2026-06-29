@@ -2,10 +2,11 @@ import React, { useEffect, useState } from 'react';
 import { Config } from '../../hooks/useConfig';
 import { Section, Row, SearchableSelect, SelectOption, ModeButton, inputStyle } from './primitives';
 
-const SUP_PROVIDERS: { value: 'claude' | 'codex' | 'opencode'; label: string }[] = [
+const SUP_PROVIDERS: { value: 'claude' | 'codex' | 'opencode' | 'pi'; label: string }[] = [
   { value: 'claude', label: 'Claude' },
   { value: 'codex', label: 'Codex' },
   { value: 'opencode', label: 'OpenCode' },
+  { value: 'pi', label: 'Pi' },
 ];
 
 interface SupervisorSectionProps {
@@ -65,7 +66,7 @@ const SupervisorSection: React.FC<SupervisorSectionProps> = ({ config, save }) =
       </Row>
       <div style={{ fontSize: '0.55rem', color: 'var(--wks-text-disabled)' }}>
         Which CLI the supervisor runs on (also pickable when you launch one from “Ask the Fleet”).
-        Codex and OpenCode supervisors are wired to the workspacer MCP facade — the supervisor’s
+        Codex, OpenCode, and Pi supervisors are wired to the workspacer MCP facade — the supervisor’s
         tools to observe and coordinate the fleet — via their own MCP config. Experimental: it needs
         a CLI build with remote-MCP support; Claude remains the most battle-tested.
       </div>

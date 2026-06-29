@@ -109,7 +109,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     claudemonSessionClient.close(id));
 
   // ── Claude sessions (delegated to claudemon) ──
-  ipcMain.handle(IPC.CLAUDE_SPAWN, async (_event, opts: { cwd?: string; provider?: 'claude' | 'codex' | 'opencode'; profileId?: string; model?: string; skipPermissions?: boolean; resumeSessionId?: string; cols?: number; rows?: number; supervisor?: boolean; mcpFacade?: boolean; label?: string; parentSessionId?: string; mcpItemIds?: string[] }) => {
+  ipcMain.handle(IPC.CLAUDE_SPAWN, async (_event, opts: { cwd?: string; provider?: 'claude' | 'codex' | 'opencode' | 'pi'; profileId?: string; model?: string; skipPermissions?: boolean; resumeSessionId?: string; cols?: number; rows?: number; supervisor?: boolean; mcpFacade?: boolean; label?: string; parentSessionId?: string; mcpItemIds?: string[] }) => {
     // Provider selects the coding-agent backend. OpenCode and Codex are Tier-2
     // managed: claudemon drives their machine interface (`opencode serve` HTTP+SSE
     // / `codex app-server` JSON-RPC) and translates events into the shared session

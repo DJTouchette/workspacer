@@ -182,7 +182,7 @@ pub async fn handle_managed(
     State(conv): State<ConversationStore>,
     Json(payload): Json<SpawnManagedPayload>,
 ) -> impl IntoResponse {
-    if payload.provider != "opencode" && payload.provider != "codex" {
+    if !matches!(payload.provider.as_str(), "opencode" | "codex" | "pi") {
         return (
             StatusCode::BAD_REQUEST,
             format!("unsupported managed provider: {}", payload.provider),
@@ -213,6 +213,16 @@ pub async fn handle_managed(
             facade,
         ),
         "codex" => crate::providers::codex::spawn_session(
+            store.clone(),
+            conv.clone(),
+            session_id.clone(),
+            payload.cwd.clone(),
+            payload.model.clone(),
+            bin,
+            payload.yolo,
+            facade,
+        ),
+        "pi" => crate::providers::pi::spawn_session(
             store.clone(),
             conv.clone(),
             session_id.clone(),
