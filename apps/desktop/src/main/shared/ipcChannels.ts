@@ -27,6 +27,7 @@ export const IPC = {
   // ── Claude sessions ──
   CLAUDE_SPAWN: 'claude:spawn',
   CLAUDE_LIST_MODELS: 'claude:listModels',
+  PROVIDER_LIST_MODELS: 'provider:listModels',
   CLAUDE_MESSAGE: 'claude:message',
   CLAUDE_APPROVE: 'claude:approve',
   CLAUDE_ANSWER: 'claude:answer',

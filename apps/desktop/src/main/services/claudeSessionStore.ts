@@ -204,6 +204,19 @@ class ClaudeSessionStore {
     this.spawnMeta.set(sessionId, meta);
   }
 
+  /** Eagerly register a freshly-spawned managed (codex/opencode/pi) session so
+   *  its GUI pane has a snapshot to render right away. Managed backends fire no
+   *  Claude hooks and emit no conversation delta until they first produce output,
+   *  so without this the pane sits on the empty "connecting / no session" state
+   *  until the first message. Idempotent — a no-op once the session exists (the
+   *  conversation/statusline streams take over from there). Picks up the
+   *  provider/label from any prior setSpawnMeta via createSession. */
+  ensureManagedSession(sessionId: string, cwd: string): void {
+    if (!sessionId || this.sessions.has(sessionId)) return;
+    const session = this.createSession(sessionId, normalizeCwd(cwd));
+    this.pushUpdate(session);
+  }
+
   /** Session ids currently marked as supervisors (live sessions only). */
   supervisorSessionIds(): string[] {
     const ids: string[] = [];

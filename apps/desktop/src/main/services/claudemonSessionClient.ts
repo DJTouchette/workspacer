@@ -109,6 +109,28 @@ class ClaudemonSessionClient {
     return resBody.session_id;
   }
 
+  /** List the models a managed provider can launch with, live-queried from its
+   *  CLI/server via GET /providers/:provider/models. Returns an empty list on
+   *  any failure so the spawn dialog can fall back to free-text entry. */
+  async listProviderModels(
+    provider: 'opencode' | 'codex' | 'pi',
+    cwd?: string,
+    bin?: string,
+  ): Promise<Array<{ id: string; label: string; default: boolean }>> {
+    const params = new URLSearchParams();
+    if (cwd) params.set('cwd', cwd);
+    if (bin) params.set('bin', bin);
+    const qs = params.toString();
+    try {
+      const res = await fetch(`${CLAUDEMON_API_URL}/providers/${provider}/models${qs ? `?${qs}` : ''}`);
+      if (!res.ok) return [];
+      const body = await res.json() as { models?: Array<{ id: string; label: string; default?: boolean }> };
+      return (body.models ?? []).map((m) => ({ id: m.id, label: m.label, default: m.default === true }));
+    } catch {
+      return [];
+    }
+  }
+
   /** Attach a viewer to an already-running daemon session — no spawn, no
    *  --resume. The renderer keys ports by paneId so multiple viewers can
    *  coexist (claudemon's pty.bytes channel is a tokio::broadcast). */

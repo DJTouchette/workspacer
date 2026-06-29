@@ -23,10 +23,39 @@ use serde_json::Value;
 use tokio::process::Command;
 use tokio::sync::mpsc;
 
-use super::{apply_updates, AgentUpdate, Facade, UsageAcc};
+use super::{apply_updates, AgentUpdate, Facade, ModelInfo, UsageAcc};
 use crate::session::conversation::ConversationItem;
 use crate::session::state::SessionMode;
 use crate::session::{ConversationStore, SessionStore};
+
+/// List the models OpenCode can launch with, by shelling out to `opencode
+/// models` — which prints one `provider/model` id per line for every provider
+/// it knows about. The ids are exactly what `--model` / the message `model`
+/// field accept, so the picker round-trips them verbatim.
+pub async fn list_models(bin: &str, cwd: &str) -> anyhow::Result<Vec<ModelInfo>> {
+    let out = Command::new(bin)
+        .arg("models")
+        .current_dir(cwd)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .await
+        .with_context(|| format!("running `{bin} models`"))?;
+    if !out.status.success() {
+        anyhow::bail!("`{bin} models` exited with {}", out.status);
+    }
+    let models = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && l.contains('/'))
+        .map(|id| ModelInfo {
+            id: id.to_string(),
+            label: id.to_string(),
+            default: false,
+        })
+        .collect();
+    Ok(models)
+}
 
 /// Translate one OpenCode SSE event into zero or more typed updates. Pure and
 /// total: unknown event types and missing fields yield an empty/partial result

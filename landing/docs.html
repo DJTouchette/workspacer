@@ -94,6 +94,7 @@
   </a>
   <div class="links">
     <a href="index.html">home</a>
+    <a href="build.html">build</a>
     <a href="https://github.com/DJTouchette/workspacer">github</a>
   </div>
 </div></nav>
@@ -103,15 +104,14 @@
     <div class="label">docs</div>
     <nav id="toc">
       <a href="#overview">overview</a>
-      <a href="#install">install and quick start</a>
-      <a href="#architecture">architecture</a>
-      <a href="#agents-and-providers">agents and providers</a>
+      <a href="#getting-started">getting started</a>
+      <a href="#agents-and-providers">running agents</a>
       <a href="#agent-pane">the agent pane</a>
       <a href="#panes">pane types</a>
       <a href="#layout-and-navigation">layout and navigation</a>
       <a href="#attention">attention and notifications</a>
       <a href="#remote">remote and multi-client</a>
-      <a href="#extending">extending: plugins, mcp, and the tui</a>
+      <a href="#extending">plugins, mcp, and the tui</a>
       <a href="#configuration">configuration</a>
     </nav>
   </aside>
@@ -127,200 +127,84 @@
 <ul>
 <li><strong>one agent = one long-lived session = one workspace.</strong> Each agent is a single claudemon session, keyed by its working directory. It has its own tabs and panes (the Claude pane, plus terminals, a browser, a git review/diff pane, a per-agent notes scratchpad, and more).</li>
 <li><strong>sessions live in the daemon, not the window.</strong> The session runs in <code>claudemon</code>, independent of any UI. Close the desktop window and the agent keeps running. A session spawned from somewhere else (the MCP facade, another agent) gets auto-adopted and shows up as a card on its own.</li>
-<li><strong>one card per session, everywhere.</strong> Cards are keyed by a stable id derived from the session and deduped on layout sync, so the same agent shows up once whether you're looking at it from the desktop app, the TUI, or a remote client.</li>
+<li><strong>one card per session, everywhere.</strong> The same agent shows up exactly once whether you're looking from the desktop app, the terminal client, or a remote device, never doubled, never out of sync.</li>
 </ul>
 <p>You move between agents in the sidebar, or change how the whole fleet is laid out with view modes: <code>tabs</code> (a horizontal strip), <code>spatial</code> (a pan-zoom canvas), or <code>stacked</code> (a vertical feed). Switching modes never remounts your live panes. There's also a Fleet Deck, a cross-agent radar of live agent cards, as a higher-altitude view over the same sessions.</p>
-<h3>the pieces</h3>
-<p>work{spacer} is a monorepo of four components. You mostly interact with one of the two clients; the daemons are the substrate.</p>
+<h3>what's running on your machine</h3>
+<p>You launch one thing, the desktop app, but a few processes run behind it. You never start them by hand; the app does, and it restarts them if they crash.</p>
 <ul>
-<li><strong><code>apps/desktop</code></strong>: the Electron + React desktop app. The primary client. It spawns and supervises the two daemons as child processes (auto-restart on crash with backoff).</li>
-<li><strong><code>services/claudemon</code></strong>: a Rust daemon that owns sessions and PTYs. It ingests Claude Code hook events, tracks each session's mode (<code>input</code>, <code>responding</code>, <code>approval</code>, <code>question</code>, <code>stopped</code>), parses the JSONL transcript, and serves it all over HTTP + SSE. Default ports: hook ingress <code>127.0.0.1:7890</code>, API <code>127.0.0.1:7891</code>.</li>
-<li><strong><code>services/hub</code></strong>: a Go control-plane: a WebSocket event bus, a process supervisor for plugin sidecars, a capability router (request/reply), and an MCP facade (<code>cmd/mcp</code>) that re-exposes the fleet as MCP tools so an agent can drive work{spacer} headlessly. A standalone <code>cmd/brain</code> provider can back the capabilities without a GUI open.</li>
-<li><strong><code>apps/tui</code></strong>: <code>wks-tui</code>, a Rust terminal client over the hub bus, for monitoring and driving the same fleet with no Electron window open.</li>
+<li><strong>the desktop app</strong>: the window you click. It's just a client. It doesn't hold your sessions, it displays and drives them.</li>
+<li><strong>the session daemon</strong> (<code>claudemon</code>): a background process that actually owns every agent session and terminal. It keeps running whether or not a window is open, which is why closing the window never kills an agent.</li>
+<li><strong>the hub</strong>: a background bus that lets other clients, the terminal app, your phone, a second PC, see and drive the same fleet, and that hosts plugins.</li>
 </ul>
-<p>Because every client talks to the same <code>hub</code> bus (and the same <code>claudemon</code> underneath), a session running under one client can be observed and driven from another.</p>
+<p>You can also drive the same fleet from a terminal with <code>wks-tui</code>, or from a phone/laptop over the network (see <a href="#remote">remote and multi-client</a>). Because every client talks to the same hub and the same session daemon underneath, a session started in one place can be watched and driven from anywhere else.</p>
 <h3>getting started</h3>
-<p>From the repo root:</p>
-<pre><code>make install            # install desktop JS deps
-make build-claudemon    # build the Rust session daemon (needed before spawning agents)
-make dev                # run the desktop app in dev mode, remote sharing on</code></pre>
-<p><code>make dev</code> runs <code>npm run dev:share</code>: it builds the <code>hub</code> binary, starts the Vite renderer, launches Electron with hot reload, and turns on remote sharing (the hub binds a token-authed web endpoint; the URL + token show up in the app's Hub status). Use <code>./dev</code> for the same loop without remote sharing.</p>
-<p>To drive the same fleet from a terminal instead, <code>make dev-tui</code> (debug) or <code>make run-tui</code> (release). The TUI auto-spawns whatever daemons aren't already listening on loopback, so it works standalone.</p>
+<p>Install work{spacer}, wire up the Claude hooks once, and spawn your first agent. The <a href="#getting-started">getting started</a> section walks through it. If you're building from source or writing a plugin, see the <a href="build.html">build &amp; internals</a> page instead.</p>
 </section>
 
-<section id="install" class="doc">
-<h2>install and quick start</h2>
-<p>work{spacer} is a monorepo. The Electron desktop app in <code>apps/desktop</code> is the primary client. It spawns and supervises two daemons at runtime: <code>claudemon</code> (Rust, in <code>services/claudemon</code>) and <code>hub</code> (Go, in <code>services/hub</code>). A Rust TUI lives in <code>apps/tui</code>. The root <code>Makefile</code> is the single entry point, every target just delegates into the right component directory.</p>
-<h3>toolchains</h3>
-<p>Toolchains are pinned with <a href="https://mise.jdx.dev"><code>mise</code></a> via <code>mise.toml</code> at the repo root:</p>
+<section id="getting-started" class="doc">
+<h2>getting started</h2>
+<p>This walks through a first run: get the app, wire Claude's hooks once, spawn your first agent, and find your way around. Building from source and packaging are covered on the <a href="build.html">build &amp; internals</a> page.</p>
+<h3>install and launch</h3>
+<p>Install the desktop app and open it. On first launch it starts its background daemons for you and, if there's nothing to restore, shows the <strong>session picker</strong>, your list of saved sessions, with "new session" to start clean.</p>
+<p>One concept to keep in mind from the start: <strong>your window is disposable</strong>. Agents run in the background session daemon, not in the window. Close work{spacer}, your agents keep working; reopen it (or the terminal app, or your phone) and you reconnect to the same live sessions. The cockpit is detachable from the planes.</p>
+<h3>wire Claude's hooks (once)</h3>
+<p>So work{spacer} can see what your Claude agents are doing, Claude needs to POST lifecycle events to the session daemon. That's a one-time setup that merges a small hook block into <code>~/.claude/settings.json</code>:</p>
+<pre><code>claudemon init                  # merge the hooks into ~/.claude/settings.json
+claudemon init --dry-run        # preview the merged file, write nothing</code></pre>
+<p>You only do this once per machine (per Claude config dir). Without it, Claude agents still run, but the live conversation view, state dots, and approval forwarding won't light up. Codex and OpenCode agents don't need this, they're driven directly.</p>
+<h3>spawn your first agent</h3>
+<p>Hit <code>Ctrl+Shift+N</code> (or the <code>+</code> in the sidebar) to open the spawn dialog. Pick a <strong>working directory</strong> (the project you want the agent to work in), optionally name it, choose an agent backend (<strong>Claude Code</strong>, <strong>Codex</strong>, or <strong>OpenCode</strong>), and spawn. The agent shows up as a card in the sidebar and opens its workspace. Type in the composer at the bottom and you're off.</p>
+<p>Spawn a few more in other directories. Each one is its own workspace with its own tabs and panes. The sidebar shows every agent's live state at a glance, and the "<a href="#attention">N need you / N working</a>" header tells you who's blocked on a decision. See <a href="#agents-and-providers">running agents</a> for every field in the spawn dialog.</p>
+<h3>find your way around</h3>
 <ul>
-<li><strong>Go 1.25</strong> for the <code>hub</code> (and the <code>mcp</code> + <code>brain</code> binaries).</li>
-<li><strong>Node 22</strong> for the Electron app and the Vite renderer.</li>
-<li><strong>Rust</strong> via the standard <code>cargo</code> / <code>rustup</code> toolchain (not pinned by mise).</li>
+<li><strong>Command palette</strong> (<code>Ctrl+Shift+P</code>): a fuzzy launcher for everything, new panes, dialogs, your saved prompts and skills, plugin panes.</li>
+<li><strong>Switch agents</strong> in the sidebar, or <code>Ctrl+Tab</code> / <code>Ctrl+Shift+Tab</code>.</li>
+<li><strong>Jump to whoever needs you</strong> (<code>Ctrl+Shift+Space</code>), or open the <strong>Triage Inbox</strong> (<code>Ctrl+Shift+I</code>) to clear approvals and questions across the whole fleet like email.</li>
+<li><strong>Fleet Deck</strong> (<code>Ctrl+Shift+F</code>): a cross-agent radar showing every agent at once, with the ones that need you floated to the front.</li>
+<li><strong>Keyboard cheatsheet</strong>: press <code>F1</code> any time.</li>
 </ul>
-<p><code>mise.toml</code> also puts <code>./apps/desktop/node_modules/.bin</code> on <code>PATH</code> so the app's local binaries resolve inside tasks.</p>
-<h3>install</h3>
-<p>From the repo root:</p>
-<pre><code>make install      # cd apps/desktop &amp;&amp; npm install</code></pre>
-<p>That installs the desktop JS deps. A <code>postinstall</code> step runs <code>electron-rebuild</code> against <code>better-sqlite3</code> so the native module matches your Electron version.</p>
-<h3>dev: with or without remote sharing</h3>
-<pre><code>make dev          # desktop app in dev mode, remote sharing ON
-./dev             # same dev loop, remote sharing OFF</code></pre>
-<p><code>make dev</code> runs <code>npm run dev:share</code>, which sets <code>WORKSPACER_REMOTE_SHARE=1</code> and then runs the normal dev loop. The dev loop builds the <code>hub</code> and <code>mcp</code> binaries, builds the main process, ensures the web renderer bundle exists, starts the Vite renderer on <code>http://localhost:5173</code>, waits for it, then launches Electron with <code>ELECTRON_DEV=1</code> and hot reload.</p>
-<p><code>./dev</code> is a thin wrapper that runs <code>npm run dev</code> straight, so no remote sharing.</p>
-<p><strong>remote sharing.</strong> With <code>WORKSPACER_REMOTE_SHARE=1</code> the hub binds beyond loopback so another PC or phone (intended over a Tailscale tailnet) can reach the bus and the <code>/remote</code> web client. The URL and token show up in the app's Hub status.</p>
-<ul>
-<li><code>WORKSPACER_REMOTE_SHARE=1</code> turns it on. Default bind is <code>0.0.0.0:7895</code>.</li>
-<li><code>WORKSPACER_REMOTE_ADDR=host:port</code> overrides the bind address. Pin it to your tailnet IP to keep it off the LAN.</li>
-<li>Default (unset): the hub stays on <code>127.0.0.1</code>. A bus token is always created either way, remote mode reuses it as the bearer secret.</li>
-</ul>
-<h3>build claudemon once</h3>
-<p><code>claudemon</code> is built separately from the dev loop. The dev loop builds <code>hub</code> and <code>mcp</code> but not <code>claudemon</code>, so before the app can spawn Claude sessions you need to build it once:</p>
-<pre><code>make build-claudemon     # cargo build --release in services/claudemon</code></pre>
-<p>The binary lands at <code>services/claudemon/target/release/claudemon</code>. <code>make build</code> also covers it. You only need to redo this when claudemon's source changes.</p>
-<h3>build</h3>
-<pre><code>make build               # build all four components
-make build-hub           # go build the hub + mcp + brain binaries
-make build-claudemon     # cargo build --release for claudemon
-make build-tui           # cargo build --release for wks-tui</code></pre>
-<p><code>make build</code> runs <code>build-hub</code>, <code>build-claudemon</code>, <code>build-desktop</code>, and <code>build-tui</code>. <code>build-desktop</code> runs the desktop <code>npm run build</code> (main process + the Electron renderer + the web renderer bundle).</p>
-<p><code>make build-hub</code> produces three Go binaries in <code>services/hub/</code>: <code>hub</code> (<code>./cmd/hub</code>), <code>mcp</code> (<code>./cmd/mcp</code>), and <code>brain</code> (<code>./cmd/brain</code>).</p>
-<h3>package</h3>
-<pre><code>make package             # build daemons + electron-builder installers</code></pre>
-<p>This builds the renderer and main process, builds <code>hub</code>, <code>mcp</code>, and a release <code>claudemon</code>, then runs <code>electron-builder</code>. Installers land in <code>apps/desktop/release/</code>.</p>
-<h3>test</h3>
-<pre><code>make test                # desktop + hub + tui suites
-make test-desktop        # npm test (main via vitest, renderer via vitest)
-make test-hub            # go test -race ./...
-make test-tui            # cargo test</code></pre>
-<p>The desktop app also has an e2e suite (<code>npm run test:e2e</code>, Playwright) that is not part of <code>make test</code>.</p>
-<h3>run the tui</h3>
-<pre><code>make dev-tui             # wks-tui debug build; builds hub/brain first, then claudemon (debug)
-make run-tui             # wks-tui release build; builds release claudemon + hub + tui first</code></pre>
-<p>The TUI defaults to the hub bus and auto-spawns the hub and brain. Pass <code>ARGS="--direct"</code> for the standalone claudemon-direct path, e.g. <code>make run-tui ARGS="--direct"</code>.</p>
-<h3>GPU escape hatch</h3>
-<p>Some Linux GPUs (hybrid Intel + AMD/NVIDIA laptops under Wayland) render the Chromium surface as garbage, speckled corruption. If you hit that:</p>
-<pre><code>WORKSPACER_DISABLE_GPU=1 ./dev</code></pre>
-<p>When set to <code>1</code>, the app calls <code>disableHardwareAcceleration()</code> and adds <code>--disable-gpu-compositing</code>. Single-GPU machines that render fine should leave it unset.</p>
-<h3>per-component builds</h3>
-<p>Every component also builds on its own from its directory, the make targets just delegate. See the per-component READMEs: <code>apps/desktop/README.md</code>, <code>apps/tui/README.md</code>, <code>services/claudemon/README.md</code>, <code>services/hub/README.md</code>.</p>
-<pre><code>make clean               # remove build artifacts across all components</code></pre>
-</section>
-
-<section id="architecture" class="doc">
-<h2>architecture</h2>
-<p>work{spacer} is three processes, not one. The desktop app you click is just a client. The actual work (the agent sessions, the PTYs, the transcripts) lives in daemons that keep running with or without a window open.</p>
-<h3>the three processes</h3>
-<ul>
-<li><strong>desktop</strong> (<code>apps/desktop</code>), the Electron + React app. This is the primary GUI client. Electron main spawns and supervises the two daemons below as child processes, connects to the hub as a bus client, and forwards events into the renderer. It owns nothing about sessions itself, it just drives them.</li>
-<li><strong>claudemon</strong> (<code>services/claudemon</code>, Rust), owns the sessions. It ingests Claude Code hook events on <code>127.0.0.1:7890</code>, holds per-session state and PTYs, and serves session state + bidirectional control on <code>127.0.0.1:7891</code> over REST + SSE. It parses the <code>~/.claude/projects/*/*.jsonl</code> transcripts so any client gets a structured conversation, not raw scrollback.</li>
-<li><strong>hub</strong> (<code>services/hub</code>, Go), the control-plane. A WebSocket event bus, a process supervisor, a capability (RPC) router, the plugin system, and an MCP facade. It runs independently of the UI so plugins and remote clients can broker events with or without a window open. Default bind is <code>127.0.0.1:7895</code>.</li>
-</ul>
-<p>A Rust TUI (<code>apps/tui</code>, <code>wks-tui</code>) is a second client. Remote and web clients connect to the same hub bus. A session running on one client can be observed and driven from another.</p>
-<h3>why your window is disposable</h3>
-<p>The sessions live in claudemon, not in the desktop app. claudemon is a separate OS process that the app spawns but does not contain.</p>
-<p>Close the window, the agent keeps running. Reopen it (or open the TUI, or a phone), and you reconnect to the same live sessions. Claude is still working in the daemon the whole time. This is the whole point of the split: the cockpit is detachable from the planes.</p>
-<h3>who spawns what</h3>
-<p>Electron main is the supervisor of the daemons:</p>
-<ul>
-<li><code>claudemonDaemon.ts</code> spawns <code>claudemon serve --hook-port 7890 --api-port 7891</code>.</li>
-<li><code>hubDaemon.ts</code> spawns <code>hub</code> with <code>--addr</code>, <code>--claudemon-events http://127.0.0.1:7891/events</code> (so claudemon becomes the first producer on the bus), <code>--plugins-dir</code>, <code>--claudemon</code>, and a <code>--token</code>.</li>
-</ul>
-<p>Binary resolution is mode-aware. In dev (<code>ELECTRON_DEV=1</code> or not packaged) the binaries come from <code>services/claudemon/target/release/claudemon</code> and <code>services/hub/hub</code>. Packaged, they come from <code>&lt;resourcesPath&gt;/claudemon/</code> and <code>&lt;resourcesPath&gt;/hub/</code>. Both daemons must already be built, <code>make build-claudemon</code> and <code>make build-hub</code>, or <code>make build</code> for everything.</p>
-<p>Before spawning, the app kills any stale process already listening on the daemon's port (<code>killStaleListener</code>, via <code>lsof -ti :&lt;port&gt;</code> on Unix, <code>netstat</code>/<code>taskkill</code> on Windows), then polls <code>/health</code> for up to 5s before declaring the daemon ready.</p>
-<h3>the hub bus</h3>
-<p>Each client opens <strong>one</strong> bidirectional WebSocket to <code>ws://&lt;addr&gt;/bus</code> and exchanges JSON frames. Publish and subscribe share the same pipe (deliberately, vs claudemon's SSE-down / POST-up split, because it keeps plugins simple).</p>
-<p><strong>Pub/sub.</strong> Subscribe to topics, publish events:</p>
-<pre><code>client → hub:   {"op":"subscribe","topics":["agent.*"]}
-                {"op":"publish","event":{"type":"agent.spawned","source":"plugin.x","data":{...}}}
-hub → client:   {"op":"event","event":{...}}</code></pre>
-<p>Topic patterns are exact (<code>agent.spawned</code>), namespace wildcard (<code>agent.*</code>), or all (<code>*</code>). The event envelope is <code>{ id, type, source, time, data }</code>; the hub stamps <code>id</code>/<code>time</code> if you leave them blank. Fan-out is non-blocking: a slow client gets events dropped and counted rather than stalling everyone else.</p>
-<p><strong>Capabilities (RPC).</strong> The same socket carries request/reply. A provider registers method names; a caller calls them; the hub routes the call to the owning provider and the reply back, correlating by a global id:</p>
-<pre><code>provider → hub: {"op":"register","methods":["agents.list","agents.sendMessage"]}
-caller   → hub: {"op":"call","id":"req-1","method":"agents.list","params":{...}}
-hub → provider: {"op":"call","id":"&lt;global&gt;","method":"agents.list","params":{...}}
-provider → hub: {"op":"result","id":"&lt;global&gt;","result":{...}}
-hub → caller:   {"op":"result","id":"req-1","result":{...}}</code></pre>
-<p>The hub never <em>executes</em> a capability, it only routes. The router is <strong>single-owner per method</strong>: two providers registering the same method would collide. That constraint shapes the whole "who owns what" story below. The MCP facade (<code>cmd/mcp</code>) is just another caller on this bus, re-exposing each capability as an MCP tool.</p>
-<p>In the running app, Electron main is the capability <strong>provider</strong> (<code>hubCapabilities.ts</code>): it provides <code>agents.list</code>, <code>agents.sendMessage</code>, <code>notifications.post</code>, and the rest. Because those caps only exist while the GUI is up, there's a headless provider, <code>cmd/brain</code>, that can register the same surface against claudemon's HTTP API with no window open. Single-owner routing is why brain runs in scopes: <code>full</code> (headless, provides everything) or <code>catalog</code> (alongside the app, owns only the file-backed subset while the app keeps the live agent caps). The desktop spawns the hub with <code>--brain-scope catalog</code> or <code>off</code> depending on <code>brainDelegation.ts</code>.</p>
-<h3>token auth</h3>
-<p>The hub always loads or creates a bus token, even on the localhost-only default. It lives at <code>&lt;configDir&gt;/remote-token</code> (created with mode <code>0600</code>, 24 random bytes, base64url). The local hub client presents it; that's how the bus tells the trusted host apart from plugin sidecars and webviews, which carry their own per-plugin tokens. This is the basis of plugin capability enforcement.</p>
-<p>The hub flag is <code>--token</code> (or <code>$HUB_TOKEN</code>). When set, auth is required on <code>/bus</code>, <code>/remote</code>, <code>/plugins/install</code>, and <code>/plugins/remove</code>. Empty means no auth, which is only safe because the default bind is loopback.</p>
-<p>Remote sharing reuses the same token as a bearer secret. It's opt-in via <code>WORKSPACER_REMOTE_SHARE</code>; setting it makes the hub bind off loopback (default <code>0.0.0.0:7895</code>, overridable with <code>WORKSPACER_REMOTE_ADDR</code>, intended to be pinned to a Tailscale IP). Binding off localhost without auth is meaningless, so in that mode the token is required on <code>/bus</code>.</p>
-<h3>one agent, one card, everywhere</h3>
-<p>The layout is mirrored across clients (desktop, web, phone) through a hub-owned shared document, last-writer-wins. The real identity of an agent is its live claudemon <code>sessionId</code>. Historically each client minted a random card id, so the same session got a different id on every client and a blind whole-array sync made them ping-pong (spawn one, end up with seven).</p>
-<p>Two defenses live in <code>agentIdentity.ts</code>:</p>
-<ul>
-<li><strong>deterministic id</strong>: <code>agentIdForSession(sessionId)</code> returns <code>agent-&lt;sessionId&gt;</code>, so every client produces the <em>same</em> card id for a session and never diverges.</li>
-<li><strong>dedupe on sync</strong>: <code>dedupeBySessionId</code> runs whenever a layout is taken in, collapsing any cards that still share a <code>sessionId</code> down to one. The survivor is the lexicographically-smallest id (so every client agrees) placed at the first occurrence (so ordering stays stable). Cards with no <code>sessionId</code> (stopped or local agents) are always kept.</li>
-</ul>
-<p>The net effect: one card per session across every client.</p>
-<h3>auto-restart with backoff</h3>
-<p>Both daemons are supervised the same way (<code>RestartBackoff</code> in <code>daemonUtils.ts</code>). On an unexpected exit (not an intentional <code>stopClaudemon()</code>/<code>stopHub()</code>), the app respawns with exponential backoff:</p>
-<ul>
-<li>base delay <code>1000ms</code>, doubling each attempt, capped at <code>30000ms</code>.</li>
-<li>gives up after <code>10</code> consecutive failures (then logs "restart the app to recover").</li>
-<li>if the daemon stayed healthy for at least <code>60000ms</code>, the next crash is treated as a fresh failure and the counter resets, so transient crashes don't burn the budget.</li>
-</ul>
-<p>An intentional stop sets a flag so the supervised process isn't respawned, and clears the failure counter so the next manual start begins fresh. The hub in turn supervises its own children the same way: spawn, health-check, restart-on-crash, graceful stop (SIGTERM then SIGKILL), with each lifecycle change reported on the bus as a <code>sidecar.*</code> event. That covers plugin sidecars and the brain provider.</p>
+<p>The rest of these docs go pane by pane and feature by feature. A good order from here: <a href="#agents-and-providers">running agents</a> → <a href="#agent-pane">the agent pane</a> → <a href="#attention">attention and notifications</a>.</p>
 </section>
 
 <section id="agents-and-providers" class="doc">
-<h2>agents and providers</h2>
-<p>work{spacer} drives three coding agents now, not one: Claude Code, Codex, and OpenCode. You pick the backend when you spawn an agent, and the rest of the app (Fleet Deck, sidebar, inspector, the GUI conversation view) treats them the same way.</p>
-<p>The provider type lives in <code>apps/desktop/src/renderer/src/types/pane.ts</code>:</p>
-<pre><code>type AgentProvider = 'claude' | 'codex' | 'opencode'</code></pre>
-<p><code>undefined</code> is treated as <code>'claude'</code> for back-compat, so any agent or config that predates multi-provider support keeps working.</p>
+<h2>running agents</h2>
+<p>work{spacer} drives three coding agents, not one: <strong>Claude Code</strong>, <strong>Codex</strong>, and <strong>OpenCode</strong>. You pick the backend when you spawn an agent, and the rest of the app, the sidebar, the Fleet Deck, the inspector, the conversation view, treats them the same way: same state dots, same live transcript, same token/cost readouts, same approval prompts.</p>
 <h3>the spawn dialog</h3>
-<p>The spawn dialog is <code>SpawnAgentDialog.tsx</code>. It collects:</p>
+<p>Open it with <code>Ctrl+Shift+N</code> or the <code>+</code> in the sidebar. It always asks for:</p>
 <ul>
-<li><strong>Working directory</strong>: type a path or hit <code>Browse…</code> (native folder picker). This is the agent's cwd and the default cwd for every pane it opens.</li>
-<li><strong>Name (optional)</strong>: defaults to the basename of the cwd (<code>deriveAgentName</code>). Renameable later.</li>
-<li><strong>Agent</strong>: three buttons: <code>Claude Code</code>, <code>Codex</code>, <code>OpenCode</code>, each with its own logo. This is the provider picker.</li>
+<li><strong>Working directory</strong>: type a path or hit <code>Browse…</code>. This is the agent's project folder, and the default folder for every pane it opens (its terminals, its git review, etc.).</li>
+<li><strong>Name (optional)</strong>: defaults to the folder name. You can rename it later.</li>
+<li><strong>Agent</strong>: pick <code>Claude Code</code>, <code>Codex</code>, or <code>OpenCode</code>.</li>
 </ul>
-<p>The rest of the fields are <strong>Claude-only</strong> and only render when the provider is <code>claude</code>:</p>
+<p>If you pick <strong>Claude Code</strong>, a few more fields appear:</p>
 <ul>
-<li><strong>Resume session (optional)</strong>: shows up when there are resumable Claude sessions in that cwd (discovered via <code>claudeListSessionsForDir</code>, debounced 250ms). <code>Start fresh</code> is the default; otherwise pick one by relative time + summary. Resuming reuses the prior conversation (<code>--resume &lt;id&gt;</code>).</li>
-<li><strong>Model</strong>: <code>Default (Claude Code setting)</code>, then <code>Latest</code> aliases, then models <code>Seen in sessions</code>, then <code>Custom…</code> for a free-text id (e.g. <code>claude-opus-4-8</code> or <code>opus</code>). The dropdown is fed by <code>claudeListModels</code>.</li>
-<li><strong>Profile (optional)</strong>: named profiles (model, config dir, extra args, default MCP loadout). <code>Default</code> if none picked.</li>
-<li><strong>MCP servers (optional)</strong>: checkbox list of <code>kind: 'mcp'</code> Library items, project-scoped to the cwd's <code>.workspacer/library</code>. Pre-filled from the chosen profile's loadout. Only the checked servers are exposed to the session (<code>--strict-mcp-config</code>).</li>
-<li><strong>Skip permissions</strong>: a <code>dangerous</code>-flagged checkbox that passes <code>--dangerously-skip-permissions</code>, bypassing all approval prompts.</li>
+<li><strong>Resume session (optional)</strong>: if you've run Claude in this folder before, you can pick a previous conversation to continue instead of starting fresh. Each is listed by how long ago it ran plus a short summary. The default is to start fresh.</li>
+<li><strong>Model</strong>: leave it on the default (your Claude Code setting), pick a <code>Latest</code> alias, pick a model you've used before, or type a custom id (e.g. <code>opus</code>).</li>
+<li><strong>Profile (optional)</strong>: a saved bundle of model + config dir + extra args + a default set of MCP servers (see <a href="#configuration">configuration</a>). <code>Default</code> if you don't pick one.</li>
+<li><strong>MCP servers (optional)</strong>: tick which MCP servers from your Library to expose to this session. Only the ones you check are loaded.</li>
+<li><strong>Skip permissions</strong>: bypass all approval prompts for this agent. Flagged as dangerous, because it lets the agent run anything without asking.</li>
 </ul>
-<p>For Codex and OpenCode, the dialog drops the Claude-only options and keeps three fields:</p>
+<p>For <strong>Codex</strong> and <strong>OpenCode</strong> the extra Claude fields drop away. You get a free-text <strong>Model (optional)</strong> in that provider's own id format (e.g. <code>gpt-5.4</code> for Codex, <code>anthropic/claude-sonnet-4</code> for OpenCode; blank = the provider's default), and a <strong>YOLO mode</strong> toggle, the same skip-permissions idea: on, the agent accepts every approval itself; off, approvals come to you.</p>
+<p><code>Enter</code> in any field spawns; <code>Esc</code> cancels.</p>
+<h3>terminal-style vs managed agents</h3>
+<p>There's one difference worth knowing between the backends, in how their pane behaves:</p>
 <ul>
-<li><strong>Model (optional)</strong>: a free-text id in the provider's own format (placeholder <code>gpt-5.4</code> for Codex, <code>anthropic/claude-sonnet-4</code> for OpenCode). Blank means the provider's default.</li>
-<li><strong>YOLO mode</strong>: the skip-permissions checkbox, relabelled for managed agents. On, the adapter accepts every approval request inline. Off, requests are forwarded to you.</li>
-<li><strong>Working directory</strong> and <strong>Name</strong>, same as Claude.</li>
+<li><strong>Claude</strong> agents have both a rich GUI conversation view and a raw terminal view, and you can flip between them (see <a href="#agent-pane">the agent pane</a>).</li>
+<li><strong>Codex and OpenCode</strong> are <em>managed</em>: the session daemon drives them directly and renders the conversation, so they're GUI-only, there's no terminal to flip to. They still surface the same state, telemetry, and approval prompts as Claude.</li>
 </ul>
-<p>It submits <code>{ cwd, name, provider, model, skipPermissions }</code>.</p>
-<p><strong>Approvals.</strong> Managed agents forward approval requests to the UI. When the adapter sees a request (<code>requestApproval</code> for Codex, a <code>permission.updated</code> event for OpenCode) it parks the request id and surfaces a pending approval, the same as a Claude one, so your <code>/approve</code> or <code>/decline</code> decision is sent back to the agent. YOLO mode is the exception: it answers every request <code>accept</code> inline and never parks one.</p>
-<p><code>Enter</code> in any text field spawns. <code>Escape</code> cancels (captured globally).</p>
-<h3>the two tiers</h3>
-<p>There are two integration tiers, decided by provider.</p>
-<p><strong>Tier-1 (PTY / terminal view).</strong> A provider runs as its own interactive CLI inside a PTY. The launch side is provider-agnostic: <code>apps/desktop/src/main/services/agentProviders.ts</code> resolves the binary on <code>PATH</code> (<code>resolveAgentBinary</code> looks for <code>codex</code> / <code>opencode</code>, falling back to the bare command name so a freshly-installed CLI works without a restart) and <code>buildAgentArgv</code> just returns <code>[binary]</code> for non-Claude providers. Claude itself always gets the full flag set from <code>claudeResolver</code> (<code>--session-id</code> / <code>--model</code> / <code>--resume</code> / profile env like <code>CLAUDE_CONFIG_DIR</code>).</p>
-<p><strong>Tier-2 (managed adapter).</strong> claudemon drives the provider's own machine interface and translates its events into claudemon's session model, so the agent lights up the GUI and Fleet Deck with the same telemetry (mode/state, live conversation, token/cost/usage, pending approvals) as a Claude session. There is no PTY in this mode.</p>
-<p>In the desktop main process (<code>apps/desktop/src/main/ipc.ts</code>), the <code>CLAUDE_SPAWN</code> handler routes any provider other than <code>claude</code> to <code>claudemonSessionClient.spawnManaged({ provider, cwd, model, bin })</code> instead of spawning a PTY.</p>
-<p>How each managed provider is driven (claudemon, <code>services/claudemon/src/providers/</code>):</p>
-<ul>
-<li><strong>Claude</strong>: observed indirectly via injected <strong>hooks</strong> (lifecycle events POSTed to claudemon), the <strong>JSONL transcript</strong> tail (<code>~/.claude</code>), and the <strong>statusLine</strong> (context % / cost / rate limits). This is the original behavior.</li>
-<li><strong>OpenCode</strong>: claudemon spawns <code>opencode serve</code> (headless HTTP, default <code>127.0.0.1:4096</code>, OpenAPI 3.1), creates/drives a session over HTTP, and consumes the <code>GET /event</code> SSE stream. Frames look like <code>{ "type": "&lt;entity&gt;.&lt;action&gt;", "properties": {…} }</code> (e.g. <code>session.idle</code>, <code>message.part.updated</code>, <code>permission.updated</code>). The translator is defensive: unknown event types and missing fields are ignored, not errors.</li>
-<li><strong>Codex</strong>: claudemon spawns <code>codex app-server</code> (JSON-RPC 2.0 over stdio, newline-delimited). It does <code>thread/start</code> (model + cwd), <code>turn/start</code> per prompt, and consumes notifications: <code>turn/started|completed|failed</code>, <code>item/started|completed</code>, <code>item/agentMessage/delta</code> (streamed text), <code>thread/tokenUsage/updated</code>, and approval requests (<code>item/commandExecution/requestApproval</code>, <code>item/fileChange/requestApproval</code>).</li>
-</ul>
-<p>The managed spawn endpoint is <code>POST /sessions/spawn-managed</code> in <code>services/claudemon/src/daemon/spawn.rs</code>. It accepts <code>opencode</code> and <code>codex</code> (other values 400). The session id is registered up front (<code>register_managed</code>) and returned immediately; the adapter boots in the background, so the card shows up while the server/process starts.</p>
-<p>Internally each adapter is split into a pure per-provider <code>translate()</code> (native event → <code>AgentUpdate</code>s, unit-tested) and a shared <code>apply_updates</code> layer. <code>AgentUpdate</code> is the common vocabulary: <code>Idle</code>, <code>Busy</code>, <code>PermissionPending</code>, <code>AssistantText</code>, <code>UserText</code>, <code>ToolUse</code>, <code>Usage</code>, <code>Error</code>.</p>
-<h3>profiles and per-provider models</h3>
-<p>Profiles (<code>Profile (optional)</code> in the dialog) are named bundles of model + config dir + extra args + a default MCP loadout, selectable at spawn. The model dropdown is per-spawn and Claude-specific today: <code>Latest</code> aliases resolve to the newest model of each family, plus anything <code>Seen in sessions</code>, plus a <code>Custom…</code> free-text id. Profiles only apply to Claude. Codex and OpenCode take a single free-text model id from the dialog's <code>Model (optional)</code> field (their own id formats), passed straight through <code>spawn-managed</code>; everything else about model/session config they manage themselves.</p>
-<h3>auto-adopt</h3>
-<p>Sessions spawned outside the desktop UI (by the MCP facade, by another agent, by the TUI) are adopted automatically as agent cards. The adopt loop lives in <code>App.tsx</code>: once the session phase is <code>active</code>, it walks the live snapshot map and calls <code>adoptAgent</code> for any running session that isn't a pre-existing leftover from a prior run, isn't ended, and isn't already owned by a card. The adopted card gets the <strong>same deterministic id</strong> any other client would mint for that session (<code>agentIdForSession</code>), so concurrent clients converge on one card instead of racing duplicates. If the snapshot carries a <code>parentSessionId</code>, the new card nests under that parent.</p>
+<p>Whatever the backend, approvals work the same: when an agent wants to run something it can't on its own, the request comes to you (in the pane, the sidebar card, or the Triage Inbox) unless you turned on skip-permissions / YOLO for that agent.</p>
+<h3>agents started elsewhere show up automatically</h3>
+<p>You don't have to start every agent from the window. A session spawned by a supervisor, by the MCP facade, by the terminal app, or on another machine, gets <strong>auto-adopted</strong>: it appears as its own card as soon as it's running, deduped so you never see the same session twice across clients. If it was spawned as a child of another agent, it nests under that parent in the sidebar.</p>
 <h3>supervisor agents</h3>
-<p>A supervisor is a Claude agent spawned with the work{spacer} MCP facade attached, so it can observe and coordinate the rest of the fleet. <code>kind: 'supervisor'</code> marks it and <code>parentId</code> points at the agent it watches (undefined = fleet-level). Supervisors render nested under their parent in the sidebar. The <code>spawnSupervisor</code> wrapper in <code>useAgentManager.ts</code> derives a name from the seed question, picks a sensible cwd (fleet-wide unless one is given), and calls <code>spawnAgent</code> with <code>supervisor: true</code>. When no model is passed, it falls back to the configured supervisor model.</p>
+<p>A supervisor is a Claude agent that can see and coordinate the rest of your fleet (it's given the work{spacer} tools). You spawn one from the <strong>Ask</strong> pane ("ask the fleet"). It renders nested under whatever it's watching, fleet-wide, or scoped to a single agent. Use it for things like a cross-fleet standup, a triage sweep, or a cost rollup. See the <a href="#panes">Ask pane</a> for the presets.</p>
 <h3>respawn, terminate, rename</h3>
 <ul>
-<li><strong>Respawn</strong>: <code>respawnAgent</code> restarts a stopped agent, reusing its stored <code>cwd</code>, <code>provider</code>, <code>profileId</code>, <code>model</code>, <code>skipPermissions</code>, and <code>mcpItemIds</code>, and resuming the prior conversation when a <code>lastSessionId</code> is available. It re-points the agent's Claude panes at the fresh session.</li>
-<li><strong>Terminate</strong>: <code>terminateAgent</code> kills the daemon session (<code>claudeClose</code>) and drops the card. The Overview / global workspace is permanent and cannot be terminated. Closing the last tab or last pane of a non-global agent also terminates it.</li>
-<li><strong>Rename</strong>: <code>renameAgent</code> sets the per-agent display name. Default is the basename of the cwd.</li>
+<li><strong>Respawn</strong> restarts a stopped agent with the same folder, backend, profile, model, and settings, and resumes the prior conversation when it can. Its panes re-point at the fresh session.</li>
+<li><strong>Terminate</strong> ends the agent's session and removes the card. The pinned <strong>Overview</strong> workspace can't be terminated. Closing an agent's last tab or pane also terminates it.</li>
+<li><strong>Rename</strong> changes the display name (it defaults to the folder name).</li>
 </ul>
-<p>Sessions live in the daemons independent of any window, so navigating between agents never spawns or kills a session; only an explicit terminate (or the session ending) tears one down.</p>
+<p>Because sessions live in the background daemon, switching between agents never starts or stops one. Only an explicit terminate (or the agent ending on its own) tears a session down.</p>
 </section>
 
 <section id="agent-pane" class="doc">
@@ -588,116 +472,72 @@ hub → caller:   {"op":"result","id":"req-1","result":{...}}</code></pre>
 
 <section id="remote" class="doc">
 <h2>remote and multi-client</h2>
-<p>work{spacer} sessions live in the daemons, not in any one window. The hub is an event bus + capability router, so any client that speaks the bus protocol over <code>ws://&lt;host&gt;:7895/bus</code> is a peer: the desktop app, the Rust TUI, a phone, another PC, the full web app. They all see and drive the same fleet. A remote device is just another bus client.</p>
+<p>Because your sessions live in the background daemon rather than in any one window, you can watch and drive the same fleet from more than one place at once: the desktop app, the terminal app, your phone, a second PC, or a full web app in a browser. They all see the same agents, and a layout change on one mirrors to the others like tmux clients on one session. Most of the time you'll just use the desktop app; this section is about reaching your fleet from somewhere else.</p>
 <h3>remote sharing is opt-in</h3>
-<p>By default the hub binds <code>127.0.0.1:7895</code> and nothing reaches it from off-box. To share it, launch with one env var:</p>
+<p>By default nothing about your fleet is reachable from off your machine, everything stays on localhost. To share it to another device you launch with one environment variable set:</p>
 <ul>
-<li><code>WORKSPACER_REMOTE_SHARE=1</code> turns on remote sharing. The hub now binds <code>0.0.0.0:7895</code> instead of loopback.</li>
-<li><code>WORKSPACER_REMOTE_ADDR=host:port</code> overrides the bind address. Pin it to your tailnet IP (e.g. <code>WORKSPACER_REMOTE_ADDR=100.x.y.z:7895</code>) so it never listens on the LAN.</li>
+<li><code>WORKSPACER_REMOTE_SHARE=1</code> turns on remote sharing.</li>
+<li><code>WORKSPACER_REMOTE_ADDR=host:port</code> (optional) pins the address it listens on. Set it to your <strong>tailnet IP</strong> so it's only reachable over your private network, not the whole LAN.</li>
 </ul>
-<p>Binding off loopback is meaningless without auth, so in this mode the bus requires a bearer token. A token is generated once and persisted at <code>~/.config/workspacer/remote-token</code> (mode <code>0600</code>). The token is enforced on <code>/bus</code>, <code>/m</code>, <code>/remote</code>, <code>/app/</code>, and the mutating plugin routes; <code>/health</code> stays open. Empty token (the localhost default) means no auth, exactly today's behavior.</p>
-<p>The intended transport is a Tailscale tailnet, not the public internet. claudemon (port 7891) stays loopback-only. A remote client only ever talks to the hub, which relays to Electron main, which talks to claudemon over loopback. The connection is not encrypted on its own, so keep both devices on the same trusted tailnet.</p>
+<p>When sharing is on, access is gated by a secret token (generated once and stored in your config dir). Anyone with the token-bearing URL gets full control, so treat it like a password.</p>
+<blockquote>The intended transport is a <strong>Tailscale tailnet</strong>, not the open internet. The connection isn't encrypted on its own, so keep both devices on the same trusted private network.</blockquote>
 <h3>the share dialog (QR)</h3>
-<p>Open <strong>Remote control</strong> from the phone icon in the Hub status row at the bottom of the sidebar (<code>HubStatus</code>). The dialog (<code>RemoteShareDialog</code>) reads connection info over IPC (<code>getRemoteInfo()</code> → <code>getRemoteShareInfo()</code>); nothing is sent anywhere.</p>
+<p>Open <strong>Remote control</strong> from the phone icon in the Hub status row at the bottom of the sidebar.</p>
 <ul>
-<li><strong>Off:</strong> it tells you to relaunch with <code>WORKSPACER_REMOTE_SHARE=1</code> and shows the optional <code>WORKSPACER_REMOTE_ADDR</code> pin.</li>
-<li><strong>On:</strong> it shows a scannable QR of the token-bearing URL (point your phone camera, tap, done), plus copy buttons for the URL and the token (token masked behind a show/hide eye). The URL already includes <code>?token=...</code>, so anyone who can open it gets full control. Two tabs pick what the QR points at: <strong>Full app</strong> (the real renderer at <code>/app/</code>) and <strong>Mobile</strong> (the lightweight client at <code>/m</code>). Full app is preferred when a web build exists; otherwise only Mobile shows.</li>
+<li><strong>Sharing off:</strong> the dialog tells you to relaunch with <code>WORKSPACER_REMOTE_SHARE=1</code> (and offers the optional address pin).</li>
+<li><strong>Sharing on:</strong> it shows a <strong>QR code</strong> of the ready-to-use URL, point your phone camera at it and tap, plus copy buttons for the URL and the token (masked behind a show/hide eye). Pick what the QR points at with the <strong>Full app</strong> / <strong>Mobile</strong> tabs.</li>
 </ul>
-<p>The same URL + token are surfaced in the app's Hub status, where the dot is green when the bus is connected. The advertised host prefers a Tailscale <code>100.x</code> address, then the first non-internal IPv4.</p>
-<h3>web clients</h3>
-<p>Three self-contained pages, all token-guarded, all speaking the bus over <code>/bus</code>:</p>
+<p>The same URL and token also show in the Hub status row, where the dot turns green once the bus is connected.</p>
+<h3>the web clients</h3>
+<p>Three browser clients, no install on the remote device:</p>
 <ul>
-<li><strong><code>/m</code></strong>: the mobile-first client, attention/decision-first (not terminal-centric): a live Fleet list, a "Needs You" queue of approvals/questions with big approve/answer buttons, and per-agent chat. This is what the QR points at by default (the <strong>Mobile</strong> tab). No build step (embedded in the hub binary).</li>
-<li><strong><code>/remote</code></strong>: the lightweight terminal-mirror client: agent list, chat, approvals, and a live xterm terminal mirror of the real Claude pane. Vendored <code>xterm.js</code> + fit addon are served from the hub (<code>/xterm.js</code>, <code>/xterm.css</code>, <code>/addon-fit.js</code>), so it works offline / over Tailscale with no CDN.</li>
-<li><strong><code>/app/</code></strong>: the FULL web app: the hub serves the real renderer bundle and the browser runs it over the bus via a <code>window.electronAPI</code> polyfill, for true desktop parity. Only served when remote sharing is on and a web build exists. Build it with <code>npm run build:renderer:web</code>; the desktop wires <code>--webapp-dir dist/web</code> and the route lights up only when that dir has an <code>index.html</code>.</li>
+<li><strong>Mobile</strong>: a phone-first, decision-first client, a live fleet list, a "Needs You" queue of approvals and questions with big approve/answer buttons, and per-agent chat. This is what the QR points at by default. Best for clearing approvals from your couch.</li>
+<li><strong>Terminal mirror</strong>: a lightweight client with the agent list, chat, approvals, and a live mirror of the agent's real terminal. Works offline over Tailscale.</li>
+<li><strong>Full app</strong>: the complete work{spacer} interface running in the browser, with full desktop parity. Available when sharing is on and a web build is present.</li>
 </ul>
-<h3>layout mirroring (tmux-style)</h3>
-<p>The hub owns a shared <strong>layout document</strong> (<code>internal/layout</code>) so the desktop and any web/phone client mirror each other like tmux clients on one session: same agent cards, same tabs, same active tab, same view mode.</p>
+<h3>what mirrors, and what stays put</h3>
 <ul>
-<li>The hub holds, versions, persists, and broadcasts the doc; it does not interpret it. The <code>Data</code> is opaque (the renderer's <code>AgentWorkspace[]</code> + globals); the reducer that produces it lives only in the renderer, so there's no second Go copy to drift.</li>
-<li>RPCs: <code>layout.get</code> and <code>layout.set</code>. Every accepted <code>set</code> bumps <code>version</code>, persists, and broadcasts <code>layout.changed</code>; clients ignore stale echoes by version.</li>
-<li>Concurrency is last-writer-wins. With one human driving at a time that's exactly right; clients reconcile to the broadcast.</li>
-<li>Persisted at <code>&lt;user-config-dir&gt;/workspacer-hub/layout.json</code> across hub restarts (<code>--layout-file</code>, empty = memory only).</li>
+<li><strong>Layout mirrors.</strong> Your agent cards, tabs, active tab, and view mode are shared, so every client shows the same arrangement. With one person driving at a time, that just works; the last change wins.</li>
+<li><strong>One card per agent.</strong> The same session never doubles up across clients, the desktop, the web app, and your phone all show one card for it.</li>
+<li><strong>Terminals stream on demand.</strong> A live terminal is only mirrored to a client while that client is actually watching it, so you're not streaming build logs to a phone in your pocket.</li>
+<li><strong>No window needed.</strong> Remote clients keep working even with the desktop app closed, the background daemons serve them on their own.</li>
 </ul>
-<h3>terminal share / PTY mirror</h3>
-<p>Mirroring a live terminal is lease-gated so the hub never streams a session nobody is watching (<code>terminalShare.ts</code>).</p>
-<ul>
-<li>claudemon exposes raw PTY bytes at <code>GET /sessions/:id/stream</code> (SSE, base64 chunks, first frame replays the ring buffer). A remote can't reach claudemon, so for each watched session Electron main runs one SSE consumer and republishes chunks onto the bus as <code>pty.bytes.&lt;sessionId&gt;</code> events. The remote subscribes and feeds them into xterm.</li>
-<li>A viewer calls <code>sessions.attachTerminal</code> when it opens the terminal view (this restarts the stream so the buffer replay re-primes the viewer), refreshes with <code>sessions.terminalKeepalive</code> on a timer, and <code>sessions.detachTerminal</code> when it leaves. The lease is 20s, swept every 5s; a lapsed lease stops the stream.</li>
-<li>Input and resize flow back through <code>sessions.terminalInput</code> and <code>sessions.terminalResize</code>.</li>
-<li>Bursty output (build logs, <code>npm test</code>) is coalesced into one bus event per frame (~16ms, or a 64KB flush) so a phone isn't flooded with tiny WS messages.</li>
-</ul>
-<p>When the desktop app is running it provides these capabilities. The headless <code>brain</code> (<code>cmd/brain --brain-scope full</code>) ports the same forwarder so clients work with no GUI open.</p>
-<h3>one bus, no double cards</h3>
-<p>There is one bus and one fleet, so a card never doubles up across clients. Agent cards are keyed by a stable id derived from the session and deduped on layout sync, so the desktop, the web app, and the phone all show one card per session. The hub's capability router is single-owner per method, so two providers can't claim the same capability: next to the desktop app the headless brain takes the file-backed <code>catalog</code> scope and the app keeps the live/streaming caps; run headless, the brain takes <code>full</code> and provides everything.</p>
 </section>
 
 <section id="extending" class="doc">
-<h2>extending: plugins, mcp, and the tui</h2>
-<p>The hub (<code>services/hub</code>) is the extension surface. It is a control-plane daemon that runs independent of the desktop window: an event bus, a capability router (request/reply), a plugin host, and an MCP facade. Three ways to extend work{spacer} hang off it: write a plugin, drive the fleet over MCP, or use the Rust TUI as a headless client. All three talk to the same bus, so they see one fleet.</p>
+<h2>plugins, mcp, and the tui</h2>
+<p>There are three ways to push work{spacer} past the built-in panes: install <strong>plugins</strong> that add new panes and automations, let an <strong>agent drive the whole fleet</strong> over MCP, or run the <strong>terminal client</strong> for a keyboard-only cockpit. If you want to <em>write</em> a plugin rather than just install one, that's on the <a href="build.html#plugins">build &amp; internals</a> page.</p>
 <h3>plugins</h3>
-<p>A plugin is a polyglot sidecar (any language) plus a <code>plugin.json</code> manifest that declares what it contributes. The hub reads <code>&lt;plugins-dir&gt;/&lt;name&gt;/plugin.json</code>, validates it, starts the sidecar, and announces the contribution on the bus (<code>plugin.loaded</code> / <code>plugin.unloaded</code>). The desktop renderer picks that up and registers the pane types, command-palette entries, and hotkeys.</p>
-<p>Point the hub at a plugins dir:</p>
-<pre><code>go run ./cmd/hub --plugins-dir /path/to/plugins</code></pre>
-<p><strong>the manifest (<code>plugin.json</code>).</strong> Schema version is <code>"apiVersion": "1"</code> (the loader rejects anything else). Real fields, from <code>internal/plugin/manifest.go</code>:</p>
+<p>Plugins add their own panes (dashboards, editors, rule editors), command-palette entries, and hotkeys. Manage them from the <strong>Plugins Manager</strong> (command palette → "Manage Plugins").</p>
 <ul>
-<li><code>id</code>, <code>name</code>, <code>id</code> is required and is the install dir / token key.</li>
-<li><code>server</code>, the sidecar process: <code>command</code> (required when <code>server</code> is set), <code>args</code>, <code>port</code>, <code>health</code> (a path, e.g. <code>/health</code>). The hub serves the plugin's panes from <code>http://127.0.0.1:&lt;port&gt;&lt;path&gt;</code>.</li>
-<li><code>ui</code>, instead of <code>server</code>, a subdir of static assets the hub serves itself at <code>/plugins/ui/&lt;id&gt;/</code>. This is a webview-only plugin with no sidecar process. Only the named subdir is exposed (not <code>plugin.json</code> or <code>.bus-token</code>).</li>
-<li><code>panes</code>, pane types injected into the UI. Each: <code>type</code> (unique id), <code>title</code>, <code>icon</code>, <code>path</code>, and <code>scope</code> (<code>global</code> = Overview only, <code>agent</code> = inside an agent workspace and gets its sessionId/cwd, <code>both</code> = wherever you are, the default).</li>
-<li><code>hotkeys</code>, <code>id</code>, <code>default</code> (e.g. <code>ctrl+shift+a</code>), and <code>command</code>, which is either <code>open-pane:&lt;paneType&gt;</code> or <code>emit:&lt;eventType&gt;</code>.</li>
-<li><code>capabilities</code>, bus methods the plugin may <strong>call</strong>. A bare string (<code>"agents.list"</code>) for an unscoped verb, or the object form <code>{ "method": "fs.read", "paths": ["${pluginDir}"] }</code> for a filesystem-scoped one. Filesystem methods (<code>fs.*</code>, <code>search.project</code>) must declare <code>paths</code> or the loader rejects them, so a plugin can never get unrestricted host fs access. Path tokens: <code>${pluginDir}</code>, <code>${agentCwd}</code> (bound per open pane), or absolute paths. Anything unresolved grants nothing (fail closed).</li>
-<li><code>provides</code>, capabilities the plugin <strong>answers</strong> on the bus (it becomes a provider, like rivet-bridge).</li>
-<li><code>emits</code> / <code>consumes</code>, event types it publishes / subscribes to.</li>
-<li><code>settings</code>, typed settings (<code>boolean</code>/<code>number</code>/<code>string</code>/<code>select</code>) the host renders in Settings and delivers into the webview as <code>window.__WKS_SETTINGS__</code> + a <code>wks-settings</code> event.</li>
-<li><code>install</code>, a one-time setup argv run in the plugin dir after a GitHub install (e.g. <code>["go","build","-o","rules-engine","."]</code>).</li>
+<li><strong>Install</strong> from a GitHub repo (<code>owner/repo</code> or a full URL) or a tarball URL, via the install dialog. work{spacer} downloads it, runs any build step, and loads it.</li>
+<li><strong>Enable / Disable</strong> a plugin without uninstalling it, and <strong>Update</strong> or <strong>Remove</strong> it.</li>
+<li>Each plugin shows <strong>live health</strong>, green when it's running fine, amber/red when it's struggling or crashed, so you can tell at a glance if one is misbehaving.</li>
 </ul>
-<p><strong>the plugin manager</strong> (<code>internal/plugin/manager.go</code>) owns the loaded set. <code>Add</code> starts the sidecar and emits <code>plugin.loaded</code>; <code>Remove</code> stops it, drops its bus token, and emits <code>plugin.unloaded</code>, returning the dir so the caller can delete it without a second lookup (closes the TOCTOU window). <code>SetEnabled</code> toggles a <code>.disabled</code> marker file and reloads, so you can disable a plugin without uninstalling it. Each plugin gets a per-plugin bus token (persisted to <code>.bus-token</code>, stable across restarts) bound to exactly its declared capability grants.</p>
-<p><strong>the installer</strong> (<code>internal/plugin/install.go</code>) takes a GitHub reference (<code>owner/repo</code>, a full URL, or a <code>/tree/&lt;ref&gt;</code> / <code>/commit/&lt;sha&gt;</code> URL) or a direct <code>.tar.gz</code> / <code>.tgz</code> URL. For GitHub it tries the given ref, else <code>main</code> then <code>master</code>, via <code>codeload.github.com</code>. Extraction is <strong>zip-slip-guarded</strong>: every entry's target must stay inside the destination (it strips the GitHub top-level wrapper dir and rejects <code>..</code> escapes). It extracts into a temp dir on the same filesystem then renames into place (atomic install / reinstall), and runs the manifest's <code>install</code> build step (5-minute timeout). This is the trusted-install model (like a VS Code extension), not a sandbox: it downloads and runs code from the internet, so the caller gets user consent.</p>
-<p><strong>the process supervisor</strong> (<code>internal/supervisor/supervisor.go</code>) runs each sidecar: spawn, health-poll, restart-on-crash. If the manifest gives a <code>port</code> + <code>health</code>, the supervisor GETs <code>http://127.0.0.1:&lt;port&gt;&lt;health&gt;</code> every 2s (200 == healthy) and emits <code>sidecar.healthy</code> / <code>sidecar.unhealthy</code> as it flips. Graceful stop sends <strong>SIGTERM, then SIGKILL</strong> after a 5s <code>WaitDelay</code>. An unexpected exit is reported as <code>sidecar.crashed</code> and restarted after a backoff (default 1s). States: <code>stopped</code>, <code>running</code>, <code>healthy</code>, <code>unhealthy</code>, <code>crashed</code>.</p>
-<p><strong>theming.</strong> Plugin panes render as webviews and the host injects its active theme as <code>--wks-*</code> CSS custom properties on <code>:root</code> (re-injected on every live theme switch and every in-plugin navigation). It also sets zero-specificity <code>:where(html, body)</code> defaults so a plugin with no styling still looks native, and exposes a JS hook for canvas UIs: <code>window.__WKS_THEME__</code> and a <code>wks-theme</code> event. Reference tokens with a fallback so the page still works in a plain browser: <code>background: var(--wks-bg-base, #1a1a1a)</code>. Tokens: <code>--wks-bg-base/-raised/-surface/-elevated</code>, <code>--wks-text-primary/-secondary</code>, <code>--wks-accent</code>, <code>--wks-success/-error/-warning</code>, and more (see <code>services/hub/docs/plugin-theming.md</code>). Injection is for plugin panes only, never the regular browser pane.</p>
-<p><strong>shipped examples</strong> (<code>services/hub/examples/</code>):</p>
+<p>Plugin panes are themed to match your current theme, and an agent-scoped plugin pane only gets access to that agent's project folder, never your whole disk. A few plugins ship as examples (an event→action rules engine, an agent-grid dashboard, a minimal clock demo); see the <a href="build.html#plugins">build page</a> for the catalog and how to write your own.</p>
+<blockquote>Installing a plugin downloads and runs code from the internet, like a VS Code extension. Only install plugins you trust.</blockquote>
+<h3>let an agent drive the fleet (MCP)</h3>
+<p>work{spacer} can expose your whole fleet to a coding agent as MCP tools, so an agent (or any MCP client) can list your agents, read a transcript, spawn new agents, send prompts, approve/answer prompts, and post notifications, on your behalf. This is what powers the <strong>supervisor</strong> agents you spawn from the Ask pane, but you can also attach it to a Claude Code session of your own.</p>
+<p>The tools an MCP client gets:</p>
 <ul>
-<li><strong>rules-engine</strong>: an always-on event→action interpreter. A Go sidecar on the bus plus a webview rule editor. Rules match events and fire actions: <code>notify</code>, <code>sendMessage</code>, <code>command</code>, <code>emit</code>, <code>webhook</code>. Persists rules to JSON; emits <code>rules.fired</code>. Example: <code>on agent.state_changed → notify</code>.</li>
-<li><strong>rivet-bridge</strong>: the inverse of the MCP facade: it consumes the external <code>rivet</code> MCP server and re-exposes its tools as hub capabilities (<code>recon.*</code>, <code>witness.*</code>, <code>schema.*</code>) so the fleet (rules-engine, dashboards, supervisors) can call them. Needs the external <code>rivet</code> binary; <code>install</code> builds it with <code>go build</code>.</li>
-<li><strong>agent-dashboard</strong>: a bus-native agent grid webview. Consumes <code>agent.state_changed</code> / <code>agent.snapshot</code>; uses <code>agents.list</code> / <code>agents.sendMessage</code> / <code>notifications.post</code>.</li>
-<li><strong>clock-plugin</strong>: the minimal demo: one webview pane and one hotkey (<code>ctrl+shift+k</code> → <code>open-pane:example.clock</code>). Start here if you're writing your first plugin.</li>
-</ul>
-<h3>mcp facade</h3>
-<p><code>cmd/mcp</code> exposes the hub's capabilities as MCP tools, so an ephemeral <code>claude -p</code> supervisor (or any MCP client) can view and drive the whole fleet. It is a thin adapter: a tool call becomes a bus <code>call</code>, the provider (Electron main, or the headless brain) executes it, and the reply becomes the tool result. The facade never touches workspacer state.</p>
-<p>It serves two transports off one server: <code>/mcp</code> (Streamable HTTP, the current MCP HTTP transport) and <code>/sse</code> (legacy SSE), plus <code>/health</code>.</p>
-<pre><code># hub first (the bus), then the facade pointed at it
-go run ./cmd/hub --addr 127.0.0.1:7895
-go run ./cmd/mcp --addr 127.0.0.1:7897 --hub ws://127.0.0.1:7895/bus
-# pass --token / $HUB_TOKEN when the hub requires auth</code></pre>
-<p>Attach it to Claude Code via <code>--mcp-config</code>:</p>
-<pre><code>{
-  "mcpServers": {
-    "workspacer": { "type": "http", "url": "http://127.0.0.1:7897/mcp" }
-  }
-}</code></pre>
-<p>The 10 tools, each 1:1 with a hub capability:</p>
-<ul>
-<li><code>list_agents</code>, running agents + state/usage/pending asks.</li>
-<li><code>get_transcript</code>, read a session's transcript.</li>
-<li><code>spawn_agent</code>, start a new agent; returns its sessionId.</li>
-<li><code>create_terminal</code>, open a new shell PTY; returns its sessionId.</li>
+<li><code>list_agents</code>, the running agents with their state, usage, and any pending asks.</li>
+<li><code>get_transcript</code>, read a session's conversation.</li>
+<li><code>spawn_agent</code> / <code>create_terminal</code>, start a new agent or shell.</li>
 <li><code>send_message</code>, send a prompt to an agent.</li>
-<li><code>approve</code>, resolve a permission prompt (yes/no/always).</li>
-<li><code>answer</code>, answer an AskUserQuestion picker.</li>
-<li><code>signal</code>, send a signal (SIGINT/SIGTERM/…).</li>
-<li><code>terminal_input</code>, write raw bytes into a PTY.</li>
-<li><code>notify</code>, show a desktop notification.</li>
+<li><code>approve</code> / <code>answer</code>, resolve a permission prompt or answer a question.</li>
+<li><code>signal</code> / <code>terminal_input</code>, interrupt/stop an agent or type into a shell.</li>
+<li><code>notify</code>, raise a desktop notification.</li>
 </ul>
-<p><code>spawn_agent</code> / <code>create_terminal</code> need the matching capabilities registered by a provider; the session runs headless in claudemon and a desktop pane can attach later. Authorization for the facade is a stubbed allow-all seam today (per-method capability tokens are the next milestone, not shipped).</p>
-<p>Note: the agent-driving capabilities (<code>agents.*</code>, <code>claude.*</code>, <code>sessions.*</code>) are normally provided by the Electron main process, so they only exist while the desktop app is running. <code>cmd/brain</code> is a standalone provider that fills the gap headlessly (backed by claudemon's HTTP API), and the hub can supervise it with <code>--brain-scope full</code> (headless) or <code>--brain-scope catalog</code> (alongside the app). So the MCP facade works with no GUI open.</p>
-<h3>wks-tui</h3>
-<p><code>apps/tui</code> is a Rust terminal client over the same bus. It monitors every live agent claudemon sees and drives it with no Electron window open. By default it is a thin client of the hub bus: driving, the agent list (<code>agent.snapshot</code> / <code>agent.statusline</code>), and the live terminal (<code>pty.bytes</code>) all flow through the brain, the same caps the desktop and <code>/remote</code> web client use. Pass <code>--direct</code> to bypass the bus and talk to claudemon's REST + SSE directly (the original standalone path; it also falls back to this if a loopback bus isn't reachable).</p>
-<pre><code>cargo run --release         # in apps/tui</code></pre>
-<p><strong>daemon bootstrap.</strong> On startup it launches whatever loopback daemon isn't already listening and stops it on exit (a pre-existing one is reused and left running): claudemon always, plus the hub + brain in bus mode (<code>make build-hub</code> puts the <code>hub</code>/<code>brain</code> binaries in-tree; override the hub with <code>WKS_HUB_BIN</code>). So standalone Just Works. Override claudemon's location with <code>WKS_CLAUDEMON_BIN</code>, point at a remote bus with <code>--bus ws://host:7895/bus</code> (auth <code>--bus-token</code> / <code>HUB_TOKEN</code>), or <code>--no-spawn</code> to connect only to daemons started elsewhere. claudemon defaults to <code>http://127.0.0.1:7891</code> (<code>--claudemon-url</code> to change).</p>
-<p><strong>what it does.</strong> A pinned <strong>dashboard</strong> row (agent count, needs-you / working / idle, total cost, roster, and 5h/7d rate-limit windows when Claude reports them). A <strong>sidebar</strong> of every live session. Open an agent and it has a tab bar; the first tab is the Claude session, <code>T</code> opens a terminal tab. The default chat view is the agent's <strong>raw PTY</strong> (vt100), exactly like the Electron terminal toggle; <code>t</code> toggles to the parsed transcript with approve/answer buttons.</p>
-<p><strong>control.</strong> <code>c</code> spawn (modal to pick cwd + Claude profile), <code>y</code>/<code>n</code>/<code>a</code> approve/deny/always, <code>1</code>–<code>9</code> answer an AskUserQuestion, <code>x</code> interrupt (SIGINT) / <code>X</code> stop (SIGTERM), <code>e</code> rename, <code>S</code> respawn, <code>R</code> git review pane, <code>N</code> per-project notes. Reconnects across claudemon restarts.</p>
-<p><strong>navigation (vim-first).</strong> <code>Ctrl-K</code> opens the fuzzy command palette anywhere (new agent, terminal, <code>:</code> commands, jump to any agent by name or cwd, insert a library item). <code>j</code>/<code>k</code> move, <code>g</code>/<code>G</code> first/last, <code>m</code> jumps to the next agent needing attention. There's a leader/which-key menu (<code>space</code> by default, set <code>"leader"</code> in <code>tui.json</code>), <code>Ctrl-w</code> splits (tile up to 4 agents), harpoon pins (<code>&lt;leader&gt;h</code>, <code>&lt;leader&gt;1</code>…<code>9</code>), <code>/</code> sidebar filter, <code>&lt;leader&gt;/</code> transcript content search, a <code>:</code> ex command line, and vim counts (<code>3j</code>, <code>5G</code>). Config is <code>~/.config/workspacer/tui.json</code> (theme + per-context key remaps); <code>?</code> shows the active bindings.</p>
+<p>The setup and the exact endpoint to point an MCP client at live on the <a href="build.html#mcp">build &amp; internals</a> page. It keeps working even with the desktop window closed.</p>
+<h3>the terminal client (wks-tui)</h3>
+<p><code>wks-tui</code> is a full terminal cockpit over the same fleet, for when you'd rather stay on the keyboard or you're on a box with no GUI. It sees and drives every agent the desktop app does. Start it standalone, it brings up whatever background daemons it needs on its own, or point it at a remote machine's bus.</p>
+<ul>
+<li><strong>Dashboard + sidebar.</strong> A pinned row with agent count, needs-you / working / idle, total cost, and rate-limit windows, plus a sidebar of every live session.</li>
+<li><strong>Per agent.</strong> Open one and it has tabs: the agent session (raw terminal by default, <code>t</code> toggles the parsed transcript with approve/answer buttons), plus a terminal tab (<code>T</code>), git review (<code>R</code>), and per-project notes (<code>N</code>).</li>
+<li><strong>Control.</strong> <code>c</code> spawn, <code>y</code>/<code>n</code>/<code>a</code> approve/deny/always, <code>1</code>–<code>9</code> answer a question, <code>x</code>/<code>X</code> interrupt/stop, <code>e</code> rename, <code>S</code> respawn.</li>
+<li><strong>Navigation is vim-first.</strong> <code>Ctrl-K</code> for a fuzzy command palette, <code>j</code>/<code>k</code> to move, <code>m</code> to jump to the next agent needing you, a <code>space</code> leader/which-key menu, <code>Ctrl-w</code> splits (tile up to 4 agents), harpoon pins, <code>/</code> to filter, a <code>:</code> command line, and vim counts. Press <code>?</code> for the active bindings. Config (theme + key remaps) lives at <code>~/.config/workspacer/tui.json</code>.</li>
+</ul>
+<p>See the <a href="build.html">build &amp; internals</a> page for how to launch it from source and the daemon/bus flags.</p>
 </section>
 
 <section id="configuration" class="doc">
@@ -779,12 +619,12 @@ go run ./cmd/mcp --addr 127.0.0.1:7897 --hub ws://127.0.0.1:7895/bus
 <pre><code>claudemon init                  # merge hooks into ~/.claude/settings.json
 claudemon init --dry-run        # print the merged document, write nothing
 claudemon init --hook-port 8888 # match a non-default hook port</code></pre>
-<p>The default ports the daemons bind: claudemon hook ingress <code>7890</code>, claudemon API <code>7891</code>, hub bus <code>7895</code>, MCP facade <code>7897</code>. claudemon's own flags: <code>claudemon serve --host 127.0.0.1 --hook-port 7890 --api-port 7891 --db-path &lt;file&gt;</code>.</p>
+<p>The default ports the background daemons bind: hook ingress <code>7890</code>, session API <code>7891</code>, hub bus <code>7895</code>, MCP facade <code>7897</code>. You won't normally touch these unless something else on your machine wants the same port.</p>
 <h3>environment variables</h3>
 <ul>
 <li><code>WORKSPACER_DISABLE_GPU=1</code>, disable GPU rendering. Use this if the window renders broken on Wayland.</li>
 <li><code>WORKSPACER_REMOTE_SHARE=1</code>, opt into remote sharing. The hub then binds off loopback and requires the bus token. Off by default, meaning loopback-only with no token enforced for sharing.</li>
-<li><code>WORKSPACER_REMOTE_ADDR=host:port</code>, bind address when sharing is on (default <code>0.0.0.0:7895</code>). Pin it to your tailnet IP to avoid exposing it to the whole LAN. <code>make dev</code> runs with sharing on; <code>./dev</code> runs without.</li>
+<li><code>WORKSPACER_REMOTE_ADDR=host:port</code>, bind address when sharing is on (default <code>0.0.0.0:7895</code>). Pin it to your tailnet IP to avoid exposing it to the whole LAN.</li>
 <li><code>CLAUDE_CONFIG_DIR</code>, set per spawn from a profile's <code>configDir</code>, so each profile can point at its own <code>~/.claude</code>-style dir.</li>
 <li><code>XDG_CONFIG_HOME</code>, moves the desktop config dir (Linux).</li>
 <li><code>XDG_DATA_HOME</code>, moves claudemon's <code>state.db</code> directory.</li>

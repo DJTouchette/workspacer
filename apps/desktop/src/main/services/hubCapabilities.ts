@@ -12,6 +12,8 @@ import { randomUUID } from 'crypto';
 import { claudeSessionStore } from './claudeSessionStore';
 import { claudemonSessionClient } from './claudemonSessionClient';
 import { buildClaudeArgv } from './claudeResolver';
+import { spawnManagedAgent } from './managedSpawn';
+import type { AgentProvider } from './agentProviders';
 import { claudeProfiles } from './claudeProfiles';
 import { registerCapability } from './hubClient';
 import { appIconPath } from '../lib/appIcon';
@@ -102,8 +104,9 @@ export function registerHubCapabilities(): void {
   // capabilities. The session runs headless in claudemon; a desktop pane can
   // attach to it later via the normal attach flow.
   registerCapability('agents.spawn', async (params: unknown) => {
-    const { cwd, profileId, model, skipPermissions, resumeSessionId, cols, rows, supervisor, mcpFacade, label, parentSessionId } =
+    const { provider, cwd, profileId, model, skipPermissions, resumeSessionId, cols, rows, supervisor, mcpFacade, label, parentSessionId } =
       (params ?? {}) as {
+        provider?: AgentProvider;
         cwd?: string;
         profileId?: string;
         model?: string;
@@ -116,6 +119,17 @@ export function registerHubCapabilities(): void {
         label?: string;
         parentSessionId?: string;
       };
+    // Managed (Tier-2) backend — Codex / OpenCode / Pi run through claudemon's
+    // adapter, not a Claude PTY. Shares the dispatch with the `claude:spawn` IPC
+    // handler so this path can't silently fall back to spawning Claude (it did
+    // before — `provider` was ignored here, which is why a Codex agent spawned
+    // from the web/remote client came up as Claude).
+    if (provider && provider !== 'claude') {
+      const sessionId = await spawnManagedAgent({
+        provider, cwd, model, skipPermissions, resumeSessionId, supervisor, mcpFacade, label, parentSessionId,
+      });
+      return { sessionId };
+    }
     const profile = profileId ? claudeProfiles.getProfile(profileId) : undefined;
     const env: Record<string, string> = {};
     if (profile?.configDir) {

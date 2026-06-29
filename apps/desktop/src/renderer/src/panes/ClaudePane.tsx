@@ -5,6 +5,7 @@ import { WebFontsAddon } from '@xterm/addon-web-fonts';
 import '@xterm/xterm/css/xterm.css';
 import { useClaudeSpawn } from '../hooks/useClaudeSpawn';
 import { useClaudeSession } from '../hooks/useClaudeSession';
+import { providerLabel } from '../hooks/useAgentManager';
 import { useConfig } from '../hooks/useConfig';
 import { useTheme } from '../hooks/useTheme';
 import type { ConversationTurn, ToolCall, SubagentInfo, WorkflowRunInfo } from '../types/claudeSession';
@@ -70,6 +71,9 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
   //                       to show
   const isClaude = (provider ?? 'claude') === 'claude';
   const isManaged = provider === 'opencode' || provider === 'codex' || provider === 'pi';
+  // Display name of the backend for user-facing copy (empty states, composer,
+  // exit notice) so a Codex/OpenCode/Pi pane doesn't read as "Claude".
+  const agentName = providerLabel(provider);
   const hasGui = isClaude || isManaged;
   const hasTerminal = !isManaged;
   const showViewToggle = hasGui && hasTerminal; // only Claude has both
@@ -139,9 +143,9 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
 
   const handleExit = useCallback(() => {
     if (terminalRef.current) {
-      terminalRef.current.write('\r\n\x1b[90m[Claude session exited]\x1b[0m\r\n');
+      terminalRef.current.write(`\r\n\x1b[90m[${agentName} session exited]\x1b[0m\r\n`);
     }
-  }, []);
+  }, [agentName]);
 
   const { sessionId, isReady, spawnError, write, resize, attachToTerminal, startSession, retry } = useClaudeSpawn({
     paneId,
@@ -893,9 +897,9 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
                 {/* Empty states */}
                 {conversation.length === 0 && !session && spawnError && (
                   <div style={{ textAlign: 'center', marginTop: 60, color: colors.mutedDim }}>
-                    <div style={{ fontSize: '0.8rem', color: colors.error }}>Couldn’t start Claude</div>
+                    <div style={{ fontSize: '0.8rem', color: colors.error }}>Couldn’t start {agentName}</div>
                     <div style={{ fontSize: '0.7rem', marginTop: 6, color: colors.mutedDim }}>
-                      {spawnError.message || 'The Claude session failed to start.'}
+                      {spawnError.message || `The ${agentName} session failed to start.`}
                     </div>
                     <button
                       onClick={retry}
@@ -922,8 +926,8 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
                     <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
                       <StreamingDots />
                     </div>
-                    <div style={{ fontSize: '0.8rem', color: colors.muted }}>Connecting to Claude…</div>
-                    {showHookHint && (
+                    <div style={{ fontSize: '0.8rem', color: colors.muted }}>Connecting to {agentName}…</div>
+                    {showHookHint && isClaude && (
                       <div style={{ fontSize: '0.7rem', marginTop: 6, color: colors.mutedDim }}>
                         Still connecting — make sure hooks are configured in ~/.claude/settings.json
                       </div>
@@ -1032,6 +1036,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
               dimmed={!!(dockApproval || dockQuestions)}
               inputRef={inputRef}
               showSendButton={config.ui.showComposerSend !== false}
+              agentName={agentName}
             />
           </div>
       </div>

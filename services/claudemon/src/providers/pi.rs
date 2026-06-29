@@ -26,10 +26,67 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStdin, Command};
 use tokio::sync::mpsc;
 
-use super::{apply_updates, AgentUpdate, Facade, UsageAcc};
+use super::{apply_updates, AgentUpdate, Facade, ModelInfo, UsageAcc};
 use crate::session::conversation::ConversationItem;
 use crate::session::state::SessionMode;
 use crate::session::{ConversationStore, SessionStore};
+
+/// List the models Pi can launch with, via its RPC `get_available_models`
+/// command. We boot a throwaway `pi --mode rpc`, ask for the catalog, then drop
+/// the process. Pi only returns models for providers the user has authed, so an
+/// empty list (no login) is normal — the picker then falls back to free text.
+/// Each model carries `provider` + `id`; we join them as `provider/id`, exactly
+/// the form `--model` accepts.
+pub async fn list_models(bin: &str, cwd: &str) -> anyhow::Result<Vec<ModelInfo>> {
+    let mut child = Command::new(bin)
+        .arg("--mode")
+        .arg("rpc")
+        .current_dir(cwd)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .with_context(|| format!("spawning `{bin} --mode rpc`"))?;
+
+    let mut stdin = child.stdin.take().context("pi rpc: no stdin")?;
+    let stdout = child.stdout.take().context("pi rpc: no stdout")?;
+    let mut lines = BufReader::new(stdout).lines();
+
+    write_msg(&mut stdin, &json!({ "type": "get_available_models", "id": "models" })).await?;
+
+    let read = async {
+        while let Ok(Some(line)) = lines.next_line().await {
+            let Ok(value) = serde_json::from_str::<Value>(&line) else { continue };
+            if value.get("command").and_then(Value::as_str) != Some("get_available_models") {
+                continue;
+            }
+            let arr = value
+                .get("data")
+                .and_then(|d| d.get("models"))
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let models = arr
+                .iter()
+                .filter_map(|m| {
+                    let provider = m.get("provider").and_then(Value::as_str)?;
+                    let id = m.get("id").and_then(Value::as_str)?;
+                    let full = format!("{provider}/{id}");
+                    Some(ModelInfo { id: full.clone(), label: full, default: false })
+                })
+                .collect::<Vec<_>>();
+            return Ok(models);
+        }
+        anyhow::bail!("pi rpc closed before answering get_available_models");
+    };
+
+    let result = tokio::time::timeout(std::time::Duration::from_secs(10), read)
+        .await
+        .context("timed out listing pi models")?;
+    let _ = child.start_kill();
+    result
+}
 
 /// Translate one Pi RPC event into zero or more typed updates. Pure and total:
 /// unknown event types and missing fields yield an empty/partial result rather

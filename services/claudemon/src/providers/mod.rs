@@ -33,6 +33,19 @@ use crate::session::conversation::ConversationItem;
 use crate::session::state::{Pending, SessionMode, StatusLine};
 use crate::session::{ConversationStore, SessionStore};
 
+/// One selectable model for a managed provider, as surfaced by the spawn
+/// dialog's model picker. `id` is the value passed back as the model override
+/// (the provider's own id format); `label` is the human display name; `default`
+/// marks the provider's out-of-the-box choice. Populated by each provider's
+/// `list_models` (live-queried from the CLI/server at pick time).
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct ModelInfo {
+    pub id: String,
+    pub label: String,
+    #[serde(default)]
+    pub default: bool,
+}
+
 /// A typed update distilled from one native provider event, in the common
 /// vocabulary every adapter maps onto. Several can come from a single event
 /// (e.g. a streamed text chunk is both "the agent is busy" and "here's text").

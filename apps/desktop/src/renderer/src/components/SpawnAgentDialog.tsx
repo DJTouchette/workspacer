@@ -37,8 +37,15 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, default
   const [name, setName] = useState('');
   const [provider, setProvider] = useState<AgentProvider>(defaultProvider ?? 'claude');
   const isClaude = provider === 'claude';
-  // Free-text model for non-Claude providers (their own id formats).
-  const [providerModel, setProviderModel] = useState('');
+  // Model picker for non-Claude providers. The list is live-queried from the
+  // provider's own CLI/server (codex/opencode/pi); `providerSel` is the dropdown
+  // value (''=provider default, a model id, or CUSTOM), and `providerCustom`
+  // holds the free-text id when CUSTOM — or whenever the live list is empty
+  // (e.g. Pi with no authed providers), in which case the field is shown bare.
+  const [providerModels, setProviderModels] = useState<Array<{ id: string; label: string; default: boolean }>>([]);
+  const [providerModelsLoading, setProviderModelsLoading] = useState(false);
+  const [providerSel, setProviderSel] = useState('');
+  const [providerCustom, setProviderCustom] = useState('');
   const [profiles, setProfiles] = useState<SpawnProfile[]>([]);
   const [profileId, setProfileId] = useState<string>('');
 
@@ -108,6 +115,27 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, default
       .catch(() => {});
   }, []);
 
+  // Live-query the model catalog when a managed provider is picked. Each lookup
+  // boots the provider's CLI/server, so we key only on `provider` (not cwd) to
+  // avoid re-spawning on every keystroke; the list is auth/global, not
+  // cwd-specific. Resets the selection so a stale pick can't leak across
+  // providers. An empty list (failure or no authed models) is fine — the field
+  // falls back to free-text entry.
+  useEffect(() => {
+    if (isClaude) { setProviderModels([]); return; }
+    setProviderSel('');
+    setProviderCustom('');
+    setProviderModels([]);
+    setProviderModelsLoading(true);
+    let cancelled = false;
+    window.electronAPI.providerListModels?.(provider as 'codex' | 'opencode' | 'pi', cwd.trim() || undefined)
+      .then((list) => { if (!cancelled) setProviderModels(list ?? []); })
+      .catch(() => { if (!cancelled) setProviderModels([]); })
+      .finally(() => { if (!cancelled) setProviderModelsLoading(false); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [provider]);
+
   // Re-list MCP servers when the directory settles — project-scoped servers
   // live under the chosen cwd's .workspacer/library.
   useEffect(() => {
@@ -136,6 +164,10 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, default
     setMcpSel((sel) => (sel.includes(id) ? sel.filter((x) => x !== id) : [...sel, id]));
 
   const resolvedModel = modelSel === CUSTOM ? customModel.trim() : modelSel;
+  // For managed providers: the free-text custom field is the source whenever the
+  // live list is empty or Custom… is chosen; otherwise it's the dropdown value.
+  const resolvedProviderModel =
+    providerModels.length === 0 || providerSel === CUSTOM ? providerCustom.trim() : providerSel;
 
   const browse = async () => {
     const picked = await window.electronAPI.pickFolder?.(cwd || undefined);
@@ -148,7 +180,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, default
     // TUI in Tier-1 and don't take Claude's profile/model/MCP/resume flags).
     onSpawn(isClaude
       ? { cwd: cwd.trim(), name: name.trim() || undefined, profileId: profileId || undefined, model: resolvedModel || undefined, skipPermissions, mcpItemIds: mcpSel.length ? mcpSel : undefined, resumeSessionId: resumeSessionId || undefined }
-      : { cwd: cwd.trim(), name: name.trim() || undefined, provider, model: providerModel.trim() || undefined, skipPermissions });
+      : { cwd: cwd.trim(), name: name.trim() || undefined, provider, model: resolvedProviderModel || undefined, skipPermissions });
   };
 
   const placeholderName = cwd.trim() ? deriveAgentName(cwd.trim()) : 'agent';
@@ -237,13 +269,36 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, default
 
         {!isClaude && (
           <Field label="Model (optional)">
-            <input
-              value={providerModel}
-              onChange={(e) => setProviderModel(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') onCancel(); }}
-              placeholder={modelPlaceholder(provider)}
-              style={inputStyle}
-            />
+            {providerModels.length > 0 ? (
+              <>
+                <select value={providerSel} onChange={(e) => setProviderSel(e.target.value)} style={inputStyle}>
+                  <option value="">Default ({PROVIDERS.find((p) => p.value === provider)?.label} setting)</option>
+                  <optgroup label="Available">
+                    {providerModels.map((m) => (
+                      <option key={m.id} value={m.id}>{m.label}{m.default ? '  — default' : ''}</option>
+                    ))}
+                  </optgroup>
+                  <option value={CUSTOM}>Custom…</option>
+                </select>
+                {providerSel === CUSTOM && (
+                  <input
+                    value={providerCustom}
+                    onChange={(e) => setProviderCustom(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') onCancel(); }}
+                    placeholder={modelPlaceholder(provider)}
+                    style={{ ...inputStyle, marginTop: 6 }}
+                  />
+                )}
+              </>
+            ) : (
+              <input
+                value={providerCustom}
+                onChange={(e) => setProviderCustom(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') onCancel(); }}
+                placeholder={providerModelsLoading ? 'Loading models…' : modelPlaceholder(provider)}
+                style={inputStyle}
+              />
+            )}
           </Field>
         )}
 

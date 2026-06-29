@@ -20,7 +20,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStdin, Command};
 use tokio::sync::mpsc;
 
-use super::{apply_updates, AgentUpdate, Facade, UsageAcc};
+use super::{apply_updates, AgentUpdate, Facade, ModelInfo, UsageAcc};
 use crate::session::conversation::ConversationItem;
 use crate::session::state::SessionMode;
 use crate::session::{ConversationStore, SessionStore};
@@ -160,6 +160,85 @@ fn command_text(params: &Value) -> Option<String> {
         ),
         _ => None,
     }
+}
+
+// ── Model listing ────────────────────────────────────────────────────────────
+
+/// List the models Codex offers, via the app-server's `model/list` JSON-RPC.
+/// We boot a throwaway `codex app-server`, `initialize`, ask for the catalog,
+/// then drop the process. Hidden models are skipped; the rest map to the picker
+/// with their `displayName` as label and the server-flagged default marked.
+pub async fn list_models(bin: &str, cwd: &str) -> anyhow::Result<Vec<ModelInfo>> {
+    let mut child = Command::new(bin)
+        .arg("app-server")
+        .current_dir(cwd)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .with_context(|| format!("spawning `{bin} app-server`"))?;
+
+    let mut stdin = child.stdin.take().context("codex app-server: no stdin")?;
+    let stdout = child.stdout.take().context("codex app-server: no stdout")?;
+    let mut lines = BufReader::new(stdout).lines();
+
+    write_msg(
+        &mut stdin,
+        &json!({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": { "clientInfo": { "name": "workspacer", "version": "0.1" } }
+        }),
+    )
+    .await?;
+    write_msg(
+        &mut stdin,
+        &json!({ "jsonrpc": "2.0", "id": 2, "method": "model/list", "params": {} }),
+    )
+    .await?;
+
+    // Read until the response to id=2 arrives (or stdout closes). A short overall
+    // timeout keeps a wedged binary from hanging the picker.
+    let read = async {
+        while let Ok(Some(line)) = lines.next_line().await {
+            let Ok(value) = serde_json::from_str::<Value>(&line) else { continue };
+            if value.get("id").and_then(Value::as_u64) != Some(2) {
+                continue;
+            }
+            let data = value
+                .get("result")
+                .and_then(|r| r.get("data"))
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let models = data
+                .iter()
+                .filter(|m| !m.get("hidden").and_then(Value::as_bool).unwrap_or(false))
+                .filter_map(|m| {
+                    let id = m
+                        .get("model")
+                        .or_else(|| m.get("id"))
+                        .and_then(Value::as_str)?
+                        .to_string();
+                    let label = m
+                        .get("displayName")
+                        .and_then(Value::as_str)
+                        .unwrap_or(&id)
+                        .to_string();
+                    let default = m.get("isDefault").and_then(Value::as_bool).unwrap_or(false);
+                    Some(ModelInfo { id, label, default })
+                })
+                .collect::<Vec<_>>();
+            return Ok(models);
+        }
+        anyhow::bail!("codex app-server closed before answering model/list");
+    };
+
+    let result = tokio::time::timeout(std::time::Duration::from_secs(10), read)
+        .await
+        .context("timed out listing codex models")?;
+    let _ = child.start_kill();
+    result
 }
 
 // ── Live client ─────────────────────────────────────────────────────────────

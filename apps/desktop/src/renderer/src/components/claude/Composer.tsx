@@ -19,6 +19,8 @@ export interface ComposerProps {
   inputRef?: React.RefObject<HTMLTextAreaElement>;
   /** Show the send (↑) button. When false, Enter still sends. Defaults to true. */
   showSendButton?: boolean;
+  /** Display name of the agent backend (Claude / Codex / …) for placeholders. */
+  agentName?: string;
 }
 
 /**
@@ -37,6 +39,7 @@ export const Composer: React.FC<ComposerProps> = ({
   dimmed,
   inputRef,
   showSendButton = true,
+  agentName = 'Claude',
 }) => {
   const fallbackRef = useRef<HTMLTextAreaElement>(null);
   const taRef = inputRef ?? fallbackRef;
@@ -111,7 +114,7 @@ export const Composer: React.FC<ComposerProps> = ({
           <textarea
             ref={taRef}
             rows={1}
-            placeholder={attachedFiles.length > 0 ? 'What should Claude do with these files?' : 'Message Claude... (Shift+Enter for newline)'}
+            placeholder={attachedFiles.length > 0 ? `What should ${agentName} do with these files?` : `Message ${agentName}... (Shift+Enter for newline)`}
             value={value}
             onChange={(e) => onChange(e.target.value)}
             onPaste={onPaste}

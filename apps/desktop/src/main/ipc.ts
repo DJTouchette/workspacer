@@ -14,7 +14,8 @@ import { agentNotifier } from './services/agentNotifier';
 import { claudemonSessionClient } from './services/claudemonSessionClient';
 import { buildClaudeArgv } from './services/claudeResolver';
 import { resolveAgentBinary } from './services/agentProviders';
-import { facadeSpawnArgs, buildSessionMcpConfig, MCP_FACADE_URL, managedFacadeInstructions } from './services/mcpConfig';
+import { spawnManagedAgent } from './services/managedSpawn';
+import { facadeSpawnArgs, buildSessionMcpConfig } from './services/mcpConfig';
 import { installSupervisorSkill, ensureSupervisorHome } from './services/supervisorSkill';
 import { importChromeCookies, importChromeCookiesViaCDP } from './services/chromeCookieImport';
 import { claudeProfiles } from './services/claudeProfiles';
@@ -116,24 +117,19 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     // model, so they light up the GUI / Fleet Deck like a Claude session — no PTY.
     const provider = opts.provider ?? 'claude';
     if (provider !== 'claude') {
-      let cwd = opts.cwd || process.env.HOME || os.homedir();
-      const bin = resolveAgentBinary(provider);
-      // A managed supervisor / facade worker gets the workspacer MCP facade
-      // (registered with the provider's own MCP config by the adapter) plus the
-      // role instructions injected on its opening turn.
-      const wantsFacade = opts.supervisor || opts.mcpFacade;
-      if (opts.supervisor && !opts.cwd) cwd = ensureSupervisorHome();
-      // Pin the id so we can pre-register spawn metadata (provider/label/parent)
-      // before the first conversation delta creates the session entry — that's
-      // how a managed session's analytics row gets tagged with its backend.
-      const managedId = opts.resumeSessionId || randomUUID();
-      claudeSessionStore.setSpawnMeta(managedId, {
-        label: opts.label, parentSessionId: opts.parentSessionId,
-        isSupervisor: opts.supervisor, provider,
-      });
-      return claudemonSessionClient.spawnManaged({
-        provider, cwd, model: opts.model, bin, yolo: opts.skipPermissions, sessionId: managedId,
-        ...(wantsFacade && { mcp: MCP_FACADE_URL, instructions: managedFacadeInstructions(!!opts.supervisor) }),
+      // Managed (Tier-2) backend — driven by claudemon's adapter, not a PTY.
+      // Shared with the `agents.spawn` hub capability so the two transports
+      // can't diverge (see managedSpawn.ts).
+      return spawnManagedAgent({
+        provider,
+        cwd: opts.cwd,
+        model: opts.model,
+        skipPermissions: opts.skipPermissions,
+        resumeSessionId: opts.resumeSessionId,
+        supervisor: opts.supervisor,
+        mcpFacade: opts.mcpFacade,
+        label: opts.label,
+        parentSessionId: opts.parentSessionId,
       });
     }
     const profile = opts.profileId ? claudeProfiles.getProfile(opts.profileId) : undefined;
@@ -337,6 +333,12 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // updates with zero maintenance), and `seen` carries concrete ids observed
   // in real transcripts — past sessions plus anything persisted in config.
   ipcMain.handle(IPC.CLAUDE_LIST_MODELS, () => listClaudeModels());
+
+  // Live model catalog for a managed provider (codex/opencode/pi). We resolve
+  // the launcher binary the same way spawning does, then query the provider's
+  // own CLI/server via claudemon so the picker matches the installed version.
+  ipcMain.handle(IPC.PROVIDER_LIST_MODELS, (_event, provider: 'codex' | 'opencode' | 'pi', cwd?: string) =>
+    claudemonSessionClient.listProviderModels(provider, cwd, resolveAgentBinary(provider)));
 
   ipcMain.handle(IPC.CLAUDE_MESSAGE, (_event, sessionId: string, text: string) =>
     claudemonSessionClient.message(sessionId, text));

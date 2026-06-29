@@ -182,6 +182,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke(IPC.CLAUDE_SPAWN, opts),
   claudeListModels: (): Promise<{ defaultModel: string; skipPermissionsDefault: boolean; aliases: Array<{ value: string; label: string }>; seen: string[] }> =>
     ipcRenderer.invoke(IPC.CLAUDE_LIST_MODELS),
+  providerListModels: (provider: 'codex' | 'opencode' | 'pi', cwd?: string): Promise<Array<{ id: string; label: string; default: boolean }>> =>
+    ipcRenderer.invoke(IPC.PROVIDER_LIST_MODELS, provider, cwd),
   claudeMessage: (sessionId: string, text: string): Promise<{ ok: boolean; mode?: string }> =>
     ipcRenderer.invoke(IPC.CLAUDE_MESSAGE, sessionId, text),
   claudeApprove: (sessionId: string, decision: 'yes' | 'no' | 'always', reason?: string): Promise<void> =>

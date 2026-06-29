@@ -47,6 +47,7 @@ export interface ElectronAPI {
   // Claude sessions (delegated to claudemon daemon)
   spawnClaude: (opts: { cwd?: string; provider?: 'claude' | 'codex' | 'opencode' | 'pi'; profileId?: string; model?: string; skipPermissions?: boolean; resumeSessionId?: string; cols?: number; rows?: number; supervisor?: boolean; mcpItemIds?: string[] }) => Promise<string>;
   claudeListModels: () => Promise<{ defaultModel: string; skipPermissionsDefault: boolean; aliases: Array<{ value: string; label: string }>; seen: string[] }>;
+  providerListModels: (provider: 'codex' | 'opencode' | 'pi', cwd?: string) => Promise<Array<{ id: string; label: string; default: boolean }>>;
   claudeMessage: (sessionId: string, text: string) => Promise<{ ok: boolean; mode?: string }>;
   claudeApprove: (sessionId: string, decision: 'yes' | 'no' | 'always', reason?: string) => Promise<void>;
   claudeAnswer: (sessionId: string, payload: { option?: number; text?: string; answers?: string[] }) => Promise<void>;

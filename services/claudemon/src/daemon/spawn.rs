@@ -12,7 +12,12 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
+use axum::{
+    extract::{Path, Query, State},
+    http::StatusCode,
+    response::IntoResponse,
+    Json,
+};
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use portable_pty::PtySize;
 use serde::Deserialize;
@@ -237,4 +242,49 @@ pub async fn handle_managed(
     tracing::info!(%session_id, provider = %payload.provider, cwd = %payload.cwd, "spawned managed session");
 
     Json(json!({ "session_id": session_id, "cwd": payload.cwd })).into_response()
+}
+
+/// Query params for `GET /providers/:provider/models`.
+#[derive(Debug, Deserialize)]
+pub struct ProviderModelsQuery {
+    /// Working directory to run the provider CLI in (it reads project/global
+    /// config + auth from there). Defaults to the daemon's cwd.
+    #[serde(default)]
+    pub cwd: Option<String>,
+    /// Resolved launcher binary (the desktop resolves it on PATH); falls back to
+    /// the provider name.
+    #[serde(default)]
+    pub bin: Option<String>,
+}
+
+/// `GET /providers/:provider/models` — list the models a managed provider can
+/// launch with, live-queried from its own CLI/server (so the picker always
+/// matches what the installed binary actually offers). Returns
+/// `{ "models": [{ "id", "label", "default" }] }`; an empty list is valid (e.g.
+/// Pi with no authed providers) and the UI falls back to free-text entry.
+pub async fn handle_provider_models(
+    Path(provider): Path<String>,
+    Query(q): Query<ProviderModelsQuery>,
+) -> impl IntoResponse {
+    let bin = q.bin.unwrap_or_else(|| provider.clone());
+    let cwd = q.cwd.unwrap_or_else(|| ".".to_string());
+    let result = match provider.as_str() {
+        "opencode" => crate::providers::opencode::list_models(&bin, &cwd).await,
+        "codex" => crate::providers::codex::list_models(&bin, &cwd).await,
+        "pi" => crate::providers::pi::list_models(&bin, &cwd).await,
+        other => {
+            return (
+                StatusCode::BAD_REQUEST,
+                format!("unsupported managed provider: {other}"),
+            )
+                .into_response();
+        }
+    };
+    match result {
+        Ok(models) => Json(json!({ "models": models })).into_response(),
+        Err(err) => {
+            tracing::warn!(?err, %provider, "listing provider models failed");
+            (StatusCode::BAD_GATEWAY, format!("{err}")).into_response()
+        }
+    }
 }
