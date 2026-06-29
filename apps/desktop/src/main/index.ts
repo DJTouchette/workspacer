@@ -372,34 +372,44 @@ app.whenReady().then(() => {
   createWindow();
 });
 
-app.on('before-quit', () => {
-  // Signal renderer to save session before quit
+let shuttingDown = false;
+
+/**
+ * Tear everything down, letting the daemons exit *gracefully* before we quit —
+ * crucially the hub, so it runs mgr.Stop() and SIGTERMs its supervised plugin
+ * sidecars instead of being force-killed and orphaning them (the Windows gap).
+ * Capped so a stuck daemon can never hang the quit.
+ */
+async function gracefulShutdown(): Promise<void> {
+  // Signal renderer to save session before we tear down its backends.
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send(IPC.APP_BEFORE_QUIT);
   }
+  try { claudemonSessionClient.closeAll(); } catch { /* ignore */ }
   workflowWatcher.detachAll();
   stopAllTerminals();
   stopClaudemonHookBridge();
   stopClaudemonStatusLineBridge();
   stopClaudemonConversationBridge();
   stopHubClient();
-  stopMcpFacade();
-  stopHub();
-  stopClaudemon();
-  database.close();
+  // Stop the daemons in parallel; each closes its stdin so its watchdog runs a
+  // clean shutdown (the hub tears down sidecars first). Overall cap as a backstop.
+  await Promise.race([
+    Promise.allSettled([stopMcpFacade(), stopHub(), stopClaudemon()]),
+    new Promise<void>((r) => setTimeout(r, 9000)),
+  ]);
+  try { database.close(); } catch { /* ignore */ }
+}
+
+app.on('before-quit', (event) => {
+  if (shuttingDown) return; // re-entry after our async cleanup — let the quit proceed
+  shuttingDown = true;
+  event.preventDefault();
+  void gracefulShutdown().finally(() => app.quit());
 });
 
 app.on('window-all-closed', () => {
-  claudemonSessionClient.closeAll();
-  workflowWatcher.detachAll();
-  stopAllTerminals();
-  stopClaudemonHookBridge();
-  stopClaudemonStatusLineBridge();
-  stopClaudemonConversationBridge();
-  stopHubClient();
-  stopMcpFacade();
-  stopHub();
-  stopClaudemon();
+  // Quit on all platforms; this fires before-quit, which runs gracefulShutdown.
   app.quit();
 });
 

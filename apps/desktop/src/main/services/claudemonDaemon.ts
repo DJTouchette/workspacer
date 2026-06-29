@@ -13,7 +13,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { spawn, ChildProcess } from 'child_process';
 import { app } from 'electron';
-import { killStaleListener, waitForHealth as waitForHealthShared, PORTS, RestartBackoff, daemonSpawnOptions } from '../lib/daemonUtils';
+import { killStaleListener, waitForHealth as waitForHealthShared, PORTS, RestartBackoff, daemonSpawnOptions, gracefulStop } from '../lib/daemonUtils';
 
 const HOOK_PORT = PORTS.claudemonHook;
 const API_PORT = PORTS.claudemonApi;
@@ -126,14 +126,13 @@ export function runClaudemonInit(): Promise<void> {
   });
 }
 
-export function stopClaudemon(): void {
+export function stopClaudemon(): Promise<void> {
   intentionalStop = true;
   backoff.reset(); // clear failure counter so the next startClaudemon() begins fresh
-  if (child) {
-    try { child.kill(); } catch {}
-    child = null;
-  }
+  const c = child;
+  child = null;
   readyPromise = null;
+  return gracefulStop(c, 'claudemon');
 }
 
 export const CLAUDEMON_HOOK_PORT = HOOK_PORT;

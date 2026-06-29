@@ -24,7 +24,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { spawn, ChildProcess } from 'child_process';
 import { app } from 'electron';
-import { killStaleListener, waitForHealth, PORTS, RestartBackoff, daemonSpawnOptions } from '../lib/daemonUtils';
+import { killStaleListener, waitForHealth, PORTS, RestartBackoff, daemonSpawnOptions, gracefulStop } from '../lib/daemonUtils';
 import { HUB_BUS_URL, getHubToken } from './hubDaemon';
 
 const PORT = PORTS.mcpFacade;
@@ -106,14 +106,13 @@ function scheduleRestart(bin: string): void {
   }, delay);
 }
 
-export function stopMcpFacade(): void {
+export function stopMcpFacade(): Promise<void> {
   intentionalStop = true;
   backoff.reset();
-  if (child) {
-    try { child.kill(); } catch { /* already gone */ }
-    child = null;
-  }
+  const c = child;
+  child = null;
   readyPromise = null;
+  return gracefulStop(c, 'mcp');
 }
 
 export const MCP_FACADE_PORT = PORT;

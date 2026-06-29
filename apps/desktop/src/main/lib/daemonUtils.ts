@@ -4,7 +4,7 @@
  * single source of truth so neither daemon duplicates it.
  */
 
-import { execSync, type SpawnOptions } from 'child_process';
+import { execSync, type SpawnOptions, type ChildProcess } from 'child_process';
 
 // ── Port registry ────────────────────────────────────────────────────────────
 
@@ -40,6 +40,45 @@ export function daemonSpawnOptions(extraEnv?: NodeJS.ProcessEnv): SpawnOptions {
     windowsHide: true,
     env: { ...process.env, ...extraEnv, WORKSPACER_PARENT_PID: String(process.pid) },
   };
+}
+
+// ── gracefulStop ─────────────────────────────────────────────────────────────
+
+/**
+ * Stop a managed daemon *gracefully*: close its stdin — the EOF its watchdog
+ * treats as "parent gone" — so it runs its normal shutdown path, then wait up to
+ * `graceMs` for it to exit and SIGKILL only as a fallback. Resolves once it's
+ * gone (or was already gone).
+ *
+ * Why not just `child.kill()`: on Windows `kill()` is `TerminateProcess`, which
+ * stops the process instantly and skips its cleanup. For the hub that cleanup is
+ * `mgr.Stop()` — tearing down supervised plugin sidecars — so a bare kill would
+ * orphan them. Closing stdin lets the hub exit through that path first.
+ */
+export function gracefulStop(child: ChildProcess | null, label: string, graceMs = 4000): Promise<void> {
+  return new Promise((resolve) => {
+    if (!child || child.exitCode !== null || child.signalCode !== null) {
+      resolve();
+      return;
+    }
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve();
+    };
+    timer = setTimeout(() => {
+      console.warn(`[${label}] graceful stop timed out after ${graceMs}ms; forcing kill`);
+      try { child.kill(); } catch { /* already gone */ }
+      finish();
+    }, graceMs);
+    child.once('exit', finish);
+    try {
+      child.stdin?.end(); // EOF → the daemon's watchdog runs its clean shutdown
+    } catch { /* no stdin pipe — rely on the timeout/kill fallback */ }
+  });
 }
 
 // ── killStaleListener ────────────────────────────────────────────────────────

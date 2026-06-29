@@ -20,7 +20,7 @@ import { spawn, ChildProcess } from 'child_process';
 import { app } from 'electron';
 import { CLAUDEMON_API_URL } from './claudemonDaemon';
 import { DELEGATE_CATALOG_TO_BRAIN, DESKTOP_RENDERER_USES_BUS } from './brainDelegation';
-import { killStaleListener, waitForHealth as waitForHealthShared, PORTS, RestartBackoff, daemonSpawnOptions } from '../lib/daemonUtils';
+import { killStaleListener, waitForHealth as waitForHealthShared, PORTS, RestartBackoff, daemonSpawnOptions, gracefulStop } from '../lib/daemonUtils';
 import { getConfigDir } from './configService';
 
 const PORT = PORTS.hub;
@@ -271,14 +271,15 @@ function scheduleRestart(bin: string): void {
   }, delay);
 }
 
-export function stopHub(): void {
+export function stopHub(): Promise<void> {
   intentionalStop = true;
   backoff.reset(); // clear failure counter so the next startHub() begins fresh
-  if (child) {
-    try { child.kill(); } catch {}
-    child = null;
-  }
+  const c = child;
+  child = null;
   readyPromise = null;
+  // Extra grace: closing stdin makes the hub run mgr.Stop(), which SIGTERMs each
+  // supervised plugin sidecar (up to a few seconds apiece) before it exits.
+  return gracefulStop(c, 'hub', 6000);
 }
 
 export const HUB_PORT = PORT;
