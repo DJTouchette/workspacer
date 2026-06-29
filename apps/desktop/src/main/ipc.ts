@@ -118,7 +118,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     if (provider !== 'claude') {
       const cwd = opts.cwd || process.env.HOME || os.homedir();
       const bin = resolveAgentBinary(provider);
-      return claudemonSessionClient.spawnManaged({ provider, cwd, model: opts.model, bin });
+      return claudemonSessionClient.spawnManaged({ provider, cwd, model: opts.model, bin, yolo: opts.skipPermissions });
     }
     const profile = opts.profileId ? claudeProfiles.getProfile(opts.profileId) : undefined;
     const env: Record<string, string> = {};

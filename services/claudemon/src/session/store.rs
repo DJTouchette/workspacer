@@ -116,6 +116,11 @@ pub struct SessionStore {
     /// PTY: the provider adapter's driver task owns the receiver and forwards
     /// each prompt to the agent's own API (e.g. OpenCode's POST message).
     managed_inputs: Arc<DashMap<String, mpsc::UnboundedSender<String>>>,
+    /// Managed approval decisions (true = approve, false = deny). `/approve`
+    /// routes the user's decision here for managed sessions; the adapter's
+    /// driver forwards it to the provider (OpenCode permission reply / Codex
+    /// JSON-RPC approval response).
+    managed_decisions: Arc<DashMap<String, mpsc::UnboundedSender<bool>>>,
 }
 
 /// Outcome of a `/message` submission. Keeping the policy here (rather than in
@@ -157,6 +162,7 @@ impl SessionStore {
             aliases: Arc::new(DashMap::new()),
             pending_messages: Arc::new(DashMap::new()),
             managed_inputs: Arc::new(DashMap::new()),
+            managed_decisions: Arc::new(DashMap::new()),
         }
     }
 
@@ -510,10 +516,27 @@ impl SessionStore {
         self.managed_inputs.insert(session_id.to_string(), tx);
     }
 
-    /// Tear down a managed session: drop its prompt channel (signalling the
-    /// driver to stop) and mark it Stopped.
+    /// Register the approval-decision channel for a managed session. `/approve`
+    /// routes the user's yes/no here (the adapter forwards it to the provider).
+    pub fn register_managed_decision(&self, session_id: &str, tx: mpsc::UnboundedSender<bool>) {
+        self.managed_decisions.insert(session_id.to_string(), tx);
+    }
+
+    /// Forward an approval decision to a managed session's adapter. Returns
+    /// false (so the caller falls through to the Claude hook path) when this
+    /// isn't a managed session.
+    pub fn submit_managed_decision(&self, session_id: &str, approve: bool) -> bool {
+        match self.managed_decisions.get(session_id) {
+            Some(tx) => tx.send(approve).is_ok(),
+            None => false,
+        }
+    }
+
+    /// Tear down a managed session: drop its prompt + decision channels
+    /// (signalling the driver to stop) and mark it Stopped.
     pub fn deregister_managed(&self, session_id: &str) {
         self.managed_inputs.remove(session_id);
+        self.managed_decisions.remove(session_id);
         if let Some(mut entry) = self.states.get_mut(session_id) {
             entry.mode = SessionMode::Stopped;
             entry.updated_at = OffsetDateTime::now_utc();

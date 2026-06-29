@@ -264,6 +264,13 @@ async fn post_approve(
                 .into_response();
         }
     };
+    // Managed (adapter-driven) sessions don't use Claude's parked-hook gateway —
+    // route the decision to the provider adapter, which forwards it to the
+    // agent's own approval API.
+    let approve = matches!(payload.decision.as_deref(), Some("yes") | Some("always"));
+    if store.submit_managed_decision(&id, approve) {
+        return Json(json!({ "ok": true, "managed": true, "approve": approve })).into_response();
+    }
     if !store.resolve_decision(&id, hook_decision.clone()) {
         return (
             StatusCode::CONFLICT,

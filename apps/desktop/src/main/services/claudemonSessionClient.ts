@@ -86,6 +86,8 @@ class ClaudemonSessionClient {
     model?: string;
     /** Resolved launcher binary (the desktop resolves it on PATH). */
     bin?: string;
+    /** YOLO / skip approvals — auto-approve every command and file change. */
+    yolo?: boolean;
     sessionId?: string;
   }): Promise<string> {
     const { sessionId: pinnedId, ...rest } = args;

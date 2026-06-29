@@ -136,7 +136,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, onSpawn
     // TUI in Tier-1 and don't take Claude's profile/model/MCP/resume flags).
     onSpawn(isClaude
       ? { cwd: cwd.trim(), name: name.trim() || undefined, profileId: profileId || undefined, model: resolvedModel || undefined, skipPermissions, mcpItemIds: mcpSel.length ? mcpSel : undefined, resumeSessionId: resumeSessionId || undefined }
-      : { cwd: cwd.trim(), name: name.trim() || undefined, provider, model: providerModel.trim() || undefined });
+      : { cwd: cwd.trim(), name: name.trim() || undefined, provider, model: providerModel.trim() || undefined, skipPermissions });
   };
 
   const placeholderName = cwd.trim() ? deriveAgentName(cwd.trim()) : 'agent';
@@ -318,7 +318,6 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, onSpawn
           </Field>
         )}
 
-        {isClaude && (
         <label style={{
           display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 4, cursor: 'pointer',
         }}>
@@ -329,14 +328,15 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, onSpawn
             style={{ marginTop: 2, cursor: 'pointer' }}
           />
           <span style={{ fontSize: '0.72rem', lineHeight: 1.4 }}>
-            <span style={{ color: 'var(--wks-text-primary)' }}>Skip permissions</span>
+            <span style={{ color: 'var(--wks-text-primary)' }}>{isClaude ? 'Skip permissions' : 'YOLO mode'}</span>
             <span style={{ color: 'var(--wks-danger, #e05555)', marginLeft: 6 }}>dangerous</span>
             <div style={{ color: 'var(--wks-text-faint)', fontSize: '0.65rem', marginTop: 1 }}>
-              Bypasses all approval prompts (--dangerously-skip-permissions).
+              {isClaude
+                ? 'Bypasses all approval prompts (--dangerously-skip-permissions).'
+                : 'Auto-approves every command and file change — no prompts.'}
             </div>
           </span>
         </label>
-        )}
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}>
           <button onClick={onCancel} style={secondaryBtnStyle}>Cancel</button>

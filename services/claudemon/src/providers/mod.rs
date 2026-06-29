@@ -32,8 +32,12 @@ pub enum AgentUpdate {
     Idle,
     /// The agent is actively producing output.
     Busy,
-    /// A permission/approval request is outstanding (waiting on the user).
+    /// A permission/approval request is outstanding (waiting on the user). `id`
+    /// is the provider's permission/request identifier, needed to forward the
+    /// decision back (OpenCode permission reply); None when the transport
+    /// already carries the id out of band (Codex JSON-RPC request id).
     PermissionPending {
+        id: Option<String>,
         tool: Option<String>,
         summary: Option<String>,
     },
@@ -152,7 +156,7 @@ pub fn apply_updates(
                     new_mode = Some(SessionMode::Responding);
                 }
             }
-            AgentUpdate::PermissionPending { tool, summary } => {
+            AgentUpdate::PermissionPending { tool, summary, .. } => {
                 new_mode = Some(SessionMode::Approval);
                 // NOTE: surfacing the pending approval is accurate telemetry, but
                 // forwarding the user's decision back to the provider's approval

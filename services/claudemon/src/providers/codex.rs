@@ -77,6 +77,7 @@ pub fn translate(method: &str, params: &Value) -> Vec<AgentUpdate> {
         "item/commandExecution/requestApproval" => {
             let cmd = command_text(params);
             out.push(AgentUpdate::PermissionPending {
+                id: None, // carried out of band as the JSON-RPC request id
                 tool: Some("command".into()),
                 summary: cmd,
             });
@@ -88,6 +89,7 @@ pub fn translate(method: &str, params: &Value) -> Vec<AgentUpdate> {
                 .or_else(|| params.get("item").and_then(|i| i.get("path")).and_then(Value::as_str))
                 .map(str::to_owned);
             out.push(AgentUpdate::PermissionPending {
+                id: None,
                 tool: Some("file change".into()),
                 summary: path,
             });
@@ -171,9 +173,10 @@ pub fn spawn_session(
     cwd: String,
     model: Option<String>,
     bin: String,
+    yolo: bool,
 ) {
     tokio::spawn(async move {
-        if let Err(err) = run_session(&store, &conv, &session_id, &cwd, model, &bin).await {
+        if let Err(err) = run_session(&store, &conv, &session_id, &cwd, model, &bin, yolo).await {
             tracing::warn!(?err, session = %session_id, "codex managed session ended with error");
         }
         store.deregister_managed(&session_id);
@@ -187,6 +190,7 @@ async fn run_session(
     cwd: &str,
     model: Option<String>,
     bin: &str,
+    yolo: bool,
 ) -> anyhow::Result<()> {
     let mut child = Command::new(bin)
         .arg("app-server")
@@ -211,12 +215,17 @@ async fn run_session(
 
     let (tx, mut rx) = mpsc::unbounded_channel::<String>();
     store.register_managed_input(session_id, tx);
+    let (dtx, mut drx) = mpsc::unbounded_channel::<bool>();
+    store.register_managed_decision(session_id, dtx);
 
     let mut thread_id: Option<String> = None;
     let mut pending_prompts: Vec<String> = Vec::new();
     let mut req_id: u64 = 1;
     let mut cur_mode = SessionMode::Input;
     let mut acc = UsageAcc::new();
+    // The JSON-RPC id of an approval request awaiting the user's decision
+    // (non-YOLO). YOLO answers requests inline and never parks one here.
+    let mut pending_approval: Option<Value> = None;
 
     loop {
         tokio::select! {
@@ -226,7 +235,7 @@ async fn run_session(
                         handle_message(
                             &value, store, conv, session_id, &mut stdin,
                             &mut thread_id, &mut pending_prompts, &mut req_id,
-                            &mut cur_mode, &mut acc,
+                            &mut cur_mode, &mut acc, yolo, &mut pending_approval,
                         ).await;
                     }
                 }
@@ -251,6 +260,17 @@ async fn run_session(
                 }
                 None => break, // managed input dropped → terminated
             },
+            decision = drx.recv() => match decision {
+                Some(approve) => {
+                    if let Some(id) = pending_approval.take() {
+                        let result = json!({ "decision": if approve { "accept" } else { "decline" } });
+                        let _ = write_msg(&mut stdin, &json!({ "jsonrpc": "2.0", "id": id, "result": result })).await;
+                        store.set_managed_mode(session_id, SessionMode::Responding, None);
+                        cur_mode = SessionMode::Responding;
+                    }
+                }
+                None => break,
+            },
             status = child.wait() => {
                 tracing::info!(?status, session = %session_id, "codex app-server exited");
                 break;
@@ -274,6 +294,8 @@ async fn handle_message(
     req_id: &mut u64,
     cur_mode: &mut SessionMode,
     acc: &mut UsageAcc,
+    yolo: bool,
+    pending_approval: &mut Option<Value>,
 ) {
     // A response to one of our requests (the thread/start handshake).
     if value.get("id").is_some() && (value.get("result").is_some() || value.get("error").is_some()) {
@@ -305,11 +327,16 @@ async fn handle_message(
     }
 
     // Server→client *requests* (they carry an id) must be answered or the agent
-    // blocks. Approval requests are auto-accepted for now — accurate decision
-    // forwarding from the UI is Phase 4. (Run Codex in a sandbox accordingly.)
+    // blocks. For an approval request: YOLO accepts inline; otherwise we park the
+    // request id and surface it, so the user's /approve decision is forwarded
+    // (see the decision branch in run_session).
     if value.get("id").is_some() && method.ends_with("/requestApproval") {
         let id = value.get("id").cloned().unwrap_or(Value::Null);
-        let _ = write_msg(stdin, &json!({ "jsonrpc": "2.0", "id": id, "result": { "decision": "accept" } })).await;
+        if yolo {
+            let _ = write_msg(stdin, &json!({ "jsonrpc": "2.0", "id": id, "result": { "decision": "accept" } })).await;
+        } else {
+            *pending_approval = Some(id);
+        }
     }
 }
 
@@ -406,6 +433,7 @@ mod tests {
         assert_eq!(
             translate("item/commandExecution/requestApproval", &p),
             vec![AgentUpdate::PermissionPending {
+                id: None,
                 tool: Some("command".into()),
                 summary: Some("rm -rf build".into()),
             }]
@@ -418,6 +446,7 @@ mod tests {
         assert_eq!(
             translate("item/fileChange/requestApproval", &p),
             vec![AgentUpdate::PermissionPending {
+                id: None,
                 tool: Some("file change".into()),
                 summary: Some("src/main.rs".into()),
             }]

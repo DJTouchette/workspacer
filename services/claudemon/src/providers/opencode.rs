@@ -51,6 +51,11 @@ pub fn translate(event: &Value) -> Vec<AgentUpdate> {
 
         "permission.updated" | "permission.replied" => {
             let p = props.get("permission").unwrap_or(&props);
+            let id = p
+                .get("id")
+                .or_else(|| p.get("permissionID"))
+                .and_then(Value::as_str)
+                .map(str::to_owned);
             let tool = p
                 .get("title")
                 .and_then(Value::as_str)
@@ -62,7 +67,7 @@ pub fn translate(event: &Value) -> Vec<AgentUpdate> {
                 .and_then(Value::as_str)
                 .or_else(|| p.get("description").and_then(Value::as_str))
                 .map(str::to_owned);
-            out.push(AgentUpdate::PermissionPending { tool, summary });
+            out.push(AgentUpdate::PermissionPending { id, tool, summary });
         }
 
         // Both the streamed-part event and the whole-message event indicate the
@@ -174,12 +179,26 @@ pub fn spawn_session(
     cwd: String,
     model: Option<String>,
     bin: String,
+    yolo: bool,
 ) {
     tokio::spawn(async move {
-        if let Err(err) = run_session(&store, &conv, &session_id, &cwd, model, &bin).await {
+        if let Err(err) = run_session(&store, &conv, &session_id, &cwd, model, &bin, yolo).await {
             tracing::warn!(?err, session = %session_id, "opencode managed session ended with error");
         }
         store.deregister_managed(&session_id);
+    });
+}
+
+/// POST a permission reply to OpenCode: `once` (allow this time) or `reject`.
+/// Mirrors the SDK's `SessionPermissionService.Respond`.
+fn reply_permission(client: &reqwest::Client, base: &str, oc_id: &str, perm_id: &str, approve: bool) {
+    let url = format!("{base}/session/{oc_id}/permissions/{perm_id}");
+    let body = serde_json::json!({ "response": if approve { "once" } else { "reject" } });
+    let c = client.clone();
+    tokio::spawn(async move {
+        if let Err(err) = c.post(url).json(&body).send().await {
+            tracing::warn!(?err, "opencode permission reply failed");
+        }
     });
 }
 
@@ -190,6 +209,7 @@ async fn run_session(
     cwd: &str,
     model: Option<String>,
     bin: &str,
+    yolo: bool,
 ) -> anyhow::Result<()> {
     // Pick a free loopback port for this server instance (each managed session
     // gets its own `opencode serve`).
@@ -232,9 +252,11 @@ async fn run_session(
             .context("opencode POST /session response missing `id`")?
     };
 
-    // Route user prompts from `submit_message` to us.
+    // Route user prompts + approval decisions from the HTTP API to us.
     let (tx, mut rx) = mpsc::unbounded_channel::<String>();
     store.register_managed_input(session_id, tx);
+    let (dtx, mut drx) = mpsc::unbounded_channel::<bool>();
+    store.register_managed_decision(session_id, dtx);
 
     // Subscribe to the event stream.
     let resp = client
@@ -247,13 +269,42 @@ async fn run_session(
     let mut buf: Vec<u8> = Vec::new();
     let mut cur_mode = SessionMode::Input;
     let mut acc = UsageAcc::new();
+    // The id of the permission currently awaiting the user's decision (non-YOLO).
+    let mut pending_perm_id: Option<String> = None;
 
     loop {
         tokio::select! {
             chunk = stream.next() => match chunk {
                 Some(Ok(bytes)) => {
                     buf.extend_from_slice(&bytes);
-                    process_sse_buffer(&mut buf, store, conv, session_id, &mut cur_mode, &mut acc);
+                    while let Some(pos) = buf.iter().position(|&b| b == b'\n') {
+                        let line: Vec<u8> = buf.drain(..=pos).collect();
+                        let s = String::from_utf8_lossy(&line);
+                        let s = s.trim_end_matches(['\r', '\n']);
+                        let Some(data) = s.strip_prefix("data:") else { continue };
+                        let data = data.trim();
+                        if data.is_empty() { continue; }
+                        let Ok(value) = serde_json::from_str::<Value>(data) else { continue };
+                        let mut updates = translate(&value);
+                        if updates.is_empty() { continue; }
+                        // Pull any permission request out: YOLO auto-allows it and
+                        // keeps working; otherwise we surface it and remember the id
+                        // so the user's decision can be forwarded.
+                        if let Some(idx) = updates.iter().position(|u| matches!(u, AgentUpdate::PermissionPending { .. })) {
+                            if let AgentUpdate::PermissionPending { id, .. } = &updates[idx] {
+                                let perm_id = id.clone();
+                                if yolo {
+                                    if let Some(pid) = perm_id {
+                                        reply_permission(&client, &base, &oc_id, &pid, true);
+                                    }
+                                    updates.remove(idx); // don't surface Approval
+                                } else {
+                                    pending_perm_id = perm_id;
+                                }
+                            }
+                        }
+                        apply_updates(store, conv, session_id, updates, &mut cur_mode, &mut acc);
+                    }
                 }
                 Some(Err(err)) => return Err(err.into()),
                 None => break,
@@ -282,6 +333,17 @@ async fn run_session(
                 }
                 None => break, // managed input dropped → session terminated
             },
+            decision = drx.recv() => match decision {
+                Some(approve) => {
+                    if let Some(pid) = pending_perm_id.take() {
+                        reply_permission(&client, &base, &oc_id, &pid, approve);
+                        // The agent resumes (or stops on reject); reflect Responding.
+                        store.set_managed_mode(session_id, SessionMode::Responding, None);
+                        cur_mode = SessionMode::Responding;
+                    }
+                }
+                None => break,
+            },
             status = child.wait() => {
                 tracing::info!(?status, session = %session_id, "opencode serve exited");
                 break;
@@ -306,35 +368,6 @@ async fn wait_healthy(client: &reqwest::Client, base: &str) -> anyhow::Result<()
     anyhow::bail!("opencode serve did not become healthy in time")
 }
 
-/// Drain complete `data:` lines out of the SSE byte buffer and apply them.
-fn process_sse_buffer(
-    buf: &mut Vec<u8>,
-    store: &SessionStore,
-    conv: &ConversationStore,
-    session_id: &str,
-    cur_mode: &mut SessionMode,
-    acc: &mut UsageAcc,
-) {
-    while let Some(pos) = buf.iter().position(|&b| b == b'\n') {
-        let line: Vec<u8> = buf.drain(..=pos).collect();
-        let s = String::from_utf8_lossy(&line);
-        let s = s.trim_end_matches(['\r', '\n']);
-        let Some(data) = s.strip_prefix("data:") else {
-            continue; // event:/id:/comment/blank — SSE framing we don't need
-        };
-        let data = data.trim();
-        if data.is_empty() {
-            continue;
-        }
-        if let Ok(value) = serde_json::from_str::<Value>(data) {
-            let updates = translate(&value);
-            if !updates.is_empty() {
-                apply_updates(store, conv, session_id, updates, cur_mode, acc);
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -357,6 +390,7 @@ mod tests {
         let ev = json!({
             "type": "permission.updated",
             "properties": {
+                "id": "perm_1",
                 "type": "bash",
                 "title": "Bash",
                 "metadata": { "command": "rm -rf build" }
@@ -365,6 +399,7 @@ mod tests {
         assert_eq!(
             translate(&ev),
             vec![AgentUpdate::PermissionPending {
+                id: Some("perm_1".into()),
                 tool: Some("Bash".into()),
                 summary: Some("rm -rf build".into()),
             }]

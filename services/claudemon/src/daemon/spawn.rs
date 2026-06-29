@@ -162,6 +162,10 @@ pub struct SpawnManagedPayload {
     /// the provider name.
     #[serde(default)]
     pub bin: Option<String>,
+    /// YOLO / skip-approvals: auto-approve every command and file change instead
+    /// of surfacing them for the user's decision.
+    #[serde(default)]
+    pub yolo: bool,
     /// Caller-pinned session id, so every client converges on one card.
     #[serde(default)]
     pub session_id: Option<String>,
@@ -195,6 +199,7 @@ pub async fn handle_managed(
             payload.cwd.clone(),
             payload.model.clone(),
             bin,
+            payload.yolo,
         ),
         "codex" => crate::providers::codex::spawn_session(
             store.clone(),
@@ -203,6 +208,7 @@ pub async fn handle_managed(
             payload.cwd.clone(),
             payload.model.clone(),
             bin,
+            payload.yolo,
         ),
         _ => unreachable!(),
     }
