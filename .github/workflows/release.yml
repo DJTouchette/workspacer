@@ -1,0 +1,114 @@
+name: release
+
+# Build the desktop app + bundled daemons (claudemon/Rust, hub/mcp/brain/Go) on
+# all three desktop OSes. On a version tag (v*) the installers are attached to a
+# GitHub Release; on PRs / manual runs it's a build smoke-test that just uploads
+# the artifacts so you can catch per-platform breakage early.
+on:
+  push:
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same ref cancels the older in-progress run (saves minutes
+# on PRs). Tag builds use the tag as the group, so they never cancel each other.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Windows → NSIS installer + portable .exe (x64).
+          - os: windows-latest
+            artifact: windows
+          # macOS → .dmg. macos-14 is Apple-silicon (arm64); macos-13 is x64.
+          # Pick one to start; add the other as a second leg when you want both.
+          - os: macos-14
+            artifact: macos-arm64
+          # Linux → AppImage. AppImage is distro-agnostic (runs on Arch, Fedora,
+          # Debian, …); GitHub only offers Ubuntu runners, and we pin the OLDEST
+          # supported Ubuntu so the glibc the AppImage links against stays broadly
+          # compatible (glibc is backward- but not forward-compatible, and
+          # AppImage doesn't bundle it).
+          - os: ubuntu-22.04
+            artifact: linux
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: apps/desktop
+    env:
+      # No code-signing in CI yet: don't let electron-builder hunt for a cert
+      # (that just fails the macOS build). Wire signing secrets in later.
+      CSC_IDENTITY_AUTO_DISCOVERY: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: |
+            apps/desktop/package-lock.json
+            apps/desktop/src/renderer/package-lock.json
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.4'
+          cache-dependency-path: services/hub/go.sum
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build (claudemon)
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: services/claudemon
+
+      # apps/desktop's postinstall rebuilds better-sqlite3 against Electron's
+      # ABI for this OS, so the native module ships correctly per platform.
+      - name: Install desktop deps
+        run: npm ci
+
+      - name: Install renderer deps
+        working-directory: apps/desktop/src/renderer
+        run: npm ci
+
+      # Mirrors `npm run package`: builds the renderer + main, compiles the Go
+      # and Rust daemons, then runs electron-builder for THIS host OS. `--publish
+      # never` keeps electron-builder from trying to upload (we attach artifacts
+      # to the Release ourselves, below).
+      - name: Package
+        run: npm run package -- --publish never
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: workspacer-${{ matrix.artifact }}
+          path: |
+            apps/desktop/release/*.exe
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.AppImage
+          if-no-files-found: error
+
+      # Only on a version tag: attach this OS's installers to the GitHub Release
+      # for the tag (each matrix leg appends its own files to the same release).
+      - name: Attach to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            apps/desktop/release/*.exe
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.AppImage
+          draft: true
+          fail_on_unmatched_files: false
+
+    permissions:
+      contents: write
