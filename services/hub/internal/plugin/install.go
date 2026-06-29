@@ -54,6 +54,48 @@ func Install(pluginsDir, input string, progress func(stage string)) (Manifest, e
 	return Manifest{}, lastErr
 }
 
+// InstallFromDir installs a plugin from a local source directory — used to add
+// one of the bundled examples that ship inside the app. It validates the source
+// manifest, copies the tree into pluginsDir, runs the optional install command,
+// and returns the validated manifest. The caller adds it to the Manager.
+//
+// Unlike Install it neither downloads nor writes an .install-source: a bundled
+// example has nothing to "update" from, so the UI shows no Update button.
+func InstallFromDir(pluginsDir, srcDir string) (Manifest, error) {
+	if pluginsDir == "" {
+		return Manifest{}, fmt.Errorf("no plugins directory configured")
+	}
+	if err := os.MkdirAll(pluginsDir, 0o755); err != nil {
+		return Manifest{}, err
+	}
+	// Validate before copying anything.
+	m, err := Load(filepath.Join(srcDir, "plugin.json"))
+	if err != nil {
+		return Manifest{}, err
+	}
+	name := sanitizeName(m.ID)
+	if name == "" {
+		return Manifest{}, fmt.Errorf("could not determine install directory name")
+	}
+	dest := filepath.Join(pluginsDir, name)
+	if err := os.RemoveAll(dest); err != nil { // overwrite on re-add
+		return Manifest{}, err
+	}
+	if err := os.CopyFS(dest, os.DirFS(srcDir)); err != nil {
+		return Manifest{}, fmt.Errorf("copy example: %w", err)
+	}
+	final, err := Load(filepath.Join(dest, "plugin.json"))
+	if err != nil {
+		return Manifest{}, err
+	}
+	if len(final.Install) > 0 {
+		if err := runInstall(dest, final.Install); err != nil {
+			return Manifest{}, fmt.Errorf("install command failed: %w", err)
+		}
+	}
+	return final, nil
+}
+
 // resolveTarballURLs turns a GitHub reference into candidate codeload tarball
 // URLs (trying the given ref, else main then master), plus a fallback dir name.
 // A direct .tar.gz URL is returned as-is.

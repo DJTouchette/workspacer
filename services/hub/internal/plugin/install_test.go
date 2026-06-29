@@ -138,6 +138,44 @@ func TestInstallNoManifest(t *testing.T) {
 	}
 }
 
+func TestInstallFromDir(t *testing.T) {
+	// A bundled-example-style source dir with a manifest + a ui asset.
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "plugin.json"),
+		[]byte(`{"id":"example.hello","name":"Hello","apiVersion":"1","ui":"ui","panes":[{"type":"example.hello","title":"Hello"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(src, "ui"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "ui", "index.html"), []byte("<html>hi</html>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+	m, err := InstallFromDir(dir, src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(dir, "example-hello")
+	if m.ID != "example.hello" || m.Dir != want {
+		t.Fatalf("manifest = %+v (want Dir %q)", m, want)
+	}
+	// The whole tree (incl. the ui subdir) is copied into the plugins dir.
+	if _, err := os.Stat(filepath.Join(want, "ui", "index.html")); err != nil {
+		t.Errorf("ui asset not copied: %v", err)
+	}
+	// No .install-source for a bundled example (nothing to update from).
+	if _, err := os.Stat(filepath.Join(want, sourceFile)); err == nil {
+		t.Error("InstallFromDir should not write an .install-source")
+	}
+
+	// Re-adding overwrites cleanly.
+	if _, err := InstallFromDir(dir, src); err != nil {
+		t.Fatalf("re-add failed: %v", err)
+	}
+}
+
 func TestStripPath(t *testing.T) {
 	if got := stripPath("repo-main/sub/file.txt", 1); got != filepath.Join("sub", "file.txt") {
 		t.Errorf("got %q", got)

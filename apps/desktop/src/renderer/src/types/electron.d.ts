@@ -105,6 +105,10 @@ export interface ElectronAPI {
   listHubPlugins: () => Promise<PluginManifest[]>;
   hubPublish: (event: { type: string; source?: string; data?: unknown }) => Promise<void>;
   installPlugin: (url: string) => Promise<{ ok: boolean; plugin?: PluginManifest; error?: string }>;
+  /** Read-only catalog of bundled example plugins the user can add. */
+  listExamplePlugins: () => Promise<PluginManifest[]>;
+  /** Add one bundled example by manifest id (copied from the app's examples dir). */
+  installExamplePlugin: (id: string) => Promise<{ ok: boolean; plugin?: PluginManifest; error?: string }>;
   removePlugin: (id: string) => Promise<{ ok: boolean; error?: string }>;
   setPluginEnabled: (id: string, enabled: boolean) => Promise<{ ok: boolean; plugin?: PluginManifest; error?: string }>;
   /** Mint an ephemeral, capability-scoped bus token for an agent-scoped plugin

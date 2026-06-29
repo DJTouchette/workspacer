@@ -48,6 +48,9 @@ export interface PluginManifest {
   capabilities?: string[];
   emits?: string[];
   consumes?: string[];
+  /** Optional one-time build/setup command run on install (e.g. ["go","build",…]).
+   *  Present on manifests served by the hub; used to derive runtime requirements. */
+  install?: string[];
   /** Install reference (GitHub URL / owner-repo) recorded at install time; enables one-click update. */
   source?: string;
   /** True when the plugin is installed but disabled (sidecar stopped, contributions withheld). */

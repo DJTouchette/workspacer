@@ -70,6 +70,8 @@ const HOST_ONLY = [
   'importChromeCookies', // reads the host browser profile
   'listHubPlugins', // plugin registry lives in main
   'installPlugin',
+  'listExamplePlugins', // bundled-example catalog lives in main
+  'installExamplePlugin',
   'removePlugin',
   'setPluginEnabled',
   'pluginPaneToken', // trusted-host mint via the hub's guarded route

@@ -157,7 +157,15 @@ function userPluginsDir(): string {
   return path.join(getConfigDir(), 'plugins');
 }
 
-/** Ensure the user plugins dir exists; seed it from bundled examples once. */
+/**
+ * Webview-only example plugins with zero runtime dependencies — safe to seed on
+ * any machine. The Python/Go sidecar examples are NOT seeded (they'd crash-loop
+ * without the runtime); users add those on demand from the examples gallery,
+ * which labels each with its requirement.
+ */
+const DEFAULT_SEEDED_EXAMPLES = ['editor', 'hello-scoped'];
+
+/** Ensure the user plugins dir exists; seed the safe default examples once. */
 function ensurePluginsDir(): string {
   const dir = userPluginsDir();
   try {
@@ -165,8 +173,15 @@ function ensurePluginsDir(): string {
     const empty = fs.readdirSync(dir).length === 0;
     const examples = bundledExamplesDir();
     if (empty && fs.existsSync(examples)) {
-      fs.cpSync(examples, dir, { recursive: true });
-      console.log(`[hub] seeded plugins dir from ${examples}`);
+      const seeded: string[] = [];
+      for (const name of DEFAULT_SEEDED_EXAMPLES) {
+        const src = path.join(examples, name);
+        if (fs.existsSync(src)) {
+          fs.cpSync(src, path.join(dir, name), { recursive: true });
+          seeded.push(name);
+        }
+      }
+      console.log(`[hub] seeded plugins dir with default examples: ${seeded.join(', ') || '(none found)'}`);
     }
   } catch (err) {
     console.error('[hub] failed to prepare plugins dir:', err);
@@ -198,6 +213,8 @@ function launch(bin: string): Promise<void> {
     '--addr', BIND_ADDR,
     '--claudemon-events', `${CLAUDEMON_API_URL}/events`,
     '--plugins-dir', pluginsDir,
+    // Read-only catalog of bundled examples the user can add from the UI.
+    '--examples-dir', bundledExamplesDir(),
     // Have the hub supervise the headless brain provider. With delegation on it
     // owns the file-backed "catalog" capabilities (main stops registering them —
     // see hubCapabilities + brainDelegation); the brain binary ships next to the

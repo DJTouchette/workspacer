@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { usePlugins } from '../hooks/usePlugins';
 import PluginInstallDialog from '../components/PluginInstallDialog';
+import ExamplesGalleryDialog from '../components/ExamplesGalleryDialog';
 import { Blocks } from '../components/icons';
 
 /** Latest supervisor state per plugin id, from `sidecar.*` bus events. */
@@ -44,6 +45,7 @@ const PluginsManagerPane: React.FC<{ title?: string }> = () => {
   const { plugins } = usePlugins();
   const sidecar = useSidecarStates();
   const [showInstall, setShowInstall] = useState(false);
+  const [showExamples, setShowExamples] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const remove = async (id: string) => {
@@ -83,9 +85,17 @@ const PluginsManagerPane: React.FC<{ title?: string }> = () => {
         </div>
         <div style={{ fontSize: '0.65rem', color: 'var(--wks-text-faint)' }}>{plugins.length} installed</div>
         <button
-          onClick={() => setShowInstall(true)}
+          onClick={() => setShowExamples(true)}
           style={{
             marginLeft: 'auto', fontSize: '0.72rem', fontFamily: 'inherit', cursor: 'pointer',
+            background: 'transparent', color: 'var(--wks-text-secondary, var(--wks-text-primary))',
+            border: '1px solid var(--wks-border-input)', borderRadius: 5, padding: '5px 12px', fontWeight: 600,
+          }}
+        >Browse examples…</button>
+        <button
+          onClick={() => setShowInstall(true)}
+          style={{
+            fontSize: '0.72rem', fontFamily: 'inherit', cursor: 'pointer',
             background: 'var(--wks-accent)', color: 'var(--wks-text-on-accent, #fff)',
             border: 'none', borderRadius: 5, padding: '5px 12px', fontWeight: 600,
           }}
@@ -94,7 +104,7 @@ const PluginsManagerPane: React.FC<{ title?: string }> = () => {
 
       {plugins.length === 0 && (
         <div style={{ padding: 30, textAlign: 'center', color: 'var(--wks-text-faint)', fontSize: '0.8rem' }}>
-          No plugins installed. Install one from a GitHub repo to add panes, hotkeys, and dashboards.
+          No plugins installed. Browse the bundled examples, or install one from a GitHub repo to add panes, hotkeys, and dashboards.
         </div>
       )}
 
@@ -140,6 +150,12 @@ const PluginsManagerPane: React.FC<{ title?: string }> = () => {
       </div>
 
       {showInstall && <PluginInstallDialog onClose={() => setShowInstall(false)} />}
+      {showExamples && (
+        <ExamplesGalleryDialog
+          installedIds={plugins.map((p) => p.id)}
+          onClose={() => setShowExamples(false)}
+        />
+      )}
     </div>
   );
 };

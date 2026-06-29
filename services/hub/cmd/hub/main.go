@@ -68,6 +68,7 @@ func main() {
 	addr := flag.String("addr", "127.0.0.1:7895", "listen address for the bus + health endpoints")
 	claudemonEvents := flag.String("claudemon-events", "", "claudemon /events SSE URL to bridge onto the bus (e.g. http://127.0.0.1:7891/events)")
 	pluginsDir := flag.String("plugins-dir", "", "directory of plugin subdirs (each with a plugin.json) to load + supervise")
+	examplesDir := flag.String("examples-dir", "", "directory of bundled example plugins users can add from the UI (read-only catalog)")
 	webappDir := flag.String("webapp-dir", os.Getenv("WORKSPACER_WEBAPP_DIR"), "directory of the built web app (dist/web) to serve at /app/ for full remote parity; empty = disabled")
 	token := flag.String("token", os.Getenv("HUB_TOKEN"), "shared secret required to reach /bus + mutating routes (empty = no auth, localhost-only default)")
 	layoutFile := flag.String("layout-file", defaultLayoutFile(), "path to persist the shared workspace layout document (empty = memory only)")
@@ -303,6 +304,56 @@ func main() {
 			return
 		}
 		log.Printf("plugin %s enabled=%v", body.ID, body.Enabled)
+		_ = json.NewEncoder(w).Encode(m)
+	}))
+	// Catalog of bundled example plugins the user can add (read-only). Unguarded
+	// like /plugins: it only lists manifests that ship inside the app.
+	srv.AddRoute("/plugins/examples", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		manifests := []plugin.Manifest{}
+		if *examplesDir != "" {
+			manifests, _ = plugin.LoadDir(*examplesDir)
+		}
+		_ = json.NewEncoder(w).Encode(manifests)
+	})
+	// Add one bundled example by manifest id: copy it from the examples dir into
+	// the writable plugins dir, run its install step, and supervise it. No
+	// network — the source ships in the app. Token-guarded like /plugins/install.
+	srv.AddRoute("/plugins/examples/install", guard(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		var body struct{ ID string }
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ID == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "missing id"})
+			return
+		}
+		if *examplesDir == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "no examples directory configured"})
+			return
+		}
+		// Resolve the example's source dir by matching manifest id.
+		manifests, _ := plugin.LoadDir(*examplesDir)
+		srcDir := ""
+		for _, m := range manifests {
+			if m.ID == body.ID {
+				srcDir = m.Dir
+				break
+			}
+		}
+		if srcDir == "" {
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "no such example: " + body.ID})
+			return
+		}
+		m, err := plugin.InstallFromDir(*pluginsDir, srcDir)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		mgr.Add(m)
+		log.Printf("added example plugin %s", m.ID)
 		_ = json.NewEncoder(w).Encode(m)
 	}))
 	if *pluginsDir != "" {

@@ -303,6 +303,34 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       return { ok: false, error: String((err as Error)?.message ?? err) };
     }
   });
+  // Read-only catalog of bundled example plugins the user can add. Returns the
+  // manifests as-is; the renderer derives each one's runtime requirement and
+  // cross-references the installed list to show an "Added" state.
+  ipcMain.handle(IPC.HUB_LIST_EXAMPLES, async () => {
+    try {
+      const res = await fetch(`${HUB_HTTP_URL}/plugins/examples`);
+      if (!res.ok) return [];
+      return await res.json() as Array<{ id: string; [k: string]: unknown }>;
+    } catch {
+      return [];
+    }
+  });
+  // Add one bundled example by manifest id (the hub copies it from the examples
+  // dir into the writable plugins dir and supervises it — no network).
+  ipcMain.handle(IPC.HUB_INSTALL_EXAMPLE, async (_event, id: string) => {
+    try {
+      const res = await fetch(`${HUB_HTTP_URL}/plugins/examples/install`, {
+        method: 'POST',
+        headers: hubAuthHeaders(),
+        body: JSON.stringify({ id }),
+      });
+      const body = await res.json() as any;
+      if (!res.ok) return { ok: false, error: body?.error || `HTTP ${res.status}` };
+      return { ok: true, plugin: body };
+    } catch (err) {
+      return { ok: false, error: String((err as Error)?.message ?? err) };
+    }
+  });
   ipcMain.handle(IPC.HUB_REMOVE_PLUGIN, async (_event, id: string) => {
     try {
       await fetch(`${HUB_HTTP_URL}/plugins/remove`, {
