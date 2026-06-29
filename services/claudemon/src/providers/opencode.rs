@@ -23,7 +23,7 @@ use serde_json::Value;
 use tokio::process::Command;
 use tokio::sync::mpsc;
 
-use super::{apply_updates, AgentUpdate, UsageAcc};
+use super::{apply_updates, AgentUpdate, Facade, UsageAcc};
 use crate::session::conversation::ConversationItem;
 use crate::session::state::SessionMode;
 use crate::session::{ConversationStore, SessionStore};
@@ -180,13 +180,36 @@ pub fn spawn_session(
     model: Option<String>,
     bin: String,
     yolo: bool,
+    facade: Facade,
 ) {
     tokio::spawn(async move {
-        if let Err(err) = run_session(&store, &conv, &session_id, &cwd, model, &bin, yolo).await {
+        if let Err(err) = run_session(&store, &conv, &session_id, &cwd, model, &bin, yolo, &facade).await {
             tracing::warn!(?err, session = %session_id, "opencode managed session ended with error");
         }
         store.deregister_managed(&session_id);
     });
+}
+
+/// Merge the workspacer MCP facade into the cwd's `opencode.json` so
+/// `opencode serve` loads it as a remote MCP server. Preserves any existing
+/// config; only sets `mcp.workspacer`.
+fn write_opencode_mcp(cwd: &str, mcp_url: &str) {
+    let path = std::path::Path::new(cwd).join("opencode.json");
+    let mut root = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+        .filter(Value::is_object)
+        .unwrap_or_else(|| serde_json::json!({}));
+    root["mcp"]["workspacer"] = serde_json::json!({
+        "type": "remote",
+        "url": mcp_url,
+        "enabled": true,
+    });
+    if let Ok(text) = serde_json::to_string_pretty(&root) {
+        if let Err(err) = std::fs::write(&path, text) {
+            tracing::warn!(?err, "writing opencode.json for the facade failed");
+        }
+    }
 }
 
 /// POST a permission reply to OpenCode: `once` (allow this time) or `reject`.
@@ -210,7 +233,13 @@ async fn run_session(
     model: Option<String>,
     bin: &str,
     yolo: bool,
+    facade: &Facade,
 ) -> anyhow::Result<()> {
+    // Register the workspacer MCP facade (supervisors) before the server boots.
+    if let Some(mcp_url) = &facade.mcp_url {
+        write_opencode_mcp(cwd, mcp_url);
+    }
+
     // Pick a free loopback port for this server instance (each managed session
     // gets its own `opencode serve`).
     let port = {
@@ -271,6 +300,8 @@ async fn run_session(
     let mut acc = UsageAcc::new();
     // The id of the permission currently awaiting the user's decision (non-YOLO).
     let mut pending_perm_id: Option<String> = None;
+    // Role instructions to prepend to the first turn only (supervisors).
+    let mut pending_instructions: Option<String> = facade.instructions.clone();
 
     loop {
         tokio::select! {
@@ -311,17 +342,20 @@ async fn run_session(
             },
             msg = rx.recv() => match msg {
                 Some(text) => {
-                    // Optimistically echo the user message + flip to Responding so
-                    // the UI reacts instantly; the POST runs detached (the reply
-                    // streams back over SSE).
+                    // Echo the user's message verbatim, but prepend the role
+                    // instructions (once) to what's actually sent to the agent.
                     conv.push(session_id, vec![ConversationItem::UserMessage { text: text.clone(), timestamp: None }]);
+                    let sent = match pending_instructions.take() {
+                        Some(instr) => format!("{instr}\n\n{text}"),
+                        None => text,
+                    };
                     if cur_mode != SessionMode::Responding {
                         store.set_managed_mode(session_id, SessionMode::Responding, None);
                         cur_mode = SessionMode::Responding;
                     }
                     let c = client.clone();
                     let url = format!("{base}/session/{oc_id}/message");
-                    let mut body = serde_json::json!({ "parts": [ { "type": "text", "text": text } ] });
+                    let mut body = serde_json::json!({ "parts": [ { "type": "text", "text": sent } ] });
                     if let Some(m) = &model {
                         body["model"] = Value::String(m.clone());
                     }

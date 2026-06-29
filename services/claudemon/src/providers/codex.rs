@@ -20,7 +20,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStdin, Command};
 use tokio::sync::mpsc;
 
-use super::{apply_updates, AgentUpdate, UsageAcc};
+use super::{apply_updates, AgentUpdate, Facade, UsageAcc};
 use crate::session::conversation::ConversationItem;
 use crate::session::state::SessionMode;
 use crate::session::{ConversationStore, SessionStore};
@@ -174,9 +174,10 @@ pub fn spawn_session(
     model: Option<String>,
     bin: String,
     yolo: bool,
+    facade: Facade,
 ) {
     tokio::spawn(async move {
-        if let Err(err) = run_session(&store, &conv, &session_id, &cwd, model, &bin, yolo).await {
+        if let Err(err) = run_session(&store, &conv, &session_id, &cwd, model, &bin, yolo, &facade).await {
             tracing::warn!(?err, session = %session_id, "codex managed session ended with error");
         }
         store.deregister_managed(&session_id);
@@ -191,9 +192,17 @@ async fn run_session(
     model: Option<String>,
     bin: &str,
     yolo: bool,
+    facade: &Facade,
 ) -> anyhow::Result<()> {
-    let mut child = Command::new(bin)
-        .arg("app-server")
+    let mut cmd = Command::new(bin);
+    cmd.arg("app-server");
+    // Register the workspacer MCP facade (supervisors) as a config override so
+    // `codex app-server` exposes its tools.
+    if let Some(mcp_url) = &facade.mcp_url {
+        cmd.arg("-c")
+            .arg(format!("mcp_servers.workspacer.url=\"{mcp_url}\""));
+    }
+    let mut child = cmd
         .current_dir(cwd)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -226,6 +235,8 @@ async fn run_session(
     // The JSON-RPC id of an approval request awaiting the user's decision
     // (non-YOLO). YOLO answers requests inline and never parks one here.
     let mut pending_approval: Option<Value> = None;
+    // Role instructions to prepend to the first turn only (supervisors).
+    let mut pending_instructions: Option<String> = facade.instructions.clone();
 
     loop {
         tokio::select! {
@@ -244,7 +255,13 @@ async fn run_session(
             },
             msg = rx.recv() => match msg {
                 Some(text) => {
+                    // Echo the user's message verbatim, but prepend the role
+                    // instructions (once) to what's actually sent to the agent.
                     conv.push(session_id, vec![ConversationItem::UserMessage { text: text.clone(), timestamp: None }]);
+                    let sent = match pending_instructions.take() {
+                        Some(instr) => format!("{instr}\n\n{text}"),
+                        None => text,
+                    };
                     if cur_mode != SessionMode::Responding {
                         store.set_managed_mode(session_id, SessionMode::Responding, None);
                         cur_mode = SessionMode::Responding;
@@ -252,10 +269,10 @@ async fn run_session(
                     match &thread_id {
                         Some(tid) => {
                             req_id += 1;
-                            let _ = send_turn(&mut stdin, req_id, tid, &text).await;
+                            let _ = send_turn(&mut stdin, req_id, tid, &sent).await;
                         }
-                        // Thread not open yet — buffer until the handshake lands.
-                        None => pending_prompts.push(text),
+                        // Thread not open yet — buffer the (already-wrapped) prompt.
+                        None => pending_prompts.push(sent),
                     }
                 }
                 None => break, // managed input dropped → terminated

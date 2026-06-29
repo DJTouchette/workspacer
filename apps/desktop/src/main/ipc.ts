@@ -14,7 +14,7 @@ import { agentNotifier } from './services/agentNotifier';
 import { claudemonSessionClient } from './services/claudemonSessionClient';
 import { buildClaudeArgv } from './services/claudeResolver';
 import { resolveAgentBinary } from './services/agentProviders';
-import { facadeSpawnArgs, buildSessionMcpConfig } from './services/mcpConfig';
+import { facadeSpawnArgs, buildSessionMcpConfig, MCP_FACADE_URL, managedFacadeInstructions } from './services/mcpConfig';
 import { installSupervisorSkill, ensureSupervisorHome } from './services/supervisorSkill';
 import { importChromeCookies, importChromeCookiesViaCDP } from './services/chromeCookieImport';
 import { claudeProfiles } from './services/claudeProfiles';
@@ -116,9 +116,17 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     // model, so they light up the GUI / Fleet Deck like a Claude session — no PTY.
     const provider = opts.provider ?? 'claude';
     if (provider !== 'claude') {
-      const cwd = opts.cwd || process.env.HOME || os.homedir();
+      let cwd = opts.cwd || process.env.HOME || os.homedir();
       const bin = resolveAgentBinary(provider);
-      return claudemonSessionClient.spawnManaged({ provider, cwd, model: opts.model, bin, yolo: opts.skipPermissions });
+      // A managed supervisor / facade worker gets the workspacer MCP facade
+      // (registered with the provider's own MCP config by the adapter) plus the
+      // role instructions injected on its opening turn.
+      const wantsFacade = opts.supervisor || opts.mcpFacade;
+      if (opts.supervisor && !opts.cwd) cwd = ensureSupervisorHome();
+      return claudemonSessionClient.spawnManaged({
+        provider, cwd, model: opts.model, bin, yolo: opts.skipPermissions,
+        ...(wantsFacade && { mcp: MCP_FACADE_URL, instructions: managedFacadeInstructions(!!opts.supervisor) }),
+      });
     }
     const profile = opts.profileId ? claudeProfiles.getProfile(opts.profileId) : undefined;
     const env: Record<string, string> = {};

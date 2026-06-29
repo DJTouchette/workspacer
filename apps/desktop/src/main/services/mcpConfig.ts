@@ -20,11 +20,38 @@ export const SUPERVISOR_SYSTEM_PROMPT =
 - notify to surface a desktop notification.
 Start by calling list_agents to discover the fleet, then get_snapshot or get_transcript for detail. Whenever you reference a session in your answer, write its id in the form session:<sessionId> so the UI can turn it into a clickable link. Be concise and direct — you are briefing a busy senior engineer.`;
 
+/** The workspacer MCP facade — an HTTP MCP server started at app launch
+ *  (mcpFacadeDaemon). Claude points at it via --mcp-config; managed providers
+ *  (Codex/OpenCode) register it through their own MCP config. */
+export const MCP_FACADE_URL = 'http://127.0.0.1:7897/mcp';
+
 const MCP_CONFIG_CONTENTS = JSON.stringify(
-  { mcpServers: { workspacer: { type: 'http', url: 'http://127.0.0.1:7897/mcp' } } },
+  { mcpServers: { workspacer: { type: 'http', url: MCP_FACADE_URL } } },
   null,
   2,
 );
+
+/**
+ * Role instructions prepended to a *managed* (Codex/OpenCode) agent's first
+ * turn when it's given the facade. Claude gets this via --append-system-prompt
+ * plus the /supervise skill; managed providers don't have those, so we inject
+ * the role as system text on the opening message.
+ */
+export function managedFacadeInstructions(supervisor: boolean): string {
+  if (!supervisor) {
+    return (
+      'You have the workspacer MCP tools (the workspacer__* tool set) to observe the agent fleet. ' +
+      'You may be asked to read another session’s transcript and reply with a concise, structured digest ' +
+      'of what that agent is doing and whether it is blocked. Do not spawn or coordinate other agents.'
+    );
+  }
+  return (
+    `${SUPERVISOR_SYSTEM_PROMPT}\n\n` +
+    'Watch the fleet continuously: start with list_agents, then get_snapshot / get_transcript for detail, ' +
+    'and surface anything that needs a human. Spawn cheap summarizer workers when you need transcript digests. ' +
+    'Tool names may be prefixed by your runtime (e.g. workspacer__list_agents) — use whichever the workspacer server exposes.'
+  );
+}
 
 /**
  * Build the argv fragment that grants a spawned session the workspacer MCP

@@ -327,7 +327,7 @@ const AskPane: React.FC<AskPaneProps> = ({ agents, spawnSupervisor, onJumpToAgen
           </div>
           {provider !== 'claude' && (
             <span style={{ fontSize: '0.6rem', color: 'var(--wks-text-faint)' }}>
-              fleet-coordination tools are Claude-only for now
+              fleet tools via MCP facade · experimental
             </span>
           )}
         </div>

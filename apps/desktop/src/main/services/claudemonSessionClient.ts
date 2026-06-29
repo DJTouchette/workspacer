@@ -88,6 +88,10 @@ class ClaudemonSessionClient {
     bin?: string;
     /** YOLO / skip approvals — auto-approve every command and file change. */
     yolo?: boolean;
+    /** Workspacer MCP facade URL to register with the provider (supervisors). */
+    mcp?: string;
+    /** Role instructions to prepend to the agent's first turn (supervisors). */
+    instructions?: string;
     sessionId?: string;
   }): Promise<string> {
     const { sessionId: pinnedId, ...rest } = args;

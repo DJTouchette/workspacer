@@ -166,6 +166,12 @@ pub struct SpawnManagedPayload {
     /// of surfacing them for the user's decision.
     #[serde(default)]
     pub yolo: bool,
+    /// Workspacer MCP facade URL to register with the provider (supervisors).
+    #[serde(default)]
+    pub mcp: Option<String>,
+    /// Role instructions to prepend to the agent's first turn (supervisors).
+    #[serde(default)]
+    pub instructions: Option<String>,
     /// Caller-pinned session id, so every client converges on one card.
     #[serde(default)]
     pub session_id: Option<String>,
@@ -191,6 +197,10 @@ pub async fn handle_managed(
         .unwrap_or_else(|| payload.provider.clone());
 
     store.register_managed(&session_id, &payload.cwd);
+    let facade = crate::providers::Facade {
+        mcp_url: payload.mcp.clone(),
+        instructions: payload.instructions.clone(),
+    };
     match payload.provider.as_str() {
         "opencode" => crate::providers::opencode::spawn_session(
             store.clone(),
@@ -200,6 +210,7 @@ pub async fn handle_managed(
             payload.model.clone(),
             bin,
             payload.yolo,
+            facade,
         ),
         "codex" => crate::providers::codex::spawn_session(
             store.clone(),
@@ -209,6 +220,7 @@ pub async fn handle_managed(
             payload.model.clone(),
             bin,
             payload.yolo,
+            facade,
         ),
         _ => unreachable!(),
     }

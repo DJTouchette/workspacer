@@ -65,9 +65,9 @@ const SupervisorSection: React.FC<SupervisorSectionProps> = ({ config, save }) =
       </Row>
       <div style={{ fontSize: '0.55rem', color: 'var(--wks-text-disabled)' }}>
         Which CLI the supervisor runs on (also pickable when you launch one from “Ask the Fleet”).
-        Note: the workspacer MCP facade — the supervisor’s tools to observe and coordinate the
-        fleet — is Claude-only today, so a Codex/OpenCode supervisor runs the CLI but can’t yet
-        drive the fleet tools.
+        Codex and OpenCode supervisors are wired to the workspacer MCP facade — the supervisor’s
+        tools to observe and coordinate the fleet — via their own MCP config. Experimental: it needs
+        a CLI build with remote-MCP support; Claude remains the most battle-tested.
       </div>
 
       <Row label="Supervisor model">

@@ -16,6 +16,15 @@
 pub mod codex;
 pub mod opencode;
 
+/// Workspacer MCP facade wiring for a managed supervisor: the facade MCP server
+/// URL to register with the provider, and the role instructions to prepend to
+/// the agent's first turn. Both `None` for a normal (non-supervisor) agent.
+#[derive(Clone, Default)]
+pub struct Facade {
+    pub mcp_url: Option<String>,
+    pub instructions: Option<String>,
+}
+
 use serde_json::Value;
 use time::OffsetDateTime;
 
