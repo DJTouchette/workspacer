@@ -13,7 +13,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { spawn, ChildProcess } from 'child_process';
 import { app } from 'electron';
-import { killStaleListener, waitForHealth as waitForHealthShared, PORTS, RestartBackoff } from '../lib/daemonUtils';
+import { killStaleListener, waitForHealth as waitForHealthShared, PORTS, RestartBackoff, daemonSpawnOptions } from '../lib/daemonUtils';
 
 const HOOK_PORT = PORTS.claudemonHook;
 const API_PORT = PORTS.claudemonApi;
@@ -60,11 +60,11 @@ function launch(bin: string): Promise<void> {
 
   console.log(`[claudemon] spawning ${bin}`);
   backoff.markStarted();
-  child = spawn(bin, ['serve', '--hook-port', String(HOOK_PORT), '--api-port', String(API_PORT)], {
-    stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, RUST_LOG: process.env.RUST_LOG ?? 'claudemon=info' },
-    windowsHide: true,
-  });
+  child = spawn(
+    bin,
+    ['serve', '--hook-port', String(HOOK_PORT), '--api-port', String(API_PORT)],
+    daemonSpawnOptions({ RUST_LOG: process.env.RUST_LOG ?? 'claudemon=info' }),
+  );
 
   // AbortController so a fast-exiting daemon cancels the health-check poll
   // instead of spinning for the full HEALTH_TIMEOUT_MS.

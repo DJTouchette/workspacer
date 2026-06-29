@@ -20,6 +20,8 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+
+	"github.com/djtouchette/workspacer-hub/internal/parentwatch"
 )
 
 func main() {
@@ -36,6 +38,11 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	// Self-exit if our launcher (the hub supervisor) dies, so a force-killed hub
+	// doesn't leave us orphaned on the bus. No-op when run manually.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	parentwatch.Watch(cancel)
 
 	// In full scope the brain owns the live agent view: a session store fed by
 	// claudemon's /events stream, answering agents.list / sessions.snapshot* and

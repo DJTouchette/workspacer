@@ -111,6 +111,9 @@ pub async fn run(cfg: ServeConfig) -> Result<()> {
             _ = sigterm.recv() => {
                 tracing::info!("received SIGTERM, shutting down");
             }
+            _ = wait_for_parent_exit() => {
+                tracing::info!("parent process exited; shutting down");
+            }
         }
     }
     #[cfg(not(unix))]
@@ -121,10 +124,40 @@ pub async fn run(cfg: ServeConfig) -> Result<()> {
             _ = tokio::signal::ctrl_c() => {
                 tracing::info!("shutting down");
             }
+            _ = wait_for_parent_exit() => {
+                tracing::info!("parent process exited; shutting down");
+            }
         }
     }
 
     Ok(())
+}
+
+/// Resolves when our parent process exits, so a daemon launched by the desktop
+/// app never outlives it (no orphaned listeners holding ports 7890/7891).
+///
+/// Detection is via stdin EOF: the launcher hands us a stdin pipe and holds the
+/// write end open for its whole life; when it dies — even on a force-kill the OS
+/// can't notify us about — the kernel closes the pipe and our read returns EOF.
+/// Cross-platform (Win/Mac/Linux), no polling, no process-handle APIs.
+///
+/// Gated on `WORKSPACER_PARENT_PID` (set by the launcher): when it's unset — a
+/// manual `claudemon serve` from a terminal — this never resolves, so the
+/// daemon keeps running. We discard any bytes; only EOF matters.
+async fn wait_for_parent_exit() {
+    use tokio::io::AsyncReadExt;
+    if std::env::var_os("WORKSPACER_PARENT_PID").is_none() {
+        std::future::pending::<()>().await;
+        return;
+    }
+    let mut stdin = tokio::io::stdin();
+    let mut buf = [0u8; 256];
+    loop {
+        match stdin.read(&mut buf).await {
+            Ok(0) | Err(_) => break, // parent closed the pipe (exited)
+            Ok(_) => {}              // ignore anything the parent writes
+        }
+    }
 }
 
 fn spawn_persistence_task(

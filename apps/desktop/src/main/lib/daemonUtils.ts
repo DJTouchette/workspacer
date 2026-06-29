@@ -4,7 +4,7 @@
  * single source of truth so neither daemon duplicates it.
  */
 
-import { execSync } from 'child_process';
+import { execSync, type SpawnOptions } from 'child_process';
 
 // ── Port registry ────────────────────────────────────────────────────────────
 
@@ -18,6 +18,29 @@ export const PORTS = {
   /** mcp facade: exposes hub capabilities as MCP tools (the supervisor's control plane) */
   mcpFacade: 7897,
 } as const;
+
+// ── daemonSpawnOptions ───────────────────────────────────────────────────────
+
+/**
+ * Spawn options shared by every managed daemon (claudemon, hub, mcp).
+ *
+ * The key bit is `stdio[0] = 'pipe'`: we hand the child a stdin pipe and never
+ * write to or close it, so it stays open for the app's whole lifetime. The
+ * daemons treat stdin EOF as "parent died" and self-exit — so even if the app
+ * is force-killed (Task Manager "End task", a crash, SIGKILL) the OS closes the
+ * pipe and the daemons shut themselves down instead of orphaning and holding
+ * their ports. Works identically on Windows, macOS, and Linux.
+ *
+ * `WORKSPACER_PARENT_PID` both records our pid and gates the child's watchdog,
+ * so running a daemon by hand from a terminal never self-exits on stdin.
+ */
+export function daemonSpawnOptions(extraEnv?: NodeJS.ProcessEnv): SpawnOptions {
+  return {
+    stdio: ['pipe', 'pipe', 'pipe'],
+    windowsHide: true,
+    env: { ...process.env, ...extraEnv, WORKSPACER_PARENT_PID: String(process.pid) },
+  };
+}
 
 // ── killStaleListener ────────────────────────────────────────────────────────
 

@@ -20,6 +20,7 @@ import (
 	"github.com/djtouchette/workspacer-hub/internal/claudemon"
 	"github.com/djtouchette/workspacer-hub/internal/event"
 	"github.com/djtouchette/workspacer-hub/internal/layout"
+	"github.com/djtouchette/workspacer-hub/internal/parentwatch"
 	"github.com/djtouchette/workspacer-hub/internal/plugin"
 	"github.com/djtouchette/workspacer-hub/internal/sandbox"
 	"github.com/djtouchette/workspacer-hub/internal/supervisor"
@@ -110,6 +111,11 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// Self-exit if the launcher (the desktop app) dies, so we don't orphan and
+	// keep port 7895 (and the supervised brain) alive. No-op when run manually.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	parentwatch.Watch(cancel)
 
 	// Load + supervise plugins; expose their contributions at /plugins. The
 	// manager registers per-plugin bus tokens with srv so capability calls are

@@ -24,7 +24,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { spawn, ChildProcess } from 'child_process';
 import { app } from 'electron';
-import { killStaleListener, waitForHealth, PORTS, RestartBackoff } from '../lib/daemonUtils';
+import { killStaleListener, waitForHealth, PORTS, RestartBackoff, daemonSpawnOptions } from '../lib/daemonUtils';
 import { HUB_BUS_URL, getHubToken } from './hubDaemon';
 
 const PORT = PORTS.mcpFacade;
@@ -73,10 +73,7 @@ function launch(bin: string): Promise<void> {
 
   console.log(`[mcp] spawning ${bin} (addr ${ADDR}, hub ${HUB_BUS_URL})`);
   backoff.markStarted();
-  child = spawn(bin, args, {
-    stdio: ['ignore', 'pipe', 'pipe'],
-    windowsHide: true,
-  });
+  child = spawn(bin, args, daemonSpawnOptions());
 
   const healthAbort = new AbortController();
 

@@ -20,7 +20,7 @@ import { spawn, ChildProcess } from 'child_process';
 import { app } from 'electron';
 import { CLAUDEMON_API_URL } from './claudemonDaemon';
 import { DELEGATE_CATALOG_TO_BRAIN, DESKTOP_RENDERER_USES_BUS } from './brainDelegation';
-import { killStaleListener, waitForHealth as waitForHealthShared, PORTS, RestartBackoff } from '../lib/daemonUtils';
+import { killStaleListener, waitForHealth as waitForHealthShared, PORTS, RestartBackoff, daemonSpawnOptions } from '../lib/daemonUtils';
 import { getConfigDir } from './configService';
 
 const PORT = PORTS.hub;
@@ -213,10 +213,7 @@ function launch(bin: string): Promise<void> {
   if (REMOTE_ENABLED && fs.existsSync(webDir)) {
     hubArgs.push('--webapp-dir', webDir);
   }
-  child = spawn(bin, hubArgs, {
-    stdio: ['ignore', 'pipe', 'pipe'],
-    windowsHide: true,
-  });
+  child = spawn(bin, hubArgs, daemonSpawnOptions());
 
   if (REMOTE_ENABLED) {
     const info = getRemoteShareInfo();

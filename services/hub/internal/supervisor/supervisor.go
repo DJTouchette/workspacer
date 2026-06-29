@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -80,6 +81,13 @@ type Supervisor struct {
 	cancel  context.CancelFunc
 	done    chan struct{}
 	healthy atomic.Bool
+
+	// Parent-death pipe. Each child gets parentR as stdin; we hold parentW open
+	// for this process's lifetime. If the hub is force-killed, the OS closes
+	// parentW and the child sees stdin EOF and self-exits (see parentwatch). A
+	// field reference keeps parentW from being closed by os.File's GC finalizer.
+	parentR *os.File
+	parentW *os.File
 }
 
 // New creates a supervisor. pub may be nil (no lifecycle events emitted).
@@ -155,6 +163,18 @@ func (s *Supervisor) emit(st State, pid int, errMsg string) {
 }
 
 func (s *Supervisor) run(ctx context.Context) {
+	// Open the parent-death pipe once; reused across restarts. Best-effort — if
+	// it fails we just spawn without it (graceful stop still works via Cancel).
+	if s.parentR == nil {
+		if r, w, err := os.Pipe(); err == nil {
+			s.parentR, s.parentW = r, w
+		}
+	}
+	// Tell children who their parent is; this both documents the relationship
+	// and gates each child's stdin-EOF watchdog (see internal/parentwatch).
+	childEnv := append(append([]string{}, s.spec.Env...),
+		"WORKSPACER_PARENT_PID="+strconv.Itoa(os.Getpid()))
+
 	for {
 		if ctx.Err() != nil {
 			s.setState(Stopped)
@@ -162,8 +182,11 @@ func (s *Supervisor) run(ctx context.Context) {
 		}
 
 		cmd := exec.CommandContext(ctx, s.spec.Command, s.spec.Args...)
-		cmd.Env = mergeEnv(os.Environ(), s.spec.Env)
+		cmd.Env = mergeEnv(os.Environ(), childEnv)
 		cmd.Dir = s.spec.Dir
+		if s.parentR != nil {
+			cmd.Stdin = s.parentR
+		}
 		// Graceful stop: SIGTERM on cancel, SIGKILL if it lingers.
 		cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 		cmd.WaitDelay = 5 * time.Second

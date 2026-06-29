@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/djtouchette/workspacer-hub/internal/busclient"
+	"github.com/djtouchette/workspacer-hub/internal/parentwatch"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -38,6 +39,11 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// Self-exit if the launcher (the desktop app) dies, so we don't orphan and
+	// keep port 7897 alive. No-op when run manually.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	parentwatch.Watch(cancel)
 
 	client := busclient.New(*hubURL, *token)
 	go client.Run(ctx)
