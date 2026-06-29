@@ -294,12 +294,25 @@ async fn run_session(
     let stdout = child.stdout.take().context("codex app-server: no stdout")?;
     let mut lines = BufReader::new(stdout).lines();
 
-    // Open a thread (handshake). Its id arrives in the response to id=1.
+    // The app server requires an `initialize` handshake before any other
+    // request: a `thread/start` sent first is rejected with
+    // `{"code":-32600,"message":"Not initialized"}`, so the thread never opens,
+    // prompts buffer forever, and the agent never responds. Send `initialize`
+    // (id=1) then `thread/start` (id=2) pipelined — the server processes them in
+    // order, and the thread id arrives in the id=2 response (see handle_message).
+    write_msg(
+        &mut stdin,
+        &json!({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": { "clientInfo": { "name": "workspacer", "version": "0.1" } }
+        }),
+    )
+    .await?;
     let mut start_params = json!({ "cwd": cwd });
     if let Some(m) = &model {
         start_params["model"] = Value::String(m.clone());
     }
-    write_msg(&mut stdin, &json!({ "jsonrpc": "2.0", "id": 1, "method": "thread/start", "params": start_params })).await?;
+    write_msg(&mut stdin, &json!({ "jsonrpc": "2.0", "id": 2, "method": "thread/start", "params": start_params })).await?;
 
     let (tx, mut rx) = mpsc::unbounded_channel::<String>();
     store.register_managed_input(session_id, tx);
@@ -308,7 +321,8 @@ async fn run_session(
 
     let mut thread_id: Option<String> = None;
     let mut pending_prompts: Vec<String> = Vec::new();
-    let mut req_id: u64 = 1;
+    // Request ids 1 (initialize) and 2 (thread/start) are taken; turns start at 3.
+    let mut req_id: u64 = 2;
     let mut cur_mode = SessionMode::Input;
     let mut acc = UsageAcc::new();
     // The JSON-RPC id of an approval request awaiting the user's decision
@@ -393,7 +407,9 @@ async fn handle_message(
     yolo: bool,
     pending_approval: &mut Option<Value>,
 ) {
-    // A response to one of our requests (the thread/start handshake).
+    // A response to one of our requests (the initialize / thread/start
+    // handshake). Only thread/start carries a thread id; the initialize response
+    // has no `thread`, so the extraction below simply falls through for it.
     if value.get("id").is_some() && (value.get("result").is_some() || value.get("error").is_some()) {
         if thread_id.is_none() {
             if let Some(tid) = value
