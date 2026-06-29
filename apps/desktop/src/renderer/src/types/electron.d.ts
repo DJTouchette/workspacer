@@ -72,8 +72,8 @@ export interface ElectronAPI {
   deleteSession: (filename: string) => Promise<void>;
 
   // Analytics (old-session metadata)
-  analyticsSummary: () => Promise<AnalyticsSummary>;
-  analyticsRecent: (limit?: number) => Promise<SessionHistoryRecord[]>;
+  analyticsSummary: (provider?: string) => Promise<AnalyticsSummary>;
+  analyticsRecent: (limit?: number, provider?: string) => Promise<SessionHistoryRecord[]>;
 
   // Layout templates
   layoutsList: () => Promise<Layout[]>;

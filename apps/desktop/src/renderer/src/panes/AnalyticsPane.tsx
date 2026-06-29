@@ -2,6 +2,25 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AnalyticsSummary, AnalyticsBucket, SessionHistoryRecord } from '../types/analytics';
 import { usePageVisible } from '../hooks/usePageVisible';
 import { shortModelLabel } from '../lib/modelLabel';
+import { AgentLogo } from '../components/agentLogos';
+import type { AgentProvider } from '../types/pane';
+
+/** Provider filter selection. 'all' folds every backend together. */
+type ProviderFilter = 'all' | AgentProvider;
+const PROVIDER_FILTERS: { value: ProviderFilter; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'claude', label: 'Claude' },
+  { value: 'codex', label: 'Codex' },
+  { value: 'opencode', label: 'OpenCode' },
+];
+function providerLabel(key: string): string {
+  switch (key) {
+    case 'claude': return 'Claude';
+    case 'codex': return 'Codex';
+    case 'opencode': return 'OpenCode';
+    default: return key || '(unknown)';
+  }
+}
 
 function basename(p: string): string {
   return p ? (p.replace(/[/\\]+$/, '').split(/[/\\]/).pop() || p) : '(none)';
@@ -125,6 +144,60 @@ const ModelShare: React.FC<{ rows: AnalyticsBucket[] }> = ({ rows }) => {
   );
 };
 
+/** Stable colour per provider so the split reads consistently across renders. */
+const PROVIDER_COLORS: Record<string, string> = {
+  claude: 'var(--wks-accent)',
+  codex: 'var(--wks-success)',
+  opencode: 'var(--wks-purple)',
+};
+
+/** "By provider": the combined split across coding-agent backends. Always shows
+ *  every provider (independent of the active filter) so you can see the whole
+ *  picture while drilled into one. Each row carries its brand logo. */
+const ProviderShare: React.FC<{
+  rows: AnalyticsBucket[];
+  active: ProviderFilter;
+  onPick: (p: ProviderFilter) => void;
+}> = ({ rows, active, onPick }) => {
+  if (rows.length === 0) return <Empty />;
+  const total = Math.max(0.0001, rows.reduce((sum, r) => sum + r.costUSD, 0));
+  const ranked = [...rows].sort((a, b) => b.costUSD - a.costUSD);
+  const colorOf = (k: string) => PROVIDER_COLORS[k] ?? 'var(--wks-busy)';
+  return (
+    <>
+      <div style={{ display: 'flex', height: 12, borderRadius: 99, overflow: 'hidden', background: 'var(--wks-bg-base)', marginBottom: 4 }}>
+        {ranked.map((m) => (
+          <span key={m.key} title={`${providerLabel(m.key)} · ${Math.round((m.costUSD / total) * 100)}%`} style={{ background: colorOf(m.key), width: `${(m.costUSD / total) * 100}%` }} />
+        ))}
+      </div>
+      {ranked.map((m) => {
+        const share = Math.round((m.costUSD / total) * 100);
+        const isActive = active === m.key;
+        const provider = (['claude', 'codex', 'opencode'].includes(m.key) ? m.key : 'claude') as AgentProvider;
+        return (
+          <div
+            key={m.key}
+            onClick={() => onPick(isActive ? 'all' : (m.key as ProviderFilter))}
+            title={isActive ? 'Showing this backend — click to clear' : `Filter to ${providerLabel(m.key)}`}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 10, padding: '9px 8px', margin: '0 -8px',
+              borderTop: '1px solid var(--wks-border-subtle)', cursor: 'pointer', borderRadius: 7,
+              background: isActive ? 'var(--wks-bg-selected)' : 'transparent',
+            }}
+          >
+            <span style={{ width: 9, height: 9, borderRadius: 3, flex: 'none', background: colorOf(m.key) }} />
+            <AgentLogo provider={provider} size={14} style={{ flex: 'none', color: 'var(--wks-text-secondary)' }} />
+            <span style={{ flex: 1, fontSize: '0.78rem', color: 'var(--wks-text-primary)', fontWeight: isActive ? 600 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{providerLabel(m.key)}</span>
+            <span style={{ fontSize: '0.66rem', color: 'var(--wks-text-faint)', fontVariantNumeric: 'tabular-nums' }}>{m.sessions} ses</span>
+            <span style={{ fontSize: '0.7rem', color: 'var(--wks-text-faint)', fontVariantNumeric: 'tabular-nums' }}>{share}%</span>
+            <span style={{ fontSize: '0.7rem', color: 'var(--wks-accent)', fontWeight: 600, minWidth: 54, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtUSD(m.costUSD)}</span>
+          </div>
+        );
+      })}
+    </>
+  );
+};
+
 const BucketTable: React.FC<{ rows: AnalyticsBucket[]; labelOf: (k: string) => string; header: string }> = ({ rows, labelOf, header }) => {
   if (rows.length === 0) return <Empty />;
   return (
@@ -239,10 +312,25 @@ const AnalyticsPane: React.FC<{ title?: string }> = () => {
   const pageVisible = usePageVisible();
   const wasHiddenRef = useRef(false);
 
+  const [provider, setProvider] = useState<ProviderFilter>(() => {
+    try {
+      const v = localStorage.getItem('wks-usage-provider');
+      return PROVIDER_FILTERS.some((p) => p.value === v) ? (v as ProviderFilter) : 'all';
+    } catch { return 'all'; }
+  });
+  const pickProvider = (v: ProviderFilter) => {
+    setProvider(v);
+    try { localStorage.setItem('wks-usage-provider', v); } catch { /* private mode */ }
+  };
+
   const refresh = useCallback(() => {
-    window.electronAPI.analyticsSummary?.().then(setSummary).catch(() => {});
-    window.electronAPI.analyticsRecent?.(100).then((r) => setRecent(Array.isArray(r) ? r : [])).catch(() => {});
-  }, []);
+    // 'all' ⇒ no scope; otherwise scope totals/breakdowns to one backend. The
+    // byProvider split inside the summary is always all so the combined picture
+    // stays visible while filtered.
+    const scope = provider === 'all' ? undefined : provider;
+    window.electronAPI.analyticsSummary?.(scope).then(setSummary).catch(() => {});
+    window.electronAPI.analyticsRecent?.(100, scope).then((r) => setRecent(Array.isArray(r) ? r : [])).catch(() => {});
+  }, [provider]);
 
   useEffect(() => {
     if (!pageVisible) {
@@ -258,11 +346,11 @@ const AnalyticsPane: React.FC<{ title?: string }> = () => {
     return () => clearInterval(t);
   }, [pageVisible, refresh]);
 
-  // Initial load on mount.
+  // Initial load on mount, and whenever the provider filter changes.
   useEffect(() => {
     refresh();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [provider]);
 
   const [usageView, setUsageView] = useState<'overview' | 'breakdown'>(() => {
     try { return localStorage.getItem('wks-usage-view') === 'breakdown' ? 'breakdown' : 'overview'; } catch { return 'overview'; }
@@ -302,15 +390,41 @@ const AnalyticsPane: React.FC<{ title?: string }> = () => {
 
   return (
     <div style={{ height: '100%', overflow: 'auto', padding: '18px 20px', background: 'var(--wks-bg-base)' }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 11, marginBottom: 18 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 11, marginBottom: 12 }}>
         <div style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--wks-text-primary)' }}>Usage &amp; cost</div>
-        <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-secondary)', fontVariantNumeric: 'tabular-nums' }}>last 30 days · all agents</div>
+        <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-secondary)', fontVariantNumeric: 'tabular-nums' }}>
+          last 30 days · {provider === 'all' ? 'all agents' : providerLabel(provider)}
+        </div>
         <div style={{ flex: 1 }} />
         <div style={{ display: 'flex', alignSelf: 'center', background: 'var(--wks-bg-surface)', border: '1px solid var(--wks-border-subtle)', borderRadius: 8, padding: 3 }}>
           <SegBtn active={usageView === 'overview'} onClick={() => pickUsageView('overview')}>Overview</SegBtn>
           <SegBtn active={usageView === 'breakdown'} onClick={() => pickUsageView('breakdown')}>Breakdown</SegBtn>
         </div>
         <button onClick={refresh} style={{ ...refreshBtn, alignSelf: 'center', marginLeft: 0 }} title="Refresh">↻</button>
+      </div>
+
+      {/* Provider filter — scope every figure to one backend, or fold them all
+          together. The "By provider" card below always shows the full split. */}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 18, flexWrap: 'wrap' }}>
+        {PROVIDER_FILTERS.map((p) => {
+          const active = provider === p.value;
+          return (
+            <button
+              key={p.value}
+              onClick={() => pickProvider(p.value)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6, padding: '5px 11px', borderRadius: 99,
+                cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.7rem', fontWeight: 600,
+                border: `1px solid ${active ? 'var(--wks-accent)' : 'var(--wks-border-subtle)'}`,
+                background: active ? 'color-mix(in srgb, var(--wks-accent) 16%, transparent)' : 'var(--wks-bg-surface)',
+                color: active ? 'var(--wks-text-primary)' : 'var(--wks-text-secondary)',
+              }}
+            >
+              {p.value !== 'all' && <AgentLogo provider={p.value} size={13} style={{ flex: 'none' }} />}
+              {p.label}
+            </button>
+          );
+        })}
       </div>
 
       {usageView === 'overview' ? (
@@ -330,10 +444,14 @@ const AnalyticsPane: React.FC<{ title?: string }> = () => {
             <ChartCard title="Daily spend" caption={`${fmtUSD(periodSpend)} this period`}>
               <CostBars data={summary?.byDay ?? []} />
             </ChartCard>
-            <ChartCard title="By model">
-              <ModelShare rows={summary?.byModel ?? []} />
+            <ChartCard title="By provider" caption="all backends">
+              <ProviderShare rows={summary?.byProvider ?? []} active={provider} onPick={pickProvider} />
             </ChartCard>
           </div>
+
+          <ChartCard title="By model" style={{ marginBottom: 14 }}>
+            <ModelShare rows={summary?.byModel ?? []} />
+          </ChartCard>
         </>
       ) : (
         <>
@@ -367,7 +485,10 @@ const AnalyticsPane: React.FC<{ title?: string }> = () => {
             {recent.map((r) => (
               <tr key={r.sessionId} style={{ borderTop: '1px solid var(--wks-border-subtle)' }}>
                 <td style={{ ...td, color: 'var(--wks-text-primary)', fontWeight: 500 }} title={r.cwd}>
-                  {r.agentName || basename(r.cwd)}
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, verticalAlign: 'middle' }}>
+                    <AgentLogo provider={(r.provider || 'claude') as AgentProvider} size={12} style={{ flex: 'none', color: 'var(--wks-text-faint)' }} />
+                    {r.agentName || basename(r.cwd)}
+                  </span>
                   {r.status === 'active' && <span style={{ marginLeft: 6, fontSize: '0.55rem', color: 'var(--wks-success, #4ade80)' }}>● live</span>}
                 </td>
                 <td style={{ ...td, color: 'var(--wks-text-secondary)' }}>{shortModel(r.model)}</td>

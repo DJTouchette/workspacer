@@ -26,6 +26,7 @@ export function writeHistory(session: ClaudeSessionState, status: 'active' | 'en
     sessionId: session.sessionId,
     cwd: session.cwd,
     agentName: session.cwd ? path.basename(session.cwd.replace(/[/\\]+$/, '')) : session.sessionId.slice(0, 8),
+    provider: session.provider ?? '',
     model: session.usage?.model ?? '',
     gitBranch: gitBranchOf(session.cwd),
     startedAt: new Date(session.startedAt).toISOString(),

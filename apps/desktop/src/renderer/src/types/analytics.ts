@@ -22,12 +22,16 @@ export interface AnalyticsSummary {
   byDay: AnalyticsBucket[];
   byProject: AnalyticsBucket[];
   byModel: AnalyticsBucket[];
+  /** Split by coding-agent backend (claude/codex/opencode); always all rows. */
+  byProvider: AnalyticsBucket[];
 }
 
 export interface SessionHistoryRecord {
   sessionId: string;
   cwd: string;
   agentName: string;
+  /** Coding-agent backend ('claude' | 'codex' | 'opencode'). '' ⇒ claude. */
+  provider: string;
   model: string | null;
   gitBranch: string;
   startedAt: string;

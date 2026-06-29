@@ -10,6 +10,8 @@ export interface SessionHistoryRecord {
   sessionId: string;
   cwd: string;
   agentName: string;
+  /** Coding-agent backend ('claude' | 'codex' | 'opencode'). '' ⇒ claude (legacy). */
+  provider: string;
   model: string | null;
   gitBranch: string;
   startedAt: string;   // ISO
@@ -49,6 +51,15 @@ export interface AnalyticsSummary {
   byDay: AnalyticsBucket[];     // chronological, recent window
   byProject: AnalyticsBucket[]; // top spenders
   byModel: AnalyticsBucket[];
+  byProvider: AnalyticsBucket[]; // split by coding-agent backend (always all)
+}
+
+/** SQL fragment + bind params for an optional provider filter. Legacy rows have
+ *  provider='' which we treat as 'claude'. */
+function providerFilter(provider?: string): { where: string; params: Record<string, string> } {
+  if (!provider) return { where: '', params: {} };
+  if (provider === 'claude') return { where: `WHERE (provider='' OR provider='claude')`, params: {} };
+  return { where: `WHERE provider=@provider`, params: { provider } };
 }
 
 class SessionHistoryStore {
@@ -58,18 +69,18 @@ class SessionHistoryStore {
       database.db
         .prepare(
           `INSERT INTO session_history (
-             session_id, cwd, agent_name, model, git_branch, started_at, ended_at,
+             session_id, cwd, agent_name, provider, model, git_branch, started_at, ended_at,
              duration_ms, input_tokens, output_tokens, cost_usd, peak_context,
              tool_calls, message_count, subagent_count, workflow_runs, workflow_failed,
              status, updated_at
            ) VALUES (
-             @sessionId, @cwd, @agentName, @model, @gitBranch, @startedAt, @endedAt,
+             @sessionId, @cwd, @agentName, @provider, @model, @gitBranch, @startedAt, @endedAt,
              @durationMs, @inputTokens, @outputTokens, @costUSD, @peakContext,
              @toolCalls, @messageCount, @subagentCount, @workflowRuns, @workflowFailed,
              @status, @updatedAt
            )
            ON CONFLICT(session_id) DO UPDATE SET
-             cwd=excluded.cwd, agent_name=excluded.agent_name, model=excluded.model,
+             cwd=excluded.cwd, agent_name=excluded.agent_name, provider=excluded.provider, model=excluded.model,
              git_branch=excluded.git_branch, ended_at=excluded.ended_at,
              duration_ms=excluded.duration_ms, input_tokens=excluded.input_tokens,
              output_tokens=excluded.output_tokens, cost_usd=excluded.cost_usd,
@@ -80,6 +91,7 @@ class SessionHistoryStore {
         )
         .run({
           ...rec,
+          provider: rec.provider ?? '',
           model: rec.model ?? '',
           updatedAt: new Date().toISOString(),
         });
@@ -88,68 +100,84 @@ class SessionHistoryStore {
     }
   }
 
-  /** Aggregate analytics across all recorded sessions. */
-  summary(): AnalyticsSummary {
+  /** Aggregate analytics. With `provider`, the totals/breakdowns are scoped to
+   *  that backend; `byProvider` is always computed across all so the split is
+   *  visible even while filtered. */
+  summary(provider?: string): AnalyticsSummary {
     const empty: AnalyticsSummary = {
       totals: { sessions: 0, costUSD: 0, inputTokens: 0, outputTokens: 0, toolCalls: 0, durationMs: 0, workflowRuns: 0 },
-      byDay: [], byProject: [], byModel: [],
+      byDay: [], byProject: [], byModel: [], byProvider: [],
     };
     try {
       const db = database.db;
+      const { where, params } = providerFilter(provider);
+      const and = where ? `${where} AND` : 'WHERE';
+
       const totals = db.prepare(
         `SELECT COUNT(*) AS sessions, COALESCE(SUM(cost_usd),0) AS costUSD,
                 COALESCE(SUM(input_tokens),0) AS inputTokens, COALESCE(SUM(output_tokens),0) AS outputTokens,
                 COALESCE(SUM(tool_calls),0) AS toolCalls, COALESCE(SUM(duration_ms),0) AS durationMs,
                 COALESCE(SUM(workflow_runs),0) AS workflowRuns
-         FROM session_history`,
-      ).get() as AnalyticsTotals;
+         FROM session_history ${where}`,
+      ).get(params) as AnalyticsTotals;
 
       const byDay = db.prepare(
         `SELECT substr(started_at,1,10) AS key, COUNT(*) AS sessions,
                 COALESCE(SUM(cost_usd),0) AS costUSD,
                 COALESCE(SUM(input_tokens+output_tokens),0) AS tokens
          FROM session_history
-         WHERE started_at != ''
+         ${and} started_at != ''
          GROUP BY key ORDER BY key DESC LIMIT 30`,
-      ).all() as AnalyticsBucket[];
+      ).all(params) as AnalyticsBucket[];
 
       const byProject = db.prepare(
         `SELECT cwd AS key, COUNT(*) AS sessions,
                 COALESCE(SUM(cost_usd),0) AS costUSD,
                 COALESCE(SUM(input_tokens+output_tokens),0) AS tokens
-         FROM session_history
+         FROM session_history ${where}
          GROUP BY cwd ORDER BY costUSD DESC LIMIT 12`,
-      ).all() as AnalyticsBucket[];
+      ).all(params) as AnalyticsBucket[];
 
       const byModel = db.prepare(
         `SELECT CASE WHEN model='' THEN '(unknown)' ELSE model END AS key, COUNT(*) AS sessions,
                 COALESCE(SUM(cost_usd),0) AS costUSD,
                 COALESCE(SUM(input_tokens+output_tokens),0) AS tokens
-         FROM session_history
+         FROM session_history ${where}
          GROUP BY model ORDER BY costUSD DESC LIMIT 12`,
+      ).all(params) as AnalyticsBucket[];
+
+      // Provider split — always across all rows ('' counts as claude).
+      const byProvider = db.prepare(
+        `SELECT CASE WHEN provider='' THEN 'claude' ELSE provider END AS key, COUNT(*) AS sessions,
+                COALESCE(SUM(cost_usd),0) AS costUSD,
+                COALESCE(SUM(input_tokens+output_tokens),0) AS tokens
+         FROM session_history
+         GROUP BY key ORDER BY costUSD DESC`,
       ).all() as AnalyticsBucket[];
 
-      return { totals, byDay: byDay.reverse(), byProject, byModel };
+      return { totals, byDay: byDay.reverse(), byProject, byModel, byProvider };
     } catch (err) {
       console.error('[SessionHistory] summary failed:', err);
       return empty;
     }
   }
 
-  /** Recent sessions, newest first, for the analytics table. */
-  recent(limit = 100): SessionHistoryRecord[] {
+  /** Recent sessions, newest first, for the analytics table. Optionally scoped
+   *  to one provider. */
+  recent(limit = 100, provider?: string): SessionHistoryRecord[] {
     try {
+      const { where, params } = providerFilter(provider);
       const rows = database.db.prepare(
-        `SELECT session_id AS sessionId, cwd, agent_name AS agentName, model, git_branch AS gitBranch,
+        `SELECT session_id AS sessionId, cwd, agent_name AS agentName, provider, model, git_branch AS gitBranch,
                 started_at AS startedAt, ended_at AS endedAt, duration_ms AS durationMs,
                 input_tokens AS inputTokens, output_tokens AS outputTokens, cost_usd AS costUSD,
                 peak_context AS peakContext, tool_calls AS toolCalls, message_count AS messageCount,
                 subagent_count AS subagentCount, workflow_runs AS workflowRuns,
                 workflow_failed AS workflowFailed, status
-         FROM session_history
+         FROM session_history ${where}
          ORDER BY (CASE WHEN started_at='' THEN updated_at ELSE started_at END) DESC
-         LIMIT ?`,
-      ).all(limit) as SessionHistoryRecord[];
+         LIMIT @limit`,
+      ).all({ ...params, limit }) as SessionHistoryRecord[];
       return rows;
     } catch (err) {
       console.error('[SessionHistory] recent failed:', err);

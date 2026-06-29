@@ -161,6 +161,8 @@ export interface ClaudeSessionState {
   /** True for fleet-supervisor sessions — they get nudged when another agent
    *  blocks on a decision (see supervisorNudge). */
   isSupervisor?: boolean;
+  /** Coding-agent backend ('claude' | 'codex' | 'opencode'), for analytics. */
+  provider?: string;
   /** Guards against double history writes (Stop 1500ms timeout vs SessionEnd). */
   historyWritten?: boolean;
 }
@@ -180,7 +182,7 @@ class ClaudeSessionStore {
   private usageAccumulator = new SessionUsageAccumulator();
   // Pre-spawn metadata keyed by pinned session id. Recorded before the first
   // hook arrives so adopted cards carry a name and parent from the start.
-  private spawnMeta = new Map<string, { label?: string; parentSessionId?: string; isSupervisor?: boolean }>();
+  private spawnMeta = new Map<string, { label?: string; parentSessionId?: string; isSupervisor?: boolean; provider?: string }>();
   // Last-applied conversation sequence per session (gap detection for the
   // daemon's delta stream) and sessions with a snapshot resync in flight.
   private convSeq = new Map<string, number>();
@@ -189,11 +191,15 @@ class ClaudeSessionStore {
   private pendingFlush = new Map<string, NodeJS.Timeout>();
   // Debounce: per-session statusLine debounce timers (STATUSLINE_DEBOUNCE_MS).
   private statusLineTimers = new Map<string, NodeJS.Timeout>();
+  // Debounce: per-managed-session analytics snapshot timers. Managed (codex /
+  // opencode) sessions don't fire Claude Stop/SessionEnd hooks, so we snapshot
+  // their history off the conversation stream instead (see scheduleManagedHistory).
+  private managedHistoryTimers = new Map<string, NodeJS.Timeout>();
 
   /** Record name/parent for a session about to be spawned, keyed by its pinned
    *  id. Consumed when the session first registers (see createSession), so an
    *  adopted card can be named and nested under its spawner. */
-  setSpawnMeta(sessionId: string, meta: { label?: string; parentSessionId?: string; isSupervisor?: boolean }): void {
+  setSpawnMeta(sessionId: string, meta: { label?: string; parentSessionId?: string; isSupervisor?: boolean; provider?: string }): void {
     if (!sessionId) return;
     this.spawnMeta.set(sessionId, meta);
   }
@@ -337,6 +343,27 @@ class ClaudeSessionStore {
     session.lastActivity = Date.now();
     this.mergeWatcherData(session);
     this.pushUpdate(session);
+    this.scheduleManagedHistory(session);
+  }
+
+  /** Snapshot a managed (codex/opencode) session into analytics. These backends
+   *  don't fire Claude Stop/SessionEnd hooks, so we debounce a write off the
+   *  conversation stream — the upsert is keyed by session_id, so repeated writes
+   *  just refresh the row's usage. Claude sessions are skipped (they go through
+   *  the hook path's Stop/SessionEnd writes). */
+  private scheduleManagedHistory(session: ClaudeSessionState): void {
+    const provider = session.provider;
+    if (!provider || provider === 'claude') return;
+    const sessionId = session.sessionId;
+    const existing = this.managedHistoryTimers.get(sessionId);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      this.managedHistoryTimers.delete(sessionId);
+      const s = this.sessions.get(sessionId);
+      if (s) writeHistory(s, 'active');
+    }, 2500);
+    timer.unref?.();
+    this.managedHistoryTimers.set(sessionId, timer);
   }
 
   /** Replace a session's conversation with the daemon's full parsed history. */
@@ -476,6 +503,7 @@ class ClaudeSessionStore {
       session.label = meta.label;
       session.parentSessionId = meta.parentSessionId;
       session.isSupervisor = meta.isSupervisor;
+      session.provider = meta.provider;
       this.spawnMeta.delete(sessionId);
     }
     this.sessions.set(sessionId, session);

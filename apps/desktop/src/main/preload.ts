@@ -164,10 +164,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke(IPC.SESSION_DELETE, filename),
 
   // ── Analytics ──
-  analyticsSummary: (): Promise<unknown> =>
-    ipcRenderer.invoke(IPC.ANALYTICS_SUMMARY),
-  analyticsRecent: (limit?: number): Promise<unknown[]> =>
-    ipcRenderer.invoke(IPC.ANALYTICS_RECENT, limit),
+  analyticsSummary: (provider?: string): Promise<unknown> =>
+    ipcRenderer.invoke(IPC.ANALYTICS_SUMMARY, provider),
+  analyticsRecent: (limit?: number, provider?: string): Promise<unknown[]> =>
+    ipcRenderer.invoke(IPC.ANALYTICS_RECENT, limit, provider),
 
   // ── Layout templates ──
   layoutsList: (): Promise<unknown[]> =>

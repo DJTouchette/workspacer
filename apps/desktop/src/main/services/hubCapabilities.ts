@@ -422,10 +422,13 @@ export function registerHubCapabilities(): void {
   });
 
   // ── Analytics ──────────────────────────────────────────────────────────
-  registerCapability('analytics.summary', () => sessionHistory.summary());
+  registerCapability('analytics.summary', (params: unknown) => {
+    const { provider } = (params ?? {}) as { provider?: string };
+    return sessionHistory.summary(provider);
+  });
   registerCapability('analytics.recent', (params: unknown) => {
-    const { limit } = (params ?? {}) as { limit?: number };
-    return sessionHistory.recent(limit);
+    const { limit, provider } = (params ?? {}) as { limit?: number; provider?: string };
+    return sessionHistory.recent(limit, provider);
   });
 
   // ── Approval gate + host cwd ───────────────────────────────────────────

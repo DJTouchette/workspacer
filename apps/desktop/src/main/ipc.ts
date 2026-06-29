@@ -123,8 +123,16 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       // role instructions injected on its opening turn.
       const wantsFacade = opts.supervisor || opts.mcpFacade;
       if (opts.supervisor && !opts.cwd) cwd = ensureSupervisorHome();
+      // Pin the id so we can pre-register spawn metadata (provider/label/parent)
+      // before the first conversation delta creates the session entry — that's
+      // how a managed session's analytics row gets tagged with its backend.
+      const managedId = opts.resumeSessionId || randomUUID();
+      claudeSessionStore.setSpawnMeta(managedId, {
+        label: opts.label, parentSessionId: opts.parentSessionId,
+        isSupervisor: opts.supervisor, provider,
+      });
       return claudemonSessionClient.spawnManaged({
-        provider, cwd, model: opts.model, bin, yolo: opts.skipPermissions,
+        provider, cwd, model: opts.model, bin, yolo: opts.skipPermissions, sessionId: managedId,
         ...(wantsFacade && { mcp: MCP_FACADE_URL, instructions: managedFacadeInstructions(!!opts.supervisor) }),
       });
     }
@@ -139,7 +147,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     const sessionId = opts.resumeSessionId || randomUUID();
     // Record name/parent before the session registers so adopted cards are
     // enriched from the very first hook event.
-    claudeSessionStore.setSpawnMeta(sessionId, { label: opts.label, parentSessionId: opts.parentSessionId, isSupervisor: opts.supervisor });
+    claudeSessionStore.setSpawnMeta(sessionId, { label: opts.label, parentSessionId: opts.parentSessionId, isSupervisor: opts.supervisor, provider: 'claude' });
 
     // Per-spawn MCP servers selected from the Library (kind 'mcp'). Resolve the
     // chosen item ids to their configs, write a session-scoped --mcp-config, and
@@ -434,8 +442,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   });
 
   // ── Analytics (old-session metadata) ──
-  ipcMain.handle(IPC.ANALYTICS_SUMMARY, () => sessionHistory.summary());
-  ipcMain.handle(IPC.ANALYTICS_RECENT, (_event, limit?: number) => sessionHistory.recent(limit));
+  ipcMain.handle(IPC.ANALYTICS_SUMMARY, (_event, provider?: string) => sessionHistory.summary(provider));
+  ipcMain.handle(IPC.ANALYTICS_RECENT, (_event, limit?: number, provider?: string) => sessionHistory.recent(limit, provider));
 
   // ── Layout templates (reusable directory + pane arrangements) ──
   ipcMain.handle(IPC.LAYOUTS_LIST, () => layoutService.list());

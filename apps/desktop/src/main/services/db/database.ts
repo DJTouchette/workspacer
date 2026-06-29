@@ -123,6 +123,13 @@ CREATE INDEX IF NOT EXISTS idx_session_history_cwd ON session_history(cwd);
 CREATE INDEX IF NOT EXISTS idx_session_history_model ON session_history(model);
 `;
 
+// Tag each analytics row with the coding-agent backend, so usage can be split
+// by provider (Claude / Codex / OpenCode) or seen combined.
+const MIGRATION_V3 = `
+ALTER TABLE session_history ADD COLUMN provider TEXT DEFAULT '';
+CREATE INDEX IF NOT EXISTS idx_session_history_provider ON session_history(provider);
+`;
+
 function getDbPath(): string {
   return path.join(getConfigDir(), 'workspacer.db');
 }
@@ -191,6 +198,17 @@ export class DatabaseService {
         );
       })();
       console.log('[DatabaseService] applied migration v2');
+    }
+
+    if (currentVersion < 3) {
+      db.transaction(() => {
+        db.exec(MIGRATION_V3);
+        db.prepare('INSERT INTO _migrations (version, applied_at) VALUES (?, ?)').run(
+          3,
+          new Date().toISOString(),
+        );
+      })();
+      console.log('[DatabaseService] applied migration v3');
     }
   }
 
