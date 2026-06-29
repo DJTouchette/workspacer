@@ -66,6 +66,33 @@ export interface PluginManifest {
   uiBase?: string;
 }
 
+/** What a plugin needs on the machine, derived from its manifest. */
+export interface PluginRequirement {
+  label: string;
+  /** True for a real prerequisite (runtime/toolchain) worth warning about. */
+  warn: boolean;
+}
+
+/**
+ * Best-effort guess of a plugin's build/runtime requirement from its manifest,
+ * so the UI can warn before adding a sidecar that needs Python/Go/Rust/Node —
+ * or explain why one is crash-looping. Webview-only plugins (no server) need
+ * nothing. We can't truly detect what a prebuilt binary needs, so a server
+ * command we don't recognize is reported generically.
+ */
+export function pluginRequirement(m: PluginManifest): PluginRequirement {
+  const cmd = m.server?.command ?? '';
+  const tool = m.install?.[0];
+  if (tool === 'go') return { label: 'Needs Go toolchain', warn: true };
+  if (tool === 'cargo') return { label: 'Needs Rust toolchain', warn: true };
+  if (tool === 'npm' || tool === 'node' || tool === 'pnpm' || tool === 'yarn') return { label: 'Needs Node.js', warn: true };
+  if (/(^|\/)python/i.test(cmd)) return { label: 'Needs Python 3', warn: true };
+  if (/(^|\/)node(\.exe)?$/i.test(cmd)) return { label: 'Needs Node.js', warn: true };
+  if (!m.server && m.ui) return { label: 'No dependencies', warn: false };
+  if (m.server) return { label: `Runs ${cmd || 'a local server'}`, warn: true };
+  return { label: 'No dependencies', warn: false };
+}
+
 /** A pane contribution resolved to a concrete webview URL. */
 export interface PluginPane {
   pluginId: string;

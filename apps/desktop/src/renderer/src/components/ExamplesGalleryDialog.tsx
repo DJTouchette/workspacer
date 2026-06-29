@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import type { PluginManifest } from '../types/plugin';
+import { pluginRequirement, type PluginManifest } from '../types/plugin';
 import { AlertTriangle } from './icons';
 
 interface ExamplesGalleryDialogProps {
@@ -8,27 +8,6 @@ interface ExamplesGalleryDialogProps {
   onClose: () => void;
   /** Called after a successful add so the host can refresh the plugin list. */
   onAdded?: (pluginId: string) => void;
-}
-
-/** What an example needs on the machine to actually run. */
-interface Requirement {
-  label: string;
-  /** Whether it's a heavier prerequisite worth warning about. */
-  warn: boolean;
-}
-
-/**
- * Derive an example's runtime requirement from its manifest, so users know
- * before adding. Webview-only plugins need nothing; a python3 server needs
- * Python; a `go build` install step needs the Go toolchain.
- */
-function requirementOf(m: PluginManifest): Requirement {
-  const cmd = m.server?.command ?? '';
-  if (m.install?.[0] === 'go') return { label: 'Needs Go toolchain', warn: true };
-  if (/python/i.test(cmd)) return { label: 'Needs Python 3', warn: true };
-  if (!m.server && m.ui) return { label: 'No dependencies', warn: false };
-  if (m.server) return { label: `Runs ${cmd || 'a local server'}`, warn: true };
-  return { label: 'No dependencies', warn: false };
 }
 
 function kindOf(m: PluginManifest): string {
@@ -125,7 +104,7 @@ const ExamplesGalleryDialog: React.FC<ExamplesGalleryDialogProps> = ({ installed
             </div>
           )}
           {examples?.map((m) => {
-            const req = requirementOf(m);
+            const req = pluginRequirement(m);
             const isAdded = added.has(m.id);
             const busy = busyId === m.id;
             return (

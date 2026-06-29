@@ -2,16 +2,21 @@ import React, { useEffect, useState } from 'react';
 import { usePlugins } from '../hooks/usePlugins';
 import PluginInstallDialog from '../components/PluginInstallDialog';
 import ExamplesGalleryDialog from '../components/ExamplesGalleryDialog';
-import { Blocks } from '../components/icons';
+import { pluginRequirement } from '../types/plugin';
+import { Blocks, AlertTriangle } from '../components/icons';
 
-/** Latest supervisor state per plugin id, from `sidecar.*` bus events. */
-function useSidecarStates(): Record<string, string> {
-  const [states, setStates] = useState<Record<string, string>>({});
+interface SidecarStatus { state: string; err?: string }
+
+/** Latest supervisor state (+ last error) per plugin id, from `sidecar.*` events. */
+function useSidecarStates(): Record<string, SidecarStatus> {
+  const [states, setStates] = useState<Record<string, SidecarStatus>>({});
   useEffect(() => {
     const off = window.electronAPI.onHubEvent?.((ev) => {
       if (!ev.type?.startsWith('sidecar.')) return;
-      const d = ev.data as { name?: string; state?: string } | undefined;
-      if (d?.name && d?.state) setStates((prev) => ({ ...prev, [d.name as string]: d.state as string }));
+      const d = ev.data as { name?: string; state?: string; err?: string } | undefined;
+      if (d?.name && d?.state) {
+        setStates((prev) => ({ ...prev, [d.name as string]: { state: d.state as string, err: d.err } }));
+      }
     });
     return () => off?.();
   }, []);
@@ -111,8 +116,11 @@ const PluginsManagerPane: React.FC<{ title?: string }> = () => {
       <div style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
         {plugins.map((p) => {
           const hasServer = !!p.server;
-          const state = p.disabled ? 'disabled' : hasServer ? (sidecar[p.id] ?? 'starting') : 'no server';
+          const sc = sidecar[p.id];
+          const state = p.disabled ? 'disabled' : hasServer ? (sc?.state ?? 'starting') : 'no server';
           const busy = busyId === p.id;
+          const req = pluginRequirement(p);
+          const crashErr = state === 'crashed' ? sc?.err : undefined;
           return (
             <div key={p.id} style={{
               border: '1px solid var(--wks-border-subtle)', borderRadius: 8, padding: 12,
@@ -143,7 +151,21 @@ const PluginsManagerPane: React.FC<{ title?: string }> = () => {
                 <span>{(p.panes?.length ?? 0)} pane{(p.panes?.length ?? 0) === 1 ? '' : 's'}{p.panes?.length ? ': ' + p.panes.map((x) => x.title).join(', ') : ''}</span>
                 {!!p.hotkeys?.length && <span>hotkeys: {p.hotkeys.map((h) => h.default).join(', ')}</span>}
                 {!!p.server?.port && <span>:{p.server.port}</span>}
+                {hasServer && req.warn && (
+                  <span style={{ color: 'var(--wks-warning, #e0a000)' }}>{req.label}</span>
+                )}
               </div>
+              {crashErr && (
+                <div style={{
+                  marginTop: 8, padding: '6px 8px', borderRadius: 5,
+                  background: 'var(--wks-bg-input)', border: '1px solid var(--wks-border-subtle)',
+                  fontSize: '0.6rem', lineHeight: 1.5, color: 'var(--wks-danger, #e05555)',
+                  display: 'flex', gap: 5, alignItems: 'flex-start', wordBreak: 'break-word',
+                }}>
+                  <AlertTriangle size={11} strokeWidth={2} style={{ flexShrink: 0, marginTop: 1 }} />
+                  <span>{crashErr}</span>
+                </div>
+              )}
             </div>
           );
         })}
