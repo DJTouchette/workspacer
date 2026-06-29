@@ -57,10 +57,17 @@ class ClaudemonSessionClient {
     portChannel?: string;
     /** Caller-pinned session id (matches `claude --session-id <uuid>`). */
     sessionId?: string;
+    /** Hybrid agents (e.g. 'codex'): the PTY is the agent's TUI and claudemon
+     *  also tails its rollout transcript to drive the GUI conversation view. */
+    rolloutProvider?: string;
   }): Promise<string> {
-    const { portChannel = 'claude:port', sessionId: pinnedId, ...rest } = args;
+    const { portChannel = 'claude:port', sessionId: pinnedId, rolloutProvider, ...rest } = args;
     // claudemon's SpawnPayload uses snake_case.
-    const reqBody = { ...rest, ...(pinnedId ? { session_id: pinnedId } : {}) };
+    const reqBody = {
+      ...rest,
+      ...(pinnedId ? { session_id: pinnedId } : {}),
+      ...(rolloutProvider ? { rollout_provider: rolloutProvider } : {}),
+    };
     const res = await fetch(`${CLAUDEMON_API_URL}/sessions/spawn`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

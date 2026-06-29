@@ -485,6 +485,23 @@ impl SessionStore {
         state
     }
 
+    /// Attach a PTY wrapper to an already-registered (managed) session so its
+    /// terminal input (`POST /sessions/:id/input`) reaches the child and its
+    /// output flows through `record_output` onto the byte stream. Used by hybrid
+    /// agents (e.g. OpenCode `attach`) that pair a structured GUI adapter with a
+    /// live TUI in a PTY — the GUI and Term are then two views of one session.
+    /// The byte buffer + channel already exist from `register_managed`; this just
+    /// adds the input wrapper (and is defensive about the buffer/channel).
+    pub fn attach_pty(&self, session_id: &str, handle: WrapperHandle) {
+        self.wrappers.insert(session_id.to_string(), handle);
+        self.buffers
+            .entry(session_id.to_string())
+            .or_insert_with(|| Arc::new(Mutex::new(OutputBuffer::new(OUTPUT_BUFFER_CAP))));
+        self.bytes_tx
+            .entry(session_id.to_string())
+            .or_insert_with(|| broadcast::channel(BYTE_BROADCAST_CAPACITY).0);
+    }
+
     /// Drive a managed session's mode (and optional pending) directly, since
     /// managed backends don't emit Claude hooks. Broadcasts a SessionUpdate.
     /// Returns None if the session isn't registered.

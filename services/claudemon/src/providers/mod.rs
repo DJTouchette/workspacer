@@ -14,6 +14,7 @@
 //! provider module.
 
 pub mod codex;
+pub mod codex_rollout;
 pub mod opencode;
 pub mod pi;
 

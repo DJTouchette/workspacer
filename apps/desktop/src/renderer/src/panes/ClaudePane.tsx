@@ -66,17 +66,19 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
   const { config } = useConfig();
   // Which surfaces this provider has:
   //   claude            — GUI (hooks/transcript telemetry) + terminal (its PTY)
-  //   opencode / codex  — GUI only: managed sessions driven by claudemon's
-  //                       adapters (no PTY), so the terminal view has nothing
-  //                       to show
+  //   codex (hybrid)    — GUI (claudemon tails its rollout transcript) + terminal
+  //                       (the codex TUI runs in a PTY)
+  //   opencode (hybrid) — GUI (the `opencode serve` /event adapter) + terminal
+  //                       (`opencode attach` TUI in a PTY, same serve + session)
+  //   pi                — GUI only: managed `pi --mode rpc` adapter (no PTY)
   const isClaude = (provider ?? 'claude') === 'claude';
-  const isManaged = provider === 'opencode' || provider === 'codex' || provider === 'pi';
+  const isHybrid = provider === 'codex' || provider === 'opencode';
   // Display name of the backend for user-facing copy (empty states, composer,
   // exit notice) so a Codex/OpenCode/Pi pane doesn't read as "Claude".
   const agentName = providerLabel(provider);
-  const hasGui = isClaude || isManaged;
-  const hasTerminal = !isManaged;
-  const showViewToggle = hasGui && hasTerminal; // only Claude has both
+  const hasGui = true; // every provider surfaces a structured GUI conversation
+  const hasTerminal = isClaude || isHybrid; // only claude + hybrid have a PTY
+  const showViewToggle = hasGui && hasTerminal; // claude + hybrid get both
   // A spawned-with-prompt pane always opens in GUI; otherwise honour the
   // configured default view (falls back to terminal until config loads).
   const [viewModeState, setViewModeState] = useState<ViewMode>(

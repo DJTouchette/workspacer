@@ -35,6 +35,9 @@ export interface ManagedSpawnOptions {
   mcpFacade?: boolean;
   label?: string;
   parentSessionId?: string;
+  /** PTY dimensions for hybrid (PTY-backed) providers like Codex. */
+  cols?: number;
+  rows?: number;
 }
 
 /**
@@ -45,6 +48,9 @@ export interface ManagedSpawnOptions {
  */
 export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<string> {
   const { provider } = opts;
+  // Codex is a *hybrid*: its own TUI runs in a PTY (the Term view) and claudemon
+  // tails the rollout transcript for the GUI view — not the headless app-server.
+  if (provider === 'codex') return spawnCodexHybrid(opts);
   // Supervisors with no explicit cwd open in their dedicated home (~/.workspacer)
   // rather than inheriting some repo; everything else uses the given cwd.
   let cwd = opts.cwd || process.env.HOME || os.homedir();
@@ -77,5 +83,44 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
   // "no session") until the first message. The conversation/statusline streams
   // enrich this entry as the agent runs.
   claudeSessionStore.ensureManagedSession(sessionId, cwd);
+  return sessionId;
+}
+
+/**
+ * Spawn a hybrid Codex agent: the `codex` TUI runs in a PTY (the Term view,
+ * via the normal `/sessions/spawn`), and claudemon additionally tails Codex's
+ * rollout transcript (`rolloutProvider: 'codex'`) to populate the GUI
+ * conversation view from the same live session. Returns the canonical session
+ * id (pinned so the daemon's id == ours).
+ */
+async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
+  let cwd = opts.cwd || process.env.HOME || os.homedir();
+  if (opts.supervisor && !opts.cwd) cwd = ensureSupervisorHome();
+  const bin = resolveAgentBinary('codex');
+  const sessionId = opts.resumeSessionId || randomUUID();
+  claudeSessionStore.setSpawnMeta(sessionId, {
+    label: opts.label,
+    parentSessionId: opts.parentSessionId,
+    isSupervisor: opts.supervisor,
+    provider: 'codex',
+  });
+  // Show the card immediately; the rollout tailer + conversation stream enrich it.
+  claudeSessionStore.ensureManagedSession(sessionId, cwd);
+  // Codex takes a model override as a config flag (`-c model="<id>"`); YOLO maps
+  // to bypassing its approval/sandbox prompts so the TUI doesn't block on them.
+  const model = opts.model?.trim();
+  const argv = [
+    bin,
+    ...(model ? ['-c', `model=${JSON.stringify(model)}`] : []),
+    ...(opts.skipPermissions ? ['--dangerously-bypass-approvals-and-sandbox'] : []),
+  ];
+  await claudemonSessionClient.spawn({
+    argv,
+    cwd,
+    cols: opts.cols ?? 120,
+    rows: opts.rows ?? 32,
+    sessionId,
+    rolloutProvider: 'codex',
+  });
   return sessionId;
 }

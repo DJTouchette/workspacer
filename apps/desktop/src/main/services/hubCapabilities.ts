@@ -126,7 +126,7 @@ export function registerHubCapabilities(): void {
     // from the web/remote client came up as Claude).
     if (provider && provider !== 'claude') {
       const sessionId = await spawnManagedAgent({
-        provider, cwd, model, skipPermissions, resumeSessionId, supervisor, mcpFacade, label, parentSessionId,
+        provider, cwd, model, skipPermissions, resumeSessionId, supervisor, mcpFacade, label, parentSessionId, cols, rows,
       });
       return { sessionId };
     }

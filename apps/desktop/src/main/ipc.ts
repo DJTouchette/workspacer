@@ -130,6 +130,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
         mcpFacade: opts.mcpFacade,
         label: opts.label,
         parentSessionId: opts.parentSessionId,
+        cols: opts.cols,
+        rows: opts.rows,
       });
     }
     const profile = opts.profileId ? claudeProfiles.getProfile(opts.profileId) : undefined;

@@ -48,10 +48,16 @@ pub struct SpawnPayload {
     /// cwd-based alias guessing, correct even with many sessions in one cwd.
     #[serde(default)]
     pub session_id: Option<String>,
+    /// When set (e.g. `"codex"`), this PTY is a managed agent's own TUI and we
+    /// additionally tail its rollout transcript to drive the GUI conversation
+    /// view — a "hybrid" session that has both a terminal and a structured GUI.
+    #[serde(default)]
+    pub rollout_provider: Option<String>,
 }
 
 pub async fn handle(
     State(store): State<SessionStore>,
+    State(conv): State<ConversationStore>,
     Json(payload): Json<SpawnPayload>,
 ) -> impl IntoResponse {
     if payload.argv.is_empty() {
@@ -143,6 +149,18 @@ pub async fn handle(
 
     store.register_spawn(&session_id, &cwd, WrapperHandle { tx: input_tx });
     tracing::info!(%session_id, %cwd, argv=?payload.argv, "spawned in-daemon PTY");
+
+    // Hybrid agents (e.g. Codex): the PTY above is the agent's own TUI (the Term
+    // view); additionally tail its rollout transcript so the GUI conversation
+    // view is populated from the same live session.
+    if payload.rollout_provider.as_deref() == Some("codex") {
+        crate::providers::codex_rollout::spawn_tailer(
+            store.clone(),
+            conv.clone(),
+            session_id.clone(),
+            cwd.clone(),
+        );
+    }
 
     Json(json!({ "session_id": session_id, "cwd": cwd })).into_response()
 }
