@@ -34,9 +34,11 @@ pub async fn run(cfg: ServeConfig) -> Result<()> {
     tracing::info!(db = %cfg.db_path.display(), "sqlite store ready");
 
     // Repopulate the in-memory list from the DB so sessions survive a daemon
-    // restart: prior agents reappear (as stopped) and can be resumed with
-    // `claude --resume <id>`. Bounded to the most-recent window — the table is
-    // never pruned, so we don't want to surface the entire history.
+    // restart: prior agents reappear (as stopped — no process is attached, so
+    // they show as resumable, not live) and can be resumed with
+    // `claude --resume <id>`. Bounded to the most-recent window. Nothing is
+    // deleted; stale ones come back archived (see `SessionState::is_archived`)
+    // so they stay out of the default list but remain reachable.
     match db.load_recent_sessions(SESSION_HYDRATE_LIMIT) {
         Ok(sessions) if !sessions.is_empty() => {
             let count = sessions.len();

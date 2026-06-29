@@ -97,17 +97,37 @@ pub fn router(state: ApiState) -> Router {
         .with_state(state)
 }
 
-async fn list_sessions(State(store): State<SessionStore>) -> impl IntoResponse {
+#[derive(Debug, Default, Deserialize)]
+struct ListSessionsQuery {
+    /// Include archived (stopped + long-idle) sessions in the response. Off by
+    /// default so the list shows only live and recently-active agents; the UI
+    /// opts in (`?include_archived=true`) to browse older ones.
+    #[serde(default)]
+    include_archived: bool,
+}
+
+async fn list_sessions(
+    State(store): State<SessionStore>,
+    Query(q): Query<ListSessionsQuery>,
+) -> impl IntoResponse {
+    let now = time::OffsetDateTime::now_utc().unix_timestamp();
     let sessions: Vec<Value> = store
         .list()
         .into_iter()
-        .map(|state| {
+        .filter_map(|state| {
+            let archived = state.is_archived(now);
+            // Default list hides archived sessions; they're still reachable via
+            // `?include_archived=true` and the per-session endpoint.
+            if archived && !q.include_archived {
+                return None;
+            }
             let u = usage::usage_for_path(state.transcript_path.as_deref());
             let mut v = serde_json::to_value(&state).unwrap_or(Value::Null);
             if let Some(obj) = v.as_object_mut() {
                 obj.insert("usage".to_string(), serde_json::to_value(&u).unwrap_or(Value::Null));
+                obj.insert("archived".to_string(), Value::Bool(archived));
             }
-            v
+            Some(v)
         })
         .collect();
     Json(sessions)
@@ -119,6 +139,8 @@ async fn get_session(
 ) -> impl IntoResponse {
     match store.get(&id) {
         Some(state) => {
+            let now = time::OffsetDateTime::now_utc().unix_timestamp();
+            let archived = state.is_archived(now);
             let u = usage::usage_for_path(state.transcript_path.as_deref());
             let mut v = serde_json::to_value(&state).unwrap_or(Value::Null);
             if let Some(obj) = v.as_object_mut() {
@@ -126,6 +148,7 @@ async fn get_session(
                     "usage".to_string(),
                     serde_json::to_value(&u).unwrap_or(Value::Null),
                 );
+                obj.insert("archived".to_string(), Value::Bool(archived));
             }
             Json(v).into_response()
         }

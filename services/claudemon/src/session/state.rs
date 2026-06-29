@@ -215,6 +215,11 @@ impl StatusLine {
     }
 }
 
+/// How long a stopped session may sit idle before it's archived (hidden from
+/// the default list but kept on disk and resumable). Seven days covers any
+/// agent you'd realistically come back to.
+pub const ARCHIVE_AFTER_SECONDS: i64 = 7 * 24 * 60 * 60;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionState {
     pub session_id: String,
@@ -253,6 +258,16 @@ impl SessionState {
             transcript_path: None,
             status_line: None,
         }
+    }
+
+    /// Whether this session should be hidden from the default session list. A
+    /// session is archived once it's stopped (no process attached) and has sat
+    /// idle past [`ARCHIVE_AFTER_SECONDS`]. Live or recently-active sessions are
+    /// never archived; archiving is purely a display filter — the row stays in
+    /// SQLite and the session remains resumable.
+    pub fn is_archived(&self, now_unix: i64) -> bool {
+        self.mode == SessionMode::Stopped
+            && now_unix.saturating_sub(self.updated_at.unix_timestamp()) > ARCHIVE_AFTER_SECONDS
     }
 
     pub fn apply(&mut self, event: &HookEvent) {
@@ -401,6 +416,22 @@ mod tests {
             timestamp: None,
             payload: map,
         }
+    }
+
+    #[test]
+    fn is_archived_only_for_stopped_and_stale_sessions() {
+        let base = 1_000_000_000i64;
+        let mut state = SessionState::new("s".into(), None);
+        state.updated_at = OffsetDateTime::from_unix_timestamp(base).unwrap();
+
+        // Stopped but recently active → not archived.
+        state.mode = SessionMode::Stopped;
+        assert!(!state.is_archived(base + 60));
+        // Stopped and idle past the window → archived.
+        assert!(state.is_archived(base + ARCHIVE_AFTER_SECONDS + 1));
+        // Live (any non-stopped mode) is never archived, however old.
+        state.mode = SessionMode::Input;
+        assert!(!state.is_archived(base + ARCHIVE_AFTER_SECONDS + 1));
     }
 
     #[test]

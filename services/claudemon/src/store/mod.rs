@@ -124,9 +124,9 @@ impl Db {
 
     /// Load the most recently active persisted sessions so the daemon can
     /// repopulate its in-memory list after a restart. Ordered newest-first and
-    /// capped at `limit` — the table is never pruned, so hydrating all of it
-    /// would flood the list with ancient sessions. Newest-first means the agents
-    /// you actually had open come back; the long tail stays in the DB.
+    /// capped at `limit`. Stale sessions are kept (never deleted) but the daemon
+    /// marks them archived so they stay out of the default list while remaining
+    /// resumable — see `SessionState::is_archived`.
     pub fn load_recent_sessions(&self, limit: usize) -> Result<Vec<RestoredSession>> {
         let guard = self.conn.lock().expect("db mutex poisoned");
         let mut stmt = guard.prepare(

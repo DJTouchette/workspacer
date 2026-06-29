@@ -289,6 +289,20 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  // Dock/taskbar icon. The BrowserWindow `icon` option covers the window icon
+  // on Linux/Windows, but the macOS dock ignores it (it reads the app bundle,
+  // which is Electron's default in dev), and Windows needs an explicit
+  // AppUserModelId so the taskbar shows our icon instead of grouping under the
+  // generic electron.exe one.
+  if (process.platform === 'win32') {
+    app.setAppUserModelId('com.workspacer.app');
+  } else if (process.platform === 'darwin') {
+    const dockIcon = appIcon();
+    if (dockIcon && app.dock) {
+      app.dock.setIcon(dockIcon);
+    }
+  }
+
   // Register protocol handler to serve local font files
   protocol.handle('workspacer-font', (request) => {
     const filename = decodeURIComponent(request.url.replace('workspacer-font://', ''));
