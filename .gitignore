@@ -16,11 +16,6 @@ services/hub/*.exe
 # Go renames a locked (running) binary to <name>.exe~ when it can't overwrite it.
 services/hub/*.exe~
 
-# root-level hub build output
-/hub/hub
-/hub/hub.exe
-/hub/hub.exe~
-
 # Committed binaries don't belong in source control (deleted from history going forward)
 /bin/
 /workspacer
