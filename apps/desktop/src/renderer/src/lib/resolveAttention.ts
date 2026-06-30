@@ -70,11 +70,11 @@ export function resolveAnswer(
 export function resolveReply(sessionId: string, text: string): void {
   window.electronAPI.claudeMessage(sessionId, text).then((res) => {
     if (!res.ok) {
-      window.electronAPI.claudeWrite(sessionId, text);
-      setTimeout(() => window.electronAPI.claudeWrite(sessionId, '\r'), 50);
+      // Single atomic write: text + submit in one frame so the lone \r can't
+      // race a mid-flight redraw and get dropped (the "typed but not sent" bug).
+      window.electronAPI.claudeWrite(sessionId, text + '\r');
     }
   }).catch(() => {
-    window.electronAPI.claudeWrite(sessionId, text);
-    setTimeout(() => window.electronAPI.claudeWrite(sessionId, '\r'), 50);
+    window.electronAPI.claudeWrite(sessionId, text + '\r');
   });
 }
