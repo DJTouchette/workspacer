@@ -174,6 +174,19 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     searchProject: (opts) =>
       client.call<{ results: { file: string; matches: { line: number; column: number; text: string }[] }[]; truncated: boolean }>('search.project', opts),
 
+    // ── Git (review pane) ────────────────────────────────────────────────
+    // The hub capabilities wrap their payloads ({ diff }, { files }, { output });
+    // unwrap here so both transports present the same flat shapes to GitClient.
+    gitStatus: (cwd) => client.call<import('../../../main/shared/ipcTypes').GitStatus>('git.status', { cwd }),
+    gitDiff: (cwd, path, staged, untracked) =>
+      client.call<{ diff: string }>('git.diff', { cwd, path, staged, untracked }).then((r) => r.diff),
+    gitNumstat: (cwd, staged) =>
+      client.call<{ files: import('../../../main/shared/ipcTypes').GitNumstatEntry[] }>('git.numstat', { cwd, staged }).then((r) => r.files),
+    gitStage: (cwd, path) => client.call<{ output: string }>('git.stage', { cwd, path }).then((r) => r.output),
+    gitUnstage: (cwd, path) => client.call<{ output: string }>('git.unstage', { cwd, path }).then((r) => r.output),
+    gitCommit: (cwd, message) => client.call<{ output: string }>('git.commit', { cwd, message }).then((r) => r.output),
+    gitPush: (cwd) => client.call<{ output: string }>('git.push', { cwd }).then((r) => r.output),
+
     // ── Config ───────────────────────────────────────────────────────────
     getConfig: () => client.call<AppConfig>('config.get', {}),
     reloadConfig: () => client.call<AppConfig>('config.reload', {}),

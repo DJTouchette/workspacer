@@ -24,6 +24,7 @@ import { listClaudeSessionsForDir } from './services/claudeSessionList';
 import { readTextFile, writeTextFile, listDir } from './services/fileService';
 import { startWatch, stopWatch, setEmitSink } from './services/fileWatchService';
 import { searchProject } from './services/searchService';
+import * as git from './services/gitService';
 import { HUB_HTTP_URL, getHubToken, getRemoteShareInfo, setRemoteShare } from './services/hubDaemon';
 import { publishToHub, isHubConnected, callHub } from './services/hubClient';
 import { IPC } from './shared/ipcChannels';
@@ -534,6 +535,17 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // Project-wide search (editor search sidebar), backed by ripgrep.
   ipcMain.handle(IPC.SEARCH_PROJECT, (_event, opts: Parameters<typeof searchProject>[0]) =>
     searchProject(opts));
+
+  // ── Git (review pane) ── shells out to `git`; same backend as the git.*
+  // hub capabilities, so the desktop reaches it whether it's on IPC or the bus.
+  ipcMain.handle(IPC.GIT_STATUS, (_event, cwd: string) => git.status(cwd));
+  ipcMain.handle(IPC.GIT_DIFF, (_event, cwd: string, path?: string, staged?: boolean, untracked?: boolean) =>
+    git.diff(cwd, path, staged, untracked));
+  ipcMain.handle(IPC.GIT_NUMSTAT, (_event, cwd: string, staged?: boolean) => git.numstat(cwd, staged));
+  ipcMain.handle(IPC.GIT_STAGE, (_event, cwd: string, path?: string) => git.stage(cwd, path));
+  ipcMain.handle(IPC.GIT_UNSTAGE, (_event, cwd: string, path?: string) => git.unstage(cwd, path));
+  ipcMain.handle(IPC.GIT_COMMIT, (_event, cwd: string, message: string) => git.commit(cwd, message));
+  ipcMain.handle(IPC.GIT_PUSH, (_event, cwd: string) => git.push(cwd));
 
   // Dialog
   ipcMain.handle(IPC.DIALOG_PICK_FOLDER, async (_event, defaultPath?: string) => {

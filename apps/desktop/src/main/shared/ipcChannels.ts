@@ -118,6 +118,15 @@ export const IPC = {
   // ── Project search (editor search sidebar) ──
   SEARCH_PROJECT: 'search:project',
 
+  // ── Git (review pane) ──
+  GIT_STATUS: 'git:status',
+  GIT_DIFF: 'git:diff',
+  GIT_NUMSTAT: 'git:numstat',
+  GIT_STAGE: 'git:stage',
+  GIT_UNSTAGE: 'git:unstage',
+  GIT_COMMIT: 'git:commit',
+  GIT_PUSH: 'git:push',
+
   // ── Browser cookies ──
   CHROME_COOKIES_IMPORT: 'chrome-cookies:import',
 

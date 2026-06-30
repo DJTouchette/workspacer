@@ -28,6 +28,7 @@ import { listClaudeSessionsForDir } from './claudeSessionList';
 import { readTextFile, writeTextFile, listDir } from './fileService';
 import { startWatch, stopWatch } from './fileWatchService';
 import { searchProject } from './searchService';
+import * as git from './gitService';
 import * as terminalShare from './terminalShare';
 import { IPC } from '../shared/ipcChannels';
 import type { SessionData, LayoutInput, ProfileUpdate } from '../shared/ipcTypes';
@@ -527,5 +528,47 @@ export function registerHubCapabilities(): void {
     const opts = (params ?? {}) as Parameters<typeof searchProject>[0];
     if (!opts.query) throw new Error('search.project requires { query, cwd }');
     return searchProject(opts);
+  });
+
+  // ── Git (review pane) ──────────────────────────────────────────────────
+  // Same backend as the git:* IPC, so the web/remote mirror reviews the host's
+  // work tree exactly as the desktop does. A failed git command (non-zero exit,
+  // not-a-work-tree) rejects the call; the renderer surfaces git's stderr.
+  registerCapability('git.status', (params: unknown) => {
+    const { cwd } = (params ?? {}) as { cwd?: string };
+    if (!cwd) throw new Error('git.status requires { cwd }');
+    return git.status(cwd);
+  });
+  registerCapability('git.diff', (params: unknown) => {
+    const { cwd, path, staged, untracked } = (params ?? {}) as {
+      cwd?: string; path?: string; staged?: boolean; untracked?: boolean;
+    };
+    if (!cwd) throw new Error('git.diff requires { cwd }');
+    return git.diff(cwd, path, staged, untracked).then((diff) => ({ diff }));
+  });
+  registerCapability('git.numstat', (params: unknown) => {
+    const { cwd, staged } = (params ?? {}) as { cwd?: string; staged?: boolean };
+    if (!cwd) throw new Error('git.numstat requires { cwd }');
+    return git.numstat(cwd, staged).then((files) => ({ files }));
+  });
+  registerCapability('git.stage', (params: unknown) => {
+    const { cwd, path } = (params ?? {}) as { cwd?: string; path?: string };
+    if (!cwd) throw new Error('git.stage requires { cwd }');
+    return git.stage(cwd, path).then((output) => ({ ok: true, output }));
+  });
+  registerCapability('git.unstage', (params: unknown) => {
+    const { cwd, path } = (params ?? {}) as { cwd?: string; path?: string };
+    if (!cwd) throw new Error('git.unstage requires { cwd }');
+    return git.unstage(cwd, path).then((output) => ({ ok: true, output }));
+  });
+  registerCapability('git.commit', (params: unknown) => {
+    const { cwd, message } = (params ?? {}) as { cwd?: string; message?: string };
+    if (!cwd || typeof message !== 'string') throw new Error('git.commit requires { cwd, message }');
+    return git.commit(cwd, message).then((output) => ({ ok: true, output }));
+  });
+  registerCapability('git.push', (params: unknown) => {
+    const { cwd } = (params ?? {}) as { cwd?: string };
+    if (!cwd) throw new Error('git.push requires { cwd }');
+    return git.push(cwd).then((output) => ({ ok: true, output }));
   });
 }

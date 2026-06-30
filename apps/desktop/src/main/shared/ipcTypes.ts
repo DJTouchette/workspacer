@@ -8,6 +8,30 @@
  * must be parseable by both the main tsc build and the renderer tsc build.
  */
 
+// ── Git (review pane: git:status / diff / numstat / stage / …) ──
+
+/** One changed file from `git status --porcelain`. `staged`/`unstaged` are the
+ *  porcelain XY codes ("M" "A" "D" "R" "?" " " …). */
+export interface GitFileStatus {
+  path: string;
+  /** Set only for renames/copies: the original path. */
+  orig_path?: string;
+  staged: string;
+  unstaged: string;
+}
+
+export interface GitStatus {
+  branch: string | null;
+  files: GitFileStatus[];
+}
+
+/** Per-file added/deleted line counts. Null counts mean a binary file. */
+export interface GitNumstatEntry {
+  path: string;
+  added: number | null;
+  deleted: number | null;
+}
+
 // ── Claude session snapshot (sent over claude-session:get / getAll / update) ──
 
 export type SessionAmbientState =

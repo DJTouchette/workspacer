@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { IPC } from './shared/ipcChannels';
-import type { ClaudeSessionSnapshot, AppConfig, AppConfigPartial, SessionData, LayoutInput, ProfileUpdate } from './shared/ipcTypes';
+import type { ClaudeSessionSnapshot, AppConfig, AppConfigPartial, SessionData, LayoutInput, ProfileUpdate, GitStatus, GitNumstatEntry } from './shared/ipcTypes';
 
 // ── MessagePort storage (preload isolated world) ──
 // Minimal type for the DOM MessagePort (main tsconfig lacks DOM lib)
@@ -391,6 +391,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
   }): Promise<{ results: { file: string; matches: { line: number; column: number; text: string }[] }[]; truncated: boolean }> =>
     ipcRenderer.invoke(IPC.SEARCH_PROJECT, opts),
 
+
+  // Git (review pane) — shells out to git in the main process.
+  gitStatus: (cwd: string): Promise<GitStatus> =>
+    ipcRenderer.invoke(IPC.GIT_STATUS, cwd),
+  gitDiff: (cwd: string, path?: string, staged?: boolean, untracked?: boolean): Promise<string> =>
+    ipcRenderer.invoke(IPC.GIT_DIFF, cwd, path, staged, untracked),
+  gitNumstat: (cwd: string, staged?: boolean): Promise<GitNumstatEntry[]> =>
+    ipcRenderer.invoke(IPC.GIT_NUMSTAT, cwd, staged),
+  gitStage: (cwd: string, path?: string): Promise<string> =>
+    ipcRenderer.invoke(IPC.GIT_STAGE, cwd, path),
+  gitUnstage: (cwd: string, path?: string): Promise<string> =>
+    ipcRenderer.invoke(IPC.GIT_UNSTAGE, cwd, path),
+  gitCommit: (cwd: string, message: string): Promise<string> =>
+    ipcRenderer.invoke(IPC.GIT_COMMIT, cwd, message),
+  gitPush: (cwd: string): Promise<string> =>
+    ipcRenderer.invoke(IPC.GIT_PUSH, cwd),
 
   // Browser cookie import (Chrome or Edge)
   importChromeCookies: (domainFilter?: string[], method?: 'cdp' | 'direct', browser?: 'chrome' | 'edge'): Promise<{ imported: number; skipped: number; errors: string[] }> =>

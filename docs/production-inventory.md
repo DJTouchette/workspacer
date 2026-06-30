@@ -130,7 +130,6 @@ Claude Profiles (CRUD).
 | `components/ScrollIndicator.tsx` | zero importers | DROP? |
 | `tests/components/ItemDetailOverlay.test.tsx` | tests a dead component | DROP? |
 
-> `lib/claudemonBase.ts` is NOT dead — still used by live `gitQueries.ts`.
 > `InboxPane` (mentioned in old docs) no longer exists; live equivalent is `InboxDrawer`.
 
 ---
@@ -181,7 +180,7 @@ Claude Profiles (CRUD).
 | Session/PTY APIs (input/output/stream/message/approve/answer/decide/gate/signal/resize/spawn) | `daemon/api.rs`, `daemon/spawn.rs` | WORKING | |
 | Transcript read + conversation tailer (SSE deltas, seq-join) | `session/transcript.rs`, `session/conversation.rs` | WORKING | |
 | Event/hook/statusline SSE streams (`/events`, `/hooks/stream`, `/statusline/stream`) | `daemon/api.rs` | WORKING | |
-| Git API (status/diff/numstat/stage/unstage/commit/push) | `daemon/git.rs` | WORKING | |
+| Git (review pane) — MOVED to the desktop host (`apps/desktop/src/main/services/gitService.ts`, exposed as `git:*` IPC + `git.*` hub capabilities). Was `daemon/git.rs`. | — | MOVED OUT OF CLAUDEMON | |
 | External wrapper + in-daemon PTY (WebSocket protocol) | `wrapper/*`, `protocol.rs` | WORKING | |
 | `claudemon watch` TUI | `tui/*` | WORKING (cli.rs comment calls it a "stub" — misleading) | |
 | `claudemon init` (merge hooks into settings.json) | `daemon/init.rs` | WORKING | |

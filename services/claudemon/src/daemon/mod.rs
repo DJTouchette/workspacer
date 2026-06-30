@@ -1,5 +1,4 @@
 pub mod api;
-pub mod git;
 pub mod hook;
 pub mod init;
 pub mod spawn;

@@ -1,7 +1,12 @@
 /**
- * Thin client for claudemon's git API, used by the review pane: read-only
- * status/diff plus the staging actions (stage/unstage/commit/push).
- * Endpoints implemented at services/claudemon/src/daemon/git.rs.
+ * Thin client for the host's git surface, used by the review pane: read-only
+ * status/diff/numstat plus the staging actions (stage/unstage/commit/push).
+ *
+ * Git is a host capability exposed on `window.electronAPI` — over preload IPC
+ * on the desktop, or the hub bus on the web/remote mirror (and desktop bus
+ * mode). The backend (`apps/desktop/src/main/services/gitService.ts`) shells
+ * out to `git`. A failed git command rejects the underlying call; we surface
+ * its message verbatim.
  */
 
 export interface FileStatus {
@@ -26,16 +31,9 @@ export interface NumstatEntry {
   deleted: number | null;
 }
 
-import { CLAUDEMON_API_BASE } from './claudemonBase';
-
 export class GitClient {
-  constructor(private readonly baseUrl: string = CLAUDEMON_API_BASE) {}
-
   async status(cwd: string): Promise<GitStatus> {
-    const url = `${this.baseUrl}/git/status?cwd=${encodeURIComponent(cwd)}`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`git status failed: ${res.status} ${await res.text()}`);
-    return (await res.json()) as GitStatus;
+    return window.electronAPI.gitStatus(cwd);
   }
 
   /**
@@ -44,62 +42,34 @@ export class GitClient {
    * `untracked` renders an untracked file as an all-added diff.
    */
   async diff(cwd: string, path?: string, staged = false, untracked = false): Promise<string> {
-    const params = new URLSearchParams({ cwd });
-    if (path) params.set('path', path);
-    if (staged) params.set('staged', 'true');
-    if (untracked) params.set('untracked', 'true');
-    const res = await fetch(`${this.baseUrl}/git/diff?${params.toString()}`);
-    if (!res.ok) throw new Error(`git diff failed: ${res.status} ${await res.text()}`);
-    const body = (await res.json()) as { diff: string };
-    return body.diff;
+    return window.electronAPI.gitDiff(cwd, path, staged, untracked);
   }
 
   /** Added/deleted line counts per changed file (`git diff --numstat`). */
   async numstat(cwd: string, staged = false): Promise<NumstatEntry[]> {
-    const params = new URLSearchParams({ cwd });
-    if (staged) params.set('staged', 'true');
-    const res = await fetch(`${this.baseUrl}/git/numstat?${params.toString()}`);
-    if (!res.ok) throw new Error(`git numstat failed: ${res.status} ${await res.text()}`);
-    const body = (await res.json()) as { files: NumstatEntry[] };
-    return body.files;
+    return window.electronAPI.gitNumstat(cwd, staged);
   }
 
   // ── Mutating actions ──
   //
-  // Each posts a JSON body and expects `{ ok, output?, error? }`. The daemon
-  // returns 422 with git's stderr in `error` for the expected failures
-  // (nothing staged, no upstream, conflicts), which we surface verbatim.
-
-  private async post(path: string, body: Record<string, unknown>): Promise<string> {
-    const res = await fetch(`${this.baseUrl}${path}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    const data = (await res.json().catch(() => null)) as
-      | { ok?: boolean; output?: string; error?: string }
-      | null;
-    if (!res.ok || !data?.ok) {
-      throw new Error(data?.error?.trim() || `${path} failed: ${res.status}`);
-    }
-    return data.output ?? '';
-  }
+  // Each rejects with git's stderr on the expected failures (nothing staged,
+  // no upstream, conflicts), which the review pane surfaces verbatim.
 
   /** Stage a single path, or the whole work tree when `path` is omitted. */
   stage(cwd: string, path?: string): Promise<string> {
-    return this.post('/git/stage', { cwd, path });
+    return window.electronAPI.gitStage(cwd, path);
   }
 
   /** Unstage a single path, or everything when `path` is omitted. */
   unstage(cwd: string, path?: string): Promise<string> {
-    return this.post('/git/unstage', { cwd, path });
+    return window.electronAPI.gitUnstage(cwd, path);
   }
 
   commit(cwd: string, message: string): Promise<string> {
-    return this.post('/git/commit', { cwd, message });
+    return window.electronAPI.gitCommit(cwd, message);
   }
 
   push(cwd: string): Promise<string> {
-    return this.post('/git/push', { cwd });
+    return window.electronAPI.gitPush(cwd);
   }
 }
