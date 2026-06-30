@@ -23,7 +23,7 @@ import { listClaudeSessionsForDir } from './services/claudeSessionList';
 import { readTextFile, writeTextFile, listDir } from './services/fileService';
 import { startWatch, stopWatch, setEmitSink } from './services/fileWatchService';
 import { searchProject } from './services/searchService';
-import { HUB_HTTP_URL, getHubToken, getRemoteShareInfo } from './services/hubDaemon';
+import { HUB_HTTP_URL, getHubToken, getRemoteShareInfo, setRemoteShare } from './services/hubDaemon';
 import { publishToHub, isHubConnected, callHub } from './services/hubClient';
 import { IPC } from './shared/ipcChannels';
 import type { ClaudeSessionSnapshot, AppConfig, AppConfigPartial, SessionData, LayoutInput, ProfileUpdate } from './shared/ipcTypes';
@@ -246,6 +246,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC.LAYOUT_SET, (_event, data: unknown) => callHub('layout.set', { data }));
   // Connection info for the remote-control client (URL + token for a QR/share).
   ipcMain.handle(IPC.HUB_GET_REMOTE_INFO, () => getRemoteShareInfo());
+  ipcMain.handle(IPC.HUB_SET_REMOTE_SHARE, (_event, enabled: boolean) => setRemoteShare(!!enabled));
   // When remote auth is on, the hub's mutating routes require the token; the
   // local UI presents it via the same Authorization header a remote client uses.
   const hubAuthHeaders = (): Record<string, string> => {

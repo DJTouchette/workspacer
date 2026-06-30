@@ -13,11 +13,18 @@ TUI       := apps/tui
 CLAUDEMON := services/claudemon
 HUB       := services/hub
 
-.PHONY: dev dev-tui run-tui install build build-desktop build-hub build-claudemon build-tui \
+.PHONY: dev dev-share dev-tui run-tui install build build-desktop build-hub build-claudemon build-tui \
         test test-desktop test-hub test-tui package clean
 
-## dev: run the desktop app in dev mode (Vite + Electron) with remote sharing on
+## dev: run the desktop app in dev mode (Vite + Electron). Remote sharing is now
+##      a runtime toggle (Remote control → Start sharing); use `make dev-share`
+##      to force it on at launch instead.
 dev:
+	cd $(DESKTOP) && npm run dev
+
+## dev-share: like `dev` but force-enables remote sharing at launch (env var),
+##            for testing the web/bridged client without flipping the UI toggle.
+dev-share:
 	cd $(DESKTOP) && npm run dev:share
 
 ## dev-tui: run wks-tui (debug); builds claudemon + hub/brain first. The TUI now

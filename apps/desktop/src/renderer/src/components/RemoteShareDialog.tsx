@@ -26,6 +26,21 @@ const RemoteShareDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState<string | null>(null);
   const [showToken, setShowToken] = useState(false);
+  const [toggling, setToggling] = useState(false);
+
+  // Flip remote sharing on/off. Main persists the choice and restarts the hub
+  // (re-binding loopback ⇄ tailnet), then returns fresh share info.
+  const toggleShare = async (enabled: boolean) => {
+    setToggling(true);
+    try {
+      const next = await window.electronAPI.setRemoteShare?.(enabled);
+      if (next) setInfo(next);
+    } catch {
+      /* leave current state; the badge still reflects reality on next open */
+    } finally {
+      setToggling(false);
+    }
+  };
 
   useEffect(() => {
     window.electronAPI.getRemoteInfo?.()
@@ -92,10 +107,20 @@ const RemoteShareDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           </div>
         )}
 
-        {!loading && info && !info.enabled && <DisabledState />}
+        {!loading && info && !info.enabled && (
+          <DisabledState busy={toggling} onStart={() => toggleShare(true)} />
+        )}
 
         {!loading && info && info.enabled && (
-          <EnabledState info={info} copied={copied} showToken={showToken} onCopy={copy} onToggleToken={() => setShowToken((s) => !s)} />
+          <EnabledState
+            info={info}
+            copied={copied}
+            showToken={showToken}
+            busy={toggling}
+            onCopy={copy}
+            onToggleToken={() => setShowToken((s) => !s)}
+            onStop={() => toggleShare(false)}
+          />
         )}
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 20 }}>
@@ -106,44 +131,77 @@ const RemoteShareDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   );
 };
 
-function DisabledState() {
+function DisabledState({ busy, onStart }: { busy: boolean; onStart: () => void }) {
   return (
     <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-tertiary)', lineHeight: 1.6 }}>
-      <div style={{
-        display: 'inline-flex', alignItems: 'center', gap: 6, marginBottom: 12,
-        padding: '3px 10px', borderRadius: 999,
-        background: 'var(--wks-bg-input)', border: '1px solid var(--wks-border-input)',
-        color: 'var(--wks-text-muted)', fontSize: '0.65rem', fontWeight: 600,
-      }}>
-        <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--wks-text-faint, #666)' }} />
-        Remote sharing is OFF
+      <StatusPill on={false} />
+      <div style={{ marginBottom: 14 }}>
+        Right now the hub listens on <code style={inlineCode}>localhost</code> only — nothing off this
+        machine can reach it. Start sharing to bind it to your network so a phone or another computer
+        can connect.
       </div>
-      <div style={{ marginBottom: 10 }}>
-        By default the hub binds to localhost only. To share it, launch Workspacer with remote
-        sharing enabled, then reopen this panel:
-      </div>
-      <Code>WORKSPACER_REMOTE_SHARE=1</Code>
-      <div style={{ margin: '10px 0 6px', color: 'var(--wks-text-muted)' }}>
-        Optionally pin it to your tailnet IP so it never listens on the LAN:
-      </div>
-      <Code>WORKSPACER_REMOTE_ADDR=100.x.y.z:7895</Code>
-      <div style={{ marginTop: 12, color: 'var(--wks-text-faint)', fontSize: '0.68rem' }}>
-        A shared token is generated automatically and stored at
-        {' '}<code style={inlineCode}>~/.config/workspacer/remote-token</code>. Keep both devices on
-        the same Tailscale network — the connection isn't encrypted on its own.
+
+      <TailscaleNote />
+
+      <button onClick={onStart} disabled={busy} style={primaryBtnStyle(busy)}>
+        {busy ? 'Starting…' : 'Start sharing'}
+      </button>
+      <div style={{ marginTop: 8, color: 'var(--wks-text-faint)', fontSize: '0.66rem' }}>
+        This restarts the hub bound to <code style={inlineCode}>0.0.0.0</code> (all interfaces) and
+        generates a one-time URL with an access token. You can stop sharing again anytime.
       </div>
     </div>
   );
 }
 
+/** Status chip used by both states. */
+function StatusPill({ on }: { on: boolean }) {
+  const color = on ? 'var(--wks-success, #3fb950)' : 'var(--wks-text-faint, #666)';
+  return (
+    <div style={{
+      display: 'inline-flex', alignItems: 'center', gap: 6, marginBottom: 14,
+      padding: '3px 10px', borderRadius: 999,
+      background: 'var(--wks-bg-input)', border: '1px solid var(--wks-border-input)',
+      color: on ? 'var(--wks-success, #3fb950)' : 'var(--wks-text-muted)', fontSize: '0.65rem', fontWeight: 600,
+    }}>
+      <span style={{ width: 6, height: 6, borderRadius: '50%', background: color, boxShadow: on ? `0 0 5px ${color}` : 'none' }} />
+      Remote sharing is {on ? 'ON' : 'OFF'}
+    </div>
+  );
+}
+
+/** How the connection actually reaches another device — Tailscale, in plain terms. */
+function TailscaleNote() {
+  return (
+    <div style={{
+      margin: '0 0 16px', padding: '10px 12px', borderRadius: 8,
+      background: 'var(--wks-bg-input)', border: '1px solid var(--wks-border-subtle, var(--wks-border-input))',
+      fontSize: '0.68rem', color: 'var(--wks-text-tertiary)', lineHeight: 1.6,
+    }}>
+      <div style={{ fontWeight: 600, color: 'var(--wks-text-muted)', marginBottom: 4 }}>
+        How this reaches your phone
+      </div>
+      Sharing exposes the hub on your machine's network address. The clean way to use it from
+      anywhere is <a href="https://tailscale.com/" target="_blank" rel="noreferrer" style={{ color: 'var(--wks-accent, #4a9eff)' }}>Tailscale</a> —
+      a zero-config VPN that puts all your devices on one private network (a “tailnet”) with stable
+      <code style={inlineCode}>100.x</code> IPs. Install Tailscale on this machine and your phone,
+      sign both into the same account, and the URL below works from anywhere — the traffic rides
+      Tailscale's encrypted WireGuard tunnel, never the public internet. Without it, sharing only
+      reaches devices on the same LAN, and the link itself isn't encrypted — so prefer the tailnet.
+    </div>
+  );
+}
+
 function EnabledState({
-  info, copied, showToken, onCopy, onToggleToken,
+  info, copied, showToken, busy, onCopy, onToggleToken, onStop,
 }: {
   info: RemoteInfo;
   copied: string | null;
   showToken: boolean;
+  busy: boolean;
   onCopy: (label: string, text: string) => void;
   onToggleToken: () => void;
+  onStop: () => void;
 }) {
   const hasApp = !!info.appUrl;
   // Prefer the full app when it's available; fall back to the lite client.
@@ -152,18 +210,7 @@ function EnabledState({
 
   return (
     <div>
-      <div style={{
-        display: 'inline-flex', alignItems: 'center', gap: 6, marginBottom: 14,
-        padding: '3px 10px', borderRadius: 999,
-        background: 'var(--wks-bg-input)', border: '1px solid var(--wks-border-input)',
-        color: 'var(--wks-success, #3fb950)', fontSize: '0.65rem', fontWeight: 600,
-      }}>
-        <span style={{
-          width: 6, height: 6, borderRadius: '50%',
-          background: 'var(--wks-success, #3fb950)', boxShadow: '0 0 5px var(--wks-success, #3fb950)',
-        }} />
-        Remote sharing is ON
-      </div>
+      <StatusPill on={true} />
 
       {/* Full app vs mobile client. The full app is the real renderer served at
           /app; mobile is the mobile-first single-page client served at /m. */}
@@ -207,11 +254,17 @@ function EnabledState({
 
       <div style={{
         marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--wks-border-subtle)',
-        fontSize: '0.68rem', color: 'var(--wks-text-faint)', lineHeight: 1.6,
+        fontSize: '0.68rem', color: 'var(--wks-text-faint)', lineHeight: 1.6, marginBottom: 14,
       }}>
         The URL already includes the token, so anyone who can open it gets full control. Only share
-        it over your trusted tailnet.
+        it over your trusted tailnet — see below.
       </div>
+
+      <TailscaleNote />
+
+      <button onClick={onStop} disabled={busy} style={dangerBtnStyle(busy)}>
+        {busy ? 'Stopping…' : 'Stop sharing'}
+      </button>
     </div>
   );
 }
@@ -268,18 +321,24 @@ function ModeTab({ active, onClick, title, children }: { active: boolean; onClic
   );
 }
 
-function Code({ children }: { children: React.ReactNode }) {
-  return (
-    <div style={{
-      fontFamily: 'var(--wks-font-mono, monospace)', fontSize: '0.72rem',
-      color: 'var(--wks-text-primary)',
-      background: 'var(--wks-bg-base)', border: '1px solid var(--wks-border-input)',
-      borderRadius: 4, padding: '6px 8px', overflowX: 'auto', whiteSpace: 'nowrap',
-    }}>
-      {children}
-    </div>
-  );
-}
+const primaryBtnStyle = (disabled: boolean): React.CSSProperties => ({
+  width: '100%', boxSizing: 'border-box',
+  fontSize: '0.8rem', fontWeight: 600, fontFamily: 'inherit',
+  cursor: disabled ? 'default' : 'pointer',
+  background: disabled ? 'var(--wks-bg-input)' : 'var(--wks-accent, #4a9eff)',
+  color: disabled ? 'var(--wks-text-faint)' : 'var(--wks-text-on-accent, #fff)',
+  border: 'none', borderRadius: 6, padding: '9px 14px',
+});
+
+const dangerBtnStyle = (disabled: boolean): React.CSSProperties => ({
+  width: '100%', boxSizing: 'border-box',
+  fontSize: '0.8rem', fontWeight: 600, fontFamily: 'inherit',
+  cursor: disabled ? 'default' : 'pointer',
+  background: 'transparent',
+  color: disabled ? 'var(--wks-text-faint)' : 'var(--wks-danger, #e05555)',
+  border: `1px solid ${disabled ? 'var(--wks-border-input)' : 'var(--wks-danger, #e05555)'}`,
+  borderRadius: 6, padding: '9px 14px',
+});
 
 const inlineCode: React.CSSProperties = {
   fontFamily: 'var(--wks-font-mono, monospace)',

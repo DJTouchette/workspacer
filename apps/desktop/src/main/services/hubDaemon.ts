@@ -33,21 +33,71 @@ let intentionalStop = false;
 const backoff = new RestartBackoff();
 
 /**
- * Remote sharing (opt-in). When WORKSPACER_REMOTE_SHARE is set, the hub binds
+ * Remote sharing (opt-in, toggleable at runtime). When enabled the hub binds
  * beyond loopback so another PC/phone — ideally over a Tailscale tailnet — can
  * reach the bus + the /remote web client. Binding off localhost is meaningless
  * without auth, so in this mode we also require a shared token on /bus.
  *
- *   WORKSPACER_REMOTE_SHARE=1            enable remote sharing
+ * The toggle is persisted to `<config>/remote-share-enabled` and flipped from
+ * the UI (Remote control → Start/Stop sharing), which restarts the hub bound
+ * accordingly. `WORKSPACER_REMOTE_SHARE=1` force-enables it (dev / `make dev`).
+ *
  *   WORKSPACER_REMOTE_ADDR=host:port     bind address (default 0.0.0.0:7895;
  *                                        pin to your tailnet IP to avoid LAN)
  *
- * Default (unset): exactly today's behavior — 127.0.0.1, no token.
+ * Default (off): exactly today's behavior — 127.0.0.1, loopback only.
  */
-const REMOTE_ENABLED = !!process.env.WORKSPACER_REMOTE_SHARE;
-const BIND_ADDR = REMOTE_ENABLED
-  ? (process.env.WORKSPACER_REMOTE_ADDR || `0.0.0.0:${PORT}`)
-  : `127.0.0.1:${PORT}`;
+function remoteFlagFile(): string {
+  return path.join(getConfigDir(), 'remote-share-enabled');
+}
+
+/** Cached effective state so hot paths (per-snapshot telemetry) don't stat the
+ *  flag file each call. Invalidated on toggle and recomputed lazily. */
+let remoteEnabledCache: boolean | null = null;
+
+/** Whether remote sharing is currently on: the env var force-enables it,
+ *  otherwise the persisted UI toggle decides. Cached. */
+function isRemoteEnabled(): boolean {
+  if (remoteEnabledCache !== null) return remoteEnabledCache;
+  let enabled = false;
+  if (process.env.WORKSPACER_REMOTE_SHARE) {
+    enabled = true;
+  } else {
+    try {
+      enabled = fs.readFileSync(remoteFlagFile(), 'utf-8').trim() === '1';
+    } catch {
+      enabled = false;
+    }
+  }
+  remoteEnabledCache = enabled;
+  return enabled;
+}
+
+/** Cheap, cached accessor for other modules (e.g. snapshot telemetry). */
+export function isRemoteShareEnabled(): boolean {
+  return isRemoteEnabled();
+}
+
+/** Persist the remote-share toggle (presence of the flag file = enabled). */
+function writeRemoteShareFlag(enabled: boolean): void {
+  const file = remoteFlagFile();
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    if (enabled) fs.writeFileSync(file, '1', { mode: 0o600 });
+    else fs.rmSync(file, { force: true });
+  } catch (err) {
+    console.error('[hub] failed to persist remote-share flag:', err);
+  }
+  remoteEnabledCache = null; // recompute on next read (env still force-enables)
+}
+
+/** Bind address for the current remote-share state: tailnet-reachable when on,
+ *  loopback-only when off. */
+function bindAddr(): string {
+  return isRemoteEnabled()
+    ? (process.env.WORKSPACER_REMOTE_ADDR || `0.0.0.0:${PORT}`)
+    : `127.0.0.1:${PORT}`;
+}
 
 /**
  * Load (or create + persist) the hub bus token. Always set now — even on the
@@ -76,7 +126,7 @@ const HUB_TOKEN = loadOrCreateToken();
 
 /** Best-effort: a tailnet/LAN IP to advertise in the remote URL. */
 function advertiseHost(): string {
-  const [host] = BIND_ADDR.split(':');
+  const [host] = bindAddr().split(':');
   if (host && host !== '0.0.0.0' && host !== '::') return host;
   // Prefer a Tailscale (100.64.0.0/10) address if present, else first non-internal IPv4.
   let fallback = '';
@@ -115,11 +165,12 @@ function webappDir(): string {
 
 /** Connection info for the remote-control client — for the UI / logs. */
 export function getRemoteShareInfo(): RemoteShareInfo {
+  const enabled = isRemoteEnabled();
   const host = advertiseHost();
   const q = HUB_TOKEN ? `?token=${encodeURIComponent(HUB_TOKEN)}` : '';
-  const hasWebApp = REMOTE_ENABLED && fs.existsSync(webappDir());
+  const hasWebApp = enabled && fs.existsSync(webappDir());
   return {
-    enabled: REMOTE_ENABLED,
+    enabled,
     token: HUB_TOKEN,
     remoteUrl: `http://${host}:${PORT}/m${q}`,
     appUrl: hasWebApp ? `http://${host}:${PORT}/app/${q}` : '',
@@ -207,10 +258,12 @@ function launch(bin: string): Promise<void> {
   killStaleListener(PORT, 'hub');
 
   const pluginsDir = ensurePluginsDir();
-  console.log(`[hub] spawning ${bin} (addr ${BIND_ADDR})`);
+  const addr = bindAddr();
+  const remote = isRemoteEnabled();
+  console.log(`[hub] spawning ${bin} (addr ${addr})`);
   backoff.markStarted();
   const hubArgs = [
-    '--addr', BIND_ADDR,
+    '--addr', addr,
     '--claudemon-events', `${CLAUDEMON_API_URL}/events`,
     '--plugins-dir', pluginsDir,
     // Read-only catalog of bundled examples the user can add from the UI.
@@ -227,12 +280,12 @@ function launch(bin: string): Promise<void> {
   // Serve the full web app (real renderer) at /app/ when remote sharing is on
   // and a web build exists. The lightweight /remote client works regardless.
   const webDir = webappDir();
-  if (REMOTE_ENABLED && fs.existsSync(webDir)) {
+  if (remote && fs.existsSync(webDir)) {
     hubArgs.push('--webapp-dir', webDir);
   }
   child = spawn(bin, hubArgs, daemonSpawnOptions());
 
-  if (REMOTE_ENABLED) {
+  if (remote) {
     const info = getRemoteShareInfo();
     console.log(`[hub] remote sharing ON — lightweight client: ${info.remoteUrl}`);
     if (info.appUrl) console.log(`[hub] full app (real renderer): ${info.appUrl}`);
@@ -269,6 +322,25 @@ function scheduleRestart(bin: string): void {
     if (intentionalStop || child) return; // stopped, or already back up
     launch(bin).catch(err => console.error('[hub] restart failed health check:', err));
   }, delay);
+}
+
+/**
+ * Toggle remote sharing at runtime: persist the flag, then restart the hub so
+ * it re-binds (loopback ⇄ tailnet) and (de)serves the web app. Returns the
+ * fresh share info for the UI. Force-on via WORKSPACER_REMOTE_SHARE can't be
+ * turned off here (the env var always wins) — we surface that to the caller.
+ */
+export async function setRemoteShare(enabled: boolean): Promise<RemoteShareInfo> {
+  writeRemoteShareFlag(enabled);
+  await stopHub();
+  // stopHub cleared readyPromise + set intentionalStop; startHub re-launches
+  // bound for the new state. Await health so the UI's refreshed info is live.
+  try {
+    await startHub();
+  } catch (err) {
+    console.error('[hub] restart after remote-share toggle failed:', err);
+  }
+  return getRemoteShareInfo();
 }
 
 export function stopHub(): Promise<void> {

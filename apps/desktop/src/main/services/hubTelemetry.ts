@@ -16,6 +16,7 @@
  * `agents.list` poll loop — so neither is duplicated here.
  */
 import { publishToHub } from './hubClient';
+import { isRemoteShareEnabled } from './hubDaemon';
 import type { WorkflowRunInfo } from './workflowWatcher';
 import type { ClaudeSessionSnapshot } from './claudeSessionStore';
 
@@ -28,7 +29,7 @@ import type { ClaudeSessionSnapshot } from './claudeSessionStore';
  * desktop-only path is unchanged.
  */
 export function publishSnapshot(snapshot: ClaudeSessionSnapshot): void {
-  if (!process.env.WORKSPACER_REMOTE_SHARE) return;
+  if (!isRemoteShareEnabled()) return;
   publishToHub({ type: 'agent.snapshot', data: snapshot });
 }
 

@@ -219,6 +219,9 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
       client.subscribe('layout.changed', (ev) => callback(ev.data as { version: number; data: unknown })),
     getHubStatus: () => Promise.resolve({ connected: client.isConnected() }),
     getRemoteInfo: () => Promise.resolve({ enabled: true, token, remoteUrl: location.href, appUrl: location.href, busUrl: '', desktopBus: false }),
+    // A web/remote client exists only because the host already enabled sharing,
+    // and it can't restart the host's hub — so this is a no-op that reports on.
+    setRemoteShare: () => { warnOnce('setRemoteShare'); return Promise.resolve({ enabled: true, token, remoteUrl: location.href, appUrl: location.href, busUrl: '', desktopBus: false }); },
     listHubPlugins: () => { warnOnce('listHubPlugins'); return Promise.resolve([]); },
     hubPublish: (event) => client.call<void>('__publish', event).then(() => {}).catch(() => {}),
     installPlugin: () => Promise.resolve({ ok: false, error: 'not available over hub' }),

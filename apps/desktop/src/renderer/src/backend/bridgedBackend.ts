@@ -81,6 +81,7 @@ const HOST_ONLY = [
   'setPluginSettings',
   'onPluginSettingsChanged',
   'getRemoteInfo', // main owns the remote-share/token state
+  'setRemoteShare', // toggling host sharing is a host action (restarts the hub)
   'onBeforeQuit', // Electron app lifecycle
   'setActiveSession', // OS notification / ambient awareness
   'onFocusAgent',

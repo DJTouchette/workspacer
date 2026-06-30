@@ -58,6 +58,7 @@ export const IPC = {
   HUB_PUBLISH: 'hub:publish',
   HUB_GET_STATUS: 'hub:getStatus',
   HUB_GET_REMOTE_INFO: 'hub:getRemoteInfo',
+  HUB_SET_REMOTE_SHARE: 'hub:setRemoteShare',
   HUB_INSTALL_PLUGIN: 'hub:installPlugin',
   HUB_INSPECT_PLUGIN: 'hub:inspectPlugin',
   HUB_LIST_EXAMPLES: 'hub:listExamples',

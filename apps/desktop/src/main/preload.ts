@@ -297,6 +297,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   getRemoteInfo: (): Promise<{ enabled: boolean; token: string; remoteUrl: string; appUrl: string; busUrl: string; desktopBus: boolean }> =>
     ipcRenderer.invoke(IPC.HUB_GET_REMOTE_INFO),
+  setRemoteShare: (enabled: boolean): Promise<{ enabled: boolean; token: string; remoteUrl: string; appUrl: string; busUrl: string; desktopBus: boolean }> =>
+    ipcRenderer.invoke(IPC.HUB_SET_REMOTE_SHARE, enabled),
   installPlugin: (url: string): Promise<{ ok: boolean; plugin?: unknown; error?: string }> =>
     ipcRenderer.invoke(IPC.HUB_INSTALL_PLUGIN, url),
   inspectPlugin: (url: string): Promise<{ ok: boolean; plugin?: unknown; error?: string }> =>

@@ -102,6 +102,8 @@ export interface ElectronAPI {
   layoutSet: (data: unknown) => Promise<LayoutDoc>;
   onLayoutChanged: (callback: (doc: LayoutDoc) => void) => () => void;
   getRemoteInfo: () => Promise<{ enabled: boolean; token: string; remoteUrl: string; appUrl: string; busUrl: string; desktopBus?: boolean }>;
+  /** Toggle remote sharing at runtime (persists + restarts the hub). Returns fresh share info. */
+  setRemoteShare?: (enabled: boolean) => Promise<{ enabled: boolean; token: string; remoteUrl: string; appUrl: string; busUrl: string; desktopBus?: boolean }>;
   listHubPlugins: () => Promise<PluginManifest[]>;
   hubPublish: (event: { type: string; source?: string; data?: unknown }) => Promise<void>;
   installPlugin: (url: string) => Promise<{ ok: boolean; plugin?: PluginManifest; error?: string }>;
