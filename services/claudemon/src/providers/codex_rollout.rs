@@ -18,6 +18,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use directories::BaseDirs;
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncSeekExt, BufReader};
 
@@ -72,12 +73,30 @@ pub fn translate(value: &Value) -> Vec<AgentUpdate> {
     out
 }
 
-/// `$CODEX_HOME` (if set) else `$HOME/.codex`. None if neither is available.
+/// `$CODEX_HOME` (if set) else `<home>/.codex`. The home dir comes from
+/// `directories::BaseDirs` — the same resolver the rest of claudemon uses — so
+/// this works on Windows (USERPROFILE/known folders), where `$HOME` is normally
+/// unset. Reading `$HOME` directly here meant Codex's GUI transcript never
+/// populated on Windows (the rollout was never discovered).
 fn codex_home() -> Option<PathBuf> {
     if let Some(h) = std::env::var_os("CODEX_HOME") {
         return Some(PathBuf::from(h));
     }
-    std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".codex"))
+    BaseDirs::new().map(|b| b.home_dir().join(".codex"))
+}
+
+/// Compare two filesystem paths for equality, tolerant of the differences that
+/// crop up between the cwd we spawn Codex with and the one it records in
+/// `session_meta`: separator style (`\` vs `/`), a trailing separator, and — on
+/// Windows — case. Without this the exact-string match in `discover_rollout`
+/// can miss the right rollout and leave the GUI view empty.
+fn paths_eq(a: &str, b: &str) -> bool {
+    fn norm(s: &str) -> String {
+        let t = s.replace('\\', "/");
+        let t = t.trim_end_matches('/');
+        if cfg!(windows) { t.to_lowercase() } else { t.to_string() }
+    }
+    norm(a) == norm(b)
 }
 
 /// Read the `session_meta.cwd` from the first JSON line of a rollout file.
@@ -139,7 +158,7 @@ async fn discover_rollout(cwd: &str, since: std::time::SystemTime) -> Option<Pat
         // Newest first, so the first cwd match is the most recent session.
         candidates.sort_by(|a, b| b.1.cmp(&a.1));
         for (path, _) in candidates {
-            if rollout_cwd(&path).await.as_deref() == Some(cwd) {
+            if rollout_cwd(&path).await.is_some_and(|c| paths_eq(&c, cwd)) {
                 return Some(path);
             }
         }
@@ -270,6 +289,19 @@ mod tests {
     fn empty_messages_are_skipped() {
         assert!(translate(&ev(json!({ "type": "agent_message", "message": "" }))).is_empty());
         assert!(translate(&ev(json!({ "type": "user_message" }))).is_empty());
+    }
+
+    #[test]
+    fn paths_eq_tolerates_separators_and_trailing_slash() {
+        assert!(paths_eq("/work/repo", "/work/repo/"));
+        assert!(paths_eq("C:\\work\\repo", "C:/work/repo"));
+        assert!(!paths_eq("/work/repo", "/work/other"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn paths_eq_is_case_insensitive_on_windows() {
+        assert!(paths_eq("C:\\Work\\Repo", "c:/work/repo"));
     }
 
     #[test]
