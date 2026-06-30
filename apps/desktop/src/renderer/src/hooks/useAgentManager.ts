@@ -204,7 +204,16 @@ export function useAgentManager() {
       tabs: agentTabs,
       activeTabId: agentActiveTab,
     };
-    setAgents((prev) => [...prev, agent]);
+    // Replace, don't append: a managed (codex/opencode) session pushes its first
+    // snapshot — which the auto-adopt effect turns into a provider-less "Claude"
+    // card — before this spawn's IPC even returns. Both share the deterministic
+    // id, so drop any card already holding this id/session and commit the fully
+    // specified one (correct provider/tabs). Without this the adopted card wins
+    // the `find(byId)` lookup and the pane shows "Claude" for a Codex agent.
+    setAgents((prev) => [
+      ...prev.filter((a) => a.id !== agent.id && (!sessionId || a.sessionId !== sessionId)),
+      agent,
+    ]);
     setActiveAgentId(agent.id);
     return agent.id;
   }, []);
@@ -277,17 +286,21 @@ export function useAgentManager() {
    *  the MCP facade / by another agent), so it appears as a card. Idempotent:
    *  does nothing if some workspace already owns this sessionId. Resolves nesting
    *  by matching parentSessionId to an existing agent's sessionId. */
-  const adoptAgent = useCallback((opts: { sessionId: string; cwd: string; name?: string; parentSessionId?: string }) => {
+  const adoptAgent = useCallback((opts: { sessionId: string; cwd: string; name?: string; parentSessionId?: string; provider?: AgentProvider }) => {
     setAgents((prev) => {
       if (prev.some((a) => a.sessionId === opts.sessionId)) return prev; // already tracked — dedupe inside the updater (race-safe)
       const parent = opts.parentSessionId ? prev.find((a) => a.sessionId === opts.parentSessionId) : undefined;
-      const { tabs, activeTabId } = defaultAgentTabs(opts.sessionId, opts.cwd);
+      // Carry the provider so an adopted card (e.g. a Codex session spawned via
+      // the MCP facade or the web client) renders the right label/logo instead
+      // of defaulting to Claude.
+      const { tabs, activeTabId } = defaultAgentTabs(opts.sessionId, opts.cwd, undefined, opts.provider);
       const agent: AgentWorkspace = {
         // Same deterministic id any other client would mint for this session, so
         // concurrent adoptions converge on one card instead of racing ids.
         id: agentIdForSession(opts.sessionId),
         name: opts.name?.trim() || deriveAgentName(opts.cwd),
         cwd: opts.cwd,
+        provider: opts.provider,
         sessionId: opts.sessionId,
         parentId: parent?.id,
         tabs,

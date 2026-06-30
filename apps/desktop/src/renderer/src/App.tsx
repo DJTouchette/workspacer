@@ -427,7 +427,7 @@ function App() {
       if (agents.some((a) => a.sessionId === sessionId)) continue;
       // Mark as adopted before calling to avoid redundant calls from re-renders.
       adoptedRef.current.add(sessionId);
-      adoptAgent({ sessionId, cwd: snapshot.cwd, name: snapshot.label, parentSessionId: snapshot.parentSessionId });
+      adoptAgent({ sessionId, cwd: snapshot.cwd, name: snapshot.label, parentSessionId: snapshot.parentSessionId, provider: snapshot.provider as AgentProvider | undefined });
     }
   }, [snapshotBySession, agents, adoptAgent, sessionPhase]);
 

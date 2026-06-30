@@ -152,4 +152,7 @@ export interface ClaudeSessionSnapshot {
   label?: string;
   /** Session id of the agent that spawned this one — drives nesting in the UI. */
   parentSessionId?: string;
+  /** Coding-agent backend ('claude' | 'codex' | 'opencode' | 'pi'). Set at spawn
+   *  time; lets an adopted card render the right provider label/logo. */
+  provider?: string;
 }
