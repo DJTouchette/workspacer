@@ -16,9 +16,26 @@ import * as os from 'os';
 import { randomUUID } from 'crypto';
 import { claudeSessionStore } from './claudeSessionStore';
 import { claudemonSessionClient } from './claudemonSessionClient';
-import { resolveAgentBinary, type AgentProvider } from './agentProviders';
+import { resolveAgentBinary, isAgentBinaryInstalled, type AgentProvider } from './agentProviders';
 import { MCP_FACADE_URL, managedFacadeInstructions } from './mcpConfig';
 import { ensureSupervisorHome } from './supervisorSkill';
+import { notifySystem } from './systemNotice';
+
+/** Install hints surfaced when a provider CLI isn't on PATH. */
+const INSTALL_HINT: Record<Exclude<AgentProvider, 'claude'>, string> = {
+  codex: 'Install the Codex CLI and make sure `codex` is on your PATH.',
+  opencode: 'Install OpenCode and make sure `opencode` is on your PATH.',
+  pi: 'Install Pi and make sure `pi` is on your PATH.',
+};
+
+/** Pre-flight: fail fast with a clear banner if the provider CLI is missing,
+ *  rather than spawning a process that dies with an opaque ENOENT. */
+function assertProviderInstalled(provider: Exclude<AgentProvider, 'claude'>): void {
+  if (isAgentBinaryInstalled(provider)) return;
+  const title = `${provider} CLI not found`;
+  notifySystem({ level: 'error', key: `missing-${provider}`, title, detail: INSTALL_HINT[provider] });
+  throw new Error(`${title}. ${INSTALL_HINT[provider]}`);
+}
 
 export interface ManagedSpawnOptions {
   /** The managed backend to launch (never 'claude' — caller dispatches that). */
@@ -48,6 +65,7 @@ export interface ManagedSpawnOptions {
  */
 export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<string> {
   const { provider } = opts;
+  assertProviderInstalled(provider);
   // Codex is a *hybrid*: its own TUI runs in a PTY (the Term view) and claudemon
   // tails the rollout transcript for the GUI view — not the headless app-server.
   if (provider === 'codex') return spawnCodexHybrid(opts);

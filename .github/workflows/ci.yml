@@ -1,0 +1,146 @@
+name: ci
+
+# Test + typecheck/lint on every PR and every push to master. Complements
+# release.yml (which only smoke-BUILDS the installers). Toolchain setup/versions
+# here mirror release.yml exactly (Node 20, Go 1.25.4, Rust stable, the two
+# `npm ci`s, and the same caches).
+on:
+  pull_request:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+# A newer push to the same ref cancels the older in-progress run on PRs.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Desktop: TypeScript typecheck (main + renderer) and the vitest suites.
+  # apps/desktop and apps/desktop/src/renderer each have their own
+  # package-lock.json, so both need their own `npm ci` (same as release.yml).
+  # ---------------------------------------------------------------------------
+  desktop:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: |
+            apps/desktop/package-lock.json
+            apps/desktop/src/renderer/package-lock.json
+
+      # apps/desktop's postinstall runs electron-rebuild (better-sqlite3 against
+      # Electron's ABI). It needs Electron's prebuilt binaries; on a headless
+      # Linux runner that's fine for the rebuild step.
+      - name: Install desktop deps
+        run: npm ci
+
+      - name: Install renderer deps
+        working-directory: apps/desktop/src/renderer
+        run: npm ci
+
+      # tsconfig.main.json emits by default (it's the build config), so force
+      # --noEmit for a pure typecheck.
+      - name: Typecheck main
+        run: npx tsc -p tsconfig.main.json --noEmit
+
+      # renderer tsconfig.json already has noEmit:true.
+      - name: Typecheck renderer
+        working-directory: apps/desktop/src/renderer
+        run: npx tsc -p tsconfig.json --noEmit
+
+      # `npm test` => test:main (vitest run) + test:renderer (vitest run in
+      # src/renderer). Both already use `run`, so vitest does not watch.
+      # NOTE (2026-06-29): a few tests are currently failing locally on
+      # in-progress branches (hubCapabilitiesProfiles.test.ts in main; one
+      # renderer test). They are real test failures CI is meant to surface, not
+      # a tooling problem -- once those edits land green this job goes green.
+      - name: Test
+        env:
+          CI: 'true'
+        run: npm test
+
+  # ---------------------------------------------------------------------------
+  # claudemon (Rust): cargo test + clippy. Same Swatinem cache as release.yml.
+  # ---------------------------------------------------------------------------
+  claudemon:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/claudemon
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache Rust build (claudemon)
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: services/claudemon
+
+      - name: Test
+        run: cargo test
+
+      # Clippy reports 27 lint warnings today (e.g. write_with_newline,
+      # redundant_locals), so `-D warnings` would fail the build. Run clippy
+      # without `-D warnings` for now (it exits 0); tighten to
+      # `cargo clippy --all-targets -- -D warnings` once those are cleaned up.
+      - name: Clippy
+        run: cargo clippy --all-targets
+
+  # ---------------------------------------------------------------------------
+  # tui (Rust): cargo test.
+  # ---------------------------------------------------------------------------
+  tui:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/tui
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build (tui)
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/tui
+
+      - name: Test
+        run: cargo test
+
+  # ---------------------------------------------------------------------------
+  # hub (Go): go vet + go test. Go version pinned to match release.yml.
+  # ---------------------------------------------------------------------------
+  hub:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/hub
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.4'
+          cache-dependency-path: services/hub/go.sum
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...

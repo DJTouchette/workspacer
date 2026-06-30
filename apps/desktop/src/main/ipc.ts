@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow, dialog } from 'electron';
+import { ipcMain, BrowserWindow, dialog, shell } from 'electron';
 import * as os from 'os';
 import * as fs from 'fs';
 import { randomUUID } from 'crypto';
@@ -15,6 +15,7 @@ import { claudemonSessionClient } from './services/claudemonSessionClient';
 import { buildClaudeArgv } from './services/claudeResolver';
 import { resolveAgentBinary } from './services/agentProviders';
 import { spawnManagedAgent } from './services/managedSpawn';
+import { logsDir } from './services/logFile';
 import { facadeSpawnArgs, buildSessionMcpConfig } from './services/mcpConfig';
 import { installSupervisorSkill, ensureSupervisorHome } from './services/supervisorSkill';
 import { importChromeCookies, importChromeCookiesViaCDP } from './services/chromeCookieImport';
@@ -247,6 +248,12 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // Connection info for the remote-control client (URL + token for a QR/share).
   ipcMain.handle(IPC.HUB_GET_REMOTE_INFO, () => getRemoteShareInfo());
   ipcMain.handle(IPC.HUB_SET_REMOTE_SHARE, (_event, enabled: boolean) => setRemoteShare(!!enabled));
+  ipcMain.handle(IPC.LOGS_OPEN_FOLDER, async () => {
+    const dir = logsDir();
+    try { await fs.promises.mkdir(dir, { recursive: true }); } catch { /* best effort */ }
+    const err = await shell.openPath(dir);
+    return { ok: !err, error: err || undefined };
+  });
   // When remote auth is on, the hub's mutating routes require the token; the
   // local UI presents it via the same Authorization header a remote client uses.
   const hubAuthHeaders = (): Record<string, string> => {

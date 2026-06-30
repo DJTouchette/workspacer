@@ -46,6 +46,14 @@ export function resolveAgentBinary(provider: Exclude<AgentProvider, 'claude'>): 
   return findOnPath(binNames(base)) ?? base;
 }
 
+/** True if the provider's CLI is on PATH right now. Used for a spawn pre-flight
+ *  so a missing CLI surfaces a clear "install it" message instead of a doomed
+ *  process that fails opaquely. PATH is read fresh, so a just-installed CLI is
+ *  detected without a restart. */
+export function isAgentBinaryInstalled(provider: Exclude<AgentProvider, 'claude'>): boolean {
+  return findOnPath(binNames(provider)) !== null;
+}
+
 export interface AgentArgvOptions extends ClaudeArgvOptions {
   /** The agent backend to launch. Defaults to 'claude'. */
   provider?: AgentProvider;

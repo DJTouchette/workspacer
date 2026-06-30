@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -170,7 +171,14 @@ func (m *Manager) sandboxSidecar(mf Manifest) (command string, args []string, ru
 		return "", nil, false
 	default: // RunUnsandboxed
 		if mode != sandbox.ModeOff {
+			// best-effort + no available mechanism: the sidecar is ACTUALLY running
+			// unconfined and nothing else makes that visible. Warn loudly so the
+			// operator sees the risk in the hub output, not just on the bus.
+			log.Printf("[plugin] WARNING: sidecar %q is running WITHOUT sandboxing (no confinement mechanism available on this platform / mode=best-effort: %s) — it has full access to your files and network. Set WORKSPACER_PLUGIN_SANDBOX=enforce to refuse unconfined plugins.", mf.ID, res.Note)
 			m.pub.Publish(event.New("plugin.unsandboxed", "hub", map[string]string{"id": mf.ID, "reason": res.Note}))
+		} else {
+			// mode=off: the operator explicitly turned sandboxing off — one quiet note.
+			log.Printf("[plugin] sidecar %q running unsandboxed (WORKSPACER_PLUGIN_SANDBOX=off)", mf.ID)
 		}
 		return cmd, cmdArgs, true
 	}

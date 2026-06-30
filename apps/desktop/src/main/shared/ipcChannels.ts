@@ -16,6 +16,8 @@ export const IPC = {
   // ── Notifications / ambient awareness ──
   NOTIFY_SET_ACTIVE_SESSION: 'notify:set-active-session', // send (renderer → main)
   NOTIFY_FOCUS_AGENT: 'notify:focus-agent', // push (main → renderer)
+  SYSTEM_NOTICE: 'system:notice', // push (main → renderer): daemon/startup failures etc.
+  LOGS_OPEN_FOLDER: 'logs:openFolder', // invoke (renderer → main): reveal the logs dir
 
   // ── Generic terminal ──
   TERMINAL_CREATE: 'terminal:create',

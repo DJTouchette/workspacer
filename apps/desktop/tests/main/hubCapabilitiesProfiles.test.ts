@@ -19,6 +19,10 @@ vi.mock('../../src/main/services/hubClient', () => ({
 }));
 vi.mock('../../src/main/services/claudeProfiles', () => ({ claudeProfiles: { addProfile } }));
 
+// Catalog capabilities (incl. claude.profiles.add) are registered by main only
+// when catalog isn't delegated to the brain. Force the non-delegated path so
+// this test exercises main's handler regardless of the runtime default.
+vi.mock('../../src/main/services/brainDelegation', () => ({ DELEGATE_CATALOG_TO_BRAIN: false }));
 // Stub the heavy/native/electron-touching deps so the module imports cleanly.
 vi.mock('electron', () => ({ Notification: { isSupported: () => false } }));
 vi.mock('../../src/main/services/claudeSessionStore', () => ({ claudeSessionStore: {} }));

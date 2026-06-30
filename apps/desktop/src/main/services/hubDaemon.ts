@@ -22,6 +22,7 @@ import { CLAUDEMON_API_URL } from './claudemonDaemon';
 import { DELEGATE_CATALOG_TO_BRAIN, DESKTOP_RENDERER_USES_BUS } from './brainDelegation';
 import { killStaleListener, waitForHealth as waitForHealthShared, PORTS, RestartBackoff, daemonSpawnOptions, gracefulStop } from '../lib/daemonUtils';
 import { getConfigDir } from './configService';
+import { notifySystem } from './systemNotice';
 
 const PORT = PORTS.hub;
 const HEALTH_TIMEOUT_MS = 5000;
@@ -286,9 +287,9 @@ function launch(bin: string): Promise<void> {
   child = spawn(bin, hubArgs, daemonSpawnOptions());
 
   if (remote) {
-    const info = getRemoteShareInfo();
-    console.log(`[hub] remote sharing ON — lightweight client: ${info.remoteUrl}`);
-    if (info.appUrl) console.log(`[hub] full app (real renderer): ${info.appUrl}`);
+    // Log the reachable address but NOT the token — the tokened URL/QR lives in
+    // the Remote control panel only, so the secret never lands in logs/terminals.
+    console.log(`[hub] remote sharing ON — bound to ${addr}. Open Remote control for the tokened link/QR.`);
   }
 
   // AbortController so a fast-exiting daemon cancels the health-check poll
@@ -314,7 +315,12 @@ function launch(bin: string): Promise<void> {
 function scheduleRestart(bin: string): void {
   const delay = backoff.nextDelay();
   if (delay === null) {
-    console.error('[hub] crashed too many times; giving up auto-restart. Restart the app to recover.');
+    notifySystem({
+      level: 'warn',
+      key: 'hub-crashloop',
+      title: 'Control plane (hub) keeps crashing',
+      detail: 'Gave up restarting it. Plugins and remote sharing stay unavailable until you restart the app.',
+    });
     return;
   }
   console.warn(`[hub] unexpected exit — restarting in ${delay}ms`);

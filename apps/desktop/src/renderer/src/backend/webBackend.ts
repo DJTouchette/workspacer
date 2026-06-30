@@ -267,6 +267,8 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     onBeforeQuit: () => () => {},
     setActiveSession: () => { /* no ambient OS notifications on web */ },
     onFocusAgent: () => () => {},
+    onSystemNotice: () => () => {}, // host-process notices; not relevant to the web client
+    openLogsFolder: () => { warnOnce('openLogsFolder'); return Promise.resolve({ ok: false, error: 'not available on web' }); },
   };
 
   return api;

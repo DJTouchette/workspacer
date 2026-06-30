@@ -175,6 +175,10 @@ export interface ElectronAPI {
   // Notifications / ambient awareness
   setActiveSession: (sessionId: string | null) => void;
   onFocusAgent: (callback: (sessionId: string) => void) => () => void;
+  /** Main-process system notices (daemon/startup failures) for an in-app banner. */
+  onSystemNotice?: (callback: (notice: { level: 'error' | 'warn' | 'info'; title: string; detail?: string; key?: string }) => void) => () => void;
+  /** Reveal the logs folder in the OS file manager (for bug reports). */
+  openLogsFolder?: () => Promise<{ ok: boolean; error?: string }>;
 }
 
 declare global {

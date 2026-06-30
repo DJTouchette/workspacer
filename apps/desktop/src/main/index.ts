@@ -14,6 +14,8 @@ import { startClaudemonConversationBridge, stopClaudemonConversationBridge } fro
 import { startHub, stopHub } from './services/hubDaemon';
 import { startMcpFacade, stopMcpFacade } from './services/mcpFacadeDaemon';
 import { setHubMainWindow, startHubClient, stopHubClient } from './services/hubClient';
+import { setNoticeWindow, notifySystem } from './services/systemNotice';
+import { initFileLogging } from './services/logFile';
 import { stopAllTerminals } from './services/terminalShare';
 import { workflowWatcher } from './services/workflowWatcher';
 import { registerHubCapabilities } from './services/hubCapabilities';
@@ -207,6 +209,7 @@ function createWindow(): void {
   claudeSessionStore.setMainWindow(mainWindow);
   agentNotifier.setMainWindow(mainWindow);
   setHubMainWindow(mainWindow);
+  setNoticeWindow(mainWindow);
 
   // claudemon daemon owns hook ingestion + transcript parsing. We spawn it,
   // run `claudemon init` to merge our hooks into ~/.claude/settings.json,
@@ -242,10 +245,22 @@ function createWindow(): void {
             console.error('[main] failed to start mcp facade — supervisors will lack action tools:', err)
           );
         })
-        .catch(err => console.error('[main] failed to start hub:', err));
+        .catch(err => {
+          notifySystem({
+            level: 'warn',
+            key: 'hub-start',
+            title: 'Control plane (hub) failed to start',
+            detail: 'Plugins and remote sharing are unavailable. Agents still work locally. ' + (err?.message ?? String(err)),
+          });
+        });
     })
     .catch(err => {
-      console.error('[main] failed to start claudemon — Claude sessions will not get hook events:', err);
+      notifySystem({
+        level: 'error',
+        key: 'claudemon-start',
+        title: 'Agent daemon (claudemon) failed to start',
+        detail: 'Claude sessions won’t receive hook events or appear correctly. ' + (err?.message ?? String(err)),
+      });
     });
 
   // Prevent Electron from navigating to dropped files
@@ -289,6 +304,9 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  // Persist logs to a file before anything spawns, so daemon output + console
+  // are captured for bug reports (otherwise they're lost on quit).
+  initFileLogging();
   // Dock/taskbar icon. The BrowserWindow `icon` option covers the window icon
   // on Linux/Windows, but the macOS dock ignores it (it reads the app bundle,
   // which is Electron's default in dev), and Windows needs an explicit

@@ -104,7 +104,7 @@ export function registerHubCapabilities(): void {
   // capabilities. The session runs headless in claudemon; a desktop pane can
   // attach to it later via the normal attach flow.
   registerCapability('agents.spawn', async (params: unknown) => {
-    const { provider, cwd, profileId, model, skipPermissions, resumeSessionId, cols, rows, supervisor, mcpFacade, label, parentSessionId } =
+    const { provider, cwd, profileId, model, skipPermissions: reqSkip, resumeSessionId, cols, rows, supervisor, mcpFacade, label, parentSessionId } =
       (params ?? {}) as {
         provider?: AgentProvider;
         cwd?: string;
@@ -119,6 +119,16 @@ export function registerHubCapabilities(): void {
         label?: string;
         parentSessionId?: string;
       };
+    // SECURITY: this capability is the REMOTE/web/MCP spawn path (the local
+    // desktop spawns over IPC). Driving an agent is already code execution on
+    // the host, but we refuse to let a remote caller silently auto-bypass every
+    // approval (`--dangerously-skip-permissions` / bypass-sandbox). Approvals
+    // still surface and can be answered remotely; a YOLO agent must be started
+    // locally. So `skipPermissions` is forced off here.
+    if (reqSkip) {
+      console.warn('[hub] agents.spawn: ignoring skipPermissions=true from a bus client — remote spawns never auto-bypass approvals.');
+    }
+    const skipPermissions = false;
     // Managed (Tier-2) backend — Codex / OpenCode / Pi run through claudemon's
     // adapter, not a Claude PTY. Shares the dispatch with the `claude:spawn` IPC
     // handler so this path can't silently fall back to spawning Claude (it did

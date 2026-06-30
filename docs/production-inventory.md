@@ -221,6 +221,10 @@ Claude Profiles (CRUD).
 
 ## 5. hub — Go control-plane (`services/hub`)
 
+> **Security:** for the remote-sharing threat model (loopback default, tailnet
+> deployment, token-in-URL, sandbox caveats), see
+> [`docs/remote-sharing-security.md`](remote-sharing-security.md).
+
 | Feature | Location | Status | Keep? |
 |---|---|---|---|
 | In-memory pub/sub broker (drop-not-block) | `internal/broker` | WORKING (5 tests) | |

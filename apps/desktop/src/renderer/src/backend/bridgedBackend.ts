@@ -85,6 +85,8 @@ const HOST_ONLY = [
   'onBeforeQuit', // Electron app lifecycle
   'setActiveSession', // OS notification / ambient awareness
   'onFocusAgent',
+  'onSystemNotice', // main-process daemon/startup notices; IPC-only push
+  'openLogsFolder', // opens the host's logs dir in its file manager
   'onLibraryChanged', // IPC change event; the bus has no library-change topic
 ] as const satisfies readonly (keyof ElectronAPI)[];
 

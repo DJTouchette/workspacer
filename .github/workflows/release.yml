@@ -25,10 +25,13 @@ jobs:
           # Windows → NSIS installer + portable .exe (x64).
           - os: windows-latest
             artifact: windows
-          # macOS → .dmg. macos-14 is Apple-silicon (arm64); macos-13 is x64.
-          # Pick one to start; add the other as a second leg when you want both.
+          # macOS → .dmg, both architectures. macos-14 is Apple-silicon (arm64);
+          # macos-13 is Intel (x64). Each leg builds the daemons natively for its
+          # arch and attaches its own .dmg to the release.
           - os: macos-14
             artifact: macos-arm64
+          - os: macos-13
+            artifact: macos-x64
           # Linux → AppImage. AppImage is distro-agnostic (runs on Arch, Fedora,
           # Debian, …); GitHub only offers Ubuntu runners, and we pin the OLDEST
           # supported Ubuntu so the glibc the AppImage links against stays broadly

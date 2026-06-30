@@ -299,6 +299,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke(IPC.HUB_GET_REMOTE_INFO),
   setRemoteShare: (enabled: boolean): Promise<{ enabled: boolean; token: string; remoteUrl: string; appUrl: string; busUrl: string; desktopBus: boolean }> =>
     ipcRenderer.invoke(IPC.HUB_SET_REMOTE_SHARE, enabled),
+  openLogsFolder: (): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke(IPC.LOGS_OPEN_FOLDER),
   installPlugin: (url: string): Promise<{ ok: boolean; plugin?: unknown; error?: string }> =>
     ipcRenderer.invoke(IPC.HUB_INSTALL_PLUGIN, url),
   inspectPlugin: (url: string): Promise<{ ok: boolean; plugin?: unknown; error?: string }> =>
@@ -413,6 +415,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on(IPC.NOTIFY_FOCUS_AGENT, handler);
     return () => {
       ipcRenderer.removeListener(IPC.NOTIFY_FOCUS_AGENT, handler);
+    };
+  },
+  onSystemNotice: (callback: (notice: { level: 'error' | 'warn' | 'info'; title: string; detail?: string; key?: string }) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, notice: { level: 'error' | 'warn' | 'info'; title: string; detail?: string; key?: string }) => callback(notice);
+    ipcRenderer.on(IPC.SYSTEM_NOTICE, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.SYSTEM_NOTICE, handler);
     };
   },
 });

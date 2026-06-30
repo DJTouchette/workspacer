@@ -19,6 +19,7 @@ import SpawnAgentDialog from './components/SpawnAgentDialog';
 // startup bundle — it only mounts when the user opens the share panel.
 const RemoteShareDialog = lazy(() => import('./components/RemoteShareDialog'));
 import WebFolderPicker from './components/WebFolderPicker';
+import SystemNotices from './components/SystemNotices';
 import ScrollContainer, { ScrollContainerRef } from './components/ScrollContainer';
 import ShortcutOverlay from './components/ShortcutOverlay';
 import ChordHint from './components/ChordHint';
@@ -1331,6 +1332,9 @@ function App() {
 
       {/* Host filesystem browser for the web build's pickFolder (inert on desktop). */}
       <WebFolderPicker />
+
+      {/* Main-process system notices (daemon/startup failures) as in-app banners. */}
+      <SystemNotices />
 
       <LibrarySidePanel
         visible={showLibraryPanel}

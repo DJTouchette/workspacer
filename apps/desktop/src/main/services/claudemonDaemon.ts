@@ -14,6 +14,7 @@ import * as path from 'path';
 import { spawn, ChildProcess } from 'child_process';
 import { app } from 'electron';
 import { killStaleListener, waitForHealth as waitForHealthShared, PORTS, RestartBackoff, daemonSpawnOptions, gracefulStop } from '../lib/daemonUtils';
+import { notifySystem } from './systemNotice';
 
 const HOOK_PORT = PORTS.claudemonHook;
 const API_PORT = PORTS.claudemonApi;
@@ -89,7 +90,12 @@ function launch(bin: string): Promise<void> {
 function scheduleRestart(bin: string): void {
   const delay = backoff.nextDelay();
   if (delay === null) {
-    console.error('[claudemon] crashed too many times; giving up auto-restart. Restart the app to recover.');
+    notifySystem({
+      level: 'error',
+      key: 'claudemon-crashloop',
+      title: 'Agent daemon (claudemon) keeps crashing',
+      detail: 'Gave up restarting it after repeated failures. Claude sessions won’t work until you restart the app.',
+    });
     return;
   }
   console.warn(`[claudemon] unexpected exit — restarting in ${delay}ms`);
