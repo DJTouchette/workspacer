@@ -262,7 +262,7 @@ const NavBar: React.FC<NavBarProps> = ({ tabs, activeTabId, onTabClick, onAddTab
                 </div>
                 <MenuButton label="Claude" icon={<PaneIcon type="claude" size={13} />} onClick={async () => {
                   setShowMenu(false);
-                  const folder = await window.electronAPI.pickFolder();
+                  const folder = await window.electronAPI.pickFolder(config.agents?.defaultCwd?.trim() || undefined);
                   if (!folder) return;
                   // Check for profiles — show picker if more than 1
                   let profileId: string | undefined;

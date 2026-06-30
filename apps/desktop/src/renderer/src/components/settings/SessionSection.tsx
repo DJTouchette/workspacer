@@ -33,6 +33,21 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
   const defaultProvider = config.agents?.defaultProvider ?? 'claude';
   const guiFontScale = config.ui.guiFontScale ?? 1.15;
   const diffView = config.ui.diffView ?? 'stacked';
+
+  // Default directory for new agents. Local state so typing is smooth; persisted
+  // on blur / Enter (and immediately when picked via Browse).
+  const [defaultCwd, setDefaultCwd] = React.useState(config.agents?.defaultCwd ?? '');
+  React.useEffect(() => { setDefaultCwd(config.agents?.defaultCwd ?? ''); }, [config.agents?.defaultCwd]);
+  const saveDefaultCwd = (value: string) => {
+    const v = value.trim();
+    if (v === (config.agents?.defaultCwd ?? '')) return;
+    save({ agents: { ...config.agents, defaultCwd: v } });
+  };
+  const browseDefaultCwd = async () => {
+    const picked = await window.electronAPI.pickFolder?.(defaultCwd || undefined);
+    if (picked) { setDefaultCwd(picked); saveDefaultCwd(picked); }
+  };
+
   return (
     <Section title="Session">
       <CheckRow
@@ -60,6 +75,38 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
       <div style={{ fontSize: '0.55rem', color: 'var(--wks-text-disabled)' }}>
         The coding agent pre-selected in the spawn dialog. Codex and OpenCode run via claudemon's
         adapters with live telemetry; Claude is the default.
+      </div>
+
+      <Row label="Default directory">
+        <div style={{ display: 'flex', gap: 4, flex: 1, minWidth: 0 }}>
+          <input
+            value={defaultCwd}
+            onChange={(e) => setDefaultCwd(e.target.value)}
+            onBlur={(e) => saveDefaultCwd(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') saveDefaultCwd((e.target as HTMLInputElement).value); }}
+            placeholder="App launch directory"
+            spellCheck={false}
+            style={{
+              flex: 1, minWidth: 0, fontSize: '0.7rem', fontFamily: 'inherit',
+              background: 'var(--wks-bg-base)', color: 'var(--wks-text-primary)',
+              border: '1px solid var(--wks-border-input)', borderRadius: 4, padding: '4px 7px',
+            }}
+          />
+          <button
+            onClick={browseDefaultCwd}
+            style={{
+              fontSize: '0.7rem', fontFamily: 'inherit', cursor: 'pointer', whiteSpace: 'nowrap',
+              background: 'var(--wks-bg-input)', color: 'var(--wks-text-tertiary)',
+              border: '1px solid var(--wks-border-input)', borderRadius: 4, padding: '0 10px',
+            }}
+          >
+            Browse…
+          </button>
+        </div>
+      </Row>
+      <div style={{ fontSize: '0.55rem', color: 'var(--wks-text-disabled)' }}>
+        Where the spawn dialog opens (and where Browse… starts). Leave blank to use the app's
+        launch directory.
       </div>
 
       <Row label="Default Claude view">

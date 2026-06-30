@@ -128,9 +128,14 @@ export interface Config {
     /** Concrete model ids seen across sessions, surfaced in the spawn dropdown. */
     seenModels?: string[];
   };
-  /** Default coding-agent backend pre-selected in the spawn dialog. */
+  /** Defaults applied when spawning a new agent. */
   agents?: {
+    /** Coding-agent backend pre-selected in the spawn dialog. */
     defaultProvider?: AgentProvider;
+    /** Directory the spawn dialog opens at (and where Browse… starts). Absent
+     *  falls back to the app's launch cwd. Set this so new agents don't default
+     *  to the install path. */
+    defaultCwd?: string;
   };
   /** Optional fleet-supervisor settings (opt-in; absent = sensible defaults). */
   supervisor?: SupervisorConfig;

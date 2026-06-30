@@ -1351,7 +1351,7 @@ function App() {
 
       {showSpawnDialog && (
         <SpawnAgentDialog
-          defaultCwd={appCwdRef.current}
+          defaultCwd={config.agents?.defaultCwd?.trim() || appCwdRef.current}
           defaultProvider={config.agents?.defaultProvider}
           onSpawn={handleSpawnAgent}
           onCancel={() => setShowSpawnDialog(false)}
