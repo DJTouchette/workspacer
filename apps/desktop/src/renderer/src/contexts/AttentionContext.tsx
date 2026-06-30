@@ -110,6 +110,22 @@ export const AttentionProvider: React.FC<ProviderProps> = ({
     [feed, selectedSig],
   );
 
+  // Keep the open agent's inbox clear. openAgent clears an agent's items at the
+  // moment you open it, but while you're piloting that agent it keeps working —
+  // finishing, asking, hitting an approval — and each of those would re-land in
+  // the inbox for the very agent on your screen. So while piloting, auto-dismiss
+  // any item for the active agent as it surfaces: you're already looking at it,
+  // and the live prompt still shows in its own pane. Gated on 'piloting' so the
+  // Fleet/Inbox triage views still list the active agent's items normally. Items
+  // for OTHER agents are untouched. `feed` already excludes dismissed items, so
+  // this fires only on genuinely new items and settles immediately.
+  useEffect(() => {
+    if (viewLevel !== 'piloting' || !activeAgentId) return;
+    for (const it of feed) {
+      if (it.agentId === activeAgentId) dismiss(it.signature);
+    }
+  }, [feed, viewLevel, activeAgentId, dismiss]);
+
   const moveSelection = useCallback((delta: number) => {
     if (feed.length === 0) return;
     const idx = feed.findIndex((it) => it.signature === selectedSig);

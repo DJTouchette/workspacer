@@ -105,4 +105,12 @@ describe('Mission Control surfaces', () => {
     // Its item is dismissed, so the card no longer lingers in the inbox.
     expect(screen.queryByText('Permission Required: Bash')).not.toBeInTheDocument();
   });
+
+  it("keeps the piloted agent's inbox clear as new items arrive", () => {
+    // activeAgentId is 'a1'; while piloting it, its approval must not surface in
+    // the inbox even though the snapshot has a pending approval (you're already
+    // looking at the agent, and its pane shows the live prompt).
+    renderSurfaces('piloting');
+    expect(screen.queryByText('Permission Required: Bash')).not.toBeInTheDocument();
+  });
 });
