@@ -125,7 +125,10 @@ function withGlobalWorkspace(list: AgentWorkspace[]): AgentWorkspace[] {
 
 export function useAgentManager() {
   const [agents, setAgents] = useState<AgentWorkspace[]>(() => withGlobalWorkspace([]));
-  const [activeAgentId, setActiveAgentId] = useState<string>('');
+  // Start on the global workspace so the command palette (and other pane
+  // operations) have a valid target before the saved session finishes loading.
+  // loadAgentsFromSession overrides this once the session is ready.
+  const [activeAgentId, setActiveAgentId] = useState<string>(GLOBAL_WORKSPACE_ID);
 
   // Refs let the (stable) callbacks below read current state without being
   // re-created on every agent/tab change.
