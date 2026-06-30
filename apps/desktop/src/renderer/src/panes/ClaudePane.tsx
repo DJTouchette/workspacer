@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useCallback, useState, useMemo } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useCallback, useState, useMemo } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebFontsAddon } from '@xterm/addon-web-fonts';
@@ -110,21 +110,6 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
   const contentAreaRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  // Escape hatch for the rare backdrop-filter compositing garble: nudge the
-  // content area onto a fresh raster (toggle a composited property for one
-  // frame). Clears stale pixels without resetting scroll position or the PTY.
-  const forceRepaint = useCallback(() => {
-    const el = contentAreaRef.current;
-    if (!el) return;
-    el.style.transform = 'translateZ(0)';
-    el.style.opacity = '0.999';
-    requestAnimationFrame(() => {
-      if (!el) return;
-      el.style.transform = '';
-      el.style.opacity = '';
-    });
-  }, []);
-
   const { terminalTheme } = useTheme();
   const termCfg = config.terminal;
 
@@ -158,6 +143,42 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
     onExit: handleExit,
     defer: true,
   });
+
+  // Refresh button: clear rendering glitches across both views.
+  //  1) Nudge the content area onto a fresh raster (toggle a composited property
+  //     for one frame) — clears the rare backdrop-filter compositing garble.
+  //  2) Refit + repaint the xterm grid and send the PTY a resize so the agent's
+  //     TUI redraws. A same-size resize won't trigger the child's SIGWINCH
+  //     redraw, so nudge the rows by one and restore next frame — Claude Code /
+  //     Codex repaint fully on resize, which clears glitches a client-side
+  //     refresh alone can't. No-op (safely) when the terminal view is hidden.
+  const forceRepaint = useCallback(() => {
+    const el = contentAreaRef.current;
+    if (el) {
+      el.style.transform = 'translateZ(0)';
+      el.style.opacity = '0.999';
+      requestAnimationFrame(() => {
+        if (!el) return;
+        el.style.transform = '';
+        el.style.opacity = '';
+      });
+    }
+    const term = terminalRef.current;
+    const fit = fitAddonRef.current;
+    if (term && fit && isTermVisible(termContainerRef.current)) {
+      try {
+        fit.fit();
+        term.refresh(0, term.rows - 1);
+        const { cols, rows } = term;
+        if (rows > 1) {
+          resize(cols, rows - 1);
+          requestAnimationFrame(() => resize(cols, rows));
+        } else {
+          resize(cols, rows);
+        }
+      } catch {}
+    }
+  }, [resize]);
 
   // After a grace period with no session, surface the hook-config hint in the
   // connecting empty state (most spawns connect in well under this). Reset the
@@ -348,16 +369,11 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
     };
   }, [attachToTerminal, write, resize]);
 
-  // Focus terminal or GUI input when pane becomes active
+  // Focus the GUI composer when the pane becomes active in GUI mode. Terminal
+  // focus + refit is handled by the reveal layout-effect below.
   useEffect(() => {
-    if (!isActive) return;
-    if (viewMode === 'terminal' && terminalRef.current) {
-      terminalRef.current.focus();
-      requestAnimationFrame(() =>
-        refitAndRepaint(fitAddonRef.current, terminalRef.current, termContainerRef.current));
-    } else if (viewMode === 'gui') {
-      requestAnimationFrame(() => inputRef.current?.focus());
-    }
+    if (!isActive || viewMode !== 'gui') return;
+    requestAnimationFrame(() => inputRef.current?.focus());
   }, [viewMode, isActive, isReady]);
 
   // Jump to the latest message whenever the GUI view opens — the scroll
@@ -374,18 +390,29 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
     return () => cancelAnimationFrame(id);
   }, [viewMode]);
 
-  // Re-fit terminal on active change. The workspace was likely just toggled
-  // from display:none to block, so refit + repaint (two frames so layout
-  // settles first) to clear any stale glyphs, then sync the PTY size.
-  useEffect(() => {
-    if (isActive && viewMode === 'terminal' && terminalRef.current) {
-      terminalRef.current.focus();
-      requestAnimationFrame(() => requestAnimationFrame(() => {
+  // Reveal the terminal cleanly when this pane becomes active (or switches to
+  // Term view). Switching agents toggles the workspace display:none → block,
+  // exposing a terminal that's stale and possibly mis-sized; refitting +
+  // repainting it after the browser has already painted is the "PTY coming to
+  // life" glitch. So mask it: useLayoutEffect runs *before* paint, so we hide
+  // the container instantly (transition off, so stale cells don't fade out),
+  // then refit + repaint while it's hidden and fade the correct terminal in.
+  useLayoutEffect(() => {
+    const container = termContainerRef.current;
+    if (!isActive || viewMode !== 'terminal' || !container) return;
+    container.style.transition = 'none';
+    container.style.opacity = '0';
+    terminalRef.current?.focus();
+    const id = requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
         const t = terminalRef.current;
-        refitAndRepaint(fitAddonRef.current, t, termContainerRef.current);
+        refitAndRepaint(fitAddonRef.current, t, container);
         if (t) resize(t.cols, t.rows);
-      }));
-    }
+        container.style.transition = 'opacity 0.12s ease-out';
+        container.style.opacity = '1';
+      }),
+    );
+    return () => cancelAnimationFrame(id);
   }, [isActive, viewMode, resize]);
 
   // Update terminal theme when it changes
