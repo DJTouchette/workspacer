@@ -131,11 +131,14 @@ export function useAgentManager() {
   const [activeAgentId, setActiveAgentId] = useState<string>(GLOBAL_WORKSPACE_ID);
 
   // Refs let the (stable) callbacks below read current state without being
-  // re-created on every agent/tab change.
+  // re-created on every agent/tab change. Updated directly during render
+  // (not in useEffect) so they are always current when any post-commit
+  // callback (rAF, setTimeout, IPC handler) reads them — useEffect fires
+  // after paint, which leaves a one-frame stale window.
   const agentsRef = useRef(agents);
   const activeAgentIdRef = useRef(activeAgentId);
-  useEffect(() => { agentsRef.current = agents; }, [agents]);
-  useEffect(() => { activeAgentIdRef.current = activeAgentId; }, [activeAgentId]);
+  agentsRef.current = agents;
+  activeAgentIdRef.current = activeAgentId;
 
   // Derived view of the active agent's tabs — App treats these like the old
   // flat workspace state.
