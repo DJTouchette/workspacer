@@ -40,12 +40,17 @@ jobs:
           - os: ubuntu-22.04
             artifact: linux
     runs-on: ${{ matrix.os }}
+    # Enter the `release` environment only for Windows tag-builds (that's the
+    # subject our Azure OIDC federated credential trusts). Empty otherwise, so
+    # PR/other-OS legs aren't gated by it.
+    environment: ${{ (matrix.os == 'windows-latest' && startsWith(github.ref, 'refs/tags/v')) && 'release' || '' }}
     defaults:
       run:
         working-directory: apps/desktop
     env:
-      # No code-signing in CI yet: don't let electron-builder hunt for a cert
-      # (that just fails the macOS build). Wire signing secrets in later.
+      # macOS signing isn't wired yet (needs an Apple cert + notarization), so
+      # stop electron-builder hunting for one (which would fail the macOS build).
+      # Windows IS signed below via Azure Trusted Signing on tag builds.
       CSC_IDENTITY_AUTO_DISCOVERY: false
 
     steps:
@@ -83,11 +88,33 @@ jobs:
         working-directory: apps/desktop/src/renderer
         run: npm ci
 
+      # Windows release builds sign via Azure Trusted Signing (OIDC — no stored
+      # secret). Only when this is a tag build AND the cert-profile var is set,
+      # so PRs and the pre-signing-setup period stay unsigned (and don't fail).
+      - name: Azure login (Windows signing)
+        if: matrix.os == 'windows-latest' && startsWith(github.ref, 'refs/tags/v') && vars.AZURE_CODESIGN_PROFILE != ''
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
       # Mirrors `npm run package`: builds the renderer + main, compiles the Go
       # and Rust daemons, then runs electron-builder for THIS host OS. `--publish
-      # never` keeps electron-builder from trying to upload (we attach artifacts
-      # to the Release ourselves, below).
-      - name: Package
+      # never` keeps electron-builder from uploading (we attach to the Release
+      # ourselves, below).
+      - name: Package (Windows, signed via Azure Trusted Signing)
+        if: matrix.os == 'windows-latest' && startsWith(github.ref, 'refs/tags/v') && vars.AZURE_CODESIGN_PROFILE != ''
+        shell: pwsh
+        run: >
+          npm run package -- --publish never
+          -c.win.azureSignOptions.endpoint=https://eus.codesigning.azure.net/
+          -c.win.azureSignOptions.codeSigningAccountName=WorkSpacer
+          -c.win.azureSignOptions.certificateProfileName=${{ vars.AZURE_CODESIGN_PROFILE }}
+          "-c.win.azureSignOptions.publisherName=${{ vars.AZURE_CODESIGN_PUBLISHER }}"
+
+      - name: Package (unsigned)
+        if: ${{ !(matrix.os == 'windows-latest' && startsWith(github.ref, 'refs/tags/v') && vars.AZURE_CODESIGN_PROFILE != '') }}
         run: npm run package -- --publish never
 
       - name: Upload artifacts
@@ -115,3 +142,4 @@ jobs:
 
     permissions:
       contents: write
+      id-token: write # Azure OIDC federated login for Windows Trusted Signing
