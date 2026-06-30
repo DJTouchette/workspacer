@@ -66,9 +66,14 @@ export interface ManagedSpawnOptions {
 export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<string> {
   const { provider } = opts;
   assertProviderInstalled(provider);
-  // Codex is a *hybrid*: its own TUI runs in a PTY (the Term view) and claudemon
-  // tails the rollout transcript for the GUI view — not the headless app-server.
-  if (provider === 'codex') return spawnCodexHybrid(opts);
+  // Codex backend differs by platform:
+  //  - Windows: HYBRID — its own TUI runs in a PTY (the Term view) and claudemon
+  //    tails the rollout transcript for the GUI. The Codex app-server *daemon*
+  //    that would let a TUI and an RPC client share one live thread is Unix-only,
+  //    so the rollout is the only live structured channel out of the TUI here.
+  //  - macOS/Linux: the app-server JSON-RPC adapter (the generic managed path
+  //    below) drives a structured GUI directly.
+  if (provider === 'codex' && process.platform === 'win32') return spawnCodexHybrid(opts);
   // Supervisors with no explicit cwd open in their dedicated home (~/.workspacer)
   // rather than inheriting some repo; everything else uses the given cwd.
   let cwd = opts.cwd || process.env.HOME || os.homedir();

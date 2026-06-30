@@ -75,6 +75,13 @@ pub enum AgentUpdate {
         name: String,
         input: Value,
     },
+    /// The result of a tool invocation, joined to its `ToolUse` by id so the GUI
+    /// can render the call and its output as one card.
+    ToolResult {
+        tool_use_id: String,
+        content: String,
+        is_error: bool,
+    },
     /// Token/cost telemetry for the session.
     Usage {
         model: Option<String>,
@@ -118,6 +125,12 @@ pub fn conversation_item(update: &AgentUpdate) -> Option<ConversationItem> {
             id: id.clone(),
             name: name.clone(),
             input: input.clone(),
+            timestamp: None,
+        }),
+        AgentUpdate::ToolResult { tool_use_id, content, is_error } => Some(ConversationItem::ToolResult {
+            tool_use_id: tool_use_id.clone(),
+            content: content.clone(),
+            is_error: *is_error,
             timestamp: None,
         }),
         _ => None,
@@ -198,7 +211,10 @@ pub fn apply_updates(
             AgentUpdate::Error(msg) => {
                 tracing::debug!(session = %session_id, error = %msg, "managed session error");
             }
-            AgentUpdate::AssistantText(_) | AgentUpdate::UserText(_) | AgentUpdate::ToolUse { .. } => {
+            AgentUpdate::AssistantText(_)
+            | AgentUpdate::UserText(_)
+            | AgentUpdate::ToolUse { .. }
+            | AgentUpdate::ToolResult { .. } => {
                 if let Some(item) = conversation_item(update) {
                     items.push(item);
                 }

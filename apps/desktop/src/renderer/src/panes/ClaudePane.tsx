@@ -66,13 +66,15 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
   const { config } = useConfig();
   // Which surfaces this provider has:
   //   claude            — GUI (hooks/transcript telemetry) + terminal (its PTY)
-  //   codex (hybrid)    — GUI (claudemon tails its rollout transcript) + terminal
-  //                       (the codex TUI runs in a PTY)
+  //   codex (Windows)   — hybrid: GUI (claudemon tails its rollout) + terminal
+  //                       (the codex TUI in a PTY). On macOS/Linux Codex runs via
+  //                       the headless app-server RPC adapter → GUI only.
   //   opencode (hybrid) — GUI (the `opencode serve` /event adapter) + terminal
   //                       (`opencode attach` TUI in a PTY, same serve + session)
   //   pi                — GUI only: managed `pi --mode rpc` adapter (no PTY)
   const isClaude = (provider ?? 'claude') === 'claude';
-  const isHybrid = provider === 'codex' || provider === 'opencode';
+  const isWindows = window.electronAPI?.platform === 'win32';
+  const isHybrid = provider === 'opencode' || (provider === 'codex' && isWindows);
   // Display name of the backend for user-facing copy (empty states, composer,
   // exit notice) so a Codex/OpenCode/Pi pane doesn't read as "Claude".
   const agentName = providerLabel(provider);
