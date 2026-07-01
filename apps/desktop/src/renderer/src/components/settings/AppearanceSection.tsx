@@ -78,7 +78,7 @@ const AppearanceSection: React.FC<AppearanceSectionProps> = ({ config, save }) =
           />
         </div>
       </Row>
-      <div style={{ fontSize: '0.55rem', color: 'var(--wks-text-disabled)' }}>
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
         Each theme has its own corner style. "Theme" follows it; pick another to override until you switch themes.
       </div>
       <Row label="Border color">
@@ -103,7 +103,7 @@ const AppearanceSection: React.FC<AppearanceSectionProps> = ({ config, save }) =
           )}
         </div>
       </Row>
-      <div style={{ fontSize: '0.55rem', color: 'var(--wks-text-disabled)' }}>
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
         Border around the focused pane when a tab is split. Defaults to the theme's accent; switching themes resets it.
       </div>
     </Section>

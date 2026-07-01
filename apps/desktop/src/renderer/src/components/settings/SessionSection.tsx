@@ -132,7 +132,7 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
         checked={autoResume}
         onChange={(v) => save({ session: { autoResume: v } })}
       />
-      <div style={{ fontSize: '0.55rem', color: 'var(--wks-text-disabled)' }}>
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
         Reopens your agents and tabs automatically. Off shows the session picker at startup.
         Switch sessions any time from the command palette (Ctrl+K → Switch session).
       </div>
@@ -149,7 +149,7 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
           ))}
         </div>
       </Row>
-      <div style={{ fontSize: '0.55rem', color: 'var(--wks-text-disabled)' }}>
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
         The coding agent pre-selected in the spawn dialog. Codex and OpenCode run via claudemon's
         adapters with live telemetry; Claude is the default.
       </div>
@@ -181,7 +181,7 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
           </button>
         </div>
       </Row>
-      <div style={{ fontSize: '0.55rem', color: 'var(--wks-text-disabled)' }}>
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
         Where the spawn dialog opens (and where Browse… starts). Leave blank to use the app's
         launch directory.
       </div>
@@ -200,7 +200,7 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
           />
         </div>
       </Row>
-      <div style={{ fontSize: '0.55rem', color: 'var(--wks-text-disabled)' }}>
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
         Which view a Claude pane opens in. The rich GUI shows the conversation, work cards,
         and inspector; Terminal is the raw Claude Code TUI. Toggle any time from the pane's top bar.
       </div>
@@ -217,7 +217,7 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
           ))}
         </div>
       </Row>
-      <div style={{ fontSize: '0.55rem', color: 'var(--wks-text-disabled)' }}>
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
         Size of the conversation text in the GUI view (messages, markdown, code blocks).
         Doesn't affect the terminal view.
       </div>
@@ -234,7 +234,7 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
           ))}
         </div>
       </Row>
-      <div style={{ fontSize: '0.55rem', color: 'var(--wks-text-disabled)' }}>
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
         How file edits render in the GUI. Stacked shows all removed lines then all added;
         Inline interleaves them as a unified diff; Split shows old and new side by side.
       </div>
@@ -244,7 +244,7 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
         checked={config.ui.showComposerSend !== false}
         onChange={(v) => save({ ui: { ...config.ui, showComposerSend: v } })}
       />
-      <div style={{ fontSize: '0.55rem', color: 'var(--wks-text-disabled)' }}>
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
         The ↑ button next to the message box. Off keeps the box clean — Enter still sends
         (Shift+Enter for a newline).
       </div>
@@ -252,7 +252,7 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
       <div style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--wks-text-muted)', marginTop: 16, marginBottom: 4 }}>
         Tool paths
       </div>
-      <div style={{ fontSize: '0.55rem', color: 'var(--wks-text-disabled)', marginBottom: 8 }}>
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)', marginBottom: 8 }}>
         Override the binary path for each coding agent. Leave blank to auto-detect on PATH.
         A green dot means the CLI was found; red means it's missing or the path is invalid.
       </div>

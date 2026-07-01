@@ -45,7 +45,7 @@ const ShortcutOverlay: React.FC<ShortcutOverlayProps> = ({ visible, onClose, pre
           borderRadius: 'var(--wks-radius-md)',
           boxShadow: '0 16px 48px var(--wks-glass-shadow), inset 0 0 0 1.5px var(--wks-glass-highlight)',
           padding: '12px 16px',
-          width: 'min(440px, 92vw)',
+          width: 'min(620px, 94vw)',
           boxSizing: 'border-box',
         }}
         onClick={(e) => e.stopPropagation()}

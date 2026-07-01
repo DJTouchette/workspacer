@@ -31,7 +31,7 @@ const ProfileEditForm: React.FC<{
     />
     {mcpItems.length > 0 && (
       <div>
-        <div style={{ fontSize: '0.55rem', color: 'var(--wks-text-disabled)', textTransform: 'uppercase', letterSpacing: '0.04em', margin: '4px 0 2px' }}>
+        <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)', textTransform: 'uppercase', letterSpacing: '0.04em', margin: '4px 0 2px' }}>
           Default MCP servers
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 1, maxHeight: 120, overflowY: 'auto' }}>
@@ -149,7 +149,7 @@ const ClaudeProfilesSection: React.FC = () => {
                     </div>
                   )}
                   {p.extraArgs.length > 0 && (
-                    <div style={{ fontSize: '0.55rem', color: 'var(--wks-text-disabled)', fontFamily: 'monospace' }}>
+                    <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)', fontFamily: 'monospace' }}>
                       {p.extraArgs.join(' ')}
                     </div>
                   )}

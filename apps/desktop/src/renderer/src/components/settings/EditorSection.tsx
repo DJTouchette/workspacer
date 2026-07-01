@@ -28,7 +28,7 @@ const EditorSection: React.FC<EditorSectionProps> = ({ config, save }) => {
           />
         </div>
       </Row>
-      <div style={{ fontSize: '0.55rem', color: 'var(--wks-text-disabled)' }}>
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
         How the Editor pane opens files. <strong>CodeMirror</strong> is an in-app code editor
         (syntax, Ctrl+S to save). <strong>Terminal</strong> runs your own editor in a PTY pane.
       </div>
@@ -41,7 +41,7 @@ const EditorSection: React.FC<EditorSectionProps> = ({ config, save }) => {
               <ModeButton label="Off" active={!vim} onClick={() => save({ editor: { ...editorCfg, vim: false } })} />
             </div>
           </Row>
-          <div style={{ fontSize: '0.55rem', color: 'var(--wks-text-disabled)' }}>
+          <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
             Vim keybindings inside the CodeMirror editor. Independent of the workspace keybindings.
           </div>
         </>
@@ -58,7 +58,7 @@ const EditorSection: React.FC<EditorSectionProps> = ({ config, save }) => {
               placeholder="nvim"
             />
           </Row>
-          <div style={{ fontSize: '0.55rem', color: 'var(--wks-text-disabled)' }}>
+          <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
             The file path is appended as the last argument — e.g. <code>nvim</code> opens
             <code> nvim &lt;file&gt;</code>. Must be on the daemon host's PATH.
           </div>

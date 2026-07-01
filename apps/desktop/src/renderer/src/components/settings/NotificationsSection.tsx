@@ -38,7 +38,7 @@ const NotificationsSection: React.FC<NotificationsSectionProps> = ({ config, sav
         disabled={!notif.enabled}
         onChange={(v) => set({ sound: v })}
       />
-      <div style={{ fontSize: '0.55rem', color: 'var(--wks-text-disabled)' }}>
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
         Alerts when an agent needs approval/input or finishes. Ctrl+Alt+→ jumps to the next agent that needs you.
       </div>
     </Section>

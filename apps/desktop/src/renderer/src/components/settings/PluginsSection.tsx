@@ -58,7 +58,7 @@ const PluginSettings: React.FC<{ plugin: PluginManifest }> = ({ plugin }) => {
       {(plugin.settings ?? []).map((s) => (
         <React.Fragment key={s.key}>
           {control(s)}
-          {s.help && <div style={{ fontSize: '0.55rem', color: 'var(--wks-text-disabled)', marginBottom: 2 }}>{s.help}</div>}
+          {s.help && <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)', marginBottom: 2 }}>{s.help}</div>}
         </React.Fragment>
       ))}
     </div>
@@ -72,7 +72,7 @@ const PluginsSection: React.FC = () => {
   if (!configurable.length) return null;
   return (
     <Section title="Plugins">
-      <div style={{ fontSize: '0.55rem', color: 'var(--wks-text-disabled)', marginBottom: 4 }}>
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)', marginBottom: 4 }}>
         Options contributed by installed plugins. Changes apply to open plugin panes live.
       </div>
       {configurable.map((p) => <PluginSettings key={p.id} plugin={p} />)}
