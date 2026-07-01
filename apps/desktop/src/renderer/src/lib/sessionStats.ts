@@ -13,6 +13,32 @@ import type { ClaudeSessionSnapshot, SessionStatusLine, SessionUsage } from '../
  * per-agent context bar derive from this so they can never show different
  * context percentages for the same session.
  */
+// ── Shared formatters + thresholds ───────────────────────────────────────────
+//
+// These were re-declared (with subtly different thresholds) in SideBar,
+// FleetDeck, AgentCard, and SessionStatusBar — so the same context % could show
+// amber on one surface and green on another, and token counts formatted
+// differently. Single definitions here keep every agent surface consistent.
+
+/** 142345 → "142k", 1_200_000 → "1.2M", ≥10M → "12M" (drops the decimal). */
+export function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`;
+  if (n >= 1_000) return `${Math.round(n / 1_000)}k`;
+  return `${n}`;
+}
+
+/** Cost, compact: `$1.23`, `<$0.01` for tiny non-zero, `$0.00` for nothing. */
+export function fmtUSD(n: number): string {
+  return n >= 0.01 ? `$${n.toFixed(2)}` : n > 0 ? '<$0.01' : '$0.00';
+}
+
+/** Context-window fill color by PERCENT (0–100): green → amber (≥70) → red (≥90). */
+export function ctxColor(pct: number): string {
+  if (pct >= 90) return 'var(--wks-danger, #e05555)';
+  if (pct >= 70) return 'var(--wks-warning, #e0a000)';
+  return 'var(--wks-success, #3fb950)';
+}
+
 export interface DerivedSessionStats {
   model?: string;
   /** Context window fill, 0–100. */

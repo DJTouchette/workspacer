@@ -1,6 +1,6 @@
 import React from 'react';
 import type { ClaudeSessionSnapshot } from '../../types/claudeSession';
-import { deriveSessionStats } from '../../lib/sessionStats';
+import { deriveSessionStats, fmtTokens, fmtUSD, ctxColor } from '../../lib/sessionStats';
 import { IconModel } from '../wksIcons';
 
 /**
@@ -17,19 +17,6 @@ import { IconModel } from '../wksIcons';
  * (which shells out to git), not in the JSON channel we ingest.
  */
 
-function fmtTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-  return `${n}`;
-}
-function fmtUSD(n: number): string {
-  return n >= 0.01 ? `$${n.toFixed(2)}` : n > 0 ? '<$0.01' : '$0.00';
-}
-function ctxColor(pct: number): string {
-  if (pct >= 80) return 'var(--wks-danger, #e05555)';
-  if (pct >= 50) return 'var(--wks-warning, #e0a000)';
-  return 'var(--wks-success, #3fb950)';
-}
 function baseName(p: string | undefined): string {
   if (!p) return '';
   return p.replace(/[/\\]+$/, '').split(/[/\\]/).pop() || p;

@@ -8,20 +8,7 @@ import { usePageVisible } from '../hooks/usePageVisible';
 import { StatusGlyph } from './statusGlyph';
 import { AgentLogo } from './agentLogos';
 import { shortModelLabel } from '../lib/modelLabel';
-
-function fmtTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${Math.round(n / 1_000)}k`;
-  return `${n}`;
-}
-function fmtUSD(n: number): string {
-  return n >= 0.01 ? `$${n.toFixed(2)}` : n > 0 ? '<$0.01' : '$0.00';
-}
-function ctxColor(frac: number): string {
-  if (frac >= 0.9) return 'var(--wks-danger, #e05555)';
-  if (frac >= 0.7) return 'var(--wks-warning, #e0a000)';
-  return 'var(--wks-success, #3fb950)';
-}
+import { fmtTokens, fmtUSD, ctxColor } from '../lib/sessionStats';
 function relTime(ts: number | undefined): string {
   if (!ts) return '';
   const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
@@ -161,9 +148,9 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot }) => {
         {usage && usage.contextTokens > 0 ? (
           <>
             <span style={{ flex: 1, height: 5, borderRadius: 3, background: 'var(--wks-border-subtle, #2a2a2a)', overflow: 'hidden' }}>
-              <span style={{ display: 'block', height: '100%', width: `${Math.max(2, ctxFrac * 100)}%`, background: ctxColor(ctxFrac) }} />
+              <span style={{ display: 'block', height: '100%', width: `${Math.max(2, ctxFrac * 100)}%`, background: ctxColor(ctxFrac * 100) }} />
             </span>
-            <span style={{ fontSize: '0.64rem', color: ctxColor(ctxFrac), fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>{fmtTokens(usage.contextTokens)} · {Math.round(ctxFrac * 100)}%</span>
+            <span style={{ fontSize: '0.64rem', color: ctxColor(ctxFrac * 100), fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>{fmtTokens(usage.contextTokens)} · {Math.round(ctxFrac * 100)}%</span>
             <span style={{ fontSize: '0.64rem', color: 'var(--wks-text-faint)', flexShrink: 0 }}>{fmtUSD(usage.costUSD)}</span>
           </>
         ) : (

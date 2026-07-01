@@ -5,7 +5,7 @@ import { BrandMark, Wordmark } from './Brand';
 import { AgentWorkspace } from '../types/pane';
 import type { SessionAmbientState, ClaudeSessionSnapshot } from '../types/claudeSession';
 import type { AttentionItem, AttentionKind } from '../types/attention';
-import { deriveSessionStats } from '../lib/sessionStats';
+import { deriveSessionStats, fmtTokens, fmtUSD, ctxColor } from '../lib/sessionStats';
 import { agentAttentionScore } from '../lib/attentionRouter';
 import { AgentLogo } from './agentLogos';
 import { useAttention } from '../contexts/AttentionContext';
@@ -15,26 +15,6 @@ import { ContextMenu, ContextMenuItem } from './ContextMenu';
 export const SIDEBAR_WIDTH = 268;
 /** Width of the collapsed monogram rail (desktop). */
 export const SIDEBAR_RAIL_WIDTH = 74;
-
-/** 142345 → "142k", 1_200_000 → "1.2M". */
-function fmtTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`;
-  if (n >= 1_000) return `${Math.round(n / 1_000)}k`;
-  return `${n}`;
-}
-
-function fmtUSD(n: number): string {
-  if (n >= 10) return `$${n.toFixed(2)}`;
-  if (n >= 0.01) return `$${n.toFixed(2)}`;
-  return n > 0 ? '<$0.01' : '$0.00';
-}
-
-/** Green → amber → red as the context window fills. */
-function contextColor(frac: number): string {
-  if (frac >= 0.9) return 'var(--wks-danger, #e05555)';
-  if (frac >= 0.7) return 'var(--wks-warning, #e0a000)';
-  return 'var(--wks-success, #3fb950)';
-}
 
 /** Ambient state (or `undefined` = stopped) → status dot color + label. */
 function statusVisual(state: SessionAmbientState | undefined): { color: string; label: string } {
@@ -138,6 +118,8 @@ const SideBar: React.FC<SideBarProps> = ({
   const [contextMenu, setContextMenu] = useState<{ agentId: string; x: number; y: number } | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
+  // Type-to-filter the agent list by name or provider (nav rows always shown).
+  const [filter, setFilter] = useState('');
 
   // Per-session derived stats, memoized by the *snapshot object identity* so a
   // tick on one agent's session doesn't recompute deriveSessionStats for every
@@ -431,6 +413,24 @@ const SideBar: React.FC<SideBarProps> = ({
         </button>
       </div>
 
+      {/* Filter — only worth showing once there's a handful of agents. */}
+      {agents.filter((a) => !a.global).length > 4 && (
+        <div style={{ padding: '2px 12px 6px' }}>
+          <input
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="Filter agents…"
+            spellCheck={false}
+            style={{
+              width: '100%', boxSizing: 'border-box', fontSize: '0.72rem', fontFamily: 'inherit',
+              padding: '5px 9px', borderRadius: 'var(--wks-radius-md, 6px)',
+              border: '1px solid var(--wks-border-input, var(--wks-border-subtle))',
+              background: 'var(--wks-bg-base)', color: 'var(--wks-text-primary)',
+            }}
+          />
+        </div>
+      )}
+
       <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '7px', padding: '2px 0' }}>
         {agents.length === 0 && (
           <div style={{ padding: '8px 12px', fontSize: '0.7rem', color: 'var(--wks-text-faint)', lineHeight: 1.5 }}>
@@ -444,12 +444,17 @@ const SideBar: React.FC<SideBarProps> = ({
             with no parentId, or whose parentId doesn't resolve (fallback so
             nothing disappears). Children are NOT rendered again at top level. */}
         {(() => {
+          // Apply the name/provider filter (nav rows like Overview always shown).
+          const q = filter.trim().toLowerCase();
+          const shown = q
+            ? agents.filter((a) => a.global || a.name.toLowerCase().includes(q) || (a.provider ?? 'claude').toLowerCase().includes(q))
+            : agents;
           // Build a set of all known agent ids for fast parent-resolution checks.
-          const agentIds = new Set(agents.map((a) => a.id));
+          const agentIds = new Set(shown.map((a) => a.id));
           // Build a lookup: parentId → child agents (any kind with a resolvable parentId).
           const childrenByParent = new Map<string, typeof agents>();
           const topLevel: typeof agents = [];
-          for (const agent of agents) {
+          for (const agent of shown) {
             if (agent.parentId && agentIds.has(agent.parentId)) {
               const bucket = childrenByParent.get(agent.parentId) ?? [];
               bucket.push(agent);
@@ -599,7 +604,7 @@ const SideBar: React.FC<SideBarProps> = ({
                           </span>
                         )}
                         {hasCtx && (
-                          <span style={{ flexShrink: 0, fontFamily: 'var(--wks-font-mono)', fontSize: '0.75rem', fontWeight: 700, color: contextColor(ctxFrac), fontVariantNumeric: 'tabular-nums' }}>
+                          <span style={{ flexShrink: 0, fontFamily: 'var(--wks-font-mono)', fontSize: '0.75rem', fontWeight: 700, color: ctxColor(ctxFrac * 100), fontVariantNumeric: 'tabular-nums' }}>
                             {Math.round(ctxFrac * 100)}%
                           </span>
                         )}
@@ -622,7 +627,7 @@ const SideBar: React.FC<SideBarProps> = ({
                       <span style={{
                         display: 'block', height: '100%', borderRadius: 99,
                         width: `${Math.max(2, ctxFrac * 100)}%`,
-                        background: contextColor(ctxFrac),
+                        background: ctxColor(ctxFrac * 100),
                       }} />
                     </span>
                   )}

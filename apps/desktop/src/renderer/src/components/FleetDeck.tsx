@@ -6,6 +6,7 @@ import { AgentCard } from './AgentCard';
 import { StatusGlyph } from './statusGlyph';
 import { shortModelLabel } from '../lib/modelLabel';
 import { agentAttentionScore } from '../lib/attentionRouter';
+import { deriveSessionStats, fmtUSD, ctxColor } from '../lib/sessionStats';
 
 const CARD_MIN = 360; // matches the old minmax(360px) grid
 const GRID_GAP = 18;
@@ -18,6 +19,18 @@ function ensureFleetKeyframes() {
   s.id = STYLE_ID;
   s.textContent = '@keyframes fleetPulse { 0%,100% { box-shadow: 0 0 0 1px currentColor; } 50% { box-shadow: 0 0 0 3px currentColor, 0 0 18px currentColor; } }';
   document.head.appendChild(s);
+}
+
+/** Compact relative time for the list's "Active" column. */
+function relTime(ts: number | undefined): string {
+  if (!ts) return '—';
+  const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h`;
+  return `${Math.round(h / 24)}d`;
 }
 
 interface Props {
@@ -54,45 +67,97 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
   };
   const listScrollRef = useRef<HTMLDivElement>(null);
 
+  // Type-to-filter by name or provider. Applied before sort, so cards, list, and
+  // keyboard nav all operate on the filtered set; header counts stay whole-fleet.
+  const [query, setQuery] = useState('');
+
   // Agent → most-urgent open item, shared with the SideBar via the attention
   // feed (topByAgent) so both surfaces buoy cards by the same rule.
   const sorted = useMemo(() => {
-    return [...realAgents].sort((a, b) => {
+    const q = query.trim().toLowerCase();
+    const matches = (a: typeof realAgents[number]) =>
+      !q || a.name.toLowerCase().includes(q) || (a.provider ?? 'claude').toLowerCase().includes(q);
+    return realAgents.filter(matches).sort((a, b) => {
       const sa = agentAttentionScore(a.sessionId ? snapshotBySession[a.sessionId]?.ambientState : undefined, topByAgent.get(a.id)?.priority ?? 0);
       const sb = agentAttentionScore(b.sessionId ? snapshotBySession[b.sessionId]?.ambientState : undefined, topByAgent.get(b.id)?.priority ?? 0);
       return sb - sa;
     });
-  }, [realAgents, snapshotBySession, topByAgent]);
+  }, [realAgents, snapshotBySession, topByAgent, query]);
+
+  // List-view column sort. 'attn' keeps the needy-first order (the default); the
+  // other keys sort by live stats. Cards always use the attention order.
+  const [listSort, setListSort] = useState<{ key: 'attn' | 'name' | 'ctx' | 'cost' | 'act'; dir: 1 | -1 }>({ key: 'attn', dir: -1 });
+  const toggleSort = (key: typeof listSort.key) =>
+    setListSort((s) => (s.key === key ? { key, dir: (s.dir === 1 ? -1 : 1) } : { key, dir: key === 'name' ? 1 : -1 }));
+  const listRows = useMemo(() => {
+    if (listSort.key === 'attn') return sorted;
+    const keyOf = (a: typeof sorted[number]): number | string => {
+      const snap = a.sessionId ? snapshotBySession[a.sessionId] : undefined;
+      const st = deriveSessionStats(snap);
+      switch (listSort.key) {
+        case 'name': return a.name.toLowerCase();
+        case 'ctx': return st.ctxPct ?? -1;
+        case 'cost': return st.costUSD ?? -1;
+        case 'act': return snap?.lastActivity ?? 0;
+        default: return 0;
+      }
+    };
+    return [...sorted].sort((a, b) => {
+      const ka = keyOf(a);
+      const kb = keyOf(b);
+      const c = typeof ka === 'string' ? ka.localeCompare(kb as string) : (ka as number) - (kb as number);
+      return c * listSort.dir;
+    });
+  }, [sorted, listSort, snapshotBySession]);
+  // The order the user is actually looking at — keyboard nav + selection follow it.
+  const displayOrder = fleetView === 'list' ? listRows : sorted;
+
+  // Clickable, sortable list-column header. Click toggles direction; the active
+  // column shows a caret.
+  const SortBtn: React.FC<{ k: typeof listSort.key; label: string }> = ({ k, label }) => {
+    const active = listSort.key === k;
+    return (
+      <button
+        onClick={(e) => { e.stopPropagation(); toggleSort(k); }}
+        style={{
+          background: 'none', border: 'none', padding: 0, font: 'inherit', cursor: 'pointer',
+          color: active ? 'var(--wks-text-secondary)' : 'inherit', fontWeight: active ? 700 : 'inherit',
+        }}
+      >
+        {label}{active ? (listSort.dir === 1 ? ' ▲' : ' ▼') : ''}
+      </button>
+    );
+  };
 
   const working = realAgents.filter((a) => {
     const s = a.sessionId ? snapshotBySession[a.sessionId]?.ambientState : undefined;
     return s === 'thinking' || s === 'streaming';
   }).length;
 
-  // j/k card selection (needy-first order == `sorted`), with y/n/1-9 acting on the
+  // j/k card selection (needy-first order == `displayOrder`), with y/n/1-9 acting on the
   // selected agent's top attention item — kept entirely within the deck.
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // Keep selection valid as the fleet re-sorts / agents come and go.
   useEffect(() => {
-    if (sorted.length === 0) { if (selectedId !== null) setSelectedId(null); return; }
-    if (!selectedId || !sorted.some((a) => a.id === selectedId)) setSelectedId(sorted[0].id);
-  }, [sorted, selectedId]);
+    if (displayOrder.length === 0) { if (selectedId !== null) setSelectedId(null); return; }
+    if (!selectedId || !displayOrder.some((a) => a.id === selectedId)) setSelectedId(displayOrder[0].id);
+  }, [displayOrder, selectedId]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
-      if (sorted.length === 0) return;
+      if (displayOrder.length === 0) return;
       const stop = () => { e.preventDefault(); e.stopPropagation(); };
-      const idx = selectedId ? sorted.findIndex((a) => a.id === selectedId) : -1;
+      const idx = selectedId ? displayOrder.findIndex((a) => a.id === selectedId) : -1;
 
-      if (e.key === 'j' || e.key === 'ArrowDown') { stop(); const n = Math.min(sorted.length - 1, (idx < 0 ? -1 : idx) + 1); setSelectedId(sorted[n].id); return; }
-      if (e.key === 'k' || e.key === 'ArrowUp') { stop(); const n = Math.max(0, (idx < 0 ? 0 : idx) - 1); setSelectedId(sorted[n].id); return; }
+      if (e.key === 'j' || e.key === 'ArrowDown') { stop(); const n = Math.min(displayOrder.length - 1, (idx < 0 ? -1 : idx) + 1); setSelectedId(displayOrder[n].id); return; }
+      if (e.key === 'k' || e.key === 'ArrowUp') { stop(); const n = Math.max(0, (idx < 0 ? 0 : idx) - 1); setSelectedId(displayOrder[n].id); return; }
 
       if (idx < 0) return;
-      const top = topByAgent.get(sorted[idx].id);
+      const top = topByAgent.get(displayOrder[idx].id);
       if (!top) {
-        if (e.key === 'Enter') { stop(); openAgent(sorted[idx].id); }
+        if (e.key === 'Enter') { stop(); openAgent(displayOrder[idx].id); }
         return;
       }
       if (e.key === 'Enter') { stop(); openAgent(top.agentId); return; }
@@ -107,7 +172,7 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [sorted, selectedId, topByAgent, approve, answer, openAgent]);
+  }, [displayOrder, selectedId, topByAgent, approve, answer, openAgent]);
 
   // In list mode, keep the j/k-selected row visible as it moves.
   useEffect(() => {
@@ -131,11 +196,19 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
   }, []);
   const cols = Math.max(1, Math.floor((avail + GRID_GAP) / (CARD_MIN + GRID_GAP)));
   const rowVirtualizer = useVirtualizer({
-    count: Math.ceil(sorted.length / cols),
+    count: Math.ceil(displayOrder.length / cols),
     getScrollElement: () => scrollRef.current,
     estimateSize: () => 248, // ~230 card min-height + row gap
     overscan: 2,
   });
+
+  // In card mode, keep the j/k-selected card visible by scrolling its row into
+  // view (the list mode has its own scroll effect above).
+  useEffect(() => {
+    if (fleetView !== 'cards' || !selectedId) return;
+    const i = displayOrder.findIndex((a) => a.id === selectedId);
+    if (i >= 0) rowVirtualizer.scrollToIndex(Math.floor(i / cols), { align: 'auto' });
+  }, [selectedId, fleetView, displayOrder, cols, rowVirtualizer]);
 
   return (
     <div style={{ position: 'fixed', top, left, right: 0, bottom: 0, zIndex: 150, background: 'var(--wks-bg-base)', display: 'flex', flexDirection: 'column' }}>
@@ -148,6 +221,17 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
           </div>
         </div>
         <div style={{ flex: 1 }} />
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Filter agents…"
+          spellCheck={false}
+          style={{
+            width: 160, fontSize: '0.72rem', fontFamily: 'inherit', padding: '5px 9px',
+            borderRadius: 8, border: '1px solid var(--wks-border-subtle)',
+            background: 'var(--wks-bg-surface)', color: 'var(--wks-text-primary)',
+          }}
+        />
         <span style={{ fontSize: '0.62rem', color: 'var(--wks-text-faint)', display: 'inline-flex', gap: 6 }}>
           <span><kbd style={kbdStyle}>j</kbd>/<kbd style={kbdStyle}>k</kbd> move</span>
           <span><kbd style={kbdStyle}>y</kbd>/<kbd style={kbdStyle}>n</kbd> approve</span>
@@ -199,18 +283,19 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.74rem' }}>
             <thead>
               <tr style={{ color: 'var(--wks-text-faint)', textAlign: 'left' }}>
-                <th style={lth}>Agent</th>
+                <th style={lth}><SortBtn k="name" label="Agent" /></th>
                 <th style={lth}>Status</th>
                 <th style={lth}>Model</th>
-                <th style={lthNum}>Context</th>
-                <th style={lthNum}>Cost</th>
+                <th style={lthNum}><SortBtn k="ctx" label="Context" /></th>
+                <th style={lthNum}><SortBtn k="cost" label="Cost" /></th>
+                <th style={lthNum}><SortBtn k="act" label="Active" /></th>
               </tr>
             </thead>
             <tbody>
-              {sorted.map((agent) => {
+              {displayOrder.map((agent) => {
                 const snap = agent.sessionId ? snapshotBySession[agent.sessionId] : undefined;
                 const vis = listStateVisual(agent.sessionId ? snap?.ambientState : undefined);
-                const usage = snap?.usage;
+                const stats = deriveSessionStats(snap);
                 const sel = selectedId === agent.id;
                 return (
                   <tr
@@ -237,9 +322,10 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
                         {vis.label}
                       </span>
                     </td>
-                    <td style={{ ...ltd, color: 'var(--wks-text-secondary)' }}>{usage?.model ? shortModelLabel(usage.model) : '—'}</td>
-                    <td style={ltdNum}>{usage && usage.contextTokens > 0 ? fmtTokens(usage.contextTokens) : '—'}</td>
-                    <td style={{ ...ltdNum, color: 'var(--wks-accent)' }}>{usage ? fmtUSD(usage.costUSD) : '—'}</td>
+                    <td style={{ ...ltd, color: 'var(--wks-text-secondary)' }}>{stats.model ? shortModelLabel(stats.model) : '—'}</td>
+                    <td style={ltdNum}>{stats.ctxPct !== undefined ? <span style={{ color: ctxColor(stats.ctxPct), fontWeight: 600 }}>{Math.round(stats.ctxPct)}%</span> : '—'}</td>
+                    <td style={{ ...ltdNum, color: 'var(--wks-accent)' }}>{stats.costUSD !== undefined ? fmtUSD(stats.costUSD) : '—'}</td>
+                    <td style={ltdNum}>{relTime(snap?.lastActivity)}</td>
                   </tr>
                 );
               })}
@@ -251,7 +337,7 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
           <div style={{ position: 'relative', width: '100%', height: rowVirtualizer.getTotalSize() }}>
             {rowVirtualizer.getVirtualItems().map((vr) => {
               const start = vr.index * cols;
-              const rowAgents = sorted.slice(start, start + cols);
+              const rowAgents = displayOrder.slice(start, start + cols);
               return (
                 <div
                   key={vr.key}
@@ -308,14 +394,6 @@ const SegBtn: React.FC<{ active: boolean; onClick: () => void; children: React.R
   >{children}</button>
 );
 
-function fmtTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${Math.round(n / 1_000)}k`;
-  return `${n}`;
-}
-function fmtUSD(n: number): string {
-  return n >= 0.01 ? `$${n.toFixed(2)}` : n > 0 ? '<$0.01' : '$0.00';
-}
 
 /** Status dot/pill colour + label for the list row. `busy` (thinking/streaming)
  *  uses the dedicated busy token so it matches the cards and sidebar. */

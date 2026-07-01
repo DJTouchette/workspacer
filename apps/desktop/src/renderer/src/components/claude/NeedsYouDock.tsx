@@ -24,8 +24,9 @@ export const NeedsYouDock: React.FC<{
 
   const accent = hasQuestion ? colors.accent : colors.error;
   const label = hasQuestion ? 'Claude is asking you' : 'Approval needed';
-  // When several questions are queued, show "1 of N" so the dock reads as a
-  // sequence rather than going blank as each is answered/optimistically dismissed.
+  // A single AskUserQuestion can carry several questions; the picker renders them
+  // all together, so label the count honestly ("N questions") rather than a fake
+  // "1 of N" position that never advances.
   const total = hasQuestion ? questions!.length : 0;
 
   return (
@@ -59,7 +60,7 @@ export const NeedsYouDock: React.FC<{
           {label}
           {total > 1 && (
             <span style={{ marginLeft: 'auto', color: colors.muted, fontWeight: 600, letterSpacing: 0, textTransform: 'none' }}>
-              1 of {total}
+              {total} questions
             </span>
           )}
         </div>
