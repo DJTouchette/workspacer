@@ -5,6 +5,52 @@ import { AGENT_PURPLE, fmtTokens, fmtDuration } from './agentUtils';
 import { AgentSpinner, agentMetaStyle, WorkflowAgentRow } from './WorkflowAgentRow';
 import { useNowTicker } from './useNowTicker';
 
+/** One phase within a run: a collapsible group with a done/total · failed ·
+ *  tokens roll-up, so a 20-agent multi-phase run stays scannable. Completed
+ *  phases auto-collapse; running / failed phases stay open. */
+const PhaseGroup: React.FC<{
+  title: string;
+  detail?: string;
+  agents: WorkflowRunInfo['agents'];
+  now: number;
+}> = ({ title, detail, agents, now }) => {
+  const done = agents.filter(a => a.status === 'done' || a.status === 'failed').length;
+  const failed = agents.filter(a => a.status === 'failed').length;
+  const tokens = agents.reduce((s, a) => s + (a.tokens ?? 0), 0);
+  const active = agents.some(a => a.status === 'running' || a.status === 'queued') || failed > 0;
+  const [expanded, setExpanded] = useState(active);
+  // Follow the phase into/out of activity (collapse when it finishes cleanly,
+  // reopen if it starts working or something fails) without fighting a manual toggle.
+  const prevActive = useRef(active);
+  useEffect(() => {
+    if (active !== prevActive.current) { setExpanded(active); prevActive.current = active; }
+  }, [active]);
+
+  return (
+    <div style={{ padding: '2px 0' }}>
+      <div
+        onClick={() => setExpanded(e => !e)}
+        style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', userSelect: 'none', padding: '1px 0' }}
+      >
+        <span style={{ color: colors.mutedDim, fontSize: '0.6rem', flexShrink: 0, width: 8 }}>{expanded ? '▾' : '▸'}</span>
+        <span style={{ color: colors.muted, fontSize: '0.62rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {title}
+        </span>
+        <div style={{ flex: 1 }} />
+        <span style={agentMetaStyle}>{done}/{agents.length}</span>
+        {failed > 0 && <span style={{ ...agentMetaStyle, color: colors.error, fontWeight: 600 }}>{failed} failed</span>}
+        {tokens > 0 && <span style={agentMetaStyle}>{fmtTokens(tokens)} tok</span>}
+      </div>
+      {expanded && (
+        <div style={{ paddingLeft: 8 }}>
+          {detail && <div style={{ color: colors.mutedDim, fontSize: '0.62rem', lineHeight: 1.3, paddingBottom: 1 }}>{detail}</div>}
+          {agents.map(a => <WorkflowAgentRow key={a.id} agent={a} now={now} />)}
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const WorkflowRunCard: React.FC<{ run: WorkflowRunInfo }> = ({ run }) => {
   const running = run.status === 'running';
   const [expanded, setExpanded] = useState(running);
@@ -90,21 +136,10 @@ export const WorkflowRunCard: React.FC<{ run: WorkflowRunInfo }> = ({ run }) => 
             </div>
           )}
           {groups.map((g, gi) => (
-            <div key={`${g.title ?? 'live'}-${gi}`}>
-              {g.title && (
-                <div style={{ padding: '3px 0 1px 0' }}>
-                  <div style={{ color: colors.muted, fontSize: '0.62rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                    {g.title}
-                  </div>
-                  {phaseDetail.get(g.title) && (
-                    <div style={{ color: colors.mutedDim, fontSize: '0.62rem', lineHeight: 1.3 }}>
-                      {phaseDetail.get(g.title)}
-                    </div>
-                  )}
-                </div>
-              )}
-              {g.agents.map(a => <WorkflowAgentRow key={a.id} agent={a} now={now} />)}
-            </div>
+            g.title
+              ? <PhaseGroup key={`${g.title}-${gi}`} title={g.title} detail={phaseDetail.get(g.title)} agents={g.agents} now={now} />
+              // Live/ungrouped agents (phase not known yet) render flat.
+              : <div key={`live-${gi}`}>{g.agents.map(a => <WorkflowAgentRow key={a.id} agent={a} now={now} />)}</div>
           ))}
         </div>
       )}
