@@ -8,7 +8,8 @@ import { useClaudeSession } from '../hooks/useClaudeSession';
 import { providerLabel } from '../hooks/useAgentManager';
 import { useConfig } from '../hooks/useConfig';
 import { useTheme } from '../hooks/useTheme';
-import type { ConversationTurn, ToolCall, SubagentInfo, WorkflowRunInfo } from '../types/claudeSession';
+import type { ConversationTurn, ToolCall } from '../types/claudeSession';
+import { anchorWork } from '../lib/anchorWork';
 import type { AgentProvider } from '../types/pane';
 import {
   claudeColors as colors,
@@ -721,36 +722,12 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
   }, [isActive, inspectorCombo, toggleRail]);
 
   // Anchor subagents/workflow runs to the Agent/Workflow tool calls that
-  // spawned them so they render inline in the timeline. Hooks and the
-  // transcript don't share ids, so match by order: the nth Agent tool call
-  // in the conversation pairs with the nth hook-reported subagent (tool_use
-  // blocks land in the JSONL before execution starts, so ordering holds).
-  // Anything left over (hook arrived before the transcript caught up)
-  // renders in the live section at the bottom.
-  const { toolIdToSubagent, toolIdToWorkflow, unanchoredSubagents, unanchoredWorkflows } = useMemo(() => {
-    const agentCalls: ToolCall[] = [];
-    const workflowCalls: ToolCall[] = [];
-    for (const turn of conversation) {
-      for (const tc of turn.toolCalls ?? []) {
-        if (tc.name === 'Agent') agentCalls.push(tc);
-        else if (tc.name === 'Workflow') workflowCalls.push(tc);
-      }
-    }
-    const toolIdToSubagent = new Map<string, SubagentInfo>();
-    subagents.forEach((sub, i) => {
-      if (i < agentCalls.length) toolIdToSubagent.set(agentCalls[i].id, sub);
-    });
-    const toolIdToWorkflow = new Map<string, WorkflowRunInfo>();
-    workflows.forEach((run, i) => {
-      if (i < workflowCalls.length) toolIdToWorkflow.set(workflowCalls[i].id, run);
-    });
-    return {
-      toolIdToSubagent,
-      toolIdToWorkflow,
-      unanchoredSubagents: subagents.slice(agentCalls.length),
-      unanchoredWorkflows: workflows.slice(workflowCalls.length),
-    };
-  }, [conversation, subagents, workflows]);
+  // spawned them so they render inline in the timeline (exact toolUseId /
+  // runId joins with order-match fallback — see lib/anchorWork.ts).
+  const { toolIdToSubagent, toolIdToWorkflow, unanchoredSubagents, unanchoredWorkflows } = useMemo(
+    () => anchorWork(conversation, subagents, workflows),
+    [conversation, subagents, workflows],
+  );
 
   // Show active + completed tool calls, excluding any already in conversation
   // turns (from JSONL transcript) to avoid duplication while keeping history

@@ -91,6 +91,7 @@ export interface SubagentInfo {
   startedAt: number;
   completedAt?: number;
   description?: string;
+  toolUseId?: string;
   model?: string;
   tokens?: number;
   toolCalls?: number;

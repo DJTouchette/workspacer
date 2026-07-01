@@ -104,6 +104,8 @@ export interface SubagentInfo {
   completedAt?: number;
   // Live enrichment from the subagent's transcript (workflowWatcher)
   description?: string;
+  /** The Agent tool_use id that spawned this subagent — exact anchor for the timeline. */
+  toolUseId?: string;
   model?: string;
   tokens?: number;
   toolCalls?: number;
@@ -497,6 +499,7 @@ class ClaudeSessionStore {
       const activity = update.subagentActivity[stripPrefix(sub.id)];
       if (!activity) continue;
       if (activity.description) sub.description = activity.description;
+      if (activity.toolUseId) sub.toolUseId = activity.toolUseId;
       if (activity.model) sub.model = activity.model;
       if (activity.tokens !== undefined) sub.tokens = activity.tokens;
       if (activity.toolCalls !== undefined) sub.toolCalls = activity.toolCalls;

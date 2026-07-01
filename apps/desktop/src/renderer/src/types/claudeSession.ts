@@ -51,6 +51,8 @@ export interface SubagentInfo {
   completedAt?: number;
   // Live enrichment from the subagent's transcript (main-process workflowWatcher)
   description?: string;
+  /** The Agent tool_use id that spawned this subagent — exact anchor for the timeline. */
+  toolUseId?: string;
   model?: string;
   tokens?: number;
   toolCalls?: number;

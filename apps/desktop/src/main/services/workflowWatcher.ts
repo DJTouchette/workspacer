@@ -61,6 +61,8 @@ export interface WorkflowRunInfo {
 export interface SubagentActivity {
   description?: string;
   agentType?: string;
+  /** The Agent tool_use id that spawned this subagent (from meta.json) — lets the renderer anchor it exactly. */
+  toolUseId?: string;
   model?: string;
   tokens?: number;
   toolCalls?: number;
@@ -637,6 +639,7 @@ class WorkflowWatcher {
         activity: {
           agentType: typeof meta.agentType === 'string' ? meta.agentType : undefined,
           description: typeof meta.description === 'string' ? meta.description : undefined,
+          toolUseId: typeof meta.toolUseId === 'string' ? meta.toolUseId : undefined,
           tokens: 0,
           toolCalls: 0,
         },
