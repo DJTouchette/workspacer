@@ -23,6 +23,9 @@ pub fn router(store: SessionStore) -> Router {
         .route("/hook/:kind", post(receive_named))
         .route("/statusline", post(receive_status_line))
         .route("/health", axum::routing::get(health))
+        // Cap hook/statusline payloads: they're cloned, broadcast to every
+        // subscriber, and persisted to SQLite, so an unbounded body is a DoS seam.
+        .layer(axum::extract::DefaultBodyLimit::max(16 * 1024 * 1024))
         .with_state(store)
 }
 

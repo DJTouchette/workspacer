@@ -121,6 +121,11 @@ pub struct SessionStore {
     /// driver forwards it to the provider (OpenCode permission reply / Codex
     /// JSON-RPC approval response).
     managed_decisions: Arc<DashMap<String, mpsc::UnboundedSender<bool>>>,
+    /// Live in-daemon PTY children, keyed by session_id, so daemon shutdown can
+    /// kill them (they have no `kill_on_drop`, unlike the managed providers'
+    /// tokio children) and their exit can be reaped. Without this, quitting the
+    /// launcher orphans every `claude` PTY it spawned.
+    ptys: Arc<DashMap<String, Arc<crate::wrapper::pty::PtyHandle>>>,
 }
 
 /// Outcome of a `/message` submission. Keeping the policy here (rather than in
@@ -163,6 +168,46 @@ impl SessionStore {
             pending_messages: Arc::new(DashMap::new()),
             managed_inputs: Arc::new(DashMap::new()),
             managed_decisions: Arc::new(DashMap::new()),
+            ptys: Arc::new(DashMap::new()),
+        }
+    }
+
+    // --- in-daemon PTY child lifecycle --------------------------------------
+
+    /// Register a spawned PTY child so it can be killed on daemon shutdown and
+    /// reaped on exit.
+    pub fn register_pty(&self, session_id: &str, handle: Arc<crate::wrapper::pty::PtyHandle>) {
+        self.ptys.insert(session_id.to_string(), handle);
+    }
+
+    /// Reap and forget a PTY child after its reader loop ended. Usually the reader
+    /// stopped because the child exited (EOF) and `wait()` returns immediately —
+    /// but the reader can also break on a transient read *error* while the child
+    /// is still alive. To avoid blocking a runtime worker on `wait()` in that case
+    /// (and starving `signal_child`/`has_exited`, which take the same mutex), reap
+    /// on the blocking pool and kill first if the child hasn't already exited.
+    pub fn reap_pty(&self, session_id: &str) {
+        let Some((_, handle)) = self.ptys.remove(session_id) else {
+            return;
+        };
+        tokio::task::spawn_blocking(move || {
+            let mut child = handle.child.lock().expect("PTY child mutex poisoned");
+            // Already exited (the common EOF path) → try_wait reaps it right away.
+            if matches!(child.try_wait(), Ok(Some(_))) {
+                return;
+            }
+            // Reader broke while the child lives → kill so the following wait()
+            // returns promptly instead of blocking indefinitely.
+            let _ = child.kill();
+            let _ = child.wait();
+        });
+    }
+
+    /// Kill every live in-daemon PTY child. Called on daemon shutdown so the
+    /// `claude` processes it spawned don't outlive the daemon (and the launcher).
+    pub fn kill_all_ptys(&self) {
+        for entry in self.ptys.iter() {
+            let _ = crate::wrapper::pty::signal_child(entry.value(), crate::protocol::Signal::Sigkill);
         }
     }
 
@@ -549,11 +594,41 @@ impl SessionStore {
         }
     }
 
+    /// Whether this session is adapter-driven (OpenCode/Codex/Pi), i.e. it has a
+    /// managed prompt channel rather than a Claude hook + PTY lifecycle.
+    pub fn is_managed(&self, session_id: &str) -> bool {
+        self.managed_inputs.contains_key(session_id)
+    }
+
+    /// Externally terminate a managed session. Dropping its prompt channel makes
+    /// the adapter's driver loop see `rx.recv() == None` and break, which runs its
+    /// cleanup (kills the provider server + TUI child) and then calls
+    /// `deregister_managed`. This is the only external kill path for managed
+    /// sessions — without it, closing a pane leaves the `codex app-server` /
+    /// `opencode serve` process and its driver task running forever.
+    pub fn terminate_managed(&self, session_id: &str) -> bool {
+        // Removing the sender drops it (submit_message only holds transient
+        // clones), so the driver's `rx.recv()` resolves to None and the loop exits.
+        let existed = self.managed_inputs.remove(session_id).is_some();
+        self.managed_decisions.remove(session_id);
+        existed
+    }
+
     /// Tear down a managed session: drop its prompt + decision channels
-    /// (signalling the driver to stop) and mark it Stopped.
+    /// (signalling the driver to stop), release its terminal resources (the
+    /// attached TUI's byte buffer + broadcast + input wrapper), and mark it
+    /// Stopped. Idempotent — safe whether reached via `terminate_managed` or the
+    /// driver loop exiting on its own.
     pub fn deregister_managed(&self, session_id: &str) {
         self.managed_inputs.remove(session_id);
         self.managed_decisions.remove(session_id);
+        // Release the hybrid Term view's resources (attached by `attach_pty`).
+        // The 256 KiB byte ring per session is the bulk of a managed session's
+        // memory; leaving it (and the input wrapper + broadcast) around after the
+        // session ends is a slow leak across spawn/stop churn.
+        self.wrappers.remove(session_id);
+        self.buffers.remove(session_id);
+        self.bytes_tx.remove(session_id);
         if let Some(mut entry) = self.states.get_mut(session_id) {
             entry.mode = SessionMode::Stopped;
             entry.updated_at = OffsetDateTime::now_utc();
@@ -598,6 +673,9 @@ impl SessionStore {
         self.bytes_tx.remove(session_id);
         self.pending_messages.remove(session_id);
         self.states.remove(session_id);
+        // Drop any hook-id → canonical-id aliases pointing at this session, so the
+        // alias map doesn't accrue a permanent entry per spawn across churn.
+        self.aliases.retain(|_, canonical| canonical != session_id);
     }
 
     pub fn wrapper(&self, session_id: &str) -> Option<WrapperHandle> {
@@ -677,10 +755,20 @@ impl SessionStore {
         let Some(handle) = self.wrapper(session_id) else {
             return MessageOutcome::NoWrapper;
         };
-        let mut bytes = text.into_bytes();
-        if !bytes.last().is_some_and(|b| *b == b'\r' || *b == b'\n') {
-            bytes.push(b'\r');
-        }
+        // Inject the prompt as a *bracketed paste* followed by a separate Enter.
+        // Writing raw `text\r` as one burst makes the TUI fold the trailing CR
+        // into the "paste" (a newline in the composer) instead of submitting — you
+        // get the text plus a stray unsubmitted newline. Bracketed paste
+        // (ESC[200~ … ESC[201~) delivers the whole text as one paste event; the CR
+        // *after* the end marker is a real Enter that submits. Typed input already
+        // works because each keystroke arrives as its own event. Any trailing
+        // CR/LF in `text` is stripped so it doesn't add an extra blank line inside
+        // the paste.
+        let body = text.trim_end_matches(['\r', '\n']);
+        let mut bytes = Vec::with_capacity(body.len() + 8);
+        bytes.extend_from_slice(b"\x1b[200~");
+        bytes.extend_from_slice(body.as_bytes());
+        bytes.extend_from_slice(b"\x1b[201~\r");
         if handle
             .tx
             .send(WrapperMessage::Input { bytes: B64.encode(&bytes) })
@@ -776,13 +864,22 @@ mod tests {
         }
     }
 
+    /// A chat line as it's injected into the PTY: a bracketed paste of the text
+    /// followed by a submitting CR (see `send_message_now`).
+    fn pasted(text: &str) -> Vec<u8> {
+        let mut b = b"\x1b[200~".to_vec();
+        b.extend_from_slice(text.as_bytes());
+        b.extend_from_slice(b"\x1b[201~\r");
+        b
+    }
+
     #[test]
     fn message_sent_immediately_when_input() {
         let store = SessionStore::new();
         let (h, mut rx) = handle_with_rx();
         store.register_wrapper("s1", "/w", h); // synthetic SessionStart → Input
         assert_eq!(store.submit_message("s1", "hello".into()), MessageOutcome::Sent);
-        assert_eq!(next_input(&mut rx), b"hello\r", "line submitted with a CR");
+        assert_eq!(next_input(&mut rx), pasted("hello"), "line submitted as bracketed paste + CR");
     }
 
     #[test]
@@ -795,7 +892,7 @@ mod tests {
 
         // Claude's real SessionStart lands → Input → the queued line flushes.
         store.ingest(hook("SessionStart", "s1", "/w"));
-        assert_eq!(next_input(&mut rx), b"hi\r");
+        assert_eq!(next_input(&mut rx), pasted("hi"));
     }
 
     #[test]
@@ -808,7 +905,7 @@ mod tests {
         assert!(rx.try_recv().is_err(), "held while Claude is responding");
 
         store.ingest(hook("Stop", "s1", "/w")); // turn ends → Input → flush
-        assert_eq!(next_input(&mut rx), b"followup\r");
+        assert_eq!(next_input(&mut rx), pasted("followup"));
     }
 
     #[test]
@@ -950,5 +1047,41 @@ mod tests {
         let raw = serde_json::json!({ "session_id": "nobody", "context_window": { "used_percentage": 5 } });
         assert!(store.ingest_status_line(&raw).is_none());
         assert!(store.get("nobody").is_none(), "must not create a phantom session");
+    }
+
+    // terminate_managed drops the managed prompt channel so the adapter's driver
+    // loop (which selects on the receiver) sees the stream close and exits —
+    // the only external kill path for an adapter-driven session.
+    #[test]
+    fn terminate_managed_closes_the_prompt_channel() {
+        let store = SessionStore::new();
+        store.register_managed("m1", "/tmp");
+        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+        store.register_managed_input("m1", tx);
+        assert!(store.is_managed("m1"));
+
+        assert!(store.terminate_managed("m1"), "should report the session existed");
+        assert!(!store.is_managed("m1"), "prompt channel is gone");
+        // The driver's receiver now observes the closed channel (loop-break signal).
+        assert!(rx.try_recv().is_err(), "recv resolves to closed, not a value");
+        // Terminating an unknown / already-gone session is a no-op, not a panic.
+        assert!(!store.terminate_managed("m1"));
+    }
+
+    // deregister_managed reclaims the hybrid Term view's byte resources (the bulk
+    // of a managed session's memory) rather than leaking them past session end.
+    #[test]
+    fn deregister_managed_releases_terminal_resources() {
+        let store = SessionStore::new();
+        store.register_managed("m2", "/tmp");
+        store.attach_pty("m2", handle());
+        assert!(store.wrapper("m2").is_some());
+        assert!(store.subscribe_bytes("m2").is_some());
+
+        store.deregister_managed("m2");
+        assert!(store.wrapper("m2").is_none(), "input wrapper released");
+        assert!(store.subscribe_bytes("m2").is_none(), "byte broadcast released");
+        // The lightweight state row is kept (marked Stopped) for history.
+        assert_eq!(store.get("m2").map(|s| s.mode), Some(SessionMode::Stopped));
     }
 }

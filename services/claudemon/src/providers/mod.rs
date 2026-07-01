@@ -27,12 +27,21 @@ pub struct Facade {
     pub instructions: Option<String>,
 }
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
+use portable_pty::PtySize;
 use serde_json::Value;
 use time::OffsetDateTime;
+use tokio::sync::mpsc;
 
+use crate::protocol::{Signal, WrapperMessage};
 use crate::session::conversation::ConversationItem;
 use crate::session::state::{Pending, SessionMode, StatusLine};
+use crate::session::store::WrapperHandle;
 use crate::session::{ConversationStore, SessionStore};
+use crate::wrapper::pty;
 
 /// One selectable model for a managed provider, as surfaced by the spawn
 /// dialog's model picker. `id` is the value passed back as the model override
@@ -237,6 +246,76 @@ pub fn apply_updates(
             status_from_usage(acc.model.clone(), acc.input, acc.output, acc.cost),
         );
     }
+}
+
+/// Spawn a PTY child and wire it into an already-registered session's byte
+/// stream + input channel — the **Term half** of a hybrid managed agent. Output
+/// is pumped through `record_output` (onto the session's byte broadcast); input
+/// arrives via the `WrapperHandle` registered with `attach_pty`. Returns the
+/// handle so the caller can kill the child when the session ends.
+///
+/// Shared by the hybrid adapters (OpenCode `attach`, Codex `resume --remote`):
+/// each drives a structured GUI from its own machine interface *and* runs the
+/// agent's native TUI in a PTY attached to the same live session, so the GUI and
+/// Term are two views of one conversation.
+pub(crate) fn spawn_attach_pty(
+    store: &SessionStore,
+    session_id: &str,
+    argv: &[String],
+    cwd: &str,
+) -> anyhow::Result<Arc<pty::PtyHandle>> {
+    let handle = Arc::new(pty::spawn(
+        argv,
+        cwd,
+        PtySize { cols: 120, rows: 32, pixel_width: 0, pixel_height: 0 },
+        &HashMap::new(),
+    )?);
+
+    // input pump: WrapperMessage (from POST /sessions/:id/input) -> PTY
+    let (input_tx, mut input_rx) = mpsc::unbounded_channel::<WrapperMessage>();
+    let pty_in = handle.clone();
+    tokio::spawn(async move {
+        while let Some(msg) = input_rx.recv().await {
+            match msg {
+                WrapperMessage::Input { bytes } => {
+                    if let Ok(decoded) = B64.decode(bytes.as_bytes()) {
+                        let _ = pty::write_bytes(&pty_in, &decoded).await;
+                    }
+                }
+                WrapperMessage::Signal { signal } => match signal {
+                    Signal::Sigint => {
+                        let _ = pty::write_bytes(&pty_in, b"\x03").await;
+                    }
+                    other => {
+                        let _ = pty::signal_child(&pty_in, other);
+                    }
+                },
+                WrapperMessage::Resize { cols, rows } => {
+                    let _ = pty::resize(&pty_in, cols, rows).await;
+                }
+                _ => {}
+            }
+        }
+    });
+
+    // output pump: PTY -> record_output -> byte broadcast (the Term view)
+    let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    pty::start_reader(&handle, out_tx)?;
+    let store_out = store.clone();
+    let sid = session_id.to_string();
+    tokio::spawn(async move {
+        while let Some(chunk) = out_rx.recv().await {
+            store_out.record_output(&sid, &chunk).await;
+        }
+        // TUI exited (reader EOF) — reap it so it isn't left a zombie.
+        store_out.reap_pty(&sid);
+    });
+
+    // Register the TUI child so daemon shutdown kills it too (it's a portable-pty
+    // child with no kill-on-drop, like the in-daemon PTY path).
+    store.register_pty(session_id, handle.clone());
+    store.attach_pty(session_id, WrapperHandle { tx: input_tx });
+    Ok(handle)
 }
 
 #[cfg(test)]

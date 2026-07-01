@@ -86,6 +86,9 @@ pub fn router(state: ApiState) -> Router {
         .route("/items/:id/action", post(post_item_action))
         .route("/wrapper/:id", get(crate::daemon::wrapper_ws::upgrade))
         .route("/health", get(|| async { "ok" }))
+        // Bound request bodies (tool inputs, messages) so a hostile or buggy
+        // local client can't push an unbounded payload through the fanout + DB.
+        .layer(axum::extract::DefaultBodyLimit::max(16 * 1024 * 1024))
         .layer(CorsLayer::permissive())
         .with_state(state)
 }
@@ -104,25 +107,33 @@ async fn list_sessions(
     Query(q): Query<ListSessionsQuery>,
 ) -> impl IntoResponse {
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
-    let sessions: Vec<Value> = store
-        .list()
-        .into_iter()
-        .filter_map(|state| {
-            let archived = state.is_archived(now);
-            // Default list hides archived sessions; they're still reachable via
-            // `?include_archived=true` and the per-session endpoint.
-            if archived && !q.include_archived {
-                return None;
-            }
-            let u = usage::usage_for_path(state.transcript_path.as_deref());
-            let mut v = serde_json::to_value(&state).unwrap_or(Value::Null);
-            if let Some(obj) = v.as_object_mut() {
-                obj.insert("usage".to_string(), serde_json::to_value(&u).unwrap_or(Value::Null));
-                obj.insert("archived".to_string(), Value::Bool(archived));
-            }
-            Some(v)
-        })
-        .collect();
+    let states = store.list();
+    let include_archived = q.include_archived;
+    // `usage_for_path` reads each session's transcript from disk — doing it inline
+    // would block a runtime worker (and its SSE streams) across N file reads, so
+    // run the whole fold on the blocking pool.
+    let sessions: Vec<Value> = tokio::task::spawn_blocking(move || {
+        states
+            .into_iter()
+            .filter_map(|state| {
+                let archived = state.is_archived(now);
+                // Default list hides archived sessions; they're still reachable
+                // via `?include_archived=true` and the per-session endpoint.
+                if archived && !include_archived {
+                    return None;
+                }
+                let u = usage::usage_for_path(state.transcript_path.as_deref());
+                let mut v = serde_json::to_value(&state).unwrap_or(Value::Null);
+                if let Some(obj) = v.as_object_mut() {
+                    obj.insert("usage".to_string(), serde_json::to_value(&u).unwrap_or(Value::Null));
+                    obj.insert("archived".to_string(), Value::Bool(archived));
+                }
+                Some(v)
+            })
+            .collect()
+    })
+    .await
+    .unwrap_or_default();
     Json(sessions)
 }
 
@@ -428,6 +439,19 @@ async fn post_signal(
     Path(id): Path<String>,
     Json(payload): Json<SignalPayload>,
 ) -> impl IntoResponse {
+    // Managed (adapter-driven) sessions have no Claude-style PTY lifecycle: a
+    // terminate/kill must stop the driver loop (which then kills the provider
+    // server + TUI), not just poke the attached TUI. SIGINT still forwards to the
+    // TUI below as an interactive interrupt.
+    if store.is_managed(&id)
+        && matches!(payload.signal, crate::protocol::Signal::Sigterm | crate::protocol::Signal::Sigkill)
+    {
+        return if store.terminate_managed(&id) {
+            Json(json!({ "ok": true, "signal": payload.signal })).into_response()
+        } else {
+            (StatusCode::NOT_FOUND, "no managed session").into_response()
+        };
+    }
     let Some(handle) = store.wrapper(&id) else {
         return (StatusCode::NOT_FOUND, "no wrapper attached").into_response();
     };
@@ -486,20 +510,35 @@ async fn stream_bytes(
         return (StatusCode::NOT_FOUND, "no buffer for that session").into_response();
     };
 
-    // First event replays the ring buffer so reconnecting/attaching clients
-    // see prior terminal output. Empty snapshot → no replay event.
-    let replay = (!snapshot.is_empty()).then(|| {
-        Ok::<_, Infallible>(Event::default().event("pty.bytes").data(B64.encode(&snapshot)))
-    });
-
-    let live = BroadcastStream::new(rx).filter_map(|res| match res {
-        Ok(chunk) => Some(Ok::<_, Infallible>(
-            Event::default().event("pty.bytes").data(B64.encode(&chunk)),
-        )),
-        Err(_) => None,
-    });
-
-    let stream = futures::stream::iter(replay).chain(live);
+    // Drive the receiver directly (not via BroadcastStream) so a lag can `await`
+    // a fresh snapshot to repaint from. First event replays the ring buffer so
+    // reconnecting/attaching clients see prior terminal output.
+    let mut rx = rx;
+    let stream = async_stream::stream! {
+        if !snapshot.is_empty() {
+            yield Ok::<_, Infallible>(Event::default().event("pty.bytes").data(B64.encode(&snapshot)));
+        }
+        loop {
+            match rx.recv().await {
+                Ok(chunk) => {
+                    yield Ok(Event::default().event("pty.bytes").data(B64.encode(&chunk)));
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    // The client fell behind and the ring dropped `n` chunks. Raw
+                    // bytes have no seq to resync, and a dropped mid-escape chunk
+                    // corrupts the terminal silently. Recover client-transparently:
+                    // full terminal reset (RIS, `\x1bc`) + the current buffer, so
+                    // the terminal clears and repaints instead of rendering a hole.
+                    tracing::warn!(session = %id, dropped = n, "byte stream lagged; repainting from snapshot");
+                    let repaint = store.output_snapshot(&id).await.unwrap_or_default();
+                    let mut bytes = b"\x1bc".to_vec();
+                    bytes.extend_from_slice(&repaint);
+                    yield Ok(Event::default().event("pty.bytes").data(B64.encode(&bytes)));
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    };
 
     Sse::new(stream)
         .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
@@ -515,24 +554,32 @@ async fn get_transcript(
     };
     // Authoritative path captured from the hook — read the exact file. Falls
     // through to cwd-based resolution only if it isn't known yet or is missing.
-    if let Some(tp) = state.transcript_path.as_deref() {
-        if std::path::Path::new(tp).exists() {
-            return match transcript::read_at(tp) {
-                Ok(t) => Json(t).into_response(),
-                Err(err) => {
-                    tracing::warn!(?err, "transcript read failed");
-                    (StatusCode::INTERNAL_SERVER_ERROR, "transcript read failed").into_response()
-                }
-            };
+    // Reading/parsing the JSONL is blocking file I/O; run it off the async
+    // runtime so a large transcript doesn't stall a worker + its SSE streams.
+    let cwd = state.cwd.clone();
+    let tp = state.transcript_path.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        // Authoritative path captured from the hook — read the exact file. Falls
+        // through to cwd-based resolution only if it isn't known or is missing.
+        if let Some(tp) = tp.as_deref() {
+            if std::path::Path::new(tp).exists() {
+                return transcript::read_at(tp);
+            }
         }
-    }
-    let Some(cwd) = state.cwd.clone() else {
-        return Json(transcript::Transcript::default()).into_response();
-    };
-    match transcript::read_for_session(&cwd, &id) {
-        Ok(t) => Json(t).into_response(),
-        Err(err) => {
+        match cwd {
+            Some(cwd) => transcript::read_for_session(&cwd, &id),
+            None => Ok(transcript::Transcript::default()),
+        }
+    })
+    .await;
+    match result {
+        Ok(Ok(t)) => Json(t).into_response(),
+        Ok(Err(err)) => {
             tracing::warn!(?err, "transcript read failed");
+            (StatusCode::INTERNAL_SERVER_ERROR, "transcript read failed").into_response()
+        }
+        Err(err) => {
+            tracing::warn!(?err, "transcript read task panicked");
             (StatusCode::INTERNAL_SERVER_ERROR, "transcript read failed").into_response()
         }
     }

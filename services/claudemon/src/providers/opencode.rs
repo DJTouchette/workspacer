@@ -14,24 +14,19 @@
 //! through `translate` + the shared `apply_updates` needs a real `opencode`
 //! binary to validate end-to-end.
 
-use std::collections::HashMap;
 use std::process::Stdio;
-use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
-use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use futures_util::StreamExt;
-use portable_pty::PtySize;
 use serde_json::Value;
 use tokio::process::Command;
 use tokio::sync::mpsc;
 
 use super::{apply_updates, AgentUpdate, Facade, ModelInfo, UsageAcc};
-use crate::protocol::{Signal, WrapperMessage};
+use crate::protocol::Signal;
 use crate::session::conversation::ConversationItem;
 use crate::session::state::SessionMode;
-use crate::session::store::WrapperHandle;
 use crate::session::{ConversationStore, SessionStore};
 use crate::wrapper::pty;
 
@@ -223,6 +218,7 @@ pub fn spawn_session(
             tracing::warn!(?err, session = %session_id, "opencode managed session ended with error");
         }
         store.deregister_managed(&session_id);
+        conv.forget(&session_id);
     });
 }
 
@@ -334,7 +330,7 @@ async fn run_session(
         "--session".to_string(),
         oc_id.clone(),
     ];
-    let attach_pty = match spawn_attach_pty(store, session_id, &attach_argv, cwd) {
+    let attach_pty = match super::spawn_attach_pty(store, session_id, &attach_argv, cwd) {
         Ok(h) => Some(h),
         Err(err) => {
             tracing::warn!(?err, session = %session_id, "opencode attach TUI failed; Term view unavailable");
@@ -354,7 +350,9 @@ async fn run_session(
     let mut cur_mode = SessionMode::Input;
     let mut acc = UsageAcc::new();
     // The id of the permission currently awaiting the user's decision (non-YOLO).
-    let mut pending_perm_id: Option<String> = None;
+    // Permission ids awaiting a decision, FIFO — a queue (not one slot) so
+    // concurrent permission requests don't drop each other and stall the agent.
+    let mut pending_perm_ids: std::collections::VecDeque<String> = std::collections::VecDeque::new();
     // Role instructions to prepend to the first turn only (supervisors).
     let mut pending_instructions: Option<String> = facade.instructions.clone();
 
@@ -384,8 +382,8 @@ async fn run_session(
                                         reply_permission(&client, &base, &oc_id, &pid, true);
                                     }
                                     updates.remove(idx); // don't surface Approval
-                                } else {
-                                    pending_perm_id = perm_id;
+                                } else if let Some(pid) = perm_id {
+                                    pending_perm_ids.push_back(pid);
                                 }
                             }
                         }
@@ -424,7 +422,7 @@ async fn run_session(
             },
             decision = drx.recv() => match decision {
                 Some(approve) => {
-                    if let Some(pid) = pending_perm_id.take() {
+                    if let Some(pid) = pending_perm_ids.pop_front() {
                         reply_permission(&client, &base, &oc_id, &pid, approve);
                         // The agent resumes (or stops on reject); reflect Responding.
                         store.set_managed_mode(session_id, SessionMode::Responding, None);
@@ -445,66 +443,6 @@ async fn run_session(
         let _ = pty::signal_child(handle, Signal::Sigkill);
     }
     Ok(())
-}
-
-/// Spawn a PTY child and wire it into an already-registered session's byte
-/// stream + input channel — the Term half of a hybrid managed agent. Output is
-/// pumped through `record_output` (onto the session's byte broadcast); input
-/// arrives via the `WrapperHandle` registered with `attach_pty`. Returns the
-/// handle so the caller can kill the child when the session ends.
-fn spawn_attach_pty(
-    store: &SessionStore,
-    session_id: &str,
-    argv: &[String],
-    cwd: &str,
-) -> anyhow::Result<Arc<pty::PtyHandle>> {
-    let handle = Arc::new(pty::spawn(
-        argv,
-        cwd,
-        PtySize { cols: 120, rows: 32, pixel_width: 0, pixel_height: 0 },
-        &HashMap::new(),
-    )?);
-
-    // input pump: WrapperMessage (from POST /sessions/:id/input) -> PTY
-    let (input_tx, mut input_rx) = mpsc::unbounded_channel::<WrapperMessage>();
-    let pty_in = handle.clone();
-    tokio::spawn(async move {
-        while let Some(msg) = input_rx.recv().await {
-            match msg {
-                WrapperMessage::Input { bytes } => {
-                    if let Ok(decoded) = B64.decode(bytes.as_bytes()) {
-                        let _ = pty::write_bytes(&pty_in, &decoded).await;
-                    }
-                }
-                WrapperMessage::Signal { signal } => match signal {
-                    Signal::Sigint => {
-                        let _ = pty::write_bytes(&pty_in, b"\x03").await;
-                    }
-                    other => {
-                        let _ = pty::signal_child(&pty_in, other);
-                    }
-                },
-                WrapperMessage::Resize { cols, rows } => {
-                    let _ = pty::resize(&pty_in, cols, rows).await;
-                }
-                _ => {}
-            }
-        }
-    });
-
-    // output pump: PTY -> record_output -> byte broadcast (the Term view)
-    let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Vec<u8>>();
-    pty::start_reader(&handle, out_tx)?;
-    let store_out = store.clone();
-    let sid = session_id.to_string();
-    tokio::spawn(async move {
-        while let Some(chunk) = out_rx.recv().await {
-            store_out.record_output(&sid, &chunk).await;
-        }
-    });
-
-    store.attach_pty(session_id, WrapperHandle { tx: input_tx });
-    Ok(handle)
 }
 
 /// Poll `/global/health` until the server answers (or we give up after ~10s).

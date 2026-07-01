@@ -142,6 +142,14 @@ impl ConversationStore {
         };
         let _ = self.tx.send(delta);
     }
+
+    /// Drop a session's accumulated conversation log. Called when a session ends
+    /// so the full transcript (kept in memory for late-joiner snapshots) is
+    /// reclaimed instead of living for the daemon's lifetime. Late `/conversation`
+    /// snapshot requests after this simply return None (the session is gone).
+    pub fn forget(&self, session_id: &str) {
+        self.logs.remove(session_id);
+    }
 }
 
 impl Default for ConversationStore {
@@ -165,6 +173,12 @@ pub fn spawn_tailer(sessions: SessionStore, conv: ConversationStore) {
                 if state.mode == SessionMode::Stopped {
                     let age = time::OffsetDateTime::now_utc() - state.updated_at;
                     if age.whole_seconds() > STOPPED_DRAIN_SECS {
+                        // Past the drain window the session is done. Drop its
+                        // in-memory transcript log (the biggest per-session
+                        // allocation) so it doesn't live for the daemon's life —
+                        // it's re-derivable from the on-disk JSONL, and the delta
+                        // stream is finished. Idempotent.
+                        conv.forget(&state.session_id);
                         continue;
                     }
                 }
@@ -385,6 +399,18 @@ pub fn items_from_row(value: &Value) -> Vec<ConversationItem> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn push_then_forget_reclaims_the_log() {
+        let conv = ConversationStore::new();
+        conv.push("s1", vec![ConversationItem::AssistantText { text: "hi".into(), timestamp: None }]);
+        assert!(conv.snapshot("s1").is_some(), "log present after push");
+        conv.forget("s1");
+        assert!(conv.snapshot("s1").is_none(), "log reclaimed after forget");
+        // The next push after forget starts a fresh log that resets late joiners.
+        conv.push("s1", vec![ConversationItem::AssistantText { text: "again".into(), timestamp: None }]);
+        assert_eq!(conv.snapshot("s1").map(|(seq, _)| seq), Some(1));
+    }
 
     #[test]
     fn user_text_row_yields_user_message() {

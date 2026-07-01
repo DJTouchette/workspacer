@@ -315,6 +315,38 @@ class ClaudeSessionStore {
     this.pushUpdate(session);
   }
 
+  /**
+   * Fold a *managed* (Codex/OpenCode/Pi) session's mode into `ambientState`.
+   * Pushed by `claudemonEventBridge` from claudemon's `/events` stream (the
+   * `session.update` frames a managed adapter emits via `set_managed_mode`).
+   * Managed backends fire no Claude hooks, so this is their only working / idle /
+   * waiting signal — without it their status is stuck on the `'idle'` default.
+   * No-op for unknown sessions or modes we don't surface.
+   */
+  applyManagedMode(sessionId: string, mode: string): void {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    let next: SessionAmbientState;
+    switch (mode) {
+      case 'responding': next = 'streaming'; break;
+      case 'approval':   next = 'waiting_approval'; break;
+      case 'question':   next = 'waiting_input'; break;
+      case 'input':      next = 'idle'; break;
+      default: return; // 'unknown' / 'stopped' — leave the current state as-is
+    }
+    const prevAmbient = session.ambientState;
+    session.ambientState = next;
+    session.lastActivity = Date.now();
+    if (next !== prevAmbient) {
+      agentNotifier.notifyOnTransition(session, prevAmbient);
+      const isBlocked = (s: SessionAmbientState) => s === 'waiting_approval' || s === 'waiting_input';
+      if (isBlocked(next) && !isBlocked(prevAmbient)) {
+        supervisorNudge.onBlock(session, next === 'waiting_approval' ? 'approval' : 'question', this.supervisorSessionIds());
+      }
+    }
+    this.pushUpdate(session);
+  }
+
   // ── Conversation delta integration ──
   //
   // Fed by claudemonConversationBridge from claudemon's `/conversation/stream`.

@@ -11,6 +11,7 @@ import { startClaudemon, stopClaudemon, runClaudemonInit } from './services/clau
 import { startClaudemonHookBridge, stopClaudemonHookBridge } from './services/claudemonHookBridge';
 import { startClaudemonStatusLineBridge, stopClaudemonStatusLineBridge } from './services/claudemonStatusLineBridge';
 import { startClaudemonConversationBridge, stopClaudemonConversationBridge } from './services/claudemonConversationBridge';
+import { startClaudemonEventBridge, stopClaudemonEventBridge } from './services/claudemonEventBridge';
 import { startHub, stopHub } from './services/hubDaemon';
 import { startMcpFacade, stopMcpFacade } from './services/mcpFacadeDaemon';
 import { setHubMainWindow, startHubClient, stopHubClient } from './services/hubClient';
@@ -230,6 +231,11 @@ function createWindow(): void {
       startClaudemonConversationBridge().catch(err =>
         console.error('[main] conversation bridge crashed:', err)
       );
+      // Managed (Codex/OpenCode/Pi) sessions fire no hooks; this feeds their
+      // mode → ambientState so their status isn't stuck on "Idle".
+      startClaudemonEventBridge().catch(err =>
+        console.error('[main] event bridge crashed:', err)
+      );
       // Hub (control-plane / event bus) bridges claudemon onto its bus; the
       // main process connects as a client, forwards events to the renderer, and
       // registers the capabilities plugins/MCP can call. Started after claudemon
@@ -409,6 +415,7 @@ async function gracefulShutdown(): Promise<void> {
   stopClaudemonHookBridge();
   stopClaudemonStatusLineBridge();
   stopClaudemonConversationBridge();
+  stopClaudemonEventBridge();
   stopHubClient();
   // Stop the daemons in parallel; each closes its stdin so its watchdog runs a
   // clean shutdown (the hub tears down sidecars first). Overall cap as a backstop.

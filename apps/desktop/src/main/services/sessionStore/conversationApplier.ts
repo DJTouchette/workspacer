@@ -82,7 +82,25 @@ export function applyConversationItems(
 
       case 'assistant_text': {
         const text = item.text ?? '';
-        if (text && !isDuplicateMessage(session, 'assistant', text)) {
+        if (!text) break;
+        // Managed adapters stream assistant text into one bubble, but in two
+        // different shapes: Codex emits incremental deltas ("What", " can", …)
+        // while OpenCode re-sends the full accumulated text each update ("Hello",
+        // "Hello world"). Coalesce both: if the new text extends the current
+        // bubble it's a growing snapshot → replace; otherwise it's a delta →
+        // append. (Pushing a message per fragment renders one word per line;
+        // appending snapshots would duplicate.) Claude emits whole text blocks
+        // and re-emits them around compaction, so it keeps the dedup-and-push
+        // path.
+        const streaming = !!session.provider && session.provider !== 'claude';
+        const last = session.conversation[session.conversation.length - 1];
+        if (streaming && last && last.role === 'assistant' && !last.toolCalls?.length) {
+          if (last.content && text.startsWith(last.content)) {
+            last.content = text; // full-snapshot growth (OpenCode)
+          } else {
+            last.content += text; // incremental delta (Codex)
+          }
+        } else if (!isDuplicateMessage(session, 'assistant', text)) {
           session.conversation.push({ role: 'assistant', content: text, timestamp: tsOf(item) });
         }
         break;

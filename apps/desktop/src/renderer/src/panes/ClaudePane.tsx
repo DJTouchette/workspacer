@@ -66,15 +66,15 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
   const { config } = useConfig();
   // Which surfaces this provider has:
   //   claude            — GUI (hooks/transcript telemetry) + terminal (its PTY)
-  //   codex (Windows)   — hybrid: GUI (claudemon tails its rollout) + terminal
-  //                       (the codex TUI in a PTY). On macOS/Linux Codex runs via
-  //                       the headless app-server RPC adapter → GUI only.
+  //   codex (hybrid)    — GUI (app-server JSON-RPC adapter) + terminal (the codex
+  //                       TUI in a PTY, `resume --remote` onto the same live
+  //                       app-server thread). On Windows the GUI is instead fed by
+  //                       tailing the rollout, but it's a hybrid either way.
   //   opencode (hybrid) — GUI (the `opencode serve` /event adapter) + terminal
   //                       (`opencode attach` TUI in a PTY, same serve + session)
   //   pi                — GUI only: managed `pi --mode rpc` adapter (no PTY)
   const isClaude = (provider ?? 'claude') === 'claude';
-  const isWindows = window.electronAPI?.platform === 'win32';
-  const isHybrid = provider === 'opencode' || (provider === 'codex' && isWindows);
+  const isHybrid = provider === 'opencode' || provider === 'codex';
   // Display name of the backend for user-facing copy (empty states, composer,
   // exit notice) so a Codex/OpenCode/Pi pane doesn't read as "Claude".
   const agentName = providerLabel(provider);
@@ -578,9 +578,11 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
     setOptimisticLoading(true);
 
     const rawFallback = () => {
-      // Single atomic write: text + submit in one frame so the lone \r can't
-      // race a mid-flight redraw and get dropped (the "typed but not sent" bug).
-      write(fullMessage + '\r');
+      // Bracketed paste + a separate Enter, in one frame. Writing raw `text\r`
+      // makes the TUI fold the CR into the "paste" (a newline in the composer)
+      // instead of submitting; the CR after the ESC[201~ end marker is a real
+      // Enter that submits. Mirrors the daemon's send_message_now.
+      write('\x1b[200~' + fullMessage.replace(/[\r\n]+$/, '') + '\x1b[201~\r');
     };
 
     if (!sessionId) {

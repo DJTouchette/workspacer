@@ -1,29 +1,49 @@
 //! Codex adapter — translate `codex app-server` notifications into claudemon's
 //! session model.
 //!
-//! Codex's app server speaks JSON-RPC 2.0 over stdio (newline-delimited JSON).
-//! We `thread/start` (model + cwd) for a thread, `turn/start` each user prompt,
-//! and consume the streamed notifications: `turn/started|completed|failed`,
+//! Codex's app server speaks JSON-RPC 2.0. We run it as a WebSocket daemon
+//! (`codex app-server --listen ws://127.0.0.1:<port>`) rather than over stdio,
+//! because a plain-TCP ws endpoint is the one transport a live TUI
+//! (`codex --remote ws://…`) and our RPC client can *share* — so the session is
+//! a **hybrid** (GUI + Term), like the OpenCode `serve` + `attach` pairing.
+//! (`--listen unix://` is gated in current Codex builds and the `remote-control`
+//! daemon needs the standalone installer, so ws is the portable choice — and
+//! works on Windows too, unlike the unix-socket paths.)
+//!
+//! Ownership is TUI-first: the native TUI (`codex --remote`, in a PTY = the Term
+//! view) creates and runs the session's thread — a real, "running", resumable
+//! rollout — and our RPC client discovers it (`thread/loaded/list`) and *rejoins*
+//! it (`thread/resume`, which subscribes us to the live stream). The reverse (RPC
+//! `thread/start` + TUI `resume`) fails: a just-started thread has no rollout, so
+//! `resume` errors with "no rollout found for thread id …". Once rejoined we
+//! `turn/start` each GUI prompt and consume the streamed notifications:
+//! `turn/started|completed|failed`,
 //! `item/started|completed` (commandExecution / fileChange / mcpToolCall / …),
 //! `item/agentMessage/delta` (streamed text), `thread/tokenUsage/updated`, and
 //! the approval requests (`item/commandExecution/requestApproval`,
 //! `item/fileChange/requestApproval`).
 //!
-//! The pure `translate(method, params)` is unit-tested; the live stdio client
+//! The pure `translate(method, params)` is unit-tested; the live ws client
 //! needs a real `codex` binary to validate end-to-end.
 
 use std::process::Stdio;
+use std::sync::Arc;
 
 use anyhow::Context;
+use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStdin, Command};
 use tokio::sync::mpsc;
+use tokio_tungstenite::connect_async;
+use tokio_tungstenite::tungstenite::Message;
 
 use super::{apply_updates, AgentUpdate, Facade, ModelInfo, UsageAcc};
+use crate::protocol::Signal;
 use crate::session::conversation::ConversationItem;
 use crate::session::state::SessionMode;
 use crate::session::{ConversationStore, SessionStore};
+use crate::wrapper::pty;
 
 /// Translate one Codex app-server message (`method` + `params`) into typed
 /// updates. Pure and total: unknown methods / missing fields yield an
@@ -260,6 +280,7 @@ pub fn spawn_session(
             tracing::warn!(?err, session = %session_id, "codex managed session ended with error");
         }
         store.deregister_managed(&session_id);
+        conv.forget(&session_id);
     });
 }
 
@@ -273,8 +294,19 @@ async fn run_session(
     yolo: bool,
     facade: &Facade,
 ) -> anyhow::Result<()> {
+    // Pick a free loopback port for this session's app-server. Each managed
+    // session gets its own `codex app-server`, so threads/approvals are isolated
+    // per pane.
+    let port = {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")
+            .context("reserving a port for codex app-server")?;
+        listener.local_addr()?.port()
+    };
+    let ws_url = format!("ws://127.0.0.1:{port}");
+    let http_base = format!("http://127.0.0.1:{port}");
+
     let mut cmd = Command::new(bin);
-    cmd.arg("app-server");
+    cmd.arg("app-server").arg("--listen").arg(&ws_url);
     // Register the workspacer MCP facade (supervisors) as a config override so
     // `codex app-server` exposes its tools.
     if let Some(mcp_url) = &facade.mcp_url {
@@ -283,68 +315,130 @@ async fn run_session(
     }
     let mut child = cmd
         .current_dir(cwd)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
         .stderr(Stdio::null())
         .kill_on_drop(true)
         .spawn()
-        .with_context(|| format!("spawning `{bin} app-server`"))?;
+        .with_context(|| format!("spawning `{bin} app-server --listen {ws_url}`"))?;
 
-    let mut stdin = child.stdin.take().context("codex app-server: no stdin")?;
-    let stdout = child.stdout.take().context("codex app-server: no stdout")?;
-    let mut lines = BufReader::new(stdout).lines();
+    // Wait for the server's HTTP `/readyz` before opening the ws client.
+    wait_ready(&http_base).await?;
 
-    // The app server requires an `initialize` handshake before any other
-    // request: a `thread/start` sent first is rejected with
-    // `{"code":-32600,"message":"Not initialized"}`, so the thread never opens,
-    // prompts buffer forever, and the agent never responds. Send `initialize`
-    // (id=1) then `thread/start` (id=2) pipelined — the server processes them in
-    // order, and the thread id arrives in the id=2 response (see handle_message).
-    write_msg(
-        &mut stdin,
-        &json!({
-            "jsonrpc": "2.0", "id": 1, "method": "initialize",
-            "params": { "clientInfo": { "name": "workspacer", "version": "0.1" } }
-        }),
-    )
-    .await?;
-    let mut start_params = json!({ "cwd": cwd });
-    if let Some(m) = &model {
-        start_params["model"] = Value::String(m.clone());
-    }
-    write_msg(&mut stdin, &json!({ "jsonrpc": "2.0", "id": 2, "method": "thread/start", "params": start_params })).await?;
+    // Connect the JSON-RPC-over-WebSocket client.
+    let (ws_stream, _resp) = connect_async(&ws_url)
+        .await
+        .with_context(|| format!("connecting to codex app-server at {ws_url}"))?;
+    let (mut ws_write, mut ws_read) = ws_stream.split();
+
+    // Serialize all outgoing JSON-RPC through one task that owns the ws sink, so
+    // the several send sites (handshake, turns, approval replies) never contend
+    // for the writer. Dropping `out_tx` (on return) closes the sink.
+    let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Value>();
+    tokio::spawn(async move {
+        while let Some(v) = out_rx.recv().await {
+            if ws_write.send(Message::Text(v.to_string())).await.is_err() {
+                break;
+            }
+        }
+        let _ = ws_write.close().await;
+    });
+
+    // The app server requires an `initialize` handshake before any other request.
+    let _ = out_tx.send(json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": { "clientInfo": { "name": "workspacer", "version": "0.1" } }
+    }));
 
     let (tx, mut rx) = mpsc::unbounded_channel::<String>();
     store.register_managed_input(session_id, tx);
     let (dtx, mut drx) = mpsc::unbounded_channel::<bool>();
     store.register_managed_decision(session_id, dtx);
 
+    // The native TUI OWNS the thread: bare `codex --remote` creates and runs it
+    // (a real, "running", resumable rollout) — then we rejoin it over RPC (below)
+    // to drive the GUI, exactly the validated owner/rejoiner split. The reverse
+    // (RPC `thread/start` here + TUI `resume`) fails because a just-started thread
+    // has no rollout yet: "no rollout found for thread id …". Model / YOLO are set
+    // on the thread's creator (the TUI) as config overrides. Kept so we can kill
+    // it when the session ends.
+    let tui_pty = spawn_codex_tui(store, session_id, cwd, bin, &ws_url, model.as_deref(), yolo);
+
     let mut thread_id: Option<String> = None;
+    // Whether our `thread/resume` has actually taken (we're receiving the thread's
+    // live stream). The first resume can land before the TUI's thread is "running"
+    // and fail, so we keep retrying until this flips true.
+    let mut subscribed = false;
     let mut pending_prompts: Vec<String> = Vec::new();
-    // Request ids 1 (initialize) and 2 (thread/start) are taken; turns start at 3.
+    // id 1 = initialize, 2 = thread/resume, 100 = thread/loaded/list poll; the
+    // user's turns take ids from 3 up.
     let mut req_id: u64 = 2;
     let mut cur_mode = SessionMode::Input;
     let mut acc = UsageAcc::new();
-    // The JSON-RPC id of an approval request awaiting the user's decision
-    // (non-YOLO). YOLO answers requests inline and never parks one here.
-    let mut pending_approval: Option<Value> = None;
+    // JSON-RPC ids of approval requests awaiting the user's decision (non-YOLO),
+    // FIFO. A queue (not a single slot) so two requests arriving before the user
+    // answers don't drop the first and deadlock the agent. YOLO answers inline and
+    // never parks one here.
+    let mut pending_approvals: std::collections::VecDeque<Value> = std::collections::VecDeque::new();
     // Role instructions to prepend to the first turn only (supervisors).
     let mut pending_instructions: Option<String> = facade.instructions.clone();
+    // Poll `thread/loaded/list` until the TUI's thread appears, then rejoin it —
+    // retrying the resume until we're actually subscribed. Bounded by a deadline
+    // so a TUI that never creates a thread (or died at startup) can't busy-poll
+    // for the daemon's life.
+    let mut discover = tokio::time::interval(std::time::Duration::from_millis(300));
+    let discover_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(180);
+    let mut discover_expired = false;
+    // Watch the TUI (the thread owner) for death: if it exits while the app-server
+    // lives, the session is dead and must tear down rather than run against a
+    // dead thread. try_wait is cheap; a coarse tick is fine.
+    let mut tui_check = tokio::time::interval(std::time::Duration::from_secs(2));
 
     loop {
         tokio::select! {
-            line = lines.next_line() => match line {
-                Ok(Some(line)) => {
-                    if let Ok(value) = serde_json::from_str::<Value>(&line) {
+            msg = ws_read.next() => match msg {
+                Some(Ok(Message::Text(text))) => {
+                    // One ws frame may carry one JSON-RPC object or several
+                    // newline-delimited ones; handle each line independently.
+                    for line in text.split('\n') {
+                        let line = line.trim();
+                        if line.is_empty() { continue; }
+                        let Ok(value) = serde_json::from_str::<Value>(line) else { continue };
                         handle_message(
-                            &value, store, conv, session_id, &mut stdin,
-                            &mut thread_id, &mut pending_prompts, &mut req_id,
-                            &mut cur_mode, &mut acc, yolo, &mut pending_approval,
-                        ).await;
+                            &value, store, conv, session_id, &out_tx,
+                            &mut thread_id, &mut subscribed, &mut pending_prompts, &mut req_id,
+                            &mut cur_mode, &mut acc, yolo, &mut pending_approvals,
+                        );
                     }
                 }
-                Ok(None) => break, // stdout closed → process gone
-                Err(err) => return Err(err.into()),
+                Some(Ok(Message::Close(_))) | None => break, // server gone
+                Some(Ok(_)) => {} // ping/pong/binary — ignore
+                Some(Err(err)) => return Err(err.into()),
+            },
+            // Drive discovery + rejoin until we're subscribed to the TUI's thread:
+            // ask which threads are loaded (there's only ever one on this
+            // per-session app-server) and (re)send `thread/resume` for it. The
+            // first resume can precede the thread becoming "running", so we retry.
+            _ = discover.tick(), if !subscribed && !discover_expired => {
+                if tokio::time::Instant::now() >= discover_deadline {
+                    discover_expired = true;
+                    tracing::warn!(session = %session_id, "codex: gave up rejoining the TUI thread after 3min; GUI view will stay empty (Term still usable)");
+                } else {
+                    match &thread_id {
+                        None => {
+                            let _ = out_tx.send(json!({ "jsonrpc": "2.0", "id": 100, "method": "thread/loaded/list", "params": {} }));
+                        }
+                        Some(tid) => {
+                            let _ = out_tx.send(json!({ "jsonrpc": "2.0", "id": 2, "method": "thread/resume", "params": { "threadId": tid } }));
+                        }
+                    }
+                }
+            },
+            _ = tui_check.tick(), if tui_pty.is_some() => {
+                if tui_pty.as_ref().is_some_and(|h| pty::has_exited(h)) {
+                    tracing::info!(session = %session_id, "codex TUI exited; tearing down session");
+                    break;
+                }
             },
             msg = rx.recv() => match msg {
                 Some(text) => {
@@ -362,7 +456,7 @@ async fn run_session(
                     match &thread_id {
                         Some(tid) => {
                             req_id += 1;
-                            let _ = send_turn(&mut stdin, req_id, tid, &sent).await;
+                            send_turn(&out_tx, req_id, tid, &sent);
                         }
                         // Thread not open yet — buffer the (already-wrapped) prompt.
                         None => pending_prompts.push(sent),
@@ -372,9 +466,9 @@ async fn run_session(
             },
             decision = drx.recv() => match decision {
                 Some(approve) => {
-                    if let Some(id) = pending_approval.take() {
+                    if let Some(id) = pending_approvals.pop_front() {
                         let result = json!({ "decision": if approve { "accept" } else { "decline" } });
-                        let _ = write_msg(&mut stdin, &json!({ "jsonrpc": "2.0", "id": id, "result": result })).await;
+                        let _ = out_tx.send(json!({ "jsonrpc": "2.0", "id": id, "result": result }));
                         store.set_managed_mode(session_id, SessionMode::Responding, None);
                         cur_mode = SessionMode::Responding;
                     }
@@ -389,39 +483,114 @@ async fn run_session(
     }
 
     let _ = child.start_kill();
+    if let Some(handle) = &tui_pty {
+        let _ = pty::signal_child(handle, Signal::Sigkill);
+    }
     Ok(())
 }
 
+/// Launch the native Codex TUI in a PTY, connected over `--remote` to this
+/// session's app-server. The TUI creates and owns the session's thread; the RPC
+/// client rejoins it (see `run_session`), so the Term view and the RPC-driven GUI
+/// are two views of one conversation. Best-effort: if it can't start, the GUI
+/// still works and the Term is empty.
+fn spawn_codex_tui(
+    store: &SessionStore,
+    session_id: &str,
+    cwd: &str,
+    bin: &str,
+    ws_url: &str,
+    model: Option<&str>,
+    yolo: bool,
+) -> Option<Arc<pty::PtyHandle>> {
+    let mut argv = vec![
+        bin.to_string(),
+        "--remote".to_string(),
+        ws_url.to_string(),
+    ];
+    // Model is a config override on the thread's creator; YOLO bypasses the
+    // approval/sandbox prompts so the shared thread doesn't block on them.
+    if let Some(m) = model {
+        argv.push("-c".to_string());
+        argv.push(format!("model={}", Value::String(m.to_string())));
+    }
+    if yolo {
+        argv.push("--dangerously-bypass-approvals-and-sandbox".to_string());
+    }
+    match super::spawn_attach_pty(store, session_id, &argv, cwd) {
+        Ok(h) => Some(h),
+        Err(err) => {
+            tracing::warn!(?err, session = %session_id, "codex TUI (--remote) failed; Term view unavailable");
+            None
+        }
+    }
+}
+
+/// Poll the app-server's HTTP `/readyz` until it answers (or give up after ~10s).
+async fn wait_ready(http_base: &str) -> anyhow::Result<()> {
+    let client = reqwest::Client::new();
+    for _ in 0..50 {
+        if let Ok(resp) = client.get(format!("{http_base}/readyz")).send().await {
+            if resp.status().is_success() {
+                return Ok(());
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+    anyhow::bail!("codex app-server did not become ready in time")
+}
+
 #[allow(clippy::too_many_arguments)]
-async fn handle_message(
+fn handle_message(
     value: &Value,
     store: &SessionStore,
     conv: &ConversationStore,
     session_id: &str,
-    stdin: &mut ChildStdin,
+    out_tx: &mpsc::UnboundedSender<Value>,
     thread_id: &mut Option<String>,
+    subscribed: &mut bool,
     pending_prompts: &mut Vec<String>,
     req_id: &mut u64,
     cur_mode: &mut SessionMode,
     acc: &mut UsageAcc,
     yolo: bool,
-    pending_approval: &mut Option<Value>,
+    pending_approvals: &mut std::collections::VecDeque<Value>,
 ) {
-    // A response to one of our requests (the initialize / thread/start
-    // handshake). Only thread/start carries a thread id; the initialize response
-    // has no `thread`, so the extraction below simply falls through for it.
+    // A response to one of our requests:
+    //  - `thread/loaded/list` (id=100): `result.data` lists thread ids loaded in
+    //    this per-session app-server — the one the TUI created. Rejoin it
+    //    (`thread/resume`), which for a *running* thread subscribes us to its live
+    //    stream so the GUI mirrors the TUI.
+    //  - `thread/resume` (id=2): success means we're subscribed; an error (e.g. the
+    //    thread wasn't "running" yet) is logged and the discover loop retries.
     if value.get("id").is_some() && (value.get("result").is_some() || value.get("error").is_some()) {
+        let id = value.get("id").and_then(Value::as_u64);
+        if id == Some(2) {
+            if let Some(err) = value.get("error") {
+                tracing::warn!(session = %session_id, error = %err, "codex thread/resume failed; retrying");
+            } else {
+                *subscribed = true;
+                tracing::info!(session = %session_id, thread = ?thread_id, "codex: rejoined thread — GUI stream subscribed");
+            }
+        }
         if thread_id.is_none() {
             if let Some(tid) = value
                 .get("result")
-                .and_then(|r| r.get("threadId").or_else(|| r.get("thread").and_then(|t| t.get("id"))))
+                .and_then(|r| r.get("data"))
+                .and_then(Value::as_array)
+                .and_then(|a| a.first())
                 .and_then(Value::as_str)
             {
                 *thread_id = Some(tid.to_string());
-                // Flush any prompts that arrived before the thread opened.
+                tracing::info!(session = %session_id, thread = %tid, "codex: discovered TUI thread, resuming");
+                let _ = out_tx.send(json!({
+                    "jsonrpc": "2.0", "id": 2, "method": "thread/resume",
+                    "params": { "threadId": tid }
+                }));
+                // Flush any prompts that arrived before the thread was found.
                 for text in std::mem::take(pending_prompts) {
                     *req_id += 1;
-                    let _ = send_turn(stdin, *req_id, tid, &text).await;
+                    send_turn(out_tx, *req_id, tid, &text);
                 }
             }
         }
@@ -432,6 +601,12 @@ async fn handle_message(
         return;
     };
     let params = value.get("params").cloned().unwrap_or(Value::Null);
+
+    // Receiving any turn/item stream event proves the resume took, even if we
+    // missed its response — stop the discover/retry loop.
+    if !*subscribed && (method.starts_with("turn/") || method.starts_with("item/")) {
+        *subscribed = true;
+    }
 
     let updates = translate(method, &params);
     if !updates.is_empty() {
@@ -445,27 +620,24 @@ async fn handle_message(
     if value.get("id").is_some() && method.ends_with("/requestApproval") {
         let id = value.get("id").cloned().unwrap_or(Value::Null);
         if yolo {
-            let _ = write_msg(stdin, &json!({ "jsonrpc": "2.0", "id": id, "result": { "decision": "accept" } })).await;
+            let _ = out_tx.send(json!({ "jsonrpc": "2.0", "id": id, "result": { "decision": "accept" } }));
         } else {
-            *pending_approval = Some(id);
+            pending_approvals.push_back(id);
         }
     }
 }
 
-async fn send_turn(stdin: &mut ChildStdin, id: u64, thread_id: &str, text: &str) -> anyhow::Result<()> {
-    write_msg(
-        stdin,
-        &json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": "turn/start",
-            "params": { "threadId": thread_id, "input": [ { "type": "text", "text": text } ] }
-        }),
-    )
-    .await
+fn send_turn(out_tx: &mpsc::UnboundedSender<Value>, id: u64, thread_id: &str, text: &str) {
+    let _ = out_tx.send(json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "turn/start",
+        "params": { "threadId": thread_id, "input": [ { "type": "text", "text": text } ] }
+    }));
 }
 
-/// Write one JSON-RPC message as a single newline-delimited line.
+/// Write one JSON-RPC message as a single newline-delimited line. Used by the
+/// stdio-based `list_models` handshake (a throwaway `codex app-server`).
 async fn write_msg(stdin: &mut ChildStdin, value: &Value) -> anyhow::Result<()> {
     let mut line = serde_json::to_vec(value)?;
     line.push(b'\n');

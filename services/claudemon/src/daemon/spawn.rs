@@ -141,12 +141,15 @@ pub async fn handle(
                 .record_output(&session_for_reader, &chunk)
                 .await;
         }
-        // Reader EOF — child exited. Make sure we don't leak a pending spawn
-        // entry if SessionStart never fired (e.g. claude crashed at startup).
+        // Reader EOF — child exited. Reap it (so it doesn't linger as a zombie)
+        // and make sure we don't leak a pending spawn entry if SessionStart never
+        // fired (e.g. claude crashed at startup).
+        store_for_reader.reap_pty(&session_for_reader);
         store_for_reader.drop_pending_spawn(&session_for_reader, &cwd_for_reader);
         tracing::info!(session = %session_for_reader, "in-daemon PTY reader ended");
     });
 
+    store.register_pty(&session_id, pty_handle.clone());
     store.register_spawn(&session_id, &cwd, WrapperHandle { tx: input_tx });
     tracing::info!(%session_id, %cwd, argv=?payload.argv, "spawned in-daemon PTY");
 

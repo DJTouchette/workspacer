@@ -158,6 +158,15 @@ pub fn signal_child(handle: &PtyHandle, sig: crate::protocol::Signal) -> Result<
     Ok(())
 }
 
+/// Non-blocking check whether the PTY child has already exited. Used by hybrid
+/// managed adapters to notice their TUI dying so the whole session tears down
+/// (rather than leaving the driver + provider server running against a dead
+/// thread). Reaps the child if it has exited, so it doesn't linger as a zombie.
+pub fn has_exited(handle: &PtyHandle) -> bool {
+    let mut child = handle.child.lock().expect("PTY child mutex poisoned");
+    matches!(child.try_wait(), Ok(Some(_)))
+}
+
 pub async fn resize(handle: &PtyHandle, cols: u16, rows: u16) -> Result<()> {
     let master = handle.master.clone();
     tokio::task::spawn_blocking(move || -> Result<()> {

@@ -217,6 +217,7 @@ pub fn spawn_session(
             tracing::warn!(?err, session = %session_id, "pi managed session ended with error");
         }
         store.deregister_managed(&session_id);
+        conv.forget(&session_id);
     });
 }
 
@@ -284,9 +285,10 @@ async fn run_session(
 
     let mut cur_mode = SessionMode::Input;
     let mut acc = UsageAcc::new();
-    // The Extension UI request awaiting the user's decision (non-YOLO). We park
-    // the whole request so we can echo its `id` + `method` in the reply.
-    let mut pending_approval: Option<Value> = None;
+    // Extension UI requests awaiting the user's decision (non-YOLO), FIFO. We park
+    // each whole request so we can echo its `id` + `method` in the reply; a queue
+    // (not one slot) so concurrent requests don't drop each other and stall.
+    let mut pending_approvals: std::collections::VecDeque<Value> = std::collections::VecDeque::new();
     // Role instructions to prepend to the first turn only (supervisors).
     let mut pending_instructions: Option<String> = facade.instructions.clone();
 
@@ -297,7 +299,7 @@ async fn run_session(
                     if let Ok(value) = serde_json::from_str::<Value>(&line) {
                         handle_message(
                             &value, store, conv, session_id, &mut stdin,
-                            &mut cur_mode, &mut acc, yolo, &mut pending_approval,
+                            &mut cur_mode, &mut acc, yolo, &mut pending_approvals,
                         ).await;
                     }
                 }
@@ -323,7 +325,7 @@ async fn run_session(
             },
             decision = drx.recv() => match decision {
                 Some(approve) => {
-                    if let Some(req) = pending_approval.take() {
+                    if let Some(req) = pending_approvals.pop_front() {
                         let _ = respond_ui(&mut stdin, &req, approve).await;
                         store.set_managed_mode(session_id, SessionMode::Responding, None);
                         cur_mode = SessionMode::Responding;
@@ -352,7 +354,7 @@ async fn handle_message(
     cur_mode: &mut SessionMode,
     acc: &mut UsageAcc,
     yolo: bool,
-    pending_approval: &mut Option<Value>,
+    pending_approvals: &mut std::collections::VecDeque<Value>,
 ) {
     let ty = value.get("type").and_then(Value::as_str).unwrap_or("");
 
@@ -382,7 +384,7 @@ async fn handle_message(
                 summary: dialog_summary(value),
             }];
             apply_updates(store, conv, session_id, updates, cur_mode, acc);
-            *pending_approval = Some(value.clone());
+            pending_approvals.push_back(value.clone());
         }
         return;
     }

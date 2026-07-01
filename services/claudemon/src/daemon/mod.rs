@@ -79,6 +79,9 @@ pub async fn run(cfg: ServeConfig) -> Result<()> {
     tracing::info!(%api_addr, "api server listening");
 
     let hook_app = hook::router(store.clone());
+    // Retained past the `store` move into ApiState so shutdown can kill the PTY
+    // children the daemon spawned (they have no kill-on-drop).
+    let store_for_shutdown = store.clone();
     let api_app = api::router(api::ApiState {
         store,
         db,
@@ -128,6 +131,11 @@ pub async fn run(cfg: ServeConfig) -> Result<()> {
             }
         }
     }
+
+    // Kill the PTY children we spawned so they don't outlive the daemon (and the
+    // launcher). Managed-provider children use kill_on_drop and are reaped as the
+    // runtime tears down; the portable-pty children are not, so kill them here.
+    store_for_shutdown.kill_all_ptys();
 
     Ok(())
 }
