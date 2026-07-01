@@ -22,16 +22,32 @@ function statusColor(status: WorkflowAgentInfo['status']): string {
  * as a modal from a WorkflowRunCard's expand button; re-reads the live run each
  * render so it keeps updating while the workflow runs.
  */
-export const WorkflowTimeline: React.FC<{ run: WorkflowRunInfo; onClose: () => void }> = ({ run, onClose }) => {
+export const WorkflowTimeline: React.FC<{ sessionId: string; run: WorkflowRunInfo; onClose: () => void }> = ({ sessionId, run, onClose }) => {
   const running = run.status === 'running';
   const now = useNowTicker(running);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Full transcript of the selected agent, fetched on demand (main reads the
+  // agent-<id>.jsonl). null = none/failed load; [] = loaded-but-empty.
+  const [transcript, setTranscript] = useState<{ role: string; text: string }[] | null>(null);
+  const [loadingTx, setLoadingTx] = useState(false);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
   }, [onClose]);
+
+  useEffect(() => {
+    if (!selectedId) { setTranscript(null); return; }
+    let cancelled = false;
+    setLoadingTx(true);
+    setTranscript(null);
+    window.electronAPI.workflowAgentTranscript(sessionId, run.runId, selectedId)
+      .then((t) => { if (!cancelled) setTranscript(t); })
+      .catch(() => { if (!cancelled) setTranscript(null); })
+      .finally(() => { if (!cancelled) setLoadingTx(false); });
+    return () => { cancelled = true; };
+  }, [selectedId, sessionId, run.runId]);
 
   const finished = run.agents.filter(a => a.status === 'done' || a.status === 'failed').length;
   const failed = run.agents.filter(a => a.status === 'failed').length;
@@ -176,6 +192,21 @@ export const WorkflowTimeline: React.FC<{ run: WorkflowRunInfo; onClose: () => v
               {!selected.promptPreview && !selected.resultPreview && (
                 <div style={{ color: colors.mutedDim }}>No prompt/result captured{selected.status === 'running' ? ' yet' : ''}.</div>
               )}
+
+              {/* Full transcript drill-in */}
+              <div style={{ marginTop: 12, borderTop: `1px solid ${colors.borderSubtle}`, paddingTop: 8 }}>
+                <div style={detailLabel}>Transcript</div>
+                {loadingTx && <div style={{ color: colors.mutedDim }}>Loading…</div>}
+                {!loadingTx && (transcript?.length ?? 0) === 0 && (
+                  <div style={{ color: colors.mutedDim }}>{transcript === null ? 'Transcript unavailable.' : 'No messages yet.'}</div>
+                )}
+                {!loadingTx && transcript && transcript.map((t, i) => (
+                  <div key={i} style={{ marginBottom: 8 }}>
+                    <div style={{ ...detailLabel, color: t.role === 'user' ? colors.accent : AGENT_PURPLE }}>{t.role}</div>
+                    <div style={detailBody}>{t.text}</div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>

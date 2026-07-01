@@ -20,15 +20,15 @@ export const WorkflowOverlay: React.FC = () => {
     return () => window.removeEventListener(WORKFLOW_OPEN_EVENT, onOpen);
   }, []);
 
-  const run = useMemo(() => {
+  const found = useMemo(() => {
     if (!runId) return undefined;
-    for (const snap of Object.values(snapshotBySession)) {
+    for (const [sid, snap] of Object.entries(snapshotBySession)) {
       const r = snap?.workflows?.find((w) => w.runId === runId);
-      if (r) return r;
+      if (r) return { sessionId: sid, run: r };
     }
     return undefined;
   }, [runId, snapshotBySession]);
 
-  if (!runId || !run) return null;
-  return <WorkflowTimeline run={run} onClose={() => setRunId(null)} />;
+  if (!runId || !found) return null;
+  return <WorkflowTimeline sessionId={found.sessionId} run={found.run} onClose={() => setRunId(null)} />;
 };

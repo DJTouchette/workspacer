@@ -10,6 +10,7 @@ import { sessionHistory } from './services/sessionHistory';
 import { layoutService } from './services/layoutService';
 import { claudeSessionStore } from './services/claudeSessionStore';
 import { listClaudeModels } from './services/claudeModels';
+import { workflowWatcher } from './services/workflowWatcher';
 import { agentNotifier } from './services/agentNotifier';
 import { claudemonSessionClient } from './services/claudemonSessionClient';
 import { buildClaudeArgv } from './services/claudeResolver';
@@ -388,6 +389,11 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // updates with zero maintenance), and `seen` carries concrete ids observed
   // in real transcripts — past sessions plus anything persisted in config.
   ipcMain.handle(IPC.CLAUDE_LIST_MODELS, () => listClaudeModels());
+
+  // Full transcript of one workflow agent, for the timeline drill-in. Resolved
+  // from the run's on-disk dir by the watcher; null if it's no longer around.
+  ipcMain.handle(IPC.WORKFLOW_AGENT_TRANSCRIPT, (_event, sessionId: string, runId: string, agentId: string) =>
+    workflowWatcher.readAgentTranscript(sessionId, runId, agentId));
 
   // Live model catalog for a managed provider (codex/opencode/pi). We resolve
   // the launcher binary the same way spawning does, then query the provider's

@@ -136,6 +136,8 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     // ── Claude sessions ──────────────────────────────────────────────────
     spawnClaude: (opts) => client.call<{ sessionId: string }>('agents.spawn', opts).then((r) => r.sessionId),
     claudeListModels: () => client.call('claude.listModels', {}),
+    // Reads a local transcript file; not available over the hub bus (web mirror).
+    workflowAgentTranscript: async () => null,
     // No hub capability for live per-provider model listing yet — fall back to
     // an empty list so the spawn dialog uses its free-text model field.
     providerListModels: () => { warnOnce('providerListModels'); return Promise.resolve([]); },

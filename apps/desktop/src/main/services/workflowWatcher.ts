@@ -310,6 +310,51 @@ class WorkflowWatcher {
     for (const id of Array.from(this.watches.keys())) this.detach(id);
   }
 
+  /**
+   * Read a workflow agent's transcript for the drill-in view. Resolves the file
+   * from the run's known dir and returns lightweight turns (role + text, with
+   * tool calls flattened to one-line summaries) — enough to read what the agent
+   * did without shipping the raw JSONL. `null` if the session/run/file is gone.
+   */
+  readAgentTranscript(sessionId: string, runId: string, agentId: string): { role: string; text: string }[] | null {
+    const dir = this.watches.get(sessionId)?.runs.get(runId)?.dir;
+    if (!dir) return null;
+    const file = path.join(dir, `agent-${stripAgentPrefix(agentId)}.jsonl`);
+    let raw: string;
+    try {
+      raw = fs.readFileSync(file, 'utf8');
+    } catch {
+      return null;
+    }
+    const turns: { role: string; text: string }[] = [];
+    for (const line of raw.split('\n')) {
+      if (!line.trim()) continue;
+      let j: any;
+      try { j = JSON.parse(line); } catch { continue; }
+      const msg = j.message ?? j;
+      const role = msg.role ?? j.type;
+      if (role !== 'user' && role !== 'assistant') continue;
+      const parts: string[] = [];
+      const content = msg.content;
+      if (typeof content === 'string') {
+        parts.push(content);
+      } else if (Array.isArray(content)) {
+        for (const b of content) {
+          if (b?.type === 'text' && typeof b.text === 'string') parts.push(b.text);
+          else if (b?.type === 'tool_use') parts.push(`⚙ ${b.name ?? 'tool'}`);
+          else if (b?.type === 'tool_result') {
+            const t = typeof b.content === 'string' ? b.content
+              : Array.isArray(b.content) ? b.content.map((c: any) => (typeof c?.text === 'string' ? c.text : '')).join('') : '';
+            if (t.trim()) parts.push(`↳ ${t.slice(0, 400)}`);
+          }
+        }
+      }
+      const text = parts.join('\n').trim();
+      if (text) turns.push({ role, text });
+    }
+    return turns;
+  }
+
   // ── Poll loop ──
 
   private ensureTimer(watch: SessionWatch): void {
