@@ -20,12 +20,17 @@ const DIFF_VIEWS: { label: string; value: 'stacked' | 'inline' | 'split' }[] = [
   { label: 'Split', value: 'split' },
 ];
 
-const AGENT_PROVIDERS: { label: string; value: 'claude' | 'codex' | 'opencode' | 'pi' }[] = [
+const AGENT_PROVIDERS: { label: string; value: 'claude' | 'codex' | 'opencode' | 'pi'; beta?: boolean }[] = [
   { label: 'Claude', value: 'claude' },
   { label: 'Codex', value: 'codex' },
-  { label: 'OpenCode', value: 'opencode' },
-  { label: 'Pi', value: 'pi' },
+  // Not yet thoroughly tested — flagged Beta so expectations are set.
+  { label: 'OpenCode', value: 'opencode', beta: true },
+  { label: 'Pi', value: 'pi', beta: true },
 ];
+
+/** Provider label with a Beta suffix for not-yet-hardened backends. */
+const providerLabel = (p: { label: string; beta?: boolean }): string =>
+  p.beta ? `${p.label} (Beta)` : p.label;
 
 interface ProviderDetection {
   provider: string;
@@ -142,7 +147,7 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
           {AGENT_PROVIDERS.map((p) => (
             <ModeButton
               key={p.value}
-              label={p.label}
+              label={providerLabel(p)}
               active={defaultProvider === p.value}
               onClick={() => save({ agents: { ...config.agents, defaultProvider: p.value } })}
             />
@@ -259,7 +264,7 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
       {AGENT_PROVIDERS.map((p) => (
         <BinaryRow
           key={p.value}
-          label={p.label}
+          label={providerLabel(p)}
           providerId={p.value}
           detection={detection.find((d) => d.provider === p.value)}
           config={config}

@@ -16,11 +16,12 @@ interface SpawnAgentDialogProps {
 
 const CUSTOM = '__custom__';
 
-const PROVIDERS: { value: AgentProvider; label: string }[] = [
+const PROVIDERS: { value: AgentProvider; label: string; beta?: boolean }[] = [
   { value: 'claude', label: 'Claude Code' },
   { value: 'codex', label: 'Codex' },
-  { value: 'opencode', label: 'OpenCode' },
-  { value: 'pi', label: 'Pi' },
+  // Not yet thoroughly tested — surfaced with a Beta badge so expectations are set.
+  { value: 'opencode', label: 'OpenCode', beta: true },
+  { value: 'pi', label: 'Pi', beta: true },
 ];
 
 /** Free-text model placeholder per managed provider (their own id formats). */
@@ -297,6 +298,20 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, default
                 >
                   <AgentLogo provider={p.value} size={14} style={{ flexShrink: 0, opacity: active ? 1 : 0.75 }} />
                   {p.label}
+                  {p.beta && (
+                    <span
+                      title="Beta — not yet thoroughly tested"
+                      style={{
+                        fontSize: '0.5rem', fontWeight: 700, letterSpacing: '0.04em',
+                        lineHeight: 1, padding: '2px 3px', borderRadius: 3, flexShrink: 0,
+                        color: 'var(--wks-warning, #e0a000)',
+                        border: '1px solid var(--wks-warning, #e0a000)',
+                        opacity: active ? 1 : 0.7,
+                      }}
+                    >
+                      BETA
+                    </span>
+                  )}
                   <span style={{ width: 6, height: 6, borderRadius: '50%', background: dotColor, flexShrink: 0 }} />
                 </button>
               );
