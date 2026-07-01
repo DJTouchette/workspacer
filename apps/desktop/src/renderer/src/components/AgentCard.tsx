@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import type { AgentWorkspace } from '../types/pane';
 import type { ClaudeSessionSnapshot, SessionAmbientState } from '../types/claudeSession';
 import { formatToolSummary } from './claude-shared';
@@ -8,7 +8,8 @@ import { usePageVisible } from '../hooks/usePageVisible';
 import { StatusGlyph } from './statusGlyph';
 import { AgentLogo } from './agentLogos';
 import { shortModelLabel } from '../lib/modelLabel';
-import { fmtTokens, fmtUSD, ctxColor } from '../lib/sessionStats';
+import { fmtTokens, fmtUSD, ctxColor, isSnapshotStale } from '../lib/sessionStats';
+import { useGitBranch } from '../hooks/useGitBranch';
 function relTime(ts: number | undefined): string {
   if (!ts) return '';
   const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
@@ -75,6 +76,18 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot }) => {
   const turns = (snapshot?.conversation ?? []).length;
 
   const working = state === 'thinking' || state === 'streaming';
+  const branch = useGitBranch(agent.cwd);
+
+  // Staleness needs a clock even when no snapshots arrive (that IS the stale
+  // case) — a slow tick re-evaluates it without re-rendering per second.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!working) return;
+    const t = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(t);
+  }, [working]);
+  const stale = isSnapshotStale(state, snapshot?.lastActivity, now);
+
   const body = working && activeTool
     ? formatToolSummary(activeTool).call
     : lastAssistant(snapshot) || (agent.sessionId ? 'No activity yet' : 'Stopped — click to respawn');
@@ -127,7 +140,16 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot }) => {
         {usage?.model && <span style={{ color: 'var(--wks-text-secondary)' }}>{shortModelLabel(usage.model)}</span>}
         {turns > 0 && <span>· {turns} turn{turns > 1 ? 's' : ''}</span>}
         {snapshot?.lastActivity ? <span>· {relTime(snapshot.lastActivity)}</span> : null}
-        {agent.cwd && <span style={{ marginLeft: 'auto', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '60%' }} title={agent.cwd}>{baseName(agent.cwd)}</span>}
+        {stale && (
+          <span
+            title={`Says "${v.label}" but nothing has arrived since ${relTime(snapshot?.lastActivity)} — the stream may have stalled.`}
+            style={{ color: 'var(--wks-warning, #e0a000)', fontWeight: 700 }}
+          >⚠ stale</span>
+        )}
+        <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0, maxWidth: '60%' }}>
+          {branch && <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`branch ${branch}`}>⎇ {branch}</span>}
+          {agent.cwd && <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={agent.cwd}>{baseName(agent.cwd)}</span>}
+        </span>
       </div>
 
       {/* Body: current tool or last message */}

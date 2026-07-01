@@ -106,12 +106,20 @@ const RateLimitCard: React.FC<{ snaps: Snap[] }> = ({ snaps }) => {
 };
 
 /** Stat tile — mockup "Overview" card: uppercase mono label on top, large
- *  mono value, optional sub-line. Matches the Usage pane's Stat exactly. */
-const Stat: React.FC<{ label: string; value: string; sub?: string; color?: string }> = ({ label, value, sub, color }) => (
-  <div style={{
-    flex: 1, minWidth: 130, padding: '15px 16px', borderRadius: 'var(--wks-radius-md, 13px)',
-    background: 'var(--wks-bg-raised)', border: '1px solid var(--wks-border-subtle)',
-  }}>
+ *  mono value, optional sub-line. Matches the Usage pane's Stat exactly.
+ *  With `onClick` the tile becomes a navigation shortcut (hover ring). */
+const Stat: React.FC<{ label: string; value: string; sub?: string; color?: string; onClick?: () => void; clickTitle?: string }> = ({ label, value, sub, color, onClick, clickTitle }) => (
+  <div
+    onClick={onClick}
+    title={onClick ? clickTitle : undefined}
+    style={{
+      flex: 1, minWidth: 130, padding: '15px 16px', borderRadius: 'var(--wks-radius-md, 13px)',
+      background: 'var(--wks-bg-raised)', border: '1px solid var(--wks-border-subtle)',
+      cursor: onClick ? 'pointer' : undefined, transition: 'border-color 0.12s',
+    }}
+    onMouseEnter={(e) => { if (onClick) (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-accent, #4a9eff)'; }}
+    onMouseLeave={(e) => { if (onClick) (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-border-subtle)'; }}
+  >
     <div style={{ fontSize: '0.6rem', color: 'var(--wks-text-faint)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{label}</div>
     <div style={{ fontSize: '1.5rem', fontWeight: 700, color: color || 'var(--wks-text-primary)', fontVariantNumeric: 'tabular-nums', marginTop: 8 }}>{value}</div>
     {sub && <div style={{ fontSize: '0.62rem', color: 'var(--wks-text-secondary)', marginTop: 3, fontVariantNumeric: 'tabular-nums' }}>{sub}</div>}
@@ -144,7 +152,7 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
   const { config, save } = useConfig();
   // "Need you" comes from the single attention feed (the spine), not a parallel
   // ambient-state count, so this stat matches the SideBar / Inbox / Fleet exactly.
-  const { counts } = useAttention();
+  const { counts, setViewLevel, openInbox } = useAttention();
   const { plugins } = usePlugins();
   const pluginStates = usePluginStates();
   const [snaps, setSnaps] = useState<Snap[]>([]);
@@ -225,9 +233,9 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
       </div>
 
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 22 }}>
-        <Stat label="Agents" value={String(agents)} sub={working ? `${working} working` : 'all idle'} />
-        <Stat label="Working" value={String(working)} color={working ? 'var(--wks-busy, var(--wks-accent, #4a9eff))' : undefined} />
-        <Stat label="Need you" value={String(needsYou)} color={needsYou ? 'var(--wks-warning, #e0a000)' : undefined} />
+        <Stat label="Agents" value={String(agents)} sub={working ? `${working} working` : 'all idle'} onClick={() => setViewLevel('fleet')} clickTitle="Open the Fleet deck" />
+        <Stat label="Working" value={String(working)} color={working ? 'var(--wks-busy, var(--wks-accent, #4a9eff))' : undefined} onClick={() => setViewLevel('fleet')} clickTitle="Open the Fleet deck" />
+        <Stat label="Need you" value={String(needsYou)} color={needsYou ? 'var(--wks-warning, #e0a000)' : undefined} onClick={openInbox} clickTitle="Open the Inbox" />
         <Stat label="Total cost" value={fmtUSD(totalCost)} sub="this session" />
         {/* Account-wide 5h/7d rate-limit windows (scanned across all sessions,
             not just workspacer's — they're global to the account). */}

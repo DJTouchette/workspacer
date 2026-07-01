@@ -6,7 +6,7 @@ import { AgentCard } from './AgentCard';
 import { StatusGlyph } from './statusGlyph';
 import { shortModelLabel } from '../lib/modelLabel';
 import { agentAttentionScore } from '../lib/attentionRouter';
-import { deriveSessionStats, fmtUSD, ctxColor } from '../lib/sessionStats';
+import { deriveSessionStats, fmtUSD, ctxColor, isSnapshotStale } from '../lib/sessionStats';
 
 const CARD_MIN = 360; // matches the old minmax(360px) grid
 const GRID_GAP = 18;
@@ -70,6 +70,14 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
   // Type-to-filter by name or provider. Applied before sort, so cards, list, and
   // keyboard nav all operate on the filtered set; header counts stay whole-fleet.
   const [query, setQuery] = useState('');
+
+  // Staleness needs a clock even when no snapshots arrive (that IS the stale
+  // case) — a slow tick re-evaluates the list rows' warning tint.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(t);
+  }, []);
 
   // Agent → most-urgent open item, shared with the SideBar via the attention
   // feed (topByAgent) so both surfaces buoy cards by the same rule.
@@ -325,7 +333,13 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
                     <td style={{ ...ltd, color: 'var(--wks-text-secondary)' }}>{stats.model ? shortModelLabel(stats.model) : '—'}</td>
                     <td style={ltdNum}>{stats.ctxPct !== undefined ? <span style={{ color: ctxColor(stats.ctxPct), fontWeight: 600 }}>{Math.round(stats.ctxPct)}%</span> : '—'}</td>
                     <td style={{ ...ltdNum, color: 'var(--wks-accent)' }}>{stats.costUSD !== undefined ? fmtUSD(stats.costUSD) : '—'}</td>
-                    <td style={ltdNum}>{relTime(snap?.lastActivity)}</td>
+                    {isSnapshotStale(snap?.ambientState, snap?.lastActivity, now) ? (
+                      <td style={{ ...ltdNum, color: 'var(--wks-warning, #e0a000)', fontWeight: 700 }} title="Says it's working but nothing has arrived — the stream may have stalled.">
+                        ⚠ {relTime(snap?.lastActivity)}
+                      </td>
+                    ) : (
+                      <td style={ltdNum}>{relTime(snap?.lastActivity)}</td>
+                    )}
                   </tr>
                 );
               })}

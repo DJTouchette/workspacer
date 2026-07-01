@@ -39,6 +39,24 @@ export function ctxColor(pct: number): string {
   return 'var(--wks-success, #3fb950)';
 }
 
+/** How long a "working" agent may go without a snapshot update before we flag it. */
+export const STALE_AFTER_MS = 120_000;
+
+/**
+ * A snapshot is stale when the agent CLAIMS to be working but nothing has
+ * arrived for {@link STALE_AFTER_MS} — usually a died stream or wedged session,
+ * exactly the case where the card's confident "Working" label misleads.
+ * Idle/waiting agents are never stale (silence is their normal state).
+ */
+export function isSnapshotStale(
+  ambientState: string | undefined,
+  lastActivity: number | undefined,
+  now: number,
+): boolean {
+  if (ambientState !== 'thinking' && ambientState !== 'streaming') return false;
+  return !!lastActivity && now - lastActivity > STALE_AFTER_MS;
+}
+
 export interface DerivedSessionStats {
   model?: string;
   /** Context window fill, 0–100. */

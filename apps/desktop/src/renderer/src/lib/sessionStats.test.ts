@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { deriveSessionStats } from './sessionStats';
+import { deriveSessionStats, isSnapshotStale, STALE_AFTER_MS } from './sessionStats';
 import type { SessionStatusLine, SessionUsage } from '../types/claudeSession';
 
 const usage = (over: Partial<SessionUsage> = {}): SessionUsage =>
@@ -33,5 +33,30 @@ describe('deriveSessionStats — cumulative tokens', () => {
 
   it('falls back to usage when statusLine carries no token counts', () => {
     expect(deriveSessionStats({ statusLine: {} as SessionStatusLine, usage: usage() }).tokens).toBe(333);
+  });
+});
+
+describe('isSnapshotStale', () => {
+  const NOW = 1_000_000_000;
+  const OLD = NOW - STALE_AFTER_MS - 1;
+  const FRESH = NOW - 1_000;
+
+  it('flags a working agent whose snapshot has gone quiet', () => {
+    expect(isSnapshotStale('streaming', OLD, NOW)).toBe(true);
+    expect(isSnapshotStale('thinking', OLD, NOW)).toBe(true);
+  });
+
+  it('does not flag a working agent with recent activity', () => {
+    expect(isSnapshotStale('streaming', FRESH, NOW)).toBe(false);
+  });
+
+  it('never flags idle/waiting/stopped agents — silence is normal for them', () => {
+    expect(isSnapshotStale('idle', OLD, NOW)).toBe(false);
+    expect(isSnapshotStale('waiting_approval', OLD, NOW)).toBe(false);
+    expect(isSnapshotStale(undefined, OLD, NOW)).toBe(false);
+  });
+
+  it('does not flag when lastActivity is unknown', () => {
+    expect(isSnapshotStale('streaming', undefined, NOW)).toBe(false);
   });
 });

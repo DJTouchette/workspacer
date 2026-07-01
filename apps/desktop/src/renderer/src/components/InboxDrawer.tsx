@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
 import { CheckCircle2 } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useAttention } from '../contexts/AttentionContext';
@@ -23,6 +23,16 @@ const InboxDrawer: React.FC = () => {
     inboxFilter, setInboxFilter,
   } = useAttention();
   const reviewCount = Math.max(0, counts.total - counts.needsYou);
+
+  // Bulk triage: dismiss every non-blocking item in the CURRENT feed in one go.
+  // Approvals/questions are deliberately excluded — bulk-hiding a card whose
+  // agent is still blocked would just bury the block.
+  const reviewedInFeed = feed.filter((it) => it.kind !== 'approval' && it.kind !== 'question');
+  const clearReviewed = useCallback(() => {
+    for (const it of feed) {
+      if (it.kind !== 'approval' && it.kind !== 'question') dismiss(it.signature);
+    }
+  }, [feed, dismiss]);
   const TABS: { key: typeof inboxFilter; label: string; count: number }[] = [
     { key: 'all', label: 'All', count: counts.total },
     { key: 'needs', label: 'Needs you', count: counts.needsYou },
@@ -63,6 +73,7 @@ const InboxDrawer: React.FC = () => {
       if (e.key === 'Escape') { stop(); closeInbox(); return; }
       if (e.key === 'j' || e.key === 'ArrowDown') { stop(); moveSelection(1); return; }
       if (e.key === 'k' || e.key === 'ArrowUp') { stop(); moveSelection(-1); return; }
+      if (e.key === 'E') { stop(); clearReviewed(); return; }
       if (!it) return;
 
       if (e.key === 'o') { stop(); openAgent(it.agentId); return; }
@@ -84,7 +95,7 @@ const InboxDrawer: React.FC = () => {
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [inboxOpen, selectedItem, moveSelection, closeInbox, openAgent, dismiss, snooze, approve, answer]);
+  }, [inboxOpen, selectedItem, moveSelection, closeInbox, openAgent, dismiss, snooze, approve, answer, clearReviewed]);
 
   return (
     <>
@@ -153,9 +164,22 @@ const InboxDrawer: React.FC = () => {
           })}
         </div>
 
-        {/* Hint strip */}
-        <div style={{ padding: '0 16px 10px', fontSize: '0.62rem', color: 'var(--wks-text-faint)', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+        {/* Hint strip + bulk actions */}
+        <div style={{ padding: '0 16px 10px', fontSize: '0.62rem', color: 'var(--wks-text-faint)', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <Hint k="j/k" t="move" /><Hint k="y/n" t="approve" /><Hint k="1-9" t="answer" /><Hint k="o" t="open" /><Hint k="e" t="dismiss" /><Hint k="s" t="snooze" />
+          {reviewedInFeed.length > 1 && (
+            <button
+              onClick={clearReviewed}
+              title="Dismiss every reviewed (non-blocking) item shown (E)"
+              style={{
+                marginLeft: 'auto', fontSize: '0.62rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
+                border: '1px solid var(--wks-border-input)', borderRadius: 6, padding: '2px 9px',
+                background: 'transparent', color: 'var(--wks-text-secondary)', whiteSpace: 'nowrap',
+              }}
+            >
+              Clear {reviewedInFeed.length} reviewed
+            </button>
+          )}
         </div>
 
         {/* Feed (windowed) */}
