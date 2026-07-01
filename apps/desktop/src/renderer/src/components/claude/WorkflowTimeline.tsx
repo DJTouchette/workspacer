@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import type { WorkflowRunInfo, WorkflowAgentInfo } from '../../types/claudeSession';
 import { claudeColors as colors } from '../claude-shared';
 import { AGENT_PURPLE, fmtTokens, fmtDuration, shortModel } from './agentUtils';
+import { fmtUSD } from '../../lib/sessionStats';
 import { agentStatusIcon } from './WorkflowAgentRow';
 import { useNowTicker } from './useNowTicker';
 
@@ -52,6 +53,7 @@ export const WorkflowTimeline: React.FC<{ sessionId: string; run: WorkflowRunInf
   const finished = run.agents.filter(a => a.status === 'done' || a.status === 'failed').length;
   const failed = run.agents.filter(a => a.status === 'failed').length;
   const tokens = run.totalTokens ?? run.agents.reduce((s, a) => s + (a.tokens ?? 0), 0);
+  const cost = run.totalCostUSD ?? run.agents.reduce((s, a) => s + (a.costUSD ?? 0), 0);
   const elapsed = running && run.startedAt ? now - run.startedAt : run.durationMs;
 
   // Shared time axis across all agents so overlapping bars read as "ran together".
@@ -106,6 +108,7 @@ export const WorkflowTimeline: React.FC<{ sessionId: string; run: WorkflowRunInf
           <span style={metaStyle}>{finished}/{run.agents.length} agents</span>
           {failed > 0 && <span style={{ ...metaStyle, color: colors.error, fontWeight: 700 }}>{failed} failed</span>}
           {tokens > 0 && <span style={metaStyle}>{fmtTokens(tokens)} tok</span>}
+          {cost > 0 && <span style={metaStyle}>{fmtUSD(cost)}</span>}
           {elapsed !== undefined && <span style={metaStyle}>{fmtDuration(elapsed)}</span>}
           <button onClick={onClose} title="Close (Esc)" style={closeBtn}>✕</button>
         </div>
@@ -172,6 +175,7 @@ export const WorkflowTimeline: React.FC<{ sessionId: string; run: WorkflowRunInf
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 10px', color: colors.muted, fontSize: '0.66rem', marginBottom: 10 }}>
                 {selected.model && <span>{shortModel(selected.model)}</span>}
                 {selected.tokens > 0 && <span>{fmtTokens(selected.tokens)} tok</span>}
+                {(selected.costUSD ?? 0) > 0 && <span>{fmtUSD(selected.costUSD!)}</span>}
                 {selected.toolCalls > 0 && <span>{selected.toolCalls} tools</span>}
                 {(selected.durationMs ?? (selected.status === 'running' && selected.startedAt ? now - selected.startedAt : undefined)) !== undefined && (
                   <span>{fmtDuration(selected.durationMs ?? (now - (selected.startedAt ?? now)))}</span>

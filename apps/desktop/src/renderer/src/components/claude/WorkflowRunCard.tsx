@@ -2,6 +2,7 @@ import React, { useMemo, useRef, useState, useEffect } from 'react';
 import type { WorkflowRunInfo } from '../../types/claudeSession';
 import { claudeColors as colors } from '../claude-shared';
 import { AGENT_PURPLE, fmtTokens, fmtDuration } from './agentUtils';
+import { fmtUSD } from '../../lib/sessionStats';
 import { AgentSpinner, agentMetaStyle, WorkflowAgentRow } from './WorkflowAgentRow';
 import { useNowTicker } from './useNowTicker';
 import { requestWorkflow } from '../../lib/workflowBus';
@@ -69,6 +70,7 @@ export const WorkflowRunCard: React.FC<{ run: WorkflowRunInfo }> = ({ run }) => 
   const failed = run.agents.filter(a => a.status === 'failed').length;
   const elapsed = running && run.startedAt ? now - run.startedAt : run.durationMs;
   const tokens = run.totalTokens ?? run.agents.reduce((sum, a) => sum + (a.tokens ?? 0), 0);
+  const cost = run.totalCostUSD ?? run.agents.reduce((sum, a) => sum + (a.costUSD ?? 0), 0);
 
   // Phase title → detail (from the run's declared phases), so a phase group can
   // show what it's for. Parsed by the watcher but previously never surfaced.
@@ -124,6 +126,7 @@ export const WorkflowRunCard: React.FC<{ run: WorkflowRunInfo }> = ({ run }) => 
         <span style={agentMetaStyle}>{finished}/{run.agents.length} agents</span>
         {failed > 0 && <span style={{ ...agentMetaStyle, color: colors.error, fontWeight: 600 }}>{failed} failed</span>}
         {tokens > 0 && <span style={agentMetaStyle}>{fmtTokens(tokens)} tok</span>}
+        {cost > 0 && <span style={agentMetaStyle}>{fmtUSD(cost)}</span>}
         {elapsed !== undefined && <span style={agentMetaStyle}>{fmtDuration(elapsed)}</span>}
         <button
           onClick={(e) => { e.stopPropagation(); requestWorkflow(run.runId); }}

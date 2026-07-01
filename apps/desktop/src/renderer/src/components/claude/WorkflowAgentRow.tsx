@@ -2,6 +2,7 @@ import React from 'react';
 import type { WorkflowAgentInfo } from '../../types/claudeSession';
 import { claudeColors as colors } from '../claude-shared';
 import { AGENT_PURPLE, fmtTokens, fmtDuration, shortModel } from './agentUtils';
+import { fmtUSD } from '../../lib/sessionStats';
 
 // Expanded detail block (full prompt / result), shared by workflow + subagent rows.
 export const agentDetailStyle: React.CSSProperties = {
@@ -105,6 +106,7 @@ const WorkflowAgentRowInner: React.FC<{ agent: WorkflowAgentInfo; now: number }>
         </span>
         {agent.model && <span style={agentMetaStyle}>{shortModel(agent.model)}</span>}
         {agent.tokens > 0 && <span style={agentMetaStyle}>{fmtTokens(agent.tokens)} tok</span>}
+        {(agent.costUSD ?? 0) > 0 && <span style={agentMetaStyle}>{fmtUSD(agent.costUSD!)}</span>}
         {agent.toolCalls > 0 && <span style={agentMetaStyle}>{agent.toolCalls} tools</span>}
         {duration !== undefined && <span style={agentMetaStyle}>{fmtDuration(duration)}</span>}
         {canExpand && <span style={{ color: colors.mutedDim, fontSize: '0.6rem', flexShrink: 0 }}>{expanded ? '▾' : '▸'}</span>}

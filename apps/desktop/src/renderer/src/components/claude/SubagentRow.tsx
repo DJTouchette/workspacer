@@ -2,6 +2,7 @@ import React from 'react';
 import type { SubagentInfo } from '../../types/claudeSession';
 import { claudeColors as colors } from '../claude-shared';
 import { AGENT_PURPLE, fmtTokens, fmtDuration, shortModel } from './agentUtils';
+import { fmtUSD } from '../../lib/sessionStats';
 import { AgentSpinner, agentMetaStyle, lastToolLineStyle } from './WorkflowAgentRow';
 import { IconDone } from '../wksIcons';
 
@@ -29,6 +30,7 @@ export const SubagentRow: React.FC<{ sub: SubagentInfo }> = ({ sub }) => {
         {sub.model && <span style={agentMetaStyle}>{shortModel(sub.model)}</span>}
         {(sub.toolCalls ?? 0) > 0 && <span style={agentMetaStyle}>{sub.toolCalls} tools</span>}
         {(sub.tokens ?? 0) > 0 && <span style={agentMetaStyle}>{fmtTokens(sub.tokens)} tok</span>}
+        {(sub.costUSD ?? 0) > 0 && <span style={agentMetaStyle}>{fmtUSD(sub.costUSD!)}</span>}
         {duration !== undefined && <span style={agentMetaStyle}>{fmtDuration(duration)}</span>}
       </div>
       {running && sub.lastToolName && (

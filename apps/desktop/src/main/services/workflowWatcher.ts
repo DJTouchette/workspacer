@@ -18,6 +18,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import vm from 'node:vm';
+import { turnCostUSD } from './modelUsage';
 
 // ── Public types (mirrored in src/renderer/src/types/claudeSession.ts) ──
 
@@ -36,6 +37,8 @@ export interface WorkflowAgentInfo {
   completedAt?: number;
   durationMs?: number;
   tokens: number; // live: cumulative output tokens; final: authoritative figure
+  /** Estimated USD cost, accumulated live from the agent's usage blocks (modelUsage rates). */
+  costUSD?: number;
   toolCalls: number;
   lastToolName?: string;
   lastToolSummary?: string;
@@ -55,6 +58,8 @@ export interface WorkflowRunInfo {
   agents: WorkflowAgentInfo[];
   totalTokens?: number;
   totalToolCalls?: number;
+  /** Estimated USD cost — sum of the agents' live-accumulated costs. */
+  totalCostUSD?: number;
 }
 
 /** Live enrichment for a plain (Agent-tool) subagent, joined by agent id. */
@@ -65,6 +70,7 @@ export interface SubagentActivity {
   toolUseId?: string;
   model?: string;
   tokens?: number;
+  costUSD?: number;
   toolCalls?: number;
   lastToolName?: string;
   lastToolSummary?: string;
@@ -233,7 +239,7 @@ function parseScriptMeta(scriptText: string): { name?: string; description?: str
 /** Fold one transcript JSONL entry into live per-agent stats. */
 function applyTranscriptEntry(
   entry: any,
-  stats: { tokens: number; toolCalls: number; model?: string; lastToolName?: string; lastToolSummary?: string; promptPreview?: string; startedAt?: number },
+  stats: { tokens: number; costUSD?: number; toolCalls: number; model?: string; lastToolName?: string; lastToolSummary?: string; promptPreview?: string; startedAt?: number },
   usageDedup: { lastUsageKey: string | null },
 ): void {
   const ts = entry.timestamp ? Date.parse(entry.timestamp) : NaN;
@@ -256,6 +262,7 @@ function applyTranscriptEntry(
       if (key && key !== usageDedup.lastUsageKey) {
         usageDedup.lastUsageKey = key;
         stats.tokens += msg.usage.output_tokens ?? 0;
+        stats.costUSD = (stats.costUSD ?? 0) + turnCostUSD(msg.model ?? stats.model, msg.usage);
       }
     }
     const blocks = Array.isArray(msg.content) ? msg.content : [];
@@ -394,7 +401,13 @@ class WorkflowWatcher {
       .sort((a, b) => a.startedAt - b.startedAt)
       .slice(-MAX_RUNS)
       // Deep-ish copy so IPC snapshots don't share mutable state
-      .map(r => ({ ...r, phases: r.phases.map(p => ({ ...p })), agents: r.agents.map(a => ({ ...a })) }));
+      .map(r => {
+        const agents = r.agents.map(a => ({ ...a }));
+        // Run cost is derivable only from the live per-agent accumulation (the
+        // final state file doesn't carry cost), so roll it up at snapshot time.
+        const cost = agents.reduce((s, a) => s + (a.costUSD ?? 0), 0);
+        return { ...r, phases: r.phases.map(p => ({ ...p })), agents, totalCostUSD: cost > 0 ? cost : r.totalCostUSD };
+      });
 
     const subagentActivity: Record<string, SubagentActivity> = {};
     for (const [id, st] of watch.plainAgents) subagentActivity[id] = { ...st.activity };
@@ -499,8 +512,11 @@ class WorkflowWatcher {
       const agents: WorkflowAgentInfo[] = [];
       for (const p of j.workflowProgress) {
         if (p?.type !== 'workflow_agent' || !p.agentId) continue;
+        // The final file has no cost figures — keep what the live tail accumulated.
+        const liveCost = run.agents.get(stripAgentPrefix(String(p.agentId)))?.info.costUSD;
         agents.push({
           id: stripAgentPrefix(String(p.agentId)),
+          costUSD: liveCost,
           label: typeof p.label === 'string' ? p.label : undefined,
           phaseTitle: typeof p.phaseTitle === 'string' ? p.phaseTitle : undefined,
           model: typeof p.model === 'string' ? p.model : undefined,
@@ -665,6 +681,7 @@ class WorkflowWatcher {
       if (lines.length === 0) continue;
       const stats = {
         tokens: st.activity.tokens ?? 0,
+        costUSD: st.activity.costUSD,
         toolCalls: st.activity.toolCalls ?? 0,
         model: st.activity.model,
         lastToolName: st.activity.lastToolName,
@@ -680,6 +697,7 @@ class WorkflowWatcher {
       }
       st.lastUsageKey = dedup.lastUsageKey;
       st.activity.tokens = stats.tokens;
+      st.activity.costUSD = stats.costUSD;
       st.activity.toolCalls = stats.toolCalls;
       st.activity.model = stats.model;
       st.activity.lastToolName = stats.lastToolName;

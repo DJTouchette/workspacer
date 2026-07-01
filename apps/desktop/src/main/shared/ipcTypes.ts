@@ -94,6 +94,7 @@ export interface SubagentInfo {
   toolUseId?: string;
   model?: string;
   tokens?: number;
+  costUSD?: number;
   toolCalls?: number;
   lastToolName?: string;
   lastToolSummary?: string;
@@ -114,6 +115,7 @@ export interface WorkflowAgentInfo {
   completedAt?: number;
   durationMs?: number;
   tokens: number;
+  costUSD?: number;
   toolCalls: number;
   lastToolName?: string;
   lastToolSummary?: string;
@@ -133,6 +135,7 @@ export interface WorkflowRunInfo {
   agents: WorkflowAgentInfo[];
   totalTokens?: number;
   totalToolCalls?: number;
+  totalCostUSD?: number;
 }
 
 export interface SessionUsage {

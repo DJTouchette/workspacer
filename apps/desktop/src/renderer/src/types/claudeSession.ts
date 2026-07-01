@@ -55,6 +55,8 @@ export interface SubagentInfo {
   toolUseId?: string;
   model?: string;
   tokens?: number;
+  /** Estimated USD cost, live-accumulated from the subagent's usage blocks. */
+  costUSD?: number;
   toolCalls?: number;
   lastToolName?: string;
   lastToolSummary?: string;
@@ -77,6 +79,8 @@ export interface WorkflowAgentInfo {
   completedAt?: number;
   durationMs?: number;
   tokens: number;
+  /** Estimated USD cost, live-accumulated from the agent's usage blocks. */
+  costUSD?: number;
   toolCalls: number;
   lastToolName?: string;
   lastToolSummary?: string;
@@ -96,6 +100,8 @@ export interface WorkflowRunInfo {
   agents: WorkflowAgentInfo[];
   totalTokens?: number;
   totalToolCalls?: number;
+  /** Estimated USD cost — sum of the agents' live-accumulated costs. */
+  totalCostUSD?: number;
 }
 
 /** Token / cost / context usage, parsed from the transcript in the main process. */

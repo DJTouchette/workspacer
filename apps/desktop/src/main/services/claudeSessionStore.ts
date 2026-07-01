@@ -108,6 +108,7 @@ export interface SubagentInfo {
   toolUseId?: string;
   model?: string;
   tokens?: number;
+  costUSD?: number;
   toolCalls?: number;
   lastToolName?: string;
   lastToolSummary?: string;
@@ -502,6 +503,7 @@ class ClaudeSessionStore {
       if (activity.toolUseId) sub.toolUseId = activity.toolUseId;
       if (activity.model) sub.model = activity.model;
       if (activity.tokens !== undefined) sub.tokens = activity.tokens;
+      if (activity.costUSD !== undefined) sub.costUSD = activity.costUSD;
       if (activity.toolCalls !== undefined) sub.toolCalls = activity.toolCalls;
       if (activity.lastToolName) sub.lastToolName = activity.lastToolName;
       if (activity.lastToolSummary !== undefined) sub.lastToolSummary = activity.lastToolSummary;
