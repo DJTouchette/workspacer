@@ -139,6 +139,7 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     // No hub capability for live per-provider model listing yet — fall back to
     // an empty list so the spawn dialog uses its free-text model field.
     providerListModels: () => { warnOnce('providerListModels'); return Promise.resolve([]); },
+    providerCheckAll: () => { warnOnce('providerCheckAll'); return Promise.resolve([]); },
     claudeMessage: (sessionId, text) => client.call<{ ok: boolean; mode?: string }>('agents.sendMessage', { sessionId, text }),
     claudeApprove: (sessionId, decision, reason) => client.call<void>('claude.approve', { sessionId, decision, reason }).then(() => {}),
     claudeAnswer: (sessionId, payload) => client.call<void>('claude.answer', { sessionId, ...payload }).then(() => {}),

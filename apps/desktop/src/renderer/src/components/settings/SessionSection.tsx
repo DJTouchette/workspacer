@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Config } from '../../hooks/useConfig';
 import { Section, CheckRow, Row, ModeButton } from './primitives';
 
@@ -27,12 +27,89 @@ const AGENT_PROVIDERS: { label: string; value: 'claude' | 'codex' | 'opencode' |
   { label: 'Pi', value: 'pi' },
 ];
 
+interface ProviderDetection {
+  provider: string;
+  found: boolean;
+  resolvedPath: string | null;
+  customBin: string;
+}
+
+/** One editable binary-path row for a provider in the settings panel. */
+const BinaryRow: React.FC<{
+  label: string;
+  providerId: 'claude' | 'codex' | 'opencode' | 'pi';
+  detection: ProviderDetection | undefined;
+  config: Config;
+  save: (partial: Partial<Config>) => Promise<Config>;
+  onRefresh: () => void;
+}> = ({ label, providerId, detection, config, save, onRefresh }) => {
+  const [value, setValue] = useState(config.agents?.binaries?.[providerId] ?? '');
+  useEffect(() => { setValue(config.agents?.binaries?.[providerId] ?? ''); }, [config.agents?.binaries, providerId]);
+
+  const persist = (v: string) => {
+    save({ agents: { ...config.agents, binaries: { ...config.agents?.binaries, [providerId]: v.trim() } } })
+      .then(() => onRefresh()).catch(() => {});
+  };
+
+  const browse = async () => {
+    const files = await window.electronAPI.pickFiles?.(undefined);
+    if (files?.length) { setValue(files[0]); persist(files[0]); }
+  };
+
+  const dotColor = detection === undefined ? 'var(--wks-text-disabled)'
+    : detection.found ? '#3db86a'
+    : 'var(--wks-danger, #e05555)';
+  const hint = detection === undefined ? 'Checking…'
+    : detection.found ? `Found: ${detection.resolvedPath}`
+    : 'Not found on PATH';
+
+  return (
+    <Row label={label}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', gap: 4 }}>
+          <input
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onBlur={(e) => persist(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') persist(value); }}
+            placeholder="Auto-detect on PATH"
+            spellCheck={false}
+            style={{
+              flex: 1, minWidth: 0, fontSize: '0.7rem', fontFamily: 'inherit',
+              background: 'var(--wks-bg-base)', color: 'var(--wks-text-primary)',
+              border: '1px solid var(--wks-border-input)', borderRadius: 4, padding: '4px 7px',
+            }}
+          />
+          <button
+            onClick={browse}
+            style={{
+              fontSize: '0.7rem', fontFamily: 'inherit', cursor: 'pointer', whiteSpace: 'nowrap',
+              background: 'var(--wks-bg-input)', color: 'var(--wks-text-tertiary)',
+              border: '1px solid var(--wks-border-input)', borderRadius: 4, padding: '0 10px',
+            }}
+          >Browse…</button>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.6rem' }}>
+          <span style={{ width: 7, height: 7, borderRadius: '50%', background: dotColor, flexShrink: 0 }} />
+          <span style={{ color: detection?.found ? '#3db86a' : 'var(--wks-text-disabled)' }}>{hint}</span>
+        </div>
+      </div>
+    </Row>
+  );
+};
+
 const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
   const autoResume = config.session?.autoResume ?? true;
   const defaultView = config.claude?.defaultView ?? 'terminal';
   const defaultProvider = config.agents?.defaultProvider ?? 'claude';
   const guiFontScale = config.ui.guiFontScale ?? 1.15;
   const diffView = config.ui.diffView ?? 'stacked';
+
+  const [detection, setDetection] = useState<ProviderDetection[]>([]);
+  const refreshDetection = () => {
+    window.electronAPI.providerCheckAll?.().then((list) => setDetection(list ?? [])).catch(() => {});
+  };
+  useEffect(() => { refreshDetection(); }, []);
 
   // Default directory for new agents. Local state so typing is smooth; persisted
   // on blur / Enter (and immediately when picked via Browse).
@@ -171,6 +248,25 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
         The ↑ button next to the message box. Off keeps the box clean — Enter still sends
         (Shift+Enter for a newline).
       </div>
+
+      <div style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--wks-text-muted)', marginTop: 16, marginBottom: 4 }}>
+        Tool paths
+      </div>
+      <div style={{ fontSize: '0.55rem', color: 'var(--wks-text-disabled)', marginBottom: 8 }}>
+        Override the binary path for each coding agent. Leave blank to auto-detect on PATH.
+        A green dot means the CLI was found; red means it's missing or the path is invalid.
+      </div>
+      {AGENT_PROVIDERS.map((p) => (
+        <BinaryRow
+          key={p.value}
+          label={p.label}
+          providerId={p.value}
+          detection={detection.find((d) => d.provider === p.value)}
+          config={config}
+          save={save}
+          onRefresh={refreshDetection}
+        />
+      ))}
     </Section>
   );
 };

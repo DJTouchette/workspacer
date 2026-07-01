@@ -17,6 +17,7 @@ import { randomUUID } from 'crypto';
 import { claudeSessionStore } from './claudeSessionStore';
 import { claudemonSessionClient } from './claudemonSessionClient';
 import { resolveAgentBinary, isAgentBinaryInstalled, type AgentProvider } from './agentProviders';
+import { configService } from './configService';
 import { MCP_FACADE_URL, managedFacadeInstructions } from './mcpConfig';
 import { ensureSupervisorHome } from './supervisorSkill';
 import { notifySystem } from './systemNotice';
@@ -28,10 +29,15 @@ const INSTALL_HINT: Record<Exclude<AgentProvider, 'claude'>, string> = {
   pi: 'Install Pi and make sure `pi` is on your PATH.',
 };
 
+/** User-configured binary path for a provider ('' if not set). */
+function configuredBin(provider: Exclude<AgentProvider, 'claude'>): string {
+  return configService.getConfig().agents?.binaries?.[provider] ?? '';
+}
+
 /** Pre-flight: fail fast with a clear banner if the provider CLI is missing,
  *  rather than spawning a process that dies with an opaque ENOENT. */
 function assertProviderInstalled(provider: Exclude<AgentProvider, 'claude'>): void {
-  if (isAgentBinaryInstalled(provider)) return;
+  if (isAgentBinaryInstalled(provider, configuredBin(provider))) return;
   const title = `${provider} CLI not found`;
   notifySystem({ level: 'error', key: `missing-${provider}`, title, detail: INSTALL_HINT[provider] });
   throw new Error(`${title}. ${INSTALL_HINT[provider]}`);
@@ -79,7 +85,7 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
   let cwd = opts.cwd || process.env.HOME || os.homedir();
   if (opts.supervisor && !opts.cwd) cwd = ensureSupervisorHome();
 
-  const bin = resolveAgentBinary(provider);
+  const bin = resolveAgentBinary(provider, configuredBin(provider));
   const wantsFacade = opts.supervisor || opts.mcpFacade;
   const managedId = opts.resumeSessionId || randomUUID();
   claudeSessionStore.setSpawnMeta(managedId, {
@@ -119,7 +125,7 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
 async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
   let cwd = opts.cwd || process.env.HOME || os.homedir();
   if (opts.supervisor && !opts.cwd) cwd = ensureSupervisorHome();
-  const bin = resolveAgentBinary('codex');
+  const bin = resolveAgentBinary('codex', configuredBin('codex'));
   const sessionId = opts.resumeSessionId || randomUUID();
   claudeSessionStore.setSpawnMeta(sessionId, {
     label: opts.label,

@@ -32,10 +32,20 @@ function modelPlaceholder(provider: AgentProvider): string {
   }
 }
 
+/** Detection result for one provider (mirrors main-process ProviderStatus). */
+interface ProviderDetection {
+  provider: string;
+  found: boolean;
+  resolvedPath: string | null;
+  customBin: string;
+}
+
 const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, defaultProvider, onSpawn, onCancel }) => {
   const [cwd, setCwd] = useState(defaultCwd);
   const [name, setName] = useState('');
   const [provider, setProvider] = useState<AgentProvider>(defaultProvider ?? 'claude');
+  const [providerDetection, setProviderDetection] = useState<ProviderDetection[]>([]);
+  const [customBinPath, setCustomBinPath] = useState('');
   const isClaude = provider === 'claude';
   // Model picker for non-Claude providers. The list is live-queried from the
   // provider's own CLI/server (codex/opencode/pi); `providerSel` is the dropdown
@@ -67,6 +77,19 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, default
   const [resumeSessionId, setResumeSessionId] = useState('');
 
   useEffect(() => { setCwd(defaultCwd); }, [defaultCwd]);
+
+  // Fetch provider detection status once on mount.
+  useEffect(() => {
+    window.electronAPI.providerCheckAll?.()
+      .then((list) => setProviderDetection(list ?? []))
+      .catch(() => {});
+  }, []);
+
+  // When switching provider, seed the custom-bin field from the detected config.
+  useEffect(() => {
+    const det = providerDetection.find((d) => d.provider === provider);
+    setCustomBinPath(det?.customBin ?? '');
+  }, [provider, providerDetection]);
 
   // Close on Escape regardless of which inner element has focus.
   useEffect(() => {
@@ -174,6 +197,20 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, default
     if (picked) setCwd(picked);
   };
 
+  const saveCustomBin = (value: string) => {
+    const binaries = { [provider]: value.trim() };
+    window.electronAPI.saveConfig?.({ agents: { binaries } } as any)
+      .then(() => window.electronAPI.providerCheckAll?.().then((list) => setProviderDetection(list ?? [])).catch(() => {}))
+      .catch(() => {});
+  };
+
+  const browseCustomBin = async () => {
+    const files = await window.electronAPI.pickFiles?.(undefined);
+    if (files?.length) { setCustomBinPath(files[0]); saveCustomBin(files[0]); }
+  };
+
+  const currentDetection = providerDetection.find((d) => d.provider === provider);
+
   const submit = () => {
     if (!cwd.trim()) return;
     // Claude-only options are dropped for other providers (they run their own
@@ -240,10 +277,15 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, default
           <div style={{ display: 'flex', gap: 4 }}>
             {PROVIDERS.map((p) => {
               const active = provider === p.value;
+              const det = providerDetection.find((d) => d.provider === p.value);
+              const dotColor = det === undefined ? 'var(--wks-text-disabled)'
+                : det.found ? '#3db86a'
+                : 'var(--wks-danger, #e05555)';
               return (
                 <button
                   key={p.value}
                   onClick={() => setProvider(p.value)}
+                  title={det ? (det.found ? `Found: ${det.resolvedPath}` : 'Not found on PATH') : 'Checking…'}
                   style={{
                     flex: 1, padding: '6px 8px', borderRadius: 6, cursor: 'pointer',
                     display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
@@ -255,10 +297,61 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, default
                 >
                   <AgentLogo provider={p.value} size={14} style={{ flexShrink: 0, opacity: active ? 1 : 0.75 }} />
                   {p.label}
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: dotColor, flexShrink: 0 }} />
                 </button>
               );
             })}
           </div>
+
+          {/* Detection status + custom binary path for the selected provider */}
+          {currentDetection && (
+            <div style={{ marginTop: 6 }}>
+              {currentDetection.found ? (
+                <div style={{ color: '#3db86a', fontSize: '0.62rem' }}>
+                  ✓ {currentDetection.resolvedPath}
+                </div>
+              ) : (
+                <div>
+                  <div style={{ color: 'var(--wks-danger, #e05555)', fontSize: '0.62rem', marginBottom: 4 }}>
+                    Not found on PATH — set a custom path or install the CLI
+                  </div>
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    <input
+                      value={customBinPath}
+                      onChange={(e) => setCustomBinPath(e.target.value)}
+                      onBlur={(e) => saveCustomBin(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') saveCustomBin(customBinPath); if (e.key === 'Escape') onCancel(); }}
+                      placeholder={`/usr/local/bin/${provider}`}
+                      spellCheck={false}
+                      style={{ ...inputStyle, fontSize: '0.72rem' }}
+                    />
+                    <button onClick={browseCustomBin} style={browseBtnStyle}>Browse…</button>
+                  </div>
+                </div>
+              )}
+              {/* Let the user override even when auto-detected */}
+              {currentDetection.found && (
+                <details style={{ marginTop: 4 }}>
+                  <summary style={{ fontSize: '0.6rem', color: 'var(--wks-text-faint)', cursor: 'pointer' }}>
+                    Override binary path…
+                  </summary>
+                  <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
+                    <input
+                      value={customBinPath}
+                      onChange={(e) => setCustomBinPath(e.target.value)}
+                      onBlur={(e) => saveCustomBin(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') saveCustomBin(customBinPath); if (e.key === 'Escape') onCancel(); }}
+                      placeholder={currentDetection.resolvedPath ?? ''}
+                      spellCheck={false}
+                      style={{ ...inputStyle, fontSize: '0.72rem' }}
+                    />
+                    <button onClick={browseCustomBin} style={browseBtnStyle}>Browse…</button>
+                  </div>
+                </details>
+              )}
+            </div>
+          )}
+
           {!isClaude && (
             <div style={{ color: 'var(--wks-text-faint)', fontSize: '0.62rem', marginTop: 5, lineHeight: 1.4 }}>
               Runs via claudemon's {PROVIDERS.find((p) => p.value === provider)?.label} adapter —

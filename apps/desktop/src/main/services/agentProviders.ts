@@ -14,6 +14,16 @@ import { buildClaudeArgv, ClaudeArgvOptions } from './claudeResolver';
 
 export type AgentProvider = 'claude' | 'codex' | 'opencode' | 'pi';
 
+/** Detection result for one provider. */
+export interface ProviderStatus {
+  provider: AgentProvider;
+  found: boolean;
+  /** Absolute path if detected; null if the binary is missing. */
+  resolvedPath: string | null;
+  /** The user-configured custom binary path (may be empty string = not set). */
+  customBin: string;
+}
+
 /** First existing absolute path for any of `names` across PATH, else null. */
 function findOnPath(names: string[]): string | null {
   const dirs = (process.env.PATH || '').split(path.delimiter).filter(Boolean);
@@ -36,22 +46,45 @@ function binNames(base: string): string[] {
 }
 
 /**
- * Resolve the launcher binary for a provider. Falls back to the bare command
- * name (relying on the user's PATH at spawn time) when not found up front, so a
- * freshly-installed CLI still works without a restart.
+ * Resolve the launcher binary for a provider. When `customBin` is supplied and
+ * non-empty it is returned directly (the user's configured override). Otherwise
+ * falls back to a PATH search, then to the bare command name so a freshly-
+ * installed CLI still works without a restart.
  */
-export function resolveAgentBinary(provider: Exclude<AgentProvider, 'claude'>): string {
+export function resolveAgentBinary(provider: Exclude<AgentProvider, 'claude'>, customBin?: string): string {
+  if (customBin?.trim()) return customBin.trim();
   // Binary name matches the provider id for every managed CLI (codex/opencode/pi).
-  const base = provider;
-  return findOnPath(binNames(base)) ?? base;
+  return findOnPath(binNames(provider)) ?? provider;
 }
 
-/** True if the provider's CLI is on PATH right now. Used for a spawn pre-flight
- *  so a missing CLI surfaces a clear "install it" message instead of a doomed
- *  process that fails opaquely. PATH is read fresh, so a just-installed CLI is
- *  detected without a restart. */
-export function isAgentBinaryInstalled(provider: Exclude<AgentProvider, 'claude'>): boolean {
+/**
+ * True if the provider's CLI is accessible right now. When `customBin` is set
+ * we check that path directly; otherwise we search PATH.  PATH is read fresh,
+ * so a just-installed CLI is detected without a restart.
+ */
+export function isAgentBinaryInstalled(provider: Exclude<AgentProvider, 'claude'>, customBin?: string): boolean {
+  if (customBin?.trim()) {
+    try { return fs.existsSync(customBin.trim()); } catch { return false; }
+  }
   return findOnPath(binNames(provider)) !== null;
+}
+
+/** Check detection status for all providers (including Claude). `binaries` maps
+ *  provider id → user-configured override path ('' = not set). */
+export function checkAllProviders(
+  binaries: Partial<Record<AgentProvider, string>> = {},
+): ProviderStatus[] {
+  const all: AgentProvider[] = ['claude', 'codex', 'opencode', 'pi'];
+  return all.map((provider) => {
+    const customBin = (binaries[provider] ?? '').trim();
+    if (customBin) {
+      let found = false;
+      try { found = fs.existsSync(customBin); } catch {}
+      return { provider, found, resolvedPath: found ? customBin : null, customBin };
+    }
+    const resolvedPath = findOnPath(binNames(provider));
+    return { provider, found: resolvedPath !== null, resolvedPath, customBin: '' };
+  });
 }
 
 export interface AgentArgvOptions extends ClaudeArgvOptions {

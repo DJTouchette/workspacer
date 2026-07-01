@@ -136,6 +136,13 @@ export interface Config {
      *  falls back to the app's launch cwd. Set this so new agents don't default
      *  to the install path. */
     defaultCwd?: string;
+    /** User-configured binary paths per provider. '' = auto-detect on PATH. */
+    binaries?: {
+      claude?: string;
+      codex?: string;
+      opencode?: string;
+      pi?: string;
+    };
   };
   /** Optional fleet-supervisor settings (opt-in; absent = sensible defaults). */
   supervisor?: SupervisorConfig;

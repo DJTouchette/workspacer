@@ -258,6 +258,16 @@ export interface AppConfig {
   session: {
     autoResume: boolean;
   };
+  agents?: {
+    defaultProvider?: string;
+    defaultCwd?: string;
+    binaries?: {
+      claude?: string;
+      codex?: string;
+      opencode?: string;
+      pi?: string;
+    };
+  };
 }
 
 // ── Session persistence (session:save) ──

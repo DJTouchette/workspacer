@@ -13,7 +13,7 @@ import { listClaudeModels } from './services/claudeModels';
 import { agentNotifier } from './services/agentNotifier';
 import { claudemonSessionClient } from './services/claudemonSessionClient';
 import { buildClaudeArgv } from './services/claudeResolver';
-import { resolveAgentBinary } from './services/agentProviders';
+import { resolveAgentBinary, checkAllProviders } from './services/agentProviders';
 import { spawnManagedAgent } from './services/managedSpawn';
 import { logsDir } from './services/logFile';
 import { facadeSpawnArgs, buildSessionMcpConfig } from './services/mcpConfig';
@@ -392,8 +392,17 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // Live model catalog for a managed provider (codex/opencode/pi). We resolve
   // the launcher binary the same way spawning does, then query the provider's
   // own CLI/server via claudemon so the picker matches the installed version.
-  ipcMain.handle(IPC.PROVIDER_LIST_MODELS, (_event, provider: 'codex' | 'opencode' | 'pi', cwd?: string) =>
-    claudemonSessionClient.listProviderModels(provider, cwd, resolveAgentBinary(provider)));
+  ipcMain.handle(IPC.PROVIDER_LIST_MODELS, (_event, provider: 'codex' | 'opencode' | 'pi', cwd?: string) => {
+    const customBin = configService.getConfig().agents?.binaries?.[provider] ?? '';
+    return claudemonSessionClient.listProviderModels(provider, cwd, resolveAgentBinary(provider, customBin));
+  });
+
+  // Detection status for all providers — returns path + found flag, using the
+  // user-configured binary overrides from config when present.
+  ipcMain.handle(IPC.PROVIDER_CHECK_ALL, () => {
+    const binaries = configService.getConfig().agents?.binaries ?? {};
+    return checkAllProviders(binaries);
+  });
 
   ipcMain.handle(IPC.CLAUDE_MESSAGE, (_event, sessionId: string, text: string) =>
     claudemonSessionClient.message(sessionId, text));

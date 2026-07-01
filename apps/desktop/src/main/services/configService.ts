@@ -95,6 +95,20 @@ interface Config {
     /** Which view a Claude pane opens in by default: rich 'gui' or raw 'terminal'. */
     defaultView: 'gui' | 'terminal';
   };
+  /** Defaults applied when spawning a new agent. */
+  agents: {
+    /** Coding-agent backend pre-selected in the spawn dialog. */
+    defaultProvider: string;
+    /** Directory the spawn dialog opens at. '' = app launch cwd. */
+    defaultCwd: string;
+    /** User-configured binary paths per provider. '' = auto-detect on PATH. */
+    binaries: {
+      claude: string;
+      codex: string;
+      opencode: string;
+      pi: string;
+    };
+  };
   /** Optional fleet-supervisor settings. The supervisor is opt-in (spawned via
    *  "Ask the Fleet"); nothing here is assumed present by the rest of the app. */
   supervisor: {
@@ -262,6 +276,16 @@ function defaultConfig(): Config {
       seenModels: [],
       skipPermissionsDefault: false,
       defaultView: 'terminal',
+    },
+    agents: {
+      defaultProvider: 'claude',
+      defaultCwd: '',
+      binaries: {
+        claude: '',
+        codex: '',
+        opencode: '',
+        pi: '',
+      },
     },
     supervisor: {
       model: '',
