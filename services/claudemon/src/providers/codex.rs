@@ -284,19 +284,20 @@ pub fn spawn_session(
     });
 }
 
-async fn run_session(
-    store: &SessionStore,
-    conv: &ConversationStore,
-    session_id: &str,
+/// A connected JSON-RPC-over-WebSocket stream to a session's `codex app-server`.
+type CodexWs = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+/// Start `codex app-server --listen ws://…` for this session on a free loopback
+/// port and connect the ws client. Returns the child, the ws stream, and the ws
+/// URL (the TUI attaches to it via `--remote`). An error means the ws path is
+/// unavailable for this Codex build — the caller falls back to the rollout hybrid.
+async fn start_appserver(
     cwd: &str,
-    model: Option<String>,
     bin: &str,
-    yolo: bool,
     facade: &Facade,
-) -> anyhow::Result<()> {
-    // Pick a free loopback port for this session's app-server. Each managed
-    // session gets its own `codex app-server`, so threads/approvals are isolated
-    // per pane.
+) -> anyhow::Result<(tokio::process::Child, CodexWs, String)> {
+    // Each managed session gets its own app-server, so threads/approvals are
+    // isolated per pane.
     let port = {
         let listener = std::net::TcpListener::bind("127.0.0.1:0")
             .context("reserving a port for codex app-server")?;
@@ -313,7 +314,7 @@ async fn run_session(
         cmd.arg("-c")
             .arg(format!("mcp_servers.workspacer.url=\"{mcp_url}\""));
     }
-    let mut child = cmd
+    let child = cmd
         .current_dir(cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -325,10 +326,95 @@ async fn run_session(
     // Wait for the server's HTTP `/readyz` before opening the ws client.
     wait_ready(&http_base).await?;
 
-    // Connect the JSON-RPC-over-WebSocket client.
-    let (ws_stream, _resp) = connect_async(&ws_url)
+    let (ws, _resp) = connect_async(&ws_url)
         .await
         .with_context(|| format!("connecting to codex app-server at {ws_url}"))?;
+    Ok((child, ws, ws_url))
+}
+
+/// Fallback when the app-server ws path is unavailable: run the plain `codex` TUI
+/// in a PTY (the Term view) and tail its rollout transcript for the GUI — the
+/// same mechanism used on Windows. Less rich than the RPC path (approvals happen
+/// in the Term; text lands in rollout-sized chunks rather than token deltas) but
+/// robust and version-independent, so a Codex CLI that changed `app-server` /
+/// `--remote` still gives a working pane instead of an empty one.
+async fn run_rollout_fallback(
+    store: &SessionStore,
+    conv: &ConversationStore,
+    session_id: &str,
+    cwd: &str,
+    model: Option<String>,
+    bin: &str,
+    yolo: bool,
+) -> anyhow::Result<()> {
+    // Plain codex TUI (no `--remote`): it owns its own session and writes a rollout.
+    let mut argv = vec![bin.to_string()];
+    if let Some(m) = &model {
+        argv.push("-c".to_string());
+        argv.push(format!("model={}", Value::String(m.clone())));
+    }
+    if yolo {
+        argv.push("--dangerously-bypass-approvals-and-sandbox".to_string());
+    }
+    let tui = super::spawn_attach_pty(store, session_id, &argv, cwd)
+        .context("spawning fallback codex TUI")?;
+    // Drive the GUI conversation from the rollout transcript.
+    super::codex_rollout::spawn_tailer(store.clone(), conv.clone(), session_id.to_string(), cwd.to_string());
+
+    // GUI-composer prompts arrive here; write them into the TUI's PTY (there's no
+    // RPC channel in this mode — approvals and everything else happen in the Term).
+    let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+    store.register_managed_input(session_id, tx);
+    let mut tui_check = tokio::time::interval(std::time::Duration::from_secs(2));
+
+    loop {
+        tokio::select! {
+            msg = rx.recv() => match msg {
+                Some(text) => {
+                    conv.push(session_id, vec![ConversationItem::UserMessage { text: text.clone(), timestamp: None }]);
+                    // Bracketed paste + Enter (same as the Claude PTY path) so the
+                    // TUI submits instead of folding the CR into the paste.
+                    let body = text.trim_end_matches(['\r', '\n']);
+                    let mut bytes = b"\x1b[200~".to_vec();
+                    bytes.extend_from_slice(body.as_bytes());
+                    bytes.extend_from_slice(b"\x1b[201~\r");
+                    let _ = pty::write_bytes(&tui, &bytes).await;
+                }
+                None => break, // managed input dropped → terminated
+            },
+            _ = tui_check.tick() => {
+                if pty::has_exited(&tui) {
+                    tracing::info!(session = %session_id, "codex fallback TUI exited; tearing down");
+                    break;
+                }
+            }
+        }
+    }
+    let _ = pty::signal_child(&tui, Signal::Sigkill);
+    Ok(())
+}
+
+async fn run_session(
+    store: &SessionStore,
+    conv: &ConversationStore,
+    session_id: &str,
+    cwd: &str,
+    model: Option<String>,
+    bin: &str,
+    yolo: bool,
+    facade: &Facade,
+) -> anyhow::Result<()> {
+    // Start the app-server + ws client. If that fails, the ws path is unavailable
+    // for this Codex build (e.g. a version that dropped/renamed `app-server
+    // --listen`, or won't bind/handshake) — degrade to the rollout hybrid rather
+    // than leave the pane dead. The RPC path is preferred; this is the safety net.
+    let (mut child, ws_stream, ws_url) = match start_appserver(cwd, bin, facade).await {
+        Ok(t) => t,
+        Err(err) => {
+            tracing::warn!(?err, session = %session_id, "codex app-server ws path unavailable — falling back to the rollout hybrid (Term + transcript-tailed GUI)");
+            return run_rollout_fallback(store, conv, session_id, cwd, model, bin, yolo).await;
+        }
+    };
     let (mut ws_write, mut ws_read) = ws_stream.split();
 
     // Serialize all outgoing JSON-RPC through one task that owns the ws sink, so
@@ -387,8 +473,11 @@ async fn run_session(
     // so a TUI that never creates a thread (or died at startup) can't busy-poll
     // for the daemon's life.
     let mut discover = tokio::time::interval(std::time::Duration::from_millis(300));
-    let discover_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(180);
-    let mut discover_expired = false;
+    // If we can't rejoin the TUI's thread within this window, the ws path is up
+    // but its thread protocol drifted — fall back to the rollout hybrid rather
+    // than sit on an empty GUI. Generous enough for a slow TUI cold-start.
+    let discover_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
+    let mut needs_fallback = false;
     // Watch the TUI (the thread owner) for death: if it exits while the app-server
     // lives, the session is dead and must tear down rather than run against a
     // dead thread. try_wait is cheap; a coarse tick is fine.
@@ -419,10 +508,11 @@ async fn run_session(
             // ask which threads are loaded (there's only ever one on this
             // per-session app-server) and (re)send `thread/resume` for it. The
             // first resume can precede the thread becoming "running", so we retry.
-            _ = discover.tick(), if !subscribed && !discover_expired => {
+            _ = discover.tick(), if !subscribed && !needs_fallback => {
                 if tokio::time::Instant::now() >= discover_deadline {
-                    discover_expired = true;
-                    tracing::warn!(session = %session_id, "codex: gave up rejoining the TUI thread after 3min; GUI view will stay empty (Term still usable)");
+                    tracing::warn!(session = %session_id, "codex: couldn't rejoin the TUI thread in time; falling back to the rollout hybrid");
+                    needs_fallback = true;
+                    break;
                 } else {
                     match &thread_id {
                         None => {
@@ -482,9 +572,17 @@ async fn run_session(
         }
     }
 
+    // Tear down the ws attempt (app-server + the `--remote` TUI) before any
+    // fallback, so the rollout path starts from a clean slate.
     let _ = child.start_kill();
     if let Some(handle) = &tui_pty {
         let _ = pty::signal_child(handle, Signal::Sigkill);
+    }
+
+    // The thread protocol drifted (ws up, but we never rejoined): degrade to the
+    // rollout hybrid so the pane still works.
+    if needs_fallback {
+        return run_rollout_fallback(store, conv, session_id, cwd, model, bin, yolo).await;
     }
     Ok(())
 }
