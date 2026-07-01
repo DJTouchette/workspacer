@@ -4,6 +4,7 @@ import { claudeColors as colors } from '../claude-shared';
 import { AGENT_PURPLE, fmtTokens, fmtDuration } from './agentUtils';
 import { AgentSpinner, agentMetaStyle, WorkflowAgentRow } from './WorkflowAgentRow';
 import { useNowTicker } from './useNowTicker';
+import { requestWorkflow } from '../../lib/workflowBus';
 
 /** One phase within a run: a collapsible group with a done/total · failed ·
  *  tokens roll-up, so a 20-agent multi-phase run stays scannable. Completed
@@ -124,6 +125,11 @@ export const WorkflowRunCard: React.FC<{ run: WorkflowRunInfo }> = ({ run }) => 
         {failed > 0 && <span style={{ ...agentMetaStyle, color: colors.error, fontWeight: 600 }}>{failed} failed</span>}
         {tokens > 0 && <span style={agentMetaStyle}>{fmtTokens(tokens)} tok</span>}
         {elapsed !== undefined && <span style={agentMetaStyle}>{fmtDuration(elapsed)}</span>}
+        <button
+          onClick={(e) => { e.stopPropagation(); requestWorkflow(run.runId); }}
+          title="Open timeline"
+          style={{ background: 'none', border: 'none', color: colors.mutedDim, cursor: 'pointer', fontSize: '0.72rem', padding: '0 2px', flexShrink: 0, lineHeight: 1 }}
+        >⤢</button>
         <span style={{ color: colors.mutedDim, fontSize: '0.6rem', flexShrink: 0 }}>{expanded ? '▾' : '▸'}</span>
       </div>
 

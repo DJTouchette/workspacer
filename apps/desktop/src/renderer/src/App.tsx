@@ -31,6 +31,7 @@ import LibrarySidePanel from './components/LibrarySidePanel';
 import BottomTerminalPanel from './components/BottomTerminalPanel';
 import InboxDrawer from './components/InboxDrawer';
 import FleetDeck from './components/FleetDeck';
+import { WorkflowOverlay } from './components/WorkflowOverlay';
 import { AttentionProvider } from './contexts/AttentionContext';
 import { useAttentionFeed, type AttentionFeed } from './hooks/useAttentionFeed';
 import type { Layout, LayoutAgent } from './types/layout';
@@ -1392,6 +1393,9 @@ function App() {
 
       {/* Triage Inbox — top-level drawer, reachable from any agent. */}
       <InboxDrawer />
+
+      {/* Full-height workflow timeline, opened from a WorkflowRunCard. */}
+      <WorkflowOverlay />
     </div>
     </AttentionProvider>
   );
