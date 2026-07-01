@@ -1,13 +1,13 @@
 import React from 'react';
 
 export const inputStyle: React.CSSProperties = {
-  height: '24px',
-  padding: '0 8px',
-  fontSize: '0.65rem',
+  height: '30px',
+  padding: '0 10px',
+  fontSize: '0.78rem',
   backgroundColor: 'var(--wks-bg-input)',
   color: 'var(--wks-text-secondary)',
   border: '1px solid var(--wks-border)',
-  borderRadius: '3px',
+  borderRadius: '5px',
   outline: 'none',
   fontFamily: 'inherit',
   boxSizing: 'border-box' as const,
@@ -18,14 +18,14 @@ export function SmallButton({ label, onClick, primary, danger }: { label: string
     <button
       onClick={(e) => { e.stopPropagation(); onClick(); }}
       style={{
-        padding: '2px 8px',
-        fontSize: '0.6rem',
+        padding: '4px 10px',
+        fontSize: '0.72rem',
         fontFamily: 'inherit',
         fontWeight: 500,
         backgroundColor: primary ? 'var(--wks-accent)' : 'transparent',
         color: danger ? 'var(--wks-error)' : primary ? '#fff' : 'var(--wks-text-muted)',
         border: primary ? '1px solid var(--wks-accent)' : '1px solid var(--wks-border)',
-        borderRadius: '3px',
+        borderRadius: '5px',
         cursor: 'pointer',
         height: 'auto',
         lineHeight: '1.4',
@@ -38,17 +38,18 @@ export function SmallButton({ label, onClick, primary, danger }: { label: string
   );
 }
 
-export function Section({ title, children }: { title: string; children: React.ReactNode }) {
+export function Section({ title, children, id }: { title: string; children: React.ReactNode; id?: string }) {
   return (
-    <div style={{ marginBottom: '26px', animation: 'wks-fade-in 0.2s ease' }}>
+    <div id={id} style={{ marginBottom: '32px', animation: 'wks-fade-in 0.18s ease' }}>
       <div style={{
-        fontFamily: 'var(--wks-font-mono, monospace)',
-        fontSize: '0.6rem',
-        fontWeight: 600,
+        fontSize: '0.68rem',
+        fontWeight: 700,
         color: 'var(--wks-text-faint)',
         textTransform: 'uppercase',
-        letterSpacing: '0.12em',
-        marginBottom: '2px',
+        letterSpacing: '0.1em',
+        marginBottom: '4px',
+        paddingBottom: '6px',
+        borderBottom: '1px solid var(--wks-border-subtle)',
       }}>
         {title}
       </div>
@@ -59,13 +60,15 @@ export function Section({ title, children }: { title: string; children: React.Re
   );
 }
 
-/** A divided settings row: bold label left, control right. Hairline on top so
- *  stacked rows read as a clean list (mockup). */
+/** A divided settings row: bold label left, control right. */
 const rowFrame: React.CSSProperties = {
   display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px',
-  padding: '11px 0', borderTop: '1px solid var(--wks-border-subtle)',
+  padding: '12px 0', borderTop: '1px solid var(--wks-border-subtle)',
 };
-const rowLabel: React.CSSProperties = { fontSize: '0.78rem', fontWeight: 500, color: 'var(--wks-text-primary)' };
+const rowLabel: React.CSSProperties = {
+  fontSize: '0.85rem', fontWeight: 500, color: 'var(--wks-text-primary)',
+  flexShrink: 0,
+};
 
 export function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -85,7 +88,7 @@ export function CheckRow({ label, checked, onChange, disabled }: { label: string
         checked={checked}
         disabled={disabled}
         onChange={(e) => onChange(e.target.checked)}
-        style={{ accentColor: 'var(--wks-accent)', cursor: disabled ? 'default' : 'pointer', width: 15, height: 15, flexShrink: 0 }}
+        style={{ accentColor: 'var(--wks-accent)', cursor: disabled ? 'default' : 'pointer', width: 16, height: 16, flexShrink: 0 }}
       />
     </label>
   );
@@ -96,16 +99,16 @@ export function ModeButton({ label, active, onClick }: { label: string; active: 
     <button
       onClick={onClick}
       style={{
-        padding: '3px 12px',
-        fontSize: '0.65rem',
+        padding: '4px 14px',
+        fontSize: '0.75rem',
         fontFamily: 'inherit',
         fontWeight: active ? 600 : 400,
         backgroundColor: active ? 'var(--wks-accent)' : 'var(--wks-bg-elevated)',
         color: active ? '#fff' : 'var(--wks-text-muted)',
         border: active ? '1px solid var(--wks-accent)' : '1px solid var(--wks-border)',
-        borderRadius: '3px',
+        borderRadius: '5px',
         cursor: 'pointer',
-        height: '24px',
+        height: '28px',
         lineHeight: '1',
         margin: 0,
         width: 'auto',
@@ -119,21 +122,20 @@ export function ModeButton({ label, active, onClick }: { label: string; active: 
 export interface SelectOption {
   value: string;
   label: string;
-  /** Optional color chip shown left of the label (e.g. a theme's accent). */
+  /** Optional color chip shown left of the label. */
   swatch?: string;
 }
 
 /**
  * A compact, searchable single-select (combobox). Click to open a popover with
- * a filter box + keyboard-navigable list. Matches the settings inline-style /
- * CSS-var conventions and stays a fixed trigger size so rows don't reflow.
+ * a filter box + keyboard-navigable list.
  */
 export function SearchableSelect({
   value,
   options,
   onChange,
   placeholder,
-  width = 170,
+  width = 190,
 }: {
   value: string;
   options: SelectOption[];
@@ -157,7 +159,6 @@ export function SearchableSelect({
     );
   }, [options, query]);
 
-  // Close on outside click.
   React.useEffect(() => {
     if (!open) return;
     const onDoc = (e: MouseEvent) => {
@@ -167,8 +168,6 @@ export function SearchableSelect({
     return () => document.removeEventListener('mousedown', onDoc);
   }, [open]);
 
-  // Reset + focus the filter each time we open; start the highlight on the
-  // current value so Enter re-selects it.
   React.useEffect(() => {
     if (!open) return;
     setQuery('');
@@ -178,10 +177,10 @@ export function SearchableSelect({
     return () => clearTimeout(t);
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Keep the highlight valid as the filter narrows, and scroll it into view.
   React.useEffect(() => {
     setHighlight((h) => Math.min(h, Math.max(0, filtered.length - 1)));
   }, [filtered.length]);
+
   React.useEffect(() => {
     if (!open) return;
     const el = listRef.current?.children[highlight] as HTMLElement | undefined;
@@ -223,17 +222,17 @@ export function SearchableSelect({
         <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: selected ? 'var(--wks-text-secondary)' : 'var(--wks-text-faint)' }}>
           {selected ? selected.label : (placeholder || 'Select…')}
         </span>
-        <span style={{ color: 'var(--wks-text-faint)', fontSize: '0.6rem', flexShrink: 0 }}>▾</span>
+        <span style={{ color: 'var(--wks-text-faint)', fontSize: '0.65rem', flexShrink: 0 }}>▾</span>
       </button>
 
       {open && (
         <div style={{
-          position: 'absolute', top: 'calc(100% + 4px)', right: 0, width: Math.max(width, 200), zIndex: 100,
+          position: 'absolute', top: 'calc(100% + 4px)', right: 0, width: Math.max(width, 210), zIndex: 100,
           background: 'var(--wks-bg-elevated)', border: '1px solid var(--wks-border)',
-          borderRadius: 'var(--wks-radius-sm, 4px)', boxShadow: '0 8px 24px var(--wks-shadow, rgba(0,0,0,0.4))',
+          borderRadius: 'var(--wks-radius-sm, 5px)', boxShadow: '0 8px 24px var(--wks-shadow, rgba(0,0,0,0.4))',
           overflow: 'hidden',
         }}>
-          <div style={{ padding: 6, borderBottom: '1px solid var(--wks-border-subtle, var(--wks-border))' }}>
+          <div style={{ padding: 7, borderBottom: '1px solid var(--wks-border-subtle, var(--wks-border))' }}>
             <input
               ref={inputRef}
               value={query}
@@ -243,9 +242,9 @@ export function SearchableSelect({
               style={{ ...inputStyle, width: '100%' }}
             />
           </div>
-          <div ref={listRef} style={{ maxHeight: 220, overflowY: 'auto', padding: 4 }}>
+          <div ref={listRef} style={{ maxHeight: 240, overflowY: 'auto', padding: 4 }}>
             {filtered.length === 0 ? (
-              <div style={{ padding: '8px 10px', fontSize: '0.65rem', color: 'var(--wks-text-faint)' }}>No matches</div>
+              <div style={{ padding: '10px 12px', fontSize: '0.75rem', color: 'var(--wks-text-faint)' }}>No matches</div>
             ) : (
               filtered.map((o, i) => {
                 const isSel = o.value === value;
@@ -257,8 +256,8 @@ export function SearchableSelect({
                     onClick={() => choose(o.value)}
                     style={{
                       display: 'flex', alignItems: 'center', gap: 8, width: '100%',
-                      padding: '5px 8px', fontSize: '0.65rem', fontFamily: 'inherit',
-                      textAlign: 'left', border: 'none', borderRadius: 3, cursor: 'pointer',
+                      padding: '6px 10px', fontSize: '0.78rem', fontFamily: 'inherit',
+                      textAlign: 'left', border: 'none', borderRadius: 4, cursor: 'pointer',
                       background: isHi ? 'var(--wks-bg-hover)' : 'transparent',
                       color: isSel ? 'var(--wks-accent-text, var(--wks-accent))' : 'var(--wks-text-secondary)',
                       fontWeight: isSel ? 600 : 400,
@@ -266,7 +265,7 @@ export function SearchableSelect({
                   >
                     {o.swatch && swatchDot(o.swatch)}
                     <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.label}</span>
-                    {isSel && <span style={{ flexShrink: 0, fontSize: '0.7rem' }}>✓</span>}
+                    {isSel && <span style={{ flexShrink: 0, fontSize: '0.75rem' }}>✓</span>}
                   </button>
                 );
               })
