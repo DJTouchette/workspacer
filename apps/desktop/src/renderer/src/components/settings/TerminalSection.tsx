@@ -29,7 +29,7 @@ const TerminalSection: React.FC<TerminalSectionProps> = ({ config, save }) => {
           placeholder="System default"
         />
       </Row>
-      <div style={{ fontSize: '0.55rem', color: 'var(--wks-text-disabled)' }}>
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
         New terminals (the <strong>+</strong> button, <strong>Ctrl+Space&nbsp;N</strong>) open with this shell.
         <strong> System default</strong> uses your OS default. Pick a specific shell from the menu next to <strong>+</strong> to
         override per-tab.

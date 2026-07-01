@@ -71,7 +71,7 @@ const ShortcutEditor: React.FC<{ config: Config; save: (partial: Partial<Config>
       <div style={{ fontSize: '0.65rem', color: 'var(--wks-text-faint)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '4px' }}>
         Shortcuts (click to rebind)
       </div>
-      <div style={{ fontSize: '0.58rem', color: 'var(--wks-text-disabled)', marginBottom: '8px' }}>
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)', marginBottom: '8px' }}>
         Press a key combo for a direct binding, or press the prefix first then a key for a chord.
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
@@ -180,7 +180,7 @@ const KeybindingsSection: React.FC<KeybindingsSectionProps> = ({ config, save })
           }}
         />
       </Row>
-      <div style={{ fontSize: '0.58rem', color: 'var(--wks-text-disabled)' }}>
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
         Structural commands (new tab, split, navigate panes) fire as <strong>{formatBinding(prefix)}</strong> then a
         key. Direct combos are reserved for terminal-safe keys so a focused terminal keeps Ctrl+C / Ctrl+L / etc.
       </div>
@@ -191,7 +191,7 @@ const KeybindingsSection: React.FC<KeybindingsSectionProps> = ({ config, save })
           <ModeButton label="Off" active={!chordHints} onClick={() => save({ keybindings: { ...config.keybindings, chordHints: false } })} />
         </div>
       </Row>
-      <div style={{ fontSize: '0.58rem', color: 'var(--wks-text-disabled)' }}>
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
         When the prefix is pressed, show a cheatsheet of the available chord keys in the bottom corner. Off keeps just
         the minimal prefix indicator.
       </div>
