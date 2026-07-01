@@ -184,11 +184,16 @@ fn command_text(params: &Value) -> Option<String> {
 
 // ── Model listing ────────────────────────────────────────────────────────────
 
-/// List the models Codex offers, via the app-server's `model/list` JSON-RPC.
-/// We boot a throwaway `codex app-server`, `initialize`, ask for the catalog,
-/// then drop the process. Hidden models are skipped; the rest map to the picker
-/// with their `displayName` as label and the server-flagged default marked.
+/// List the models Codex offers (cached; see [`super::cached_or_fetch`]).
 pub async fn list_models(bin: &str, cwd: &str) -> anyhow::Result<Vec<ModelInfo>> {
+    super::cached_or_fetch(format!("codex:{bin}"), fetch_models(bin, cwd)).await
+}
+
+/// Live query: boot a throwaway `codex app-server`, `initialize`, ask for the
+/// catalog via `model/list`, then drop the process. Hidden models are skipped;
+/// the rest map to the picker with their `displayName` as label and the
+/// server-flagged default marked.
+async fn fetch_models(bin: &str, cwd: &str) -> anyhow::Result<Vec<ModelInfo>> {
     let mut child = Command::new(bin)
         .arg("app-server")
         .current_dir(cwd)

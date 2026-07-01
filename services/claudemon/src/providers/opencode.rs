@@ -30,11 +30,15 @@ use crate::session::state::SessionMode;
 use crate::session::{ConversationStore, SessionStore};
 use crate::wrapper::pty;
 
-/// List the models OpenCode can launch with, by shelling out to `opencode
-/// models` — which prints one `provider/model` id per line for every provider
-/// it knows about. The ids are exactly what `--model` / the message `model`
-/// field accept, so the picker round-trips them verbatim.
+/// List the models OpenCode can launch with (cached; see [`super::cached_or_fetch`]).
 pub async fn list_models(bin: &str, cwd: &str) -> anyhow::Result<Vec<ModelInfo>> {
+    super::cached_or_fetch(format!("opencode:{bin}"), fetch_models(bin, cwd)).await
+}
+
+/// Live query: shell out to `opencode models`, which prints one `provider/model`
+/// id per line for every provider it knows about. The ids are exactly what
+/// `--model` / the message `model` field accept, so the picker round-trips them.
+async fn fetch_models(bin: &str, cwd: &str) -> anyhow::Result<Vec<ModelInfo>> {
     let out = Command::new(bin)
         .arg("models")
         .current_dir(cwd)

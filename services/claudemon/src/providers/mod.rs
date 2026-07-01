@@ -56,6 +56,67 @@ pub struct ModelInfo {
     pub default: bool,
 }
 
+// ── Model-list cache ─────────────────────────────────────────────────────────
+//
+// Listing a managed provider's models means shelling out (a throwaway
+// `codex app-server`, `opencode models`, a Pi RPC), so we don't want to do it on
+// every picker-open — and those interfaces are version-fragile, so we keep the
+// last-known-good list to serve if a later query fails rather than showing an
+// empty picker. Keyed by "<provider>:<bin>" so different binaries don't collide.
+
+struct ModelCacheEntry {
+    at: std::time::Instant,
+    models: Vec<ModelInfo>,
+}
+static MODEL_CACHE: once_cell::sync::Lazy<std::sync::Mutex<std::collections::HashMap<String, ModelCacheEntry>>> =
+    once_cell::sync::Lazy::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+const MODEL_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// Cached models for `key`, if present and — when `max_age` is given — younger
+/// than it. `None` age means "any age" (the stale last-known-good fallback).
+fn model_cache_get(key: &str, max_age: Option<std::time::Duration>) -> Option<Vec<ModelInfo>> {
+    let cache = MODEL_CACHE.lock().ok()?;
+    let entry = cache.get(key)?;
+    match max_age {
+        Some(ttl) if entry.at.elapsed() > ttl => None,
+        _ => Some(entry.models.clone()),
+    }
+}
+
+fn model_cache_put(key: &str, models: &[ModelInfo]) {
+    if let Ok(mut cache) = MODEL_CACHE.lock() {
+        cache.insert(key.to_string(), ModelCacheEntry { at: std::time::Instant::now(), models: models.to_vec() });
+    }
+}
+
+/// Wrap a provider's live model query with the shared cache: serve a fresh cache
+/// hit without running `fetch`; on a miss run it and cache the result; if it
+/// fails, serve the last-known-good cached list (never inventing ids) and only
+/// error when we've never listed for this key. `fetch` is the query future — for
+/// an `async fn` it's a no-op until awaited, so constructing it on a cache hit is
+/// free.
+pub(crate) async fn cached_or_fetch(
+    key: String,
+    fetch: impl std::future::Future<Output = anyhow::Result<Vec<ModelInfo>>>,
+) -> anyhow::Result<Vec<ModelInfo>> {
+    if let Some(models) = model_cache_get(&key, Some(MODEL_CACHE_TTL)) {
+        return Ok(models);
+    }
+    match fetch.await {
+        Ok(models) => {
+            model_cache_put(&key, &models);
+            Ok(models)
+        }
+        Err(err) => match model_cache_get(&key, None) {
+            Some(models) => {
+                tracing::warn!(?err, key, "model list failed; serving last-known-good cached models");
+                Ok(models)
+            }
+            None => Err(err),
+        },
+    }
+}
+
 /// A typed update distilled from one native provider event, in the common
 /// vocabulary every adapter maps onto. Several can come from a single event
 /// (e.g. a streamed text chunk is both "the agent is busy" and "here's text").
@@ -321,6 +382,28 @@ pub(crate) fn spawn_attach_pty(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn model_cache_ttl_and_stale_fallback() {
+        let key = "test-provider:test-bin-abc123"; // unique: MODEL_CACHE is global
+        let models = vec![ModelInfo { id: "m1".into(), label: "M1".into(), default: true }];
+
+        // Fresh entry is served both as a fresh hit and as last-known-good.
+        model_cache_put(key, &models);
+        assert!(model_cache_get(key, Some(MODEL_CACHE_TTL)).is_some(), "fresh hit");
+        assert!(model_cache_get(key, None).is_some(), "any-age hit");
+
+        // An entry older than the TTL is NOT a fresh hit, but IS still available
+        // as the stale fallback (what we serve when a live query fails).
+        if let Some(old) = std::time::Instant::now().checked_sub(MODEL_CACHE_TTL * 2) {
+            MODEL_CACHE.lock().unwrap().insert(key.into(), ModelCacheEntry { at: old, models });
+            assert!(model_cache_get(key, Some(MODEL_CACHE_TTL)).is_none(), "stale is not a fresh hit");
+            assert!(model_cache_get(key, None).is_some(), "stale still served as last-known-good");
+        }
+
+        // Unknown key → nothing cached.
+        assert!(model_cache_get("test-provider:never-seen", None).is_none());
+    }
 
     #[test]
     fn status_from_usage_sets_only_known_fields() {

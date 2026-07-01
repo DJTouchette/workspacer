@@ -31,13 +31,17 @@ use crate::session::conversation::ConversationItem;
 use crate::session::state::SessionMode;
 use crate::session::{ConversationStore, SessionStore};
 
-/// List the models Pi can launch with, via its RPC `get_available_models`
-/// command. We boot a throwaway `pi --mode rpc`, ask for the catalog, then drop
-/// the process. Pi only returns models for providers the user has authed, so an
-/// empty list (no login) is normal — the picker then falls back to free text.
-/// Each model carries `provider` + `id`; we join them as `provider/id`, exactly
-/// the form `--model` accepts.
+/// List the models Pi can launch with (cached; see [`super::cached_or_fetch`]).
 pub async fn list_models(bin: &str, cwd: &str) -> anyhow::Result<Vec<ModelInfo>> {
+    super::cached_or_fetch(format!("pi:{bin}"), fetch_models(bin, cwd)).await
+}
+
+/// Live query via Pi's RPC `get_available_models`: boot a throwaway
+/// `pi --mode rpc`, ask for the catalog, then drop the process. Pi only returns
+/// models for providers the user has authed, so an empty list (no login) is
+/// normal — the picker then falls back to free text. Each model carries
+/// `provider` + `id`; we join them as `provider/id`, the form `--model` accepts.
+async fn fetch_models(bin: &str, cwd: &str) -> anyhow::Result<Vec<ModelInfo>> {
     let mut child = Command::new(bin)
         .arg("--mode")
         .arg("rpc")
