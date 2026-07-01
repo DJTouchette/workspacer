@@ -2,6 +2,24 @@ import React from 'react';
 import type { WorkflowAgentInfo } from '../../types/claudeSession';
 import { claudeColors as colors } from '../claude-shared';
 import { AGENT_PURPLE, fmtTokens, fmtDuration, shortModel } from './agentUtils';
+
+// Expanded detail block (full prompt / result), shared by workflow + subagent rows.
+export const agentDetailStyle: React.CSSProperties = {
+  paddingLeft: 18,
+  paddingTop: 2,
+  fontSize: '0.66rem',
+  lineHeight: 1.4,
+  whiteSpace: 'pre-wrap',
+  wordBreak: 'break-word',
+  fontFamily: 'var(--claude-mono-font, monospace)',
+};
+export const agentDetailLabel: React.CSSProperties = {
+  color: colors.mutedDim,
+  fontSize: '0.58rem',
+  fontWeight: 700,
+  textTransform: 'uppercase',
+  letterSpacing: 0.4,
+};
 import { IconQueued, IconError, IconDone } from '../wksIcons';
 
 // ── Shared styles ──
@@ -57,12 +75,20 @@ export const agentStatusIcon = (status: WorkflowAgentInfo['status']): React.Reac
 
 const WorkflowAgentRowInner: React.FC<{ agent: WorkflowAgentInfo; now: number }> = ({ agent, now }) => {
   const running = agent.status === 'running';
+  const failed = agent.status === 'failed';
   const title = agent.label ?? agent.promptPreview ?? agent.id;
   const duration = agent.durationMs ?? (running && agent.startedAt ? now - agent.startedAt : undefined);
+  // The prompt/result are captured by the watcher; let the user expand to read
+  // them (and, for a failed agent, see why it failed).
+  const canExpand = !!(agent.promptPreview || agent.resultPreview);
+  const [expanded, setExpanded] = React.useState(false);
 
   return (
     <div style={{ padding: '1px 0' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.72rem', lineHeight: 1.4 }}>
+      <div
+        onClick={canExpand ? () => setExpanded(e => !e) : undefined}
+        style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.72rem', lineHeight: 1.4, cursor: canExpand ? 'pointer' : 'default' }}
+      >
         {agentStatusIcon(agent.status)}
         <span
           title={agent.promptPreview ?? title}
@@ -79,11 +105,29 @@ const WorkflowAgentRowInner: React.FC<{ agent: WorkflowAgentInfo; now: number }>
         </span>
         {agent.model && <span style={agentMetaStyle}>{shortModel(agent.model)}</span>}
         {agent.tokens > 0 && <span style={agentMetaStyle}>{fmtTokens(agent.tokens)} tok</span>}
+        {agent.toolCalls > 0 && <span style={agentMetaStyle}>{agent.toolCalls} tools</span>}
         {duration !== undefined && <span style={agentMetaStyle}>{fmtDuration(duration)}</span>}
+        {canExpand && <span style={{ color: colors.mutedDim, fontSize: '0.6rem', flexShrink: 0 }}>{expanded ? '▾' : '▸'}</span>}
       </div>
       {running && agent.lastToolName && (
         <div style={lastToolLineStyle}>
           {'└'} {agent.lastToolName}{agent.lastToolSummary ? ` ${agent.lastToolSummary}` : ''}
+        </div>
+      )}
+      {expanded && (
+        <div style={{ paddingBottom: 3 }}>
+          {agent.promptPreview && (
+            <div style={agentDetailStyle}>
+              <span style={agentDetailLabel}>Prompt </span>
+              <span style={{ color: colors.muted }}>{agent.promptPreview}</span>
+            </div>
+          )}
+          {agent.resultPreview && (
+            <div style={agentDetailStyle}>
+              <span style={agentDetailLabel}>{failed ? 'Error ' : 'Result '}</span>
+              <span style={{ color: failed ? colors.error : colors.text }}>{agent.resultPreview}</span>
+            </div>
+          )}
         </div>
       )}
     </div>

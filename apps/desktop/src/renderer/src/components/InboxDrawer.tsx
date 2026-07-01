@@ -20,7 +20,14 @@ const InboxDrawer: React.FC = () => {
     inboxOpen, closeInbox, feed, counts,
     selectedItem, moveSelection, setSelectedSig,
     approve, answer, dismiss, snooze, openAgent,
+    inboxFilter, setInboxFilter,
   } = useAttention();
+  const reviewCount = Math.max(0, counts.total - counts.needsYou);
+  const TABS: { key: typeof inboxFilter; label: string; count: number }[] = [
+    { key: 'all', label: 'All', count: counts.total },
+    { key: 'needs', label: 'Needs you', count: counts.needsYou },
+    { key: 'review', label: 'Review', count: reviewCount },
+  ];
   const listRef = useRef<HTMLDivElement>(null);
 
   // Windowed feed: only the visible cards (plus a little overscan) are in the
@@ -117,6 +124,33 @@ const InboxDrawer: React.FC = () => {
           )}
           <div style={{ flex: 1 }} />
           <button onClick={closeInbox} title="Close (Esc)" style={closeBtn}>✕</button>
+        </div>
+
+        {/* Filter tabs — All / Needs you / Review. `feed` is filtered in context,
+            so keyboard triage operates on exactly what's shown. */}
+        <div style={{ display: 'flex', gap: 4, padding: '0 16px 8px' }}>
+          {TABS.map((t) => {
+            const active = inboxFilter === t.key;
+            return (
+              <button
+                key={t.key}
+                onClick={() => setInboxFilter(t.key)}
+                style={{
+                  flex: 1, padding: '4px 6px', borderRadius: 6, cursor: 'pointer',
+                  fontSize: '0.68rem', fontWeight: 600, fontFamily: 'inherit',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+                  border: active ? '1px solid var(--wks-accent)' : '1px solid var(--wks-border-input)',
+                  background: active ? 'var(--wks-accent-bg)' : 'transparent',
+                  color: active ? 'var(--wks-accent-text, var(--wks-text-primary))' : 'var(--wks-text-tertiary)',
+                }}
+              >
+                {t.label}
+                {t.count > 0 && (
+                  <span style={{ fontSize: '0.6rem', fontWeight: 700, opacity: 0.8 }}>{t.count}</span>
+                )}
+              </button>
+            );
+          })}
         </div>
 
         {/* Hint strip */}

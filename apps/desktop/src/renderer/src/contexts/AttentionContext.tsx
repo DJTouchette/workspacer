@@ -19,6 +19,9 @@ interface AttentionContextValue {
   inboxOpen: boolean;
   openInbox: () => void;
   closeInbox: () => void;
+  /** Which slice of the feed the inbox shows. `feed` is already filtered to it. */
+  inboxFilter: InboxFilter;
+  setInboxFilter: (f: InboxFilter) => void;
   selectedSig: string | null;
   setSelectedSig: (sig: string | null) => void;
   moveSelection: (delta: number) => void;
@@ -45,6 +48,11 @@ interface AttentionContextValue {
   /** Open the spawn-agent flow (wires App's spawn dialog). */
   spawnAgent: () => void;
 }
+
+/** Inbox tab: everything, only agents blocked ON you, or informational/review. */
+export type InboxFilter = 'all' | 'needs' | 'review';
+/** Kinds that mean "an agent is waiting on you" (vs. review/informational). */
+const NEEDS_KINDS: ReadonlySet<AttentionKind> = new Set<AttentionKind>(['approval', 'question']);
 
 const AttentionContext = createContext<AttentionContextValue | null>(null);
 
@@ -81,7 +89,17 @@ export const AttentionProvider: React.FC<ProviderProps> = ({
   agents, activeAgentId, snapshotBySession, inboxOpen, openInbox, closeInbox,
   viewLevel, setViewLevel, onOpenAgent, onRespawnAgent, onSpawnAgent, attention, children,
 }) => {
-  const { items: feed, counts, topByAgent, dismiss, snooze } = attention;
+  const { items: allItems, counts, topByAgent, dismiss, snooze } = attention;
+
+  // Inbox tab filter. `feed` is the filtered view everything downstream uses
+  // (selection, keyboard nav, rendering), so switching tabs keeps j/k triage
+  // consistent. `counts` stays whole-feed for the header badges.
+  const [inboxFilter, setInboxFilter] = useState<InboxFilter>('all');
+  const feed = useMemo(() => {
+    if (inboxFilter === 'all') return allItems;
+    const wantNeeds = inboxFilter === 'needs';
+    return allItems.filter((it) => NEEDS_KINDS.has(it.kind) === wantNeeds);
+  }, [allItems, inboxFilter]);
   const [selectedSig, setSelectedSig] = useState<string | null>(null);
   // Remember the selected card's index so that when it resolves out from under
   // us we can advance to the NEXT item (same slot) rather than snapping to top.
@@ -199,11 +217,11 @@ export const AttentionProvider: React.FC<ProviderProps> = ({
   // Provider value identity is stable across renders that don't change inputs.
   const value: AttentionContextValue = useMemo(() => ({
     agents, activeAgentId, snapshotBySession, feed, counts, topByAgent,
-    inboxOpen, selectedSig, selectedItem, viewLevel,
+    inboxOpen, selectedSig, selectedItem, viewLevel, inboxFilter, setInboxFilter,
     ...actions,
   }), [
     agents, activeAgentId, snapshotBySession, feed, counts, topByAgent,
-    inboxOpen, selectedSig, selectedItem, viewLevel, actions,
+    inboxOpen, selectedSig, selectedItem, viewLevel, inboxFilter, actions,
   ]);
 
   return <AttentionContext.Provider value={value}>{children}</AttentionContext.Provider>;

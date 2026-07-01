@@ -6,6 +6,8 @@ import { AgentWorkspace } from '../types/pane';
 import type { SessionAmbientState, ClaudeSessionSnapshot } from '../types/claudeSession';
 import type { AttentionItem, AttentionKind } from '../types/attention';
 import { deriveSessionStats } from '../lib/sessionStats';
+import { agentAttentionScore } from '../lib/attentionRouter';
+import { AgentLogo } from './agentLogos';
 import { useAttention } from '../contexts/AttentionContext';
 import HubStatus from './HubStatus';
 import { ContextMenu, ContextMenuItem } from './ContextMenu';
@@ -478,8 +480,6 @@ const SideBar: React.FC<SideBarProps> = ({
               ? `\n${Math.round(stats.ctxPct!)}% context${stats.tokens !== undefined ? ` · ${fmtTokens(stats.tokens)} tok` : ''}${stats.costUSD !== undefined ? ` · ${fmtUSD(stats.costUSD)}` : ''}${stats.model ? ` · ${stats.model}` : ''}`
               : '';
             const working = state === 'thinking' || state === 'streaming';
-            // First alphanumeric of the name, for the monogram tile.
-            const tileLetter = ((agent.name.match(/[a-z0-9]/i)?.[0]) || agent.name.charAt(0) || '?').toUpperCase();
             const statusText = isGlobal ? 'Dashboards & plugins' : agent.sessionId ? label : 'Stopped — click to respawn';
 
             return (
@@ -544,7 +544,9 @@ const SideBar: React.FC<SideBarProps> = ({
                       ) : isSupervisor ? (
                         <span style={{ fontSize: '0.78rem', lineHeight: 1 }}>🧭</span>
                       ) : (
-                        <span style={{ fontFamily: 'var(--wks-font-mono)', fontSize: '0.8125rem', fontWeight: 700, color: 'var(--wks-text-primary)', lineHeight: 1 }}>{tileLetter}</span>
+                        // Provider logo so Claude / Codex / OpenCode / Pi agents are
+                        // distinguishable at a glance (was a generic name initial).
+                        <AgentLogo provider={agent.provider ?? 'claude'} size={17} style={{ color: 'var(--wks-text-primary)', lineHeight: 1 }} />
                       )}
                       {!isGlobal && (glyph ? (
                         <span title={label} style={{
@@ -628,6 +630,20 @@ const SideBar: React.FC<SideBarProps> = ({
               </button>
             );
           };
+
+          // Needy-first ordering — same rule as the Fleet Deck (via
+          // `agentAttentionScore` + the shared attention feed) so the agent
+          // blocked on you rises to the top instead of scrolling off. Global/nav
+          // rows (Overview) stay pinned above the fleet. V8 sort is stable, so
+          // equal-priority agents keep their existing order.
+          topLevel.sort((a, b) => {
+            const ga = a.global ? 1 : 0;
+            const gb = b.global ? 1 : 0;
+            if (ga !== gb) return gb - ga;
+            const sa = agentAttentionScore(a.sessionId ? statusBySession[a.sessionId] : undefined, topByAgent.get(a.id)?.priority ?? 0);
+            const sb = agentAttentionScore(b.sessionId ? statusBySession[b.sessionId] : undefined, topByAgent.get(b.id)?.priority ?? 0);
+            return sb - sa;
+          });
 
           const rows: React.ReactNode[] = [];
           for (const agent of topLevel) {

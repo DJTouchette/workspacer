@@ -19,8 +19,17 @@ export const WorkflowRunCard: React.FC<{ run: WorkflowRunInfo }> = ({ run }) => 
 
   const now = useNowTicker(running);
   const finished = run.agents.filter(a => a.status === 'done' || a.status === 'failed').length;
+  const failed = run.agents.filter(a => a.status === 'failed').length;
   const elapsed = running && run.startedAt ? now - run.startedAt : run.durationMs;
   const tokens = run.totalTokens ?? run.agents.reduce((sum, a) => sum + (a.tokens ?? 0), 0);
+
+  // Phase title → detail (from the run's declared phases), so a phase group can
+  // show what it's for. Parsed by the watcher but previously never surfaced.
+  const phaseDetail = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const p of run.phases) if (p.detail) m.set(p.title, p.detail);
+    return m;
+  }, [run.phases]);
 
   // Group agents by phase. phaseTitle is only known once the final state file
   // lands, so live agents render as a flat list until then.
@@ -66,6 +75,7 @@ export const WorkflowRunCard: React.FC<{ run: WorkflowRunInfo }> = ({ run }) => 
         </span>
         <div style={{ flex: 1 }} />
         <span style={agentMetaStyle}>{finished}/{run.agents.length} agents</span>
+        {failed > 0 && <span style={{ ...agentMetaStyle, color: colors.error, fontWeight: 600 }}>{failed} failed</span>}
         {tokens > 0 && <span style={agentMetaStyle}>{fmtTokens(tokens)} tok</span>}
         {elapsed !== undefined && <span style={agentMetaStyle}>{fmtDuration(elapsed)}</span>}
         <span style={{ color: colors.mutedDim, fontSize: '0.6rem', flexShrink: 0 }}>{expanded ? '▾' : '▸'}</span>
@@ -82,8 +92,15 @@ export const WorkflowRunCard: React.FC<{ run: WorkflowRunInfo }> = ({ run }) => 
           {groups.map((g, gi) => (
             <div key={`${g.title ?? 'live'}-${gi}`}>
               {g.title && (
-                <div style={{ color: colors.muted, fontSize: '0.62rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, padding: '3px 0 1px 0' }}>
-                  {g.title}
+                <div style={{ padding: '3px 0 1px 0' }}>
+                  <div style={{ color: colors.muted, fontSize: '0.62rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                    {g.title}
+                  </div>
+                  {phaseDetail.get(g.title) && (
+                    <div style={{ color: colors.mutedDim, fontSize: '0.62rem', lineHeight: 1.3 }}>
+                      {phaseDetail.get(g.title)}
+                    </div>
+                  )}
                 </div>
               )}
               {g.agents.map(a => <WorkflowAgentRow key={a.id} agent={a} now={now} />)}
