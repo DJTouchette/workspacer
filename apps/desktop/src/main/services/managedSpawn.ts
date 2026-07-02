@@ -48,6 +48,8 @@ export interface ManagedSpawnOptions {
   provider: Exclude<AgentProvider, 'claude'>;
   cwd?: string;
   model?: string;
+  /** Reasoning-effort level (codex `model_reasoning_effort`); others ignore it. */
+  effort?: string;
   /** YOLO / auto-approve every command and file change. */
   skipPermissions?: boolean;
   /** Re-use this id (matches the desktop's pinned-session contract). */
@@ -95,11 +97,17 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
     parentSessionId: opts.parentSessionId,
     isSupervisor: opts.supervisor,
     provider,
+    settings: {
+      model: opts.model,
+      effort: opts.effort,
+      permissionMode: opts.skipPermissions ? 'yolo' : 'ask',
+    },
   });
   const sessionId = await claudemonSessionClient.spawnManaged({
     provider,
     cwd,
     model: opts.model,
+    effort: opts.effort,
     bin,
     yolo: opts.skipPermissions,
     sessionId: managedId,
@@ -134,15 +142,23 @@ async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
     parentSessionId: opts.parentSessionId,
     isSupervisor: opts.supervisor,
     provider: 'codex',
+    settings: {
+      model: opts.model,
+      effort: opts.effort,
+      permissionMode: opts.skipPermissions ? 'yolo' : 'ask',
+    },
   });
   // Show the card immediately; the rollout tailer + conversation stream enrich it.
   claudeSessionStore.ensureManagedSession(sessionId, cwd);
-  // Codex takes a model override as a config flag (`-c model="<id>"`); YOLO maps
-  // to bypassing its approval/sandbox prompts so the TUI doesn't block on them.
+  // Codex takes model/effort overrides as config flags (`-c model="<id>"`,
+  // `-c model_reasoning_effort=<level>`); YOLO maps to bypassing its
+  // approval/sandbox prompts so the TUI doesn't block on them.
   const model = opts.model?.trim();
+  const effort = opts.effort?.trim();
   const argv = [
     bin,
     ...(model ? ['-c', `model=${JSON.stringify(model)}`] : []),
+    ...(effort ? ['-c', `model_reasoning_effort=${JSON.stringify(effort)}`] : []),
     ...(opts.skipPermissions ? ['--dangerously-bypass-approvals-and-sandbox'] : []),
   ];
   await claudemonSessionClient.spawn({

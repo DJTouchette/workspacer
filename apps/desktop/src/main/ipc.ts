@@ -113,7 +113,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     claudemonSessionClient.close(id));
 
   // ── Claude sessions (delegated to claudemon) ──
-  ipcMain.handle(IPC.CLAUDE_SPAWN, async (_event, opts: { cwd?: string; provider?: 'claude' | 'codex' | 'opencode' | 'pi'; profileId?: string; model?: string; skipPermissions?: boolean; resumeSessionId?: string; cols?: number; rows?: number; supervisor?: boolean; mcpFacade?: boolean; label?: string; parentSessionId?: string; mcpItemIds?: string[] }) => {
+  ipcMain.handle(IPC.CLAUDE_SPAWN, async (_event, opts: { cwd?: string; provider?: 'claude' | 'codex' | 'opencode' | 'pi'; profileId?: string; model?: string; effort?: string; permissionMode?: string; skipPermissions?: boolean; resumeSessionId?: string; cols?: number; rows?: number; supervisor?: boolean; mcpFacade?: boolean; label?: string; parentSessionId?: string; mcpItemIds?: string[] }) => {
     // Provider selects the coding-agent backend. OpenCode and Codex are Tier-2
     // managed: claudemon drives their machine interface (`opencode serve` HTTP+SSE
     // / `codex app-server` JSON-RPC) and translates events into the shared session
@@ -127,7 +127,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
         provider,
         cwd: opts.cwd,
         model: opts.model,
-        skipPermissions: opts.skipPermissions,
+        effort: opts.effort,
+        skipPermissions: opts.skipPermissions || opts.permissionMode === 'yolo',
         resumeSessionId: opts.resumeSessionId,
         supervisor: opts.supervisor,
         mcpFacade: opts.mcpFacade,
@@ -146,9 +147,19 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     // id == claude's id == the filename — correct transcripts even with many
     // sessions in one cwd. Resuming keeps the existing id.
     const sessionId = opts.resumeSessionId || randomUUID();
+    // Claude's permission mode: an explicit mode wins; the legacy boolean maps
+    // to bypass. Recorded on the snapshot so the composer pill shows truth.
+    const permissionMode = opts.permissionMode
+      ?? (opts.skipPermissions ? 'bypassPermissions' : 'default');
     // Record name/parent before the session registers so adopted cards are
     // enriched from the very first hook event.
-    claudeSessionStore.setSpawnMeta(sessionId, { label: opts.label, parentSessionId: opts.parentSessionId, isSupervisor: opts.supervisor, provider: 'claude' });
+    claudeSessionStore.setSpawnMeta(sessionId, {
+      label: opts.label,
+      parentSessionId: opts.parentSessionId,
+      isSupervisor: opts.supervisor,
+      provider: 'claude',
+      settings: { model: opts.model, permissionMode },
+    });
 
     // Per-spawn MCP servers selected from the Library (kind 'mcp'). Resolve the
     // chosen item ids to their configs, write a session-scoped --mcp-config, and
@@ -182,6 +193,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       resumeSessionId: opts.resumeSessionId,
       model,
       skipPermissions: opts.skipPermissions,
+      permissionMode: permissionMode as 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions',
       sessionId,
       // Facade sessions get the MCP config + pre-allowed tools + a role prompt.
       // A supervisor also learns its session id and is kicked into /supervise;

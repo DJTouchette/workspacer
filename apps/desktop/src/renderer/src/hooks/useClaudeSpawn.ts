@@ -23,6 +23,14 @@ interface UseClaudeSpawnOptions {
   defer?: boolean;
 }
 
+/** Settings overrides for restartSession (composer pills' restart path). */
+export interface RestartSessionOverrides {
+  provider?: string;
+  model?: string;
+  effort?: string;
+  permissionMode?: string;
+}
+
 interface UseClaudeSpawnReturn {
   /** claudemon canonical session_id (null until spawn resolves) */
   sessionId: string | null;
@@ -38,6 +46,10 @@ interface UseClaudeSpawnReturn {
   startSession: (cols: number, rows: number) => void;
   /** Re-run the init/start path after a failed spawn (clears spawnError). */
   retry: () => void;
+  /** Owner panes only: close the session and respawn it (resuming the same
+   *  pinned id) with new launch settings. No-op for attached viewers — their
+   *  restart goes through the agent manager (see ClaudePane). */
+  restartSession: (overrides: RestartSessionOverrides) => Promise<void>;
 }
 
 export function useClaudeSpawn({
@@ -105,6 +117,39 @@ export function useClaudeSpawn({
     }, 50);
   }, []);
 
+  /** Subscribe the exit + output streams for a viewer key (spawn/attach/restart
+   *  all share this wiring). */
+  const subscribeStreams = useCallback((viewerKey: string) => {
+    // Session death: main emits terminal:exit keyed by the sessionId (owner
+    // stream 404) or the viewerKey (dead attach target). Match either so both
+    // owner and attached panes learn their session is gone. Without this
+    // subscription onExit was never invoked at all — panes rendered a dead
+    // session indistinguishably from a live idle one.
+    unsubExitRef.current = window.electronAPI.onTerminalExit((eventId: string) => {
+      if (eventId !== sessionIdRef.current && eventId !== viewerKeyRef.current) return;
+      onExitRef.current?.();
+    });
+
+    unsubOutputRef.current = window.electronAPI.onClaudeOutput(viewerKey, (data: string) => {
+      if (!data || !termRef.current) return;
+      pendingOutputRef.current.push(binaryStringToUint8Array(data));
+      if (rafRef.current === null) {
+        rafRef.current = requestAnimationFrame(() => {
+          rafRef.current = null;
+          const term = termRef.current;
+          if (!term) return;
+          const chunks = pendingOutputRef.current;
+          pendingOutputRef.current = [];
+          // Guard each write: a single malformed/edge-case sequence that makes
+          // xterm throw must not abort the batch or break the render loop.
+          for (const chunk of chunks) {
+            try { term.write(chunk); } catch (err) { console.warn('[useClaudeSpawn] term.write threw:', err); }
+          }
+        });
+      }
+    });
+  }, []);
+
   const initSession = useCallback(async (cols?: number, rows?: number) => {
     lastDimsRef.current = { cols, rows };
     setSpawnError(null);
@@ -140,36 +185,7 @@ export function useClaudeSpawn({
       sessionIdRef.current = id;
       viewerKeyRef.current = viewerKey;
       setSessionId(id);
-
-      // Session death: main emits terminal:exit keyed by the sessionId (owner
-      // stream 404) or the viewerKey (dead attach target). Match either so both
-      // owner and attached panes learn their session is gone. Without this
-      // subscription onExit was never invoked at all — panes rendered a dead
-      // session indistinguishably from a live idle one.
-      unsubExitRef.current = window.electronAPI.onTerminalExit((eventId: string) => {
-        if (eventId !== sessionIdRef.current && eventId !== viewerKeyRef.current) return;
-        onExitRef.current?.();
-      });
-
-      unsubOutputRef.current = window.electronAPI.onClaudeOutput(viewerKey, (data: string) => {
-        if (!data || !termRef.current) return;
-        pendingOutputRef.current.push(binaryStringToUint8Array(data));
-        if (rafRef.current === null) {
-          rafRef.current = requestAnimationFrame(() => {
-            rafRef.current = null;
-            const term = termRef.current;
-            if (!term) return;
-            const chunks = pendingOutputRef.current;
-            pendingOutputRef.current = [];
-            // Guard each write: a single malformed/edge-case sequence that makes
-            // xterm throw must not abort the batch or break the render loop.
-            for (const chunk of chunks) {
-              try { term.write(chunk); } catch (err) { console.warn('[useClaudeSpawn] term.write threw:', err); }
-            }
-          });
-        }
-      });
-
+      subscribeStreams(viewerKey);
       setIsReady(true);
     } catch (err) {
       console.error('[useClaudeSpawn] spawn failed:', err);
@@ -177,7 +193,56 @@ export function useClaudeSpawn({
         setSpawnError(err instanceof Error ? err : new Error(String(err)));
       }
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /**
+   * Owner-pane restart: close the live session, respawn resuming the SAME
+   * pinned id with new launch settings (model/effort/permission mode), and
+   * rewire the byte streams. The daemon returns the same canonical id on a
+   * resume spawn, so the GUI snapshot stream (keyed by session id) is
+   * continuous across the restart. Attached viewers must not use this — their
+   * session belongs to the agent manager (respawn goes through it instead).
+   */
+  const restartSession = useCallback(async (overrides: RestartSessionOverrides) => {
+    const old = sessionIdRef.current;
+    if (!old || isAttachedRef.current) return;
+    if (unsubOutputRef.current) { unsubOutputRef.current(); unsubOutputRef.current = null; }
+    if (unsubExitRef.current) { unsubExitRef.current(); unsubExitRef.current = null; }
+    await window.electronAPI.claudeClose(old).catch(() => {});
+    sessionIdRef.current = null;
+    viewerKeyRef.current = null;
+    setIsReady(false);
+    setSpawnError(null);
+    const { cols, rows } = lastDimsRef.current;
+    try {
+      const id = await window.electronAPI.spawnClaude({
+        cwd: cwdRef.current,
+        profileId: profileRef.current,
+        provider: overrides.provider as 'claude' | 'codex' | 'opencode' | 'pi' | undefined,
+        resumeSessionId: old,
+        model: overrides.model,
+        effort: overrides.effort,
+        permissionMode: overrides.permissionMode,
+        cols,
+        rows,
+      });
+      if (!mountedRef.current) {
+        window.electronAPI.claudeClose(id).catch(() => {});
+        return;
+      }
+      sessionIdRef.current = id;
+      viewerKeyRef.current = id;
+      setSessionId(id);
+      subscribeStreams(id);
+      setIsReady(true);
+    } catch (err) {
+      console.error('[useClaudeSpawn] restart failed:', err);
+      if (mountedRef.current) {
+        setSpawnError(err instanceof Error ? err : new Error(String(err)));
+      }
+    }
+  }, [subscribeStreams]);
 
   const startSession = useCallback((cols: number, rows: number) => {
     if (sessionIdRef.current) return;
@@ -232,5 +297,6 @@ export function useClaudeSpawn({
     attachToTerminal,
     startSession,
     retry,
+    restartSession,
   };
 }

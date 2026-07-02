@@ -129,6 +129,12 @@ export interface ClaudeArgvOptions {
   /** Pass `--dangerously-skip-permissions` to bypass all permission checks. */
   skipPermissions?: boolean;
   /**
+   * Claude Code permission mode (`--permission-mode default|acceptEdits|plan`).
+   * 'bypassPermissions' is expressed as `--dangerously-skip-permissions`
+   * instead (the CLI treats them equivalently but the flag predates the mode).
+   */
+  permissionMode?: 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions';
+  /**
    * Pin the session id via `--session-id <uuid>` for a *new* session. Makes
    * claude name its transcript `<uuid>.jsonl`, so the id we track, claude's id,
    * and the transcript file all agree — no cwd-based guessing. Ignored when
@@ -166,9 +172,17 @@ export function buildClaudeArgv(opts: ClaudeArgvOptions = {}): string[] {
     argv.push('--model', opts.model.trim());
   }
   // Inject --dangerously-skip-permissions unless a profile already set it.
+  // 'bypassPermissions' mode rides the same flag.
   const alreadySkips = (opts.extraArgs ?? []).includes('--dangerously-skip-permissions');
-  if (opts.skipPermissions && !alreadySkips) {
+  const wantsBypass = opts.skipPermissions || opts.permissionMode === 'bypassPermissions';
+  if (wantsBypass && !alreadySkips) {
     argv.push('--dangerously-skip-permissions');
+  }
+  // Non-bypass permission modes map to --permission-mode, unless a profile
+  // already pins one (or bypass is in play — the flags would fight).
+  const profilePinsMode = (opts.extraArgs ?? []).some((a) => a === '--permission-mode' || a.startsWith('--permission-mode='));
+  if (opts.permissionMode && opts.permissionMode !== 'bypassPermissions' && opts.permissionMode !== 'default' && !wantsBypass && !profilePinsMode) {
+    argv.push('--permission-mode', opts.permissionMode);
   }
   // Supervisor / MCP extras — appended after profile args so they always land.
   if (opts.mcpConfig) {

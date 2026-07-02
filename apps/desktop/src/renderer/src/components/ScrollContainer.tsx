@@ -102,7 +102,7 @@ interface ScrollContainerProps {
   /** Full agent list — passed down to the Ask pane so it can display all agents. */
   allAgents?: AgentWorkspace[];
   /** Spawn a supervisor agent from a question — forwarded to AskPane. */
-  spawnSupervisor?: (opts: { question: string; parentId?: string; provider?: AgentProvider }) => Promise<string>;
+  spawnSupervisor?: (opts: { question?: string; parentId?: string; provider?: AgentProvider }) => Promise<string>;
   /** Jump to a specific agent by id — forwarded to AskPane. */
   onJumpToAgent?: (agentId: string) => void;
 }
@@ -127,7 +127,7 @@ interface PaneCallbacks {
   /** Full agent list for the Ask pane. */
   allAgents?: AgentWorkspace[];
   /** Spawn a supervisor — for the Ask pane. */
-  spawnSupervisor?: (opts: { question: string; parentId?: string; provider?: AgentProvider }) => Promise<string>;
+  spawnSupervisor?: (opts: { question?: string; parentId?: string; provider?: AgentProvider }) => Promise<string>;
   /** Jump to agent by id — for the Ask pane. */
   onJumpToAgent?: (agentId: string) => void;
 }

@@ -96,6 +96,8 @@ class ClaudemonSessionClient {
     provider: 'opencode' | 'codex' | 'pi';
     cwd: string;
     model?: string;
+    /** Reasoning-effort level (codex `model_reasoning_effort`); others ignore it. */
+    effort?: string;
     /** Resolved launcher binary (the desktop resolves it on PATH). */
     bin?: string;
     /** YOLO / skip approvals — auto-approve every command and file change. */

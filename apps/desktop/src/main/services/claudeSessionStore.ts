@@ -41,6 +41,14 @@ const STATUSLINE_DEBOUNCE_MS = 250;
  */
 export type SessionAmbientState = 'idle' | 'thinking' | 'streaming' | 'waiting_input' | 'waiting_approval';
 
+/** Launch settings requested at spawn/restart time (composer pill truth
+ *  fallback — live statusLine/usage wins for the model when present). */
+export interface SessionSpawnSettings {
+  model?: string;
+  effort?: string;
+  permissionMode?: string;
+}
+
 /** Normalize a path for consistent map-key matching on Windows (backslash vs forward slash, case) */
 function normalizeCwd(cwd: string): string {
   if (!cwd) return cwd;
@@ -166,6 +174,9 @@ export interface ClaudeSessionState {
   isSupervisor?: boolean;
   /** Coding-agent backend ('claude' | 'codex' | 'opencode'), for analytics. */
   provider?: string;
+  /** Requested-at-spawn launch settings — what the composer pills show when no
+   *  live telemetry (statusLine/usage model) is available yet. */
+  settings?: SessionSpawnSettings;
   /** Guards against double history writes (Stop 1500ms timeout vs SessionEnd). */
   historyWritten?: boolean;
 }
@@ -185,7 +196,7 @@ class ClaudeSessionStore {
   private usageAccumulator = new SessionUsageAccumulator();
   // Pre-spawn metadata keyed by pinned session id. Recorded before the first
   // hook arrives so adopted cards carry a name and parent from the start.
-  private spawnMeta = new Map<string, { label?: string; parentSessionId?: string; isSupervisor?: boolean; provider?: string }>();
+  private spawnMeta = new Map<string, { label?: string; parentSessionId?: string; isSupervisor?: boolean; provider?: string; settings?: SessionSpawnSettings }>();
   // Last-applied conversation sequence per session (gap detection for the
   // daemon's delta stream) and sessions with a snapshot resync in flight.
   private convSeq = new Map<string, number>();
@@ -202,9 +213,16 @@ class ClaudeSessionStore {
   /** Record name/parent for a session about to be spawned, keyed by its pinned
    *  id. Consumed when the session first registers (see createSession), so an
    *  adopted card can be named and nested under its spawner. */
-  setSpawnMeta(sessionId: string, meta: { label?: string; parentSessionId?: string; isSupervisor?: boolean; provider?: string }): void {
+  setSpawnMeta(sessionId: string, meta: { label?: string; parentSessionId?: string; isSupervisor?: boolean; provider?: string; settings?: SessionSpawnSettings }): void {
     if (!sessionId) return;
     this.spawnMeta.set(sessionId, meta);
+    // A restart-with-settings re-spawns onto an id that may still have a live
+    // entry — refresh its settings in place so the pills track the request.
+    const existing = this.sessions.get(sessionId);
+    if (existing && meta.settings) {
+      existing.settings = { ...existing.settings, ...meta.settings };
+      this.pushUpdate(existing);
+    }
   }
 
   /** Eagerly register a freshly-spawned managed (codex/opencode/pi) session so
@@ -554,6 +572,7 @@ class ClaudeSessionStore {
       session.parentSessionId = meta.parentSessionId;
       session.isSupervisor = meta.isSupervisor;
       session.provider = meta.provider;
+      session.settings = meta.settings;
       this.spawnMeta.delete(sessionId);
     }
     this.sessions.set(sessionId, session);

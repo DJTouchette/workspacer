@@ -30,6 +30,20 @@ interface DirNode {
   files: TreeEntry[];
 }
 
+/** All directory paths of the tree built from `entries`, post-compression —
+ *  the key set a controlled `collapsed` prop needs for "Collapse all". */
+export function collectDirPaths(entries: TreeEntry[]): string[] {
+  const out: string[] = [];
+  const walk = (node: DirNode) => {
+    for (const dir of node.dirs) {
+      out.push(dir.path);
+      walk(dir);
+    }
+  };
+  walk(buildTree(entries));
+  return out;
+}
+
 function buildTree(entries: TreeEntry[]): DirNode {
   const root: DirNode = { name: '', path: '', dirs: [], files: [] };
   for (const entry of entries) {
@@ -138,14 +152,23 @@ export interface FileTreeProps {
   entries: TreeEntry[];
   selectedKey: string | null;
   onSelect: (entry: TreeEntry) => void;
-  /** Inline hover action per file ("Stage" / "Unstage"). */
-  actionLabel: string;
-  onAction: (entry: TreeEntry) => void;
-  busy: boolean;
+  /** Inline hover action per file ("Stage" / "Unstage"). Omit both to render
+   *  a read-only tree (e.g. the transcript's changed-files card). */
+  actionLabel?: string;
+  onAction?: (entry: TreeEntry) => void;
+  busy?: boolean;
   /** Line counts per path, from numstat. */
   stats: ReadonlyMap<string, NumstatEntry>;
   /** Right-click → "Open in editor". Omit to disable the context menu. */
   onOpenInEditor?: (entry: TreeEntry) => void;
+  /** Controlled collapse state (keys from `collectDirPaths`). Omit for the
+   *  default internal state. */
+  collapsed?: ReadonlySet<string>;
+  onToggleDir?: (path: string) => void;
+  /** Replaces the per-file StatusChip (e.g. with a file-type glyph). */
+  renderIcon?: (entry: TreeEntry) => React.ReactNode;
+  /** Aggregated +/− per directory path — rendered on dir rows when given. */
+  dirCounts?: ReadonlyMap<string, { added: number; removed: number }>;
 }
 
 const INDENT = 13;
@@ -159,14 +182,23 @@ const FileTree: React.FC<FileTreeProps> = ({
   busy,
   stats,
   onOpenInEditor,
+  collapsed: collapsedProp,
+  onToggleDir,
+  renderIcon,
+  dirCounts,
 }) => {
   ensureReviewStyles();
   const tree = useMemo(() => buildTree(entries), [entries]);
-  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
+  const [internalCollapsed, setInternalCollapsed] = useState<ReadonlySet<string>>(new Set());
+  const collapsed = collapsedProp ?? internalCollapsed;
   const [menu, setMenu] = useState<{ x: number; y: number; entry: TreeEntry } | null>(null);
 
   const toggle = (path: string) => {
-    setCollapsed((prev) => {
+    if (onToggleDir) {
+      onToggleDir(path);
+      return;
+    }
+    setInternalCollapsed((prev) => {
       const next = new Set(prev);
       if (next.has(path)) next.delete(path);
       else next.add(path);
@@ -211,6 +243,16 @@ const FileTree: React.FC<FileTreeProps> = ({
           >
             {dir.name}
           </span>
+          {(() => {
+            const agg = dirCounts?.get(dir.path);
+            if (!agg || (agg.added === 0 && agg.removed === 0)) return null;
+            return (
+              <>
+                <span style={{ flex: 1 }} />
+                <Counts stat={{ path: dir.path, added: agg.added, deleted: agg.removed }} />
+              </>
+            );
+          })()}
         </div>
         {!isCollapsed && renderChildren(dir, depth + 1)}
       </React.Fragment>
@@ -254,7 +296,7 @@ const FileTree: React.FC<FileTreeProps> = ({
               boxSizing: 'border-box',
             }}
           >
-            <StatusChip code={entry.code} />
+            {renderIcon ? renderIcon(entry) : <StatusChip code={entry.code} />}
             <span
               style={{
                 flex: 1,
@@ -268,31 +310,33 @@ const FileTree: React.FC<FileTreeProps> = ({
               {name}
             </span>
             <Counts stat={stats.get(entry.file.path)} />
-            <button
-              className="wks-review-action"
-              onClick={(e) => {
-                e.stopPropagation();
-                onAction(entry);
-              }}
-              disabled={busy}
-              title={actionLabel}
-              style={{
-                flexShrink: 0,
-                padding: '0 7px',
-                borderRadius: 5,
-                border: `1px solid ${colors.borderSubtle}`,
-                background: colors.bg,
-                color: colors.text,
-                cursor: busy ? 'default' : 'pointer',
-                fontSize: '0.6rem',
-                fontFamily: 'inherit',
-                fontWeight: 600,
-                lineHeight: '16px',
-                height: 18,
-              }}
-            >
-              {actionLabel}
-            </button>
+            {onAction && actionLabel && (
+              <button
+                className="wks-review-action"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onAction(entry);
+                }}
+                disabled={busy}
+                title={actionLabel}
+                style={{
+                  flexShrink: 0,
+                  padding: '0 7px',
+                  borderRadius: 5,
+                  border: `1px solid ${colors.borderSubtle}`,
+                  background: colors.bg,
+                  color: colors.text,
+                  cursor: busy ? 'default' : 'pointer',
+                  fontSize: '0.6rem',
+                  fontFamily: 'inherit',
+                  fontWeight: 600,
+                  lineHeight: '16px',
+                  height: 18,
+                }}
+              >
+                {actionLabel}
+              </button>
+            )}
           </div>
         );
       })}

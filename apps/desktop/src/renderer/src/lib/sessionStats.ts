@@ -1,4 +1,5 @@
-import type { ClaudeSessionSnapshot, SessionStatusLine, SessionUsage } from '../types/claudeSession';
+import type { ClaudeSessionSnapshot, FileChange, SessionStatusLine, SessionUsage } from '../types/claudeSession';
+import { collectEditedFiles } from './turnChanges';
 
 /**
  * The single source of truth for "what numbers do we show for this session".
@@ -55,6 +56,36 @@ export function isSnapshotStale(
 ): boolean {
   if (ambientState !== 'thinking' && ambientState !== 'streaming') return false;
   return !!lastActivity && now - lastActivity > STALE_AFTER_MS;
+}
+
+/**
+ * One-line change summary for a session's whole `fileChanges` list — the
+ * "~ 4 files · +120 −36" line on fleet cards. Line counts are tool-input
+ * estimates (same math as the per-turn ChangedFilesCard fallback), so both
+ * surfaces agree.
+ */
+export function summarizeFileChanges(fileChanges: FileChange[]): {
+  files: number;
+  added: number;
+  removed: number;
+} {
+  const edited = collectEditedFiles(
+    fileChanges.map((fc) => ({
+      id: '',
+      // fc.path is authoritative even when the tool input spells it another way
+      name: fc.toolName,
+      input: { ...fc.input, file_path: fc.input?.file_path ?? fc.path },
+      status: 'complete' as const,
+      startedAt: fc.timestamp,
+    })),
+  );
+  let added = 0;
+  let removed = 0;
+  for (const est of edited.values()) {
+    added += est.added;
+    removed += est.removed;
+  }
+  return { files: edited.size, added, removed };
 }
 
 export interface DerivedSessionStats {

@@ -284,18 +284,20 @@ async fn fetch_models(bin: &str, cwd: &str) -> anyhow::Result<Vec<ModelInfo>> {
 
 /// Spawn and drive a Codex-managed session in the background. Returns
 /// immediately; the session id is already registered in `store` by the caller.
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_session(
     store: SessionStore,
     conv: ConversationStore,
     session_id: String,
     cwd: String,
     model: Option<String>,
+    effort: Option<String>,
     bin: String,
     yolo: bool,
     facade: Facade,
 ) {
     tokio::spawn(async move {
-        if let Err(err) = run_session(&store, &conv, &session_id, &cwd, model, &bin, yolo, &facade).await {
+        if let Err(err) = run_session(&store, &conv, &session_id, &cwd, model, effort, &bin, yolo, &facade).await {
             tracing::warn!(?err, session = %session_id, "codex managed session ended with error");
         }
         store.deregister_managed(&session_id);
@@ -357,12 +359,14 @@ async fn start_appserver(
 /// in the Term; text lands in rollout-sized chunks rather than token deltas) but
 /// robust and version-independent, so a Codex CLI that changed `app-server` /
 /// `--remote` still gives a working pane instead of an empty one.
+#[allow(clippy::too_many_arguments)]
 async fn run_rollout_fallback(
     store: &SessionStore,
     conv: &ConversationStore,
     session_id: &str,
     cwd: &str,
     model: Option<String>,
+    effort: Option<String>,
     bin: &str,
     yolo: bool,
 ) -> anyhow::Result<()> {
@@ -371,6 +375,10 @@ async fn run_rollout_fallback(
     if let Some(m) = &model {
         argv.push("-c".to_string());
         argv.push(format!("model={}", Value::String(m.clone())));
+    }
+    if let Some(e) = &effort {
+        argv.push("-c".to_string());
+        argv.push(format!("model_reasoning_effort={}", Value::String(e.clone())));
     }
     if yolo {
         argv.push("--dangerously-bypass-approvals-and-sandbox".to_string());
@@ -413,12 +421,14 @@ async fn run_rollout_fallback(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_session(
     store: &SessionStore,
     conv: &ConversationStore,
     session_id: &str,
     cwd: &str,
     model: Option<String>,
+    effort: Option<String>,
     bin: &str,
     yolo: bool,
     facade: &Facade,
@@ -431,7 +441,7 @@ async fn run_session(
         Ok(t) => t,
         Err(err) => {
             tracing::warn!(?err, session = %session_id, "codex app-server ws path unavailable — falling back to the rollout hybrid (Term + transcript-tailed GUI)");
-            return run_rollout_fallback(store, conv, session_id, cwd, model, bin, yolo).await;
+            return run_rollout_fallback(store, conv, session_id, cwd, model, effort, bin, yolo).await;
         }
     };
     let (mut ws_write, mut ws_read) = ws_stream.split();
@@ -467,7 +477,7 @@ async fn run_session(
     // has no rollout yet: "no rollout found for thread id …". Model / YOLO are set
     // on the thread's creator (the TUI) as config overrides. Kept so we can kill
     // it when the session ends.
-    let tui_pty = spawn_codex_tui(store, session_id, cwd, bin, &ws_url, model.as_deref(), yolo);
+    let tui_pty = spawn_codex_tui(store, session_id, cwd, bin, &ws_url, model.as_deref(), effort.as_deref(), yolo);
 
     let mut thread_id: Option<String> = None;
     // Whether our `thread/resume` has actually taken (we're receiving the thread's
@@ -601,7 +611,7 @@ async fn run_session(
     // The thread protocol drifted (ws up, but we never rejoined): degrade to the
     // rollout hybrid so the pane still works.
     if needs_fallback {
-        return run_rollout_fallback(store, conv, session_id, cwd, model, bin, yolo).await;
+        return run_rollout_fallback(store, conv, session_id, cwd, model, effort, bin, yolo).await;
     }
     Ok(())
 }
@@ -611,6 +621,7 @@ async fn run_session(
 /// client rejoins it (see `run_session`), so the Term view and the RPC-driven GUI
 /// are two views of one conversation. Best-effort: if it can't start, the GUI
 /// still works and the Term is empty.
+#[allow(clippy::too_many_arguments)]
 fn spawn_codex_tui(
     store: &SessionStore,
     session_id: &str,
@@ -618,6 +629,7 @@ fn spawn_codex_tui(
     bin: &str,
     ws_url: &str,
     model: Option<&str>,
+    effort: Option<&str>,
     yolo: bool,
 ) -> Option<Arc<pty::PtyHandle>> {
     let mut argv = vec![
@@ -625,11 +637,16 @@ fn spawn_codex_tui(
         "--remote".to_string(),
         ws_url.to_string(),
     ];
-    // Model is a config override on the thread's creator; YOLO bypasses the
-    // approval/sandbox prompts so the shared thread doesn't block on them.
+    // Model / reasoning effort are config overrides on the thread's creator;
+    // YOLO bypasses the approval/sandbox prompts so the shared thread doesn't
+    // block on them.
     if let Some(m) = model {
         argv.push("-c".to_string());
         argv.push(format!("model={}", Value::String(m.to_string())));
+    }
+    if let Some(e) = effort {
+        argv.push("-c".to_string());
+        argv.push(format!("model_reasoning_effort={}", Value::String(e.to_string())));
     }
     if yolo {
         argv.push("--dangerously-bypass-approvals-and-sandbox".to_string());

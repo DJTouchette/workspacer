@@ -166,6 +166,10 @@ export function useAgentManager() {
     provider?: AgentProvider;
     profileId?: string;
     model?: string;
+    /** Reasoning-effort level (codex only today). */
+    effort?: string;
+    /** Permission mode (claude default/acceptEdits/plan/bypassPermissions, managed ask/yolo). */
+    permissionMode?: string;
     skipPermissions?: boolean;
     /** Library item ids (kind 'mcp') to load for this session. */
     mcpItemIds?: string[];
@@ -182,7 +186,7 @@ export function useAgentManager() {
     const cwd = opts.cwd;
     let sessionId: string | undefined;
     try {
-      sessionId = await window.electronAPI.spawnClaude({ cwd, provider: opts.provider, profileId: opts.profileId, model: opts.model, skipPermissions: opts.skipPermissions, mcpItemIds: opts.mcpItemIds, resumeSessionId: opts.resumeSessionId, supervisor: opts.supervisor, cols: 120, rows: 32 });
+      sessionId = await window.electronAPI.spawnClaude({ cwd, provider: opts.provider, profileId: opts.profileId, model: opts.model, effort: opts.effort, permissionMode: opts.permissionMode, skipPermissions: opts.skipPermissions, mcpItemIds: opts.mcpItemIds, resumeSessionId: opts.resumeSessionId, supervisor: opts.supervisor, cols: 120, rows: 32 });
     } catch (err) {
       console.error('[Agent] spawn failed:', err);
     }
@@ -196,6 +200,8 @@ export function useAgentManager() {
       provider: opts.provider,
       profileId: opts.profileId,
       model: opts.model,
+      effort: opts.effort,
+      permissionMode: opts.permissionMode,
       skipPermissions: opts.skipPermissions,
       mcpItemIds: opts.mcpItemIds,
       sessionId,
@@ -229,7 +235,7 @@ export function useAgentManager() {
     const resumeSessionId = agent.lastSessionId;
     let sessionId: string | undefined;
     try {
-      sessionId = await window.electronAPI.spawnClaude({ cwd: agent.cwd, provider: agent.provider, profileId: agent.profileId, model: agent.model, skipPermissions: agent.skipPermissions, mcpItemIds: agent.mcpItemIds, resumeSessionId, cols: 120, rows: 32 });
+      sessionId = await window.electronAPI.spawnClaude({ cwd: agent.cwd, provider: agent.provider, profileId: agent.profileId, model: agent.model, effort: agent.effort, permissionMode: agent.permissionMode, skipPermissions: agent.skipPermissions, mcpItemIds: agent.mcpItemIds, resumeSessionId, cols: 120, rows: 32 });
     } catch (err) {
       console.error('[Agent] respawn failed:', err);
     }
@@ -257,12 +263,65 @@ export function useAgentManager() {
   }, [mutateAgent]);
 
   /**
+   * Restart a RUNNING agent with new launch settings (composer pills' restart
+   * path for attached panes). Closes the live session, respawns resuming the
+   * same pinned id — so panes attached to that id stay pointed at the right
+   * session — and persists the settings on the record so future respawns keep
+   * them. Claude resumes the conversation; managed providers start a fresh
+   * provider-side thread (the pill's confirm copy says so).
+   */
+  const respawnAgentWithSettings = useCallback(async (
+    sessionId: string,
+    overrides: { model?: string; effort?: string; permissionMode?: string },
+  ) => {
+    const agent = agentsRef.current.find((a) => a.sessionId === sessionId || a.lastSessionId === sessionId);
+    if (!agent) return;
+    const model = overrides.model ?? agent.model;
+    const effort = overrides.effort ?? agent.effort;
+    const permissionMode = overrides.permissionMode ?? agent.permissionMode;
+    // The legacy YOLO boolean must track the mode, or the next plain respawn
+    // would re-apply a bypass the user just switched away from.
+    const skipPermissions = permissionMode
+      ? permissionMode === 'bypassPermissions' || permissionMode === 'yolo'
+      : agent.skipPermissions;
+    if (agent.sessionId) {
+      try { await window.electronAPI.claudeClose(agent.sessionId); } catch { /* already gone */ }
+    }
+    const resumeSessionId = agent.sessionId ?? agent.lastSessionId;
+    let newSessionId: string | undefined;
+    try {
+      newSessionId = await window.electronAPI.spawnClaude({ cwd: agent.cwd, provider: agent.provider, profileId: agent.profileId, model, effort, permissionMode, skipPermissions, mcpItemIds: agent.mcpItemIds, resumeSessionId, cols: 120, rows: 32 });
+    } catch (err) {
+      console.error('[Agent] restart-with-settings failed:', err);
+    }
+    if (!newSessionId) return;
+    mutateAgent(agent.id, (a) => ({
+      ...a,
+      model,
+      effort,
+      permissionMode,
+      skipPermissions,
+      sessionId: newSessionId,
+      lastSessionId: undefined,
+    }));
+  }, [mutateAgent]);
+
+  /**
    * Convenience wrapper to spawn a supervisor agent: derives a name from the
    * question, picks a sensible cwd, and calls `spawnAgent` with supervisor=true.
+   * With no question it spawns a plain "fleet agent" — same supervisor wiring,
+   * staged with a generic kick to start its watch loop instead of a question.
    * Returns the new agent id.
    */
-  const spawnSupervisor = useCallback(async (opts: { question: string; parentId?: string; cwd?: string; provider?: AgentProvider }): Promise<string> => {
-    const name = deriveSupervisorName(opts.question);
+  const spawnSupervisor = useCallback(async (opts: { question?: string; parentId?: string; cwd?: string; provider?: AgentProvider }): Promise<string> => {
+    const question = opts.question?.trim() || undefined;
+    const name = question ? deriveSupervisorName(question) : '\u{1F9ED} Fleet supervisor';
+    // Claude runs the installed /supervise skill; managed providers have no
+    // skills, so they get a plain-language opener (their facade instructions
+    // already carry the supervisor role).
+    const kick = (opts.provider ?? 'claude') === 'claude'
+      ? '/supervise'
+      : 'Start watching the fleet: call list_agents, then report what each agent is doing.';
     // A supervisor watches the whole fleet, so unless a cwd is given explicitly
     // it opens in its dedicated home (~/.workspacer) rather than inheriting some
     // agent's repo. Resolve it here so the card's cwd matches where the session
@@ -278,7 +337,7 @@ export function useAgentManager() {
       kind: 'supervisor',
       parentId: opts.parentId,
       supervisor: true,
-      initialPrompt: opts.question,
+      initialPrompt: question ?? kick,
     });
   }, [spawnAgent]);
 
@@ -632,6 +691,7 @@ export function useAgentManager() {
     spawnSupervisor,
     adoptAgent,
     respawnAgent,
+    respawnAgentWithSettings,
     terminateAgent,
     renameAgent,
     reconcileAgents,

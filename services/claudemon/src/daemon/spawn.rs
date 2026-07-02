@@ -184,6 +184,10 @@ pub struct SpawnManagedPayload {
     /// Optional model override (provider-specific id).
     #[serde(default)]
     pub model: Option<String>,
+    /// Optional reasoning-effort level. Codex maps it to the
+    /// `model_reasoning_effort` config override; other providers ignore it.
+    #[serde(default)]
+    pub effort: Option<String>,
     /// Resolved launcher binary (the desktop resolves it on PATH); falls back to
     /// the provider name.
     #[serde(default)]
@@ -244,6 +248,7 @@ pub async fn handle_managed(
             session_id.clone(),
             payload.cwd.clone(),
             payload.model.clone(),
+            payload.effort.clone(),
             bin,
             payload.yolo,
             facade,

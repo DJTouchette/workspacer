@@ -31,10 +31,18 @@ import { TurnDivider } from '../components/claude/TurnDivider';
 import { NeedsYouDock } from '../components/claude/NeedsYouDock';
 import { Composer } from '../components/claude/Composer';
 import { WorkCard } from '../components/claude/WorkCard';
+import { ChangedFilesCard } from '../components/claude/ChangedFilesCard';
+import {
+  collectEditedFiles,
+  ensureTurnSnapshot,
+  getTurnSnapshot,
+  estimateSnapshot,
+} from '../lib/turnChanges';
 import { InspectorRail } from '../components/claude/InspectorRail';
 import { DropOverlay } from '../components/claude/DropOverlay';
 import { ScrollToBottomButton } from '../components/claude/ScrollToBottomButton';
 import { SessionStatusBar } from '../components/claude/SessionStatusBar';
+import { ComposerControls, type RestartOverrides } from '../components/claude/ComposerControls';
 import { classifyFile, buildPromptPrefix, extractFilePaths } from '../components/claude/fileAttachment';
 import type { AttachedFile } from '../components/claude/fileAttachment';
 
@@ -86,9 +94,10 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
   const hasTerminal = isClaude || isHybrid; // only claude + hybrid have a PTY
   const showViewToggle = hasGui && hasTerminal; // claude + hybrid get both
   // A spawned-with-prompt pane always opens in GUI; otherwise honour the
-  // configured default view (falls back to terminal until config loads).
+  // configured default view. The fallback is the structured GUI — the rich
+  // conversation surface every provider has — with the Term a toggle away.
   const [viewModeState, setViewModeState] = useState<ViewMode>(
-    initialPrompt ? 'gui' : (config.claude?.defaultView ?? 'terminal'),
+    initialPrompt ? 'gui' : (config.claude?.defaultView ?? 'gui'),
   );
   const noopSetView = useCallback((_v: React.SetStateAction<ViewMode>) => {}, []);
   // Lock to the sole available surface when the provider doesn't offer both;
@@ -140,7 +149,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
     }
   }, [agentName]);
 
-  const { sessionId, isReady, spawnError, write, resize, attachToTerminal, startSession, retry } = useClaudeSpawn({
+  const { sessionId, isReady, spawnError, write, resize, attachToTerminal, startSession, retry, restartSession } = useClaudeSpawn({
     paneId,
     cwd,
     profileId,
@@ -665,6 +674,31 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
   const serverStreaming = optimisticLoading || session?.ambientState === 'thinking' || session?.ambientState === 'streaming';
   // If user cancelled, suppress streaming UI until a new activity cycle begins
   const isStreaming = serverStreaming && (session?.lastActivity ?? 0) > cancelledAt;
+  const ambientIdle = session?.ambientState === 'idle';
+
+  // ── Changed-files snapshots ──
+  //
+  // On the busy→idle edge (a turn ending), freeze the git line counts for the
+  // files the trailing assistant turn-group edited (see lib/turnChanges.ts).
+  // Skipped on mount (prev === undefined): a restored conversation's old turns
+  // must render estimate fallbacks, not today's git numbers as if historical.
+  const prevAmbientRef = useRef<string | undefined>(undefined);
+  const [changesVersion, setChangesVersion] = useState(0);
+  useEffect(() => {
+    const state = session?.ambientState;
+    const prev = prevAmbientRef.current;
+    prevAmbientRef.current = state;
+    if (!sessionId || state !== 'idle' || prev === undefined || prev === 'idle') return;
+    const base = session?.conversation ?? [];
+    let start = base.length;
+    while (start > 0 && base[start - 1].role === 'assistant') start--;
+    if (start >= base.length) return;
+    const edited = collectEditedFiles(base.slice(start).flatMap(t => t.toolCalls ?? []));
+    if (edited.size === 0) return;
+    void ensureTurnSnapshot(sessionId, start, cwd, edited)
+      .then(() => setChangesVersion(v => v + 1))
+      .catch(() => {});
+  }, [session?.ambientState, session?.conversation, sessionId, cwd]);
 
   // Needs-you dock visibility. Dismissal timestamps give an optimistic hide:
   // the dock vanishes on click while the response round-trips through the
@@ -679,6 +713,21 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
     write('\x1b');
     setCancelledAt(Date.now());
   }, [write]);
+
+  // Restart the session with new launch settings (composer pills). Two spawn
+  // ownerships: an attached viewer's session belongs to the agent manager
+  // (dispatch, same pattern as library:insert); an owner pane restarts its own
+  // spawn in place. Both resume the same pinned id, so the GUI snapshot stream
+  // is continuous.
+  const handleRestartWith = useCallback((overrides: RestartOverrides) => {
+    if (attachSessionId) {
+      window.dispatchEvent(new CustomEvent('agent:respawn', {
+        detail: { sessionId: sessionId ?? attachSessionId, overrides },
+      }));
+    } else {
+      void restartSession({ ...overrides, provider });
+    }
+  }, [attachSessionId, sessionId, restartSession, provider]);
 
   // Escape key cancels in GUI mode (must be after cancelTask/isStreaming declarations)
   useEffect(() => {
@@ -803,17 +852,50 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
       pendingWork = null;
     };
 
+    // A "turn group" spans the assistant turns between two user messages —
+    // its tool calls feed the end-of-turn ChangedFilesCard. Keyed by the
+    // group's first assistant turn (global index), matching the capture
+    // effect above so the frozen git snapshot is found; without one (app
+    // restart, cache eviction) the card degrades to tool-input estimates.
+    let group: { start: number; calls: ToolCall[] } | null = null;
+    const closeGroup = (complete: boolean) => {
+      if (!group) return;
+      const g = group;
+      group = null;
+      if (!complete) return;
+      const edited = collectEditedFiles(g.calls);
+      if (edited.size === 0) return;
+      const snap = sessionId ? getTurnSnapshot(sessionId, g.start) : undefined;
+      items.push(
+        <ChangedFilesCard
+          key={`chg-${g.start}`}
+          snapshot={snap ?? estimateSnapshot(edited, cwd)}
+          cwd={cwd}
+        />
+      );
+    };
+
     visibleTurns.forEach((turn, vi) => {
       const gi = startIdx + vi; // global index for stable keys
       const calls = turn.toolCalls ?? [];
 
       if (turn.role === 'user') {
         flushWork();
+        closeGroup(true);
         if (gi > 0) items.push(<TurnDivider key={`div-${gi}`} />);
         items.push(<ConversationMessage key={`msg-${gi}`} turn={turn} />);
         prevRole = 'user';
         return;
       }
+
+      if (!group) {
+        // Walk back past the window edge so a partially-visible group still
+        // keys on its true first assistant turn (where the snapshot lives).
+        let gs = gi;
+        while (gs > 0 && conversation[gs - 1].role === 'assistant') gs--;
+        group = { start: gs, calls: [] };
+      }
+      group.calls.push(...calls);
 
       // Assistant turn. Text introduces the work that follows it, so close any
       // prior work card above the message, render the text, then open a fresh
@@ -837,6 +919,9 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
       prevRole = 'assistant';
     });
     flushWork();
+    // The trailing group only gets its card once the turn actually ended —
+    // idle, not merely "not streaming" (waiting_approval is mid-turn).
+    closeGroup(ambientIdle);
 
     // Keep the most recent work card expanded after work ends, so the latest
     // step stays open without a click. Older cards collapse as usual.
@@ -846,7 +931,9 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
     }
 
     return items;
-  }, [conversation, visibleCount, toolIdToSubagent, toolIdToWorkflow, isStreaming, sessionId, cwd]);
+    // changesVersion re-renders cards once a frozen git snapshot lands.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversation, visibleCount, toolIdToSubagent, toolIdToWorkflow, isStreaming, ambientIdle, sessionId, cwd, changesVersion]);
 
   return (
     <div style={{
@@ -1073,6 +1160,16 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
         flexShrink: 0,
       }}>
         <StatusBadge session={session} approvalDismissed={!!(pendingApproval && pendingApproval.timestamp <= approvalDismissedAt)} />
+
+        {/* Session controls — model / effort / permission-mode pills. Live
+            where the provider supports it (claude /model), else restart. */}
+        <ComposerControls
+          provider={provider ?? 'claude'}
+          sessionId={sessionId}
+          snapshot={session}
+          cwd={cwd}
+          onRestartWith={handleRestartWith}
+        />
 
         {/* In-app status line — model · ctx · tok/cost · 5h/7d (replaces the
             old working-timer + directory readouts). */}

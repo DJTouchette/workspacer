@@ -206,7 +206,7 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
   const rowVirtualizer = useVirtualizer({
     count: Math.ceil(displayOrder.length / cols),
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => 248, // ~230 card min-height + row gap
+    estimateSize: () => 290, // ~260 card min-height (chips + files line) + row gap; rows self-measure
     overscan: 2,
   });
 

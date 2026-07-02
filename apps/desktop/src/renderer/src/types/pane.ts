@@ -104,6 +104,11 @@ export interface AgentWorkspace {
   profileId?: string;
   /** Model passed as `--model` at spawn (alias or full id). '' / undefined = Claude default. */
   model?: string;
+  /** Reasoning-effort level (codex `model_reasoning_effort`). Re-passed on respawn. */
+  effort?: string;
+  /** Permission mode: claude default/acceptEdits/plan/bypassPermissions, managed
+   *  ask/yolo. Re-passed on respawn (see lib/providerCaps.ts). */
+  permissionMode?: string;
   /** Whether this agent was spawned with `--dangerously-skip-permissions`. */
   skipPermissions?: boolean;
   /** Library item ids (kind 'mcp') this agent was spawned with. Re-passed on

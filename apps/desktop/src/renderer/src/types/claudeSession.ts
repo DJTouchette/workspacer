@@ -163,4 +163,11 @@ export interface ClaudeSessionSnapshot {
   /** Coding-agent backend ('claude' | 'codex' | 'opencode' | 'pi'). Set at spawn
    *  time; lets an adopted card render the right provider label/logo. */
   provider?: string;
+  /** Requested-at-spawn launch settings — the composer pills' fallback truth
+   *  (live statusLine/usage model wins when present). */
+  settings?: {
+    model?: string;
+    effort?: string;
+    permissionMode?: string;
+  };
 }

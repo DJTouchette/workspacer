@@ -105,12 +105,14 @@ export function registerHubCapabilities(): void {
   // capabilities. The session runs headless in claudemon; a desktop pane can
   // attach to it later via the normal attach flow.
   registerCapability('agents.spawn', async (params: unknown) => {
-    const { provider, cwd, profileId, model, skipPermissions: reqSkip, resumeSessionId, cols, rows, supervisor, mcpFacade, label, parentSessionId } =
+    const { provider, cwd, profileId, model, effort, permissionMode: reqMode, skipPermissions: reqSkip, resumeSessionId, cols, rows, supervisor, mcpFacade, label, parentSessionId } =
       (params ?? {}) as {
         provider?: AgentProvider;
         cwd?: string;
         profileId?: string;
         model?: string;
+        effort?: string;
+        permissionMode?: string;
         skipPermissions?: boolean;
         resumeSessionId?: string;
         cols?: number;
@@ -126,10 +128,11 @@ export function registerHubCapabilities(): void {
     // approval (`--dangerously-skip-permissions` / bypass-sandbox). Approvals
     // still surface and can be answered remotely; a YOLO agent must be started
     // locally. So `skipPermissions` is forced off here.
-    if (reqSkip) {
-      console.warn('[hub] agents.spawn: ignoring skipPermissions=true from a bus client — remote spawns never auto-bypass approvals.');
+    if (reqSkip || reqMode === 'bypassPermissions' || reqMode === 'yolo') {
+      console.warn('[hub] agents.spawn: ignoring permission bypass from a bus client — remote spawns never auto-bypass approvals.');
     }
     const skipPermissions = false;
+    const permissionMode = reqMode === 'bypassPermissions' || reqMode === 'yolo' ? undefined : reqMode;
     // Managed (Tier-2) backend — Codex / OpenCode / Pi run through claudemon's
     // adapter, not a Claude PTY. Shares the dispatch with the `claude:spawn` IPC
     // handler so this path can't silently fall back to spawning Claude (it did
@@ -137,7 +140,7 @@ export function registerHubCapabilities(): void {
     // from the web/remote client came up as Claude).
     if (provider && provider !== 'claude') {
       const sessionId = await spawnManagedAgent({
-        provider, cwd, model, skipPermissions, resumeSessionId, supervisor, mcpFacade, label, parentSessionId, cols, rows,
+        provider, cwd, model, effort, skipPermissions, resumeSessionId, supervisor, mcpFacade, label, parentSessionId, cols, rows,
       });
       return { sessionId };
     }
@@ -150,7 +153,13 @@ export function registerHubCapabilities(): void {
     const sessionId = resumeSessionId || randomUUID();
     // Record name/parent before the session registers so adopted cards are
     // enriched from the very first hook event.
-    claudeSessionStore.setSpawnMeta(sessionId, { label, parentSessionId, isSupervisor: supervisor });
+    claudeSessionStore.setSpawnMeta(sessionId, {
+      label,
+      parentSessionId,
+      isSupervisor: supervisor,
+      provider: 'claude',
+      settings: { model, permissionMode: permissionMode ?? 'default' },
+    });
 
     // Supervisors install the /supervise skill and default to the configured
     // supervisor model. Facade workers (mcpFacade) get the tools but no loop.
@@ -165,6 +174,7 @@ export function registerHubCapabilities(): void {
       resumeSessionId,
       model: resolvedModel,
       skipPermissions,
+      permissionMode: permissionMode as 'default' | 'acceptEdits' | 'plan' | undefined,
       sessionId,
       // Full supervisor, or a plain facade worker — both get the MCP facade
       // config + pre-allowed tools; only a supervisor gets the /supervise loop.

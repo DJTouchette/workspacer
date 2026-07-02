@@ -3,6 +3,11 @@ import { deriveAgentName } from '../hooks/useAgentManager';
 import { AgentLogo } from './agentLogos';
 import type { LibraryItem } from '../types/library';
 import type { AgentProvider } from '../types/pane';
+import { capsFor } from '../lib/providerCaps';
+
+/** Bypass-everything mode id per provider family (claude vs managed). */
+const bypassModeFor = (provider: AgentProvider): string =>
+  provider === 'claude' ? 'bypassPermissions' : 'yolo';
 
 interface SpawnProfile { id: string; name: string; mcpItemIds?: string[] }
 
@@ -10,7 +15,7 @@ interface SpawnAgentDialogProps {
   defaultCwd: string;
   /** Provider pre-selected in the picker (config.agents.defaultProvider). */
   defaultProvider?: AgentProvider;
-  onSpawn: (opts: { cwd: string; name?: string; provider?: AgentProvider; profileId?: string; model?: string; skipPermissions?: boolean; mcpItemIds?: string[]; resumeSessionId?: string }) => void;
+  onSpawn: (opts: { cwd: string; name?: string; provider?: AgentProvider; profileId?: string; model?: string; effort?: string; permissionMode?: string; skipPermissions?: boolean; mcpItemIds?: string[]; resumeSessionId?: string }) => void;
   onCancel: () => void;
 }
 
@@ -71,7 +76,10 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, default
   const [seen, setSeen] = useState<string[]>([]);
   const [modelSel, setModelSel] = useState<string>('');
   const [customModel, setCustomModel] = useState('');
-  const [skipPermissions, setSkipPermissions] = useState(false);
+  // Permission mode ('' = provider default: claude 'default', managed 'ask')
+  // and reasoning effort ('' = provider default; codex only). See providerCaps.
+  const [permissionMode, setPermissionMode] = useState('');
+  const [effort, setEffort] = useState('');
 
   // Resume an existing Claude session in this cwd. ''=start fresh.
   const [sessions, setSessions] = useState<Array<{ sessionId: string; timestamp: string; summary: string }>>([]);
@@ -91,6 +99,19 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, default
     const det = providerDetection.find((d) => d.provider === provider);
     setCustomBinPath(det?.customBin ?? '');
   }, [provider, providerDetection]);
+
+  // Keep the permission mode valid across provider switches: bypass-family ids
+  // translate (bypassPermissions ↔ yolo); anything else the new provider
+  // doesn't offer resets to its default. Effort only exists on some providers.
+  useEffect(() => {
+    setPermissionMode((cur) => {
+      if (!cur) return cur;
+      if (capsFor(provider).permissionModes.some((m) => m.id === cur)) return cur;
+      if (cur === 'bypassPermissions' || cur === 'yolo') return bypassModeFor(provider);
+      return '';
+    });
+    if (!capsFor(provider).effort) setEffort('');
+  }, [provider]);
 
   // Close on Escape regardless of which inner element has focus.
   useEffect(() => {
@@ -129,7 +150,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, default
         if (!res) return;
         setAliases(res.aliases ?? []);
         setSeen(res.seen ?? []);
-        setSkipPermissions(res.skipPermissionsDefault === true);
+        if (res.skipPermissionsDefault === true) setPermissionMode(bypassModeFor(provider));
         // Pre-select the saved default. If it's a concrete id we don't have in
         // a list, keep it as a custom entry so the saved value isn't dropped.
         const d = res.defaultModel ?? '';
@@ -214,11 +235,15 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, default
 
   const submit = () => {
     if (!cwd.trim()) return;
+    // '' means the provider's own default mode; the legacy boolean tracks the
+    // bypass-family modes for back-compat consumers (saved defaults, respawn).
+    const resolvedMode = permissionMode || (isClaude ? 'default' : 'ask');
+    const skipPermissions = resolvedMode === 'bypassPermissions' || resolvedMode === 'yolo';
     // Claude-only options are dropped for other providers (they run their own
     // TUI in Tier-1 and don't take Claude's profile/model/MCP/resume flags).
     onSpawn(isClaude
-      ? { cwd: cwd.trim(), name: name.trim() || undefined, profileId: profileId || undefined, model: resolvedModel || undefined, skipPermissions, mcpItemIds: mcpSel.length ? mcpSel : undefined, resumeSessionId: resumeSessionId || undefined }
-      : { cwd: cwd.trim(), name: name.trim() || undefined, provider, model: resolvedProviderModel || undefined, skipPermissions });
+      ? { cwd: cwd.trim(), name: name.trim() || undefined, profileId: profileId || undefined, model: resolvedModel || undefined, permissionMode: resolvedMode, skipPermissions, mcpItemIds: mcpSel.length ? mcpSel : undefined, resumeSessionId: resumeSessionId || undefined }
+      : { cwd: cwd.trim(), name: name.trim() || undefined, provider, model: resolvedProviderModel || undefined, effort: effort || undefined, permissionMode: resolvedMode, skipPermissions });
   };
 
   const placeholderName = cwd.trim() ? deriveAgentName(cwd.trim()) : 'agent';
@@ -493,25 +518,31 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, default
           </Field>
         )}
 
-        <label style={{
-          display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 4, cursor: 'pointer',
-        }}>
-          <input
-            type="checkbox"
-            checked={skipPermissions}
-            onChange={(e) => setSkipPermissions(e.target.checked)}
-            style={{ marginTop: 2, cursor: 'pointer' }}
-          />
-          <span style={{ fontSize: '0.72rem', lineHeight: 1.4 }}>
-            <span style={{ color: 'var(--wks-text-primary)' }}>{isClaude ? 'Skip permissions' : 'YOLO mode'}</span>
-            <span style={{ color: 'var(--wks-danger, #e05555)', marginLeft: 6 }}>dangerous</span>
-            <div style={{ color: 'var(--wks-text-faint)', fontSize: '0.65rem', marginTop: 1 }}>
+        {capsFor(provider).effort && (
+          <Field label="Reasoning effort">
+            <select value={effort} onChange={(e) => setEffort(e.target.value)} style={inputStyle}>
+              <option value="">Default</option>
+              {capsFor(provider).effort!.levels.map((l) => (
+                <option key={l.id} value={l.id}>{l.label}</option>
+              ))}
+            </select>
+          </Field>
+        )}
+
+        <Field label="Permissions">
+          <select value={permissionMode} onChange={(e) => setPermissionMode(e.target.value)} style={inputStyle}>
+            {capsFor(provider).permissionModes.map((m, i) => (
+              <option key={m.id} value={i === 0 ? '' : m.id}>{m.label}</option>
+            ))}
+          </select>
+          {(permissionMode === 'bypassPermissions' || permissionMode === 'yolo') && (
+            <div style={{ color: 'var(--wks-danger, #e05555)', fontSize: '0.65rem', marginTop: 3 }}>
               {isClaude
-                ? 'Bypasses all approval prompts (--dangerously-skip-permissions).'
-                : 'Auto-approves every command and file change — no prompts.'}
+                ? 'Dangerous — bypasses all approval prompts (--dangerously-skip-permissions).'
+                : 'Dangerous — auto-approves every command and file change, no prompts.'}
             </div>
-          </span>
-        </label>
+          )}
+        </Field>
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}>
           <button onClick={onCancel} style={secondaryBtnStyle}>Cancel</button>

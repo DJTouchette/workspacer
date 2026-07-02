@@ -108,7 +108,7 @@ interface AgentViewHandlers {
   onNavigateToTab: (tabId: string) => void;
   onAddTab: (type: PaneType, shell?: string, label?: string, cwd?: string, profileId?: string, resumeSessionId?: string, attachSessionId?: string) => void;
   onSplit: (tabId: string, type: PaneType) => void;
-  spawnSupervisor: (opts: { question: string; parentId?: string; provider?: AgentProvider }) => Promise<string>;
+  spawnSupervisor: (opts: { question?: string; parentId?: string; provider?: AgentProvider }) => Promise<string>;
   onJumpToAgent: (agentId: string) => void;
 }
 
@@ -196,6 +196,7 @@ function App() {
     spawnSupervisor,
     adoptAgent,
     respawnAgent,
+    respawnAgentWithSettings,
     terminateAgent,
     renameAgent,
     reconcileAgents,
@@ -643,7 +644,7 @@ function App() {
     saveConfig({ directories: { recent, favourites: config.directories?.favourites ?? [] } });
   }, [config.directories, saveConfig]);
 
-  const handleSpawnAgent = useCallback((opts: { cwd: string; name?: string; provider?: AgentProvider; profileId?: string; model?: string; skipPermissions?: boolean; mcpItemIds?: string[]; resumeSessionId?: string }) => {
+  const handleSpawnAgent = useCallback((opts: { cwd: string; name?: string; provider?: AgentProvider; profileId?: string; model?: string; effort?: string; permissionMode?: string; skipPermissions?: boolean; mcpItemIds?: string[]; resumeSessionId?: string }) => {
     setShowSpawnDialog(false);
     // Remember the picked model + skip-permissions choice so they stick next time
     // — but only for Claude, so spawning a Codex/OpenCode agent doesn't clobber
@@ -712,6 +713,15 @@ function App() {
   const handleJumpToAgent = useCallback((agentId: string) => {
     handleSelectAgent(agentId);
   }, [handleSelectAgent]);
+
+  /** Spawn a fleet supervisor directly (no question) and focus it — the
+   *  command-palette shortcut past the Ask pane. Uses the configured
+   *  supervisor provider, same as the Ask pane's default. */
+  const spawnFleetAgent = useCallback(async () => {
+    setShowCommandPalette(false);
+    const id = await spawnSupervisor({ provider: config.supervisor?.provider });
+    handleSelectAgent(id);
+  }, [spawnSupervisor, handleSelectAgent, config.supervisor?.provider]);
 
   const goToAgent = useCallback((delta: number) => {
     if (agents.length === 0) return;
@@ -950,6 +960,21 @@ function App() {
     window.addEventListener(REVIEW_REQUEST_FILE_EVENT, handler);
     return () => window.removeEventListener(REVIEW_REQUEST_FILE_EVENT, handler);
   }, [tabs, activeAgent, setActiveTabId, setActivePane, scrollToTab, handleAddTab]);
+
+  // Restart an agent-managed session with new launch settings (composer pills
+  // in an attached ClaudePane dispatch this — same CustomEvent pattern as
+  // library:insert, since the pane doesn't own the agent record).
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const d = (e as CustomEvent).detail as
+        | { sessionId?: string; overrides?: { model?: string; effort?: string; permissionMode?: string } }
+        | undefined;
+      if (!d?.sessionId) return;
+      void respawnAgentWithSettings(d.sessionId, d.overrides ?? {});
+    };
+    window.addEventListener('agent:respawn', handler);
+    return () => window.removeEventListener('agent:respawn', handler);
+  }, [respawnAgentWithSettings]);
 
   const handleLaunchApp = useCallback((app: { name: string; url: string }) => {
     const newId = addTab('browser', app.name, insertPosition, undefined, app.url, true);
@@ -1307,6 +1332,7 @@ function App() {
         onOpenLayouts={() => { setShowCommandPalette(false); setShowLayouts(true); }}
         onOpenRemote={() => { setShowCommandPalette(false); setShowRemote(true); }}
         onOpenAskPane={openAskPane}
+        onSpawnFleetAgent={() => { void spawnFleetAgent(); }}
         onOpenFile={() => { setShowCommandPalette(false); openFileInEditor(); }}
         shortcuts={resolvedShortcuts}
         prefix={kbPrefix}

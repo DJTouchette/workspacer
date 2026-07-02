@@ -1,14 +1,14 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import type { AgentWorkspace } from '../types/pane';
 import type { ClaudeSessionSnapshot, SessionAmbientState } from '../types/claudeSession';
-import { formatToolSummary } from './claude-shared';
 import { QuestionPicker } from './claude/QuestionPicker';
+import { AgentCardBody } from './AgentCardBody';
 import { useAttention } from '../contexts/AttentionContext';
 import { usePageVisible } from '../hooks/usePageVisible';
 import { StatusGlyph } from './statusGlyph';
 import { AgentLogo } from './agentLogos';
 import { shortModelLabel } from '../lib/modelLabel';
-import { fmtTokens, fmtUSD, ctxColor, isSnapshotStale } from '../lib/sessionStats';
+import { fmtTokens, fmtUSD, ctxColor, isSnapshotStale, summarizeFileChanges } from '../lib/sessionStats';
 import { useGitBranch } from '../hooks/useGitBranch';
 function relTime(ts: number | undefined): string {
   if (!ts) return '';
@@ -88,9 +88,18 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot }) => {
   }, [working]);
   const stale = isSnapshotStale(state, snapshot?.lastActivity, now);
 
-  const body = working && activeTool
-    ? formatToolSummary(activeTool).call
-    : lastAssistant(snapshot) || (agent.sessionId ? 'No activity yet' : 'Stopped — click to respawn');
+  // Body: the last message always leads (as markdown); tool activity lives in
+  // the chip row, so the two no longer alternate.
+  const bodyText = lastAssistant(snapshot);
+  const bodyFallback = agent.sessionId ? 'No activity yet' : 'Stopped — click to respawn';
+  const recentTools = useMemo(
+    () => (snapshot?.completedToolCalls ?? []).slice(-2).reverse(),
+    [snapshot?.completedToolCalls],
+  );
+  const fileStats = useMemo(
+    () => summarizeFileChanges(snapshot?.fileChanges ?? []),
+    [snapshot?.fileChanges],
+  );
 
   const [draft, setDraft] = useState('');
   const submitDraft = () => {
@@ -109,7 +118,7 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot }) => {
       onClick={() => openAgent(agent.id)}
       title={`${agent.name} — ${v.label}\n${agent.cwd}`}
       style={{
-        display: 'flex', flexDirection: 'column', minHeight: 230, cursor: 'pointer',
+        display: 'flex', flexDirection: 'column', minHeight: 260, cursor: 'pointer',
         borderRadius: 'var(--wks-radius-lg)', overflow: 'hidden',
         background: 'var(--wks-bg-surface)',
         border: `1.5px solid ${v.color}`,
@@ -152,9 +161,16 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot }) => {
         </span>
       </div>
 
-      {/* Body: current tool or last message */}
-      <div style={{ flex: 1, padding: '0 14px 10px', fontSize: '0.8rem', color: 'var(--wks-text-secondary)', lineHeight: 1.5, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: hasAction ? 3 : 6, WebkitBoxOrient: 'vertical', fontFamily: working && activeTool ? 'var(--claude-mono-font, monospace)' : 'inherit' }}>
-        {body}
+      {/* Body: tool chips + last message as markdown + changed-files line */}
+      <div style={{ flex: 1, paddingBottom: 10, minHeight: 0, display: 'flex' }}>
+        <AgentCardBody
+          text={bodyText}
+          fallback={bodyFallback}
+          active={working ? activeTool : undefined}
+          recent={recentTools}
+          fileStats={fileStats}
+          compact={hasAction}
+        />
       </div>
 
       {/* Orchestration mini-progress */}

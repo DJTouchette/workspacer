@@ -145,6 +145,45 @@ describe('buildClaudeArgv', () => {
     });
   });
 
+  describe('--permission-mode flag', () => {
+    it('injects --permission-mode for acceptEdits / plan', () => {
+      for (const mode of ['acceptEdits', 'plan'] as const) {
+        const argv = buildClaudeArgv({ permissionMode: mode });
+        const idx = argv.indexOf('--permission-mode');
+        expect(idx).toBeGreaterThan(-1);
+        expect(argv[idx + 1]).toBe(mode);
+      }
+    });
+
+    it("maps 'bypassPermissions' to --dangerously-skip-permissions, not --permission-mode", () => {
+      const argv = buildClaudeArgv({ permissionMode: 'bypassPermissions' });
+      expect(argv).toContain('--dangerously-skip-permissions');
+      expect(argv).not.toContain('--permission-mode');
+    });
+
+    it("omits the flag for 'default' (claude's own default)", () => {
+      const argv = buildClaudeArgv({ permissionMode: 'default' });
+      expect(argv).not.toContain('--permission-mode');
+      expect(argv).not.toContain('--dangerously-skip-permissions');
+    });
+
+    it('does NOT inject when skipPermissions already bypasses (flags would fight)', () => {
+      const argv = buildClaudeArgv({ skipPermissions: true, permissionMode: 'plan' });
+      expect(argv).toContain('--dangerously-skip-permissions');
+      expect(argv).not.toContain('--permission-mode');
+    });
+
+    it('does NOT inject when profile extraArgs already pin a mode', () => {
+      const argv = buildClaudeArgv({
+        permissionMode: 'plan',
+        extraArgs: ['--permission-mode', 'acceptEdits'],
+      });
+      expect(argv.filter((a) => a === '--permission-mode')).toHaveLength(1);
+      const idx = argv.indexOf('--permission-mode');
+      expect(argv[idx + 1]).toBe('acceptEdits');
+    });
+  });
+
   describe('--resume vs --session-id (mutually exclusive)', () => {
     it('adds --resume <id> when resumeSessionId is provided', () => {
       const argv = buildClaudeArgv({ resumeSessionId: 'abc-123' });
