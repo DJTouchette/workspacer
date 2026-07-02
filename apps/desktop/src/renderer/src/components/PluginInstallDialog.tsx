@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { pluginRequirement, type PluginManifest } from '../types/plugin';
 import { AlertTriangle } from './icons';
+import { PluginPermissions } from './plugin/PluginPermissions';
 
 interface PluginInstallDialogProps {
   onClose: () => void;
@@ -150,8 +151,18 @@ const PluginInstallDialog: React.FC<PluginInstallDialogProps> = ({ onClose, onIn
               <div style={{ fontSize: '0.62rem', color: 'var(--wks-text-faint)', marginTop: 2 }}>{preview.id}</div>
               <div style={{ marginTop: 8, display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: '0.62rem', color: 'var(--wks-text-muted)' }}>
                 <span>{(preview.panes?.length ?? 0)} pane{(preview.panes?.length ?? 0) === 1 ? '' : 's'}{preview.panes?.length ? ': ' + preview.panes.map((x) => x.title).join(', ') : ''}</span>
-                {!!preview.capabilities?.length && <span>{preview.capabilities.length} capabilit{preview.capabilities.length === 1 ? 'y' : 'ies'}</span>}
               </div>
+
+              {/* Itemized permissions — what the plugin can do on the bus, so
+                  the install click is informed consent (the hub enforces
+                  exactly these). */}
+              <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--wks-border-subtle)' }}>
+                <div style={{ fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--wks-text-muted)', marginBottom: 8 }}>
+                  Permissions it's requesting
+                </div>
+                <PluginPermissions manifest={preview} />
+              </div>
+
               {req && (
                 <div style={{
                   marginTop: 8, fontSize: '0.64rem', fontWeight: 600,

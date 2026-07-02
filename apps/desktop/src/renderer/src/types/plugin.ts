@@ -36,6 +36,21 @@ export interface PluginSettingDef {
   help?: string;
 }
 
+/** One capability entry in a manifest: a bus method the plugin may call, with
+ *  optional filesystem scoping (the object form the hub serves for path-scoped
+ *  methods). Mirrors the hub's `capspec` Capability. */
+export type PluginCapability = string | { method: string; paths?: string[] };
+
+/** The method name of a capability entry, whichever form it takes. */
+export function capabilityMethod(c: PluginCapability): string {
+  return typeof c === 'string' ? c : c.method;
+}
+
+/** The declared filesystem roots of a capability entry (empty for verb-only). */
+export function capabilityPaths(c: PluginCapability): string[] {
+  return typeof c === 'string' ? [] : c.paths ?? [];
+}
+
 export interface PluginManifest {
   id: string;
   name: string;
@@ -45,7 +60,11 @@ export interface PluginManifest {
   hotkeys?: PluginHotkeyContribution[];
   settings?: PluginSettingDef[];
   provides?: string[];
-  capabilities?: string[];
+  /** Capabilities the plugin may call. A bare string is verb-only; the object
+   *  form carries the filesystem roots a path-scoped method (fs.*, search.project)
+   *  is confined to. The hub serves the object form for path-scoped caps, so the
+   *  permissions view can show the scope. */
+  capabilities?: PluginCapability[];
   emits?: string[];
   consumes?: string[];
   /** Optional one-time build/setup command run on install (e.g. ["go","build",…]).

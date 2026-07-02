@@ -3,6 +3,8 @@ import { usePlugins } from '../hooks/usePlugins';
 import PluginInstallDialog from '../components/PluginInstallDialog';
 import ExamplesGalleryDialog from '../components/ExamplesGalleryDialog';
 import { pluginRequirement } from '../types/plugin';
+import { hasSensitivePermission } from '../lib/pluginPermissions';
+import { PluginPermissions } from '../components/plugin/PluginPermissions';
 import { Blocks, AlertTriangle } from '../components/icons';
 
 interface SidecarStatus { state: string; err?: string }
@@ -52,6 +54,13 @@ const PluginsManagerPane: React.FC<{ title?: string }> = () => {
   const [showInstall, setShowInstall] = useState(false);
   const [showExamples, setShowExamples] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [permsOpen, setPermsOpen] = useState<Set<string>>(new Set());
+  const togglePerms = (id: string) =>
+    setPermsOpen((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
 
   const remove = async (id: string) => {
     if (!window.confirm(`Remove plugin "${id}"? This stops its server and deletes it.`)) return;
@@ -154,7 +163,25 @@ const PluginsManagerPane: React.FC<{ title?: string }> = () => {
                 {hasServer && req.warn && (
                   <span style={{ color: 'var(--wks-warning, #e0a000)' }}>{req.label}</span>
                 )}
+                <button
+                  onClick={() => togglePerms(p.id)}
+                  style={{
+                    background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: '0.62rem',
+                    fontFamily: 'inherit', color: 'var(--wks-accent)', display: 'inline-flex', alignItems: 'center', gap: 3,
+                  }}
+                >
+                  {hasSensitivePermission(p) && <AlertTriangle size={10} strokeWidth={2} style={{ color: 'var(--wks-warning, #e0a000)' }} />}
+                  {permsOpen.has(p.id) ? 'Hide permissions' : 'Permissions'}
+                </button>
               </div>
+              {permsOpen.has(p.id) && (
+                <div style={{
+                  marginTop: 8, padding: '8px 10px', borderRadius: 5,
+                  background: 'var(--wks-bg-input)', border: '1px solid var(--wks-border-subtle)',
+                }}>
+                  <PluginPermissions manifest={p} compact />
+                </div>
+              )}
               {crashErr && (
                 <div style={{
                   marginTop: 8, padding: '6px 8px', borderRadius: 5,
