@@ -22,7 +22,12 @@ Deliberately separate from `claudemon` (which stays focused on Claude sessions)
   owning provider and the reply back, correlating by a global id. Handles no-
   provider, provider-error, provider-disconnect, and timeout. The hub never
   *executes* a capability — it routes. (This is the seam the MCP facade plugs
-  into.) Authorization is a stubbed seam (allow-all) for capability tokens later.
+  into.) Authorization is enforced per-connection: a per-plugin token may only
+  `call` the capabilities its manifest declared (path-scoped ones confined to
+  granted roots), `publish` the event types it declared in `emits`, receive only
+  those in `consumes`, and `register` as a provider only for methods in
+  `provides`. The host token is trusted (full access). See "Plugin
+  authorization" below.
 
 All tested with unit + end-to-end tests, clean under `-race`. `integration`
 proves the full event spine (claudemon SSE → bridge → broker → bus → client);
@@ -35,6 +40,28 @@ proves the full event spine (claudemon SSE → bridge → broker → bus → cli
   `examples/clock-plugin/` for a working one (a webview pane + a hotkey).
   Plugin panes get the app theme injected as `--wks-*` CSS variables — see
   [docs/plugin-theming.md](docs/plugin-theming.md).
+
+### Plugin authorization
+
+A plugin only gets what its manifest declares — the same "ask for it to be
+granted it" model on every bus verb. Each plugin connects with its own token
+(the host/main-process link is *trusted* and bypasses all of this); an untrusted
+connection is confined by four manifest fields:
+
+| Manifest field | Grants | Bus verb enforced |
+| --- | --- | --- |
+| `capabilities` | methods it may **call** (path-scoped ones confined to declared roots, canonicalize-then-contain) | `call` |
+| `provides` | methods it may **answer** as a provider | `register` (disallowed methods dropped; ack lists what registered) |
+| `emits` | event types it may **publish** | `publish` (undeclared type → error) |
+| `consumes` | event types it may **receive** | delivery (a broad `subscribe`, even `"*"`, is capped to these) |
+
+Patterns use the bus topic syntax — exact, `prefix.*`, or `*` — matched by
+`internal/event.Matches`. Everything fails closed: a field left empty grants
+nothing. In particular a plugin cannot drive the app by publishing a `command.*`
+event unless it declared that emit — commands normally go through a granted
+`call`. Grants are built by the plugin loader (`grantsFor` / `eventGrantsFor`)
+and enforced in the bus (`conn.mayCall`/`authorize`, `mayPublish`, `mayConsume`,
+`mayProvide`). Tested in `bus/event_authz_test.go` + `bus/rpc_test.go`.
 
 Wired into the app: Electron main spawns the hub, connects as a client,
 forwards events to the renderer, **provides** capabilities (`agents.list`,

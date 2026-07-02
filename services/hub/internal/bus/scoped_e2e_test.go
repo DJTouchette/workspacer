@@ -24,7 +24,7 @@ func TestScopedFSCallEnforcedEndToEnd(t *testing.T) {
 	srv.SetToken("host-secret")
 	srv.RegisterPluginToken("plug-tok", "test.plugin", []capspec.Grant{
 		{Method: "fs.read", FSRoots: []string{canon}},
-	})
+	}, capspec.EventGrants{})
 
 	// Trusted provider answers fs.read. It should only ever see the in-scope call.
 	provider := dialClientToken(t, url, "host-secret")

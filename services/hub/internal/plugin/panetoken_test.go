@@ -19,7 +19,7 @@ func newFakeRegistrar() *fakeRegistrar {
 	return &fakeRegistrar{registered: map[string][]capspec.Grant{}}
 }
 
-func (f *fakeRegistrar) RegisterPluginToken(token, _ string, grants []capspec.Grant) {
+func (f *fakeRegistrar) RegisterPluginToken(token, _ string, grants []capspec.Grant, _ capspec.EventGrants) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.registered[token] = grants

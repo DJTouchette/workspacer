@@ -50,8 +50,9 @@ type Frame struct {
 // and the grants it holds — the capabilities it may call, each with optional
 // filesystem scoping.
 type pluginIdent struct {
-	id   string
-	caps map[string]capGrant
+	id     string
+	caps   map[string]capGrant
+	events capspec.EventGrants
 }
 
 // capGrant is what a plugin token may do with one capability. fsRoots, when
@@ -86,7 +87,7 @@ func NewServer(b *broker.Broker) *Server {
 // resolved) so the per-call containment check doesn't re-walk them; a root that
 // can't be canonicalized is dropped, since it can't safely grant anything.
 // Idempotent; called by the plugin manager on load.
-func (s *Server) RegisterPluginToken(token, pluginID string, grants []capspec.Grant) {
+func (s *Server) RegisterPluginToken(token, pluginID string, grants []capspec.Grant, events capspec.EventGrants) {
 	if token == "" {
 		return
 	}
@@ -98,7 +99,7 @@ func (s *Server) RegisterPluginToken(token, pluginID string, grants []capspec.Gr
 		set[g.Method] = capGrant{fsRoots: canonRoots(g.FSRoots)}
 	}
 	s.ptMu.Lock()
-	s.pluginTokens[token] = pluginIdent{id: pluginID, caps: set}
+	s.pluginTokens[token] = pluginIdent{id: pluginID, caps: set, events: events}
 	s.ptMu.Unlock()
 }
 
@@ -208,8 +209,9 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 	var trusted bool
 	var caps map[string]capGrant
 	var pluginID string
+	var events capspec.EventGrants
 	if pi, ok := s.lookupPluginToken(tok); ok {
-		caps, pluginID = pi.caps, pi.id
+		caps, pluginID, events = pi.caps, pi.id, pi.events
 	} else if s.token == "" || tok == s.token {
 		trusted = true
 	} else {
@@ -228,7 +230,10 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 	// and to token-gated remote clients alike.
 	ws.SetReadLimit(64 << 20) // 64 MiB
 	ctx := r.Context()
-	cn := &conn{ws: ws, ctx: ctx, trusted: trusted, caps: caps, pluginID: pluginID}
+	cn := &conn{
+		ws: ws, ctx: ctx, trusted: trusted, caps: caps, pluginID: pluginID,
+		emits: events.Emits, consumes: events.Consumes, provides: events.Provides,
+	}
 	s.router.addConn(cn)
 	defer cn.ws.CloseNow()
 
@@ -242,6 +247,12 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		for ev := range sub.C {
 			ev := ev
+			// Enforce the consume grant even when the plugin subscribed more
+			// broadly (e.g. "*") — the manifest's `consumes` is the ceiling on
+			// what it can ever receive, not just what it asked for.
+			if !cn.mayConsume(ev.Type) {
+				continue
+			}
 			if err := cn.send(Frame{Op: "event", Event: &ev}); err != nil {
 				return
 			}
@@ -272,10 +283,22 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 				_ = cn.send(Frame{Op: "error", Error: "publish missing event"})
 				continue
 			}
+			// A plugin may publish only the event types its manifest declared in
+			// `emits`. This is the gate that stops an untrusted plugin from, e.g.,
+			// publishing a `command.*` event to drive the app without holding the
+			// capability — commands must go through `call`, or be an explicitly
+			// granted emit.
+			if !cn.mayPublish(f.Event.Type) {
+				_ = cn.send(Frame{Op: "error", Error: "plugin not authorized to publish event " + f.Event.Type})
+				continue
+			}
 			s.broker.Publish(*f.Event)
 		case "register":
-			s.router.register(cn, f.Methods)
-			_ = cn.send(Frame{Op: "registered", Methods: f.Methods})
+			// A plugin may register as a provider only for methods its manifest
+			// declared in `provides`; disallowed ones are dropped, and the ack
+			// reflects what was actually registered.
+			accepted := s.router.register(cn, f.Methods)
+			_ = cn.send(Frame{Op: "registered", Methods: accepted})
 		case "call":
 			s.router.call(cn, f)
 		case "result":
@@ -302,6 +325,34 @@ type conn struct {
 	trusted  bool
 	caps     map[string]capGrant
 	pluginID string
+	// Event-side grants (empty for a trusted conn, which bypasses these): which
+	// event types this plugin may publish / receive, and which capability methods
+	// it may register as a provider of. Patterns are matched with event.Matches.
+	emits    []string
+	consumes []string
+	provides []string
+}
+
+// mayPublish reports whether this connection may publish an event of the given
+// type. Trusted conns publish anything; a plugin may publish only types matched
+// by its manifest's `emits`.
+func (cn *conn) mayPublish(typ string) bool {
+	return cn.trusted || event.MatchesAny(cn.emits, typ)
+}
+
+// mayConsume reports whether an event of the given type may be delivered to this
+// connection. Trusted conns receive everything they subscribed to; a plugin
+// additionally only receives types matched by its manifest's `consumes`, so a
+// broad `subscribe` can never widen its reach past what it declared.
+func (cn *conn) mayConsume(typ string) bool {
+	return cn.trusted || event.MatchesAny(cn.consumes, typ)
+}
+
+// mayProvide reports whether this connection may register as the provider of a
+// capability method. Trusted conns (the host) provide the built-in capabilities;
+// a plugin may register only methods matched by its manifest's `provides`.
+func (cn *conn) mayProvide(method string) bool {
+	return cn.trusted || event.MatchesAny(cn.provides, method)
 }
 
 // mayCall reports whether this connection is allowed to invoke method at all

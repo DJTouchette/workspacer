@@ -95,7 +95,7 @@ func rpcServerWith(t *testing.T) (string, *Server) {
 func TestCallNotAuthorized(t *testing.T) {
 	url, srv := rpcServerWith(t)
 	srv.SetToken("host-secret")
-	srv.RegisterPluginToken("plug-tok", "test.plugin", []capspec.Grant{{Method: "agents.list"}}) // not agents.spawn
+	srv.RegisterPluginToken("plug-tok", "test.plugin", []capspec.Grant{{Method: "agents.list"}}, capspec.EventGrants{}) // not agents.spawn
 
 	caller := dialClientToken(t, url, "plug-tok")
 	caller.send(Frame{Op: "call", ID: "auth1", Method: "agents.spawn"})
@@ -113,7 +113,7 @@ func TestCallNotAuthorized(t *testing.T) {
 func TestPluginMayCallDeclaredCapability(t *testing.T) {
 	url, srv := rpcServerWith(t)
 	srv.SetToken("host-secret")
-	srv.RegisterPluginToken("plug-tok", "test.plugin", []capspec.Grant{{Method: "agents.spawn"}})
+	srv.RegisterPluginToken("plug-tok", "test.plugin", []capspec.Grant{{Method: "agents.spawn"}}, capspec.EventGrants{})
 
 	provider := dialClientToken(t, url, "host-secret") // trusted host registers the method
 	provider.send(Frame{Op: "register", Methods: []string{"agents.spawn"}})

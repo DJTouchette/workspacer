@@ -40,3 +40,21 @@ type Grant struct {
 	Method  string
 	FSRoots []string
 }
+
+// EventGrants is a plugin token's pub/sub + provider surface — the event side of
+// the same "declare it in the manifest to be allowed it" model that [Grant]
+// gives capability calls:
+//
+//   - Emits: event types the plugin may publish on the bus.
+//   - Consumes: event types it may receive (delivery of anything else is dropped).
+//   - Provides: capability method names it may register as a provider of.
+//
+// Patterns use the bus topic syntax — exact, "prefix.*", or "*" — matched by
+// internal/event.Matches. Empty means none: a plugin that declared nothing can
+// neither publish, receive, nor provide, matching the fail-closed stance of
+// capability calls. Trusted connections (the host) bypass all of this.
+type EventGrants struct {
+	Emits    []string
+	Consumes []string
+	Provides []string
+}

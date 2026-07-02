@@ -44,6 +44,19 @@ func grantsWithBindings(mf Manifest, extra map[string]string) []capspec.Grant {
 	return out
 }
 
+// eventGrantsFor lifts a manifest's declared pub/sub + provider surface into the
+// grant the bus enforces: which event types the plugin may publish (emits) /
+// receive (consumes), and which capability methods it may register as a provider
+// of (provides). Verbatim from the manifest — the patterns are matched at the
+// bus with the same syntax as subscription topics.
+func eventGrantsFor(mf Manifest) capspec.EventGrants {
+	return capspec.EventGrants{
+		Emits:    mf.Emits,
+		Consumes: mf.Consumes,
+		Provides: mf.Provides,
+	}
+}
+
 // resolveRoots expands a capability's declared path scopes to concrete roots.
 // Unresolvable entries are dropped — a path-scoped grant that resolves to no
 // roots denies every call (fail closed), which is the safe outcome.
@@ -97,7 +110,7 @@ type Publisher interface {
 // confine its filesystem reach. The bus Server implements this. nil is allowed
 // (capability enforcement disabled).
 type TokenRegistrar interface {
-	RegisterPluginToken(token, pluginID string, grants []capspec.Grant)
+	RegisterPluginToken(token, pluginID string, grants []capspec.Grant, events capspec.EventGrants)
 	UnregisterPluginToken(token string)
 }
 
@@ -214,7 +227,7 @@ func (m *Manager) PaneToken(pluginID string, bindings map[string]string) (string
 	if err != nil {
 		return "", err
 	}
-	m.reg.RegisterPluginToken(tok, pluginID, grantsWithBindings(l.manifest, bindings))
+	m.reg.RegisterPluginToken(tok, pluginID, grantsWithBindings(l.manifest, bindings), eventGrantsFor(l.manifest))
 	m.mu.Lock()
 	m.paneTokens[tok] = pluginID
 	m.mu.Unlock()
@@ -309,7 +322,7 @@ func (m *Manager) Add(mf Manifest) {
 	if !mf.Disabled && m.reg != nil && (mf.Server != nil || len(mf.Panes) > 0) {
 		l.token = loadOrCreatePluginToken(mf.Dir)
 		if l.token != "" {
-			m.reg.RegisterPluginToken(l.token, mf.ID, grantsFor(mf))
+			m.reg.RegisterPluginToken(l.token, mf.ID, grantsFor(mf), eventGrantsFor(mf))
 		}
 	}
 	if mf.Server != nil && !mf.Disabled {

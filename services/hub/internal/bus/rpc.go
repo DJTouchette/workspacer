@@ -102,14 +102,22 @@ func (rt *router) registerLocal(method string, h LocalHandler) {
 	rt.mu.Unlock()
 }
 
-func (rt *router) register(cn *conn, methods []string) {
+// register installs cn as the provider for each method it's allowed to provide
+// (trusted conns: all; plugins: those matched by their `provides` grant).
+// Returns the methods actually registered, so the caller's ack is truthful and a
+// plugin can tell which of its requested methods were withheld.
+func (rt *router) register(cn *conn, methods []string) []string {
+	accepted := make([]string, 0, len(methods))
 	rt.mu.Lock()
 	for _, m := range methods {
-		if m != "" {
-			rt.providers[m] = cn.id
+		if m == "" || !cn.mayProvide(m) {
+			continue
 		}
+		rt.providers[m] = cn.id
+		accepted = append(accepted, m)
 	}
 	rt.mu.Unlock()
+	return accepted
 }
 
 // call routes a caller's invocation to the registered provider.
