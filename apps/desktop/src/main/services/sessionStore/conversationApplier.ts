@@ -1,4 +1,5 @@
 import type { ClaudeSessionState, ToolCall } from '../claudeSessionStore';
+import { applyStopEvent } from './hookEventRouter';
 
 // ── Conversation delta application ───────────────────────────────────────────
 //
@@ -51,6 +52,22 @@ export function isDuplicateMessage(session: ClaudeSessionState, role: string, co
   return recent.some(
     (t) => t.role === role && t.content && t.content === content,
   );
+}
+
+/**
+ * Claude Code writes these markers into the transcript when the user
+ * interrupts a turn (Esc): a plain `[Request interrupted by user]` user row,
+ * or `[Request interrupted by user for tool use]` as the pending tool's
+ * result. Crucially, *no Stop hook fires on interrupt* — so without spotting
+ * these, an interrupted session stays stuck on 'streaming' until its next
+ * prompt.
+ */
+function isInterruptMarker(item: ConversationItemWire): boolean {
+  const text =
+    item.kind === 'user_message' ? item.text :
+    item.kind === 'tool_result' ? item.content :
+    undefined;
+  return typeof text === 'string' && text.trimStart().startsWith('[Request interrupted by user');
 }
 
 function tsOf(item: ConversationItemWire): number {
@@ -160,5 +177,16 @@ export function applyConversationItems(
     }
     session.completedToolCalls = session.completedToolCalls.filter(tc => !convToolIds.has(tc.id));
     session.activeToolCalls = session.activeToolCalls.filter(tc => !convToolIds.has(tc.id));
+  }
+
+  // Interrupt detection: if the batch *ends* on an interrupt marker, the turn
+  // was cancelled and no Stop hook is coming — fold in the same cleanup Stop
+  // would have done (idle, clear pendings + work log). Only the trailing item
+  // counts: an interrupt mid-batch is history the session already moved past
+  // (e.g. a full resync replaying an old interrupt), and any follow-up prompt
+  // flips the state back to 'streaming' via its UserPromptSubmit hook anyway.
+  const lastMeaningful = [...items].reverse().find(i => i.kind !== 'usage');
+  if (lastMeaningful && isInterruptMarker(lastMeaningful)) {
+    applyStopEvent(session);
   }
 }
