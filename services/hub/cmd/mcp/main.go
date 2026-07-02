@@ -116,7 +116,7 @@ func newServer(c *busclient.Client) *mcp.Server {
 
 	// ── Spawn ──────────────────────────────────────────────────────────────
 	addTool[spawnAgentIn](s, c, "spawn_agent",
-		"Start a new Claude Code agent session in a directory. Returns the new sessionId, which you can then drive with send_message, approve, answer, etc. Pass label to give the new agent a human-readable name shown in the UI, and parentSessionId (your own session id) so the new agent appears nested under you in the UI. Set mcpFacade:true to give the new agent the workspacer tools too (e.g. a summarizer worker that reads transcripts itself).",
+		"Start a new coding-agent session in a directory — Claude Code by default, or another harness via provider (codex, opencode, pi). Returns the new sessionId, which you can then drive with send_message, approve, answer, etc. Pass label to give the new agent a human-readable name shown in the UI, and parentSessionId (your own session id) so the new agent appears nested under you in the UI. Set mcpFacade:true to give the new agent the workspacer tools too (e.g. a summarizer worker that reads transcripts itself).",
 		"agents.spawn")
 	addTool[createTerminalIn](s, c, "create_terminal",
 		"Open a new shell terminal session. Returns the new sessionId; write to it with terminal_input.",
@@ -364,8 +364,9 @@ type recentIn struct {
 }
 
 type spawnAgentIn struct {
+	Provider        string `json:"provider,omitempty" jsonschema:"coding-agent backend to run: claude (default), codex, opencode, or pi"`
 	Cwd             string `json:"cwd,omitempty" jsonschema:"working directory for the new agent (defaults to the user's home)"`
-	Model           string `json:"model,omitempty" jsonschema:"model id to use, e.g. claude-opus-4-8 (optional)"`
+	Model           string `json:"model,omitempty" jsonschema:"model id to use, e.g. claude-opus-4-8 (optional; provider-specific)"`
 	ProfileID       string `json:"profileId,omitempty" jsonschema:"workspacer Claude profile id to use (optional)"`
 	SkipPermissions bool   `json:"skipPermissions,omitempty" jsonschema:"start the agent with --dangerously-skip-permissions"`
 	Label           string `json:"label,omitempty" jsonschema:"a short human label for the new agent, shown as its name in the UI"`

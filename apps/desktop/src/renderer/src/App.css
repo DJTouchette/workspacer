@@ -116,6 +116,12 @@ html, body {
   to { opacity: 1; transform: none; }
 }
 
+/* The section header already draws a rule; the first row's own divider
+ * would double it up right underneath. */
+.wks-settings-section-body > :first-child {
+  border-top: none !important;
+}
+
 /* Shared frosted-glass surface. Apply alongside per-element layout styles. */
 .wks-glass {
   background-color: var(--wks-glass-bg);

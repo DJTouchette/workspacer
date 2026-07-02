@@ -47,13 +47,13 @@ export function Section({ title, children, id }: { title: string; children: Reac
         color: 'var(--wks-text-faint)',
         textTransform: 'uppercase',
         letterSpacing: '0.1em',
-        marginBottom: '4px',
-        paddingBottom: '6px',
+        marginBottom: '10px',
+        paddingBottom: '10px',
         borderBottom: '1px solid var(--wks-border-subtle)',
       }}>
         {title}
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column' }}>
+      <div className="wks-settings-section-body" style={{ display: 'flex', flexDirection: 'column' }}>
         {children}
       </div>
     </div>

@@ -8,8 +8,9 @@ import { findSessionRefs } from './askLinks';
 export interface AskPaneProps {
   /** The current fleet — used to resolve session:<id> links and to scope. */
   agents: AgentWorkspace[];
-  /** Spawn a supervisor agent and send it the question. Returns new agent id. */
-  spawnSupervisor: (opts: { question: string; parentId?: string; provider?: AgentProvider }) => Promise<string>;
+  /** Spawn a supervisor agent and send it the question (or, with no question,
+   *  a plain fleet agent staged to start its watch loop). Returns new agent id. */
+  spawnSupervisor: (opts: { question?: string; parentId?: string; provider?: AgentProvider }) => Promise<string>;
   /** Navigate the app to a given agent workspace by its AgentWorkspace.id. */
   onJumpToAgent: (agentId: string) => void;
   /** When the Ask pane was opened scoped to a specific agent (AgentWorkspace.id),
@@ -152,6 +153,21 @@ const AskPane: React.FC<AskPaneProps> = ({ agents, spawnSupervisor, onJumpToAgen
     },
     [spawning, spawnSupervisor, scopeAgentId, onJumpToAgent, prefix, provider],
   );
+
+  // Spawn a fleet agent directly — no question, it just starts its watch loop.
+  const spawnDirect = useCallback(async () => {
+    if (spawning) return;
+    setSpawning(true);
+    setError('');
+    try {
+      const newId = await spawnSupervisor({ parentId: scopeAgentId, provider });
+      onJumpToAgent(newId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSpawning(false);
+    }
+  }, [spawning, spawnSupervisor, scopeAgentId, provider, onJumpToAgent]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -349,27 +365,58 @@ const AskPane: React.FC<AskPaneProps> = ({ agents, spawnSupervisor, onJumpToAgen
           </div>
         )}
 
-        {/* Ask button */}
-        <button
-          onClick={() => void submit(question)}
-          disabled={!canSubmit}
-          style={{
-            alignSelf: 'flex-end',
-            padding: '8px 20px',
-            borderRadius: 8,
-            border: 'none',
-            background: canSubmit ? 'var(--wks-accent, #4a9eff)' : 'var(--wks-border-subtle, rgba(255,255,255,0.08))',
-            color: canSubmit ? 'var(--wks-text-on-accent, #0d0d10)' : 'var(--wks-text-faint, #666)',
-            fontSize: '0.78rem',
-            fontWeight: 700,
-            fontFamily: 'inherit',
-            cursor: canSubmit ? 'pointer' : 'default',
-            transition: 'background 0.15s ease, color 0.15s ease',
-            letterSpacing: '0.01em',
-          }}
-        >
-          {spawning ? 'Spawning…' : 'Ask'}
-        </button>
+        {/* Actions: spawn a fleet agent directly, or ask the question */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10 }}>
+          <button
+            onClick={() => void spawnDirect()}
+            disabled={spawning}
+            title="Spawn a supervisor with no question — it just starts watching the fleet"
+            style={{
+              padding: '8px 14px',
+              borderRadius: 8,
+              border: '1px solid var(--wks-border-subtle, rgba(255,255,255,0.12))',
+              background: 'transparent',
+              color: spawning ? 'var(--wks-text-faint, #666)' : 'var(--wks-text-secondary, #aaa)',
+              fontSize: '0.74rem',
+              fontWeight: 600,
+              fontFamily: 'inherit',
+              cursor: spawning ? 'default' : 'pointer',
+              transition: 'border-color 0.15s ease, color 0.15s ease',
+            }}
+            onMouseEnter={(e) => {
+              if (spawning) return;
+              const el = e.currentTarget as HTMLButtonElement;
+              el.style.borderColor = 'var(--wks-accent, #4a9eff)';
+              el.style.color = 'var(--wks-accent, #4a9eff)';
+            }}
+            onMouseLeave={(e) => {
+              const el = e.currentTarget as HTMLButtonElement;
+              el.style.borderColor = 'var(--wks-border-subtle, rgba(255,255,255,0.12))';
+              el.style.color = 'var(--wks-text-secondary, #aaa)';
+            }}
+          >
+            Just spawn a fleet agent
+          </button>
+          <button
+            onClick={() => void submit(question)}
+            disabled={!canSubmit}
+            style={{
+              padding: '8px 20px',
+              borderRadius: 8,
+              border: 'none',
+              background: canSubmit ? 'var(--wks-accent, #4a9eff)' : 'var(--wks-border-subtle, rgba(255,255,255,0.08))',
+              color: canSubmit ? 'var(--wks-text-on-accent, #0d0d10)' : 'var(--wks-text-faint, #666)',
+              fontSize: '0.78rem',
+              fontWeight: 700,
+              fontFamily: 'inherit',
+              cursor: canSubmit ? 'pointer' : 'default',
+              transition: 'background 0.15s ease, color 0.15s ease',
+              letterSpacing: '0.01em',
+            }}
+          >
+            {spawning ? 'Spawning…' : 'Ask'}
+          </button>
+        </div>
       </div>
 
       {/* ── Supervisors list ── */}
