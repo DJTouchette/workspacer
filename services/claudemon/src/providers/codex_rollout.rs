@@ -146,15 +146,25 @@ fn translate_event_msg(payload: &Value) -> Vec<AgentUpdate> {
         "task_started" => out.push(AgentUpdate::Busy),
         "task_complete" => out.push(AgentUpdate::Idle),
         "token_count" => {
-            let usage = payload.get("info").and_then(|i| i.get("total_token_usage"));
+            let info = payload.get("info");
+            let usage = info.and_then(|i| i.get("total_token_usage"));
             let input = usage.and_then(|u| u.get("input_tokens")).and_then(Value::as_u64);
             let output = usage.and_then(|u| u.get("output_tokens")).and_then(Value::as_u64);
             if input.is_some() || output.is_some() {
+                let context_tokens = usage
+                    .and_then(|u| u.get("total_tokens"))
+                    .and_then(Value::as_u64)
+                    .or_else(|| Some(input.unwrap_or(0) + output.unwrap_or(0)));
+                let context_window = info
+                    .and_then(|i| i.get("model_context_window"))
+                    .and_then(Value::as_u64);
                 out.push(AgentUpdate::Usage {
                     model: None,
                     input_tokens: input,
                     output_tokens: output,
                     cost_usd: None,
+                    context_tokens,
+                    context_window,
                 });
             }
         }
@@ -448,7 +458,8 @@ mod tests {
     fn token_count_maps_to_usage() {
         let e = ev(json!({
             "type": "token_count",
-            "info": { "total_token_usage": { "input_tokens": 1000, "output_tokens": 200, "total_tokens": 1200 } }
+            "info": { "total_token_usage": { "input_tokens": 1000, "output_tokens": 200, "total_tokens": 1200 },
+                      "model_context_window": 272000 }
         }));
         assert_eq!(
             translate(&e),
@@ -457,6 +468,8 @@ mod tests {
                 input_tokens: Some(1000),
                 output_tokens: Some(200),
                 cost_usd: None,
+                context_tokens: Some(1200),
+                context_window: Some(272000),
             }]
         );
     }

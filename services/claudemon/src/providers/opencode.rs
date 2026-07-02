@@ -185,6 +185,9 @@ fn usage_from(v: &Value) -> Option<AgentUpdate> {
     let tokens = v.get("tokens");
     let input = tokens.and_then(|t| t.get("input")).and_then(Value::as_u64);
     let output = tokens.and_then(|t| t.get("output")).and_then(Value::as_u64);
+    let cache = tokens.and_then(|t| t.get("cache"));
+    let cache_read = cache.and_then(|c| c.get("read")).and_then(Value::as_u64);
+    let cache_write = cache.and_then(|c| c.get("write")).and_then(Value::as_u64);
     let cost = v.get("cost").and_then(Value::as_f64);
     let model = v
         .get("modelID")
@@ -194,11 +197,21 @@ fn usage_from(v: &Value) -> Option<AgentUpdate> {
     if input.is_none() && output.is_none() && cost.is_none() && model.is_none() {
         return None;
     }
+    // Context occupancy of the step that just finished: prompt side (input +
+    // both cache tiers) plus what it generated. OpenCode doesn't report the
+    // model's window; the status line falls back to the window table.
+    let context_tokens = if input.is_some() || output.is_some() {
+        Some(input.unwrap_or(0) + output.unwrap_or(0) + cache_read.unwrap_or(0) + cache_write.unwrap_or(0))
+    } else {
+        None
+    };
     Some(AgentUpdate::Usage {
         model,
         input_tokens: input,
         output_tokens: output,
         cost_usd: cost,
+        context_tokens,
+        context_window: None,
     })
 }
 
@@ -578,6 +591,8 @@ mod tests {
                     input_tokens: Some(1200),
                     output_tokens: Some(340),
                     cost_usd: Some(0.0123),
+                    context_tokens: Some(1540),
+                    context_window: None,
                 }
             ]
         );
@@ -602,6 +617,8 @@ mod tests {
                     input_tokens: Some(50),
                     output_tokens: Some(9),
                     cost_usd: Some(0.001),
+                    context_tokens: Some(59),
+                    context_window: None,
                 }
             ]
         );

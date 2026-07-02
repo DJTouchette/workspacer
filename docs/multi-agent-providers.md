@@ -57,9 +57,22 @@ integration is *cleaner*, not hackier:
   output_tokens, reasoning_output_tokens}`, `turn.failed`, `item.*`, `error`;
   resume via `codex exec resume`).
 
-### Pi — `pi --mode rpc`
-- The `@mariozechner/pi-coding-agent` harness. RPC mode speaks strict
-  **LF-delimited JSONL over stdio** (split on `\n` only — its own warning).
+### Pi — hybrid (TUI + session-file tail); `--mode rpc` for supervisors
+- **Hybrid (default since 2026-07):** the native Pi TUI runs in a PTY pinned to
+  our canonical id (`pi --session-id <uuid>` — creates it if missing), and the
+  GUI is driven by tailing the session JSONL Pi writes to
+  `~/.pi/agent/sessions/--<encoded-cwd>--/<ts>_<uuid>.jsonl` (encoding: strip
+  leading separator, `/ \ :` → `-`). Entries are whole `{type:"message"}` units
+  (user / assistant w/ text+toolCall blocks+usage / toolResult) plus
+  `model_change`; busy/idle is inferred from user messages and the assistant
+  `stopReason` ("toolUse" → more coming). GUI prompts are bracketed-pasted into
+  the TUI; approvals happen in the Term. Context tokens follow Pi's own formula:
+  `usage.totalTokens || input+output+cacheRead+cacheWrite`.
+- **RPC mode (supervisors only):** headless `pi --mode rpc`, kept because role
+  instructions must be prepended programmatically and dialogs must surface as
+  GUI approvals. RPC speaks strict **LF-delimited JSONL over stdio** (split on
+  `\n` only — its own warning).
+- The `@earendil-works/pi-coding-agent` harness (formerly @mariozechner).
 - Drive: `{"type":"prompt","message":...}` per user turn (`steer`/`follow_up`/
   `abort` also available); model via `--model` flag or `set_model`.
 - Observe: `agent_start`/`agent_end` + `turn_start`/`turn_end` (lifecycle),

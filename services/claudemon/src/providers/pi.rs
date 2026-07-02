@@ -179,17 +179,31 @@ fn usage_from(message: &Value) -> Option<AgentUpdate> {
     let output = pick(&["output", "outputTokens", "output_tokens", "completionTokens", "completion_tokens"]);
     let cost = usage
         .and_then(|u| u.get("cost"))
-        .and_then(Value::as_f64)
+        .and_then(|c| c.as_f64().or_else(|| c.get("total").and_then(Value::as_f64)))
         .or_else(|| message.get("cost").and_then(Value::as_f64));
     let model = message.get("model").and_then(Value::as_str).map(str::to_owned);
     if input.is_none() && output.is_none() && cost.is_none() && model.is_none() {
         return None;
     }
+    // Context occupancy — Pi's own formula (compaction.ts): totalTokens when
+    // present, else input + output + both cache tiers.
+    let total = pick(&["totalTokens", "total_tokens", "total"]);
+    let cache_read = pick(&["cacheRead", "cache_read", "cacheReadTokens"]);
+    let cache_write = pick(&["cacheWrite", "cache_write", "cacheWriteTokens"]);
+    let context_tokens = total.filter(|t| *t > 0).or_else(|| {
+        if input.is_some() || output.is_some() {
+            Some(input.unwrap_or(0) + output.unwrap_or(0) + cache_read.unwrap_or(0) + cache_write.unwrap_or(0))
+        } else {
+            None
+        }
+    });
     Some(AgentUpdate::Usage {
         model,
         input_tokens: input,
         output_tokens: output,
         cost_usd: cost,
+        context_tokens,
+        context_window: None,
     })
 }
 
@@ -206,6 +220,16 @@ fn dialog_summary(req: &Value) -> Option<String> {
 
 /// Spawn and drive a Pi-managed session in the background. Returns immediately;
 /// the session id is already registered in `store` by the caller.
+///
+/// Two shapes, mirroring the Codex hybrid split:
+///   - **Hybrid (default):** the native Pi TUI runs in a PTY (the Term view),
+///     pinned to our canonical session id via `--session-id`, and the GUI is
+///     driven by tailing the session JSONL Pi writes for that id. GUI prompts
+///     are pasted into the TUI; approvals happen in the Term.
+///   - **RPC (supervisors):** `pi --mode rpc` headless — needed because the
+///     facade's role instructions must be prepended programmatically and the
+///     dialogs must surface as GUI approvals; a supervisor has no human at a
+///     Term.
 pub fn spawn_session(
     store: SessionStore,
     conv: ConversationStore,
@@ -217,7 +241,13 @@ pub fn spawn_session(
     facade: Facade,
 ) {
     tokio::spawn(async move {
-        if let Err(err) = run_session(&store, &conv, &session_id, &cwd, model, &bin, yolo, &facade).await {
+        let headless = facade.mcp_url.is_some() || facade.instructions.is_some();
+        let result = if headless {
+            run_session(&store, &conv, &session_id, &cwd, model, &bin, yolo, &facade).await
+        } else {
+            run_tui_session(&store, &conv, &session_id, &cwd, model, &bin).await
+        };
+        if let Err(err) = result {
             tracing::warn!(?err, session = %session_id, "pi managed session ended with error");
         }
         store.deregister_managed(&session_id);
@@ -244,6 +274,315 @@ fn write_pi_mcp(cwd: &str, mcp_url: &str) {
             tracing::warn!(?err, "writing .mcp.json for the facade failed");
         }
     }
+}
+
+// ── Hybrid (TUI + session-file tail) ────────────────────────────────────────
+
+/// Pi's per-project session dir: `~/.pi/agent/sessions/--<encoded-cwd>--/`,
+/// where the encoding strips a leading separator and turns `/ \ :` into `-`
+/// (mirrors `session-manager.ts`'s `safePath`).
+fn pi_session_dir(cwd: &str) -> Option<std::path::PathBuf> {
+    let home = directories::BaseDirs::new()?.home_dir().to_path_buf();
+    let trimmed = cwd.trim_start_matches(['/', '\\']);
+    let encoded = format!("--{}--", trimmed.replace(['/', '\\', ':'], "-"));
+    Some(home.join(".pi").join("agent").join("sessions").join(encoded))
+}
+
+/// Find the session JSONL Pi writes for our pinned id: `<ts>_<session_id>.jsonl`
+/// in the project's session dir. Polls until it appears (Pi creates it lazily on
+/// the first persisted entry) or the session ends; ~3 min backstop like the
+/// codex rollout discovery.
+async fn discover_session_file(
+    store: &SessionStore,
+    session_id: &str,
+    cwd: &str,
+) -> Option<std::path::PathBuf> {
+    let dir = pi_session_dir(cwd)?;
+    let suffix = format!("_{session_id}.jsonl");
+    for _ in 0..720 {
+        if store.get(session_id).is_none() {
+            return None; // session ended before Pi persisted anything
+        }
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                if entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|n| n.ends_with(&suffix))
+                {
+                    return Some(entry.path());
+                }
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+    None
+}
+
+/// Collect the plain text out of a Pi message `content` (a string, or an array
+/// of blocks where text blocks carry `text`).
+fn content_text(content: Option<&Value>) -> String {
+    match content {
+        Some(Value::String(s)) => s.clone(),
+        Some(Value::Array(blocks)) => blocks
+            .iter()
+            .filter(|b| b.get("type").and_then(Value::as_str) == Some("text"))
+            .filter_map(|b| b.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join(""),
+        _ => String::new(),
+    }
+}
+
+/// Translate one Pi session-file entry into typed updates. Pure and total.
+///
+/// Session entries are whole units appended after the fact (`{type:"message",
+/// message:{…}}` and friends) — unlike the RPC stream there are no start/end
+/// lifecycle events, so busy/idle is inferred: a user message means a turn is
+/// beginning (Busy); an assistant message that stopped for tool use means more
+/// is coming (Busy); any other assistant stop means the turn is over (Idle).
+pub fn translate_session_entry(entry: &Value) -> Vec<AgentUpdate> {
+    let mut out = Vec::new();
+    match entry.get("type").and_then(Value::as_str).unwrap_or("") {
+        "message" => {
+            let Some(message) = entry.get("message") else { return out };
+            match message.get("role").and_then(Value::as_str).unwrap_or("") {
+                "user" => {
+                    let text = content_text(message.get("content"));
+                    if !text.trim().is_empty() {
+                        out.push(AgentUpdate::UserText(text));
+                    }
+                    out.push(AgentUpdate::Busy);
+                }
+                "assistant" => {
+                    for block in message
+                        .get("content")
+                        .and_then(Value::as_array)
+                        .map(|a| a.as_slice())
+                        .unwrap_or(&[])
+                    {
+                        match block.get("type").and_then(Value::as_str).unwrap_or("") {
+                            "text" => {
+                                if let Some(text) = block.get("text").and_then(Value::as_str) {
+                                    if !text.trim().is_empty() {
+                                        out.push(AgentUpdate::AssistantText(text.to_string()));
+                                    }
+                                }
+                            }
+                            "toolCall" | "tool_call" => {
+                                let id = block.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+                                let name = block
+                                    .get("name")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("tool")
+                                    .to_string();
+                                let input = block
+                                    .get("arguments")
+                                    .or_else(|| block.get("args"))
+                                    .cloned()
+                                    .unwrap_or(Value::Null);
+                                out.push(AgentUpdate::ToolUse { id, name, input });
+                            }
+                            _ => {} // thinking etc.
+                        }
+                    }
+                    if let Some(u) = usage_from(message) {
+                        out.push(u);
+                    }
+                    let stop = message
+                        .get("stopReason")
+                        .and_then(Value::as_str)
+                        .unwrap_or("");
+                    if stop.to_ascii_lowercase().contains("tool") {
+                        out.push(AgentUpdate::Busy); // tool round — more coming
+                    } else {
+                        out.push(AgentUpdate::Idle);
+                    }
+                }
+                "toolResult" => {
+                    let tool_use_id = message
+                        .get("toolCallId")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
+                    let content = {
+                        let t = content_text(message.get("content"));
+                        if t.is_empty() {
+                            message
+                                .get("output")
+                                .and_then(Value::as_str)
+                                .unwrap_or("")
+                                .to_string()
+                        } else {
+                            t
+                        }
+                    };
+                    let is_error = message.get("isError").and_then(Value::as_bool).unwrap_or(false);
+                    out.push(AgentUpdate::ToolResult { tool_use_id, content, is_error });
+                }
+                _ => {} // custom / bashExecution / branch summaries — not conversation
+            }
+        }
+        "model_change" => {
+            let provider = entry.get("provider").and_then(Value::as_str);
+            let model_id = entry.get("modelId").and_then(Value::as_str);
+            if let Some(m) = model_id {
+                let full = match provider {
+                    Some(p) => format!("{p}/{m}"),
+                    None => m.to_string(),
+                };
+                out.push(AgentUpdate::Usage {
+                    model: Some(full),
+                    input_tokens: None,
+                    output_tokens: None,
+                    cost_usd: None,
+                    context_tokens: None,
+                    context_window: None,
+                });
+            }
+        }
+        _ => {} // session header, labels, compaction, thinking_level_change, …
+    }
+    out
+}
+
+/// Tail the Pi session JSONL by byte offset, folding each complete line through
+/// [`translate_session_entry`] + the shared apply path. Replays already-written
+/// history first (a resumed session repopulates the GUI), then polls for
+/// appends. Ends when the session is deregistered or the file vanishes.
+async fn tail_session_file(
+    store: &SessionStore,
+    conv: &ConversationStore,
+    session_id: &str,
+    path: &std::path::Path,
+) -> anyhow::Result<()> {
+    use tokio::io::{AsyncBufReadExt, AsyncSeekExt};
+    let mut cur_mode = SessionMode::Input;
+    let mut acc = UsageAcc::new();
+    let mut offset: u64 = 0;
+    let mut leftover = String::new();
+    loop {
+        if store.get(session_id).is_none() {
+            break;
+        }
+        let Ok(mut file) = tokio::fs::File::open(path).await else { break };
+        let len = file.metadata().await.map(|m| m.len()).unwrap_or(offset);
+        if len > offset {
+            file.seek(std::io::SeekFrom::Start(offset)).await?;
+            let mut reader = BufReader::new(file);
+            let mut line = String::new();
+            loop {
+                line.clear();
+                let n = reader.read_line(&mut line).await?;
+                if n == 0 {
+                    break;
+                }
+                offset += n as u64;
+                if !line.ends_with('\n') {
+                    leftover = std::mem::take(&mut line);
+                    offset -= leftover.len() as u64;
+                    break;
+                }
+                let full = if leftover.is_empty() {
+                    line.clone()
+                } else {
+                    format!("{}{}", std::mem::take(&mut leftover), line)
+                };
+                let trimmed = full.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+                    let updates = translate_session_entry(&value);
+                    if !updates.is_empty() {
+                        apply_updates(store, conv, session_id, updates, &mut cur_mode, &mut acc);
+                    }
+                }
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    }
+    Ok(())
+}
+
+/// Hybrid driver: native Pi TUI in a PTY (Term view) pinned to our session id,
+/// GUI driven by tailing the session JSONL it writes. GUI prompts are pasted
+/// into the TUI (bracketed paste, like the codex rollout fallback); the file
+/// tail echoes them back as `UserText`, so no local echo here. Approvals happen
+/// in the Term.
+async fn run_tui_session(
+    store: &SessionStore,
+    conv: &ConversationStore,
+    session_id: &str,
+    cwd: &str,
+    model: Option<String>,
+    bin: &str,
+) -> anyhow::Result<()> {
+    let mut argv = vec![bin.to_string(), "--session-id".to_string(), session_id.to_string()];
+    if let Some(m) = &model {
+        argv.push("--model".to_string());
+        argv.push(m.clone());
+    }
+    let tui = super::spawn_attach_pty(store, session_id, &argv, cwd)
+        .context("spawning pi TUI")?;
+
+    // Ready for input as soon as the TUI is up (mode-gates the GUI composer).
+    store.set_managed_mode(session_id, SessionMode::Input, None);
+
+    // Drive the GUI from the session file (background; best-effort).
+    {
+        let store = store.clone();
+        let conv = conv.clone();
+        let sid = session_id.to_string();
+        let cwd = cwd.to_string();
+        tokio::spawn(async move {
+            let Some(path) = discover_session_file(&store, &sid, &cwd).await else {
+                tracing::warn!(session = %sid, "pi session file not found; GUI view will stay empty");
+                return;
+            };
+            tracing::info!(session = %sid, path = %path.display(), "tailing pi session file");
+            if let Err(err) = tail_session_file(&store, &conv, &sid, &path).await {
+                tracing::warn!(?err, session = %sid, "pi session tail ended with error");
+            }
+        });
+    }
+
+    let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+    store.register_managed_input(session_id, tx);
+    // Approvals happen in the Term in this mode; accept and drop decisions so a
+    // stray /approve can't wedge the caller.
+    let (dtx, mut drx) = mpsc::unbounded_channel::<bool>();
+    store.register_managed_decision(session_id, dtx);
+    let mut tui_check = tokio::time::interval(std::time::Duration::from_secs(2));
+
+    loop {
+        tokio::select! {
+            msg = rx.recv() => match msg {
+                Some(text) => {
+                    // Bracketed paste + Enter so the TUI submits it as one message.
+                    let body = text.trim_end_matches(['\r', '\n']);
+                    let mut bytes = b"\x1b[200~".to_vec();
+                    bytes.extend_from_slice(body.as_bytes());
+                    bytes.extend_from_slice(b"\x1b[201~\r");
+                    let _ = crate::wrapper::pty::write_bytes(&tui, &bytes).await;
+                }
+                None => break, // managed input dropped → terminated
+            },
+            decision = drx.recv() => match decision {
+                Some(_) => {} // approvals live in the Term here
+                None => break,
+            },
+            _ = tui_check.tick() => {
+                if crate::wrapper::pty::has_exited(&tui) {
+                    tracing::info!(session = %session_id, "pi TUI exited; tearing down session");
+                    break;
+                }
+            },
+        }
+    }
+
+    let _ = crate::wrapper::pty::signal_child(&tui, crate::protocol::Signal::Sigkill);
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -473,6 +812,8 @@ mod tests {
                 input_tokens: Some(10),
                 output_tokens: Some(2),
                 cost_usd: None,
+                context_tokens: Some(12),
+                context_window: None,
             }]
         );
         // No message → no updates (and still not Idle).
@@ -541,6 +882,8 @@ mod tests {
                 input_tokens: Some(1200),
                 output_tokens: Some(340),
                 cost_usd: Some(0.0123),
+                context_tokens: Some(1540),
+                context_window: None,
             }]
         );
     }
@@ -558,6 +901,8 @@ mod tests {
                 input_tokens: Some(5),
                 output_tokens: Some(7),
                 cost_usd: None,
+                context_tokens: Some(12),
+                context_window: None,
             }]
         );
     }
@@ -580,5 +925,117 @@ mod tests {
         assert!(translate(&json!({ "type": "queue_update", "steering": [] })).is_empty());
         assert!(translate(&json!({})).is_empty());
         assert!(translate(&Value::Null).is_empty());
+    }
+
+    // ── session-file entries (the hybrid's GUI feed) ──
+
+    fn msg_entry(message: Value) -> Value {
+        json!({ "type": "message", "id": "e1", "parentId": null, "timestamp": "2026-07-01T00:00:00Z", "message": message })
+    }
+
+    #[test]
+    fn session_user_message_is_text_plus_busy() {
+        let e = msg_entry(json!({ "role": "user", "content": "fix the tests" }));
+        assert_eq!(
+            translate_session_entry(&e),
+            vec![AgentUpdate::UserText("fix the tests".into()), AgentUpdate::Busy]
+        );
+        // Block-array content works too.
+        let e = msg_entry(json!({ "role": "user", "content": [{ "type": "text", "text": "hi" }] }));
+        assert_eq!(
+            translate_session_entry(&e),
+            vec![AgentUpdate::UserText("hi".into()), AgentUpdate::Busy]
+        );
+    }
+
+    #[test]
+    fn session_assistant_message_emits_text_tools_usage_and_mode() {
+        let e = msg_entry(json!({
+            "role": "assistant",
+            "model": "anthropic/claude-sonnet-4-5",
+            "stopReason": "toolUse",
+            "content": [
+                { "type": "thinking", "thinking": "hmm" },
+                { "type": "text", "text": "Running it." },
+                { "type": "toolCall", "id": "tc1", "name": "bash", "arguments": { "command": "ls" } }
+            ],
+            "usage": { "input": 100, "output": 20, "cacheRead": 400, "cacheWrite": 30, "cost": 0.01 }
+        }));
+        assert_eq!(
+            translate_session_entry(&e),
+            vec![
+                AgentUpdate::AssistantText("Running it.".into()),
+                AgentUpdate::ToolUse { id: "tc1".into(), name: "bash".into(), input: json!({ "command": "ls" }) },
+                AgentUpdate::Usage {
+                    model: Some("anthropic/claude-sonnet-4-5".into()),
+                    input_tokens: Some(100),
+                    output_tokens: Some(20),
+                    cost_usd: Some(0.01),
+                    // input + output + cacheRead + cacheWrite
+                    context_tokens: Some(550),
+                    context_window: None,
+                },
+                AgentUpdate::Busy, // stopReason toolUse → more coming
+            ]
+        );
+    }
+
+    #[test]
+    fn session_assistant_final_message_idles() {
+        let e = msg_entry(json!({
+            "role": "assistant",
+            "stopReason": "stop",
+            "content": [{ "type": "text", "text": "Done." }],
+            "usage": { "input": 10, "output": 5, "totalTokens": 900 }
+        }));
+        let updates = translate_session_entry(&e);
+        assert_eq!(updates.last(), Some(&AgentUpdate::Idle));
+        // totalTokens wins as the context occupancy when present.
+        assert!(updates.iter().any(|u| matches!(u,
+            AgentUpdate::Usage { context_tokens: Some(900), .. })));
+    }
+
+    #[test]
+    fn session_tool_result_maps_to_tool_result() {
+        let e = msg_entry(json!({
+            "role": "toolResult",
+            "toolCallId": "tc1",
+            "content": [{ "type": "text", "text": "file1\nfile2" }],
+            "isError": false
+        }));
+        assert_eq!(
+            translate_session_entry(&e),
+            vec![AgentUpdate::ToolResult { tool_use_id: "tc1".into(), content: "file1\nfile2".into(), is_error: false }]
+        );
+    }
+
+    #[test]
+    fn session_model_change_updates_the_model() {
+        let e = json!({ "type": "model_change", "id": "e2", "provider": "anthropic", "modelId": "claude-opus-4-8" });
+        assert_eq!(
+            translate_session_entry(&e),
+            vec![AgentUpdate::Usage {
+                model: Some("anthropic/claude-opus-4-8".into()),
+                input_tokens: None,
+                output_tokens: None,
+                cost_usd: None,
+                context_tokens: None,
+                context_window: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn session_noise_entries_are_ignored() {
+        assert!(translate_session_entry(&json!({ "type": "session", "id": "s", "cwd": "/x" })).is_empty());
+        assert!(translate_session_entry(&json!({ "type": "label", "targetId": "e1" })).is_empty());
+        assert!(translate_session_entry(&json!({ "type": "compaction", "summary": "…" })).is_empty());
+        assert!(translate_session_entry(&msg_entry(json!({ "role": "custom", "content": "x" }))).is_empty());
+    }
+
+    #[test]
+    fn pi_session_dir_encodes_cwd_like_pi_does() {
+        let dir = pi_session_dir("/home/user/Work/repo").unwrap();
+        assert!(dir.ends_with(".pi/agent/sessions/--home-user-Work-repo--"));
     }
 }

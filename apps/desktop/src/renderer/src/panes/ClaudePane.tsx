@@ -73,9 +73,12 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
   //                       tailing the rollout, but it's a hybrid either way.
   //   opencode (hybrid) — GUI (the `opencode serve` /event adapter) + terminal
   //                       (`opencode attach` TUI in a PTY, same serve + session)
-  //   pi                — GUI only: managed `pi --mode rpc` adapter (no PTY)
+  //   pi (hybrid)       — terminal (the pi TUI in a PTY, `--session-id` pinned)
+  //                       + GUI (the daemon tails pi's session JSONL). Only a
+  //                       supervisor pi (MCP facade) is headless `--mode rpc`,
+  //                       and its Term is simply blank.
   const isClaude = (provider ?? 'claude') === 'claude';
-  const isHybrid = provider === 'opencode' || provider === 'codex';
+  const isHybrid = provider === 'opencode' || provider === 'codex' || provider === 'pi';
   // Display name of the backend for user-facing copy (empty states, composer,
   // exit notice) so a Codex/OpenCode/Pi pane doesn't read as "Claude".
   const agentName = providerLabel(provider);

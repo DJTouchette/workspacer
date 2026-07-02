@@ -158,26 +158,54 @@ pub enum AgentUpdate {
         input_tokens: Option<u64>,
         output_tokens: Option<u64>,
         cost_usd: Option<f64>,
+        /// Tokens currently occupying the model's context window (the latest
+        /// turn's total, including cache) — NOT cumulative like input/output.
+        context_tokens: Option<u64>,
+        /// The model's context window size, when the provider reports it.
+        /// Absent → [`context_window_for`] falls back to a table by model id.
+        context_window: Option<u64>,
     },
     /// A session-level error message.
     Error(String),
 }
 
-/// Build a `StatusLine` from usage telemetry, for `SessionStore::apply_status_line`.
-pub fn status_from_usage(
-    model: Option<String>,
-    input_tokens: Option<u64>,
-    output_tokens: Option<u64>,
-    cost_usd: Option<f64>,
-) -> StatusLine {
-    StatusLine {
-        model_display: model,
-        total_input_tokens: input_tokens,
-        total_output_tokens: output_tokens,
-        cost_usd,
-        received_at: Some(OffsetDateTime::now_utc()),
-        ..Default::default()
+/// Context window size (tokens) for well-known model families, used when the
+/// provider's own events don't report one. Prefix/substring matched on the
+/// model id (lowercased). Deliberately conservative: an unknown model returns
+/// `None` and the context meter simply doesn't render — a missing meter beats a
+/// wrong one.
+pub fn context_window_for(model: &str) -> Option<u64> {
+    let m = model.to_ascii_lowercase();
+    // Order matters where families overlap (check the more specific first).
+    if m.contains("gemini") {
+        return Some(1_048_576);
     }
+    if m.contains("gpt-4.1") {
+        return Some(1_047_576);
+    }
+    if m.contains("claude") {
+        // 1M-context variants advertise it in the id (e.g. `[1m]`).
+        return Some(if m.contains("[1m]") || m.contains("-1m") { 1_000_000 } else { 200_000 });
+    }
+    if m.contains("gpt-5") || m.contains("codex") {
+        return Some(272_000);
+    }
+    if m.contains("gpt-4o") {
+        return Some(128_000);
+    }
+    if m.starts_with("o3") || m.starts_with("o4") || m.contains("/o3") || m.contains("/o4") {
+        return Some(200_000);
+    }
+    if m.contains("grok") {
+        return Some(256_000);
+    }
+    if m.contains("deepseek") {
+        return Some(131_072);
+    }
+    if m.contains("kimi") || m.contains("qwen") {
+        return Some(262_144);
+    }
+    None
 }
 
 /// Map an `AgentUpdate` to a conversation item, when it represents one.
@@ -209,20 +237,32 @@ pub fn conversation_item(update: &AgentUpdate) -> Option<ConversationItem> {
 
 /// Running tally of model/usage/cost across a managed session, for the status
 /// line. Tokens/cost arrive as per-message or per-step partials, so we take the
-/// max — the displayed totals never regress mid-turn.
+/// max — the displayed totals never regress mid-turn. Context occupancy is the
+/// LATEST reading (not max: compaction legitimately shrinks it).
 #[derive(Default)]
 pub struct UsageAcc {
     model: Option<String>,
     input: Option<u64>,
     output: Option<u64>,
     cost: Option<f64>,
+    context_tokens: Option<u64>,
+    context_window: Option<u64>,
 }
 
 impl UsageAcc {
     pub fn new() -> Self {
         Self::default()
     }
-    fn merge(&mut self, model: Option<String>, input: Option<u64>, output: Option<u64>, cost: Option<f64>) {
+    #[allow(clippy::too_many_arguments)]
+    fn merge(
+        &mut self,
+        model: Option<String>,
+        input: Option<u64>,
+        output: Option<u64>,
+        cost: Option<f64>,
+        context_tokens: Option<u64>,
+        context_window: Option<u64>,
+    ) {
         if model.is_some() {
             self.model = model;
         }
@@ -234,6 +274,38 @@ impl UsageAcc {
         }
         if let Some(c) = cost {
             self.cost = Some(self.cost.map_or(c, |p| p.max(c)));
+        }
+        if context_tokens.is_some() {
+            self.context_tokens = context_tokens; // latest, not max — compaction shrinks it
+        }
+        if context_window.is_some() {
+            self.context_window = context_window;
+        }
+    }
+
+    /// Build the `StatusLine` for `SessionStore::apply_status_line` — the same
+    /// shape Claude's own statusLine feeds, so the renderer's bottom bar (model
+    /// · context meter · tokens · cost) renders identically for every provider.
+    /// The context %, previously Claude-only, is computed from the latest
+    /// context occupancy over the provider-reported window (falling back to
+    /// [`context_window_for`] by model id).
+    pub fn status_line(&self) -> StatusLine {
+        let window = self
+            .context_window
+            .or_else(|| self.model.as_deref().and_then(context_window_for));
+        let pct = match (self.context_tokens, window) {
+            (Some(ctx), Some(win)) if win > 0 => Some(((ctx as f64 / win as f64) * 100.0).min(100.0)),
+            _ => None,
+        };
+        StatusLine {
+            model_display: self.model.clone(),
+            context_used_pct: pct,
+            context_window_size: window,
+            total_input_tokens: self.input,
+            total_output_tokens: self.output,
+            cost_usd: self.cost,
+            received_at: Some(OffsetDateTime::now_utc()),
+            ..Default::default()
         }
     }
 }
@@ -274,8 +346,8 @@ pub fn apply_updates(
                     raw: Value::Null,
                 });
             }
-            AgentUpdate::Usage { model, input_tokens, output_tokens, cost_usd } => {
-                acc.merge(model.clone(), *input_tokens, *output_tokens, *cost_usd);
+            AgentUpdate::Usage { model, input_tokens, output_tokens, cost_usd, context_tokens, context_window } => {
+                acc.merge(model.clone(), *input_tokens, *output_tokens, *cost_usd, *context_tokens, *context_window);
                 usage_changed = true;
             }
             AgentUpdate::Error(msg) => {
@@ -302,10 +374,7 @@ pub fn apply_updates(
         }
     }
     if usage_changed {
-        store.apply_status_line(
-            session_id,
-            status_from_usage(acc.model.clone(), acc.input, acc.output, acc.cost),
-        );
+        store.apply_status_line(session_id, acc.status_line());
     }
 }
 
@@ -406,14 +475,57 @@ mod tests {
     }
 
     #[test]
-    fn status_from_usage_sets_only_known_fields() {
-        let sl = status_from_usage(Some("m".into()), Some(10), Some(2), Some(0.5));
+    fn status_line_sets_only_known_fields() {
+        let mut acc = UsageAcc::new();
+        acc.merge(Some("m".into()), Some(10), Some(2), Some(0.5), None, None);
+        let sl = acc.status_line();
         assert_eq!(sl.model_display.as_deref(), Some("m"));
         assert_eq!(sl.total_input_tokens, Some(10));
         assert_eq!(sl.total_output_tokens, Some(2));
         assert_eq!(sl.cost_usd, Some(0.5));
+        // Unknown model + no reported window → no context meter.
         assert!(sl.context_used_pct.is_none());
         assert!(sl.received_at.is_some());
+    }
+
+    #[test]
+    fn status_line_computes_context_pct_from_reported_window() {
+        let mut acc = UsageAcc::new();
+        acc.merge(None, Some(10), Some(2), None, Some(50_000), Some(200_000));
+        let sl = acc.status_line();
+        assert_eq!(sl.context_window_size, Some(200_000));
+        assert!((sl.context_used_pct.unwrap() - 25.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn status_line_falls_back_to_window_table_by_model() {
+        let mut acc = UsageAcc::new();
+        acc.merge(Some("anthropic/claude-sonnet-4-5".into()), None, None, None, Some(100_000), None);
+        let sl = acc.status_line();
+        assert_eq!(sl.context_window_size, Some(200_000));
+        assert!((sl.context_used_pct.unwrap() - 50.0).abs() < 0.001);
+        // Context % is capped at 100 even if occupancy overshoots the window.
+        acc.merge(None, None, None, None, Some(999_999), None);
+        assert!((acc.status_line().context_used_pct.unwrap() - 100.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn context_tokens_track_latest_not_max() {
+        // Compaction shrinks the context — the meter must follow it down.
+        let mut acc = UsageAcc::new();
+        acc.merge(None, None, None, None, Some(150_000), Some(200_000));
+        acc.merge(None, None, None, None, Some(30_000), None);
+        let sl = acc.status_line();
+        assert!((sl.context_used_pct.unwrap() - 15.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn context_window_table_matches_families() {
+        assert_eq!(context_window_for("anthropic/claude-opus-4-8"), Some(200_000));
+        assert_eq!(context_window_for("claude-opus-4-8[1m]"), Some(1_000_000));
+        assert_eq!(context_window_for("gpt-5-codex"), Some(272_000));
+        assert_eq!(context_window_for("google/gemini-2.5-pro"), Some(1_048_576));
+        assert_eq!(context_window_for("totally-unknown-model"), None);
     }
 
     #[test]
@@ -433,8 +545,8 @@ mod tests {
     #[test]
     fn usage_acc_takes_max_and_latest_model() {
         let mut acc = UsageAcc::new();
-        acc.merge(Some("a".into()), Some(100), Some(10), Some(0.1));
-        acc.merge(Some("b".into()), Some(80), Some(20), Some(0.2));
+        acc.merge(Some("a".into()), Some(100), Some(10), Some(0.1), None, None);
+        acc.merge(Some("b".into()), Some(80), Some(20), Some(0.2), None, None);
         // model = latest, tokens/cost = max (never regress mid-turn).
         assert_eq!(acc.model.as_deref(), Some("b"));
         assert_eq!(acc.input, Some(100));

@@ -86,11 +86,25 @@ pub fn translate(method: &str, params: &Value) -> Vec<AgentUpdate> {
             let input = u.get("input_tokens").and_then(Value::as_u64);
             let output = u.get("output_tokens").and_then(Value::as_u64);
             if input.is_some() || output.is_some() {
+                // Context occupancy: prefer the event's own total; else sum. The
+                // window is probed on both objects and in both spellings — codex
+                // has carried `model_context_window` beside the token totals.
+                let context_tokens = u
+                    .get("total_tokens")
+                    .and_then(Value::as_u64)
+                    .or_else(|| Some(input.unwrap_or(0) + output.unwrap_or(0)));
+                let context_window = [u, params].iter().find_map(|v| {
+                    v.get("model_context_window")
+                        .or_else(|| v.get("modelContextWindow"))
+                        .and_then(Value::as_u64)
+                });
                 out.push(AgentUpdate::Usage {
                     model: None,
                     input_tokens: input,
                     output_tokens: output,
                     cost_usd: None,
+                    context_tokens,
+                    context_window,
                 });
             }
         }
@@ -802,7 +816,8 @@ mod tests {
 
     #[test]
     fn token_usage_maps_to_usage() {
-        let p = json!({ "usage": { "input_tokens": 1000, "output_tokens": 200, "cached_input_tokens": 50 } });
+        let p = json!({ "usage": { "input_tokens": 1000, "output_tokens": 200, "cached_input_tokens": 50,
+            "total_tokens": 1250, "model_context_window": 272000 } });
         assert_eq!(
             translate("thread/tokenUsage/updated", &p),
             vec![AgentUpdate::Usage {
@@ -810,6 +825,8 @@ mod tests {
                 input_tokens: Some(1000),
                 output_tokens: Some(200),
                 cost_usd: None,
+                context_tokens: Some(1250),
+                context_window: Some(272000),
             }]
         );
     }
