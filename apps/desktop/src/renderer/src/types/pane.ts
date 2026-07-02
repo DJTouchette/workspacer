@@ -1,4 +1,4 @@
-export type PaneType = 'terminal' | 'browser' | 'notes' | 'claude' | 'settings' | 'review' | 'plugin' | 'plugins' | 'overview' | 'library' | 'analytics' | 'ask' | 'editor';
+export type PaneType = 'terminal' | 'browser' | 'notes' | 'claude' | 'settings' | 'review' | 'plugin' | 'plugins' | 'overview' | 'library' | 'analytics' | 'ask' | 'editor' | 'agentwatch' | 'agents';
 
 /** Coding-agent backend an agent workspace / agent pane runs.
  *  `undefined` is treated as `'claude'` for backward compatibility with sessions
@@ -45,6 +45,13 @@ export interface PaneConfig {
    *  ephemeral, agent-cwd-scoped bus token on mount (and revoke it on unmount)
    *  instead of using the broader static per-plugin token. */
   pluginId?: string;
+  /** Agent-watch panes only: the claudemon session that OWNS the watched
+   *  subagent/workflow (the parent session whose snapshot carries it). */
+  watchSessionId?: string;
+  /** Agent-watch panes only: what kind of thing is being watched. */
+  watchKind?: 'subagent' | 'workflow';
+  /** Agent-watch panes only: the subagent id or workflow runId being watched. */
+  watchId?: string;
 }
 
 /** Position + size of a tab's card on the spatial canvas, in world coordinates

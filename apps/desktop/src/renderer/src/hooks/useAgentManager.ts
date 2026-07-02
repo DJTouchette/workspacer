@@ -33,6 +33,8 @@ const defaultTitles: Record<PaneType, string> = {
   analytics: 'Analytics',
   ask: 'Ask',
   editor: 'Editor',
+  agentwatch: 'Watch',
+  agents: 'Agents',
 };
 
 /** Derive a human label from a working directory (its basename). */
@@ -464,6 +466,38 @@ export function useAgentManager() {
     setActiveAgentId(workspaceId);
   }, []);
 
+  /** Open (or focus) a watch pane for one subagent / workflow run in the
+   *  active workspace. Deduped by watch target so clicking the same agent in
+   *  the inspector twice focuses the existing pane instead of duplicating. */
+  const openAgentWatch = useCallback((opts: { sessionId: string; kind: 'subagent' | 'workflow'; id: string; title: string }): string => {
+    const aid = activeAgentIdRef.current;
+    if (!aid) return '';
+    const agent = agentsRef.current.find((a) => a.id === aid);
+    if (!agent) return '';
+    const existing = agent.tabs.find((t) =>
+      t.panes.some((p) => p.type === 'agentwatch' && p.watchId === opts.id && p.watchSessionId === opts.sessionId));
+    if (existing) {
+      mutateAgent(aid, (a) => ({ ...a, activeTabId: existing.id }));
+      return existing.id;
+    }
+    const paneId = generateId('agentwatch');
+    const tabId = generateId('tab');
+    const pane: PaneConfig = {
+      id: paneId,
+      type: 'agentwatch',
+      title: opts.title,
+      watchSessionId: opts.sessionId,
+      watchKind: opts.kind,
+      watchId: opts.id,
+    };
+    mutateAgent(aid, (a) => ({
+      ...a,
+      tabs: [...a.tabs, { id: tabId, title: opts.title, panes: [pane], activePaneId: paneId, lastActiveAt: Date.now() }],
+      activeTabId: tabId,
+    }));
+    return tabId;
+  }, [mutateAgent]);
+
   // ── Tab/pane operations (scoped to the active agent) ──────────────────────
 
   const setActiveTabId = useCallback((tabId: string) => {
@@ -489,6 +523,7 @@ export function useAgentManager() {
     attachSessionId?: string,
     initialCommand?: string,
     filePath?: string,
+    provider?: AgentProvider,
   ) => {
     const aid = activeAgentIdRef.current;
     if (!aid) return '';
@@ -497,7 +532,7 @@ export function useAgentManager() {
     const paneTitle = title ?? defaultTitles[type];
 
     const pane: PaneConfig = {
-      id: paneId, type, title: paneTitle, shell, url, appMode, cwd, profileId, resumeSessionId, attachSessionId, initialCommand, filePath,
+      id: paneId, type, title: paneTitle, shell, url, appMode, cwd, profileId, resumeSessionId, attachSessionId, initialCommand, filePath, provider,
     };
     const tab: TabConfig = { id: tabId, title: paneTitle, panes: [pane], activePaneId: paneId, lastActiveAt: Date.now() };
 
@@ -698,6 +733,7 @@ export function useAgentManager() {
     stopAgentForSession,
     loadAgentsFromSession,
     openPaneIn,
+    openAgentWatch,
     // tabs (active agent)
     tabs,
     activeTabId,

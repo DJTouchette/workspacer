@@ -402,9 +402,10 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // in real transcripts — past sessions plus anything persisted in config.
   ipcMain.handle(IPC.CLAUDE_LIST_MODELS, () => listClaudeModels());
 
-  // Full transcript of one workflow agent, for the timeline drill-in. Resolved
-  // from the run's on-disk dir by the watcher; null if it's no longer around.
-  ipcMain.handle(IPC.WORKFLOW_AGENT_TRANSCRIPT, (_event, sessionId: string, runId: string, agentId: string) =>
+  // Full transcript of one subagent, for the timeline / watch-pane drill-in.
+  // runId names a workflow run; null means a plain Agent-tool subagent.
+  // Resolved from the on-disk dir by the watcher; null if it's no longer around.
+  ipcMain.handle(IPC.WORKFLOW_AGENT_TRANSCRIPT, (_event, sessionId: string, runId: string | null, agentId: string) =>
     workflowWatcher.readAgentTranscript(sessionId, runId, agentId));
 
   // Live model catalog for a managed provider (codex/opencode/pi). We resolve

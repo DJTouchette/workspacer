@@ -53,7 +53,11 @@ const PhaseGroup: React.FC<{
   );
 };
 
-export const WorkflowRunCard: React.FC<{ run: WorkflowRunInfo }> = ({ run }) => {
+export const WorkflowRunCard: React.FC<{
+  run: WorkflowRunInfo;
+  /** When set, adds a "watch in pane" button — opens a live watch pane for this run. */
+  onWatch?: () => void;
+}> = ({ run, onWatch }) => {
   const running = run.status === 'running';
   const [expanded, setExpanded] = useState(running);
   // Auto-collapse once when a run finishes SUCCESSFULLY; user can re-expand. A
@@ -128,6 +132,13 @@ export const WorkflowRunCard: React.FC<{ run: WorkflowRunInfo }> = ({ run }) => 
         {tokens > 0 && <span style={agentMetaStyle}>{fmtTokens(tokens)} tok</span>}
         {cost > 0 && <span style={agentMetaStyle}>{fmtUSD(cost)}</span>}
         {elapsed !== undefined && <span style={agentMetaStyle}>{fmtDuration(elapsed)}</span>}
+        {onWatch && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onWatch(); }}
+            title="Watch this workflow in a pane"
+            style={{ background: 'none', border: 'none', color: colors.mutedDim, cursor: 'pointer', fontSize: '0.72rem', padding: '0 2px', flexShrink: 0, lineHeight: 1 }}
+          >⧉</button>
+        )}
         <button
           onClick={(e) => { e.stopPropagation(); requestWorkflow(run.runId); }}
           title="Open timeline"

@@ -20,10 +20,11 @@ function statusColor(status: WorkflowAgentInfo['status']): string {
  * Full-height timeline view of one workflow run: phases as swimlanes, each agent
  * a time-positioned bar so you can see what ran in parallel vs. sequentially, and
  * a detail panel (click a bar) with the agent's prompt, result, and stats. Opened
- * as a modal from a WorkflowRunCard's expand button; re-reads the live run each
+ * as a modal from a WorkflowRunCard's expand button, or `embedded` (no backdrop /
+ * Escape / close button) inside an agent-watch pane; re-reads the live run each
  * render so it keeps updating while the workflow runs.
  */
-export const WorkflowTimeline: React.FC<{ sessionId: string; run: WorkflowRunInfo; onClose: () => void }> = ({ sessionId, run, onClose }) => {
+export const WorkflowTimeline: React.FC<{ sessionId: string; run: WorkflowRunInfo; onClose?: () => void; embedded?: boolean }> = ({ sessionId, run, onClose, embedded }) => {
   const running = run.status === 'running';
   const now = useNowTicker(running);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -33,10 +34,11 @@ export const WorkflowTimeline: React.FC<{ sessionId: string; run: WorkflowRunInf
   const [loadingTx, setLoadingTx] = useState(false);
 
   useEffect(() => {
+    if (embedded || !onClose) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [onClose]);
+  }, [onClose, embedded]);
 
   useEffect(() => {
     if (!selectedId) { setTranscript(null); return; }
@@ -82,21 +84,19 @@ export const WorkflowTimeline: React.FC<{ sessionId: string; run: WorkflowRunInf
 
   const selected = selectedId ? run.agents.find(a => a.id === selectedId) : undefined;
 
-  return (
-    <div
-      onClick={onClose}
-      style={{
-        position: 'fixed', inset: 0, zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center',
-        background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(2px)',
-      }}
-    >
+  // Modal chrome only when floating; embedded fills its pane edge-to-edge.
+  const cardStyle: React.CSSProperties = embedded
+    ? { width: '100%', height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--wks-bg-base)', overflow: 'hidden' }
+    : {
+        width: 'min(1100px, 92vw)', height: 'min(760px, 88vh)', display: 'flex', flexDirection: 'column',
+        background: 'var(--wks-bg-raised)', border: `1px solid ${colors.border}`,
+        borderRadius: 12, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.5)',
+      };
+
+  const card = (
       <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          width: 'min(1100px, 92vw)', height: 'min(760px, 88vh)', display: 'flex', flexDirection: 'column',
-          background: 'var(--wks-bg-raised)', border: `1px solid ${colors.border}`,
-          borderRadius: 12, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.5)',
-        }}
+        onClick={embedded ? undefined : (e) => e.stopPropagation()}
+        style={cardStyle}
       >
         {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', borderBottom: `1px solid ${colors.borderSubtle}` }}>
@@ -110,7 +110,7 @@ export const WorkflowTimeline: React.FC<{ sessionId: string; run: WorkflowRunInf
           {tokens > 0 && <span style={metaStyle}>{fmtTokens(tokens)} tok</span>}
           {cost > 0 && <span style={metaStyle}>{fmtUSD(cost)}</span>}
           {elapsed !== undefined && <span style={metaStyle}>{fmtDuration(elapsed)}</span>}
-          <button onClick={onClose} title="Close (Esc)" style={closeBtn}>✕</button>
+          {!embedded && onClose && <button onClick={onClose} title="Close (Esc)" style={closeBtn}>✕</button>}
         </div>
 
         {/* Body: timeline + detail */}
@@ -215,6 +215,18 @@ export const WorkflowTimeline: React.FC<{ sessionId: string; run: WorkflowRunInf
           )}
         </div>
       </div>
+  );
+
+  if (embedded) return card;
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(2px)',
+      }}
+    >
+      {card}
     </div>
   );
 };

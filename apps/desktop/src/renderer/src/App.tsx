@@ -11,6 +11,7 @@ import PluginInstallDialog from './components/PluginInstallDialog';
 import { usePlugins } from './hooks/usePlugins';
 import { useUiEventBus } from './hooks/useUiEventBus';
 import { REVIEW_REQUEST_FILE_EVENT, openReviewFile, type ReviewFileTarget } from './lib/reviewBus';
+import { AGENT_WATCH_EVENT, SESSION_WATCH_EVENT, type AgentWatchTarget, type SessionWatchTarget } from './lib/watchBus';
 import { EDITOR_OPEN_FILE_EVENT } from './lib/editorBus';
 import { useUiCommands } from './hooks/useUiCommands';
 import type { PluginPane } from './types/plugin';
@@ -203,6 +204,7 @@ function App() {
     stopAgentForSession,
     loadAgentsFromSession,
     openPaneIn,
+    openAgentWatch,
     setActiveAgentId,
     tabs,
     activeTabId,
@@ -518,8 +520,8 @@ function App() {
 
   const insertPosition = config.panes.insertPosition || 'after';
 
-  const addTabWithConfig = useCallback((type: PaneType, title?: string, shell?: string, url?: string, appMode?: boolean, cwd?: string, profileId?: string, resumeSessionId?: string, attachSessionId?: string, initialCommand?: string, filePath?: string) => {
-    return addTab(type, title, insertPosition, shell, url, appMode, cwd, profileId, resumeSessionId, attachSessionId, initialCommand, filePath);
+  const addTabWithConfig = useCallback((type: PaneType, title?: string, shell?: string, url?: string, appMode?: boolean, cwd?: string, profileId?: string, resumeSessionId?: string, attachSessionId?: string, initialCommand?: string, filePath?: string, provider?: AgentProvider) => {
+    return addTab(type, title, insertPosition, shell, url, appMode, cwd, profileId, resumeSessionId, attachSessionId, initialCommand, filePath, provider);
   }, [addTab, insertPosition]);
 
   // Open the editor. The default (CodeMirror) engine is now the sandboxed editor
@@ -700,6 +702,12 @@ function App() {
   const openAnalytics = useCallback(() => {
     setShowCommandPalette(false);
     openPaneIn(GLOBAL_WORKSPACE_ID, 'analytics', 'Analytics');
+  }, [openPaneIn]);
+
+  /** Open the Agents pane (fleet cards as a pane) in the global workspace. */
+  const openAgentsPane = useCallback(() => {
+    setShowCommandPalette(false);
+    openPaneIn(GLOBAL_WORKSPACE_ID, 'agents', 'Agents');
   }, [openPaneIn]);
 
   /** Open the Ask pane in the global Overview workspace (command-palette entry
@@ -960,6 +968,43 @@ function App() {
     window.addEventListener(REVIEW_REQUEST_FILE_EVENT, handler);
     return () => window.removeEventListener(REVIEW_REQUEST_FILE_EVENT, handler);
   }, [tabs, activeAgent, setActiveTabId, setActivePane, scrollToTab, handleAddTab]);
+
+  // Watch one subagent / workflow run in a dedicated pane (inspector rail
+  // click-through). openAgentWatch dedupes by target, so a repeat click
+  // focuses the existing watch tab.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const t = (e as CustomEvent).detail as AgentWatchTarget | undefined;
+      if (!t?.sessionId || !t.id || !t.kind) return;
+      const tabId = openAgentWatch(t);
+      if (tabId) requestAnimationFrame(() => scrollToTab(tabId));
+    };
+    window.addEventListener(AGENT_WATCH_EVENT, handler);
+    return () => window.removeEventListener(AGENT_WATCH_EVENT, handler);
+  }, [openAgentWatch, scrollToTab]);
+
+  // Watch a whole session in a GUI viewer pane (Agents pane click-through).
+  // Focus an existing viewer for that session in the current workspace, else
+  // attach a new one — the pane never owns the session's lifetime.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const t = (e as CustomEvent).detail as SessionWatchTarget | undefined;
+      if (!t?.sessionId) return;
+      for (const tab of tabs) {
+        const match = tab.panes.find((p) => p.type === 'claude' && (p.attachSessionId === t.sessionId || ptyMapping[p.id] === t.sessionId));
+        if (match) {
+          setActiveTabId(tab.id);
+          setActivePane(tab.id, match.id);
+          scrollToTab(tab.id);
+          return;
+        }
+      }
+      const newId = addTabWithConfig('claude', t.title, undefined, undefined, undefined, t.cwd, undefined, undefined, t.sessionId, undefined, undefined, t.provider);
+      requestAnimationFrame(() => scrollToTab(newId));
+    };
+    window.addEventListener(SESSION_WATCH_EVENT, handler);
+    return () => window.removeEventListener(SESSION_WATCH_EVENT, handler);
+  }, [tabs, ptyMapping, setActiveTabId, setActivePane, scrollToTab, addTabWithConfig]);
 
   // Restart an agent-managed session with new launch settings (composer pills
   // in an attached ClaudePane dispatch this — same CustomEvent pattern as
@@ -1329,6 +1374,7 @@ function App() {
         }}
         onSwitchSession={() => { setShowCommandPalette(false); switchSession(); }}
         onOpenAnalytics={openAnalytics}
+        onOpenAgents={openAgentsPane}
         onOpenLayouts={() => { setShowCommandPalette(false); setShowLayouts(true); }}
         onOpenRemote={() => { setShowCommandPalette(false); setShowRemote(true); }}
         onOpenAskPane={openAskPane}

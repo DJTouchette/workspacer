@@ -85,6 +85,8 @@ interface CommandPaletteProps {
   onSwitchSession?: () => void;
   /** Open the Analytics pane. */
   onOpenAnalytics?: () => void;
+  /** Open the Agents pane (all agents as live cards, click to watch one). */
+  onOpenAgents?: () => void;
   /** Open the layout-templates manager. */
   onOpenLayouts?: () => void;
   /** Open the remote-control (phone sharing) panel. */
@@ -114,7 +116,7 @@ interface CommandPaletteProps {
   onToggleHelp?: () => void;
 }
 
-const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = 'tab', agentCwd, onClose, onLaunchApp, onAddTab, onSplitPane, pluginPanes = [], onOpenPlugin, onInstallPlugin, onManagePlugins, libraryItems = [], restrictTo, onOpenLibrary, onSwitchSession, onOpenAnalytics, onOpenLayouts, onOpenRemote, onOpenAskPane, onSpawnFleetAgent, onOpenFile, shortcuts = {}, prefix = 'ctrl+space', onSpawnAgent, onToggleSidebar, onToggleInbox, onToggleFleet, onSaveSession, onOpenSettings, onToggleHelp }) => {
+const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = 'tab', agentCwd, onClose, onLaunchApp, onAddTab, onSplitPane, pluginPanes = [], onOpenPlugin, onInstallPlugin, onManagePlugins, libraryItems = [], restrictTo, onOpenLibrary, onSwitchSession, onOpenAnalytics, onOpenAgents, onOpenLayouts, onOpenRemote, onOpenAskPane, onSpawnFleetAgent, onOpenFile, shortcuts = {}, prefix = 'ctrl+space', onSpawnAgent, onToggleSidebar, onToggleInbox, onToggleFleet, onSaveSession, onOpenSettings, onToggleHelp }) => {
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [profilePicker, setProfilePicker] = useState<{ folder: string; profiles: any[]; paneType: PaneType } | null>(null);
@@ -148,6 +150,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
     add('cmd-toggle-inbox', 'Toggle Inbox', 'Open or close the triage inbox', <Star size={16} strokeWidth={1.75} />, onToggleInbox, 'toggle-inbox');
     add('cmd-toggle-fleet', 'Toggle Fleet Deck', 'Cross-agent radar overlay', <LayoutGrid size={16} strokeWidth={1.75} />, onToggleFleet, 'toggle-fleet');
     add('cmd-analytics', 'Analytics', 'Session usage & cost', <BarChart3 size={16} strokeWidth={1.75} />, onOpenAnalytics);
+    add('cmd-agents', 'Agents Monitor', 'All agents as live cards — click one to watch it in a pane', <LayoutGrid size={16} strokeWidth={1.75} />, onOpenAgents);
     add('cmd-layouts', 'Layouts…', 'Apply or save a layout template', <LayoutGrid size={16} strokeWidth={1.75} />, onOpenLayouts);
     add('cmd-switch-session', 'Switch Session…', 'Open another saved workspace session', <FolderOpen size={16} strokeWidth={1.75} />, onSwitchSession);
     add('cmd-save-session', 'Save Session', 'Persist the current workspace', <FolderOpen size={16} strokeWidth={1.75} />, onSaveSession, 'save-session');
@@ -157,7 +160,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ visible, apps, mode = '
     add('cmd-settings', 'Settings', 'App preferences', <Settings size={16} strokeWidth={1.75} />, onOpenSettings, 'settings');
     add('cmd-help', 'Keyboard Shortcuts', 'Show the shortcuts reference', <Brain size={16} strokeWidth={1.75} />, onToggleHelp, 'toggle-help');
     return out;
-  }, [onOpenAskPane, onSpawnFleetAgent, onToggleSidebar, onToggleInbox, onToggleFleet, onOpenAnalytics, onOpenLayouts, onSwitchSession, onSaveSession, onOpenRemote, onManagePlugins, onInstallPlugin, onOpenSettings, onToggleHelp]);
+  }, [onOpenAskPane, onSpawnFleetAgent, onToggleSidebar, onToggleInbox, onToggleFleet, onOpenAnalytics, onOpenAgents, onOpenLayouts, onSwitchSession, onSaveSession, onOpenRemote, onManagePlugins, onInstallPlugin, onOpenSettings, onToggleHelp]);
 
   // "Keyboard Shortcuts" is always pinned at the top (regardless of query) so
   // help is immediately discoverable. It is sourced from commandActions so it

@@ -5,6 +5,7 @@ import { WorkflowRunCard } from './WorkflowRunCard';
 import { SubagentRow } from './SubagentRow';
 import { fmtTokens } from './agentUtils';
 import { requestReviewFile } from '../../lib/reviewBus';
+import { requestAgentWatch } from '../../lib/watchBus';
 
 type RailTab = 'files' | 'workflows' | 'agents' | 'usage';
 
@@ -85,6 +86,23 @@ export const InspectorRail: React.FC<{
     liveWorkflows > 0 ? 'workflows' : liveSubagents > 0 ? 'agents' : 'files',
   );
   const files = useMemo(() => aggregateFiles(fileChanges), [fileChanges]);
+
+  // Click-through: open a dedicated live watch pane for one subagent /
+  // workflow run (handled by App, which owns the tab manager).
+  const sessionId = session?.sessionId;
+  const watchSubagent = (sub: (typeof subagents)[number]) => {
+    if (!sessionId) return;
+    requestAgentWatch({
+      sessionId,
+      kind: 'subagent',
+      id: sub.id,
+      title: `Agent: ${sub.type}`,
+    });
+  };
+  const watchWorkflow = (runId: string, name?: string) => {
+    if (!sessionId) return;
+    requestAgentWatch({ sessionId, kind: 'workflow', id: runId, title: `Flow: ${name ?? runId}` });
+  };
 
   const sl = session?.statusLine;
   const usage = session?.usage;
@@ -239,7 +257,9 @@ export const InspectorRail: React.FC<{
                   {liveWorkflows} running
                 </div>
               )}
-              {workflows.map(run => <WorkflowRunCard key={run.runId} run={run} />)}
+              {workflows.map(run => (
+                <WorkflowRunCard key={run.runId} run={run} onWatch={() => watchWorkflow(run.runId, run.name)} />
+              ))}
             </>
           )
         )}
@@ -248,7 +268,7 @@ export const InspectorRail: React.FC<{
           subagents.length === 0 ? (
             <div style={emptyStateStyle}>No subagents yet</div>
           ) : (
-            subagents.map(sub => <SubagentRow key={sub.id} sub={sub} />)
+            subagents.map(sub => <SubagentRow key={sub.id} sub={sub} onOpen={() => watchSubagent(sub)} />)
           )
         )}
 

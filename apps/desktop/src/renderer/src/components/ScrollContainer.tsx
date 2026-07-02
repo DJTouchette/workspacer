@@ -18,6 +18,8 @@ const OverviewPane = React.lazy(() => import('../panes/OverviewPane'));
 const LibraryPane = React.lazy(() => import('../panes/LibraryPane'));
 const AnalyticsPane = React.lazy(() => import('../panes/AnalyticsPane'));
 const AskPane = React.lazy(() => import('../panes/AskPane'));
+const AgentWatchPane = React.lazy(() => import('../panes/AgentWatchPane'));
+const AgentsPane = React.lazy(() => import('../panes/AgentsPane'));
 
 // --- Spatial-canvas constants -------------------------------------------------
 const CARD_HEADER_H = 26;        // drag-handle strip atop each spatial card
@@ -215,6 +217,20 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
           />
         </Suspense>
       );
+    case 'agentwatch':
+      return (
+        <Suspense fallback={<PaneFallback />}>
+          <AgentWatchPane
+            title={pane.title}
+            isActive={isActive}
+            watchSessionId={pane.watchSessionId}
+            watchKind={pane.watchKind}
+            watchId={pane.watchId}
+          />
+        </Suspense>
+      );
+    case 'agents':
+      return <Suspense fallback={<PaneFallback />}><AgentsPane isActive={isActive} /></Suspense>;
     default:
       return <div>Unknown pane type</div>;
   }

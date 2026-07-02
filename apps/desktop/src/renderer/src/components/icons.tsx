@@ -28,6 +28,8 @@ import {
   Smartphone,
   Clock,
   Rows3,
+  Eye,
+  Radar,
   type LucideIcon,
 } from 'lucide-react';
 import { PaneType } from '../types/pane';
@@ -69,6 +71,8 @@ const PANE_ICONS: Record<PaneType, IconComponent> = {
   analytics: IconUsage,
   ask: Brain,
   editor: IconFile,
+  agentwatch: Eye,
+  agents: Radar,
 };
 
 export interface IconProps {
@@ -117,6 +121,8 @@ export {
   Smartphone,
   Clock,
   Rows3,
+  Eye,
+  Radar,
 };
 
 // Workspacer Icon Pack — the custom two-tone agent glyph set (panes, status,

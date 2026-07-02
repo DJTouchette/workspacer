@@ -6,14 +6,24 @@ import { fmtUSD } from '../../lib/sessionStats';
 import { AgentSpinner, agentMetaStyle, lastToolLineStyle } from './WorkflowAgentRow';
 import { IconDone } from '../wksIcons';
 
-export const SubagentRow: React.FC<{ sub: SubagentInfo }> = ({ sub }) => {
+export const SubagentRow: React.FC<{
+  sub: SubagentInfo;
+  /** When set the row is clickable — opens a live watch pane for this agent. */
+  onOpen?: () => void;
+}> = ({ sub, onOpen }) => {
   const running = sub.status === 'running';
   // Only completed subagents have a final duration; running ones don't get a
   // `now` tick here, so we show elapsed on completion (consistent with workflow
   // rows, which do tick).
   const duration = sub.completedAt && sub.startedAt ? sub.completedAt - sub.startedAt : undefined;
   return (
-    <div style={{ padding: '1px 0' }}>
+    <div
+      onClick={onOpen}
+      title={onOpen ? 'Watch this agent in a pane' : undefined}
+      style={{ padding: '1px 0', cursor: onOpen ? 'pointer' : undefined, borderRadius: 4 }}
+      onMouseEnter={onOpen ? (e) => { e.currentTarget.style.backgroundColor = 'var(--wks-bg-hover)'; } : undefined}
+      onMouseLeave={onOpen ? (e) => { e.currentTarget.style.backgroundColor = 'transparent'; } : undefined}
+    >
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem', lineHeight: 1.4 }}>
         {running
           ? <AgentSpinner />

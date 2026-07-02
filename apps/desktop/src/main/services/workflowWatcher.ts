@@ -320,13 +320,17 @@ class WorkflowWatcher {
   }
 
   /**
-   * Read a workflow agent's transcript for the drill-in view. Resolves the file
-   * from the run's known dir and returns lightweight turns (role + text, with
-   * tool calls flattened to one-line summaries) — enough to read what the agent
-   * did without shipping the raw JSONL. `null` if the session/run/file is gone.
+   * Read a subagent's transcript for the drill-in view. `runId` names a
+   * workflow run (file resolved from the run's known dir); pass null for a
+   * plain Agent-tool subagent (file lives in the session's subagents/ root).
+   * Returns lightweight turns (role + text, with tool calls flattened to
+   * one-line summaries) — enough to read what the agent did without shipping
+   * the raw JSONL. `null` if the session/run/file is gone.
    */
-  readAgentTranscript(sessionId: string, runId: string, agentId: string): { role: string; text: string }[] | null {
-    const dir = this.watches.get(sessionId)?.runs.get(runId)?.dir;
+  readAgentTranscript(sessionId: string, runId: string | null, agentId: string): { role: string; text: string }[] | null {
+    const watch = this.watches.get(sessionId);
+    if (!watch) return null;
+    const dir = runId ? watch.runs.get(runId)?.dir : path.join(watch.sessionDir, 'subagents');
     if (!dir) return null;
     const file = path.join(dir, `agent-${stripAgentPrefix(agentId)}.jsonl`);
     let raw: string;

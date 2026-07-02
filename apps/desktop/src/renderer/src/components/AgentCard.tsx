@@ -51,6 +51,9 @@ interface Props {
   snapshot?: ClaudeSessionSnapshot;
   /** Score-derived buoyancy badge ("needs you" etc.), already computed by the deck. */
   rank?: number;
+  /** Override for the card-body click. Default pilots into the agent's
+   *  workspace; the Agents pane passes an "open a watch pane" action instead. */
+  onOpen?: () => void;
 }
 
 /**
@@ -60,7 +63,7 @@ interface Props {
  * lets you resolve the common cases (approve / answer a question / drop a quick
  * message) without ever leaving the deck.
  */
-export const AgentCard: React.FC<Props> = ({ agent, snapshot }) => {
+export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen }) => {
   const { openAgent, approve, answer, sendMessage, feed } = useAttention();
   const pageVisible = usePageVisible();
   const state = snapshot?.ambientState;
@@ -115,7 +118,7 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot }) => {
 
   return (
     <div
-      onClick={() => openAgent(agent.id)}
+      onClick={onOpen ?? (() => openAgent(agent.id))}
       title={`${agent.name} — ${v.label}\n${agent.cwd}`}
       style={{
         display: 'flex', flexDirection: 'column', minHeight: 260, cursor: 'pointer',
