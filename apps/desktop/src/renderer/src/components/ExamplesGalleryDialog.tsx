@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { pluginRequirement, type PluginManifest } from '../types/plugin';
+import { hasSensitivePermission } from '../lib/pluginPermissions';
+import { PluginPermissions } from './plugin/PluginPermissions';
 import { AlertTriangle } from './icons';
 
 interface ExamplesGalleryDialogProps {
@@ -27,6 +29,13 @@ const ExamplesGalleryDialog: React.FC<ExamplesGalleryDialogProps> = ({ installed
   const [busyId, setBusyId] = useState<string | null>(null);
   const [added, setAdded] = useState<Set<string>>(() => new Set(installedIds));
   const [error, setError] = useState<string | null>(null);
+  const [permsOpen, setPermsOpen] = useState<Set<string>>(new Set());
+  const togglePerms = (id: string) =>
+    setPermsOpen((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); onClose(); } };
@@ -110,34 +119,56 @@ const ExamplesGalleryDialog: React.FC<ExamplesGalleryDialogProps> = ({ installed
             return (
               <div key={m.id} style={{
                 border: '1px solid var(--wks-border-subtle)', borderRadius: 8, padding: '10px 12px',
-                background: 'var(--wks-bg-surface)', display: 'flex', alignItems: 'center', gap: 10,
+                background: 'var(--wks-bg-surface)',
               }}>
-                <div style={{ minWidth: 0, flex: 1 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ fontSize: '0.82rem', fontWeight: 600 }}>{m.name || m.id}</span>
-                    <span style={{ fontSize: '0.6rem', color: 'var(--wks-text-faint)', border: '1px solid var(--wks-border-subtle)', borderRadius: 3, padding: '1px 5px' }}>{kindOf(m)}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: '0.82rem', fontWeight: 600 }}>{m.name || m.id}</span>
+                      <span style={{ fontSize: '0.6rem', color: 'var(--wks-text-faint)', border: '1px solid var(--wks-border-subtle)', borderRadius: 3, padding: '1px 5px' }}>{kindOf(m)}</span>
+                    </div>
+                    <div style={{ fontSize: '0.62rem', color: 'var(--wks-text-faint)', marginTop: 2 }}>{m.id}</div>
+                    <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                      <span style={{
+                        fontSize: '0.62rem',
+                        color: req.warn ? 'var(--wks-warning, #e0a000)' : 'var(--wks-text-muted)',
+                        display: 'inline-flex', alignItems: 'center', gap: 4,
+                      }}>
+                        {req.warn && <AlertTriangle size={11} strokeWidth={2} />}{req.label}
+                      </span>
+                      <button
+                        onClick={() => togglePerms(m.id)}
+                        style={{
+                          background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: '0.62rem',
+                          fontFamily: 'inherit', color: 'var(--wks-accent)', display: 'inline-flex', alignItems: 'center', gap: 3,
+                        }}
+                      >
+                        {hasSensitivePermission(m) && <AlertTriangle size={10} strokeWidth={2} style={{ color: 'var(--wks-warning, #e0a000)' }} />}
+                        {permsOpen.has(m.id) ? 'Hide permissions' : 'Permissions'}
+                      </button>
+                    </div>
                   </div>
-                  <div style={{ fontSize: '0.62rem', color: 'var(--wks-text-faint)', marginTop: 2 }}>{m.id}</div>
-                  <div style={{
-                    marginTop: 4, fontSize: '0.62rem',
-                    color: req.warn ? 'var(--wks-warning, #e0a000)' : 'var(--wks-text-muted)',
-                    display: 'inline-flex', alignItems: 'center', gap: 4,
-                  }}>
-                    {req.warn && <AlertTriangle size={11} strokeWidth={2} />}{req.label}
-                  </div>
+                  <button
+                    onClick={() => !isAdded && add(m.id)}
+                    disabled={isAdded || busy}
+                    style={{
+                      fontSize: '0.72rem', fontFamily: 'inherit', flexShrink: 0, alignSelf: 'center',
+                      cursor: (isAdded || busy) ? 'default' : 'pointer',
+                      background: isAdded ? 'transparent' : 'var(--wks-accent)',
+                      color: isAdded ? 'var(--wks-text-faint)' : 'var(--wks-text-on-accent, #fff)',
+                      border: isAdded ? '1px solid var(--wks-border-input)' : 'none',
+                      borderRadius: 5, padding: '5px 14px', fontWeight: 600,
+                    }}
+                  >{isAdded ? 'Added' : busy ? 'Adding…' : 'Add'}</button>
                 </div>
-                <button
-                  onClick={() => !isAdded && add(m.id)}
-                  disabled={isAdded || busy}
-                  style={{
-                    fontSize: '0.72rem', fontFamily: 'inherit', flexShrink: 0,
-                    cursor: (isAdded || busy) ? 'default' : 'pointer',
-                    background: isAdded ? 'transparent' : 'var(--wks-accent)',
-                    color: isAdded ? 'var(--wks-text-faint)' : 'var(--wks-text-on-accent, #fff)',
-                    border: isAdded ? '1px solid var(--wks-border-input)' : 'none',
-                    borderRadius: 5, padding: '5px 14px', fontWeight: 600,
-                  }}
-                >{isAdded ? 'Added' : busy ? 'Adding…' : 'Add'}</button>
+                {permsOpen.has(m.id) && (
+                  <div style={{
+                    marginTop: 8, padding: '8px 10px', borderRadius: 5,
+                    background: 'var(--wks-bg-input)', border: '1px solid var(--wks-border-subtle)',
+                  }}>
+                    <PluginPermissions manifest={m} compact />
+                  </div>
+                )}
               </div>
             );
           })}
