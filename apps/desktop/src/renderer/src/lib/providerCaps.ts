@@ -96,10 +96,17 @@ export function capsFor(provider: AgentProvider | undefined): ProviderCaps {
   return PROVIDER_CAPS[provider ?? 'claude'] ?? PROVIDER_CAPS.claude;
 }
 
+/** Labels for mode ids that can show up in live telemetry (hook
+ *  `permission_mode`) but aren't offered in the spawn/restart menu. */
+const EXTRA_MODE_LABELS: Record<string, string> = {
+  auto: 'Auto',
+  dontAsk: "Don't ask",
+};
+
 /** Display label for a permission-mode id ('acceptEdits' → 'Accept edits'). */
 export function permissionModeLabel(provider: AgentProvider | undefined, id: string | undefined): string {
   const caps = capsFor(provider);
   const fallback = caps.permissionModes[0];
   if (!id) return fallback?.label ?? 'Ask to approve';
-  return caps.permissionModes.find((m) => m.id === id)?.label ?? id;
+  return caps.permissionModes.find((m) => m.id === id)?.label ?? EXTRA_MODE_LABELS[id] ?? id;
 }

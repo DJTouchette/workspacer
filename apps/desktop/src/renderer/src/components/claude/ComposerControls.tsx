@@ -142,7 +142,10 @@ export const ComposerControls: React.FC<{
     : stats.model ?? settings?.model ?? 'Model';
   const effortLevel = caps.effort?.levels.find((l) => l.id === settings?.effort);
   const effortLabel = effortLevel?.label ?? settings?.effort ?? 'Effort';
-  const permLabel = permissionModeLabel(provider, settings?.permissionMode);
+  // Live mode (hook telemetry — follows shift+tab in the TUI) wins over the
+  // requested-at-spawn setting, same precedence as the model pill.
+  const currentPermMode = snapshot?.livePermissionMode ?? settings?.permissionMode;
+  const permLabel = permissionModeLabel(provider, currentPermMode);
 
   const disabled = !sessionId;
 
@@ -223,7 +226,7 @@ export const ComposerControls: React.FC<{
               {caps.permissionModes.map((m) => (
                 <ContextMenuItem
                   key={m.id}
-                  label={m.id === (settings?.permissionMode ?? caps.permissionModes[0]?.id) ? `${m.label} ✓` : m.label}
+                  label={m.id === (currentPermMode ?? caps.permissionModes[0]?.id) ? `${m.label} ✓` : m.label}
                   onClick={() => pickRestart({ permissionMode: m.id }, m.label)}
                 />
               ))}

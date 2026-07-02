@@ -170,4 +170,8 @@ export interface ClaudeSessionSnapshot {
     effort?: string;
     permissionMode?: string;
   };
+  /** Current permission mode from hook payloads — tracks live changes (e.g.
+   *  shift+tab in the TUI), unlike `settings.permissionMode` which is frozen
+   *  at spawn. Claude sessions only; managed providers fire no hooks. */
+  livePermissionMode?: string;
 }

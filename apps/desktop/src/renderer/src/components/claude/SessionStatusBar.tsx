@@ -46,6 +46,20 @@ const CtxBar: React.FC<{ pct: number }> = ({ pct }) => {
   );
 };
 
+/** Compact label + color per permission-mode id. Claude ids come from hook
+ *  `permission_mode`; 'ask'/'yolo' are the managed-provider (codex/opencode/pi)
+ *  spawn settings. Unknown ids fall back to the raw id in the default color. */
+const MODE_DISPLAY: Record<string, { label: string; color: string }> = {
+  default: { label: 'ask', color: 'var(--wks-text-secondary)' },
+  plan: { label: 'plan', color: '#38bdf8' },
+  acceptEdits: { label: 'accept edits', color: '#fbbf24' },
+  auto: { label: 'auto', color: '#4ade80' },
+  dontAsk: { label: "don't ask", color: '#fbbf24' },
+  bypassPermissions: { label: 'bypass', color: '#f87171' },
+  ask: { label: 'ask', color: 'var(--wks-text-secondary)' },
+  yolo: { label: 'full access', color: '#f87171' },
+};
+
 interface Props {
   snapshot?: ClaudeSessionSnapshot | null;
   cwd?: string;
@@ -56,11 +70,17 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd }) => {
   const { model, ctxPct, tokens, costUSD: cost, fiveHourPct: five, sevenDayPct: seven } =
     deriveSessionStats(snapshot);
 
+  // Permission mode: live hook telemetry (follows shift+tab cycling in the
+  // TUI) wins over the requested-at-spawn setting. Managed providers never
+  // send the live value, so they show their spawn setting.
+  const modeId = snapshot?.livePermissionMode ?? snapshot?.settings?.permissionMode;
+  const mode = modeId ? MODE_DISPLAY[modeId] ?? { label: modeId, color: 'var(--wks-text-secondary)' } : undefined;
+
   // (Tool-call + subagent counts live in the ClaudePane toolbar alongside this
   // bar — kept there so the numbers aren't shown twice.)
 
   // Until the first reading arrives, render nothing so the toolbar stays clean.
-  const hasAny = model || ctxPct !== undefined || tokens !== undefined || cost !== undefined;
+  const hasAny = model || mode || ctxPct !== undefined || tokens !== undefined || cost !== undefined;
   if (!hasAny) return null;
 
   return (
@@ -78,6 +98,17 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd }) => {
     >
       {dir && <span style={{ color: 'var(--wks-accent-text)', fontWeight: 600 }}>{dir}</span>}
       {model && (<><Sep /><span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--wks-text-secondary)' }}><IconModel size={14} strokeWidth={2} accent="currentColor" />{model}</span></>)}
+      {mode && (
+        <>
+          <Sep />
+          <span
+            title="Permission mode — cycles live with shift+tab in the terminal view"
+            style={{ color: mode.color, fontWeight: 600 }}
+          >
+            {mode.label}
+          </span>
+        </>
+      )}
       {ctxPct !== undefined && (
         <>
           <Sep />

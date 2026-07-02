@@ -177,6 +177,11 @@ export interface ClaudeSessionState {
   /** Requested-at-spawn launch settings — what the composer pills show when no
    *  live telemetry (statusLine/usage model) is available yet. */
   settings?: SessionSpawnSettings;
+  /** Current permission mode from hook payloads (`permission_mode` rides on
+   *  PreToolUse/PostToolUse/UserPromptSubmit/Stop). Unlike `settings`, this
+   *  tracks live changes — e.g. shift+tab cycling in the TUI. Claude sessions
+   *  only; managed providers fire no hooks so it stays unset for them. */
+  livePermissionMode?: string;
   /** Guards against double history writes (Stop 1500ms timeout vs SessionEnd). */
   historyWritten?: boolean;
 }
@@ -278,6 +283,13 @@ class ClaudeSessionStore {
     }
     // Keep the watcher's poll loop alive while hooks are flowing
     workflowWatcher.poke(sessionId);
+
+    // Track the live permission mode — most hook payloads carry it, and it's
+    // the only signal that follows shift+tab cycling in the TUI (the statusLine
+    // JSON doesn't include it, and `settings` is frozen at spawn time).
+    if (typeof event.permission_mode === 'string' && event.permission_mode) {
+      session.livePermissionMode = event.permission_mode;
+    }
 
     // Conversation content arrives via claudemon's transcript tailer
     // (applyConversationDelta) — no JSONL reads happen in this process.
