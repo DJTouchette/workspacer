@@ -47,8 +47,8 @@ export function Section({ title, children, id }: { title: string; children: Reac
         color: 'var(--wks-text-faint)',
         textTransform: 'uppercase',
         letterSpacing: '0.1em',
-        marginBottom: '10px',
-        paddingBottom: '10px',
+        marginBottom: '16px',
+        paddingBottom: '12px',
         borderBottom: '1px solid var(--wks-border-subtle)',
       }}>
         {title}
@@ -63,7 +63,7 @@ export function Section({ title, children, id }: { title: string; children: Reac
 /** A divided settings row: bold label left, control right. */
 const rowFrame: React.CSSProperties = {
   display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px',
-  padding: '12px 0', borderTop: '1px solid var(--wks-border-subtle)',
+  padding: '16px 0', borderTop: '1px solid var(--wks-border-subtle)',
 };
 const rowLabel: React.CSSProperties = {
   fontSize: '0.85rem', fontWeight: 500, color: 'var(--wks-text-primary)',

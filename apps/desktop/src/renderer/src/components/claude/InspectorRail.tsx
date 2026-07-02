@@ -47,7 +47,7 @@ const UsageBar: React.FC<{ label: string; pct: number; sub?: string }> = ({ labe
   const color = pct >= 80 ? colors.error : pct >= 50 ? colors.warning : colors.success;
   return (
     <div style={{ marginBottom: 10 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.65rem', color: colors.muted, marginBottom: 3 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', color: colors.muted, marginBottom: 3 }}>
         <span>{label}</span>
         <span style={{ color, fontVariantNumeric: 'tabular-nums' }}>{Math.round(pct)}%{sub ? ` · ${sub}` : ''}</span>
       </div>
@@ -62,7 +62,7 @@ const emptyStateStyle: React.CSSProperties = {
   padding: '24px 12px',
   textAlign: 'center',
   color: colors.mutedDim,
-  fontSize: '0.7rem',
+  fontSize: '0.78rem',
 };
 
 /**
@@ -122,7 +122,7 @@ export const InspectorRail: React.FC<{
 
   return (
     <div style={{
-      width: 280,
+      width: 320,
       flexShrink: 0,
       display: 'flex',
       flexDirection: 'column',
@@ -144,9 +144,9 @@ export const InspectorRail: React.FC<{
             key={t.id}
             onClick={() => setTab(t.id)}
             style={{
-              fontSize: '0.62rem',
+              fontSize: '0.72rem',
               fontWeight: 600,
-              padding: '3px 6px',
+              padding: '4px 8px',
               borderRadius: 4,
               border: 'none',
               cursor: 'pointer',
@@ -161,8 +161,8 @@ export const InspectorRail: React.FC<{
             {t.label}
             {t.badge !== undefined && (
               <span style={{
-                fontSize: '0.55rem',
-                padding: '0 4px',
+                fontSize: '0.64rem',
+                padding: '0 5px',
                 borderRadius: 6,
                 backgroundColor: 'rgba(255,255,255,0.08)',
                 color: (t.id === 'agents' || t.id === 'workflows') ? '#c084fc' : colors.muted,
@@ -178,7 +178,7 @@ export const InspectorRail: React.FC<{
           onClick={onClose}
           title="Hide inspector"
           style={{
-            fontSize: '0.7rem',
+            fontSize: '0.8rem',
             border: 'none',
             background: 'transparent',
             color: colors.mutedDim,
@@ -205,10 +205,10 @@ export const InspectorRail: React.FC<{
                   display: 'flex',
                   alignItems: 'baseline',
                   gap: 6,
-                  padding: '3px 4px',
+                  padding: '4px 4px',
                   margin: '0 -4px',
                   borderRadius: 4,
-                  fontSize: '0.72rem',
+                  fontSize: '0.8rem',
                   borderBottom: `1px solid ${colors.borderSubtle}`,
                   cursor: 'pointer',
                 }}
@@ -227,7 +227,7 @@ export const InspectorRail: React.FC<{
                 <span style={{
                   color: colors.text,
                   fontFamily: 'var(--claude-mono-font, monospace)',
-                  fontSize: '0.68rem',
+                  fontSize: '0.76rem',
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
                   whiteSpace: 'nowrap',
@@ -235,12 +235,12 @@ export const InspectorRail: React.FC<{
                 }}>
                   {f.name}
                 </span>
-                <span style={{ color: colors.mutedDim, fontSize: '0.6rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <span style={{ color: colors.mutedDim, fontSize: '0.68rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {f.dir}
                 </span>
                 <div style={{ flex: 1 }} />
                 {f.count > 1 && (
-                  <span style={{ color: colors.mutedDim, fontSize: '0.6rem', flexShrink: 0 }}>×{f.count}</span>
+                  <span style={{ color: colors.mutedDim, fontSize: '0.68rem', flexShrink: 0 }}>×{f.count}</span>
                 )}
               </div>
             ))
@@ -253,7 +253,7 @@ export const InspectorRail: React.FC<{
           ) : (
             <>
               {liveWorkflows > 0 && (
-                <div style={{ fontSize: '0.6rem', color: '#c084fc', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>
+                <div style={{ fontSize: '0.68rem', color: '#c084fc', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>
                   {liveWorkflows} running
                 </div>
               )}
@@ -278,7 +278,7 @@ export const InspectorRail: React.FC<{
           ) : (
             <div>
               {model && (
-                <div style={{ fontSize: '0.7rem', color: colors.textBright, fontWeight: 600, marginBottom: 10 }}>
+                <div style={{ fontSize: '0.78rem', color: colors.textBright, fontWeight: 600, marginBottom: 10 }}>
                   {model}
                 </div>
               )}
@@ -289,7 +289,7 @@ export const InspectorRail: React.FC<{
               {sl?.sevenDayPct !== undefined && (
                 <UsageBar label="7-day limit" pct={sl.sevenDayPct} sub={sl.sevenDayResetsAt ? `resets ${fmtReset(sl.sevenDayResetsAt)}` : undefined} />
               )}
-              <div style={{ fontSize: '0.68rem', color: colors.muted, lineHeight: 1.9, marginTop: 4, fontVariantNumeric: 'tabular-nums' }}>
+              <div style={{ fontSize: '0.76rem', color: colors.muted, lineHeight: 1.9, marginTop: 4, fontVariantNumeric: 'tabular-nums' }}>
                 {inTok !== undefined && <div>Input tokens<span style={{ float: 'right', color: colors.text }}>{fmtTokens(inTok) || '0'}</span></div>}
                 {outTok !== undefined && <div>Output tokens<span style={{ float: 'right', color: colors.text }}>{fmtTokens(outTok) || '0'}</span></div>}
                 {cost !== undefined && Number.isFinite(cost) && <div>Cost<span style={{ float: 'right', color: colors.text }}>${cost.toFixed(2)}</span></div>}

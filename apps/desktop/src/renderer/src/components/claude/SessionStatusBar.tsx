@@ -24,7 +24,7 @@ function baseName(p: string | undefined): string {
 
 /** A thin vertical rule between HUD groups, replacing the ASCII pipe. */
 const Sep: React.FC = () => (
-  <span style={{ width: 1, height: 15, flexShrink: 0, background: 'var(--wks-border, #555)', opacity: 0.7 }} />
+  <span style={{ width: 1, height: 17, flexShrink: 0, background: 'var(--wks-border, #555)', opacity: 0.7 }} />
 );
 
 /** Segmented 10-tick context gauge — filled ticks take the threshold color. */
@@ -37,7 +37,7 @@ const CtxBar: React.FC<{ pct: number }> = ({ pct }) => {
         <span
           key={i}
           style={{
-            width: 4, height: 11, borderRadius: 1,
+            width: 5, height: 13, borderRadius: 1,
             background: i < filled ? color : 'var(--wks-bg-elevated, #444)',
           }}
         />
@@ -68,16 +68,16 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd }) => {
       style={{
         display: 'inline-flex',
         alignItems: 'center',
-        gap: 7,
+        gap: 8,
         minWidth: 0,
         overflow: 'hidden',
         fontFamily: 'var(--wks-font-mono, var(--claude-mono-font, monospace))',
-        fontSize: '0.64rem',
+        fontSize: '0.78rem',
         whiteSpace: 'nowrap',
       }}
     >
       {dir && <span style={{ color: 'var(--wks-accent-text)', fontWeight: 600 }}>{dir}</span>}
-      {model && (<><Sep /><span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--wks-text-secondary)' }}><IconModel size={12} strokeWidth={2} accent="currentColor" />{model}</span></>)}
+      {model && (<><Sep /><span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--wks-text-secondary)' }}><IconModel size={14} strokeWidth={2} accent="currentColor" />{model}</span></>)}
       {ctxPct !== undefined && (
         <>
           <Sep />
