@@ -61,9 +61,12 @@ export function useSessionLifecycle({
 
   // Reconcile saved agents against the daemon's live sessions — mark any whose
   // session no longer exists as stopped (so the sidebar offers a respawn).
+  // Ended sessions must not count as live: the store keeps a snapshot around
+  // for a ~30s grace window after SessionEnd, and treating those ids as alive
+  // left restored agents looking live while attached to a dead session.
   const reconcileWithDaemon = useCallback(() => {
     window.electronAPI.getAllClaudeSessions().then((sessions: any[]) => {
-      reconcileAgents(new Set(sessions.map((s) => s.sessionId)));
+      reconcileAgents(new Set(sessions.filter((s) => s.status !== 'ended').map((s) => s.sessionId)));
     }).catch(() => {});
   }, [reconcileAgents]);
 
@@ -97,8 +100,8 @@ export function useSessionLifecycle({
     });
   }, []);
 
-  const saveCurrentSession = useCallback((force?: boolean) => {
-    if (sessionPhase !== 'active') return;
+  const saveCurrentSession = useCallback((force?: boolean): Promise<void> => {
+    if (sessionPhase !== 'active') return Promise.resolve();
     const payload = {
       name: sessionName,
       activeAgentId,
@@ -117,9 +120,9 @@ export function useSessionLifecycle({
         + ag.tabs.map((t) => t.id + t.title + (t.activePaneId || '') + (t.canvas ? `${t.canvas.x},${t.canvas.y},${t.canvas.w},${t.canvas.h}` : '')
           + t.panes.map((p) => p.id + p.type + (p.url || '') + (p.notes || '')).join()).join()),
     });
-    if (!force && hash === lastSaveHashRef.current) return;
+    if (!force && hash === lastSaveHashRef.current) return Promise.resolve();
     lastSaveHashRef.current = hash;
-    window.electronAPI.saveSession(payload).catch((err: any) => {
+    return window.electronAPI.saveSession(payload).then(() => undefined, (err: any) => {
       console.error('[Session] save failed:', err);
     });
   }, [agents, activeAgentId, sessionName, sessionPhase, ptyMapping]);
@@ -130,6 +133,18 @@ export function useSessionLifecycle({
     return () => clearInterval(interval);
   }, [sessionPhase, pageVisible, saveCurrentSession]);
 
+  // Persist promptly after the layout actually changes (saveCurrentSession is
+  // re-created whenever agents/activeAgentId/panes change, so this effect fires
+  // per change and the timeout debounces bursts). Without it, a terminate or
+  // spawn only reaches disk on the 30s tick or a graceful quit — kill the app
+  // in that window and the terminated agent resurrects on the next boot. The
+  // content hash inside saveCurrentSession keeps redundant writes cheap.
+  useEffect(() => {
+    if (sessionPhase !== 'active') return;
+    const t = setTimeout(() => saveCurrentSession(), 1000);
+    return () => clearTimeout(t);
+  }, [sessionPhase, saveCurrentSession]);
+
   useEffect(() => {
     const handler = () => saveCurrentSession();
     window.addEventListener('beforeunload', handler);
@@ -137,7 +152,13 @@ export function useSessionLifecycle({
   }, [saveCurrentSession]);
 
   useEffect(() => {
-    const unsub = window.electronAPI.onBeforeQuit(() => saveCurrentSession(true));
+    // Quit handshake: main pauses teardown until we ack that the save landed
+    // (or errored — ack regardless, so a save failure can't hang the quit).
+    const unsub = window.electronAPI.onBeforeQuit(() => {
+      saveCurrentSession(true).finally(() => {
+        window.electronAPI.notifyQuitSaved?.();
+      });
+    });
     return unsub;
   }, [saveCurrentSession]);
 

@@ -185,6 +185,8 @@ export interface ElectronAPI {
 
   // App lifecycle
   onBeforeQuit: (callback: () => void) => () => void;
+  /** Ack that the quit-time session save finished — main holds teardown for it. */
+  notifyQuitSaved?: () => void;
 
   // Notifications / ambient awareness
   setActiveSession: (sessionId: string | null) => void;

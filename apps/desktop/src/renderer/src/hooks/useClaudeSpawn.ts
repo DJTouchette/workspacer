@@ -77,6 +77,7 @@ export function useClaudeSpawn({
   const pendingOutputRef = useRef<Uint8Array[]>([]);
   const rafRef = useRef<number | null>(null);
   const unsubOutputRef = useRef<(() => void) | null>(null);
+  const unsubExitRef = useRef<(() => void) | null>(null);
   /** Key for port lookup in the preload — paneId for attached viewers,
    *  sessionId for spawned (owner) panes. */
   const viewerKeyRef = useRef<string | null>(null);
@@ -140,6 +141,16 @@ export function useClaudeSpawn({
       viewerKeyRef.current = viewerKey;
       setSessionId(id);
 
+      // Session death: main emits terminal:exit keyed by the sessionId (owner
+      // stream 404) or the viewerKey (dead attach target). Match either so both
+      // owner and attached panes learn their session is gone. Without this
+      // subscription onExit was never invoked at all — panes rendered a dead
+      // session indistinguishably from a live idle one.
+      unsubExitRef.current = window.electronAPI.onTerminalExit((eventId: string) => {
+        if (eventId !== sessionIdRef.current && eventId !== viewerKeyRef.current) return;
+        onExitRef.current?.();
+      });
+
       unsubOutputRef.current = window.electronAPI.onClaudeOutput(viewerKey, (data: string) => {
         if (!data || !termRef.current) return;
         pendingOutputRef.current.push(binaryStringToUint8Array(data));
@@ -194,6 +205,7 @@ export function useClaudeSpawn({
       }
       pendingOutputRef.current = [];
       if (unsubOutputRef.current) unsubOutputRef.current();
+      if (unsubExitRef.current) unsubExitRef.current();
       if (sessionIdRef.current) {
         if (isAttachedRef.current) {
           window.electronAPI.detachClaude(paneId).catch((err) => {

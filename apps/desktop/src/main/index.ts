@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, protocol, net, session } from 'electron';
+import { app, BrowserWindow, Menu, protocol, net, session, ipcMain } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -405,9 +405,18 @@ let shuttingDown = false;
  * Capped so a stuck daemon can never hang the quit.
  */
 async function gracefulShutdown(): Promise<void> {
-  // Signal renderer to save session before we tear down its backends.
+  // Signal renderer to save session and WAIT for its ack before tearing down
+  // its backends — the save is an async IPC round-trip, and proceeding
+  // immediately raced it against daemon shutdown (a lost race resurrects
+  // terminated agents from a stale yaml on the next boot). Capped so a hung
+  // renderer can never block the quit.
   if (mainWindow && !mainWindow.isDestroyed()) {
+    const ack = new Promise<void>((resolve) => {
+      ipcMain.once(IPC.APP_QUIT_SAVED, () => resolve());
+    });
     mainWindow.webContents.send(IPC.APP_BEFORE_QUIT);
+    await Promise.race([ack, new Promise<void>((r) => setTimeout(r, 1500))]);
+    ipcMain.removeAllListeners(IPC.APP_QUIT_SAVED);
   }
   try { claudemonSessionClient.closeAll(); } catch { /* ignore */ }
   workflowWatcher.detachAll();

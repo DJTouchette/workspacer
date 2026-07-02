@@ -281,6 +281,7 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
 
     // ── Lifecycle / ambient ──────────────────────────────────────────────
     onBeforeQuit: () => () => {},
+    notifyQuitSaved: () => {}, // no quit handshake in the browser
     setActiveSession: () => { /* no ambient OS notifications on web */ },
     onFocusAgent: () => () => {},
     onSystemNotice: () => () => {}, // host-process notices; not relevant to the web client

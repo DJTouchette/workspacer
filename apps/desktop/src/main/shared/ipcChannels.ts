@@ -134,6 +134,7 @@ export const IPC = {
 
   // ── App lifecycle ──
   APP_BEFORE_QUIT: 'app:before-quit', // push (main → renderer)
+  APP_QUIT_SAVED: 'app:quit-saved', // ack (renderer → main): the quit-save landed
 
   // ── Window chrome (Windows native caption-button overlay) ──
   WINDOW_SET_OVERLAY: 'window:setOverlay', // send (renderer → main)

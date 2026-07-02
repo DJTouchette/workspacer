@@ -199,6 +199,7 @@ function App() {
     terminateAgent,
     renameAgent,
     reconcileAgents,
+    stopAgentForSession,
     loadAgentsFromSession,
     openPaneIn,
     setActiveAgentId,
@@ -373,13 +374,17 @@ function App() {
           const { [sessionId]: _drop, ...rest } = prev;
           return rest;
         });
+        // Flip the owning agent to stopped so the card offers a respawn right
+        // away. (No-op after an explicit terminate — the agent is already
+        // gone by the time its session reports ended.)
+        stopAgentForSession(sessionId);
         return;
       }
       setStatusBySession((prev) => ({ ...prev, [sessionId]: snapshot.ambientState }));
       setSnapshotBySession((prev) => ({ ...prev, [sessionId]: snapshot }));
     });
     return () => { unsub(); };
-  }, [refreshSessionSnapshots]);
+  }, [refreshSessionSnapshots, stopAgentForSession]);
 
   // Drop a terminated agent's session snapshot/status from the promoted maps.
   // useAgentManager.terminateAgent removes the agent + closes the daemon session

@@ -348,6 +348,18 @@ export function useAgentManager() {
     ));
   }, []);
 
+  /** Mark the agent owning this session as stopped — its session died mid-run
+   *  (SessionEnd arrived). Same shape as reconcileAgents so the sidebar flips
+   *  to "Stopped — click to respawn" immediately instead of waiting for the
+   *  next resume-time reconcile (which never happens while the app runs). */
+  const stopAgentForSession = useCallback((sessionId: string) => {
+    setAgents((prev) => prev.map((a) =>
+      a.sessionId === sessionId
+        ? { ...a, sessionId: undefined, lastSessionId: sessionId }
+        : a,
+    ));
+  }, []);
+
   const loadAgentsFromSession = useCallback((sessionAgents: AgentWorkspace[], activeId: string) => {
     // Dedupe by sessionId on the way in: this is the merge point for every
     // cross-client layout update, so collapsing same-session cards here is what
@@ -623,6 +635,7 @@ export function useAgentManager() {
     terminateAgent,
     renameAgent,
     reconcileAgents,
+    stopAgentForSession,
     loadAgentsFromSession,
     openPaneIn,
     // tabs (active agent)

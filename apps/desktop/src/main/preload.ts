@@ -424,6 +424,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.removeListener(IPC.APP_BEFORE_QUIT, handler);
     };
   },
+  /** Ack that the quit-time session save finished — main holds teardown for it. */
+  notifyQuitSaved: (): void => ipcRenderer.send(IPC.APP_QUIT_SAVED),
 
   // Notifications / ambient awareness
   /** Tell main which agent session is currently on screen (null = none). */

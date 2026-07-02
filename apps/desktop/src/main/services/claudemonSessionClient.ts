@@ -40,6 +40,11 @@ class ClaudemonSessionClient {
    *  PTY is in a separate process, so we can't /proc-walk it; we just
    *  remember the spawn cwd. */
   private cwds = new Map<string, string>();
+  /** Managed (adapter-driven) sessions we spawned. They have no PTY byte
+   *  stream, so they're invisible to the `streams` map — track them here so
+   *  closeAll() can terminate them too (the daemon maps SIGTERM on a managed
+   *  session to a provider terminate). */
+  private managedIds = new Set<string>();
 
   setMainWindow(win: BrowserWindow): void {
     this.mainWindow = win;
@@ -113,6 +118,7 @@ class ClaudemonSessionClient {
     }
     const resBody = await res.json() as { session_id: string };
     this.cwds.set(resBody.session_id, rest.cwd);
+    this.managedIds.add(resBody.session_id);
     return resBody.session_id;
   }
 
@@ -147,7 +153,39 @@ class ClaudemonSessionClient {
       return sessionId;
     }
     this.attachByteStream(paneId, sessionId, portChannel, 'attached');
+    // A restored pane can point at a session that is stopped (the daemon keeps
+    // terminated sessions as resumable rows, so the id still resolves) or gone
+    // entirely. Without a liveness check the viewer sits silently on a dead
+    // stream and the pane looks alive — verify and surface the exit instead.
+    this.verifyAttachTarget(paneId, sessionId);
     return sessionId;
+  }
+
+  /** Fire-and-forget: if the attach target is missing or stopped, tear the
+   *  viewer down and tell the renderer the session is dead (keyed by the
+   *  viewer's pane id, which is how attached panes listen). */
+  private verifyAttachTarget(viewerKey: string, sessionId: string): void {
+    fetch(`${CLAUDEMON_API_URL}/sessions/${sessionId}`)
+      .then(async (res) => {
+        let dead = res.status === 404;
+        if (res.ok) {
+          const body = await res.json().catch(() => null) as { mode?: string } | null;
+          dead = body?.mode === 'stopped';
+        }
+        if (!dead) return;
+        const stream = this.streams.get(viewerKey);
+        if (stream && stream.sessionId === sessionId) {
+          stream.stopped = true;
+          try { stream.abort.abort(); } catch {}
+          try { stream.port.close(); } catch {}
+          this.streams.delete(viewerKey);
+        }
+        const win = this.mainWindow;
+        if (win && !win.isDestroyed()) {
+          win.webContents.send(IPC.TERMINAL_EXIT, viewerKey);
+        }
+      })
+      .catch(() => { /* daemon unreachable — the SSE backoff handles that path */ });
   }
 
   /** Detach a viewer without affecting the session itself. */
@@ -337,8 +375,10 @@ class ClaudemonSessionClient {
       this.streams.delete(key);
     }
     this.cwds.delete(sessionId);
-    // Best-effort: SIGTERM the child. The session entry stays around in the
-    // daemon until the next restart — fine for our purposes.
+    this.managedIds.delete(sessionId);
+    // Best-effort: SIGTERM the child (for managed sessions the daemon maps
+    // this to a provider terminate). The session entry stays around in the
+    // daemon as a resumable Stopped row — that's intended.
     try { await this.signal(sessionId, 'SIGTERM'); } catch {}
   }
 
@@ -352,6 +392,11 @@ class ClaudemonSessionClient {
       } else {
         this.detach(s.viewerKey);
       }
+    }
+    // Managed sessions have no byte stream, so the loop above never sees them.
+    for (const id of Array.from(this.managedIds)) {
+      if (seen.has(id)) continue;
+      this.close(id).catch(() => {});
     }
   }
 
