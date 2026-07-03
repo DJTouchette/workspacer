@@ -47,6 +47,11 @@ sha2 = "0.10"
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.29", features = ["signal"] }
 
+[dev-dependencies]
+# test-util enables tokio's paused clock (`#[tokio::test(start_paused = true)]`)
+# so the delayed pending-message flush is testable without real sleeps.
+tokio = { version = "1", features = ["full", "test-util"] }
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

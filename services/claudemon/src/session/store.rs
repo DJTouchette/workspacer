@@ -20,6 +20,18 @@ const BYTE_BROADCAST_CAPACITY: usize = 1024;
 /// Bounds memory if a session never reaches `Input` (e.g. stuck on startup);
 /// the oldest is dropped past this. In practice the queue holds 0–1.
 const MAX_PENDING_MESSAGES: usize = 8;
+/// Delay between an `Input` transition and the pending-message flush. The
+/// transition is announced by a *hook* (Stop / SessionStart), and Claude Code
+/// runs hooks while the turn is still closing — its composer isn't back at the
+/// prompt yet. Injecting at that instant types the message into the box but
+/// the submitting Enter is treated as mid-turn input and swallowed, leaving
+/// the text stranded in the TUI (the "GUI send lands in the TUI box" bug).
+const FLUSH_DELAY_MS: u64 = 300;
+/// Grace period after a flushed send before verifying the submit took. A
+/// successful submit flips the session to `Responding` (UserPromptSubmit
+/// hook); still `Input` after this long means the Enter was swallowed and the
+/// text is sitting in the composer — a bare CR then submits it.
+const SUBMIT_VERIFY_DELAY_MS: u64 = 1000;
 
 /// Per-session ring buffer of raw PTY bytes the child has produced so far.
 #[derive(Default)]
@@ -350,7 +362,7 @@ impl SessionStore {
         // Drain or drop any queued chat messages — done outside the `states`
         // entry lock above (flush touches `wrappers`, not `states`).
         if became_input {
-            self.flush_pending_messages(&event.session_id);
+            self.schedule_pending_flush(&event.session_id);
         } else if became_stopped {
             self.clear_pending_messages(&event.session_id);
         }
@@ -712,7 +724,7 @@ impl SessionStore {
                 // (`mem::take` under the shard lock), so this and the `ingest`
                 // flush can never double-send or lose the message.
                 if self.states.get(session_id).map(|s| s.mode) == Some(SessionMode::Input) {
-                    self.flush_pending_messages(session_id);
+                    self.schedule_pending_flush(session_id);
                 }
                 MessageOutcome::Queued
             }
@@ -731,8 +743,55 @@ impl SessionStore {
         q.push(text);
     }
 
-    /// Drain and send queued messages in order. Called on the `Input`
-    /// transition. No-op when the queue is empty.
+    /// Flush queued messages once the TUI is actually ready. The `Input`
+    /// transition is announced by a hook, which Claude Code runs *before* its
+    /// composer is back at the prompt — flushing synchronously there types the
+    /// message into the box but the submitting Enter gets swallowed as mid-turn
+    /// input, stranding the text in the TUI (seen when a GUI send raced a
+    /// terminal-driven turn). So: wait a beat, re-check the session is still
+    /// ready (if not, the next `Input` transition reschedules), flush, then
+    /// verify the submit actually flipped the session to `Responding` — if it
+    /// didn't, a bare CR submits whatever is sitting in the composer (a no-op
+    /// on an empty prompt).
+    ///
+    /// Outside a tokio runtime (unit tests drive the state machine
+    /// synchronously) this degrades to the immediate flush.
+    fn schedule_pending_flush(&self, session_id: &str) {
+        if self
+            .pending_messages
+            .get(session_id)
+            .map_or(true, |q| q.is_empty())
+        {
+            return;
+        }
+        let Ok(rt) = tokio::runtime::Handle::try_current() else {
+            self.flush_pending_messages(session_id);
+            return;
+        };
+        let store = self.clone();
+        let sid = session_id.to_string();
+        rt.spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(FLUSH_DELAY_MS)).await;
+            if store.states.get(&sid).map(|s| s.mode) != Some(SessionMode::Input) {
+                return; // no longer ready — the queue survives for the next transition
+            }
+            store.flush_pending_messages(&sid);
+            tokio::time::sleep(std::time::Duration::from_millis(SUBMIT_VERIFY_DELAY_MS)).await;
+            if store.states.get(&sid).map(|s| s.mode) == Some(SessionMode::Input) {
+                // No UserPromptSubmit arrived — the Enter was swallowed and the
+                // text is sitting in the composer. Submit it.
+                if let Some(handle) = store.wrapper(&sid) {
+                    let _ = handle
+                        .tx
+                        .send(WrapperMessage::Input { bytes: B64.encode(b"\r") });
+                }
+            }
+        });
+    }
+
+    /// Drain and send queued messages in order. Called via
+    /// [`Self::schedule_pending_flush`] on the `Input` transition. No-op when
+    /// the queue is empty.
     fn flush_pending_messages(&self, session_id: &str) {
         let queued: Vec<String> = self
             .pending_messages
@@ -895,6 +954,9 @@ mod tests {
         assert_eq!(next_input(&mut rx), pasted("hi"));
     }
 
+    // Outside a tokio runtime the flush degrades to synchronous (the daemon
+    // always runs inside one — there it goes through the delayed schedule,
+    // covered by the paused-clock tests below).
     #[test]
     fn message_queued_in_responding_flushes_on_stop() {
         let store = SessionStore::new();
@@ -906,6 +968,68 @@ mod tests {
 
         store.ingest(hook("Stop", "s1", "/w")); // turn ends → Input → flush
         assert_eq!(next_input(&mut rx), pasted("followup"));
+    }
+
+    // The real (in-runtime) path: an Input transition *schedules* the flush —
+    // the hook that announced it fires while the TUI is still closing the
+    // turn, so an immediate injection strands the text in the composer. After
+    // the settle delay the message flushes; if no UserPromptSubmit follows,
+    // the Enter was swallowed and a bare CR re-submits the composer content.
+    #[tokio::test(start_paused = true)]
+    async fn scheduled_flush_delays_then_verifies_submit() {
+        let store = SessionStore::new();
+        let (h, mut rx) = handle_with_rx();
+        store.register_wrapper("s1", "/w", h); // Input
+        store.ingest(hook("UserPromptSubmit", "s1", "/w")); // → Responding
+        assert_eq!(store.submit_message("s1", "followup".into()), MessageOutcome::Queued);
+
+        store.ingest(hook("Stop", "s1", "/w")); // → Input; flush scheduled, not immediate
+        assert!(rx.try_recv().is_err(), "no injection while the TUI is still closing the turn");
+
+        tokio::time::sleep(std::time::Duration::from_millis(FLUSH_DELAY_MS + 50)).await;
+        assert_eq!(next_input(&mut rx), pasted("followup"), "flushed once the prompt settles");
+
+        // No UserPromptSubmit arrives → verify pass submits the stranded text.
+        tokio::time::sleep(std::time::Duration::from_millis(SUBMIT_VERIFY_DELAY_MS + 50)).await;
+        assert_eq!(next_input(&mut rx), b"\r".to_vec(), "bare CR submits the composer");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn scheduled_flush_skips_verify_when_submit_took() {
+        let store = SessionStore::new();
+        let (h, mut rx) = handle_with_rx();
+        store.register_wrapper("s1", "/w", h);
+        store.ingest(hook("UserPromptSubmit", "s1", "/w"));
+        assert_eq!(store.submit_message("s1", "followup".into()), MessageOutcome::Queued);
+        store.ingest(hook("Stop", "s1", "/w"));
+
+        tokio::time::sleep(std::time::Duration::from_millis(FLUSH_DELAY_MS + 50)).await;
+        assert_eq!(next_input(&mut rx), pasted("followup"));
+        store.ingest(hook("UserPromptSubmit", "s1", "/w")); // the submit took
+
+        tokio::time::sleep(std::time::Duration::from_millis(SUBMIT_VERIFY_DELAY_MS + 50)).await;
+        assert!(rx.try_recv().is_err(), "no stray CR when the message submitted");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn scheduled_flush_holds_message_when_a_turn_starts_in_the_window() {
+        // The user submits from the TUI during the settle window — the queued
+        // message must not be injected into the now-running turn; it stays
+        // queued and flushes after the *next* Input transition.
+        let store = SessionStore::new();
+        let (h, mut rx) = handle_with_rx();
+        store.register_wrapper("s1", "/w", h);
+        store.ingest(hook("UserPromptSubmit", "s1", "/w"));
+        assert_eq!(store.submit_message("s1", "queued".into()), MessageOutcome::Queued);
+        store.ingest(hook("Stop", "s1", "/w")); // schedules the flush
+        store.ingest(hook("UserPromptSubmit", "s1", "/w")); // TUI turn starts inside the window
+
+        tokio::time::sleep(std::time::Duration::from_millis(FLUSH_DELAY_MS + 50)).await;
+        assert!(rx.try_recv().is_err(), "flush aborted — a turn is running");
+
+        store.ingest(hook("Stop", "s1", "/w")); // next turn end reschedules
+        tokio::time::sleep(std::time::Duration::from_millis(FLUSH_DELAY_MS + 50)).await;
+        assert_eq!(next_input(&mut rx), pasted("queued"));
     }
 
     #[test]
