@@ -30,6 +30,7 @@ export const IPC = {
   CLAUDE_SPAWN: 'claude:spawn',
   CLAUDE_LIST_MODELS: 'claude:listModels',
   WORKFLOW_AGENT_TRANSCRIPT: 'workflow:agentTranscript',
+  WORKFLOW_AGENT_CONVERSATION: 'workflow:agentConversation',
   PROVIDER_LIST_MODELS: 'provider:listModels',
   PROVIDER_CHECK_ALL: 'provider:checkAll',
   CLAUDE_MESSAGE: 'claude:message',

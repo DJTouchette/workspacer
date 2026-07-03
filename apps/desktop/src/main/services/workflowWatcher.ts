@@ -46,6 +46,26 @@ export interface WorkflowAgentInfo {
   resultPreview?: string;
 }
 
+/** Renderer-shaped tool call for `readAgentConversation` (mirrors the
+ *  ToolCall in claudeSessionStore / renderer types/claudeSession.ts). */
+export interface AgentToolCall {
+  id: string;
+  name: string;
+  input: any;
+  response?: any;
+  status: 'running' | 'complete' | 'failed';
+  startedAt: number;
+  completedAt?: number;
+}
+
+/** Renderer-shaped conversation turn for `readAgentConversation`. */
+export interface AgentConversationTurn {
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: number;
+  toolCalls?: AgentToolCall[];
+}
+
 export interface WorkflowRunInfo {
   runId: string;
   name?: string;
@@ -364,6 +384,75 @@ class WorkflowWatcher {
       }
       const text = parts.join('\n').trim();
       if (text) turns.push({ role, text });
+    }
+    return turns;
+  }
+
+  /**
+   * Rich variant of `readAgentTranscript` for the watch pane's GUI view:
+   * turns in the renderer's `ConversationTurn` shape, with real ToolCall
+   * objects (tool_use paired to its tool_result) instead of flattened
+   * one-liners — so the same ConversationMessage/WorkCard components the
+   * main GUI view uses can render a subagent's work. `null` if the
+   * session/run/file is gone.
+   */
+  readAgentConversation(sessionId: string, runId: string | null, agentId: string): AgentConversationTurn[] | null {
+    const watch = this.watches.get(sessionId);
+    if (!watch) return null;
+    const dir = runId ? watch.runs.get(runId)?.dir : path.join(watch.sessionDir, 'subagents');
+    if (!dir) return null;
+    const file = path.join(dir, `agent-${stripAgentPrefix(agentId)}.jsonl`);
+    let raw: string;
+    try {
+      raw = fs.readFileSync(file, 'utf8');
+    } catch {
+      return null;
+    }
+    const turns: AgentConversationTurn[] = [];
+    const toolCallById = new Map<string, AgentToolCall>();
+    for (const line of raw.split('\n')) {
+      if (!line.trim()) continue;
+      let j: any;
+      try { j = JSON.parse(line); } catch { continue; }
+      const msg = j.message ?? j;
+      const role = msg.role ?? j.type;
+      if (role !== 'user' && role !== 'assistant') continue;
+      const ts = j.timestamp ? Date.parse(j.timestamp) || Date.now() : Date.now();
+      const content = msg.content;
+
+      if (typeof content === 'string') {
+        if (content.trim()) turns.push({ role, content, timestamp: ts });
+        continue;
+      }
+      if (!Array.isArray(content)) continue;
+
+      for (const b of content) {
+        if (b?.type === 'text' && typeof b.text === 'string' && b.text.trim()) {
+          turns.push({ role, content: b.text, timestamp: ts });
+        } else if (b?.type === 'tool_use') {
+          // Unresolved calls stay 'running' — truthful while the agent is
+          // live, and the tail call of an interrupted agent reads as cut off.
+          const tc: AgentToolCall = {
+            id: b.id ?? `tc-${ts}-${turns.length}`,
+            name: b.name ?? 'tool',
+            input: b.input ?? {},
+            status: 'running',
+            startedAt: ts,
+          };
+          if (tc.id) toolCallById.set(tc.id, tc);
+          // Each call is its own turn, matching the main conversation shape.
+          turns.push({ role: 'assistant', content: '', timestamp: ts, toolCalls: [tc] });
+        } else if (b?.type === 'tool_result' && b.tool_use_id) {
+          const tc = toolCallById.get(b.tool_use_id);
+          if (tc) {
+            const t = typeof b.content === 'string' ? b.content
+              : Array.isArray(b.content) ? b.content.map((c: any) => (typeof c?.text === 'string' ? c.text : '')).join('') : '';
+            tc.response = t;
+            tc.status = b.is_error ? 'failed' : 'complete';
+            tc.completedAt = ts;
+          }
+        }
+      }
     }
     return turns;
   }

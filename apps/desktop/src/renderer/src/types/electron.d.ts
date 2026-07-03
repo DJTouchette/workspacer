@@ -50,6 +50,7 @@ export interface ElectronAPI {
   spawnClaude: (opts: { cwd?: string; provider?: 'claude' | 'codex' | 'opencode' | 'pi'; profileId?: string; model?: string; effort?: string; permissionMode?: string; skipPermissions?: boolean; resumeSessionId?: string; cols?: number; rows?: number; supervisor?: boolean; label?: string; parentSessionId?: string; mcpItemIds?: string[] }) => Promise<string>;
   claudeListModels: () => Promise<{ defaultModel: string; skipPermissionsDefault: boolean; aliases: Array<{ value: string; label: string }>; seen: string[] }>;
   workflowAgentTranscript: (sessionId: string, runId: string | null, agentId: string) => Promise<{ role: string; text: string }[] | null>;
+  workflowAgentConversation: (sessionId: string, runId: string | null, agentId: string) => Promise<import('./claudeSession').ConversationTurn[] | null>;
   providerListModels: (provider: 'codex' | 'opencode' | 'pi', cwd?: string) => Promise<Array<{ id: string; label: string; default: boolean }>>;
   providerCheckAll: () => Promise<Array<{ provider: string; found: boolean; resolvedPath: string | null; customBin: string }>>;
   claudeMessage: (sessionId: string, text: string) => Promise<{ ok: boolean; mode?: string }>;

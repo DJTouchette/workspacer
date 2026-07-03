@@ -1,6 +1,9 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { ConversationTurn, ToolCall } from '../types/claudeSession';
 import { useClaudeSession } from '../hooks/useClaudeSession';
 import { claudeColors as colors } from '../components/claude-shared';
+import { ConversationMessage } from '../components/claude/ConversationMessage';
+import { WorkCard } from '../components/claude/WorkCard';
 import { WorkflowTimeline } from '../components/claude/WorkflowTimeline';
 import { AGENT_PURPLE, fmtTokens, fmtDuration, shortModel } from '../components/claude/agentUtils';
 import { fmtUSD } from '../lib/sessionStats';
@@ -42,14 +45,22 @@ const AgentWatchPane: React.FC<AgentWatchPaneProps> = ({ isActive, watchSessionI
   const running = sub?.status === 'running';
   const now = useNowTicker(!!running);
 
+  // GUI view (default) renders the full conversation experience — markdown +
+  // WorkCards — from the rich turn parse; Raw is the original mono transcript.
+  const [view, setView] = useState<'gui' | 'raw'>('gui');
+
   // Subagent transcript, re-read on a slow poll while the agent runs (the
   // watcher tails the same file, so this stays ~2.5s behind reality at worst).
   // null = unavailable/never loaded; [] = loaded but no messages yet.
   const [transcript, setTranscript] = useState<{ role: string; text: string }[] | null>(null);
+  const [conv, setConv] = useState<ConversationTurn[] | null>(null);
   const fetchTranscript = useCallback(() => {
     if (watchKind !== 'subagent' || !watchSessionId || !watchId) return;
     window.electronAPI.workflowAgentTranscript(watchSessionId, null, watchId)
       .then((t) => { if (t) setTranscript(t); })
+      .catch(() => {});
+    window.electronAPI.workflowAgentConversation(watchSessionId, null, watchId)
+      .then((t) => { if (t) setConv(t); })
       .catch(() => {});
   }, [watchKind, watchSessionId, watchId]);
 
@@ -63,13 +74,43 @@ const AgentWatchPane: React.FC<AgentWatchPaneProps> = ({ isActive, watchSessionI
   // Follow the tail: stick to the bottom while new turns stream in, unless the
   // user has scrolled up to read something.
   const scrollRef = useRef<HTMLDivElement>(null);
-  const turnCount = transcript?.length ?? 0;
+  const turnCount = (view === 'gui' ? conv?.length : transcript?.length) ?? 0;
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
     if (nearBottom) el.scrollTop = el.scrollHeight;
   }, [turnCount]);
+
+  // GUI timeline: text turns as chat messages, consecutive tool-call turns
+  // collapsed into one WorkCard — the same reading shape as the main GUI view
+  // (text → work → text), minus its windowing/orchestration extras.
+  const cwd = session?.cwd;
+  const guiItems = useMemo(() => {
+    if (!conv) return null;
+    const items: React.ReactNode[] = [];
+    let work: ToolCall[] = [];
+    let workKey = 0;
+    const flush = (isLast: boolean) => {
+      if (work.length === 0) return;
+      items.push(
+        <WorkCard key={`work-${workKey}`} toolCalls={work} live={!!running && isLast} isLast={isLast} cwd={cwd} />,
+      );
+      work = [];
+    };
+    conv.forEach((turn, i) => {
+      const calls = turn.toolCalls ?? [];
+      if (calls.length > 0) {
+        if (work.length === 0) workKey = i;
+        work.push(...calls);
+        return;
+      }
+      flush(false);
+      if (turn.content) items.push(<ConversationMessage key={`msg-${i}`} turn={turn} />);
+    });
+    flush(true);
+    return items;
+  }, [conv, running, cwd]);
 
   if (!watchSessionId || !watchKind || !watchId) {
     return emptyState(['Nothing to watch', 'This pane lost its watch target — close it and reopen from the inspector.']);
@@ -104,6 +145,29 @@ const AgentWatchPane: React.FC<AgentWatchPaneProps> = ({ isActive, watchSessionI
           <span style={{ color: AGENT_PURPLE, fontWeight: 700 }}>Agent</span>
           <span style={{ color: colors.textBright, fontWeight: 600 }}>{sub?.type ?? 'subagent'}</span>
           <div style={{ flex: 1 }} />
+          {/* GUI / Raw view toggle */}
+          <span style={{ display: 'inline-flex', border: `1px solid ${colors.borderSubtle}`, borderRadius: 6, overflow: 'hidden', flexShrink: 0 }}>
+            {(['gui', 'raw'] as const).map((v) => (
+              <button
+                key={v}
+                onClick={() => setView(v)}
+                title={v === 'gui' ? 'Rendered conversation (markdown + tool cards)' : 'Raw transcript text'}
+                style={{
+                  fontSize: '0.62rem',
+                  fontWeight: 600,
+                  padding: '2px 8px',
+                  border: 'none',
+                  cursor: 'pointer',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.04em',
+                  backgroundColor: view === v ? 'var(--wks-accent-bg)' : 'transparent',
+                  color: view === v ? colors.accent : colors.mutedDim,
+                }}
+              >
+                {v === 'gui' ? 'GUI' : 'Raw'}
+              </button>
+            ))}
+          </span>
           <span style={{ fontSize: '0.66rem', color: running ? AGENT_PURPLE : colors.mutedDim, fontWeight: 600 }}>
             {sub ? (running ? 'running' : 'complete') : 'not in live snapshot'}
           </span>
@@ -127,15 +191,18 @@ const AgentWatchPane: React.FC<AgentWatchPaneProps> = ({ isActive, watchSessionI
 
       {/* Transcript */}
       <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: '12px 16px' }}>
-        {transcript === null && (
+        {(view === 'gui' ? conv === null : transcript === null) && (
           <div style={{ color: colors.mutedDim, fontSize: '0.72rem', textAlign: 'center', marginTop: 40 }}>
             {sub ? 'Loading transcript…' : 'Transcript unavailable — the owning session isn’t being watched (it may have ended or the app restarted).'}
           </div>
         )}
-        {transcript !== null && transcript.length === 0 && (
+        {(view === 'gui' ? conv !== null && conv.length === 0 : transcript !== null && transcript.length === 0) && (
           <div style={{ color: colors.mutedDim, fontSize: '0.72rem', textAlign: 'center', marginTop: 40 }}>No messages yet.</div>
         )}
-        {transcript?.map((t, i) => (
+        {view === 'gui' && guiItems && (
+          <div style={{ maxWidth: 900, marginLeft: 'auto', marginRight: 'auto' }}>{guiItems}</div>
+        )}
+        {view === 'raw' && transcript?.map((t, i) => (
           <div key={i} style={{ marginBottom: 12, maxWidth: 900, marginLeft: 'auto', marginRight: 'auto' }}>
             <div style={{ fontSize: '0.58rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 3, color: t.role === 'user' ? colors.accent : AGENT_PURPLE }}>
               {t.role === 'user' ? (i === 0 ? 'prompt' : 'user') : 'agent'}

@@ -408,6 +408,11 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC.WORKFLOW_AGENT_TRANSCRIPT, (_event, sessionId: string, runId: string | null, agentId: string) =>
     workflowWatcher.readAgentTranscript(sessionId, runId, agentId));
 
+  // Rich variant for the watch pane's GUI view: ConversationTurn-shaped turns
+  // with real tool-call objects, renderable by the main conversation components.
+  ipcMain.handle(IPC.WORKFLOW_AGENT_CONVERSATION, (_event, sessionId: string, runId: string | null, agentId: string) =>
+    workflowWatcher.readAgentConversation(sessionId, runId, agentId));
+
   // Live model catalog for a managed provider (codex/opencode/pi). We resolve
   // the launcher binary the same way spawning does, then query the provider's
   // own CLI/server via claudemon so the picker matches the installed version.

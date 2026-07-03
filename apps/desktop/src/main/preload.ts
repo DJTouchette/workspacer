@@ -184,6 +184,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke(IPC.CLAUDE_LIST_MODELS),
   workflowAgentTranscript: (sessionId: string, runId: string | null, agentId: string): Promise<{ role: string; text: string }[] | null> =>
     ipcRenderer.invoke(IPC.WORKFLOW_AGENT_TRANSCRIPT, sessionId, runId, agentId),
+  workflowAgentConversation: (sessionId: string, runId: string | null, agentId: string): Promise<unknown[] | null> =>
+    ipcRenderer.invoke(IPC.WORKFLOW_AGENT_CONVERSATION, sessionId, runId, agentId),
   providerListModels: (provider: 'codex' | 'opencode' | 'pi', cwd?: string): Promise<Array<{ id: string; label: string; default: boolean }>> =>
     ipcRenderer.invoke(IPC.PROVIDER_LIST_MODELS, provider, cwd),
   providerCheckAll: (): Promise<Array<{ provider: string; found: boolean; resolvedPath: string | null; customBin: string }>> =>
