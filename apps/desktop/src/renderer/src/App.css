@@ -122,6 +122,18 @@ html, body {
   border-top: none !important;
 }
 
+/* Composer (GUI chat bar) — hover states for the flat controls inside the
+ * panel's bottom row; base styles are inline in Composer/ComposerControls. */
+.wks-composer-ctl:hover:not(:disabled),
+.wks-composer-icon-btn:hover {
+  background-color: var(--wks-bg-hover) !important;
+  color: var(--wks-text-primary) !important;
+}
+.wks-composer-ctl,
+.wks-composer-icon-btn {
+  transition: background-color 0.12s, color 0.12s;
+}
+
 /* Shared frosted-glass surface. Apply alongside per-element layout styles. */
 .wks-glass {
   background-color: var(--wks-glass-bg);

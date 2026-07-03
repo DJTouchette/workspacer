@@ -1,4 +1,4 @@
-import React, { useLayoutEffect, useRef } from 'react';
+import React, { useLayoutEffect, useRef, useState } from 'react';
 import { claudeColors as colors } from '../claude-shared';
 import { FileChips } from './FileChips';
 import type { AttachedFile } from './fileAttachment';
@@ -21,12 +21,19 @@ export interface ComposerProps {
   showSendButton?: boolean;
   /** Display name of the agent backend (Claude / Codex / …) for placeholders. */
   agentName?: string;
+  /** Session controls (model / effort / permission) rendered inside the
+   *  panel's bottom row, next to the attach button. */
+  controls?: React.ReactNode;
 }
 
 /**
- * Multi-line auto-growing message composer. Enter sends, Shift+Enter inserts
- * a newline. Replaces the old single-line <input> so pasted/typed multi-line
- * prompts are visible and editable before sending.
+ * Multi-line auto-growing message composer. Enter sends, Shift+Enter inserts a
+ * newline.
+ *
+ * Visually a single floating panel over the conversation background (no
+ * full-width strip behind it): rounded border, flat raised surface, the
+ * textarea borderless on top and a controls row along the bottom edge —
+ * attach + session pills on the left, send on the right.
  */
 export const Composer: React.FC<ComposerProps> = ({
   value,
@@ -40,9 +47,11 @@ export const Composer: React.FC<ComposerProps> = ({
   inputRef,
   showSendButton = true,
   agentName = 'Claude',
+  controls,
 }) => {
   const fallbackRef = useRef<HTMLTextAreaElement>(null);
   const taRef = inputRef ?? fallbackRef;
+  const [focused, setFocused] = useState(false);
   const canSend = value.trim().length > 0 || attachedFiles.length > 0;
 
   // Auto-grow: reset to auto then clamp to scrollHeight so shrinking works too.
@@ -62,62 +71,41 @@ export const Composer: React.FC<ComposerProps> = ({
     ta.style.overflowY = sh > MAX_COMPOSER_HEIGHT ? 'auto' : 'hidden';
   }, [value, taRef]);
 
+  const borderColor = attachedFiles.length > 0
+    ? colors.accent
+    : focused ? 'var(--wks-border-input)' : colors.borderSubtle;
+
   return (
     <div style={{
-      borderTop: `1px solid ${colors.border}`,
-      background: 'var(--wks-bg-raised)',
-      padding: '10px 16px 9px 16px',
+      padding: '4px 16px 12px',
       flexShrink: 0,
       opacity: dimmed ? 0.55 : 1,
       transition: 'opacity 0.15s',
     }}>
       <div style={{ maxWidth: 1040, margin: '0 auto' }}>
-        <FileChips files={attachedFiles} onRemove={onRemoveFile} />
         <div style={{
           display: 'flex',
-          alignItems: 'center',
-          gap: 6,
-          padding: '6px 6px 6px 10px',
-          borderRadius: 13,
-          border: `1px solid ${attachedFiles.length > 0 ? colors.accent : 'var(--wks-border-input)'}`,
-          backgroundColor: 'var(--wks-bg-input)',
-          boxShadow: 'inset 0 1px 0 var(--wks-glass-highlight)',
+          flexDirection: 'column',
+          borderRadius: 16,
+          border: `1px solid ${borderColor}`,
+          background: 'var(--wks-bg-raised)',
+          boxShadow: '0 4px 24px rgba(0, 0, 0, 0.18)',
           transition: 'border-color 0.15s',
         }}>
-          <span aria-hidden style={{
-            alignSelf: 'center', flexShrink: 0,
-            fontFamily: 'var(--wks-font-mono)', fontSize: '0.95rem', fontWeight: 700,
-            color: colors.accent, lineHeight: 1,
-          }}>{'›'}</span>
-          <button
-            onClick={onPickFiles}
-            title="Attach files"
-            style={{
-              alignSelf: 'center',
-              width: 24,
-              height: 24,
-              borderRadius: '50%',
-              border: 'none',
-              backgroundColor: 'transparent',
-              color: colors.muted,
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: '1rem',
-              flexShrink: 0,
-              padding: 0,
-            }}
-          >
-            +
-          </button>
+          {attachedFiles.length > 0 && (
+            <div style={{ padding: '10px 14px 0' }}>
+              <FileChips files={attachedFiles} onRemove={onRemoveFile} />
+            </div>
+          )}
           <textarea
             ref={taRef}
             rows={1}
-            placeholder={attachedFiles.length > 0 ? `What should ${agentName} do with these files?` : `Message ${agentName}... (Shift+Enter for newline)`}
+            placeholder={attachedFiles.length > 0 ? `What should ${agentName} do with these files?` : `Message ${agentName}… (Shift+Enter for newline)`}
             value={value}
             onChange={(e) => onChange(e.target.value)}
             onPaste={onPaste}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setFocused(false)}
             onKeyDown={(e) => {
               // Enter sends; Shift+Enter inserts a newline. Only treat Enter as
               // an IME candidate-commit (not a send) when it's a real
@@ -133,13 +121,11 @@ export const Composer: React.FC<ComposerProps> = ({
               }
             }}
             style={{
-              flex: 1,
-              fontSize: '0.8rem',
+              fontSize: '0.82rem',
               // border-box so the auto-grow height (set to scrollHeight) matches
-              // the text exactly; otherwise the padding inflates the box and the
-              // top-aligned text rides above the centered buttons.
+              // the text exactly.
               boxSizing: 'border-box',
-              padding: '4px 0',
+              padding: '12px 14px 4px',
               border: 'none',
               backgroundColor: 'transparent',
               color: colors.text,
@@ -150,44 +136,71 @@ export const Composer: React.FC<ComposerProps> = ({
               // Floor at one line (lineHeight + vertical padding, border-box) so
               // the box always shows a full line even if a measurement lands
               // while hidden and reports 0.
-              minHeight: 'calc(1.5em + 8px)',
+              minHeight: 'calc(1.5em + 16px)',
               maxHeight: MAX_COMPOSER_HEIGHT,
             }}
           />
-          {showSendButton && (
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 4,
+            padding: '4px 8px 8px',
+            minWidth: 0,
+          }}>
             <button
-              onClick={onSend}
-              disabled={!canSend}
+              onClick={onPickFiles}
+              title="Attach files"
+              className="wks-composer-icon-btn"
               style={{
-                width: 28,
-                height: 28,
+                width: 26,
+                height: 26,
                 borderRadius: '50%',
                 border: 'none',
-                backgroundColor: canSend ? colors.accent : 'rgba(255,255,255,0.06)',
-                color: canSend ? '#0d0d10' : colors.mutedDim,
-                cursor: canSend ? 'pointer' : 'default',
+                backgroundColor: 'transparent',
+                color: colors.muted,
+                cursor: 'pointer',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                fontSize: '0.85rem',
-                fontWeight: 700,
+                fontSize: '1.05rem',
                 flexShrink: 0,
-                transition: 'background-color 0.15s, color 0.15s',
+                padding: 0,
               }}
-              aria-label="Send message"
             >
-              {'↑'}
+              +
             </button>
-          )}
-        </div>
-        {/* Key hints (mockup) — subtle, and the discoverable cue for Enter-to-send
-            when the send button is hidden. */}
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 10, marginTop: 6, padding: '0 3px',
-          fontFamily: 'var(--wks-font-mono, monospace)', fontSize: '0.6rem', color: colors.mutedDim,
-        }}>
-          <span><span style={{ color: colors.muted }}>⏎</span> send</span>
-          <span><span style={{ color: colors.muted }}>⇧⏎</span> newline</span>
+            {controls && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 2, minWidth: 0, overflow: 'hidden' }}>
+                {controls}
+              </div>
+            )}
+            <div style={{ flex: 1 }} />
+            {showSendButton && (
+              <button
+                onClick={onSend}
+                disabled={!canSend}
+                style={{
+                  width: 30,
+                  height: 30,
+                  borderRadius: '50%',
+                  border: 'none',
+                  backgroundColor: canSend ? 'var(--wks-accent)' : 'var(--wks-bg-elevated, rgba(255,255,255,0.06))',
+                  color: canSend ? '#fff' : colors.mutedDim,
+                  cursor: canSend ? 'pointer' : 'default',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '0.9rem',
+                  fontWeight: 700,
+                  flexShrink: 0,
+                  transition: 'background-color 0.15s, color 0.15s',
+                }}
+                aria-label="Send message"
+              >
+                {'↑'}
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>

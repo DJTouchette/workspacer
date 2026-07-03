@@ -1,7 +1,8 @@
 /**
- * Session control pills — "Opus 4.5 ▾ · High ▾ · Full access ▾" — rendered in
- * the pane's bottom status bar next to the context meter. What each pill can
- * do comes from lib/providerCaps.ts:
+ * Session control pills — "Opus 4.5 ▾ · High ▾ · Full access ▾" — rendered
+ * flat (separator-divided, no borders) inside the composer's bottom row in GUI
+ * mode, and in the pane's bottom status bar in terminal mode. What each pill
+ * can do comes from lib/providerCaps.ts:
  *
  *  - Model:  claude switches live (`/model <id>` submitted through the normal
  *    message path); managed providers restart with the new model.
@@ -21,6 +22,7 @@ import { capsFor, permissionModeLabel } from '../../lib/providerCaps';
 import { deriveSessionStats } from '../../lib/sessionStats';
 import { claudeColors as colors } from '../claude-shared';
 import { ContextMenu, ContextMenuItem, ContextMenuLabel, ContextMenuSeparator } from '../ContextMenu';
+import { IconModel } from '../wksIcons';
 
 export interface RestartOverrides {
   model?: string;
@@ -46,23 +48,31 @@ interface MenuState {
 const pillStyle: React.CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
-  gap: 4,
-  padding: '1px 8px',
-  borderRadius: 9,
-  border: `1px solid ${colors.borderSubtle}`,
+  gap: 5,
+  padding: '3px 8px',
+  borderRadius: 7,
+  border: 'none',
   background: 'transparent',
   color: colors.muted,
   cursor: 'pointer',
-  fontSize: '0.6rem',
+  fontSize: '0.68rem',
   fontFamily: 'inherit',
   fontWeight: 600,
   lineHeight: '16px',
   whiteSpace: 'nowrap',
-  maxWidth: 160,
+  maxWidth: 180,
   overflow: 'hidden',
   textOverflow: 'ellipsis',
   flexShrink: 0,
 };
+
+/** Thin vertical rule between controls (T3-style separators). */
+const Sep: React.FC = () => (
+  <span aria-hidden style={{
+    width: 1, height: 14, flexShrink: 0, margin: '0 2px',
+    background: colors.borderSubtle,
+  }} />
+);
 
 export const ComposerControls: React.FC<{
   provider: AgentProvider | undefined;
@@ -150,28 +160,36 @@ export const ComposerControls: React.FC<{
   const disabled = !sessionId;
 
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, minWidth: 0 }}>
       <button
+        className="wks-composer-ctl"
         style={{ ...pillStyle, color: switching ? colors.accent : pillStyle.color }}
         onClick={openMenu('model')}
         disabled={disabled}
         title={disabled ? 'No session yet' : caps.modelSwitch === 'live' ? 'Switch model (applies to the next turn)' : 'Switch model (restarts the session)'}
       >
+        <IconModel size={13} strokeWidth={2} accent="currentColor" />
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{modelLabel}</span>
         <span style={{ opacity: 0.7 }}>▾</span>
       </button>
       {caps.effort && (
-        <button
-          style={pillStyle}
-          onClick={openMenu('effort')}
-          disabled={disabled}
-          title={disabled ? 'No session yet' : 'Reasoning effort (restarts the session)'}
-        >
-          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{effortLabel}</span>
-          <span style={{ opacity: 0.7 }}>▾</span>
-        </button>
+        <>
+          <Sep />
+          <button
+            className="wks-composer-ctl"
+            style={pillStyle}
+            onClick={openMenu('effort')}
+            disabled={disabled}
+            title={disabled ? 'No session yet' : 'Reasoning effort (restarts the session)'}
+          >
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{effortLabel}</span>
+            <span style={{ opacity: 0.7 }}>▾</span>
+          </button>
+        </>
       )}
+      <Sep />
       <button
+        className="wks-composer-ctl"
         style={pillStyle}
         onClick={openMenu('permission')}
         disabled={disabled}

@@ -83,12 +83,11 @@ export function statusBadgeStyle(color: string): React.CSSProperties {
   return {
     display: 'inline-flex',
     alignItems: 'center',
-    fontSize: '0.6rem',
+    gap: 5,
+    fontSize: '0.66rem',
     fontWeight: 600,
+    letterSpacing: '0.02em',
     color: color,
-    padding: '1px 6px',
-    borderRadius: 3,
-    backgroundColor: 'rgba(255,255,255,0.05)',
     whiteSpace: 'nowrap',
   };
 }
@@ -97,7 +96,7 @@ export const StatusBadge: React.FC<{
   session: ClaudeSessionSnapshot | null;
   approvalDismissed?: boolean;
 }> = ({ session, approvalDismissed }) => {
-  if (!session) return <span style={statusBadgeStyle('#555')}>no session</span>;
+  if (!session) return <span style={statusBadgeStyle('var(--wks-text-muted)')}>no session</span>;
 
   const state = (session.ambientState === 'waiting_approval' && approvalDismissed)
     ? 'thinking'
@@ -108,7 +107,7 @@ export const StatusBadge: React.FC<{
 
   return (
     <span style={statusBadgeStyle(color)}>
-      <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', backgroundColor: color, marginRight: 4 }} />
+      <span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', backgroundColor: color }} />
       {label}
     </span>
   );

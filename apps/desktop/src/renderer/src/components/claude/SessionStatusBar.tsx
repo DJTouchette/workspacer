@@ -113,7 +113,7 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd }) => {
         <>
           <Sep />
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: ctxColor(ctxPct), fontVariantNumeric: 'tabular-nums' }}>
-            <span style={{ color: 'var(--wks-text-faint)' }}>ctx</span>
+            <span style={{ color: 'var(--wks-text-muted)' }}>ctx</span>
             <CtxBar pct={ctxPct} />
             {Math.round(ctxPct)}%
           </span>
@@ -124,7 +124,7 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd }) => {
           <Sep />
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontVariantNumeric: 'tabular-nums' }}>
             {tokens !== undefined && (
-              <span><span style={{ color: 'var(--wks-text-faint)' }}>tok </span><span style={{ color: 'var(--wks-text-secondary)' }}>{fmtTokens(tokens)}</span></span>
+              <span><span style={{ color: 'var(--wks-text-muted)' }}>tok </span><span style={{ color: 'var(--wks-text-secondary)' }}>{fmtTokens(tokens)}</span></span>
             )}
             {cost !== undefined && <span style={{ color: 'var(--wks-accent-text)' }}>{fmtUSD(cost)}</span>}
           </span>
@@ -134,8 +134,8 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd }) => {
         <>
           <Sep />
           <span style={{ color: 'var(--wks-text-secondary)', fontVariantNumeric: 'tabular-nums' }}>
-            {five !== undefined && (<><span style={{ color: 'var(--wks-text-faint)' }}>5h </span>{Math.round(five)}%</>)}
-            {seven !== undefined && (<> <span style={{ color: 'var(--wks-text-faint)' }}>7d </span>{Math.round(seven)}%</>)}
+            {five !== undefined && (<><span style={{ color: 'var(--wks-text-muted)' }}>5h </span>{Math.round(five)}%</>)}
+            {seven !== undefined && (<> <span style={{ color: 'var(--wks-text-muted)' }}>7d </span>{Math.round(seven)}%</>)}
           </span>
         </>
       )}
