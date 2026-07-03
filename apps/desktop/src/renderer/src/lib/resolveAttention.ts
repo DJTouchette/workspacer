@@ -63,18 +63,23 @@ export function resolveAnswer(
 /**
  * Send a free-text message to an agent (inbox quick-reply).
  *
- * Mirrors ClaudePane.handleSend: prefer claudemon's mode-gated /message
- * endpoint (it appends the carriage return for us); fall back to a raw PTY
- * write + Enter if the session isn't in input mode.
+ * Mirrors ClaudePane.handleSend: claudemon's /message owns delivery — it
+ * queues while the agent is busy (or a dialog is up), injects once the prompt
+ * settles, and verifies the submit took. A rejection means the session has
+ * ended, where raw keystrokes can't help either; the raw write stays reserved
+ * for transport failure (daemon unreachable), framed as a bracketed paste +
+ * separate Enter so the CR can't fold into the paste (mirrors the daemon's
+ * send_message_now).
  */
 export function resolveReply(sessionId: string, text: string): void {
   window.electronAPI.claudeMessage(sessionId, text).then((res) => {
     if (!res.ok) {
-      // Single atomic write: text + submit in one frame so the lone \r can't
-      // race a mid-flight redraw and get dropped (the "typed but not sent" bug).
-      window.electronAPI.claudeWrite(sessionId, text + '\r');
+      console.warn(`[resolveAttention] /message rejected (mode=${res.mode}); session is not accepting input`);
     }
   }).catch(() => {
-    window.electronAPI.claudeWrite(sessionId, text + '\r');
+    window.electronAPI.claudeWrite(
+      sessionId,
+      '\x1b[200~' + text.replace(/[\r\n]+$/, '') + '\x1b[201~\r',
+    );
   });
 }

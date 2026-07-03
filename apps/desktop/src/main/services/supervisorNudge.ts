@@ -56,14 +56,11 @@ class SupervisorNudge {
       `[supervisor] An agent is now blocked on a decision: ${list}. ` +
       `Run a /supervise pass: gather the context and notify me with a recommendation.`;
     try {
-      // Mirror agents.sendMessage: prefer the mode-gated /message, fall back to
-      // typing into the PTY so the nudge queues even while the supervisor is busy.
-      const res = await claudemonSessionClient.message(supervisorId, text);
-      if (!res.ok) {
-        await claudemonSessionClient.input(supervisorId, text);
-        await new Promise((r) => setTimeout(r, 50));
-        await claudemonSessionClient.input(supervisorId, '\r');
-      }
+      // claudemon's /message queues while the supervisor is busy (or a dialog
+      // is up) and delivers once its prompt settles — no raw-PTY fallback
+      // needed (typing into an open dialog could answer it by accident). A
+      // rejection means the supervisor session has ended; nothing to do.
+      await claudemonSessionClient.message(supervisorId, text);
     } catch {
       /* the supervisor may have just ended — best-effort */
     }

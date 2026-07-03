@@ -584,11 +584,12 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
     const fullMessage = filePrefix + userText;
 
     // Show message immediately and set loading state
-    setOptimisticMessages(prev => [...prev, {
+    const optimisticTurn: ConversationTurn = {
       role: 'user',
       content: fullMessage,
       timestamp: Date.now(),
-    }]);
+    };
+    setOptimisticMessages(prev => [...prev, optimisticTurn]);
     setOptimisticLoading(true);
 
     const rawFallback = () => {
@@ -604,17 +605,25 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
       return;
     }
 
-    // Prefer claudemon's /message endpoint — it appends \r and writes the whole
-    // line atomically. The daemon now *buffers* a message sent before the
-    // session is ready (cold-start `unknown`, or mid-turn `responding`) and
-    // flushes it the instant the input prompt is up, so a single call suffices —
-    // no client-side retry race. The only rejections are modes that won't accept
-    // free chat (approval / question / stopped), where a raw PTY write is the
-    // right fallback.
+    // Prefer claudemon's /message endpoint — it owns the whole delivery
+    // policy: buffers a message sent before the session is ready (cold-start
+    // `unknown`, mid-turn `responding`, or an open approval/question dialog),
+    // injects once the prompt has settled, and verifies the submit took
+    // (re-pressing Enter if the TUI swallowed it). A single call suffices —
+    // no client-side retry race. The only rejection left is a stopped session,
+    // where the wrapper is gone and raw keystrokes can't help either — so the
+    // raw PTY write stays reserved for transport failure (daemon unreachable).
     try {
       const res = await window.electronAPI.claudeMessage(sessionId, fullMessage);
       if (res.ok) return; // sent or queued by the daemon
-      console.warn(`[ClaudePane] /message rejected (mode=${res.mode}); raw PTY write`);
+      // The session has ended — nothing was delivered. Retract the optimistic
+      // bubble and put the text back in the composer so the send visibly
+      // didn't take (instead of a phantom message above a dead session).
+      console.warn(`[ClaudePane] /message rejected (mode=${res.mode}); session is not accepting input`);
+      setOptimisticMessages(prev => prev.filter(t => t !== optimisticTurn));
+      setOptimisticLoading(false);
+      setInputValue(prev => (prev.trim().length > 0 ? prev : userText));
+      return;
     } catch (err) {
       console.warn('[ClaudePane] /message failed:', err);
     }

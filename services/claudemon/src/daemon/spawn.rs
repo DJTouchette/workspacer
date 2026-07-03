@@ -99,7 +99,12 @@ pub async fn handle(
             match msg {
                 WrapperMessage::Input { bytes } => {
                     if let Ok(decoded) = B64.decode(bytes.as_bytes()) {
-                        let _ = pty::write_bytes(&pty_for_input, &decoded).await;
+                        if let Err(err) = pty::write_bytes(&pty_for_input, &decoded).await {
+                            // A failed write means input (possibly a chat send
+                            // the store already reported delivered) was lost —
+                            // make it visible instead of vanishing.
+                            tracing::warn!(?err, len = decoded.len(), "PTY input write failed");
+                        }
                     }
                 }
                 WrapperMessage::Signal { signal } => match signal {

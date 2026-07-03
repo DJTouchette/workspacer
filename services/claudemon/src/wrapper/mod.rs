@@ -105,7 +105,9 @@ pub async fn run_with_daemon(argv: Vec<String>, daemon_ws: &str) -> Result<()> {
                 match msg {
                     WrapperMessage::Input { bytes } => {
                         if let Ok(decoded) = B64.decode(bytes.as_bytes()) {
-                            let _ = pty::write_bytes(&pty_for_reader, &decoded).await;
+                            if let Err(err) = pty::write_bytes(&pty_for_reader, &decoded).await {
+                                tracing::warn!(?err, len = decoded.len(), "PTY input write failed");
+                            }
                         }
                     }
                     WrapperMessage::Signal { signal } => {

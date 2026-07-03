@@ -18,8 +18,9 @@ const OUTPUT_BUFFER_CAP: usize = 256 * 1024; // 256 KiB per session
 const BYTE_BROADCAST_CAPACITY: usize = 1024;
 /// Max chat messages held per session while it isn't yet accepting input.
 /// Bounds memory if a session never reaches `Input` (e.g. stuck on startup);
-/// the oldest is dropped past this. In practice the queue holds 0–1.
-const MAX_PENDING_MESSAGES: usize = 8;
+/// the oldest is dropped (with a warning) past this. In practice the queue
+/// holds 0–1, so the cap only bites on a genuinely wedged session.
+const MAX_PENDING_MESSAGES: usize = 32;
 /// Delay between an `Input` transition and the pending-message flush. The
 /// transition is announced by a *hook* (Stop / SessionStart), and Claude Code
 /// runs hooks while the turn is still closing — its composer isn't back at the
@@ -32,6 +33,55 @@ const FLUSH_DELAY_MS: u64 = 300;
 /// hook); still `Input` after this long means the Enter was swallowed and the
 /// text is sitting in the composer — a bare CR then submits it.
 const SUBMIT_VERIFY_DELAY_MS: u64 = 1000;
+/// How many corrective bare-CR passes the verify loop makes before giving up.
+/// Each pass waits [`SUBMIT_VERIFY_DELAY_MS`] and only fires while the session
+/// is still `Input` (a CR on an empty prompt is a no-op, so a spurious pass is
+/// harmless); two passes cover an Enter swallowed twice in a row.
+const SUBMIT_VERIFY_ATTEMPTS: u32 = 2;
+
+/// Tracks the child's bracketed-paste (DECSET 2004) state from its output
+/// stream. `enabled` is `None` until either toggle sequence has been seen.
+/// `tail` holds the last few bytes of the previous chunk so a toggle sequence
+/// split across chunk boundaries is still recognized.
+#[derive(Default)]
+struct PasteModeTracker {
+    enabled: Option<bool>,
+    tail: Vec<u8>,
+}
+
+const PASTE_ON: &[u8] = b"\x1b[?2004h";
+const PASTE_OFF: &[u8] = b"\x1b[?2004l";
+
+impl PasteModeTracker {
+    /// Scan a chunk (prefixed with the retained tail) for the *last* paste
+    /// toggle it contains and update `enabled`. Returns the new state when a
+    /// toggle was seen in this chunk.
+    fn scan(&mut self, chunk: &[u8]) -> Option<bool> {
+        let mut hay = std::mem::take(&mut self.tail);
+        hay.extend_from_slice(chunk);
+        let last_on = find_last(&hay, PASTE_ON);
+        let last_off = find_last(&hay, PASTE_OFF);
+        let seen = match (last_on, last_off) {
+            (Some(on), Some(off)) => Some(on > off),
+            (Some(_), None) => Some(true),
+            (None, Some(_)) => Some(false),
+            (None, None) => None,
+        };
+        if seen.is_some() {
+            self.enabled = seen;
+        }
+        // Keep one sequence-length-minus-one of tail for boundary spanning.
+        let keep = hay.len().min(PASTE_ON.len() - 1);
+        self.tail = hay[hay.len() - keep..].to_vec();
+        seen
+    }
+}
+
+fn find_last(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .rposition(|w| w == needle)
+}
 
 /// Per-session ring buffer of raw PTY bytes the child has produced so far.
 #[derive(Default)]
@@ -124,6 +174,28 @@ pub struct SessionStore {
     /// after spawn reliable instead of racing a raw PTY write against the TUI's
     /// cold-start render (the "typed but not sent" bug).
     pending_messages: Arc<DashMap<String, Vec<String>>>,
+    /// When each session last transitioned into `Input`. The scheduled flush
+    /// settles [`FLUSH_DELAY_MS`] past this instant, so a send into a prompt
+    /// that has been idle for a while injects immediately while a send racing
+    /// a just-closed turn waits out the TUI's composer redraw.
+    input_since: Arc<DashMap<String, tokio::time::Instant>>,
+    /// Monotonic per-session flush generation. Every (re)schedule and every
+    /// queue clear bumps it; an in-flight flush/verify task re-checks its
+    /// captured epoch at each step and aborts when superseded, so corrective
+    /// CRs can never stack up from overlapping tasks.
+    flush_epochs: Arc<DashMap<String, u64>>,
+    /// When a client last wrote *raw* bytes to the session (terminal
+    /// keystrokes via `/input`, picker answers via `/answer`). The verify
+    /// ladder aborts if this postdates its flush: the composer content is no
+    /// longer known-ours, and a corrective CR could submit a user's draft.
+    client_input_at: Arc<DashMap<String, tokio::time::Instant>>,
+    /// Bracketed-paste (DECSET 2004) state per session, tracked from the PTY
+    /// output stream in [`Self::record_output`]. `send_message_now` frames
+    /// chat as a bracketed paste; if the TUI has paste mode *off* (cold-start
+    /// trust/OAuth screens), the markers would land as literal text — so the
+    /// flush holds while this is explicitly `false` and reschedules when the
+    /// enable sequence appears. `None` (never observed) does not gate.
+    paste_modes: Arc<DashMap<String, PasteModeTracker>>,
     /// Managed (adapter-driven) sessions route user prompts here instead of to a
     /// PTY: the provider adapter's driver task owns the receiver and forwards
     /// each prompt to the agent's own API (e.g. OpenCode's POST message).
@@ -145,12 +217,15 @@ pub struct SessionStore {
 /// unit-tested without standing up axum.
 #[derive(Debug, PartialEq, Eq)]
 pub enum MessageOutcome {
-    /// Written to the child immediately (session was in `Input`).
+    /// Accepted for delivery — the session is at the prompt (`Input`). The
+    /// write happens via the guarded flush: immediately once the prompt has
+    /// settled, and verified afterwards (see `schedule_pending_flush`).
     Sent,
-    /// Held until the session reaches `Input` (was `Unknown`/`Responding`).
+    /// Held until the session reaches `Input` (was `Unknown`/`Responding`,
+    /// or paused on `Approval`/`Question`), then flushed through the same
+    /// guarded pipeline.
     Queued,
-    /// Session is in a mode that won't accept free chat (`Approval`,
-    /// `Question`, `Stopped`); the caller should use the matching endpoint.
+    /// Session has ended (`Stopped`) — there is no prompt to deliver to.
     Rejected(SessionMode),
     /// No session with this id.
     NoSession,
@@ -178,6 +253,10 @@ impl SessionStore {
             pending_spawns_by_cwd: Arc::new(DashMap::new()),
             aliases: Arc::new(DashMap::new()),
             pending_messages: Arc::new(DashMap::new()),
+            input_since: Arc::new(DashMap::new()),
+            flush_epochs: Arc::new(DashMap::new()),
+            client_input_at: Arc::new(DashMap::new()),
+            paste_modes: Arc::new(DashMap::new()),
             managed_inputs: Arc::new(DashMap::new()),
             managed_decisions: Arc::new(DashMap::new()),
             ptys: Arc::new(DashMap::new()),
@@ -362,6 +441,11 @@ impl SessionStore {
         // Drain or drop any queued chat messages — done outside the `states`
         // entry lock above (flush touches `wrappers`, not `states`).
         if became_input {
+            // Stamp the transition so the scheduled flush can settle relative
+            // to it: a send into a long-idle prompt injects immediately, a send
+            // racing this very transition waits out the composer redraw.
+            self.input_since
+                .insert(event.session_id.clone(), tokio::time::Instant::now());
             self.schedule_pending_flush(&event.session_id);
         } else if became_stopped {
             self.clear_pending_messages(&event.session_id);
@@ -450,6 +534,9 @@ impl SessionStore {
             .or_insert_with(|| Arc::new(Mutex::new(OutputBuffer::new(OUTPUT_BUFFER_CAP))));
         let (tx, _) = broadcast::channel(BYTE_BROADCAST_CAPACITY);
         self.bytes_tx.insert(session_id.to_string(), tx);
+        // Fresh child, unknown terminal state — a stale paste-mode reading from
+        // a previous life of this session id must not gate (or ungate) sends.
+        self.paste_modes.remove(session_id);
         state
     }
 
@@ -496,6 +583,9 @@ impl SessionStore {
             .or_insert_with(|| broadcast::channel(BYTE_BROADCAST_CAPACITY).0);
         self.pending_spawns_by_cwd
             .insert(cwd.to_string(), session_id.to_string());
+        // Fresh child — drop any paste-mode reading from a previous life of
+        // this session id (resume reuses it).
+        self.paste_modes.remove(session_id);
         let _ = self.update_tx.send(SessionUpdate {
             session_id: session_id.to_string(),
             event: "Spawn".to_string(),
@@ -684,6 +774,10 @@ impl SessionStore {
         self.buffers.remove(session_id);
         self.bytes_tx.remove(session_id);
         self.pending_messages.remove(session_id);
+        self.input_since.remove(session_id);
+        self.flush_epochs.remove(session_id);
+        self.client_input_at.remove(session_id);
+        self.paste_modes.remove(session_id);
         self.states.remove(session_id);
         // Drop any hook-id → canonical-id aliases pointing at this session, so the
         // alias map doesn't accrue a permanent entry per spawn across churn.
@@ -696,11 +790,14 @@ impl SessionStore {
 
     // --- chat message submission --------------------------------------------
 
-    /// Submit a chat message. Sends it immediately when the session is ready
-    /// (`Input`), otherwise holds it until the session reaches `Input` and
-    /// flushes it then (`Unknown`/`Responding`). Modes that won't accept free
-    /// chat are rejected so the caller can use the right endpoint. See
-    /// [`MessageOutcome`].
+    /// Submit a chat message. Every live mode accepts it: at the prompt
+    /// (`Input`) it goes through the guarded flush right away; in any other
+    /// live mode (`Unknown`/`Responding`/`Approval`/`Question`) it is held and
+    /// flushed when the session next reaches `Input`. Queuing during
+    /// `Approval`/`Question` matters: typing into an open dialog would answer
+    /// the dialog, not deliver the message — the old `Rejected` outcome pushed
+    /// callers into exactly that raw-PTY fallback. Only a `Stopped` session
+    /// rejects. See [`MessageOutcome`].
     pub fn submit_message(&self, session_id: &str, text: String) -> MessageOutcome {
         // Managed (adapter-driven) sessions forward the prompt to the provider's
         // own API via the driver task — no PTY, no Input-mode gating.
@@ -715,8 +812,23 @@ impl SessionStore {
             return MessageOutcome::NoSession;
         };
         match mode {
-            SessionMode::Input => self.send_message_now(session_id, text),
-            SessionMode::Unknown | SessionMode::Responding => {
+            SessionMode::Stopped => MessageOutcome::Rejected(SessionMode::Stopped),
+            SessionMode::Input => {
+                if self.wrapper(session_id).is_none() {
+                    return MessageOutcome::NoWrapper;
+                }
+                // Even at the prompt the send is routed through the scheduled
+                // flush rather than written inline: the hook that announced
+                // `Input` fires while the TUI is still closing the turn, so an
+                // instant injection can have its Enter swallowed exactly like a
+                // queued one. The flush settles FLUSH_DELAY_MS past the Input
+                // transition (a no-op wait when the prompt has been idle) and
+                // then verifies the submit took.
+                self.enqueue_message(session_id, text);
+                self.schedule_pending_flush(session_id);
+                MessageOutcome::Sent
+            }
+            _ => {
                 self.enqueue_message(session_id, text);
                 // Guard the read-then-enqueue against a concurrent transition:
                 // if `ingest` flipped the session to `Input` after our mode read
@@ -728,7 +840,6 @@ impl SessionStore {
                 }
                 MessageOutcome::Queued
             }
-            other => MessageOutcome::Rejected(other),
         }
     }
 
@@ -738,9 +849,56 @@ impl SessionStore {
             .entry(session_id.to_string())
             .or_default();
         if q.len() >= MAX_PENDING_MESSAGES {
-            q.remove(0); // drop oldest — bound memory under a stuck session
+            // Bound memory under a stuck session. The caller was already told
+            // "queued", so this is silent loss from its perspective — warn so
+            // a wedged session is at least visible in the daemon log.
+            let dropped = q.remove(0);
+            tracing::warn!(
+                session_id,
+                dropped = %dropped.chars().take(80).collect::<String>(),
+                "pending-message queue full; dropping oldest"
+            );
         }
         q.push(text);
+    }
+
+    /// Bump the session's flush generation, invalidating any in-flight
+    /// flush/verify task, and return the fresh value for a new task to carry.
+    fn bump_flush_epoch(&self, session_id: &str) -> u64 {
+        let mut entry = self.flush_epochs.entry(session_id.to_string()).or_insert(0);
+        *entry += 1;
+        *entry
+    }
+
+    fn flush_epoch_is(&self, session_id: &str, epoch: u64) -> bool {
+        self.flush_epochs.get(session_id).map(|e| *e) == Some(epoch)
+    }
+
+    /// Record that a client wrote raw bytes to this session (terminal
+    /// keystrokes, picker answers). Called by the `/input` and `/answer`
+    /// handlers so an in-flight verify ladder knows the composer is no longer
+    /// exclusively ours and stands down.
+    pub fn note_client_input(&self, session_id: &str) {
+        self.client_input_at
+            .insert(session_id.to_string(), tokio::time::Instant::now());
+    }
+
+    /// Whether the session's TUI has bracketed paste *explicitly* disabled.
+    /// Unknown (never observed either toggle) does not gate — some transports
+    /// attach mid-stream and would otherwise never flush.
+    fn paste_mode_off(&self, session_id: &str) -> bool {
+        self.paste_modes
+            .get(session_id)
+            .is_some_and(|t| t.enabled == Some(false))
+    }
+
+    fn client_typed_since(&self, session_id: &str, when: tokio::time::Instant) -> bool {
+        // `>=`, not `>`: input landing at the same instant as the flush is
+        // exactly the ambiguity the guard exists for (and the paused test
+        // clock only moves during sleeps, so simultaneous stamps are common).
+        self.client_input_at
+            .get(session_id)
+            .is_some_and(|t| *t >= when)
     }
 
     /// Flush queued messages once the TUI is actually ready. The `Input`
@@ -748,11 +906,18 @@ impl SessionStore {
     /// composer is back at the prompt — flushing synchronously there types the
     /// message into the box but the submitting Enter gets swallowed as mid-turn
     /// input, stranding the text in the TUI (seen when a GUI send raced a
-    /// terminal-driven turn). So: wait a beat, re-check the session is still
-    /// ready (if not, the next `Input` transition reschedules), flush, then
-    /// verify the submit actually flipped the session to `Responding` — if it
-    /// didn't, a bare CR submits whatever is sitting in the composer (a no-op
-    /// on an empty prompt).
+    /// terminal-driven turn). So: settle until the mode has been `Input` for
+    /// [`FLUSH_DELAY_MS`] (no wait when the prompt has been idle longer than
+    /// that), re-check the session is still ready (if not, the next `Input`
+    /// transition reschedules), flush, then verify the submit actually flipped
+    /// the session to `Responding` — if it didn't, a bare CR submits whatever
+    /// is sitting in the composer (a no-op on an empty prompt), retried up to
+    /// [`SUBMIT_VERIFY_ATTEMPTS`] times.
+    ///
+    /// Each call bumps the session's flush epoch and the spawned task
+    /// re-checks it at every step, so overlapping schedules (rapid sends,
+    /// back-to-back `Input` transitions) collapse to a single live task and
+    /// corrective CRs never stack.
     ///
     /// Outside a tokio runtime (unit tests drive the state machine
     /// synchronously) this degrades to the immediate flush.
@@ -764,6 +929,7 @@ impl SessionStore {
         {
             return;
         }
+        let epoch = self.bump_flush_epoch(session_id);
         let Ok(rt) = tokio::runtime::Handle::try_current() else {
             self.flush_pending_messages(session_id);
             return;
@@ -771,40 +937,105 @@ impl SessionStore {
         let store = self.clone();
         let sid = session_id.to_string();
         rt.spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(FLUSH_DELAY_MS)).await;
+            let settled = store
+                .input_since
+                .get(&sid)
+                .map(|i| i.elapsed())
+                .unwrap_or_default();
+            let remaining =
+                std::time::Duration::from_millis(FLUSH_DELAY_MS).saturating_sub(settled);
+            if !remaining.is_zero() {
+                tokio::time::sleep(remaining).await;
+            }
+            if !store.flush_epoch_is(&sid, epoch) {
+                return; // superseded by a newer schedule (or the queue was cleared)
+            }
             if store.states.get(&sid).map(|s| s.mode) != Some(SessionMode::Input) {
                 return; // no longer ready — the queue survives for the next transition
             }
-            store.flush_pending_messages(&sid);
-            tokio::time::sleep(std::time::Duration::from_millis(SUBMIT_VERIFY_DELAY_MS)).await;
-            if store.states.get(&sid).map(|s| s.mode) == Some(SessionMode::Input) {
+            if store.paste_mode_off(&sid) {
+                // The TUI has bracketed paste explicitly disabled (cold-start
+                // trust/OAuth screens) — a paste now would land as literal
+                // marker text. Hold; `record_output` reschedules on the enable
+                // sequence.
+                return;
+            }
+            let sent = store.flush_pending_messages(&sid);
+            if sent.is_empty() {
+                return;
+            }
+            let flushed_at = tokio::time::Instant::now();
+            // Slash commands (e.g. `/model opus`) can complete without a
+            // UserPromptSubmit hook, so "still Input" is not evidence the Enter
+            // was swallowed — and a corrective CR could activate whatever picker
+            // the command opened. Only verify sends that must start a turn.
+            if sent.iter().all(|t| t.trim_start().starts_with('/')) {
+                return;
+            }
+            for _ in 0..SUBMIT_VERIFY_ATTEMPTS {
+                tokio::time::sleep(std::time::Duration::from_millis(SUBMIT_VERIFY_DELAY_MS))
+                    .await;
+                if !store.flush_epoch_is(&sid, epoch) {
+                    return;
+                }
+                if store.states.get(&sid).map(|s| s.mode) != Some(SessionMode::Input) {
+                    return; // the submit took (UserPromptSubmit flipped the mode)
+                }
+                if store.client_typed_since(&sid, flushed_at) {
+                    return; // someone typed raw bytes since the flush — the
+                            // composer is no longer known-ours, a CR could
+                            // submit their draft
+                }
                 // No UserPromptSubmit arrived — the Enter was swallowed and the
                 // text is sitting in the composer. Submit it.
-                if let Some(handle) = store.wrapper(&sid) {
-                    let _ = handle
-                        .tx
-                        .send(WrapperMessage::Input { bytes: B64.encode(b"\r") });
-                }
+                let Some(handle) = store.wrapper(&sid) else { return };
+                let _ = handle
+                    .tx
+                    .send(WrapperMessage::Input { bytes: B64.encode(b"\r") });
+            }
+            // Ladder exhausted with the session still at `Input` and no
+            // client typing — the text is most likely stranded in the
+            // composer. Loud log rather than a re-paste: re-sending the text
+            // risks doubling it if a submit actually took but its hook was
+            // lost, which is worse than a visible strand.
+            tokio::time::sleep(std::time::Duration::from_millis(SUBMIT_VERIFY_DELAY_MS)).await;
+            if store.flush_epoch_is(&sid, epoch)
+                && store.states.get(&sid).map(|s| s.mode) == Some(SessionMode::Input)
+                && !store.client_typed_since(&sid, flushed_at)
+            {
+                tracing::warn!(
+                    session_id = %sid,
+                    "chat send not confirmed after verify retries; text may be stranded in the composer"
+                );
             }
         });
     }
 
-    /// Drain and send queued messages in order. Called via
+    /// Drain and send queued messages in order, returning the texts that were
+    /// actually written to the child (so the caller can decide whether the
+    /// batch needs submit verification). Called via
     /// [`Self::schedule_pending_flush`] on the `Input` transition. No-op when
     /// the queue is empty.
-    fn flush_pending_messages(&self, session_id: &str) {
+    fn flush_pending_messages(&self, session_id: &str) -> Vec<String> {
         let queued: Vec<String> = self
             .pending_messages
             .get_mut(session_id)
             .map(|mut q| std::mem::take(&mut *q))
             .unwrap_or_default();
+        let mut sent = Vec::with_capacity(queued.len());
         for text in queued {
-            let _ = self.send_message_now(session_id, text);
+            if self.send_message_now(session_id, text.clone()) == MessageOutcome::Sent {
+                sent.push(text);
+            }
         }
+        sent
     }
 
     fn clear_pending_messages(&self, session_id: &str) {
         self.pending_messages.remove(session_id);
+        // Abort any in-flight flush/verify task — its corrective CR must not
+        // fire on whatever state the session is in now.
+        self.bump_flush_epoch(session_id);
     }
 
     /// Encode a chat line — appending the `\r` that Claude Code's input field
@@ -839,6 +1070,22 @@ impl SessionStore {
     }
 
     pub async fn record_output(&self, session_id: &str, chunk: &[u8]) {
+        // Track the child's bracketed-paste state. When the TUI (re-)enables
+        // paste mode — the strongest available signal that its composer is
+        // mounted and accepting input — release any messages held behind the
+        // paste-mode gate in `schedule_pending_flush`.
+        let toggled_on = {
+            let mut tracker = self
+                .paste_modes
+                .entry(session_id.to_string())
+                .or_default();
+            tracker.scan(chunk) == Some(true)
+        };
+        if toggled_on
+            && self.states.get(session_id).map(|s| s.mode) == Some(SessionMode::Input)
+        {
+            self.schedule_pending_flush(session_id);
+        }
         // Hold the buffer lock across both the ring-buffer push and the
         // broadcast send so a concurrent snapshot_and_subscribe can't see a
         // chunk in the snapshot *and* receive it again via the broadcast.
@@ -1032,17 +1279,186 @@ mod tests {
         assert_eq!(next_input(&mut rx), pasted("queued"));
     }
 
+    // A *direct* send (mode already `Input`) rides the same guarded pipeline:
+    // right after an Input transition it settles first — the hook that
+    // announced the mode fires while the TUI is still closing the turn, and an
+    // instant injection gets its Enter swallowed exactly like a queued one.
+    #[tokio::test(start_paused = true)]
+    async fn direct_send_settles_after_a_fresh_input_transition() {
+        let store = SessionStore::new();
+        let (h, mut rx) = handle_with_rx();
+        store.register_wrapper("s1", "/w", h); // Input transition stamped now
+        assert_eq!(store.submit_message("s1", "hi".into()), MessageOutcome::Sent);
+        tokio::task::yield_now().await;
+        assert!(rx.try_recv().is_err(), "held while the composer settles");
+
+        tokio::time::sleep(std::time::Duration::from_millis(FLUSH_DELAY_MS + 50)).await;
+        assert_eq!(next_input(&mut rx), pasted("hi"));
+
+        store.ingest(hook("UserPromptSubmit", "s1", "/w")); // the submit took
+        tokio::time::sleep(std::time::Duration::from_millis(2 * SUBMIT_VERIFY_DELAY_MS + 100))
+            .await;
+        assert!(rx.try_recv().is_err(), "no corrective CR after a clean submit");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn direct_send_into_an_idle_prompt_flushes_without_settle_wait() {
+        let store = SessionStore::new();
+        let (h, mut rx) = handle_with_rx();
+        store.register_wrapper("s1", "/w", h);
+        // The prompt has been idle far longer than the settle window.
+        tokio::time::sleep(std::time::Duration::from_millis(FLUSH_DELAY_MS * 10)).await;
+        assert_eq!(store.submit_message("s1", "hi".into()), MessageOutcome::Sent);
+        tokio::task::yield_now().await;
+        assert_eq!(next_input(&mut rx), pasted("hi"), "no settle wait on an idle prompt");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn swallowed_enter_gets_bounded_corrective_crs() {
+        let store = SessionStore::new();
+        let (h, mut rx) = handle_with_rx();
+        store.register_wrapper("s1", "/w", h);
+        tokio::time::sleep(std::time::Duration::from_millis(FLUSH_DELAY_MS * 10)).await;
+        assert_eq!(store.submit_message("s1", "hi".into()), MessageOutcome::Sent);
+        tokio::task::yield_now().await;
+        assert_eq!(next_input(&mut rx), pasted("hi"));
+
+        // No UserPromptSubmit ever arrives → each verify pass submits, capped.
+        tokio::time::sleep(std::time::Duration::from_millis(SUBMIT_VERIFY_DELAY_MS + 50)).await;
+        assert_eq!(next_input(&mut rx), b"\r".to_vec(), "first corrective CR");
+        tokio::time::sleep(std::time::Duration::from_millis(SUBMIT_VERIFY_DELAY_MS + 50)).await;
+        assert_eq!(next_input(&mut rx), b"\r".to_vec(), "second corrective CR");
+        tokio::time::sleep(std::time::Duration::from_millis(SUBMIT_VERIFY_DELAY_MS * 4)).await;
+        assert!(rx.try_recv().is_err(), "the ladder is bounded — no CR spam");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn flush_holds_while_bracketed_paste_is_disabled() {
+        // Cold-start screens (trust prompt, OAuth) run with DECSET 2004 off —
+        // a paste there lands as literal marker text. The flush holds until
+        // the TUI enables paste mode, which `record_output` observes.
+        let store = SessionStore::new();
+        let (h, mut rx) = handle_with_rx();
+        store.register_wrapper("s1", "/w", h);
+        store.record_output("s1", b"\x1b[?2004l").await; // paste explicitly off
+        tokio::time::sleep(std::time::Duration::from_millis(FLUSH_DELAY_MS * 10)).await;
+
+        assert_eq!(store.submit_message("s1", "hi".into()), MessageOutcome::Sent);
+        tokio::time::sleep(std::time::Duration::from_millis(FLUSH_DELAY_MS + 50)).await;
+        assert!(rx.try_recv().is_err(), "held while paste mode is off");
+
+        // The composer mounts and enables paste mode → release.
+        store.record_output("s1", b"\x1b[?2004h").await;
+        tokio::time::sleep(std::time::Duration::from_millis(FLUSH_DELAY_MS + 50)).await;
+        assert_eq!(next_input(&mut rx), pasted("hi"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn paste_toggle_split_across_chunks_is_detected() {
+        let store = SessionStore::new();
+        let (h, mut rx) = handle_with_rx();
+        store.register_wrapper("s1", "/w", h);
+        // Disable arrives split across two output chunks.
+        store.record_output("s1", b"\x1b[?20").await;
+        store.record_output("s1", b"04l").await;
+        tokio::time::sleep(std::time::Duration::from_millis(FLUSH_DELAY_MS * 10)).await;
+
+        assert_eq!(store.submit_message("s1", "hi".into()), MessageOutcome::Sent);
+        tokio::time::sleep(std::time::Duration::from_millis(FLUSH_DELAY_MS + 50)).await;
+        assert!(rx.try_recv().is_err(), "split 2004l still gates the flush");
+
+        store.record_output("s1", b"\x1b[?2004").await;
+        store.record_output("s1", b"h").await;
+        tokio::time::sleep(std::time::Duration::from_millis(FLUSH_DELAY_MS + 50)).await;
+        assert_eq!(next_input(&mut rx), pasted("hi"), "split 2004h releases it");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn verify_stands_down_when_the_user_types_in_the_window() {
+        // Raw terminal keystrokes land in the composer during the verify
+        // window — a corrective CR would submit the user's draft, so the
+        // ladder aborts instead.
+        let store = SessionStore::new();
+        let (h, mut rx) = handle_with_rx();
+        store.register_wrapper("s1", "/w", h);
+        tokio::time::sleep(std::time::Duration::from_millis(FLUSH_DELAY_MS * 10)).await;
+        assert_eq!(store.submit_message("s1", "hi".into()), MessageOutcome::Sent);
+        tokio::task::yield_now().await;
+        assert_eq!(next_input(&mut rx), pasted("hi"));
+
+        store.note_client_input("s1"); // user starts typing in the terminal
+        tokio::time::sleep(std::time::Duration::from_millis(SUBMIT_VERIFY_DELAY_MS * 4)).await;
+        assert!(rx.try_recv().is_err(), "no corrective CR while the user is typing");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn slash_command_send_skips_submit_verification() {
+        // Built-in commands (e.g. `/model`) may not fire UserPromptSubmit, so
+        // "still Input" is not evidence of a swallowed Enter — and a corrective
+        // CR could activate whatever picker the command opened.
+        let store = SessionStore::new();
+        let (h, mut rx) = handle_with_rx();
+        store.register_wrapper("s1", "/w", h);
+        tokio::time::sleep(std::time::Duration::from_millis(FLUSH_DELAY_MS * 10)).await;
+        assert_eq!(store.submit_message("s1", "/model opus".into()), MessageOutcome::Sent);
+        tokio::task::yield_now().await;
+        assert_eq!(next_input(&mut rx), pasted("/model opus"));
+
+        tokio::time::sleep(std::time::Duration::from_millis(SUBMIT_VERIFY_DELAY_MS * 4)).await;
+        assert!(rx.try_recv().is_err(), "no corrective CR for a slash command");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn rapid_sends_coalesce_to_one_verify_task() {
+        // A second send supersedes the first send's flush/verify task (epoch
+        // bump), so corrective CRs never stack up from overlapping tasks.
+        let store = SessionStore::new();
+        let (h, mut rx) = handle_with_rx();
+        store.register_wrapper("s1", "/w", h);
+        tokio::time::sleep(std::time::Duration::from_millis(FLUSH_DELAY_MS * 10)).await;
+        assert_eq!(store.submit_message("s1", "one".into()), MessageOutcome::Sent);
+        tokio::task::yield_now().await;
+        assert_eq!(next_input(&mut rx), pasted("one"));
+        assert_eq!(store.submit_message("s1", "two".into()), MessageOutcome::Sent);
+        tokio::task::yield_now().await;
+        assert_eq!(next_input(&mut rx), pasted("two"));
+
+        // Both tasks' timers elapse, but only the latest epoch may correct.
+        tokio::time::sleep(std::time::Duration::from_millis(SUBMIT_VERIFY_DELAY_MS + 50)).await;
+        assert_eq!(next_input(&mut rx), b"\r".to_vec());
+        assert!(rx.try_recv().is_err(), "exactly one CR per verify window");
+    }
+
     #[test]
-    fn message_rejected_when_awaiting_approval() {
+    fn message_queued_while_awaiting_approval_flushes_after_the_dialog() {
+        // Typing into an open permission dialog would answer the dialog, so a
+        // send during `Approval` queues and delivers once the prompt is back.
         let store = SessionStore::new();
         let (h, mut rx) = handle_with_rx();
         store.register_wrapper("s1", "/w", h); // Input
         store.ingest(hook("PermissionRequest", "s1", "/w")); // → Approval
         assert_eq!(
-            store.submit_message("s1", "no".into()),
-            MessageOutcome::Rejected(SessionMode::Approval),
+            store.submit_message("s1", "also do X".into()),
+            MessageOutcome::Queued,
         );
         assert!(rx.try_recv().is_err(), "chat is not written while awaiting approval");
+
+        store.ingest(hook("PostToolUse", "s1", "/w")); // approved → Responding
+        assert!(rx.try_recv().is_err(), "still held mid-turn");
+        store.ingest(hook("Stop", "s1", "/w")); // turn ends → Input → flush
+        assert_eq!(next_input(&mut rx), pasted("also do X"));
+    }
+
+    #[test]
+    fn message_rejected_when_stopped() {
+        let store = SessionStore::new();
+        let (h, _rx) = handle_with_rx();
+        store.register_wrapper("s1", "/w", h);
+        store.ingest(hook("SessionEnd", "s1", "/w")); // → Stopped
+        assert_eq!(
+            store.submit_message("s1", "hi".into()),
+            MessageOutcome::Rejected(SessionMode::Stopped),
+        );
     }
 
     #[test]

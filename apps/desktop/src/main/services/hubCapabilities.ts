@@ -77,12 +77,12 @@ export function registerHubCapabilities(): void {
     })),
   );
 
-  // Control: send a prompt to an agent. Prefers claudemon's mode-gated /message
-  // (it appends the carriage return for us). When the session isn't at an input
-  // prompt — e.g. the agent is mid-turn — /message 409s; rather than silently
-  // dropping the text (which made the remote "break" after the first message),
-  // mirror the desktop ClaudePane fallback and type straight into the PTY so
-  // follow-up messages queue into claude's input like any other keystrokes.
+  // Control: send a prompt to an agent. claudemon's /message owns the whole
+  // delivery policy: it queues while the agent is busy (or a dialog is up),
+  // injects once the prompt has settled, and verifies the submit took. A 409
+  // now only means the session has ended — raw PTY typing can't help there
+  // (and the old fallback could press Enter on an open permission dialog), so
+  // surface the rejection to the caller instead.
   registerCapability('agents.sendMessage', async (params: unknown) => {
     const { sessionId, text } = (params ?? {}) as { sessionId?: string; text?: string };
     if (!sessionId || typeof text !== 'string') {
@@ -90,9 +90,7 @@ export function registerHubCapabilities(): void {
     }
     const res = await claudemonSessionClient.message(sessionId, text);
     if (!res.ok) {
-      await claudemonSessionClient.input(sessionId, text);
-      await new Promise((r) => setTimeout(r, 50));
-      await claudemonSessionClient.input(sessionId, '\r');
+      throw new Error(`session is not accepting input (mode=${res.mode ?? 'unknown'})`);
     }
     return { ok: true };
   });

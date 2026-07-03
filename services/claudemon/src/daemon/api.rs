@@ -205,6 +205,9 @@ async fn post_input(
     {
         return (StatusCode::GONE, "wrapper disconnected").into_response();
     }
+    // Raw keystrokes mean the composer is no longer exclusively ours — any
+    // in-flight submit-verify ladder must stand down (see `note_client_input`).
+    store.note_client_input(&id);
     Json(json!({ "ok": true, "bytes": raw.len() })).into_response()
 }
 
@@ -218,16 +221,18 @@ async fn post_message(
     Path(id): Path<String>,
     Json(payload): Json<MessagePayload>,
 ) -> impl IntoResponse {
-    // The store owns the policy: send now when the prompt is up, otherwise
-    // queue and flush on the next `Input` transition (so the first message after
-    // spawn doesn't race the TUI's cold start). See `SessionStore::submit_message`.
+    // The store owns the policy: every live mode accepts the message — sent
+    // through the settle+verify pipeline when the prompt is up, queued and
+    // flushed on the next `Input` transition otherwise (cold start, mid-turn,
+    // or an open approval/question dialog). Only a stopped session rejects.
+    // See `SessionStore::submit_message`.
     match store.submit_message(&id, payload.text) {
         MessageOutcome::Sent => Json(json!({ "ok": true })).into_response(),
         MessageOutcome::Queued => Json(json!({ "ok": true, "queued": true })).into_response(),
         MessageOutcome::Rejected(mode) => (
             StatusCode::CONFLICT,
             Json(json!({
-                "error": "session is not accepting chat input",
+                "error": "session has ended and cannot accept chat input",
                 "mode": mode,
                 "expected": "input",
             })),
@@ -426,6 +431,8 @@ async fn post_answer(
     {
         return (StatusCode::GONE, "wrapper disconnected").into_response();
     }
+    // Picker keystrokes count as client input for the submit-verify ladder.
+    store.note_client_input(&id);
     Json(json!({ "ok": true, "bytes": bytes.len() })).into_response()
 }
 
