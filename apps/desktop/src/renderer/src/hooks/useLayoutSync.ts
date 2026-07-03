@@ -6,9 +6,12 @@
  * is the renderer's half of that contract:
  *
  *   • hydrate — on startup, read the hub's layout document. If it already holds
- *     a layout (another client — the desktop, or a prior web session — seeded
- *     it), adopt it and skip the local session picker. If it's empty, report
- *     `empty` so the normal session-restore runs and then seeds the hub.
+ *     a layout and `adoptSharedLayout` is on, adopt it and skip the local
+ *     session picker. Otherwise report `empty` so the normal session-restore
+ *     runs (picker / auto-resume) and then seeds the hub. The hub persists the
+ *     document across restarts, so an unconditional adopt would resurrect the
+ *     previous run's panes on every boot — adoption is gated on the user's
+ *     auto-resume preference (see App).
  *   • apply   — when the hub broadcasts `layout.changed` from another client,
  *     replace local state with it.
  *   • push    — when local state changes (a tab opened, a pane split, the
@@ -51,6 +54,11 @@ interface UseLayoutSyncOptions {
   setSessionPhase: (phase: 'loading' | 'picker' | 'active') => void;
   /** Don't touch the hub until config has loaded (mirrors session lifecycle). */
   enabled: boolean;
+  /** Adopt a pre-existing hub layout during startup hydration. When off, a
+   *  persisted document reports `empty` so the session lifecycle (picker /
+   *  auto-resume) decides what comes up; live `layout.changed` broadcasts —
+   *  another client actively writing — still apply either way. */
+  adoptSharedLayout: boolean;
   /** Reports the outcome of the initial hub read so App can gate session restore. */
   onHydration: (result: HydrationResult) => void;
 }
@@ -77,6 +85,7 @@ export function useLayoutSync({
   sessionPhase,
   setSessionPhase,
   enabled,
+  adoptSharedLayout,
   onHydration,
 }: UseLayoutSyncOptions): void {
   // Highest document version we've accounted for (applied or acknowledged).
@@ -91,6 +100,11 @@ export function useLayoutSync({
   const activeAgentIdRef = useRef<string>(activeAgentId);
   agentsRef.current = agents;
   activeAgentIdRef.current = activeAgentId;
+  // Read through a ref inside the one-shot hydrate effect so a later settings
+  // toggle doesn't re-run the effect (its cleanup would drop the layout.changed
+  // subscription with no re-subscribe past the hydratedRef guard).
+  const adoptSharedLayoutRef = useRef(adoptSharedLayout);
+  adoptSharedLayoutRef.current = adoptSharedLayout;
 
   // ── hydrate + subscribe ─────────────────────────────────────────────────
   useEffect(() => {
@@ -116,9 +130,12 @@ export function useLayoutSync({
           // A newer layout was already adopted via broadcast — we're mirroring.
           setSessionPhase('active');
           onHydration('adopted');
-        } else if (hasRealLayout(data) && data) {
+        } else if (adoptSharedLayoutRef.current && hasRealLayout(data) && data) {
           // Another client already populated the layout — adopt it and skip the
-          // local picker so this client comes up mirroring, not blank. Mark the
+          // local picker so this client comes up mirroring, not blank. Gated on
+          // the auto-resume preference: the hub persists this document, so with
+          // auto-resume off a leftover layout from the previous run must fall
+          // through to the picker instead of silently coming back. Mark the
           // echo-breaker against the *normalized* result loadAgentsFromSession
           // produced, not the raw doc, so the adopted layout doesn't immediately
           // bounce back to the hub as a spurious "local change".

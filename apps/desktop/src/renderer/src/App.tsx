@@ -185,9 +185,11 @@ function App() {
   // document is read we don't know whether to adopt a shared layout or run the
   // local session picker, so session restore waits on this:
   //   'pending'  — still reading the hub
-  //   'adopted'  — the hub had a layout; we mirrored it and skip the picker
-  //   'empty'    — no shared layout yet; run normal session restore (which then
-  //                seeds the hub via useLayoutSync's push)
+  //   'adopted'  — the hub had a layout and auto-resume is on; we mirrored it
+  //                and skip the picker
+  //   'empty'    — nothing to adopt (no shared layout, or auto-resume is off);
+  //                run normal session restore (which then seeds the hub via
+  //                useLayoutSync's push)
   const [hubHydration, setHubHydration] = useState<HydrationResult>('pending');
   const {
     agents,
@@ -312,6 +314,11 @@ function App() {
     sessionPhase,
     setSessionPhase,
     enabled: configLoaded,
+    // The hub persists its layout document across restarts, so adopting it
+    // unconditionally would resurrect the previous run's panes on every boot.
+    // Only auto-adopt when the user opted into auto-resume; otherwise startup
+    // falls through to the session picker and panes come back via "resume".
+    adoptSharedLayout: config.session?.autoResume ?? false,
     onHydration: setHubHydration,
   });
 

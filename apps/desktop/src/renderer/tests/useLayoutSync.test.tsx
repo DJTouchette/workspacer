@@ -29,7 +29,7 @@ beforeEach(() => {
   };
 });
 
-function renderSync(load: ReturnType<typeof vi.fn>) {
+function renderSync(load: ReturnType<typeof vi.fn>, opts?: { adoptSharedLayout?: boolean; onHydration?: ReturnType<typeof vi.fn> }) {
   return renderHook(() =>
     useLayoutSync({
       agents: [],
@@ -38,7 +38,8 @@ function renderSync(load: ReturnType<typeof vi.fn>) {
       sessionPhase: 'active',
       setSessionPhase: vi.fn(),
       enabled: true,
-      onHydration: vi.fn(),
+      adoptSharedLayout: opts?.adoptSharedLayout ?? true,
+      onHydration: opts?.onHydration ?? vi.fn(),
     }),
   );
 }
@@ -69,5 +70,30 @@ describe('useLayoutSync — version monotonicity', () => {
     renderSync(load);
     await act(async () => { resolveLayoutGet!({ version: 1, data: { agents: [mkAgent('a1')], activeAgentId: 'a1' } }); await Promise.resolve(); });
     expect(load.mock.calls.map((c) => c[0]?.[0]?.id)).toContain('a1');
+  });
+});
+
+describe('useLayoutSync — adoption gated on auto-resume', () => {
+  // Regression: the hub persists its layout document across restarts, so an
+  // unconditional adopt resurrected the previous run's panes on every boot.
+  // With adoptSharedLayout off, a persisted layout must report 'empty' (so the
+  // session picker runs) and must not be applied.
+  it('reports empty and does not adopt a persisted layout when adoptSharedLayout is off', async () => {
+    const load = vi.fn();
+    const onHydration = vi.fn();
+    renderSync(load, { adoptSharedLayout: false, onHydration });
+    await act(async () => { resolveLayoutGet!({ version: 4, data: { agents: [mkAgent('old')], activeAgentId: 'old' } }); await Promise.resolve(); });
+    expect(load).not.toHaveBeenCalled();
+    expect(onHydration).toHaveBeenCalledWith('empty');
+  });
+
+  it('still applies live layout.changed broadcasts when adoptSharedLayout is off', async () => {
+    const load = vi.fn();
+    renderSync(load, { adoptSharedLayout: false });
+    await act(async () => { resolveLayoutGet!({ version: 1, data: { agents: [mkAgent('old')], activeAgentId: 'old' } }); await Promise.resolve(); });
+    // Another client writes while we're up — that's a live mirror, not a stale
+    // boot-time document, and must still apply.
+    act(() => layoutChangedCb!({ version: 2, data: { agents: [mkAgent('live')], activeAgentId: 'live' } }));
+    expect(load.mock.calls.map((c) => c[0]?.[0]?.id)).toContain('live');
   });
 });

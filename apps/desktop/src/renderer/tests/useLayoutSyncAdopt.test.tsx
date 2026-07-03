@@ -44,6 +44,7 @@ function useCombined() {
     sessionPhase: phase,
     setSessionPhase: setPhase,
     enabled: true,
+    adoptSharedLayout: true,
     onHydration: () => {},
   });
   return { mgr, phase };
