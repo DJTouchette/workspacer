@@ -125,6 +125,9 @@ export interface Config {
   claude?: {
     /** Which view a Claude pane opens in by default: rich 'gui' or raw 'terminal'. */
     defaultView: 'gui' | 'terminal';
+    /** How runs of tool calls render in the GUI: prose summary cards, or the
+     *  waterfall trace monitor (per-call duration bars + dig-in rows). */
+    workLog?: 'cards' | 'trace';
     /** Concrete model ids seen across sessions, surfaced in the spawn dropdown. */
     seenModels?: string[];
   };

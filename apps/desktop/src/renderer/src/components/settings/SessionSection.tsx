@@ -106,6 +106,7 @@ const BinaryRow: React.FC<{
 const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
   const autoResume = config.session?.autoResume ?? true;
   const defaultView = config.claude?.defaultView ?? 'terminal';
+  const workLog = config.claude?.workLog ?? 'cards';
   const defaultProvider = config.agents?.defaultProvider ?? 'claude';
   const guiFontScale = config.ui.guiFontScale ?? 1.15;
   const diffView = config.ui.diffView ?? 'stacked';
@@ -208,6 +209,26 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
         Which view a Claude pane opens in. The rich GUI shows the conversation, work cards,
         and inspector; Terminal is the raw Claude Code TUI. Toggle any time from the pane's top bar.
+      </div>
+
+      <Row label="Work log style">
+        <div style={{ display: 'flex', gap: 4 }}>
+          <ModeButton
+            label="Cards"
+            active={workLog === 'cards'}
+            onClick={() => save({ claude: { ...config.claude, defaultView, workLog: 'cards' } })}
+          />
+          <ModeButton
+            label="Trace"
+            active={workLog === 'trace'}
+            onClick={() => save({ claude: { ...config.claude, defaultView, workLog: 'trace' } })}
+          />
+        </div>
+      </Row>
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
+        How Claude's tool calls render in the GUI conversation. Cards summarize each run in prose;
+        Trace is a waterfall monitor — one row per call with duration bars on a shared time axis,
+        color-coded by kind, click a row to dig into its full input and output.
       </div>
 
       <Row label="Chat text size">

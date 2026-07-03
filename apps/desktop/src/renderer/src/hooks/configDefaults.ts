@@ -106,6 +106,6 @@ export const DEFAULT_CONFIG: Config = {
   scripts: {},
   apps: [],
   session: { autoResume: false },
-  claude: { defaultView: 'terminal' },
+  claude: { defaultView: 'terminal', workLog: 'cards' },
   supervisor: { model: '', summarizerModel: 'sonnet', pollSeconds: 45 },
 };

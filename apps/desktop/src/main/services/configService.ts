@@ -94,6 +94,9 @@ interface Config {
     skipPermissionsDefault: boolean;
     /** Which view a Claude pane opens in by default: rich 'gui' or raw 'terminal'. */
     defaultView: 'gui' | 'terminal';
+    /** How runs of tool calls render in the GUI: prose summary 'cards', or the
+     *  'trace' waterfall monitor (per-call duration bars + dig-in rows). */
+    workLog: 'cards' | 'trace';
   };
   /** Defaults applied when spawning a new agent. */
   agents: {
@@ -276,6 +279,7 @@ function defaultConfig(): Config {
       seenModels: [],
       skipPermissionsDefault: false,
       defaultView: 'terminal',
+      workLog: 'cards',
     },
     agents: {
       defaultProvider: 'claude',

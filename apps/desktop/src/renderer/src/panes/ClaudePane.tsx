@@ -31,6 +31,7 @@ import { TurnDivider } from '../components/claude/TurnDivider';
 import { NeedsYouDock } from '../components/claude/NeedsYouDock';
 import { Composer } from '../components/claude/Composer';
 import { WorkCard } from '../components/claude/WorkCard';
+import { ToolTraceCard } from '../components/claude/ToolTraceCard';
 import { ChangedFilesCard } from '../components/claude/ChangedFilesCard';
 import {
   collectEditedFiles,
@@ -823,6 +824,10 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
     isStreaming,
   ]);
 
+  // Which work-log surface renders a run of tool calls: prose summary cards,
+  // or the waterfall trace monitor (see ToolTraceCard). Same props either way.
+  const WorkView = config.claude?.workLog === 'trace' ? ToolTraceCard : WorkCard;
+
   // Build rendered conversation with dividers (windowed to last visibleCount
   // turns). Consecutive tool-call turns collapse into one WorkCard so the
   // timeline reads as: user said → Claude worked → Claude said.
@@ -840,7 +845,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
       const { calls, keyStart, endIdx } = pendingWork;
       workCardIdxs.push(items.length);
       items.push(
-        <WorkCard
+        <WorkView
           key={`work-${keyStart}`}
           toolCalls={calls}
           subagentByToolId={toolIdToSubagent}
@@ -933,7 +938,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
     return items;
     // changesVersion re-renders cards once a frozen git snapshot lands.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conversation, visibleCount, toolIdToSubagent, toolIdToWorkflow, isStreaming, ambientIdle, sessionId, cwd, changesVersion]);
+  }, [conversation, visibleCount, toolIdToSubagent, toolIdToWorkflow, isStreaming, ambientIdle, sessionId, cwd, changesVersion, WorkView]);
 
   return (
     <div style={{
@@ -1124,7 +1129,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
               onAnswer={handleAnswer}
             />
 
-            {/* Composer / Input area */}
+            {/* Composer / Input area — session pills live inside its bottom row */}
             <Composer
               value={inputValue}
               onChange={setInputValue}
@@ -1137,6 +1142,15 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
               inputRef={inputRef}
               showSendButton={config.ui.showComposerSend !== false}
               agentName={agentName}
+              controls={
+                <ComposerControls
+                  provider={provider ?? 'claude'}
+                  sessionId={sessionId}
+                  snapshot={session}
+                  cwd={cwd}
+                  onRestartWith={handleRestartWith}
+                />
+              }
             />
           </div>
       </div>
@@ -1148,35 +1162,41 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
 
       {/* Status / control bar — pinned to the bottom of the pane (below the
           content area, so it sits under the composer in GUI and under the
-          terminal in Term), IDE/CLI status-line style. */}
+          terminal in Term), IDE/CLI status-line style. In GUI mode it renders
+          chromeless (transparent, no rule) as a quiet footer line under the
+          floating composer; terminal mode keeps the solid toolbar treatment
+          so it reads as an edge against the xterm surface. */}
       <div style={{
         display: 'flex',
         alignItems: 'center',
-        gap: 8,
-        padding: '3px 10px',
-        backgroundColor: colors.bgToolbar,
-        borderTop: `1px solid ${colors.border}`,
-        minHeight: 26,
+        gap: 10,
+        padding: viewMode === 'gui' ? '2px 18px 8px' : '4px 12px',
+        backgroundColor: viewMode === 'gui' ? 'transparent' : colors.bgToolbar,
+        borderTop: viewMode === 'gui' ? 'none' : `1px solid ${colors.border}`,
+        minHeight: 28,
         flexShrink: 0,
       }}>
         <StatusBadge session={session} approvalDismissed={!!(pendingApproval && pendingApproval.timestamp <= approvalDismissedAt)} />
 
-        {/* Session controls — model / effort / permission-mode pills. Live
-            where the provider supports it (claude /model), else restart. */}
-        <ComposerControls
-          provider={provider ?? 'claude'}
-          sessionId={sessionId}
-          snapshot={session}
-          cwd={cwd}
-          onRestartWith={handleRestartWith}
-        />
+        {/* Session controls — model / effort / permission-mode pills. In GUI
+            mode these live inside the composer's bottom row (T3-style); keep
+            them here for terminal mode, which has no composer. */}
+        {viewMode === 'terminal' && (
+          <ComposerControls
+            provider={provider ?? 'claude'}
+            sessionId={sessionId}
+            snapshot={session}
+            cwd={cwd}
+            onRestartWith={handleRestartWith}
+          />
+        )}
 
         {/* In-app status line — model · ctx · tok/cost · 5h/7d (replaces the
             old working-timer + directory readouts). */}
         <SessionStatusBar snapshot={session} cwd={cwd} />
 
         {session && (
-          <span style={{ fontSize: '0.55rem', color: colors.mutedDim }}>
+          <span style={{ fontSize: '0.68rem', fontFamily: 'var(--wks-font-mono, monospace)', color: 'var(--wks-text-muted)', whiteSpace: 'nowrap' }}>
             {session.totalToolCalls} tools
           </span>
         )}
@@ -1186,14 +1206,14 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
             subagents.filter(s => s.status === 'running').length +
             workflows.flatMap(w => w.agents).filter(a => a.status === 'running').length;
           return liveAgents > 0 ? (
-            <span style={{ fontSize: '0.55rem', color: 'var(--wks-purple, #c084fc)' }}>
+            <span style={{ fontSize: '0.68rem', fontFamily: 'var(--wks-font-mono, monospace)', color: 'var(--wks-purple, #c084fc)', whiteSpace: 'nowrap' }}>
               {liveAgents} subagent{liveAgents !== 1 ? 's' : ''}
             </span>
           ) : null;
         })()}
 
         {attachedFiles.length > 0 && (
-          <span style={{ fontSize: '0.55rem', color: colors.accent }}>
+          <span style={{ fontSize: '0.68rem', fontFamily: 'var(--wks-font-mono, monospace)', color: colors.accent, whiteSpace: 'nowrap' }}>
             {attachedFiles.length} file{attachedFiles.length !== 1 ? 's' : ''} attached
           </span>
         )}
@@ -1204,41 +1224,46 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
         <button
           onClick={forceRepaint}
           title="Redraw pane (fixes occasional rendering glitches)"
+          className="wks-composer-icon-btn"
           style={{
             ...toggleBtnStyle,
             display: 'flex',
             alignItems: 'center',
             backgroundColor: 'transparent',
-            color: colors.mutedDim,
+            color: 'var(--wks-text-muted)',
           }}
         >
           <RefreshCw size={13} strokeWidth={1.9} />
         </button>
 
-        {/* Attach files */}
-        <button
-          onClick={openFilePicker}
-          title="Attach files"
-          style={{
-            ...toggleBtnStyle,
-            backgroundColor: 'transparent',
-            color: colors.mutedDim,
-            fontSize: '0.7rem',
-          }}
-        >
-          +
-        </button>
+        {/* Attach files — terminal mode only; the composer has its own + in GUI */}
+        {viewMode === 'terminal' && (
+          <button
+            onClick={openFilePicker}
+            title="Attach files"
+            className="wks-composer-icon-btn"
+            style={{
+              ...toggleBtnStyle,
+              backgroundColor: 'transparent',
+              color: 'var(--wks-text-muted)',
+              fontSize: '0.8rem',
+            }}
+          >
+            +
+          </button>
+        )}
 
         {/* Inspector rail toggle — available in both GUI and Terminal mode */}
         <button
           onClick={toggleRail}
           title={railOpen ? 'Hide inspector' : 'Show inspector (files / workflows / agents / usage)'}
+          className={railOpen ? undefined : 'wks-composer-icon-btn'}
           style={{
             ...toggleBtnStyle,
             display: 'flex',
             alignItems: 'center',
             backgroundColor: railOpen ? 'var(--wks-accent-bg)' : 'transparent',
-            color: railOpen ? colors.accent : colors.mutedDim,
+            color: railOpen ? colors.accent : 'var(--wks-text-muted)',
           }}
         >
           <PanelRight size={13} strokeWidth={1.9} />
@@ -1248,20 +1273,22 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
         <div style={{ display: showViewToggle ? 'flex' : 'none', gap: 2 }}>
           <button
             onClick={() => setViewMode('gui')}
+            className={viewMode === 'gui' ? undefined : 'wks-composer-icon-btn'}
             style={{
               ...toggleBtnStyle,
               backgroundColor: viewMode === 'gui' ? 'var(--wks-accent-bg)' : 'transparent',
-              color: viewMode === 'gui' ? colors.accent : colors.mutedDim,
+              color: viewMode === 'gui' ? colors.accent : 'var(--wks-text-muted)',
             }}
           >
             GUI
           </button>
           <button
             onClick={() => setViewMode('terminal')}
+            className={viewMode === 'terminal' ? undefined : 'wks-composer-icon-btn'}
             style={{
               ...toggleBtnStyle,
               backgroundColor: viewMode === 'terminal' ? 'var(--wks-accent-bg)' : 'transparent',
-              color: viewMode === 'terminal' ? colors.accent : colors.mutedDim,
+              color: viewMode === 'terminal' ? colors.accent : 'var(--wks-text-muted)',
             }}
           >
             Term
@@ -1273,10 +1300,10 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
 };
 
 const toggleBtnStyle: React.CSSProperties = {
-  fontSize: '0.55rem',
+  fontSize: '0.62rem',
   fontWeight: 600,
-  padding: '2px 8px',
-  borderRadius: 4,
+  padding: '3px 9px',
+  borderRadius: 6,
   border: 'none',
   cursor: 'pointer',
 };
