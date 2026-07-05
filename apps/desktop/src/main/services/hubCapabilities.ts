@@ -658,9 +658,24 @@ export function registerHubCapabilities(): void {
   // Same backend as the git:* IPC, so the web/remote mirror reviews the host's
   // work tree exactly as the desktop does. A failed git command (non-zero exit,
   // not-a-work-tree) rejects the call; the renderer surfaces git's stderr.
+  //
+  // SECURITY.md #6: the review-pane git surface moved out of claudemon into the
+  // host (gitService.ts), so its remote-reachable entry point is now these bus
+  // capabilities. Every one takes a caller-supplied `cwd`; without confinement a
+  // remote/token-holding client could commit or push to — or read the diff of —
+  // any git repo the desktop user can write, and a symlinked `cwd` could point
+  // outside the intended repo (the finding's original concern). We therefore
+  // canonicalize and contain `cwd` to the same workspace roots as fs.* (#8): the
+  // live agent cwds the review pane legitimately operates on, plus the config dir.
+  // canonicalization resolves symlinks before the check, so a symlinked cwd can't
+  // escape the roots. The local desktop IPC path is unchanged: it's the trusted
+  // user reviewing their own repos, and this containment only guards the bus.
+  const guardGitCwd = (cap: string, cwd: string): void =>
+    assertPathAllowed(cap, cwd, workspaceRoots());
   registerCapability('git.status', (params: unknown) => {
     const { cwd } = (params ?? {}) as { cwd?: string };
     if (!cwd) throw new Error('git.status requires { cwd }');
+    guardGitCwd('git.status', cwd);
     return git.status(cwd);
   });
   registerCapability('git.diff', (params: unknown) => {
@@ -668,31 +683,37 @@ export function registerHubCapabilities(): void {
       cwd?: string; path?: string; staged?: boolean; untracked?: boolean;
     };
     if (!cwd) throw new Error('git.diff requires { cwd }');
+    guardGitCwd('git.diff', cwd);
     return git.diff(cwd, path, staged, untracked).then((diff) => ({ diff }));
   });
   registerCapability('git.numstat', (params: unknown) => {
     const { cwd, staged } = (params ?? {}) as { cwd?: string; staged?: boolean };
     if (!cwd) throw new Error('git.numstat requires { cwd }');
+    guardGitCwd('git.numstat', cwd);
     return git.numstat(cwd, staged).then((files) => ({ files }));
   });
   registerCapability('git.stage', (params: unknown) => {
     const { cwd, path } = (params ?? {}) as { cwd?: string; path?: string };
     if (!cwd) throw new Error('git.stage requires { cwd }');
+    guardGitCwd('git.stage', cwd);
     return git.stage(cwd, path).then((output) => ({ ok: true, output }));
   });
   registerCapability('git.unstage', (params: unknown) => {
     const { cwd, path } = (params ?? {}) as { cwd?: string; path?: string };
     if (!cwd) throw new Error('git.unstage requires { cwd }');
+    guardGitCwd('git.unstage', cwd);
     return git.unstage(cwd, path).then((output) => ({ ok: true, output }));
   });
   registerCapability('git.commit', (params: unknown) => {
     const { cwd, message } = (params ?? {}) as { cwd?: string; message?: string };
     if (!cwd || typeof message !== 'string') throw new Error('git.commit requires { cwd, message }');
+    guardGitCwd('git.commit', cwd);
     return git.commit(cwd, message).then((output) => ({ ok: true, output }));
   });
   registerCapability('git.push', (params: unknown) => {
     const { cwd } = (params ?? {}) as { cwd?: string };
     if (!cwd) throw new Error('git.push requires { cwd }');
+    guardGitCwd('git.push', cwd);
     return git.push(cwd).then((output) => ({ ok: true, output }));
   });
 }

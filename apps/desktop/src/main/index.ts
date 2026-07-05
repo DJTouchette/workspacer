@@ -23,6 +23,7 @@ import { workflowWatcher } from './services/workflowWatcher';
 import { registerHubCapabilities } from './services/hubCapabilities';
 import { database } from './services/db';
 import { appIcon } from './lib/appIcon';
+import { applySafeWebviewPreferences, isWebviewSrcAllowed, type MutableWebPreferences } from './lib/webviewGuard';
 import { IPC } from './shared/ipcChannels';
 
 // Font file registry: filename → absolute path (populated during discovery)
@@ -252,6 +253,29 @@ function createWindow(): void {
       nodeIntegration: false,
       webviewTag: true,
     },
+  });
+
+  // Harden every <webview> the renderer attaches (SECURITY.md #10): force safe
+  // web preferences (no preload / nodeIntegration; contextIsolation on) so an
+  // injected privileged webview can't reach the main process, and confine its
+  // src — and every later navigation — to http(s)/about so it can't load file://
+  // or other local-resource schemes off the host.
+  mainWindow.webContents.on('will-attach-webview', (event, webPreferences, params) => {
+    applySafeWebviewPreferences(webPreferences as unknown as MutableWebPreferences);
+    if (!isWebviewSrcAllowed(params.src)) {
+      console.warn(`[main] blocking <webview> attach with disallowed src: ${params.src}`);
+      event.preventDefault();
+    }
+  });
+  mainWindow.webContents.on('did-attach-webview', (_event, guest) => {
+    const blockNav = (e: Electron.Event, url: string) => {
+      if (!isWebviewSrcAllowed(url)) {
+        console.warn(`[main] blocking <webview> navigation to disallowed url: ${url}`);
+        e.preventDefault();
+      }
+    };
+    guest.on('will-navigate', blockNav);
+    guest.on('will-redirect', blockNav);
   });
 
   registerIpcHandlers(mainWindow);

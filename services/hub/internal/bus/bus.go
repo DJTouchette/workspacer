@@ -203,8 +203,17 @@ func (s *Server) Handler() http.Handler {
 	return mux
 }
 
-func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	// Subscriber/method counts are internal topology. With no token configured
+	// (the loopback default) or an authorized caller, expose them — they're handy
+	// for local ops and tests. But once a token guards the bus, an unauthenticated
+	// probe (a malicious page hitting loopback, or an unauthorized remote client)
+	// gets liveness only, never the counts. See SECURITY.md #4.
+	if s.token != "" && !s.Authorized(r) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+		return
+	}
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"status":      "ok",
 		"subscribers": s.broker.SubscriberCount(),

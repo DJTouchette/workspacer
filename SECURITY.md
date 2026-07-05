@@ -71,6 +71,11 @@ cap extraction with `io.CopyN` + a total-bytes ceiling. The zip-slip path guard
 (`filepath.Rel`) is already correct.
 
 ### 4. Hub `/health` leaks internal counts unauthenticated — Low
+**FIXED 2026-07-05**: `/health` now gates the detail on auth — when a token is
+configured and the caller isn't authorized, it returns `{"status":"ok"}` only;
+with no token (the loopback default) or an authorized caller it still returns the
+subscriber/method counts (handy for local ops/tests). So the counts never reach an
+unauthenticated remote probe once the bus is token-guarded.
 `services/hub/internal/bus/bus.go:118`
 
 `/health` returns subscriber/method counts with no auth even when a token is
@@ -93,7 +98,22 @@ Recommended: restrict `CorsLayer` to known origins (Electron scheme +
 `http://localhost:*`). Decision needed: the allowed origin set.
 
 ### 6. claudemon git commit does not canonicalize `cwd` — Medium
-`services/claudemon/src/daemon/git.rs` (`commit`)
+**FIXED 2026-07-05** (deviation from the recommendation, noted): the git surface
+this finding describes no longer lives in claudemon — commit `3732018` moved it to
+the host (`apps/desktop/src/main/services/gitService.ts`) and the daemon no longer
+touches git. Its remaining remote-reachable entry point is the `git.*` hub
+capabilities, so the containment was applied there
+(`apps/desktop/src/main/services/hubCapabilities.ts`): every `git.*` cap now
+canonicalize-then-contains its caller-supplied `cwd` to the same workspace roots as
+fs.* (#8) — the live agent cwds the review pane legitimately operates on, plus the
+config dir. Canonicalization resolves symlinks before the check, so a symlinked
+`cwd` can't escape the roots (the finding's original concern). Scope deviation from
+the doc's "under the user's home": home-only would be both too broad for a remote
+caller and would need to gate the trusted local desktop IPC path (the user
+reviewing their own repos, which may live outside home) — the workspace-roots set
+is tighter for the bus and leaves legitimate local review untouched.
+`services/claudemon/src/daemon/git.rs` (`commit`) — moved to
+`apps/desktop/src/main/services/gitService.ts`; guarded at the `git.*` hub caps.
 
 `cwd` is passed to git as `current_dir` after only `rev-parse
 --is-inside-work-tree`. A symlinked `cwd` can point outside the intended repo,
@@ -103,6 +123,14 @@ Recommended: `canonicalize` `cwd` and verify it is under an expected prefix
 (e.g. the user's home / configured project roots).
 
 ### 7. Electron path traversal in session load/delete — High
+**FIXED 2026-07-05**: `loadSession` / `deleteSession` now resolve the
+caller-supplied `filename` against the sessions dir and require the result to sit
+at or under it (`resolveWithinSessionsDir` — `path.resolve` collapses `..`, then a
+prefix check), rejecting a traversal (`../../.ssh/id_rsa`) or an absolute path
+before any `fs` call. The check runs *outside* the existing try/catch so an escape
+attempt rejects loudly instead of being swallowed into a null "not found". This
+covers the `sessions.load` / `sessions.delete` hub capabilities too, since they
+delegate to these methods.
 `apps/desktop/src/main/services/sessionService.ts` (`loadSession`,
 `deleteSession`); also the `sessions.load` hub capability in
 `apps/desktop/src/main/services/hubCapabilities.ts`
@@ -132,6 +160,15 @@ project roots); reject anything that escapes via `path.resolve`. Decision
 needed: the allowed roots.
 
 ### 9. Electron `claude:signal` forwards an unvalidated signal string — Medium
+**FIXED 2026-07-05**: the signal name is now validated against an allowlist
+(`['SIGTERM','SIGINT','SIGKILL','SIGSTOP','SIGCONT']`) in
+`claudemonSessionClient.signal()` — the single chokepoint both the `claude:signal`
+IPC handler and the `claude.signal` hub capability funnel through, so the renderer
+and the remote/MCP bus paths are gated together. An unrecognized signal rejects
+before any daemon call. Note claudemon is stricter still: its `Signal` serde enum
+only accepts SIGINT/SIGTERM/SIGKILL, so SIGSTOP/SIGCONT already fail closed there
+(deserialize error → 4xx); the allowlist keeps the doc's recommended superset so it
+stays correct if the daemon later grows job-control signals.
 `apps/desktop/src/main/ipc.ts` (`claude:signal`) →
 `claudemonSessionClient.ts`
 
@@ -142,6 +179,18 @@ Recommended: validate against `['SIGTERM','SIGINT','SIGKILL','SIGSTOP','SIGCONT'
 before forwarding.
 
 ### 10. Electron enables `webviewTag` with no attach guard — Medium
+**FIXED 2026-07-05**: the main window now installs a `will-attach-webview` handler
+(`apps/desktop/src/main/index.ts`, logic in `main/lib/webviewGuard.ts`) that
+force-applies safe prefs on every attach — strips any `preload`, sets
+`nodeIntegration=false` (top frame and sub-frames), `contextIsolation=true` —
+regardless of what the `<webview>` tag requested, so an injected privileged webview
+can't reach the main process. It also confines the `src` to http/https/about
+(BrowserPane does arbitrary http(s) browsing; plugin panes load the hub UI origin
+or a 127.0.0.1 sidecar — no legitimate webview uses `file://` or other local
+schemes), and a `did-attach-webview` handler re-runs that scheme check on every
+`will-navigate` / `will-redirect`, so a `file://` URL typed into the browser bar is
+blocked too, not just the initial src. Investigated: no webview sets a preload or
+uses `file://`, so forcing these prefs is behavior-preserving for the real panes.
 `apps/desktop/src/main/index.ts:192`
 
 `webviewTag: true` with no `will-attach-webview` handler lets renderer content

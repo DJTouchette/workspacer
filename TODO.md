@@ -6,12 +6,10 @@ theme, roughly ordered by severity within each group.
 
 ## Security (matters the moment remote share / plugins are exposed wider)
 
-- [ ] **SECURITY.md backlog** — 10 acknowledged findings shipped by design:
-      permissive CORS on claudemon mutation/spawn/git endpoints,
-      hub bus `InsecureSkipVerify` origin bypass, `register` capability hijack,
-      plugin-install arbitrary-command RCE + decompression bomb, unallowlisted
-      `fs.read`/`fs.write` hub capabilities, session path traversal. Revisit
-      before any exposure beyond Tailscale.
+- [x] **SECURITY.md backlog** — all 10 findings fixed 2026-07-05 except the
+      explicitly deferred design pieces: plugin build-command sandboxing
+      (extraction is bounded) and the remote-share TLS/privilege-separation
+      posture. See SECURITY.md annotations for each fix.
 - [x] **capspec path-scoping is a hand-listed 7-method allowlist**
       (`services/hub/internal/capspec/capspec.go:16-24`) — any new path-bearing
       capability gets zero FS confinement until manually added, and no test

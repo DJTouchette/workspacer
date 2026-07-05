@@ -66,6 +66,24 @@ function getSessionsDir(): string {
   return path.join(getConfigDir(), 'sessions');
 }
 
+/**
+ * Resolve a caller-supplied session `filename` against the sessions dir and
+ * confine it there (SECURITY.md #7). `loadSession` / `deleteSession` are reachable
+ * from the hub bus (the `sessions.load` / `sessions.delete` capabilities) and thus
+ * from a remote client, so a `filename` like `"../../.ssh/id_rsa"` must not read or
+ * delete outside the sessions directory. `path.resolve` collapses any `..`; we then
+ * require the result to sit at or under the sessions dir, rejecting anything that
+ * escapes (including an absolute path, which resolve keeps verbatim).
+ */
+function resolveWithinSessionsDir(filename: string): string {
+  const dir = getSessionsDir();
+  const resolved = path.resolve(dir, filename);
+  if (resolved !== dir && !resolved.startsWith(dir + path.sep)) {
+    throw new Error(`session filename escapes the sessions directory: ${filename}`);
+  }
+  return resolved;
+}
+
 const sanitizeFilename = slugSession;
 
 function getTerminalCwd(sessionId: string): string | undefined {
@@ -116,8 +134,10 @@ class SessionService {
   }
 
   loadSession(filename: string): SessionData | null {
+    // Containment first, outside the try: a traversal attempt is a hard reject
+    // that must surface to the caller, not be swallowed into a null "not found".
+    const filePath = resolveWithinSessionsDir(filename);
     try {
-      const filePath = path.join(getSessionsDir(), filename);
       const data = fs.readFileSync(filePath, 'utf-8');
       return yaml.load(data) as SessionData;
     } catch {
@@ -135,8 +155,10 @@ class SessionService {
   }
 
   deleteSession(filename: string): void {
+    // Containment first, outside the try: a traversal attempt must reject loudly
+    // rather than be mistaken for a "file didn't exist" no-op.
+    const filePath = resolveWithinSessionsDir(filename);
     try {
-      const filePath = path.join(getSessionsDir(), filename);
       fs.unlinkSync(filePath);
     } catch {
       // Ignore if file doesn't exist

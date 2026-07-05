@@ -15,6 +15,18 @@ import { IPC } from '../shared/ipcChannels';
 const BACKOFF_INITIAL_MS = 200;
 const BACKOFF_MAX_MS = 5000;
 
+/**
+ * Signal names we are willing to forward to the daemon (SECURITY.md #9). Both the
+ * `claude:signal` IPC handler and the `claude.signal` hub capability funnel through
+ * `signal()` below, so validating here gates every desktop path (renderer and
+ * remote/MCP bus alike) — a caller can't push an arbitrary string into the daemon's
+ * signal endpoint. claudemon itself is stricter still: its `Signal` enum only
+ * accepts SIGINT/SIGTERM/SIGKILL, so SIGSTOP/SIGCONT would be rejected there today;
+ * we keep the doc's recommended superset so the allowlist stays correct if the
+ * daemon later grows job-control signals.
+ */
+const ALLOWED_SIGNALS = new Set(['SIGTERM', 'SIGINT', 'SIGKILL', 'SIGSTOP', 'SIGCONT']);
+
 interface SessionStream {
   sessionId: string;
   /** Unique key for this viewer. For spawned panes, equals sessionId.
@@ -391,6 +403,9 @@ class ClaudemonSessionClient {
   }
 
   async signal(sessionId: string, signal: string): Promise<void> {
+    if (!ALLOWED_SIGNALS.has(signal)) {
+      throw new Error(`refusing to forward unrecognized signal "${signal}"`);
+    }
     await this.postJSON(`/sessions/${sessionId}/signal`, { signal });
   }
 

@@ -98,13 +98,22 @@ vi.mock('./claudeSessionList', () => ({ listClaudeSessionsForDir: vi.fn() }));
 vi.mock('./fileService', () => ({ readTextFile: vi.fn(), writeTextFile: vi.fn(), listDir: vi.fn(() => ({ path: '', entries: [] })) }));
 vi.mock('./fileWatchService', () => ({ startWatch: vi.fn(), stopWatch: vi.fn() }));
 vi.mock('./searchService', () => ({ searchProject: vi.fn(() => ({ results: [], truncated: false })) }));
-vi.mock('./gitService', () => ({}));
+vi.mock('./gitService', () => ({
+  status: vi.fn(async () => ({ branch: 'main', files: [] })),
+  diff: vi.fn(async () => ''),
+  numstat: vi.fn(async () => []),
+  stage: vi.fn(async () => ''),
+  unstage: vi.fn(async () => ''),
+  commit: vi.fn(async () => 'committed'),
+  push: vi.fn(async () => 'pushed'),
+}));
 vi.mock('./terminalShare', () => ({}));
 vi.mock('./supervisorSkill', () => ({ ensureSupervisorHome: vi.fn(() => '/home/super') }));
 
 const { registerHubCapabilities } = await import('./hubCapabilities');
 const { readTextFile, writeTextFile } = await import('./fileService');
 const { searchProject } = await import('./searchService');
+const gitMock = await import('./gitService');
 
 /** Invoke a registered capability by method name. */
 function call(method: string, params?: unknown): unknown {
@@ -364,5 +373,43 @@ describe('fs.* path confinement (SECURITY.md #8)', () => {
   it('fs.listDir allows browsing inside a live agent cwd', () => {
     const res = call('fs.listDir', { path: agentCwd }) as { path: string };
     expect(res.path).toBe(agentCwd);
+  });
+});
+
+describe('git.* cwd confinement (SECURITY.md #6)', () => {
+  // The review-pane git surface moved from claudemon to the host; its bus caps are
+  // now the remote-reachable entry point, so a caller-supplied cwd must be confined
+  // to the live agent cwds (the same workspace roots as fs.*), not any host repo.
+  let agentCwd: string;
+  beforeEach(() => {
+    agentCwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-git-')));
+    getAllSnapshots.mockReturnValue([{ cwd: agentCwd }] as never);
+  });
+
+  it('git.commit runs when cwd is a live agent cwd', async () => {
+    await call('git.commit', { cwd: agentCwd, message: 'wip' });
+    expect(gitMock.commit).toHaveBeenCalledWith(agentCwd, 'wip');
+  });
+
+  it('git.commit is denied for a cwd outside the workspace', async () => {
+    expect(() => call('git.commit', { cwd: '/tmp/some-other-repo', message: 'wip' })).toThrow(
+      /outside the allowed workspace/,
+    );
+    expect(gitMock.commit).not.toHaveBeenCalled();
+  });
+
+  it('git.push is denied for a cwd outside the workspace', () => {
+    expect(() => call('git.push', { cwd: os.homedir() })).toThrow(/outside the allowed workspace/);
+    expect(gitMock.push).not.toHaveBeenCalled();
+  });
+
+  it('git.status (read) is also confined to the workspace', () => {
+    expect(() => call('git.status', { cwd: '/etc' })).toThrow(/outside the allowed workspace/);
+    expect(gitMock.status).not.toHaveBeenCalled();
+  });
+
+  it('git.status runs for a live agent cwd', async () => {
+    await call('git.status', { cwd: agentCwd });
+    expect(gitMock.status).toHaveBeenCalledWith(agentCwd);
   });
 });

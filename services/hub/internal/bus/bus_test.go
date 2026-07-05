@@ -145,4 +145,68 @@ func TestHealth(t *testing.T) {
 	if body["status"] != "ok" {
 		t.Fatalf("body=%v", body)
 	}
+	// No token configured (the loopback default): detailed counts are exposed.
+	if _, ok := body["subscribers"]; !ok {
+		t.Fatalf("expected subscriber/method counts with no token configured: %v", body)
+	}
+}
+
+// getHealth fetches /health, optionally with a bearer token, and returns the
+// decoded body. Uses a fresh server so SetToken is applied before any request.
+func getHealth(t *testing.T, srv *Server, token string) map[string]any {
+	t.Helper()
+	hs := httptest.NewServer(srv.Handler())
+	t.Cleanup(hs.Close)
+	req, err := http.NewRequest(http.MethodGet, hs.URL+"/health", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	return body
+}
+
+// TestHealthGating verifies SECURITY.md #4: when a token is configured, an
+// unauthenticated /health probe gets liveness only (no subscriber/method
+// counts), while an authorized caller still gets the detailed counts.
+func TestHealthGating(t *testing.T) {
+	t.Run("unauthenticated caller gets status only when a token is set", func(t *testing.T) {
+		srv := NewServer(broker.New())
+		srv.SetToken("secret")
+		body := getHealth(t, srv, "")
+		if body["status"] != "ok" {
+			t.Fatalf("status=%v", body["status"])
+		}
+		if _, ok := body["subscribers"]; ok {
+			t.Fatalf("subscriber count leaked to unauthenticated caller: %v", body)
+		}
+		if _, ok := body["methods"]; ok {
+			t.Fatalf("method count leaked to unauthenticated caller: %v", body)
+		}
+	})
+
+	t.Run("authorized caller still sees the detailed counts", func(t *testing.T) {
+		srv := NewServer(broker.New())
+		srv.SetToken("secret")
+		body := getHealth(t, srv, "secret")
+		if _, ok := body["subscribers"]; !ok {
+			t.Fatalf("expected subscriber count for authorized caller: %v", body)
+		}
+		if _, ok := body["methods"]; !ok {
+			t.Fatalf("expected method count for authorized caller: %v", body)
+		}
+	})
 }
