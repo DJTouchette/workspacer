@@ -113,6 +113,23 @@ func (rt *router) register(cn *conn, methods []string) []string {
 		if m == "" || !cn.mayProvide(m) {
 			continue
 		}
+		// First-registration-wins (capability-hijack guard): a method already owned
+		// by a *different, still-live* connection may not be re-registered. Without
+		// this, any token-bearing client — a plugin, or a remote client under the
+		// shared host token — could re-register claude.approve / agents.spawn and
+		// silently intercept every subsequent caller's params (session ids, prompts,
+		// approvals). The check applies to trusted conns too, because a remote client
+		// presenting the host token is itself `trusted`, so exempting trusted callers
+		// would reopen the exact hole. Ownership is released the instant the owner's
+		// connection drops: dropConn deletes its providers under this same mutex, so
+		// the desktop's own reconnect (and any provider restart) re-registers cleanly
+		// into the now-empty slot — only a live owner is protected. Re-registering a
+		// method you already own is idempotent (ownerID == cn.id falls through).
+		if ownerID, owned := rt.providers[m]; owned && ownerID != cn.id {
+			if _, live := rt.conns[ownerID]; live {
+				continue // owned by another live connection — refuse the hijack
+			}
+		}
 		rt.providers[m] = cn.id
 		accepted = append(accepted, m)
 	}

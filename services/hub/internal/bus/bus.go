@@ -15,7 +15,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -210,7 +212,62 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
+// originAllowed implements the WebSocket same-origin policy for /bus, replacing
+// coder/websocket's InsecureSkipVerify (which accepted every Origin, so any web
+// page the user visited could open ws://127.0.0.1/bus and drive the control
+// plane). The bus is a loopback control plane that, under remote sharing, is also
+// reached over Tailscale by a web client the hub itself serves. The policy:
+//
+//   - No Origin header → allow. Non-browser clients (the Electron main process on
+//     the `ws` library, the native mobile client, CLIs, and the busclient used by
+//     brain/MCP) don't send Origin. Only a browser's same-origin policy is being
+//     enforced here; a native client that reached us at all already has the token.
+//   - Origin host == request Host → allow. The same-origin case: the web remote is
+//     served BY the hub, so the page's origin host — including a Tailscale
+//     hostname or a bare LAN IP:port — equals the Host it dials. Case-insensitive.
+//   - Loopback origin (localhost / 127.0.0.0/8 / ::1, any port) → allow. Covers a
+//     local dev renderer served on a different port; a remote attacker's page is
+//     never served from the victim's own loopback.
+//   - Anything else (a cross-site browser origin) → reject. This is the malicious-
+//     page / DNS-rebinding vector the finding flags.
+func originAllowed(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true // non-browser client — no browser same-origin policy to enforce
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return false // malformed / opaque ("null") Origin — fail closed
+	}
+	// Same-origin: the Origin's host (host[:port]) equals the Host the client
+	// dialed. Browsers set Origin to scheme://host[:port]; r.Host is host[:port].
+	// Equal ⇒ the page was served from this very endpoint (hub-served remote UI).
+	if strings.EqualFold(u.Host, r.Host) {
+		return true
+	}
+	// Loopback origins are always local to the user's machine, so a dev renderer on
+	// another localhost port is fine while a remote page never qualifies.
+	return isLoopbackHost(u.Hostname())
+}
+
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
+}
+
 func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
+	// Reject cross-site browser origins before doing any auth work. A non-browser
+	// client (Electron main, mobile native, brain/MCP busclient) sends no Origin
+	// and passes; a page served by the hub itself is same-origin and passes.
+	if !originAllowed(r) {
+		http.Error(w, "forbidden origin", http.StatusForbidden)
+		return
+	}
 	// Classify the connection by the token it presents:
 	//   - a registered per-plugin token → that plugin, restricted to its caps
 	//   - the host token (or no host token configured) → trusted, full access
@@ -229,6 +286,10 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// InsecureSkipVerify is intentional: origin is already enforced by
+	// originAllowed above (a testable policy that must allow no-Origin native
+	// clients and loopback dev renderers, which OriginPatterns can't express), so
+	// we take over the check rather than let the library re-run its own.
 	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
 	if err != nil {
 		return

@@ -18,7 +18,7 @@ import { claudeProfiles } from './claudeProfiles';
 import { registerCapability } from './hubClient';
 import { appIconPath } from '../lib/appIcon';
 import { DELEGATE_CATALOG_TO_BRAIN } from './brainDelegation';
-import { configService } from './configService';
+import { configService, getConfigDir } from './configService';
 import { listClaudeModels } from './claudeModels';
 import { libraryService } from './libraryService';
 import { sessionService } from './sessionService';
@@ -45,6 +45,91 @@ function detectDefaultShell(): string {
     return 'powershell.exe';
   }
   return process.env.SHELL || '/bin/sh';
+}
+
+// ── Filesystem path confinement for fs.* / search.project (SECURITY.md #8) ──
+//
+// These capabilities run in the trusted main process and, under remote sharing,
+// are reachable by a web/phone client holding the shared host token — which the
+// hub classifies as `trusted`, so its per-plugin path confinement does NOT apply.
+// Left open, a remote caller could `fs.read('/etc/passwd')` or
+// `fs.write('~/.ssh/authorized_keys')`. The desktop renderer never uses these bus
+// capabilities (it edits over the `file:*` / `search:*` IPC path instead), so
+// every bus call that reaches them is an external caller (web / remote / MCP, or a
+// plugin the hub already confined to its grant). We therefore confine them here to
+// the directories the web workspace legitimately touches:
+//
+//   - each live agent's cwd — the workspaces the editor / search / watch act on
+//   - the workspacer config dir — its own settings / library / handoff files
+//
+// The directory *picker* (fs.listDir) additionally allows browsing the home tree,
+// since its whole job is choosing a not-yet-open working directory for a new agent
+// (it only lists non-hidden directory names, never file contents). Note this also
+// intersects a plugin's own fs grant with these roots; a plugin needing fs access
+// to a root outside the workspace would need that root added here (or a per-caller
+// identity seam) — acceptable today since plugin fs grants target project files,
+// which are agent cwds.
+
+/**
+ * Canonicalize `p`: absolute, with `..` and symlinks resolved. For a target that
+ * doesn't exist yet (e.g. a file fs.write is about to create) it resolves the
+ * longest existing ancestor and re-appends the missing tail, so a write can't be
+ * aimed outside a root through a not-yet-created intermediate, and a symlink along
+ * the existing prefix is still followed. Throws on any non-ENOENT error mid-walk
+ * (permission, etc.) so the caller fails closed.
+ */
+function canonicalizePath(p: string): string {
+  let abs = path.resolve(p);
+  let rem = '';
+  for (;;) {
+    try {
+      const real = fs.realpathSync(abs);
+      return rem ? path.join(real, rem) : real;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err; // fail closed
+      const parent = path.dirname(abs);
+      if (parent === abs) return rem ? path.join(abs, rem) : abs; // reached fs root
+      rem = rem ? path.join(path.basename(abs), rem) : path.basename(abs);
+      abs = parent;
+    }
+  }
+}
+
+/** True when `target` canonicalizes to a location at or inside one of `roots`. */
+function pathWithinRoots(roots: string[], target: string): boolean {
+  let ct: string;
+  try {
+    ct = canonicalizePath(target);
+  } catch {
+    return false; // couldn't verify → deny
+  }
+  return roots.some((r) => {
+    let cr: string;
+    try { cr = fs.realpathSync(r); } catch { cr = path.resolve(r); }
+    return ct === cr || ct.startsWith(cr + path.sep);
+  });
+}
+
+/** Workspace roots for content-touching fs.* calls: live agent cwds + config dir. */
+function workspaceRoots(): string[] {
+  const roots = new Set<string>();
+  for (const s of claudeSessionStore.getAllSnapshots()) {
+    if (s.cwd) roots.add(s.cwd);
+  }
+  roots.add(getConfigDir());
+  return [...roots];
+}
+
+/** Broader roots for the directory picker: the home tree plus the workspace roots. */
+function browseRoots(): string[] {
+  return [os.homedir(), ...workspaceRoots()];
+}
+
+/** Reject a call whose path escapes the allowed roots. */
+function assertPathAllowed(cap: string, target: string, roots: string[]): void {
+  if (!pathWithinRoots(roots, target)) {
+    throw new Error(`${cap}: path is outside the allowed workspace (agent cwds + config dir)`);
+  }
 }
 
 export function registerHubCapabilities(): void {
@@ -502,6 +587,9 @@ export function registerHubCapabilities(): void {
     const { path: p } = (params ?? {}) as { path?: string };
     const home = os.homedir();
     const resolved = path.resolve(p && p.trim() ? p.replace(/^~/, home) : home);
+    // Browsing is limited to the home tree + live agent cwds so a remote client
+    // can pick a project dir but can't enumerate /etc, /root, or other users' homes.
+    assertPathAllowed('fs.listDir', resolved, browseRoots());
     let dirs: string[] = [];
     try {
       dirs = fs.readdirSync(resolved, { withFileTypes: true })
@@ -520,17 +608,20 @@ export function registerHubCapabilities(): void {
   cat('fs.read', (params: unknown) => {
     const { path: p } = (params ?? {}) as { path?: string };
     if (!p) throw new Error('fs.read requires a path');
+    assertPathAllowed('fs.read', p, workspaceRoots());
     return readTextFile(p);
   });
   cat('fs.write', (params: unknown) => {
     const { path: p, contents } = (params ?? {}) as { path?: string; contents?: string };
     if (!p) throw new Error('fs.write requires a path');
+    assertPathAllowed('fs.write', p, workspaceRoots());
     return writeTextFile(p, contents ?? '');
   });
   // Files-included, gitignore-aware listing for the editor's file tree (web client).
   cat('fs.listEntries', (params: unknown) => {
     const { path: p } = (params ?? {}) as { path?: string };
     if (!p) throw new Error('fs.listEntries requires a path');
+    assertPathAllowed('fs.listEntries', p, workspaceRoots());
     return listDir(p);
   });
 
@@ -541,12 +632,14 @@ export function registerHubCapabilities(): void {
   registerCapability('fs.watch', (params: unknown) => {
     const { path: p } = (params ?? {}) as { path?: string };
     if (!p) throw new Error('fs.watch requires a path');
+    assertPathAllowed('fs.watch', p, workspaceRoots());
     startWatch(p);
     return { ok: true };
   });
   registerCapability('fs.unwatch', (params: unknown) => {
     const { path: p } = (params ?? {}) as { path?: string };
     if (!p) throw new Error('fs.unwatch requires a path');
+    assertPathAllowed('fs.unwatch', p, workspaceRoots());
     stopWatch(p);
     return { ok: true };
   });
@@ -556,6 +649,8 @@ export function registerHubCapabilities(): void {
   registerCapability('search.project', (params: unknown) => {
     const opts = (params ?? {}) as Parameters<typeof searchProject>[0];
     if (!opts.query) throw new Error('search.project requires { query, cwd }');
+    if (!opts.cwd) throw new Error('search.project requires { query, cwd }');
+    assertPathAllowed('search.project', opts.cwd, workspaceRoots());
     return searchProject(opts);
   });
 

@@ -19,6 +19,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import * as os from 'os';
+import * as path from 'path';
+import * as fs from 'fs';
 
 // Capture every registered capability handler so tests can invoke them directly.
 const registered = new Map<string, (params: unknown) => unknown>();
@@ -67,6 +70,7 @@ vi.mock('./agentProviders', () => ({
 }));
 
 const getConfig = vi.fn(() => ({ agents: { binaries: { codex: '/custom/codex' } } }));
+const getConfigDirMock = vi.fn(() => '/nonexistent-config-dir');
 vi.mock('./configService', () => ({
   configService: {
     getConfig: (...a: unknown[]) => getConfig(...a),
@@ -74,6 +78,7 @@ vi.mock('./configService', () => ({
     getConfigPath: vi.fn(),
     saveConfig: vi.fn(),
   },
+  getConfigDir: (...a: unknown[]) => getConfigDirMock(...a),
 }));
 
 // Handoff brief authored path — used by claude.handoffAgentBrief.
@@ -90,14 +95,16 @@ vi.mock('./sessionService', () => ({ sessionService: {} }));
 vi.mock('./sessionHistory', () => ({ sessionHistory: {} }));
 vi.mock('./layoutService', () => ({ layoutService: {} }));
 vi.mock('./claudeSessionList', () => ({ listClaudeSessionsForDir: vi.fn() }));
-vi.mock('./fileService', () => ({ readTextFile: vi.fn(), writeTextFile: vi.fn(), listDir: vi.fn() }));
+vi.mock('./fileService', () => ({ readTextFile: vi.fn(), writeTextFile: vi.fn(), listDir: vi.fn(() => ({ path: '', entries: [] })) }));
 vi.mock('./fileWatchService', () => ({ startWatch: vi.fn(), stopWatch: vi.fn() }));
-vi.mock('./searchService', () => ({ searchProject: vi.fn() }));
+vi.mock('./searchService', () => ({ searchProject: vi.fn(() => ({ results: [], truncated: false })) }));
 vi.mock('./gitService', () => ({}));
 vi.mock('./terminalShare', () => ({}));
 vi.mock('./supervisorSkill', () => ({ ensureSupervisorHome: vi.fn(() => '/home/super') }));
 
 const { registerHubCapabilities } = await import('./hubCapabilities');
+const { readTextFile, writeTextFile } = await import('./fileService');
+const { searchProject } = await import('./searchService');
 
 /** Invoke a registered capability by method name. */
 function call(method: string, params?: unknown): unknown {
@@ -298,5 +305,64 @@ describe('error propagation', () => {
     await expect(async () => await call('claude.setModel', { sessionId: 's1', model: 'x' })).rejects.toThrow(
       'daemon down',
     );
+  });
+});
+
+describe('fs.* path confinement (SECURITY.md #8)', () => {
+  // A real temp dir stands in for a live agent's cwd — the confinement helpers
+  // canonicalize via the real filesystem, so the roots must exist.
+  let agentCwd: string;
+  beforeEach(() => {
+    agentCwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-agent-')));
+    getAllSnapshots.mockReturnValue([{ cwd: agentCwd }] as never);
+  });
+
+  it('fs.read allows a path inside a live agent cwd', () => {
+    const inside = path.join(agentCwd, 'notes.txt');
+    expect(() => call('fs.read', { path: inside })).not.toThrow();
+    expect(readTextFile).toHaveBeenCalledWith(inside);
+  });
+
+  it('fs.read denies an arbitrary host path (e.g. /etc/passwd)', () => {
+    expect(() => call('fs.read', { path: '/etc/passwd' })).toThrow(/outside the allowed workspace/);
+    expect(readTextFile).not.toHaveBeenCalled();
+  });
+
+  it('fs.read denies a traversal escape from the agent cwd', () => {
+    const escape = path.join(agentCwd, '..', '..', '..', 'etc', 'passwd');
+    expect(() => call('fs.read', { path: escape })).toThrow(/outside the allowed workspace/);
+    expect(readTextFile).not.toHaveBeenCalled();
+  });
+
+  it('fs.write denies writing outside the workspace', () => {
+    expect(() => call('fs.write', { path: path.join(os.homedir(), '.ssh', 'authorized_keys'), contents: 'x' })).toThrow(
+      /outside the allowed workspace/,
+    );
+    expect(writeTextFile).not.toHaveBeenCalled();
+  });
+
+  it('fs.write allows a not-yet-existing file inside the agent cwd (nearest-ancestor canonicalize)', () => {
+    const newFile = path.join(agentCwd, 'sub', 'new.txt'); // parent dir does not exist yet
+    expect(() => call('fs.write', { path: newFile, contents: 'x' })).not.toThrow();
+    expect(writeTextFile).toHaveBeenCalledWith(newFile, 'x');
+  });
+
+  it('search.project denies a cwd outside the workspace', () => {
+    expect(() => call('search.project', { query: 'x', cwd: '/etc' })).toThrow(/outside the allowed workspace/);
+    expect(searchProject).not.toHaveBeenCalled();
+  });
+
+  it('search.project allows a cwd inside a live agent cwd', () => {
+    expect(() => call('search.project', { query: 'x', cwd: agentCwd })).not.toThrow();
+    expect(searchProject).toHaveBeenCalled();
+  });
+
+  it('fs.listDir (folder picker) denies browsing outside the home tree', () => {
+    expect(() => call('fs.listDir', { path: '/etc' })).toThrow(/outside the allowed workspace/);
+  });
+
+  it('fs.listDir allows browsing inside a live agent cwd', () => {
+    const res = call('fs.listDir', { path: agentCwd }) as { path: string };
+    expect(res.path).toBe(agentCwd);
   });
 });
