@@ -87,7 +87,7 @@ theme, roughly ordered by severity within each group.
       zero tests (this is how the spawn drift went unnoticed).
 - [ ] Renderer: no pane/component tests for `App.tsx`, `ClaudePane.tsx`, or the
       composer/send pipeline.
-- [ ] TUI: `app/input.rs` (1350-line key dispatcher) has no test module.
+- [x] TUI: `app/input.rs` (1350-line key dispatcher) has no test module.
 - [ ] Stale Playwright E2E (`claudePane.test.ts`) posts an old hook shape and
       isn't run in CI.
 

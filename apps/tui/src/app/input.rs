@@ -848,11 +848,7 @@ impl App {
             self.set_toast("no agent selected");
             return;
         };
-        let provider = self
-            .managed_providers
-            .get(&sid)
-            .cloned()
-            .unwrap_or_else(|| "claude".to_string());
+        let provider = self.provider_for(&sid);
         let managed = provider != "claude";
         let cwd = self.target_agent().and_then(|a| a.cwd.clone()).unwrap_or_default();
         self.picker = Some(Picker {
@@ -916,7 +912,7 @@ impl App {
             self.set_toast("no agent selected");
             return;
         };
-        let managed = self.managed_providers.contains_key(&sid);
+        let managed = self.provider_for(&sid) != "claude";
         let cycle: &[&str] = if managed {
             &["ask", "yolo"]
         } else {
@@ -1655,4 +1651,363 @@ impl App {
 /// up so the user can always quit.
 fn is_ctrl_c(key: &KeyEvent) -> bool {
     key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c')
+}
+
+#[cfg(test)]
+mod tests {
+    //! Dispatch-seam tests for the top-level key handler. These drive real
+    //! `KeyEvent`s through [`App::handle_key`] and assert on the synchronous
+    //! state it leaves behind — normal-mode action resolution (counts, leader
+    //! chords), the insert/filter/cmdline text modes, question-mode digit
+    //! gating, and that open modals swallow keys instead of leaking them into
+    //! global actions. Async effects (network sends) are fire-and-forget against
+    //! a dead port, so we only assert the local state each path mutates.
+    use super::*;
+    use crate::app::ChatMode;
+    use crate::claudemon::Claudemon;
+    use crate::config::Config;
+    use crate::types::Agent;
+
+    fn test_app() -> App {
+        // Redirect the config dir to a per-process temp dir: harpoon/rename/notes
+        // dispatch persists to disk, and tests must never touch the real files.
+        use std::sync::Once;
+        static ONCE: Once = Once::new();
+        ONCE.call_once(|| {
+            let dir =
+                std::env::temp_dir().join(format!("wks-tui-input-test-{}", std::process::id()));
+            let _ = std::fs::create_dir_all(&dir);
+            std::env::set_var("XDG_CONFIG_HOME", &dir);
+        });
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let (ptx, _prx) = tokio::sync::mpsc::unbounded_channel();
+        // An unused port: the background stream tasks fail and retry harmlessly.
+        let cm = Claudemon::new("http://127.0.0.1:59999".into());
+        App::new(cm, Vec::new(), Vec::new(), Config::default(), tx, ptx)
+    }
+
+    fn agent(id: &str, mode: &str) -> Agent {
+        serde_json::from_value(serde_json::json!({
+            "session_id": id, "cwd": format!("/work/{id}"), "mode": mode
+        }))
+        .unwrap()
+    }
+
+    /// An agent parked on a structured question (so `has_question()` is true).
+    fn agent_asking(id: &str) -> Agent {
+        serde_json::from_value(serde_json::json!({
+            "session_id": id, "cwd": format!("/work/{id}"), "mode": "question",
+            "pending": {"kind": "question", "questions": [
+                {"question": "Which?", "options": [{"label": "A"}, {"label": "B"}]}
+            ]}
+        }))
+        .unwrap()
+    }
+
+    fn ch(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)
+    }
+    fn ctrl(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
+    }
+    fn code(k: KeyCode) -> KeyEvent {
+        KeyEvent::new(k, KeyModifiers::NONE)
+    }
+    /// Feed each character of `s` as a separate key press.
+    fn feed(app: &mut App, s: &str) {
+        for c in s.chars() {
+            app.handle_key(ch(c));
+        }
+    }
+    /// A list app with `n` agents and the first one selected (row 1).
+    fn app_with_agents(n: usize) -> App {
+        let mut app = test_app();
+        app.set_agents((1..=n).map(|i| agent(&format!("s{i}"), "responding")).collect());
+        app.selected = 1;
+        app
+    }
+
+    // ── normal-mode key → Action resolution ─────────────────────────────────
+
+    #[test]
+    fn normal_q_quits() {
+        let mut app = app_with_agents(2);
+        app.handle_key(ch('q'));
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn normal_j_k_navigate_the_sidebar() {
+        let mut app = app_with_agents(3);
+        app.selected = 0;
+        app.handle_key(ch('j'));
+        app.handle_key(ch('j'));
+        assert_eq!(app.selected, 2, "two j's step down two rows");
+        app.handle_key(ch('k'));
+        assert_eq!(app.selected, 1, "k steps back up");
+    }
+
+    #[test]
+    fn normal_g_and_shift_g_jump_first_and_last() {
+        let mut app = app_with_agents(3);
+        app.handle_key(ch('G'));
+        assert_eq!(app.selected, 3, "G jumps to the last agent row");
+        app.handle_key(ch('g'));
+        assert_eq!(app.selected, 0, "g jumps to the first (dashboard) row");
+    }
+
+    #[test]
+    fn ctrl_k_opens_palette_and_question_help_opens_help() {
+        let mut app = app_with_agents(1);
+        app.handle_key(ctrl('k'));
+        assert!(app.palette.is_some(), "ctrl+k opens the command palette");
+        app.palette = None;
+        app.handle_key(ch('?'));
+        assert!(app.help, "? opens the help overlay");
+    }
+
+    // ── vim counts ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn count_prefix_repeats_a_motion_then_clears() {
+        let mut app = app_with_agents(3);
+        app.selected = 0;
+        app.handle_key(ch('3'));
+        assert_eq!(app.count, Some(3), "a leading digit accumulates a count");
+        app.handle_key(ch('j'));
+        assert_eq!(app.selected, 3, "3j steps down three rows");
+        assert_eq!(app.count, None, "the count is consumed by the motion");
+    }
+
+    #[test]
+    fn count_then_shift_g_jumps_to_that_agent() {
+        let mut app = app_with_agents(3);
+        feed(&mut app, "2");
+        app.handle_key(ch('G'));
+        assert_eq!(app.selected, 2, "2G jumps to agent #2");
+    }
+
+    #[test]
+    fn leading_zero_does_not_start_a_count() {
+        let mut app = app_with_agents(3);
+        app.selected = 1;
+        app.handle_key(ch('0'));
+        assert_eq!(app.count, None, "a bare 0 never starts a count");
+        assert_eq!(app.selected, 1, "and resolves to nothing here");
+    }
+
+    #[test]
+    fn esc_abandons_a_pending_count() {
+        let mut app = app_with_agents(2);
+        app.handle_key(ch('3'));
+        assert_eq!(app.count, Some(3));
+        app.handle_key(code(KeyCode::Esc));
+        assert_eq!(app.count, None, "esc clears the pending count");
+        assert!(!app.should_quit, "and doesn't also fire Esc's own binding");
+    }
+
+    // ── leader / which-key chords ───────────────────────────────────────────
+
+    #[test]
+    fn leader_alone_is_pending_and_fires_nothing() {
+        let mut app = app_with_agents(1);
+        app.handle_key(ch(' '));
+        assert_eq!(app.pending_keys.len(), 1, "leader is held pending");
+        assert!(app.spawn_form.is_none() && !app.should_quit, "nothing fired yet");
+    }
+
+    #[test]
+    fn leader_a_opens_the_spawn_form() {
+        let mut app = app_with_agents(1);
+        feed(&mut app, " a");
+        assert!(app.spawn_form.is_some(), "<leader> a is the new-agent chord");
+        assert!(app.pending_keys.is_empty(), "the chord resolved and cleared");
+    }
+
+    #[tokio::test]
+    async fn leader_slash_opens_cross_agent_search() {
+        let mut app = app_with_agents(1);
+        feed(&mut app, " /");
+        assert!(app.search.is_some(), "<leader> / opens content search");
+    }
+
+    #[test]
+    fn leader_digit_is_a_positional_harpoon_jump() {
+        let mut app = app_with_agents(1);
+        feed(&mut app, " 1");
+        // No pins, so the jump only toasts — but the chord must be consumed and
+        // must not fall through to a count or a global action.
+        assert!(app.pending_keys.is_empty(), "the leader+digit chord is consumed");
+        assert_eq!(app.count, None);
+        assert!(!app.should_quit);
+    }
+
+    #[test]
+    fn esc_abandons_a_pending_leader_chord() {
+        let mut app = app_with_agents(1);
+        app.handle_key(ch(' '));
+        assert_eq!(app.pending_keys.len(), 1);
+        app.handle_key(code(KeyCode::Esc));
+        assert!(app.pending_keys.is_empty(), "esc drops the half-typed chord");
+    }
+
+    #[test]
+    fn unknown_normal_key_is_a_harmless_noop() {
+        let mut app = app_with_agents(2);
+        app.handle_key(ch('z'));
+        assert!(app.pending_keys.is_empty() && !app.should_quit && app.count.is_none());
+    }
+
+    // ── insert / compose mode routing ───────────────────────────────────────
+
+    #[tokio::test]
+    async fn i_enters_insert_mode_in_the_transcript() {
+        let mut app = app_with_agents(1);
+        app.open_agent();
+        app.chat_mode = ChatMode::Transcript; // 'i' = Attach in terminal mode
+        app.handle_key(ch('i'));
+        assert!(app.insert_mode, "i enters compose mode in the transcript context");
+    }
+
+    #[tokio::test]
+    async fn insert_mode_typing_appends_to_the_composer() {
+        let mut app = app_with_agents(1);
+        app.open_agent();
+        app.insert_mode = true;
+        feed(&mut app, "hi");
+        assert_eq!(app.input, "hi", "characters land in the composer, not the keymap");
+    }
+
+    #[tokio::test]
+    async fn insert_mode_esc_exits_to_normal() {
+        let mut app = app_with_agents(1);
+        app.open_agent();
+        app.insert_mode = true;
+        app.handle_key(code(KeyCode::Esc));
+        assert!(!app.insert_mode, "esc leaves compose mode");
+    }
+
+    #[tokio::test]
+    async fn insert_mode_enter_sends_and_clears_the_composer() {
+        let mut app = app_with_agents(1);
+        app.open_agent();
+        app.insert_mode = true;
+        feed(&mut app, "ship it");
+        app.handle_key(code(KeyCode::Enter));
+        assert!(app.input.is_empty(), "enter dispatches the message and clears the buffer");
+    }
+
+    // ── `/` sidebar filter entry / exit ─────────────────────────────────────
+
+    #[test]
+    fn slash_opens_the_filter_and_typing_edits_it() {
+        let mut app = app_with_agents(2);
+        app.handle_key(ch('/'));
+        assert!(app.filter_editing, "/ starts editing the sidebar filter");
+        feed(&mut app, "s1");
+        assert_eq!(app.filter.as_deref(), Some("s1"), "characters extend the query");
+        app.handle_key(code(KeyCode::Backspace));
+        assert_eq!(app.filter.as_deref(), Some("s"), "backspace trims it");
+    }
+
+    #[test]
+    fn filter_enter_keeps_it_and_esc_clears_it() {
+        let mut app = app_with_agents(2);
+        app.handle_key(ch('/'));
+        feed(&mut app, "s1");
+        app.handle_key(code(KeyCode::Enter));
+        assert!(!app.filter_editing, "enter stops editing");
+        assert_eq!(app.filter.as_deref(), Some("s1"), "but keeps the filter");
+
+        app.handle_key(ch('/'));
+        app.handle_key(code(KeyCode::Esc));
+        assert!(!app.filter_editing && app.filter.is_none(), "esc clears the filter entirely");
+    }
+
+    // ── `:` ex-command line entry / exit ────────────────────────────────────
+
+    #[test]
+    fn colon_opens_the_cmdline() {
+        let mut app = app_with_agents(1);
+        app.handle_key(ch(':'));
+        assert_eq!(app.cmdline.as_deref(), Some(""), ": opens an empty command line");
+    }
+
+    #[test]
+    fn cmdline_esc_cancels_without_running() {
+        let mut app = app_with_agents(1);
+        app.handle_key(ch(':'));
+        feed(&mut app, "q");
+        app.handle_key(code(KeyCode::Esc));
+        assert!(app.cmdline.is_none(), "esc closes the command line");
+        assert!(!app.should_quit, "and the typed command never ran");
+    }
+
+    #[test]
+    fn cmdline_enter_runs_the_command() {
+        let mut app = app_with_agents(1);
+        app.handle_key(ch(':'));
+        feed(&mut app, "q");
+        app.handle_key(code(KeyCode::Enter));
+        assert!(app.cmdline.is_none(), "enter closes the command line");
+        assert!(app.should_quit, ":q quits");
+    }
+
+    // ── question-mode digit gating ──────────────────────────────────────────
+
+    #[tokio::test]
+    async fn digit_answers_a_pending_question_instead_of_starting_a_count() {
+        let mut app = test_app();
+        app.set_agents(vec![agent_asking("s1")]);
+        app.selected = 1;
+        app.handle_key(ch('3'));
+        // With a question up, 1-9 answer it positionally — no count is started.
+        assert_eq!(app.count, None, "a digit does not accumulate a count while a question is up");
+        assert!(app.pending_keys.is_empty());
+    }
+
+    #[test]
+    fn digit_starts_a_count_when_no_question_is_pending() {
+        let mut app = app_with_agents(2);
+        app.handle_key(ch('3'));
+        assert_eq!(app.count, Some(3), "without a question, the same digit starts a count");
+    }
+
+    // ── open modals swallow keys (no leak to global actions) ────────────────
+
+    #[test]
+    fn keys_in_the_picker_modal_do_not_reach_global_actions() {
+        let mut app = app_with_agents(1);
+        app.open_model_picker();
+        assert!(app.picker.is_some());
+        app.handle_key(ch('q')); // would Quit in the List context
+        assert!(!app.should_quit, "the picker captures the key");
+        assert!(app.picker.is_some(), "and stays open");
+        app.handle_key(code(KeyCode::Esc));
+        assert!(app.picker.is_none(), "esc closes the picker");
+    }
+
+    #[tokio::test]
+    async fn keys_in_the_search_modal_do_not_quit() {
+        let mut app = app_with_agents(1);
+        app.open_search();
+        assert!(app.search.is_some());
+        app.handle_key(ch('q'));
+        assert!(!app.should_quit, "typing in search never triggers the global quit");
+        assert_eq!(
+            app.search.as_ref().map(|s| s.query.as_str()),
+            Some("q"),
+            "the key lands in the search query instead"
+        );
+    }
+
+    #[test]
+    fn keys_in_the_spawn_form_do_not_leak_to_global_actions() {
+        let mut app = app_with_agents(1);
+        app.open_spawn();
+        assert!(app.spawn_form.is_some());
+        app.handle_key(ch('q'));
+        assert!(!app.should_quit, "the spawn form captures keys");
+        assert!(app.spawn_form.is_some());
+    }
 }

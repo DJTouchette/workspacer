@@ -98,12 +98,25 @@ pub enum AgentMode {
     Other,
 }
 
+/// Serde default for [`Agent::provider`] — claudemon's un-managed PTY path is
+/// Claude, and older daemons omit the field entirely, so an absent value means
+/// Claude. Mirrors claudemon's own `default_provider`.
+fn default_provider() -> String {
+    "claude".to_string()
+}
+
 /// One live session, as returned by claudemon's `GET /sessions`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Agent {
     pub session_id: String,
     #[serde(default)]
     pub cwd: Option<String>,
+    /// Which agent backend owns this session, straight from claudemon's session
+    /// list (`"claude"` | `"codex"` | `"opencode"` | `"pi"`). Authoritative over
+    /// the TUI's local managed-spawn map — see [`App::provider_for`]. Serde
+    /// defaults to `"claude"` so older daemons deserialize unchanged.
+    #[serde(default = "default_provider")]
+    pub provider: String,
     /// The current session mode. Defaults to `AgentMode::Unknown` when the
     /// field is absent, and falls back to `AgentMode::Other` for unrecognised
     /// values so deserialization never panics on future daemon versions.
@@ -477,6 +490,23 @@ mod tests {
         }]);
         let agents: Vec<Agent> = serde_json::from_value(json).unwrap();
         assert!(agents[0].usage.is_none());
+    }
+
+    #[test]
+    fn provider_wire_field_parses_and_defaults_to_claude() {
+        // Explicit provider is carried through verbatim.
+        let a: Agent = serde_json::from_value(serde_json::json!({
+            "session_id": "x", "mode": "input", "provider": "codex"
+        }))
+        .unwrap();
+        assert_eq!(a.provider, "codex");
+
+        // Absent provider (older daemon / un-managed PTY) defaults to "claude".
+        let a: Agent = serde_json::from_value(serde_json::json!({
+            "session_id": "y", "mode": "input"
+        }))
+        .unwrap();
+        assert_eq!(a.provider, "claude");
     }
 
     #[test]

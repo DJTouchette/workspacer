@@ -392,10 +392,11 @@ pub struct App {
     pub palette: Option<Palette>,
     /// The model / handoff-provider picker modal, when open.
     pub picker: Option<Picker>,
-    /// Provider per session for sessions this TUI spawned managed (session_id →
-    /// `"codex"`/`"opencode"`/`"pi"`). The daemon's `/sessions` list carries no
-    /// provider field, so this is how the model picker + permission-mode cycle
-    /// know a session is managed (adopted/unknown sessions default to claude).
+    /// Fallback provider map for managed sessions this TUI spawned (session_id →
+    /// `"codex"`/`"opencode"`/`"pi"`). claudemon's `/sessions` list now carries
+    /// an authoritative `provider` field ([`Agent::provider`]) that
+    /// [`App::provider_for`] prefers; this map only bridges the gap before the
+    /// first post-spawn refresh lands (and daemons too old to emit the field).
     pub managed_providers: HashMap<String, String>,
     /// Last known permission mode per session, updated from each successful
     /// switch — the cycle advances from here.
@@ -1011,6 +1012,25 @@ impl App {
     pub fn chat_agent(&self) -> Option<&Agent> {
         let sid = self.chat_session_id()?;
         self.all_agents.iter().find(|a| a.session_id == sid)
+    }
+
+    /// Resolve a session's provider (`"claude"`/`"codex"`/`"opencode"`/`"pi"`).
+    ///
+    /// Prefers claudemon's authoritative wire field (present for every session,
+    /// however it was spawned), and falls back to the local managed-spawn map
+    /// for the window between spawning a managed agent here and the first
+    /// session-list refresh that carries it — and for daemons too old to emit
+    /// `provider`. The map only ever holds non-Claude entries (managed spawns),
+    /// so a wire `"claude"` defers to it; anything unknown resolves to
+    /// `"claude"`.
+    pub(super) fn provider_for(&self, sid: &str) -> String {
+        self.all_agents
+            .iter()
+            .find(|a| a.session_id == sid)
+            .map(|a| a.provider.clone())
+            .filter(|p| p != "claude")
+            .or_else(|| self.managed_providers.get(sid).cloned())
+            .unwrap_or_else(|| "claude".to_string())
     }
 
     // ── async actions (fire-and-forget; results arrive as AppMsg) ───────────
@@ -1891,6 +1911,34 @@ mod tests {
         app.managed_providers.insert("s1".into(), "codex".into());
         app.open_model_picker();
         assert!(app.picker.as_ref().unwrap().pending);
+    }
+
+    #[test]
+    fn provider_for_prefers_wire_field_then_falls_back_to_local_map() {
+        let mut app = test_app();
+
+        // Wire field carries the provider — resolved with no local map entry.
+        let codex: Agent = serde_json::from_value(serde_json::json!({
+            "session_id": "s1", "mode": "input", "provider": "codex"
+        }))
+        .unwrap();
+        app.set_agents(vec![codex]);
+        assert_eq!(app.provider_for("s1"), "codex");
+
+        // A plain wire "claude" session with no local entry stays claude.
+        app.set_agents(vec![agent_cwd("s2", "/repo", "input")]);
+        assert_eq!(app.provider_for("s2"), "claude");
+
+        // A just-spawned managed agent not yet in the refreshed list: the local
+        // map bridges the gap until the wire field arrives.
+        app.apply_msg(AppMsg::ManagedSpawned {
+            session_id: "s3".into(),
+            provider: "pi".into(),
+        });
+        assert_eq!(app.provider_for("s3"), "pi");
+
+        // Unknown session (neither list nor map) → claude.
+        assert_eq!(app.provider_for("nope"), "claude");
     }
 
     #[test]
