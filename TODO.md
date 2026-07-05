@@ -97,9 +97,10 @@ theme, roughly ordered by severity within each group.
 
 ## CI / tooling / release
 
-- [ ] No lint/format enforcement in any language — no eslint/prettier,
-      no rustfmt/clippy config (`-D warnings` off, 27 tolerated warnings),
-      no golangci. Pick and enforce per language.
+- [x] Format enforcement shipped 2026-07-05: prettier (measured config) +
+      cargo fmt + gofmt, all checked in CI; clippy at -D warnings in both
+      Rust crates (warnings burned to zero). Deliberately format-only —
+      eslint/golangci rule sets remain a future decision.
 - [x] `make test` skips claudemon entirely (`Makefile:62`); local `test-hub`
       uses `-race` while CI doesn't — align both.
 - [x] No `typecheck` npm script in apps/desktop (CI calls tsc directly).
