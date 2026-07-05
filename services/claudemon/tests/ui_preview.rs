@@ -45,6 +45,7 @@ fn preview_dashboard_three_sessions() {
             transcript_path: None,
             status_line: None,
             provider: "claude".into(),
+            plan: None,
         })
         .session(SessionState {
             session_id: "9e8d7c6b-aaaa-bbbb-cccc-dddddddddddd".into(),
@@ -58,6 +59,7 @@ fn preview_dashboard_three_sessions() {
             transcript_path: None,
             status_line: None,
             provider: "claude".into(),
+            plan: None,
         })
         .session(SessionState {
             session_id: "11223344-eeee-ffff-0000-987654321000".into(),
@@ -75,6 +77,7 @@ fn preview_dashboard_three_sessions() {
             transcript_path: None,
             status_line: None,
             provider: "claude".into(),
+            plan: None,
         })
         .connected();
     let snap = snapshot_dashboard(b, 100, 24);
@@ -96,6 +99,7 @@ fn preview_chat_empty() {
             transcript_path: None,
             status_line: None,
             provider: "claude".into(),
+            plan: None,
         })
         .connected()
         .chat_for("demo-session-id");
@@ -118,6 +122,7 @@ fn preview_chat_with_text_and_tool_calls() {
             transcript_path: None,
             status_line: None,
             provider: "claude".into(),
+            plan: None,
         })
         .connected()
         .chat_for_with_transcript("demo-session-id", Transcript {
@@ -177,6 +182,7 @@ fn preview_chat_with_pending_approval() {
             transcript_path: None,
             status_line: None,
             provider: "claude".into(),
+            plan: None,
         })
         .connected()
         .chat_for_with_transcript("demo-session-id", Transcript {
@@ -234,6 +240,7 @@ fn preview_chat_with_pending_question() {
             transcript_path: None,
             status_line: None,
             provider: "claude".into(),
+            plan: None,
         })
         .connected()
         .chat_for("demo-session-id");
@@ -256,6 +263,7 @@ fn preview_chat_with_input_typed() {
             transcript_path: None,
             status_line: None,
             provider: "claude".into(),
+            plan: None,
         })
         .connected()
         .chat_for("demo-session-id")
@@ -279,6 +287,7 @@ fn preview_chat_with_multiline_input() {
             transcript_path: None,
             status_line: None,
             provider: "claude".into(),
+            plan: None,
         })
         .connected()
         .chat_for("demo-session-id")

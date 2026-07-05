@@ -8,8 +8,9 @@ use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 
 use time::OffsetDateTime;
 
+use super::conversation::{ConversationItem, ConversationStore};
 use super::permission_mode::{classify_screen, PermissionMode, PermissionSwitchError};
-use super::state::{HookEvent, Pending, SessionMode, SessionState, StatusLine};
+use super::state::{HookEvent, Pending, Plan, SessionMode, SessionState, StatusLine};
 use crate::protocol::WrapperMessage;
 
 const BROADCAST_CAPACITY: usize = 256;
@@ -852,6 +853,41 @@ impl SessionStore {
             status_line: status,
         });
         Some(state)
+    }
+
+    /// Record the agent's current plan and surface it to clients.
+    ///
+    /// Two effects, one call so there's a single emission path: (1) store the
+    /// plan on the session state (auto-serialized in `GET /sessions/:id`), and
+    /// (2) push a `plan` conversation item onto `conv` so the live SSE delta and
+    /// any resync replay both deliver it. Last-write-wins: each call fully
+    /// replaces the prior plan. Storing on the state is skipped (but the item is
+    /// still pushed) if the session isn't registered — the conversation log is
+    /// keyed independently, so a plan never gets lost on a timing edge.
+    pub fn set_plan(
+        &self,
+        conv: &ConversationStore,
+        session_id: &str,
+        plan: Plan,
+    ) -> Option<SessionState> {
+        let item = ConversationItem::Plan {
+            steps: plan.steps.clone(),
+            updated_at: plan.updated_at.clone(),
+        };
+        let state = self.states.get_mut(session_id).map(|mut entry| {
+            entry.plan = Some(plan);
+            entry.updated_at = OffsetDateTime::now_utc();
+            entry.clone()
+        });
+        conv.push(session_id, vec![item]);
+        if let Some(state) = &state {
+            let _ = self.update_tx.send(SessionUpdate {
+                session_id: session_id.to_string(),
+                event: "Plan".to_string(),
+                state: state.clone(),
+            });
+        }
+        state
     }
 
     /// Drop a previously-registered spawn that has not yet bound to a claude

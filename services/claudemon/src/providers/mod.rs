@@ -38,7 +38,7 @@ use tokio::sync::mpsc;
 
 use crate::protocol::{Signal, WrapperMessage};
 use crate::session::conversation::ConversationItem;
-use crate::session::state::{Pending, SessionMode, StatusLine};
+use crate::session::state::{Pending, Plan, PlanStatus, PlanStep, SessionMode, StatusLine};
 use crate::session::store::WrapperHandle;
 use crate::session::{ConversationStore, SessionStore};
 use crate::wrapper::pty;
@@ -191,6 +191,11 @@ pub enum AgentUpdate {
     },
     /// A session-level error message.
     Error(String),
+    /// The agent's current plan / checklist (Codex's `update_plan` / todo list).
+    /// Last-write-wins full replacement — carried into the conversation store as
+    /// a `plan` item by `apply_updates` (via `SessionStore::set_plan`), never as
+    /// a `conversation_item`.
+    Plan(Plan),
 }
 
 /// Parse a Codex `RateLimitSnapshot` — camelCase on the app-server wire
@@ -233,6 +238,62 @@ pub(crate) fn rate_limits_from(v: &Value) -> Option<AgentUpdate> {
         five_hour_resets_at: five.1,
         seven_day_pct: seven.0,
         seven_day_resets_at: seven.1,
+    })
+}
+
+/// Parse a plan / todo-list payload from a provider event into a [`Plan`].
+///
+/// Codex surfaces the agent's plan in a few near-identical shapes depending on
+/// the channel: the `update_plan` tool's arguments (`{ plan: [{ step, status
+/// }] }`), an app-server `todoList`/`plan` item, or a rollout equivalent. This
+/// reads whichever list key is present (`plan` / `steps` / `items` / `todos`)
+/// and maps each entry defensively: step text from `content` / `step` / `text`
+/// / `title`; status from an explicit `status` string (via
+/// [`PlanStatus::from_wire`]) or a boolean `completed` flag. Returns `None` when
+/// no recognizable step list is present, so it's safe to probe any item.
+pub(crate) fn plan_from_value(v: &Value) -> Option<Plan> {
+    let steps: Vec<PlanStep> = ["plan", "steps", "items", "todos"]
+        .iter()
+        .find_map(|k| v.get(*k).and_then(Value::as_array))?
+        .iter()
+        .filter_map(plan_step_from_value)
+        .collect();
+    if steps.is_empty() {
+        return None;
+    }
+    Some(Plan {
+        steps,
+        updated_at: None,
+    })
+}
+
+fn plan_step_from_value(v: &Value) -> Option<PlanStep> {
+    let content = ["content", "step", "text", "title"]
+        .iter()
+        .find_map(|k| v.get(*k).and_then(Value::as_str))?
+        .to_string();
+    let status = v
+        .get("status")
+        .and_then(Value::as_str)
+        .map(PlanStatus::from_wire)
+        .or_else(|| {
+            v.get("completed").and_then(Value::as_bool).map(|done| {
+                if done {
+                    PlanStatus::Completed
+                } else {
+                    PlanStatus::Pending
+                }
+            })
+        })
+        .unwrap_or(PlanStatus::Pending);
+    let active_form = ["activeForm", "active_form"]
+        .iter()
+        .find_map(|k| v.get(*k).and_then(Value::as_str))
+        .map(str::to_owned);
+    Some(PlanStep {
+        content,
+        status,
+        active_form,
     })
 }
 
@@ -438,6 +499,9 @@ pub fn apply_updates(
     let mut new_mode: Option<SessionMode> = None;
     let mut pending: Option<Pending> = None;
     let mut usage_changed = false;
+    // Latest plan in this batch (last-write-wins); applied after the item push
+    // so its own conversation item lands just past the batch's items.
+    let mut plan: Option<Plan> = None;
 
     for update in &updates {
         match update {
@@ -504,6 +568,7 @@ pub fn apply_updates(
                     timestamp: None,
                 });
             }
+            AgentUpdate::Plan(p) => plan = Some(p.clone()),
             AgentUpdate::AssistantText(_)
             | AgentUpdate::UserText(_)
             | AgentUpdate::ToolUse { .. }
@@ -517,6 +582,9 @@ pub fn apply_updates(
 
     if !items.is_empty() {
         conv.push(session_id, items);
+    }
+    if let Some(plan) = plan {
+        store.set_plan(conv, session_id, plan);
     }
     if let Some(mode) = new_mode {
         if mode != *cur_mode || mode == SessionMode::Approval {
@@ -742,6 +810,65 @@ mod tests {
     }
 
     #[test]
+    fn apply_updates_plan_stores_state_and_pushes_conversation_item() {
+        let store = SessionStore::new();
+        let conv = ConversationStore::new();
+        store.register_managed("s-plan", "/tmp/proj", "codex");
+        let mut mode = SessionMode::Input;
+        let mut acc = UsageAcc::new();
+        let plan = Plan {
+            steps: vec![
+                PlanStep {
+                    content: "explore".into(),
+                    status: PlanStatus::Completed,
+                    active_form: None,
+                },
+                PlanStep {
+                    content: "build".into(),
+                    status: PlanStatus::InProgress,
+                    active_form: None,
+                },
+            ],
+            updated_at: None,
+        };
+        apply_updates(
+            &store,
+            &conv,
+            "s-plan",
+            vec![AgentUpdate::Plan(plan.clone())],
+            &mut mode,
+            &mut acc,
+        );
+        // Stored on the session state...
+        assert_eq!(store.get("s-plan").and_then(|s| s.plan), Some(plan));
+        // ...and pushed as a conversation item.
+        let (_seq, items) = conv.snapshot("s-plan").expect("conversation exists");
+        assert!(items
+            .iter()
+            .any(|i| matches!(i, ConversationItem::Plan { steps, .. } if steps.len() == 2)));
+    }
+
+    #[test]
+    fn plan_from_value_reads_shapes_and_rejects_non_plans() {
+        // `update_plan` args shape.
+        let p = plan_from_value(&serde_json::json!({ "plan": [
+            { "step": "a", "status": "in_progress" }
+        ]}))
+        .expect("plan shape parses");
+        assert_eq!(p.steps.len(), 1);
+        assert_eq!(p.steps[0].status, PlanStatus::InProgress);
+        // todo-list shape with a boolean completed flag.
+        let p = plan_from_value(&serde_json::json!({ "items": [
+            { "text": "a", "completed": true }
+        ]}))
+        .expect("todo shape parses");
+        assert_eq!(p.steps[0].status, PlanStatus::Completed);
+        // A non-plan value is rejected (safe to probe any item).
+        assert!(plan_from_value(&serde_json::json!({ "command": ["ls"] })).is_none());
+        assert!(plan_from_value(&serde_json::json!({ "plan": [] })).is_none());
+    }
+
+    #[test]
     fn conversation_item_mapping() {
         assert!(matches!(
             conversation_item(&AgentUpdate::AssistantText("x".into())),
@@ -753,6 +880,12 @@ mod tests {
         ));
         assert!(conversation_item(&AgentUpdate::Idle).is_none());
         assert!(conversation_item(&AgentUpdate::Busy).is_none());
+        // Plan is applied via set_plan, never mapped to a plain conversation item.
+        assert!(conversation_item(&AgentUpdate::Plan(Plan {
+            steps: vec![],
+            updated_at: None,
+        }))
+        .is_none());
     }
 
     #[test]

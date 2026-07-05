@@ -1206,6 +1206,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn get_session_surfaces_a_set_plan() {
+        use crate::session::state::{Plan, PlanStatus, PlanStep};
+        let state = test_state();
+        state.store.register_managed("sess-1", "/tmp/proj", "codex");
+        state.store.set_plan(
+            &state.conv,
+            "sess-1",
+            Plan {
+                steps: vec![
+                    PlanStep {
+                        content: "explore".into(),
+                        status: PlanStatus::Completed,
+                        active_form: None,
+                    },
+                    PlanStep {
+                        content: "build".into(),
+                        status: PlanStatus::InProgress,
+                        active_form: Some("Building".into()),
+                    },
+                ],
+                updated_at: Some("2026-07-04T10:00:00Z".into()),
+            },
+        );
+        let (status, body) = request(state, get("/sessions/sess-1")).await;
+        assert_eq!(status, StatusCode::OK);
+        let v = serde_json::from_slice::<Value>(&body).unwrap();
+        // The plan auto-serializes on the session state, in the fixed wire shape.
+        assert_eq!(v["plan"]["updatedAt"], "2026-07-04T10:00:00Z");
+        assert_eq!(v["plan"]["steps"][0]["content"], "explore");
+        assert_eq!(v["plan"]["steps"][0]["status"], "completed");
+        assert_eq!(v["plan"]["steps"][1]["status"], "in_progress");
+        assert_eq!(v["plan"]["steps"][1]["activeForm"], "Building");
+    }
+
+    #[tokio::test]
     async fn get_output_unknown_session_is_404() {
         let (status, body) = request(test_state(), get("/sessions/nope/output")).await;
         assert_eq!(status, StatusCode::NOT_FOUND);

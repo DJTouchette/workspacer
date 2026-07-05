@@ -122,6 +122,15 @@ fn translate_response_item(payload: &Value) -> Vec<AgentUpdate> {
                 .and_then(|s| serde_json::from_str::<Value>(s).ok())
                 .or_else(|| payload.get("arguments").cloned())
                 .unwrap_or(Value::Null);
+            // Codex's plan tool is a function call named `update_plan` whose
+            // arguments carry `{ plan: [{ step, status }] }`. Surface it as a
+            // first-class plan in addition to the tool card, mirroring how the
+            // Claude path treats `TodoWrite`.
+            if name == "update_plan" {
+                if let Some(plan) = super::plan_from_value(&input) {
+                    out.push(AgentUpdate::Plan(plan));
+                }
+            }
             out.push(AgentUpdate::ToolUse { id, name, input });
         }
         "function_call_output" => {
@@ -480,6 +489,27 @@ mod tests {
                 input: json!({ "command": "ls" }),
             }]
         );
+    }
+
+    #[test]
+    fn update_plan_function_call_yields_plan_and_tool_use() {
+        use crate::session::state::PlanStatus;
+        let v = item(
+            json!({ "type": "function_call", "name": "update_plan", "call_id": "c1",
+            "arguments": "{\"explanation\":\"go\",\"plan\":[{\"step\":\"a\",\"status\":\"completed\"},{\"step\":\"b\",\"status\":\"in_progress\"}]}" }),
+        );
+        let updates = translate(&v);
+        // A plan update PLUS the tool card (parallel to Claude's TodoWrite).
+        assert_eq!(updates.len(), 2);
+        match &updates[0] {
+            AgentUpdate::Plan(plan) => {
+                assert_eq!(plan.steps.len(), 2);
+                assert_eq!(plan.steps[0].status, PlanStatus::Completed);
+                assert_eq!(plan.steps[1].status, PlanStatus::InProgress);
+            }
+            other => panic!("expected Plan first, got {other:?}"),
+        }
+        assert!(matches!(&updates[1], AgentUpdate::ToolUse { name, .. } if name == "update_plan"));
     }
 
     #[test]

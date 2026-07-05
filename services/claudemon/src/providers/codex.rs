@@ -196,14 +196,25 @@ pub fn translate(method: &str, params: &Value) -> Vec<AgentUpdate> {
 /// emits tool-uses (so a tool isn't recorded twice); assistant text arrives via
 /// `item/agentMessage/delta`, so completed agentMessage items are not re-emitted.
 fn translate_item(method: &str, item: &Value, out: &mut Vec<AgentUpdate>) {
-    if method != "item/started" {
-        return;
-    }
     let ty = item
         .get("type")
         .and_then(Value::as_str)
         .or_else(|| item.get("itemType").and_then(Value::as_str))
         .unwrap_or("");
+    // Plan / todo-list updates arrive as a dedicated item and, unlike tool
+    // uses, are meaningful on BOTH item/started and item/completed (the latter
+    // carries the final statuses) — last-write-wins, so honor either. The exact
+    // item type name isn't nailed down across Codex builds, so accept the
+    // plausible spellings and lean on `plan_from_value` to confirm real steps.
+    if matches!(ty, "todoList" | "todo_list" | "plan" | "planUpdate") {
+        if let Some(plan) = super::plan_from_value(item) {
+            out.push(AgentUpdate::Plan(plan));
+        }
+        return;
+    }
+    if method != "item/started" {
+        return;
+    }
     let id = item
         .get("id")
         .and_then(Value::as_str)
@@ -1146,6 +1157,53 @@ mod tests {
                 summary: Some("src/main.rs".into()),
                 raw: p.clone(),
             }]
+        );
+    }
+
+    #[test]
+    fn todo_list_item_yields_plan_on_started_and_completed() {
+        use crate::session::state::PlanStatus;
+        let p = json!({ "item": { "type": "todoList", "id": "i1", "items": [
+            { "text": "explore", "status": "completed" },
+            { "text": "implement", "status": "in_progress" },
+            { "text": "verify", "completed": false }
+        ]}});
+        for method in ["item/started", "item/completed"] {
+            let updates = translate(method, &p);
+            assert_eq!(updates.len(), 1, "{method} yields exactly one plan update");
+            match &updates[0] {
+                AgentUpdate::Plan(plan) => {
+                    assert_eq!(plan.steps.len(), 3);
+                    assert_eq!(plan.steps[0].content, "explore");
+                    assert_eq!(plan.steps[0].status, PlanStatus::Completed);
+                    assert_eq!(plan.steps[1].status, PlanStatus::InProgress);
+                    // boolean `completed: false` maps to Pending.
+                    assert_eq!(plan.steps[2].status, PlanStatus::Pending);
+                }
+                other => panic!("expected Plan, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn plan_item_with_step_status_shape_yields_plan() {
+        use crate::session::state::PlanStatus;
+        // The `update_plan`-style shape (`plan: [{ step, status }]`) surfaced as
+        // a `plan` item.
+        let p = json!({ "item": { "type": "plan", "plan": [
+            { "step": "do the thing", "status": "pending" }
+        ]}});
+        let updates = translate("item/started", &p);
+        assert_eq!(
+            updates,
+            vec![AgentUpdate::Plan(crate::session::state::Plan {
+                steps: vec![crate::session::state::PlanStep {
+                    content: "do the thing".into(),
+                    status: PlanStatus::Pending,
+                    active_form: None,
+                }],
+                updated_at: None,
+            })]
         );
     }
 

@@ -22,7 +22,7 @@ use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
 use super::conversation::ConversationItem;
-use super::state::SessionState;
+use super::state::{PlanStatus, SessionState};
 
 /// Per-message caps (chars). The final assistant message gets the big one.
 const USER_SPINE_CAP: usize = 240;
@@ -192,6 +192,8 @@ pub fn build_brief(
     let mut blocks: Vec<String> = Vec::new();
     let mut spent = 0usize;
     let mut last_assistant_seen = false;
+    // Only the most recent plan is signal — earlier revisions are superseded.
+    let mut plan_seen = false;
     for item in items.iter().rev() {
         let block = match item {
             ConversationItem::UserMessage { text, .. } => {
@@ -217,6 +219,27 @@ pub fn build_brief(
                 }
             }
             ConversationItem::Usage { .. } => continue,
+            ConversationItem::Plan { steps, .. } => {
+                // Reverse iteration → the first plan we hit is the latest; skip
+                // the superseded earlier ones.
+                if plan_seen || steps.is_empty() {
+                    continue;
+                }
+                plan_seen = true;
+                let lines = steps
+                    .iter()
+                    .map(|s| {
+                        let mark = match s.status {
+                            PlanStatus::Completed => "[x]",
+                            PlanStatus::InProgress => "[~]",
+                            PlanStatus::Pending => "[ ]",
+                        };
+                        format!("  {mark} {}", s.content)
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                format!("**Plan:**\n{lines}\n")
+            }
         };
         if spent + block.len() > RECENT_BUDGET && !blocks.is_empty() {
             break;

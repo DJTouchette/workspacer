@@ -599,6 +599,7 @@ mod tests {
             transcript_path: None,
             status_line: None,
             provider: "claude".into(),
+            plan: None,
         };
         app.sessions.insert(session.session_id.clone(), session);
         app.order.push("test-session-id".into());

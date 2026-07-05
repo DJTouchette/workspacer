@@ -127,6 +127,63 @@ pub enum Pending {
     },
 }
 
+/// The agent's current plan / checklist, surfaced as first-class session state.
+///
+/// A single last-write-wins snapshot: whenever the agent rewrites its plan
+/// (Claude Code's `TodoWrite`, Codex's `update_plan` / todo list), the whole
+/// plan is replaced. Both the live SSE delta and a resync replay carry it (as a
+/// `plan` conversation item), so clients keep the newest one they see.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Plan {
+    pub steps: Vec<PlanStep>,
+    /// When the plan was last rewritten, in the same RFC3339 format the
+    /// conversation items carry. Absent when the source event has no timestamp.
+    #[serde(rename = "updatedAt", default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+}
+
+/// One step of a [`Plan`]. Mirrors a Claude Code `TodoWrite` todo
+/// (`content` / `status` / `activeForm`); Codex plan steps map onto the same
+/// shape.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlanStep {
+    pub content: String,
+    pub status: PlanStatus,
+    /// Present-tense label shown while the step is in progress (Claude's
+    /// `activeForm`). Absent for providers that don't supply one.
+    #[serde(
+        rename = "activeForm",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub active_form: Option<String>,
+}
+
+/// Lifecycle of a [`PlanStep`]. Serializes to the wire vocabulary shared by
+/// Claude's `TodoWrite` and Codex's plan tool (`pending` / `in_progress` /
+/// `completed`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanStatus {
+    Pending,
+    InProgress,
+    Completed,
+}
+
+impl PlanStatus {
+    /// Map a raw status string onto the enum, defensively — any unrecognized
+    /// value (or a provider that spells "done" instead of "completed") lands on
+    /// a sane default rather than being dropped. Aligns with the status
+    /// vocabulary `transcript::summarize_todos` already recognizes.
+    pub fn from_wire(s: &str) -> Self {
+        match s {
+            "in_progress" | "inprogress" | "in-progress" => Self::InProgress,
+            "completed" | "complete" | "done" => Self::Completed,
+            _ => Self::Pending,
+        }
+    }
+}
+
 /// Live telemetry from Claude Code's `statusLine` command.
 ///
 /// This is a *different channel* from hooks: Claude pipes this JSON only to the
@@ -250,6 +307,11 @@ pub struct SessionState {
     /// `"pi"`). Clients read this instead of guessing from spawn provenance.
     #[serde(default = "default_provider")]
     pub provider: String,
+    /// The agent's current plan / checklist, last-write-wins. Additive and
+    /// back-compatible like `provider` — absent until the agent writes a plan,
+    /// and omitted from the wire when empty. Fed by `SessionStore::set_plan`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<Plan>,
 }
 
 /// Serde default for [`SessionState::provider`] — the un-managed PTY path is
@@ -273,6 +335,7 @@ impl SessionState {
             transcript_path: None,
             status_line: None,
             provider: default_provider(),
+            plan: None,
         }
     }
 
@@ -808,6 +871,47 @@ mod tests {
     // ------------------------------------------------------------------ //
     // HookEventKind — serialization round-trip                            //
     // ------------------------------------------------------------------ //
+
+    #[test]
+    fn plan_status_from_wire_maps_defensively() {
+        assert_eq!(PlanStatus::from_wire("pending"), PlanStatus::Pending);
+        assert_eq!(PlanStatus::from_wire("in_progress"), PlanStatus::InProgress);
+        assert_eq!(PlanStatus::from_wire("completed"), PlanStatus::Completed);
+        // Codex/alt spellings.
+        assert_eq!(PlanStatus::from_wire("done"), PlanStatus::Completed);
+        assert_eq!(PlanStatus::from_wire("in-progress"), PlanStatus::InProgress);
+        // Anything unrecognized falls back to Pending rather than being dropped.
+        assert_eq!(PlanStatus::from_wire("garbage"), PlanStatus::Pending);
+    }
+
+    #[test]
+    fn plan_status_serializes_to_wire_vocabulary() {
+        assert_eq!(
+            serde_json::to_string(&PlanStatus::InProgress).unwrap(),
+            "\"in_progress\""
+        );
+        assert_eq!(
+            serde_json::to_string(&PlanStatus::Completed).unwrap(),
+            "\"completed\""
+        );
+    }
+
+    #[test]
+    fn plan_serializes_with_camelcase_wire_fields() {
+        let plan = Plan {
+            steps: vec![PlanStep {
+                content: "do it".into(),
+                status: PlanStatus::InProgress,
+                active_form: Some("Doing it".into()),
+            }],
+            updated_at: Some("2026-07-04T10:00:00Z".into()),
+        };
+        let v = serde_json::to_value(&plan).unwrap();
+        assert_eq!(v["updatedAt"], "2026-07-04T10:00:00Z");
+        assert_eq!(v["steps"][0]["content"], "do it");
+        assert_eq!(v["steps"][0]["status"], "in_progress");
+        assert_eq!(v["steps"][0]["activeForm"], "Doing it");
+    }
 
     #[test]
     fn hook_event_kind_serializes_to_pascal_case_strings() {

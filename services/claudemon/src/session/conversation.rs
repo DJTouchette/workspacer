@@ -18,6 +18,7 @@ use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::sync::broadcast;
 
+use super::state::{Plan, PlanStatus, PlanStep};
 use super::transcript::{blocks, flatten_tool_result, Block};
 use super::{SessionMode, SessionStore};
 
@@ -63,6 +64,16 @@ pub enum ConversationItem {
         usage: Value,
         #[serde(skip_serializing_if = "Option::is_none")]
         message_id: Option<String>,
+    },
+    /// The agent's current plan / checklist (Claude's `TodoWrite`, Codex's
+    /// `update_plan`). Last-write-wins full replacement — clients keep the
+    /// newest one they see. Fields inlined (not the shared `Plan` struct) so the
+    /// serialized shape is unambiguous: `{ kind: "plan", steps: [...],
+    /// updatedAt?: <rfc3339> }`.
+    Plan {
+        steps: Vec<PlanStep>,
+        #[serde(rename = "updatedAt", skip_serializing_if = "Option::is_none")]
+        updated_at: Option<String>,
     },
 }
 
@@ -180,7 +191,7 @@ pub fn spawn_tailer(sessions: SessionStore, conv: ConversationStore) {
                         continue;
                     }
                 }
-                if let Err(err) = tail_one(&conv, &state.session_id, &path).await {
+                if let Err(err) = tail_one(&sessions, &conv, &state.session_id, &path).await {
                     tracing::debug!(?err, session = %state.session_id, "transcript tail failed");
                 }
             }
@@ -193,7 +204,12 @@ pub fn spawn_tailer(sessions: SessionStore, conv: ConversationStore) {
 /// DashMap guards are never held across an await: we copy the cursor out,
 /// do the file I/O, then re-acquire to commit. Only the tailer task mutates
 /// logs, so the copy can't go stale.
-async fn tail_one(conv: &ConversationStore, session_id: &str, path: &str) -> std::io::Result<()> {
+async fn tail_one(
+    store: &SessionStore,
+    conv: &ConversationStore,
+    session_id: &str,
+    path: &str,
+) -> std::io::Result<()> {
     let (mut offset, mut partial, mut reset) = match conv.logs.get(session_id) {
         Some(l) if l.path == path => (l.offset, l.partial.clone(), false),
         // New session, or claude switched transcript files (e.g. resume).
@@ -234,12 +250,19 @@ async fn tail_one(conv: &ConversationStore, session_id: &str, path: &str) -> std
 
     let complete = String::from_utf8_lossy(&buf);
     let mut items = Vec::new();
+    // The latest plan seen in this batch (last-write-wins across the batch, and
+    // across the whole file on a reset/rebuild — so a resync replays the current
+    // plan, not every historical revision).
+    let mut latest_plan: Option<Plan> = None;
     for line in complete.lines() {
         if line.trim().is_empty() {
             continue;
         }
         if let Ok(value) = serde_json::from_str::<Value>(line) {
             items.extend(items_from_row(&value));
+            if let Some(plan) = plan_from_row(&value) {
+                latest_plan = Some(plan);
+            }
         }
     }
 
@@ -265,6 +288,12 @@ async fn tail_one(conv: &ConversationStore, session_id: &str, path: &str) -> std
         }
     };
     let _ = conv.tx.send(delta);
+    // Surface the plan after the batch's items so it lands just past the
+    // TodoWrite tool_use that carried it. `set_plan` both records it on the
+    // session state and pushes a `plan` conversation item (its own delta).
+    if let Some(plan) = latest_plan {
+        store.set_plan(conv, session_id, plan);
+    }
     Ok(())
 }
 
@@ -398,6 +427,84 @@ pub fn items_from_row(value: &Value) -> Vec<ConversationItem> {
         _ => {}
     }
     out
+}
+
+/// Extract the agent's current plan from a transcript row, if it carries a
+/// `TodoWrite` tool call. Claude Code writes the checklist as a `TodoWrite`
+/// tool_use whose input is `{ todos: [{ content, status, activeForm }] }`; the
+/// last such call in the row is the current plan (a single row rarely has more
+/// than one). Skips meta / sidechain rows exactly like [`items_from_row`], so a
+/// sub-agent's private todos don't clobber the main session's plan.
+///
+/// Returns `Some` for any row that rewrote the plan — including an empty list
+/// (a cleared plan is a legitimate last-write). `None` for rows with no
+/// `TodoWrite`.
+pub fn plan_from_row(value: &Value) -> Option<Plan> {
+    if value
+        .get("isMeta")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return None;
+    }
+    if value
+        .get("isSidechain")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return None;
+    }
+    if value.get("type").and_then(Value::as_str) != Some("assistant") {
+        return None;
+    }
+    let content = value.get("message")?.get("content")?.as_array()?;
+    let ts = value
+        .get("timestamp")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    // Last TodoWrite in the row wins (last-write-wins within the row too).
+    let input = content
+        .iter()
+        .rev()
+        .find(|b| {
+            b.get("type").and_then(Value::as_str) == Some("tool_use")
+                && b.get("name").and_then(Value::as_str) == Some("TodoWrite")
+        })?
+        .get("input")?;
+    Some(plan_from_todos(input, ts))
+}
+
+/// Build a [`Plan`] from a `TodoWrite` tool input (`{ todos: [...] }`). Unknown
+/// statuses map to `Pending` via [`PlanStatus::from_wire`]; a todo missing
+/// `content` is skipped.
+fn plan_from_todos(input: &Value, updated_at: Option<String>) -> Plan {
+    let steps = input
+        .get("todos")
+        .and_then(Value::as_array)
+        .map(|todos| {
+            todos
+                .iter()
+                .filter_map(|t| {
+                    let content = t.get("content").and_then(Value::as_str)?.to_string();
+                    let status = t
+                        .get("status")
+                        .and_then(Value::as_str)
+                        .map(PlanStatus::from_wire)
+                        .unwrap_or(PlanStatus::Pending);
+                    let active_form = t
+                        .get("activeForm")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned);
+                    Some(PlanStep {
+                        content,
+                        status,
+                        active_form,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Plan { steps, updated_at }
 }
 
 #[cfg(test)]
@@ -596,6 +703,112 @@ mod tests {
         assert!(items_from_row(&json!({ "type": "summary", "summary": "..." })).is_empty());
     }
 
+    #[test]
+    fn todowrite_row_yields_plan_with_status_mapping() {
+        let row = json!({
+            "type": "assistant",
+            "timestamp": "2026-07-04T10:00:00Z",
+            "message": { "role": "assistant", "content": [
+                { "type": "tool_use", "id": "tu_1", "name": "TodoWrite", "input": { "todos": [
+                    { "content": "read code", "status": "completed", "activeForm": "Reading code" },
+                    { "content": "write code", "status": "in_progress", "activeForm": "Writing code" },
+                    { "content": "test", "status": "pending" },
+                    { "content": "ship", "status": "bogus-status" }
+                ]}}
+            ]}
+        });
+        let plan = plan_from_row(&row).expect("TodoWrite row yields a plan");
+        assert_eq!(plan.updated_at.as_deref(), Some("2026-07-04T10:00:00Z"));
+        assert_eq!(plan.steps.len(), 4);
+        assert_eq!(plan.steps[0].status, PlanStatus::Completed);
+        assert_eq!(plan.steps[0].active_form.as_deref(), Some("Reading code"));
+        assert_eq!(plan.steps[1].status, PlanStatus::InProgress);
+        assert_eq!(plan.steps[2].status, PlanStatus::Pending);
+        assert_eq!(plan.steps[2].active_form, None);
+        // Unknown status maps defensively to Pending.
+        assert_eq!(plan.steps[3].status, PlanStatus::Pending);
+    }
+
+    #[test]
+    fn non_todowrite_and_sidechain_rows_yield_no_plan() {
+        // A plain assistant row (no TodoWrite) has no plan.
+        assert!(plan_from_row(&json!({
+            "type": "assistant",
+            "message": { "role": "assistant", "content": [{ "type": "text", "text": "hi" }] }
+        }))
+        .is_none());
+        // A sub-agent's TodoWrite (isSidechain) must not clobber the main plan.
+        assert!(plan_from_row(&json!({
+            "type": "assistant",
+            "isSidechain": true,
+            "message": { "role": "assistant", "content": [
+                { "type": "tool_use", "id": "t", "name": "TodoWrite", "input": { "todos": [
+                    { "content": "sub task", "status": "pending" }
+                ]}}
+            ]}
+        }))
+        .is_none());
+    }
+
+    #[test]
+    fn todowrite_empty_todos_is_a_cleared_plan() {
+        // An empty list is a legitimate last-write (the plan was cleared), not a
+        // "no plan" signal — it must still produce a Plan.
+        let plan = plan_from_row(&json!({
+            "type": "assistant",
+            "message": { "role": "assistant", "content": [
+                { "type": "tool_use", "id": "t", "name": "TodoWrite", "input": { "todos": [] }}
+            ]}
+        }))
+        .expect("empty TodoWrite is a cleared plan");
+        assert!(plan.steps.is_empty());
+    }
+
+    #[tokio::test]
+    async fn tail_extracts_and_replaces_plan_from_todowrite_rows() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("claudemon-plan-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("p.jsonl");
+        let path_str = path.to_string_lossy().to_string();
+
+        let store = SessionStore::new();
+        store.register_managed("s-plan", &dir.to_string_lossy(), "claude");
+        let conv = ConversationStore::new();
+
+        // First TodoWrite: one in-progress step.
+        let r1 = r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"TodoWrite","input":{"todos":[{"content":"step one","status":"in_progress"}]}}]}}"#;
+        {
+            let mut f = std::fs::File::create(&path).unwrap();
+            writeln!(f, "{r1}").unwrap();
+        }
+        tail_one(&store, &conv, "s-plan", &path_str).await.unwrap();
+        let plan = store.get("s-plan").unwrap().plan.expect("plan recorded");
+        assert_eq!(plan.steps.len(), 1);
+        assert_eq!(plan.steps[0].status, PlanStatus::InProgress);
+        // A `plan` conversation item was pushed alongside the tool_use.
+        let (_seq, items) = conv.snapshot("s-plan").unwrap();
+        assert!(items
+            .iter()
+            .any(|i| matches!(i, ConversationItem::Plan { steps, .. } if steps.len() == 1)));
+
+        // Second TodoWrite fully replaces the first (last-write-wins).
+        let r2 = r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t2","name":"TodoWrite","input":{"todos":[{"content":"step one","status":"completed"},{"content":"step two","status":"pending"}]}}]}}"#;
+        {
+            let mut f = std::fs::OpenOptions::new()
+                .append(true)
+                .open(&path)
+                .unwrap();
+            writeln!(f, "{r2}").unwrap();
+        }
+        tail_one(&store, &conv, "s-plan", &path_str).await.unwrap();
+        let plan = store.get("s-plan").unwrap().plan.expect("plan replaced");
+        assert_eq!(plan.steps.len(), 2, "plan fully replaced, not merged");
+        assert_eq!(plan.steps[0].status, PlanStatus::Completed);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     #[tokio::test]
     async fn tail_picks_up_appends_and_carries_partial_lines() {
         use std::io::Write;
@@ -604,6 +817,7 @@ mod tests {
         let path = dir.join("t.jsonl");
         let path_str = path.to_string_lossy().to_string();
 
+        let store = SessionStore::new();
         let conv = ConversationStore::new();
         let mut rx = conv.subscribe();
 
@@ -614,7 +828,7 @@ mod tests {
             let mut f = std::fs::File::create(&path).unwrap();
             write!(f, "{row1}\n{}", &row2[..20]).unwrap();
         }
-        tail_one(&conv, "s1", &path_str).await.unwrap();
+        tail_one(&store, &conv, "s1", &path_str).await.unwrap();
         let d1 = rx.try_recv().expect("first delta");
         assert!(d1.reset);
         assert_eq!(d1.seq, 1);
@@ -628,7 +842,7 @@ mod tests {
                 .unwrap();
             writeln!(f, "{}", &row2[20..]).unwrap();
         }
-        tail_one(&conv, "s1", &path_str).await.unwrap();
+        tail_one(&store, &conv, "s1", &path_str).await.unwrap();
         let d2 = rx.try_recv().expect("second delta");
         assert!(!d2.reset);
         assert_eq!(d2.seq, 2);
