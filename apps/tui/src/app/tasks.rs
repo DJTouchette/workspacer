@@ -188,6 +188,7 @@ mod tests {
         SpawnForm {
             cwd: cwd.into(),
             profile_idx: 0,
+            provider_idx: 0,
             completions: Vec::new(),
             initial_prompt: None,
         }

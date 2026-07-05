@@ -52,6 +52,12 @@ theme, roughly ordered by severity within each group.
       saved share/webview URLs.
 - [ ] `fileWatchService.ts:87` drops watcher errors to keep the watcher alive —
       errors invisible.
+- [ ] claudemon's `/sessions` JSON carries no `provider`/managed field —
+      clients must guess (the TUI tracks providers only for sessions it
+      spawned itself; adopted managed sessions default to claude). Add a
+      `provider` field to the session payload.
+- [ ] No hub capability for `GET /providers/:provider/models` — provider
+      model listing is REST-only, unreachable for pure bus clients.
 - [ ] OpenCode/Pi lack live model + permission-mode switch (409) — needs
       `register_managed_model_switch` / `register_managed_yolo` equivalents per
       provider, or documented as a permanent capability cliff in providerCaps.

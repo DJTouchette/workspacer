@@ -195,3 +195,56 @@ we'd add) · ✗ analytics history (no claudemon endpoint; would need new backen
   (`ReviewState.error` ← `AppMsg::GitError`) so a non-repo cwd reads clearly;
   +6 app-state tests (review/respawn/statusline/notes/git-error). 74 TUI tests
   pass. **All roadmap phases (1–7) now complete.**
+- 2026-07-04 — **Log refresh.** The log above ends 2026-06-14 and under-claims
+  what has shipped since. Landed in the intervening weeks (see the memory graph
+  for detail):
+  - **Hub-bus transport** (`bus.rs`) — the TUI can run as a thin hub-bus client
+    (the `Driver` routes message/approve/answer/signal/spawn/terminal-input/
+    resize through bus capabilities when connected, REST otherwise), with live
+    `pty.bytes.<id>` + `agent.statusline` events and a reconnecting socket.
+  - **Neovim layer** (`keys.rs`, `input.rs`, `ui.rs`) — leader + which-key menu,
+    `Ctrl-w` window splits/tiling, harpoon pins (`<leader>1..9`, persisted by
+    cwd), a jumplist (`Ctrl-o`) + alternate-agent (`Ctrl-^`), the `:` ex-command
+    line, and vim count prefixes (`3j`, `2G`).
+  - **Cross-agent transcript content search** (`<leader>/`) — fans out
+    `/conversation` across the fleet into a live-greppable index modal.
+- 2026-07-04 — Phase 8 (provider parity) done: the TUI was Claude-only and
+  missing five claudemon endpoints that already existed server-side. Added
+  `Claudemon` client methods for all five — `set_model` (POST `/sessions/:id/
+  model`), `set_permission_mode` (POST `/sessions/:id/permission-mode`),
+  `handoff` (POST `/sessions/:id/handoff`), `spawn_managed` (POST
+  `/sessions/spawn-managed`), and `provider_models` (GET
+  `/providers/:provider/models`) — plus a status-aware `post_status` helper so a
+  409 capability cliff surfaces the daemon's `{ok:false,error}` message instead
+  of a raw string. Wired into the app:
+  - **Model picker** (`<leader>M` · `:model` · palette) — a filtered modal.
+    Managed sessions (codex/opencode/pi) fetch their launchable models live and
+    pre-select the provider's default; claude/unknown sessions get a free-text
+    field and switch via a `/model` slash command on the message path (their PTY
+    409s the endpoint). opencode/pi 409s show the daemon's error, no crash.
+  - **Permission-mode cycle** (`<leader>P` · `:permission`) — managed sessions
+    cycle ask⇄yolo, PTY sessions default→acceptEdits→plan; the settled mode is
+    remembered so the next cycle advances from it. Capability cliffs toast.
+  - **Handoff** (`<leader>H` · `:handoff`) — a target-provider chooser; builds
+    the brief, then spawns the successor (managed or claude) in the same cwd
+    primed to read it. claude successors seed the brief into their composer
+    (pasted, unsent, like the library-spawn flow); managed successors receive it
+    as their first queued message.
+  - **Managed spawn in the spawn modal** — `←/→` cycle the provider (claude /
+    codex / opencode / pi); a non-claude choice takes the managed path (profile
+    ignored). The provider of any managed session this TUI spawns is recorded so
+    the model picker + permission-mode cycle pick the managed behaviour for it
+    (the daemon's `/sessions` list carries no provider field).
+  - **Bus routing** — `set_model`/`set_permission_mode`/`handoff`/`spawn_managed`
+    route through the matching hub capabilities (`claude.setModel`,
+    `claude.setPermissionMode`, `claude.handoffBrief`, and `agents.spawn` with a
+    `provider` param) when bus-connected, REST otherwise. `provider_models` has
+    no hub capability, so it is REST-only (always reachable on loopback). Note:
+    the bus `agents.spawn` path forces approvals *on* for remote callers, so
+    managed `yolo` is honoured only over REST.
+  - Tests: 7 client round-trips against a one-shot mock HTTP server
+    (`set_model` ok + 409, `set_permission_mode` ok + 409, `handoff`,
+    `spawn_managed`, `provider_models`); 5 `Driver` bus-routing tests; 6
+    app-state tests (provider recording + prune, mode memory, model-picker
+    pending, model fold + default preselect, handoff provider list, managed
+    spawn selection). 120 TUI tests pass; clean build.

@@ -72,6 +72,10 @@ pub enum Action {
     OpenCmdline,
     // cross-agent content search
     OpenSearch,
+    // provider parity
+    SwitchModel,
+    CyclePermissionMode,
+    Handoff,
 }
 
 impl Action {
@@ -124,6 +128,9 @@ impl Action {
             OpenFilter => "filter",
             OpenCmdline => "cmdline",
             OpenSearch => "search",
+            SwitchModel => "switch_model",
+            CyclePermissionMode => "cycle_permission_mode",
+            Handoff => "handoff",
         }
     }
 
@@ -175,6 +182,9 @@ impl Action {
             "filter" => OpenFilter,
             "cmdline" => OpenCmdline,
             "search" => OpenSearch,
+            "switch_model" => SwitchModel,
+            "cycle_permission_mode" => CyclePermissionMode,
+            "handoff" => Handoff,
             _ => return None,
         })
     }
@@ -640,6 +650,10 @@ impl Keymap {
             ("x", ToggleStopped),
             // Cross-agent transcript content search.
             ("/", OpenSearch),
+            // Provider parity: live model switch, permission-mode cycle, handoff.
+            ("M", SwitchModel),
+            ("P", CyclePermissionMode),
+            ("H", Handoff),
             ("?", Help),
             ("q", Quit),
         ];

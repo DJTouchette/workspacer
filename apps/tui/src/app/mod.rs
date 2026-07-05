@@ -47,6 +47,15 @@ pub enum AppMsg {
     GitError { cwd: String, message: String },
     /// A session's transcript lines, for the content-search index.
     SearchEntries { session_id: String, name: String, lines: Vec<String> },
+    /// The daemon settled a live permission-mode switch — remember it so the
+    /// cycle advances from the real current mode next time.
+    PermissionMode { session_id: String, mode: String },
+    /// A managed provider's launchable models arrived — fold them into the open
+    /// model picker (if it's still for this session).
+    PickerModels { session_id: String, models: Vec<crate::claudemon::ProviderModel> },
+    /// A managed (Codex/OpenCode/Pi) session spawned — record its provider so the
+    /// model picker and permission-mode cycle pick the managed behaviour for it.
+    ManagedSpawned { session_id: String, provider: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -103,12 +112,21 @@ pub enum SplitDir {
     Rows,
 }
 
-/// State of the "spawn a new agent" modal. Profile-centric: a working directory
-/// plus a chosen profile (which carries model / skip-permissions in its args).
+/// Providers the spawn modal can launch. `claude` is a PTY session (profile +
+/// argv); the rest are managed (adapter-driven) sessions via
+/// `/sessions/spawn-managed`.
+pub const SPAWN_PROVIDERS: &[&str] = &["claude", "codex", "opencode", "pi"];
+
+/// State of the "spawn a new agent" modal. Profile-centric for claude: a working
+/// directory plus a chosen profile (which carries model / skip-permissions in
+/// its args). A non-claude `provider_idx` selects a managed backend instead, for
+/// which the profile is ignored.
 #[derive(Debug, Clone)]
 pub struct SpawnForm {
     pub cwd: String,
     pub profile_idx: usize,
+    /// Index into [`SPAWN_PROVIDERS`]; 0 = claude (the default PTY path).
+    pub provider_idx: usize,
     /// Candidate directory names from the last `tab` completion, shown under the
     /// field when the path is ambiguous. Cleared on any edit.
     pub completions: Vec<String>,
@@ -199,6 +217,66 @@ impl SearchState {
 
     pub fn chosen(&self) -> Option<&SearchHit> {
         self.matched.get(self.selected).map(|&i| &self.entries[i])
+    }
+}
+
+/// One selectable row in a [`Picker`]: a stable `id` (what gets applied) and a
+/// human `label`.
+#[derive(Debug, Clone)]
+pub struct PickerItem {
+    pub id: String,
+    pub label: String,
+}
+
+/// What a [`Picker`] is choosing, and the context each choice needs to act on.
+#[derive(Debug, Clone)]
+pub enum PickerKind {
+    /// Live model switch for `session_id`. `provider` decides how it applies:
+    /// a managed provider POSTs `/model`; `claude` sends a `/model` slash command
+    /// on the message path (its PTY 409s the endpoint). `effort` rides along for
+    /// providers that map it (codex).
+    Model { provider: String, effort: Option<String> },
+    /// Cross-provider handoff: build a brief from `session_id`, then spawn the
+    /// chosen provider as the successor (in `cwd`) primed to read it.
+    Handoff { cwd: String },
+}
+
+/// A modal fuzzy list bound to one session — the model picker and the handoff
+/// provider chooser. Mirrors [`Palette`]/[`SearchState`]: a query line filters
+/// `items` live. `allow_free_text` lets the model picker apply a typed id that
+/// isn't in the (provider-supplied) list. `pending` is true while the async list
+/// is still loading.
+pub struct Picker {
+    pub title: String,
+    pub kind: PickerKind,
+    pub session_id: String,
+    pub query: String,
+    pub items: Vec<PickerItem>,
+    pub matched: Vec<usize>,
+    pub selected: usize,
+    pub pending: bool,
+    pub allow_free_text: bool,
+}
+
+impl Picker {
+    /// Re-run the substring filter over `items` (case-insensitive). An empty
+    /// query matches everything (unlike content search — the list is small).
+    pub fn rematch(&mut self) {
+        let q = self.query.to_lowercase();
+        self.matched = self
+            .items
+            .iter()
+            .enumerate()
+            .filter(|(_, it)| q.is_empty() || it.label.to_lowercase().contains(&q) || it.id.to_lowercase().contains(&q))
+            .map(|(i, _)| i)
+            .collect();
+        if self.selected >= self.matched.len() {
+            self.selected = self.matched.len().saturating_sub(1);
+        }
+    }
+
+    pub fn chosen(&self) -> Option<&PickerItem> {
+        self.matched.get(self.selected).map(|&i| &self.items[i])
     }
 }
 
@@ -312,6 +390,16 @@ pub struct App {
     pub help: bool,
     pub spawn_form: Option<SpawnForm>,
     pub palette: Option<Palette>,
+    /// The model / handoff-provider picker modal, when open.
+    pub picker: Option<Picker>,
+    /// Provider per session for sessions this TUI spawned managed (session_id →
+    /// `"codex"`/`"opencode"`/`"pi"`). The daemon's `/sessions` list carries no
+    /// provider field, so this is how the model picker + permission-mode cycle
+    /// know a session is managed (adopted/unknown sessions default to claude).
+    pub managed_providers: HashMap<String, String>,
+    /// Last known permission mode per session, updated from each successful
+    /// switch — the cycle advances from here.
+    pub perm_modes: HashMap<String, String>,
     /// The git review pane, when open (a modal over the agent view).
     pub review: Option<ReviewState>,
     /// The rename overlay, when open.
@@ -443,6 +531,9 @@ impl App {
             help: false,
             spawn_form: None,
             palette: None,
+            picker: None,
+            managed_providers: HashMap::new(),
+            perm_modes: HashMap::new(),
             review: None,
             rename: None,
             names: crate::names::load(),
@@ -562,6 +653,40 @@ impl App {
                     }
                 }
             }
+            AppMsg::PermissionMode { session_id, mode } => {
+                self.perm_modes.insert(session_id, mode.clone());
+                self.set_toast(format!("Mode: {mode}"));
+            }
+            AppMsg::PickerModels { session_id, models } => {
+                if let Some(p) = self.picker.as_mut() {
+                    if p.session_id == session_id {
+                        // Highlight the provider's default model, if it flagged one.
+                        let default_idx = models.iter().position(|m| m.default);
+                        p.items = models
+                            .into_iter()
+                            .map(|m| PickerItem {
+                                label: match &m.label {
+                                    Some(l) if !l.is_empty() && l != &m.id => {
+                                        format!("{}  ({})", l, m.id)
+                                    }
+                                    _ => m.id.clone(),
+                                },
+                                id: m.id,
+                            })
+                            .collect();
+                        p.pending = false;
+                        p.rematch();
+                        if let Some(i) = default_idx {
+                            if let Some(pos) = p.matched.iter().position(|&mi| mi == i) {
+                                p.selected = pos;
+                            }
+                        }
+                    }
+                }
+            }
+            AppMsg::ManagedSpawned { session_id, provider } => {
+                self.managed_providers.insert(session_id, provider);
+            }
         }
     }
 
@@ -669,6 +794,8 @@ impl App {
         self.prune_terminals(&live);
         self.no_terminal.retain(|sid| live.contains(sid));
         self.status_lines.retain(|sid, _| live.contains(sid));
+        self.managed_providers.retain(|sid, _| live.contains(sid));
+        self.perm_modes.retain(|sid, _| live.contains(sid));
         // Drop workspaces whose agent is gone (shell tabs may persist as their
         // own sessions, but the agent grouping is no longer meaningful).
         self.workspaces.retain(|agent_id, _| live.contains(agent_id));
@@ -1721,6 +1848,103 @@ mod tests {
 
         app.run_command("q");
         assert!(app.should_quit);
+    }
+
+    #[test]
+    fn managed_spawned_records_provider_and_prunes() {
+        let mut app = test_app();
+        app.apply_msg(AppMsg::ManagedSpawned {
+            session_id: "m1".into(),
+            provider: "codex".into(),
+        });
+        assert_eq!(app.managed_providers.get("m1").map(String::as_str), Some("codex"));
+        // The record is pruned once the session leaves the live set.
+        app.set_agents(vec![]);
+        assert!(app.managed_providers.get("m1").is_none());
+    }
+
+    #[test]
+    fn permission_mode_message_remembers_mode() {
+        let mut app = test_app();
+        app.apply_msg(AppMsg::PermissionMode { session_id: "s1".into(), mode: "plan".into() });
+        assert_eq!(app.perm_modes.get("s1").map(String::as_str), Some("plan"));
+        assert_eq!(app.toast(), Some("Mode: plan"));
+    }
+
+    #[tokio::test]
+    async fn model_picker_pending_tracks_managed_provider() {
+        let mut app = test_app();
+        app.set_agents(vec![agent_cwd("s1", "/repo", "responding")]);
+        app.selected = 1;
+
+        // Unknown provider → treated as claude → free-text picker, not pending.
+        app.open_model_picker();
+        {
+            let p = app.picker.as_ref().unwrap();
+            assert!(!p.pending);
+            assert!(p.allow_free_text);
+            assert!(matches!(&p.kind, PickerKind::Model { provider, .. } if provider == "claude"));
+        }
+        app.picker = None;
+
+        // Known managed → picker starts pending while it fetches the model list.
+        app.managed_providers.insert("s1".into(), "codex".into());
+        app.open_model_picker();
+        assert!(app.picker.as_ref().unwrap().pending);
+    }
+
+    #[test]
+    fn picker_models_fold_and_preselect_default() {
+        let mut app = test_app();
+        app.picker = Some(Picker {
+            title: "model".into(),
+            kind: PickerKind::Model { provider: "codex".into(), effort: None },
+            session_id: "s1".into(),
+            query: String::new(),
+            items: Vec::new(),
+            matched: Vec::new(),
+            selected: 0,
+            pending: true,
+            allow_free_text: true,
+        });
+        app.apply_msg(AppMsg::PickerModels {
+            session_id: "s1".into(),
+            models: vec![
+                crate::claudemon::ProviderModel { id: "a".into(), label: None, default: false },
+                crate::claudemon::ProviderModel {
+                    id: "b".into(),
+                    label: Some("Model B".into()),
+                    default: true,
+                },
+            ],
+        });
+        let p = app.picker.as_ref().unwrap();
+        assert!(!p.pending);
+        assert_eq!(p.items.len(), 2);
+        assert_eq!(p.chosen().map(|i| i.id.as_str()), Some("b"), "default model preselected");
+    }
+
+    #[tokio::test]
+    async fn handoff_picker_lists_target_providers() {
+        let mut app = test_app();
+        app.set_agents(vec![agent_cwd("s1", "/repo", "responding")]);
+        app.selected = 1;
+        app.open_handoff_picker();
+        let p = app.picker.as_ref().unwrap();
+        assert!(matches!(p.kind, PickerKind::Handoff { .. }));
+        assert_eq!(p.items.len(), 4);
+        assert!(p.items.iter().any(|i| i.id == "codex"));
+    }
+
+    #[tokio::test]
+    async fn managed_provider_spawn_flow_selects_provider() {
+        // The spawn modal cycles the provider; a non-claude choice takes the
+        // managed path (no profile needed).
+        let mut app = test_app();
+        app.open_spawn();
+        let form = app.spawn_form.as_mut().unwrap();
+        form.provider_idx = 1; // "codex"
+        assert_eq!(SPAWN_PROVIDERS[form.provider_idx], "codex");
     }
 
     #[tokio::test]

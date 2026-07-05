@@ -315,6 +315,98 @@ impl Driver {
             None => self.claudemon.resize(sid, cols, rows).await,
         }
     }
+
+    /// Live model/effort switch for a managed session. On the bus this is
+    /// `claude.setModel`; a capability cliff (opencode/pi, or a PTY session) comes
+    /// back as `{ ok:false, error }`, surfaced as an `Err`. REST otherwise.
+    pub async fn set_model(&self, sid: &str, model: Option<&str>, effort: Option<&str>) -> Result<()> {
+        match &self.bus {
+            Some(b) => {
+                let mut params = json!({ "sessionId": sid });
+                if let Some(m) = model {
+                    params["model"] = json!(m);
+                }
+                if let Some(e) = effort {
+                    params["effort"] = json!(e);
+                }
+                check_ok(b.call("claude.setModel", params).await?).map(|_| ())
+            }
+            None => self.claudemon.set_model(sid, model, effort).await,
+        }
+    }
+
+    /// Live permission-mode switch; returns the mode the daemon settled on. Bus
+    /// path is `claude.setPermissionMode`, REST otherwise.
+    pub async fn set_permission_mode(&self, sid: &str, mode: &str) -> Result<String> {
+        match &self.bus {
+            Some(b) => {
+                let v = check_ok(
+                    b.call("claude.setPermissionMode", json!({ "sessionId": sid, "mode": mode }))
+                        .await?,
+                )?;
+                Ok(v.get("mode").and_then(|m| m.as_str()).unwrap_or(mode).to_string())
+            }
+            None => self.claudemon.set_permission_mode(sid, mode).await,
+        }
+    }
+
+    /// Build a cross-provider handoff brief. Bus path is `claude.handoffBrief`,
+    /// REST otherwise. Returns the markdown + persisted path.
+    pub async fn handoff(&self, sid: &str) -> Result<crate::claudemon::HandoffBrief> {
+        match &self.bus {
+            Some(b) => {
+                let v = check_ok(b.call("claude.handoffBrief", json!({ "sessionId": sid })).await?)?;
+                Ok(crate::claudemon::HandoffBrief {
+                    markdown: v.get("markdown").and_then(|m| m.as_str()).unwrap_or("").to_string(),
+                    path: v.get("path").and_then(|p| p.as_str()).map(String::from),
+                })
+            }
+            None => self.claudemon.handoff(sid).await,
+        }
+    }
+
+    /// Spawn a managed (Codex/OpenCode/Pi) session and return its id. On the bus
+    /// this rides `agents.spawn` with a `provider` param (which routes to the
+    /// managed spawn path); note the bus path forces approvals *on* — a remote
+    /// caller can't auto-bypass, so `yolo` is honoured only over REST.
+    pub async fn spawn_managed(
+        &self,
+        provider: &str,
+        cwd: &str,
+        model: Option<&str>,
+        effort: Option<&str>,
+        yolo: bool,
+    ) -> Result<String> {
+        match &self.bus {
+            Some(b) => {
+                let mut params = json!({ "provider": provider, "cwd": cwd });
+                if let Some(m) = model {
+                    params["model"] = json!(m);
+                }
+                if let Some(e) = effort {
+                    params["effort"] = json!(e);
+                }
+                let res = check_ok(b.call("agents.spawn", params).await?)?;
+                res.get("sessionId")
+                    .and_then(|s| s.as_str())
+                    .map(String::from)
+                    .ok_or_else(|| anyhow!("agents.spawn returned no sessionId"))
+            }
+            None => self.claudemon.spawn_managed(provider, cwd, model, effort, yolo, "").await,
+        }
+    }
+}
+
+/// Fold a bus `call` result into a `Result`: a capability that returns
+/// `{ ok:false, error }` (rather than raising a protocol error) becomes an `Err`
+/// carrying the message, so a provider capability cliff reads the same over the
+/// bus as over REST.
+fn check_ok(v: Value) -> Result<Value> {
+    if v.get("ok").and_then(|b| b.as_bool()) == Some(false) {
+        let err = v.get("error").and_then(|e| e.as_str()).unwrap_or("capability failed");
+        return Err(anyhow!("{err}"));
+    }
+    Ok(v)
 }
 
 #[cfg(test)]
@@ -448,6 +540,98 @@ mod tests {
         assert_eq!(method, "agents.spawn");
         assert_eq!(params["cwd"], json!("/tmp/proj"));
         assert_eq!(params["profileId"], json!("work"));
+    }
+
+    #[tokio::test]
+    async fn driver_routes_set_model_to_capability() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut rx = recording_hub(listener, json!({ "ok": true, "model": "gpt-5" }));
+
+        bus_driver(addr)
+            .set_model("s1", Some("gpt-5"), Some("high"))
+            .await
+            .expect("set_model ok");
+
+        let (method, params) = tokio::time::timeout(Duration::from_secs(3), rx.recv())
+            .await
+            .expect("call within 3s")
+            .expect("recorder open");
+        assert_eq!(method, "claude.setModel");
+        assert_eq!(params["sessionId"], json!("s1"));
+        assert_eq!(params["model"], json!("gpt-5"));
+        assert_eq!(params["effort"], json!("high"));
+    }
+
+    #[tokio::test]
+    async fn driver_set_model_surfaces_capability_error() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let _rx = recording_hub(listener, json!({ "ok": false, "error": "no model switch" }));
+
+        let err = bus_driver(addr).set_model("s1", Some("x"), None).await.unwrap_err();
+        assert!(err.to_string().contains("no model switch"), "got {err}");
+    }
+
+    #[tokio::test]
+    async fn driver_set_permission_mode_returns_mode() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut rx = recording_hub(listener, json!({ "ok": true, "mode": "plan" }));
+
+        let mode = bus_driver(addr)
+            .set_permission_mode("s1", "plan")
+            .await
+            .expect("permission mode ok");
+        assert_eq!(mode, "plan");
+
+        let (method, params) = tokio::time::timeout(Duration::from_secs(3), rx.recv())
+            .await
+            .expect("call within 3s")
+            .expect("recorder open");
+        assert_eq!(method, "claude.setPermissionMode");
+        assert_eq!(params["sessionId"], json!("s1"));
+        assert_eq!(params["mode"], json!("plan"));
+    }
+
+    #[tokio::test]
+    async fn driver_handoff_routes_and_parses_brief() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut rx =
+            recording_hub(listener, json!({ "ok": true, "markdown": "# b", "path": "/h/x.md" }));
+
+        let brief = bus_driver(addr).handoff("s1").await.expect("handoff ok");
+        assert_eq!(brief.path.as_deref(), Some("/h/x.md"));
+
+        let (method, params) = tokio::time::timeout(Duration::from_secs(3), rx.recv())
+            .await
+            .expect("call within 3s")
+            .expect("recorder open");
+        assert_eq!(method, "claude.handoffBrief");
+        assert_eq!(params["sessionId"], json!("s1"));
+    }
+
+    #[tokio::test]
+    async fn driver_spawn_managed_uses_agents_spawn_with_provider() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut rx = recording_hub(listener, json!({ "sessionId": "m1" }));
+
+        let sid = bus_driver(addr)
+            .spawn_managed("codex", "/w", Some("gpt-5"), None, true)
+            .await
+            .expect("spawn_managed ok");
+        assert_eq!(sid, "m1");
+
+        let (method, params) = tokio::time::timeout(Duration::from_secs(3), rx.recv())
+            .await
+            .expect("call within 3s")
+            .expect("recorder open");
+        assert_eq!(method, "agents.spawn");
+        assert_eq!(params["provider"], json!("codex"));
+        assert_eq!(params["cwd"], json!("/w"));
+        assert_eq!(params["model"], json!("gpt-5"));
     }
 
     #[tokio::test]

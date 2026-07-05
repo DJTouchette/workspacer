@@ -52,6 +52,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
     if app.palette.is_some() {
         render_palette(f, f.area(), app);
     }
+    if app.picker.is_some() {
+        render_picker(f, f.area(), app);
+    }
     if app.search.is_some() {
         render_search(f, f.area(), app);
     }
@@ -897,6 +900,9 @@ fn render_spawn_modal(f: &mut Frame, area: Rect, app: &App) {
         .filter(|p| !p.extra_args.is_empty())
         .map(|p| format!("  ({})", p.extra_args.join(" ")))
         .unwrap_or_default();
+    let providers = crate::app::SPAWN_PROVIDERS;
+    let provider = providers.get(form.provider_idx).copied().unwrap_or("claude");
+    let is_claude = provider == "claude";
 
     let mut lines = vec![
         Line::raw(""),
@@ -906,14 +912,32 @@ fn render_spawn_modal(f: &mut Frame, area: Rect, app: &App) {
             Span::styled("▏", Style::default().fg(t.accent)),
         ]),
         Line::from(vec![
+            Span::styled("  provider ", Style::default().fg(t.dim)),
+            Span::styled("‹ ", Style::default().fg(t.accent)),
+            Span::styled(provider.to_string(), Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled(" ›", Style::default().fg(t.accent)),
+            Span::styled(
+                format!("  {}/{}", form.provider_idx + 1, providers.len()),
+                Style::default().fg(t.dim),
+            ),
+        ]),
+    ];
+    // The profile picker only applies to claude (managed providers ignore it).
+    if is_claude {
+        lines.push(Line::from(vec![
             Span::styled("  profile  ", Style::default().fg(t.dim)),
             Span::styled("‹ ", Style::default().fg(t.accent)),
             Span::styled(profile_name.to_string(), Style::default().add_modifier(Modifier::BOLD)),
             Span::styled(" ›", Style::default().fg(t.accent)),
             Span::styled(format!("  {}/{}", form.profile_idx + 1, n), Style::default().fg(t.dim)),
             Span::styled(extra, Style::default().fg(t.dim)),
-        ]),
-    ];
+        ]));
+    } else {
+        lines.push(Line::from(Span::styled(
+            "  managed session — profile not used",
+            Style::default().fg(t.dim),
+        )));
+    }
 
     // Tab-completion candidates, when the path is ambiguous.
     if !form.completions.is_empty() {
@@ -940,7 +964,7 @@ fn render_spawn_modal(f: &mut Frame, area: Rect, app: &App) {
 
     lines.push(Line::raw(""));
     lines.push(Line::from(Span::styled(
-        "  type a path · tab complete · ↑↓ profile · enter spawn · esc cancel",
+        "  type a path · tab complete · ←→ provider · ↑↓ profile · enter spawn · esc",
         Style::default().fg(t.dim),
     )));
 
@@ -1024,6 +1048,73 @@ fn render_palette(f: &mut Frame, area: Rect, app: &App) {
             " ↑↓ move · enter run · esc close ",
             Style::default().fg(t.dim),
         )))
+        .border_style(Style::default().fg(t.accent));
+    f.render_widget(Paragraph::new(lines).block(block), rect);
+}
+
+/// The model / handoff-provider picker: a query line over a small filtered
+/// list. The model picker also accepts free text (a model id not in the list).
+fn render_picker(f: &mut Frame, area: Rect, app: &App) {
+    let t = &app.theme;
+    let Some(p) = app.picker.as_ref() else { return };
+
+    let w = area.width.saturating_sub(8).min(64).max(24);
+    let max_rows = area.height.saturating_sub(6).min(12).max(3);
+    let shown = (p.matched.len() as u16).min(max_rows);
+    let h = (shown + 5).min(area.height);
+    let rect = Rect {
+        x: area.x + (area.width.saturating_sub(w)) / 2,
+        y: area.y + 2,
+        width: w,
+        height: h,
+    };
+    f.render_widget(ratatui::widgets::Clear, rect);
+    let inner_w = w.saturating_sub(2) as usize;
+
+    let mut lines = vec![Line::from(vec![
+        Span::styled("› ", Style::default().fg(t.accent)),
+        Span::raw(p.query.clone()),
+        Span::styled("▏", Style::default().fg(t.accent)),
+    ])];
+
+    let start = p.selected.saturating_sub(shown.saturating_sub(1) as usize);
+    for (offset, &mi) in p.matched.iter().skip(start).take(shown as usize).enumerate() {
+        let i = start + offset;
+        let selected = i == p.selected;
+        let marker = if selected { "❯ " } else { "  " };
+        let label_style = if selected {
+            Style::default().fg(t.accent).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        lines.push(Line::from(vec![
+            Span::styled(marker, Style::default().fg(t.accent)),
+            Span::styled(
+                crate::types::truncate(&p.items[mi].label, inner_w.saturating_sub(4)),
+                label_style,
+            ),
+        ]));
+    }
+    if p.pending {
+        lines.push(Line::from(Span::styled("  loading models…", Style::default().fg(t.dim))));
+    } else if p.matched.is_empty() {
+        let hint = if p.allow_free_text {
+            "type a model id and press enter"
+        } else {
+            "no matches"
+        };
+        lines.push(Line::from(Span::styled(format!("  {hint}"), Style::default().fg(t.dim))));
+    }
+
+    let foot = if p.allow_free_text {
+        " ↑↓ move · enter apply (or typed id) · esc close "
+    } else {
+        " ↑↓ move · enter apply · esc close "
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" {} ", p.title))
+        .title_bottom(Line::from(Span::styled(foot, Style::default().fg(t.dim))))
         .border_style(Style::default().fg(t.accent));
     f.render_widget(Paragraph::new(lines).block(block), rect);
 }

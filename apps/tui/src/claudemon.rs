@@ -32,6 +32,31 @@ pub enum StreamEnd {
     NoPty,
 }
 
+/// A model a managed provider can launch/switch to, from
+/// `GET /providers/:provider/models`. An empty list is valid (the picker falls
+/// back to free-text entry).
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProviderModel {
+    pub id: String,
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub default: bool,
+}
+
+/// A cross-provider handoff brief from `POST /sessions/:id/handoff`: the
+/// markdown a successor agent reads, plus the file it was persisted to (absent
+/// when `no_persist`).
+#[derive(Debug, Clone)]
+pub struct HandoffBrief {
+    /// The brief markdown. The daemon already persists it to `path`, and the TUI
+    /// hands the successor the file path rather than the text, so this is carried
+    /// for completeness / callers that want it inline.
+    #[allow(dead_code)]
+    pub markdown: String,
+    pub path: Option<String>,
+}
+
 /// Connection-state / change notifications from the `/events` SSE stream.
 #[derive(Debug)]
 pub enum DaemonEvent {
@@ -96,6 +121,112 @@ impl Claudemon {
 
     pub async fn signal(&self, session_id: &str, signal: &str) -> Result<()> {
         self.post_ok(&format!("/sessions/{session_id}/signal"), &json!({ "signal": signal })).await
+    }
+
+    // ── provider parity (model / permission-mode / handoff / managed spawn) ──
+
+    /// Live model/effort switch for a *managed* session (`POST /sessions/:id/model`).
+    /// PTY (claude) sessions 409 here — they switch via the `/model` slash command
+    /// on the message path, so callers route those to `message` instead. Surfaces
+    /// the daemon's `{ ok:false, error }` (409 for opencode/pi capability cliffs)
+    /// as an `Err` with the message.
+    pub async fn set_model(
+        &self,
+        session_id: &str,
+        model: Option<&str>,
+        effort: Option<&str>,
+    ) -> Result<()> {
+        let mut body = json!({});
+        if let Some(m) = model {
+            body["model"] = json!(m);
+        }
+        if let Some(e) = effort {
+            body["effort"] = json!(e);
+        }
+        let (code, resp) = self
+            .post_status(&format!("/sessions/{session_id}/model"), &body)
+            .await?;
+        ok_or_daemon_error(code, resp, "model switch failed").map(|_| ())
+    }
+
+    /// Live permission-mode switch (`POST /sessions/:id/permission-mode`). Returns
+    /// the mode the daemon settled on. A capability cliff (managed yolo→ask when
+    /// spawned in bypass, or a mode outside the shift+tab cycle) comes back as a
+    /// 409 `{ ok:false, error }`, surfaced as an `Err`.
+    pub async fn set_permission_mode(&self, session_id: &str, mode: &str) -> Result<String> {
+        let (code, resp) = self
+            .post_status(
+                &format!("/sessions/{session_id}/permission-mode"),
+                &json!({ "mode": mode }),
+            )
+            .await?;
+        let resp = ok_or_daemon_error(code, resp, "permission-mode switch failed")?;
+        Ok(resp
+            .get("mode")
+            .and_then(|m| m.as_str())
+            .unwrap_or(mode)
+            .to_string())
+    }
+
+    /// Build a cross-provider handoff brief (`POST /sessions/:id/handoff`),
+    /// persisting it under `~/.workspacer/handoffs/`. Returns the markdown + path.
+    pub async fn handoff(&self, session_id: &str) -> Result<HandoffBrief> {
+        let (code, resp) = self
+            .post_status(&format!("/sessions/{session_id}/handoff"), &json!({}))
+            .await?;
+        let resp = ok_or_daemon_error(code, resp, "handoff failed")?;
+        Ok(HandoffBrief {
+            markdown: resp
+                .get("markdown")
+                .and_then(|m| m.as_str())
+                .unwrap_or("")
+                .to_string(),
+            path: resp.get("path").and_then(|p| p.as_str()).map(String::from),
+        })
+    }
+
+    /// Spawn a *managed* (adapter-driven) session — Codex / OpenCode / Pi
+    /// (`POST /sessions/spawn-managed`). Returns the assigned session id.
+    pub async fn spawn_managed(
+        &self,
+        provider: &str,
+        cwd: &str,
+        model: Option<&str>,
+        effort: Option<&str>,
+        yolo: bool,
+        session_id: &str,
+    ) -> Result<String> {
+        let mut body = json!({ "provider": provider, "cwd": cwd, "yolo": yolo });
+        if let Some(m) = model {
+            body["model"] = json!(m);
+        }
+        if let Some(e) = effort {
+            body["effort"] = json!(e);
+        }
+        if !session_id.is_empty() {
+            body["session_id"] = json!(session_id);
+        }
+        let resp = self.post_json("/sessions/spawn-managed", &body).await?;
+        resp.get("session_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .ok_or_else(|| anyhow!("spawn-managed response missing session_id"))
+    }
+
+    /// List the models a managed provider can launch with, live-queried from its
+    /// CLI (`GET /providers/:provider/models`). An empty list is valid.
+    pub async fn provider_models(&self, provider: &str, cwd: &str) -> Result<Vec<ProviderModel>> {
+        let mut q = format!("/providers/{provider}/models");
+        if !cwd.is_empty() {
+            q.push_str(&format!("?cwd={}", encode(cwd)));
+        }
+        let v = self.get_json(&q).await?;
+        let models = v
+            .get("models")
+            .cloned()
+            .and_then(|m| serde_json::from_value(m).ok())
+            .unwrap_or_default();
+        Ok(models)
     }
 
     // ── terminal path (raw PTY) ─────────────────────────────────────────────
@@ -320,6 +451,43 @@ impl Claudemon {
     async fn post_ok(&self, path: &str, body: &Value) -> Result<()> {
         self.post_json(path, body).await.map(|_| ())
     }
+
+    /// POST returning `(status_code, json_body)` *without* treating a non-2xx as
+    /// an error — so callers can read a structured `{ ok:false, error }` body
+    /// (the 409 capability cliffs for model / permission-mode) and surface the
+    /// daemon's own message instead of a raw "claudemon 409: {...}" string.
+    async fn post_status(&self, path: &str, body: &Value) -> Result<(u16, Value)> {
+        let (host, port) = split_host_port(&self.base);
+        let mut stream = TcpStream::connect((host.as_str(), port)).await?;
+        let data = serde_json::to_vec(body)?;
+        let head = format!(
+            "POST {path} HTTP/1.1\r\nHost: {host}:{port}\r\nContent-Type: application/json\r\n\
+             Content-Length: {}\r\nConnection: close\r\n\r\n",
+            data.len()
+        );
+        stream.write_all(head.as_bytes()).await?;
+        stream.write_all(&data).await?;
+        stream.flush().await?;
+        let mut raw = Vec::new();
+        stream.read_to_end(&mut raw).await?;
+        parse_http_status(&raw)
+    }
+}
+
+/// Fold a `(status, body)` from [`Claudemon::post_status`] into a `Result`: on a
+/// 2xx return the body; otherwise pull `body.error` (the daemon's message) or
+/// fall back to `fallback`.
+fn ok_or_daemon_error(code: u16, body: Value, fallback: &str) -> Result<Value> {
+    if (200..300).contains(&code) {
+        Ok(body)
+    } else {
+        let msg = body
+            .get("error")
+            .and_then(|e| e.as_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| fallback.to_string());
+        Err(anyhow!("{msg}"))
+    }
 }
 
 /// Subscribe to claudemon's `/events` SSE stream, emitting a `Changed` on every
@@ -536,6 +704,22 @@ fn parse_http_json(raw: &[u8]) -> Result<Value> {
     Ok(serde_json::from_str(body.trim()).unwrap_or(Value::Null))
 }
 
+/// Like [`parse_http_json`] but returns the status code alongside the body
+/// instead of erroring on non-2xx, so a caller can read a structured error body.
+fn parse_http_status(raw: &[u8]) -> Result<(u16, Value)> {
+    let text = String::from_utf8_lossy(raw);
+    let (headers, body) = text
+        .split_once("\r\n\r\n")
+        .ok_or_else(|| anyhow!("malformed HTTP response"))?;
+    let code = headers
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .and_then(|c| c.parse::<u16>().ok())
+        .unwrap_or(0);
+    Ok((code, serde_json::from_str(body.trim()).unwrap_or(Value::Null)))
+}
+
 fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|w| w == needle)
 }
@@ -701,5 +885,157 @@ mod tests {
                 a.cwd_str()
             );
         }
+    }
+
+    // ── provider-parity client round-trips (against a one-shot mock server) ──
+
+    /// A one-shot mock HTTP server: answers the next request with
+    /// `status`/`resp_body`, then hands back the parsed request as
+    /// `(method, path, json_body)` for assertions.
+    async fn mock_server(
+        status: u16,
+        reason: &'static str,
+        resp_body: &'static str,
+    ) -> (String, tokio::task::JoinHandle<(String, String, Value)>) {
+        use tokio::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let base = format!("http://{addr}");
+        let handle = tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = Vec::new();
+            let mut tmp = [0u8; 4096];
+            let header_end = loop {
+                let n = sock.read(&mut tmp).await.unwrap();
+                if n == 0 {
+                    break buf.len();
+                }
+                buf.extend_from_slice(&tmp[..n]);
+                if let Some(i) = find(&buf, b"\r\n\r\n") {
+                    break i;
+                }
+            };
+            let head = String::from_utf8_lossy(&buf[..header_end]).to_string();
+            let req_line = head.lines().next().unwrap_or("").to_string();
+            let mut parts = req_line.split_whitespace();
+            let method = parts.next().unwrap_or("").to_string();
+            let path = parts.next().unwrap_or("").to_string();
+            let content_len = head
+                .lines()
+                .find_map(|l| {
+                    l.to_ascii_lowercase()
+                        .strip_prefix("content-length:")
+                        .map(|v| v.trim().parse::<usize>().unwrap_or(0))
+                })
+                .unwrap_or(0);
+            let mut body_bytes = buf[(header_end + 4).min(buf.len())..].to_vec();
+            while body_bytes.len() < content_len {
+                let n = sock.read(&mut tmp).await.unwrap();
+                if n == 0 {
+                    break;
+                }
+                body_bytes.extend_from_slice(&tmp[..n]);
+            }
+            let body: Value = serde_json::from_slice(&body_bytes).unwrap_or(Value::Null);
+            let resp = format!(
+                "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\n\
+                 Content-Length: {}\r\nConnection: close\r\n\r\n{}",
+                resp_body.len(),
+                resp_body
+            );
+            sock.write_all(resp.as_bytes()).await.unwrap();
+            sock.flush().await.unwrap();
+            (method, path, body)
+        });
+        (base, handle)
+    }
+
+    #[tokio::test]
+    async fn set_model_posts_body_and_succeeds() {
+        let (base, srv) = mock_server(200, "OK", r#"{"ok":true,"model":"gpt-5"}"#).await;
+        Claudemon::new(base)
+            .set_model("s1", Some("gpt-5"), Some("high"))
+            .await
+            .expect("ok");
+        let (method, path, body) = srv.await.unwrap();
+        assert_eq!(method, "POST");
+        assert_eq!(path, "/sessions/s1/model");
+        assert_eq!(body["model"], json!("gpt-5"));
+        assert_eq!(body["effort"], json!("high"));
+    }
+
+    #[tokio::test]
+    async fn set_model_409_surfaces_daemon_error() {
+        let (base, srv) =
+            mock_server(409, "Conflict", r#"{"ok":false,"error":"opencode has no model switch"}"#)
+                .await;
+        let err = Claudemon::new(base).set_model("s1", Some("x"), None).await.unwrap_err();
+        assert!(err.to_string().contains("opencode has no model switch"), "got {err}");
+        let _ = srv.await;
+    }
+
+    #[tokio::test]
+    async fn set_permission_mode_returns_settled_mode() {
+        let (base, srv) = mock_server(200, "OK", r#"{"ok":true,"mode":"plan"}"#).await;
+        let mode = Claudemon::new(base).set_permission_mode("s1", "plan").await.expect("ok");
+        assert_eq!(mode, "plan");
+        let (_, path, body) = srv.await.unwrap();
+        assert_eq!(path, "/sessions/s1/permission-mode");
+        assert_eq!(body["mode"], json!("plan"));
+    }
+
+    #[tokio::test]
+    async fn permission_mode_409_surfaces_error() {
+        let (base, srv) =
+            mock_server(409, "Conflict", r#"{"ok":false,"error":"session is busy"}"#).await;
+        let err = Claudemon::new(base).set_permission_mode("s1", "plan").await.unwrap_err();
+        assert!(err.to_string().contains("session is busy"), "got {err}");
+        let _ = srv.await;
+    }
+
+    #[tokio::test]
+    async fn handoff_returns_markdown_and_path() {
+        let (base, srv) =
+            mock_server(200, "OK", r##"{"ok":true,"markdown":"# brief","path":"/h/x.md"}"##).await;
+        let brief = Claudemon::new(base).handoff("s1").await.expect("ok");
+        assert_eq!(brief.markdown, "# brief");
+        assert_eq!(brief.path.as_deref(), Some("/h/x.md"));
+        let (_, path, _) = srv.await.unwrap();
+        assert_eq!(path, "/sessions/s1/handoff");
+    }
+
+    #[tokio::test]
+    async fn spawn_managed_returns_session_id_and_sends_fields() {
+        let (base, srv) = mock_server(200, "OK", r#"{"session_id":"m1","cwd":"/w"}"#).await;
+        let sid = Claudemon::new(base)
+            .spawn_managed("codex", "/w", Some("gpt-5"), Some("high"), true, "pin-1")
+            .await
+            .expect("ok");
+        assert_eq!(sid, "m1");
+        let (_, path, body) = srv.await.unwrap();
+        assert_eq!(path, "/sessions/spawn-managed");
+        assert_eq!(body["provider"], json!("codex"));
+        assert_eq!(body["cwd"], json!("/w"));
+        assert_eq!(body["yolo"], json!(true));
+        assert_eq!(body["session_id"], json!("pin-1"));
+    }
+
+    #[tokio::test]
+    async fn provider_models_lists_and_carries_cwd_query() {
+        let (base, srv) = mock_server(
+            200,
+            "OK",
+            r#"{"models":[{"id":"gpt-5","label":"GPT-5","default":true},{"id":"o3"}]}"#,
+        )
+        .await;
+        let models = Claudemon::new(base).provider_models("codex", "/w").await.expect("ok");
+        assert_eq!(models.len(), 2);
+        assert_eq!(models[0].id, "gpt-5");
+        assert!(models[0].default);
+        assert_eq!(models[1].id, "o3");
+        let (method, path, _) = srv.await.unwrap();
+        assert_eq!(method, "GET");
+        assert!(path.starts_with("/providers/codex/models"), "got {path}");
+        assert!(path.contains("cwd="), "cwd query missing: {path}");
     }
 }
