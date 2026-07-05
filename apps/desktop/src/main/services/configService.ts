@@ -134,6 +134,13 @@ interface Config {
     /** Restore the most recent session automatically on launch (skip the picker). */
     autoResume: boolean;
   };
+  /** In-app auto-update (electron-updater over the GitHub Release feed). */
+  updates: {
+    /** Master switch for auto-update. Default true; only acts in packaged builds. */
+    enabled: boolean;
+    /** Release channel electron-updater reads ('latest', 'beta', …). */
+    channel: string;
+  };
   editor: {
     /** Editor-pane engine: in-app 'codemirror', or your $EDITOR in a 'terminal'. */
     engine: 'codemirror' | 'terminal';
@@ -323,6 +330,10 @@ function defaultConfig(): Config {
     scripts: {},
     session: {
       autoResume: false,
+    },
+    updates: {
+      enabled: true,
+      channel: 'latest',
     },
     apps: [
       { name: 'GitHub', url: 'https://github.com', icon: '\u{1F4BB}' },

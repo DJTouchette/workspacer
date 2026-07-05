@@ -107,12 +107,14 @@ theme, roughly ordered by severity within each group.
 - [x] No `typecheck` npm script in apps/desktop (CI calls tsc directly).
 - [ ] **macOS builds unsigned + un-notarized** (`release.yml:54` disables
       signing) — Gatekeeper-blocked for normal users. DEFERRED 2026-07-05:
-      needs an Apple Developer account; revisit when distributing.
+      needs an Apple Developer account; revisit when distributing. When it
+      lands, also add `zip` to the mac target — Squirrel.Mac auto-updates
+      from zip, not dmg.
 - [ ] Windows Azure Trusted Signing plumbed but pending manual identity
       validation + cert profile (`docs/windows-code-signing.md`).
       DEFERRED 2026-07-05 by decision; the workflow activates via
       `vars.AZURE_CODESIGN_PROFILE` once the manual steps are done.
-- [ ] No auto-update channel (`--publish never`, no electron-updater).
+- [x] No auto-update channel (`--publish never`, no electron-updater).
 - [x] CI uses Node 20 while README/mise pin Node 22 — align.
 
 ## Docs drift

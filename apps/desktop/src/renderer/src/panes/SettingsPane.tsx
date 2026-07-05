@@ -5,6 +5,7 @@ import LayoutSection from '../components/settings/LayoutSection';
 import TerminalSection from '../components/settings/TerminalSection';
 import KeybindingsSection from '../components/settings/KeybindingsSection';
 import NotificationsSection from '../components/settings/NotificationsSection';
+import UpdatesSection from '../components/settings/UpdatesSection';
 import SessionSection from '../components/settings/SessionSection';
 import BrowserSection from '../components/settings/BrowserSection';
 import EditorSection from '../components/settings/EditorSection';
@@ -128,6 +129,14 @@ const SECTIONS: SectionDef[] = [
     group: 'System',
     keywords: [
       'notification', 'alert', 'sound', 'done', 'notify', 'badge', 'attention',
+    ],
+  },
+  {
+    key: 'updates',
+    label: 'Updates',
+    group: 'System',
+    keywords: [
+      'update', 'auto', 'upgrade', 'version', 'release', 'download', 'install', 'channel',
     ],
   },
   {
@@ -283,6 +292,7 @@ const SettingsPane: React.FC<SettingsPaneProps> = () => {
       case 'browser': return <BrowserSection config={config} save={save} />;
       case 'apps': return <AppsSection config={config} save={save} />;
       case 'notifications': return <NotificationsSection config={config} save={save} />;
+      case 'updates': return <UpdatesSection config={config} save={save} />;
       case 'plugins': return <PluginsSection />;
       default: return null;
     }

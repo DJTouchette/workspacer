@@ -120,6 +120,13 @@ export interface Config {
     /** Restore the most recent session automatically on launch (skip the picker). */
     autoResume: boolean;
   };
+  /** In-app auto-update (electron-updater). Only acts in packaged builds. */
+  updates?: {
+    /** Master switch for auto-update. Default true. */
+    enabled: boolean;
+    /** Release channel ('latest', 'beta', …). */
+    channel?: string;
+  };
   /** Set once the user dismisses the first-run welcome; absent/false shows it. */
   onboardingDismissed?: boolean;
   claude?: {

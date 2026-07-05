@@ -121,10 +121,15 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: workspacer-${{ matrix.artifact }}
+          # Installers PLUS the electron-updater metadata (latest*.yml) and the
+          # delta .blockmap files — the updater needs the .yml + .blockmap next
+          # to each installer, not just the installer.
           path: |
             apps/desktop/release/*.exe
             apps/desktop/release/*.dmg
             apps/desktop/release/*.AppImage
+            apps/desktop/release/*.yml
+            apps/desktop/release/*.blockmap
           if-no-files-found: error
 
       # Only on a version tag: attach this OS's installers to the GitHub Release
@@ -133,10 +138,14 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          # Attach the update metadata (latest*.yml) + .blockmap alongside the
+          # installers so electron-updater can read the release as an update feed.
           files: |
             apps/desktop/release/*.exe
             apps/desktop/release/*.dmg
             apps/desktop/release/*.AppImage
+            apps/desktop/release/*.yml
+            apps/desktop/release/*.blockmap
           draft: true
           fail_on_unmatched_files: false
 

@@ -16,6 +16,7 @@ import { startHub, stopHub } from './services/hubDaemon';
 import { startMcpFacade, stopMcpFacade } from './services/mcpFacadeDaemon';
 import { setHubMainWindow, startHubClient, stopHubClient } from './services/hubClient';
 import { setNoticeWindow, notifySystem } from './services/systemNotice';
+import { updateService } from './services/updateService';
 import { initFileLogging } from './services/logFile';
 import { stopAllTerminals } from './services/terminalShare';
 import { workflowWatcher } from './services/workflowWatcher';
@@ -256,6 +257,8 @@ function createWindow(): void {
   registerIpcHandlers(mainWindow);
   claudeSessionStore.setMainWindow(mainWindow);
   agentNotifier.setMainWindow(mainWindow);
+  // Kick off auto-update (no-op in dev / when disabled via config).
+  updateService.start(mainWindow);
   setHubMainWindow(mainWindow);
   setNoticeWindow(mainWindow);
 
@@ -491,6 +494,7 @@ async function gracefulShutdown(): Promise<void> {
     await Promise.race([ack, new Promise<void>((r) => setTimeout(r, 1500))]);
     ipcMain.removeAllListeners(IPC.APP_QUIT_SAVED);
   }
+  updateService.stop();
   try { claudemonSessionClient.closeAll(); } catch { /* ignore */ }
   workflowWatcher.detachAll();
   stopAllTerminals();

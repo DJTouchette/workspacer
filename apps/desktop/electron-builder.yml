@@ -2,6 +2,17 @@ appId: com.workspacer.app
 productName: Workspacer
 asar: true
 
+# electron-updater reads the latest PUBLISHED GitHub Release for this repo. This
+# provider block is what makes electron-builder generate the update metadata
+# (latest.yml / latest-linux.yml / latest-mac.yml + .blockmap files) alongside
+# the installers. CI builds with `--publish never`, so nothing is uploaded from
+# the build itself — the release workflow attaches the installers AND the
+# metadata files to the drafted GitHub Release, which is the feed clients read.
+publish:
+  provider: github
+  owner: DJTouchette
+  repo: workspacer
+
 directories:
   buildResources: build
   output: release
