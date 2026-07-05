@@ -165,8 +165,57 @@ pub enum AgentUpdate {
         /// Absent → [`context_window_for`] falls back to a table by model id.
         context_window: Option<u64>,
     },
+    /// The account's 5h/7d rate-limit windows, when the provider reports them
+    /// (Codex does) — same meaning as the fields Claude's statusLine carries.
+    RateLimits {
+        five_hour_pct: Option<f64>,
+        five_hour_resets_at: Option<i64>,
+        seven_day_pct: Option<f64>,
+        seven_day_resets_at: Option<i64>,
+    },
     /// A session-level error message.
     Error(String),
+}
+
+/// Parse a Codex `RateLimitSnapshot` — camelCase on the app-server wire
+/// (`usedPercent`/`windowDurationMins`/`resetsAt`), snake_case in rollout
+/// `event_msg`s (`used_percent`/`window_minutes`/`resets_at`) — into a
+/// [`AgentUpdate::RateLimits`]. Each window is bucketed by its duration (≤12h →
+/// the 5h slot, longer → the 7d slot), falling back to primary→5h /
+/// secondary→7d when the duration is absent.
+pub(crate) fn rate_limits_from(v: &Value) -> Option<AgentUpdate> {
+    fn window(w: &Value) -> (Option<f64>, Option<i64>, Option<u64>) {
+        let pick = |keys: [&str; 2]| keys.iter().find_map(|k| w.get(*k));
+        (
+            pick(["usedPercent", "used_percent"]).and_then(Value::as_f64),
+            pick(["resetsAt", "resets_at"]).and_then(Value::as_i64),
+            pick(["windowDurationMins", "window_minutes"]).and_then(Value::as_u64),
+        )
+    }
+    let mut five: (Option<f64>, Option<i64>) = (None, None);
+    let mut seven: (Option<f64>, Option<i64>) = (None, None);
+    for key in ["primary", "secondary"] {
+        let Some(w) = v.get(key).filter(|w| !w.is_null()) else { continue };
+        let (pct, resets, mins) = window(w);
+        if pct.is_none() && resets.is_none() {
+            continue;
+        }
+        let is_seven_day = mins.map_or(key == "secondary", |m| m > 720);
+        if is_seven_day {
+            seven = (pct, resets);
+        } else {
+            five = (pct, resets);
+        }
+    }
+    if five == (None, None) && seven == (None, None) {
+        return None;
+    }
+    Some(AgentUpdate::RateLimits {
+        five_hour_pct: five.0,
+        five_hour_resets_at: five.1,
+        seven_day_pct: seven.0,
+        seven_day_resets_at: seven.1,
+    })
 }
 
 /// Context window size (tokens) for well-known model families, used when the
@@ -247,11 +296,24 @@ pub struct UsageAcc {
     cost: Option<f64>,
     context_tokens: Option<u64>,
     context_window: Option<u64>,
+    five_hour_pct: Option<f64>,
+    five_hour_resets_at: Option<i64>,
+    seven_day_pct: Option<f64>,
+    seven_day_resets_at: Option<i64>,
 }
 
 impl UsageAcc {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Pre-fill the model from spawn settings so the status line names it even
+    /// before (or without) the provider's own usage events carrying one. A
+    /// later event that does carry a model still overrides this.
+    pub fn seed_model(&mut self, model: Option<&str>) {
+        if self.model.is_none() {
+            self.model = model.map(str::to_owned);
+        }
     }
     #[allow(clippy::too_many_arguments)]
     fn merge(
@@ -283,6 +345,25 @@ impl UsageAcc {
         }
     }
 
+    /// Fold in a rate-limit reading — latest wins per window (they only move
+    /// forward between readings; a lower % just means the window rolled).
+    fn merge_rate_limits(
+        &mut self,
+        five_hour_pct: Option<f64>,
+        five_hour_resets_at: Option<i64>,
+        seven_day_pct: Option<f64>,
+        seven_day_resets_at: Option<i64>,
+    ) {
+        if five_hour_pct.is_some() {
+            self.five_hour_pct = five_hour_pct;
+            self.five_hour_resets_at = five_hour_resets_at;
+        }
+        if seven_day_pct.is_some() {
+            self.seven_day_pct = seven_day_pct;
+            self.seven_day_resets_at = seven_day_resets_at;
+        }
+    }
+
     /// Build the `StatusLine` for `SessionStore::apply_status_line` — the same
     /// shape Claude's own statusLine feeds, so the renderer's bottom bar (model
     /// · context meter · tokens · cost) renders identically for every provider.
@@ -304,6 +385,10 @@ impl UsageAcc {
             total_input_tokens: self.input,
             total_output_tokens: self.output,
             cost_usd: self.cost,
+            five_hour_pct: self.five_hour_pct,
+            five_hour_resets_at: self.five_hour_resets_at,
+            seven_day_pct: self.seven_day_pct,
+            seven_day_resets_at: self.seven_day_resets_at,
             received_at: Some(OffsetDateTime::now_utc()),
             ..Default::default()
         }
@@ -348,6 +433,10 @@ pub fn apply_updates(
             }
             AgentUpdate::Usage { model, input_tokens, output_tokens, cost_usd, context_tokens, context_window } => {
                 acc.merge(model.clone(), *input_tokens, *output_tokens, *cost_usd, *context_tokens, *context_window);
+                usage_changed = true;
+            }
+            AgentUpdate::RateLimits { five_hour_pct, five_hour_resets_at, seven_day_pct, seven_day_resets_at } => {
+                acc.merge_rate_limits(*five_hour_pct, *five_hour_resets_at, *seven_day_pct, *seven_day_resets_at);
                 usage_changed = true;
             }
             AgentUpdate::Error(msg) => {

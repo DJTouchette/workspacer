@@ -41,11 +41,33 @@ use crate::session::{ConversationStore, SessionStore};
 ///     `user_message` / `agent_message` are intentionally ignored — the same
 ///     text already arrives as `response_item` messages, so honoring both would
 ///     duplicate every turn.
-/// `session_meta`, `turn_context`, and reasoning items yield nothing.
+/// `turn_context` yields only the model name; `session_meta` and reasoning
+/// items yield nothing.
 pub fn translate(value: &Value) -> Vec<AgentUpdate> {
     match value.get("type").and_then(Value::as_str) {
         Some("response_item") => translate_response_item(value.get("payload").unwrap_or(value)),
         Some("event_msg") => translate_event_msg(value.get("payload").unwrap_or(value)),
+        // `turn_context` is otherwise ignored, but it's the only rollout record
+        // naming the model — harvest it so the status line isn't blank.
+        Some("turn_context") => {
+            let model = value
+                .get("payload")
+                .unwrap_or(value)
+                .get("model")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            match model {
+                Some(m) => vec![AgentUpdate::Usage {
+                    model: Some(m),
+                    input_tokens: None,
+                    output_tokens: None,
+                    cost_usd: None,
+                    context_tokens: None,
+                    context_window: None,
+                }],
+                None => Vec::new(),
+            }
+        }
         _ => Vec::new(),
     }
 }
@@ -151,8 +173,13 @@ fn translate_event_msg(payload: &Value) -> Vec<AgentUpdate> {
             let input = usage.and_then(|u| u.get("input_tokens")).and_then(Value::as_u64);
             let output = usage.and_then(|u| u.get("output_tokens")).and_then(Value::as_u64);
             if input.is_some() || output.is_some() {
-                let context_tokens = usage
-                    .and_then(|u| u.get("total_tokens"))
+                // Context occupancy comes from `last_token_usage` — the most
+                // recent request, i.e. what's actually in the window.
+                // `total_token_usage` is CUMULATIVE across the session and
+                // pins the context meter at 100% within a few turns.
+                let context_tokens = info
+                    .and_then(|i| i.get("last_token_usage"))
+                    .and_then(|l| l.get("total_tokens"))
                     .and_then(Value::as_u64)
                     .or_else(|| Some(input.unwrap_or(0) + output.unwrap_or(0)));
                 let context_window = info
@@ -166,6 +193,10 @@ fn translate_event_msg(payload: &Value) -> Vec<AgentUpdate> {
                     context_tokens,
                     context_window,
                 });
+            }
+            // The same event carries the account's rate-limit windows.
+            if let Some(u) = payload.get("rate_limits").and_then(super::rate_limits_from) {
+                out.push(u);
             }
         }
         _ => {} // user_message / agent_message ignored (see response_item messages)
@@ -455,7 +486,42 @@ mod tests {
     }
 
     #[test]
-    fn token_count_maps_to_usage() {
+    fn token_count_context_comes_from_last_not_cumulative() {
+        // `total_token_usage` is cumulative across the session; the context
+        // meter must read `last_token_usage` (what the latest request actually
+        // held) or it pins at 100% within a few turns.
+        let e = ev(json!({
+            "type": "token_count",
+            "info": { "total_token_usage": { "input_tokens": 4402946, "output_tokens": 40196, "total_tokens": 4443142 },
+                      "last_token_usage": { "input_tokens": 132153, "output_tokens": 399, "total_tokens": 132552 },
+                      "model_context_window": 258400 },
+            "rate_limits": {
+                "primary": { "used_percent": 19.0, "window_minutes": 300, "resets_at": 1783121345 },
+                "secondary": { "used_percent": 3.0, "window_minutes": 10080, "resets_at": 1783708145 } }
+        }));
+        assert_eq!(
+            translate(&e),
+            vec![
+                AgentUpdate::Usage {
+                    model: None,
+                    input_tokens: Some(4402946),
+                    output_tokens: Some(40196),
+                    cost_usd: None,
+                    context_tokens: Some(132552),
+                    context_window: Some(258400),
+                },
+                AgentUpdate::RateLimits {
+                    five_hour_pct: Some(19.0),
+                    five_hour_resets_at: Some(1783121345),
+                    seven_day_pct: Some(3.0),
+                    seven_day_resets_at: Some(1783708145),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn token_count_without_last_falls_back_to_in_plus_out() {
         let e = ev(json!({
             "type": "token_count",
             "info": { "total_token_usage": { "input_tokens": 1000, "output_tokens": 200, "total_tokens": 1200 },
@@ -470,6 +536,22 @@ mod tests {
                 cost_usd: None,
                 context_tokens: Some(1200),
                 context_window: Some(272000),
+            }]
+        );
+    }
+
+    #[test]
+    fn turn_context_yields_model() {
+        let v = json!({ "type": "turn_context", "payload": { "model": "gpt-5.5", "cwd": "/w" } });
+        assert_eq!(
+            translate(&v),
+            vec![AgentUpdate::Usage {
+                model: Some("gpt-5.5".into()),
+                input_tokens: None,
+                output_tokens: None,
+                cost_usd: None,
+                context_tokens: None,
+                context_window: None,
             }]
         );
     }

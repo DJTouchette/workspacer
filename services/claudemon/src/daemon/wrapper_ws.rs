@@ -37,7 +37,9 @@ async fn handle(socket: WebSocket, _id_from_path: String, store: SessionStore) {
     // First frame must be Register.
     let register = match stream.next().await {
         Some(Ok(Message::Text(text))) => match serde_json::from_str::<WrapperMessage>(&text) {
-            Ok(WrapperMessage::Register { session_id, cwd, .. }) => (session_id, cwd),
+            Ok(WrapperMessage::Register { session_id, cwd, cols, rows, .. }) => {
+                (session_id, cwd, cols, rows)
+            }
             Ok(other) => {
                 tracing::warn!(?other, "wrapper opened WS without Register first");
                 return;
@@ -49,10 +51,11 @@ async fn handle(socket: WebSocket, _id_from_path: String, store: SessionStore) {
         },
         _ => return,
     };
-    let (session_id, cwd) = register;
+    let (session_id, cwd, cols, rows) = register;
 
     let (tx, mut rx) = mpsc::unbounded_channel::<WrapperMessage>();
     store.register_wrapper(&session_id, &cwd, WrapperHandle { tx });
+    store.note_term_size(&session_id, cols, rows);
     tracing::info!(%session_id, %cwd, "wrapper registered");
 
     // daemon → wrapper pump

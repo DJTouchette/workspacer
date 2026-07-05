@@ -156,6 +156,7 @@ pub async fn handle(
 
     store.register_pty(&session_id, pty_handle.clone());
     store.register_spawn(&session_id, &cwd, WrapperHandle { tx: input_tx });
+    store.note_term_size(&session_id, cols, rows);
     tracing::info!(%session_id, %cwd, argv=?payload.argv, "spawned in-daemon PTY");
 
     // Hybrid agents (e.g. Codex): the PTY above is the agent's own TUI (the Term

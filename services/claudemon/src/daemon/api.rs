@@ -18,7 +18,10 @@ use tokio_stream::{wrappers::BroadcastStream, StreamExt};
 use tower_http::cors::CorsLayer;
 
 use crate::protocol::WrapperMessage;
-use crate::session::{transcript, usage, ConversationStore, MessageOutcome, SessionMode, SessionStore};
+use crate::session::{
+    transcript, usage, ConversationStore, MessageOutcome, PermissionMode, PermissionSwitchError,
+    SessionMode, SessionStore,
+};
 use crate::store::items::{ItemAction, ItemBroadcaster, ItemChange, ListFilter};
 use crate::store::Db;
 
@@ -71,11 +74,14 @@ pub fn router(state: ApiState) -> Router {
         .route("/sessions/:id/decide", post(post_decide))
         .route("/sessions/:id/gate", post(post_gate))
         .route("/sessions/:id/signal", post(post_signal))
+        .route("/sessions/:id/permission-mode", post(post_permission_mode))
+        .route("/sessions/:id/model", post(post_model))
         .route("/sessions/:id/resize", post(post_resize))
         .route("/sessions/:id/output", get(get_output))
         .route("/sessions/:id/stream", get(stream_bytes))
         .route("/sessions/:id/transcript", get(get_transcript))
         .route("/sessions/:id/conversation", get(get_conversation))
+        .route("/sessions/:id/handoff", post(post_handoff))
         .route("/conversation/stream", get(conversation_stream))
         .route("/events", get(event_stream))
         .route("/hooks/stream", get(hook_stream))
@@ -473,6 +479,138 @@ async fn post_signal(
 }
 
 #[derive(Debug, Deserialize)]
+struct PermissionModePayload {
+    mode: String,
+}
+
+/// Live permission-mode switch, no restart, conversation untouched.
+///
+/// PTY (claude) sessions: the daemon presses Shift+Tab (the TUI's own mode
+/// cycle) and verifies each step against the reconstructed screen until the
+/// target mode's footer marker shows (`SessionStore::set_permission_mode`).
+/// Managed sessions (codex over the app-server ws): flips the adapter's
+/// auto-approve flag — modes are `ask`/`yolo`, and yolo→ask is only possible
+/// when the provider wasn't spawned in bypass mode
+/// (`SessionStore::set_managed_permission_mode`).
+async fn post_permission_mode(
+    State(store): State<SessionStore>,
+    Path(id): Path<String>,
+    Json(payload): Json<PermissionModePayload>,
+) -> impl IntoResponse {
+    let result = if store.is_managed(&id) {
+        if payload.mode != "ask" && payload.mode != "yolo" {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "ok": false, "error": format!("unknown managed permission mode '{}' (expected 'ask' or 'yolo')", payload.mode) })),
+            )
+                .into_response();
+        }
+        store.set_managed_permission_mode(&id, &payload.mode).map(str::to_string)
+    } else {
+        let Some(target) = PermissionMode::parse(&payload.mode) else {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "ok": false, "error": format!("unknown permission mode '{}'", payload.mode) })),
+            )
+                .into_response();
+        };
+        store
+            .set_permission_mode(&id, target)
+            .await
+            .map(|m| m.as_str().to_string())
+    };
+    match result {
+        Ok(mode) => Json(json!({ "ok": true, "mode": mode })).into_response(),
+        Err(err) => {
+            let (status, msg, current) = match err {
+                PermissionSwitchError::NoSession => {
+                    (StatusCode::NOT_FOUND, "session not found".to_string(), None)
+                }
+                PermissionSwitchError::NoWrapper => (
+                    StatusCode::NOT_FOUND,
+                    "no wrapper attached to that session".to_string(),
+                    None,
+                ),
+                PermissionSwitchError::Managed => (
+                    StatusCode::CONFLICT,
+                    "this session's permission policy is frozen at spawn — restart to change it"
+                        .to_string(),
+                    None,
+                ),
+                PermissionSwitchError::Busy(mode) => (
+                    StatusCode::CONFLICT,
+                    format!("session is busy ({mode:?}) — try again when the dialog is resolved"),
+                    None,
+                ),
+                PermissionSwitchError::Unavailable(current) => (
+                    StatusCode::CONFLICT,
+                    format!(
+                        "mode '{}' is not in this session's shift+tab cycle",
+                        payload.mode
+                    ),
+                    Some(current.as_str().to_string()),
+                ),
+                PermissionSwitchError::Unverified(current) => (
+                    StatusCode::CONFLICT,
+                    "the TUI did not acknowledge the mode cycle keystroke".to_string(),
+                    Some(current.as_str().to_string()),
+                ),
+                PermissionSwitchError::ManagedUnavailable { current } => (
+                    StatusCode::CONFLICT,
+                    "the agent was started with approvals bypassed — restart to re-enable them"
+                        .to_string(),
+                    Some(current.to_string()),
+                ),
+            };
+            let mut body = json!({ "ok": false, "error": msg });
+            if let Some(current) = current {
+                body["mode"] = json!(current);
+            }
+            (status, Json(body)).into_response()
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct ModelSwitchPayload {
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    effort: Option<String>,
+}
+
+/// Live model/effort switch for a managed session, no restart, conversation
+/// untouched. Codex over the app-server ws applies it to the running thread
+/// via `thread/settings/update`; providers without a switch channel (opencode/
+/// pi, codex rollout fallback) get a 409 so the caller can offer the restart
+/// path. PTY (claude) sessions switch through their own `/model` slash command
+/// on the message path — this endpoint is the managed-provider counterpart.
+async fn post_model(
+    State(store): State<SessionStore>,
+    Path(id): Path<String>,
+    Json(payload): Json<ModelSwitchPayload>,
+) -> impl IntoResponse {
+    if payload.model.is_none() && payload.effort.is_none() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "ok": false, "error": "provide `model` and/or `effort`" })),
+        )
+            .into_response();
+    }
+    if !store.is_managed(&id) {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({ "ok": false, "error": "PTY sessions switch via the /model slash command on the message path" })),
+        )
+            .into_response();
+    }
+    match store.set_managed_model(&id, crate::session::ModelSwitch { model: payload.model.clone(), effort: payload.effort.clone() }) {
+        Ok(()) => Json(json!({ "ok": true, "model": payload.model, "effort": payload.effort })).into_response(),
+        Err(err) => (StatusCode::CONFLICT, Json(json!({ "ok": false, "error": err }))).into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize)]
 struct ResizePayload {
     cols: u16,
     rows: u16,
@@ -493,6 +631,7 @@ async fn post_resize(
     {
         return (StatusCode::GONE, "wrapper disconnected").into_response();
     }
+    store.note_term_size(&id, payload.cols, payload.rows);
     Json(json!({ "ok": true, "cols": payload.cols, "rows": payload.rows })).into_response()
 }
 
@@ -615,6 +754,51 @@ async fn get_conversation(
         items.drain(0..skip);
     }
     Json(json!({ "session_id": id, "seq": seq, "items": items }))
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct HandoffPayload {
+    /// Skip writing the brief under `~/.workspacer/handoffs/` (default writes).
+    #[serde(default)]
+    no_persist: bool,
+}
+
+/// Build a cross-provider handoff brief from the session's conversation —
+/// the markdown a successor agent (any harness) reads to take the work over.
+/// Persists to `~/.workspacer/handoffs/` unless `no_persist`; the response
+/// carries both the markdown and the file path. Works for stopped sessions
+/// too, as long as their conversation is still tailed/cached.
+async fn post_handoff(
+    State(store): State<SessionStore>,
+    State(conv): State<ConversationStore>,
+    Path(id): Path<String>,
+    Json(payload): Json<HandoffPayload>,
+) -> impl IntoResponse {
+    let (_, items) = conv.snapshot(&id).unwrap_or((0, Vec::new()));
+    if items.is_empty() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "ok": false, "error": "no conversation recorded for that session" })),
+        )
+            .into_response();
+    }
+    let state = store.get(&id);
+    let markdown = crate::session::handoff::build_brief(&id, state.as_ref(), &items);
+    let path = if payload.no_persist {
+        None
+    } else {
+        match crate::session::handoff::persist_brief(&id, &markdown) {
+            Ok(p) => Some(p.to_string_lossy().into_owned()),
+            Err(err) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "ok": false, "error": format!("could not write handoff brief: {err}") })),
+                )
+                    .into_response();
+            }
+        }
+    };
+    Json(json!({ "ok": true, "markdown": markdown, "path": path })).into_response()
 }
 
 /// How many leading items to drop so only those with sequence > `since` remain,

@@ -8,6 +8,7 @@ use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 
 use time::OffsetDateTime;
 
+use super::permission_mode::{classify_screen, PermissionMode, PermissionSwitchError};
 use super::state::{HookEvent, Pending, SessionMode, SessionState, StatusLine};
 use crate::protocol::WrapperMessage;
 
@@ -38,6 +39,19 @@ const SUBMIT_VERIFY_DELAY_MS: u64 = 1000;
 /// is still `Input` (a CR on an empty prompt is a no-op, so a spurious pass is
 /// harmless); two passes cover an Enter swallowed twice in a row.
 const SUBMIT_VERIFY_ATTEMPTS: u32 = 2;
+/// Shift+Tab presses a permission-mode switch may make before concluding the
+/// target mode isn't in this session's cycle. Claude Code cycles at most four
+/// modes, so six covers a full loop with slack for a double-draw.
+const MODE_MAX_PRESSES: u32 = 6;
+/// How often the mode switch re-reads the screen while waiting for the footer
+/// to react to a press.
+const MODE_POLL_MS: u64 = 50;
+/// How long a press may go without an observable footer change before the
+/// switch gives up (`Unverified`). TUI redraw after Shift+Tab is near-instant;
+/// this is generous slack for a loaded machine.
+const MODE_CHANGE_TIMEOUT_MS: u64 = 1200;
+/// Terminal size assumed for sessions whose size was never reported.
+const DEFAULT_TERM_SIZE: (u16, u16) = (80, 24);
 
 /// Tracks the child's bracketed-paste (DECSET 2004) state from its output
 /// stream. `enabled` is `None` until either toggle sequence has been seen.
@@ -210,6 +224,42 @@ pub struct SessionStore {
     /// tokio children) and their exit can be reaped. Without this, quitting the
     /// launcher orphans every `claude` PTY it spawned.
     ptys: Arc<DashMap<String, Arc<crate::wrapper::pty::PtyHandle>>>,
+    /// Last-known PTY size (cols, rows) per session — set at spawn/register and
+    /// on `/resize`. The live permission-mode switch reconstructs the screen
+    /// from the output ring with `vt100`, which needs the real grid to place
+    /// the footer rows correctly.
+    term_sizes: Arc<DashMap<String, (u16, u16)>>,
+    /// Live-switchable auto-approve policy for managed sessions whose adapter
+    /// mediates approvals (codex over the app-server ws). The adapter registers
+    /// its shared flag at session start; `/permission-mode` flips it. Sessions
+    /// without an entry (opencode/pi, codex rollout fallback) can't switch live.
+    managed_yolo: Arc<DashMap<String, ManagedYoloHandle>>,
+    /// Live model/effort switch channels for managed sessions whose adapter can
+    /// apply one mid-thread (codex over the app-server ws:
+    /// `thread/settings/update`). Registered by the adapter at session start;
+    /// `POST /sessions/:id/model` sends here. Sessions without an entry
+    /// (opencode/pi, codex rollout fallback) can't switch live — the caller
+    /// falls back to the restart path.
+    managed_model: Arc<DashMap<String, mpsc::UnboundedSender<ModelSwitch>>>,
+}
+
+/// A live model/effort switch request for a managed adapter's driver loop.
+/// Either field may be absent — absent means "leave as is".
+#[derive(Debug, Clone)]
+pub struct ModelSwitch {
+    pub model: Option<String>,
+    pub effort: Option<String>,
+}
+
+/// A managed session's approval policy, shared with its driver task.
+#[derive(Clone)]
+pub struct ManagedYoloHandle {
+    /// Read by the adapter at each approval request: `true` = auto-approve.
+    pub live: Arc<std::sync::atomic::AtomicBool>,
+    /// Whether the provider's own process was spawned in bypass mode. If so,
+    /// approvals are skipped at the source and flipping `live` off can't bring
+    /// them back — yolo→ask needs a restart.
+    pub spawned_yolo: bool,
 }
 
 /// Outcome of a `/message` submission. Keeping the policy here (rather than in
@@ -260,6 +310,9 @@ impl SessionStore {
             managed_inputs: Arc::new(DashMap::new()),
             managed_decisions: Arc::new(DashMap::new()),
             ptys: Arc::new(DashMap::new()),
+            term_sizes: Arc::new(DashMap::new()),
+            managed_yolo: Arc::new(DashMap::new()),
+            managed_model: Arc::new(DashMap::new()),
         }
     }
 
@@ -686,6 +739,23 @@ impl SessionStore {
         self.managed_decisions.insert(session_id.to_string(), tx);
     }
 
+    /// Register the live model-switch channel for a managed session whose
+    /// adapter can apply one mid-thread (codex: `thread/settings/update`).
+    pub fn register_managed_model_switch(&self, session_id: &str, tx: mpsc::UnboundedSender<ModelSwitch>) {
+        self.managed_model.insert(session_id.to_string(), tx);
+    }
+
+    /// Live-switch a managed session's model/effort without a restart. Err when
+    /// the session has no switch channel (provider can't do it live — opencode/
+    /// pi, or codex running on the rollout fallback) so the caller can offer
+    /// the restart path instead.
+    pub fn set_managed_model(&self, session_id: &str, switch: ModelSwitch) -> Result<(), &'static str> {
+        match self.managed_model.get(session_id) {
+            Some(tx) if tx.send(switch).is_ok() => Ok(()),
+            _ => Err("this session's provider can't switch models live — restart with the new model"),
+        }
+    }
+
     /// Forward an approval decision to a managed session's adapter. Returns
     /// false (so the caller falls through to the Claude hook path) when this
     /// isn't a managed session.
@@ -713,6 +783,7 @@ impl SessionStore {
         // clones), so the driver's `rx.recv()` resolves to None and the loop exits.
         let existed = self.managed_inputs.remove(session_id).is_some();
         self.managed_decisions.remove(session_id);
+        self.managed_model.remove(session_id);
         existed
     }
 
@@ -724,6 +795,8 @@ impl SessionStore {
     pub fn deregister_managed(&self, session_id: &str) {
         self.managed_inputs.remove(session_id);
         self.managed_decisions.remove(session_id);
+        self.managed_model.remove(session_id);
+        self.managed_yolo.remove(session_id);
         // Release the hybrid Term view's resources (attached by `attach_pty`).
         // The 256 KiB byte ring per session is the bulk of a managed session's
         // memory; leaving it (and the input wrapper + broadcast) around after the
@@ -778,6 +851,7 @@ impl SessionStore {
         self.flush_epochs.remove(session_id);
         self.client_input_at.remove(session_id);
         self.paste_modes.remove(session_id);
+        self.term_sizes.remove(session_id);
         self.states.remove(session_id);
         // Drop any hook-id → canonical-id aliases pointing at this session, so the
         // alias map doesn't accrue a permanent entry per spawn across churn.
@@ -786,6 +860,169 @@ impl SessionStore {
 
     pub fn wrapper(&self, session_id: &str) -> Option<WrapperHandle> {
         self.wrappers.get(session_id).map(|h| h.clone())
+    }
+
+    // --- terminal size ------------------------------------------------------
+
+    /// Record the session's PTY size — called at spawn/register and on
+    /// `/resize` so screen reconstruction uses the real grid.
+    pub fn note_term_size(&self, session_id: &str, cols: u16, rows: u16) {
+        if cols == 0 || rows == 0 {
+            return;
+        }
+        self.term_sizes.insert(session_id.to_string(), (cols, rows));
+    }
+
+    fn term_size(&self, session_id: &str) -> (u16, u16) {
+        self.term_sizes
+            .get(session_id)
+            .map(|s| *s)
+            .unwrap_or(DEFAULT_TERM_SIZE)
+    }
+
+    // --- live permission-mode switch ------------------------------------------
+
+    /// The session's current permission mode as shown by its TUI footer,
+    /// reconstructed from the output ring buffer. `None` when the session has
+    /// no output buffer (no wrapper ever attached).
+    pub async fn screen_permission_mode(&self, session_id: &str) -> Option<PermissionMode> {
+        let bytes = self.output_snapshot(session_id).await?;
+        let (cols, rows) = self.term_size(session_id);
+        let mut parser = vt100::Parser::new(rows, cols, 0);
+        parser.process(&bytes);
+        Some(classify_screen(&parser.screen().contents()))
+    }
+
+    /// Wait for the footer's mode classification to move off `prev` after a
+    /// Shift+Tab press. Polls the reconstructed screen every [`MODE_POLL_MS`]
+    /// for up to [`MODE_CHANGE_TIMEOUT_MS`]; `None` = no observable change.
+    async fn await_mode_change(
+        &self,
+        session_id: &str,
+        prev: PermissionMode,
+    ) -> Option<PermissionMode> {
+        let deadline = tokio::time::Instant::now()
+            + std::time::Duration::from_millis(MODE_CHANGE_TIMEOUT_MS);
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(MODE_POLL_MS)).await;
+            if let Some(mode) = self.screen_permission_mode(session_id).await {
+                if mode != prev {
+                    return Some(mode);
+                }
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return None;
+            }
+        }
+    }
+
+    /// Switch a live PTY session's permission mode without a restart, the way
+    /// a human would: press Shift+Tab (the TUI's mode cycle) and watch the
+    /// footer marker until the target mode is showing. Every press is verified
+    /// against the reconstructed screen, so the loop stops on the target,
+    /// detects a full cycle without it (`Unavailable` — conveniently already
+    /// back at the starting mode), and never sprays blind keystrokes
+    /// (`Unverified` after one unacknowledged press).
+    ///
+    /// Only `Input`/`Responding` sessions are eligible: while a dialog is up
+    /// (`Approval`/`Question`) Shift+Tab could act on the dialog instead.
+    pub async fn set_permission_mode(
+        &self,
+        session_id: &str,
+        target: PermissionMode,
+    ) -> Result<PermissionMode, PermissionSwitchError> {
+        if self.is_managed(session_id) {
+            return Err(PermissionSwitchError::Managed);
+        }
+        let Some(mode) = self.states.get(session_id).map(|s| s.mode) else {
+            return Err(PermissionSwitchError::NoSession);
+        };
+        if !matches!(mode, SessionMode::Input | SessionMode::Responding) {
+            return Err(PermissionSwitchError::Busy(mode));
+        }
+        let Some(handle) = self.wrapper(session_id) else {
+            return Err(PermissionSwitchError::NoWrapper);
+        };
+        let Some(start) = self.screen_permission_mode(session_id).await else {
+            return Err(PermissionSwitchError::NoWrapper);
+        };
+        if start == target {
+            return Ok(start);
+        }
+        let mut current = start;
+        for _ in 0..MODE_MAX_PRESSES {
+            if handle
+                .tx
+                .send(WrapperMessage::Input { bytes: B64.encode(b"\x1b[Z") })
+                .is_err()
+            {
+                return Err(PermissionSwitchError::NoWrapper);
+            }
+            let Some(next) = self.await_mode_change(session_id, current).await else {
+                return Err(PermissionSwitchError::Unverified(current));
+            };
+            current = next;
+            if current == target {
+                return Ok(current);
+            }
+            if current == start {
+                return Err(PermissionSwitchError::Unavailable(current));
+            }
+        }
+        Err(PermissionSwitchError::Unavailable(current))
+    }
+
+    /// Register a managed session's live approval-policy flag. The adapter
+    /// keeps the `Arc` and reads it at every approval request; `spawned_yolo`
+    /// records whether the provider process itself was started in bypass mode
+    /// (in which case approvals can't be re-enabled live).
+    pub fn register_managed_yolo(
+        &self,
+        session_id: &str,
+        live: Arc<std::sync::atomic::AtomicBool>,
+        spawned_yolo: bool,
+    ) {
+        self.managed_yolo
+            .insert(session_id.to_string(), ManagedYoloHandle { live, spawned_yolo });
+    }
+
+    /// Live-switch a managed session's permission mode (`"ask"` / `"yolo"`).
+    ///
+    /// `ask → yolo` always works: the adapter starts auto-approving the
+    /// provider's approval requests (already-parked requests stay parked for
+    /// the user — only *new* ones auto-approve). `yolo → ask` works only when
+    /// the provider process wasn't itself spawned in bypass mode; otherwise it
+    /// never sends approval requests and the switch would be a silent no-op —
+    /// reported as `ManagedUnavailable` so the caller can offer a restart.
+    pub fn set_managed_permission_mode(
+        &self,
+        session_id: &str,
+        mode: &str,
+    ) -> Result<&'static str, PermissionSwitchError> {
+        if !self.is_managed(session_id) {
+            return if self.states.contains_key(session_id) {
+                Err(PermissionSwitchError::NoWrapper)
+            } else {
+                Err(PermissionSwitchError::NoSession)
+            };
+        }
+        let Some(handle) = self.managed_yolo.get(session_id).map(|h| h.clone()) else {
+            return Err(PermissionSwitchError::Managed);
+        };
+        match mode {
+            "yolo" => {
+                handle.live.store(true, std::sync::atomic::Ordering::Relaxed);
+                Ok("yolo")
+            }
+            "ask" => {
+                if handle.spawned_yolo {
+                    return Err(PermissionSwitchError::ManagedUnavailable { current: "yolo" });
+                }
+                handle.live.store(false, std::sync::atomic::Ordering::Relaxed);
+                Ok("ask")
+            }
+            _ => Err(PermissionSwitchError::Managed),
+        }
     }
 
     // --- chat message submission --------------------------------------------
@@ -1623,5 +1860,176 @@ mod tests {
         assert!(store.subscribe_bytes("m2").is_none(), "byte broadcast released");
         // The lightweight state row is kept (marked Stopped) for history.
         assert_eq!(store.get("m2").map(|s| s.mode), Some(SessionMode::Stopped));
+    }
+
+    // ── live permission-mode switch ──
+
+    use crate::session::permission_mode::{PermissionMode, PermissionSwitchError};
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    const SHIFT_TAB: &[u8] = b"\x1b[Z";
+
+    /// Bottom-row footer redraw for a mode marker: park the cursor on the last
+    /// default row (24), erase it, write the marker — what the classifier sees.
+    fn footer(marker: &str) -> Vec<u8> {
+        format!("\x1b[24;1H\x1b[2K{marker}").into_bytes()
+    }
+
+    fn marker_for(mode: &str) -> &'static str {
+        match mode {
+            "acceptEdits" => "⏵⏵ accept edits on (shift+tab to cycle)",
+            "plan" => "⏸ plan mode on (shift+tab to cycle)",
+            "bypassPermissions" => "⏵⏵ bypass permissions on (shift+tab to cycle)",
+            _ => "? for shortcuts",
+        }
+    }
+
+    /// A fake Claude TUI: consumes wrapper input frames and, on each Shift+Tab,
+    /// advances through `cycle` and redraws the footer accordingly. Returns a
+    /// press counter the test can assert on.
+    fn fake_tui(
+        store: &SessionStore,
+        sid: &'static str,
+        mut rx: mpsc::UnboundedReceiver<WrapperMessage>,
+        cycle: &'static [&'static str],
+    ) -> Arc<AtomicU32> {
+        let presses = Arc::new(AtomicU32::new(0));
+        let presses_out = presses.clone();
+        let store = store.clone();
+        tokio::spawn(async move {
+            let mut idx = 0usize;
+            while let Some(msg) = rx.recv().await {
+                let WrapperMessage::Input { bytes } = msg else { continue };
+                let Ok(decoded) = B64.decode(bytes.as_bytes()) else { continue };
+                if decoded == SHIFT_TAB {
+                    presses.fetch_add(1, Ordering::SeqCst);
+                    idx = (idx + 1) % cycle.len();
+                    store.record_output(sid, &footer(marker_for(cycle[idx]))).await;
+                }
+            }
+        });
+        presses_out
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn mode_switch_cycles_to_target_and_stops() {
+        let store = SessionStore::new();
+        let (h, rx) = handle_with_rx();
+        store.register_wrapper("s1", "/w", h); // synthetic SessionStart → Input
+        store.record_output("s1", &footer("? for shortcuts")).await;
+        let presses = fake_tui(&store, "s1", rx, &["default", "acceptEdits", "plan"]);
+
+        let got = store.set_permission_mode("s1", PermissionMode::Plan).await;
+        assert_eq!(got, Ok(PermissionMode::Plan));
+        assert_eq!(presses.load(Ordering::SeqCst), 2, "default → acceptEdits → plan");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn mode_switch_is_a_noop_when_already_on_target() {
+        let store = SessionStore::new();
+        let (h, mut rx) = handle_with_rx();
+        store.register_wrapper("s1", "/w", h);
+        store.record_output("s1", &footer(marker_for("acceptEdits"))).await;
+
+        let got = store.set_permission_mode("s1", PermissionMode::AcceptEdits).await;
+        assert_eq!(got, Ok(PermissionMode::AcceptEdits));
+        assert!(rx.try_recv().is_err(), "no keystrokes for a no-op switch");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn mode_switch_reports_unavailable_after_a_full_cycle() {
+        let store = SessionStore::new();
+        let (h, rx) = handle_with_rx();
+        store.register_wrapper("s1", "/w", h);
+        store.record_output("s1", &footer("? for shortcuts")).await;
+        // Bypass isn't in this session's cycle.
+        let presses = fake_tui(&store, "s1", rx, &["default", "acceptEdits", "plan"]);
+
+        let got = store.set_permission_mode("s1", PermissionMode::BypassPermissions).await;
+        assert_eq!(got, Err(PermissionSwitchError::Unavailable(PermissionMode::Default)),
+            "full loop ends back at the starting mode");
+        assert_eq!(presses.load(Ordering::SeqCst), 3, "one full cycle, then stop");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn mode_switch_gives_up_when_the_tui_ignores_the_keystroke() {
+        let store = SessionStore::new();
+        let (h, _rx) = handle_with_rx(); // nobody redraws the footer
+        store.register_wrapper("s1", "/w", h);
+        store.record_output("s1", &footer("? for shortcuts")).await;
+
+        let got = store.set_permission_mode("s1", PermissionMode::Plan).await;
+        assert_eq!(got, Err(PermissionSwitchError::Unverified(PermissionMode::Default)));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn mode_switch_rejected_while_a_dialog_is_open() {
+        let store = SessionStore::new();
+        let (h, mut rx) = handle_with_rx();
+        store.register_wrapper("s1", "/w", h);
+        store.ingest(hook("PermissionRequest", "s1", "/w")); // Approval pause
+
+        let got = store.set_permission_mode("s1", PermissionMode::AcceptEdits).await;
+        assert_eq!(got, Err(PermissionSwitchError::Busy(SessionMode::Approval)));
+        assert!(rx.try_recv().is_err(), "no keystrokes near an open dialog");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn mode_switch_rejected_for_managed_sessions() {
+        let store = SessionStore::new();
+        store.register_managed("m1", "/tmp");
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        store.register_managed_input("m1", tx);
+        let got = store.set_permission_mode("m1", PermissionMode::AcceptEdits).await;
+        assert_eq!(got, Err(PermissionSwitchError::Managed));
+    }
+
+    // ── managed (codex) live approval-policy switch ──
+
+    fn managed_with_yolo(store: &SessionStore, sid: &str, spawned_yolo: bool) -> Arc<std::sync::atomic::AtomicBool> {
+        store.register_managed(sid, "/tmp");
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        store.register_managed_input(sid, tx);
+        let live = Arc::new(std::sync::atomic::AtomicBool::new(spawned_yolo));
+        store.register_managed_yolo(sid, live.clone(), spawned_yolo);
+        live
+    }
+
+    #[test]
+    fn managed_switch_ask_to_yolo_flips_the_adapter_flag() {
+        let store = SessionStore::new();
+        let live = managed_with_yolo(&store, "m1", false);
+        assert_eq!(store.set_managed_permission_mode("m1", "yolo"), Ok("yolo"));
+        assert!(live.load(Ordering::SeqCst), "adapter now auto-approves");
+        // …and back: the provider wasn't spawned in bypass mode, so approvals
+        // still flow and 'ask' is reachable live.
+        assert_eq!(store.set_managed_permission_mode("m1", "ask"), Ok("ask"));
+        assert!(!live.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn managed_switch_to_ask_unavailable_when_spawned_yolo() {
+        let store = SessionStore::new();
+        let live = managed_with_yolo(&store, "m1", true);
+        assert_eq!(
+            store.set_managed_permission_mode("m1", "ask"),
+            Err(PermissionSwitchError::ManagedUnavailable { current: "yolo" }),
+            "a bypass-spawned provider never asks — flipping the flag would be a silent no-op"
+        );
+        assert!(live.load(Ordering::SeqCst), "flag untouched on refusal");
+    }
+
+    #[test]
+    fn managed_switch_without_registered_flag_reports_frozen() {
+        // opencode/pi and the codex rollout fallback never register a live
+        // flag — the switch must refuse rather than pretend.
+        let store = SessionStore::new();
+        store.register_managed("m1", "/tmp");
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        store.register_managed_input("m1", tx);
+        assert_eq!(
+            store.set_managed_permission_mode("m1", "yolo"),
+            Err(PermissionSwitchError::Managed)
+        );
     }
 }

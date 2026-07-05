@@ -27,6 +27,7 @@
 //! needs a real `codex` binary to validate end-to-end.
 
 use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -82,20 +83,39 @@ pub fn translate(method: &str, params: &Value) -> Vec<AgentUpdate> {
             }
         }
         "thread/tokenUsage/updated" => {
-            let u = params.get("usage").unwrap_or(params);
-            let input = u.get("input_tokens").and_then(Value::as_u64);
-            let output = u.get("output_tokens").and_then(Value::as_u64);
+            // Current wire (`ThreadTokenUsage`): `{ tokenUsage: { total: {…},
+            // last: {…}, modelContextWindow } }` where total/last are camelCase
+            // `TokenUsageBreakdown`s. `total` is CUMULATIVE across the whole
+            // thread; `last` is the most recent request — i.e. what's actually
+            // occupying the context window right now. Older builds sent a flat
+            // snake_case `usage` object; those spellings are kept as fallbacks.
+            let tu = params.get("tokenUsage").or_else(|| params.get("usage")).unwrap_or(params);
+            let pick = |v: &Value, keys: [&str; 2]| keys.iter().find_map(|k| v.get(*k).and_then(Value::as_u64));
+            let total = tu.get("total");
+            let last = tu.get("last");
+            // Cumulative session totals, for the tokens readout.
+            let input = total
+                .and_then(|t| pick(t, ["inputTokens", "input_tokens"]))
+                .or_else(|| pick(tu, ["input_tokens", "inputTokens"]));
+            let output = total
+                .and_then(|t| pick(t, ["outputTokens", "output_tokens"]))
+                .or_else(|| pick(tu, ["output_tokens", "outputTokens"]));
             if input.is_some() || output.is_some() {
-                // Context occupancy: prefer the event's own total; else sum. The
-                // window is probed on both objects and in both spellings — codex
-                // has carried `model_context_window` beside the token totals.
-                let context_tokens = u
-                    .get("total_tokens")
-                    .and_then(Value::as_u64)
-                    .or_else(|| Some(input.unwrap_or(0) + output.unwrap_or(0)));
-                let context_window = [u, params].iter().find_map(|v| {
-                    v.get("model_context_window")
-                        .or_else(|| v.get("modelContextWindow"))
+                // Context occupancy: the LAST request's total (never the
+                // cumulative one — that pins the meter at 100% within a few
+                // turns). Only the legacy flat shape falls back to its own
+                // total, which was per-turn there.
+                let context_tokens = last
+                    .and_then(|l| pick(l, ["totalTokens", "total_tokens"]))
+                    .or_else(|| {
+                        total.is_none().then(|| {
+                            pick(tu, ["total_tokens", "totalTokens"])
+                                .unwrap_or_else(|| input.unwrap_or(0) + output.unwrap_or(0))
+                        })
+                    });
+                let context_window = [tu, params].iter().find_map(|v| {
+                    v.get("modelContextWindow")
+                        .or_else(|| v.get("model_context_window"))
                         .and_then(Value::as_u64)
                 });
                 out.push(AgentUpdate::Usage {
@@ -106,6 +126,33 @@ pub fn translate(method: &str, params: &Value) -> Vec<AgentUpdate> {
                     context_tokens,
                     context_window,
                 });
+            }
+        }
+        // Thread settings changed — by our own `thread/settings/update` (live
+        // model switch) or by the user in the TUI (`/model`). Either way the
+        // model on the status line follows the thread's truth.
+        "thread/settings/updated" => {
+            let model = params
+                .get("threadSettings")
+                .and_then(|s| s.get("model"))
+                .and_then(Value::as_str);
+            if let Some(m) = model {
+                out.push(AgentUpdate::Usage {
+                    model: Some(m.to_string()),
+                    input_tokens: None,
+                    output_tokens: None,
+                    cost_usd: None,
+                    context_tokens: None,
+                    context_window: None,
+                });
+            }
+        }
+        // Account 5h/7d rate-limit windows (`RateLimitSnapshot`) — same meaning
+        // as Claude's statusLine rate_limits, so they land in the same fields.
+        "account/rateLimits/updated" => {
+            let snap = params.get("rateLimits").unwrap_or(params);
+            if let Some(u) = super::rate_limits_from(snap) {
+                out.push(u);
             }
         }
         "item/commandExecution/requestApproval" => {
@@ -469,6 +516,18 @@ async fn run_session(
     store.register_managed_input(session_id, tx);
     let (dtx, mut drx) = mpsc::unbounded_channel::<bool>();
     store.register_managed_decision(session_id, dtx);
+    // Live model/effort switch (POST /sessions/:id/model): applied to the
+    // running thread via `thread/settings/update`, so subsequent turns — from
+    // the GUI or the TUI — use the new model. No restart, thread untouched.
+    let (mtx, mut mrx) = mpsc::unbounded_channel::<crate::session::ModelSwitch>();
+    store.register_managed_model_switch(session_id, mtx);
+    // Approval policy, live-switchable via `/permission-mode`: the adapter
+    // mediates every approval request on this ws path, so flipping the flag
+    // takes effect on the next request without touching the session. A
+    // yolo-spawned TUI bypasses approvals at the source, though — that
+    // direction needs a restart (`spawned_yolo` records it).
+    let yolo_live = Arc::new(AtomicBool::new(yolo));
+    store.register_managed_yolo(session_id, yolo_live.clone(), yolo);
 
     // The native TUI OWNS the thread: bare `codex --remote` creates and runs it
     // (a real, "running", resumable rollout) — then we rejoin it over RPC (below)
@@ -490,6 +549,10 @@ async fn run_session(
     let mut req_id: u64 = 2;
     let mut cur_mode = SessionMode::Input;
     let mut acc = UsageAcc::new();
+    // Codex's usage events never carry the model id — name it from the spawn
+    // setting so the status line isn't blank (and the window-table fallback has
+    // something to key on if the event omits `modelContextWindow`).
+    acc.seed_model(model.as_deref());
     // JSON-RPC ids of approval requests awaiting the user's decision (non-YOLO),
     // FIFO. A queue (not a single slot) so two requests arriving before the user
     // answers don't drop the first and deadlock the agent. YOLO answers inline and
@@ -525,7 +588,7 @@ async fn run_session(
                         handle_message(
                             &value, store, conv, session_id, &out_tx,
                             &mut thread_id, &mut subscribed, &mut pending_prompts, &mut req_id,
-                            &mut cur_mode, &mut acc, yolo, &mut pending_approvals,
+                            &mut cur_mode, &mut acc, &yolo_live, &mut pending_approvals,
                         );
                     }
                 }
@@ -590,6 +653,25 @@ async fn run_session(
                         let _ = out_tx.send(json!({ "jsonrpc": "2.0", "id": id, "result": result }));
                         store.set_managed_mode(session_id, SessionMode::Responding, None);
                         cur_mode = SessionMode::Responding;
+                    }
+                }
+                None => break,
+            },
+            switch = mrx.recv() => match switch {
+                Some(sw) => {
+                    // Settings live on the thread; partial params leave the
+                    // rest untouched. Confirmation arrives as the
+                    // `thread/settings/updated` notification (handled in
+                    // `translate`), which refreshes the status-line model.
+                    match &thread_id {
+                        Some(tid) if subscribed => {
+                            let mut params = json!({ "threadId": tid });
+                            if let Some(m) = &sw.model { params["model"] = json!(m); }
+                            if let Some(e) = &sw.effort { params["effort"] = json!(e); }
+                            req_id += 1;
+                            let _ = out_tx.send(json!({ "jsonrpc": "2.0", "id": req_id, "method": "thread/settings/update", "params": params }));
+                        }
+                        _ => tracing::warn!(session = %session_id, "model switch requested before the thread was joined — ignored"),
                     }
                 }
                 None => break,
@@ -687,7 +769,7 @@ fn handle_message(
     req_id: &mut u64,
     cur_mode: &mut SessionMode,
     acc: &mut UsageAcc,
-    yolo: bool,
+    yolo: &AtomicBool,
     pending_approvals: &mut std::collections::VecDeque<Value>,
 ) {
     // A response to one of our requests:
@@ -753,7 +835,7 @@ fn handle_message(
     // (see the decision branch in run_session).
     if value.get("id").is_some() && method.ends_with("/requestApproval") {
         let id = value.get("id").cloned().unwrap_or(Value::Null);
-        if yolo {
+        if yolo.load(Ordering::Relaxed) {
             let _ = out_tx.send(json!({ "jsonrpc": "2.0", "id": id, "result": { "decision": "accept" } }));
         } else {
             pending_approvals.push_back(id);
@@ -832,7 +914,7 @@ mod tests {
     }
 
     #[test]
-    fn token_usage_maps_to_usage() {
+    fn token_usage_maps_to_usage_legacy_flat_shape() {
         let p = json!({ "usage": { "input_tokens": 1000, "output_tokens": 200, "cached_input_tokens": 50,
             "total_tokens": 1250, "model_context_window": 272000 } });
         assert_eq!(
@@ -844,6 +926,62 @@ mod tests {
                 cost_usd: None,
                 context_tokens: Some(1250),
                 context_window: Some(272000),
+            }]
+        );
+    }
+
+    #[test]
+    fn token_usage_thread_shape_uses_last_for_context() {
+        // Modern `ThreadTokenUsage` wire: cumulative `total`, per-request
+        // `last`. Tokens readout = total; context occupancy = last (using the
+        // cumulative total here is the bug that pinned the meter at 100%).
+        let p = json!({ "threadId": "t1", "tokenUsage": {
+            "total": { "totalTokens": 4443142, "inputTokens": 4402946, "cachedInputTokens": 3733376,
+                       "outputTokens": 40196, "reasoningOutputTokens": 17792 },
+            "last": { "totalTokens": 132552, "inputTokens": 132153, "cachedInputTokens": 130432,
+                      "outputTokens": 399, "reasoningOutputTokens": 99 },
+            "modelContextWindow": 258400 } });
+        assert_eq!(
+            translate("thread/tokenUsage/updated", &p),
+            vec![AgentUpdate::Usage {
+                model: None,
+                input_tokens: Some(4402946),
+                output_tokens: Some(40196),
+                cost_usd: None,
+                context_tokens: Some(132552),
+                context_window: Some(258400),
+            }]
+        );
+    }
+
+    #[test]
+    fn thread_settings_updated_yields_model() {
+        let p = json!({ "threadId": "t1", "threadSettings": { "model": "gpt-5.5-codex", "effort": "high" } });
+        assert_eq!(
+            translate("thread/settings/updated", &p),
+            vec![AgentUpdate::Usage {
+                model: Some("gpt-5.5-codex".into()),
+                input_tokens: None,
+                output_tokens: None,
+                cost_usd: None,
+                context_tokens: None,
+                context_window: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn account_rate_limits_map_to_windows() {
+        let p = json!({ "rateLimits": {
+            "primary": { "usedPercent": 19.0, "windowDurationMins": 300, "resetsAt": 1783121345 },
+            "secondary": { "usedPercent": 3.0, "windowDurationMins": 10080, "resetsAt": 1783708145 } } });
+        assert_eq!(
+            translate("account/rateLimits/updated", &p),
+            vec![AgentUpdate::RateLimits {
+                five_hour_pct: Some(19.0),
+                five_hour_resets_at: Some(1783121345),
+                seven_day_pct: Some(3.0),
+                seven_day_resets_at: Some(1783708145),
             }]
         );
     }
