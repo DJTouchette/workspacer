@@ -32,16 +32,16 @@ theme, roughly ordered by severity within each group.
 
 ## Correctness / robustness
 
-- [ ] **Codex model-switch during boot silently dropped** — HTTP 200 returned,
+- [x] **Codex model-switch during boot silently dropped** — HTTP 200 returned,
       then `codex.rs:674` logs "requested before the thread was joined —
       ignored". Queue it and apply after join, or return an error.
 - [x] **Hub supervisor hot-loops** — fixed 1s restart backoff, no cap
       (`services/hub/internal/supervisor/supervisor.go:58-63`); health-check
       failures are observability-only.
-- [ ] `terminate_managed` leaks the yolo handle — removes
+- [x] `terminate_managed` leaks the yolo handle — removes
       `managed_inputs/decisions/model` but not `managed_yolo`
       (`services/claudemon/src/session/store.rs`, terminate path).
-- [ ] Managed approval cards carry no tool input — `Pending::Approval { raw:
+- [x] Managed approval cards carry no tool input — `Pending::Approval { raw:
       Value::Null }` (`providers/mod.rs`), so the GUI can't show the payload
       for Codex/OpenCode/Pi approvals the way it can for Claude hook approvals.
 - [x] Pane-token registration race (`services/hub/internal/plugin/manager.go:230-233`)
@@ -52,7 +52,7 @@ theme, roughly ordered by severity within each group.
       saved share/webview URLs.
 - [x] `fileWatchService.ts:87` drops watcher errors to keep the watcher alive —
       errors invisible.
-- [ ] claudemon's `/sessions` JSON carries no `provider`/managed field —
+- [x] claudemon's `/sessions` JSON carries no `provider`/managed field —
       clients must guess (the TUI tracks providers only for sessions it
       spawned itself; adopted managed sessions default to claude). Add a
       `provider` field to the session payload.
@@ -79,8 +79,10 @@ theme, roughly ordered by severity within each group.
 
 ## Test coverage
 
-- [ ] claudemon HTTP surface: ~30 handlers in `daemon/api.rs` have one test
-      between them; `daemon/spawn.rs`, `wrapper_ws.rs`, `hook.rs` untested.
+- [ ] claudemon HTTP surface: an axum oneshot test harness now exists in
+      `daemon/api.rs` (health, session list, 404, 409 paths seeded) — extend
+      it across the remaining ~25 handlers; `daemon/spawn.rs`, `wrapper_ws.rs`,
+      `hook.rs` still untested.
 - [ ] Desktop main: `hubCapabilities.ts` and the four claudemon bridges have
       zero tests (this is how the spawn drift went unnoticed).
 - [ ] Renderer: no pane/component tests for `App.tsx`, `ClaudePane.tsx`, or the

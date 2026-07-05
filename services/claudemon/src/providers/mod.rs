@@ -134,6 +134,11 @@ pub enum AgentUpdate {
         id: Option<String>,
         tool: Option<String>,
         summary: Option<String>,
+        /// The provider's raw request payload, so the GUI can render the full
+        /// approval detail (argv, diff, dialog fields) the way it does for
+        /// Claude hook approvals. `Value::Null` when the adapter has no richer
+        /// payload than the tool/summary it already carries.
+        raw: Value,
     },
     /// A chunk of assistant text to append to the conversation.
     AssistantText(String),
@@ -420,7 +425,7 @@ pub fn apply_updates(
                     new_mode = Some(SessionMode::Responding);
                 }
             }
-            AgentUpdate::PermissionPending { tool, summary, .. } => {
+            AgentUpdate::PermissionPending { tool, summary, raw, .. } => {
                 new_mode = Some(SessionMode::Approval);
                 // NOTE: surfacing the pending approval is accurate telemetry, but
                 // forwarding the user's decision back to the provider's approval
@@ -428,7 +433,7 @@ pub fn apply_updates(
                 pending = Some(Pending::Approval {
                     tool: tool.clone(),
                     summary: summary.clone(),
-                    raw: Value::Null,
+                    raw: raw.clone(),
                 });
             }
             AgentUpdate::Usage { model, input_tokens, output_tokens, cost_usd, context_tokens, context_window } => {

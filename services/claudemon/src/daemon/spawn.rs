@@ -232,7 +232,7 @@ pub async fn handle_managed(
         .bin
         .unwrap_or_else(|| payload.provider.clone());
 
-    store.register_managed(&session_id, &payload.cwd);
+    store.register_managed(&session_id, &payload.cwd, &payload.provider);
     let facade = crate::providers::Facade {
         mcp_url: payload.mcp.clone(),
         instructions: payload.instructions.clone(),

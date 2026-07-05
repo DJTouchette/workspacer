@@ -161,6 +161,7 @@ pub fn translate(method: &str, params: &Value) -> Vec<AgentUpdate> {
                 id: None, // carried out of band as the JSON-RPC request id
                 tool: Some("command".into()),
                 summary: cmd,
+                raw: params.clone(),
             });
         }
         "item/fileChange/requestApproval" => {
@@ -173,6 +174,7 @@ pub fn translate(method: &str, params: &Value) -> Vec<AgentUpdate> {
                 id: None,
                 tool: Some("file change".into()),
                 summary: path,
+                raw: params.clone(),
             });
         }
         _ => {}
@@ -560,6 +562,10 @@ async fn run_session(
     let mut pending_approvals: std::collections::VecDeque<Value> = std::collections::VecDeque::new();
     // Role instructions to prepend to the first turn only (supervisors).
     let mut pending_instructions: Option<String> = facade.instructions.clone();
+    // A model/effort switch requested before the thread is joined can't be sent
+    // yet (there's no thread to update), but the HTTP call already returned 200 —
+    // stash it here and apply it the instant we subscribe rather than dropping it.
+    let mut pending_switch: Option<crate::session::ModelSwitch> = None;
     // Poll `thread/loaded/list` until the TUI's thread appears, then rejoin it —
     // retrying the resume until we're actually subscribed. Bounded by a deadline
     // so a TUI that never creates a thread (or died at startup) can't busy-poll
@@ -589,6 +595,7 @@ async fn run_session(
                             &value, store, conv, session_id, &out_tx,
                             &mut thread_id, &mut subscribed, &mut pending_prompts, &mut req_id,
                             &mut cur_mode, &mut acc, &yolo_live, &mut pending_approvals,
+                            &mut pending_switch,
                         );
                     }
                 }
@@ -665,13 +672,14 @@ async fn run_session(
                     // `translate`), which refreshes the status-line model.
                     match &thread_id {
                         Some(tid) if subscribed => {
-                            let mut params = json!({ "threadId": tid });
-                            if let Some(m) = &sw.model { params["model"] = json!(m); }
-                            if let Some(e) = &sw.effort { params["effort"] = json!(e); }
-                            req_id += 1;
-                            let _ = out_tx.send(json!({ "jsonrpc": "2.0", "id": req_id, "method": "thread/settings/update", "params": params }));
+                            send_model_switch(&out_tx, &mut req_id, tid, &sw);
                         }
-                        _ => tracing::warn!(session = %session_id, "model switch requested before the thread was joined — ignored"),
+                        // Not joined yet — stash it; `handle_message` applies it
+                        // the moment the resume subscribes us to the thread.
+                        _ => {
+                            tracing::debug!(session = %session_id, "model switch requested before thread join — queued");
+                            merge_pending_switch(&mut pending_switch, sw);
+                        }
                     }
                 }
                 None => break,
@@ -771,6 +779,7 @@ fn handle_message(
     acc: &mut UsageAcc,
     yolo: &AtomicBool,
     pending_approvals: &mut std::collections::VecDeque<Value>,
+    pending_switch: &mut Option<crate::session::ModelSwitch>,
 ) {
     // A response to one of our requests:
     //  - `thread/loaded/list` (id=100): `result.data` lists thread ids loaded in
@@ -787,6 +796,9 @@ fn handle_message(
             } else {
                 *subscribed = true;
                 tracing::info!(session = %session_id, thread = ?thread_id, "codex: rejoined thread — GUI stream subscribed");
+                if let (Some(sw), Some(tid)) = (pending_switch.take(), thread_id.as_deref()) {
+                    send_model_switch(out_tx, req_id, tid, &sw);
+                }
             }
         }
         if thread_id.is_none() {
@@ -822,6 +834,9 @@ fn handle_message(
     // missed its response — stop the discover/retry loop.
     if !*subscribed && (method.starts_with("turn/") || method.starts_with("item/")) {
         *subscribed = true;
+        if let (Some(sw), Some(tid)) = (pending_switch.take(), thread_id.as_deref()) {
+            send_model_switch(out_tx, req_id, tid, &sw);
+        }
     }
 
     let updates = translate(method, &params);
@@ -850,6 +865,48 @@ fn send_turn(out_tx: &mpsc::UnboundedSender<Value>, id: u64, thread_id: &str, te
         "method": "turn/start",
         "params": { "threadId": thread_id, "input": [ { "type": "text", "text": text } ] }
     }));
+}
+
+/// Push a `thread/settings/update` for a live model/effort switch. Partial params
+/// leave the untouched setting as is; confirmation returns via the
+/// `thread/settings/updated` notification.
+fn send_model_switch(
+    out_tx: &mpsc::UnboundedSender<Value>,
+    req_id: &mut u64,
+    thread_id: &str,
+    switch: &crate::session::ModelSwitch,
+) {
+    let mut params = json!({ "threadId": thread_id });
+    if let Some(m) = &switch.model {
+        params["model"] = json!(m);
+    }
+    if let Some(e) = &switch.effort {
+        params["effort"] = json!(e);
+    }
+    *req_id += 1;
+    let _ = out_tx.send(json!({
+        "jsonrpc": "2.0",
+        "id": *req_id,
+        "method": "thread/settings/update",
+        "params": params,
+    }));
+}
+
+/// Fold a new switch into a stashed one (or start one), so a burst of switches
+/// requested before the thread joins collapses to the latest value per field
+/// rather than dropping all but one.
+fn merge_pending_switch(pending: &mut Option<crate::session::ModelSwitch>, switch: crate::session::ModelSwitch) {
+    match pending {
+        Some(existing) => {
+            if switch.model.is_some() {
+                existing.model = switch.model;
+            }
+            if switch.effort.is_some() {
+                existing.effort = switch.effort;
+            }
+        }
+        None => *pending = Some(switch),
+    }
 }
 
 /// Write one JSON-RPC message as a single newline-delimited line. Used by the
@@ -995,6 +1052,7 @@ mod tests {
                 id: None,
                 tool: Some("command".into()),
                 summary: Some("rm -rf build".into()),
+                raw: p.clone(),
             }]
         );
     }
@@ -1008,6 +1066,7 @@ mod tests {
                 id: None,
                 tool: Some("file change".into()),
                 summary: Some("src/main.rs".into()),
+                raw: p.clone(),
             }]
         );
     }
@@ -1016,5 +1075,48 @@ mod tests {
     fn unknown_method_is_ignored() {
         assert!(translate("session/whatever", &json!({ "x": 1 })).is_empty());
         assert!(translate("item/reasoning/summaryTextDelta", &json!({ "delta": "thinking" })).is_empty());
+    }
+
+    #[test]
+    fn merge_pending_switch_starts_and_overrides_per_field() {
+        use crate::session::ModelSwitch;
+        let mut pending: Option<ModelSwitch> = None;
+        // First switch seeds the slot.
+        merge_pending_switch(&mut pending, ModelSwitch { model: Some("gpt-5.5-codex".into()), effort: None });
+        let p = pending.clone().unwrap();
+        assert_eq!(p.model.as_deref(), Some("gpt-5.5-codex"));
+        assert_eq!(p.effort, None);
+        // A later switch that only sets effort keeps the earlier model.
+        merge_pending_switch(&mut pending, ModelSwitch { model: None, effort: Some("high".into()) });
+        let p = pending.clone().unwrap();
+        assert_eq!(p.model.as_deref(), Some("gpt-5.5-codex"));
+        assert_eq!(p.effort.as_deref(), Some("high"));
+        // A later switch that sets model overrides only the model.
+        merge_pending_switch(&mut pending, ModelSwitch { model: Some("gpt-5.5".into()), effort: None });
+        let p = pending.unwrap();
+        assert_eq!(p.model.as_deref(), Some("gpt-5.5"));
+        assert_eq!(p.effort.as_deref(), Some("high"));
+    }
+
+    #[test]
+    fn pending_switch_is_flushed_once_subscribed() {
+        use crate::session::ModelSwitch;
+        // Emulate the queue-and-apply path: a switch stashed before join is sent
+        // as a thread/settings/update the moment we subscribe.
+        let (tx, mut rx) = mpsc::unbounded_channel::<Value>();
+        let mut pending: Option<ModelSwitch> =
+            Some(ModelSwitch { model: Some("gpt-5.5-codex".into()), effort: Some("high".into()) });
+        let mut req_id: u64 = 5;
+        let thread_id = Some("t1".to_string());
+        if let (Some(sw), Some(tid)) = (pending.take(), thread_id.as_deref()) {
+            send_model_switch(&tx, &mut req_id, tid, &sw);
+        }
+        assert!(pending.is_none());
+        let sent = rx.try_recv().expect("a settings update should have been queued");
+        assert_eq!(sent["method"], "thread/settings/update");
+        assert_eq!(sent["id"], json!(6));
+        assert_eq!(sent["params"]["threadId"], "t1");
+        assert_eq!(sent["params"]["model"], "gpt-5.5-codex");
+        assert_eq!(sent["params"]["effort"], "high");
     }
 }

@@ -881,7 +881,100 @@ async fn status_line_stream(
 
 #[cfg(test)]
 mod tests {
-    use super::items_skip;
+    use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+    use tower::ServiceExt; // for `oneshot`
+
+    /// Build an `ApiState` backed by a throwaway on-disk SQLite db and empty
+    /// in-memory stores. Each call gets a fresh db file so tests don't share
+    /// state. This is the seam future handler tests build on: register whatever
+    /// the handler reads (sessions, conversation) on `state.store`/`state.conv`
+    /// before dispatching a request.
+    fn test_state() -> ApiState {
+        let mut db_path = std::env::temp_dir();
+        db_path.push(format!("claudemon-api-test-{}.db", uuid::Uuid::new_v4()));
+        ApiState {
+            store: SessionStore::new(),
+            db: Db::open(&db_path).expect("open test db"),
+            conv: ConversationStore::new(),
+        }
+    }
+
+    /// Dispatch one request through the full router (layers + routing) and
+    /// return the status plus the response body as bytes. Uses tower's
+    /// `oneshot`, the idiomatic axum handler-test path — no socket is bound.
+    async fn request(state: ApiState, req: Request<Body>) -> (StatusCode, Vec<u8>) {
+        let resp = router(state).oneshot(req).await.expect("router responds");
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .expect("collect body");
+        (status, bytes.to_vec())
+    }
+
+    fn get(uri: &str) -> Request<Body> {
+        Request::builder().uri(uri).body(Body::empty()).unwrap()
+    }
+
+    fn post_json(uri: &str, body: Value) -> Request<Body> {
+        Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn health_returns_ok() {
+        let (status, body) = request(test_state(), get("/health")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, b"ok");
+    }
+
+    #[tokio::test]
+    async fn list_sessions_empty_is_empty_array() {
+        let (status, body) = request(test_state(), get("/sessions")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(serde_json::from_slice::<Value>(&body).unwrap(), json!([]));
+    }
+
+    #[tokio::test]
+    async fn list_sessions_includes_a_registered_session_with_provider() {
+        let state = test_state();
+        state.store.register_managed("sess-1", "/tmp/proj", "codex");
+        let (status, body) = request(state, get("/sessions")).await;
+        assert_eq!(status, StatusCode::OK);
+        let arr = serde_json::from_slice::<Value>(&body).unwrap();
+        let sessions = arr.as_array().expect("array");
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0]["session_id"], "sess-1");
+        // The additive provider field is surfaced on the wire.
+        assert_eq!(sessions[0]["provider"], "codex");
+    }
+
+    #[tokio::test]
+    async fn get_unknown_session_is_404() {
+        let (status, body) = request(test_state(), get("/sessions/does-not-exist")).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body, b"session not found");
+    }
+
+    #[tokio::test]
+    async fn post_model_on_unswitchable_session_conflicts() {
+        // A managed session with no model-switch channel registered (opencode/pi
+        // or the codex rollout fallback) can't switch live: the route surfaces
+        // the store's refusal as 409 rather than a silent success.
+        let state = test_state();
+        state.store.register_managed("sess-1", "/tmp/proj", "opencode");
+        let req = post_json("/sessions/sess-1/model", json!({ "model": "gpt-5.5" }));
+        let (status, body) = request(state, req).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        let v = serde_json::from_slice::<Value>(&body).unwrap();
+        assert_eq!(v["ok"], false);
+        assert!(v["error"].is_string());
+    }
 
     #[test]
     fn items_skip_window() {

@@ -662,13 +662,14 @@ impl SessionStore {
     /// output buffer + byte channel so the renderer's viewer-attach path
     /// (`/sessions/:id/stream`) works uniformly — it simply never receives any
     /// bytes; the conversation/state/status streams carry the real telemetry.
-    pub fn register_managed(&self, session_id: &str, cwd: &str) -> SessionState {
+    pub fn register_managed(&self, session_id: &str, cwd: &str, provider: &str) -> SessionState {
         let state = {
             let mut entry = self
                 .states
                 .entry(session_id.to_string())
                 .or_insert_with(|| SessionState::new(session_id.to_string(), Some(cwd.to_string())));
             entry.mode = SessionMode::Input;
+            entry.provider = provider.to_string();
             entry.clone()
         };
         self.buffers
@@ -784,6 +785,7 @@ impl SessionStore {
         let existed = self.managed_inputs.remove(session_id).is_some();
         self.managed_decisions.remove(session_id);
         self.managed_model.remove(session_id);
+        self.managed_yolo.remove(session_id);
         existed
     }
 
@@ -1832,7 +1834,7 @@ mod tests {
     #[test]
     fn terminate_managed_closes_the_prompt_channel() {
         let store = SessionStore::new();
-        store.register_managed("m1", "/tmp");
+        store.register_managed("m1", "/tmp", "codex");
         let (tx, mut rx) = mpsc::unbounded_channel::<String>();
         store.register_managed_input("m1", tx);
         assert!(store.is_managed("m1"));
@@ -1845,12 +1847,54 @@ mod tests {
         assert!(!store.terminate_managed("m1"));
     }
 
+    // terminate_managed must clean up every managed registration, including the
+    // yolo handle — leaking it kept the approval-policy flag alive past teardown.
+    #[test]
+    fn terminate_managed_cleans_up_the_yolo_handle() {
+        let store = SessionStore::new();
+        let _live = managed_with_yolo(&store, "m1", false);
+        // The yolo flag is registered, so a live policy switch is accepted.
+        assert_eq!(store.set_managed_permission_mode("m1", "yolo"), Ok("yolo"));
+
+        assert!(store.terminate_managed("m1"));
+        // Re-register just the prompt channel so `is_managed` is true again but
+        // the yolo handle is NOT — isolating that terminate cleaned it up. With
+        // the handle gone the switch reports the session frozen rather than
+        // silently mutating a leaked handle.
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        store.register_managed_input("m1", tx);
+        assert_eq!(
+            store.set_managed_permission_mode("m1", "yolo"),
+            Err(PermissionSwitchError::Managed),
+            "yolo handle should be gone after terminate"
+        );
+    }
+
+    // The serialized session carries the provider so clients don't guess: PTY
+    // sessions default to claude; managed sessions report their adapter.
+    #[test]
+    fn session_state_carries_provider() {
+        let store = SessionStore::new();
+        let managed = store.register_managed("m1", "/tmp", "opencode");
+        assert_eq!(managed.provider, "opencode");
+        // A brand-new (PTY-style) state defaults to claude, and survives a
+        // serde round-trip via the default when the field is absent.
+        let claude = SessionState::new("c1".to_string(), Some("/tmp".to_string()));
+        assert_eq!(claude.provider, "claude");
+        let json = serde_json::to_value(&claude).unwrap();
+        assert_eq!(json["provider"], "claude");
+        let mut obj = json.as_object().unwrap().clone();
+        obj.remove("provider");
+        let restored: SessionState = serde_json::from_value(Value::Object(obj)).unwrap();
+        assert_eq!(restored.provider, "claude", "absent field defaults to claude");
+    }
+
     // deregister_managed reclaims the hybrid Term view's byte resources (the bulk
     // of a managed session's memory) rather than leaking them past session end.
     #[test]
     fn deregister_managed_releases_terminal_resources() {
         let store = SessionStore::new();
-        store.register_managed("m2", "/tmp");
+        store.register_managed("m2", "/tmp", "codex");
         store.attach_pty("m2", handle());
         assert!(store.wrapper("m2").is_some());
         assert!(store.subscribe_bytes("m2").is_some());
@@ -1977,7 +2021,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn mode_switch_rejected_for_managed_sessions() {
         let store = SessionStore::new();
-        store.register_managed("m1", "/tmp");
+        store.register_managed("m1", "/tmp", "codex");
         let (tx, _rx) = mpsc::unbounded_channel::<String>();
         store.register_managed_input("m1", tx);
         let got = store.set_permission_mode("m1", PermissionMode::AcceptEdits).await;
@@ -1987,7 +2031,7 @@ mod tests {
     // ── managed (codex) live approval-policy switch ──
 
     fn managed_with_yolo(store: &SessionStore, sid: &str, spawned_yolo: bool) -> Arc<std::sync::atomic::AtomicBool> {
-        store.register_managed(sid, "/tmp");
+        store.register_managed(sid, "/tmp", "codex");
         let (tx, _rx) = mpsc::unbounded_channel::<String>();
         store.register_managed_input(sid, tx);
         let live = Arc::new(std::sync::atomic::AtomicBool::new(spawned_yolo));
@@ -2024,7 +2068,7 @@ mod tests {
         // opencode/pi and the codex rollout fallback never register a live
         // flag — the switch must refuse rather than pretend.
         let store = SessionStore::new();
-        store.register_managed("m1", "/tmp");
+        store.register_managed("m1", "/tmp", "codex");
         let (tx, _rx) = mpsc::unbounded_channel::<String>();
         store.register_managed_input("m1", tx);
         assert_eq!(

@@ -44,6 +44,7 @@ fn preview_dashboard_three_sessions() {
             last_event: Some("Stop".into()),
             transcript_path: None,
             status_line: None,
+            provider: "claude".into(),
         })
         .session(SessionState {
             session_id: "9e8d7c6b-aaaa-bbbb-cccc-dddddddddddd".into(),
@@ -56,6 +57,7 @@ fn preview_dashboard_three_sessions() {
             last_event: Some("PreToolUse".into()),
             transcript_path: None,
             status_line: None,
+            provider: "claude".into(),
         })
         .session(SessionState {
             session_id: "11223344-eeee-ffff-0000-987654321000".into(),
@@ -72,6 +74,7 @@ fn preview_dashboard_three_sessions() {
             last_event: Some("PreToolUse".into()),
             transcript_path: None,
             status_line: None,
+            provider: "claude".into(),
         })
         .connected();
     let snap = snapshot_dashboard(b, 100, 24);
@@ -92,6 +95,7 @@ fn preview_chat_empty() {
             last_event: Some("SessionStart".into()),
             transcript_path: None,
             status_line: None,
+            provider: "claude".into(),
         })
         .connected()
         .chat_for("demo-session-id");
@@ -113,6 +117,7 @@ fn preview_chat_with_text_and_tool_calls() {
             last_event: Some("PreToolUse".into()),
             transcript_path: None,
             status_line: None,
+            provider: "claude".into(),
         })
         .connected()
         .chat_for_with_transcript("demo-session-id", Transcript {
@@ -171,6 +176,7 @@ fn preview_chat_with_pending_approval() {
             last_event: Some("PreToolUse".into()),
             transcript_path: None,
             status_line: None,
+            provider: "claude".into(),
         })
         .connected()
         .chat_for_with_transcript("demo-session-id", Transcript {
@@ -218,6 +224,7 @@ fn preview_chat_with_pending_question() {
             last_event: Some("PreToolUse".into()),
             transcript_path: None,
             status_line: None,
+            provider: "claude".into(),
         })
         .connected()
         .chat_for("demo-session-id");
@@ -239,6 +246,7 @@ fn preview_chat_with_input_typed() {
             last_event: Some("SessionStart".into()),
             transcript_path: None,
             status_line: None,
+            provider: "claude".into(),
         })
         .connected()
         .chat_for("demo-session-id")
@@ -261,6 +269,7 @@ fn preview_chat_with_multiline_input() {
             last_event: Some("SessionStart".into()),
             transcript_path: None,
             status_line: None,
+            provider: "claude".into(),
         })
         .connected()
         .chat_for("demo-session-id")

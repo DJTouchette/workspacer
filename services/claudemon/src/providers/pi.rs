@@ -725,6 +725,7 @@ async fn handle_message(
                 id: None,
                 tool: Some(method.to_string()),
                 summary: dialog_summary(value),
+                raw: value.clone(),
             }];
             apply_updates(store, conv, session_id, updates, cur_mode, acc);
             pending_approvals.push_back(value.clone());

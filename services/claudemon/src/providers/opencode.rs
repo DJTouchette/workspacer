@@ -102,7 +102,7 @@ pub fn translate(event: &Value) -> Vec<AgentUpdate> {
                 .and_then(Value::as_str)
                 .or_else(|| p.get("description").and_then(Value::as_str))
                 .map(str::to_owned);
-            out.push(AgentUpdate::PermissionPending { id, tool, summary });
+            out.push(AgentUpdate::PermissionPending { id, tool, summary, raw: p.clone() });
         }
 
         // Both the streamed-part event and the whole-message event indicate the
@@ -494,14 +494,15 @@ mod tests {
 
     #[test]
     fn permission_pending_pulls_tool_and_command() {
+        let props = json!({
+            "id": "perm_1",
+            "type": "bash",
+            "title": "Bash",
+            "metadata": { "command": "rm -rf build" }
+        });
         let ev = json!({
             "type": "permission.updated",
-            "properties": {
-                "id": "perm_1",
-                "type": "bash",
-                "title": "Bash",
-                "metadata": { "command": "rm -rf build" }
-            }
+            "properties": props.clone(),
         });
         assert_eq!(
             translate(&ev),
@@ -509,6 +510,7 @@ mod tests {
                 id: Some("perm_1".into()),
                 tool: Some("Bash".into()),
                 summary: Some("rm -rf build".into()),
+                raw: props,
             }]
         );
     }

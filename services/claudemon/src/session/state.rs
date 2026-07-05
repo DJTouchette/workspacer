@@ -241,6 +241,17 @@ pub struct SessionState {
     /// Latest statusLine telemetry, fed by the `/statusline` forwarder.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status_line: Option<StatusLine>,
+    /// Which agent backend drives this session: `"claude"` for the default
+    /// hook + PTY sessions, or a managed adapter's name (`"codex"`, `"opencode"`,
+    /// `"pi"`). Clients read this instead of guessing from spawn provenance.
+    #[serde(default = "default_provider")]
+    pub provider: String,
+}
+
+/// Serde default for [`SessionState::provider`] — the un-managed PTY path is
+/// always Claude, and old persisted rows predate the field.
+fn default_provider() -> String {
+    "claude".to_string()
 }
 
 impl SessionState {
@@ -257,6 +268,7 @@ impl SessionState {
             last_event: None,
             transcript_path: None,
             status_line: None,
+            provider: default_provider(),
         }
     }
 
