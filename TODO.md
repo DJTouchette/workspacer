@@ -79,10 +79,10 @@ theme, roughly ordered by severity within each group.
 
 ## Test coverage
 
-- [ ] claudemon HTTP surface: an axum oneshot test harness now exists in
-      `daemon/api.rs` (health, session list, 404, 409 paths seeded) — extend
-      it across the remaining ~25 handlers; `daemon/spawn.rs`, `wrapper_ws.rs`,
-      `hook.rs` still untested.
+- [x] claudemon HTTP surface: 52 handler tests in `daemon/api.rs` cover
+      every control/read route's 4xx + main invalid-state + happy paths and
+      spawn validation. Still open: SSE stream routes (don't fit the oneshot
+      harness), real-spawn happy paths, `wrapper_ws.rs`, `hook.rs`.
 - [ ] Desktop main: `hubCapabilities.ts` and the four claudemon bridges have
       zero tests (this is how the spawn drift went unnoticed).
 - [ ] Renderer: no pane/component tests for `App.tsx`, `ClaudePane.tsx`, or the

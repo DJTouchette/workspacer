@@ -882,9 +882,31 @@ async fn status_line_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::conversation::ConversationItem;
+    use crate::session::store::WrapperHandle;
+    use crate::session::ModelSwitch;
     use axum::body::Body;
     use axum::http::Request;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use tokio::sync::mpsc;
     use tower::ServiceExt; // for `oneshot`
+
+    /// A wrapper handle plus the receiver, so a test can assert exactly which
+    /// input/signal/resize frames a handler forwarded to the child. Mirrors the
+    /// store-side `handle_with_rx` helper.
+    fn wrapper() -> (WrapperHandle, mpsc::UnboundedReceiver<WrapperMessage>) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        (WrapperHandle { tx }, rx)
+    }
+
+    /// Decode the next `Input` frame's bytes, asserting one is present.
+    fn next_input(rx: &mut mpsc::UnboundedReceiver<WrapperMessage>) -> Vec<u8> {
+        match rx.try_recv().expect("expected a wrapper frame") {
+            WrapperMessage::Input { bytes } => B64.decode(bytes).expect("valid base64"),
+            other => panic!("expected Input frame, got {other:?}"),
+        }
+    }
 
     /// Build an `ApiState` backed by a throwaway on-disk SQLite db and empty
     /// in-memory stores. Each call gets a fresh db file so tests don't share
@@ -974,6 +996,623 @@ mod tests {
         let v = serde_json::from_slice::<Value>(&body).unwrap();
         assert_eq!(v["ok"], false);
         assert!(v["error"].is_string());
+    }
+
+    // --- list / read routes -------------------------------------------------
+
+    #[tokio::test]
+    async fn list_sessions_hides_and_reveals_via_include_archived() {
+        // A fresh session is never archived, so it shows in both views; the
+        // point here is that the query param parses and both paths return it.
+        let state = test_state();
+        state.store.register_managed("sess-1", "/tmp/proj", "codex");
+        let (status, body) = request(state.clone(), get("/sessions?include_archived=true")).await;
+        assert_eq!(status, StatusCode::OK);
+        let arr = serde_json::from_slice::<Value>(&body).unwrap();
+        assert_eq!(arr.as_array().unwrap().len(), 1);
+        // The archived flag is surfaced additively on each row.
+        assert_eq!(arr[0]["archived"], false);
+    }
+
+    #[tokio::test]
+    async fn get_session_returns_the_registered_state() {
+        let state = test_state();
+        state.store.register_managed("sess-1", "/tmp/proj", "codex");
+        let (status, body) = request(state, get("/sessions/sess-1")).await;
+        assert_eq!(status, StatusCode::OK);
+        let v = serde_json::from_slice::<Value>(&body).unwrap();
+        assert_eq!(v["session_id"], "sess-1");
+        assert_eq!(v["provider"], "codex");
+        // usage + archived are decorated onto the base state.
+        assert_eq!(v["archived"], false);
+        assert!(v.get("usage").is_some());
+    }
+
+    #[tokio::test]
+    async fn get_output_unknown_session_is_404() {
+        let (status, body) = request(test_state(), get("/sessions/nope/output")).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body, b"no buffer for that session");
+    }
+
+    #[tokio::test]
+    async fn get_output_registered_session_is_empty_buffer() {
+        // A managed session gets an (empty) output buffer at registration, so the
+        // viewer-attach path works uniformly even though it never emits bytes.
+        let state = test_state();
+        state.store.register_managed("sess-1", "/tmp/proj", "codex");
+        let (status, body) = request(state, get("/sessions/sess-1/output")).await;
+        assert_eq!(status, StatusCode::OK);
+        let v = serde_json::from_slice::<Value>(&body).unwrap();
+        assert_eq!(v["bytes"], 0);
+        assert_eq!(v["text"], "");
+    }
+
+    #[tokio::test]
+    async fn get_transcript_unknown_session_is_404() {
+        let (status, body) = request(test_state(), get("/sessions/nope/transcript")).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body, b"session not found");
+    }
+
+    #[tokio::test]
+    async fn get_transcript_with_no_file_returns_empty_transcript() {
+        // No transcript on disk for this id → the reader falls through to a
+        // default (empty) Transcript rather than erroring.
+        let state = test_state();
+        state.store.register_managed("sess-1", "/tmp/proj", "codex");
+        let (status, body) = request(state, get("/sessions/sess-1/transcript")).await;
+        assert_eq!(status, StatusCode::OK);
+        let v = serde_json::from_slice::<Value>(&body).unwrap();
+        assert!(v.is_object(), "transcript is a JSON object");
+    }
+
+    #[tokio::test]
+    async fn get_conversation_unknown_session_is_empty_snapshot() {
+        // Conversation never 404s — an unknown session is just an empty log.
+        let (status, body) = request(test_state(), get("/sessions/nope/conversation")).await;
+        assert_eq!(status, StatusCode::OK);
+        let v = serde_json::from_slice::<Value>(&body).unwrap();
+        assert_eq!(v["session_id"], "nope");
+        assert_eq!(v["seq"], 0);
+        assert_eq!(v["items"], json!([]));
+    }
+
+    #[tokio::test]
+    async fn get_conversation_since_filters_to_the_delta() {
+        let state = test_state();
+        state.conv.push(
+            "sess-1",
+            vec![
+                ConversationItem::UserMessage { text: "one".into(), timestamp: None },
+                ConversationItem::AssistantText { text: "two".into(), timestamp: None },
+                ConversationItem::UserMessage { text: "three".into(), timestamp: None },
+            ],
+        );
+        // Full snapshot: seq 3, all three items.
+        let (status, body) = request(state.clone(), get("/sessions/sess-1/conversation")).await;
+        assert_eq!(status, StatusCode::OK);
+        let v = serde_json::from_slice::<Value>(&body).unwrap();
+        assert_eq!(v["seq"], 3);
+        assert_eq!(v["items"].as_array().unwrap().len(), 3);
+        // `?since=2` advances the cursor: only the 3rd item remains, seq unchanged.
+        let (status, body) = request(state, get("/sessions/sess-1/conversation?since=2")).await;
+        assert_eq!(status, StatusCode::OK);
+        let v = serde_json::from_slice::<Value>(&body).unwrap();
+        assert_eq!(v["seq"], 3);
+        let items = v["items"].as_array().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["text"], "three");
+    }
+
+    // --- /input -------------------------------------------------------------
+
+    #[tokio::test]
+    async fn post_input_without_wrapper_is_404() {
+        let req = post_json("/sessions/nope/input", json!({ "text": "hi" }));
+        let (status, body) = request(test_state(), req).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body, b"no wrapper attached to that session");
+    }
+
+    #[tokio::test]
+    async fn post_input_with_neither_text_nor_bytes_is_400() {
+        let state = test_state();
+        let (h, _rx) = wrapper();
+        state.store.register_wrapper("sess-1", "/w", h);
+        let req = post_json("/sessions/sess-1/input", json!({ "newline": true }));
+        let (status, body) = request(state, req).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body, b"expected `text` or `bytes_b64`");
+    }
+
+    #[tokio::test]
+    async fn post_input_bad_base64_is_400() {
+        let state = test_state();
+        let (h, _rx) = wrapper();
+        state.store.register_wrapper("sess-1", "/w", h);
+        let req = post_json("/sessions/sess-1/input", json!({ "bytes_b64": "not!base64!" }));
+        let (status, body) = request(state, req).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body, b"bad base64");
+    }
+
+    #[tokio::test]
+    async fn post_input_text_forwards_a_frame() {
+        let state = test_state();
+        let (h, mut rx) = wrapper();
+        state.store.register_wrapper("sess-1", "/w", h);
+        let req = post_json("/sessions/sess-1/input", json!({ "text": "hi", "newline": false }));
+        let (status, body) = request(state, req).await;
+        assert_eq!(status, StatusCode::OK);
+        let v = serde_json::from_slice::<Value>(&body).unwrap();
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["bytes"], 2);
+        assert_eq!(next_input(&mut rx), b"hi");
+    }
+
+    // --- /message -----------------------------------------------------------
+
+    #[tokio::test]
+    async fn post_message_unknown_session_is_404() {
+        let req = post_json("/sessions/nope/message", json!({ "text": "hi" }));
+        let (status, body) = request(test_state(), req).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body, b"session not found");
+    }
+
+    #[tokio::test]
+    async fn post_message_on_stopped_session_conflicts() {
+        // register + deregister leaves a resumable but Stopped session (no managed
+        // input channel), which is the only mode that rejects a chat message.
+        let state = test_state();
+        state.store.register_managed("sess-1", "/tmp/proj", "codex");
+        state.store.deregister_managed("sess-1");
+        let req = post_json("/sessions/sess-1/message", json!({ "text": "hi" }));
+        let (status, body) = request(state, req).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        let v = serde_json::from_slice::<Value>(&body).unwrap();
+        assert!(v["error"].is_string());
+        assert_eq!(v["mode"], "stopped");
+        assert_eq!(v["expected"], "input");
+    }
+
+    #[tokio::test]
+    async fn post_message_on_managed_session_forwards_prompt() {
+        let state = test_state();
+        state.store.register_managed("sess-1", "/tmp/proj", "codex");
+        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+        state.store.register_managed_input("sess-1", tx);
+        let req = post_json("/sessions/sess-1/message", json!({ "text": "do the thing" }));
+        let (status, body) = request(state, req).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(serde_json::from_slice::<Value>(&body).unwrap()["ok"], true);
+        assert_eq!(rx.try_recv().unwrap(), "do the thing");
+    }
+
+    // --- /approve -----------------------------------------------------------
+
+    #[tokio::test]
+    async fn post_approve_unknown_session_is_404() {
+        let req = post_json("/sessions/nope/approve", json!({ "decision": "yes" }));
+        let (status, body) = request(test_state(), req).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body, b"session not found");
+    }
+
+    #[tokio::test]
+    async fn post_approve_when_not_awaiting_approval_conflicts() {
+        // A live session sitting at the prompt (Input) is not awaiting approval.
+        let state = test_state();
+        state.store.register_managed("sess-1", "/tmp/proj", "codex");
+        let req = post_json("/sessions/sess-1/approve", json!({ "decision": "yes" }));
+        let (status, body) = request(state, req).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        let v = serde_json::from_slice::<Value>(&body).unwrap();
+        assert_eq!(v["expected"], "approval");
+    }
+
+    #[tokio::test]
+    async fn post_approve_bad_decision_is_400() {
+        let state = test_state();
+        state.store.register_managed("sess-1", "/tmp/proj", "codex");
+        state
+            .store
+            .set_managed_mode("sess-1", SessionMode::Approval, None);
+        let req = post_json("/sessions/sess-1/approve", json!({ "decision": "maybe" }));
+        let (status, body) = request(state, req).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body, b"expected `decision` (yes|no|always)");
+    }
+
+    #[tokio::test]
+    async fn post_approve_routes_to_managed_decision_channel() {
+        let state = test_state();
+        state.store.register_managed("sess-1", "/tmp/proj", "codex");
+        state
+            .store
+            .set_managed_mode("sess-1", SessionMode::Approval, None);
+        let (tx, mut rx) = mpsc::unbounded_channel::<bool>();
+        state.store.register_managed_decision("sess-1", tx);
+        let req = post_json("/sessions/sess-1/approve", json!({ "decision": "yes" }));
+        let (status, body) = request(state, req).await;
+        assert_eq!(status, StatusCode::OK);
+        let v = serde_json::from_slice::<Value>(&body).unwrap();
+        assert_eq!(v["managed"], true);
+        assert_eq!(v["approve"], true);
+        assert!(rx.try_recv().unwrap());
+    }
+
+    // --- /decide ------------------------------------------------------------
+
+    #[tokio::test]
+    async fn post_decide_with_no_parked_decision_conflicts() {
+        // Nothing parked (no gate, no PreToolUse) → the resolve fails as 409.
+        let req = post_json("/sessions/nope/decide", json!({ "body": { "decision": "approve" } }));
+        let (status, body) = request(test_state(), req).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        let v = serde_json::from_slice::<Value>(&body).unwrap();
+        assert!(v["error"].is_string());
+    }
+
+    #[tokio::test]
+    async fn post_decide_resolves_a_parked_decision() {
+        let state = test_state();
+        state.store.register_managed("sess-1", "/tmp/proj", "codex");
+        // Park a decision the handler will resolve.
+        let mut parked = state.store.park_decision("sess-1", Some("Bash".into()), json!({}));
+        let req = post_json(
+            "/sessions/sess-1/decide",
+            json!({ "body": { "decision": "approve" } }),
+        );
+        let (status, body) = request(state, req).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(serde_json::from_slice::<Value>(&body).unwrap()["ok"], true);
+        // The awaiter received exactly the body we posted.
+        assert_eq!(parked.try_recv().unwrap(), json!({ "decision": "approve" }));
+    }
+
+    // --- /gate --------------------------------------------------------------
+
+    #[tokio::test]
+    async fn post_gate_unknown_session_is_404() {
+        let req = post_json("/sessions/nope/gate", json!({ "on": true }));
+        let (status, body) = request(test_state(), req).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body, b"session not found");
+    }
+
+    #[tokio::test]
+    async fn post_gate_toggles_the_session_gate() {
+        let state = test_state();
+        state.store.register_managed("sess-1", "/tmp/proj", "codex");
+        let req = post_json("/sessions/sess-1/gate", json!({ "on": true }));
+        let (status, body) = request(state.clone(), req).await;
+        assert_eq!(status, StatusCode::OK);
+        let v = serde_json::from_slice::<Value>(&body).unwrap();
+        assert_eq!(v["gate_enabled"], true);
+        assert!(state.store.gate_enabled("sess-1"));
+    }
+
+    // --- /answer ------------------------------------------------------------
+
+    #[tokio::test]
+    async fn post_answer_unknown_session_is_404() {
+        let req = post_json("/sessions/nope/answer", json!({ "option": 1 }));
+        let (status, body) = request(test_state(), req).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body, b"session not found");
+    }
+
+    #[tokio::test]
+    async fn post_answer_when_not_asking_conflicts() {
+        let state = test_state();
+        state.store.register_managed("sess-1", "/tmp/proj", "codex");
+        let req = post_json("/sessions/sess-1/answer", json!({ "option": 1 }));
+        let (status, body) = request(state, req).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        let v = serde_json::from_slice::<Value>(&body).unwrap();
+        assert_eq!(v["expected"], "question");
+    }
+
+    #[tokio::test]
+    async fn post_answer_option_out_of_range_is_400() {
+        let state = test_state();
+        state.store.register_managed("sess-1", "/tmp/proj", "codex");
+        state
+            .store
+            .set_managed_mode("sess-1", SessionMode::Question, None);
+        let (h, _rx) = wrapper();
+        state.store.attach_pty("sess-1", h);
+        let req = post_json("/sessions/sess-1/answer", json!({ "option": 10 }));
+        let (status, body) = request(state, req).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body, b"option must be 1-9");
+    }
+
+    #[tokio::test]
+    async fn post_answer_option_forwards_keystrokes() {
+        let state = test_state();
+        state.store.register_managed("sess-1", "/tmp/proj", "codex");
+        state
+            .store
+            .set_managed_mode("sess-1", SessionMode::Question, None);
+        let (h, mut rx) = wrapper();
+        state.store.attach_pty("sess-1", h);
+        let req = post_json("/sessions/sess-1/answer", json!({ "option": 2 }));
+        let (status, _body) = request(state, req).await;
+        assert_eq!(status, StatusCode::OK);
+        // Picker answer is the option digit plus a submitting CR.
+        assert_eq!(next_input(&mut rx), b"2\r");
+    }
+
+    // --- /signal ------------------------------------------------------------
+
+    #[tokio::test]
+    async fn post_signal_without_wrapper_is_404() {
+        let req = post_json("/sessions/nope/signal", json!({ "signal": "SIGINT" }));
+        let (status, body) = request(test_state(), req).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body, b"no wrapper attached");
+    }
+
+    #[tokio::test]
+    async fn post_signal_forwards_to_wrapper() {
+        let state = test_state();
+        let (h, mut rx) = wrapper();
+        state.store.register_wrapper("sess-1", "/w", h);
+        let req = post_json("/sessions/sess-1/signal", json!({ "signal": "SIGINT" }));
+        let (status, body) = request(state, req).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(serde_json::from_slice::<Value>(&body).unwrap()["ok"], true);
+        match rx.try_recv().expect("a signal frame") {
+            WrapperMessage::Signal { signal } => {
+                assert_eq!(signal, crate::protocol::Signal::Sigint)
+            }
+            other => panic!("expected Signal frame, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn post_signal_terminate_stops_managed_session() {
+        // A managed SIGTERM tears down the driver loop instead of poking a TUI.
+        let state = test_state();
+        state.store.register_managed("sess-1", "/tmp/proj", "codex");
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        state.store.register_managed_input("sess-1", tx);
+        let req = post_json("/sessions/sess-1/signal", json!({ "signal": "SIGTERM" }));
+        let (status, body) = request(state.clone(), req).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(serde_json::from_slice::<Value>(&body).unwrap()["ok"], true);
+        // The prompt channel was dropped, so the session is no longer managed.
+        assert!(!state.store.is_managed("sess-1"));
+    }
+
+    // --- /resize ------------------------------------------------------------
+
+    #[tokio::test]
+    async fn post_resize_without_wrapper_is_404() {
+        let req = post_json("/sessions/nope/resize", json!({ "cols": 80, "rows": 24 }));
+        let (status, body) = request(test_state(), req).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body, b"no wrapper attached");
+    }
+
+    #[tokio::test]
+    async fn post_resize_forwards_and_records_size() {
+        let state = test_state();
+        let (h, mut rx) = wrapper();
+        state.store.register_wrapper("sess-1", "/w", h);
+        let req = post_json("/sessions/sess-1/resize", json!({ "cols": 120, "rows": 40 }));
+        let (status, body) = request(state, req).await;
+        assert_eq!(status, StatusCode::OK);
+        let v = serde_json::from_slice::<Value>(&body).unwrap();
+        assert_eq!(v["cols"], 120);
+        assert_eq!(v["rows"], 40);
+        match rx.try_recv().expect("a resize frame") {
+            WrapperMessage::Resize { cols, rows } => {
+                assert_eq!((cols, rows), (120, 40))
+            }
+            other => panic!("expected Resize frame, got {other:?}"),
+        }
+    }
+
+    // --- /permission-mode ---------------------------------------------------
+
+    /// Mark an already-registered session as managed (adapter-driven) by giving
+    /// it a prompt channel — `is_managed` keys off this map, not `register_managed`.
+    /// The receiver is returned so the caller keeps it alive if it matters.
+    fn mark_managed(store: &SessionStore, id: &str) -> mpsc::UnboundedReceiver<String> {
+        let (tx, rx) = mpsc::unbounded_channel::<String>();
+        store.register_managed_input(id, tx);
+        rx
+    }
+
+    #[tokio::test]
+    async fn post_permission_mode_unknown_session_is_404() {
+        // Non-managed path: a valid mode string on an unknown session → NoSession,
+        // which the handler renders as a JSON error body (not plain text).
+        let req = post_json("/sessions/nope/permission-mode", json!({ "mode": "default" }));
+        let (status, body) = request(test_state(), req).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let v = serde_json::from_slice::<Value>(&body).unwrap();
+        assert_eq!(v["ok"], false);
+        assert!(v["error"].as_str().unwrap().contains("session not found"));
+    }
+
+    #[tokio::test]
+    async fn post_permission_mode_unknown_mode_is_400() {
+        let req = post_json("/sessions/nope/permission-mode", json!({ "mode": "bogus" }));
+        let (status, body) = request(test_state(), req).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let v = serde_json::from_slice::<Value>(&body).unwrap();
+        assert_eq!(v["ok"], false);
+        assert!(v["error"].as_str().unwrap().contains("bogus"));
+    }
+
+    #[tokio::test]
+    async fn post_permission_mode_managed_unknown_mode_is_400() {
+        let state = test_state();
+        state.store.register_managed("sess-1", "/tmp/proj", "codex");
+        let _rx = mark_managed(&state.store, "sess-1");
+        let req = post_json("/sessions/sess-1/permission-mode", json!({ "mode": "plan" }));
+        let (status, body) = request(state, req).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let v = serde_json::from_slice::<Value>(&body).unwrap();
+        assert!(v["error"].as_str().unwrap().contains("ask"));
+    }
+
+    #[tokio::test]
+    async fn post_permission_mode_managed_yolo_flips_live_flag() {
+        let state = test_state();
+        state.store.register_managed("sess-1", "/tmp/proj", "codex");
+        let _rx = mark_managed(&state.store, "sess-1");
+        let live = Arc::new(AtomicBool::new(false));
+        state
+            .store
+            .register_managed_yolo("sess-1", live.clone(), false);
+        let req = post_json("/sessions/sess-1/permission-mode", json!({ "mode": "yolo" }));
+        let (status, body) = request(state, req).await;
+        assert_eq!(status, StatusCode::OK);
+        let v = serde_json::from_slice::<Value>(&body).unwrap();
+        assert_eq!(v["mode"], "yolo");
+        assert!(live.load(Ordering::Relaxed));
+    }
+
+    #[tokio::test]
+    async fn post_permission_mode_managed_ask_conflicts_when_spawned_yolo() {
+        // Spawned in bypass mode: yolo→ask can't work, surfaced as 409.
+        let state = test_state();
+        state.store.register_managed("sess-1", "/tmp/proj", "codex");
+        let _rx = mark_managed(&state.store, "sess-1");
+        let live = Arc::new(AtomicBool::new(true));
+        state
+            .store
+            .register_managed_yolo("sess-1", live, true);
+        let req = post_json("/sessions/sess-1/permission-mode", json!({ "mode": "ask" }));
+        let (status, body) = request(state, req).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        let v = serde_json::from_slice::<Value>(&body).unwrap();
+        assert_eq!(v["ok"], false);
+    }
+
+    // --- /model -------------------------------------------------------------
+
+    #[tokio::test]
+    async fn post_model_without_fields_is_400() {
+        let state = test_state();
+        state.store.register_managed("sess-1", "/tmp/proj", "codex");
+        let req = post_json("/sessions/sess-1/model", json!({}));
+        let (status, body) = request(state, req).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let v = serde_json::from_slice::<Value>(&body).unwrap();
+        assert_eq!(v["ok"], false);
+    }
+
+    #[tokio::test]
+    async fn post_model_on_pty_session_conflicts() {
+        // A non-managed (PTY) session switches models via the /model slash command
+        // on the message path, not this endpoint.
+        let state = test_state();
+        let (h, _rx) = wrapper();
+        state.store.register_wrapper("sess-1", "/w", h);
+        let req = post_json("/sessions/sess-1/model", json!({ "model": "opus" }));
+        let (status, body) = request(state, req).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        let v = serde_json::from_slice::<Value>(&body).unwrap();
+        assert!(v["error"].as_str().unwrap().contains("slash command"));
+    }
+
+    #[tokio::test]
+    async fn post_model_routes_to_switch_channel() {
+        let state = test_state();
+        state.store.register_managed("sess-1", "/tmp/proj", "codex");
+        let _in = mark_managed(&state.store, "sess-1");
+        let (tx, mut rx) = mpsc::unbounded_channel::<ModelSwitch>();
+        state.store.register_managed_model_switch("sess-1", tx);
+        let req = post_json(
+            "/sessions/sess-1/model",
+            json!({ "model": "gpt-5.5", "effort": "high" }),
+        );
+        let (status, body) = request(state, req).await;
+        assert_eq!(status, StatusCode::OK);
+        let v = serde_json::from_slice::<Value>(&body).unwrap();
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["model"], "gpt-5.5");
+        let switch = rx.try_recv().unwrap();
+        assert_eq!(switch.model.as_deref(), Some("gpt-5.5"));
+        assert_eq!(switch.effort.as_deref(), Some("high"));
+    }
+
+    // --- /handoff -----------------------------------------------------------
+
+    #[tokio::test]
+    async fn post_handoff_with_no_conversation_is_404() {
+        let req = post_json("/sessions/nope/handoff", json!({ "no_persist": true }));
+        let (status, body) = request(test_state(), req).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let v = serde_json::from_slice::<Value>(&body).unwrap();
+        assert_eq!(v["ok"], false);
+    }
+
+    #[tokio::test]
+    async fn post_handoff_builds_a_brief_from_the_conversation() {
+        let state = test_state();
+        state.store.register_managed("sess-1", "/tmp/proj", "codex");
+        state.conv.push(
+            "sess-1",
+            vec![
+                ConversationItem::UserMessage { text: "add a test".into(), timestamp: None },
+                ConversationItem::AssistantText { text: "done".into(), timestamp: None },
+            ],
+        );
+        // no_persist keeps the test off disk (~/.workspacer/handoffs).
+        let req = post_json("/sessions/sess-1/handoff", json!({ "no_persist": true }));
+        let (status, body) = request(state, req).await;
+        assert_eq!(status, StatusCode::OK);
+        let v = serde_json::from_slice::<Value>(&body).unwrap();
+        assert_eq!(v["ok"], true);
+        assert!(v["markdown"].as_str().unwrap().contains("add a test"));
+        assert_eq!(v["path"], Value::Null);
+    }
+
+    // --- spawn validation ---------------------------------------------------
+
+    #[tokio::test]
+    async fn spawn_empty_argv_is_400() {
+        let req = post_json("/sessions/spawn", json!({ "argv": [], "cwd": "/tmp" }));
+        let (status, body) = request(test_state(), req).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body, b"argv must not be empty");
+    }
+
+    #[tokio::test]
+    async fn spawn_missing_required_field_is_4xx() {
+        // No `cwd` → the JSON body fails to deserialize; axum rejects with a 4xx
+        // (422) long before any PTY work.
+        let req = post_json("/sessions/spawn", json!({ "argv": ["claude"] }));
+        let (status, _body) = request(test_state(), req).await;
+        assert!(status.is_client_error(), "got {status}");
+        assert_ne!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn spawn_managed_bad_provider_is_400() {
+        let req = post_json(
+            "/sessions/spawn-managed",
+            json!({ "provider": "bogus", "cwd": "/tmp" }),
+        );
+        let (status, body) = request(test_state(), req).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(String::from_utf8_lossy(&body).contains("unsupported managed provider"));
+    }
+
+    #[tokio::test]
+    async fn spawn_managed_missing_provider_is_4xx() {
+        let req = post_json("/sessions/spawn-managed", json!({ "cwd": "/tmp" }));
+        let (status, _body) = request(test_state(), req).await;
+        assert!(status.is_client_error(), "got {status}");
+        assert_ne!(status, StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     #[test]
