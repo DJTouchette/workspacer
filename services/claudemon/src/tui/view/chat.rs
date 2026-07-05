@@ -18,11 +18,11 @@ use crate::session::{
 use crate::tui::app::{App, ChatState};
 use crate::tui::syntax;
 
+use super::render_markdown_text;
 use super::{
     compact_tool_success, draw_toast, first_line_truncated, hint, mode_badge, short_id,
     split_cat_n_line, tool_color, wrap_spans, FOCUS,
 };
-use super::render_markdown_text;
 
 pub(super) fn render_chat(frame: &mut Frame, app: &App, chat: &ChatState) {
     let area = frame.area();
@@ -139,10 +139,7 @@ fn draw_transcript(frame: &mut Frame, area: Rect, _app: &App, chat: &ChatState) 
     }
 
     let cache = chat.render_cache.borrow();
-    let lines: &[Line<'static>] = cache
-        .as_ref()
-        .map(|c| c.lines.as_slice())
-        .unwrap_or(&[]);
+    let lines: &[Line<'static>] = cache.as_ref().map(|c| c.lines.as_slice()).unwrap_or(&[]);
 
     let viewport = area.height.saturating_sub(2) as usize;
     let total = lines.len();
@@ -156,7 +153,10 @@ fn draw_transcript(frame: &mut Frame, area: Rect, _app: &App, chat: &ChatState) 
         .collect();
 
     let title = if let Some(path) = chat.transcript.path.as_deref() {
-        format!(" transcript · {} ", path.split('/').next_back().unwrap_or(path))
+        format!(
+            " transcript · {} ",
+            path.split('/').next_back().unwrap_or(path)
+        )
     } else {
         " transcript ".to_string()
     };

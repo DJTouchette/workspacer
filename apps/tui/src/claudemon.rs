@@ -87,40 +87,68 @@ impl Claudemon {
     /// Parsed conversation (`{ items: [...] }`) — richer than `/transcript`
     /// (carries tool results / work-log items joined to their calls).
     pub async fn conversation(&self, session_id: &str) -> Result<Value> {
-        self.get_json(&format!("/sessions/{session_id}/conversation")).await
+        self.get_json(&format!("/sessions/{session_id}/conversation"))
+            .await
     }
 
     /// The session's current mode (unknown/input/responding/approval/...), or
     /// None if it can't be read. Used to wait until a fresh agent is ready.
     pub async fn session_mode(&self, session_id: &str) -> Option<String> {
-        let v = self.get_json(&format!("/sessions/{session_id}")).await.ok()?;
-        v.get("mode").and_then(|m| m.as_str()).map(|s| s.to_string())
+        let v = self
+            .get_json(&format!("/sessions/{session_id}"))
+            .await
+            .ok()?;
+        v.get("mode")
+            .and_then(|m| m.as_str())
+            .map(|s| s.to_string())
     }
 
     // ── control ───────────────────────────────────────────────────────────
 
-    pub async fn approve(&self, session_id: &str, decision: &str, reason: Option<String>) -> Result<()> {
+    pub async fn approve(
+        &self,
+        session_id: &str,
+        decision: &str,
+        reason: Option<String>,
+    ) -> Result<()> {
         let mut body = json!({ "decision": decision });
         if let Some(r) = reason {
             body["reason"] = json!(r);
         }
-        self.post_ok(&format!("/sessions/{session_id}/approve"), &body).await
+        self.post_ok(&format!("/sessions/{session_id}/approve"), &body)
+            .await
     }
 
     pub async fn answer_option(&self, session_id: &str, option: u64) -> Result<()> {
-        self.post_ok(&format!("/sessions/{session_id}/answer"), &json!({ "option": option })).await
+        self.post_ok(
+            &format!("/sessions/{session_id}/answer"),
+            &json!({ "option": option }),
+        )
+        .await
     }
 
     pub async fn answer_text(&self, session_id: &str, text: &str) -> Result<()> {
-        self.post_ok(&format!("/sessions/{session_id}/answer"), &json!({ "text": text })).await
+        self.post_ok(
+            &format!("/sessions/{session_id}/answer"),
+            &json!({ "text": text }),
+        )
+        .await
     }
 
     pub async fn message(&self, session_id: &str, text: &str) -> Result<()> {
-        self.post_ok(&format!("/sessions/{session_id}/message"), &json!({ "text": text })).await
+        self.post_ok(
+            &format!("/sessions/{session_id}/message"),
+            &json!({ "text": text }),
+        )
+        .await
     }
 
     pub async fn signal(&self, session_id: &str, signal: &str) -> Result<()> {
-        self.post_ok(&format!("/sessions/{session_id}/signal"), &json!({ "signal": signal })).await
+        self.post_ok(
+            &format!("/sessions/{session_id}/signal"),
+            &json!({ "signal": signal }),
+        )
+        .await
     }
 
     // ── provider parity (model / permission-mode / handoff / managed spawn) ──
@@ -314,7 +342,10 @@ impl Claudemon {
                         if let Ok(bytes) =
                             base64::engine::general_purpose::STANDARD.decode(data.trim())
                         {
-                            let _ = sink.send(PtyChunk { session_id: session_id.to_string(), bytes });
+                            let _ = sink.send(PtyChunk {
+                                session_id: session_id.to_string(),
+                                bytes,
+                            });
                         }
                     }
                 }
@@ -351,7 +382,10 @@ impl Claudemon {
     // ── git (review pane) ───────────────────────────────────────────────────
 
     /// Branch + changed files for a work tree. Returns `(branch, files)`.
-    pub async fn git_status(&self, cwd: &str) -> Result<(Option<String>, Vec<crate::types::FileStatus>)> {
+    pub async fn git_status(
+        &self,
+        cwd: &str,
+    ) -> Result<(Option<String>, Vec<crate::types::FileStatus>)> {
         let v = self
             .get_json(&format!("/git/status?cwd={}", encode(cwd)))
             .await?;
@@ -367,7 +401,13 @@ impl Claudemon {
     /// Raw unified diff text for a path (or the whole tree when `path` is empty).
     /// `staged` selects index-vs-HEAD; `untracked` renders a new file as
     /// all-added (requires a path).
-    pub async fn git_diff(&self, cwd: &str, path: &str, staged: bool, untracked: bool) -> Result<String> {
+    pub async fn git_diff(
+        &self,
+        cwd: &str,
+        path: &str,
+        staged: bool,
+        untracked: bool,
+    ) -> Result<String> {
         let mut q = format!("/git/diff?cwd={}&staged={staged}", encode(cwd));
         if !path.is_empty() {
             q.push_str(&format!("&path={}", encode(path)));
@@ -376,7 +416,10 @@ impl Claudemon {
             q.push_str("&untracked=true");
         }
         let v = self.get_json(&q).await?;
-        Ok(v.get("diff").and_then(|d| d.as_str()).unwrap_or("").to_string())
+        Ok(v.get("diff")
+            .and_then(|d| d.as_str())
+            .unwrap_or("")
+            .to_string())
     }
 
     pub async fn git_stage(&self, cwd: &str, path: Option<&str>) -> Result<()> {
@@ -396,11 +439,13 @@ impl Claudemon {
     }
 
     pub async fn git_commit(&self, cwd: &str, message: &str) -> Result<()> {
-        self.git_action_ok("/git/commit", &json!({ "cwd": cwd, "message": message })).await
+        self.git_action_ok("/git/commit", &json!({ "cwd": cwd, "message": message }))
+            .await
     }
 
     pub async fn git_push(&self, cwd: &str) -> Result<()> {
-        self.git_action_ok("/git/push", &json!({ "cwd": cwd })).await
+        self.git_action_ok("/git/push", &json!({ "cwd": cwd }))
+            .await
     }
 
     /// POST a git action and surface `{ ok:false, error }` as an `Err` so the UI
@@ -408,7 +453,10 @@ impl Claudemon {
     async fn git_action_ok(&self, path: &str, body: &Value) -> Result<()> {
         let resp = self.post_json(path, body).await?;
         if resp.get("ok").and_then(|b| b.as_bool()) == Some(false) {
-            let err = resp.get("error").and_then(|e| e.as_str()).unwrap_or("git failed");
+            let err = resp
+                .get("error")
+                .and_then(|e| e.as_str())
+                .unwrap_or("git failed");
             return Err(anyhow!("{}", err.trim()));
         }
         Ok(())
@@ -717,7 +765,10 @@ fn parse_http_status(raw: &[u8]) -> Result<(u16, Value)> {
         .and_then(|line| line.split_whitespace().nth(1))
         .and_then(|c| c.parse::<u16>().ok())
         .unwrap_or(0);
-    Ok((code, serde_json::from_str(body.trim()).unwrap_or(Value::Null)))
+    Ok((
+        code,
+        serde_json::from_str(body.trim()).unwrap_or(Value::Null),
+    ))
 }
 
 fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
@@ -804,8 +855,14 @@ mod tests {
 
     #[test]
     fn host_port_parsing() {
-        assert_eq!(split_host_port("http://127.0.0.1:7891"), ("127.0.0.1".into(), 7891));
-        assert_eq!(split_host_port("http://localhost:9/"), ("localhost".into(), 9));
+        assert_eq!(
+            split_host_port("http://127.0.0.1:7891"),
+            ("127.0.0.1".into(), 7891)
+        );
+        assert_eq!(
+            split_host_port("http://localhost:9/"),
+            ("localhost".into(), 9)
+        );
     }
 
     #[test]
@@ -844,14 +901,23 @@ mod tests {
         let mut buf = Vec::new();
         let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
         while tokio::time::Instant::now() < deadline {
-            if let Ok(Some(c)) = tokio::time::timeout(Duration::from_millis(250), rx.recv()).await { buf.extend_from_slice(&c.bytes) }
+            if let Ok(Some(c)) = tokio::time::timeout(Duration::from_millis(250), rx.recv()).await {
+                buf.extend_from_slice(&c.bytes)
+            }
         }
         reader.abort();
         let _ = cm.signal(&sid, "SIGTERM").await;
 
         let text = String::from_utf8_lossy(&buf);
-        eprintln!("pty bytes: {} | contains PINGPONG: {}", buf.len(), text.contains("PINGPONG"));
-        assert!(text.contains("PINGPONG"), "expected echoed input in PTY stream");
+        eprintln!(
+            "pty bytes: {} | contains PINGPONG: {}",
+            buf.len(),
+            text.contains("PINGPONG")
+        );
+        assert!(
+            text.contains("PINGPONG"),
+            "expected echoed input in PTY stream"
+        );
     }
 
     /// Live check against a running claudemon. Run with:
@@ -963,18 +1029,30 @@ mod tests {
 
     #[tokio::test]
     async fn set_model_409_surfaces_daemon_error() {
-        let (base, srv) =
-            mock_server(409, "Conflict", r#"{"ok":false,"error":"opencode has no model switch"}"#)
-                .await;
-        let err = Claudemon::new(base).set_model("s1", Some("x"), None).await.unwrap_err();
-        assert!(err.to_string().contains("opencode has no model switch"), "got {err}");
+        let (base, srv) = mock_server(
+            409,
+            "Conflict",
+            r#"{"ok":false,"error":"opencode has no model switch"}"#,
+        )
+        .await;
+        let err = Claudemon::new(base)
+            .set_model("s1", Some("x"), None)
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("opencode has no model switch"),
+            "got {err}"
+        );
         let _ = srv.await;
     }
 
     #[tokio::test]
     async fn set_permission_mode_returns_settled_mode() {
         let (base, srv) = mock_server(200, "OK", r#"{"ok":true,"mode":"plan"}"#).await;
-        let mode = Claudemon::new(base).set_permission_mode("s1", "plan").await.expect("ok");
+        let mode = Claudemon::new(base)
+            .set_permission_mode("s1", "plan")
+            .await
+            .expect("ok");
         assert_eq!(mode, "plan");
         let (_, path, body) = srv.await.unwrap();
         assert_eq!(path, "/sessions/s1/permission-mode");
@@ -985,15 +1063,22 @@ mod tests {
     async fn permission_mode_409_surfaces_error() {
         let (base, srv) =
             mock_server(409, "Conflict", r#"{"ok":false,"error":"session is busy"}"#).await;
-        let err = Claudemon::new(base).set_permission_mode("s1", "plan").await.unwrap_err();
+        let err = Claudemon::new(base)
+            .set_permission_mode("s1", "plan")
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("session is busy"), "got {err}");
         let _ = srv.await;
     }
 
     #[tokio::test]
     async fn handoff_returns_markdown_and_path() {
-        let (base, srv) =
-            mock_server(200, "OK", r##"{"ok":true,"markdown":"# brief","path":"/h/x.md"}"##).await;
+        let (base, srv) = mock_server(
+            200,
+            "OK",
+            r##"{"ok":true,"markdown":"# brief","path":"/h/x.md"}"##,
+        )
+        .await;
         let brief = Claudemon::new(base).handoff("s1").await.expect("ok");
         assert_eq!(brief.markdown, "# brief");
         assert_eq!(brief.path.as_deref(), Some("/h/x.md"));
@@ -1025,7 +1110,10 @@ mod tests {
             r#"{"models":[{"id":"gpt-5","label":"GPT-5","default":true},{"id":"o3"}]}"#,
         )
         .await;
-        let models = Claudemon::new(base).provider_models("codex", "/w").await.expect("ok");
+        let models = Claudemon::new(base)
+            .provider_models("codex", "/w")
+            .await
+            .expect("ok");
         assert_eq!(models.len(), 2);
         assert_eq!(models[0].id, "gpt-5");
         assert!(models[0].default);

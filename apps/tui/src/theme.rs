@@ -110,9 +110,9 @@ pub fn parse_color(s: &str) -> Option<Color> {
     let s = s.trim();
     // `#rrggbb`, or a bare `rrggbb` only when every char is a hex digit (so a
     // 6-letter name like "yellow" isn't mistaken for hex and swallowed).
-    let hex = s.strip_prefix('#').or_else(|| {
-        (s.len() == 6 && s.bytes().all(|b| b.is_ascii_hexdigit())).then_some(s)
-    });
+    let hex = s
+        .strip_prefix('#')
+        .or_else(|| (s.len() == 6 && s.bytes().all(|b| b.is_ascii_hexdigit())).then_some(s));
     if let Some(hex) = hex {
         if hex.len() == 6 {
             let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
@@ -158,7 +158,10 @@ mod tests {
     #[test]
     fn unknown_preset_is_none() {
         assert!(Theme::preset("chartreuse").is_none());
-        assert!(Theme::preset("NORD").is_some(), "names are case-insensitive");
+        assert!(
+            Theme::preset("NORD").is_some(),
+            "names are case-insensitive"
+        );
     }
 
     #[test]

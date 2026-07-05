@@ -9,7 +9,10 @@ use crate::keys::{Action, Chord, Context, KeyMatch};
 use crate::profiles;
 
 use super::tasks::{bracketed_paste, complete_path, fetch_agents, fetch_search_index, seed_prompt};
-use super::{App, AppMsg, ChatMode, NotesState, PaletteAction, PaletteItem, Picker, PickerItem, PickerKind, RenameForm, SearchState, SplitDir, SpawnForm, TabKind, View, Workspace, Tab};
+use super::{
+    App, AppMsg, ChatMode, NotesState, PaletteAction, PaletteItem, Picker, PickerItem, PickerKind,
+    RenameForm, SearchState, SpawnForm, SplitDir, Tab, TabKind, View, Workspace,
+};
 
 /// Ex-command verbs surfaced in the Ctrl-K palette as a "command" source — the
 /// fuzzy-findable mirror of the `:` command line. `(verb, description)`.
@@ -498,8 +501,12 @@ impl App {
             self.term_attached = false;
             return;
         }
-        let Some(sid) = self.open_session_id() else { return };
-        let Some(bytes) = crate::terminal::encode_key(&key) else { return };
+        let Some(sid) = self.open_session_id() else {
+            return;
+        };
+        let Some(bytes) = crate::terminal::encode_key(&key) else {
+            return;
+        };
         let drv = self.driver();
         tokio::spawn(async move {
             let _ = drv.terminal_input(&sid, &bytes).await;
@@ -565,7 +572,9 @@ impl App {
     /// Open the rename overlay for the targeted agent, prefilled with its
     /// current custom name (if any).
     pub(super) fn open_rename(&mut self) {
-        let Some(agent) = self.target_agent() else { return };
+        let Some(agent) = self.target_agent() else {
+            return;
+        };
         let cwd = agent.cwd_str().to_string();
         if cwd.is_empty() {
             self.set_toast("no working directory to name");
@@ -596,7 +605,9 @@ impl App {
     /// Save the rename: store (or clear, when blank) the cwd's custom name and
     /// persist the map.
     fn submit_rename(&mut self) {
-        let Some(form) = self.rename.take() else { return };
+        let Some(form) = self.rename.take() else {
+            return;
+        };
         let name = form.input.trim().to_string();
         if name.is_empty() {
             self.names.remove(&form.cwd);
@@ -610,14 +621,21 @@ impl App {
     // ── notes scratchpad ────────────────────────────────────────────────────
 
     pub(super) fn open_notes(&mut self) {
-        let Some(agent) = self.target_agent() else { return };
+        let Some(agent) = self.target_agent() else {
+            return;
+        };
         let cwd = agent.cwd_str().to_string();
         if cwd.is_empty() {
             self.set_toast("no working directory for notes");
             return;
         }
         let text = self.notes.get(&cwd).cloned().unwrap_or_default();
-        self.notes_view = Some(NotesState { cwd, text, editing: false, scroll: 0 });
+        self.notes_view = Some(NotesState {
+            cwd,
+            text,
+            editing: false,
+            scroll: 0,
+        });
     }
 
     fn handle_notes_key(&mut self, key: KeyEvent) {
@@ -678,7 +696,9 @@ impl App {
 
     /// Persist the open note (clearing the entry when blank).
     fn save_notes(&mut self) {
-        let Some(n) = self.notes_view.as_ref() else { return };
+        let Some(n) = self.notes_view.as_ref() else {
+            return;
+        };
         let cwd = n.cwd.clone();
         let text = n.text.trim_end().to_string();
         if text.is_empty() {
@@ -692,7 +712,9 @@ impl App {
     pub(super) fn handle_spawn_key(&mut self, key: KeyEvent) {
         let n = self.profiles.len();
         let np = crate::app::SPAWN_PROVIDERS.len();
-        let Some(form) = self.spawn_form.as_mut() else { return };
+        let Some(form) = self.spawn_form.as_mut() else {
+            return;
+        };
         match key.code {
             KeyCode::Esc => self.spawn_form = None,
             KeyCode::Enter => self.submit_spawn(),
@@ -727,9 +749,21 @@ impl App {
 
     pub(super) fn open_palette(&mut self) {
         let mut items = vec![
-            PaletteItem { label: "New agent".into(), hint: "spawn".into(), action: PaletteAction::NewAgent },
-            PaletteItem { label: "New terminal".into(), hint: "shell tab".into(), action: PaletteAction::NewTerminal },
-            PaletteItem { label: "Dashboard".into(), hint: "overview".into(), action: PaletteAction::Dashboard },
+            PaletteItem {
+                label: "New agent".into(),
+                hint: "spawn".into(),
+                action: PaletteAction::NewAgent,
+            },
+            PaletteItem {
+                label: "New terminal".into(),
+                hint: "shell tab".into(),
+                action: PaletteAction::NewTerminal,
+            },
+            PaletteItem {
+                label: "Dashboard".into(),
+                hint: "overview".into(),
+                action: PaletteAction::Dashboard,
+            },
         ];
         // Commands — the `:`-line verbs, so Ctrl-K is a real command palette.
         for (verb, desc) in COMMAND_PALETTE {
@@ -769,7 +803,9 @@ impl App {
     }
 
     pub(super) fn handle_palette_key(&mut self, key: KeyEvent) {
-        let Some(p) = self.palette.as_mut() else { return };
+        let Some(p) = self.palette.as_mut() else {
+            return;
+        };
         match key.code {
             KeyCode::Esc => self.palette = None,
             KeyCode::Enter => {
@@ -850,10 +886,16 @@ impl App {
         };
         let provider = self.provider_for(&sid);
         let managed = provider != "claude";
-        let cwd = self.target_agent().and_then(|a| a.cwd.clone()).unwrap_or_default();
+        let cwd = self
+            .target_agent()
+            .and_then(|a| a.cwd.clone())
+            .unwrap_or_default();
         self.picker = Some(Picker {
             title: format!("model · {provider}"),
-            kind: PickerKind::Model { provider: provider.clone(), effort: None },
+            kind: PickerKind::Model {
+                provider: provider.clone(),
+                effort: None,
+            },
             session_id: sid.clone(),
             query: String::new(),
             items: Vec::new(),
@@ -866,8 +908,14 @@ impl App {
             let cm = self.claudemon.clone();
             let tx = self.tx.clone();
             tokio::spawn(async move {
-                let models = cm.provider_models(&provider, &cwd).await.unwrap_or_default();
-                let _ = tx.send(AppMsg::PickerModels { session_id: sid, models });
+                let models = cm
+                    .provider_models(&provider, &cwd)
+                    .await
+                    .unwrap_or_default();
+                let _ = tx.send(AppMsg::PickerModels {
+                    session_id: sid,
+                    models,
+                });
             });
         }
     }
@@ -879,14 +927,20 @@ impl App {
             self.set_toast("no agent selected");
             return;
         };
-        let Some(cwd) = self.target_agent().and_then(|a| a.cwd.clone()).filter(|c| !c.is_empty())
+        let Some(cwd) = self
+            .target_agent()
+            .and_then(|a| a.cwd.clone())
+            .filter(|c| !c.is_empty())
         else {
             self.set_toast("no working directory for a handoff");
             return;
         };
         let items: Vec<PickerItem> = ["claude", "codex", "opencode", "pi"]
             .iter()
-            .map(|p| PickerItem { id: (*p).to_string(), label: (*p).to_string() })
+            .map(|p| PickerItem {
+                id: (*p).to_string(),
+                label: (*p).to_string(),
+            })
             .collect();
         let mut picker = Picker {
             title: "hand off to".into(),
@@ -918,7 +972,11 @@ impl App {
         } else {
             &["default", "acceptEdits", "plan"]
         };
-        let cur = self.perm_modes.get(&sid).map(String::as_str).unwrap_or(cycle[0]);
+        let cur = self
+            .perm_modes
+            .get(&sid)
+            .map(String::as_str)
+            .unwrap_or(cycle[0]);
         let idx = cycle.iter().position(|m| *m == cur).unwrap_or(0);
         let next = cycle[(idx + 1) % cycle.len()].to_string();
         let drv = self.driver();
@@ -927,7 +985,10 @@ impl App {
         tokio::spawn(async move {
             match drv.set_permission_mode(&sid2, &next).await {
                 Ok(mode) => {
-                    let _ = tx.send(AppMsg::PermissionMode { session_id: sid2, mode });
+                    let _ = tx.send(AppMsg::PermissionMode {
+                        session_id: sid2,
+                        mode,
+                    });
                 }
                 Err(e) => {
                     let _ = tx.send(AppMsg::Toast(format!("mode: {e}")));
@@ -973,7 +1034,12 @@ impl App {
         let Some(p) = self.picker.take() else { return };
         // A highlighted list row wins; free text (the model picker) is the fallback.
         let chosen_id = p.chosen().map(|it| it.id.clone());
-        let Picker { kind, session_id, query, .. } = p;
+        let Picker {
+            kind,
+            session_id,
+            query,
+            ..
+        } = p;
         match kind {
             PickerKind::Model { provider, effort } => {
                 let model = chosen_id.or_else(|| {
@@ -1006,7 +1072,10 @@ impl App {
         let drv = self.driver();
         if provider == "claude" {
             let msg = format!("/model {model}");
-            self.dispatch("Model switch sent", async move { drv.message(&sid, &msg).await });
+            self.dispatch(
+                "Model switch sent",
+                async move { drv.message(&sid, &msg).await },
+            );
         } else {
             self.dispatch("Model switched", async move {
                 drv.set_model(&sid, Some(&model), effort.as_deref()).await
@@ -1109,7 +1178,11 @@ impl App {
             return;
         }
         // Current agent index, or "before the first" when the Dashboard is selected.
-        let cur = if self.selected == 0 { n - 1 } else { self.selected - 1 };
+        let cur = if self.selected == 0 {
+            n - 1
+        } else {
+            self.selected - 1
+        };
         for offset in 1..=n {
             let i = (cur + offset) % n;
             if self.agents[i].is_waiting() {
@@ -1124,7 +1197,9 @@ impl App {
     /// single Claude tab the first time). The Dashboard row doesn't "open" — it's
     /// a live preview, so Enter there is a no-op.
     pub(super) fn open_agent(&mut self) {
-        let Some(agent) = self.selected_agent() else { return };
+        let Some(agent) = self.selected_agent() else {
+            return;
+        };
         let id = agent.session_id.clone();
         // Opening from the sidebar resets the layout to a single pane.
         self.tiles = vec![id.clone()];
@@ -1169,10 +1244,16 @@ impl App {
             .unwrap_or_default();
         self.load_git_summary(cwd);
         self.view = View::Agent { id: id.clone() };
-        self.workspaces.entry(id.clone()).or_insert_with(|| Workspace {
-            tabs: vec![Tab { title: "claude".into(), session_id: id.clone(), kind: TabKind::Claude }],
-            active: 0,
-        });
+        self.workspaces
+            .entry(id.clone())
+            .or_insert_with(|| Workspace {
+                tabs: vec![Tab {
+                    title: "claude".into(),
+                    session_id: id.clone(),
+                    kind: TabKind::Claude,
+                }],
+                active: 0,
+            });
         self.enter_active_tab();
     }
 
@@ -1210,7 +1291,11 @@ impl App {
 
     /// Teleport to the 1-based harpoon slot, if it's filled.
     pub(super) fn harpoon_jump(&mut self, slot: usize) {
-        let Some(sid) = slot.checked_sub(1).and_then(|i| self.harpoon.get(i)).cloned() else {
+        let Some(sid) = slot
+            .checked_sub(1)
+            .and_then(|i| self.harpoon.get(i))
+            .cloned()
+        else {
             self.set_toast(format!("no agent pinned at {slot}"));
             return;
         };
@@ -1237,7 +1322,11 @@ impl App {
         }
         let target = self.jump_idx as i32 + delta;
         if target < 0 || target as usize >= self.jumplist.len() {
-            self.set_toast(if delta < 0 { "start of jumps" } else { "end of jumps" });
+            self.set_toast(if delta < 0 {
+                "start of jumps"
+            } else {
+                "end of jumps"
+            });
             return;
         }
         self.jump_idx = target as usize;
@@ -1325,7 +1414,9 @@ impl App {
         self.chat_follow = true;
         self.insert_mode = false;
         self.term_attached = false;
-        let Some(tab) = self.active_tab().cloned() else { return };
+        let Some(tab) = self.active_tab().cloned() else {
+            return;
+        };
         if tab.kind == TabKind::Claude && self.no_terminal.contains(&tab.session_id) {
             self.chat_mode = ChatMode::Transcript;
             self.load_transcript(tab.session_id);
@@ -1358,12 +1449,18 @@ impl App {
     /// it's a real PTY we can stream, and shows in the system-wide list). The
     /// session id comes back async and is added as a tab then.
     pub(super) fn new_terminal_tab(&mut self) {
-        let Some(id) = self.open_agent_id().map(|s| s.to_string()) else { return };
+        let Some(id) = self.open_agent_id().map(|s| s.to_string()) else {
+            return;
+        };
         let cwd = self
             .chat_agent()
             .map(|a| a.cwd_str().to_string())
             .filter(|c| !c.is_empty())
-            .or_else(|| std::env::current_dir().ok().map(|p| p.display().to_string()))
+            .or_else(|| {
+                std::env::current_dir()
+                    .ok()
+                    .map(|p| p.display().to_string())
+            })
             .unwrap_or_else(|| "/".into());
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".into());
         let cm = self.claudemon.clone();
@@ -1372,7 +1469,10 @@ impl App {
         tokio::spawn(async move {
             match cm.spawn(vec![shell], cwd, serde_json::Map::new(), "").await {
                 Ok(sid) => {
-                    let _ = tx.send(AppMsg::ShellSpawned { agent_id: id, session_id: sid });
+                    let _ = tx.send(AppMsg::ShellSpawned {
+                        agent_id: id,
+                        session_id: sid,
+                    });
                 }
                 Err(e) => {
                     let _ = tx.send(AppMsg::Toast(format!("Terminal failed: {e}")));
@@ -1385,7 +1485,9 @@ impl App {
     /// (back to the list); closing a shell tab stops that shell.
     pub(super) fn close_tab(&mut self) {
         let Some(ws) = self.workspace() else { return };
-        let Some(tab) = ws.active_tab().cloned() else { return };
+        let Some(tab) = ws.active_tab().cloned() else {
+            return;
+        };
         if tab.kind == TabKind::Claude {
             self.close_chat();
             return;
@@ -1433,7 +1535,9 @@ impl App {
     /// claudemon's REST API. The new agent surfaces in the sidebar on the next
     /// state-change event (claudemon emits one once Claude starts up).
     pub(super) fn submit_spawn(&mut self) {
-        let Some(form) = self.spawn_form.clone() else { return };
+        let Some(form) = self.spawn_form.clone() else {
+            return;
+        };
         let cwd = profiles::normalize_cwd(&form.cwd);
         if cwd.is_empty() {
             self.set_toast("working directory required");
@@ -1536,7 +1640,9 @@ impl App {
     /// of starting blank. (claudemon keeps the old stopped session in its list
     /// until it's pruned; this adds a live one in the same directory.)
     pub(super) fn respawn(&mut self) {
-        let Some(agent) = self.target_agent() else { return };
+        let Some(agent) = self.target_agent() else {
+            return;
+        };
         if agent.state() != "stopped" {
             self.set_toast("agent is still running");
             return;
@@ -1596,7 +1702,9 @@ impl App {
     }
 
     pub(super) fn approve(&mut self, decision: &str, ok: &str) {
-        let Some(agent) = self.target_agent() else { return };
+        let Some(agent) = self.target_agent() else {
+            return;
+        };
         if agent.approval().is_none() {
             return;
         }
@@ -1608,18 +1716,25 @@ impl App {
 
     /// Answer the first pending question with the option at 1-based key `c`.
     pub(super) fn answer_option(&mut self, c: char) {
-        let Some(agent) = self.target_agent() else { return };
+        let Some(agent) = self.target_agent() else {
+            return;
+        };
         if !agent.has_question() {
             return;
         }
         let option = (c as u8 - b'0') as u64; // '1'..='9' → 1..=9
         let sid = agent.session_id.clone();
         let drv = self.driver();
-        self.dispatch("Answered", async move { drv.answer_option(&sid, option).await });
+        self.dispatch(
+            "Answered",
+            async move { drv.answer_option(&sid, option).await },
+        );
     }
 
     pub(super) fn signal(&mut self, signal: &str, ok: &str) {
-        let Some(sid) = self.target_session() else { return };
+        let Some(sid) = self.target_session() else {
+            return;
+        };
         let drv = self.driver();
         let signal = signal.to_string();
         self.dispatch(ok, async move { drv.signal(&sid, &signal).await });
@@ -1632,7 +1747,9 @@ impl App {
         if text.is_empty() {
             return;
         }
-        let Some(agent) = self.target_agent() else { return };
+        let Some(agent) = self.target_agent() else {
+            return;
+        };
         let sid = agent.session_id.clone();
         let answering = agent.has_question();
         let drv = self.driver();
@@ -1722,7 +1839,11 @@ mod tests {
     /// A list app with `n` agents and the first one selected (row 1).
     fn app_with_agents(n: usize) -> App {
         let mut app = test_app();
-        app.set_agents((1..=n).map(|i| agent(&format!("s{i}"), "responding")).collect());
+        app.set_agents(
+            (1..=n)
+                .map(|i| agent(&format!("s{i}"), "responding"))
+                .collect(),
+        );
         app.selected = 1;
         app
     }
@@ -1813,15 +1934,24 @@ mod tests {
         let mut app = app_with_agents(1);
         app.handle_key(ch(' '));
         assert_eq!(app.pending_keys.len(), 1, "leader is held pending");
-        assert!(app.spawn_form.is_none() && !app.should_quit, "nothing fired yet");
+        assert!(
+            app.spawn_form.is_none() && !app.should_quit,
+            "nothing fired yet"
+        );
     }
 
     #[test]
     fn leader_a_opens_the_spawn_form() {
         let mut app = app_with_agents(1);
         feed(&mut app, " a");
-        assert!(app.spawn_form.is_some(), "<leader> a is the new-agent chord");
-        assert!(app.pending_keys.is_empty(), "the chord resolved and cleared");
+        assert!(
+            app.spawn_form.is_some(),
+            "<leader> a is the new-agent chord"
+        );
+        assert!(
+            app.pending_keys.is_empty(),
+            "the chord resolved and cleared"
+        );
     }
 
     #[tokio::test]
@@ -1837,7 +1967,10 @@ mod tests {
         feed(&mut app, " 1");
         // No pins, so the jump only toasts — but the chord must be consumed and
         // must not fall through to a count or a global action.
-        assert!(app.pending_keys.is_empty(), "the leader+digit chord is consumed");
+        assert!(
+            app.pending_keys.is_empty(),
+            "the leader+digit chord is consumed"
+        );
         assert_eq!(app.count, None);
         assert!(!app.should_quit);
     }
@@ -1848,7 +1981,10 @@ mod tests {
         app.handle_key(ch(' '));
         assert_eq!(app.pending_keys.len(), 1);
         app.handle_key(code(KeyCode::Esc));
-        assert!(app.pending_keys.is_empty(), "esc drops the half-typed chord");
+        assert!(
+            app.pending_keys.is_empty(),
+            "esc drops the half-typed chord"
+        );
     }
 
     #[test]
@@ -1866,7 +2002,10 @@ mod tests {
         app.open_agent();
         app.chat_mode = ChatMode::Transcript; // 'i' = Attach in terminal mode
         app.handle_key(ch('i'));
-        assert!(app.insert_mode, "i enters compose mode in the transcript context");
+        assert!(
+            app.insert_mode,
+            "i enters compose mode in the transcript context"
+        );
     }
 
     #[tokio::test]
@@ -1875,7 +2014,10 @@ mod tests {
         app.open_agent();
         app.insert_mode = true;
         feed(&mut app, "hi");
-        assert_eq!(app.input, "hi", "characters land in the composer, not the keymap");
+        assert_eq!(
+            app.input, "hi",
+            "characters land in the composer, not the keymap"
+        );
     }
 
     #[tokio::test]
@@ -1894,7 +2036,10 @@ mod tests {
         app.insert_mode = true;
         feed(&mut app, "ship it");
         app.handle_key(code(KeyCode::Enter));
-        assert!(app.input.is_empty(), "enter dispatches the message and clears the buffer");
+        assert!(
+            app.input.is_empty(),
+            "enter dispatches the message and clears the buffer"
+        );
     }
 
     // ── `/` sidebar filter entry / exit ─────────────────────────────────────
@@ -1905,7 +2050,11 @@ mod tests {
         app.handle_key(ch('/'));
         assert!(app.filter_editing, "/ starts editing the sidebar filter");
         feed(&mut app, "s1");
-        assert_eq!(app.filter.as_deref(), Some("s1"), "characters extend the query");
+        assert_eq!(
+            app.filter.as_deref(),
+            Some("s1"),
+            "characters extend the query"
+        );
         app.handle_key(code(KeyCode::Backspace));
         assert_eq!(app.filter.as_deref(), Some("s"), "backspace trims it");
     }
@@ -1921,7 +2070,10 @@ mod tests {
 
         app.handle_key(ch('/'));
         app.handle_key(code(KeyCode::Esc));
-        assert!(!app.filter_editing && app.filter.is_none(), "esc clears the filter entirely");
+        assert!(
+            !app.filter_editing && app.filter.is_none(),
+            "esc clears the filter entirely"
+        );
     }
 
     // ── `:` ex-command line entry / exit ────────────────────────────────────
@@ -1930,7 +2082,11 @@ mod tests {
     fn colon_opens_the_cmdline() {
         let mut app = app_with_agents(1);
         app.handle_key(ch(':'));
-        assert_eq!(app.cmdline.as_deref(), Some(""), ": opens an empty command line");
+        assert_eq!(
+            app.cmdline.as_deref(),
+            Some(""),
+            ": opens an empty command line"
+        );
     }
 
     #[test]
@@ -1962,7 +2118,10 @@ mod tests {
         app.selected = 1;
         app.handle_key(ch('3'));
         // With a question up, 1-9 answer it positionally — no count is started.
-        assert_eq!(app.count, None, "a digit does not accumulate a count while a question is up");
+        assert_eq!(
+            app.count, None,
+            "a digit does not accumulate a count while a question is up"
+        );
         assert!(app.pending_keys.is_empty());
     }
 
@@ -1970,7 +2129,11 @@ mod tests {
     fn digit_starts_a_count_when_no_question_is_pending() {
         let mut app = app_with_agents(2);
         app.handle_key(ch('3'));
-        assert_eq!(app.count, Some(3), "without a question, the same digit starts a count");
+        assert_eq!(
+            app.count,
+            Some(3),
+            "without a question, the same digit starts a count"
+        );
     }
 
     // ── open modals swallow keys (no leak to global actions) ────────────────
@@ -1993,7 +2156,10 @@ mod tests {
         app.open_search();
         assert!(app.search.is_some());
         app.handle_key(ch('q'));
-        assert!(!app.should_quit, "typing in search never triggers the global quit");
+        assert!(
+            !app.should_quit,
+            "typing in search never triggers the global quit"
+        );
         assert_eq!(
             app.search.as_ref().map(|s| s.query.as_str()),
             Some("q"),

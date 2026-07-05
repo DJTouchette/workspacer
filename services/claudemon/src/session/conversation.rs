@@ -113,9 +113,7 @@ impl ConversationStore {
     /// Full parsed history + current seq for one session (for clients joining
     /// mid-session or recovering from a missed delta).
     pub fn snapshot(&self, session_id: &str) -> Option<(u64, Vec<ConversationItem>)> {
-        self.logs
-            .get(session_id)
-            .map(|l| (l.seq, l.items.clone()))
+        self.logs.get(session_id).map(|l| (l.seq, l.items.clone()))
     }
 
     /// Append items for a *managed* session — one not backed by a transcript
@@ -220,7 +218,10 @@ async fn tail_one(conv: &ConversationStore, session_id: &str, path: &str) -> std
         // Bound the read to the length we statted so `offset` stays consistent
         // even if the file grows while we read.
         let mut chunk = Vec::with_capacity((len - offset) as usize);
-        (&mut file).take(len - offset).read_to_end(&mut chunk).await?;
+        (&mut file)
+            .take(len - offset)
+            .read_to_end(&mut chunk)
+            .await?;
         offset += chunk.len() as u64;
         buf.extend_from_slice(&chunk);
     }
@@ -290,7 +291,11 @@ fn is_injected_meta(text: &str) -> bool {
 
 pub fn items_from_row(value: &Value) -> Vec<ConversationItem> {
     let mut out = Vec::new();
-    if value.get("isMeta").and_then(Value::as_bool).unwrap_or(false) {
+    if value
+        .get("isMeta")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
         return out;
     }
     // Sub-agent steps (Task tool / workflow agents) are written into the same
@@ -403,12 +408,24 @@ mod tests {
     #[test]
     fn push_then_forget_reclaims_the_log() {
         let conv = ConversationStore::new();
-        conv.push("s1", vec![ConversationItem::AssistantText { text: "hi".into(), timestamp: None }]);
+        conv.push(
+            "s1",
+            vec![ConversationItem::AssistantText {
+                text: "hi".into(),
+                timestamp: None,
+            }],
+        );
         assert!(conv.snapshot("s1").is_some(), "log present after push");
         conv.forget("s1");
         assert!(conv.snapshot("s1").is_none(), "log reclaimed after forget");
         // The next push after forget starts a fresh log that resets late joiners.
-        conv.push("s1", vec![ConversationItem::AssistantText { text: "again".into(), timestamp: None }]);
+        conv.push(
+            "s1",
+            vec![ConversationItem::AssistantText {
+                text: "again".into(),
+                timestamp: None,
+            }],
+        );
         assert_eq!(conv.snapshot("s1").map(|(seq, _)| seq), Some(1));
     }
 
@@ -480,7 +497,12 @@ mod tests {
         let items = items_from_row(&row);
         assert_eq!(items.len(), 1);
         match &items[0] {
-            ConversationItem::ToolResult { tool_use_id, content, is_error, .. } => {
+            ConversationItem::ToolResult {
+                tool_use_id,
+                content,
+                is_error,
+                ..
+            } => {
                 assert_eq!(tool_use_id, "tu_1");
                 assert_eq!(content, "42 lines");
                 assert!(!is_error);
@@ -508,9 +530,15 @@ mod tests {
         });
         let items = items_from_row(&row);
         assert_eq!(items.len(), 3, "usage + text + tool_use (thinking skipped)");
-        assert!(matches!(&items[0], ConversationItem::Usage { model: Some(m), message_id: Some(id), .. } if m == "claude-fable-5" && id == "msg_1"));
-        assert!(matches!(&items[1], ConversationItem::AssistantText { text, .. } if text == "I'll read the file."));
-        assert!(matches!(&items[2], ConversationItem::ToolUse { id, name, .. } if id == "tu_2" && name == "Read"));
+        assert!(
+            matches!(&items[0], ConversationItem::Usage { model: Some(m), message_id: Some(id), .. } if m == "claude-fable-5" && id == "msg_1")
+        );
+        assert!(
+            matches!(&items[1], ConversationItem::AssistantText { text, .. } if text == "I'll read the file.")
+        );
+        assert!(
+            matches!(&items[2], ConversationItem::ToolUse { id, name, .. } if id == "tu_2" && name == "Read")
+        );
     }
 
     #[test]
@@ -528,14 +556,20 @@ mod tests {
                 ]
             }
         });
-        assert!(items_from_row(&tool_use).is_empty(), "sidechain tool_use must be dropped");
+        assert!(
+            items_from_row(&tool_use).is_empty(),
+            "sidechain tool_use must be dropped"
+        );
 
         let text = json!({
             "type": "assistant",
             "isSidechain": true,
             "message": { "role": "assistant", "content": [{ "type": "text", "text": "subagent thinking" }] }
         });
-        assert!(items_from_row(&text).is_empty(), "sidechain text must be dropped");
+        assert!(
+            items_from_row(&text).is_empty(),
+            "sidechain text must be dropped"
+        );
 
         // The spawning Agent tool_use lives in the MAIN (non-sidechain) turn and
         // must still surface so its card anchors.
@@ -555,7 +589,10 @@ mod tests {
 
     #[test]
     fn meta_and_summary_rows_are_skipped() {
-        assert!(items_from_row(&json!({ "type": "user", "isMeta": true, "message": { "content": "x" } })).is_empty());
+        assert!(items_from_row(
+            &json!({ "type": "user", "isMeta": true, "message": { "content": "x" } })
+        )
+        .is_empty());
         assert!(items_from_row(&json!({ "type": "summary", "summary": "..." })).is_empty());
     }
 
@@ -585,14 +622,19 @@ mod tests {
 
         // Second write: the rest of row 2.
         {
-            let mut f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+            let mut f = std::fs::OpenOptions::new()
+                .append(true)
+                .open(&path)
+                .unwrap();
             writeln!(f, "{}", &row2[20..]).unwrap();
         }
         tail_one(&conv, "s1", &path_str).await.unwrap();
         let d2 = rx.try_recv().expect("second delta");
         assert!(!d2.reset);
         assert_eq!(d2.seq, 2);
-        assert!(matches!(&d2.items[0], ConversationItem::UserMessage { text, .. } if text == "second"));
+        assert!(
+            matches!(&d2.items[0], ConversationItem::UserMessage { text, .. } if text == "second")
+        );
 
         // Snapshot reflects the whole log.
         let (seq, items) = conv.snapshot("s1").unwrap();

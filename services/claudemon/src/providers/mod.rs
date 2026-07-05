@@ -68,8 +68,9 @@ struct ModelCacheEntry {
     at: std::time::Instant,
     models: Vec<ModelInfo>,
 }
-static MODEL_CACHE: once_cell::sync::Lazy<std::sync::Mutex<std::collections::HashMap<String, ModelCacheEntry>>> =
-    once_cell::sync::Lazy::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+static MODEL_CACHE: once_cell::sync::Lazy<
+    std::sync::Mutex<std::collections::HashMap<String, ModelCacheEntry>>,
+> = once_cell::sync::Lazy::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
 const MODEL_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(600);
 
 /// Cached models for `key`, if present and — when `max_age` is given — younger
@@ -85,7 +86,13 @@ fn model_cache_get(key: &str, max_age: Option<std::time::Duration>) -> Option<Ve
 
 fn model_cache_put(key: &str, models: &[ModelInfo]) {
     if let Ok(mut cache) = MODEL_CACHE.lock() {
-        cache.insert(key.to_string(), ModelCacheEntry { at: std::time::Instant::now(), models: models.to_vec() });
+        cache.insert(
+            key.to_string(),
+            ModelCacheEntry {
+                at: std::time::Instant::now(),
+                models: models.to_vec(),
+            },
+        );
     }
 }
 
@@ -109,7 +116,11 @@ pub(crate) async fn cached_or_fetch(
         }
         Err(err) => match model_cache_get(&key, None) {
             Some(models) => {
-                tracing::warn!(?err, key, "model list failed; serving last-known-good cached models");
+                tracing::warn!(
+                    ?err,
+                    key,
+                    "model list failed; serving last-known-good cached models"
+                );
                 Ok(models)
             }
             None => Err(err),
@@ -200,7 +211,9 @@ pub(crate) fn rate_limits_from(v: &Value) -> Option<AgentUpdate> {
     let mut five: (Option<f64>, Option<i64>) = (None, None);
     let mut seven: (Option<f64>, Option<i64>) = (None, None);
     for key in ["primary", "secondary"] {
-        let Some(w) = v.get(key).filter(|w| !w.is_null()) else { continue };
+        let Some(w) = v.get(key).filter(|w| !w.is_null()) else {
+            continue;
+        };
         let (pct, resets, mins) = window(w);
         if pct.is_none() && resets.is_none() {
             continue;
@@ -239,7 +252,11 @@ pub fn context_window_for(model: &str) -> Option<u64> {
     }
     if m.contains("claude") {
         // 1M-context variants advertise it in the id (e.g. `[1m]`).
-        return Some(if m.contains("[1m]") || m.contains("-1m") { 1_000_000 } else { 200_000 });
+        return Some(if m.contains("[1m]") || m.contains("-1m") {
+            1_000_000
+        } else {
+            200_000
+        });
     }
     if m.contains("gpt-5") || m.contains("codex") {
         return Some(272_000);
@@ -279,7 +296,11 @@ pub fn conversation_item(update: &AgentUpdate) -> Option<ConversationItem> {
             input: input.clone(),
             timestamp: None,
         }),
-        AgentUpdate::ToolResult { tool_use_id, content, is_error } => Some(ConversationItem::ToolResult {
+        AgentUpdate::ToolResult {
+            tool_use_id,
+            content,
+            is_error,
+        } => Some(ConversationItem::ToolResult {
             tool_use_id: tool_use_id.clone(),
             content: content.clone(),
             is_error: *is_error,
@@ -380,7 +401,9 @@ impl UsageAcc {
             .context_window
             .or_else(|| self.model.as_deref().and_then(context_window_for));
         let pct = match (self.context_tokens, window) {
-            (Some(ctx), Some(win)) if win > 0 => Some(((ctx as f64 / win as f64) * 100.0).min(100.0)),
+            (Some(ctx), Some(win)) if win > 0 => {
+                Some(((ctx as f64 / win as f64) * 100.0).min(100.0))
+            }
             _ => None,
         };
         StatusLine {
@@ -424,7 +447,9 @@ pub fn apply_updates(
                     new_mode = Some(SessionMode::Responding);
                 }
             }
-            AgentUpdate::PermissionPending { tool, summary, raw, .. } => {
+            AgentUpdate::PermissionPending {
+                tool, summary, raw, ..
+            } => {
                 new_mode = Some(SessionMode::Approval);
                 // NOTE: surfacing the pending approval is accurate telemetry, but
                 // forwarding the user's decision back to the provider's approval
@@ -435,12 +460,36 @@ pub fn apply_updates(
                     raw: raw.clone(),
                 });
             }
-            AgentUpdate::Usage { model, input_tokens, output_tokens, cost_usd, context_tokens, context_window } => {
-                acc.merge(model.clone(), *input_tokens, *output_tokens, *cost_usd, *context_tokens, *context_window);
+            AgentUpdate::Usage {
+                model,
+                input_tokens,
+                output_tokens,
+                cost_usd,
+                context_tokens,
+                context_window,
+            } => {
+                acc.merge(
+                    model.clone(),
+                    *input_tokens,
+                    *output_tokens,
+                    *cost_usd,
+                    *context_tokens,
+                    *context_window,
+                );
                 usage_changed = true;
             }
-            AgentUpdate::RateLimits { five_hour_pct, five_hour_resets_at, seven_day_pct, seven_day_resets_at } => {
-                acc.merge_rate_limits(*five_hour_pct, *five_hour_resets_at, *seven_day_pct, *seven_day_resets_at);
+            AgentUpdate::RateLimits {
+                five_hour_pct,
+                five_hour_resets_at,
+                seven_day_pct,
+                seven_day_resets_at,
+            } => {
+                acc.merge_rate_limits(
+                    *five_hour_pct,
+                    *five_hour_resets_at,
+                    *seven_day_pct,
+                    *seven_day_resets_at,
+                );
                 usage_changed = true;
             }
             AgentUpdate::Error(msg) => {
@@ -499,7 +548,12 @@ pub(crate) fn spawn_attach_pty(
     let handle = Arc::new(pty::spawn(
         argv,
         cwd,
-        PtySize { cols: 120, rows: 32, pixel_width: 0, pixel_height: 0 },
+        PtySize {
+            cols: 120,
+            rows: 32,
+            pixel_width: 0,
+            pixel_height: 0,
+        },
         &HashMap::new(),
     )?);
 
@@ -557,19 +611,35 @@ mod tests {
     #[test]
     fn model_cache_ttl_and_stale_fallback() {
         let key = "test-provider:test-bin-abc123"; // unique: MODEL_CACHE is global
-        let models = vec![ModelInfo { id: "m1".into(), label: "M1".into(), default: true }];
+        let models = vec![ModelInfo {
+            id: "m1".into(),
+            label: "M1".into(),
+            default: true,
+        }];
 
         // Fresh entry is served both as a fresh hit and as last-known-good.
         model_cache_put(key, &models);
-        assert!(model_cache_get(key, Some(MODEL_CACHE_TTL)).is_some(), "fresh hit");
+        assert!(
+            model_cache_get(key, Some(MODEL_CACHE_TTL)).is_some(),
+            "fresh hit"
+        );
         assert!(model_cache_get(key, None).is_some(), "any-age hit");
 
         // An entry older than the TTL is NOT a fresh hit, but IS still available
         // as the stale fallback (what we serve when a live query fails).
         if let Some(old) = std::time::Instant::now().checked_sub(MODEL_CACHE_TTL * 2) {
-            MODEL_CACHE.lock().unwrap().insert(key.into(), ModelCacheEntry { at: old, models });
-            assert!(model_cache_get(key, Some(MODEL_CACHE_TTL)).is_none(), "stale is not a fresh hit");
-            assert!(model_cache_get(key, None).is_some(), "stale still served as last-known-good");
+            MODEL_CACHE
+                .lock()
+                .unwrap()
+                .insert(key.into(), ModelCacheEntry { at: old, models });
+            assert!(
+                model_cache_get(key, Some(MODEL_CACHE_TTL)).is_none(),
+                "stale is not a fresh hit"
+            );
+            assert!(
+                model_cache_get(key, None).is_some(),
+                "stale still served as last-known-good"
+            );
         }
 
         // Unknown key → nothing cached.
@@ -602,7 +672,14 @@ mod tests {
     #[test]
     fn status_line_falls_back_to_window_table_by_model() {
         let mut acc = UsageAcc::new();
-        acc.merge(Some("anthropic/claude-sonnet-4-5".into()), None, None, None, Some(100_000), None);
+        acc.merge(
+            Some("anthropic/claude-sonnet-4-5".into()),
+            None,
+            None,
+            None,
+            Some(100_000),
+            None,
+        );
         let sl = acc.status_line();
         assert_eq!(sl.context_window_size, Some(200_000));
         assert!((sl.context_used_pct.unwrap() - 50.0).abs() < 0.001);
@@ -623,7 +700,10 @@ mod tests {
 
     #[test]
     fn context_window_table_matches_families() {
-        assert_eq!(context_window_for("anthropic/claude-opus-4-8"), Some(200_000));
+        assert_eq!(
+            context_window_for("anthropic/claude-opus-4-8"),
+            Some(200_000)
+        );
         assert_eq!(context_window_for("claude-opus-4-8[1m]"), Some(1_000_000));
         assert_eq!(context_window_for("gpt-5-codex"), Some(272_000));
         assert_eq!(context_window_for("google/gemini-2.5-pro"), Some(1_048_576));
@@ -646,11 +726,16 @@ mod tests {
             &mut mode,
             &mut acc,
         );
-        let (_seq, items) = conv.snapshot("s-err").expect("conversation exists for session");
+        let (_seq, items) = conv
+            .snapshot("s-err")
+            .expect("conversation exists for session");
         assert_eq!(items.len(), 1, "one item surfaced for the error");
         match &items[0] {
             ConversationItem::AssistantText { text, .. } => {
-                assert!(text.contains("boom: model overloaded"), "error text carried through: {text}");
+                assert!(
+                    text.contains("boom: model overloaded"),
+                    "error text carried through: {text}"
+                );
             }
             other => panic!("expected AssistantText, got {other:?}"),
         }

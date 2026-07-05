@@ -14,7 +14,6 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc::UnboundedSender;
 
-use base64::Engine as _;
 use crate::claudemon::{Claudemon, PtyChunk};
 use crate::config::Config;
 use crate::keys::{Chord, Keymap};
@@ -23,6 +22,7 @@ use crate::profiles::Profile;
 use crate::terminal::Term;
 use crate::theme::Theme;
 use crate::types::{Agent, FileStatus, StatusLine, Turn};
+use base64::Engine as _;
 
 use tasks::{fetch_agents, fetch_git_diff, fetch_git_status, fetch_transcript};
 
@@ -30,32 +30,67 @@ use tasks::{fetch_agents, fetch_git_diff, fetch_git_status, fetch_transcript};
 #[derive(Debug)]
 pub enum AppMsg {
     Agents(Vec<Agent>),
-    Transcript { session_id: String, turns: Vec<Turn> },
+    Transcript {
+        session_id: String,
+        turns: Vec<Turn>,
+    },
     Toast(String),
     /// A session has no PTY to stream (external/observed-only) — fall back to
     /// the transcript view for it.
     TerminalUnavailable(String),
     /// A shell spawned for a `new terminal` tab is ready.
-    ShellSpawned { agent_id: String, session_id: String },
+    ShellSpawned {
+        agent_id: String,
+        session_id: String,
+    },
     /// Git status for the review pane's work tree.
-    GitStatus { cwd: String, branch: Option<String>, files: Vec<FileStatus> },
+    GitStatus {
+        cwd: String,
+        branch: Option<String>,
+        files: Vec<FileStatus>,
+    },
     /// A file's unified diff for the review pane.
-    GitDiff { cwd: String, path: String, staged: bool, diff: String },
+    GitDiff {
+        cwd: String,
+        path: String,
+        staged: bool,
+        diff: String,
+    },
     /// Lightweight branch + changed-file count for the open agent's inspector.
-    GitSummary { cwd: String, branch: Option<String>, changed: usize },
+    GitSummary {
+        cwd: String,
+        branch: Option<String>,
+        changed: usize,
+    },
     /// A git read failed for a work tree (e.g. not a repo) — shown in review.
-    GitError { cwd: String, message: String },
+    GitError {
+        cwd: String,
+        message: String,
+    },
     /// A session's transcript lines, for the content-search index.
-    SearchEntries { session_id: String, name: String, lines: Vec<String> },
+    SearchEntries {
+        session_id: String,
+        name: String,
+        lines: Vec<String>,
+    },
     /// The daemon settled a live permission-mode switch — remember it so the
     /// cycle advances from the real current mode next time.
-    PermissionMode { session_id: String, mode: String },
+    PermissionMode {
+        session_id: String,
+        mode: String,
+    },
     /// A managed provider's launchable models arrived — fold them into the open
     /// model picker (if it's still for this session).
-    PickerModels { session_id: String, models: Vec<crate::claudemon::ProviderModel> },
+    PickerModels {
+        session_id: String,
+        models: Vec<crate::claudemon::ProviderModel>,
+    },
     /// A managed (Codex/OpenCode/Pi) session spawned — record its provider so the
     /// model picker and permission-mode cycle pick the managed behaviour for it.
-    ManagedSpawned { session_id: String, provider: String },
+    ManagedSpawned {
+        session_id: String,
+        provider: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -235,7 +270,10 @@ pub enum PickerKind {
     /// a managed provider POSTs `/model`; `claude` sends a `/model` slash command
     /// on the message path (its PTY 409s the endpoint). `effort` rides along for
     /// providers that map it (codex).
-    Model { provider: String, effort: Option<String> },
+    Model {
+        provider: String,
+        effort: Option<String>,
+    },
     /// Cross-provider handoff: build a brief from `session_id`, then spawn the
     /// chosen provider as the successor (in `cwd`) primed to read it.
     Handoff { cwd: String },
@@ -267,7 +305,11 @@ impl Picker {
             .items
             .iter()
             .enumerate()
-            .filter(|(_, it)| q.is_empty() || it.label.to_lowercase().contains(&q) || it.id.to_lowercase().contains(&q))
+            .filter(|(_, it)| {
+                q.is_empty()
+                    || it.label.to_lowercase().contains(&q)
+                    || it.id.to_lowercase().contains(&q)
+            })
             .map(|(i, _)| i)
             .collect();
         if self.selected >= self.matched.len() {
@@ -293,7 +335,12 @@ pub struct Palette {
 impl Palette {
     pub(super) fn new(items: Vec<PaletteItem>) -> Self {
         let filtered = (0..items.len()).collect();
-        Palette { query: String::new(), items, filtered, selected: 0 }
+        Palette {
+            query: String::new(),
+            items,
+            filtered,
+            selected: 0,
+        }
     }
 
     pub(super) fn refilter(&mut self) {
@@ -622,10 +669,15 @@ impl App {
             }
             AppMsg::Toast(t) => self.set_toast(t),
             AppMsg::TerminalUnavailable(sid) => self.mark_no_terminal(sid),
-            AppMsg::ShellSpawned { agent_id, session_id } => {
-                self.add_shell_tab(agent_id, session_id)
-            }
-            AppMsg::SearchEntries { session_id, name, lines } => {
+            AppMsg::ShellSpawned {
+                agent_id,
+                session_id,
+            } => self.add_shell_tab(agent_id, session_id),
+            AppMsg::SearchEntries {
+                session_id,
+                name,
+                lines,
+            } => {
                 // Fold a session's lines into the open search index (ignore if
                 // the modal was closed before the fetch returned).
                 if let Some(s) = self.search.as_mut() {
@@ -641,10 +693,17 @@ impl App {
                 }
             }
             AppMsg::GitStatus { cwd, branch, files } => self.apply_git_status(cwd, branch, files),
-            AppMsg::GitDiff { cwd, path, staged, diff } => {
-                self.apply_git_diff(cwd, path, staged, diff)
-            }
-            AppMsg::GitSummary { cwd, branch, changed } => {
+            AppMsg::GitDiff {
+                cwd,
+                path,
+                staged,
+                diff,
+            } => self.apply_git_diff(cwd, path, staged, diff),
+            AppMsg::GitSummary {
+                cwd,
+                branch,
+                changed,
+            } => {
                 self.git_summary.insert(cwd, (branch, changed));
             }
             AppMsg::GitError { cwd, message } => {
@@ -685,7 +744,10 @@ impl App {
                     }
                 }
             }
-            AppMsg::ManagedSpawned { session_id, provider } => {
+            AppMsg::ManagedSpawned {
+                session_id,
+                provider,
+            } => {
                 self.managed_providers.insert(session_id, provider);
             }
         }
@@ -707,7 +769,9 @@ impl App {
     /// Fold a fresh status into the open review pane (ignored if the pane closed
     /// or moved to another work tree), then load the selected file's diff.
     fn apply_git_status(&mut self, cwd: String, branch: Option<String>, files: Vec<FileStatus>) {
-        let Some(r) = self.review.as_mut() else { return };
+        let Some(r) = self.review.as_mut() else {
+            return;
+        };
         if r.cwd != cwd {
             return;
         }
@@ -724,7 +788,9 @@ impl App {
     /// and staged/unstaged view (a stale response for a since-changed selection
     /// is dropped).
     fn apply_git_diff(&mut self, cwd: String, path: String, staged: bool, diff: String) {
-        let Some(r) = self.review.as_mut() else { return };
+        let Some(r) = self.review.as_mut() else {
+            return;
+        };
         if r.cwd != cwd || r.staged_view != staged {
             return;
         }
@@ -791,7 +857,11 @@ impl App {
         // Drop warm terminals (and no-PTY marks) for sessions that have gone
         // away — keyed off the full live set, NOT the filtered view (a session
         // merely hidden by the `/` filter is still alive).
-        let live: HashSet<String> = self.all_agents.iter().map(|a| a.session_id.clone()).collect();
+        let live: HashSet<String> = self
+            .all_agents
+            .iter()
+            .map(|a| a.session_id.clone())
+            .collect();
         self.prune_terminals(&live);
         self.no_terminal.retain(|sid| live.contains(sid));
         self.status_lines.retain(|sid, _| live.contains(sid));
@@ -799,7 +869,8 @@ impl App {
         self.perm_modes.retain(|sid, _| live.contains(sid));
         // Drop workspaces whose agent is gone (shell tabs may persist as their
         // own sessions, but the agent grouping is no longer meaningful).
-        self.workspaces.retain(|agent_id, _| live.contains(agent_id));
+        self.workspaces
+            .retain(|agent_id, _| live.contains(agent_id));
         // Drop tiled panes whose session vanished, and keep the focus in range.
         self.tiles.retain(|sid| live.contains(sid));
         if self.tile_focus >= self.tiles.len() {
@@ -824,7 +895,11 @@ impl App {
     /// `/`-filter keystroke.
     pub(super) fn apply_filter(&mut self) {
         let sel_id = self.selected_agent().map(|a| a.session_id.clone());
-        let needle = self.filter.as_deref().filter(|q| !q.is_empty()).map(str::to_lowercase);
+        let needle = self
+            .filter
+            .as_deref()
+            .filter(|q| !q.is_empty())
+            .map(str::to_lowercase);
         self.agents = self
             .all_agents
             .iter()
@@ -854,7 +929,9 @@ impl App {
     /// so the tab itself still resolves its title and terminal.
     pub fn is_shell_session(&self, sid: &str) -> bool {
         self.workspaces.values().any(|ws| {
-            ws.tabs.iter().any(|t| t.kind == TabKind::Shell && t.session_id == sid)
+            ws.tabs
+                .iter()
+                .any(|t| t.kind == TabKind::Shell && t.session_id == sid)
         })
     }
 
@@ -1070,7 +1147,11 @@ impl App {
             // snapshot is just a nudge that something changed, so re-pull.
             "agent.snapshot" => self.refresh(),
             "agent.statusline" => {
-                let sid = ev.data.get("sessionId").and_then(|v| v.as_str()).map(String::from);
+                let sid = ev
+                    .data
+                    .get("sessionId")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
                 let sl = ev.data.get("statusLine").cloned();
                 if let (Some(sid), Some(sl)) = (sid, sl) {
                     if let Ok(status) = serde_json::from_value::<StatusLine>(sl) {
@@ -1120,7 +1201,10 @@ impl App {
     /// Open the review pane over the targeted agent's work tree. No-op (with a
     /// toast) when the agent has no cwd.
     pub(super) fn open_review(&mut self) {
-        let Some(cwd) = self.target_agent().and_then(|a| a.cwd.clone()).filter(|c| !c.is_empty())
+        let Some(cwd) = self
+            .target_agent()
+            .and_then(|a| a.cwd.clone())
+            .filter(|c| !c.is_empty())
         else {
             self.set_toast("no working directory for this agent");
             return;
@@ -1149,7 +1233,9 @@ impl App {
     /// Load the selected file's diff for the current staged/unstaged view.
     pub(super) fn review_load_diff(&self) {
         let Some(r) = &self.review else { return };
-        let Some(file) = r.selected_file() else { return };
+        let Some(file) = r.selected_file() else {
+            return;
+        };
         let cm = self.claudemon.clone();
         let tx = self.tx.clone();
         let cwd = r.cwd.clone();
@@ -1157,14 +1243,14 @@ impl App {
         let staged = r.staged_view;
         // Untracked files have no index/HEAD baseline — render them all-added.
         let untracked = !staged && file.is_untracked();
-        tokio::spawn(async move {
-            fetch_git_diff(&cm, &tx, cwd, path, staged, untracked).await
-        });
+        tokio::spawn(async move { fetch_git_diff(&cm, &tx, cwd, path, staged, untracked).await });
     }
 
     /// Move the file selection by `delta` and load the newly-selected diff.
     pub(super) fn review_select(&mut self, delta: i32) {
-        let Some(r) = self.review.as_mut() else { return };
+        let Some(r) = self.review.as_mut() else {
+            return;
+        };
         if r.files.is_empty() {
             return;
         }
@@ -1197,18 +1283,27 @@ impl App {
 
     pub(super) fn review_stage(&mut self) {
         let Some(r) = &self.review else { return };
-        let Some(file) = r.selected_file() else { return };
+        let Some(file) = r.selected_file() else {
+            return;
+        };
         let (cwd, path) = (r.cwd.clone(), file.path.clone());
         let cm = self.claudemon.clone();
-        self.git_dispatch("Staged", async move { cm.git_stage(&cwd, Some(&path)).await });
+        self.git_dispatch(
+            "Staged",
+            async move { cm.git_stage(&cwd, Some(&path)).await },
+        );
     }
 
     pub(super) fn review_unstage(&mut self) {
         let Some(r) = &self.review else { return };
-        let Some(file) = r.selected_file() else { return };
+        let Some(file) = r.selected_file() else {
+            return;
+        };
         let (cwd, path) = (r.cwd.clone(), file.path.clone());
         let cm = self.claudemon.clone();
-        self.git_dispatch("Unstaged", async move { cm.git_unstage(&cwd, Some(&path)).await });
+        self.git_dispatch("Unstaged", async move {
+            cm.git_unstage(&cwd, Some(&path)).await
+        });
     }
 
     pub(super) fn review_stage_all(&mut self) {
@@ -1227,7 +1322,9 @@ impl App {
     }
 
     pub(super) fn review_submit_commit(&mut self) {
-        let Some(r) = self.review.as_mut() else { return };
+        let Some(r) = self.review.as_mut() else {
+            return;
+        };
         let msg = r.commit_msg.take().unwrap_or_default();
         let msg = msg.trim().to_string();
         if msg.is_empty() {
@@ -1280,7 +1377,10 @@ impl App {
             let sid = session_id.clone();
             let handle = tokio::spawn(async move {
                 let _ = bus
-                    .call("sessions.attachTerminal", serde_json::json!({ "sessionId": sid }))
+                    .call(
+                        "sessions.attachTerminal",
+                        serde_json::json!({ "sessionId": sid }),
+                    )
                     .await;
                 loop {
                     tokio::time::sleep(std::time::Duration::from_secs(10)).await;
@@ -1291,7 +1391,10 @@ impl App {
                     );
                     if lapsed {
                         let _ = bus
-                            .call("sessions.attachTerminal", serde_json::json!({ "sessionId": sid }))
+                            .call(
+                                "sessions.attachTerminal",
+                                serde_json::json!({ "sessionId": sid }),
+                            )
                             .await;
                     }
                 }
@@ -1340,7 +1443,9 @@ impl App {
     /// Switch between the raw terminal and the parsed transcript. The terminal
     /// stays warm in the background either way.
     pub(super) fn toggle_chat_mode(&mut self) {
-        let Some(sid) = self.chat_session_id() else { return };
+        let Some(sid) = self.chat_session_id() else {
+            return;
+        };
         match self.chat_mode {
             ChatMode::Terminal => {
                 self.chat_mode = ChatMode::Transcript;
@@ -1408,7 +1513,8 @@ mod tests {
     }
 
     fn agent(id: &str) -> Agent {
-        serde_json::from_value(serde_json::json!({ "session_id": id, "mode": "responding" })).unwrap()
+        serde_json::from_value(serde_json::json!({ "session_id": id, "mode": "responding" }))
+            .unwrap()
     }
 
     fn agent_cwd(id: &str, cwd: &str, mode: &str) -> Agent {
@@ -1438,7 +1544,11 @@ mod tests {
             data: serde_json::json!(base64::engine::general_purpose::STANDARD.encode("hello")),
         });
         let screen = app.terms.get("s1").unwrap().screen();
-        assert!(screen.contents().contains("hello"), "got {:?}", screen.contents());
+        assert!(
+            screen.contents().contains("hello"),
+            "got {:?}",
+            screen.contents()
+        );
     }
 
     #[tokio::test]
@@ -1484,7 +1594,11 @@ mod tests {
             Some("cwd is not inside a git work tree")
         );
         // A successful status clears the error.
-        app.apply_msg(AppMsg::GitStatus { cwd: "/repo".into(), branch: Some("main".into()), files: vec![] });
+        app.apply_msg(AppMsg::GitStatus {
+            cwd: "/repo".into(),
+            branch: Some("main".into()),
+            files: vec![],
+        });
         assert!(app.review.as_ref().unwrap().error.is_none());
     }
 
@@ -1494,7 +1608,10 @@ mod tests {
         app.set_agents(vec![agent("s1")]);
         app.apply_status_line(
             "s1".into(),
-            StatusLine { context_used_pct: Some(50.0), ..Default::default() },
+            StatusLine {
+                context_used_pct: Some(50.0),
+                ..Default::default()
+            },
         );
         assert!(app.status_lines.contains_key("s1"));
         app.set_agents(vec![]); // session gone → statusline pruned
@@ -1508,7 +1625,10 @@ mod tests {
         app.selected = 1;
         app.notes.insert("/repo".into(), "remember this".into());
         app.open_notes();
-        assert_eq!(app.notes_view.as_ref().map(|n| n.text.as_str()), Some("remember this"));
+        assert_eq!(
+            app.notes_view.as_ref().map(|n| n.text.as_str()),
+            Some("remember this")
+        );
     }
 
     #[tokio::test]
@@ -1518,8 +1638,14 @@ mod tests {
         app.selected = 1; // row 0 is the Dashboard; the agent is row 1
 
         app.open_agent();
-        assert!(app.terms.contains_key("s1"), "opening creates a warm terminal");
-        assert!(app.workspaces.contains_key("s1"), "opening creates a workspace");
+        assert!(
+            app.terms.contains_key("s1"),
+            "opening creates a warm terminal"
+        );
+        assert!(
+            app.workspaces.contains_key("s1"),
+            "opening creates a workspace"
+        );
 
         app.close_chat();
         assert!(
@@ -1529,7 +1655,10 @@ mod tests {
 
         // Agent disappears from the list → its terminal is pruned.
         app.set_agents(vec![]);
-        assert!(!app.terms.contains_key("s1"), "terminal pruned once the session is gone");
+        assert!(
+            !app.terms.contains_key("s1"),
+            "terminal pruned once the session is gone"
+        );
     }
 
     #[tokio::test]
@@ -1538,7 +1667,11 @@ mod tests {
         app.set_agents(vec![agent("s1")]);
         app.selected = 1;
         app.open_agent();
-        assert_eq!(app.workspace().unwrap().tabs.len(), 1, "starts with the claude tab");
+        assert_eq!(
+            app.workspace().unwrap().tabs.len(),
+            1,
+            "starts with the claude tab"
+        );
 
         app.add_shell_tab("s1".into(), "sh-1".into());
         let ws = app.workspace().unwrap();
@@ -1547,7 +1680,11 @@ mod tests {
         assert_eq!(app.chat_session_id().as_deref(), Some("sh-1"));
 
         app.tab_prev();
-        assert_eq!(app.chat_session_id().as_deref(), Some("s1"), "back to claude tab");
+        assert_eq!(
+            app.chat_session_id().as_deref(),
+            Some("s1"),
+            "back to claude tab"
+        );
         app.tab_next();
         assert_eq!(app.chat_session_id().as_deref(), Some("sh-1"));
 
@@ -1579,7 +1716,10 @@ mod tests {
         // A third split, then close the focused pane.
         app.focus_pane(-1); // back to s2
         app.split_pane(SplitDir::Rows);
-        assert_eq!(app.tiles, vec!["s1".to_string(), "s2".to_string(), "s3".to_string()]);
+        assert_eq!(
+            app.tiles,
+            vec!["s1".to_string(), "s2".to_string(), "s3".to_string()]
+        );
         assert_eq!(app.tile_focus, 2);
         app.close_pane();
         assert_eq!(app.tiles, vec!["s1".to_string(), "s2".to_string()]);
@@ -1666,7 +1806,10 @@ mod tests {
             agent_cwd("new-beta", "/work/beta", "responding"),
             agent_cwd("new-alpha", "/work/alpha", "responding"),
         ]);
-        assert_eq!(app.harpoon, vec!["new-alpha".to_string(), "new-beta".to_string()]);
+        assert_eq!(
+            app.harpoon,
+            vec!["new-alpha".to_string(), "new-beta".to_string()]
+        );
     }
 
     #[tokio::test]
@@ -1684,7 +1827,11 @@ mod tests {
 
         // An agent we watched live stays visible once it stops (respawnable).
         app.set_agents(vec![agent_cwd("s1", "/repo", "stopped")]);
-        assert_eq!(app.agents.len(), 1, "s1 was seen live, so it survives stopping");
+        assert_eq!(
+            app.agents.len(),
+            1,
+            "s1 was seen live, so it survives stopping"
+        );
         assert_eq!(app.hidden_count, 0);
 
         // Toggling show-all reveals stopped history again.
@@ -1716,7 +1863,11 @@ mod tests {
         }
         assert_eq!(app.agents.len(), 1);
         assert_eq!(app.agents[0].session_id, "s2");
-        assert_eq!(app.all_agents.len(), 3, "filter is a view; full set is untouched");
+        assert_eq!(
+            app.all_agents.len(),
+            3,
+            "filter is a view; full set is untouched"
+        );
 
         // A poll while filtered keeps the filter applied.
         app.handle_filter_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
@@ -1877,7 +2028,10 @@ mod tests {
             session_id: "m1".into(),
             provider: "codex".into(),
         });
-        assert_eq!(app.managed_providers.get("m1").map(String::as_str), Some("codex"));
+        assert_eq!(
+            app.managed_providers.get("m1").map(String::as_str),
+            Some("codex")
+        );
         // The record is pruned once the session leaves the live set.
         app.set_agents(vec![]);
         assert!(!app.managed_providers.contains_key("m1"));
@@ -1886,7 +2040,10 @@ mod tests {
     #[test]
     fn permission_mode_message_remembers_mode() {
         let mut app = test_app();
-        app.apply_msg(AppMsg::PermissionMode { session_id: "s1".into(), mode: "plan".into() });
+        app.apply_msg(AppMsg::PermissionMode {
+            session_id: "s1".into(),
+            mode: "plan".into(),
+        });
         assert_eq!(app.perm_modes.get("s1").map(String::as_str), Some("plan"));
         assert_eq!(app.toast(), Some("Mode: plan"));
     }
@@ -1946,7 +2103,10 @@ mod tests {
         let mut app = test_app();
         app.picker = Some(Picker {
             title: "model".into(),
-            kind: PickerKind::Model { provider: "codex".into(), effort: None },
+            kind: PickerKind::Model {
+                provider: "codex".into(),
+                effort: None,
+            },
             session_id: "s1".into(),
             query: String::new(),
             items: Vec::new(),
@@ -1958,7 +2118,11 @@ mod tests {
         app.apply_msg(AppMsg::PickerModels {
             session_id: "s1".into(),
             models: vec![
-                crate::claudemon::ProviderModel { id: "a".into(), label: None, default: false },
+                crate::claudemon::ProviderModel {
+                    id: "a".into(),
+                    label: None,
+                    default: false,
+                },
                 crate::claudemon::ProviderModel {
                     id: "b".into(),
                     label: Some("Model B".into()),
@@ -1969,7 +2133,11 @@ mod tests {
         let p = app.picker.as_ref().unwrap();
         assert!(!p.pending);
         assert_eq!(p.items.len(), 2);
-        assert_eq!(p.chosen().map(|i| i.id.as_str()), Some("b"), "default model preselected");
+        assert_eq!(
+            p.chosen().map(|i| i.id.as_str()),
+            Some("b"),
+            "default model preselected"
+        );
     }
 
     #[tokio::test]

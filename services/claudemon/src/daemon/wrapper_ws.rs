@@ -37,9 +37,13 @@ async fn handle(socket: WebSocket, _id_from_path: String, store: SessionStore) {
     // First frame must be Register.
     let register = match stream.next().await {
         Some(Ok(Message::Text(text))) => match serde_json::from_str::<WrapperMessage>(&text) {
-            Ok(WrapperMessage::Register { session_id, cwd, cols, rows, .. }) => {
-                (session_id, cwd, cols, rows)
-            }
+            Ok(WrapperMessage::Register {
+                session_id,
+                cwd,
+                cols,
+                rows,
+                ..
+            }) => (session_id, cwd, cols, rows),
             Ok(other) => {
                 tracing::warn!(?other, "wrapper opened WS without Register first");
                 return;
@@ -78,7 +82,9 @@ async fn handle(socket: WebSocket, _id_from_path: String, store: SessionStore) {
     let store_for_inbound = store.clone();
     let session_for_inbound = session_id.clone();
     while let Some(frame) = stream.next().await {
-        let Ok(Message::Text(text)) = frame else { continue };
+        let Ok(Message::Text(text)) = frame else {
+            continue;
+        };
         let msg: WrapperMessage = match serde_json::from_str(&text) {
             Ok(m) => m,
             Err(err) => {
@@ -89,7 +95,9 @@ async fn handle(socket: WebSocket, _id_from_path: String, store: SessionStore) {
         match msg {
             WrapperMessage::Output { bytes } => {
                 if let Ok(decoded) = B64.decode(bytes.as_bytes()) {
-                    store_for_inbound.record_output(&session_for_inbound, &decoded).await;
+                    store_for_inbound
+                        .record_output(&session_for_inbound, &decoded)
+                        .await;
                 }
             }
             WrapperMessage::Exited { code } => {

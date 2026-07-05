@@ -94,7 +94,8 @@ pub async fn run(cfg: ServeConfig) -> Result<()> {
     #[cfg(unix)]
     {
         use tokio::signal::unix::{signal, SignalKind};
-        let mut sigterm = signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
+        let mut sigterm =
+            signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
         tokio::select! {
             _ = hook_task => {},
             _ = api_task => {},

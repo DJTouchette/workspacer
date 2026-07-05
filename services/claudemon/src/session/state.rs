@@ -89,7 +89,6 @@ pub enum SessionMode {
     Stopped,
 }
 
-
 /// One question Claude is asking the user (mirrors the `AskUserQuestion`
 /// tool input).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -188,7 +187,9 @@ impl StatusLine {
                 .and_then(|m| m.get("display_name"))
                 .and_then(Value::as_str)
                 .map(str::to_owned),
-            context_used_pct: cw.and_then(|c| c.get("used_percentage")).and_then(Value::as_f64),
+            context_used_pct: cw
+                .and_then(|c| c.get("used_percentage"))
+                .and_then(Value::as_f64),
             context_window_size: cw
                 .and_then(|c| c.get("context_window_size"))
                 .and_then(Value::as_u64),
@@ -201,12 +202,18 @@ impl StatusLine {
             cost_usd: cost
                 .and_then(|c| c.get("total_cost_usd"))
                 .and_then(Value::as_f64),
-            five_hour_pct: five.and_then(|f| f.get("used_percentage")).and_then(Value::as_f64),
-            five_hour_resets_at: five.and_then(|f| f.get("resets_at")).and_then(Value::as_i64),
+            five_hour_pct: five
+                .and_then(|f| f.get("used_percentage"))
+                .and_then(Value::as_f64),
+            five_hour_resets_at: five
+                .and_then(|f| f.get("resets_at"))
+                .and_then(Value::as_i64),
             seven_day_pct: seven
                 .and_then(|s| s.get("used_percentage"))
                 .and_then(Value::as_f64),
-            seven_day_resets_at: seven.and_then(|s| s.get("resets_at")).and_then(Value::as_i64),
+            seven_day_resets_at: seven
+                .and_then(|s| s.get("resets_at"))
+                .and_then(Value::as_i64),
             received_at: Some(OffsetDateTime::now_utc()),
         }
     }
@@ -292,9 +299,9 @@ impl SessionState {
         }
 
         // Parse the event name into a typed enum; unrecognised events are a no-op.
-        let Ok(kind) = serde_json::from_value::<HookEventKind>(
-            serde_json::Value::String(event.event.clone()),
-        ) else {
+        let Ok(kind) =
+            serde_json::from_value::<HookEventKind>(serde_json::Value::String(event.event.clone()))
+        else {
             return;
         };
 
@@ -333,9 +340,7 @@ impl SessionState {
                         .unwrap_or_default();
                     self.mode = SessionMode::Question;
                     self.pending = Some(Pending::Question { questions, raw });
-                } else if self.mode != SessionMode::Approval
-                    && self.mode != SessionMode::Question
-                {
+                } else if self.mode != SessionMode::Approval && self.mode != SessionMode::Question {
                     self.mode = SessionMode::Responding;
                 }
             }
@@ -362,9 +367,7 @@ impl SessionState {
             }
 
             HookEventKind::SubagentStart | HookEventKind::SubagentStop => {
-                if self.mode != SessionMode::Approval
-                    && self.mode != SessionMode::Question
-                {
+                if self.mode != SessionMode::Approval && self.mode != SessionMode::Question {
                     self.mode = SessionMode::Responding;
                 }
             }
@@ -828,8 +831,7 @@ mod tests {
                 "wrong serialization for {variant:?}"
             );
             // Also verify round-trip deserialization.
-            let deserialized: HookEventKind =
-                serde_json::from_str(&serialized).unwrap();
+            let deserialized: HookEventKind = serde_json::from_str(&serialized).unwrap();
             assert_eq!(deserialized, *variant, "round-trip failed for {variant:?}");
         }
     }

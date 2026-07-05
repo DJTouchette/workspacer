@@ -21,7 +21,11 @@ use tui_term::widget::PseudoTerminal;
 pub fn render(f: &mut Frame, app: &mut App) {
     let root = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Min(1), Constraint::Length(1)])
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Min(1),
+            Constraint::Length(1),
+        ])
         .split(f.area());
 
     render_header(f, root[0], app);
@@ -73,7 +77,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
 fn render_rename(f: &mut Frame, area: Rect, app: &App) {
     let t = &app.theme;
-    let Some(form) = app.rename.as_ref() else { return };
+    let Some(form) = app.rename.as_ref() else {
+        return;
+    };
     let w = area.width.saturating_sub(8).clamp(20, 60);
     let lines = vec![
         Line::raw(""),
@@ -83,7 +89,10 @@ fn render_rename(f: &mut Frame, area: Rect, app: &App) {
             Span::styled("▏", Style::default().fg(t.accent)),
         ]),
         Line::from(Span::styled(
-            format!("  {}", crate::types::truncate(&form.cwd, w.saturating_sub(4) as usize)),
+            format!(
+                "  {}",
+                crate::types::truncate(&form.cwd, w.saturating_sub(4) as usize)
+            ),
             Style::default().fg(t.dim),
         )),
         Line::raw(""),
@@ -117,7 +126,10 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
         ("●", t.bad, "reconnecting…")
     };
     let mut spans = vec![
-        Span::styled(" workspacer ", Style::default().fg(t.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " workspacer ",
+            Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
+        ),
         Span::styled("· tui", Style::default().fg(t.dim)),
     ];
     if let Some(toast) = app.toast() {
@@ -140,7 +152,11 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
 fn render_sidebar(f: &mut Frame, area: Rect, app: &App) {
     let t = &app.theme;
     let title = if app.hidden_count > 0 {
-        format!(" agents ({} · +{} stopped) ", app.agents.len(), app.hidden_count)
+        format!(
+            " agents ({} · +{} stopped) ",
+            app.agents.len(),
+            app.hidden_count
+        )
     } else {
         format!(" agents ({}) ", app.agents.len())
     };
@@ -152,7 +168,11 @@ fn render_sidebar(f: &mut Frame, area: Rect, app: &App) {
     // Show the active `/` filter along the bottom edge (with a cursor while
     // it's being typed).
     if let Some(q) = &app.filter {
-        let txt = if editing { format!(" /{q}▏ ") } else { format!(" /{q} ") };
+        let txt = if editing {
+            format!(" /{q}▏ ")
+        } else {
+            format!(" /{q} ")
+        };
         block = block.title_bottom(Line::from(Span::styled(
             txt,
             Style::default().fg(if editing { t.accent } else { t.dim }),
@@ -178,7 +198,10 @@ fn render_sidebar(f: &mut Frame, area: Rect, app: &App) {
         };
         let mut name_spans = vec![
             marker,
-            Span::styled(app.agent_name(a), Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled(
+                app.agent_name(a),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
         ];
         // Harpoon pin badge: the 1-based slot, so `<leader>N` is discoverable.
         if let Some(slot) = app.harpoon.iter().position(|s| s == &a.session_id) {
@@ -189,12 +212,17 @@ fn render_sidebar(f: &mut Frame, area: Rect, app: &App) {
         }
         let name = Line::from(name_spans);
         let stats = derive_stats(a, app.status_lines.get(&a.session_id));
-        let meta = Line::from(Span::styled(meta_line(a, &stats), Style::default().fg(t.dim)));
+        let meta = Line::from(Span::styled(
+            meta_line(a, &stats),
+            Style::default().fg(t.dim),
+        ));
         ListItem::new(vec![name, meta])
     }));
 
     let list = List::new(items).block(block).highlight_style(
-        Style::default().bg(t.selection_bg).add_modifier(Modifier::BOLD),
+        Style::default()
+            .bg(t.selection_bg)
+            .add_modifier(Modifier::BOLD),
     );
     let mut state = ListState::default();
     state.select(Some(app.selected));
@@ -213,7 +241,11 @@ fn meta_line(a: &Agent, stats: &DerivedStats) -> String {
         s.push_str(&format!("  ${c:.2}"));
     }
     // No usage/statusLine yet — fall back to a raw tool-call count.
-    if stats.model.is_none() && stats.context_pct.is_none() && stats.cost.is_none() && a.tool_calls > 0 {
+    if stats.model.is_none()
+        && stats.context_pct.is_none()
+        && stats.cost.is_none()
+        && a.tool_calls > 0
+    {
         s.push_str(&format!("  {} tools", a.tool_calls));
     }
     s
@@ -273,7 +305,12 @@ fn render_detail(f: &mut Frame, area: Rect, app: &App) {
         kv(t, "cwd", a.cwd_str()),
         Line::from(vec![
             Span::styled("state  ", Style::default().fg(t.dim)),
-            Span::styled(badge(a.state()), Style::default().fg(state_color(t, a.state())).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                badge(a.state()),
+                Style::default()
+                    .fg(state_color(t, a.state()))
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]),
     ];
     let stats = derive_stats(a, app.status_lines.get(&a.session_id));
@@ -304,7 +341,9 @@ fn render_detail(f: &mut Frame, area: Rect, app: &App) {
     lines.push(Line::raw(""));
     lines.extend(ask_lines(t, a, area.width.saturating_sub(2)));
 
-    let p = Paragraph::new(lines).block(block).wrap(ratatui::widgets::Wrap { trim: false });
+    let p = Paragraph::new(lines)
+        .block(block)
+        .wrap(ratatui::widgets::Wrap { trim: false });
     f.render_widget(p, area);
 }
 
@@ -318,7 +357,10 @@ fn kv<'a>(t: &Theme, k: &'a str, v: &str) -> Line<'a> {
 /// Pretty-print the most relevant slice of a permission-request hook payload —
 /// the tool input if we can find it, else the whole thing.
 fn approval_input(raw: &Value) -> String {
-    let target = raw.get("tool_input").or_else(|| raw.get("input")).unwrap_or(raw);
+    let target = raw
+        .get("tool_input")
+        .or_else(|| raw.get("input"))
+        .unwrap_or(raw);
     serde_json::to_string_pretty(target).unwrap_or_default()
 }
 
@@ -397,7 +439,11 @@ fn render_chat(f: &mut Frame, area: Rect, app: &mut App) {
         .as_ref()
         .map(|a| ask_lines(&app.theme, a, area.width.saturating_sub(2)))
         .unwrap_or_default();
-    let ask_h = if ask.is_empty() { 0 } else { (ask.len() as u16 + 2).min(area.height / 2) };
+    let ask_h = if ask.is_empty() {
+        0
+    } else {
+        (ask.len() as u16 + 2).min(area.height / 2)
+    };
     let composer_h = 3;
 
     let rows = Layout::default()
@@ -424,12 +470,17 @@ fn render_chat(f: &mut Frame, area: Rect, app: &mut App) {
         .borders(Borders::ALL)
         .title(title)
         .title_bottom(if working {
-            Line::from(Span::styled(" working… ", Style::default().fg(app.theme.accent)))
+            Line::from(Span::styled(
+                " working… ",
+                Style::default().fg(app.theme.accent),
+            ))
         } else {
             Line::from("")
         })
         .border_style(Style::default().fg(app.theme.dim));
-    let transcript = Paragraph::new(lines).block(block).scroll((app.chat_scroll, 0));
+    let transcript = Paragraph::new(lines)
+        .block(block)
+        .scroll((app.chat_scroll, 0));
     f.render_widget(transcript, rows[0]);
 
     if ask_h > 0 {
@@ -454,7 +505,12 @@ fn render_composer(f: &mut Frame, area: Rect, app: &App, agent: &Option<Agent>) 
     let block = Block::default()
         .borders(Borders::ALL)
         .title(Line::from(vec![
-            Span::styled(format!(" {label} "), Style::default().fg(label_color).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!(" {label} "),
+                Style::default()
+                    .fg(label_color)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled(format!("{hint} "), Style::default().fg(t.dim)),
         ]))
         .border_style(Style::default().fg(if app.insert_mode { t.accent } else { t.dim }));
@@ -470,7 +526,10 @@ fn render_composer(f: &mut Frame, area: Rect, app: &App, agent: &Option<Agent>) 
     } else {
         Style::default()
     };
-    f.render_widget(Paragraph::new(Line::from(Span::styled(text, style))).block(block), area);
+    f.render_widget(
+        Paragraph::new(Line::from(Span::styled(text, style))).block(block),
+        area,
+    );
 }
 
 /// Build the fully-wrapped, styled transcript lines for the current turns.
@@ -484,7 +543,10 @@ fn transcript_lines(app: &App, width: usize) -> Vec<Line<'static>> {
     let w = width.max(10);
     let mut out: Vec<Line> = Vec::new();
     if app.turns.is_empty() {
-        out.push(Line::from(Span::styled("no messages yet", Style::default().fg(t.dim))));
+        out.push(Line::from(Span::styled(
+            "no messages yet",
+            Style::default().fg(t.dim),
+        )));
         return out;
     }
     let mut run: Vec<(String, String, Option<String>)> = Vec::new();
@@ -494,7 +556,12 @@ fn transcript_lines(app: &App, width: usize) -> Vec<Line<'static>> {
             && turn.parts.iter().all(|p| matches!(p, Part::Tool { .. }));
         if tool_only {
             for p in &turn.parts {
-                if let Part::Tool { name, summary, result } = p {
+                if let Part::Tool {
+                    name,
+                    summary,
+                    result,
+                } = p
+                {
                     run.push((name.clone(), summary.clone(), result.clone()));
                 }
             }
@@ -506,7 +573,10 @@ fn transcript_lines(app: &App, width: usize) -> Vec<Line<'static>> {
             Role::User => ("▍ you", t.accent),
             Role::Assistant => ("▍ claude", t.ok),
         };
-        out.push(Line::from(Span::styled(label, Style::default().fg(color).add_modifier(Modifier::BOLD))));
+        out.push(Line::from(Span::styled(
+            label,
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        )));
         for part in &turn.parts {
             match part {
                 Part::Text(text) => {
@@ -520,7 +590,11 @@ fn transcript_lines(app: &App, width: usize) -> Vec<Line<'static>> {
                         }
                     }
                 }
-                Part::Tool { name, summary, result } => {
+                Part::Tool {
+                    name,
+                    summary,
+                    result,
+                } => {
                     let text = if summary.is_empty() {
                         format!("⚙ {name}")
                     } else {
@@ -544,11 +618,18 @@ fn transcript_lines(app: &App, width: usize) -> Vec<Line<'static>> {
 /// Render a tool's result as a dimmed, indented `↳` snippet (red when it's an
 /// error). Already truncated to ~200 chars upstream; cap at a few lines.
 fn push_tool_result(out: &mut Vec<Line<'static>>, res: &str, t: &Theme, w: usize) {
-    let color = if res.starts_with("error: ") { t.bad } else { t.dim };
+    let color = if res.starts_with("error: ") {
+        t.bad
+    } else {
+        t.dim
+    };
     for (i, line) in res.lines().take(3).enumerate() {
         let prefix = if i == 0 { "  ↳ " } else { "    " };
         for piece in wrap(line, w.saturating_sub(4)) {
-            out.push(Line::from(Span::styled(format!("{prefix}{piece}"), Style::default().fg(color))));
+            out.push(Line::from(Span::styled(
+                format!("{prefix}{piece}"),
+                Style::default().fg(color),
+            )));
         }
     }
 }
@@ -580,7 +661,11 @@ fn flush_tool_run(
         }
     } else {
         let names: Vec<&str> = run.iter().map(|(n, _, _)| n.as_str()).collect();
-        let text = format!("⚙ {} tool calls · {}", run.len(), summarize_tool_names(&names));
+        let text = format!(
+            "⚙ {} tool calls · {}",
+            run.len(),
+            summarize_tool_names(&names)
+        );
         for piece in wrap(&text, w) {
             out.push(Line::from(Span::styled(piece, Style::default().fg(t.dim))));
         }
@@ -630,9 +715,15 @@ fn render_terminal(f: &mut Frame, area: Rect, app: &mut App) {
         .unwrap_or_else(|| " session ended ".into());
     let border = if app.term_attached() { accent } else { dim };
     let bottom = if app.term_attached() {
-        Line::from(Span::styled(" ● attached — Ctrl-] to detach ", Style::default().fg(accent)))
+        Line::from(Span::styled(
+            " ● attached — Ctrl-] to detach ",
+            Style::default().fg(accent),
+        ))
     } else {
-        Line::from(Span::styled(" i/enter to attach · t transcript ", Style::default().fg(dim)))
+        Line::from(Span::styled(
+            " i/enter to attach · t transcript ",
+            Style::default().fg(dim),
+        ))
     };
     let block = Block::default()
         .borders(Borders::ALL)
@@ -647,7 +738,8 @@ fn render_terminal(f: &mut Frame, area: Rect, app: &mut App) {
     if let Some(s) = sid.as_ref() {
         if let Some(term) = app.terms.get_mut(s) {
             if term.resize(inner.height, inner.width) {
-                app.term_resizes.insert(s.clone(), (inner.width, inner.height)); // (cols, rows)
+                app.term_resizes
+                    .insert(s.clone(), (inner.width, inner.height)); // (cols, rows)
             }
         }
     }
@@ -716,13 +808,17 @@ fn render_watch_pane(f: &mut Frame, area: Rect, app: &mut App, sid: &str) {
     let block = Block::default()
         .borders(Borders::ALL)
         .title(title)
-        .title_bottom(Line::from(Span::styled(" Ctrl-w w to focus ", Style::default().fg(dim))))
+        .title_bottom(Line::from(Span::styled(
+            " Ctrl-w w to focus ",
+            Style::default().fg(dim),
+        )))
         .border_style(Style::default().fg(if waiting { warn } else { dim }));
     let inner = block.inner(area);
 
     if let Some(term) = app.terms.get_mut(sid) {
         if term.resize(inner.height, inner.width) {
-            app.term_resizes.insert(sid.to_string(), (inner.width, inner.height));
+            app.term_resizes
+                .insert(sid.to_string(), (inner.width, inner.height));
         }
     }
     match app.terms.get(sid) {
@@ -737,7 +833,8 @@ fn render_watch_pane(f: &mut Frame, area: Rect, app: &mut App, sid: &str) {
                 "starting terminal…"
             };
             f.render_widget(
-                Paragraph::new(Line::from(Span::styled(msg, Style::default().fg(dim)))).block(block),
+                Paragraph::new(Line::from(Span::styled(msg, Style::default().fg(dim))))
+                    .block(block),
                 area,
             );
         }
@@ -774,14 +871,26 @@ fn render_tab_bar(f: &mut Frame, area: Rect, app: &App) {
         spans.push(Span::styled(format!(" {} ", tab.title), style));
         spans.push(Span::styled("│", Style::default().fg(t.dim)));
     }
-    spans.push(Span::styled("  T:term  [ ]:tabs  w:close", Style::default().fg(t.dim)));
+    spans.push(Span::styled(
+        "  T:term  [ ]:tabs  w:close",
+        Style::default().fg(t.dim),
+    ));
     // Inspector: branch + changed-file count for the open agent's work tree.
-    if let Some((branch, changed)) = app.chat_agent().and_then(|a| app.git_summary.get(a.cwd_str())) {
+    if let Some((branch, changed)) = app
+        .chat_agent()
+        .and_then(|a| app.git_summary.get(a.cwd_str()))
+    {
         if let Some(b) = branch {
-            spans.push(Span::styled(format!("   ⎇ {b}"), Style::default().fg(t.dim)));
+            spans.push(Span::styled(
+                format!("   ⎇ {b}"),
+                Style::default().fg(t.dim),
+            ));
         }
         if *changed > 0 {
-            spans.push(Span::styled(format!(" ±{changed}"), Style::default().fg(t.warn)));
+            spans.push(Span::styled(
+                format!(" ±{changed}"),
+                Style::default().fg(t.warn),
+            ));
         }
     }
     f.render_widget(Paragraph::new(Line::from(spans)), area);
@@ -798,7 +907,11 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
 
     // Fleet totals reflect the whole live set (not the `/`-filtered sidebar view),
     // but exclude TUI-spawned shells — they aren't agents.
-    let fleet = || app.all_agents.iter().filter(|a| !app.is_shell_session(&a.session_id));
+    let fleet = || {
+        app.all_agents
+            .iter()
+            .filter(|a| !app.is_shell_session(&a.session_id))
+    };
     let total = fleet().count();
     let waiting = fleet().filter(|a| a.is_waiting()).count();
     let busy = fleet().filter(|a| a.is_busy()).count();
@@ -815,15 +928,24 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
 
     let mut lines = vec![
         Line::from(Span::styled(
-            format!("workspacer · {total} agent{}", if total == 1 { "" } else { "s" }),
+            format!(
+                "workspacer · {total} agent{}",
+                if total == 1 { "" } else { "s" }
+            ),
             Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
         )),
         Line::raw(""),
         Line::from(vec![
             Span::styled("needs you ", Style::default().fg(t.dim)),
-            Span::styled(format!("{waiting}"), Style::default().fg(t.warn).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!("{waiting}"),
+                Style::default().fg(t.warn).add_modifier(Modifier::BOLD),
+            ),
             Span::styled("    working ", Style::default().fg(t.dim)),
-            Span::styled(format!("{busy}"), Style::default().fg(t.accent).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!("{busy}"),
+                Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
+            ),
             Span::styled("    idle ", Style::default().fg(t.dim)),
             Span::styled(format!("{idle}"), Style::default().fg(t.ok)),
         ]),
@@ -835,7 +957,10 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
     if let Some(s) = rate {
         let mut spans = vec![Span::styled("rate limit ", Style::default().fg(t.dim))];
         if let Some(p) = s.five_hour_pct {
-            spans.push(Span::styled(format!("5h {p:.0}%"), Style::default().fg(rate_color(t, p))));
+            spans.push(Span::styled(
+                format!("5h {p:.0}%"),
+                Style::default().fg(rate_color(t, p)),
+            ));
         }
         if let Some(p) = s.seven_day_pct {
             spans.push(Span::styled(
@@ -848,7 +973,11 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
     lines.push(Line::raw(""));
 
     // Compact roster over the whole fleet (ignores the sidebar filter, skips shells).
-    for a in app.all_agents.iter().filter(|a| !app.is_shell_session(&a.session_id)) {
+    for a in app
+        .all_agents
+        .iter()
+        .filter(|a| !app.is_shell_session(&a.session_id))
+    {
         let marker = if a.is_waiting() {
             Span::styled("● ", Style::default().fg(t.warn))
         } else if a.is_busy() {
@@ -858,7 +987,10 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
         };
         let mut row = vec![
             marker,
-            Span::styled(format!("{:<28}", crate::types::truncate(&app.agent_name(a), 28)), Style::default()),
+            Span::styled(
+                format!("{:<28}", crate::types::truncate(&app.agent_name(a), 28)),
+                Style::default(),
+            ),
             Span::styled(
                 format!("{:<10}", a.state()),
                 Style::default().fg(state_color(t, a.state())),
@@ -866,10 +998,16 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
         ];
         let stats = derive_stats(a, app.status_lines.get(&a.session_id));
         if let Some(p) = stats.context_pct {
-            row.push(Span::styled(format!(" {p:.0}%"), Style::default().fg(t.dim)));
+            row.push(Span::styled(
+                format!(" {p:.0}%"),
+                Style::default().fg(t.dim),
+            ));
         }
         if let Some(c) = stats.cost {
-            row.push(Span::styled(format!("  ${c:.2}"), Style::default().fg(t.dim)));
+            row.push(Span::styled(
+                format!("  ${c:.2}"),
+                Style::default().fg(t.dim),
+            ));
         }
         lines.push(Line::from(row));
     }
@@ -880,7 +1018,9 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
         )));
     }
 
-    let p = Paragraph::new(lines).block(block).wrap(ratatui::widgets::Wrap { trim: false });
+    let p = Paragraph::new(lines)
+        .block(block)
+        .wrap(ratatui::widgets::Wrap { trim: false });
     f.render_widget(p, area);
 }
 
@@ -888,7 +1028,9 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
 
 fn render_spawn_modal(f: &mut Frame, area: Rect, app: &App) {
     let t = &app.theme;
-    let Some(form) = app.spawn_form.as_ref() else { return };
+    let Some(form) = app.spawn_form.as_ref() else {
+        return;
+    };
 
     let w = area.width.saturating_sub(8).clamp(20, 72);
     let inner_w = w.saturating_sub(2) as usize;
@@ -901,7 +1043,10 @@ fn render_spawn_modal(f: &mut Frame, area: Rect, app: &App) {
         .map(|p| format!("  ({})", p.extra_args.join(" ")))
         .unwrap_or_default();
     let providers = crate::app::SPAWN_PROVIDERS;
-    let provider = providers.get(form.provider_idx).copied().unwrap_or("claude");
+    let provider = providers
+        .get(form.provider_idx)
+        .copied()
+        .unwrap_or("claude");
     let is_claude = provider == "claude";
 
     let mut lines = vec![
@@ -914,7 +1059,10 @@ fn render_spawn_modal(f: &mut Frame, area: Rect, app: &App) {
         Line::from(vec![
             Span::styled("  provider ", Style::default().fg(t.dim)),
             Span::styled("‹ ", Style::default().fg(t.accent)),
-            Span::styled(provider.to_string(), Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled(
+                provider.to_string(),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
             Span::styled(" ›", Style::default().fg(t.accent)),
             Span::styled(
                 format!("  {}/{}", form.provider_idx + 1, providers.len()),
@@ -927,9 +1075,15 @@ fn render_spawn_modal(f: &mut Frame, area: Rect, app: &App) {
         lines.push(Line::from(vec![
             Span::styled("  profile  ", Style::default().fg(t.dim)),
             Span::styled("‹ ", Style::default().fg(t.accent)),
-            Span::styled(profile_name.to_string(), Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled(
+                profile_name.to_string(),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
             Span::styled(" ›", Style::default().fg(t.accent)),
-            Span::styled(format!("  {}/{}", form.profile_idx + 1, n), Style::default().fg(t.dim)),
+            Span::styled(
+                format!("  {}/{}", form.profile_idx + 1, n),
+                Style::default().fg(t.dim),
+            ),
             Span::styled(extra, Style::default().fg(t.dim)),
         ]));
     } else {
@@ -947,7 +1101,10 @@ fn render_spawn_modal(f: &mut Frame, area: Rect, app: &App) {
             format!("  {} {}", form.completions.len(), "matches:"),
             Style::default().fg(t.dim),
         )));
-        lines.push(Line::from(Span::styled(format!("  {shown}"), Style::default().fg(t.accent))));
+        lines.push(Line::from(Span::styled(
+            format!("  {shown}"),
+            Style::default().fg(t.accent),
+        )));
     }
 
     // When seeding a library prompt, show what will be inserted.
@@ -989,7 +1146,9 @@ fn render_spawn_modal(f: &mut Frame, area: Rect, app: &App) {
 
 fn render_palette(f: &mut Frame, area: Rect, app: &App) {
     let t = &app.theme;
-    let Some(p) = app.palette.as_ref() else { return };
+    let Some(p) = app.palette.as_ref() else {
+        return;
+    };
 
     let w = area.width.saturating_sub(8).clamp(24, 76);
     let max_rows = area.height.saturating_sub(6).clamp(3, 14);
@@ -1038,7 +1197,10 @@ fn render_palette(f: &mut Frame, area: Rect, app: &App) {
         lines.push(Line::from(spans));
     }
     if visible.is_empty() {
-        lines.push(Line::from(Span::styled("no matches", Style::default().fg(t.dim))));
+        lines.push(Line::from(Span::styled(
+            "no matches",
+            Style::default().fg(t.dim),
+        )));
     }
 
     let block = Block::default()
@@ -1078,7 +1240,13 @@ fn render_picker(f: &mut Frame, area: Rect, app: &App) {
     ])];
 
     let start = p.selected.saturating_sub(shown.saturating_sub(1) as usize);
-    for (offset, &mi) in p.matched.iter().skip(start).take(shown as usize).enumerate() {
+    for (offset, &mi) in p
+        .matched
+        .iter()
+        .skip(start)
+        .take(shown as usize)
+        .enumerate()
+    {
         let i = start + offset;
         let selected = i == p.selected;
         let marker = if selected { "❯ " } else { "  " };
@@ -1096,14 +1264,20 @@ fn render_picker(f: &mut Frame, area: Rect, app: &App) {
         ]));
     }
     if p.pending {
-        lines.push(Line::from(Span::styled("  loading models…", Style::default().fg(t.dim))));
+        lines.push(Line::from(Span::styled(
+            "  loading models…",
+            Style::default().fg(t.dim),
+        )));
     } else if p.matched.is_empty() {
         let hint = if p.allow_free_text {
             "type a model id and press enter"
         } else {
             "no matches"
         };
-        lines.push(Line::from(Span::styled(format!("  {hint}"), Style::default().fg(t.dim))));
+        lines.push(Line::from(Span::styled(
+            format!("  {hint}"),
+            Style::default().fg(t.dim),
+        )));
     }
 
     let foot = if p.allow_free_text {
@@ -1147,7 +1321,13 @@ fn render_search(f: &mut Frame, area: Rect, app: &App) {
     ])];
 
     let start = s.selected.saturating_sub(shown.saturating_sub(1) as usize);
-    for (offset, &idx) in s.matched.iter().skip(start).take(shown as usize).enumerate() {
+    for (offset, &idx) in s
+        .matched
+        .iter()
+        .skip(start)
+        .take(shown as usize)
+        .enumerate()
+    {
         let i = start + offset;
         let hit = &s.entries[idx];
         let selected = i == s.selected;
@@ -1162,7 +1342,11 @@ fn render_search(f: &mut Frame, area: Rect, app: &App) {
         lines.push(Line::from(vec![
             Span::styled(marker, Style::default().fg(t.accent)),
             Span::styled(
-                format!("{:<width$}", crate::types::truncate(&hit.name, NAME_COL), width = NAME_COL),
+                format!(
+                    "{:<width$}",
+                    crate::types::truncate(&hit.name, NAME_COL),
+                    width = NAME_COL
+                ),
                 Style::default().fg(t.accent),
             ),
             Span::styled(format!("  {snippet}"), snippet_style),
@@ -1174,7 +1358,11 @@ fn render_search(f: &mut Frame, area: Rect, app: &App) {
             Style::default().fg(t.dim),
         )));
     } else if s.matched.is_empty() {
-        let msg = if s.pending > 0 { "indexing…" } else { "no matches" };
+        let msg = if s.pending > 0 {
+            "indexing…"
+        } else {
+            "no matches"
+        };
         lines.push(Line::from(Span::styled(msg, Style::default().fg(t.dim))));
     }
 
@@ -1229,13 +1417,26 @@ fn render_help(f: &mut Frame, area: Rect, app: &App) {
     lines.push(Line::from(vec![
         Span::styled("press ", Style::default().fg(t.dim)),
         Span::styled(app.keymap.leader().display(), Style::default().fg(t.ok)),
-        Span::styled(" for the leader menu (which-key)", Style::default().fg(t.dim)),
+        Span::styled(
+            " for the leader menu (which-key)",
+            Style::default().fg(t.dim),
+        ),
     ]));
     lines.push(Line::raw(""));
     lines.extend(binding_lines(t, app, "global", Context::Global));
     lines.extend(binding_lines(t, app, "sidebar / dashboard", Context::List));
-    lines.extend(binding_lines(t, app, "agent · terminal", Context::AgentTerminal));
-    lines.extend(binding_lines(t, app, "agent · transcript", Context::AgentTranscript));
+    lines.extend(binding_lines(
+        t,
+        app,
+        "agent · terminal",
+        Context::AgentTerminal,
+    ));
+    lines.extend(binding_lines(
+        t,
+        app,
+        "agent · transcript",
+        Context::AgentTranscript,
+    ));
     lines.push(Line::from(vec![
         Span::styled("answer keys ", Style::default().fg(t.dim)),
         Span::styled("1-9", Style::default().fg(t.ok)),
@@ -1244,7 +1445,10 @@ fn render_help(f: &mut Frame, area: Rect, app: &App) {
     lines.push(Line::raw(""));
     lines.push(Line::from(vec![
         Span::styled("themes: ", Style::default().fg(t.dim)),
-        Span::styled(crate::theme::BUILTINS.join(", "), Style::default().fg(t.accent)),
+        Span::styled(
+            crate::theme::BUILTINS.join(", "),
+            Style::default().fg(t.accent),
+        ),
     ]));
 
     // Cap height to the viewport; the box scrolls via Paragraph if it overflows.
@@ -1291,7 +1495,10 @@ fn render_whichkey(f: &mut Frame, area: Rect, app: &App) {
                 None => "▸ …".to_string(),
             };
             Line::from(vec![
-                Span::styled(format!(" {key:<7}"), Style::default().fg(t.accent).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    format!(" {key:<7}"),
+                    Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
+                ),
                 Span::styled(label, Style::default().fg(t.fg)),
             ])
         })
@@ -1300,8 +1507,14 @@ fn render_whichkey(f: &mut Frame, area: Rect, app: &App) {
     // surface them as a hint when the leader prefix is up and pins exist.
     if app.pending_keys == [app.keymap.leader()] && !app.harpoon.is_empty() {
         rows.push(Line::from(vec![
-            Span::styled(format!(" {:<7}", "1-9"), Style::default().fg(t.accent).add_modifier(Modifier::BOLD)),
-            Span::styled(format!("jump to pinned agent (⚓1-{})", app.harpoon.len()), Style::default().fg(t.fg)),
+            Span::styled(
+                format!(" {:<7}", "1-9"),
+                Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("jump to pinned agent (⚓1-{})", app.harpoon.len()),
+                Style::default().fg(t.fg),
+            ),
         ]));
     }
 
@@ -1326,7 +1539,10 @@ fn render_whichkey(f: &mut Frame, area: Rect, app: &App) {
     let block = Block::default()
         .borders(Borders::ALL)
         .title(title)
-        .title_bottom(Line::from(Span::styled(" esc cancel ", Style::default().fg(t.dim))))
+        .title_bottom(Line::from(Span::styled(
+            " esc cancel ",
+            Style::default().fg(t.dim),
+        )))
         .border_style(Style::default().fg(t.accent));
     f.render_widget(Paragraph::new(rows).block(block), rect);
 }
@@ -1335,7 +1551,9 @@ fn render_whichkey(f: &mut Frame, area: Rect, app: &App) {
 
 fn render_notes(f: &mut Frame, area: Rect, app: &App) {
     let t = &app.theme;
-    let Some(n) = app.notes_view.as_ref() else { return };
+    let Some(n) = app.notes_view.as_ref() else {
+        return;
+    };
 
     let w = area.width.saturating_sub(6).clamp(24, 76);
     let h = area.height.saturating_sub(4).clamp(6, 24);
@@ -1355,7 +1573,10 @@ fn render_notes(f: &mut Frame, area: Rect, app: &App) {
     };
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(format!(" {mode} · {} ", crate::types::truncate(&n.cwd, w.saturating_sub(12) as usize)))
+        .title(format!(
+            " {mode} · {} ",
+            crate::types::truncate(&n.cwd, w.saturating_sub(12) as usize)
+        ))
         .title_bottom(Line::from(Span::styled(bottom, Style::default().fg(t.dim))))
         .border_style(Style::default().fg(t.accent));
 
@@ -1366,7 +1587,11 @@ fn render_notes(f: &mut Frame, area: Rect, app: &App) {
         )))
     } else {
         // Show a trailing cursor while editing.
-        let text = if n.editing { format!("{}▏", n.text) } else { n.text.clone() };
+        let text = if n.editing {
+            format!("{}▏", n.text)
+        } else {
+            n.text.clone()
+        };
         Paragraph::new(text)
             .wrap(ratatui::widgets::Wrap { trim: false })
             .scroll((n.scroll, 0))
@@ -1384,7 +1609,10 @@ fn render_review(f: &mut Frame, area: Rect, app: &App) {
     let view = if r.staged_view { "staged" } else { "unstaged" };
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(format!(" review · {branch} · {view} ({} files) ", r.files.len()))
+        .title(format!(
+            " review · {branch} · {view} ({} files) ",
+            r.files.len()
+        ))
         .border_style(Style::default().fg(t.accent));
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -1392,7 +1620,10 @@ fn render_review(f: &mut Frame, area: Rect, app: &App) {
     let composing = r.commit_msg.is_some();
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(if composing { 3 } else { 0 })])
+        .constraints([
+            Constraint::Min(1),
+            Constraint::Length(if composing { 3 } else { 0 }),
+        ])
         .split(inner);
     let cols = Layout::default()
         .direction(Direction::Horizontal)
@@ -1405,7 +1636,10 @@ fn render_review(f: &mut Frame, area: Rect, app: &App) {
     if composing {
         let msg = r.commit_msg.as_deref().unwrap_or("");
         let p = Paragraph::new(Line::from(vec![
-            Span::styled("commit ", Style::default().fg(t.accent).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "commit ",
+                Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
+            ),
             Span::raw(format!("{msg}▏")),
         ]))
         .block(
@@ -1425,7 +1659,10 @@ fn render_review_files(f: &mut Frame, area: Rect, t: &Theme, r: &crate::app::Rev
         .border_style(Style::default().fg(t.dim));
     if let Some(err) = &r.error {
         let p = Paragraph::new(vec![
-            Line::from(Span::styled("git unavailable", Style::default().fg(t.bad).add_modifier(Modifier::BOLD))),
+            Line::from(Span::styled(
+                "git unavailable",
+                Style::default().fg(t.bad).add_modifier(Modifier::BOLD),
+            )),
             Line::raw(""),
             Line::from(Span::styled(err.clone(), Style::default().fg(t.dim))),
         ])
@@ -1449,32 +1686,52 @@ fn render_review_files(f: &mut Frame, area: Rect, t: &Theme, r: &crate::app::Rev
         .map(|file| {
             let staged = file.staged.trim();
             let unstaged = file.unstaged.trim();
-            let sc = if staged.is_empty() { '·' } else { staged.chars().next().unwrap() };
-            let uc = if unstaged.is_empty() { '·' } else { unstaged.chars().next().unwrap() };
+            let sc = if staged.is_empty() {
+                '·'
+            } else {
+                staged.chars().next().unwrap()
+            };
+            let uc = if unstaged.is_empty() {
+                '·'
+            } else {
+                unstaged.chars().next().unwrap()
+            };
             ListItem::new(Line::from(vec![
                 Span::styled(format!("{sc}"), Style::default().fg(t.ok)),
                 Span::styled(format!("{uc} "), Style::default().fg(t.warn)),
-                Span::styled(crate::types::truncate(&file.display_path(), 30), Style::default()),
+                Span::styled(
+                    crate::types::truncate(&file.display_path(), 30),
+                    Style::default(),
+                ),
             ]))
         })
         .collect();
-    let list = List::new(items)
-        .block(block)
-        .highlight_style(Style::default().bg(t.selection_bg).add_modifier(Modifier::BOLD));
+    let list = List::new(items).block(block).highlight_style(
+        Style::default()
+            .bg(t.selection_bg)
+            .add_modifier(Modifier::BOLD),
+    );
     let mut state = ListState::default();
     state.select(Some(r.selected));
     f.render_stateful_widget(list, area, &mut state);
 }
 
 fn render_review_diff(f: &mut Frame, area: Rect, t: &Theme, r: &crate::app::ReviewState) {
-    let path = r.selected_file().map(|file| file.path.as_str()).unwrap_or("");
+    let path = r
+        .selected_file()
+        .map(|file| file.path.as_str())
+        .unwrap_or("");
     let block = Block::default()
         .borders(Borders::ALL)
         .title(format!(" {} ", if path.is_empty() { "diff" } else { path }))
         .border_style(Style::default().fg(t.dim));
 
     if r.diff.trim().is_empty() {
-        let msg = if r.files.is_empty() { "nothing to review" } else { "no changes in this view" };
+        let msg = if r.files.is_empty() {
+            "nothing to review"
+        } else {
+            "no changes in this view"
+        };
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(msg, Style::default().fg(t.dim)))).block(block),
             area,
@@ -1488,7 +1745,11 @@ fn render_review_diff(f: &mut Frame, area: Rect, t: &Theme, r: &crate::app::Revi
         .map(|line| {
             let style = if line.starts_with("@@") {
                 Style::default().fg(t.accent)
-            } else if line.starts_with("+++") || line.starts_with("---") || line.starts_with("diff ") || line.starts_with("index ") {
+            } else if line.starts_with("+++")
+                || line.starts_with("---")
+                || line.starts_with("diff ")
+                || line.starts_with("index ")
+            {
                 Style::default().fg(t.dim)
             } else if line.starts_with('+') {
                 Style::default().fg(t.ok)
@@ -1501,7 +1762,9 @@ fn render_review_diff(f: &mut Frame, area: Rect, t: &Theme, r: &crate::app::Revi
         })
         .collect();
     f.render_widget(
-        Paragraph::new(lines).block(block).scroll((r.diff_scroll, 0)),
+        Paragraph::new(lines)
+            .block(block)
+            .scroll((r.diff_scroll, 0)),
         area,
     );
 }
@@ -1513,7 +1776,10 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
     if let Some(cmd) = &app.cmdline {
         let chip = Span::styled(
             " CMD ",
-            Style::default().bg(app.theme.accent).fg(Color::Black).add_modifier(Modifier::BOLD),
+            Style::default()
+                .bg(app.theme.accent)
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD),
         );
         f.render_widget(
             Paragraph::new(Line::from(vec![
@@ -1571,13 +1837,18 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
     let (label, color) = mode_chip(app, in_agent, on_shell);
     let mut spans = vec![Span::styled(
         format!(" {label} "),
-        Style::default().bg(color).fg(Color::Black).add_modifier(Modifier::BOLD),
+        Style::default()
+            .bg(color)
+            .fg(Color::Black)
+            .add_modifier(Modifier::BOLD),
     )];
     // Pending vim count (e.g. while typing `12` before `G`).
     if let Some(n) = app.count {
         spans.push(Span::styled(
             format!(" {n}"),
-            Style::default().fg(app.theme.warn).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(app.theme.warn)
+                .add_modifier(Modifier::BOLD),
         ));
     }
     spans.push(Span::styled(body, Style::default().fg(app.theme.dim)));

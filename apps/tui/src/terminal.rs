@@ -126,10 +126,22 @@ mod tests {
 
     #[test]
     fn encodes_common_keys() {
-        assert_eq!(encode_key(&key(KeyCode::Enter, KeyModifiers::NONE)), Some(vec![b'\r']));
-        assert_eq!(encode_key(&key(KeyCode::Char('a'), KeyModifiers::NONE)), Some(vec![b'a']));
+        assert_eq!(
+            encode_key(&key(KeyCode::Enter, KeyModifiers::NONE)),
+            Some(vec![b'\r'])
+        );
+        assert_eq!(
+            encode_key(&key(KeyCode::Char('a'), KeyModifiers::NONE)),
+            Some(vec![b'a'])
+        );
         // Ctrl-C → 0x03 (interrupt), forwarded to Claude.
-        assert_eq!(encode_key(&key(KeyCode::Char('c'), KeyModifiers::CONTROL)), Some(vec![0x03]));
-        assert_eq!(encode_key(&key(KeyCode::Up, KeyModifiers::NONE)), Some(vec![0x1b, b'[', b'A']));
+        assert_eq!(
+            encode_key(&key(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+            Some(vec![0x03])
+        );
+        assert_eq!(
+            encode_key(&key(KeyCode::Up, KeyModifiers::NONE)),
+            Some(vec![0x1b, b'[', b'A'])
+        );
     }
 }

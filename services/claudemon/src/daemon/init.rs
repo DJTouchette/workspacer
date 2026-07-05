@@ -92,11 +92,10 @@ pub async fn run_with_port(dry_run: bool, hook_port: u16) -> Result<()> {
     let path = settings_path()?;
     let existing = match fs::read_to_string(&path) {
         Ok(text) if text.trim().is_empty() => Value::Object(Default::default()),
-        Ok(text) => serde_json::from_str(&text)
-            .with_context(|| format!("parsing {}", path.display()))?,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            Value::Object(Default::default())
+        Ok(text) => {
+            serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))?
         }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Value::Object(Default::default()),
         Err(err) => return Err(err).with_context(|| format!("reading {}", path.display())),
     };
 
@@ -130,13 +129,12 @@ pub async fn run_with_port(dry_run: bool, hook_port: u16) -> Result<()> {
 
     // Atomic write: tmpfile in the same dir, then rename.
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("creating {}", parent.display()))?;
+        fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
     }
     let tmp = path.with_extension("json.claudemon.tmp");
     {
-        let mut f = fs::File::create(&tmp)
-            .with_context(|| format!("creating {}", tmp.display()))?;
+        let mut f =
+            fs::File::create(&tmp).with_context(|| format!("creating {}", tmp.display()))?;
         f.write_all(formatted.as_bytes())?;
         f.sync_all()?;
     }
@@ -212,9 +210,7 @@ fn merge_hooks(mut doc: Value, our_command: &str) -> (Value, Vec<String>) {
     let obj = doc.as_object_mut().expect("checked above");
     // Ensure `hooks` key exists as an object; if it already exists but is not
     // an object (malformed file), skip rather than panic.
-    let hooks_is_object = obj
-        .get("hooks")
-        .is_none_or(|v| v.is_object());
+    let hooks_is_object = obj.get("hooks").is_none_or(|v| v.is_object());
     if !hooks_is_object {
         tracing::warn!("settings.json `hooks` value is not an object; skipping hooks merge");
         return (doc, Vec::new());
@@ -231,7 +227,9 @@ fn merge_hooks(mut doc: Value, our_command: &str) -> (Value, Vec<String>) {
         let arr = hooks
             .entry((*event).to_string())
             .or_insert_with(|| Value::Array(Vec::new()));
-        let Some(arr) = arr.as_array_mut() else { continue };
+        let Some(arr) = arr.as_array_mut() else {
+            continue;
+        };
 
         // Find an existing group whose `hooks[*].command` is tagged as ours.
         let mut found = false;
@@ -251,7 +249,8 @@ fn merge_hooks(mut doc: Value, our_command: &str) -> (Value, Vec<String>) {
                     }
                     if hook
                         .get("type")
-                        .and_then(Value::as_str).is_none_or(|t| t != "command")
+                        .and_then(Value::as_str)
+                        .is_none_or(|t| t != "command")
                     {
                         hook["type"] = Value::String("command".to_string());
                     }
@@ -309,7 +308,11 @@ mod tests {
         let cmd = "echo claudemon # claudemon-hook";
         let (doc, _) = merge_hooks(starting, cmd);
         let pre = doc["hooks"]["PreToolUse"].as_array().unwrap();
-        assert_eq!(pre.len(), 2, "user hook should still be present alongside ours");
+        assert_eq!(
+            pre.len(),
+            2,
+            "user hook should still be present alongside ours"
+        );
         let user_cmd = pre[0]["hooks"][0]["command"].as_str().unwrap();
         assert_eq!(user_cmd, "echo user-hook");
     }
@@ -323,7 +326,10 @@ mod tests {
         assert!(changed);
         let cmd = doc["statusLine"]["command"].as_str().unwrap();
         // User's original command is preserved (piped to) ...
-        assert!(cmd.contains("bash ~/.claude/my-statusline.sh"), "inner command preserved");
+        assert!(
+            cmd.contains("bash ~/.claude/my-statusline.sh"),
+            "inner command preserved"
+        );
         // ... and a forward to /statusline is prepended, tagged as ours.
         assert!(cmd.contains("/statusline"));
         assert!(cmd.contains(STATUS_TAG));
@@ -350,7 +356,10 @@ mod tests {
         assert!(merge_status_line(&mut doc, 7890));
         let after_first = doc["statusLine"]["command"].as_str().unwrap().to_string();
         // Second run must detect our tag and leave the (already-wrapped) command alone.
-        assert!(!merge_status_line(&mut doc, 7890), "second run should be a no-op");
+        assert!(
+            !merge_status_line(&mut doc, 7890),
+            "second run should be a no-op"
+        );
         assert_eq!(doc["statusLine"]["command"].as_str().unwrap(), after_first);
         // The original command appears exactly once — no nested re-wrap.
         let occurrences = after_first.matches("my-statusline.sh").count();

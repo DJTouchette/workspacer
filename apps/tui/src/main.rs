@@ -45,7 +45,11 @@ use claudemon::DaemonEvent;
 #[command(name = "wks-tui", about = "Terminal client for workspacer agents")]
 struct Cli {
     /// claudemon REST base URL — the daemon the TUI reads and controls.
-    #[arg(long, env = "WKS_CLAUDEMON_URL", default_value = "http://127.0.0.1:7891")]
+    #[arg(
+        long,
+        env = "WKS_CLAUDEMON_URL",
+        default_value = "http://127.0.0.1:7891"
+    )]
     claudemon_url: String,
 
     /// Don't auto-launch claudemon if it isn't already listening. By default a
@@ -125,7 +129,17 @@ async fn main() -> Result<()> {
     };
 
     let mut terminal = setup_terminal()?;
-    let res = run(&mut terminal, cli.claudemon_url, claudemon, bus, bus_events, profiles, library, config).await;
+    let res = run(
+        &mut terminal,
+        cli.claudemon_url,
+        claudemon,
+        bus,
+        bus_events,
+        profiles,
+        library,
+        config,
+    )
+    .await;
     restore_terminal(&mut terminal)?;
     res
 }

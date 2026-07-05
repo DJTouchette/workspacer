@@ -30,11 +30,17 @@ struct Rates {
     context_limit: u64,
 }
 
-const DEFAULT_RATES: Rates = Rates { input: 3.0, output: 15.0, context_limit: 200_000 };
+const DEFAULT_RATES: Rates = Rates {
+    input: 3.0,
+    output: 15.0,
+    context_limit: 200_000,
+};
 
 /// Longest-prefix match on the transcript `model` id (mirrors modelUsage.ts).
 fn rates_for(model: Option<&str>) -> Rates {
-    let Some(model) = model else { return DEFAULT_RATES };
+    let Some(model) = model else {
+        return DEFAULT_RATES;
+    };
     // (prefix, input, output)
     const TABLE: [(&str, f64, f64); 3] = [
         ("claude-opus", 15.0, 75.0),
@@ -45,7 +51,11 @@ fn rates_for(model: Option<&str>) -> Rates {
     let mut best_len = 0usize;
     for (prefix, input, output) in TABLE {
         if model.starts_with(prefix) && prefix.len() > best_len {
-            best = Some(Rates { input, output, context_limit: 200_000 });
+            best = Some(Rates {
+                input,
+                output,
+                context_limit: 200_000,
+            });
             best_len = prefix.len();
         }
     }
@@ -120,7 +130,9 @@ fn from_transcript_value(tx: &Value) -> Option<Usage> {
         if m.get("role").and_then(|r| r.as_str()) != Some("assistant") {
             continue;
         }
-        let Some(msg) = m.get("raw").and_then(|r| r.get("message")) else { continue };
+        let Some(msg) = m.get("raw").and_then(|r| r.get("message")) else {
+            continue;
+        };
         let Some(u) = msg.get("usage") else { continue };
         any = true;
 
@@ -159,7 +171,9 @@ pub fn from_transcript(tx: &Transcript) -> Option<Usage> {
             continue;
         }
         // raw is the full JSONL row; the API message lives at raw.message.
-        let Some(msg) = m.raw.get("message") else { continue };
+        let Some(msg) = m.raw.get("message") else {
+            continue;
+        };
         let Some(u) = msg.get("usage") else { continue };
         any = true;
 
@@ -202,7 +216,14 @@ mod tests {
     // ── helpers ──────────────────────────────────────────────────────────────
 
     /// Build a TranscriptMessage whose raw field looks like a real JSONL row.
-    fn assistant_msg(id: &str, model: &str, input: u64, cache_write: u64, cache_read: u64, output: u64) -> TranscriptMessage {
+    fn assistant_msg(
+        id: &str,
+        model: &str,
+        input: u64,
+        cache_write: u64,
+        cache_read: u64,
+        output: u64,
+    ) -> TranscriptMessage {
         TranscriptMessage {
             role: "assistant".into(),
             content: Value::Null,
@@ -231,7 +252,10 @@ mod tests {
     }
 
     fn tx(messages: Vec<TranscriptMessage>) -> Transcript {
-        Transcript { path: None, messages }
+        Transcript {
+            path: None,
+            messages,
+        }
     }
 
     // ── pricing pin tests (mirror modelUsage.test.ts) ────────────────────────
@@ -239,7 +263,14 @@ mod tests {
     /// opus: $15/M in, $75/M out
     #[test]
     fn pricing_opus_in15_out75() {
-        let t = tx(vec![assistant_msg("m1", "claude-opus-4-5", 1_000_000, 0, 0, 1_000_000)]);
+        let t = tx(vec![assistant_msg(
+            "m1",
+            "claude-opus-4-5",
+            1_000_000,
+            0,
+            0,
+            1_000_000,
+        )]);
         let u = from_transcript(&t).unwrap();
         // 1M input * $15 + 1M output * $75 = $90
         assert!((u.cost_usd - 90.0).abs() < 1e-9, "opus cost={}", u.cost_usd);
@@ -248,16 +279,34 @@ mod tests {
     /// sonnet: $3/M in, $15/M out
     #[test]
     fn pricing_sonnet_in3_out15() {
-        let t = tx(vec![assistant_msg("m1", "claude-sonnet-4-6", 1_000_000, 0, 0, 1_000_000)]);
+        let t = tx(vec![assistant_msg(
+            "m1",
+            "claude-sonnet-4-6",
+            1_000_000,
+            0,
+            0,
+            1_000_000,
+        )]);
         let u = from_transcript(&t).unwrap();
         // 1M input * $3 + 1M output * $15 = $18
-        assert!((u.cost_usd - 18.0).abs() < 1e-9, "sonnet cost={}", u.cost_usd);
+        assert!(
+            (u.cost_usd - 18.0).abs() < 1e-9,
+            "sonnet cost={}",
+            u.cost_usd
+        );
     }
 
     /// haiku: $1/M in, $5/M out
     #[test]
     fn pricing_haiku_in1_out5() {
-        let t = tx(vec![assistant_msg("m1", "claude-haiku-3-5", 1_000_000, 0, 0, 1_000_000)]);
+        let t = tx(vec![assistant_msg(
+            "m1",
+            "claude-haiku-3-5",
+            1_000_000,
+            0,
+            0,
+            1_000_000,
+        )]);
         let u = from_transcript(&t).unwrap();
         // 1M input * $1 + 1M output * $5 = $6
         assert!((u.cost_usd - 6.0).abs() < 1e-9, "haiku cost={}", u.cost_usd);
@@ -266,34 +315,74 @@ mod tests {
     /// default/unknown model → falls back to sonnet rates ($3/$15)
     #[test]
     fn pricing_unknown_model_uses_default_3_15() {
-        let t = tx(vec![assistant_msg("m1", "claude-unknown-future", 1_000_000, 0, 0, 1_000_000)]);
+        let t = tx(vec![assistant_msg(
+            "m1",
+            "claude-unknown-future",
+            1_000_000,
+            0,
+            0,
+            1_000_000,
+        )]);
         let u = from_transcript(&t).unwrap();
         // default = $3/$15 → $18
-        assert!((u.cost_usd - 18.0).abs() < 1e-9, "default cost={}", u.cost_usd);
+        assert!(
+            (u.cost_usd - 18.0).abs() < 1e-9,
+            "default cost={}",
+            u.cost_usd
+        );
     }
 
     /// cache-write multiplier: 1.25× input rate
     #[test]
     fn pricing_cache_write_1_25x() {
         // sonnet: input=$3/M, so cache-write = $3.75/M
-        let t = tx(vec![assistant_msg("m1", "claude-sonnet-4-6", 0, 1_000_000, 0, 0)]);
+        let t = tx(vec![assistant_msg(
+            "m1",
+            "claude-sonnet-4-6",
+            0,
+            1_000_000,
+            0,
+            0,
+        )]);
         let u = from_transcript(&t).unwrap();
-        assert!((u.cost_usd - 3.75).abs() < 1e-9, "cache-write cost={}", u.cost_usd);
+        assert!(
+            (u.cost_usd - 3.75).abs() < 1e-9,
+            "cache-write cost={}",
+            u.cost_usd
+        );
     }
 
     /// cache-read multiplier: 0.1× input rate
     #[test]
     fn pricing_cache_read_0_1x() {
         // sonnet: input=$3/M, so cache-read = $0.30/M
-        let t = tx(vec![assistant_msg("m1", "claude-sonnet-4-6", 0, 0, 1_000_000, 0)]);
+        let t = tx(vec![assistant_msg(
+            "m1",
+            "claude-sonnet-4-6",
+            0,
+            0,
+            1_000_000,
+            0,
+        )]);
         let u = from_transcript(&t).unwrap();
-        assert!((u.cost_usd - 0.30).abs() < 1e-9, "cache-read cost={}", u.cost_usd);
+        assert!(
+            (u.cost_usd - 0.30).abs() < 1e-9,
+            "cache-read cost={}",
+            u.cost_usd
+        );
     }
 
     /// 200k→1M context window heuristic: if context_tokens > 200_000, limit = 1_000_000
     #[test]
     fn context_window_200k_to_1m_promotion() {
-        let t = tx(vec![assistant_msg("m1", "claude-opus-4-8", 250_000, 0, 0, 10)]);
+        let t = tx(vec![assistant_msg(
+            "m1",
+            "claude-opus-4-8",
+            250_000,
+            0,
+            0,
+            10,
+        )]);
         let u = from_transcript(&t).unwrap();
         assert_eq!(u.context_tokens, 250_000);
         assert_eq!(u.context_limit, 1_000_000, "should promote to 1M");
@@ -302,7 +391,14 @@ mod tests {
     /// At exactly 200_000 tokens the limit stays 200_000.
     #[test]
     fn context_window_at_200k_stays_200k() {
-        let t = tx(vec![assistant_msg("m1", "claude-sonnet-4-6", 200_000, 0, 0, 0)]);
+        let t = tx(vec![assistant_msg(
+            "m1",
+            "claude-sonnet-4-6",
+            200_000,
+            0,
+            0,
+            0,
+        )]);
         let u = from_transcript(&t).unwrap();
         assert_eq!(u.context_limit, 200_000);
     }

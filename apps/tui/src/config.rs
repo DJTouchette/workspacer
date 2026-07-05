@@ -183,7 +183,10 @@ mod tests {
             Some(Action::Quit)
         );
         // "none" unbinds the default.
-        assert_eq!(cfg.keymap.action(Context::List, Chord::parse("q").unwrap()), None);
+        assert_eq!(
+            cfg.keymap.action(Context::List, Chord::parse("q").unwrap()),
+            None
+        );
         // Untouched defaults survive.
         assert_eq!(
             cfg.keymap.action(Context::List, Chord::parse("j").unwrap()),
@@ -199,6 +202,9 @@ mod tests {
             r#"{"keys":{"nope":{"a":"quit"},"list":{"boguskey":"quit","z":"frobnicate"}}}"#,
         );
         // The valid default for "z" context-free: z isn't a default in list, so None.
-        assert_eq!(cfg.keymap.action(Context::List, Chord::parse("z").unwrap()), None);
+        assert_eq!(
+            cfg.keymap.action(Context::List, Chord::parse("z").unwrap()),
+            None
+        );
     }
 }

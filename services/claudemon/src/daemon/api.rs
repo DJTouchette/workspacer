@@ -148,12 +148,12 @@ fn cors_layer() -> CorsLayer {
 /// pinning `Host` to expected values closes that hole for the side-effecting
 /// endpoints. Requests with no `Host` at all (non-browser clients that omit it)
 /// pass through — the rebinding vector requires a browser, which always sends one.
-async fn host_guard(
-    State(allowed): State<AllowedHosts>,
-    req: Request,
-    next: Next,
-) -> Response {
-    match req.headers().get(header::HOST).and_then(|v| v.to_str().ok()) {
+async fn host_guard(State(allowed): State<AllowedHosts>, req: Request, next: Next) -> Response {
+    match req
+        .headers()
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+    {
         Some(host) if !allowed.permits(host) => {
             (StatusCode::FORBIDDEN, "host not allowed").into_response()
         }
@@ -186,8 +186,14 @@ pub fn router_with_host(state: ApiState, bind_host: Option<String>) -> Router {
     Router::new()
         .route("/sessions", get(list_sessions))
         .route("/sessions/spawn", post(crate::daemon::spawn::handle))
-        .route("/sessions/spawn-managed", post(crate::daemon::spawn::handle_managed))
-        .route("/providers/:provider/models", get(crate::daemon::spawn::handle_provider_models))
+        .route(
+            "/sessions/spawn-managed",
+            post(crate::daemon::spawn::handle_managed),
+        )
+        .route(
+            "/providers/:provider/models",
+            get(crate::daemon::spawn::handle_provider_models),
+        )
         .route("/sessions/:id", get(get_session))
         .route("/sessions/:id/input", post(post_input))
         .route("/sessions/:id/message", post(post_message))
@@ -254,7 +260,10 @@ async fn list_sessions(
                 let u = usage::usage_for_path(state.transcript_path.as_deref());
                 let mut v = serde_json::to_value(&state).unwrap_or(Value::Null);
                 if let Some(obj) = v.as_object_mut() {
-                    obj.insert("usage".to_string(), serde_json::to_value(&u).unwrap_or(Value::Null));
+                    obj.insert(
+                        "usage".to_string(),
+                        serde_json::to_value(&u).unwrap_or(Value::Null),
+                    );
                     obj.insert("archived".to_string(), Value::Bool(archived));
                 }
                 Some(v)
@@ -329,7 +338,9 @@ async fn post_input(
 
     if handle
         .tx
-        .send(WrapperMessage::Input { bytes: B64.encode(&raw) })
+        .send(WrapperMessage::Input {
+            bytes: B64.encode(&raw),
+        })
         .is_err()
     {
         return (StatusCode::GONE, "wrapper disconnected").into_response();
@@ -367,15 +378,11 @@ async fn post_message(
             })),
         )
             .into_response(),
-        MessageOutcome::NoSession => {
-            (StatusCode::NOT_FOUND, "session not found").into_response()
-        }
+        MessageOutcome::NoSession => (StatusCode::NOT_FOUND, "session not found").into_response(),
         MessageOutcome::NoWrapper => {
             (StatusCode::NOT_FOUND, "no wrapper attached to that session").into_response()
         }
-        MessageOutcome::WrapperGone => {
-            (StatusCode::GONE, "wrapper disconnected").into_response()
-        }
+        MessageOutcome::WrapperGone => (StatusCode::GONE, "wrapper disconnected").into_response(),
     }
 }
 
@@ -555,7 +562,9 @@ async fn post_answer(
 
     if handle
         .tx
-        .send(WrapperMessage::Input { bytes: B64.encode(&bytes) })
+        .send(WrapperMessage::Input {
+            bytes: B64.encode(&bytes),
+        })
         .is_err()
     {
         return (StatusCode::GONE, "wrapper disconnected").into_response();
@@ -580,7 +589,10 @@ async fn post_signal(
     // server + TUI), not just poke the attached TUI. SIGINT still forwards to the
     // TUI below as an interactive interrupt.
     if store.is_managed(&id)
-        && matches!(payload.signal, crate::protocol::Signal::Sigterm | crate::protocol::Signal::Sigkill)
+        && matches!(
+            payload.signal,
+            crate::protocol::Signal::Sigterm | crate::protocol::Signal::Sigkill
+        )
     {
         return if store.terminate_managed(&id) {
             Json(json!({ "ok": true, "signal": payload.signal })).into_response()
@@ -593,7 +605,9 @@ async fn post_signal(
     };
     if handle
         .tx
-        .send(WrapperMessage::Signal { signal: payload.signal })
+        .send(WrapperMessage::Signal {
+            signal: payload.signal,
+        })
         .is_err()
     {
         return (StatusCode::GONE, "wrapper disconnected").into_response();
@@ -628,7 +642,9 @@ async fn post_permission_mode(
             )
                 .into_response();
         }
-        store.set_managed_permission_mode(&id, &payload.mode).map(str::to_string)
+        store
+            .set_managed_permission_mode(&id, &payload.mode)
+            .map(str::to_string)
     } else {
         let Some(target) = PermissionMode::parse(&payload.mode) else {
             return (
@@ -727,9 +743,20 @@ async fn post_model(
         )
             .into_response();
     }
-    match store.set_managed_model(&id, crate::session::ModelSwitch { model: payload.model.clone(), effort: payload.effort.clone() }) {
-        Ok(()) => Json(json!({ "ok": true, "model": payload.model, "effort": payload.effort })).into_response(),
-        Err(err) => (StatusCode::CONFLICT, Json(json!({ "ok": false, "error": err }))).into_response(),
+    match store.set_managed_model(
+        &id,
+        crate::session::ModelSwitch {
+            model: payload.model.clone(),
+            effort: payload.effort.clone(),
+        },
+    ) {
+        Ok(()) => Json(json!({ "ok": true, "model": payload.model, "effort": payload.effort }))
+            .into_response(),
+        Err(err) => (
+            StatusCode::CONFLICT,
+            Json(json!({ "ok": false, "error": err })),
+        )
+            .into_response(),
     }
 }
 
@@ -749,7 +776,10 @@ async fn post_resize(
     };
     if handle
         .tx
-        .send(WrapperMessage::Resize { cols: payload.cols, rows: payload.rows })
+        .send(WrapperMessage::Resize {
+            cols: payload.cols,
+            rows: payload.rows,
+        })
         .is_err()
     {
         return (StatusCode::GONE, "wrapper disconnected").into_response();
@@ -1134,7 +1164,9 @@ mod tests {
         // or the codex rollout fallback) can't switch live: the route surfaces
         // the store's refusal as 409 rather than a silent success.
         let state = test_state();
-        state.store.register_managed("sess-1", "/tmp/proj", "opencode");
+        state
+            .store
+            .register_managed("sess-1", "/tmp/proj", "opencode");
         let req = post_json("/sessions/sess-1/model", json!({ "model": "gpt-5.5" }));
         let (status, body) = request(state, req).await;
         assert_eq!(status, StatusCode::CONFLICT);
@@ -1229,9 +1261,18 @@ mod tests {
         state.conv.push(
             "sess-1",
             vec![
-                ConversationItem::UserMessage { text: "one".into(), timestamp: None },
-                ConversationItem::AssistantText { text: "two".into(), timestamp: None },
-                ConversationItem::UserMessage { text: "three".into(), timestamp: None },
+                ConversationItem::UserMessage {
+                    text: "one".into(),
+                    timestamp: None,
+                },
+                ConversationItem::AssistantText {
+                    text: "two".into(),
+                    timestamp: None,
+                },
+                ConversationItem::UserMessage {
+                    text: "three".into(),
+                    timestamp: None,
+                },
             ],
         );
         // Full snapshot: seq 3, all three items.
@@ -1276,7 +1317,10 @@ mod tests {
         let state = test_state();
         let (h, _rx) = wrapper();
         state.store.register_wrapper("sess-1", "/w", h);
-        let req = post_json("/sessions/sess-1/input", json!({ "bytes_b64": "not!base64!" }));
+        let req = post_json(
+            "/sessions/sess-1/input",
+            json!({ "bytes_b64": "not!base64!" }),
+        );
         let (status, body) = request(state, req).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(body, b"bad base64");
@@ -1287,7 +1331,10 @@ mod tests {
         let state = test_state();
         let (h, mut rx) = wrapper();
         state.store.register_wrapper("sess-1", "/w", h);
-        let req = post_json("/sessions/sess-1/input", json!({ "text": "hi", "newline": false }));
+        let req = post_json(
+            "/sessions/sess-1/input",
+            json!({ "text": "hi", "newline": false }),
+        );
         let (status, body) = request(state, req).await;
         assert_eq!(status, StatusCode::OK);
         let v = serde_json::from_slice::<Value>(&body).unwrap();
@@ -1328,7 +1375,10 @@ mod tests {
         state.store.register_managed("sess-1", "/tmp/proj", "codex");
         let (tx, mut rx) = mpsc::unbounded_channel::<String>();
         state.store.register_managed_input("sess-1", tx);
-        let req = post_json("/sessions/sess-1/message", json!({ "text": "do the thing" }));
+        let req = post_json(
+            "/sessions/sess-1/message",
+            json!({ "text": "do the thing" }),
+        );
         let (status, body) = request(state, req).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(serde_json::from_slice::<Value>(&body).unwrap()["ok"], true);
@@ -1393,7 +1443,10 @@ mod tests {
     #[tokio::test]
     async fn post_decide_with_no_parked_decision_conflicts() {
         // Nothing parked (no gate, no PreToolUse) → the resolve fails as 409.
-        let req = post_json("/sessions/nope/decide", json!({ "body": { "decision": "approve" } }));
+        let req = post_json(
+            "/sessions/nope/decide",
+            json!({ "body": { "decision": "approve" } }),
+        );
         let (status, body) = request(test_state(), req).await;
         assert_eq!(status, StatusCode::CONFLICT);
         let v = serde_json::from_slice::<Value>(&body).unwrap();
@@ -1405,7 +1458,9 @@ mod tests {
         let state = test_state();
         state.store.register_managed("sess-1", "/tmp/proj", "codex");
         // Park a decision the handler will resolve.
-        let mut parked = state.store.park_decision("sess-1", Some("Bash".into()), json!({}));
+        let mut parked = state
+            .store
+            .park_decision("sess-1", Some("Bash".into()), json!({}));
         let req = post_json(
             "/sessions/sess-1/decide",
             json!({ "body": { "decision": "approve" } }),
@@ -1548,7 +1603,10 @@ mod tests {
         let state = test_state();
         let (h, mut rx) = wrapper();
         state.store.register_wrapper("sess-1", "/w", h);
-        let req = post_json("/sessions/sess-1/resize", json!({ "cols": 120, "rows": 40 }));
+        let req = post_json(
+            "/sessions/sess-1/resize",
+            json!({ "cols": 120, "rows": 40 }),
+        );
         let (status, body) = request(state, req).await;
         assert_eq!(status, StatusCode::OK);
         let v = serde_json::from_slice::<Value>(&body).unwrap();
@@ -1577,7 +1635,10 @@ mod tests {
     async fn post_permission_mode_unknown_session_is_404() {
         // Non-managed path: a valid mode string on an unknown session → NoSession,
         // which the handler renders as a JSON error body (not plain text).
-        let req = post_json("/sessions/nope/permission-mode", json!({ "mode": "default" }));
+        let req = post_json(
+            "/sessions/nope/permission-mode",
+            json!({ "mode": "default" }),
+        );
         let (status, body) = request(test_state(), req).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
         let v = serde_json::from_slice::<Value>(&body).unwrap();
@@ -1600,7 +1661,10 @@ mod tests {
         let state = test_state();
         state.store.register_managed("sess-1", "/tmp/proj", "codex");
         let _rx = mark_managed(&state.store, "sess-1");
-        let req = post_json("/sessions/sess-1/permission-mode", json!({ "mode": "plan" }));
+        let req = post_json(
+            "/sessions/sess-1/permission-mode",
+            json!({ "mode": "plan" }),
+        );
         let (status, body) = request(state, req).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         let v = serde_json::from_slice::<Value>(&body).unwrap();
@@ -1616,7 +1680,10 @@ mod tests {
         state
             .store
             .register_managed_yolo("sess-1", live.clone(), false);
-        let req = post_json("/sessions/sess-1/permission-mode", json!({ "mode": "yolo" }));
+        let req = post_json(
+            "/sessions/sess-1/permission-mode",
+            json!({ "mode": "yolo" }),
+        );
         let (status, body) = request(state, req).await;
         assert_eq!(status, StatusCode::OK);
         let v = serde_json::from_slice::<Value>(&body).unwrap();
@@ -1631,9 +1698,7 @@ mod tests {
         state.store.register_managed("sess-1", "/tmp/proj", "codex");
         let _rx = mark_managed(&state.store, "sess-1");
         let live = Arc::new(AtomicBool::new(true));
-        state
-            .store
-            .register_managed_yolo("sess-1", live, true);
+        state.store.register_managed_yolo("sess-1", live, true);
         let req = post_json("/sessions/sess-1/permission-mode", json!({ "mode": "ask" }));
         let (status, body) = request(state, req).await;
         assert_eq!(status, StatusCode::CONFLICT);
@@ -1707,8 +1772,14 @@ mod tests {
         state.conv.push(
             "sess-1",
             vec![
-                ConversationItem::UserMessage { text: "add a test".into(), timestamp: None },
-                ConversationItem::AssistantText { text: "done".into(), timestamp: None },
+                ConversationItem::UserMessage {
+                    text: "add a test".into(),
+                    timestamp: None,
+                },
+                ConversationItem::AssistantText {
+                    text: "done".into(),
+                    timestamp: None,
+                },
             ],
         );
         // no_persist keeps the test off disk (~/.workspacer/handoffs).
@@ -1767,8 +1838,8 @@ mod tests {
         assert_eq!(items_skip(5, 5, 3), 3); // since 3 → keep items 4,5
         assert_eq!(items_skip(5, 5, 5), 5); // since 5 → keep none
         assert_eq!(items_skip(5, 5, 9), 5); // since beyond seq → keep none
-        // A trimmed window (e.g. after items were consumed): seq=10, len=4 →
-        // first item's seq is 7.
+                                            // A trimmed window (e.g. after items were consumed): seq=10, len=4 →
+                                            // first item's seq is 7.
         assert_eq!(items_skip(10, 4, 6), 0); // since older than window → keep all
         assert_eq!(items_skip(10, 4, 8), 2); // since 8 → keep items 9,10
         assert_eq!(items_skip(0, 0, 0), 0); // empty

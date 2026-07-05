@@ -211,9 +211,18 @@ fn preview_chat_with_pending_question() {
                     header: Some("Library".into()),
                     multi_select: false,
                     options: vec![
-                        PendingOption { label: "date-fns".into(), description: Some("Functional".into()) },
-                        PendingOption { label: "dayjs".into(), description: Some("Tiny".into()) },
-                        PendingOption { label: "luxon".into(), description: Some("Rich (i18n, zones)".into()) },
+                        PendingOption {
+                            label: "date-fns".into(),
+                            description: Some("Functional".into()),
+                        },
+                        PendingOption {
+                            label: "dayjs".into(),
+                            description: Some("Tiny".into()),
+                        },
+                        PendingOption {
+                            label: "luxon".into(),
+                            description: Some("Rich (i18n, zones)".into()),
+                        },
                     ],
                 }],
                 raw: json!({}),

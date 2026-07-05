@@ -633,7 +633,10 @@ mod tests {
     #[test]
     fn summarize_write_returns_file_path() {
         assert_eq!(
-            summarize_tool_input("Write", &json!({"file_path": "/tmp/out.txt", "content": "hi"})),
+            summarize_tool_input(
+                "Write",
+                &json!({"file_path": "/tmp/out.txt", "content": "hi"})
+            ),
             "/tmp/out.txt"
         );
     }
@@ -789,7 +792,10 @@ mod tests {
 
     #[test]
     fn summarize_task_create_empty_yields_unit() {
-        assert_eq!(summarize_tool_input("TaskCreate", &json!({})), "TaskCreate()");
+        assert_eq!(
+            summarize_tool_input("TaskCreate", &json!({})),
+            "TaskCreate()"
+        );
     }
 
     #[test]
@@ -806,10 +812,7 @@ mod tests {
     #[test]
     fn summarize_task_update_id_and_status_only() {
         assert_eq!(
-            summarize_tool_input(
-                "TaskUpdate",
-                &json!({"taskId": 7, "status": "in_progress"})
-            ),
+            summarize_tool_input("TaskUpdate", &json!({"taskId": 7, "status": "in_progress"})),
             "#7 in_progress"
         );
     }
@@ -900,10 +903,7 @@ mod tests {
     fn summarize_mcp_tool_uses_last_segment_plus_first_detail_field() {
         // mcp__Neon__run_sql → short name "run_sql", detail from "query"
         assert_eq!(
-            summarize_tool_input(
-                "mcp__Neon__run_sql",
-                &json!({"query": "SELECT 1"})
-            ),
+            summarize_tool_input("mcp__Neon__run_sql", &json!({"query": "SELECT 1"})),
             "run_sql SELECT 1"
         );
     }
@@ -911,10 +911,7 @@ mod tests {
     #[test]
     fn summarize_mcp_tool_falls_back_to_name_field_when_query_missing() {
         assert_eq!(
-            summarize_tool_input(
-                "mcp__SomeSrv__do_thing",
-                &json!({"name": "my-resource"})
-            ),
+            summarize_tool_input("mcp__SomeSrv__do_thing", &json!({"name": "my-resource"})),
             "do_thing my-resource"
         );
     }
@@ -941,10 +938,7 @@ mod tests {
     #[test]
     fn summarize_mcp_tool_uses_path_field() {
         assert_eq!(
-            summarize_tool_input(
-                "mcp__FS__stat",
-                &json!({"path": "/var/log"})
-            ),
+            summarize_tool_input("mcp__FS__stat", &json!({"path": "/var/log"})),
             "stat /var/log"
         );
     }
@@ -963,10 +957,7 @@ mod tests {
     #[test]
     fn summarize_mcp_tool_uses_command_field() {
         assert_eq!(
-            summarize_tool_input(
-                "mcp__Shell__exec",
-                &json!({"command": "make test"})
-            ),
+            summarize_tool_input("mcp__Shell__exec", &json!({"command": "make test"})),
             "exec make test"
         );
     }
@@ -977,8 +968,14 @@ mod tests {
     fn summarize_unknown_tool_compact_json() {
         let result = summarize_tool_input("UnknownTool", &json!({"key": "val"}));
         // Should contain the JSON key-value pair
-        assert!(result.contains("\"key\""), "expected key in output: {result}");
-        assert!(result.contains("\"val\""), "expected val in output: {result}");
+        assert!(
+            result.contains("\"key\""),
+            "expected key in output: {result}"
+        );
+        assert!(
+            result.contains("\"val\""),
+            "expected val in output: {result}"
+        );
     }
 
     #[test]
@@ -1039,7 +1036,10 @@ mod tests {
                 {"status": "done", "text": "Review PR"},
             ]
         });
-        assert_eq!(summarize_tool_input("TodoWrite", &input), "2/3 todos complete");
+        assert_eq!(
+            summarize_tool_input("TodoWrite", &input),
+            "2/3 todos complete"
+        );
     }
 
     #[test]
@@ -1098,10 +1098,7 @@ mod tests {
     #[test]
     fn summarize_push_notification_prefers_message_field() {
         assert_eq!(
-            summarize_tool_input(
-                "PushNotification",
-                &json!({"message": "Build done"})
-            ),
+            summarize_tool_input("PushNotification", &json!({"message": "Build done"})),
             "Build done"
         );
     }
@@ -1141,10 +1138,7 @@ mod tests {
     #[test]
     fn summarize_remote_trigger_prefers_name() {
         assert_eq!(
-            summarize_tool_input(
-                "RemoteTrigger",
-                &json!({"name": "deploy", "action": "run"})
-            ),
+            summarize_tool_input("RemoteTrigger", &json!({"name": "deploy", "action": "run"})),
             "deploy"
         );
     }

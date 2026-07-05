@@ -27,7 +27,9 @@ pub struct Daemons {
 
 impl Daemons {
     fn none() -> Self {
-        Daemons { children: Vec::new() }
+        Daemons {
+            children: Vec::new(),
+        }
     }
 }
 
@@ -101,10 +103,14 @@ fn ensure_hub(daemons: &mut Daemons, bus_url: &str, claudemon_url: &str) {
         Some(bin) => {
             let events = format!("{claudemon_url}/events");
             let args: [&str; 8] = [
-                "--addr", &addr,
-                "--claudemon-events", &events,
-                "--brain-scope", "full",
-                "--claudemon", claudemon_url,
+                "--addr",
+                &addr,
+                "--claudemon-events",
+                &events,
+                "--brain-scope",
+                "full",
+                "--claudemon",
+                claudemon_url,
             ];
             match spawn(&bin, &args) {
                 Ok(child) => {
@@ -159,7 +165,9 @@ fn bus_path(url: &str) -> &str {
 /// as "not rejected" so a flaky probe never spuriously drops us off the bus.
 fn bus_auth_rejected(addr: &str, path: &str, token: Option<&str>) -> bool {
     use std::io::{Read, Write};
-    let Ok(sock) = addr.parse::<SocketAddr>() else { return false };
+    let Ok(sock) = addr.parse::<SocketAddr>() else {
+        return false;
+    };
     let Ok(mut stream) = TcpStream::connect_timeout(&sock, Duration::from_millis(300)) else {
         return false;
     };
@@ -253,8 +261,15 @@ fn claudemon_bin() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("WKS_CLAUDEMON_BIN") {
         return Some(PathBuf::from(p));
     }
-    let name = if cfg!(windows) { "claudemon.exe" } else { "claudemon" };
-    let target = repo_root().join("services").join("claudemon").join("target");
+    let name = if cfg!(windows) {
+        "claudemon.exe"
+    } else {
+        "claudemon"
+    };
+    let target = repo_root()
+        .join("services")
+        .join("claudemon")
+        .join("target");
     for profile in ["release", "debug"] {
         let candidate = target.join(profile).join(name);
         if candidate.exists() {
@@ -281,10 +296,19 @@ mod tests {
 
     #[test]
     fn parse_bus_addr_extracts_host_port() {
-        assert_eq!(parse_bus_addr("ws://127.0.0.1:7895/bus"), ("127.0.0.1:7895".into(), 7895));
-        assert_eq!(parse_bus_addr("ws://localhost:9000/bus"), ("localhost:9000".into(), 9000));
+        assert_eq!(
+            parse_bus_addr("ws://127.0.0.1:7895/bus"),
+            ("127.0.0.1:7895".into(), 7895)
+        );
+        assert_eq!(
+            parse_bus_addr("ws://localhost:9000/bus"),
+            ("localhost:9000".into(), 9000)
+        );
         // No port → hub default.
-        assert_eq!(parse_bus_addr("ws://127.0.0.1/bus"), ("127.0.0.1:7895".into(), 7895));
+        assert_eq!(
+            parse_bus_addr("ws://127.0.0.1/bus"),
+            ("127.0.0.1:7895".into(), 7895)
+        );
     }
 
     #[test]
@@ -301,7 +325,10 @@ mod tests {
         // A remote bus is never reported unreachable (respected, not managed).
         assert!(!loopback_bus_unreachable("ws://example.com:1/bus", None));
         // A token doesn't change the closed-port verdict.
-        assert!(loopback_bus_unreachable("ws://127.0.0.1:1/bus", Some("tok")));
+        assert!(loopback_bus_unreachable(
+            "ws://127.0.0.1:1/bus",
+            Some("tok")
+        ));
     }
 
     #[test]

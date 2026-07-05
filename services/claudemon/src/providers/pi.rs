@@ -59,11 +59,17 @@ async fn fetch_models(bin: &str, cwd: &str) -> anyhow::Result<Vec<ModelInfo>> {
     let stdout = child.stdout.take().context("pi rpc: no stdout")?;
     let mut lines = BufReader::new(stdout).lines();
 
-    write_msg(&mut stdin, &json!({ "type": "get_available_models", "id": "models" })).await?;
+    write_msg(
+        &mut stdin,
+        &json!({ "type": "get_available_models", "id": "models" }),
+    )
+    .await?;
 
     let read = async {
         while let Ok(Some(line)) = lines.next_line().await {
-            let Ok(value) = serde_json::from_str::<Value>(&line) else { continue };
+            let Ok(value) = serde_json::from_str::<Value>(&line) else {
+                continue;
+            };
             if value.get("command").and_then(Value::as_str) != Some("get_available_models") {
                 continue;
             }
@@ -79,7 +85,11 @@ async fn fetch_models(bin: &str, cwd: &str) -> anyhow::Result<Vec<ModelInfo>> {
                     let provider = m.get("provider").and_then(Value::as_str)?;
                     let id = m.get("id").and_then(Value::as_str)?;
                     let full = format!("{provider}/{id}");
-                    Some(ModelInfo { id: full.clone(), label: full, default: false })
+                    Some(ModelInfo {
+                        id: full.clone(),
+                        label: full,
+                        default: false,
+                    })
                 })
                 .collect::<Vec<_>>();
             return Ok(models);
@@ -177,13 +187,31 @@ fn usage_from(message: &Value) -> Option<AgentUpdate> {
         let u = usage?;
         keys.iter().find_map(|k| u.get(*k).and_then(Value::as_u64))
     };
-    let input = pick(&["input", "inputTokens", "input_tokens", "promptTokens", "prompt_tokens"]);
-    let output = pick(&["output", "outputTokens", "output_tokens", "completionTokens", "completion_tokens"]);
+    let input = pick(&[
+        "input",
+        "inputTokens",
+        "input_tokens",
+        "promptTokens",
+        "prompt_tokens",
+    ]);
+    let output = pick(&[
+        "output",
+        "outputTokens",
+        "output_tokens",
+        "completionTokens",
+        "completion_tokens",
+    ]);
     let cost = usage
         .and_then(|u| u.get("cost"))
-        .and_then(|c| c.as_f64().or_else(|| c.get("total").and_then(Value::as_f64)))
+        .and_then(|c| {
+            c.as_f64()
+                .or_else(|| c.get("total").and_then(Value::as_f64))
+        })
         .or_else(|| message.get("cost").and_then(Value::as_f64));
-    let model = message.get("model").and_then(Value::as_str).map(str::to_owned);
+    let model = message
+        .get("model")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
     if input.is_none() && output.is_none() && cost.is_none() && model.is_none() {
         return None;
     }
@@ -194,7 +222,12 @@ fn usage_from(message: &Value) -> Option<AgentUpdate> {
     let cache_write = pick(&["cacheWrite", "cache_write", "cacheWriteTokens"]);
     let context_tokens = total.filter(|t| *t > 0).or_else(|| {
         if input.is_some() || output.is_some() {
-            Some(input.unwrap_or(0) + output.unwrap_or(0) + cache_read.unwrap_or(0) + cache_write.unwrap_or(0))
+            Some(
+                input.unwrap_or(0)
+                    + output.unwrap_or(0)
+                    + cache_read.unwrap_or(0)
+                    + cache_write.unwrap_or(0),
+            )
         } else {
             None
         }
@@ -302,7 +335,12 @@ fn pi_session_dir(cwd: &str) -> Option<std::path::PathBuf> {
     let home = directories::BaseDirs::new()?.home_dir().to_path_buf();
     let trimmed = cwd.trim_start_matches(['/', '\\']);
     let encoded = format!("--{}--", trimmed.replace(['/', '\\', ':'], "-"));
-    Some(home.join(".pi").join("agent").join("sessions").join(encoded))
+    Some(
+        home.join(".pi")
+            .join("agent")
+            .join("sessions")
+            .join(encoded),
+    )
 }
 
 /// Find the session JSONL Pi writes for our pinned id: `<ts>_<session_id>.jsonl`
@@ -360,7 +398,9 @@ pub fn translate_session_entry(entry: &Value) -> Vec<AgentUpdate> {
     let mut out = Vec::new();
     match entry.get("type").and_then(Value::as_str).unwrap_or("") {
         "message" => {
-            let Some(message) = entry.get("message") else { return out };
+            let Some(message) = entry.get("message") else {
+                return out;
+            };
             match message.get("role").and_then(Value::as_str).unwrap_or("") {
                 "user" => {
                     let text = content_text(message.get("content"));
@@ -385,7 +425,11 @@ pub fn translate_session_entry(entry: &Value) -> Vec<AgentUpdate> {
                                 }
                             }
                             "toolCall" | "tool_call" => {
-                                let id = block.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+                                let id = block
+                                    .get("id")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("")
+                                    .to_string();
                                 let name = block
                                     .get("name")
                                     .and_then(Value::as_str)
@@ -432,8 +476,15 @@ pub fn translate_session_entry(entry: &Value) -> Vec<AgentUpdate> {
                             t
                         }
                     };
-                    let is_error = message.get("isError").and_then(Value::as_bool).unwrap_or(false);
-                    out.push(AgentUpdate::ToolResult { tool_use_id, content, is_error });
+                    let is_error = message
+                        .get("isError")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                    out.push(AgentUpdate::ToolResult {
+                        tool_use_id,
+                        content,
+                        is_error,
+                    });
                 }
                 _ => {} // custom / bashExecution / branch summaries — not conversation
             }
@@ -480,7 +531,9 @@ async fn tail_session_file(
         if store.get(session_id).is_none() {
             break;
         }
-        let Ok(mut file) = tokio::fs::File::open(path).await else { break };
+        let Ok(mut file) = tokio::fs::File::open(path).await else {
+            break;
+        };
         let len = file.metadata().await.map(|m| m.len()).unwrap_or(offset);
         if len > offset {
             file.seek(std::io::SeekFrom::Start(offset)).await?;
@@ -533,13 +586,16 @@ async fn run_tui_session(
     model: Option<String>,
     bin: &str,
 ) -> anyhow::Result<()> {
-    let mut argv = vec![bin.to_string(), "--session-id".to_string(), session_id.to_string()];
+    let mut argv = vec![
+        bin.to_string(),
+        "--session-id".to_string(),
+        session_id.to_string(),
+    ];
     if let Some(m) = &model {
         argv.push("--model".to_string());
         argv.push(m.clone());
     }
-    let tui = super::spawn_attach_pty(store, session_id, &argv, cwd)
-        .context("spawning pi TUI")?;
+    let tui = super::spawn_attach_pty(store, session_id, &argv, cwd).context("spawning pi TUI")?;
 
     // Ready for input as soon as the TUI is up (mode-gates the GUI composer).
     store.set_managed_mode(session_id, SessionMode::Input, None);
@@ -662,7 +718,8 @@ async fn run_session(
     // Extension UI requests awaiting the user's decision (non-YOLO), FIFO. We park
     // each whole request so we can echo its `id` + `method` in the reply; a queue
     // (not one slot) so concurrent requests don't drop each other and stall.
-    let mut pending_approvals: std::collections::VecDeque<Value> = std::collections::VecDeque::new();
+    let mut pending_approvals: std::collections::VecDeque<Value> =
+        std::collections::VecDeque::new();
     // Role instructions to prepend to the first turn only (supervisors).
     let mut pending_instructions: Option<String> = facade.instructions.clone();
 
@@ -802,7 +859,10 @@ async fn handle_message(
 /// cancels.
 async fn respond_ui(stdin: &mut ChildStdin, req: &Value, approve: bool) -> anyhow::Result<()> {
     let id = req.get("id").cloned().unwrap_or(Value::Null);
-    let method = req.get("method").and_then(Value::as_str).unwrap_or("confirm");
+    let method = req
+        .get("method")
+        .and_then(Value::as_str)
+        .unwrap_or("confirm");
     let mut msg = json!({ "type": "extension_ui_response", "id": id });
     match method {
         "confirm" => {
@@ -814,12 +874,10 @@ async fn respond_ui(stdin: &mut ChildStdin, req: &Value, approve: bool) -> anyho
             let opts = req.get("options").and_then(Value::as_array);
             let value = opts
                 .and_then(|o| {
-                    o.iter()
-                        .filter_map(Value::as_str)
-                        .find(|s| {
-                            let l = s.to_ascii_lowercase();
-                            l.contains("allow") || l.contains("yes") || l.contains("accept")
-                        })
+                    o.iter().filter_map(Value::as_str).find(|s| {
+                        let l = s.to_ascii_lowercase();
+                        l.contains("allow") || l.contains("yes") || l.contains("accept")
+                    })
                 })
                 .or_else(|| opts.and_then(|o| o.first()).and_then(Value::as_str))
                 .unwrap_or("Allow");
@@ -850,19 +908,29 @@ mod tests {
 
     #[test]
     fn agent_start_is_busy() {
-        assert_eq!(translate(&json!({ "type": "agent_start" })), vec![AgentUpdate::Busy]);
-        assert_eq!(translate(&json!({ "type": "turn_start" })), vec![AgentUpdate::Busy]);
+        assert_eq!(
+            translate(&json!({ "type": "agent_start" })),
+            vec![AgentUpdate::Busy]
+        );
+        assert_eq!(
+            translate(&json!({ "type": "turn_start" })),
+            vec![AgentUpdate::Busy]
+        );
     }
 
     #[test]
     fn agent_end_is_idle() {
-        assert_eq!(translate(&json!({ "type": "agent_end" })), vec![AgentUpdate::Idle]);
+        assert_eq!(
+            translate(&json!({ "type": "agent_end" })),
+            vec![AgentUpdate::Idle]
+        );
     }
 
     #[test]
     fn turn_end_does_not_idle_but_pulls_usage() {
         // turn_end is one round inside the loop — must not flip to Input.
-        let ev = json!({ "type": "turn_end", "message": { "usage": { "input": 10, "output": 2 } } });
+        let ev =
+            json!({ "type": "turn_end", "message": { "usage": { "input": 10, "output": 2 } } });
         assert_eq!(
             translate(&ev),
             vec![AgentUpdate::Usage {
@@ -886,7 +954,10 @@ mod tests {
         });
         assert_eq!(
             translate(&ev),
-            vec![AgentUpdate::Busy, AgentUpdate::AssistantText("Hello ".into())]
+            vec![
+                AgentUpdate::Busy,
+                AgentUpdate::AssistantText("Hello ".into())
+            ]
         );
     }
 
@@ -996,7 +1067,10 @@ mod tests {
         let e = msg_entry(json!({ "role": "user", "content": "fix the tests" }));
         assert_eq!(
             translate_session_entry(&e),
-            vec![AgentUpdate::UserText("fix the tests".into()), AgentUpdate::Busy]
+            vec![
+                AgentUpdate::UserText("fix the tests".into()),
+                AgentUpdate::Busy
+            ]
         );
         // Block-array content works too.
         let e = msg_entry(json!({ "role": "user", "content": [{ "type": "text", "text": "hi" }] }));
@@ -1023,7 +1097,11 @@ mod tests {
             translate_session_entry(&e),
             vec![
                 AgentUpdate::AssistantText("Running it.".into()),
-                AgentUpdate::ToolUse { id: "tc1".into(), name: "bash".into(), input: json!({ "command": "ls" }) },
+                AgentUpdate::ToolUse {
+                    id: "tc1".into(),
+                    name: "bash".into(),
+                    input: json!({ "command": "ls" })
+                },
                 AgentUpdate::Usage {
                     model: Some("anthropic/claude-sonnet-4-5".into()),
                     input_tokens: Some(100),
@@ -1049,8 +1127,13 @@ mod tests {
         let updates = translate_session_entry(&e);
         assert_eq!(updates.last(), Some(&AgentUpdate::Idle));
         // totalTokens wins as the context occupancy when present.
-        assert!(updates.iter().any(|u| matches!(u,
-            AgentUpdate::Usage { context_tokens: Some(900), .. })));
+        assert!(updates.iter().any(|u| matches!(
+            u,
+            AgentUpdate::Usage {
+                context_tokens: Some(900),
+                ..
+            }
+        )));
     }
 
     #[test]
@@ -1063,7 +1146,11 @@ mod tests {
         }));
         assert_eq!(
             translate_session_entry(&e),
-            vec![AgentUpdate::ToolResult { tool_use_id: "tc1".into(), content: "file1\nfile2".into(), is_error: false }]
+            vec![AgentUpdate::ToolResult {
+                tool_use_id: "tc1".into(),
+                content: "file1\nfile2".into(),
+                is_error: false
+            }]
         );
     }
 
@@ -1085,10 +1172,18 @@ mod tests {
 
     #[test]
     fn session_noise_entries_are_ignored() {
-        assert!(translate_session_entry(&json!({ "type": "session", "id": "s", "cwd": "/x" })).is_empty());
+        assert!(
+            translate_session_entry(&json!({ "type": "session", "id": "s", "cwd": "/x" }))
+                .is_empty()
+        );
         assert!(translate_session_entry(&json!({ "type": "label", "targetId": "e1" })).is_empty());
-        assert!(translate_session_entry(&json!({ "type": "compaction", "summary": "…" })).is_empty());
-        assert!(translate_session_entry(&msg_entry(json!({ "role": "custom", "content": "x" }))).is_empty());
+        assert!(
+            translate_session_entry(&json!({ "type": "compaction", "summary": "…" })).is_empty()
+        );
+        assert!(
+            translate_session_entry(&msg_entry(json!({ "role": "custom", "content": "x" })))
+                .is_empty()
+        );
     }
 
     #[test]
@@ -1102,12 +1197,16 @@ mod tests {
         // The RPC `set_model` wants provider + modelId as separate fields.
         assert_eq!(
             set_model_msg("anthropic/claude-sonnet-4-5"),
-            Some(json!({ "type": "set_model", "provider": "anthropic", "modelId": "claude-sonnet-4-5" }))
+            Some(
+                json!({ "type": "set_model", "provider": "anthropic", "modelId": "claude-sonnet-4-5" })
+            )
         );
         // Only the first slash splits; the rest stays in the model id.
         assert_eq!(
             set_model_msg("openrouter/meta-llama/llama-3.1"),
-            Some(json!({ "type": "set_model", "provider": "openrouter", "modelId": "meta-llama/llama-3.1" }))
+            Some(
+                json!({ "type": "set_model", "provider": "openrouter", "modelId": "meta-llama/llama-3.1" })
+            )
         );
         // No provider prefix, or an empty half → no switch (don't send garbage).
         assert!(set_model_msg("bare-model").is_none());

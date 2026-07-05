@@ -25,7 +25,11 @@ pub(super) async fn fetch_agents(cm: &Claudemon, tx: &UnboundedSender<AppMsg>) {
     let _ = tx.send(AppMsg::Agents(list));
 }
 
-pub(super) async fn fetch_transcript(cm: &Claudemon, tx: &UnboundedSender<AppMsg>, session_id: String) {
+pub(super) async fn fetch_transcript(
+    cm: &Claudemon,
+    tx: &UnboundedSender<AppMsg>,
+    session_id: String,
+) {
     if let Ok(v) = cm.conversation(&session_id).await {
         let turns = turns_from_conversation(&v);
         let _ = tx.send(AppMsg::Transcript { session_id, turns });
@@ -45,7 +49,11 @@ pub(super) async fn fetch_search_index(
         Ok(v) => search_lines(&turns_from_conversation(&v)),
         Err(_) => Vec::new(),
     };
-    let _ = tx.send(AppMsg::SearchEntries { session_id, name, lines });
+    let _ = tx.send(AppMsg::SearchEntries {
+        session_id,
+        name,
+        lines,
+    });
 }
 
 pub(super) async fn fetch_git_status(cm: &Claudemon, tx: &UnboundedSender<AppMsg>, cwd: String) {
@@ -57,14 +65,21 @@ pub(super) async fn fetch_git_status(cm: &Claudemon, tx: &UnboundedSender<AppMsg
             // Surface in the review pane (e.g. "not inside a git work tree")
             // instead of a fleeting toast, so an empty list isn't mistaken for
             // a clean repo.
-            let _ = tx.send(AppMsg::GitError { cwd, message: e.to_string() });
+            let _ = tx.send(AppMsg::GitError {
+                cwd,
+                message: e.to_string(),
+            });
         }
     }
 }
 
 pub(super) async fn fetch_git_summary(cm: &Claudemon, tx: &UnboundedSender<AppMsg>, cwd: String) {
     if let Ok((branch, files)) = cm.git_status(&cwd).await {
-        let _ = tx.send(AppMsg::GitSummary { cwd, branch, changed: files.len() });
+        let _ = tx.send(AppMsg::GitSummary {
+            cwd,
+            branch,
+            changed: files.len(),
+        });
     }
 }
 
@@ -77,7 +92,12 @@ pub(super) async fn fetch_git_diff(
     untracked: bool,
 ) {
     if let Ok(diff) = cm.git_diff(&cwd, &path, staged, untracked).await {
-        let _ = tx.send(AppMsg::GitDiff { cwd, path, staged, diff });
+        let _ = tx.send(AppMsg::GitDiff {
+            cwd,
+            path,
+            staged,
+            diff,
+        });
     }
 }
 
@@ -94,7 +114,12 @@ pub(super) fn bracketed_paste(text: &str) -> Vec<u8> {
 /// Seed a prompt into a freshly-spawned agent: wait until it reaches its input
 /// prompt (claudemon reports mode `input`), then paste — without submitting, so
 /// the user reviews and presses enter.
-pub(super) async fn seed_prompt(cm: &Claudemon, tx: &UnboundedSender<AppMsg>, sid: &str, prompt: &str) {
+pub(super) async fn seed_prompt(
+    cm: &Claudemon,
+    tx: &UnboundedSender<AppMsg>,
+    sid: &str,
+    prompt: &str,
+) {
     for _ in 0..40 {
         if cm.session_mode(sid).await.as_deref() == Some("input") {
             break;
@@ -102,7 +127,9 @@ pub(super) async fn seed_prompt(cm: &Claudemon, tx: &UnboundedSender<AppMsg>, si
         tokio::time::sleep(Duration::from_millis(400)).await;
     }
     let _ = cm.input_bytes(sid, &bracketed_paste(prompt)).await;
-    let _ = tx.send(AppMsg::Toast("Prompt seeded — open the agent and press enter".into()));
+    let _ = tx.send(AppMsg::Toast(
+        "Prompt seeded — open the agent and press enter".into(),
+    ));
     fetch_agents(cm, tx).await;
 }
 
@@ -162,7 +189,9 @@ pub(super) fn complete_path(form: &mut SpawnForm) {
 /// The longest common (character-wise) prefix shared by every string.
 pub(super) fn longest_common_prefix(names: &[String]) -> String {
     let mut iter = names.iter();
-    let Some(first) = iter.next() else { return String::new() };
+    let Some(first) = iter.next() else {
+        return String::new();
+    };
     let mut prefix = first.clone();
     for s in iter {
         let common: String = prefix
@@ -231,7 +260,10 @@ mod tests {
         complete_path(&mut f);
 
         assert_eq!(f.cwd, format!("{}/proj-", base.display()));
-        assert_eq!(f.completions, vec!["proj-a".to_string(), "proj-b".to_string()]);
+        assert_eq!(
+            f.completions,
+            vec!["proj-a".to_string(), "proj-b".to_string()]
+        );
         let _ = fs::remove_dir_all(&base);
     }
 

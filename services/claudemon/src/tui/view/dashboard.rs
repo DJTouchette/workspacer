@@ -12,7 +12,7 @@ use crate::session::{state::Pending, SessionMode};
 
 use crate::tui::app::App;
 
-use super::{ago, hint, kv, label, mode_badge, mode_badge_padded, short_id, draw_toast};
+use super::{ago, draw_toast, hint, kv, label, mode_badge, mode_badge_padded, short_id};
 
 pub(super) fn render_dashboard(frame: &mut Frame, app: &App) {
     let area = frame.area();

@@ -134,7 +134,10 @@ mod tests {
             classify_screen(&screen("⏵⏵ bypass permissions on (shift+tab to cycle)")),
             PermissionMode::BypassPermissions
         );
-        assert_eq!(classify_screen(&screen("? for shortcuts")), PermissionMode::Default);
+        assert_eq!(
+            classify_screen(&screen("? for shortcuts")),
+            PermissionMode::Default
+        );
         assert_eq!(classify_screen(""), PermissionMode::Default);
     }
 

@@ -4,7 +4,11 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser, Debug)]
-#[command(name = "claudemon", version, about = "Observability daemon for Claude Code sessions")]
+#[command(
+    name = "claudemon",
+    version,
+    about = "Observability daemon for Claude Code sessions"
+)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
@@ -52,7 +56,12 @@ pub enum Command {
 
 pub async fn dispatch(cli: Cli) -> Result<()> {
     match cli.command {
-        Command::Serve { host, hook_port, api_port, db_path } => {
+        Command::Serve {
+            host,
+            hook_port,
+            api_port,
+            db_path,
+        } => {
             let cfg = crate::daemon::ServeConfig {
                 host,
                 hook_port,
@@ -64,9 +73,7 @@ pub async fn dispatch(cli: Cli) -> Result<()> {
         Command::Init { dry_run, hook_port } => {
             crate::daemon::init::run_with_port(dry_run, hook_port).await
         }
-        Command::Wrap { daemon, argv } => {
-            crate::wrapper::run_with_daemon(argv, &daemon).await
-        }
+        Command::Wrap { daemon, argv } => crate::wrapper::run_with_daemon(argv, &daemon).await,
         Command::Watch { api } => crate::tui::run(api).await,
     }
 }

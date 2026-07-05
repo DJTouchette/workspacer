@@ -14,8 +14,8 @@ use crate::session::SessionMode;
 use super::app::{App, View};
 use super::syntax;
 
-mod dashboard;
 mod chat;
+mod dashboard;
 
 /// Width allocated to mode badges so columns line up across rows.
 /// Widest token is "responding" (10 chars).
@@ -34,7 +34,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
 // ─── Shared helpers ─────────────────────────────────────────────────────
 
- fn draw_toast(frame: &mut Frame, area: Rect, app: &App) {
+fn draw_toast(frame: &mut Frame, area: Rect, app: &App) {
     if let Some(t) = app.current_toast() {
         frame.render_widget(
             Paragraph::new(format!(" {t}")).style(Style::default().fg(Color::Yellow)),
@@ -886,13 +886,13 @@ mod tests {
     #[test]
     fn inline_markdown_leaves_snake_case_alone() {
         // _ inside identifiers must not be treated as italic markers.
-        let spans = inline_markdown_spans(
-            "call foo_bar_baz here",
-            Style::default().fg(Color::White),
-        );
+        let spans =
+            inline_markdown_spans("call foo_bar_baz here", Style::default().fg(Color::White));
         let flat: String = spans.iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(flat, "call foo_bar_baz here");
-        assert!(spans.iter().all(|s| !s.style.add_modifier.contains(Modifier::ITALIC)));
+        assert!(spans
+            .iter()
+            .all(|s| !s.style.add_modifier.contains(Modifier::ITALIC)));
     }
 
     #[test]

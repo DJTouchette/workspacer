@@ -49,7 +49,10 @@ pub struct BusClient {
 impl BusClient {
     /// Connect (reconnecting in the background) and return the handle plus a
     /// receiver of every delivered event.
-    pub fn connect(url: String, token: Option<String>) -> (BusClient, mpsc::UnboundedReceiver<BusEvent>) {
+    pub fn connect(
+        url: String,
+        token: Option<String>,
+    ) -> (BusClient, mpsc::UnboundedReceiver<BusEvent>) {
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         tokio::spawn(run(url, token, cmd_rx, event_tx));
@@ -60,7 +63,11 @@ impl BusClient {
     pub async fn call(&self, method: &str, params: Value) -> Result<Value> {
         let (reply, rx) = oneshot::channel();
         self.cmd_tx
-            .send(Command::Call { method: method.to_string(), params, reply })
+            .send(Command::Call {
+                method: method.to_string(),
+                params,
+                reply,
+            })
             .map_err(|_| anyhow!("bus client closed"))?;
         rx.await.map_err(|_| anyhow!("bus call dropped"))?
     }
@@ -178,14 +185,21 @@ fn handle_frame(
         Some("error") => {
             if let Some(id) = v.get("id").and_then(|i| i.as_str()) {
                 if let Some(tx) = pending.remove(id) {
-                    let err = v.get("error").and_then(|e| e.as_str()).unwrap_or("bus error");
+                    let err = v
+                        .get("error")
+                        .and_then(|e| e.as_str())
+                        .unwrap_or("bus error");
                     let _ = tx.send(Err(anyhow!(err.to_string())));
                 }
             }
         }
         Some("event") => {
             if let Some(ev) = v.get("event") {
-                let topic = ev.get("type").and_then(|t| t.as_str()).unwrap_or("").to_string();
+                let topic = ev
+                    .get("type")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 let data = ev.get("data").cloned().unwrap_or(Value::Null);
                 let _ = event_tx.send(BusEvent { topic, data });
             }
@@ -209,7 +223,10 @@ impl Driver {
     pub async fn message(&self, sid: &str, text: &str) -> Result<()> {
         match &self.bus {
             Some(b) => b
-                .call("agents.sendMessage", json!({ "sessionId": sid, "text": text }))
+                .call(
+                    "agents.sendMessage",
+                    json!({ "sessionId": sid, "text": text }),
+                )
                 .await
                 .map(|_| ()),
             None => self.claudemon.message(sid, text).await,
@@ -229,7 +246,10 @@ impl Driver {
     pub async fn answer_option(&self, sid: &str, option: u64) -> Result<()> {
         match &self.bus {
             Some(b) => b
-                .call("claude.answer", json!({ "sessionId": sid, "option": option }))
+                .call(
+                    "claude.answer",
+                    json!({ "sessionId": sid, "option": option }),
+                )
                 .await
                 .map(|_| ()),
             None => self.claudemon.answer_option(sid, option).await,
@@ -252,7 +272,10 @@ impl Driver {
     pub async fn signal(&self, sid: &str, signal: &str) -> Result<()> {
         match &self.bus {
             Some(b) => b
-                .call("claude.signal", json!({ "sessionId": sid, "signal": signal }))
+                .call(
+                    "claude.signal",
+                    json!({ "sessionId": sid, "signal": signal }),
+                )
                 .await
                 .map(|_| ()),
             None => self.claudemon.signal(sid, signal).await,
@@ -297,9 +320,12 @@ impl Driver {
         match &self.bus {
             Some(b) => {
                 let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
-                b.call("sessions.terminalInput", json!({ "sessionId": sid, "bytesB64": b64 }))
-                    .await
-                    .map(|_| ())
+                b.call(
+                    "sessions.terminalInput",
+                    json!({ "sessionId": sid, "bytesB64": b64 }),
+                )
+                .await
+                .map(|_| ())
             }
             None => self.claudemon.input_bytes(sid, bytes).await,
         }
@@ -309,7 +335,10 @@ impl Driver {
     pub async fn resize(&self, sid: &str, cols: u16, rows: u16) -> Result<()> {
         match &self.bus {
             Some(b) => b
-                .call("sessions.terminalResize", json!({ "sessionId": sid, "cols": cols, "rows": rows }))
+                .call(
+                    "sessions.terminalResize",
+                    json!({ "sessionId": sid, "cols": cols, "rows": rows }),
+                )
                 .await
                 .map(|_| ()),
             None => self.claudemon.resize(sid, cols, rows).await,
@@ -319,7 +348,12 @@ impl Driver {
     /// Live model/effort switch for a managed session. On the bus this is
     /// `claude.setModel`; a capability cliff (opencode/pi, or a PTY session) comes
     /// back as `{ ok:false, error }`, surfaced as an `Err`. REST otherwise.
-    pub async fn set_model(&self, sid: &str, model: Option<&str>, effort: Option<&str>) -> Result<()> {
+    pub async fn set_model(
+        &self,
+        sid: &str,
+        model: Option<&str>,
+        effort: Option<&str>,
+    ) -> Result<()> {
         match &self.bus {
             Some(b) => {
                 let mut params = json!({ "sessionId": sid });
@@ -341,10 +375,16 @@ impl Driver {
         match &self.bus {
             Some(b) => {
                 let v = check_ok(
-                    b.call("claude.setPermissionMode", json!({ "sessionId": sid, "mode": mode }))
-                        .await?,
+                    b.call(
+                        "claude.setPermissionMode",
+                        json!({ "sessionId": sid, "mode": mode }),
+                    )
+                    .await?,
                 )?;
-                Ok(v.get("mode").and_then(|m| m.as_str()).unwrap_or(mode).to_string())
+                Ok(v.get("mode")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or(mode)
+                    .to_string())
             }
             None => self.claudemon.set_permission_mode(sid, mode).await,
         }
@@ -355,9 +395,16 @@ impl Driver {
     pub async fn handoff(&self, sid: &str) -> Result<crate::claudemon::HandoffBrief> {
         match &self.bus {
             Some(b) => {
-                let v = check_ok(b.call("claude.handoffBrief", json!({ "sessionId": sid })).await?)?;
+                let v = check_ok(
+                    b.call("claude.handoffBrief", json!({ "sessionId": sid }))
+                        .await?,
+                )?;
                 Ok(crate::claudemon::HandoffBrief {
-                    markdown: v.get("markdown").and_then(|m| m.as_str()).unwrap_or("").to_string(),
+                    markdown: v
+                        .get("markdown")
+                        .and_then(|m| m.as_str())
+                        .unwrap_or("")
+                        .to_string(),
                     path: v.get("path").and_then(|p| p.as_str()).map(String::from),
                 })
             }
@@ -392,7 +439,11 @@ impl Driver {
                     .map(String::from)
                     .ok_or_else(|| anyhow!("agents.spawn returned no sessionId"))
             }
-            None => self.claudemon.spawn_managed(provider, cwd, model, effort, yolo, "").await,
+            None => {
+                self.claudemon
+                    .spawn_managed(provider, cwd, model, effort, yolo, "")
+                    .await
+            }
         }
     }
 }
@@ -403,7 +454,10 @@ impl Driver {
 /// bus as over REST.
 fn check_ok(v: Value) -> Result<Value> {
     if v.get("ok").and_then(|b| b.as_bool()) == Some(false) {
-        let err = v.get("error").and_then(|e| e.as_str()).unwrap_or("capability failed");
+        let err = v
+            .get("error")
+            .and_then(|e| e.as_str())
+            .unwrap_or("capability failed");
         return Err(anyhow!("{err}"));
     }
     Ok(v)
@@ -420,7 +474,9 @@ mod tests {
         let (stream, _) = listener.accept().await.unwrap();
         let ws = tokio_tungstenite::accept_async(stream).await.unwrap();
         let (mut write, mut read) = ws.split();
-        let _ = write.send(Message::Text(json!({ "op": "hello" }).to_string())).await;
+        let _ = write
+            .send(Message::Text(json!({ "op": "hello" }).to_string()))
+            .await;
         while let Some(Ok(msg)) = read.next().await {
             if let Message::Text(txt) = msg {
                 let v: Value = serde_json::from_str(&txt).unwrap();
@@ -455,7 +511,9 @@ mod tests {
         assert_eq!(res["ok"], json!(true));
         assert_eq!(res["echo"]["x"], json!(1));
 
-        client.subscribe(vec!["agent.snapshot".to_string()]).unwrap();
+        client
+            .subscribe(vec!["agent.snapshot".to_string()])
+            .unwrap();
         let ev = tokio::time::timeout(Duration::from_secs(3), events.recv())
             .await
             .expect("event within 3s")
@@ -478,10 +536,18 @@ mod tests {
             while let Some(Ok(Message::Text(txt))) = read.next().await {
                 let v: Value = serde_json::from_str(&txt).unwrap();
                 if v.get("op").and_then(|o| o.as_str()) == Some("call") {
-                    let id = v.get("id").and_then(|i| i.as_str()).unwrap_or("").to_string();
+                    let id = v
+                        .get("id")
+                        .and_then(|i| i.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     let reply = json!({ "op": "result", "id": id, "result": result.clone() });
                     let _ = write.send(Message::Text(reply.to_string())).await;
-                    let method = v.get("method").and_then(|m| m.as_str()).unwrap_or("").to_string();
+                    let method = v
+                        .get("method")
+                        .and_then(|m| m.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     let _ = tx.send((method, v.get("params").cloned().unwrap_or(Value::Null)));
                 }
             }
@@ -503,7 +569,10 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         let mut rx = recording_hub(listener, json!({}));
 
-        bus_driver(addr).message("s1", "hello").await.expect("message ok");
+        bus_driver(addr)
+            .message("s1", "hello")
+            .await
+            .expect("message ok");
 
         let (method, params) = tokio::time::timeout(Duration::from_secs(3), rx.recv())
             .await
@@ -569,7 +638,10 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         let _rx = recording_hub(listener, json!({ "ok": false, "error": "no model switch" }));
 
-        let err = bus_driver(addr).set_model("s1", Some("x"), None).await.unwrap_err();
+        let err = bus_driver(addr)
+            .set_model("s1", Some("x"), None)
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("no model switch"), "got {err}");
     }
 
@@ -598,8 +670,10 @@ mod tests {
     async fn driver_handoff_routes_and_parses_brief() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        let mut rx =
-            recording_hub(listener, json!({ "ok": true, "markdown": "# b", "path": "/h/x.md" }));
+        let mut rx = recording_hub(
+            listener,
+            json!({ "ok": true, "markdown": "# b", "path": "/h/x.md" }),
+        );
 
         let brief = bus_driver(addr).handoff("s1").await.expect("handoff ok");
         assert_eq!(brief.path.as_deref(), Some("/h/x.md"));
@@ -640,7 +714,10 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         let mut rx = recording_hub(listener, json!({}));
 
-        bus_driver(addr).terminal_input("s1", &[1, 2, 3]).await.expect("input ok");
+        bus_driver(addr)
+            .terminal_input("s1", &[1, 2, 3])
+            .await
+            .expect("input ok");
 
         let (method, params) = tokio::time::timeout(Duration::from_secs(3), rx.recv())
             .await

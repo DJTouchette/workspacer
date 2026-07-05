@@ -104,7 +104,12 @@ pub fn translate(event: &Value) -> Vec<AgentUpdate> {
                 .and_then(Value::as_str)
                 .or_else(|| p.get("description").and_then(Value::as_str))
                 .map(str::to_owned);
-            out.push(AgentUpdate::PermissionPending { id, tool, summary, raw: p.clone() });
+            out.push(AgentUpdate::PermissionPending {
+                id,
+                tool,
+                summary,
+                raw: p.clone(),
+            });
         }
 
         // Both the streamed-part event and the whole-message event indicate the
@@ -203,7 +208,12 @@ fn usage_from(v: &Value) -> Option<AgentUpdate> {
     // both cache tiers) plus what it generated. OpenCode doesn't report the
     // model's window; the status line falls back to the window table.
     let context_tokens = if input.is_some() || output.is_some() {
-        Some(input.unwrap_or(0) + output.unwrap_or(0) + cache_read.unwrap_or(0) + cache_write.unwrap_or(0))
+        Some(
+            input.unwrap_or(0)
+                + output.unwrap_or(0)
+                + cache_read.unwrap_or(0)
+                + cache_write.unwrap_or(0),
+        )
     } else {
         None
     };
@@ -235,7 +245,9 @@ pub fn spawn_session(
     facade: Facade,
 ) {
     tokio::spawn(async move {
-        if let Err(err) = run_session(&store, &conv, &session_id, &cwd, model, &bin, yolo, &facade).await {
+        if let Err(err) =
+            run_session(&store, &conv, &session_id, &cwd, model, &bin, yolo, &facade).await
+        {
             tracing::warn!(?err, session = %session_id, "opencode managed session ended with error");
         }
         store.deregister_managed(&session_id);
@@ -284,7 +296,9 @@ fn model_ref(id: &str) -> Option<Value> {
 /// attached TUI shows, so both views of the hybrid session agree. Failure is
 /// non-fatal — the per-message override still governs what we send.
 fn set_session_model(client: &reqwest::Client, base: &str, oc_id: &str, id: &str) {
-    let Some((provider, model)) = id.split_once('/') else { return };
+    let Some((provider, model)) = id.split_once('/') else {
+        return;
+    };
     if provider.is_empty() || model.is_empty() {
         return;
     }
@@ -300,7 +314,13 @@ fn set_session_model(client: &reqwest::Client, base: &str, oc_id: &str, id: &str
 
 /// POST a permission reply to OpenCode: `once` (allow this time) or `reject`.
 /// Mirrors the SDK's `SessionPermissionService.Respond`.
-fn reply_permission(client: &reqwest::Client, base: &str, oc_id: &str, perm_id: &str, approve: bool) {
+fn reply_permission(
+    client: &reqwest::Client,
+    base: &str,
+    oc_id: &str,
+    perm_id: &str,
+    approve: bool,
+) {
     let url = format!("{base}/session/{oc_id}/permissions/{perm_id}");
     let body = serde_json::json!({ "response": if approve { "once" } else { "reject" } });
     let c = client.clone();
@@ -421,7 +441,8 @@ async fn run_session(
     // The id of the permission currently awaiting the user's decision (non-YOLO).
     // Permission ids awaiting a decision, FIFO — a queue (not one slot) so
     // concurrent permission requests don't drop each other and stall the agent.
-    let mut pending_perm_ids: std::collections::VecDeque<String> = std::collections::VecDeque::new();
+    let mut pending_perm_ids: std::collections::VecDeque<String> =
+        std::collections::VecDeque::new();
     // Role instructions to prepend to the first turn only (supervisors).
     let mut pending_instructions: Option<String> = facade.instructions.clone();
 
@@ -565,7 +586,8 @@ mod tests {
 
     #[test]
     fn error_extracts_message() {
-        let ev = json!({ "type": "session.error", "properties": { "error": { "message": "boom" } } });
+        let ev =
+            json!({ "type": "session.error", "properties": { "error": { "message": "boom" } } });
         assert_eq!(translate(&ev), vec![AgentUpdate::Error("boom".into())]);
     }
 
@@ -600,7 +622,10 @@ mod tests {
         });
         assert_eq!(
             translate(&ev),
-            vec![AgentUpdate::Busy, AgentUpdate::AssistantText("Hello".into())]
+            vec![
+                AgentUpdate::Busy,
+                AgentUpdate::AssistantText("Hello".into())
+            ]
         );
     }
 
@@ -612,7 +637,10 @@ mod tests {
         });
         assert_eq!(
             translate(&ev),
-            vec![AgentUpdate::Busy, AgentUpdate::AssistantText(" world".into())]
+            vec![
+                AgentUpdate::Busy,
+                AgentUpdate::AssistantText(" world".into())
+            ]
         );
     }
 
@@ -714,7 +742,10 @@ mod tests {
     #[test]
     fn malformed_event_does_not_panic() {
         assert!(translate(&json!({})).is_empty());
-        assert_eq!(translate(&json!({ "type": "message.part.updated" })), vec![AgentUpdate::Busy]);
+        assert_eq!(
+            translate(&json!({ "type": "message.part.updated" })),
+            vec![AgentUpdate::Busy]
+        );
         assert!(translate(&Value::Null).is_empty());
     }
 

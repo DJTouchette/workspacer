@@ -55,12 +55,31 @@ fn tool_path(input: &Value) -> Option<String> {
 /// One compact line for a tool call: `Bash: cargo test` / `Edit: src/main.rs`.
 fn tool_line(name: &str, input: &Value) -> String {
     let detail = tool_path(input)
-        .or_else(|| input.get("command").and_then(Value::as_str).map(str::to_owned))
-        .or_else(|| input.get("pattern").and_then(Value::as_str).map(str::to_owned))
-        .or_else(|| input.get("query").and_then(Value::as_str).map(str::to_owned))
+        .or_else(|| {
+            input
+                .get("command")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .or_else(|| {
+            input
+                .get("pattern")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .or_else(|| {
+            input
+                .get("query")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
         .unwrap_or_else(|| {
             let s = input.to_string();
-            if s == "null" || s == "{}" { String::new() } else { s }
+            if s == "null" || s == "{}" {
+                String::new()
+            } else {
+                s
+            }
         });
     if detail.is_empty() {
         name.to_string()
@@ -71,19 +90,31 @@ fn tool_line(name: &str, input: &Value) -> String {
 
 /// Build the handoff brief. `state` enriches the header when the session is
 /// still known to the store; the conversation alone is enough otherwise.
-pub fn build_brief(session_id: &str, state: Option<&SessionState>, items: &[ConversationItem]) -> String {
-    let now = OffsetDateTime::now_utc().format(&Rfc3339).unwrap_or_default();
+pub fn build_brief(
+    session_id: &str,
+    state: Option<&SessionState>,
+    items: &[ConversationItem],
+) -> String {
+    let now = OffsetDateTime::now_utc()
+        .format(&Rfc3339)
+        .unwrap_or_default();
     let mut out = String::with_capacity(16 * 1024);
 
     out.push_str("# Session handoff brief\n\n");
-    out.push_str("You are taking over an in-progress working session from another AI coding agent.\n");
+    out.push_str(
+        "You are taking over an in-progress working session from another AI coding agent.\n",
+    );
     out.push_str("Read this brief, then continue the work — do not start over, do not redo completed steps.\n\n");
     out.push_str(&format!("- Source session: `{session_id}`\n"));
     if let Some(s) = state {
         if let Some(cwd) = &s.cwd {
             out.push_str(&format!("- Working directory: `{cwd}`\n"));
         }
-        if let Some(model) = s.status_line.as_ref().and_then(|sl| sl.model_display.as_deref()) {
+        if let Some(model) = s
+            .status_line
+            .as_ref()
+            .and_then(|sl| sl.model_display.as_deref())
+        {
             out.push_str(&format!("- Source agent model: {model}\n"));
         }
         out.push_str(&format!("- Tool calls made: {}\n", s.tool_calls));
@@ -105,7 +136,10 @@ pub fn build_brief(session_id: &str, state: Option<&SessionState>, items: &[Conv
             out.push_str(&format!("_({skip} earlier requests omitted)_\n"));
         }
         for text in user_msgs.iter().skip(skip) {
-            out.push_str(&format!("- {}\n", clip(&text.replace('\n', " "), USER_SPINE_CAP)));
+            out.push_str(&format!(
+                "- {}\n",
+                clip(&text.replace('\n', " "), USER_SPINE_CAP)
+            ));
         }
     }
 
@@ -116,7 +150,11 @@ pub fn build_brief(session_id: &str, state: Option<&SessionState>, items: &[Conv
         if let ConversationItem::ToolUse { name, input, .. } = item {
             if let Some(p) = tool_path(input) {
                 let lower = name.to_ascii_lowercase();
-                let bucket = if lower.contains("edit") || lower.contains("write") || lower.contains("patch") || lower.contains("filechange") {
+                let bucket = if lower.contains("edit")
+                    || lower.contains("write")
+                    || lower.contains("patch")
+                    || lower.contains("filechange")
+                {
                     &mut edited
                 } else {
                     &mut read_only
@@ -156,13 +194,21 @@ pub fn build_brief(session_id: &str, state: Option<&SessionState>, items: &[Conv
     let mut last_assistant_seen = false;
     for item in items.iter().rev() {
         let block = match item {
-            ConversationItem::UserMessage { text, .. } => format!("**User:**\n{}\n", clip(text, RECENT_TEXT_CAP)),
+            ConversationItem::UserMessage { text, .. } => {
+                format!("**User:**\n{}\n", clip(text, RECENT_TEXT_CAP))
+            }
             ConversationItem::AssistantText { text, .. } => {
-                let cap = if last_assistant_seen { RECENT_TEXT_CAP } else { FINAL_ASSISTANT_CAP };
+                let cap = if last_assistant_seen {
+                    RECENT_TEXT_CAP
+                } else {
+                    FINAL_ASSISTANT_CAP
+                };
                 last_assistant_seen = true;
                 format!("**Agent:**\n{}\n", clip(text, cap))
             }
-            ConversationItem::ToolUse { name, input, .. } => format!("- [tool] {}\n", tool_line(name, input)),
+            ConversationItem::ToolUse { name, input, .. } => {
+                format!("- [tool] {}\n", tool_line(name, input))
+            }
             ConversationItem::ToolResult { is_error, .. } => {
                 if *is_error {
                     "- [tool result] ERROR\n".to_string()
@@ -187,16 +233,21 @@ pub fn build_brief(session_id: &str, state: Option<&SessionState>, items: &[Conv
     }
 
     out.push_str("\n## Your job\n\n");
-    out.push_str("Continue this work in the working directory above. Verify anything you depend on \
+    out.push_str(
+        "Continue this work in the working directory above. Verify anything you depend on \
                   with your own tools (read the files, run the checks) rather than trusting this \
                   summary blindly — it is lossy. If the last exchange left an explicit next step, \
-                  do that first.\n");
+                  do that first.\n",
+    );
     out
 }
 
 /// `~/.workspacer/handoffs`, created on demand.
 pub fn handoffs_dir() -> Option<PathBuf> {
-    let dir = BaseDirs::new()?.home_dir().join(".workspacer").join("handoffs");
+    let dir = BaseDirs::new()?
+        .home_dir()
+        .join(".workspacer")
+        .join("handoffs");
     std::fs::create_dir_all(&dir).ok()?;
     Some(dir)
 }
@@ -204,9 +255,13 @@ pub fn handoffs_dir() -> Option<PathBuf> {
 /// Persist a brief; returns the absolute path. Filename is sortable and names
 /// the source session so stale briefs are self-explanatory.
 pub fn persist_brief(session_id: &str, markdown: &str) -> std::io::Result<PathBuf> {
-    let dir = handoffs_dir().ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no home directory"))?;
+    let dir = handoffs_dir()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no home directory"))?;
     let ts = OffsetDateTime::now_utc()
-        .format(&time::format_description::parse("[year][month][day]-[hour][minute][second]").expect("static format"))
+        .format(
+            &time::format_description::parse("[year][month][day]-[hour][minute][second]")
+                .expect("static format"),
+        )
         .unwrap_or_default();
     let sid: String = session_id.chars().take(8).collect();
     let path = dir.join(format!("{ts}-{sid}.md"));
@@ -220,13 +275,24 @@ mod tests {
     use serde_json::json;
 
     fn user(text: &str) -> ConversationItem {
-        ConversationItem::UserMessage { text: text.into(), timestamp: None }
+        ConversationItem::UserMessage {
+            text: text.into(),
+            timestamp: None,
+        }
     }
     fn agent(text: &str) -> ConversationItem {
-        ConversationItem::AssistantText { text: text.into(), timestamp: None }
+        ConversationItem::AssistantText {
+            text: text.into(),
+            timestamp: None,
+        }
     }
     fn tool(name: &str, input: Value) -> ConversationItem {
-        ConversationItem::ToolUse { id: "t1".into(), name: name.into(), input, timestamp: None }
+        ConversationItem::ToolUse {
+            id: "t1".into(),
+            name: name.into(),
+            input,
+            timestamp: None,
+        }
     }
 
     #[test]

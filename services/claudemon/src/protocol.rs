@@ -35,23 +35,16 @@ pub enum WrapperMessage {
         bytes: String,
     },
     /// Wrapper → daemon: child has exited.
-    Exited {
-        code: Option<i32>,
-    },
+    Exited { code: Option<i32> },
     /// Daemon → wrapper: write these bytes to the child's stdin.
     Input {
         /// base64-encoded
         bytes: String,
     },
     /// Daemon → wrapper: deliver a signal.
-    Signal {
-        signal: Signal,
-    },
+    Signal { signal: Signal },
     /// Daemon → wrapper: PTY size changed.
-    Resize {
-        cols: u16,
-        rows: u16,
-    },
+    Resize { cols: u16, rows: u16 },
 }
 
 #[cfg(test)]
@@ -93,7 +86,10 @@ mod tests {
             signal: Signal::Sigint,
         };
         let json = serde_json::to_string(&msg).unwrap();
-        assert!(json.contains("\"SIGINT\""), "wire form must be SIGINT: {json}");
+        assert!(
+            json.contains("\"SIGINT\""),
+            "wire form must be SIGINT: {json}"
+        );
         let parsed: WrapperMessage = serde_json::from_str(&json).unwrap();
         match parsed {
             WrapperMessage::Signal { signal } => assert_eq!(signal, Signal::Sigint),

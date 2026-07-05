@@ -80,13 +80,21 @@ pub async fn handle(
     let pty_handle = match pty::spawn(
         &payload.argv,
         &cwd,
-        PtySize { cols, rows, pixel_width: 0, pixel_height: 0 },
+        PtySize {
+            cols,
+            rows,
+            pixel_width: 0,
+            pixel_height: 0,
+        },
         &payload.env,
     ) {
         Ok(h) => Arc::new(h),
         Err(err) => {
             tracing::error!(?err, "spawn failed");
-            return (StatusCode::INTERNAL_SERVER_ERROR, format!("spawn failed: {err}"))
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("spawn failed: {err}"),
+            )
                 .into_response();
         }
     };
@@ -134,7 +142,10 @@ pub async fn handle(
         // Kill the child and abort the input pump so nothing leaks.
         let _ = pty::signal_child(&pty_handle, crate::protocol::Signal::Sigkill);
         input_task.abort();
-        return (StatusCode::INTERNAL_SERVER_ERROR, "could not start PTY reader")
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "could not start PTY reader",
+        )
             .into_response();
     }
     let store_for_reader = store.clone();
@@ -228,9 +239,7 @@ pub async fn handle_managed(
     let session_id = payload
         .session_id
         .unwrap_or_else(|| Uuid::new_v4().to_string());
-    let bin = payload
-        .bin
-        .unwrap_or_else(|| payload.provider.clone());
+    let bin = payload.bin.unwrap_or_else(|| payload.provider.clone());
 
     store.register_managed(&session_id, &payload.cwd, &payload.provider);
     let facade = crate::providers::Facade {

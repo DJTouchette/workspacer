@@ -89,8 +89,13 @@ pub fn translate(method: &str, params: &Value) -> Vec<AgentUpdate> {
             // thread; `last` is the most recent request — i.e. what's actually
             // occupying the context window right now. Older builds sent a flat
             // snake_case `usage` object; those spellings are kept as fallbacks.
-            let tu = params.get("tokenUsage").or_else(|| params.get("usage")).unwrap_or(params);
-            let pick = |v: &Value, keys: [&str; 2]| keys.iter().find_map(|k| v.get(*k).and_then(Value::as_u64));
+            let tu = params
+                .get("tokenUsage")
+                .or_else(|| params.get("usage"))
+                .unwrap_or(params);
+            let pick = |v: &Value, keys: [&str; 2]| {
+                keys.iter().find_map(|k| v.get(*k).and_then(Value::as_u64))
+            };
             let total = tu.get("total");
             let last = tu.get("last");
             // Cumulative session totals, for the tokens readout.
@@ -168,7 +173,12 @@ pub fn translate(method: &str, params: &Value) -> Vec<AgentUpdate> {
             let path = params
                 .get("path")
                 .and_then(Value::as_str)
-                .or_else(|| params.get("item").and_then(|i| i.get("path")).and_then(Value::as_str))
+                .or_else(|| {
+                    params
+                        .get("item")
+                        .and_then(|i| i.get("path"))
+                        .and_then(Value::as_str)
+                })
                 .map(str::to_owned);
             out.push(AgentUpdate::PermissionPending {
                 id: None,
@@ -194,7 +204,11 @@ fn translate_item(method: &str, item: &Value, out: &mut Vec<AgentUpdate>) {
         .and_then(Value::as_str)
         .or_else(|| item.get("itemType").and_then(Value::as_str))
         .unwrap_or("");
-    let id = item.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+    let id = item
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
     match ty {
         "commandExecution" => {
             let input = item
@@ -202,11 +216,19 @@ fn translate_item(method: &str, item: &Value, out: &mut Vec<AgentUpdate>) {
                 .cloned()
                 .map(|c| json!({ "command": c }))
                 .unwrap_or(Value::Null);
-            out.push(AgentUpdate::ToolUse { id, name: "shell".into(), input });
+            out.push(AgentUpdate::ToolUse {
+                id,
+                name: "shell".into(),
+                input,
+            });
         }
         "fileChange" => {
             let input = json!({ "path": item.get("path").cloned().unwrap_or(Value::Null) });
-            out.push(AgentUpdate::ToolUse { id, name: "apply_patch".into(), input });
+            out.push(AgentUpdate::ToolUse {
+                id,
+                name: "apply_patch".into(),
+                input,
+            });
         }
         "mcpToolCall" => {
             let name = item
@@ -215,12 +237,24 @@ fn translate_item(method: &str, item: &Value, out: &mut Vec<AgentUpdate>) {
                 .or_else(|| item.get("name").and_then(Value::as_str))
                 .unwrap_or("mcp")
                 .to_string();
-            let input = item.get("arguments").or_else(|| item.get("input")).cloned().unwrap_or(Value::Null);
+            let input = item
+                .get("arguments")
+                .or_else(|| item.get("input"))
+                .cloned()
+                .unwrap_or(Value::Null);
             out.push(AgentUpdate::ToolUse { id, name, input });
         }
         "webSearch" => {
-            let input = item.get("query").cloned().map(|q| json!({ "query": q })).unwrap_or(Value::Null);
-            out.push(AgentUpdate::ToolUse { id, name: "web_search".into(), input });
+            let input = item
+                .get("query")
+                .cloned()
+                .map(|q| json!({ "query": q }))
+                .unwrap_or(Value::Null);
+            out.push(AgentUpdate::ToolUse {
+                id,
+                name: "web_search".into(),
+                input,
+            });
         }
         _ => {}
     }
@@ -289,7 +323,9 @@ async fn fetch_models(bin: &str, cwd: &str) -> anyhow::Result<Vec<ModelInfo>> {
     // timeout keeps a wedged binary from hanging the picker.
     let read = async {
         while let Ok(Some(line)) = lines.next_line().await {
-            let Ok(value) = serde_json::from_str::<Value>(&line) else { continue };
+            let Ok(value) = serde_json::from_str::<Value>(&line) else {
+                continue;
+            };
             if value.get("id").and_then(Value::as_u64) != Some(2) {
                 continue;
             }
@@ -346,7 +382,19 @@ pub fn spawn_session(
     facade: Facade,
 ) {
     tokio::spawn(async move {
-        if let Err(err) = run_session(&store, &conv, &session_id, &cwd, model, effort, &bin, yolo, &facade).await {
+        if let Err(err) = run_session(
+            &store,
+            &conv,
+            &session_id,
+            &cwd,
+            model,
+            effort,
+            &bin,
+            yolo,
+            &facade,
+        )
+        .await
+        {
             tracing::warn!(?err, session = %session_id, "codex managed session ended with error");
         }
         store.deregister_managed(&session_id);
@@ -355,7 +403,8 @@ pub fn spawn_session(
 }
 
 /// A connected JSON-RPC-over-WebSocket stream to a session's `codex app-server`.
-type CodexWs = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+type CodexWs =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 /// Start `codex app-server --listen ws://…` for this session on a free loopback
 /// port and connect the ws client. Returns the child, the ws stream, and the ws
@@ -427,7 +476,10 @@ async fn run_rollout_fallback(
     }
     if let Some(e) = &effort {
         argv.push("-c".to_string());
-        argv.push(format!("model_reasoning_effort={}", Value::String(e.clone())));
+        argv.push(format!(
+            "model_reasoning_effort={}",
+            Value::String(e.clone())
+        ));
     }
     if yolo {
         argv.push("--dangerously-bypass-approvals-and-sandbox".to_string());
@@ -435,7 +487,12 @@ async fn run_rollout_fallback(
     let tui = super::spawn_attach_pty(store, session_id, &argv, cwd)
         .context("spawning fallback codex TUI")?;
     // Drive the GUI conversation from the rollout transcript.
-    super::codex_rollout::spawn_tailer(store.clone(), conv.clone(), session_id.to_string(), cwd.to_string());
+    super::codex_rollout::spawn_tailer(
+        store.clone(),
+        conv.clone(),
+        session_id.to_string(),
+        cwd.to_string(),
+    );
 
     // GUI-composer prompts arrive here; write them into the TUI's PTY (there's no
     // RPC channel in this mode — approvals and everything else happen in the Term).
@@ -490,7 +547,8 @@ async fn run_session(
         Ok(t) => t,
         Err(err) => {
             tracing::warn!(?err, session = %session_id, "codex app-server ws path unavailable — falling back to the rollout hybrid (Term + transcript-tailed GUI)");
-            return run_rollout_fallback(store, conv, session_id, cwd, model, effort, bin, yolo).await;
+            return run_rollout_fallback(store, conv, session_id, cwd, model, effort, bin, yolo)
+                .await;
         }
     };
     let (mut ws_write, mut ws_read) = ws_stream.split();
@@ -538,7 +596,16 @@ async fn run_session(
     // has no rollout yet: "no rollout found for thread id …". Model / YOLO are set
     // on the thread's creator (the TUI) as config overrides. Kept so we can kill
     // it when the session ends.
-    let tui_pty = spawn_codex_tui(store, session_id, cwd, bin, &ws_url, model.as_deref(), effort.as_deref(), yolo);
+    let tui_pty = spawn_codex_tui(
+        store,
+        session_id,
+        cwd,
+        bin,
+        &ws_url,
+        model.as_deref(),
+        effort.as_deref(),
+        yolo,
+    );
 
     let mut thread_id: Option<String> = None;
     // Whether our `thread/resume` has actually taken (we're receiving the thread's
@@ -559,7 +626,8 @@ async fn run_session(
     // FIFO. A queue (not a single slot) so two requests arriving before the user
     // answers don't drop the first and deadlock the agent. YOLO answers inline and
     // never parks one here.
-    let mut pending_approvals: std::collections::VecDeque<Value> = std::collections::VecDeque::new();
+    let mut pending_approvals: std::collections::VecDeque<Value> =
+        std::collections::VecDeque::new();
     // Role instructions to prepend to the first turn only (supervisors).
     let mut pending_instructions: Option<String> = facade.instructions.clone();
     // A model/effort switch requested before the thread is joined can't be sent
@@ -722,11 +790,7 @@ fn spawn_codex_tui(
     effort: Option<&str>,
     yolo: bool,
 ) -> Option<Arc<pty::PtyHandle>> {
-    let mut argv = vec![
-        bin.to_string(),
-        "--remote".to_string(),
-        ws_url.to_string(),
-    ];
+    let mut argv = vec![bin.to_string(), "--remote".to_string(), ws_url.to_string()];
     // Model / reasoning effort are config overrides on the thread's creator;
     // YOLO bypasses the approval/sandbox prompts so the shared thread doesn't
     // block on them.
@@ -736,7 +800,10 @@ fn spawn_codex_tui(
     }
     if let Some(e) = effort {
         argv.push("-c".to_string());
-        argv.push(format!("model_reasoning_effort={}", Value::String(e.to_string())));
+        argv.push(format!(
+            "model_reasoning_effort={}",
+            Value::String(e.to_string())
+        ));
     }
     if yolo {
         argv.push("--dangerously-bypass-approvals-and-sandbox".to_string());
@@ -788,7 +855,8 @@ fn handle_message(
     //    stream so the GUI mirrors the TUI.
     //  - `thread/resume` (id=2): success means we're subscribed; an error (e.g. the
     //    thread wasn't "running" yet) is logged and the discover loop retries.
-    if value.get("id").is_some() && (value.get("result").is_some() || value.get("error").is_some()) {
+    if value.get("id").is_some() && (value.get("result").is_some() || value.get("error").is_some())
+    {
         let id = value.get("id").and_then(Value::as_u64);
         if id == Some(2) {
             if let Some(err) = value.get("error") {
@@ -851,7 +919,8 @@ fn handle_message(
     if value.get("id").is_some() && method.ends_with("/requestApproval") {
         let id = value.get("id").cloned().unwrap_or(Value::Null);
         if yolo.load(Ordering::Relaxed) {
-            let _ = out_tx.send(json!({ "jsonrpc": "2.0", "id": id, "result": { "decision": "accept" } }));
+            let _ = out_tx
+                .send(json!({ "jsonrpc": "2.0", "id": id, "result": { "decision": "accept" } }));
         } else {
             pending_approvals.push_back(id);
         }
@@ -895,7 +964,10 @@ fn send_model_switch(
 /// Fold a new switch into a stashed one (or start one), so a burst of switches
 /// requested before the thread joins collapses to the latest value per field
 /// rather than dropping all but one.
-fn merge_pending_switch(pending: &mut Option<crate::session::ModelSwitch>, switch: crate::session::ModelSwitch) {
+fn merge_pending_switch(
+    pending: &mut Option<crate::session::ModelSwitch>,
+    switch: crate::session::ModelSwitch,
+) {
     match pending {
         Some(existing) => {
             if switch.model.is_some() {
@@ -925,12 +997,18 @@ mod tests {
 
     #[test]
     fn turn_started_is_busy() {
-        assert_eq!(translate("turn/started", &json!({})), vec![AgentUpdate::Busy]);
+        assert_eq!(
+            translate("turn/started", &json!({})),
+            vec![AgentUpdate::Busy]
+        );
     }
 
     #[test]
     fn turn_completed_is_idle() {
-        assert_eq!(translate("turn/completed", &json!({})), vec![AgentUpdate::Idle]);
+        assert_eq!(
+            translate("turn/completed", &json!({})),
+            vec![AgentUpdate::Idle]
+        );
     }
 
     #[test]
@@ -1074,7 +1152,11 @@ mod tests {
     #[test]
     fn unknown_method_is_ignored() {
         assert!(translate("session/whatever", &json!({ "x": 1 })).is_empty());
-        assert!(translate("item/reasoning/summaryTextDelta", &json!({ "delta": "thinking" })).is_empty());
+        assert!(translate(
+            "item/reasoning/summaryTextDelta",
+            &json!({ "delta": "thinking" })
+        )
+        .is_empty());
     }
 
     #[test]
@@ -1082,17 +1164,35 @@ mod tests {
         use crate::session::ModelSwitch;
         let mut pending: Option<ModelSwitch> = None;
         // First switch seeds the slot.
-        merge_pending_switch(&mut pending, ModelSwitch { model: Some("gpt-5.5-codex".into()), effort: None });
+        merge_pending_switch(
+            &mut pending,
+            ModelSwitch {
+                model: Some("gpt-5.5-codex".into()),
+                effort: None,
+            },
+        );
         let p = pending.clone().unwrap();
         assert_eq!(p.model.as_deref(), Some("gpt-5.5-codex"));
         assert_eq!(p.effort, None);
         // A later switch that only sets effort keeps the earlier model.
-        merge_pending_switch(&mut pending, ModelSwitch { model: None, effort: Some("high".into()) });
+        merge_pending_switch(
+            &mut pending,
+            ModelSwitch {
+                model: None,
+                effort: Some("high".into()),
+            },
+        );
         let p = pending.clone().unwrap();
         assert_eq!(p.model.as_deref(), Some("gpt-5.5-codex"));
         assert_eq!(p.effort.as_deref(), Some("high"));
         // A later switch that sets model overrides only the model.
-        merge_pending_switch(&mut pending, ModelSwitch { model: Some("gpt-5.5".into()), effort: None });
+        merge_pending_switch(
+            &mut pending,
+            ModelSwitch {
+                model: Some("gpt-5.5".into()),
+                effort: None,
+            },
+        );
         let p = pending.unwrap();
         assert_eq!(p.model.as_deref(), Some("gpt-5.5"));
         assert_eq!(p.effort.as_deref(), Some("high"));
@@ -1104,15 +1204,19 @@ mod tests {
         // Emulate the queue-and-apply path: a switch stashed before join is sent
         // as a thread/settings/update the moment we subscribe.
         let (tx, mut rx) = mpsc::unbounded_channel::<Value>();
-        let mut pending: Option<ModelSwitch> =
-            Some(ModelSwitch { model: Some("gpt-5.5-codex".into()), effort: Some("high".into()) });
+        let mut pending: Option<ModelSwitch> = Some(ModelSwitch {
+            model: Some("gpt-5.5-codex".into()),
+            effort: Some("high".into()),
+        });
         let mut req_id: u64 = 5;
         let thread_id = Some("t1".to_string());
         if let (Some(sw), Some(tid)) = (pending.take(), thread_id.as_deref()) {
             send_model_switch(&tx, &mut req_id, tid, &sw);
         }
         assert!(pending.is_none());
-        let sent = rx.try_recv().expect("a settings update should have been queued");
+        let sent = rx
+            .try_recv()
+            .expect("a settings update should have been queued");
         assert_eq!(sent["method"], "thread/settings/update");
         assert_eq!(sent["id"], json!(6));
         assert_eq!(sent["params"]["threadId"], "t1");

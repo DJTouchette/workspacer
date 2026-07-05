@@ -406,7 +406,9 @@ impl Keymap {
         let mut exact: Option<Action> = None;
         let mut is_prefix = false;
         for &ctx in ctxs {
-            let Some(table) = self.tables.get(&ctx) else { continue };
+            let Some(table) = self.tables.get(&ctx) else {
+                continue;
+            };
             for (binding, action) in table {
                 if binding.as_slice() == seq {
                     exact.get_or_insert(*action);
@@ -429,11 +431,17 @@ impl Keymap {
     pub fn continuations(&self, ctxs: &[Context], prefix: &[Chord]) -> Vec<Continuation> {
         let mut by_chord: HashMap<Chord, Option<Action>> = HashMap::new();
         for &ctx in ctxs {
-            let Some(table) = self.tables.get(&ctx) else { continue };
+            let Some(table) = self.tables.get(&ctx) else {
+                continue;
+            };
             for (binding, action) in table {
                 if binding.len() > prefix.len() && binding.starts_with(prefix) {
                     let next = binding[prefix.len()];
-                    let leaf = if binding.len() == prefix.len() + 1 { Some(*action) } else { None };
+                    let leaf = if binding.len() == prefix.len() + 1 {
+                        Some(*action)
+                    } else {
+                        None
+                    };
                     // A concrete leaf shouldn't be shadowed by a deeper group on
                     // the same chord; first writer wins and we only fill leaves.
                     by_chord.entry(next).or_insert(leaf);
@@ -466,7 +474,9 @@ impl Keymap {
     /// sequence or action couldn't be parsed — an unparseable entry is skipped,
     /// never fatal.
     pub fn set(&mut self, ctx: Context, seq_str: &str, action_name: &str) -> bool {
-        let Some(seq) = self.parse_seq(seq_str) else { return false };
+        let Some(seq) = self.parse_seq(seq_str) else {
+            return false;
+        };
         let table = self.tables.entry(ctx).or_default();
         if matches!(action_name, "none" | "unbind" | "") {
             table.remove(&seq);
@@ -486,11 +496,12 @@ impl Keymap {
     fn parse_seq(&self, s: &str) -> Option<Vec<Chord>> {
         let mut out = Vec::new();
         for tok in s.split_whitespace() {
-            let chord = if tok.eq_ignore_ascii_case("<leader>") || tok.eq_ignore_ascii_case("leader") {
-                self.leader
-            } else {
-                Chord::parse(tok)?
-            };
+            let chord =
+                if tok.eq_ignore_ascii_case("<leader>") || tok.eq_ignore_ascii_case("leader") {
+                    self.leader
+                } else {
+                    Chord::parse(tok)?
+                };
             out.push(chord);
         }
         if out.is_empty() {
@@ -678,14 +689,35 @@ mod tests {
     #[test]
     fn defaults_match_legacy_bindings() {
         let km = Keymap::default();
-        assert_eq!(km.action(Context::List, Chord::parse("j").unwrap()), Some(Action::SelectNext));
-        assert_eq!(km.action(Context::List, Chord::parse("G").unwrap()), Some(Action::SelectLast));
-        assert_eq!(km.action(Context::List, Chord::parse("enter").unwrap()), Some(Action::OpenAgent));
+        assert_eq!(
+            km.action(Context::List, Chord::parse("j").unwrap()),
+            Some(Action::SelectNext)
+        );
+        assert_eq!(
+            km.action(Context::List, Chord::parse("G").unwrap()),
+            Some(Action::SelectLast)
+        );
+        assert_eq!(
+            km.action(Context::List, Chord::parse("enter").unwrap()),
+            Some(Action::OpenAgent)
+        );
         // enter means different things per context.
-        assert_eq!(km.action(Context::AgentTerminal, Chord::parse("enter").unwrap()), Some(Action::Attach));
-        assert_eq!(km.action(Context::AgentTranscript, Chord::parse("i").unwrap()), Some(Action::InsertMode));
-        assert_eq!(km.action(Context::AgentTerminal, Chord::parse("i").unwrap()), Some(Action::Attach));
-        assert_eq!(km.action(Context::Global, Chord::parse("ctrl+k").unwrap()), Some(Action::Palette));
+        assert_eq!(
+            km.action(Context::AgentTerminal, Chord::parse("enter").unwrap()),
+            Some(Action::Attach)
+        );
+        assert_eq!(
+            km.action(Context::AgentTranscript, Chord::parse("i").unwrap()),
+            Some(Action::InsertMode)
+        );
+        assert_eq!(
+            km.action(Context::AgentTerminal, Chord::parse("i").unwrap()),
+            Some(Action::Attach)
+        );
+        assert_eq!(
+            km.action(Context::Global, Chord::parse("ctrl+k").unwrap()),
+            Some(Action::Palette)
+        );
     }
 
     #[test]
@@ -695,7 +727,10 @@ mod tests {
         let without = Chord::from_event(&ev('T', KeyModifiers::NONE));
         assert_eq!(with_shift, without);
         let km = Keymap::default();
-        assert_eq!(km.action(Context::List, with_shift), Some(Action::OpenAgentTerminal));
+        assert_eq!(
+            km.action(Context::List, with_shift),
+            Some(Action::OpenAgentTerminal)
+        );
     }
 
     #[test]
@@ -711,10 +746,22 @@ mod tests {
 
     #[test]
     fn parse_chord_variants() {
-        assert_eq!(Chord::parse("ctrl+k").unwrap(), Chord::new(KeyCode::Char('k'), KeyModifiers::CONTROL));
-        assert_eq!(Chord::parse("shift+tab").unwrap(), Chord::new(KeyCode::BackTab, KeyModifiers::NONE));
-        assert_eq!(Chord::parse("enter").unwrap(), Chord::new(KeyCode::Enter, KeyModifiers::NONE));
-        assert_eq!(Chord::parse("space").unwrap(), Chord::new(KeyCode::Char(' '), KeyModifiers::NONE));
+        assert_eq!(
+            Chord::parse("ctrl+k").unwrap(),
+            Chord::new(KeyCode::Char('k'), KeyModifiers::CONTROL)
+        );
+        assert_eq!(
+            Chord::parse("shift+tab").unwrap(),
+            Chord::new(KeyCode::BackTab, KeyModifiers::NONE)
+        );
+        assert_eq!(
+            Chord::parse("enter").unwrap(),
+            Chord::new(KeyCode::Enter, KeyModifiers::NONE)
+        );
+        assert_eq!(
+            Chord::parse("space").unwrap(),
+            Chord::new(KeyCode::Char(' '), KeyModifiers::NONE)
+        );
         assert!(Chord::parse("boguskey").is_none());
         assert!(Chord::parse("hyper+x").is_none());
     }
@@ -723,7 +770,10 @@ mod tests {
     fn override_and_unbind() {
         let mut km = Keymap::default();
         assert!(km.set(Context::List, "x", "quit"));
-        assert_eq!(km.action(Context::List, Chord::parse("x").unwrap()), Some(Action::Quit));
+        assert_eq!(
+            km.action(Context::List, Chord::parse("x").unwrap()),
+            Some(Action::Quit)
+        );
         // Unbind the default q.
         assert!(km.set(Context::List, "q", "none"));
         assert_eq!(km.action(Context::List, Chord::parse("q").unwrap()), None);
@@ -754,13 +804,19 @@ mod tests {
         assert_eq!(km.resolve(&ctxs, &[leader]), KeyMatch::Pending);
         // <leader> p fires the palette.
         let p = Chord::parse("p").unwrap();
-        assert_eq!(km.resolve(&ctxs, &[leader, p]), KeyMatch::Action(Action::Palette));
+        assert_eq!(
+            km.resolve(&ctxs, &[leader, p]),
+            KeyMatch::Action(Action::Palette)
+        );
         // An unbound continuation is a dead end.
         let z = Chord::parse("z").unwrap();
         assert_eq!(km.resolve(&ctxs, &[leader, z]), KeyMatch::None);
         // A plain bound key still fires immediately — it isn't a prefix.
         let j = Chord::parse("j").unwrap();
-        assert_eq!(km.resolve(&[Context::List], &[j]), KeyMatch::Action(Action::SelectNext));
+        assert_eq!(
+            km.resolve(&[Context::List], &[j]),
+            KeyMatch::Action(Action::SelectNext)
+        );
     }
 
     #[test]
@@ -781,10 +837,16 @@ mod tests {
         assert!(km.set(Context::List, "g g", "select_first"));
         let g = Chord::parse("g").unwrap();
         assert_eq!(km.resolve(&[Context::List], &[g]), KeyMatch::Pending);
-        assert_eq!(km.resolve(&[Context::List], &[g, g]), KeyMatch::Action(Action::SelectFirst));
+        assert_eq!(
+            km.resolve(&[Context::List], &[g, g]),
+            KeyMatch::Action(Action::SelectFirst)
+        );
         // `<leader>` expands in override strings, and unbinding the sequence
         // restores the lone-key behavior.
         assert!(km.set(Context::List, "g g", "none"));
-        assert_eq!(km.resolve(&[Context::List], &[g]), KeyMatch::Action(Action::SelectFirst));
+        assert_eq!(
+            km.resolve(&[Context::List], &[g]),
+            KeyMatch::Action(Action::SelectFirst)
+        );
     }
 }

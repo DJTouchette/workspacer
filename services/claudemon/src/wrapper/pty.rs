@@ -31,9 +31,7 @@ pub fn spawn(
     extra_env: &std::collections::HashMap<String, String>,
 ) -> Result<PtyHandle> {
     let pty_system = native_pty_system();
-    let pair = pty_system
-        .openpty(size)
-        .context("openpty failed")?;
+    let pair = pty_system.openpty(size).context("openpty failed")?;
 
     let mut cmd = CommandBuilder::new(&argv[0]);
     if argv.len() > 1 {
@@ -50,7 +48,10 @@ pub fn spawn(
         cmd.env(k, v);
     }
 
-    let child = pair.slave.spawn_command(cmd).context("spawning child in PTY")?;
+    let child = pair
+        .slave
+        .spawn_command(cmd)
+        .context("spawning child in PTY")?;
     // Once the child has the slave, we don't need it.
     drop(pair.slave);
 
@@ -171,7 +172,12 @@ pub async fn resize(handle: &PtyHandle, cols: u16, rows: u16) -> Result<()> {
     let master = handle.master.clone();
     tokio::task::spawn_blocking(move || -> Result<()> {
         let m = master.lock().expect("PTY master mutex poisoned");
-        m.resize(PtySize { cols, rows, pixel_width: 0, pixel_height: 0 })?;
+        m.resize(PtySize {
+            cols,
+            rows,
+            pixel_width: 0,
+            pixel_height: 0,
+        })?;
         Ok(())
     })
     .await

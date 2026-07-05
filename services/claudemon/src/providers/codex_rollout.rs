@@ -132,7 +132,11 @@ fn translate_response_item(payload: &Value) -> Vec<AgentUpdate> {
                 .unwrap_or_default()
                 .to_string();
             let (content, is_error) = function_output_text(payload.get("output"));
-            out.push(AgentUpdate::ToolResult { tool_use_id, content, is_error });
+            out.push(AgentUpdate::ToolResult {
+                tool_use_id,
+                content,
+                is_error,
+            });
         }
         _ => {} // reasoning, etc. — skipped
     }
@@ -171,8 +175,12 @@ fn translate_event_msg(payload: &Value) -> Vec<AgentUpdate> {
         "token_count" => {
             let info = payload.get("info");
             let usage = info.and_then(|i| i.get("total_token_usage"));
-            let input = usage.and_then(|u| u.get("input_tokens")).and_then(Value::as_u64);
-            let output = usage.and_then(|u| u.get("output_tokens")).and_then(Value::as_u64);
+            let input = usage
+                .and_then(|u| u.get("input_tokens"))
+                .and_then(Value::as_u64);
+            let output = usage
+                .and_then(|u| u.get("output_tokens"))
+                .and_then(Value::as_u64);
             if input.is_some() || output.is_some() {
                 // Context occupancy comes from `last_token_usage` — the most
                 // recent request, i.e. what's actually in the window.
@@ -226,7 +234,11 @@ fn paths_eq(a: &str, b: &str) -> bool {
     fn norm(s: &str) -> String {
         let t = s.replace('\\', "/");
         let t = t.trim_end_matches('/');
-        if cfg!(windows) { t.to_lowercase() } else { t.to_string() }
+        if cfg!(windows) {
+            t.to_lowercase()
+        } else {
+            t.to_string()
+        }
     }
     norm(a) == norm(b)
 }
@@ -251,7 +263,9 @@ fn collect_rollouts(sessions_root: &Path) -> Vec<(PathBuf, std::time::SystemTime
     let mut out = Vec::new();
     let mut stack = vec![sessions_root.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
             let Ok(ft) = entry.file_type() else { continue };
@@ -290,17 +304,16 @@ async fn discover_rollout(
 ) -> Option<PathBuf> {
     let sessions_root = codex_home()?.join("sessions");
     // A small grace window before `since` guards against coarse mtime / clock skew.
-    let cutoff = since
-        .checked_sub(Duration::from_secs(5))
-        .unwrap_or(since);
+    let cutoff = since.checked_sub(Duration::from_secs(5)).unwrap_or(since);
     // ~3 min backstop at 250ms/iter — long enough for any realistic cold start,
     // bounded so a session that never records eventually stops scanning.
     for _ in 0..720 {
         store.get(session_id)?;
-        let mut candidates: Vec<(PathBuf, std::time::SystemTime)> = collect_rollouts(&sessions_root)
-            .into_iter()
-            .filter(|(_, m)| *m >= cutoff)
-            .collect();
+        let mut candidates: Vec<(PathBuf, std::time::SystemTime)> =
+            collect_rollouts(&sessions_root)
+                .into_iter()
+                .filter(|(_, m)| *m >= cutoff)
+                .collect();
         // Newest first, so the first cwd match is the most recent session.
         candidates.sort_by(|a, b| b.1.cmp(&a.1));
         for (path, _) in candidates {
@@ -411,7 +424,9 @@ mod tests {
 
     #[test]
     fn non_conversational_lines_are_ignored() {
-        assert!(translate(&json!({ "type": "session_meta", "payload": { "cwd": "/x" } })).is_empty());
+        assert!(
+            translate(&json!({ "type": "session_meta", "payload": { "cwd": "/x" } })).is_empty()
+        );
         assert!(translate(&json!({ "type": "turn_context", "payload": {} })).is_empty());
         // reasoning items are not surfaced
         assert!(translate(&item(json!({ "type": "reasoning", "summary": [] }))).is_empty());
@@ -422,8 +437,14 @@ mod tests {
 
     #[test]
     fn task_started_completed_map_to_busy_idle() {
-        assert_eq!(translate(&ev(json!({ "type": "task_started" }))), vec![AgentUpdate::Busy]);
-        assert_eq!(translate(&ev(json!({ "type": "task_complete" }))), vec![AgentUpdate::Idle]);
+        assert_eq!(
+            translate(&ev(json!({ "type": "task_started" }))),
+            vec![AgentUpdate::Busy]
+        );
+        assert_eq!(
+            translate(&ev(json!({ "type": "task_complete" }))),
+            vec![AgentUpdate::Idle]
+        );
     }
 
     #[test]
@@ -440,8 +461,12 @@ mod tests {
         );
         // system/developer messages and empty content are not conversation
         assert!(translate(&item(json!({ "type": "message", "role": "system",
-            "content": [{ "type": "text", "text": "rules" }] }))).is_empty());
-        assert!(translate(&item(json!({ "type": "message", "role": "assistant", "content": [] }))).is_empty());
+            "content": [{ "type": "text", "text": "rules" }] })))
+        .is_empty());
+        assert!(translate(&item(
+            json!({ "type": "message", "role": "assistant", "content": [] })
+        ))
+        .is_empty());
     }
 
     #[test]
@@ -460,14 +485,26 @@ mod tests {
     #[test]
     fn function_call_output_maps_to_tool_result() {
         assert_eq!(
-            translate(&item(json!({ "type": "function_call_output", "call_id": "c1", "output": "done" }))),
-            vec![AgentUpdate::ToolResult { tool_use_id: "c1".into(), content: "done".into(), is_error: false }]
+            translate(&item(
+                json!({ "type": "function_call_output", "call_id": "c1", "output": "done" })
+            )),
+            vec![AgentUpdate::ToolResult {
+                tool_use_id: "c1".into(),
+                content: "done".into(),
+                is_error: false
+            }]
         );
         // object output with a success=false flag is an error
         assert_eq!(
-            translate(&item(json!({ "type": "function_call_output", "call_id": "c2",
-                "output": { "content": "boom", "success": false } }))),
-            vec![AgentUpdate::ToolResult { tool_use_id: "c2".into(), content: "boom".into(), is_error: true }]
+            translate(&item(
+                json!({ "type": "function_call_output", "call_id": "c2",
+                "output": { "content": "boom", "success": false } })
+            )),
+            vec![AgentUpdate::ToolResult {
+                tool_use_id: "c2".into(),
+                content: "boom".into(),
+                is_error: true
+            }]
         );
     }
 

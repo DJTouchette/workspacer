@@ -92,9 +92,7 @@ impl PasteModeTracker {
 }
 
 fn find_last(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack
-        .windows(needle.len())
-        .rposition(|w| w == needle)
+    haystack.windows(needle.len()).rposition(|w| w == needle)
 }
 
 /// Per-session ring buffer of raw PTY bytes the child has produced so far.
@@ -106,7 +104,10 @@ pub struct OutputBuffer {
 
 impl OutputBuffer {
     fn new(cap: usize) -> Self {
-        Self { bytes: VecDeque::with_capacity(cap.min(8192)), cap }
+        Self {
+            bytes: VecDeque::with_capacity(cap.min(8192)),
+            cap,
+        }
     }
 
     fn push(&mut self, chunk: &[u8]) {
@@ -351,7 +352,8 @@ impl SessionStore {
     /// `claude` processes it spawned don't outlive the daemon (and the launcher).
     pub fn kill_all_ptys(&self) {
         for entry in self.ptys.iter() {
-            let _ = crate::wrapper::pty::signal_child(entry.value(), crate::protocol::Signal::Sigkill);
+            let _ =
+                crate::wrapper::pty::signal_child(entry.value(), crate::protocol::Signal::Sigkill);
         }
     }
 
@@ -469,7 +471,8 @@ impl SessionStore {
             // sibling spawn sharing the cwd could steal this session's hooks.
             if let Some(cwd) = event.cwd.clone() {
                 if let Some((_, canonical)) = self.pending_spawns_by_cwd.remove(&cwd) {
-                    self.aliases.insert(event.session_id.clone(), canonical.clone());
+                    self.aliases
+                        .insert(event.session_id.clone(), canonical.clone());
                     event.session_id = canonical;
                 }
             }
@@ -486,8 +489,7 @@ impl SessionStore {
                 .or_insert_with(|| SessionState::new(event.session_id.clone(), event.cwd.clone()));
             let prev_mode = entry.mode;
             entry.apply(&event);
-            let became_input =
-                entry.mode == SessionMode::Input && prev_mode != SessionMode::Input;
+            let became_input = entry.mode == SessionMode::Input && prev_mode != SessionMode::Input;
             let became_stopped = entry.mode == SessionMode::Stopped;
             (entry.clone(), became_input, became_stopped)
         };
@@ -667,7 +669,9 @@ impl SessionStore {
             let mut entry = self
                 .states
                 .entry(session_id.to_string())
-                .or_insert_with(|| SessionState::new(session_id.to_string(), Some(cwd.to_string())));
+                .or_insert_with(|| {
+                    SessionState::new(session_id.to_string(), Some(cwd.to_string()))
+                });
             entry.mode = SessionMode::Input;
             entry.provider = provider.to_string();
             entry.clone()
@@ -742,7 +746,11 @@ impl SessionStore {
 
     /// Register the live model-switch channel for a managed session whose
     /// adapter can apply one mid-thread (codex: `thread/settings/update`).
-    pub fn register_managed_model_switch(&self, session_id: &str, tx: mpsc::UnboundedSender<ModelSwitch>) {
+    pub fn register_managed_model_switch(
+        &self,
+        session_id: &str,
+        tx: mpsc::UnboundedSender<ModelSwitch>,
+    ) {
         self.managed_model.insert(session_id.to_string(), tx);
     }
 
@@ -750,10 +758,16 @@ impl SessionStore {
     /// the session has no switch channel (provider can't do it live — opencode/
     /// pi, or codex running on the rollout fallback) so the caller can offer
     /// the restart path instead.
-    pub fn set_managed_model(&self, session_id: &str, switch: ModelSwitch) -> Result<(), &'static str> {
+    pub fn set_managed_model(
+        &self,
+        session_id: &str,
+        switch: ModelSwitch,
+    ) -> Result<(), &'static str> {
         match self.managed_model.get(session_id) {
             Some(tx) if tx.send(switch).is_ok() => Ok(()),
-            _ => Err("this session's provider can't switch models live — restart with the new model"),
+            _ => {
+                Err("this session's provider can't switch models live — restart with the new model")
+            }
         }
     }
 
@@ -903,8 +917,8 @@ impl SessionStore {
         session_id: &str,
         prev: PermissionMode,
     ) -> Option<PermissionMode> {
-        let deadline = tokio::time::Instant::now()
-            + std::time::Duration::from_millis(MODE_CHANGE_TIMEOUT_MS);
+        let deadline =
+            tokio::time::Instant::now() + std::time::Duration::from_millis(MODE_CHANGE_TIMEOUT_MS);
         loop {
             tokio::time::sleep(std::time::Duration::from_millis(MODE_POLL_MS)).await;
             if let Some(mode) = self.screen_permission_mode(session_id).await {
@@ -955,7 +969,9 @@ impl SessionStore {
         for _ in 0..MODE_MAX_PRESSES {
             if handle
                 .tx
-                .send(WrapperMessage::Input { bytes: B64.encode(b"\x1b[Z") })
+                .send(WrapperMessage::Input {
+                    bytes: B64.encode(b"\x1b[Z"),
+                })
                 .is_err()
             {
                 return Err(PermissionSwitchError::NoWrapper);
@@ -984,8 +1000,10 @@ impl SessionStore {
         live: Arc<std::sync::atomic::AtomicBool>,
         spawned_yolo: bool,
     ) {
-        self.managed_yolo
-            .insert(session_id.to_string(), ManagedYoloHandle { live, spawned_yolo });
+        self.managed_yolo.insert(
+            session_id.to_string(),
+            ManagedYoloHandle { live, spawned_yolo },
+        );
     }
 
     /// Live-switch a managed session's permission mode (`"ask"` / `"yolo"`).
@@ -1013,14 +1031,18 @@ impl SessionStore {
         };
         match mode {
             "yolo" => {
-                handle.live.store(true, std::sync::atomic::Ordering::Relaxed);
+                handle
+                    .live
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
                 Ok("yolo")
             }
             "ask" => {
                 if handle.spawned_yolo {
                     return Err(PermissionSwitchError::ManagedUnavailable { current: "yolo" });
                 }
-                handle.live.store(false, std::sync::atomic::Ordering::Relaxed);
+                handle
+                    .live
+                    .store(false, std::sync::atomic::Ordering::Relaxed);
                 Ok("ask")
             }
             _ => Err(PermissionSwitchError::Managed),
@@ -1300,7 +1322,9 @@ impl SessionStore {
         bytes.extend_from_slice(b"\x1b[201~\r");
         if handle
             .tx
-            .send(WrapperMessage::Input { bytes: B64.encode(&bytes) })
+            .send(WrapperMessage::Input {
+                bytes: B64.encode(&bytes),
+            })
             .is_err()
         {
             return MessageOutcome::WrapperGone;
@@ -1314,15 +1338,10 @@ impl SessionStore {
         // mounted and accepting input — release any messages held behind the
         // paste-mode gate in `schedule_pending_flush`.
         let toggled_on = {
-            let mut tracker = self
-                .paste_modes
-                .entry(session_id.to_string())
-                .or_default();
+            let mut tracker = self.paste_modes.entry(session_id.to_string()).or_default();
             tracker.scan(chunk) == Some(true)
         };
-        if toggled_on
-            && self.states.get(session_id).map(|s| s.mode) == Some(SessionMode::Input)
-        {
+        if toggled_on && self.states.get(session_id).map(|s| s.mode) == Some(SessionMode::Input) {
             self.schedule_pending_flush(session_id);
         }
         // Hold the buffer lock across both the ring-buffer push and the
@@ -1423,8 +1442,15 @@ mod tests {
         let store = SessionStore::new();
         let (h, mut rx) = handle_with_rx();
         store.register_wrapper("s1", "/w", h); // synthetic SessionStart → Input
-        assert_eq!(store.submit_message("s1", "hello".into()), MessageOutcome::Sent);
-        assert_eq!(next_input(&mut rx), pasted("hello"), "line submitted as bracketed paste + CR");
+        assert_eq!(
+            store.submit_message("s1", "hello".into()),
+            MessageOutcome::Sent
+        );
+        assert_eq!(
+            next_input(&mut rx),
+            pasted("hello"),
+            "line submitted as bracketed paste + CR"
+        );
     }
 
     #[test]
@@ -1432,7 +1458,10 @@ mod tests {
         let store = SessionStore::new();
         let (h, mut rx) = handle_with_rx();
         store.register_spawn("s1", "/w", h); // mode stays Unknown until SessionStart
-        assert_eq!(store.submit_message("s1", "hi".into()), MessageOutcome::Queued);
+        assert_eq!(
+            store.submit_message("s1", "hi".into()),
+            MessageOutcome::Queued
+        );
         assert!(rx.try_recv().is_err(), "nothing written while queued");
 
         // Claude's real SessionStart lands → Input → the queued line flushes.
@@ -1449,7 +1478,10 @@ mod tests {
         let (h, mut rx) = handle_with_rx();
         store.register_wrapper("s1", "/w", h); // Input
         store.ingest(hook("UserPromptSubmit", "s1", "/w")); // → Responding
-        assert_eq!(store.submit_message("s1", "followup".into()), MessageOutcome::Queued);
+        assert_eq!(
+            store.submit_message("s1", "followup".into()),
+            MessageOutcome::Queued
+        );
         assert!(rx.try_recv().is_err(), "held while Claude is responding");
 
         store.ingest(hook("Stop", "s1", "/w")); // turn ends → Input → flush
@@ -1467,17 +1499,34 @@ mod tests {
         let (h, mut rx) = handle_with_rx();
         store.register_wrapper("s1", "/w", h); // Input
         store.ingest(hook("UserPromptSubmit", "s1", "/w")); // → Responding
-        assert_eq!(store.submit_message("s1", "followup".into()), MessageOutcome::Queued);
+        assert_eq!(
+            store.submit_message("s1", "followup".into()),
+            MessageOutcome::Queued
+        );
 
         store.ingest(hook("Stop", "s1", "/w")); // → Input; flush scheduled, not immediate
-        assert!(rx.try_recv().is_err(), "no injection while the TUI is still closing the turn");
+        assert!(
+            rx.try_recv().is_err(),
+            "no injection while the TUI is still closing the turn"
+        );
 
         tokio::time::sleep(std::time::Duration::from_millis(FLUSH_DELAY_MS + 50)).await;
-        assert_eq!(next_input(&mut rx), pasted("followup"), "flushed once the prompt settles");
+        assert_eq!(
+            next_input(&mut rx),
+            pasted("followup"),
+            "flushed once the prompt settles"
+        );
 
         // No UserPromptSubmit arrives → verify pass submits the stranded text.
-        tokio::time::sleep(std::time::Duration::from_millis(SUBMIT_VERIFY_DELAY_MS + 50)).await;
-        assert_eq!(next_input(&mut rx), b"\r".to_vec(), "bare CR submits the composer");
+        tokio::time::sleep(std::time::Duration::from_millis(
+            SUBMIT_VERIFY_DELAY_MS + 50,
+        ))
+        .await;
+        assert_eq!(
+            next_input(&mut rx),
+            b"\r".to_vec(),
+            "bare CR submits the composer"
+        );
     }
 
     #[tokio::test(start_paused = true)]
@@ -1486,15 +1535,24 @@ mod tests {
         let (h, mut rx) = handle_with_rx();
         store.register_wrapper("s1", "/w", h);
         store.ingest(hook("UserPromptSubmit", "s1", "/w"));
-        assert_eq!(store.submit_message("s1", "followup".into()), MessageOutcome::Queued);
+        assert_eq!(
+            store.submit_message("s1", "followup".into()),
+            MessageOutcome::Queued
+        );
         store.ingest(hook("Stop", "s1", "/w"));
 
         tokio::time::sleep(std::time::Duration::from_millis(FLUSH_DELAY_MS + 50)).await;
         assert_eq!(next_input(&mut rx), pasted("followup"));
         store.ingest(hook("UserPromptSubmit", "s1", "/w")); // the submit took
 
-        tokio::time::sleep(std::time::Duration::from_millis(SUBMIT_VERIFY_DELAY_MS + 50)).await;
-        assert!(rx.try_recv().is_err(), "no stray CR when the message submitted");
+        tokio::time::sleep(std::time::Duration::from_millis(
+            SUBMIT_VERIFY_DELAY_MS + 50,
+        ))
+        .await;
+        assert!(
+            rx.try_recv().is_err(),
+            "no stray CR when the message submitted"
+        );
     }
 
     #[tokio::test(start_paused = true)]
@@ -1506,7 +1564,10 @@ mod tests {
         let (h, mut rx) = handle_with_rx();
         store.register_wrapper("s1", "/w", h);
         store.ingest(hook("UserPromptSubmit", "s1", "/w"));
-        assert_eq!(store.submit_message("s1", "queued".into()), MessageOutcome::Queued);
+        assert_eq!(
+            store.submit_message("s1", "queued".into()),
+            MessageOutcome::Queued
+        );
         store.ingest(hook("Stop", "s1", "/w")); // schedules the flush
         store.ingest(hook("UserPromptSubmit", "s1", "/w")); // TUI turn starts inside the window
 
@@ -1527,7 +1588,10 @@ mod tests {
         let store = SessionStore::new();
         let (h, mut rx) = handle_with_rx();
         store.register_wrapper("s1", "/w", h); // Input transition stamped now
-        assert_eq!(store.submit_message("s1", "hi".into()), MessageOutcome::Sent);
+        assert_eq!(
+            store.submit_message("s1", "hi".into()),
+            MessageOutcome::Sent
+        );
         tokio::task::yield_now().await;
         assert!(rx.try_recv().is_err(), "held while the composer settles");
 
@@ -1535,9 +1599,14 @@ mod tests {
         assert_eq!(next_input(&mut rx), pasted("hi"));
 
         store.ingest(hook("UserPromptSubmit", "s1", "/w")); // the submit took
-        tokio::time::sleep(std::time::Duration::from_millis(2 * SUBMIT_VERIFY_DELAY_MS + 100))
-            .await;
-        assert!(rx.try_recv().is_err(), "no corrective CR after a clean submit");
+        tokio::time::sleep(std::time::Duration::from_millis(
+            2 * SUBMIT_VERIFY_DELAY_MS + 100,
+        ))
+        .await;
+        assert!(
+            rx.try_recv().is_err(),
+            "no corrective CR after a clean submit"
+        );
     }
 
     #[tokio::test(start_paused = true)]
@@ -1547,9 +1616,16 @@ mod tests {
         store.register_wrapper("s1", "/w", h);
         // The prompt has been idle far longer than the settle window.
         tokio::time::sleep(std::time::Duration::from_millis(FLUSH_DELAY_MS * 10)).await;
-        assert_eq!(store.submit_message("s1", "hi".into()), MessageOutcome::Sent);
+        assert_eq!(
+            store.submit_message("s1", "hi".into()),
+            MessageOutcome::Sent
+        );
         tokio::task::yield_now().await;
-        assert_eq!(next_input(&mut rx), pasted("hi"), "no settle wait on an idle prompt");
+        assert_eq!(
+            next_input(&mut rx),
+            pasted("hi"),
+            "no settle wait on an idle prompt"
+        );
     }
 
     #[tokio::test(start_paused = true)]
@@ -1558,14 +1634,23 @@ mod tests {
         let (h, mut rx) = handle_with_rx();
         store.register_wrapper("s1", "/w", h);
         tokio::time::sleep(std::time::Duration::from_millis(FLUSH_DELAY_MS * 10)).await;
-        assert_eq!(store.submit_message("s1", "hi".into()), MessageOutcome::Sent);
+        assert_eq!(
+            store.submit_message("s1", "hi".into()),
+            MessageOutcome::Sent
+        );
         tokio::task::yield_now().await;
         assert_eq!(next_input(&mut rx), pasted("hi"));
 
         // No UserPromptSubmit ever arrives → each verify pass submits, capped.
-        tokio::time::sleep(std::time::Duration::from_millis(SUBMIT_VERIFY_DELAY_MS + 50)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(
+            SUBMIT_VERIFY_DELAY_MS + 50,
+        ))
+        .await;
         assert_eq!(next_input(&mut rx), b"\r".to_vec(), "first corrective CR");
-        tokio::time::sleep(std::time::Duration::from_millis(SUBMIT_VERIFY_DELAY_MS + 50)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(
+            SUBMIT_VERIFY_DELAY_MS + 50,
+        ))
+        .await;
         assert_eq!(next_input(&mut rx), b"\r".to_vec(), "second corrective CR");
         tokio::time::sleep(std::time::Duration::from_millis(SUBMIT_VERIFY_DELAY_MS * 4)).await;
         assert!(rx.try_recv().is_err(), "the ladder is bounded — no CR spam");
@@ -1582,7 +1667,10 @@ mod tests {
         store.record_output("s1", b"\x1b[?2004l").await; // paste explicitly off
         tokio::time::sleep(std::time::Duration::from_millis(FLUSH_DELAY_MS * 10)).await;
 
-        assert_eq!(store.submit_message("s1", "hi".into()), MessageOutcome::Sent);
+        assert_eq!(
+            store.submit_message("s1", "hi".into()),
+            MessageOutcome::Sent
+        );
         tokio::time::sleep(std::time::Duration::from_millis(FLUSH_DELAY_MS + 50)).await;
         assert!(rx.try_recv().is_err(), "held while paste mode is off");
 
@@ -1602,7 +1690,10 @@ mod tests {
         store.record_output("s1", b"04l").await;
         tokio::time::sleep(std::time::Duration::from_millis(FLUSH_DELAY_MS * 10)).await;
 
-        assert_eq!(store.submit_message("s1", "hi".into()), MessageOutcome::Sent);
+        assert_eq!(
+            store.submit_message("s1", "hi".into()),
+            MessageOutcome::Sent
+        );
         tokio::time::sleep(std::time::Duration::from_millis(FLUSH_DELAY_MS + 50)).await;
         assert!(rx.try_recv().is_err(), "split 2004l still gates the flush");
 
@@ -1621,13 +1712,19 @@ mod tests {
         let (h, mut rx) = handle_with_rx();
         store.register_wrapper("s1", "/w", h);
         tokio::time::sleep(std::time::Duration::from_millis(FLUSH_DELAY_MS * 10)).await;
-        assert_eq!(store.submit_message("s1", "hi".into()), MessageOutcome::Sent);
+        assert_eq!(
+            store.submit_message("s1", "hi".into()),
+            MessageOutcome::Sent
+        );
         tokio::task::yield_now().await;
         assert_eq!(next_input(&mut rx), pasted("hi"));
 
         store.note_client_input("s1"); // user starts typing in the terminal
         tokio::time::sleep(std::time::Duration::from_millis(SUBMIT_VERIFY_DELAY_MS * 4)).await;
-        assert!(rx.try_recv().is_err(), "no corrective CR while the user is typing");
+        assert!(
+            rx.try_recv().is_err(),
+            "no corrective CR while the user is typing"
+        );
     }
 
     #[tokio::test(start_paused = true)]
@@ -1639,12 +1736,18 @@ mod tests {
         let (h, mut rx) = handle_with_rx();
         store.register_wrapper("s1", "/w", h);
         tokio::time::sleep(std::time::Duration::from_millis(FLUSH_DELAY_MS * 10)).await;
-        assert_eq!(store.submit_message("s1", "/model opus".into()), MessageOutcome::Sent);
+        assert_eq!(
+            store.submit_message("s1", "/model opus".into()),
+            MessageOutcome::Sent
+        );
         tokio::task::yield_now().await;
         assert_eq!(next_input(&mut rx), pasted("/model opus"));
 
         tokio::time::sleep(std::time::Duration::from_millis(SUBMIT_VERIFY_DELAY_MS * 4)).await;
-        assert!(rx.try_recv().is_err(), "no corrective CR for a slash command");
+        assert!(
+            rx.try_recv().is_err(),
+            "no corrective CR for a slash command"
+        );
     }
 
     #[tokio::test(start_paused = true)]
@@ -1655,15 +1758,24 @@ mod tests {
         let (h, mut rx) = handle_with_rx();
         store.register_wrapper("s1", "/w", h);
         tokio::time::sleep(std::time::Duration::from_millis(FLUSH_DELAY_MS * 10)).await;
-        assert_eq!(store.submit_message("s1", "one".into()), MessageOutcome::Sent);
+        assert_eq!(
+            store.submit_message("s1", "one".into()),
+            MessageOutcome::Sent
+        );
         tokio::task::yield_now().await;
         assert_eq!(next_input(&mut rx), pasted("one"));
-        assert_eq!(store.submit_message("s1", "two".into()), MessageOutcome::Sent);
+        assert_eq!(
+            store.submit_message("s1", "two".into()),
+            MessageOutcome::Sent
+        );
         tokio::task::yield_now().await;
         assert_eq!(next_input(&mut rx), pasted("two"));
 
         // Both tasks' timers elapse, but only the latest epoch may correct.
-        tokio::time::sleep(std::time::Duration::from_millis(SUBMIT_VERIFY_DELAY_MS + 50)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(
+            SUBMIT_VERIFY_DELAY_MS + 50,
+        ))
+        .await;
         assert_eq!(next_input(&mut rx), b"\r".to_vec());
         assert!(rx.try_recv().is_err(), "exactly one CR per verify window");
     }
@@ -1680,7 +1792,10 @@ mod tests {
             store.submit_message("s1", "also do X".into()),
             MessageOutcome::Queued,
         );
-        assert!(rx.try_recv().is_err(), "chat is not written while awaiting approval");
+        assert!(
+            rx.try_recv().is_err(),
+            "chat is not written while awaiting approval"
+        );
 
         store.ingest(hook("PostToolUse", "s1", "/w")); // approved → Responding
         assert!(rx.try_recv().is_err(), "still held mid-turn");
@@ -1705,16 +1820,25 @@ mod tests {
         let store = SessionStore::new();
         let (h, mut rx) = handle_with_rx();
         store.register_spawn("s1", "/w", h); // Unknown
-        assert_eq!(store.submit_message("s1", "later".into()), MessageOutcome::Queued);
+        assert_eq!(
+            store.submit_message("s1", "later".into()),
+            MessageOutcome::Queued
+        );
 
         store.ingest(hook("SessionEnd", "s1", "/w")); // → Stopped, queue cleared
-        assert!(rx.try_recv().is_err(), "a stopped session drops its queued message");
+        assert!(
+            rx.try_recv().is_err(),
+            "a stopped session drops its queued message"
+        );
     }
 
     #[test]
     fn message_for_unknown_session_reports_no_session() {
         let store = SessionStore::new();
-        assert_eq!(store.submit_message("ghost", "hi".into()), MessageOutcome::NoSession);
+        assert_eq!(
+            store.submit_message("ghost", "hi".into()),
+            MessageOutcome::NoSession
+        );
     }
 
     #[test]
@@ -1747,7 +1871,11 @@ mod tests {
         assert_eq!(restored.tool_calls, 7);
 
         let live = store.get("live").expect("live session present");
-        assert_ne!(live.mode, SessionMode::Stopped, "live entry must win over hydrate");
+        assert_ne!(
+            live.mode,
+            SessionMode::Stopped,
+            "live entry must win over hydrate"
+        );
     }
 
     // A pinned spawn (claude launched with `--session-id` == our id) must keep
@@ -1764,9 +1892,15 @@ mod tests {
         store.register_spawn("BBB", cwd, handle());
 
         let state = store.ingest(hook("SessionStart", "AAA", cwd));
-        assert_eq!(state.session_id, "AAA", "pinned hook must apply to its own state");
+        assert_eq!(
+            state.session_id, "AAA",
+            "pinned hook must apply to its own state"
+        );
         assert!(store.get("AAA").is_some());
-        assert!(!store.aliases.contains_key("AAA"), "pinned id must not be aliased away");
+        assert!(
+            !store.aliases.contains_key("AAA"),
+            "pinned id must not be aliased away"
+        );
     }
 
     // Legacy path: a spawn with no pinned id (claude picks its own session id)
@@ -1806,7 +1940,9 @@ mod tests {
                 "seven_day": { "used_percentage": 35.0 }
             }
         });
-        let state = store.ingest_status_line(&raw).expect("should match canonical session");
+        let state = store
+            .ingest_status_line(&raw)
+            .expect("should match canonical session");
         assert_eq!(state.session_id, "canonical-uuid");
         let sl = state.status_line.expect("status_line set");
         assert_eq!(sl.model_display.as_deref(), Some("Opus 4.8 (1M context)"));
@@ -1825,7 +1961,10 @@ mod tests {
         let store = SessionStore::new();
         let raw = serde_json::json!({ "session_id": "nobody", "context_window": { "used_percentage": 5 } });
         assert!(store.ingest_status_line(&raw).is_none());
-        assert!(store.get("nobody").is_none(), "must not create a phantom session");
+        assert!(
+            store.get("nobody").is_none(),
+            "must not create a phantom session"
+        );
     }
 
     // terminate_managed drops the managed prompt channel so the adapter's driver
@@ -1839,10 +1978,16 @@ mod tests {
         store.register_managed_input("m1", tx);
         assert!(store.is_managed("m1"));
 
-        assert!(store.terminate_managed("m1"), "should report the session existed");
+        assert!(
+            store.terminate_managed("m1"),
+            "should report the session existed"
+        );
         assert!(!store.is_managed("m1"), "prompt channel is gone");
         // The driver's receiver now observes the closed channel (loop-break signal).
-        assert!(rx.try_recv().is_err(), "recv resolves to closed, not a value");
+        assert!(
+            rx.try_recv().is_err(),
+            "recv resolves to closed, not a value"
+        );
         // Terminating an unknown / already-gone session is a no-op, not a panic.
         assert!(!store.terminate_managed("m1"));
     }
@@ -1886,7 +2031,10 @@ mod tests {
         let mut obj = json.as_object().unwrap().clone();
         obj.remove("provider");
         let restored: SessionState = serde_json::from_value(Value::Object(obj)).unwrap();
-        assert_eq!(restored.provider, "claude", "absent field defaults to claude");
+        assert_eq!(
+            restored.provider, "claude",
+            "absent field defaults to claude"
+        );
     }
 
     // deregister_managed reclaims the hybrid Term view's byte resources (the bulk
@@ -1901,7 +2049,10 @@ mod tests {
 
         store.deregister_managed("m2");
         assert!(store.wrapper("m2").is_none(), "input wrapper released");
-        assert!(store.subscribe_bytes("m2").is_none(), "byte broadcast released");
+        assert!(
+            store.subscribe_bytes("m2").is_none(),
+            "byte broadcast released"
+        );
         // The lightweight state row is kept (marked Stopped) for history.
         assert_eq!(store.get("m2").map(|s| s.mode), Some(SessionMode::Stopped));
     }
@@ -1943,12 +2094,18 @@ mod tests {
         tokio::spawn(async move {
             let mut idx = 0usize;
             while let Some(msg) = rx.recv().await {
-                let WrapperMessage::Input { bytes } = msg else { continue };
-                let Ok(decoded) = B64.decode(bytes.as_bytes()) else { continue };
+                let WrapperMessage::Input { bytes } = msg else {
+                    continue;
+                };
+                let Ok(decoded) = B64.decode(bytes.as_bytes()) else {
+                    continue;
+                };
                 if decoded == SHIFT_TAB {
                     presses.fetch_add(1, Ordering::SeqCst);
                     idx = (idx + 1) % cycle.len();
-                    store.record_output(sid, &footer(marker_for(cycle[idx]))).await;
+                    store
+                        .record_output(sid, &footer(marker_for(cycle[idx])))
+                        .await;
                 }
             }
         });
@@ -1965,7 +2122,11 @@ mod tests {
 
         let got = store.set_permission_mode("s1", PermissionMode::Plan).await;
         assert_eq!(got, Ok(PermissionMode::Plan));
-        assert_eq!(presses.load(Ordering::SeqCst), 2, "default → acceptEdits → plan");
+        assert_eq!(
+            presses.load(Ordering::SeqCst),
+            2,
+            "default → acceptEdits → plan"
+        );
     }
 
     #[tokio::test(start_paused = true)]
@@ -1973,9 +2134,13 @@ mod tests {
         let store = SessionStore::new();
         let (h, mut rx) = handle_with_rx();
         store.register_wrapper("s1", "/w", h);
-        store.record_output("s1", &footer(marker_for("acceptEdits"))).await;
+        store
+            .record_output("s1", &footer(marker_for("acceptEdits")))
+            .await;
 
-        let got = store.set_permission_mode("s1", PermissionMode::AcceptEdits).await;
+        let got = store
+            .set_permission_mode("s1", PermissionMode::AcceptEdits)
+            .await;
         assert_eq!(got, Ok(PermissionMode::AcceptEdits));
         assert!(rx.try_recv().is_err(), "no keystrokes for a no-op switch");
     }
@@ -1989,10 +2154,19 @@ mod tests {
         // Bypass isn't in this session's cycle.
         let presses = fake_tui(&store, "s1", rx, &["default", "acceptEdits", "plan"]);
 
-        let got = store.set_permission_mode("s1", PermissionMode::BypassPermissions).await;
-        assert_eq!(got, Err(PermissionSwitchError::Unavailable(PermissionMode::Default)),
-            "full loop ends back at the starting mode");
-        assert_eq!(presses.load(Ordering::SeqCst), 3, "one full cycle, then stop");
+        let got = store
+            .set_permission_mode("s1", PermissionMode::BypassPermissions)
+            .await;
+        assert_eq!(
+            got,
+            Err(PermissionSwitchError::Unavailable(PermissionMode::Default)),
+            "full loop ends back at the starting mode"
+        );
+        assert_eq!(
+            presses.load(Ordering::SeqCst),
+            3,
+            "one full cycle, then stop"
+        );
     }
 
     #[tokio::test(start_paused = true)]
@@ -2003,7 +2177,10 @@ mod tests {
         store.record_output("s1", &footer("? for shortcuts")).await;
 
         let got = store.set_permission_mode("s1", PermissionMode::Plan).await;
-        assert_eq!(got, Err(PermissionSwitchError::Unverified(PermissionMode::Default)));
+        assert_eq!(
+            got,
+            Err(PermissionSwitchError::Unverified(PermissionMode::Default))
+        );
     }
 
     #[tokio::test(start_paused = true)]
@@ -2013,7 +2190,9 @@ mod tests {
         store.register_wrapper("s1", "/w", h);
         store.ingest(hook("PermissionRequest", "s1", "/w")); // Approval pause
 
-        let got = store.set_permission_mode("s1", PermissionMode::AcceptEdits).await;
+        let got = store
+            .set_permission_mode("s1", PermissionMode::AcceptEdits)
+            .await;
         assert_eq!(got, Err(PermissionSwitchError::Busy(SessionMode::Approval)));
         assert!(rx.try_recv().is_err(), "no keystrokes near an open dialog");
     }
@@ -2024,13 +2203,19 @@ mod tests {
         store.register_managed("m1", "/tmp", "codex");
         let (tx, _rx) = mpsc::unbounded_channel::<String>();
         store.register_managed_input("m1", tx);
-        let got = store.set_permission_mode("m1", PermissionMode::AcceptEdits).await;
+        let got = store
+            .set_permission_mode("m1", PermissionMode::AcceptEdits)
+            .await;
         assert_eq!(got, Err(PermissionSwitchError::Managed));
     }
 
     // ── managed (codex) live approval-policy switch ──
 
-    fn managed_with_yolo(store: &SessionStore, sid: &str, spawned_yolo: bool) -> Arc<std::sync::atomic::AtomicBool> {
+    fn managed_with_yolo(
+        store: &SessionStore,
+        sid: &str,
+        spawned_yolo: bool,
+    ) -> Arc<std::sync::atomic::AtomicBool> {
         store.register_managed(sid, "/tmp", "codex");
         let (tx, _rx) = mpsc::unbounded_channel::<String>();
         store.register_managed_input(sid, tx);

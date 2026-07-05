@@ -23,10 +23,16 @@ pub struct LibraryItem {
 /// missing directory or unreadable file is just skipped.
 pub fn load() -> Vec<LibraryItem> {
     let mut items = Vec::new();
-    let Some(dirs) = directories::BaseDirs::new() else { return items };
+    let Some(dirs) = directories::BaseDirs::new() else {
+        return items;
+    };
     let home = dirs.home_dir();
 
-    load_md_dir(&dirs.config_dir().join("workspacer").join("library"), "prompt", &mut items);
+    load_md_dir(
+        &dirs.config_dir().join("workspacer").join("library"),
+        "prompt",
+        &mut items,
+    );
     load_skills(&home.join(".claude").join("skills"), &mut items);
     load_agents(&home.join(".claude").join("agents"), &mut items);
 
@@ -36,18 +42,28 @@ pub fn load() -> Vec<LibraryItem> {
 
 /// Flat directory of `*.md` prompt/library files.
 fn load_md_dir(dir: &Path, default_kind: &str, out: &mut Vec<LibraryItem>) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) != Some("md") {
             continue;
         }
-        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
         let (fm, body) = parse_frontmatter(&text);
-        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("untitled");
+        let stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("untitled");
         out.push(LibraryItem {
             title: fm.get("title").cloned().unwrap_or_else(|| stem.to_string()),
-            kind: fm.get("kind").cloned().unwrap_or_else(|| default_kind.to_string()),
+            kind: fm
+                .get("kind")
+                .cloned()
+                .unwrap_or_else(|| default_kind.to_string()),
             description: fm.get("description").cloned(),
             body,
         });
@@ -56,10 +72,14 @@ fn load_md_dir(dir: &Path, default_kind: &str, out: &mut Vec<LibraryItem>) {
 
 /// `~/.claude/skills/<id>/SKILL.md`.
 fn load_skills(dir: &Path, out: &mut Vec<LibraryItem>) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let skill = entry.path().join("SKILL.md");
-        let Ok(text) = std::fs::read_to_string(&skill) else { continue };
+        let Ok(text) = std::fs::read_to_string(&skill) else {
+            continue;
+        };
         let (fm, body) = parse_frontmatter(&text);
         let id = entry.file_name().to_string_lossy().to_string();
         out.push(LibraryItem {
@@ -73,13 +93,17 @@ fn load_skills(dir: &Path, out: &mut Vec<LibraryItem>) {
 
 /// `~/.claude/agents/<id>.md`.
 fn load_agents(dir: &Path, out: &mut Vec<LibraryItem>) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) != Some("md") {
             continue;
         }
-        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
         let (fm, body) = parse_frontmatter(&text);
         let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("agent");
         out.push(LibraryItem {

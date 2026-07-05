@@ -81,7 +81,8 @@ impl Db {
                 last_event_at: r.get(4)?,
             })
         })?;
-        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
     }
 }
 
@@ -128,7 +129,16 @@ fn upsert_session_tx(tx: &rusqlite::Transaction<'_>, event: &HookEvent) -> Resul
             cwd = CASE WHEN sessions.cwd = '' THEN excluded.cwd ELSE sessions.cwd END,
             model = COALESCE(sessions.model, excluded.model),
             branch = COALESCE(sessions.branch, excluded.branch)",
-        params![session_id, name, project, cwd, worktree_path, branch, model, now],
+        params![
+            session_id,
+            name,
+            project,
+            cwd,
+            worktree_path,
+            branch,
+            model,
+            now
+        ],
     )?;
 
     if event.event == "PreToolUse" {
@@ -218,9 +228,11 @@ mod tests {
             .unwrap();
         assert_eq!(session_count, 1);
         let event_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM events WHERE session_id = 's1'", [], |r| {
-                r.get(0)
-            })
+            .query_row(
+                "SELECT COUNT(*) FROM events WHERE session_id = 's1'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(event_count, 1);
     }

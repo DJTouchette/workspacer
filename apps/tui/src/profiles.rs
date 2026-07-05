@@ -50,7 +50,10 @@ pub fn load() -> Vec<Profile> {
 
 fn read_file() -> Option<Vec<Profile>> {
     let dirs = directories::BaseDirs::new()?;
-    let path = dirs.config_dir().join("workspacer").join("claude-profiles.json");
+    let path = dirs
+        .config_dir()
+        .join("workspacer")
+        .join("claude-profiles.json");
     let text = std::fs::read_to_string(path).ok()?;
     let parsed: ProfilesFile = serde_json::from_str(&text).ok()?;
     if parsed.profiles.is_empty() {
@@ -72,7 +75,13 @@ fn read_file() -> Option<Vec<Profile>> {
 /// When `resume` is set, the same id is passed as `--resume <uuid>` instead so
 /// claude reopens that transcript (its conversation) rather than starting blank.
 /// `--resume` and `--session-id` are mutually exclusive, so resume wins.
-pub fn build_argv(profile: &Profile, model: Option<&str>, skip_permissions: bool, session_id: &str, resume: bool) -> Vec<String> {
+pub fn build_argv(
+    profile: &Profile,
+    model: Option<&str>,
+    skip_permissions: bool,
+    session_id: &str,
+    resume: bool,
+) -> Vec<String> {
     let claude = std::env::var("WKS_CLAUDE_BIN").unwrap_or_else(|_| "claude".into());
     let mut argv = vec![claude];
     argv.extend(profile.extra_args.iter().cloned());
@@ -89,7 +98,10 @@ pub fn build_argv(profile: &Profile, model: Option<&str>, skip_permissions: bool
         }
     }
 
-    let already_skips = profile.extra_args.iter().any(|a| a == "--dangerously-skip-permissions");
+    let already_skips = profile
+        .extra_args
+        .iter()
+        .any(|a| a == "--dangerously-skip-permissions");
     if skip_permissions && !already_skips {
         argv.push("--dangerously-skip-permissions".into());
     }

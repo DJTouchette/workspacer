@@ -68,8 +68,18 @@ pub fn derive_stats(agent: &Agent, sl: Option<&StatusLine>) -> DerivedStats {
     let cost = sl
         .and_then(|s| s.cost_usd)
         .filter(|c| *c > 0.0)
-        .or_else(|| agent.usage.as_ref().map(|u| u.cost_usd).filter(|c| *c > 0.0));
-    DerivedStats { model, context_pct, cost }
+        .or_else(|| {
+            agent
+                .usage
+                .as_ref()
+                .map(|u| u.cost_usd)
+                .filter(|c| *c > 0.0)
+        });
+    DerivedStats {
+        model,
+        context_pct,
+        cost,
+    }
 }
 
 /// The mode a Claude session can be in, mirroring claudemon's `SessionMode`.
@@ -190,7 +200,10 @@ impl Agent {
     /// True when the agent needs the user: an approval, a question, or a chat
     /// prompt awaiting the next message (matches the `/remote` semantics).
     pub fn is_waiting(&self) -> bool {
-        matches!(self.mode, AgentMode::Input | AgentMode::Approval | AgentMode::Question)
+        matches!(
+            self.mode,
+            AgentMode::Input | AgentMode::Approval | AgentMode::Question
+        )
     }
 
     /// True when the agent is actively producing a turn.
@@ -290,7 +303,11 @@ pub enum Part {
     Text(String),
     /// A tool call. `result` is the (truncated) tool output once it lands,
     /// prefixed with `error: ` when the tool failed.
-    Tool { name: String, summary: String, result: Option<String> },
+    Tool {
+        name: String,
+        summary: String,
+        result: Option<String>,
+    },
 }
 
 /// Flatten a conversation's turns into searchable lines for content search:
@@ -313,7 +330,11 @@ pub fn search_lines(turns: &[Turn]) -> Vec<String> {
                         }
                     }
                 }
-                Part::Tool { name, summary, result } => {
+                Part::Tool {
+                    name,
+                    summary,
+                    result,
+                } => {
                     let mut s = format!("{name} {summary}");
                     if let Some(r) = result {
                         s.push(' ');
@@ -341,7 +362,11 @@ pub fn search_lines(turns: &[Turn]) -> Vec<String> {
 /// transcript path).
 pub fn turns_from_conversation(v: &Value) -> Vec<Turn> {
     use std::collections::HashMap;
-    let items = v.get("items").and_then(|i| i.as_array()).cloned().unwrap_or_default();
+    let items = v
+        .get("items")
+        .and_then(|i| i.as_array())
+        .cloned()
+        .unwrap_or_default();
 
     let mut turns: Vec<Turn> = Vec::new();
     // tool_use id → (turn index, part index), so a later result can attach.
@@ -350,7 +375,10 @@ pub fn turns_from_conversation(v: &Value) -> Vec<Turn> {
     // Append a part to the open turn, starting a new turn on a role change.
     let push = |turns: &mut Vec<Turn>, role: Role, part: Part| -> (usize, usize) {
         if turns.last().map(|t| t.role) != Some(role) {
-            turns.push(Turn { role, parts: Vec::new() });
+            turns.push(Turn {
+                role,
+                parts: Vec::new(),
+            });
         }
         let ti = turns.len() - 1;
         turns[ti].parts.push(part);
@@ -360,38 +388,78 @@ pub fn turns_from_conversation(v: &Value) -> Vec<Turn> {
     for item in &items {
         match item.get("kind").and_then(|k| k.as_str()).unwrap_or("") {
             "user_message" => {
-                let text = item.get("text").and_then(|t| t.as_str()).unwrap_or("").trim();
+                let text = item
+                    .get("text")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("")
+                    .trim();
                 if text.is_empty() || is_meta_noise(text) {
                     continue;
                 }
                 push(&mut turns, Role::User, Part::Text(text.to_string()));
             }
             "assistant_text" => {
-                let text = item.get("text").and_then(|t| t.as_str()).unwrap_or("").trim();
+                let text = item
+                    .get("text")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("")
+                    .trim();
                 if text.is_empty() {
                     continue;
                 }
                 push(&mut turns, Role::Assistant, Part::Text(text.to_string()));
             }
             "tool_use" => {
-                let name = item.get("name").and_then(|n| n.as_str()).unwrap_or("tool").to_string();
+                let name = item
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("tool")
+                    .to_string();
                 let summary = tool_summary(item.get("input"));
-                let loc = push(&mut turns, Role::Assistant, Part::Tool { name, summary, result: None });
-                if let Some(id) = item.get("id").and_then(|i| i.as_str()).filter(|s| !s.is_empty()) {
+                let loc = push(
+                    &mut turns,
+                    Role::Assistant,
+                    Part::Tool {
+                        name,
+                        summary,
+                        result: None,
+                    },
+                );
+                if let Some(id) = item
+                    .get("id")
+                    .and_then(|i| i.as_str())
+                    .filter(|s| !s.is_empty())
+                {
                     tool_loc.insert(id.to_string(), loc);
                 }
             }
             "tool_result" => {
-                let tid = item.get("tool_use_id").and_then(|t| t.as_str()).unwrap_or("");
-                let content = item.get("content").and_then(|c| c.as_str()).unwrap_or("").trim();
-                let is_error = item.get("is_error").and_then(|e| e.as_bool()).unwrap_or(false);
+                let tid = item
+                    .get("tool_use_id")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("");
+                let content = item
+                    .get("content")
+                    .and_then(|c| c.as_str())
+                    .unwrap_or("")
+                    .trim();
+                let is_error = item
+                    .get("is_error")
+                    .and_then(|e| e.as_bool())
+                    .unwrap_or(false);
                 if content.is_empty() {
                     continue;
                 }
                 if let Some(&(ti, pi)) = tool_loc.get(tid) {
-                    if let Some(Part::Tool { result, .. }) = turns.get_mut(ti).and_then(|t| t.parts.get_mut(pi)) {
+                    if let Some(Part::Tool { result, .. }) =
+                        turns.get_mut(ti).and_then(|t| t.parts.get_mut(pi))
+                    {
                         let snippet = truncate(content, 200);
-                        *result = Some(if is_error { format!("error: {snippet}") } else { snippet });
+                        *result = Some(if is_error {
+                            format!("error: {snippet}")
+                        } else {
+                            snippet
+                        });
                     }
                 }
             }
@@ -421,7 +489,14 @@ fn tool_summary(input: Option<&Value>) -> String {
         return String::new();
     };
     const KEYS: [&str; 8] = [
-        "file_path", "path", "command", "pattern", "query", "url", "prompt", "description",
+        "file_path",
+        "path",
+        "command",
+        "pattern",
+        "query",
+        "url",
+        "prompt",
+        "description",
     ];
     for k in KEYS {
         if let Some(s) = obj.get(k).and_then(|v| v.as_str()) {
@@ -550,7 +625,11 @@ mod tests {
             { "kind": "tool_result", "tool_use_id": "t2", "content": "boom", "is_error": true },
         ]});
         let turns = turns_from_conversation(&v);
-        assert_eq!(turns.len(), 2, "one user turn, one coalesced assistant turn");
+        assert_eq!(
+            turns.len(),
+            2,
+            "one user turn, one coalesced assistant turn"
+        );
         assert_eq!(turns[0].role, Role::User);
         assert_eq!(turns[1].role, Role::Assistant);
         // assistant turn: text + 2 tools (usage skipped, results attached, not parts)
@@ -683,7 +762,11 @@ mod tests {
     #[test]
     fn mode_empty_state_is_unknown() {
         let a: Agent = serde_json::from_value(serde_json::json!({"session_id": "t"})).unwrap();
-        assert_eq!(a.state(), "unknown", "absent mode yields 'unknown' from state()");
+        assert_eq!(
+            a.state(),
+            "unknown",
+            "absent mode yields 'unknown' from state()"
+        );
         assert!(!a.is_waiting());
         assert!(!a.is_busy());
     }
@@ -711,20 +794,22 @@ mod tests {
     #[test]
     fn mode_classification_table() {
         let cases: &[(&str, bool, bool)] = &[
-            ("input",      true,  false),
-            ("approval",   true,  false),
-            ("question",   true,  false),
+            ("input", true, false),
+            ("approval", true, false),
+            ("question", true, false),
             ("responding", false, true),
-            ("stopped",    false, false),
+            ("stopped", false, false),
         ];
         for (mode, want_waiting, want_busy) in cases {
             let a = agent_with_mode(mode);
             assert_eq!(
-                a.is_waiting(), *want_waiting,
+                a.is_waiting(),
+                *want_waiting,
                 "is_waiting mismatch for mode={mode:?}"
             );
             assert_eq!(
-                a.is_busy(), *want_busy,
+                a.is_busy(),
+                *want_busy,
                 "is_busy mismatch for mode={mode:?}"
             );
         }

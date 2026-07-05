@@ -11,7 +11,7 @@ func TestMatches(t *testing.T) {
 		{"agent.spawned", "agent.terminated", false},
 		{"agent.*", "agent.spawned", true},
 		{"agent.*", "agent.state.changed", true},
-		{"agent.*", "agent", false},     // bare namespace is not under "agent."
+		{"agent.*", "agent", false},      // bare namespace is not under "agent."
 		{"agent.*", "agentx.foo", false}, // prefix must respect the dot
 		{"*", "anything.at.all", true},
 		{"git.changed", "agent.spawned", false},

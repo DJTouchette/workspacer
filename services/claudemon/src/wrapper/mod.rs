@@ -26,9 +26,7 @@ pub async fn run_with_daemon(argv: Vec<String>, daemon_ws: &str) -> Result<()> {
     }
 
     let session_id = Uuid::new_v4().to_string();
-    let cwd = std::env::current_dir()?
-        .to_string_lossy()
-        .into_owned();
+    let cwd = std::env::current_dir()?.to_string_lossy().into_owned();
     let (cols, rows) = terminal_size();
 
     tracing::info!(%session_id, %cwd, ?argv, "starting wrapper");
@@ -37,7 +35,12 @@ pub async fn run_with_daemon(argv: Vec<String>, daemon_ws: &str) -> Result<()> {
     let pty = pty::spawn(
         &argv,
         &cwd,
-        PtySize { cols, rows, pixel_width: 0, pixel_height: 0 },
+        PtySize {
+            cols,
+            rows,
+            pixel_width: 0,
+            pixel_height: 0,
+        },
         &std::collections::HashMap::new(),
     )?;
     let pty = Arc::new(pty);
@@ -68,7 +71,8 @@ pub async fn run_with_daemon(argv: Vec<String>, daemon_ws: &str) -> Result<()> {
             cols,
             rows,
         };
-        sink.send(Message::Text(serde_json::to_string(&register)?)).await?;
+        sink.send(Message::Text(serde_json::to_string(&register)?))
+            .await?;
 
         // ws_rx → sink (daemon-bound messages from anywhere in this process)
         let sink = Arc::new(Mutex::new(sink));
@@ -94,7 +98,9 @@ pub async fn run_with_daemon(argv: Vec<String>, daemon_ws: &str) -> Result<()> {
         let pty_for_reader = pty.clone();
         tokio::spawn(async move {
             while let Some(frame) = stream.next().await {
-                let Ok(Message::Text(text)) = frame else { continue };
+                let Ok(Message::Text(text)) = frame else {
+                    continue;
+                };
                 let msg: WrapperMessage = match serde_json::from_str(&text) {
                     Ok(m) => m,
                     Err(err) => {

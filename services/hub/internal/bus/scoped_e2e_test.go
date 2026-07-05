@@ -67,8 +67,8 @@ func TestRegisterRefusesUnspeccedPathCapability(t *testing.T) {
 	_, srv := rpcServerWith(t)
 	srv.RegisterPluginToken("plug-tok", "test.plugin", []capspec.Grant{
 		{Method: "fs.read", FSRoots: []string{t.TempDir()}}, // specced → granted
-		{Method: "fs.append", FSRoots: []string{"/"}},        // no spec → refused
-		{Method: "search.everything"},                        // no spec → refused
+		{Method: "fs.append", FSRoots: []string{"/"}},       // no spec → refused
+		{Method: "search.everything"},                       // no spec → refused
 	}, capspec.EventGrants{})
 
 	pi, ok := srv.lookupPluginToken("plug-tok")

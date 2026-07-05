@@ -138,9 +138,7 @@ impl Highlighter {
         match hl.highlight_line(line, &SYNTAXES) {
             Ok(ranges) => ranges
                 .into_iter()
-                .map(|(style, text)| {
-                    Span::styled(text.to_string(), to_ratatui_style(style, base))
-                })
+                .map(|(style, text)| Span::styled(text.to_string(), to_ratatui_style(style, base)))
                 .collect(),
             Err(_) => vec![Span::styled(line.to_string(), base)],
         }
@@ -148,11 +146,7 @@ impl Highlighter {
 }
 
 fn to_ratatui_style(s: SynStyle, base: Style) -> Style {
-    let mut style = base.fg(Color::Rgb(
-        s.foreground.r,
-        s.foreground.g,
-        s.foreground.b,
-    ));
+    let mut style = base.fg(Color::Rgb(s.foreground.r, s.foreground.g, s.foreground.b));
     if s.font_style.contains(FontStyle::BOLD) {
         style = style.add_modifier(Modifier::BOLD);
     }
