@@ -90,10 +90,10 @@ theme, roughly ordered by severity within each group.
       harness), real-spawn happy paths, `wrapper_ws.rs`, `hook.rs`.
 - [x] Desktop main: `hubCapabilities.ts` and the four claudemon bridges have
       zero tests (this is how the spawn drift went unnoticed).
-- [ ] Renderer: no pane/component tests for `App.tsx`, `ClaudePane.tsx`, or the
+- [x] Renderer: no pane/component tests for `App.tsx`, `ClaudePane.tsx`, or the
       composer/send pipeline.
 - [x] TUI: `app/input.rs` (1350-line key dispatcher) has no test module.
-- [ ] Stale Playwright E2E (`claudePane.test.ts`) posts an old hook shape and
+- [x] Stale Playwright E2E (`claudePane.test.ts`) posts an old hook shape and
       isn't run in CI.
 
 ## CI / tooling / release

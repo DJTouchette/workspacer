@@ -1,0 +1,110 @@
+import { describe, it, expect, vi } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
+import React from 'react';
+import { Composer } from '../../src/components/claude/Composer';
+import type { AttachedFile } from '../../src/components/claude/fileAttachment';
+
+/**
+ * Composer is the send-pipeline's front door: it owns the enabled/disabled
+ * state of the submit control and the Enter-vs-Shift+Enter contract that every
+ * text send flows through. ClaudePane wires its `onSend` to the claudemon
+ * /message path, so these tests pin the exact conditions under which a send
+ * fires.
+ */
+
+function renderComposer(props: Partial<React.ComponentProps<typeof Composer>> = {}) {
+  const onSend = vi.fn();
+  const onChange = vi.fn();
+  const onPickFiles = vi.fn();
+  const onRemoveFile = vi.fn();
+  const attachedFiles: AttachedFile[] = props.attachedFiles ?? [];
+  render(
+    <Composer
+      value={props.value ?? ''}
+      onChange={onChange}
+      onSend={onSend}
+      onPickFiles={onPickFiles}
+      attachedFiles={attachedFiles}
+      onRemoveFile={onRemoveFile}
+      {...props}
+    />,
+  );
+  return { onSend, onChange, onPickFiles, onRemoveFile };
+}
+
+const textarea = () => screen.getByRole('textbox') as HTMLTextAreaElement;
+
+describe('Composer', () => {
+  it('placeholder names the active agent backend', () => {
+    renderComposer({ agentName: 'Codex' });
+    expect(textarea().placeholder).toMatch(/Message Codex/);
+  });
+
+  it('Enter sends when there is text', () => {
+    const { onSend } = renderComposer({ value: 'ship it' });
+    fireEvent.keyDown(textarea(), { key: 'Enter' });
+    expect(onSend).toHaveBeenCalledTimes(1);
+  });
+
+  it('Shift+Enter inserts a newline instead of sending', () => {
+    const { onSend } = renderComposer({ value: 'line one' });
+    fireEvent.keyDown(textarea(), { key: 'Enter', shiftKey: true });
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it('does not treat an IME candidate-commit Enter (keyCode 229) as a send', () => {
+    const { onSend } = renderComposer({ value: '日本語' });
+    // jsdom won't set isComposing/keyCode from the init dict, so drive the
+    // nativeEvent the component reads directly.
+    const ta = textarea();
+    const ev = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true });
+    Object.defineProperty(ev, 'isComposing', { value: true });
+    Object.defineProperty(ev, 'keyCode', { value: 229 });
+    ta.dispatchEvent(ev);
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it('send button is disabled with an empty composer and no attachments', () => {
+    renderComposer({ value: '   ' });
+    expect(screen.getByLabelText('Send message')).toBeDisabled();
+  });
+
+  it('send button enables once there is non-whitespace text', () => {
+    renderComposer({ value: 'hello' });
+    const btn = screen.getByLabelText('Send message');
+    expect(btn).not.toBeDisabled();
+    fireEvent.click(btn);
+  });
+
+  it('clicking the enabled send button fires onSend', () => {
+    const { onSend } = renderComposer({ value: 'hello' });
+    fireEvent.click(screen.getByLabelText('Send message'));
+    expect(onSend).toHaveBeenCalledTimes(1);
+  });
+
+  it('send button enables on attachments alone (no text), and the placeholder flips to the files prompt', () => {
+    const files: AttachedFile[] = [
+      { path: '/repo/a.png', name: 'a.png', label: 'Image' },
+    ];
+    renderComposer({ value: '', attachedFiles: files, agentName: 'Claude' });
+    expect(screen.getByLabelText('Send message')).not.toBeDisabled();
+    expect(textarea().placeholder).toMatch(/What should Claude do with these files/);
+  });
+
+  it('hides the send button when showSendButton is false (Enter still the send path)', () => {
+    renderComposer({ value: 'hi', showSendButton: false });
+    expect(screen.queryByLabelText('Send message')).not.toBeInTheDocument();
+  });
+
+  it('typing routes through onChange', () => {
+    const { onChange } = renderComposer({ value: '' });
+    fireEvent.change(textarea(), { target: { value: 'draft' } });
+    expect(onChange).toHaveBeenCalledWith('draft');
+  });
+
+  it('the attach (+) button opens the file picker', () => {
+    const { onPickFiles } = renderComposer();
+    fireEvent.click(screen.getByTitle('Attach files'));
+    expect(onPickFiles).toHaveBeenCalledTimes(1);
+  });
+});

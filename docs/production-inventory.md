@@ -75,8 +75,9 @@ built (see §2/§3).
 | Pre-existing renderer typecheck errors (KeybindingsConfig, createTerminal decl) | Fixed in passing | ✅ done |
 
 **Still open (as of the 2026-07-05 refresh):** macOS/Linux Chrome cookie import;
-tray/overlay icon; git merge / `review_diff` next-action wiring; stale E2E
-`claudePane.test.ts`; untested main-process services. (The experimental SQLite
+tray/overlay icon; git merge / `review_diff` next-action wiring; untested
+main-process services. (The stale E2E `claudePane.test.ts` was retired — see
+below.) (The experimental SQLite
 tables `pending_decisions` / `asks` / `events_fts` that were left in place with
 the parked stack have since been removed — see the classifier cull in §0 and §3.)
 
@@ -175,7 +176,7 @@ The dead renderer files flagged in the original compile have all been deleted:
 | Tray icon | — | **NOT BUILT** | |
 | Overlay icon / dock badge | — | **NOT BUILT** (docs confirm) | |
 | Crash recovery / auto-save journal | — | **NOT BUILT** — only `before-quit` signal | |
-| E2E `claudePane.test.ts` | `tests/e2e/claudePane.test.ts` | **STALE** — POSTs to old port-7890 hook shape | |
+| E2E `claudePane.test.ts` | (removed) | **RETIRED** — premise obsolete: 7890 is now claudemon's hook ingress (not the desktop's), and the hook→GUI path round-trips through a claudemon the test never starts. A runnable replacement would need claudemon + a native folder-dialog stub. Its intended coverage now lives in renderer component tests (`tests/components/ClaudePane.test.tsx` send/approval/question seams, `composerControls`/`composer`/`needsYou`) + claudemon's own hook tests + `claudemonHookBridge.test.ts`. | |
 
 > Unit tests: good for store/resolver/config/modelUsage/sse. Missing for
 > agentNotifier, chromeCookieImport, daemon supervisors, hubClient,
@@ -298,8 +299,10 @@ These are the genuine keep/drop / finish/cut calls (not obvious cleanups):
 7. **Git review loop.** Read/stage/commit/push work; `merge` + `review_diff`
    next-action wiring is open. Finish the loop or leave manual?
 
-8. **Stale/missing tests.** E2E `claudePane.test.ts` is architecturally stale;
-   many main-process services untested. Fix before calling it production-ready.
+8. **Stale/missing tests.** E2E `claudePane.test.ts` was architecturally stale
+   and has been retired (see the capabilities table); its coverage moved to
+   renderer component tests. Many main-process services remain untested — address
+   before calling it production-ready.
 
 9. **Example plugins.** Keep all four as shipped examples, or trim
    (clock-plugin's emit is fake; rivet-bridge needs an external binary)?
