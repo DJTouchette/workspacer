@@ -6,7 +6,13 @@ import { AgentCard } from './AgentCard';
 import { StatusGlyph } from './statusGlyph';
 import { shortModelLabel } from '../lib/modelLabel';
 import { agentAttentionScore } from '../lib/attentionRouter';
-import { deriveSessionStats, fmtUSD, ctxColor, isSnapshotStale } from '../lib/sessionStats';
+import {
+  deriveSessionStats,
+  planProgress,
+  fmtUSD,
+  ctxColor,
+  isSnapshotStale,
+} from '../lib/sessionStats';
 import { useConfig } from '../hooks/useConfig';
 import { DEFAULT_SHORTCUTS } from '../hooks/configDefaults';
 import { eventMatchesCombo, digitFromRangeEvent, formatBinding } from '../lib/shortcuts';
@@ -548,6 +554,7 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
                 <th style={lthNum}>
                   <SortBtn k="cost" label="Cost" />
                 </th>
+                <th style={lthNum}>Plan</th>
                 <th style={lthNum}>
                   <SortBtn k="act" label="Active" />
                 </th>
@@ -558,6 +565,7 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
                 const snap = agent.sessionId ? snapshotBySession[agent.sessionId] : undefined;
                 const vis = listStateVisual(agent.sessionId ? snap?.ambientState : undefined);
                 const stats = deriveSessionStats(snap);
+                const plan = planProgress(snap?.plan);
                 const sel = selectedId === agent.id;
                 return (
                   <tr
@@ -650,6 +658,24 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
                     </td>
                     <td style={{ ...ltdNum, color: 'var(--wks-accent)' }}>
                       {stats.costUSD !== undefined ? fmtUSD(stats.costUSD) : '—'}
+                    </td>
+                    <td style={ltdNum}>
+                      {plan ? (
+                        <span
+                          title={plan.active?.activeForm ?? plan.active?.content ?? 'Plan progress'}
+                          style={{
+                            color:
+                              plan.done >= plan.total
+                                ? 'var(--wks-success, #3fb950)'
+                                : 'var(--wks-text-secondary)',
+                            fontWeight: 600,
+                          }}
+                        >
+                          {plan.done}/{plan.total}
+                        </span>
+                      ) : (
+                        '—'
+                      )}
                     </td>
                     {isSnapshotStale(snap?.ambientState, snap?.lastActivity, now) ? (
                       <td

@@ -91,3 +91,116 @@ describe('applyConversationItems — interrupt detection', () => {
     expect(s.ambientState).toBe('streaming');
   });
 });
+
+describe('applyConversationItems — plan', () => {
+  it('a plan item sets session.plan (full replacement)', () => {
+    const s = mkSession();
+    applyConversationItems(
+      s,
+      [
+        {
+          kind: 'plan',
+          steps: [
+            { content: 'Write types', status: 'completed' },
+            { content: 'Wire the UI', status: 'in_progress', activeForm: 'Wiring the UI' },
+            { content: 'Add tests', status: 'pending' },
+          ],
+          updatedAt: 123,
+        },
+      ],
+      noUsage,
+    );
+    expect(s.plan?.steps).toHaveLength(3);
+    expect(s.plan?.steps[1]).toEqual({
+      content: 'Wire the UI',
+      status: 'in_progress',
+      activeForm: 'Wiring the UI',
+    });
+    expect(s.plan?.updatedAt).toBe(123);
+  });
+
+  it('tolerates the `type` discriminant and snake_case active_form / updated_at', () => {
+    const s = mkSession();
+    applyConversationItems(
+      s,
+      [
+        {
+          type: 'plan',
+          steps: [{ content: 'Do it', status: 'in_progress', active_form: 'Doing it' }],
+          updated_at: 42,
+        } as never,
+      ],
+      noUsage,
+    );
+    expect(s.plan?.steps[0].activeForm).toBe('Doing it');
+    expect(s.plan?.updatedAt).toBe(42);
+  });
+
+  it('a TodoWrite tool_use call sets session.plan as a fallback', () => {
+    const s = mkSession();
+    applyConversationItems(
+      s,
+      [
+        {
+          kind: 'tool_use',
+          id: 'tu_todo',
+          name: 'TodoWrite',
+          input: {
+            todos: [
+              { content: 'Step one', status: 'completed', activeForm: 'Doing step one' },
+              { content: 'Step two', status: 'pending', activeForm: 'Doing step two' },
+            ],
+          },
+        },
+      ],
+      noUsage,
+    );
+    expect(s.plan?.steps).toHaveLength(2);
+    expect(s.plan?.steps[0].status).toBe('completed');
+  });
+
+  it('a later plan item replaces an earlier one (last-write-wins)', () => {
+    const s = mkSession();
+    applyConversationItems(
+      s,
+      [{ kind: 'plan', steps: [{ content: 'Only step', status: 'pending' }], updatedAt: 1 }],
+      noUsage,
+    );
+    applyConversationItems(
+      s,
+      [
+        {
+          kind: 'plan',
+          steps: [
+            { content: 'New A', status: 'completed' },
+            { content: 'New B', status: 'in_progress' },
+          ],
+          updatedAt: 2,
+        },
+      ],
+      noUsage,
+    );
+    expect(s.plan?.steps).toHaveLength(2);
+    expect(s.plan?.steps[0].content).toBe('New A');
+    expect(s.plan?.updatedAt).toBe(2);
+  });
+
+  it('drops empty-content rows and defaults unknown status to pending', () => {
+    const s = mkSession();
+    applyConversationItems(
+      s,
+      [
+        {
+          kind: 'plan',
+          steps: [
+            { content: '', status: 'completed' },
+            { content: 'Real', status: 'bogus' as never },
+          ],
+        },
+      ],
+      noUsage,
+    );
+    expect(s.plan?.steps).toHaveLength(1);
+    expect(s.plan?.steps[0]).toEqual({ content: 'Real', status: 'pending' });
+  });
+});

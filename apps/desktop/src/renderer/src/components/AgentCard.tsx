@@ -13,6 +13,7 @@ import {
   fmtUSD,
   ctxColor,
   isSnapshotStale,
+  planProgress,
   summarizeFileChanges,
 } from '../lib/sessionStats';
 import { useGitBranch } from '../hooks/useGitBranch';
@@ -120,6 +121,7 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen }) => {
     () => summarizeFileChanges(snapshot?.fileChanges ?? []),
     [snapshot?.fileChanges],
   );
+  const plan = useMemo(() => planProgress(snapshot?.plan), [snapshot?.plan]);
 
   const [draft, setDraft] = useState('');
   const submitDraft = () => {
@@ -283,6 +285,7 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen }) => {
           active={working ? activeTool : undefined}
           recent={recentTools}
           fileStats={fileStats}
+          plan={plan}
           compact={hasAction}
         />
       </div>

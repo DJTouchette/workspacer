@@ -80,6 +80,20 @@ export interface PendingQuestion {
   options: PendingQuestionOption[];
 }
 
+/** One step of an agent's plan (Claude TodoWrite checklist, Codex plan). */
+export interface PlanStep {
+  content: string;
+  status: 'pending' | 'in_progress' | 'completed';
+  /** Present-tense "what I'm doing now" line for the in_progress step. */
+  activeForm?: string;
+}
+
+/** The agent's current plan — last-write-wins full replacement. */
+export interface SessionPlan {
+  steps: PlanStep[];
+  updatedAt: number | string;
+}
+
 export interface SubagentInfo {
   id: string;
   type: string;
@@ -163,6 +177,8 @@ export interface ClaudeSessionSnapshot {
   pendingQuestions: PendingQuestion[] | null;
   subagents: SubagentInfo[];
   workflows: WorkflowRunInfo[];
+  /** Current plan/checklist (last-write-wins full replacement). */
+  plan?: SessionPlan;
 
   ambientState: SessionAmbientState;
   lastActivity: number;

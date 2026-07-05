@@ -1,6 +1,7 @@
 import type {
   ClaudeSessionSnapshot,
   FileChange,
+  SessionPlan,
   SessionStatusLine,
   SessionUsage,
 } from '../types/claudeSession';
@@ -116,6 +117,26 @@ export function summarizeFileChanges(fileChanges: FileChange[]): {
     removed += est.removed;
   }
   return { files: edited.size, added, removed };
+}
+
+export interface PlanProgress {
+  done: number;
+  total: number;
+  /** The step currently in_progress, if any — its activeForm is the live line. */
+  active: SessionPlan['steps'][number] | undefined;
+}
+
+/**
+ * Collapse a plan into the counts every plan surface needs: completed/total and
+ * the in_progress step (whose activeForm is the "doing now" line). Returns null
+ * when there's no plan to show, so callers can just skip rendering.
+ */
+export function planProgress(plan: SessionPlan | undefined): PlanProgress | null {
+  const steps = plan?.steps;
+  if (!steps || steps.length === 0) return null;
+  const done = steps.filter((s) => s.status === 'completed').length;
+  const active = steps.find((s) => s.status === 'in_progress');
+  return { done, total: steps.length, active };
 }
 
 export interface DerivedSessionStats {

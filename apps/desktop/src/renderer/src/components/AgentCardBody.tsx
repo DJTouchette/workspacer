@@ -10,6 +10,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import type { ToolCall } from '../types/claudeSession';
+import type { PlanProgress } from '../lib/sessionStats';
 import { formatToolSummary, ensureKeyframes, claudeColors } from './claude-shared';
 import { Markdown } from './markdown';
 
@@ -131,6 +132,8 @@ export interface AgentCardBodyProps {
   active?: ToolCall;
   recent: ToolCall[];
   fileStats: { files: number; added: number; removed: number };
+  /** Plan progress (null when the agent has no plan) — renders an N/M chip. */
+  plan?: PlanProgress | null;
   /** True when an action zone (approval/question) is showing — tighter body. */
   compact: boolean;
 }
@@ -141,6 +144,7 @@ const AgentCardBodyInner: React.FC<AgentCardBodyProps> = ({
   active,
   recent,
   fileStats,
+  plan,
   compact,
 }) => {
   useEffect(() => {
@@ -178,7 +182,7 @@ const AgentCardBodyInner: React.FC<AgentCardBodyProps> = ({
           <span style={{ color: 'var(--wks-text-faint)' }}>{fallback}</span>
         )}
       </div>
-      {fileStats.files > 0 && (
+      {(fileStats.files > 0 || plan) && (
         <div
           style={{
             padding: '6px 14px 0',
@@ -187,17 +191,39 @@ const AgentCardBodyInner: React.FC<AgentCardBodyProps> = ({
             fontVariantNumeric: 'tabular-nums',
             color: 'var(--wks-text-faint)',
             display: 'flex',
-            gap: 6,
+            alignItems: 'center',
+            gap: 8,
           }}
         >
-          <span>
-            ~ {fileStats.files} file{fileStats.files !== 1 ? 's' : ''}
-          </span>
-          {fileStats.added > 0 && (
-            <span style={{ color: 'var(--wks-success, #3fb950)' }}>+{fileStats.added}</span>
+          {plan && (
+            <span
+              title={plan.active?.activeForm ?? plan.active?.content ?? 'Plan progress'}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 4,
+                color:
+                  plan.done >= plan.total
+                    ? 'var(--wks-success, #3fb950)'
+                    : 'var(--wks-accent, #4a9eff)',
+              }}
+            >
+              <span style={{ color: 'var(--wks-text-faint)' }}>plan</span>
+              {plan.done}/{plan.total}
+            </span>
           )}
-          {fileStats.removed > 0 && (
-            <span style={{ color: 'var(--wks-error, #f87171)' }}>−{fileStats.removed}</span>
+          {fileStats.files > 0 && (
+            <span style={{ display: 'inline-flex', gap: 6 }}>
+              <span>
+                ~ {fileStats.files} file{fileStats.files !== 1 ? 's' : ''}
+              </span>
+              {fileStats.added > 0 && (
+                <span style={{ color: 'var(--wks-success, #3fb950)' }}>+{fileStats.added}</span>
+              )}
+              {fileStats.removed > 0 && (
+                <span style={{ color: 'var(--wks-error, #f87171)' }}>−{fileStats.removed}</span>
+              )}
+            </span>
           )}
         </div>
       )}
@@ -216,8 +242,15 @@ function areEqual(prev: AgentCardBodyProps, next: AgentCardBodyProps): boolean {
     prev.recent.map(toolKey).join() === next.recent.map(toolKey).join() &&
     prev.fileStats.files === next.fileStats.files &&
     prev.fileStats.added === next.fileStats.added &&
-    prev.fileStats.removed === next.fileStats.removed
+    prev.fileStats.removed === next.fileStats.removed &&
+    planKey(prev.plan) === planKey(next.plan)
   );
+}
+
+/** Stable identity for the plan prop: done/total + the active step's text. */
+function planKey(p?: PlanProgress | null): string {
+  if (!p) return '';
+  return `${p.done}/${p.total}:${p.active?.content ?? ''}`;
 }
 
 export const AgentCardBody = React.memo(AgentCardBodyInner, areEqual);

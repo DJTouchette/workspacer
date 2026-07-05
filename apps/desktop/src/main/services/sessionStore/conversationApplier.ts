@@ -1,4 +1,4 @@
-import type { ClaudeSessionState, ToolCall } from '../claudeSessionStore';
+import type { ClaudeSessionState, PlanStep, ToolCall } from '../claudeSessionStore';
 import { applyStopEvent } from './hookEventRouter';
 
 // ── Conversation delta application ───────────────────────────────────────────
@@ -8,9 +8,19 @@ import { applyStopEvent } from './hookEventRouter';
 // items into the session state — the successor to the old transcriptParser
 // (which re-read the whole JSONL on every hook event in this process).
 
+/** Wire shape of one plan step. Tolerant of both activeForm / active_form. */
+interface PlanStepWire {
+  content?: string;
+  status?: string;
+  activeForm?: string;
+  active_form?: string;
+}
+
 /** Wire shape of one item from claudemon's ConversationItem enum. */
 export interface ConversationItemWire {
-  kind: 'user_message' | 'assistant_text' | 'tool_use' | 'tool_result' | 'usage';
+  kind: 'user_message' | 'assistant_text' | 'tool_use' | 'tool_result' | 'usage' | 'plan';
+  /** Some daemons/items tag the discriminant as `type` rather than `kind`. */
+  type?: string;
   // user_message / assistant_text
   text?: string;
   // tool_use
@@ -25,8 +35,27 @@ export interface ConversationItemWire {
   model?: string;
   usage?: any;
   message_id?: string;
+  // plan (tolerant of updatedAt / updated_at)
+  steps?: PlanStepWire[];
+  updatedAt?: number | string;
+  updated_at?: number | string;
   // all
   timestamp?: string;
+}
+
+/** Normalize wire plan steps into the stored shape, dropping empty rows and
+ *  coalescing the two casings the daemon may send for the "active form" line. */
+function normalizePlanSteps(raw: PlanStepWire[] | undefined): PlanStep[] {
+  if (!Array.isArray(raw)) return [];
+  const steps: PlanStep[] = [];
+  for (const s of raw) {
+    const content = typeof s?.content === 'string' ? s.content : '';
+    if (!content) continue;
+    const status = s.status === 'in_progress' || s.status === 'completed' ? s.status : 'pending';
+    const activeForm = s.activeForm ?? s.active_form;
+    steps.push(activeForm ? { content, status, activeForm } : { content, status });
+  }
+  return steps;
 }
 
 /** Wire shape of one frame from `/conversation/stream`. */
@@ -92,7 +121,9 @@ export function applyConversationItems(
   applyUsageFn: ApplyUsageFn,
 ): void {
   for (const item of items) {
-    switch (item.kind) {
+    // The daemon tags the discriminant as `kind`, but tolerate `type` too.
+    const kind = item.kind ?? item.type;
+    switch (kind) {
       case 'user_message': {
         const text = item.text ?? '';
         if (text && !isDuplicateMessage(session, 'user', text)) {
@@ -145,6 +176,24 @@ export function applyConversationItems(
           timestamp: ts,
           toolCalls: [tc],
         });
+        // Fallback for daemons that don't yet emit a dedicated `plan` item:
+        // Claude's TodoWrite call carries the whole checklist in input.todos.
+        // Newest write wins either way (a later `plan` item or TodoWrite call
+        // replaces this), so both paths can coexist without conflict.
+        if (item.name === 'TodoWrite' && Array.isArray(item.input?.todos)) {
+          const steps = normalizePlanSteps(item.input.todos as PlanStepWire[]);
+          if (steps.length > 0) session.plan = { steps, updatedAt: ts };
+        }
+        break;
+      }
+
+      case 'plan': {
+        // Last-write-wins full replacement (may re-arrive on resync).
+        const steps = normalizePlanSteps(item.steps);
+        session.plan = {
+          steps,
+          updatedAt: item.updatedAt ?? item.updated_at ?? tsOf(item),
+        };
         break;
       }
 

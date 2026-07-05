@@ -1,13 +1,15 @@
-import React, { useMemo, useState } from 'react';
-import type { ClaudeSessionSnapshot, FileChange } from '../../types/claudeSession';
-import { claudeColors as colors } from '../claude-shared';
+import React, { useEffect, useMemo, useState } from 'react';
+import { CheckCircle2, Circle, Loader2 } from 'lucide-react';
+import type { ClaudeSessionSnapshot, FileChange, PlanStep } from '../../types/claudeSession';
+import { claudeColors as colors, ensureKeyframes } from '../claude-shared';
 import { WorkflowRunCard } from './WorkflowRunCard';
 import { SubagentRow } from './SubagentRow';
 import { fmtTokens } from './agentUtils';
+import { planProgress } from '../../lib/sessionStats';
 import { requestReviewFile } from '../../lib/reviewBus';
 import { requestAgentWatch } from '../../lib/watchBus';
 
-type RailTab = 'files' | 'workflows' | 'agents' | 'usage';
+type RailTab = 'files' | 'plan' | 'workflows' | 'agents' | 'usage';
 
 /** One row per touched path: how many times and what touched it last. */
 interface FileAgg {
@@ -95,6 +97,80 @@ const emptyStateStyle: React.CSSProperties = {
   fontSize: '0.78rem',
 };
 
+/** Per-step glyph: check = completed, spinner = in_progress, hollow = pending. */
+const StepGlyph: React.FC<{ status: PlanStep['status'] }> = ({ status }) => {
+  if (status === 'completed')
+    return <CheckCircle2 size={15} strokeWidth={2.2} style={{ color: colors.success }} />;
+  if (status === 'in_progress')
+    return (
+      <Loader2
+        size={15}
+        strokeWidth={2.2}
+        style={{ color: colors.accent, animation: 'claudeSpinner 1s linear infinite' }}
+      />
+    );
+  return <Circle size={15} strokeWidth={2} style={{ color: colors.mutedDim }} />;
+};
+
+/** The Plan tab body: one row per step with a status glyph. The in_progress
+ *  step surfaces its activeForm ("doing now") line; completed steps are muted. */
+const PlanChecklist: React.FC<{ steps: PlanStep[] }> = ({ steps }) => {
+  useEffect(() => {
+    ensureKeyframes();
+  }, []);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+      {steps.map((step, i) => {
+        const active = step.status === 'in_progress';
+        const done = step.status === 'completed';
+        return (
+          <div
+            key={i}
+            style={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: 8,
+              padding: '5px 4px',
+              margin: '0 -4px',
+              borderRadius: 4,
+              backgroundColor: active ? 'var(--wks-accent-bg)' : 'transparent',
+            }}
+          >
+            <span style={{ flexShrink: 0, marginTop: 1, lineHeight: 0 }}>
+              <StepGlyph status={step.status} />
+            </span>
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div
+                style={{
+                  fontSize: '0.8rem',
+                  lineHeight: 1.4,
+                  color: done ? colors.mutedDim : active ? colors.textBright : colors.text,
+                  textDecoration: done ? 'line-through' : 'none',
+                  fontWeight: active ? 600 : 400,
+                }}
+              >
+                {step.content}
+              </div>
+              {active && step.activeForm && (
+                <div
+                  style={{
+                    fontSize: '0.72rem',
+                    lineHeight: 1.4,
+                    color: colors.accent,
+                    marginTop: 2,
+                  }}
+                >
+                  {step.activeForm}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
 /**
  * Right-hand inspector for the Claude pane GUI view: a persistent home for
  * the session's files, agents, and usage — so workflow/agent state doesn't
@@ -107,13 +183,23 @@ export const InspectorRail: React.FC<{
   const subagents = session?.subagents ?? [];
   const workflows = session?.workflows ?? [];
   const fileChanges = session?.fileChanges ?? [];
+  const plan = session?.plan;
   const liveWorkflows = workflows.filter((w) => w.status === 'running').length;
   const liveSubagents = subagents.filter((s) => s.status === 'running').length;
+  const planStats = planProgress(plan);
 
   // Open on whatever's actively happening: a running workflow wins, then a
-  // running subagent, else the files list.
+  // running subagent. A plan that's actively in progress opens next — but only
+  // when no diffs are competing for attention, so we don't steal from Files on
+  // a session that's already changing code. Else the files list.
   const [tab, setTab] = useState<RailTab>(
-    liveWorkflows > 0 ? 'workflows' : liveSubagents > 0 ? 'agents' : 'files',
+    liveWorkflows > 0
+      ? 'workflows'
+      : liveSubagents > 0
+        ? 'agents'
+        : planStats?.active && fileChanges.length === 0
+          ? 'plan'
+          : 'files',
   );
   const files = useMemo(() => aggregateFiles(fileChanges), [fileChanges]);
 
@@ -152,8 +238,13 @@ export const InspectorRail: React.FC<{
   const cost = sl?.costUSD ?? usage?.costUSD;
   const model = sl?.modelDisplay ?? usage?.model ?? undefined;
 
-  const tabs: { id: RailTab; label: string; badge?: number }[] = [
+  const tabs: { id: RailTab; label: string; badge?: number | string }[] = [
     { id: 'files', label: 'Files', badge: files.length || undefined },
+    {
+      id: 'plan',
+      label: 'Plan',
+      badge: planStats ? `${planStats.done}/${planStats.total}` : undefined,
+    },
     { id: 'workflows', label: 'Flows', badge: workflows.length || undefined },
     { id: 'agents', label: 'Agents', badge: subagents.length || undefined },
     { id: 'usage', label: 'Usage' },
@@ -307,6 +398,27 @@ export const InspectorRail: React.FC<{
                 )}
               </div>
             ))
+          ))}
+
+        {tab === 'plan' &&
+          (!planStats ? (
+            <div style={emptyStateStyle}>No plan yet</div>
+          ) : (
+            <>
+              <div
+                style={{
+                  fontSize: '0.68rem',
+                  color: planStats.done === planStats.total ? colors.success : colors.accent,
+                  fontWeight: 600,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.05em',
+                  marginBottom: 8,
+                }}
+              >
+                {planStats.done}/{planStats.total} done
+              </div>
+              <PlanChecklist steps={plan!.steps} />
+            </>
           ))}
 
         {tab === 'workflows' &&

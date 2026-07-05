@@ -2,6 +2,7 @@ import React from 'react';
 import type { ClaudeSessionSnapshot } from '../../types/claudeSession';
 import {
   deriveSessionStats,
+  planProgress,
   fmtTokens,
   fmtUSD,
   fmtResetIn,
@@ -58,6 +59,29 @@ const CtxBar: React.FC<{ pct: number }> = ({ pct }) => {
           key={i}
           style={{
             width: 5,
+            height: 13,
+            borderRadius: 1,
+            background: i < filled ? color : 'var(--wks-bg-elevated, #444)',
+          }}
+        />
+      ))}
+    </span>
+  );
+};
+
+/** Compact plan gauge — one tick per step (capped), filled by completion. All
+ *  done tints green, otherwise accent. Mirrors CtxBar's segmented-ticks look. */
+const PlanTicks: React.FC<{ done: number; total: number }> = ({ done, total }) => {
+  const ticks = Math.min(total, 10);
+  const filled = Math.round((done / total) * ticks);
+  const color = done >= total ? 'var(--wks-success, #3fb950)' : 'var(--wks-accent-text)';
+  return (
+    <span style={{ display: 'inline-flex', gap: 2, alignItems: 'center' }}>
+      {Array.from({ length: ticks }, (_, i) => (
+        <span
+          key={i}
+          style={{
+            width: 4,
             height: 13,
             borderRadius: 1,
             background: i < filled ? color : 'var(--wks-bg-elevated, #444)',
@@ -125,6 +149,11 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = f
     ? (MODE_DISPLAY[modeId] ?? { label: modeId, color: 'var(--wks-text-secondary)' })
     : undefined;
 
+  // Plan progress: `plan 3/7`, ticks + the current step's activeForm as tooltip.
+  // Hidden when there's no plan (simplest rule — a finished plan still reads as
+  // a useful "all done" until the next turn clears it).
+  const plan = planProgress(snapshot?.plan);
+
   // (The live-subagent count lives in the ClaudePane toolbar alongside this
   // bar — kept there so the number isn't shown twice.)
 
@@ -132,6 +161,7 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = f
   const hasAny =
     (showModel && model) ||
     mode ||
+    plan ||
     ctxPct !== undefined ||
     tokens !== undefined ||
     cost !== undefined;
@@ -175,6 +205,26 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = f
             style={{ color: mode.color, fontWeight: 600 }}
           >
             {mode.label}
+          </span>
+        </>
+      )}
+      {plan && (
+        <>
+          <Sep />
+          <span
+            title={plan.active?.activeForm ?? plan.active?.content ?? 'Plan progress'}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 5,
+              color:
+                plan.done >= plan.total ? 'var(--wks-success, #3fb950)' : 'var(--wks-accent-text)',
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            <span style={{ color: 'var(--wks-text-muted)' }}>plan</span>
+            <PlanTicks done={plan.done} total={plan.total} />
+            {plan.done}/{plan.total}
           </span>
         </>
       )}
