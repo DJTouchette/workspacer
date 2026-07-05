@@ -17,9 +17,12 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -35,7 +38,18 @@ func main() {
 	addr := flag.String("addr", "127.0.0.1:7897", "HTTP listen address for the MCP server")
 	hubURL := flag.String("hub", "ws://127.0.0.1:7895/bus", "workspacer hub bus WebSocket URL")
 	token := flag.String("token", os.Getenv("HUB_TOKEN"), "hub bus token (when the hub requires auth)")
+	// mcpToken guards the facade's OWN inbound HTTP surface (/mcp, /sse) — distinct
+	// from -token, which authenticates the facade's OUTBOUND connection to the hub
+	// bus. Env mirrors the hub's HUB_TOKEN convention (flag/env, no token file).
+	mcpToken := flag.String("mcp-token", os.Getenv("WKS_MCP_TOKEN"), "bearer token required on /mcp and /sse (empty = no auth; REQUIRED to bind a non-loopback -addr)")
 	flag.Parse()
+
+	// Fail closed: a non-loopback bind with no token lets anyone who reaches the
+	// port drive the whole agent fleet. Loopback-with-no-token stays open (the
+	// default the desktop relies on).
+	if err := checkBindPolicy(*addr, *mcpToken); err != nil {
+		log.Fatalf("mcp: %v", err)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -49,18 +63,10 @@ func main() {
 	go client.Run(ctx)
 
 	server := newServer(client)
-	getServer := func(*http.Request) *mcp.Server { return server }
-
-	mux := http.NewServeMux()
-	mux.Handle("/mcp", mcp.NewStreamableHTTPHandler(getServer, nil))
-	mux.Handle("/sse", mcp.NewSSEHandler(getServer, nil))
-	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"status":       "ok",
-			"hubConnected": client.Ready(),
-		})
-	})
+	if *mcpToken != "" {
+		log.Printf("mcp auth enabled (bearer token required on /mcp and /sse)")
+	}
+	mux := newMux(server, client, *mcpToken)
 
 	httpSrv := &http.Server{Addr: *addr, Handler: mux}
 	go func() {
@@ -77,6 +83,73 @@ func main() {
 	shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = httpSrv.Shutdown(shutCtx)
+}
+
+// newMux builds the facade's HTTP router. /mcp and /sse are wrapped in bearer
+// auth when mcpToken is set; /health stays open (unauthenticated) so liveness
+// probes work without a secret.
+func newMux(server *mcp.Server, client *busclient.Client, mcpToken string) *http.ServeMux {
+	getServer := func(*http.Request) *mcp.Server { return server }
+
+	mux := http.NewServeMux()
+	mux.Handle("/mcp", requireBearer(mcpToken, mcp.NewStreamableHTTPHandler(getServer, nil)))
+	mux.Handle("/sse", requireBearer(mcpToken, mcp.NewSSEHandler(getServer, nil)))
+	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status":       "ok",
+			"hubConnected": client.Ready(),
+		})
+	})
+	return mux
+}
+
+// requireBearer wraps h so it demands `Authorization: Bearer <token>`. When
+// token is empty it is a passthrough — the loopback-only default where the OS
+// (127.0.0.1) is the boundary, mirroring the hub bus's empty-token behavior.
+// The compare is constant-time to avoid leaking the token via timing.
+func requireBearer(token string, h http.Handler) http.Handler {
+	if token == "" {
+		return h
+	}
+	want := []byte("Bearer " + token)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got := []byte(r.Header.Get("Authorization"))
+		if subtle.ConstantTimeCompare(got, want) != 1 {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
+}
+
+// checkBindPolicy fails closed when the facade would expose its fleet-driving
+// surface beyond the local host without a token. Loopback binds may stay open
+// (the desktop default); anything reachable from the network must carry a token.
+func checkBindPolicy(addr, token string) error {
+	if token == "" && !isLoopbackAddr(addr) {
+		return fmt.Errorf("refusing to bind non-loopback address %q without an auth token: set WKS_MCP_TOKEN or -mcp-token (anyone reaching this port can drive the whole agent fleet)", addr)
+	}
+	return nil
+}
+
+// isLoopbackAddr reports whether a listen address binds only the loopback
+// interface. A bare port (":7897"), 0.0.0.0, or :: all reach the network and
+// are treated as non-loopback; an unresolved hostname is likewise treated as
+// non-loopback to fail safe.
+func isLoopbackAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr // no port; treat the whole thing as the host
+	}
+	if host == "" {
+		return false // ":7897" binds every interface
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // newServer wires every hub capability to an MCP tool. Names are snake_case

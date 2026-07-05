@@ -20,15 +20,15 @@ theme, roughly ordered by severity within each group.
 - [ ] **Sidecar sandbox confines writes only** — reads + network wide open
       (`services/hub/internal/sandbox/sandbox.go:7-16`); Windows sidecars run
       fully unconfined under `best-effort` mode.
-- [ ] **MCP facade endpoints unauthenticated** (`services/hub/cmd/mcp/main.go:35,65`)
+- [x] **MCP facade endpoints unauthenticated** (`services/hub/cmd/mcp/main.go:35,65`)
       — safe only because of the loopback default binding; `-addr` can bind
       anywhere with nothing gating callers.
 - [ ] **Remote share is single-secret / full-host** — no TLS, token-in-URL,
       no per-client privilege separation, no auth rate-limiting
       (acknowledged in `docs/remote-sharing-security.md §5`).
-- [ ] Plugin `install` build command runs unconfined
-      (`services/hub/internal/plugin/install.go:294-305`); tarball extraction
-      bounded only by a 60s timeout.
+- [ ] Plugin `install` build command still runs unconfined (sandboxing
+      deferred — see the SECURITY note on runInstall). Tarball extraction is
+      now bounded (512 MiB total / 128 MiB per file / 10k entries).
 
 ## Correctness / robustness
 

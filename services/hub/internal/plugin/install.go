@@ -291,6 +291,15 @@ func installFromTarball(pluginsDir, tarballURL, fallbackName string, progress fu
 	return final, nil
 }
 
+// runInstall runs a plugin's declared install/build command.
+//
+// SECURITY / SCOPE: this executes arbitrary code from the plugin UNCONFINED —
+// full user privileges, no sandbox, only a 5-minute wall-clock timeout. That is
+// intentional for the trusted-install model (the caller gets user consent, like
+// a VS Code extension), but it means a plugin's build step can do anything the
+// user can. Sandboxing this (namespaces / seccomp / a restricted PATH) is a
+// larger design deliberately out of scope for the extraction-bounds pass; the
+// download+extract path above is now size-bounded, this exec is not.
 func runInstall(dir string, argv []string) error {
 	argv = expandPlatformTokensAll(argv)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -338,9 +347,40 @@ func sanitizeName(s string) string {
 	return strings.Trim(b.String(), "-")
 }
 
+// Extraction bounds. A gzipped tar can expand to far more than it downloads (a
+// decompression bomb), so streaming extraction is capped independently of the
+// 60s download timeout: total uncompressed bytes, file count, and any single
+// file's size. Generous enough for real plugins, small enough that a hostile
+// archive fails fast instead of filling the disk.
+const (
+	maxExtractedBytes = 512 << 20 // 512 MiB total, across all files
+	maxExtractedFiles = 10_000    // entry count (files + dirs)
+	maxSingleFileSize = 128 << 20 // 128 MiB for any one file
+)
+
+// extractLimits bounds a single extraction. Split out from the constants so
+// tests can drive the same guards with tiny limits instead of building
+// gigabyte archives.
+type extractLimits struct {
+	maxBytes    int64 // total uncompressed bytes across all files
+	maxFiles    int   // entry count (files + dirs)
+	maxFileSize int64 // any single file
+}
+
+var defaultExtractLimits = extractLimits{
+	maxBytes:    maxExtractedBytes,
+	maxFiles:    maxExtractedFiles,
+	maxFileSize: maxSingleFileSize,
+}
+
 // extractTarGz extracts a gzipped tar into dest, stripping the first
-// stripComponents path segments, guarding against path traversal (zip-slip).
+// stripComponents path segments, guarding against path traversal (zip-slip) and
+// decompression bombs (the production bounds in defaultExtractLimits).
 func extractTarGz(r io.Reader, dest string, stripComponents int) error {
+	return extractTarGzLimited(r, dest, stripComponents, defaultExtractLimits)
+}
+
+func extractTarGzLimited(r io.Reader, dest string, stripComponents int, lim extractLimits) error {
 	gz, err := gzip.NewReader(r)
 	if err != nil {
 		return err
@@ -351,6 +391,8 @@ func extractTarGz(r io.Reader, dest string, stripComponents int) error {
 	if err != nil {
 		return err
 	}
+	var totalBytes int64
+	var entries int
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
@@ -358,6 +400,9 @@ func extractTarGz(r io.Reader, dest string, stripComponents int) error {
 		}
 		if err != nil {
 			return err
+		}
+		if entries++; entries > lim.maxFiles {
+			return fmt.Errorf("archive has too many entries (limit %d): possible decompression bomb", lim.maxFiles)
 		}
 		name := stripPath(hdr.Name, stripComponents)
 		if name == "" {
@@ -381,11 +426,26 @@ func extractTarGz(r io.Reader, dest string, stripComponents int) error {
 			if err != nil {
 				return err
 			}
-			if _, err := io.Copy(f, tr); err != nil { //nolint:gosec // size bounded by 60s download
-				f.Close()
+			// Cap this file, and the running total, without trusting hdr.Size
+			// (a lying header must not let us over-read). LimitReader stops one
+			// byte past the smaller of the two remaining budgets so we can tell
+			// which bound was hit.
+			fileBudget := lim.maxFileSize
+			if remaining := lim.maxBytes - totalBytes; remaining < fileBudget {
+				fileBudget = remaining
+			}
+			n, err := io.Copy(f, io.LimitReader(tr, fileBudget+1))
+			f.Close()
+			if err != nil {
 				return err
 			}
-			f.Close()
+			totalBytes += n
+			if n > lim.maxFileSize {
+				return fmt.Errorf("file %q exceeds the per-file limit (%d bytes): possible decompression bomb", name, lim.maxFileSize)
+			}
+			if totalBytes > lim.maxBytes {
+				return fmt.Errorf("archive exceeds the total extraction limit (%d bytes): possible decompression bomb", lim.maxBytes)
+			}
 		}
 	}
 }

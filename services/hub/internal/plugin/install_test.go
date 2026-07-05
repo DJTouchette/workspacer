@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -195,6 +196,95 @@ func TestExpandPlatformTokens(t *testing.T) {
 	args := expandPlatformTokensAll([]string{"--bin", "x${exe}"})
 	if args[1] != "x"+exe {
 		t.Errorf("args expansion = %v", args)
+	}
+}
+
+// rawTarGz builds a gzipped tar from files at the given paths verbatim (no wrap
+// dir), for exercising the extraction bounds directly.
+func rawTarGz(t *testing.T, files map[string]string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	for name, content := range files {
+		if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(content)), Typeflag: tar.TypeReg}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write([]byte(content)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tw.Close()
+	gz.Close()
+	return buf.Bytes()
+}
+
+func TestExtractBoundsTotalBytes(t *testing.T) {
+	data := rawTarGz(t, map[string]string{
+		"a.txt": "hello world, this is more than the tiny total budget",
+	})
+	lim := extractLimits{maxBytes: 8, maxFiles: 100, maxFileSize: 1 << 20}
+	err := extractTarGzLimited(bytes.NewReader(data), t.TempDir(), 0, lim)
+	if err == nil || !strings.Contains(err.Error(), "total extraction limit") {
+		t.Fatalf("expected total-limit error, got %v", err)
+	}
+}
+
+func TestExtractBoundsSingleFile(t *testing.T) {
+	data := rawTarGz(t, map[string]string{
+		"big.bin": strings.Repeat("x", 64),
+	})
+	lim := extractLimits{maxBytes: 1 << 20, maxFiles: 100, maxFileSize: 16}
+	err := extractTarGzLimited(bytes.NewReader(data), t.TempDir(), 0, lim)
+	if err == nil || !strings.Contains(err.Error(), "per-file limit") {
+		t.Fatalf("expected per-file-limit error, got %v", err)
+	}
+}
+
+func TestExtractBoundsFileCount(t *testing.T) {
+	data := rawTarGz(t, map[string]string{
+		"a": "1", "b": "2", "c": "3", "d": "4", "e": "5",
+	})
+	lim := extractLimits{maxBytes: 1 << 20, maxFiles: 2, maxFileSize: 1 << 20}
+	err := extractTarGzLimited(bytes.NewReader(data), t.TempDir(), 0, lim)
+	if err == nil || !strings.Contains(err.Error(), "too many entries") {
+		t.Fatalf("expected file-count error, got %v", err)
+	}
+}
+
+func TestExtractWithinBoundsSucceeds(t *testing.T) {
+	dir := t.TempDir()
+	data := rawTarGz(t, map[string]string{
+		"a.txt":     "small",
+		"sub/b.txt": "also small",
+	})
+	lim := extractLimits{maxBytes: 1 << 20, maxFiles: 100, maxFileSize: 1 << 20}
+	if err := extractTarGzLimited(bytes.NewReader(data), dir, 0, lim); err != nil {
+		t.Fatalf("well-formed archive rejected: %v", err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(dir, "a.txt")); string(got) != "small" {
+		t.Errorf("a.txt = %q, want %q", got, "small")
+	}
+	if got, _ := os.ReadFile(filepath.Join(dir, "sub", "b.txt")); string(got) != "also small" {
+		t.Errorf("sub/b.txt = %q, want %q", got, "also small")
+	}
+}
+
+// TestInstallUnaffectedByBounds proves the production default bounds don't
+// disturb a normal install (the existing happy path runs through the real
+// extractTarGz → defaultExtractLimits).
+func TestInstallUnaffectedByBounds(t *testing.T) {
+	data := makeTarGz(t, "ok-main", map[string]string{
+		"plugin.json": `{"id":"ok.plugin","name":"OK","apiVersion":"1"}`,
+		"index.html":  "<html>ok</html>",
+	})
+	dir := t.TempDir()
+	m, err := installFromTarball(dir, serveTarball(t, data), "ok", nil)
+	if err != nil {
+		t.Fatalf("normal install rejected by bounds: %v", err)
+	}
+	if m.ID != "ok.plugin" {
+		t.Fatalf("manifest = %+v", m)
 	}
 }
 
