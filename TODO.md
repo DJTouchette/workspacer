@@ -58,9 +58,10 @@ theme, roughly ordered by severity within each group.
       `provider` field to the session payload.
 - [x] No hub capability for `GET /providers/:provider/models` — provider
       model listing is REST-only, unreachable for pure bus clients.
-- [ ] OpenCode/Pi lack live model + permission-mode switch (409) — needs
-      `register_managed_model_switch` / `register_managed_yolo` equivalents per
-      provider, or documented as a permanent capability cliff in providerCaps.
+- [x] OpenCode/Pi live model + permission-mode switch: OpenCode fully live
+      (per-turn model object + adapter-mediated permissions); Pi live on the
+      RPC/supervisor path only — composer-driven Pi TUI sessions remain a
+      restart cliff, recorded in providerCaps.ts.
 
 ## Web / remote parity
 

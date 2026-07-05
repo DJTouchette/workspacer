@@ -88,14 +88,27 @@ export const PROVIDER_CAPS: Record<AgentProvider, ProviderCaps> = {
     restartPreservesConversation: false,
   },
   opencode: {
-    modelSwitch: 'restart',
+    // Live: `opencode serve` applies the model per message, so claudemon's
+    // `/sessions/:id/model` just restamps subsequent turns (and sets it
+    // session-wide so the attached TUI agrees). Every OpenCode session drives
+    // its turns this way, so there's no fallback path — it's always live.
+    modelSwitch: 'live',
     modelSource: 'managed',
     effort: null,
     permissionModes: MANAGED_PERMISSION_MODES,
-    permissionSwitch: 'restart',
+    // Live via the adapter's approval flag: it mediates every `permission.updated`
+    // event, so ask↔yolo both flip without a restart (opencode is never spawned
+    // in a bypass mode, so yolo→ask works too).
+    permissionSwitch: 'live',
     restartPreservesConversation: false,
   },
   pi: {
+    // Restart, deliberately: the default (non-supervisor) Pi session is the
+    // hybrid TUI, which has no programmatic channel to switch model or approvals
+    // mid-session — so the daemon 409s and the pill falls back to a restart.
+    // (Pi's RPC mode — supervisors only — *does* support `set_model` and live
+    // approval mediation, and claudemon wires both; but that path isn't what the
+    // composer drives, so the per-provider signal stays 'restart'.)
     modelSwitch: 'restart',
     modelSource: 'managed',
     effort: null,

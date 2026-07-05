@@ -15,6 +15,8 @@
 //! binary to validate end-to-end.
 
 use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -27,7 +29,7 @@ use super::{apply_updates, AgentUpdate, Facade, ModelInfo, UsageAcc};
 use crate::protocol::Signal;
 use crate::session::conversation::ConversationItem;
 use crate::session::state::SessionMode;
-use crate::session::{ConversationStore, SessionStore};
+use crate::session::{ConversationStore, ModelSwitch, SessionStore};
 use crate::wrapper::pty;
 
 /// List the models OpenCode can launch with (cached; see [`super::cached_or_fetch`]).
@@ -261,6 +263,39 @@ fn write_opencode_mcp(cwd: &str, mcp_url: &str) {
     }
 }
 
+/// Split a picker model id (`provider/model`) into the object OpenCode's message
+/// API expects (`{ providerID, modelID }`). Returns None when the id has no
+/// provider prefix, so the caller omits the field and OpenCode keeps its default
+/// rather than sending a malformed ref. Only the first `/` splits the provider
+/// off — model ids may themselves contain slashes.
+fn model_ref(id: &str) -> Option<Value> {
+    let (provider, model) = id.split_once('/')?;
+    if provider.is_empty() || model.is_empty() {
+        return None;
+    }
+    Some(serde_json::json!({ "providerID": provider, "modelID": model }))
+}
+
+/// Best-effort: set the shared session's model server-wide (`POST
+/// /api/session/:id/model`, whose `ModelRef` uses `{ providerID, id }`). Our own
+/// turns already carry the model per-message; this also moves the model the
+/// attached TUI shows, so both views of the hybrid session agree. Failure is
+/// non-fatal — the per-message override still governs what we send.
+fn set_session_model(client: &reqwest::Client, base: &str, oc_id: &str, id: &str) {
+    let Some((provider, model)) = id.split_once('/') else { return };
+    if provider.is_empty() || model.is_empty() {
+        return;
+    }
+    let url = format!("{base}/api/session/{oc_id}/model");
+    let body = serde_json::json!({ "model": { "providerID": provider, "id": model } });
+    let c = client.clone();
+    tokio::spawn(async move {
+        if let Err(err) = c.post(url).json(&body).send().await {
+            tracing::warn!(?err, "opencode session model set failed");
+        }
+    });
+}
+
 /// POST a permission reply to OpenCode: `once` (allow this time) or `reject`.
 /// Mirrors the SDK's `SessionPermissionService.Respond`.
 fn reply_permission(client: &reqwest::Client, base: &str, oc_id: &str, perm_id: &str, approve: bool) {
@@ -335,6 +370,20 @@ async fn run_session(
     store.register_managed_input(session_id, tx);
     let (dtx, mut drx) = mpsc::unbounded_channel::<bool>();
     store.register_managed_decision(session_id, dtx);
+    // Live model switch (POST /sessions/:id/model): OpenCode applies the model
+    // per message, so we hold the current selection here and stamp it on each
+    // turn — a switch just updates it (and best-effort sets it session-wide so
+    // the attached TUI agrees). The switched model takes effect on the next turn.
+    let mut model = model;
+    let (mtx, mut mrx) = mpsc::unbounded_channel::<ModelSwitch>();
+    store.register_managed_model_switch(session_id, mtx);
+    // Approval policy, live-switchable via `/permission-mode`: the adapter
+    // mediates every permission event on the `/event` stream, so flipping this
+    // flag changes whether the next request auto-approves without touching the
+    // session. `opencode serve` always emits the events (we never spawn it in a
+    // bypass mode), so yolo→ask works too — spawned_yolo is always false.
+    let yolo_live = Arc::new(AtomicBool::new(yolo));
+    store.register_managed_yolo(session_id, yolo_live.clone(), false);
 
     // Hybrid Term view: run the native OpenCode TUI attached to this same serve
     // + session in a PTY, so the renderer's terminal surface mirrors the GUI
@@ -394,7 +443,7 @@ async fn run_session(
                         if let Some(idx) = updates.iter().position(|u| matches!(u, AgentUpdate::PermissionPending { .. })) {
                             if let AgentUpdate::PermissionPending { id, .. } = &updates[idx] {
                                 let perm_id = id.clone();
-                                if yolo {
+                                if yolo_live.load(Ordering::Relaxed) {
                                     if let Some(pid) = perm_id {
                                         reply_permission(&client, &base, &oc_id, &pid, true);
                                     }
@@ -426,8 +475,8 @@ async fn run_session(
                     let c = client.clone();
                     let url = format!("{base}/session/{oc_id}/message");
                     let mut body = serde_json::json!({ "parts": [ { "type": "text", "text": sent } ] });
-                    if let Some(m) = &model {
-                        body["model"] = Value::String(m.clone());
+                    if let Some(m) = model.as_deref().and_then(model_ref) {
+                        body["model"] = m;
                     }
                     tokio::spawn(async move {
                         if let Err(err) = c.post(url).json(&body).send().await {
@@ -444,6 +493,31 @@ async fn run_session(
                         // The agent resumes (or stops on reject); reflect Responding.
                         store.set_managed_mode(session_id, SessionMode::Responding, None);
                         cur_mode = SessionMode::Responding;
+                    }
+                }
+                None => break,
+            },
+            switch = mrx.recv() => match switch {
+                Some(sw) => {
+                    // OpenCode has no reasoning-effort knob (effort is ignored);
+                    // only the model moves. Update what the next turn stamps, set
+                    // it session-wide for the TUI, and reflect it on the status
+                    // line now so the pill doesn't wait for the next turn's usage.
+                    if let Some(m) = sw.model {
+                        set_session_model(&client, &base, &oc_id, &m);
+                        apply_updates(
+                            store, conv, session_id,
+                            vec![AgentUpdate::Usage {
+                                model: Some(m.clone()),
+                                input_tokens: None,
+                                output_tokens: None,
+                                cost_usd: None,
+                                context_tokens: None,
+                                context_window: None,
+                            }],
+                            &mut cur_mode, &mut acc,
+                        );
+                        model = Some(m);
                     }
                 }
                 None => break,
@@ -639,5 +713,24 @@ mod tests {
         assert!(translate(&json!({})).is_empty());
         assert_eq!(translate(&json!({ "type": "message.part.updated" })), vec![AgentUpdate::Busy]);
         assert!(translate(&Value::Null).is_empty());
+    }
+
+    #[test]
+    fn model_ref_splits_provider_and_model() {
+        // OpenCode's message `model` field is an object, not a string.
+        assert_eq!(
+            model_ref("anthropic/claude-sonnet-4"),
+            Some(json!({ "providerID": "anthropic", "modelID": "claude-sonnet-4" }))
+        );
+        // Only the first slash splits the provider off; the rest is the model id.
+        assert_eq!(
+            model_ref("openrouter/meta-llama/llama-3.1"),
+            Some(json!({ "providerID": "openrouter", "modelID": "meta-llama/llama-3.1" }))
+        );
+        // No provider prefix (or an empty half) → None, so the field is omitted
+        // and OpenCode keeps its default rather than getting a malformed ref.
+        assert!(model_ref("bare-model").is_none());
+        assert!(model_ref("/x").is_none());
+        assert!(model_ref("x/").is_none());
     }
 }

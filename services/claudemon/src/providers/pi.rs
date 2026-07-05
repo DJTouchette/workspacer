@@ -19,6 +19,8 @@
 //! real `pi` binary to validate end-to-end.
 
 use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use anyhow::Context;
 use serde_json::{json, Value};
@@ -29,7 +31,7 @@ use tokio::sync::mpsc;
 use super::{apply_updates, AgentUpdate, Facade, ModelInfo, UsageAcc};
 use crate::session::conversation::ConversationItem;
 use crate::session::state::SessionMode;
-use crate::session::{ConversationStore, SessionStore};
+use crate::session::{ConversationStore, ModelSwitch, SessionStore};
 
 /// List the models Pi can launch with (cached; see [`super::cached_or_fetch`]).
 pub async fn list_models(bin: &str, cwd: &str) -> anyhow::Result<Vec<ModelInfo>> {
@@ -205,6 +207,19 @@ fn usage_from(message: &Value) -> Option<AgentUpdate> {
         context_tokens,
         context_window: None,
     })
+}
+
+/// Build Pi's RPC `set_model` command from a picker id (`provider/modelId`, the
+/// form `fetch_models` emits). Pi wants the provider and model as separate
+/// fields; only the first `/` splits them (a model id may contain more). Returns
+/// None for an id without a provider prefix, so the caller skips a malformed
+/// switch rather than sending one Pi will reject.
+fn set_model_msg(id: &str) -> Option<Value> {
+    let (provider, model_id) = id.split_once('/')?;
+    if provider.is_empty() || model_id.is_empty() {
+        return None;
+    }
+    Some(json!({ "type": "set_model", "provider": provider, "modelId": model_id }))
 }
 
 /// A short human summary for an Extension UI dialog request, for the approval card.
@@ -625,6 +640,22 @@ async fn run_session(
     store.register_managed_input(session_id, tx);
     let (dtx, mut drx) = mpsc::unbounded_channel::<bool>();
     store.register_managed_decision(session_id, dtx);
+    // Live model switch (POST /sessions/:id/model): Pi's RPC applies it mid-session
+    // via `set_model`, so subsequent turns use the new model. The stdin is ready
+    // the instant the process is up and this loop owns it, so there's no boot-join
+    // race like codex's — a switch is simply written when it arrives. NOTE: the
+    // hybrid TUI path (`run_tui_session`, the default non-supervisor session) has
+    // no RPC channel and registers none of this, so it 409s and falls back to a
+    // restart — the capability cliff `providerCaps.pi` documents.
+    let (mtx, mut mrx) = mpsc::unbounded_channel::<ModelSwitch>();
+    store.register_managed_model_switch(session_id, mtx);
+    // Approval policy, live-switchable via `/permission-mode`: the adapter answers
+    // every `extension_ui_request` dialog, so flipping this flag changes whether
+    // the next one auto-accepts. Pi's core never bypasses at the source (approvals
+    // come from a permission extension we always mediate), so yolo→ask works too —
+    // spawned_yolo is always false.
+    let yolo_live = Arc::new(AtomicBool::new(yolo));
+    store.register_managed_yolo(session_id, yolo_live.clone(), false);
 
     let mut cur_mode = SessionMode::Input;
     let mut acc = UsageAcc::new();
@@ -642,7 +673,7 @@ async fn run_session(
                     if let Ok(value) = serde_json::from_str::<Value>(&line) {
                         handle_message(
                             &value, store, conv, session_id, &mut stdin,
-                            &mut cur_mode, &mut acc, yolo, &mut pending_approvals,
+                            &mut cur_mode, &mut acc, &yolo_live, &mut pending_approvals,
                         ).await;
                     }
                 }
@@ -676,6 +707,32 @@ async fn run_session(
                 }
                 None => break,
             },
+            switch = mrx.recv() => match switch {
+                Some(sw) => {
+                    // Pi has thinking levels, not an "effort" knob, so effort is
+                    // ignored (providerCaps.pi has no effort control). Send the
+                    // model change and reflect it on the status line right away —
+                    // the `set_model` response is a plain ack we don't translate.
+                    if let Some(m) = sw.model {
+                        if let Some(cmd) = set_model_msg(&m) {
+                            let _ = write_msg(&mut stdin, &cmd).await;
+                            apply_updates(
+                                store, conv, session_id,
+                                vec![AgentUpdate::Usage {
+                                    model: Some(m),
+                                    input_tokens: None,
+                                    output_tokens: None,
+                                    cost_usd: None,
+                                    context_tokens: None,
+                                    context_window: None,
+                                }],
+                                &mut cur_mode, &mut acc,
+                            );
+                        }
+                    }
+                }
+                None => break,
+            },
             status = child.wait() => {
                 tracing::info!(?status, session = %session_id, "pi rpc exited");
                 break;
@@ -696,7 +753,7 @@ async fn handle_message(
     stdin: &mut ChildStdin,
     cur_mode: &mut SessionMode,
     acc: &mut UsageAcc,
-    yolo: bool,
+    yolo: &AtomicBool,
     pending_approvals: &mut std::collections::VecDeque<Value>,
 ) {
     let ty = value.get("type").and_then(Value::as_str).unwrap_or("");
@@ -715,7 +772,7 @@ async fn handle_message(
         if !is_dialog {
             return; // notify / setStatus / setWidget / setTitle / set_editor_text
         }
-        if yolo {
+        if yolo.load(Ordering::Relaxed) {
             // Auto-accept so the agent keeps working without surfacing a card.
             let _ = respond_ui(stdin, value, true).await;
         } else {
@@ -1038,5 +1095,23 @@ mod tests {
     fn pi_session_dir_encodes_cwd_like_pi_does() {
         let dir = pi_session_dir("/home/user/Work/repo").unwrap();
         assert!(dir.ends_with(".pi/agent/sessions/--home-user-Work-repo--"));
+    }
+
+    #[test]
+    fn set_model_msg_splits_provider_and_model() {
+        // The RPC `set_model` wants provider + modelId as separate fields.
+        assert_eq!(
+            set_model_msg("anthropic/claude-sonnet-4-5"),
+            Some(json!({ "type": "set_model", "provider": "anthropic", "modelId": "claude-sonnet-4-5" }))
+        );
+        // Only the first slash splits; the rest stays in the model id.
+        assert_eq!(
+            set_model_msg("openrouter/meta-llama/llama-3.1"),
+            Some(json!({ "type": "set_model", "provider": "openrouter", "modelId": "meta-llama/llama-3.1" }))
+        );
+        // No provider prefix, or an empty half → no switch (don't send garbage).
+        assert!(set_model_msg("bare-model").is_none());
+        assert!(set_model_msg("/x").is_none());
+        assert!(set_model_msg("x/").is_none());
     }
 }
