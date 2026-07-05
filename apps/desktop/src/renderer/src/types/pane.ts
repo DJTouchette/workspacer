@@ -48,9 +48,11 @@ export interface PaneConfig {
   /** Agent-watch panes only: the claudemon session that OWNS the watched
    *  subagent/workflow (the parent session whose snapshot carries it). */
   watchSessionId?: string;
-  /** Agent-watch panes only: what kind of thing is being watched. */
-  watchKind?: 'subagent' | 'workflow';
-  /** Agent-watch panes only: the subagent id or workflow runId being watched. */
+  /** Agent-watch panes only: what kind of thing is being watched
+   *  ('agents' = fleet timeline of all the session's plain subagents). */
+  watchKind?: 'subagent' | 'workflow' | 'agents';
+  /** Agent-watch panes only: the subagent id or workflow runId being watched
+   *  (for 'agents', the sessionId again — one fleet pane per session). */
   watchId?: string;
 }
 

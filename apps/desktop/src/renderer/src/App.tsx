@@ -11,7 +11,7 @@ import PluginInstallDialog from './components/PluginInstallDialog';
 import { usePlugins } from './hooks/usePlugins';
 import { useUiEventBus } from './hooks/useUiEventBus';
 import { REVIEW_REQUEST_FILE_EVENT, openReviewFile, type ReviewFileTarget } from './lib/reviewBus';
-import { AGENT_WATCH_EVENT, SESSION_WATCH_EVENT, type AgentWatchTarget, type SessionWatchTarget } from './lib/watchBus';
+import { AGENT_WATCH_EVENT, SESSION_WATCH_EVENT, AGENT_HANDOFF_EVENT, type AgentWatchTarget, type SessionWatchTarget, type HandoffTarget } from './lib/watchBus';
 import { EDITOR_OPEN_FILE_EVENT } from './lib/editorBus';
 import { useUiCommands } from './hooks/useUiCommands';
 import type { PluginPane } from './types/plugin';
@@ -573,7 +573,8 @@ function App() {
     const sep = editorPane.url.includes('?') ? '&' : '?';
     const url = params.toString() ? `${editorPane.url}${sep}${params.toString()}` : editorPane.url;
     const wsId = activeAgent && !activeAgent.global ? activeAgent.id : GLOBAL_WORKSPACE_ID;
-    openPaneIn(wsId, 'plugin', title, url, dir, editorPane.pluginId);
+    const editorTabId = openPaneIn(wsId, 'plugin', title, url, dir, editorPane.pluginId);
+    requestAnimationFrame(() => scrollToTab(editorTabId));
   }, [activeAgent, config, addTabWithConfig, scrollToTab, openPaneIn]);
 
   // Open-in-editor requests (e.g. right-click in the Review pane's file tree).
@@ -708,21 +709,24 @@ function App() {
 
   const openAnalytics = useCallback(() => {
     setShowCommandPalette(false);
-    openPaneIn(GLOBAL_WORKSPACE_ID, 'analytics', 'Analytics');
-  }, [openPaneIn]);
+    const tabId = openPaneIn(GLOBAL_WORKSPACE_ID, 'analytics', 'Analytics');
+    requestAnimationFrame(() => scrollToTab(tabId));
+  }, [openPaneIn, scrollToTab]);
 
   /** Open the Agents pane (fleet cards as a pane) in the global workspace. */
   const openAgentsPane = useCallback(() => {
     setShowCommandPalette(false);
-    openPaneIn(GLOBAL_WORKSPACE_ID, 'agents', 'Agents');
-  }, [openPaneIn]);
+    const tabId = openPaneIn(GLOBAL_WORKSPACE_ID, 'agents', 'Agents');
+    requestAnimationFrame(() => scrollToTab(tabId));
+  }, [openPaneIn, scrollToTab]);
 
   /** Open the Ask pane in the global Overview workspace (command-palette entry
    *  "Ask the fleet"). Reuses an existing Ask tab rather than opening a duplicate. */
   const openAskPane = useCallback(() => {
     setShowCommandPalette(false);
-    openPaneIn(GLOBAL_WORKSPACE_ID, 'ask', 'Ask');
-  }, [openPaneIn]);
+    const tabId = openPaneIn(GLOBAL_WORKSPACE_ID, 'ask', 'Ask');
+    requestAnimationFrame(() => scrollToTab(tabId));
+  }, [openPaneIn, scrollToTab]);
 
   /** Jump to a specific agent by id — passed down to the Ask pane. */
   const handleJumpToAgent = useCallback((agentId: string) => {
@@ -1028,6 +1032,28 @@ function App() {
     return () => window.removeEventListener('agent:respawn', handler);
   }, [respawnAgentWithSettings]);
 
+  // Cross-provider handoff: spawn the successor agent in the same cwd with its
+  // composer pre-filled to read the brief (written by claudemon under
+  // ~/.workspacer/handoffs/). The user reviews the takeover message — and can
+  // append their next ask — before sending.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const t = (e as CustomEvent).detail as HandoffTarget | undefined;
+      if (!t?.targetProvider || !t.briefPath || !t.cwd) return;
+      void spawnAgent({
+        cwd: t.cwd,
+        provider: t.targetProvider,
+        name: `handoff → ${t.targetProvider}`,
+        initialPrompt:
+          `You are taking over an in-progress session from another AI coding agent. ` +
+          `First read the handoff brief at ${t.briefPath}, then continue the work from where it left off — ` +
+          `don't start over or redo completed steps. Reply with a one-paragraph summary of the state and your next step.`,
+      });
+    };
+    window.addEventListener(AGENT_HANDOFF_EVENT, handler);
+    return () => window.removeEventListener(AGENT_HANDOFF_EVENT, handler);
+  }, [spawnAgent]);
+
   const handleLaunchApp = useCallback((app: { name: string; url: string }) => {
     const newId = addTab('browser', app.name, insertPosition, undefined, app.url, true);
     requestAnimationFrame(() => scrollToTab(newId));
@@ -1071,8 +1097,9 @@ function App() {
     // ephemeral token confined to that cwd on mount (see PluginPane). The static
     // busToken stays baked into the URL as the fallback when minting is
     // unavailable (e.g. the web build, or the hub momentarily unreachable).
-    openPaneIn(target ? target.id : GLOBAL_WORKSPACE_ID, 'plugin', pane.title, url, target?.cwd, pane.pluginId);
-  }, [openPaneIn, activeAgent, agents]);
+    const tabId = openPaneIn(target ? target.id : GLOBAL_WORKSPACE_ID, 'plugin', pane.title, url, target?.cwd, pane.pluginId);
+    requestAnimationFrame(() => scrollToTab(tabId));
+  }, [openPaneIn, activeAgent, agents, scrollToTab]);
 
   // Bind plugin-contributed hotkeys + library-picker shortcut.
   usePluginHotkeys({
@@ -1367,17 +1394,16 @@ function App() {
         pluginPanes={pluginPanes}
         onOpenPlugin={handleOpenPlugin}
         onInstallPlugin={() => { setShowCommandPalette(false); setShowInstallPlugin(true); }}
-        onManagePlugins={() => { setShowCommandPalette(false); openPaneIn(GLOBAL_WORKSPACE_ID, 'plugins', 'Plugins'); }}
+        onManagePlugins={() => { setShowCommandPalette(false); const tabId = openPaneIn(GLOBAL_WORKSPACE_ID, 'plugins', 'Plugins'); requestAnimationFrame(() => scrollToTab(tabId)); }}
         onOpenLibrary={() => {
           setShowCommandPalette(false);
           // Open in the active agent's workspace (with its project cwd) so the
           // pane shows that project's library + .claude skills; fall back to
           // the global Overview when no agent is focused.
-          if (activeAgent && !activeAgent.global) {
-            openPaneIn(activeAgent.id, 'library', 'Library', undefined, activeAgent.cwd);
-          } else {
-            openPaneIn(GLOBAL_WORKSPACE_ID, 'library', 'Library');
-          }
+          const tabId = activeAgent && !activeAgent.global
+            ? openPaneIn(activeAgent.id, 'library', 'Library', undefined, activeAgent.cwd)
+            : openPaneIn(GLOBAL_WORKSPACE_ID, 'library', 'Library');
+          requestAnimationFrame(() => scrollToTab(tabId));
         }}
         onSwitchSession={() => { setShowCommandPalette(false); switchSession(); }}
         onOpenAnalytics={openAnalytics}

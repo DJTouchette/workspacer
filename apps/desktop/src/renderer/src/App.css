@@ -110,10 +110,48 @@ html, body {
   100% { opacity: 1; }
 }
 
+/* Brand loading shuttle — the cursor bar sliding between the { } braces.
+ * Distance is per-instance (element sets --wks-brand-slide-dist in px). */
+@keyframes wks-brand-slide {
+  from { transform: translateX(0); }
+  to { transform: translateX(var(--wks-brand-slide-dist, 10px)); }
+}
+
 /* Gentle fade+rise — settings sections, saved chips, and other soft entrances. */
 @keyframes wks-fade-in {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: none; }
+}
+
+/* Plain rotation — in-flight icon buttons (browser cookie sync, etc.). */
+@keyframes wks-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Indeterminate page-load shuttle pinned under the browser pane's toolbar
+ * (overlaid, so appearing/disappearing never shifts the layout). */
+@keyframes wks-browser-progress {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(400%); }
+}
+.wks-browser-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 1;
+}
+.wks-browser-progress::after {
+  content: "";
+  display: block;
+  width: 30%;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--wks-accent);
+  animation: wks-browser-progress 1.1s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
 /* The section header already draws a rule; the first row's own divider

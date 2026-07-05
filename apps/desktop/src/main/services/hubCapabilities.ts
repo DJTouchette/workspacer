@@ -11,6 +11,7 @@ import * as path from 'path';
 import { randomUUID } from 'crypto';
 import { claudeSessionStore } from './claudeSessionStore';
 import { claudemonSessionClient } from './claudemonSessionClient';
+import { agentHandoffBrief } from './agentHandoff';
 import { buildClaudeArgv } from './claudeResolver';
 import { spawnManagedAgent } from './managedSpawn';
 import type { AgentProvider } from './agentProviders';
@@ -233,6 +234,48 @@ export function registerHubCapabilities(): void {
     }
     await claudemonSessionClient.approve(sessionId, decision, reason);
     return { ok: true };
+  });
+
+  // Control: live permission-mode switch (no restart). Remote counterpart of
+  // the `claude:setPermissionMode` IPC handler; claudemon drives and verifies
+  // the switch, and the snapshot store is updated the same way so remote and
+  // desktop pills stay in sync.
+  registerCapability('claude.setPermissionMode', async (params: unknown) => {
+    const { sessionId, mode } = (params ?? {}) as { sessionId?: string; mode?: string };
+    if (!sessionId || typeof mode !== 'string' || !mode) {
+      throw new Error('claude.setPermissionMode requires { sessionId, mode }');
+    }
+    const result = await claudemonSessionClient.setPermissionMode(sessionId, mode);
+    if (result.ok && result.mode) claudeSessionStore.notePermissionMode(sessionId, result.mode);
+    return result;
+  });
+
+  // Control: live model/effort switch for managed providers (no restart).
+  // Remote counterpart of the `claude:setModel` IPC handler; confirmation
+  // flows back through the status line, so no store note is needed.
+  registerCapability('claude.setModel', async (params: unknown) => {
+    const { sessionId, model, effort } = (params ?? {}) as { sessionId?: string; model?: string; effort?: string };
+    if (!sessionId || (!model && !effort)) {
+      throw new Error('claude.setModel requires { sessionId, model and/or effort }');
+    }
+    return claudemonSessionClient.setModel(sessionId, model, effort);
+  });
+
+  // Control: build a cross-provider handoff brief (persisted under
+  // ~/.workspacer/handoffs/). Remote counterpart of `claude:handoffBrief`.
+  registerCapability('claude.handoffBrief', async (params: unknown) => {
+    const { sessionId } = (params ?? {}) as { sessionId?: string };
+    if (!sessionId) throw new Error('claude.handoffBrief requires { sessionId }');
+    return claudemonSessionClient.handoffBrief(sessionId);
+  });
+
+  // Control: agent-authored handoff brief (source agent writes the file;
+  // mechanical fallback on timeout). Long-running — resolves when the brief
+  // file exists.
+  registerCapability('claude.handoffAgentBrief', async (params: unknown) => {
+    const { sessionId } = (params ?? {}) as { sessionId?: string };
+    if (!sessionId) throw new Error('claude.handoffAgentBrief requires { sessionId }');
+    return agentHandoffBrief(sessionId);
   });
 
   // Control: answer an AskUserQuestion picker. Mirrors the desktop ClaudePane

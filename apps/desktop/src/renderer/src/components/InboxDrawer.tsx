@@ -1,10 +1,13 @@
-import React, { useCallback, useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { CheckCircle2 } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useAttention } from '../contexts/AttentionContext';
 import { AttentionCard } from './attention/AttentionCard';
 import { SNOOZE_MINUTES } from '../contexts/AttentionContext';
 import { captionInsetTop } from '../lib/layoutUtils';
+import { useConfig } from '../hooks/useConfig';
+import { DEFAULT_SHORTCUTS } from '../hooks/configDefaults';
+import { eventMatchesCombo, digitFromRangeEvent, formatBinding } from '../lib/shortcuts';
 
 const DRAWER_WIDTH = 440;
 
@@ -23,6 +26,14 @@ const InboxDrawer: React.FC = () => {
     inboxFilter, setInboxFilter,
   } = useAttention();
   const reviewCount = Math.max(0, counts.total - counts.needsYou);
+
+  // Drawer-scoped keybindings (inbox-*), remappable in Settings → Keybindings.
+  // Defaults merged under user overrides so a partial saved map still binds.
+  const { config } = useConfig();
+  const sc = useMemo(
+    () => ({ ...DEFAULT_SHORTCUTS, ...(config.keybindings?.shortcuts ?? {}) }),
+    [config.keybindings?.shortcuts],
+  );
 
   // Bulk triage: dismiss every non-blocking item in the CURRENT feed in one go.
   // Approvals/questions are deliberately excluded — bulk-hiding a card whose
@@ -70,23 +81,25 @@ const InboxDrawer: React.FC = () => {
       const it = selectedItem;
       const stop = () => { e.preventDefault(); e.stopPropagation(); };
 
+      // Escape (close), arrows (move), and Enter (act on the selected card) are
+      // fixed; the letter keys are remappable inbox-* bindings.
       if (e.key === 'Escape') { stop(); closeInbox(); return; }
-      if (e.key === 'j' || e.key === 'ArrowDown') { stop(); moveSelection(1); return; }
-      if (e.key === 'k' || e.key === 'ArrowUp') { stop(); moveSelection(-1); return; }
-      if (e.key === 'E') { stop(); clearReviewed(); return; }
+      if (eventMatchesCombo(e, sc['inbox-move-down']) || e.key === 'ArrowDown') { stop(); moveSelection(1); return; }
+      if (eventMatchesCombo(e, sc['inbox-move-up']) || e.key === 'ArrowUp') { stop(); moveSelection(-1); return; }
+      if (eventMatchesCombo(e, sc['inbox-clear-reviewed'])) { stop(); clearReviewed(); return; }
       if (!it) return;
 
-      if (e.key === 'o') { stop(); openAgent(it.agentId); return; }
-      if (e.key === 'e') { stop(); dismiss(it.signature); return; }
-      if (e.key === 's') { stop(); snooze(it.signature, SNOOZE_MINUTES); return; }
+      if (eventMatchesCombo(e, sc['inbox-open'])) { stop(); openAgent(it.agentId); return; }
+      if (eventMatchesCombo(e, sc['inbox-dismiss'])) { stop(); dismiss(it.signature); return; }
+      if (eventMatchesCombo(e, sc['inbox-snooze'])) { stop(); snooze(it.signature, SNOOZE_MINUTES); return; }
 
       if (it.payload.type === 'approval') {
-        if (e.key === 'y' || e.key === 'Enter') { stop(); approve(it, 'yes'); return; }
-        if (e.key === 'n') { stop(); approve(it, 'no'); return; }
+        if (eventMatchesCombo(e, sc['inbox-approve-yes']) || e.key === 'Enter') { stop(); approve(it, 'yes'); return; }
+        if (eventMatchesCombo(e, sc['inbox-approve-no'])) { stop(); approve(it, 'no'); return; }
       }
       if (it.payload.type === 'question') {
-        const n = parseInt(e.key, 10);
-        if (n >= 1 && n <= 9 && n <= (it.payload.questions[0]?.options.length ?? 0)) {
+        const n = digitFromRangeEvent(e, sc['inbox-answer']);
+        if (n !== null && n <= (it.payload.questions[0]?.options.length ?? 0)) {
           stop(); answer(it, { option: n }); return;
         }
         if (e.key === 'Enter') { stop(); openAgent(it.agentId); return; }
@@ -95,7 +108,7 @@ const InboxDrawer: React.FC = () => {
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [inboxOpen, selectedItem, moveSelection, closeInbox, openAgent, dismiss, snooze, approve, answer, clearReviewed]);
+  }, [inboxOpen, selectedItem, moveSelection, closeInbox, openAgent, dismiss, snooze, approve, answer, clearReviewed, sc]);
 
   return (
     <>
@@ -166,11 +179,16 @@ const InboxDrawer: React.FC = () => {
 
         {/* Hint strip + bulk actions */}
         <div style={{ padding: '0 16px 10px', fontSize: '0.62rem', color: 'var(--wks-text-faint)', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <Hint k="j/k" t="move" /><Hint k="y/n" t="approve" /><Hint k="1-9" t="answer" /><Hint k="o" t="open" /><Hint k="e" t="dismiss" /><Hint k="s" t="snooze" />
+          <Hint k={`${formatBinding(sc['inbox-move-down'] ?? '')}/${formatBinding(sc['inbox-move-up'] ?? '')}`} t="move" />
+          <Hint k={`${formatBinding(sc['inbox-approve-yes'] ?? '')}/${formatBinding(sc['inbox-approve-no'] ?? '')}`} t="approve" />
+          <Hint k={formatBinding(sc['inbox-answer'] ?? '')} t="answer" />
+          <Hint k={formatBinding(sc['inbox-open'] ?? '')} t="open" />
+          <Hint k={formatBinding(sc['inbox-dismiss'] ?? '')} t="dismiss" />
+          <Hint k={formatBinding(sc['inbox-snooze'] ?? '')} t="snooze" />
           {reviewedInFeed.length > 1 && (
             <button
               onClick={clearReviewed}
-              title="Dismiss every reviewed (non-blocking) item shown (E)"
+              title={`Dismiss every reviewed (non-blocking) item shown (${formatBinding(sc['inbox-clear-reviewed'] ?? '')})`}
               style={{
                 marginLeft: 'auto', fontSize: '0.62rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
                 border: '1px solid var(--wks-border-input)', borderRadius: 6, padding: '2px 9px',

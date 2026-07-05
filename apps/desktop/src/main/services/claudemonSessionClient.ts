@@ -323,6 +323,59 @@ class ClaudemonSessionClient {
     return { ok: true };
   }
 
+  /**
+   * Live-switch the session's permission mode without a restart. claudemon
+   * drives + verifies the switch (claude: shift+tab cycle against the screen;
+   * codex: the adapter's approval flag) — `ok: false` means it genuinely can't
+   * be done live (busy, not in the cycle, bypass-spawned) and the caller
+   * should offer the restart path. `mode` reports the daemon-confirmed mode.
+   */
+  async setPermissionMode(sessionId: string, mode: string): Promise<{ ok: boolean; mode?: string; error?: string }> {
+    const res = await fetch(`${CLAUDEMON_API_URL}/sessions/${sessionId}/permission-mode`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ mode }),
+    });
+    const body = await res.json().catch(() => ({} as any)) as { mode?: string; error?: string };
+    if (res.ok) return { ok: true, mode: body.mode ?? mode };
+    return { ok: false, mode: body.mode, error: body.error ?? `HTTP ${res.status}` };
+  }
+
+  /**
+   * Live-switch a managed session's model (and/or reasoning effort) without a
+   * restart — codex applies it to the running thread (`thread/settings/update`).
+   * `ok: false` means the provider can't do it live (opencode/pi, codex rollout
+   * fallback) and the caller should offer the restart path. Claude sessions
+   * don't use this — they switch via the `/model` slash command on the message
+   * path.
+   */
+  async setModel(sessionId: string, model?: string, effort?: string): Promise<{ ok: boolean; error?: string }> {
+    const res = await fetch(`${CLAUDEMON_API_URL}/sessions/${sessionId}/model`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model, effort }),
+    });
+    const body = await res.json().catch(() => ({} as any)) as { error?: string };
+    if (res.ok) return { ok: true };
+    return { ok: false, error: body.error ?? `HTTP ${res.status}` };
+  }
+
+  /**
+   * Build (and persist under ~/.workspacer/handoffs/) a cross-provider
+   * handoff brief for a session — the markdown a successor agent of any
+   * harness reads to take the work over.
+   */
+  async handoffBrief(sessionId: string): Promise<{ ok: boolean; markdown?: string; path?: string; error?: string }> {
+    const res = await fetch(`${CLAUDEMON_API_URL}/sessions/${sessionId}/handoff`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    const body = await res.json().catch(() => ({} as any)) as { markdown?: string; path?: string; error?: string };
+    if (res.ok) return { ok: true, markdown: body.markdown, path: body.path };
+    return { ok: false, error: body.error ?? `HTTP ${res.status}` };
+  }
+
   /** Resolve a parked approval. */
   async approve(sessionId: string, decision: 'yes' | 'no' | 'always', reason?: string): Promise<void> {
     await this.postJSON(`/sessions/${sessionId}/approve`, { decision, reason });

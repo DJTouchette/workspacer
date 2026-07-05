@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ConversationTurn, ToolCall } from '../types/claudeSession';
+import type { ConversationTurn, ToolCall, WorkflowAgentInfo, WorkflowRunInfo } from '../types/claudeSession';
 import { useClaudeSession } from '../hooks/useClaudeSession';
 import { claudeColors as colors } from '../components/claude-shared';
 import { ConversationMessage } from '../components/claude/ConversationMessage';
@@ -16,8 +16,9 @@ interface AgentWatchPaneProps {
   isActive: boolean;
   /** The claudemon session that owns the watched subagent/workflow. */
   watchSessionId?: string;
-  watchKind?: 'subagent' | 'workflow';
-  /** Subagent id or workflow runId. */
+  /** 'agents' = fleet timeline of ALL the session's plain subagents. */
+  watchKind?: 'subagent' | 'workflow' | 'agents';
+  /** Subagent id, workflow runId, or (for 'agents') the sessionId again. */
   watchId?: string;
 }
 
@@ -32,10 +33,13 @@ const emptyState = (lines: string[]): React.ReactNode => (
 );
 
 /**
- * A live "watch" pane for one unit of delegated work: either a plain Agent-tool
- * subagent (header stats + its transcript, tailed while it runs) or a Workflow
- * run (the embedded timeline). Opened from the inspector rail; purely a viewer —
- * it reads the owning session's snapshot and never touches the session itself.
+ * A live "watch" pane for delegated work: a plain Agent-tool subagent (header
+ * stats + its transcript, tailed while it runs), a Workflow run (the embedded
+ * timeline), or the session's whole subagent fleet ('agents' — the same
+ * timeline fed a synthetic run built from every plain subagent, so a couple of
+ * loose Agent calls get the workflow-style fleet view too). Opened from the
+ * inspector rail; purely a viewer — it reads the owning session's snapshot and
+ * never touches the session itself.
  */
 const AgentWatchPane: React.FC<AgentWatchPaneProps> = ({ isActive, watchSessionId, watchKind, watchId }) => {
   const { session } = useClaudeSession({ ptySessionId: watchSessionId ?? null, active: isActive });
@@ -112,8 +116,58 @@ const AgentWatchPane: React.FC<AgentWatchPaneProps> = ({ isActive, watchSessionI
     return items;
   }, [conv, running, cwd]);
 
+  // Fleet mode: fold the session's plain subagents into a synthetic workflow
+  // run so WorkflowTimeline renders them as one swimlane of time bars.
+  const subagents = session?.subagents;
+  const fleetRun = useMemo<WorkflowRunInfo | null>(() => {
+    if (watchKind !== 'agents' || !subagents || subagents.length === 0) return null;
+    const agents: WorkflowAgentInfo[] = subagents.map((s) => ({
+      id: s.id,
+      label: s.type,
+      model: s.model,
+      status: s.status === 'running' ? 'running' : 'done',
+      startedAt: s.startedAt,
+      completedAt: s.completedAt,
+      durationMs: s.completedAt !== undefined ? s.completedAt - s.startedAt : undefined,
+      tokens: s.tokens ?? 0,
+      costUSD: s.costUSD,
+      toolCalls: s.toolCalls ?? 0,
+      lastToolName: s.lastToolName,
+      lastToolSummary: s.lastToolSummary,
+      promptPreview: s.description,
+    }));
+    const live = agents.some((a) => a.status === 'running');
+    const startedAt = Math.min(...subagents.map((s) => s.startedAt));
+    const completedAt = live ? undefined : Math.max(...subagents.map((s) => s.completedAt ?? s.startedAt));
+    return {
+      runId: `fleet:${watchSessionId}`,
+      name: 'fleet',
+      description: 'All plain Agent-tool subagents of this session',
+      status: live ? 'running' : 'completed',
+      startedAt,
+      completedAt,
+      durationMs: completedAt !== undefined ? completedAt - startedAt : undefined,
+      phases: [],
+      agents,
+    };
+  }, [watchKind, subagents, watchSessionId]);
+
   if (!watchSessionId || !watchKind || !watchId) {
     return emptyState(['Nothing to watch', 'This pane lost its watch target — close it and reopen from the inspector.']);
+  }
+
+  // ── Session fleet: every plain subagent on the workflow timeline ──
+  if (watchKind === 'agents') {
+    if (!fleetRun) {
+      return emptyState([
+        'No agents to watch',
+        session
+          ? 'This session hasn’t spawned any subagents yet — they’ll appear here live.'
+          : 'The owning session isn’t running (it may have ended or the app restarted).',
+      ]);
+    }
+    // Subagent transcripts live outside any workflow run → null runId.
+    return <WorkflowTimeline embedded sessionId={watchSessionId} run={fleetRun} heading="Agent" transcriptRunId={null} />;
   }
 
   // ── Workflow run: the embedded timeline is the whole surface ──

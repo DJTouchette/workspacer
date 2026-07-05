@@ -24,8 +24,12 @@ interface Bookmark {
 function normalizeUrl(input: string): string {
   const trimmed = input.trim();
   if (!trimmed) return '';
-  if (/^https?:\/\//i.test(trimmed)) return trimmed;
-  return 'https://' + trimmed;
+  if (/^(https?|about|file):/i.test(trimmed)) return trimmed;
+  if (/^localhost(:\d+)?([/?#]|$)/i.test(trimmed)) return 'http://' + trimmed;
+  // Bare hosts ("github.com/foo") get a scheme; anything else — spaces or
+  // no dot — is treated as a search query, like a real browser's omnibox.
+  if (!/\s/.test(trimmed) && /^[^\s/]+\.[^\s]{2,}/.test(trimmed)) return 'https://' + trimmed;
+  return 'https://www.google.com/search?q=' + encodeURIComponent(trimmed);
 }
 
 const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive, initialUrl, appMode, hibernated, onUrlChange, pluginId }) => {
@@ -37,6 +41,10 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive, init
   const [canGoBack, setCanGoBack] = useState(false);
   const [canGoForward, setCanGoForward] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  /** Transient toolbar status for the cookie sync (replaces the old alert()). */
+  const [syncMsg, setSyncMsg] = useState<{ text: string; isError: boolean } | null>(null);
+  const syncMsgTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [urlFocused, setUrlFocused] = useState(false);
   const webviewRef = useRef<HTMLElement | null>(null);
   const readyRef = useRef(false);
   const onUrlChangeRef = useRef(onUrlChange);
@@ -271,6 +279,11 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive, init
     if (wv && wv.reload) wv.reload();
   }, []);
 
+  const handleStopLoad = useCallback(() => {
+    const wv = webviewRef.current as any;
+    if (wv && wv.stop) wv.stop();
+  }, []);
+
   const handleBack = useCallback(() => {
     const wv = webviewRef.current as any;
     if (wv && wv.canGoBack && wv.canGoBack()) wv.goBack();
@@ -285,6 +298,15 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive, init
     const normalized = normalizeUrl(url);
     if (normalized) window.open(normalized, '_blank');
   }, [url]);
+
+  const showSyncMsg = useCallback((text: string, isError: boolean) => {
+    if (syncMsgTimerRef.current) clearTimeout(syncMsgTimerRef.current);
+    setSyncMsg({ text, isError });
+    syncMsgTimerRef.current = setTimeout(() => setSyncMsg(null), 6000);
+  }, []);
+  useEffect(() => () => {
+    if (syncMsgTimerRef.current) clearTimeout(syncMsgTimerRef.current);
+  }, []);
 
   const handleSyncChromeCookies = useCallback(async () => {
     setSyncing(true);
@@ -303,34 +325,35 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive, init
         'google.com',
         'github.com',
       ]);
-      const summary = `Imported ${res.imported} cookie(s), skipped ${res.skipped}`;
       // Reload the current page so any session that depended on the new cookies takes effect.
       const wv = webviewRef.current as any;
       if (wv && typeof wv.reload === 'function') wv.reload();
-      // Surface a small visible signal — fall back to alert() if no toast system.
+      const summary = `Imported ${res.imported} cookie(s), skipped ${res.skipped}`;
       if (res.errors.length === 0) {
-        alert(summary);
+        showSyncMsg(summary, false);
       } else {
-        alert(`${summary}\n\nFirst error: ${res.errors[0]}`);
+        showSyncMsg(`${summary} — ${res.errors[0]}`, true);
       }
     } catch (err: any) {
-      alert(`Chrome cookie sync failed: ${err?.message ?? err}`);
+      showSyncMsg(`Cookie sync failed: ${err?.message ?? err}`, true);
     } finally {
       setSyncing(false);
     }
-  }, []);
+  }, [showSyncMsg]);
 
   const bookmarks: Bookmark[] = browserCfg.bookmarks ?? [];
+  const isSecure = /^https:/i.test(url);
 
   return (
     <div
       style={{
+        position: 'relative',
         display: 'flex',
         flexDirection: 'column',
         height: '100%',
         backgroundColor: 'var(--wks-bg-base)',
         color: 'var(--wks-text-primary)',
-        fontFamily: 'Inter, system-ui, sans-serif',
+        fontFamily: 'var(--wks-font-sans)',
         fontSize: '12px',
       }}
     >
@@ -338,67 +361,104 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive, init
       {!appMode && (<>
         <div
           style={{
+            position: 'relative',
             display: 'flex',
             alignItems: 'center',
-            gap: '3px',
-            padding: '3px 6px',
+            gap: '2px',
+            padding: '5px 8px',
             backgroundColor: 'var(--wks-bg-surface)',
-            borderBottom: '1px solid var(--wks-border)',
+            borderBottom: '1px solid var(--wks-border-subtle)',
           }}
         >
-          <button
-            onClick={handleBack}
-            title="Back"
-            style={{
-              ...navBtnStyle,
-              opacity: canGoBack ? 1 : 0.4,
-            }}
+          <NavButton onClick={handleBack} title="Back" disabled={!canGoBack}><IconBack /></NavButton>
+          <NavButton onClick={handleForward} title="Forward" disabled={!canGoForward}><IconForward /></NavButton>
+          <NavButton
+            onClick={loading ? handleStopLoad : handleRefresh}
+            title={loading ? 'Stop loading' : 'Refresh'}
           >
-            &#x2190;
-          </button>
-          <button
-            onClick={handleForward}
-            title="Forward"
-            style={{
-              ...navBtnStyle,
-              opacity: canGoForward ? 1 : 0.4,
-            }}
-          >
-            &#x2192;
-          </button>
-          <button onClick={handleRefresh} title="Refresh" style={navBtnStyle}>&#x21BB;</button>
-          <input
-            type="text"
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Enter URL..."
-            spellCheck={false}
+            {loading ? <IconStop /> : <IconRefresh />}
+          </NavButton>
+
+          {/* Omnibox pill */}
+          <div
             style={{
               flex: 1,
-              height: '24px',
-              padding: '0 8px',
-              fontSize: '11px',
-              fontFamily: 'JetBrainsMono NF, JetBrainsMono Nerd Font, monospace',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '7px',
+              height: '26px',
+              margin: '0 4px',
+              padding: '0 11px',
+              minWidth: 0,
               backgroundColor: 'var(--wks-bg-input)',
-              color: 'var(--wks-text-primary)',
-              border: '1px solid var(--wks-border)',
-              borderRadius: '3px',
-              outline: 'none',
+              border: `1px solid ${urlFocused ? 'var(--wks-border-active)' : 'var(--wks-border-input)'}`,
+              borderRadius: 'var(--wks-radius-pill)',
+              boxShadow: urlFocused ? '0 0 0 2px var(--wks-accent-glow)' : 'none',
+              transition: 'border-color 0.12s ease, box-shadow 0.12s ease',
             }}
-            onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--wks-accent-text)'; }}
-            onBlur={(e) => { e.currentTarget.style.borderColor = 'var(--wks-border)'; }}
-          />
-          <button onClick={handleGo} title="Navigate" style={{ ...navBtnStyle, backgroundColor: 'var(--wks-accent)', color: 'var(--wks-text-primary)', fontWeight: 600, padding: '0 8px', width: 'auto' }}>Go</button>
-          <button onClick={handleOpenExternal} title="Open in system browser" style={navBtnStyle}>&#x2197;</button>
-          <button
-            onClick={handleSyncChromeCookies}
-            title="Sync cookies from Chrome (fixes OAuth sign-ins)"
-            style={navBtnStyle}
-            disabled={syncing}
           >
-            {syncing ? '⋯' : '\u{1F36A}'}
-          </button>
+            <span
+              title={isSecure ? 'Secure (https)' : 'Not secure'}
+              style={{
+                display: 'flex',
+                flexShrink: 0,
+                color: isSecure ? 'var(--wks-text-faint)' : 'var(--wks-warning)',
+              }}
+            >
+              <IconLock open={!isSecure} />
+            </span>
+            <input
+              type="text"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              onKeyDown={handleKeyDown}
+              onFocus={(e) => { setUrlFocused(true); e.currentTarget.select(); }}
+              onBlur={() => setUrlFocused(false)}
+              placeholder="Search or enter URL…"
+              spellCheck={false}
+              style={{
+                flex: 1,
+                minWidth: 0,
+                background: 'transparent',
+                border: 'none',
+                outline: 'none',
+                fontSize: '0.7rem',
+                fontFamily: 'var(--wks-font-mono)',
+                color: 'var(--wks-text-primary)',
+              }}
+            />
+          </div>
+
+          {syncMsg && (
+            <span
+              title={syncMsg.text}
+              style={{
+                maxWidth: '180px',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                fontSize: '0.62rem',
+                fontWeight: 600,
+                color: syncMsg.isError ? 'var(--wks-error)' : 'var(--wks-text-muted)',
+                animation: 'wks-fade-in 0.2s ease',
+              }}
+            >
+              {syncMsg.text}
+            </span>
+          )}
+
+          <ToolbarSep />
+          <NavButton onClick={handleOpenExternal} title="Open in system browser"><IconExternal /></NavButton>
+          <NavButton
+            onClick={handleSyncChromeCookies}
+            title="Sync sign-in cookies from Chrome (fixes stubborn OAuth flows)"
+            disabled={syncing}
+            spinning={syncing}
+          >
+            <IconCookie />
+          </NavButton>
+
+          {loading && <div className="wks-browser-progress" />}
         </div>
 
         {bookmarks.length > 0 && (
@@ -407,9 +467,9 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive, init
               display: 'flex',
               flexWrap: 'wrap',
               gap: '2px',
-              padding: '2px 6px',
-              backgroundColor: 'var(--wks-bg-base)',
-              borderBottom: '1px solid var(--wks-border)',
+              padding: '3px 8px',
+              backgroundColor: 'var(--wks-bg-surface)',
+              borderBottom: '1px solid var(--wks-border-subtle)',
             }}
           >
             {bookmarks.map((bm, i) => (
@@ -418,19 +478,26 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive, init
                 onClick={() => navigate(bm.url)}
                 title={bm.url}
                 style={{
-                  height: '20px',
-                  padding: '0 6px',
-                  fontSize: '10px',
-                  backgroundColor: 'var(--wks-bg-raised)',
-                  color: 'var(--wks-accent-text)',
-                  border: '1px solid var(--wks-border)',
-                  borderRadius: '2px',
+                  padding: '2px 8px',
+                  fontSize: '0.65rem',
+                  fontWeight: 600,
+                  fontFamily: 'inherit',
+                  backgroundColor: 'transparent',
+                  color: 'var(--wks-text-secondary)',
+                  border: 'none',
+                  borderRadius: 'var(--wks-radius-pill)',
                   cursor: 'pointer',
                   whiteSpace: 'nowrap',
-                  lineHeight: '1',
+                  lineHeight: '14px',
                 }}
-                onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--wks-bg-hover)'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'var(--wks-bg-raised)'; }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = 'var(--wks-bg-hover)';
+                  e.currentTarget.style.color = 'var(--wks-accent-text)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = 'transparent';
+                  e.currentTarget.style.color = 'var(--wks-text-secondary)';
+                }}
               >
                 {bm.name}
               </button>
@@ -439,12 +506,9 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive, init
         )}
       </>)}
 
-      {/* Loading indicator */}
-      {loading && (
-        <div style={{
-          height: '2px',
-          backgroundColor: 'var(--wks-accent)',
-        }} />
+      {/* App mode has no toolbar to host the progress bar — pin it to the pane top */}
+      {appMode && loading && (
+        <div className="wks-browser-progress" style={{ top: 0, bottom: 'auto' }} />
       )}
 
       {/* Content area */}
@@ -456,12 +520,12 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive, init
           alignItems: 'center',
           justifyContent: 'center',
           backgroundColor: 'var(--wks-bg-base)',
-          color: 'rgb(100, 100, 115)',
+          color: 'var(--wks-text-muted)',
           gap: '8px',
         }}>
           <span style={{ fontSize: '2rem', opacity: 0.5 }}>&#x1F4A4;</span>
           <span style={{ fontSize: '0.7rem' }}>Hibernated</span>
-          <span style={{ fontSize: '0.6rem', color: 'rgb(70, 70, 80)' }}>{url}</span>
+          <span style={{ fontSize: '0.6rem', fontFamily: 'var(--wks-font-mono)', color: 'var(--wks-text-faint)' }}>{url}</span>
         </div>
       ) : (
         <webview
@@ -482,20 +546,112 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({ paneId, title, isActive, init
   );
 };
 
-const navBtnStyle: React.CSSProperties = {
-  height: '24px',
-  width: '24px',
-  padding: 0,
-  fontSize: '12px',
-  backgroundColor: 'var(--wks-bg-raised)',
-  color: 'var(--wks-text-secondary)',
-  border: '1px solid var(--wks-border)',
-  borderRadius: '3px',
-  cursor: 'pointer',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  lineHeight: '1',
+/** Flat toolbar icon button — borderless, hover-raised, like the composer controls. */
+const NavButton: React.FC<{
+  onClick: () => void;
+  title: string;
+  disabled?: boolean;
+  spinning?: boolean;
+  children: React.ReactNode;
+}> = ({ onClick, title, disabled, spinning, children }) => (
+  <button
+    onClick={onClick}
+    title={title}
+    disabled={disabled}
+    style={{
+      height: '24px',
+      width: '26px',
+      padding: 0,
+      flexShrink: 0,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: 'transparent',
+      color: disabled ? 'var(--wks-text-disabled)' : 'var(--wks-text-secondary)',
+      border: 'none',
+      borderRadius: 'var(--wks-radius-sm)',
+      cursor: disabled ? 'default' : 'pointer',
+      transition: 'background-color 0.1s ease, color 0.1s ease',
+    }}
+    onMouseEnter={(e) => {
+      if (disabled) return;
+      e.currentTarget.style.backgroundColor = 'var(--wks-bg-hover)';
+      e.currentTarget.style.color = 'var(--wks-text-primary)';
+    }}
+    onMouseLeave={(e) => {
+      e.currentTarget.style.backgroundColor = 'transparent';
+      e.currentTarget.style.color = disabled ? 'var(--wks-text-disabled)' : 'var(--wks-text-secondary)';
+    }}
+  >
+    <span style={{ display: 'flex', animation: spinning ? 'wks-spin 0.9s linear infinite' : undefined }}>
+      {children}
+    </span>
+  </button>
+);
+
+/** Thin vertical rule between toolbar groups (matches the composer's separators). */
+const ToolbarSep: React.FC = () => (
+  <span aria-hidden style={{
+    width: 1, height: 14, flexShrink: 0, margin: '0 4px',
+    background: 'var(--wks-border-subtle)',
+  }} />
+);
+
+// ── Toolbar icons — 14px, stroke-based, inherit currentColor ──
+
+const iconProps = {
+  width: 14,
+  height: 14,
+  viewBox: '0 0 16 16',
+  fill: 'none',
+  stroke: 'currentColor',
+  strokeWidth: 1.5,
+  strokeLinecap: 'round' as const,
+  strokeLinejoin: 'round' as const,
 };
+
+const IconBack: React.FC = () => (
+  <svg {...iconProps}><path d="M10 3.5 5.5 8l4.5 4.5" /></svg>
+);
+
+const IconForward: React.FC = () => (
+  <svg {...iconProps}><path d="M6 3.5 10.5 8 6 12.5" /></svg>
+);
+
+const IconRefresh: React.FC = () => (
+  <svg {...iconProps}>
+    <path d="M14 8a6 6 0 1 1-6-6c1.68 0 3.29.67 4.49 1.83L14 5.33" />
+    <polyline points="14 2 14 5.33 10.67 5.33" />
+  </svg>
+);
+
+const IconStop: React.FC = () => (
+  <svg {...iconProps}><path d="m4.5 4.5 7 7M11.5 4.5l-7 7" /></svg>
+);
+
+const IconExternal: React.FC = () => (
+  <svg {...iconProps}>
+    <path d="M4.67 11.33 11.33 4.67" />
+    <polyline points="5.33 4.67 11.33 4.67 11.33 10.67" />
+  </svg>
+);
+
+const IconLock: React.FC<{ open?: boolean }> = ({ open }) => (
+  <svg {...iconProps} width={11} height={11} strokeWidth={1.6}>
+    <rect x="3" y="7" width="10" height="6.5" rx="1.8" />
+    {open
+      ? <path d="M5.5 7V5a2.5 2.5 0 0 1 4.9-.7" />
+      : <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" />}
+  </svg>
+);
+
+const IconCookie: React.FC = () => (
+  <svg {...iconProps}>
+    <path d="M13.9 8.6A6 6 0 1 1 7.4 2.1 2.4 2.4 0 0 0 10 4.7a2.4 2.4 0 0 0 2.6 2.6c.5 0 1 .5 1.3 1.3Z" />
+    <circle cx="6" cy="7" r="0.4" fill="currentColor" />
+    <circle cx="7.6" cy="10.4" r="0.4" fill="currentColor" />
+    <circle cx="10.4" cy="9.6" r="0.4" fill="currentColor" />
+  </svg>
+);
 
 export default BrowserPane;

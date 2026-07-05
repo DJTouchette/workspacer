@@ -591,6 +591,18 @@ class ClaudeSessionStore {
     return session;
   }
 
+  /**
+   * Record a permission-mode change confirmed by claudemon's live switch.
+   * Hooks will carry the same value on the next event; this keeps the pill
+   * honest in the meantime (there is no hook for the switch itself).
+   */
+  notePermissionMode(sessionId: string, mode: string): void {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    session.livePermissionMode = mode;
+    this.pushUpdate(session);
+  }
+
   private pushUpdate(session: ClaudeSessionState): void {
     if (!COALESCE_SNAPSHOT_UPDATES) {
       // Original immediate-send path (byte-for-byte identical behaviour).

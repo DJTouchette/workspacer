@@ -35,6 +35,11 @@ export interface ProviderCaps {
   /** Reasoning-effort levels, or null when the provider has no such knob. */
   effort: { levels: EffortLevel[]; switch: 'restart' } | null;
   permissionModes: PermissionModeOption[];
+  /** How a permission-mode change is applied mid-session. 'live' providers
+   *  still fall back to the restart confirm when the daemon reports the
+   *  switch can't be done live (busy, not in the shift+tab cycle, or a
+   *  bypass-spawned codex that can't re-enable approvals). */
+  permissionSwitch: 'live' | 'restart';
   /** Whether a restart re-opens the same conversation (drives confirm copy). */
   restartPreservesConversation: boolean;
 }
@@ -57,10 +62,15 @@ export const PROVIDER_CAPS: Record<AgentProvider, ProviderCaps> = {
       { id: 'plan', label: 'Plan mode' },
       { id: 'bypassPermissions', label: 'Full access' },
     ],
+    // Live via claudemon's verified shift+tab cycle (`/permission-mode`).
+    permissionSwitch: 'live',
     restartPreservesConversation: true,
   },
   codex: {
-    modelSwitch: 'restart',
+    // Live via claudemon's `/sessions/:id/model` → `thread/settings/update` on
+    // the running thread (app-server ws path). The rollout fallback can't do
+    // it — the daemon answers 409 and the pill falls back to the restart flow.
+    modelSwitch: 'live',
     modelSource: 'managed',
     effort: {
       levels: [
@@ -72,6 +82,9 @@ export const PROVIDER_CAPS: Record<AgentProvider, ProviderCaps> = {
       switch: 'restart',
     },
     permissionModes: MANAGED_PERMISSION_MODES,
+    // Live via the adapter's approval flag (ask→yolo always; yolo→ask only
+    // when codex wasn't spawned in bypass mode — the daemon reports which).
+    permissionSwitch: 'live',
     restartPreservesConversation: false,
   },
   opencode: {
@@ -79,6 +92,7 @@ export const PROVIDER_CAPS: Record<AgentProvider, ProviderCaps> = {
     modelSource: 'managed',
     effort: null,
     permissionModes: MANAGED_PERMISSION_MODES,
+    permissionSwitch: 'restart',
     restartPreservesConversation: false,
   },
   pi: {
@@ -86,6 +100,7 @@ export const PROVIDER_CAPS: Record<AgentProvider, ProviderCaps> = {
     modelSource: 'managed',
     effort: null,
     permissionModes: MANAGED_PERMISSION_MODES,
+    permissionSwitch: 'restart',
     // Pi relaunches with the same `--session-id`, which *may* pick its session
     // file back up — unverified, so the copy promises the safer thing.
     restartPreservesConversation: false,

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import React from 'react';
 import { AttentionProvider } from '../../src/contexts/AttentionContext';
+import { ConfigProvider } from '../../src/contexts/ConfigContext';
 import { useAttentionFeed } from '../../src/hooks/useAttentionFeed';
 import InboxDrawer from '../../src/components/InboxDrawer';
 import FleetDeck from '../../src/components/FleetDeck';
@@ -36,6 +37,7 @@ const snapshotBySession: Record<string, any> = {
 function Harness({ viewLevel, onOpenAgent }: { viewLevel: 'fleet' | 'piloting'; onOpenAgent: (id: string) => void }) {
   const attention = useAttentionFeed(snapshotBySession, agents);
   return (
+    <ConfigProvider>
     <AttentionProvider
       agents={agents}
       activeAgentId="a1"
@@ -51,6 +53,7 @@ function Harness({ viewLevel, onOpenAgent }: { viewLevel: 'fleet' | 'piloting'; 
       <InboxDrawer />
       <FleetDeck top={40} left={196} />
     </AttentionProvider>
+    </ConfigProvider>
   );
 }
 

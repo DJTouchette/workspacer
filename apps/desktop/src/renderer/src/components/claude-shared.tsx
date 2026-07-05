@@ -228,23 +228,5 @@ export function approvalBtnStyle(color: string): React.CSSProperties {
   };
 }
 
-// ── Streaming Dots ──
-
-export const StreamingDots: React.FC = () => (
-  <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-    {[0, 200, 400].map((delay) => (
-      <span
-        key={delay}
-        style={{
-          display: 'inline-block',
-          width: 6,
-          height: 6,
-          borderRadius: '50%',
-          backgroundColor: claudeColors.muted,
-          animation: `claudePulseDot 1.4s ease-in-out infinite`,
-          animationDelay: `${delay}ms`,
-        }}
-      />
-    ))}
-  </div>
-);
+// (The old three-dot StreamingDots indicator was replaced by the animated
+// brand mark — see BrandSpinner in components/Brand.tsx.)

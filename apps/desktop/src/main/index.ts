@@ -155,18 +155,65 @@ if (process.env.WORKSPACER_DISABLE_GPU === '1') {
   app.commandLine.appendSwitch('disable-gpu-compositing');
 }
 
-// Spoof a plain Chrome user-agent for every webContents/webview/session.
-// Microsoft sign-in (and Google's, and a few others) refuse to OAuth into
-// embedded web views — they sniff for "Electron/x.y.z" or app-name tokens
-// in the UA string. Stripping those makes the in-app browser look like a
-// regular Chrome install.
-function buildChromeUserAgent(): string {
-  // Take Electron's UA, drop our app token and the "Electron/X" segment.
-  const original = app.userAgentFallback || '';
-  return original
-    .replace(/\sworkspacer\/\S+/i, '')
-    .replace(/\sElectron\/\S+/i, '');
+// ── In-app browser identity (SSO compatibility) ──
+//
+// Google and Microsoft sign-in refuse to OAuth into anything that looks like
+// an embedded web view. Two things give us away:
+//
+//  1. The UA string. Merely stripping "Electron/x" from Electron's own UA
+//     still advertises this Electron's Chromium major (130) with its FULL
+//     build number — real Chrome sends a *reduced* version ("130.0.0.0"),
+//     and by now 130 itself trips Google's "browser may be outdated /
+//     insecure" gate. So we build a canonical, current Chrome UA from
+//     scratch instead of deriving it from Electron's.
+//  2. Google's accounts pages additionally run JS-side checks that no
+//     Chrome-claiming embedded view reliably passes. The battle-tested
+//     workaround (Ferdium & friends) is to present a *Firefox* UA on
+//     accounts.google.com only — Google allows Firefox through the
+//     embedded-browser check, and Firefox sends no Sec-CH-UA client hints,
+//     so there is nothing else to keep consistent.
+//
+// CHROME_UA_MAJOR needs an occasional bump (or set WORKSPACER_CHROME_UA
+// to override the whole string). The real fix for staying current is
+// upgrading Electron itself.
+const CHROME_UA_MAJOR = process.env.WORKSPACER_CHROME_UA_MAJOR || '143';
+const FIREFOX_UA_MAJOR = '140'; // current ESR — safe to leave for a long time
+
+function uaPlatformToken(): string {
+  switch (process.platform) {
+    case 'darwin': return 'Macintosh; Intel Mac OS X 10_15_7';
+    case 'win32': return 'Windows NT 10.0; Win64; x64';
+    default: return 'X11; Linux x86_64';
+  }
 }
+
+function buildChromeUserAgent(): string {
+  if (process.env.WORKSPACER_CHROME_UA) return process.env.WORKSPACER_CHROME_UA;
+  return `Mozilla/5.0 (${uaPlatformToken()}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${CHROME_UA_MAJOR}.0.0.0 Safari/537.36`;
+}
+
+function buildFirefoxUserAgent(): string {
+  const platform =
+    process.platform === 'darwin' ? 'Macintosh; Intel Mac OS X 10.15' :
+    process.platform === 'win32' ? 'Windows NT 10.0; Win64; x64' :
+    'X11; Linux x86_64';
+  return `Mozilla/5.0 (${platform}; rv:${FIREFOX_UA_MAJOR}.0) Gecko/20100101 Firefox/${FIREFOX_UA_MAJOR}.0`;
+}
+
+// Hosts that get the Firefox treatment. Deliberately narrow: only Google's
+// sign-in surface, not all of google.com — the services themselves work
+// fine (better, even) with the Chrome UA.
+function isGoogleAuthUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname;
+    return host === 'accounts.google.com'
+      || host.endsWith('.accounts.google.com')
+      || host === 'accounts.youtube.com';
+  } catch {
+    return false;
+  }
+}
+
 app.userAgentFallback = buildChromeUserAgent();
 
 function createWindow(): void {
@@ -345,6 +392,7 @@ app.whenReady().then(() => {
   // so cookies persist across restarts AND OAuth doesn't trip the embedded
   // webview sniffer.
   const chromeUA = buildChromeUserAgent();
+  const firefoxUA = buildFirefoxUserAgent();
   session.defaultSession.setUserAgent(chromeUA);
   const browserSession = session.fromPartition('persist:browser');
   browserSession.setUserAgent(chromeUA);
@@ -355,7 +403,7 @@ app.whenReady().then(() => {
   // so MS sign-in's secondary checks pass. Pulled the brand version out of
   // the spoofed UA so the two stay consistent.
   const chromeVersionMatch = chromeUA.match(/Chrome\/(\d+)/);
-  const chromeVersion = chromeVersionMatch ? chromeVersionMatch[1] : '130';
+  const chromeVersion = chromeVersionMatch ? chromeVersionMatch[1] : CHROME_UA_MAJOR;
   const secChUa = `"Chromium";v="${chromeVersion}", "Not?A_Brand";v="99", "Google Chrome";v="${chromeVersion}"`;
 
   for (const sess of [session.defaultSession, browserSession]) {
@@ -367,26 +415,51 @@ app.whenReady().then(() => {
           headers[k] = String(headers[k]).replace(/\sElectron\/\S+/i, '').replace(/\sworkspacer\/\S+/i, '');
         }
       }
-      // Standardise Client Hints to look like real Chrome.
-      headers['Sec-CH-UA'] = secChUa;
-      headers['Sec-CH-UA-Mobile'] = '?0';
-      headers['Sec-CH-UA-Platform'] = process.platform === 'darwin' ? '"macOS"' :
-                                       process.platform === 'win32' ? '"Windows"' : '"Linux"';
-      // User-Agent itself (belt-and-suspenders — the session-level UA usually
-      // sets this, but in some edge cases requests slip through with the old UA).
-      headers['User-Agent'] = chromeUA;
+      if (isGoogleAuthUrl(details.url)) {
+        // Google sign-in: claim Firefox and send NO client hints at all —
+        // Firefox doesn't implement Sec-CH-UA, and a Firefox UA alongside
+        // Chrome client hints is exactly the inconsistency Google flags.
+        for (const k of Object.keys(headers)) {
+          if (/^sec-ch-ua/i.test(k)) delete headers[k];
+        }
+        headers['User-Agent'] = firefoxUA;
+      } else {
+        // Everywhere else: standardise Client Hints to look like real Chrome.
+        headers['Sec-CH-UA'] = secChUa;
+        headers['Sec-CH-UA-Mobile'] = '?0';
+        headers['Sec-CH-UA-Platform'] = process.platform === 'darwin' ? '"macOS"' :
+                                         process.platform === 'win32' ? '"Windows"' : '"Linux"';
+        // User-Agent itself (belt-and-suspenders — the session-level UA usually
+        // sets this, but in some edge cases requests slip through with the old UA).
+        headers['User-Agent'] = chromeUA;
+      }
       callback({ requestHeaders: headers });
     });
   }
 
-  // Apply the Chrome UA to every webview as it's created. Don't install a
-  // window-open handler — `allowpopups="true"` on the <webview> tag already
+  // The header rewrite above only covers network requests — Google's sign-in
+  // page ALSO reads navigator.userAgent from JS, and it must agree with the
+  // headers or the embedded-browser check still trips. Switch each
+  // webContents' UA as it navigates in and out of Google's auth pages.
+  // Applied to every webContents (webviews AND the popup windows that
+  // "Sign in with Google/Microsoft" buttons open via allowpopups).
+  const applyUaNavigationSwitch = (contents: Electron.WebContents) => {
+    contents.on('did-start-navigation', (_event, navUrl, _isInPlace, isMainFrame) => {
+      if (!isMainFrame) return;
+      const wanted = isGoogleAuthUrl(navUrl) ? firefoxUA : chromeUA;
+      if (contents.getUserAgent() !== wanted) contents.setUserAgent(wanted);
+    });
+  };
+
+  // Apply the Chrome UA to every webview/window as it's created. Don't install
+  // a window-open handler — `allowpopups="true"` on the <webview> tag already
   // handles popups natively with the same partition, and intercepting via
   // setWindowOpenHandler was aborting unrelated navigations.
   app.on('web-contents-created', (_event, contents) => {
     if (contents.getType() === 'webview') {
       contents.setUserAgent(chromeUA);
     }
+    applyUaNavigationSwitch(contents);
   });
 
   app.on('browser-window-created', (_e, win) => {

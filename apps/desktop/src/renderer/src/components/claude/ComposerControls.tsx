@@ -5,9 +5,15 @@
  * can do comes from lib/providerCaps.ts:
  *
  *  - Model:  claude switches live (`/model <id>` submitted through the normal
- *    message path); managed providers restart with the new model.
+ *    message path); codex switches live too (claudemon applies
+ *    `thread/settings/update` to the running thread — falls back to the
+ *    restart confirm when the daemon says it can't, e.g. rollout fallback);
+ *    opencode/pi restart with the new model.
  *  - Effort: codex only, restart (`-c model_reasoning_effort=<level>`).
- *  - Permission mode: restart for every provider.
+ *  - Permission mode: live where the daemon can drive it (claude via the
+ *    verified shift+tab cycle, codex via the adapter's approval flag); when
+ *    the daemon reports the switch can't be done live, the pick falls back to
+ *    the restart confirm with the daemon's reason. opencode/pi restart.
  *
  * Restart selections go through a confirm step whose copy says whether the
  * conversation survives (claude resumes; codex/opencode start fresh).
@@ -41,8 +47,10 @@ interface MenuState {
   kind: MenuKind;
   x: number;
   y: number;
-  /** Set once the user picked a restart-requiring value — confirm view. */
-  confirm?: { overrides: RestartOverrides; label: string };
+  /** Set once the user picked a restart-requiring value — confirm view.
+   *  `reason` carries the daemon's explanation when a live switch fell back
+   *  to the restart path. */
+  confirm?: { overrides: RestartOverrides; label: string; reason?: string };
 }
 
 const pillStyle: React.CSSProperties = {
@@ -130,21 +138,77 @@ export const ComposerControls: React.FC<{
     if (kind === 'model' && models === null) void loadModels();
   };
 
-  const liveModelSwitch = useCallback((id: string) => {
+  // Live model switch. Claude: the `/model` slash command through the normal
+  // message path. Managed (codex): claudemon's `/sessions/:id/model`, which
+  // applies `thread/settings/update` to the running thread. Either way the
+  // pill shows "switching…" until telemetry reports the new model. When the
+  // daemon says it can't be done live (rollout fallback, opencode/pi), reopen
+  // the menu as the restart confirm with its reason — same flow as the
+  // permission pill.
+  const liveModelSwitch = useCallback((id: string, label: string, at: { x: number; y: number }) => {
     if (!sessionId) return;
     modelAtSwitchRef.current = stats.model;
     setSwitching(id);
     if (switchTimerRef.current) clearTimeout(switchTimerRef.current);
     switchTimerRef.current = setTimeout(() => setSwitching(null), 15_000);
-    window.electronAPI.claudeMessage(sessionId, `/model ${id}`).catch((err) => {
-      console.warn('[ComposerControls] live model switch failed:', err);
-      setSwitching(null);
-    });
-  }, [sessionId, stats.model]);
+    if (caps.modelSource === 'claude') {
+      window.electronAPI.claudeMessage(sessionId, `/model ${id}`).catch((err) => {
+        console.warn('[ComposerControls] live model switch failed:', err);
+        setSwitching(null);
+      });
+      return;
+    }
+    window.electronAPI.claudeSetModel(sessionId, id)
+      .then((res) => {
+        if (!res.ok) {
+          setSwitching(null);
+          setMenu({
+            kind: 'model',
+            x: at.x,
+            y: at.y,
+            confirm: { overrides: { model: id }, label, reason: res.error },
+          });
+        }
+      })
+      .catch((err) => {
+        console.warn('[ComposerControls] live model switch failed:', err);
+        setSwitching(null);
+      });
+  }, [sessionId, stats.model, caps.modelSource]);
 
   const pickRestart = (overrides: RestartOverrides, label: string) => {
     setMenu((m) => (m ? { ...m, confirm: { overrides, label } } : m));
   };
+
+  /** Target mode id of an in-flight live permission switch. Cleared when the
+   *  daemon answers — on success the snapshot already carries the new mode
+   *  (main updates livePermissionMode before resolving), so no timer needed. */
+  const [permSwitching, setPermSwitching] = useState<string | null>(null);
+
+  // Live permission switch: claudemon drives and verifies it (claude:
+  // shift+tab cycle against the screen; codex: adapter approval flag). When
+  // the daemon says it can't be done live, reopen the menu as the restart
+  // confirm with its reason — same outcome the pick would have had on a
+  // restart-only provider, just better informed.
+  const livePermissionSwitch = useCallback((id: string, label: string, at: { x: number; y: number }) => {
+    if (!sessionId) return;
+    setPermSwitching(id);
+    window.electronAPI.claudeSetPermissionMode(sessionId, id)
+      .then((res) => {
+        if (!res.ok) {
+          setMenu({
+            kind: 'permission',
+            x: at.x,
+            y: at.y,
+            confirm: { overrides: { permissionMode: id }, label, reason: res.error },
+          });
+        }
+      })
+      .catch((err) => {
+        console.warn('[ComposerControls] live permission switch failed:', err);
+      })
+      .finally(() => setPermSwitching(null));
+  }, [sessionId]);
 
   // ── Pill labels ──
   const modelLabel = switching
@@ -155,7 +219,9 @@ export const ComposerControls: React.FC<{
   // Live mode (hook telemetry — follows shift+tab in the TUI) wins over the
   // requested-at-spawn setting, same precedence as the model pill.
   const currentPermMode = snapshot?.livePermissionMode ?? settings?.permissionMode;
-  const permLabel = permissionModeLabel(provider, currentPermMode);
+  const permLabel = permSwitching
+    ? `${permissionModeLabel(provider, permSwitching)}…`
+    : permissionModeLabel(provider, currentPermMode);
 
   const disabled = !sessionId;
 
@@ -190,10 +256,14 @@ export const ComposerControls: React.FC<{
       <Sep />
       <button
         className="wks-composer-ctl"
-        style={pillStyle}
+        style={{ ...pillStyle, color: permSwitching ? colors.accent : pillStyle.color }}
         onClick={openMenu('permission')}
         disabled={disabled}
-        title={disabled ? 'No session yet' : 'Permission mode (restarts the session)'}
+        title={disabled
+          ? 'No session yet'
+          : caps.permissionSwitch === 'live'
+            ? 'Permission mode (applies immediately)'
+            : 'Permission mode (restarts the session)'}
       >
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{permLabel}</span>
         <span style={{ opacity: 0.7 }}>▾</span>
@@ -216,8 +286,9 @@ export const ComposerControls: React.FC<{
                   label={m.label}
                   onClick={() => {
                     if (caps.modelSwitch === 'live') {
-                      liveModelSwitch(m.id);
+                      const at = { x: menu.x, y: menu.y };
                       setMenu(null);
+                      liveModelSwitch(m.id, m.label, at);
                     } else {
                       pickRestart({ model: m.id }, m.label);
                     }
@@ -240,12 +311,22 @@ export const ComposerControls: React.FC<{
           )}
           {menu.kind === 'permission' && (
             <>
-              <ContextMenuLabel>Permissions · restarts session</ContextMenuLabel>
+              <ContextMenuLabel>
+                Permissions{caps.permissionSwitch === 'restart' ? ' · restarts session' : ''}
+              </ContextMenuLabel>
               {caps.permissionModes.map((m) => (
                 <ContextMenuItem
                   key={m.id}
                   label={m.id === (currentPermMode ?? caps.permissionModes[0]?.id) ? `${m.label} ✓` : m.label}
-                  onClick={() => pickRestart({ permissionMode: m.id }, m.label)}
+                  onClick={() => {
+                    if (caps.permissionSwitch === 'live') {
+                      const at = { x: menu.x, y: menu.y };
+                      setMenu(null);
+                      livePermissionSwitch(m.id, m.label, at);
+                    } else {
+                      pickRestart({ permissionMode: m.id }, m.label);
+                    }
+                  }}
                 />
               ))}
             </>
@@ -255,6 +336,9 @@ export const ComposerControls: React.FC<{
 
       {menu?.confirm && (
         <ContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)} minWidth={230}>
+          {menu.confirm.reason && (
+            <ContextMenuLabel>{menu.confirm.reason}</ContextMenuLabel>
+          )}
           <ContextMenuLabel>
             {caps.restartPreservesConversation
               ? 'Restarts and resumes this conversation'

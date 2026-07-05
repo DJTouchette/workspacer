@@ -103,6 +103,12 @@ export const InspectorRail: React.FC<{
     if (!sessionId) return;
     requestAgentWatch({ sessionId, kind: 'workflow', id: runId, title: `Flow: ${name ?? runId}` });
   };
+  // Fleet view for plain (non-workflow) subagents: the same timeline surface a
+  // workflow run gets, fed all of this session's Agent-tool subagents.
+  const watchFleet = () => {
+    if (!sessionId) return;
+    requestAgentWatch({ sessionId, kind: 'agents', id: sessionId, title: 'Agents: fleet' });
+  };
 
   const sl = session?.statusLine;
   const usage = session?.usage;
@@ -268,7 +274,36 @@ export const InspectorRail: React.FC<{
           subagents.length === 0 ? (
             <div style={emptyStateStyle}>No subagents yet</div>
           ) : (
-            subagents.map(sub => <SubagentRow key={sub.id} sub={sub} onOpen={() => watchSubagent(sub)} />)
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', marginBottom: 6 }}>
+                {liveSubagents > 0 && (
+                  <span style={{ fontSize: '0.68rem', color: '#c084fc', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    {liveSubagents} running
+                  </span>
+                )}
+                <div style={{ flex: 1 }} />
+                <button
+                  onClick={watchFleet}
+                  title="Open all this session’s agents on one timeline"
+                  style={{
+                    fontSize: '0.66rem',
+                    fontWeight: 600,
+                    padding: '2px 8px',
+                    borderRadius: 4,
+                    border: `1px solid ${colors.borderSubtle}`,
+                    cursor: 'pointer',
+                    backgroundColor: 'transparent',
+                    color: colors.muted,
+                    flexShrink: 0,
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--wks-bg-hover)'; e.currentTarget.style.color = colors.text; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = colors.muted; }}
+                >
+                  Fleet view ↗
+                </button>
+              </div>
+              {subagents.map(sub => <SubagentRow key={sub.id} sub={sub} onOpen={() => watchSubagent(sub)} />)}
+            </>
           )
         )}
 

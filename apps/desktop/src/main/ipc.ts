@@ -13,6 +13,7 @@ import { listClaudeModels } from './services/claudeModels';
 import { workflowWatcher } from './services/workflowWatcher';
 import { agentNotifier } from './services/agentNotifier';
 import { claudemonSessionClient } from './services/claudemonSessionClient';
+import { agentHandoffBrief } from './services/agentHandoff';
 import { buildClaudeArgv } from './services/claudeResolver';
 import { resolveAgentBinary, checkAllProviders } from './services/agentProviders';
 import { spawnManagedAgent } from './services/managedSpawn';
@@ -430,6 +431,29 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   ipcMain.handle(IPC.CLAUDE_MESSAGE, (_event, sessionId: string, text: string) =>
     claudemonSessionClient.message(sessionId, text));
+  // Live permission-mode switch (no restart). On success, reflect the
+  // daemon-confirmed mode into the snapshot store immediately — the switch
+  // itself fires no hook, so telemetry would otherwise lag until the next one.
+  ipcMain.handle(IPC.CLAUDE_SET_PERMISSION_MODE, async (_event, sessionId: string, mode: string) => {
+    const result = await claudemonSessionClient.setPermissionMode(sessionId, mode);
+    if (result.ok && result.mode) claudeSessionStore.notePermissionMode(sessionId, result.mode);
+    return result;
+  });
+  // Live model switch for managed providers (no restart). Confirmation flows
+  // back through the status line (codex broadcasts thread/settings/updated),
+  // so no store note is needed here.
+  ipcMain.handle(IPC.CLAUDE_SET_MODEL, (_event, sessionId: string, model?: string, effort?: string) =>
+    claudemonSessionClient.setModel(sessionId, model, effort));
+  // Cross-provider handoff: daemon distills the session's conversation into a
+  // brief under ~/.workspacer/handoffs/; the renderer spawns the successor and
+  // points its first message at the file.
+  ipcMain.handle(IPC.CLAUDE_HANDOFF_BRIEF, (_event, sessionId: string) =>
+    claudemonSessionClient.handoffBrief(sessionId));
+  // Agent-authored brief: the source agent writes the file itself (it's the
+  // only thing holding the session in context); falls back to the mechanical
+  // brief if it doesn't deliver. Resolves only once a brief file exists.
+  ipcMain.handle(IPC.CLAUDE_HANDOFF_AGENT_BRIEF, (_event, sessionId: string) =>
+    agentHandoffBrief(sessionId));
   ipcMain.handle(IPC.CLAUDE_APPROVE, (_event, sessionId: string, decision: 'yes' | 'no' | 'always', reason?: string) =>
     claudemonSessionClient.approve(sessionId, decision, reason));
   ipcMain.handle(IPC.CLAUDE_ANSWER, (_event, sessionId: string, payload: { option?: number; text?: string; answers?: string[] }) =>

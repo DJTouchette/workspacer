@@ -186,27 +186,47 @@ const DEFAULT_SHORTCUTS: Record<string, string> = {
   'toggle-inspector': 'ctrl+shift+e',
   'library-picker': 'ctrl+shift+l',
   'open-review': 'ctrl+shift+g',
-  // Prefix chords (Ctrl+Space then …), grouped into submenus
-  // New ▸
+  // Prefix chords (Ctrl+Space then one key) — flat, single-key per action
+  'new-terminal': 'prefix t',
+  'new-claude': 'prefix c',
+  'new-browser': 'prefix b',
+  'split': 'prefix s',
+  'quick-split': 'prefix q',
+  'close-pane': 'prefix w',
+  'rename-tab': 'prefix r',
+  'prev-tab': 'prefix [',
+  'next-tab': 'prefix ]',
+  'move-tab-left': 'prefix ,',
+  'move-tab-right': 'prefix .',
+  'nav-left': 'prefix h',
+  'nav-down': 'prefix j',
+  'nav-up': 'prefix k',
+  'nav-right': 'prefix l',
+  'cycle-view': 'prefix v',
+};
+
+/**
+ * Old nested chord defaults (pre-flattening). A saved shortcut whose value still
+ * matches one of these was never customized by the user — it's a stale default —
+ * so it's migrated to the new single-key default. Any other value is a genuine
+ * user choice and is preserved untouched.
+ */
+const OLD_CHORD_DEFAULTS: Record<string, string> = {
   'new-terminal': 'prefix n t',
   'new-claude': 'prefix n c',
   'new-browser': 'prefix n b',
-  // Tab ▸
   'prev-tab': 'prefix t [',
   'next-tab': 'prefix t ]',
   'move-tab-left': 'prefix t ,',
   'move-tab-right': 'prefix t .',
   'rename-tab': 'prefix t r',
   'close-pane': 'prefix t w',
-  // Pane ▸
   'split': 'prefix p s',
   'quick-split': 'prefix p c',
   'nav-left': 'prefix p h',
   'nav-down': 'prefix p j',
   'nav-up': 'prefix p k',
   'nav-right': 'prefix p l',
-  // Top-level leaf
-  'cycle-view': 'prefix v',
 };
 
 function defaultConfig(): Config {
@@ -380,6 +400,35 @@ function migrateKeybindings(cfg: Config): Config {
   return cfg;
 }
 
+/**
+ * Second-pass migration for users whose config predates the chord flattening but
+ * postdates the schema rewrite (so migrateKeybindings leaves them alone). Any
+ * shortcut still holding its exact OLD_CHORD_DEFAULTS value was never touched by
+ * the user — it's a stale nested default — so rewrite it to the new flat default.
+ * A value that differs from the old default is a real user choice and is kept.
+ */
+function migrateFlatChords(cfg: Config): Config {
+  const shortcuts = cfg.keybindings?.shortcuts;
+  if (!shortcuts) return cfg;
+
+  let changed = false;
+  for (const [action, oldDefault] of Object.entries(OLD_CHORD_DEFAULTS)) {
+    if (shortcuts[action] === oldDefault && DEFAULT_SHORTCUTS[action] !== undefined) {
+      shortcuts[action] = DEFAULT_SHORTCUTS[action];
+      changed = true;
+    }
+  }
+  if (!changed) return cfg;
+
+  try {
+    fs.mkdirSync(getConfigDir(), { recursive: true });
+    fs.writeFileSync(getConfigFilePath(), yaml.dump(cfg, { lineWidth: -1 }), 'utf-8');
+  } catch (err) {
+    console.error('[ConfigService] flat-chord migration write failed:', err);
+  }
+  return cfg;
+}
+
 class ConfigService {
   private config: Config;
 
@@ -395,7 +444,11 @@ class ConfigService {
       const data = fs.readFileSync(configPath, 'utf-8');
       const parsed = yaml.load(data) as Partial<Config>;
       const merged = deepMerge(defaults, parsed) as Config;
-      return migrateKeybindings(merged);
+      // migrateKeybindings runs first: a legacy-schema config is reset wholesale
+      // to the flat defaults, after which migrateFlatChords is a no-op. A modern
+      // config passes migrateKeybindings untouched and migrateFlatChords then
+      // upgrades any stale nested-default chords in place.
+      return migrateFlatChords(migrateKeybindings(merged));
     } catch {
       // No config file — write defaults
       this.writeDefaults();

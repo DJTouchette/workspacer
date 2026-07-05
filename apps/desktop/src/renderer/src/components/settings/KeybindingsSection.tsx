@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { Config, DEFAULT_CONFIG } from '../../hooks/useConfig';
 import { formatBinding, ACTION_SECTIONS, DIGIT_RANGE_ACTIONS, DIGIT_RANGE_TOKEN } from '../../lib/shortcuts';
 import { Section, Row, ModeButton } from './primitives';
@@ -17,7 +17,10 @@ function comboFromEvent(e: React.KeyboardEvent): string {
 }
 
 const ShortcutEditor: React.FC<{ config: Config; save: (partial: Partial<Config>) => Promise<Config> }> = ({ config, save }) => {
-  const currentShortcuts = config.keybindings?.shortcuts ?? {};
+  // Defaults merged under the saved map so actions added after the user's
+  // config was written (e.g. the fleet/inbox bindings) still show their
+  // default combo instead of "—".
+  const currentShortcuts = { ...(DEFAULT_CONFIG.keybindings.shortcuts ?? {}), ...(config.keybindings?.shortcuts ?? {}) };
   const prefix = config.keybindings?.prefix ?? 'ctrl+space';
   const [capturing, setCapturing] = useState<string | null>(null);
   // True once the prefix has been pressed mid-capture: the next key becomes the
@@ -139,22 +142,68 @@ interface KeybindingsSectionProps {
   save: (partial: Partial<Config>) => Promise<Config>;
 }
 
+/** Modifier-only prefix shown while the combo is still being held, e.g. "Ctrl+…". */
+function pendingModifiers(e: KeyboardEvent): string {
+  const parts: string[] = [];
+  if (e.ctrlKey) parts.push('ctrl');
+  if (e.altKey) parts.push('alt');
+  if (e.shiftKey) parts.push('shift');
+  if (e.metaKey) parts.push('meta');
+  return parts.join('+');
+}
+
 const KeybindingsSection: React.FC<KeybindingsSectionProps> = ({ config, save }) => {
   const prefix = config.keybindings?.prefix ?? 'ctrl+space';
   const chordHints = config.keybindings?.chordHints ?? true;
   const [capturingPrefix, setCapturingPrefix] = useState(false);
+  // While held-down modifiers are being typed, show them so the combo forming is
+  // visible (e.g. "Ctrl+…"); '' means nothing pressed yet.
+  const [pendingPrefix, setPendingPrefix] = useState('');
   const prefixInputRef = useRef<HTMLInputElement>(null);
 
-  const handlePrefixCapture = useCallback((e: React.KeyboardEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    // The prefix must be a real combo, not a bare modifier — a bare-modifier
-    // prefix would arm a chord on every modifier tap.
-    if (['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) return;
-    const combo = comboFromEvent(e);
-    setCapturingPrefix(false);
-    save({ keybindings: { ...config.keybindings, prefix: combo } });
-  }, [config.keybindings, save]);
+  // Capture the leader via a document-level keydown listener rather than an
+  // input's focus. The old focus-then-setTimeout dance raced with the input's
+  // blur and usually cancelled itself before a key ever landed. A single
+  // un-modified key (bare "`" / space) is a valid leader here.
+  useEffect(() => {
+    if (!capturingPrefix) return;
+    // Keep the field focused so the global nav handler (useKeyboardNav) sees the
+    // data-leader-capture target and bails instead of consuming the combo before
+    // our listener runs. Focus is synchronous here — no setTimeout race.
+    prefixInputRef.current?.focus();
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === 'Escape') { setCapturingPrefix(false); setPendingPrefix(''); return; }
+      // Bare modifier: reflect it in the pending display and keep waiting.
+      if (['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) {
+        setPendingPrefix(pendingModifiers(e));
+        return;
+      }
+      const combo = comboFromEvent(e as unknown as React.KeyboardEvent);
+      setCapturingPrefix(false);
+      setPendingPrefix('');
+      save({ keybindings: { ...config.keybindings, prefix: combo } });
+    };
+    // A click anywhere but the capture field itself cancels.
+    const onMouseDown = (e: MouseEvent) => {
+      if (e.target === prefixInputRef.current) return;
+      setCapturingPrefix(false);
+      setPendingPrefix('');
+    };
+
+    document.addEventListener('keydown', onKeyDown, true);
+    document.addEventListener('mousedown', onMouseDown, true);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown, true);
+      document.removeEventListener('mousedown', onMouseDown, true);
+    };
+  }, [capturingPrefix, config.keybindings, save]);
+
+  const prefixDisplay = capturingPrefix
+    ? (pendingPrefix ? `${formatBinding(pendingPrefix)}+…` : 'Press key combo…')
+    : formatBinding(prefix);
 
   return (
     <Section title="Keybindings">
@@ -163,13 +212,8 @@ const KeybindingsSection: React.FC<KeybindingsSectionProps> = ({ config, save })
           ref={prefixInputRef}
           data-leader-capture="true"
           readOnly
-          value={capturingPrefix ? 'Press key combo…' : formatBinding(prefix)}
-          onKeyDown={capturingPrefix ? handlePrefixCapture : undefined}
-          onBlur={() => setCapturingPrefix(false)}
-          onClick={() => {
-            setCapturingPrefix(true);
-            setTimeout(() => prefixInputRef.current?.focus(), 0);
-          }}
+          value={prefixDisplay}
+          onMouseDown={() => { setPendingPrefix(''); setCapturingPrefix(true); }}
           style={{
             width: '160px', height: '24px', padding: '0 8px',
             fontSize: '11px', fontFamily: 'monospace',

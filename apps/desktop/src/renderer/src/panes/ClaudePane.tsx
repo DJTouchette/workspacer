@@ -15,11 +15,13 @@ import {
   claudeColors as colors,
   ensureKeyframes,
   StatusBadge,
-  StreamingDots,
   sendApproval,
 } from '../components/claude-shared';
+import { BrandSpinner } from '../components/Brand';
 import { RefreshCw } from '../components/icons';
-import { PanelRight } from 'lucide-react';
+import { PanelRight, ArrowRightLeft } from 'lucide-react';
+import { ContextMenu, ContextMenuItem, ContextMenuLabel } from '../components/ContextMenu';
+import { requestHandoff } from '../lib/watchBus';
 import { quoteFontFamily, isTermVisible, refitAndRepaint } from '../lib/terminalUtils';
 import ErrorBoundary from '../components/ErrorBoundary';
 import { clearMdCache } from '../components/markdown';
@@ -759,6 +761,39 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
     });
   }, []);
 
+  // ── Cross-provider handoff ──
+  //
+  // Two-step: pick the successor's provider, then how the brief gets written —
+  // by the source agent itself (best quality: it holds the session in context;
+  // takes a turn, mechanical fallback on timeout) or mechanically (instant
+  // digest from the conversation). Either way the brief lands under
+  // ~/.workspacer/handoffs/ and App spawns the successor with its composer
+  // pre-filled to read it. Any harness → any harness.
+  const [handoffMenu, setHandoffMenu] = useState<{ x: number; y: number; target?: AgentProvider } | null>(null);
+  const [handoffBusy, setHandoffBusy] = useState<'agent' | 'mechanical' | null>(null);
+  const handleHandoff = useCallback(async (target: AgentProvider, kind: 'agent' | 'mechanical') => {
+    const sid = sessionId ?? attachSessionId;
+    if (!sid || handoffBusy) return;
+    setHandoffBusy(kind);
+    try {
+      const res = kind === 'agent'
+        ? await window.electronAPI.claudeHandoffAgentBrief(sid)
+        : await window.electronAPI.claudeHandoffBrief(sid);
+      if (!res.ok || !res.path) {
+        console.warn('[ClaudePane] handoff brief failed:', res.error);
+        return;
+      }
+      if ((res as { fallback?: boolean }).fallback) {
+        console.warn('[ClaudePane] agent brief fell back to mechanical:', res.error);
+      }
+      requestHandoff({ targetProvider: target, cwd, briefPath: res.path, sourceSessionId: sid });
+    } catch (err) {
+      console.warn('[ClaudePane] handoff failed:', err);
+    } finally {
+      setHandoffBusy(null);
+    }
+  }, [sessionId, attachSessionId, cwd, handoffBusy]);
+
   // Inspector-rail hotkey (configurable: keybindings.shortcuts['toggle-inspector']).
   // The rail is per-pane state, so we match the combo here for the active pane
   // rather than routing through the global nav handler. Capture phase + stop
@@ -1038,7 +1073,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
                 {conversation.length === 0 && !session && !spawnError && (
                   <div style={{ textAlign: 'center', marginTop: 60, color: colors.mutedDim }}>
                     <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
-                      <StreamingDots />
+                      <BrandSpinner size={26} />
                     </div>
                     <div style={{ fontSize: '0.8rem', color: colors.muted }}>Connecting to {agentName}…</div>
                     {showHookHint && isClaude && (
@@ -1102,7 +1137,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
                     gap: 10,
                     padding: '8px 0 4px 0',
                   }}>
-                    <StreamingDots />
+                    <BrandSpinner size={15} />
                     <button
                       onClick={cancelTask}
                       style={{
@@ -1204,12 +1239,6 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
             old working-timer + directory readouts). */}
         <SessionStatusBar snapshot={session} cwd={cwd} />
 
-        {session && (
-          <span style={{ fontSize: '0.68rem', fontFamily: 'var(--wks-font-mono, monospace)', color: 'var(--wks-text-muted)', whiteSpace: 'nowrap' }}>
-            {session.totalToolCalls} tools
-          </span>
-        )}
-
         {(() => {
           const liveAgents =
             subagents.filter(s => s.status === 'running').length +
@@ -1260,6 +1289,65 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
           >
             +
           </button>
+        )}
+
+        {/* Hand off to another provider — brief goes to ~/.workspacer/handoffs */}
+        <button
+          onClick={(e) => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            setHandoffMenu({ x: rect.left, y: rect.top - 4 });
+          }}
+          title={
+            handoffBusy === 'agent'
+              ? 'Waiting for the agent to write its handoff brief…'
+              : 'Hand off this session to another agent (summarized brief, new session)'
+          }
+          className="wks-composer-icon-btn"
+          disabled={!!handoffBusy || !(sessionId ?? attachSessionId)}
+          style={{
+            ...toggleBtnStyle,
+            display: 'flex',
+            alignItems: 'center',
+            backgroundColor: 'transparent',
+            color: handoffBusy ? colors.accent : 'var(--wks-text-muted)',
+          }}
+        >
+          <ArrowRightLeft size={13} strokeWidth={1.9} />
+        </button>
+        {handoffMenu && !handoffMenu.target && (
+          <ContextMenu x={handoffMenu.x} y={handoffMenu.y} onClose={() => setHandoffMenu(null)} minWidth={170}>
+            <ContextMenuLabel>Hand off to…</ContextMenuLabel>
+            {([['claude', 'Claude'], ['codex', 'Codex'], ['opencode', 'OpenCode'], ['pi', 'Pi']] as Array<[AgentProvider, string]>)
+              .filter(([id]) => id !== (provider ?? 'claude'))
+              .map(([id, label]) => (
+                <ContextMenuItem
+                  key={id}
+                  label={label}
+                  onClick={() => setHandoffMenu((m) => (m ? { ...m, target: id } : m))}
+                />
+              ))}
+          </ContextMenu>
+        )}
+        {handoffMenu?.target && (
+          <ContextMenu x={handoffMenu.x} y={handoffMenu.y} onClose={() => setHandoffMenu(null)} minWidth={230}>
+            <ContextMenuLabel>Brief for {handoffMenu.target} — written by…</ContextMenuLabel>
+            <ContextMenuItem
+              label="This agent (best, takes a turn)"
+              onClick={() => {
+                const target = handoffMenu.target!;
+                setHandoffMenu(null);
+                void handleHandoff(target, 'agent');
+              }}
+            />
+            <ContextMenuItem
+              label="Mechanical digest (instant)"
+              onClick={() => {
+                const target = handoffMenu.target!;
+                setHandoffMenu(null);
+                void handleHandoff(target, 'mechanical');
+              }}
+            />
+          </ContextMenu>
         )}
 
         {/* Inspector rail toggle — available in both GUI and Terminal mode */}

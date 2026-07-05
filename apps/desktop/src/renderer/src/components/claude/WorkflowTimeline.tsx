@@ -23,8 +23,20 @@ function statusColor(status: WorkflowAgentInfo['status']): string {
  * as a modal from a WorkflowRunCard's expand button, or `embedded` (no backdrop /
  * Escape / close button) inside an agent-watch pane; re-reads the live run each
  * render so it keeps updating while the workflow runs.
+ *
+ * `transcriptRunId` overrides the runId used for transcript drill-ins: the
+ * session-fleet view feeds a SYNTHETIC run built from plain Agent-tool
+ * subagents, whose transcripts live outside any workflow (runId = null).
  */
-export const WorkflowTimeline: React.FC<{ sessionId: string; run: WorkflowRunInfo; onClose?: () => void; embedded?: boolean }> = ({ sessionId, run, onClose, embedded }) => {
+export const WorkflowTimeline: React.FC<{
+  sessionId: string;
+  run: WorkflowRunInfo;
+  onClose?: () => void;
+  embedded?: boolean;
+  /** Kind label in the header (default "Workflow"). */
+  heading?: string;
+  transcriptRunId?: string | null;
+}> = ({ sessionId, run, onClose, embedded, heading, transcriptRunId }) => {
   const running = run.status === 'running';
   const now = useNowTicker(running);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -40,17 +52,18 @@ export const WorkflowTimeline: React.FC<{ sessionId: string; run: WorkflowRunInf
     return () => window.removeEventListener('keydown', onKey, true);
   }, [onClose, embedded]);
 
+  const txRunId = transcriptRunId !== undefined ? transcriptRunId : run.runId;
   useEffect(() => {
     if (!selectedId) { setTranscript(null); return; }
     let cancelled = false;
     setLoadingTx(true);
     setTranscript(null);
-    window.electronAPI.workflowAgentTranscript(sessionId, run.runId, selectedId)
+    window.electronAPI.workflowAgentTranscript(sessionId, txRunId, selectedId)
       .then((t) => { if (!cancelled) setTranscript(t); })
       .catch(() => { if (!cancelled) setTranscript(null); })
       .finally(() => { if (!cancelled) setLoadingTx(false); });
     return () => { cancelled = true; };
-  }, [selectedId, sessionId, run.runId]);
+  }, [selectedId, sessionId, txRunId]);
 
   const finished = run.agents.filter(a => a.status === 'done' || a.status === 'failed').length;
   const failed = run.agents.filter(a => a.status === 'failed').length;
@@ -100,7 +113,7 @@ export const WorkflowTimeline: React.FC<{ sessionId: string; run: WorkflowRunInf
       >
         {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', borderBottom: `1px solid ${colors.borderSubtle}` }}>
-          <span style={{ color: AGENT_PURPLE, fontWeight: 700, fontSize: '0.9rem' }}>Workflow</span>
+          <span style={{ color: AGENT_PURPLE, fontWeight: 700, fontSize: '0.9rem' }}>{heading ?? 'Workflow'}</span>
           <span style={{ color: colors.textBright, fontWeight: 600, fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }} title={run.description ?? run.name}>
             {run.name ?? run.runId}
           </span>

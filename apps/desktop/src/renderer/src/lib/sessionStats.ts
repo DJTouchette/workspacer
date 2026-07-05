@@ -33,6 +33,29 @@ export function fmtUSD(n: number): string {
   return n >= 0.01 ? `$${n.toFixed(2)}` : n > 0 ? '<$0.01' : '$0.00';
 }
 
+/**
+ * Compact time-until-reset for a unix-seconds timestamp: "38m", "5h", "3d"
+ * (single coarsest unit — this rides in tight status readouts). Undefined when
+ * absent or already past, so callers can just skip rendering.
+ */
+export function fmtResetIn(epochSecs?: number): string | undefined {
+  if (!epochSecs) return undefined;
+  const mins = Math.round((epochSecs * 1000 - Date.now()) / 60000);
+  if (mins <= 0) return undefined;
+  if (mins < 60) return `${mins}m`;
+  const h = Math.round(mins / 60);
+  if (h < 24) return `${h}h`;
+  return `${Math.round(h / 24)}d`;
+}
+
+/** Absolute local wall-clock for a unix-seconds timestamp — tooltip detail. */
+export function fmtResetAt(epochSecs?: number): string | undefined {
+  if (!epochSecs) return undefined;
+  return new Date(epochSecs * 1000).toLocaleString([], {
+    weekday: 'short', hour: 'numeric', minute: '2-digit',
+  });
+}
+
 /** Context-window fill color by PERCENT (0–100): green → amber (≥70) → red (≥90). */
 export function ctxColor(pct: number): string {
   if (pct >= 90) return 'var(--wks-danger, #e05555)';
@@ -96,7 +119,11 @@ export interface DerivedSessionStats {
   tokens?: number;
   costUSD?: number;
   fiveHourPct?: number;
+  /** Unix epoch seconds the 5h rate-limit window resets at. */
+  fiveHourResetsAt?: number;
   sevenDayPct?: number;
+  /** Unix epoch seconds the 7d rate-limit window resets at. */
+  sevenDayResetsAt?: number;
 }
 
 export function deriveSessionStats(
@@ -126,6 +153,8 @@ export function deriveSessionStats(
     tokens,
     costUSD: sl?.costUSD ?? usage?.costUSD,
     fiveHourPct: sl?.fiveHourPct,
+    fiveHourResetsAt: sl?.fiveHourResetsAt,
     sevenDayPct: sl?.sevenDayPct,
+    sevenDayResetsAt: sl?.sevenDayResetsAt,
   };
 }

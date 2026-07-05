@@ -54,6 +54,10 @@ export interface ElectronAPI {
   providerListModels: (provider: 'codex' | 'opencode' | 'pi', cwd?: string) => Promise<Array<{ id: string; label: string; default: boolean }>>;
   providerCheckAll: () => Promise<Array<{ provider: string; found: boolean; resolvedPath: string | null; customBin: string }>>;
   claudeMessage: (sessionId: string, text: string) => Promise<{ ok: boolean; mode?: string }>;
+  claudeSetPermissionMode: (sessionId: string, mode: string) => Promise<{ ok: boolean; mode?: string; error?: string }>;
+  claudeSetModel: (sessionId: string, model?: string, effort?: string) => Promise<{ ok: boolean; error?: string }>;
+  claudeHandoffBrief: (sessionId: string) => Promise<{ ok: boolean; markdown?: string; path?: string; error?: string }>;
+  claudeHandoffAgentBrief: (sessionId: string) => Promise<{ ok: boolean; path?: string; fallback?: boolean; error?: string }>;
   claudeApprove: (sessionId: string, decision: 'yes' | 'no' | 'always', reason?: string) => Promise<void>;
   claudeAnswer: (sessionId: string, payload: { option?: number; text?: string; answers?: string[] }) => Promise<void>;
   claudeResize: (sessionId: string, cols: number, rows: number) => Promise<void>;

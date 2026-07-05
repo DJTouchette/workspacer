@@ -1,6 +1,6 @@
 import React from 'react';
 import type { ClaudeSessionSnapshot } from '../../types/claudeSession';
-import { deriveSessionStats, fmtTokens, fmtUSD, ctxColor } from '../../lib/sessionStats';
+import { deriveSessionStats, fmtTokens, fmtUSD, fmtResetIn, fmtResetAt, ctxColor } from '../../lib/sessionStats';
 import { IconModel } from '../wksIcons';
 
 /**
@@ -63,12 +63,31 @@ const MODE_DISPLAY: Record<string, { label: string; color: string }> = {
 interface Props {
   snapshot?: ClaudeSessionSnapshot | null;
   cwd?: string;
+  /** Render the model segment. Off by default: in the agent pane the model is
+   *  already shown by ComposerControls sitting right beside/above this bar, so
+   *  showing it here too would duplicate it. Surfaces that render this bar
+   *  without a nearby ComposerControls (e.g. inspector/fleet cards) opt in. */
+  showModel?: boolean;
 }
 
-export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd }) => {
+export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = false }) => {
   const dir = baseName(cwd || snapshot?.cwd);
-  const { model, ctxPct, tokens, costUSD: cost, fiveHourPct: five, sevenDayPct: seven } =
-    deriveSessionStats(snapshot);
+  const {
+    model, ctxPct, tokens, costUSD: cost,
+    fiveHourPct: five, fiveHourResetsAt, sevenDayPct: seven, sevenDayResetsAt,
+  } = deriveSessionStats(snapshot);
+  // The reset countdowns are computed at render time; between statusLine ticks
+  // (e.g. an idle session) they'd freeze, so tick a re-render once a minute
+  // while any reset timestamp is on display.
+  const [, bumpClock] = React.useReducer((n: number) => n + 1, 0);
+  const hasResets = fiveHourResetsAt !== undefined || sevenDayResetsAt !== undefined;
+  React.useEffect(() => {
+    if (!hasResets) return;
+    const timer = setInterval(bumpClock, 60_000);
+    return () => clearInterval(timer);
+  }, [hasResets]);
+  const fiveReset = fmtResetIn(fiveHourResetsAt);
+  const sevenReset = fmtResetIn(sevenDayResetsAt);
 
   // Permission mode: live hook telemetry (follows shift+tab cycling in the
   // TUI) wins over the requested-at-spawn setting. Managed providers never
@@ -76,11 +95,11 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd }) => {
   const modeId = snapshot?.livePermissionMode ?? snapshot?.settings?.permissionMode;
   const mode = modeId ? MODE_DISPLAY[modeId] ?? { label: modeId, color: 'var(--wks-text-secondary)' } : undefined;
 
-  // (Tool-call + subagent counts live in the ClaudePane toolbar alongside this
-  // bar — kept there so the numbers aren't shown twice.)
+  // (The live-subagent count lives in the ClaudePane toolbar alongside this
+  // bar — kept there so the number isn't shown twice.)
 
   // Until the first reading arrives, render nothing so the toolbar stays clean.
-  const hasAny = model || mode || ctxPct !== undefined || tokens !== undefined || cost !== undefined;
+  const hasAny = (showModel && model) || mode || ctxPct !== undefined || tokens !== undefined || cost !== undefined;
   if (!hasAny) return null;
 
   return (
@@ -97,7 +116,7 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd }) => {
       }}
     >
       {dir && <span style={{ color: 'var(--wks-accent-text)', fontWeight: 600 }}>{dir}</span>}
-      {model && (<><Sep /><span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--wks-text-secondary)' }}><IconModel size={14} strokeWidth={2} accent="currentColor" />{model}</span></>)}
+      {showModel && model && (<><Sep /><span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--wks-text-secondary)' }}><IconModel size={14} strokeWidth={2} accent="currentColor" />{model}</span></>)}
       {mode && (
         <>
           <Sep />
@@ -134,8 +153,18 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd }) => {
         <>
           <Sep />
           <span style={{ color: 'var(--wks-text-secondary)', fontVariantNumeric: 'tabular-nums' }}>
-            {five !== undefined && (<><span style={{ color: 'var(--wks-text-muted)' }}>5h </span>{Math.round(five)}%</>)}
-            {seven !== undefined && (<> <span style={{ color: 'var(--wks-text-muted)' }}>7d </span>{Math.round(seven)}%</>)}
+            {five !== undefined && (
+              <span title={fmtResetAt(fiveHourResetsAt) && `5h window resets ${fmtResetAt(fiveHourResetsAt)}`}>
+                <span style={{ color: 'var(--wks-text-muted)' }}>5h </span>{Math.round(five)}%
+                {fiveReset && <span style={{ color: 'var(--wks-text-muted)' }}>·{fiveReset}</span>}
+              </span>
+            )}
+            {seven !== undefined && (
+              <span title={fmtResetAt(sevenDayResetsAt) && `7d window resets ${fmtResetAt(sevenDayResetsAt)}`}>
+                {' '}<span style={{ color: 'var(--wks-text-muted)' }}>7d </span>{Math.round(seven)}%
+                {sevenReset && <span style={{ color: 'var(--wks-text-muted)' }}>·{sevenReset}</span>}
+              </span>
+            )}
           </span>
         </>
       )}

@@ -12,6 +12,27 @@ const PART_DISPLAY: Record<string, string> = {
   '`': '`',
 };
 
+/** True if the combo carries any modifier (ctrl/alt/shift/meta). A modifier-less
+ *  combo (e.g. a bare "`" or "space") is only safe as a global binding when it's
+ *  guarded against editable contexts — see isEditableTarget. */
+export function comboHasModifiers(combo: string): boolean {
+  const parts = (combo ?? '').toLowerCase().trim().split('+');
+  return parts.some((p) => p === 'ctrl' || p === 'alt' || p === 'shift' || p === 'meta');
+}
+
+/** True when the event target is a place the user is actively typing: a form
+ *  input, textarea, contenteditable, or an xterm terminal pane (xterm focuses a
+ *  .xterm-helper-textarea inside its .xterm container). Used to hold back
+ *  modifier-less global bindings so a bare leader key doesn't steal keystrokes. */
+export function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+  if (target.isContentEditable) return true;
+  if (target.closest('.xterm')) return true;
+  return false;
+}
+
 /** "ctrl+shift+a" → "Ctrl+Shift+A". */
 export function formatCombo(combo: string): string {
   return combo
@@ -55,6 +76,11 @@ export interface ActionMeta {
   /** Bound to a digit RANGE (1-9) rather than a single key — e.g. Ctrl+1-9.
    *  These live outside the chord tree and direct-matcher map (see below). */
   digitRange?: boolean;
+  /** Set when the binding only applies inside one surface (the Fleet Deck or
+   *  the Inbox drawer). Scoped actions are matched by that surface's own
+   *  keydown listener while it's open — the global handler skips them, so a
+   *  bare key like "j" never fires fleet actions from a workspace. */
+  scope?: 'fleet' | 'inbox';
 }
 
 /** The canonical action list, in display order, grouped by section. */
@@ -98,7 +124,36 @@ export const ACTION_REGISTRY: ActionMeta[] = [
   { action: 'save-session', label: 'Save session', section: 'Tools' },
   { action: 'settings', label: 'Settings', section: 'Tools' },
   { action: 'toggle-help', label: 'Toggle help', section: 'Tools' },
+  // Fleet Deck (active only while the deck is open). Movement is bound per
+  // fleet view — the Cards grid navigates spatially, the List linearly — so
+  // each has its own remappable set; actions on the selected agent are shared.
+  { action: 'fleet-open', label: 'Open selected agent', section: 'Fleet Deck', scope: 'fleet' },
+  { action: 'fleet-approve-yes', label: 'Approve', section: 'Fleet Deck', scope: 'fleet' },
+  { action: 'fleet-approve-no', label: 'Deny', section: 'Fleet Deck', scope: 'fleet' },
+  { action: 'fleet-answer', label: 'Answer question (option)', section: 'Fleet Deck', scope: 'fleet', digitRange: true },
+  { action: 'fleet-cards-left', label: 'Select card left', section: 'Fleet Deck · Cards view', scope: 'fleet' },
+  { action: 'fleet-cards-down', label: 'Select card below', section: 'Fleet Deck · Cards view', scope: 'fleet' },
+  { action: 'fleet-cards-up', label: 'Select card above', section: 'Fleet Deck · Cards view', scope: 'fleet' },
+  { action: 'fleet-cards-right', label: 'Select card right', section: 'Fleet Deck · Cards view', scope: 'fleet' },
+  { action: 'fleet-list-down', label: 'Select next row', section: 'Fleet Deck · List view', scope: 'fleet' },
+  { action: 'fleet-list-up', label: 'Select previous row', section: 'Fleet Deck · List view', scope: 'fleet' },
+  // Inbox (active only while the drawer is open)
+  { action: 'inbox-move-down', label: 'Select next item', section: 'Inbox', scope: 'inbox' },
+  { action: 'inbox-move-up', label: 'Select previous item', section: 'Inbox', scope: 'inbox' },
+  { action: 'inbox-open', label: 'Open agent', section: 'Inbox', scope: 'inbox' },
+  { action: 'inbox-approve-yes', label: 'Approve', section: 'Inbox', scope: 'inbox' },
+  { action: 'inbox-approve-no', label: 'Deny', section: 'Inbox', scope: 'inbox' },
+  { action: 'inbox-answer', label: 'Answer question (option)', section: 'Inbox', scope: 'inbox', digitRange: true },
+  { action: 'inbox-dismiss', label: 'Dismiss item', section: 'Inbox', scope: 'inbox' },
+  { action: 'inbox-snooze', label: 'Snooze item', section: 'Inbox', scope: 'inbox' },
+  { action: 'inbox-clear-reviewed', label: 'Clear all reviewed', section: 'Inbox', scope: 'inbox' },
 ];
+
+/** Action ids that only bind inside their own surface (fleet/inbox); the
+ *  global direct-binding matcher must skip these. */
+export const SCOPED_ACTIONS = new Set(
+  ACTION_REGISTRY.filter((a) => a.scope).map((a) => a.action),
+);
 
 /** action id → label, derived from the registry. */
 export const ACTION_LABELS: Record<string, string> =
@@ -227,6 +282,36 @@ export function chordBreadcrumb(
     const fullKey = path.slice(0, i + 1).join(' ');
     return groupLabels[fullKey] ?? groupLabels[step] ?? formatCombo(step);
   });
+}
+
+/** True when a keydown matches a direct combo like "shift+e", "ctrl+j", or a
+ *  bare "j". Modifiers must match exactly (so "j" doesn't fire on Ctrl+J).
+ *  Prefix chords and digit-range combos never match here. */
+export function eventMatchesCombo(e: KeyboardEvent, combo: string | undefined): boolean {
+  const trimmed = (combo ?? '').toLowerCase().trim();
+  if (!trimmed || /^prefix\s/.test(trimmed)) return false;
+  const parts = trimmed.split('+');
+  const key = parts[parts.length - 1];
+  if (key === DIGIT_RANGE_TOKEN) return false;
+  const eventKey = e.key === ' ' ? 'space' : e.key.toLowerCase();
+  return (
+    eventKey === key &&
+    e.ctrlKey === parts.includes('ctrl') &&
+    e.altKey === parts.includes('alt') &&
+    e.shiftKey === parts.includes('shift') &&
+    e.metaKey === parts.includes('meta')
+  );
+}
+
+/** The digit pressed (1–9) when a keydown matches a digit-range combo ("1-9",
+ *  "ctrl+1-9"); null otherwise. Uses e.code so Shift-modified digits still
+ *  resolve. */
+export function digitFromRangeEvent(e: KeyboardEvent, combo: string | undefined): number | null {
+  const spec = parseDigitRangeCombo(combo);
+  if (!spec) return null;
+  if (e.ctrlKey !== spec.ctrl || e.altKey !== spec.alt || e.shiftKey !== spec.shift || e.metaKey !== spec.meta) return null;
+  const m = e.code?.match(/^Digit([1-9])$/);
+  return m ? parseInt(m[1], 10) : null;
 }
 
 export function shortcutFor(

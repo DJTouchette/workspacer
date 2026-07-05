@@ -30,26 +30,45 @@ export const DEFAULT_SHORTCUTS: Record<string, string> = {
   // ── Digit-range bindings: the modifier + any of 1–9 ──
   'jump-tab': 'ctrl+1-9',
   'move-tab': 'ctrl+shift+1-9',
-  // ── Prefix chords (Ctrl+Space then …), grouped into submenus ──
-  // New ▸
-  'new-terminal': 'prefix n t',
-  'new-claude': 'prefix n c',
-  'new-browser': 'prefix n b',
-  // Tab ▸
-  'prev-tab': 'prefix t [',
-  'next-tab': 'prefix t ]',
-  'move-tab-left': 'prefix t ,',
-  'move-tab-right': 'prefix t .',
-  'rename-tab': 'prefix t r',
-  'close-pane': 'prefix t w',
-  // Pane ▸
-  'split': 'prefix p s',
-  'quick-split': 'prefix p c',
-  'nav-left': 'prefix p h',
-  'nav-down': 'prefix p j',
-  'nav-up': 'prefix p k',
-  'nav-right': 'prefix p l',
-  // Top-level leaf
+  // ── Fleet Deck (only while the deck is open; bare keys are fine there) ──
+  // Movement is per fleet view: the Cards grid navigates spatially (vim-style
+  // hjkl), the List moves linearly through rows.
+  'fleet-open': 'enter',
+  'fleet-approve-yes': 'y',
+  'fleet-approve-no': 'n',
+  'fleet-answer': '1-9',
+  'fleet-cards-left': 'h',
+  'fleet-cards-down': 'j',
+  'fleet-cards-up': 'k',
+  'fleet-cards-right': 'l',
+  'fleet-list-down': 'j',
+  'fleet-list-up': 'k',
+  // ── Inbox drawer (only while the drawer is open) ──
+  'inbox-move-down': 'j',
+  'inbox-move-up': 'k',
+  'inbox-open': 'o',
+  'inbox-approve-yes': 'y',
+  'inbox-approve-no': 'n',
+  'inbox-answer': '1-9',
+  'inbox-dismiss': 'e',
+  'inbox-snooze': 's',
+  'inbox-clear-reviewed': 'shift+e',
+  // ── Prefix chords (Ctrl+Space then one key) — flat, single-key per action ──
+  'new-terminal': 'prefix t',
+  'new-claude': 'prefix c',
+  'new-browser': 'prefix b',
+  'split': 'prefix s',
+  'quick-split': 'prefix q',
+  'close-pane': 'prefix w',
+  'rename-tab': 'prefix r',
+  'prev-tab': 'prefix [',
+  'next-tab': 'prefix ]',
+  'move-tab-left': 'prefix ,',
+  'move-tab-right': 'prefix .',
+  'nav-left': 'prefix h',
+  'nav-down': 'prefix j',
+  'nav-up': 'prefix k',
+  'nav-right': 'prefix l',
   'cycle-view': 'prefix v',
 };
 

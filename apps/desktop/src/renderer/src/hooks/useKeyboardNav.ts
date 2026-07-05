@@ -1,7 +1,7 @@
 import { useEffect, useCallback, useRef } from 'react';
 import { PaneType, TabConfig } from '../types/pane';
 import { tilingColumns } from '../lib/layoutUtils';
-import { buildChordTree, chordNodeAt, parseDigitRangeCombo, DigitRangeCombo } from '../lib/shortcuts';
+import { buildChordTree, chordNodeAt, parseDigitRangeCombo, DigitRangeCombo, comboHasModifiers, isEditableTarget, SCOPED_ACTIONS } from '../lib/shortcuts';
 
 const CHORD_TIMEOUT = 1500;
 
@@ -33,7 +33,9 @@ function buildDirectMatchers(shortcuts: Record<string, string>): Record<string, 
     const trimmed = (combo ?? '').trim();
     // Prefix chords go through the chord tree; digit-range bindings (ctrl+1-9)
     // are matched separately since the trailing "1-9" isn't a single key.
-    if (!trimmed || /^prefix\s/i.test(trimmed) || parseDigitRangeCombo(trimmed)) continue;
+    // Surface-scoped actions (fleet-*/inbox-*) are matched by their own
+    // overlay's listener — binding bare keys like "j" globally would eat them.
+    if (!trimmed || /^prefix\s/i.test(trimmed) || parseDigitRangeCombo(trimmed) || SCOPED_ACTIONS.has(action)) continue;
     out[action] = comboMatcher(trimmed);
   }
   return out;
@@ -182,6 +184,10 @@ export function useKeyboardNav({
 
   useEffect(() => {
     const prefixMatch = comboMatcher(prefix);
+    // A modifier-less leader (bare "`" or space) must not arm the chord while the
+    // user is typing — it would swallow the keystroke. Modifier leaders (Ctrl+Space)
+    // stay live everywhere. See isEditableTarget for what counts as "typing".
+    const prefixNeedsEditableGuard = !comboHasModifiers(prefix);
 
     const cancelChord = () => {
       if (chordRef.current.timeoutId) clearTimeout(chordRef.current.timeoutId);
@@ -294,8 +300,12 @@ export function useKeyboardNav({
         return;
       }
 
-      // 2. Prefix pressed → arm the chord at the root.
-      if (prefixMatch(e)) { e.preventDefault(); e.stopPropagation(); setChordPath([]); return; }
+      // 2. Prefix pressed → arm the chord at the root. A bare (modifier-less)
+      //    leader is suppressed inside editable contexts so it doesn't eat typing.
+      if (prefixMatch(e)) {
+        if (prefixNeedsEditableGuard && isEditableTarget(e.target)) return;
+        e.preventDefault(); e.stopPropagation(); setChordPath([]); return;
+      }
 
       // 3. Direct bindings. Only consume the event for actions we own; let the
       //    rest (e.g. toggle-inspector, library-picker) reach their listeners.

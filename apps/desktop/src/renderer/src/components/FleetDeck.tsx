@@ -7,6 +7,9 @@ import { StatusGlyph } from './statusGlyph';
 import { shortModelLabel } from '../lib/modelLabel';
 import { agentAttentionScore } from '../lib/attentionRouter';
 import { deriveSessionStats, fmtUSD, ctxColor, isSnapshotStale } from '../lib/sessionStats';
+import { useConfig } from '../hooks/useConfig';
+import { DEFAULT_SHORTCUTS } from '../hooks/configDefaults';
+import { eventMatchesCombo, digitFromRangeEvent, formatBinding } from '../lib/shortcuts';
 
 const CARD_MIN = 360; // matches the old minmax(360px) grid
 const GRID_GAP = 18;
@@ -55,6 +58,14 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
   } = useAttention();
 
   const realAgents = useMemo(() => agents.filter((a) => !a.global), [agents]);
+
+  // Deck-scoped keybindings (fleet-*), remappable in Settings → Keybindings.
+  // Defaults merged under user overrides so a partial saved map still binds.
+  const { config } = useConfig();
+  const sc = useMemo(
+    () => ({ ...DEFAULT_SHORTCUTS, ...(config.keybindings?.shortcuts ?? {}) }),
+    [config.keybindings?.shortcuts],
+  );
 
   // Cards (default) vs a dense List table — mirrors the mockup's Fleet toggle.
   // Persisted so the deck reopens in the layout you last used.
@@ -142,8 +153,24 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
     return s === 'thinking' || s === 'streaming';
   }).length;
 
-  // j/k card selection (needy-first order == `displayOrder`), with y/n/1-9 acting on the
-  // selected agent's top attention item — kept entirely within the deck.
+  // Windowed grid measurement (also feeds keyboard grid-nav): track the content
+  // width so we can pack cards into rows of `cols` and move selection by row.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [avail, setAvail] = useState(0);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const measure = () => setAvail(Math.max(0, el.clientWidth - GRID_PAD_X * 2));
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const cols = Math.max(1, Math.floor((avail + GRID_GAP) / (CARD_MIN + GRID_GAP)));
+
+  // Card selection (needy-first order == `displayOrder`), with approve/answer
+  // acting on the selected agent's top attention item — kept entirely within
+  // the deck.
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // Keep selection valid as the fleet re-sorts / agents come and go.
   useEffect(() => {
@@ -159,28 +186,50 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
       const stop = () => { e.preventDefault(); e.stopPropagation(); };
       const idx = selectedId ? displayOrder.findIndex((a) => a.id === selectedId) : -1;
 
-      if (e.key === 'j' || e.key === 'ArrowDown') { stop(); const n = Math.min(displayOrder.length - 1, (idx < 0 ? -1 : idx) + 1); setSelectedId(displayOrder[n].id); return; }
-      if (e.key === 'k' || e.key === 'ArrowUp') { stop(); const n = Math.max(0, (idx < 0 ? 0 : idx) - 1); setSelectedId(displayOrder[n].id); return; }
+      // Movement adapts to the active fleet view: the Cards grid navigates
+      // spatially (down = the card BELOW, one row of `cols` later), the List
+      // linearly. Each view has its own bindings; arrows are fixed fallbacks.
+      const select = (n: number) => setSelectedId(displayOrder[Math.max(0, Math.min(displayOrder.length - 1, n))].id);
+      if (fleetView === 'cards') {
+        if (idx < 0) {
+          // Nothing selected yet: any movement key just lands on the first card.
+          if (['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight'].includes(e.key) ||
+              eventMatchesCombo(e, sc['fleet-cards-down']) || eventMatchesCombo(e, sc['fleet-cards-up']) ||
+              eventMatchesCombo(e, sc['fleet-cards-left']) || eventMatchesCombo(e, sc['fleet-cards-right'])) { stop(); select(0); return; }
+        } else {
+          // Row moves are true vertical moves: below the grid they clamp into
+          // the (possibly partial) last row; at the edge rows they no-op rather
+          // than sliding sideways.
+          const lastRowStart = Math.floor((displayOrder.length - 1) / cols) * cols;
+          if (eventMatchesCombo(e, sc['fleet-cards-down']) || e.key === 'ArrowDown') { stop(); if (idx < lastRowStart) select(idx + cols); return; }
+          if (eventMatchesCombo(e, sc['fleet-cards-up']) || e.key === 'ArrowUp') { stop(); if (idx >= cols) select(idx - cols); return; }
+          if (eventMatchesCombo(e, sc['fleet-cards-left']) || e.key === 'ArrowLeft') { stop(); select(idx - 1); return; }
+          if (eventMatchesCombo(e, sc['fleet-cards-right']) || e.key === 'ArrowRight') { stop(); select(idx + 1); return; }
+        }
+      } else {
+        if (eventMatchesCombo(e, sc['fleet-list-down']) || e.key === 'ArrowDown') { stop(); select((idx < 0 ? -1 : idx) + 1); return; }
+        if (eventMatchesCombo(e, sc['fleet-list-up']) || e.key === 'ArrowUp') { stop(); select((idx < 0 ? 1 : idx) - 1); return; }
+      }
 
       if (idx < 0) return;
       const top = topByAgent.get(displayOrder[idx].id);
       if (!top) {
-        if (e.key === 'Enter') { stop(); openAgent(displayOrder[idx].id); }
+        if (eventMatchesCombo(e, sc['fleet-open'])) { stop(); openAgent(displayOrder[idx].id); }
         return;
       }
-      if (e.key === 'Enter') { stop(); openAgent(top.agentId); return; }
+      if (eventMatchesCombo(e, sc['fleet-open'])) { stop(); openAgent(top.agentId); return; }
       if (top.payload.type === 'approval') {
-        if (e.key === 'y') { stop(); approve(top, 'yes'); return; }
-        if (e.key === 'n') { stop(); approve(top, 'no'); return; }
+        if (eventMatchesCombo(e, sc['fleet-approve-yes'])) { stop(); approve(top, 'yes'); return; }
+        if (eventMatchesCombo(e, sc['fleet-approve-no'])) { stop(); approve(top, 'no'); return; }
       }
       if (top.payload.type === 'question') {
-        const n = parseInt(e.key, 10);
-        if (n >= 1 && n <= 9 && n <= (top.payload.questions[0]?.options.length ?? 0)) { stop(); answer(top, { option: n }); return; }
+        const n = digitFromRangeEvent(e, sc['fleet-answer']);
+        if (n !== null && n <= (top.payload.questions[0]?.options.length ?? 0)) { stop(); answer(top, { option: n }); return; }
       }
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [displayOrder, selectedId, topByAgent, approve, answer, openAgent]);
+  }, [displayOrder, selectedId, topByAgent, approve, answer, openAgent, sc, fleetView, cols]);
 
   // In list mode, keep the j/k-selected row visible as it moves.
   useEffect(() => {
@@ -188,21 +237,8 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
     listScrollRef.current?.querySelector(`[data-fleet-row="${selectedId}"]`)?.scrollIntoView({ block: 'nearest' });
   }, [selectedId, fleetView]);
 
-  // Windowed grid: track the content width so we can pack cards into rows, then
-  // virtualize the rows — only on-screen cards (plus overscan) are in the DOM,
-  // so a 50+-agent fleet stays smooth.
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const [avail, setAvail] = useState(0);
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const measure = () => setAvail(Math.max(0, el.clientWidth - GRID_PAD_X * 2));
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-  const cols = Math.max(1, Math.floor((avail + GRID_GAP) / (CARD_MIN + GRID_GAP)));
+  // Windowed grid: virtualize the packed rows — only on-screen cards (plus
+  // overscan) are in the DOM, so a 50+-agent fleet stays smooth.
   const rowVirtualizer = useVirtualizer({
     count: Math.ceil(displayOrder.length / cols),
     getScrollElement: () => scrollRef.current,
@@ -241,9 +277,15 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
           }}
         />
         <span style={{ fontSize: '0.62rem', color: 'var(--wks-text-faint)', display: 'inline-flex', gap: 6 }}>
-          <span><kbd style={kbdStyle}>j</kbd>/<kbd style={kbdStyle}>k</kbd> move</span>
-          <span><kbd style={kbdStyle}>y</kbd>/<kbd style={kbdStyle}>n</kbd> approve</span>
-          <span><kbd style={kbdStyle}>1-9</kbd> answer</span>
+          {fleetView === 'cards' ? (
+            <span>
+              <kbd style={kbdStyle}>{formatBinding(sc['fleet-cards-left'] ?? '')}</kbd>/<kbd style={kbdStyle}>{formatBinding(sc['fleet-cards-down'] ?? '')}</kbd>/<kbd style={kbdStyle}>{formatBinding(sc['fleet-cards-up'] ?? '')}</kbd>/<kbd style={kbdStyle}>{formatBinding(sc['fleet-cards-right'] ?? '')}</kbd> move
+            </span>
+          ) : (
+            <span><kbd style={kbdStyle}>{formatBinding(sc['fleet-list-down'] ?? '')}</kbd>/<kbd style={kbdStyle}>{formatBinding(sc['fleet-list-up'] ?? '')}</kbd> move</span>
+          )}
+          <span><kbd style={kbdStyle}>{formatBinding(sc['fleet-approve-yes'] ?? '')}</kbd>/<kbd style={kbdStyle}>{formatBinding(sc['fleet-approve-no'] ?? '')}</kbd> approve</span>
+          <span><kbd style={kbdStyle}>{formatBinding(sc['fleet-answer'] ?? '')}</kbd> answer</span>
         </span>
         {/* Cards / List toggle */}
         <div style={{ display: 'flex', background: 'var(--wks-bg-surface)', border: '1px solid var(--wks-border-subtle)', borderRadius: 8, padding: 3 }}>

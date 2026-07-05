@@ -61,6 +61,74 @@ export const BrandMark: React.FC<BrandMarkProps> = ({
   </span>
 );
 
+interface BrandSpinnerProps {
+  /** Font-size of the braces in px; the track and bar scale relative to it. */
+  size?: number;
+  /** Accent color for the mark. Defaults to the theme accent. */
+  color?: string;
+  style?: React.CSSProperties;
+  title?: string;
+}
+
+/**
+ * The brand mark as a loading indicator: the cursor bar shuttles back and
+ * forth between the braces. Drop-in wherever a spinner would sit — reads as
+ * "workspacer is working" instead of a generic throbber.
+ */
+export const BrandSpinner: React.FC<BrandSpinnerProps> = ({
+  size = 16,
+  color = 'var(--wks-accent)',
+  style,
+  title,
+}) => {
+  const barW = Math.max(2, size * 0.18);
+  const trackW = Math.round(size * 0.85);
+  return (
+    <span
+      aria-hidden={title ? undefined : true}
+      title={title}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontFamily: 'var(--wks-font-mono)',
+        fontWeight: 700,
+        fontSize: size,
+        lineHeight: 1,
+        color,
+        userSelect: 'none',
+        ...style,
+      }}
+    >
+      {'{'}
+      <span
+        style={{
+          display: 'inline-block',
+          position: 'relative',
+          width: trackW,
+          height: size * 0.72,
+          margin: `0 ${Math.max(1, size * 0.06)}px`,
+        }}
+      >
+        <span
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            width: barW,
+            height: '100%',
+            borderRadius: Math.max(1, size * 0.05),
+            background: color,
+            ['--wks-brand-slide-dist' as never]: `${trackW - barW}px`,
+            animation: 'wks-brand-slide 0.8s ease-in-out infinite alternate',
+          }}
+        />
+      </span>
+      {'}'}
+    </span>
+  );
+};
+
 interface WordmarkProps {
   /** Font-size in px. */
   size?: number;

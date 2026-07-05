@@ -192,6 +192,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke(IPC.PROVIDER_CHECK_ALL),
   claudeMessage: (sessionId: string, text: string): Promise<{ ok: boolean; mode?: string }> =>
     ipcRenderer.invoke(IPC.CLAUDE_MESSAGE, sessionId, text),
+  claudeSetPermissionMode: (sessionId: string, mode: string): Promise<{ ok: boolean; mode?: string; error?: string }> =>
+    ipcRenderer.invoke(IPC.CLAUDE_SET_PERMISSION_MODE, sessionId, mode),
+  claudeSetModel: (sessionId: string, model?: string, effort?: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke(IPC.CLAUDE_SET_MODEL, sessionId, model, effort),
+  claudeHandoffBrief: (sessionId: string): Promise<{ ok: boolean; markdown?: string; path?: string; error?: string }> =>
+    ipcRenderer.invoke(IPC.CLAUDE_HANDOFF_BRIEF, sessionId),
+  claudeHandoffAgentBrief: (sessionId: string): Promise<{ ok: boolean; path?: string; fallback?: boolean; error?: string }> =>
+    ipcRenderer.invoke(IPC.CLAUDE_HANDOFF_AGENT_BRIEF, sessionId),
   claudeApprove: (sessionId: string, decision: 'yes' | 'no' | 'always', reason?: string): Promise<void> =>
     ipcRenderer.invoke(IPC.CLAUDE_APPROVE, sessionId, decision, reason),
   claudeAnswer: (sessionId: string, payload: { option?: number; text?: string; answers?: string[] }): Promise<void> =>

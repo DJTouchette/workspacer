@@ -144,6 +144,14 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     providerListModels: () => { warnOnce('providerListModels'); return Promise.resolve([]); },
     providerCheckAll: () => { warnOnce('providerCheckAll'); return Promise.resolve([]); },
     claudeMessage: (sessionId, text) => client.call<{ ok: boolean; mode?: string }>('agents.sendMessage', { sessionId, text }),
+    claudeSetPermissionMode: (sessionId, mode) =>
+      client.call<{ ok: boolean; mode?: string; error?: string }>('claude.setPermissionMode', { sessionId, mode }),
+    claudeSetModel: (sessionId, model, effort) =>
+      client.call<{ ok: boolean; error?: string }>('claude.setModel', { sessionId, model, effort }),
+    claudeHandoffBrief: (sessionId) =>
+      client.call<{ ok: boolean; markdown?: string; path?: string; error?: string }>('claude.handoffBrief', { sessionId }),
+    claudeHandoffAgentBrief: (sessionId) =>
+      client.call<{ ok: boolean; path?: string; fallback?: boolean; error?: string }>('claude.handoffAgentBrief', { sessionId }),
     claudeApprove: (sessionId, decision, reason) => client.call<void>('claude.approve', { sessionId, decision, reason }).then(() => {}),
     claudeAnswer: (sessionId, payload) => client.call<void>('claude.answer', { sessionId, ...payload }).then(() => {}),
     claudeResize: (sessionId, cols, rows) => { reprime(sessionId); return client.call<void>('sessions.terminalResize', { sessionId, cols, rows }).then(() => {}); },
