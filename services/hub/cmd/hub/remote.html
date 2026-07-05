@@ -517,9 +517,24 @@
   }
 
   // ── terminal input + sizing helpers ────────────────────────────────────
+  // Ordered PTY input: keystrokes buffer while a call is in flight and flush
+  // as one chunk when it returns. Firing a bus call per character lets fast
+  // typing arrive out of order ("cat -v" landing as "cat v-").
+  let termInputBuf = '', termInputPumping = false;
   function termSend(data) {
     if (!termSessionId || !data) return;
-    call('sessions.terminalInput', { sessionId: termSessionId, data }).catch(() => {});
+    termInputBuf += data;
+    pumpTermInput();
+  }
+  async function pumpTermInput() {
+    if (termInputPumping) return;
+    termInputPumping = true;
+    while (termInputBuf && termSessionId) {
+      const data = termInputBuf; termInputBuf = '';
+      try { await call('sessions.terminalInput', { sessionId: termSessionId, data }); }
+      catch {}
+    }
+    termInputPumping = false;
   }
 
   const KEYSEQ = {

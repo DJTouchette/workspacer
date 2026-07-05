@@ -340,21 +340,17 @@ func (r *registry) sendMessage(ctx context.Context, raw json.RawMessage) (json.R
 	if p.SessionID == "" || p.Text == "" {
 		return nil, fmt.Errorf("agents.sendMessage requires { sessionId, text }")
 	}
-	// Prefer the mode-gated /message (it appends the carriage return for us).
-	// When the session isn't at an input prompt it 409s; rather than dropping the
-	// text, fall back to typing into the PTY so follow-ups queue like keystrokes
-	// — the same fallback as the desktop ClaudePane.
+	// claudemon's /message settles + verifies delivery itself and QUEUES the
+	// text when the session is mid-turn or holding a dialog — a 409 now only
+	// means the session has ended. The old "type into the PTY" fallback fired
+	// exactly then, silently dropping the text into a dead terminal (the
+	// classic stuck mobile send) — surface the failure instead.
 	ok, err := r.cm.submitMessage(ctx, p.SessionID, p.Text)
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
-		if err := r.cm.input(ctx, p.SessionID, p.Text); err != nil {
-			return nil, err
-		}
-		if err := r.cm.input(ctx, p.SessionID, "\r"); err != nil {
-			return nil, err
-		}
+		return nil, fmt.Errorf("session has ended and cannot accept messages")
 	}
 	return okResult()
 }

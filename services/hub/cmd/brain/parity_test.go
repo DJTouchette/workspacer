@@ -97,21 +97,21 @@ func TestAnswerMultiPart(t *testing.T) {
 	}
 }
 
-// ── sendMessage falls back to the PTY on 409 ────────────────────────────────
+// ── sendMessage surfaces a 409 (ended session) instead of typing blind ──────
 
-func TestSendMessageFallsBackOn409(t *testing.T) {
+func TestSendMessageErrorsOn409(t *testing.T) {
 	rec := newRecorder()
 	rec.status["/sessions/s1/message"] = http.StatusConflict
 	srv := rec.server()
 	defer srv.Close()
 	reg := newRegistry(newClaudemonClient(srv.URL))
 
-	if _, err := reg.handle(context.Background(), "agents.sendMessage", []byte(`{"sessionId":"s1","text":"hi"}`)); err != nil {
-		t.Fatal(err)
+	if _, err := reg.handle(context.Background(), "agents.sendMessage", []byte(`{"sessionId":"s1","text":"hi"}`)); err == nil {
+		t.Fatal("a 409 (ended session) must surface as an error, not silently fall back")
 	}
-	in := rec.calls("/sessions/s1/input")
-	if len(in) != 2 || in[0].body["text"] != "hi" || in[1].body["text"] != "\r" {
-		t.Fatalf("expected PTY fallback (text then CR), got %+v", in)
+	// The old fallback typed the text into the (dead) PTY — that must be gone.
+	if n := len(rec.calls("/sessions/s1/input")); n != 0 {
+		t.Fatalf("must not type into the PTY on 409, got %d input calls", n)
 	}
 }
 

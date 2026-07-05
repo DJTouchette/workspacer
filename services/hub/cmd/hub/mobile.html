@@ -6,6 +6,7 @@
 <meta name="theme-color" content="#0e0e11" />
 <meta name="format-detection" content="telephone=no" />
 <title>Workspacer Mobile</title>
+<link rel="stylesheet" href="xterm.css">
 <style>
   :root {
     --bg: #0e0e11; --panel: #16161b; --panel2: #1d1d24; --line: #2a2a33;
@@ -23,7 +24,7 @@
     overscroll-behavior-y: none;
   }
   /* Subtract the iOS keyboard height (--kb, set from visualViewport) so the
-     composer stays above the keyboard. ~0 on Android, so it's a no-op there. */
+     bottom controls stay above the keyboard. ~0 on Android, so it's a no-op. */
   #app { display: flex; flex-direction: column; height: calc(100dvh - var(--kb, 0px)); }
 
   /* Header */
@@ -44,7 +45,7 @@
   .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--err); flex: 0 0 auto; }
   .dot.on { background: var(--green); }
 
-  /* Scroll area */
+  /* Scroll area (fleet / needs lists) */
   main { flex: 1 1 auto; overflow-y: auto; -webkit-overflow-scrolling: touch;
     padding: 12px 12px calc(12px + var(--safe-b)); }
 
@@ -70,7 +71,7 @@
   .empty { text-align: center; color: var(--faint); padding: 48px 20px; }
   .empty .big { font-size: 30px; margin-bottom: 8px; }
 
-  /* Decision card */
+  /* Decision card (Needs You tab) */
   .decision .ctx {
     background: var(--bg); border: 1px solid var(--line); border-radius: 10px;
     padding: 10px; margin: 10px 0; font: 12.5px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -88,17 +89,59 @@
   button.always { background: rgba(230,194,0,.14); border-color: var(--accent-dim); color: #efe09a; }
   button.opt { flex-basis: 100%; text-align: left; justify-content: flex-start; }
 
-  /* Chat */
-  .bubble { max-width: 84%; padding: 9px 12px; border-radius: 14px; margin: 6px 0;
-    white-space: pre-wrap; word-break: break-word; font-size: 14.5px; }
-  .bubble.user { margin-left: auto; background: #2b2f3a; border-bottom-right-radius: 5px; }
-  .bubble.asst { margin-right: auto; background: var(--panel); border: 1px solid var(--line); border-bottom-left-radius: 5px; }
-  .tool { color: var(--dim); font-size: 12.5px; margin: 5px 2px; font-family: ui-monospace, Menlo, monospace; }
-  .tool .err { color: var(--red); }
+  /* ── Terminal view ──────────────────────────────────────────────────────
+     The agent screen IS the TUI: a live xterm mirror of the real Claude Code
+     pane, with a key bar for what phone keyboards can't type and a composer
+     that delivers through claudemon's verified send pipeline. */
+  #termwrap { flex: 1 1 auto; display: none; flex-direction: column; min-height: 0; }
+  #termwrap.show { display: flex; }
+  #term { flex: 1 1 auto; min-height: 0; background: #000; padding: 4px 2px 0 6px; position: relative; }
+  #term .xterm { height: 100%; }
+  /* One-finger scroll through scrollback; xterm handles the touches. */
+  #term .xterm-viewport { touch-action: pan-y; }
+  #termBottom {
+    position: absolute; right: 12px; bottom: 10px; z-index: 3; display: none;
+    border: 1px solid var(--line); border-radius: 999px; background: rgba(22,22,27,.92);
+    color: var(--text); font-size: 12px; font-weight: 600; padding: 7px 13px;
+  }
+  #termBottom.show { display: block; }
 
-  /* Composer */
-  .composer { flex: 0 0 auto; display: flex; gap: 8px; padding: 10px 12px calc(10px + var(--safe-b));
+  /* Blocked strip: approvals/questions surfaced right above the key bar so a
+     decision is one tap even while watching the TUI. */
+  #ask { flex: 0 0 auto; background: var(--panel); border-top: 1px solid var(--line);
+    max-height: 42vh; overflow-y: auto; }
+  #ask .inner { padding: 10px 12px; }
+  #ask .ask-title { font-size: 12.5px; font-weight: 700; color: var(--amber); margin-bottom: 6px; }
+  #ask pre {
+    background: var(--bg); border: 1px solid var(--line); border-radius: 9px; padding: 8px;
+    margin: 0 0 8px; font: 12px/1.4 ui-monospace, Menlo, monospace;
+    white-space: pre-wrap; word-break: break-word; max-height: 130px; overflow: auto;
+  }
+  #ask button.act { min-height: 42px; font-size: 14px; }
+  #ask button.opt small { display: block; color: var(--dim); font-weight: 400; font-size: 12px; }
+
+  /* Key bar: the keys the soft keyboard doesn't offer. Horizontally
+     scrollable; big tap targets; ⇧Tab front and center for mode cycling. */
+  #keybar {
+    flex: 0 0 auto; display: flex; gap: 6px; padding: 8px 8px;
+    background: var(--panel); border-top: 1px solid var(--line);
+    overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none;
+  }
+  #keybar::-webkit-scrollbar { display: none; }
+  #keybar button {
+    flex: 0 0 auto; min-width: 46px; height: 42px; padding: 0 12px;
+    border-radius: 10px; border: 1px solid var(--line); background: var(--panel2);
+    color: var(--text); font-size: 13.5px; font-weight: 600;
+    font-family: ui-monospace, Menlo, monospace;
+  }
+  #keybar button:active { filter: brightness(1.35); }
+  #keybar button.on { border-color: var(--accent); color: var(--accent); }
+  #keybar button.warn { color: #f0bcbc; }
+
+  /* Composer (terminal view): reliable sends via claudemon settle+verify. */
+  .composer { flex: 0 0 auto; display: none; gap: 8px; padding: 10px 12px calc(10px + var(--safe-b));
     background: var(--panel); border-top: 1px solid var(--line); }
+  .composer.show { display: flex; }
   .composer textarea {
     flex: 1; resize: none; max-height: 120px; min-height: 44px; padding: 11px 12px;
     background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 12px;
@@ -136,7 +179,8 @@
 
   .toast { position: fixed; left: 50%; bottom: calc(76px + var(--safe-b)); transform: translateX(-50%);
     background: #2b2b34; color: var(--text); padding: 10px 16px; border-radius: 10px; font-size: 13px;
-    opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 20; border: 1px solid var(--line); }
+    opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 20; border: 1px solid var(--line);
+    max-width: 86vw; }
   .toast.show { opacity: 1; }
 </style>
 </head>
@@ -148,10 +192,35 @@
     <span class="dot" id="dot"></span>
   </header>
   <main id="main"></main>
-  <div class="composer" id="composer" style="display:none">
-    <textarea id="msg" rows="1" placeholder="Message this agent…" autocomplete="off"></textarea>
-    <button id="send">↑</button>
+
+  <!-- Terminal view: xterm mirror + decision strip + key bar + composer -->
+  <div id="termwrap">
+    <div id="term"><button id="termBottom">↓ latest</button></div>
+    <div id="ask"></div>
+    <div id="keybar">
+      <button data-key="esc" class="warn">Esc</button>
+      <button data-key="stab" title="Shift+Tab — cycle permission mode">⇧Tab</button>
+      <button data-key="tab">Tab</button>
+      <button data-key="up">↑</button>
+      <button data-key="down">↓</button>
+      <button data-key="left">←</button>
+      <button data-key="right">→</button>
+      <button data-key="enter">⏎</button>
+      <button data-act="ctrl" id="ctrlKey">Ctrl</button>
+      <button data-key="ctrlc" class="warn">^C</button>
+      <button data-key="bksp">⌫</button>
+      <button data-key="pgup">PgUp</button>
+      <button data-key="pgdn">PgDn</button>
+      <button data-act="kb" title="Type directly into the terminal">⌨</button>
+      <button data-act="fontdown">A−</button>
+      <button data-act="fontup">A+</button>
+    </div>
+    <div class="composer show" id="composer">
+      <textarea id="msg" rows="1" placeholder="Message this agent…" autocomplete="off"></textarea>
+      <button id="send">↑</button>
+    </div>
   </div>
+
   <nav id="nav">
     <button data-tab="fleet" class="active"><span class="ico">▦</span>Fleet</button>
     <button data-tab="needs"><span class="ico">●</span>Needs You<span class="pill" id="needPill"></span></button>
@@ -159,6 +228,8 @@
 </div>
 <div class="toast" id="toast"></div>
 
+<script src="xterm.js"></script>
+<script src="addon-fit.js"></script>
 <script>
 (() => {
   const qs = new URLSearchParams(location.search);
@@ -167,7 +238,8 @@
 
   const $ = (id) => document.getElementById(id);
   const main = $('main'), dot = $('dot'), titleEl = $('title'), subEl = $('sub');
-  const backBtn = $('back'), hdr = $('hdr'), nav = $('nav'), composer = $('composer');
+  const backBtn = $('back'), hdr = $('hdr'), nav = $('nav');
+  const termwrap = $('termwrap'), askEl = $('ask'), keybar = $('keybar');
   const msgEl = $('msg'), sendBtn = $('send'), toastEl = $('toast'), needPill = $('needPill');
 
   let ws = null, backoff = 500, calls = new Map(), callSeq = 0;
@@ -175,9 +247,14 @@
   let lastActivity = 0;            // ms of the last inbound frame; drives staleness check
   const STALE_MS = 30000;
   const sessions = new Map();          // sessionId -> agents.list row
-  let view = { name: 'fleet' };        // 'fleet' | 'needs' | { name:'chat', sessionId }
-  let convo = { seq: 0, items: [] };   // current chat conversation
-  let lastConvoKey = '';
+  let view = { name: 'fleet' };        // 'fleet' | 'needs' | { name:'term', sessionId }
+
+  // Terminal mirror state
+  let term = null, fitAddon = null;
+  let termSessionId = '';
+  let termKeepalive = null, termResizeTimer = null;
+  let ctrlSticky = false;
+  let termFont = Number(localStorage.getItem('wksMobTermFont') || 13) || 13;
 
   // ── helpers ──────────────────────────────────────────────────────────────
   function esc(s) {
@@ -191,7 +268,7 @@
   }
   function toast(m) {
     toastEl.textContent = m; toastEl.classList.add('show');
-    clearTimeout(toast._t); toast._t = setTimeout(() => toastEl.classList.remove('show'), 2000);
+    clearTimeout(toast._t); toast._t = setTimeout(() => toastEl.classList.remove('show'), 2200);
   }
   function isBlocked(s) { return !!(s && (s.pendingApproval || (s.pendingQuestions && s.pendingQuestions.length))); }
 
@@ -230,15 +307,38 @@
     catch (e) { toast('Failed: ' + (e.message || e)); }
   }
 
+  // agents.list rows come desktop-shaped (sessionId/state/contextTokens) when
+  // the app provides live caps, or as raw claudemon rows (session_id/mode/
+  // usage.*) from the brain's fallback. Normalize both so the UI never keys a
+  // card on `undefined`, and drop dead/archived history rows from the fleet.
+  function normRow(s) {
+    return {
+      ...s,
+      sessionId: s.sessionId || s.session_id || '',
+      state: s.state || s.mode || '',
+      model: s.model ?? (s.usage && s.usage.model) ?? '',
+      contextTokens: s.contextTokens ?? (s.usage && s.usage.context_tokens) ?? -1,
+      contextLimit: s.contextLimit ?? (s.usage && s.usage.context_limit) ?? 0,
+    };
+  }
+  function isLive(s) {
+    if (s.archived) return false;
+    const st = (s.state || '').toLowerCase();
+    return st !== 'stopped' && st !== 'ended';
+  }
+
   async function refresh() {
     try {
       const list = await call('agents.list', {});
       sessions.clear();
-      for (const s of (list || [])) sessions.set(s.sessionId, s);
+      for (const raw of (list || [])) {
+        const s = normRow(raw);
+        if (s.sessionId && isLive(s)) sessions.set(s.sessionId, s);
+      }
       updateNeedPill();
       if (view.name === 'fleet') renderFleet();
       else if (view.name === 'needs') renderNeeds();
-      else if (view.name === 'chat') renderChatHeader();
+      else if (view.name === 'term') { renderTermHeader(); renderAsk(); }
     } catch (e) { /* connection state shows it */ }
   }
   function updateNeedPill() {
@@ -246,11 +346,15 @@
     needPill.textContent = n; needPill.classList.toggle('show', n > 0);
   }
 
-  // ── views ─────────────────────────────────────────────────────────────────
+  // ── list views ────────────────────────────────────────────────────────────
   function setTab(tab) {
+    leaveTerminal();
     view = { name: tab };
     for (const b of nav.querySelectorAll('button')) b.classList.toggle('active', b.dataset.tab === tab);
-    hdr.classList.remove('has-back'); composer.style.display = 'none'; nav.style.display = 'flex';
+    hdr.classList.remove('has-back');
+    termwrap.classList.remove('show');
+    main.style.display = 'block';
+    nav.style.display = 'flex';
     if (tab === 'fleet') { titleEl.firstChild.nodeValue = 'Fleet'; subEl.textContent = ''; renderFleet(); }
     else { titleEl.firstChild.nodeValue = 'Needs You'; subEl.textContent = ''; renderNeeds(); }
     main.scrollTop = 0;
@@ -265,7 +369,7 @@
   }
   function cardHtml(s) {
     const st = stateInfo(s);
-    const bits = [st.label === 'idle' ? '' : '', ctxPct(s), s.model ? esc(s.model) : ''].filter(Boolean);
+    const bits = [ctxPct(s), s.model ? esc(s.model) : ''].filter(Boolean);
     return `<div class="card tap" data-id="${esc(s.sessionId)}">
       <div class="row">
         <div class="grow">
@@ -278,14 +382,14 @@
     </div>`;
   }
   function bindCards() {
-    for (const el of main.querySelectorAll('.card.tap')) el.onclick = () => openChat(el.dataset.id);
+    for (const el of main.querySelectorAll('.card.tap')) el.onclick = () => openAgent(el.dataset.id);
   }
 
   function renderNeeds() {
     const list = [...sessions.values()].filter(isBlocked);
     if (!list.length) { main.innerHTML = emptyHtml('✓', "You're all caught up", 'No agent is waiting on a decision.'); return; }
     main.innerHTML = list.map(decisionHtml).join('');
-    bindDecisions();
+    bindDecisions(main);
   }
   function decisionHtml(s) {
     const name = esc(basename(s.cwd));
@@ -325,8 +429,8 @@
       return j.length > 800 ? j.slice(0, 800) + '…' : j;
     } catch { return ''; }
   }
-  function bindDecisions() {
-    for (const card of main.querySelectorAll('.card.decision')) {
+  function bindDecisions(root) {
+    for (const card of root.querySelectorAll('.card.decision, .decision-strip')) {
       const id = card.dataset.id;
       for (const b of card.querySelectorAll('[data-act="approve"]'))
         b.onclick = () => doCall('claude.approve', { sessionId: id, decision: b.dataset.d }, 'Sent: ' + b.dataset.d);
@@ -345,65 +449,229 @@
       <div style="color:var(--faint);font-size:13px;margin-top:6px">${esc(sub)}</div></div>`;
   }
 
-  // ── chat ────────────────────────────────────────────────────────────────
-  async function openChat(sessionId) {
-    view = { name: 'chat', sessionId };
-    convo = { seq: 0, items: [] }; lastConvoKey = '';
-    hdr.classList.add('has-back'); nav.style.display = 'none'; composer.style.display = 'flex';
-    renderChatHeader();
-    main.innerHTML = `<div class="empty">Loading…</div>`;
-    await loadConvo(true);
+  // ── terminal view ──────────────────────────────────────────────────────
+  // The agent screen is a live mirror of the real TUI (claudemon streams the
+  // PTY over the bus). Keystrokes go straight to the PTY; whole messages go
+  // through claudemon's settle+verify /message pipeline so they can never be
+  // half-typed into a busy prompt.
+  function openAgent(sessionId) {
+    view = { name: 'term', sessionId };
+    hdr.classList.add('has-back');
+    nav.style.display = 'none';
+    main.style.display = 'none';
+    termwrap.classList.add('show');
+    renderTermHeader();
+    renderAsk();
+    enterTerminal(sessionId);
   }
-  function renderChatHeader() {
-    if (view.name !== 'chat') return;
+  function closeAgent() { setTab('fleet'); }
+
+  function renderTermHeader() {
+    if (view.name !== 'term') return;
     const s = sessions.get(view.sessionId);
     titleEl.firstChild.nodeValue = s ? basename(s.cwd) : 'Agent';
-    subEl.textContent = s ? '  ' + stateInfo(s).label : '';
-  }
-  async function loadConvo(scroll) {
-    if (view.name !== 'chat') return;
-    try {
-      const data = await call('sessions.conversation', { sessionId: view.sessionId });
-      convo = { seq: data.seq || 0, items: Array.isArray(data.items) ? data.items : [] };
-      const key = convo.seq + ':' + convo.items.length;
-      if (key === lastConvoKey && !scroll) return;
-      lastConvoKey = key;
-      renderChat(scroll);
-    } catch (e) { main.innerHTML = `<div class="empty">Couldn't load conversation.</div>`; }
-  }
-  function renderChat(scroll) {
-    const s = sessions.get(view.sessionId);
-    let html = '';
-    // If this agent is blocked, surface the decision right at the top of the chat.
-    if (isBlocked(s)) html += decisionHtml(s);
-    for (const it of convo.items) {
-      if (it.kind === 'user_message') html += `<div class="bubble user">${esc(it.text)}</div>`;
-      else if (it.kind === 'assistant_text') html += `<div class="bubble asst">${esc(it.text)}</div>`;
-      else if (it.kind === 'tool_use') html += `<div class="tool">⚙ ${esc(it.name)} ${esc(shortArg(it.input))}</div>`;
-      else if (it.kind === 'tool_result' && it.is_error) html += `<div class="tool"><span class="err">✗ ${esc(String(it.content).slice(0, 140))}</span></div>`;
-    }
-    if (!convo.items.length && !isBlocked(s)) html = `<div class="empty">No messages yet.</div>`;
-    main.innerHTML = html;
-    if (isBlocked(s)) bindDecisions();
-    if (scroll) main.scrollTop = main.scrollHeight;
-  }
-  function shortArg(input) {
-    if (!input) return '';
-    if (typeof input === 'string') return input.slice(0, 60);
-    if (input.command) return String(input.command).slice(0, 60);
-    if (input.file_path) return basename(input.file_path);
-    if (input.description) return String(input.description).slice(0, 60);
-    return '';
+    subEl.textContent = s ? '  ' + stateInfo(s).label : '  session ended';
   }
 
+  // Approvals/questions pinned above the key bar — one tap, no typing.
+  function renderAsk() {
+    if (view.name !== 'term') { askEl.innerHTML = ''; return; }
+    const s = sessions.get(view.sessionId);
+    if (!isBlocked(s)) { askEl.innerHTML = ''; return; }
+    let body;
+    if (s.pendingApproval) {
+      const a = s.pendingApproval;
+      body = `<div class="ask-title">Wants to run ${esc(a.toolName)}</div>
+        <pre>${esc(summarizeInput(a.toolInput || {}))}</pre>
+        <div class="btns">
+          <button class="act yes" data-act="approve" data-d="yes">Approve</button>
+          <button class="act no" data-act="approve" data-d="no">Deny</button>
+          <button class="act always" data-act="approve" data-d="always">Always</button>
+        </div>`;
+    } else {
+      const q = s.pendingQuestions[0] || {};
+      body = `<div class="ask-title">${esc(q.header || 'Question')}</div>
+        <div class="qtext" style="font-size:13.5px">${esc(q.question || '')}</div>
+        <div class="btns">${(q.options || []).map((o, i) =>
+          `<button class="act opt" data-act="answer" data-opt="${i + 1}">${i + 1}. ${esc(o.label)}${o.description ? `<small>${esc(o.description)}</small>` : ''}</button>`).join('')}
+        </div>`;
+    }
+    askEl.innerHTML = `<div class="inner decision-strip" data-id="${esc(s.sessionId)}">${body}</div>`;
+    bindDecisions(askEl);
+  }
+
+  function enterTerminal(sessionId) {
+    if (!window.Terminal) { toast('Terminal library failed to load'); return; }
+    leaveTerminal();
+    termSessionId = sessionId;
+
+    const host = $('term');
+    term = new Terminal({
+      convertEol: false, scrollback: 5000, fontSize: termFont,
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+      theme: { background: '#000000' }, disableStdin: false, cursorBlink: true,
+    });
+    try { fitAddon = new FitAddon.FitAddon(); term.loadAddon(fitAddon); } catch {}
+    term.open(host);
+    // Direct typing (via the ⌨ button + soft keyboard) forwards raw to the
+    // PTY. A sticky Ctrl rewrites the next letter into its control code.
+    term.onData(d => {
+      if (ctrlSticky) {
+        if (d.length === 1) {
+          const c = d.toLowerCase().charCodeAt(0);
+          if (c >= 97 && c <= 122) d = String.fromCharCode(c - 96);
+          else if (d === ' ') d = '\x00';
+        }
+        setCtrlSticky(false);
+      }
+      termSend(d);
+    });
+    term.onScroll(updateTermBottom);
+
+    requestAnimationFrame(refitTerm);
+    window.addEventListener('resize', scheduleRefit);
+    window.addEventListener('orientationchange', scheduleRefit);
+    if (window.visualViewport) window.visualViewport.addEventListener('resize', scheduleRefit);
+
+    subscribePty(sessionId, true);
+    call('sessions.attachTerminal', { sessionId }).catch(() => {});
+    clearInterval(termKeepalive);
+    termKeepalive = setInterval(() => {
+      if (view.name !== 'term') return;
+      // If the lease lapsed (e.g. a hiccup), re-attach to restart + re-prime.
+      call('sessions.terminalKeepalive', { sessionId: termSessionId })
+        .then(r => { if (r && r.ok === false) call('sessions.attachTerminal', { sessionId: termSessionId }).catch(() => {}); })
+        .catch(() => {});
+    }, 8000);
+  }
+
+  function leaveTerminal() {
+    window.removeEventListener('resize', scheduleRefit);
+    window.removeEventListener('orientationchange', scheduleRefit);
+    if (window.visualViewport) window.visualViewport.removeEventListener('resize', scheduleRefit);
+    clearTimeout(termResizeTimer); termResizeTimer = null;
+    setCtrlSticky(false);
+    clearInterval(termKeepalive); termKeepalive = null;
+    if (termSessionId) {
+      subscribePty(termSessionId, false);
+      call('sessions.detachTerminal', { sessionId: termSessionId }).catch(() => {});
+    }
+    if (term) { try { term.dispose(); } catch {} term = null; fitAddon = null; }
+    termSessionId = '';
+  }
+
+  function subscribePty(sessionId, on) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ op: on ? 'subscribe' : 'unsubscribe', topics: ['pty.bytes.' + sessionId] }));
+  }
+
+  // Decode one base64 PTY chunk and write the raw bytes into xterm.
+  function writePty(b64) {
+    if (!term) return;
+    try {
+      const bin = atob(b64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      term.write(bytes, updateTermBottom);
+    } catch {}
+  }
+
+  // Ordered PTY input: keystrokes buffer while a call is in flight and flush
+  // as one chunk when it returns. Firing a bus call per character lets fast
+  // typing arrive out of order ("cat -v" landing as "cat v-").
+  let inputBuf = '', inputPumping = false;
+  function termSend(data) {
+    if (!termSessionId || !data) return;
+    inputBuf += data;
+    pumpInput();
+  }
+  async function pumpInput() {
+    if (inputPumping) return;
+    inputPumping = true;
+    while (inputBuf && termSessionId) {
+      const data = inputBuf; inputBuf = '';
+      try { await call('sessions.terminalInput', { sessionId: termSessionId, data }); }
+      catch (e) { toast('Key failed: ' + (e.message || e)); }
+    }
+    inputPumping = false;
+  }
+
+  // Key bar sequences — the keys phone keyboards can't produce. ⇧Tab (CSI Z)
+  // cycles Claude Code's permission modes; Esc interrupts; ^C cancels.
+  const KEYSEQ = {
+    esc: '\x1b', stab: '\x1b[Z', tab: '\t', enter: '\r', bksp: '\x7f', ctrlc: '\x03',
+    up: '\x1b[A', down: '\x1b[B', left: '\x1b[D', right: '\x1b[C',
+    pgup: '\x1b[5~', pgdn: '\x1b[6~',
+  };
+  function setCtrlSticky(on) {
+    ctrlSticky = on;
+    $('ctrlKey').classList.toggle('on', on);
+  }
+  keybar.querySelectorAll('[data-key]').forEach(btn => {
+    btn.onclick = () => {
+      let seq = KEYSEQ[btn.dataset.key] || '';
+      if (ctrlSticky && seq.length === 1) {
+        const c = seq.toLowerCase().charCodeAt(0);
+        if (c >= 97 && c <= 122) seq = String.fromCharCode(c - 96);
+        setCtrlSticky(false);
+      }
+      termSend(seq);
+    };
+  });
+  keybar.querySelectorAll('[data-act]').forEach(btn => {
+    btn.onclick = () => {
+      const a = btn.dataset.act;
+      if (a === 'ctrl') setCtrlSticky(!ctrlSticky);
+      else if (a === 'kb') { if (term) term.focus(); }
+      else if (a === 'fontup') setTermFont(termFont + 1);
+      else if (a === 'fontdown') setTermFont(termFont - 1);
+    };
+  });
+  $('termBottom').onclick = () => { if (term) { term.scrollToBottom(); updateTermBottom(); } };
+
+  function setTermFont(px) {
+    termFont = Math.max(8, Math.min(20, px));
+    localStorage.setItem('wksMobTermFont', String(termFont));
+    if (term) {
+      try { term.options.fontSize = termFont; }
+      catch { try { term.setOption('fontSize', termFont); } catch {} }
+    }
+    refitTerm();
+  }
+
+  // Fit xterm to the phone, then resize the shared PTY to that grid so the
+  // TUI rewraps for this screen instead of the desktop pane.
+  function refitTerm() {
+    if (!term || !fitAddon || view.name !== 'term') return;
+    try { fitAddon.fit(); } catch {}
+    const cols = Math.max(20, term.cols || 80);
+    const rows = Math.max(6, term.rows || 24);
+    call('sessions.terminalResize', { sessionId: termSessionId, cols, rows }).catch(() => {});
+  }
+  function scheduleRefit() {
+    clearTimeout(termResizeTimer);
+    termResizeTimer = setTimeout(refitTerm, 160);
+  }
+  function updateTermBottom() {
+    const jb = $('termBottom');
+    if (!jb || !term) return;
+    const b = term.buffer.active;
+    jb.classList.toggle('show', b.viewportY < b.baseY);
+  }
+
+  // ── composer: verified sends ───────────────────────────────────────────
+  // Whole messages go through claudemon's settle+verify /message pipeline —
+  // delivered at the prompt, or queued and flushed when the turn ends. Never
+  // half-typed into a busy TUI.
   function sendMessage() {
-    if (view.name !== 'chat') return;
+    if (view.name !== 'term') return;
     const text = (msgEl.value || '').trim();
     if (!text) return;
-    msgEl.value = ''; autosize();
+    sendBtn.disabled = true;
     call('agents.sendMessage', { sessionId: view.sessionId, text })
-      .then(() => { setTimeout(() => loadConvo(true), 400); })
-      .catch((e) => toast('Send failed: ' + (e.message || e)));
+      .then(() => { msgEl.value = ''; autosize(); toast('Sent ✓'); })
+      .catch((e) => toast('Send failed: ' + (e.message || e)))
+      .finally(() => { sendBtn.disabled = false; });
   }
   function autosize() { msgEl.style.height = 'auto'; msgEl.style.height = Math.min(msgEl.scrollHeight, 120) + 'px'; }
 
@@ -411,7 +679,8 @@
   function setConnected(on) { dot.classList.toggle('on', on); }
 
   function gate() {
-    nav.style.display = 'none'; composer.style.display = 'none'; hdr.classList.remove('has-back');
+    nav.style.display = 'none'; termwrap.classList.remove('show'); main.style.display = 'block';
+    hdr.classList.remove('has-back');
     titleEl.firstChild.nodeValue = 'Workspacer'; subEl.textContent = '';
     main.innerHTML = `<div class="gate"><h2>Token required</h2>
       <p>Paste your workspacer remote token to connect.</p>
@@ -432,10 +701,16 @@
     ws.onopen = () => {
       backoff = 500; lastActivity = Date.now(); setConnected(true);
       ws.send(JSON.stringify({ op: 'subscribe', topics: ['agent.state_changed', 'agent.snapshot'] }));
-      // Re-pull current state on every (re)connect — while the socket was down we
-      // missed the state_changed/snapshot events that normally keep us live.
-      if (view.name === 'fleet') setTab('fleet'); else refresh();
-      if (view.name === 'chat') loadConvo(true);
+      // Re-pull current state on every (re)connect — while the socket was down
+      // we missed the events that normally keep us live. If a terminal was
+      // open, re-subscribe + re-attach so the stream re-primes from the ring
+      // buffer.
+      if (view.name === 'term' && termSessionId) {
+        subscribePty(termSessionId, true);
+        call('sessions.attachTerminal', { sessionId: termSessionId }).catch(() => {});
+        refresh();
+      } else if (view.name === 'fleet') setTab('fleet');
+      else refresh();
     };
     ws.onmessage = (ev) => {
       lastActivity = Date.now();
@@ -444,9 +719,11 @@
       else if (f.op === 'error' && f.id) { const c = calls.get(f.id); if (c) { calls.delete(f.id); c.reject(new Error(f.error || 'error')); } }
       else if (f.op === 'event' && f.event) {
         const t = f.event.type || '';
-        if (t === 'agent.state_changed' || t === 'agent.snapshot') {
+        if (t.startsWith('pty.bytes.')) {
+          // The event's data IS the base64 chunk (a bare JSON string).
+          if (t === 'pty.bytes.' + termSessionId && typeof f.event.data === 'string') writePty(f.event.data);
+        } else if (t === 'agent.state_changed' || t === 'agent.snapshot') {
           refresh();
-          if (view.name === 'chat') loadConvo(false);
         }
       }
     };
@@ -481,7 +758,7 @@
 
   // ── wiring ──────────────────────────────────────────────────────────────
   for (const b of nav.querySelectorAll('button')) b.onclick = () => setTab(b.dataset.tab);
-  backBtn.onclick = () => setTab('fleet');
+  backBtn.onclick = closeAgent;
   sendBtn.onclick = sendMessage;
   msgEl.addEventListener('input', autosize);
   msgEl.addEventListener('keydown', e => {
@@ -489,16 +766,16 @@
   });
 
   // iOS keyboard handling: the software keyboard shrinks the visual viewport but
-  // not the layout viewport, so the composer would sit behind it. Expose the
-  // keyboard height as --kb (consumed by #app's height calc) and keep the chat
-  // pinned to the latest message. On Android the layout already resizes, so the
-  // delta stays ~0 and this changes nothing.
+  // not the layout viewport, so the bottom controls would sit behind it. Expose
+  // the keyboard height as --kb (consumed by #app's height calc) and refit the
+  // terminal to the shrunken area. On Android the layout already resizes, so
+  // the delta stays ~0 and this changes nothing.
   if (window.visualViewport) {
     const vv = window.visualViewport;
     const applyKb = () => {
       const kb = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
       document.documentElement.style.setProperty('--kb', (kb > 80 ? kb : 0) + 'px');
-      if (view.name === 'chat') main.scrollTop = main.scrollHeight;
+      if (view.name === 'term') scheduleRefit();
     };
     vv.addEventListener('resize', applyKb);
     vv.addEventListener('scroll', applyKb);

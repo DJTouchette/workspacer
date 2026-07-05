@@ -147,10 +147,10 @@ func (c *claudemonClient) streamStatusLines(ctx context.Context, emit func(name 
 	return c.streamSSE(ctx, "/statusline/stream", emit)
 }
 
-// submitMessage posts a prompt. claudemon's mode-gated /message accepts it only
-// when the session is at an input prompt; mid-turn it replies 409. We report
-// that as ok=false (not an error) so the caller can fall back to typing into the
-// PTY, exactly as the desktop ClaudePane does. Other HTTP failures are errors.
+// submitMessage posts a prompt through claudemon's settle+verify /message
+// pipeline (sent at the prompt, queued mid-turn / behind dialogs). A 409 now
+// only means the session has ended — reported as ok=false (not an error) so
+// the caller can surface it. Other HTTP failures are errors.
 func (c *claudemonClient) submitMessage(ctx context.Context, id, text string) (ok bool, err error) {
 	buf, err := json.Marshal(map[string]any{"text": text})
 	if err != nil {
