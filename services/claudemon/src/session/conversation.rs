@@ -586,7 +586,7 @@ mod tests {
         // Second write: the rest of row 2.
         {
             let mut f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
-            write!(f, "{}\n", &row2[20..]).unwrap();
+            writeln!(f, "{}", &row2[20..]).unwrap();
         }
         tail_one(&conv, "s1", &path_str).await.unwrap();
         let d2 = rx.try_recv().expect("second delta");

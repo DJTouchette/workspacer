@@ -395,7 +395,6 @@ impl UsageAcc {
             seven_day_pct: self.seven_day_pct,
             seven_day_resets_at: self.seven_day_resets_at,
             received_at: Some(OffsetDateTime::now_utc()),
-            ..Default::default()
         }
     }
 }

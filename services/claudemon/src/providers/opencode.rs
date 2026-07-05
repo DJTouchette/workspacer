@@ -222,6 +222,8 @@ fn usage_from(v: &Value) -> Option<AgentUpdate> {
 /// Spawn and drive an OpenCode-managed session in the background. Returns
 /// immediately; the session's id is already registered in `store` by the
 /// caller, so the UI shows it even while `opencode serve` is still booting.
+// Mirrors the shared provider spawn signature (see codex::spawn_session).
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_session(
     store: SessionStore,
     conv: ConversationStore,
@@ -309,6 +311,7 @@ fn reply_permission(client: &reqwest::Client, base: &str, oc_id: &str, perm_id: 
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_session(
     store: &SessionStore,
     conv: &ConversationStore,

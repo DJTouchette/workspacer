@@ -1164,7 +1164,7 @@ impl SessionStore {
         if self
             .pending_messages
             .get(session_id)
-            .map_or(true, |q| q.is_empty())
+            .is_none_or(|q| q.is_empty())
         {
             return;
         }

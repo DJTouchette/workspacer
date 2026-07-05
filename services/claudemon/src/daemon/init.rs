@@ -214,7 +214,7 @@ fn merge_hooks(mut doc: Value, our_command: &str) -> (Value, Vec<String>) {
     // an object (malformed file), skip rather than panic.
     let hooks_is_object = obj
         .get("hooks")
-        .map_or(true, |v| v.is_object());
+        .is_none_or(|v| v.is_object());
     if !hooks_is_object {
         tracing::warn!("settings.json `hooks` value is not an object; skipping hooks merge");
         return (doc, Vec::new());
@@ -249,10 +249,9 @@ fn merge_hooks(mut doc: Value, our_command: &str) -> (Value, Vec<String>) {
                             changed.push(event.to_string());
                         }
                     }
-                    if !hook
+                    if hook
                         .get("type")
-                        .and_then(Value::as_str)
-                        .is_some_and(|t| t == "command")
+                        .and_then(Value::as_str).is_none_or(|t| t != "command")
                     {
                         hook["type"] = Value::String("command".to_string());
                     }

@@ -14,8 +14,9 @@ use crate::tui::editor::Editor;
 
 #[derive(Clone, Debug)]
 pub enum AppEvent {
-    /// SSE delivered a `session.update` frame.
-    Update(SessionUpdate),
+    /// SSE delivered a `session.update` frame. Boxed so this ~480-byte payload
+    /// doesn't bloat every variant that travels through the event channel.
+    Update(Box<SessionUpdate>),
     /// SSE stream disconnected.
     SseDisconnected,
     /// SSE stream connected (initial or reconnect).
@@ -32,6 +33,9 @@ pub struct SessionUpdate {
 }
 
 /// Which screen the TUI is currently showing.
+// Held as a single live value on `App`, never in bulk, so the size gap between
+// the unit `Dashboard` and the `Chat` payload doesn't matter.
+#[allow(clippy::large_enum_variant)]
 pub enum View {
     /// Fleet dashboard: list of sessions + details panel.
     Dashboard,
@@ -284,6 +288,7 @@ impl App {
     pub fn apply_event(&mut self, evt: AppEvent) -> bool {
         match evt {
             AppEvent::Update(upd) => {
+                let upd = *upd;
                 if !self.sessions.contains_key(&upd.session_id) {
                     self.order.push(upd.session_id.clone());
                 }

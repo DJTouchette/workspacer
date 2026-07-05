@@ -1880,7 +1880,7 @@ mod tests {
         assert_eq!(app.managed_providers.get("m1").map(String::as_str), Some("codex"));
         // The record is pruned once the session leaves the live set.
         app.set_agents(vec![]);
-        assert!(app.managed_providers.get("m1").is_none());
+        assert!(!app.managed_providers.contains_key("m1"));
     }
 
     #[test]

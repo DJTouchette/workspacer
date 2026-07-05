@@ -67,10 +67,12 @@ impl HookEventKind {
 /// on the user — it is not actively working.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum SessionMode {
     /// No hook has fired yet. We're in TUI startup, OAuth, or first-run
     /// setup. The wrapper can still read/write bytes, but mode-specific
     /// endpoints don't know what to do.
+    #[default]
     Unknown,
     /// Chat prompt is up. Ready to receive a user message.
     Input,
@@ -87,11 +89,6 @@ pub enum SessionMode {
     Stopped,
 }
 
-impl Default for SessionMode {
-    fn default() -> Self {
-        SessionMode::Unknown
-    }
-}
 
 /// One question Claude is asking the user (mirrors the `AskUserQuestion`
 /// tool input).

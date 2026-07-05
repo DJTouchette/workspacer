@@ -34,7 +34,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
 // ─── Shared helpers ─────────────────────────────────────────────────────
 
-pub(self) fn draw_toast(frame: &mut Frame, area: Rect, app: &App) {
+ fn draw_toast(frame: &mut Frame, area: Rect, app: &App) {
     if let Some(t) = app.current_toast() {
         frame.render_widget(
             Paragraph::new(format!(" {t}")).style(Style::default().fg(Color::Yellow)),
@@ -109,7 +109,7 @@ fn render_markdown_text(
         let line = raw_line.trim_end();
         let trimmed = line.trim_start();
 
-        if trimmed.starts_with("```") {
+        if let Some(after_fence) = trimmed.strip_prefix("```") {
             if in_code {
                 in_code = false;
                 code_lang.clear();
@@ -117,7 +117,7 @@ fn render_markdown_text(
                 continue;
             }
             in_code = true;
-            code_lang = trimmed[3..].trim().to_string();
+            code_lang = after_fence.trim().to_string();
             code_highlighter = Some(syntax::Highlighter::for_language(&code_lang));
             let label = if code_lang.is_empty() {
                 "code".to_string()
@@ -297,10 +297,10 @@ fn inline_markdown_spans(text: &str, base: Style) -> Vec<Span<'static>> {
         if (chars[i] == '*' || chars[i] == '_') && !is_double_marker(&chars, i) {
             let prev = if i == 0 { None } else { Some(chars[i - 1]) };
             let next = chars.get(i + 1).copied();
-            let opens_ok = prev.map_or(true, |c| !c.is_alphanumeric())
+            let opens_ok = prev.is_none_or(|c| !c.is_alphanumeric())
                 && next.is_some_and(|c| !c.is_whitespace());
             let closes_ok = prev.is_some_and(|c| !c.is_whitespace())
-                && next.map_or(true, |c| !c.is_alphanumeric());
+                && next.is_none_or(|c| !c.is_alphanumeric());
             if (!italic && opens_ok) || (italic && closes_ok) {
                 flush_inline(&mut buf, &mut spans, base, bold, italic);
                 italic = !italic;

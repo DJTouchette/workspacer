@@ -127,6 +127,7 @@ fn ensure_hub(daemons: &mut Daemons, bus_url: &str, claudemon_url: &str) {
 ///   * nothing is listening (e.g. the hub binary isn't built), or
 ///   * something is listening but it rejects our token with 401 (e.g. the
 ///     desktop owns the hub with a token we don't have / a stale one).
+///
 /// Without the 401 check a token mismatch would leave the bus client retrying
 /// forever with an empty agent list — so we probe auth and fall back instead.
 /// A remote bus is the user's responsibility, so it's never reported

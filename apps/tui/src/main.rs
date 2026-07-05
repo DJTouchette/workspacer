@@ -130,6 +130,9 @@ async fn main() -> Result<()> {
     res
 }
 
+// Single top-level orchestration entry point wired up once from `main`; the
+// arguments are the already-constructed subsystems, not worth a params struct.
+#[allow(clippy::too_many_arguments)]
 async fn run(
     terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     events_url: String,
@@ -177,18 +180,9 @@ async fn run(
                 Some(DaemonEvent::Changed) => app.on_changed(),
                 None => break,
             },
-            am = msg_rx.recv() => match am {
-                Some(msg) => app.apply_msg(msg),
-                None => {}
-            },
-            chunk = pty_rx.recv() => match chunk {
-                Some(c) => app.feed_pty(c),
-                None => {}
-            },
-            sl = status_rx.recv() => match sl {
-                Some(msg) => app.apply_status_line(msg.session_id, msg.status_line),
-                None => {}
-            },
+            am = msg_rx.recv() => if let Some(msg) = am { app.apply_msg(msg) },
+            chunk = pty_rx.recv() => if let Some(c) = chunk { app.feed_pty(c) },
+            sl = status_rx.recv() => if let Some(msg) = sl { app.apply_status_line(msg.session_id, msg.status_line) },
             // Live agent view over the bus (snapshots + statusline). The pending()
             // arm never fires when there's no bus, so this is inert off-bus.
             bev = async {
@@ -196,10 +190,7 @@ async fn run(
                     Some(rx) => rx.recv().await,
                     None => std::future::pending().await,
                 }
-            } => match bev {
-                Some(ev) => app.apply_bus_event(ev),
-                None => {}
-            },
+            } => if let Some(ev) = bev { app.apply_bus_event(ev) },
             _ = tick.tick() => {}
         }
     }

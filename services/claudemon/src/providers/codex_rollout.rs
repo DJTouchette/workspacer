@@ -41,6 +41,7 @@ use crate::session::{ConversationStore, SessionStore};
 ///     `user_message` / `agent_message` are intentionally ignored — the same
 ///     text already arrives as `response_item` messages, so honoring both would
 ///     duplicate every turn.
+///
 /// `turn_context` yields only the model name; `session_meta` and reasoning
 /// items yield nothing.
 pub fn translate(value: &Value) -> Vec<AgentUpdate> {
@@ -295,9 +296,7 @@ async fn discover_rollout(
     // ~3 min backstop at 250ms/iter — long enough for any realistic cold start,
     // bounded so a session that never records eventually stops scanning.
     for _ in 0..720 {
-        if store.get(session_id).is_none() {
-            return None; // session ended before a rollout appeared
-        }
+        store.get(session_id)?;
         let mut candidates: Vec<(PathBuf, std::time::SystemTime)> = collect_rollouts(&sessions_root)
             .into_iter()
             .filter(|(_, m)| *m >= cutoff)

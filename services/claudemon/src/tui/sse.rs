@@ -43,7 +43,7 @@ pub async fn run(url: String, tx: mpsc::UnboundedSender<AppEvent>) {
             buf.extend_from_slice(&chunk);
             for frame in drain_sse_frames(&mut buf) {
                 if let Some(update) = parse_sse_frame(&frame) {
-                    let _ = tx.send(AppEvent::Update(update));
+                    let _ = tx.send(AppEvent::Update(Box::new(update)));
                 }
             }
         }

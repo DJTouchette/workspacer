@@ -74,7 +74,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
 fn render_rename(f: &mut Frame, area: Rect, app: &App) {
     let t = &app.theme;
     let Some(form) = app.rename.as_ref() else { return };
-    let w = area.width.saturating_sub(8).min(60).max(20);
+    let w = area.width.saturating_sub(8).clamp(20, 60);
     let lines = vec![
         Line::raw(""),
         Line::from(vec![
@@ -890,7 +890,7 @@ fn render_spawn_modal(f: &mut Frame, area: Rect, app: &App) {
     let t = &app.theme;
     let Some(form) = app.spawn_form.as_ref() else { return };
 
-    let w = area.width.saturating_sub(8).min(72).max(20);
+    let w = area.width.saturating_sub(8).clamp(20, 72);
     let inner_w = w.saturating_sub(2) as usize;
 
     let profile = app.profiles.get(form.profile_idx);
@@ -991,8 +991,8 @@ fn render_palette(f: &mut Frame, area: Rect, app: &App) {
     let t = &app.theme;
     let Some(p) = app.palette.as_ref() else { return };
 
-    let w = area.width.saturating_sub(8).min(76).max(24);
-    let max_rows = area.height.saturating_sub(6).min(14).max(3);
+    let w = area.width.saturating_sub(8).clamp(24, 76);
+    let max_rows = area.height.saturating_sub(6).clamp(3, 14);
     let visible: Vec<_> = p.visible().collect();
     let shown = (visible.len() as u16).min(max_rows);
     let h = shown + 4; // search line + borders + padding
@@ -1058,8 +1058,8 @@ fn render_picker(f: &mut Frame, area: Rect, app: &App) {
     let t = &app.theme;
     let Some(p) = app.picker.as_ref() else { return };
 
-    let w = area.width.saturating_sub(8).min(64).max(24);
-    let max_rows = area.height.saturating_sub(6).min(12).max(3);
+    let w = area.width.saturating_sub(8).clamp(24, 64);
+    let max_rows = area.height.saturating_sub(6).clamp(3, 12);
     let shown = (p.matched.len() as u16).min(max_rows);
     let h = (shown + 5).min(area.height);
     let rect = Rect {
@@ -1220,7 +1220,7 @@ fn binding_lines(t: &Theme, app: &App, title: &str, ctx: Context) -> Vec<Line<'s
 
 fn render_help(f: &mut Frame, area: Rect, app: &App) {
     let t = &app.theme;
-    let w = area.width.saturating_sub(6).min(64).max(24);
+    let w = area.width.saturating_sub(6).clamp(24, 64);
 
     let mut lines = vec![Line::from(Span::styled(
         "Keybindings — edit ~/.config/workspacer/tui.json to remap",
@@ -1337,8 +1337,8 @@ fn render_notes(f: &mut Frame, area: Rect, app: &App) {
     let t = &app.theme;
     let Some(n) = app.notes_view.as_ref() else { return };
 
-    let w = area.width.saturating_sub(6).min(76).max(24);
-    let h = area.height.saturating_sub(4).min(24).max(6);
+    let w = area.width.saturating_sub(6).clamp(24, 76);
+    let h = area.height.saturating_sub(4).clamp(6, 24);
     let rect = Rect {
         x: area.x + (area.width.saturating_sub(w)) / 2,
         y: area.y + (area.height.saturating_sub(h)) / 2,
@@ -1611,6 +1611,47 @@ fn mode_chip(app: &App, in_agent: bool, on_shell: bool) -> (&'static str, Color)
     }
 }
 
+// ── text wrapping ───────────────────────────────────────────────────────────
+
+/// Greedy word-wrap to `width` columns, hard-splitting tokens longer than the
+/// line. Good enough for transcript/JSON display; avoids pulling in a crate.
+fn wrap(s: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    let mut lines = Vec::new();
+    let mut cur = String::new();
+    for word in s.split(' ') {
+        if word.chars().count() > width {
+            // Flush, then hard-split the long token.
+            if !cur.is_empty() {
+                lines.push(std::mem::take(&mut cur));
+            }
+            let mut chunk = String::new();
+            for ch in word.chars() {
+                if chunk.chars().count() == width {
+                    lines.push(std::mem::take(&mut chunk));
+                }
+                chunk.push(ch);
+            }
+            cur = chunk;
+            continue;
+        }
+        let extra = if cur.is_empty() { 0 } else { 1 };
+        if cur.chars().count() + extra + word.chars().count() > width {
+            lines.push(std::mem::take(&mut cur));
+            cur.push_str(word);
+        } else {
+            if !cur.is_empty() {
+                cur.push(' ');
+            }
+            cur.push_str(word);
+        }
+    }
+    if !cur.is_empty() || lines.is_empty() {
+        lines.push(cur);
+    }
+    lines
+}
+
 // ── state_color characterization tests ──────────────────────────────────────
 
 #[cfg(test)]
@@ -1751,45 +1792,4 @@ mod tests {
             assert_eq!(sc(state), *want, "state_color({state:?}) expected {want:?}");
         }
     }
-}
-
-// ── text wrapping ───────────────────────────────────────────────────────────
-
-/// Greedy word-wrap to `width` columns, hard-splitting tokens longer than the
-/// line. Good enough for transcript/JSON display; avoids pulling in a crate.
-fn wrap(s: &str, width: usize) -> Vec<String> {
-    let width = width.max(1);
-    let mut lines = Vec::new();
-    let mut cur = String::new();
-    for word in s.split(' ') {
-        if word.chars().count() > width {
-            // Flush, then hard-split the long token.
-            if !cur.is_empty() {
-                lines.push(std::mem::take(&mut cur));
-            }
-            let mut chunk = String::new();
-            for ch in word.chars() {
-                if chunk.chars().count() == width {
-                    lines.push(std::mem::take(&mut chunk));
-                }
-                chunk.push(ch);
-            }
-            cur = chunk;
-            continue;
-        }
-        let extra = if cur.is_empty() { 0 } else { 1 };
-        if cur.chars().count() + extra + word.chars().count() > width {
-            lines.push(std::mem::take(&mut cur));
-            cur.push_str(word);
-        } else {
-            if !cur.is_empty() {
-                cur.push(' ');
-            }
-            cur.push_str(word);
-        }
-    }
-    if !cur.is_empty() || lines.is_empty() {
-        lines.push(cur);
-    }
-    lines
 }

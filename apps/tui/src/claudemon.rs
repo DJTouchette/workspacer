@@ -844,10 +844,7 @@ mod tests {
         let mut buf = Vec::new();
         let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
         while tokio::time::Instant::now() < deadline {
-            match tokio::time::timeout(Duration::from_millis(250), rx.recv()).await {
-                Ok(Some(c)) => buf.extend_from_slice(&c.bytes),
-                _ => {}
-            }
+            if let Ok(Some(c)) = tokio::time::timeout(Duration::from_millis(250), rx.recv()).await { buf.extend_from_slice(&c.bytes) }
         }
         reader.abort();
         let _ = cm.signal(&sid, "SIGTERM").await;

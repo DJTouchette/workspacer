@@ -245,6 +245,8 @@ fn dialog_summary(req: &Value) -> Option<String> {
 ///     facade's role instructions must be prepended programmatically and the
 ///     dialogs must surface as GUI approvals; a supervisor has no human at a
 ///     Term.
+// Mirrors the shared provider spawn signature (see codex::spawn_session).
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_session(
     store: SessionStore,
     conv: ConversationStore,
@@ -315,9 +317,7 @@ async fn discover_session_file(
     let dir = pi_session_dir(cwd)?;
     let suffix = format!("_{session_id}.jsonl");
     for _ in 0..720 {
-        if store.get(session_id).is_none() {
-            return None; // session ended before Pi persisted anything
-        }
+        store.get(session_id)?;
         if let Ok(entries) = std::fs::read_dir(&dir) {
             for entry in entries.flatten() {
                 if entry

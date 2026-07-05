@@ -131,7 +131,7 @@ fn draw_transcript(frame: &mut Frame, area: Rect, _app: &App, chat: &ChatState) 
         // Scrolling keeps the cache hot — it only changes scroll_offset,
         // which isn't part of the key.
         let mut cache = chat.render_cache.borrow_mut();
-        let needs_rebuild = cache.as_ref().map_or(true, |c| c.key != key);
+        let needs_rebuild = cache.as_ref().is_none_or(|c| c.key != key);
         if needs_rebuild {
             let lines = build_transcript_lines(chat, inner_width);
             *cache = Some(super::super::app::TranscriptRenderCache { key, lines });
@@ -156,7 +156,7 @@ fn draw_transcript(frame: &mut Frame, area: Rect, _app: &App, chat: &ChatState) 
         .collect();
 
     let title = if let Some(path) = chat.transcript.path.as_deref() {
-        format!(" transcript · {} ", path.split('/').last().unwrap_or(path))
+        format!(" transcript · {} ", path.split('/').next_back().unwrap_or(path))
     } else {
         " transcript ".to_string()
     };
@@ -482,7 +482,7 @@ fn render_transcript_message(
             .map(|p| p.content.chars().count())
             .unwrap_or(2)
     };
-    let indent: String = std::iter::repeat(' ').take(prefix_len).collect();
+    let indent: String = std::iter::repeat_n(' ', prefix_len).collect();
     let wrap_width = inner_width.saturating_sub(prefix_len).max(20);
 
     let mut emitted_for_msg = false;
@@ -625,7 +625,7 @@ fn render_transcript_message(
                             Span::styled(tag.to_string(), Style::default().fg(color))
                         } else {
                             let pad: String =
-                                std::iter::repeat(' ').take(tag.chars().count()).collect();
+                                std::iter::repeat_n(' ', tag.chars().count()).collect();
                             Span::styled(pad, Style::default().fg(color))
                         };
                         let mut spans: Vec<Span<'static>> = vec![prefix_span, tag_span];
@@ -651,7 +651,7 @@ fn render_transcript_message(
                         ]));
                     }
                 } else if total_lines > shown {
-                    let pad: String = std::iter::repeat(' ').take(tag.chars().count()).collect();
+                    let pad: String = std::iter::repeat_n(' ', tag.chars().count()).collect();
                     out.push(Line::from(vec![
                         indent.clone().into(),
                         Span::styled(pad, Style::default().fg(color)),

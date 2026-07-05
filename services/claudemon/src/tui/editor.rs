@@ -350,7 +350,6 @@ mod tests {
     fn history_recall_and_back() {
         let mut e = ed("first");
         let _ = e.take_and_remember();
-        let mut e = e;
         for ch in "second".chars() {
             e.insert(ch);
         }
@@ -416,7 +415,7 @@ mod tests {
 
     #[test]
     fn visual_cursor_with_soft_wrap() {
-        let mut e = ed("abcdef");
+        let e = ed("abcdef");
         // width 4: chars wrap after col 3 -> row 1
         // a(0,0) b(1,0) c(2,0) d wraps row 1 col 0, e(1,1), f(2,1)
         // cursor at end: (3,1)
