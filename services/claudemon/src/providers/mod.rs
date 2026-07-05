@@ -440,7 +440,16 @@ pub fn apply_updates(
                 usage_changed = true;
             }
             AgentUpdate::Error(msg) => {
-                tracing::debug!(session = %session_id, error = %msg, "managed session error");
+                // A managed provider (Codex/OpenCode/Pi) reported an agent-side
+                // failure. Log it and surface it in the conversation so the GUI
+                // shows it instead of silently swallowing it. The renderer only
+                // renders known item kinds, so ride it in as assistant text with
+                // a clear marker rather than a bespoke variant it would drop.
+                tracing::warn!(session = %session_id, error = %msg, "managed session error");
+                items.push(ConversationItem::AssistantText {
+                    text: format!("⚠️ Error: {msg}"),
+                    timestamp: None,
+                });
             }
             AgentUpdate::AssistantText(_)
             | AgentUpdate::UserText(_)
@@ -615,6 +624,32 @@ mod tests {
         assert_eq!(context_window_for("gpt-5-codex"), Some(272_000));
         assert_eq!(context_window_for("google/gemini-2.5-pro"), Some(1_048_576));
         assert_eq!(context_window_for("totally-unknown-model"), None);
+    }
+
+    #[test]
+    fn error_update_surfaces_conversation_item() {
+        // A managed-provider Error must reach the GUI as a conversation item,
+        // not vanish into a log line.
+        let store = SessionStore::new();
+        let conv = ConversationStore::new();
+        let mut mode = SessionMode::Unknown;
+        let mut acc = UsageAcc::new();
+        apply_updates(
+            &store,
+            &conv,
+            "s-err",
+            vec![AgentUpdate::Error("boom: model overloaded".into())],
+            &mut mode,
+            &mut acc,
+        );
+        let (_seq, items) = conv.snapshot("s-err").expect("conversation exists for session");
+        assert_eq!(items.len(), 1, "one item surfaced for the error");
+        match &items[0] {
+            ConversationItem::AssistantText { text, .. } => {
+                assert!(text.contains("boom: model overloaded"), "error text carried through: {text}");
+            }
+            other => panic!("expected AssistantText, got {other:?}"),
+        }
     }
 
     #[test]
