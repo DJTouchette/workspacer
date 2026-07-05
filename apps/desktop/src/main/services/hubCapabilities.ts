@@ -13,7 +13,7 @@ import { claudemonSessionClient } from './claudemonSessionClient';
 import { agentHandoffBrief } from './agentHandoff';
 import { spawnManagedAgent } from './managedSpawn';
 import { spawnClaudeAgent } from './claudeSpawn';
-import type { AgentProvider } from './agentProviders';
+import { resolveAgentBinary, checkAllProviders, type AgentProvider } from './agentProviders';
 import { claudeProfiles } from './claudeProfiles';
 import { registerCapability } from './hubClient';
 import { appIconPath } from '../lib/appIcon';
@@ -362,6 +362,26 @@ export function registerHubCapabilities(): void {
 
   // ── Model picker (web parity) ──────────────────────────────────────────
   cat('claude.listModels', () => listClaudeModels());
+
+  // ── Provider discovery (web parity) ────────────────────────────────────
+  // Mirror the PROVIDER_LIST_MODELS / PROVIDER_CHECK_ALL IPC handlers so the web
+  // Spawn dialog can list a managed provider's models and show per-provider
+  // detection dots, instead of falling back to a free-text model field. Both are
+  // read-only discovery — no code execution beyond what the desktop IPC does
+  // (listModels queries the provider's own CLI via claudemon; checkAll only
+  // stats binaries on PATH), so they carry none of agents.spawn's bypass risk.
+  registerCapability('providers.listModels', (params: unknown) => {
+    const { provider, cwd } = (params ?? {}) as { provider?: 'codex' | 'opencode' | 'pi'; cwd?: string };
+    if (provider !== 'codex' && provider !== 'opencode' && provider !== 'pi') {
+      throw new Error("providers.listModels requires { provider: 'codex'|'opencode'|'pi' }");
+    }
+    const customBin = configService.getConfig().agents?.binaries?.[provider] ?? '';
+    return claudemonSessionClient.listProviderModels(provider, cwd, resolveAgentBinary(provider, customBin));
+  });
+  registerCapability('providers.checkAll', () => {
+    const binaries = configService.getConfig().agents?.binaries ?? {};
+    return checkAllProviders(binaries);
+  });
 
   // ── Saved sessions (workspace layouts) ─────────────────────────────────
   // Mirror the SESSION_* IPC handlers so the web client can list/load/save the

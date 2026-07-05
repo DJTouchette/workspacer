@@ -8,9 +8,13 @@
  * it still calls `window.electronAPI.*` and never learns which transport it got.
  *
  * Coverage tracks the hub capability surface (`hubCapabilities.ts`). Methods the
- * hub already supports (agents, terminal I/O, approvals, transcript) are wired;
- * everything else returns a safe default and warns once, to be filled in as the
- * hub RPC surface widens (Phase 3). Each stub is marked `HUB-TODO`.
+ * hub supports (agents, terminal I/O, approvals, transcript, config, git, files,
+ * provider model/detection discovery, terminal-exit + library-change events) are
+ * wired; the remainder returns a safe default and warns once, to be filled in as
+ * the hub RPC surface widens (Phase 3). Each remaining stub is marked `HUB-TODO`.
+ * The still-stubbed surface is host-trusted/local-only work — plugin
+ * install/inspect, pane-token minting, native OS dialogs/notifications, the quit
+ * handshake — that a web/remote viewer can't perform against someone else's host.
  */
 
 import type { ElectronAPI, SessionListEntry } from '../types/electron';
@@ -131,7 +135,14 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     resizeTerminal: (id, cols, rows) => { reprime(id); return client.call<void>('sessions.terminalResize', { sessionId: id, cols, rows }); },
     closeTerminal: (id) => client.call<void>('sessions.detachTerminal', { sessionId: id }).then(() => {}),
     onTerminalOutput: (id, callback) => streamPty(client, reprimers, id, callback),
-    onTerminalExit: () => { warnOnce('onTerminalExit'); return () => {}; }, // HUB-TODO: no exit event yet
+    // Terminal exit arrives as a flat `pty.exit` bus event carrying { sessionId };
+    // the desktop fires one global callback that each pane filters by its own id,
+    // so we mirror that — one subscription per listener, dispatched by sessionId.
+    onTerminalExit: (callback) =>
+      client.subscribe('pty.exit', (ev) => {
+        const id = (ev.data as { sessionId?: string } | undefined)?.sessionId;
+        if (id) callback(id);
+      }),
 
     // ── Claude sessions ──────────────────────────────────────────────────
     spawnClaude: (opts) => client.call<{ sessionId: string }>('agents.spawn', opts).then((r) => r.sessionId),
@@ -139,10 +150,11 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     // Reads a local transcript file; not available over the hub bus (web mirror).
     workflowAgentTranscript: async () => null,
     workflowAgentConversation: async () => null,
-    // No hub capability for live per-provider model listing yet — fall back to
-    // an empty list so the spawn dialog uses its free-text model field.
-    providerListModels: () => { warnOnce('providerListModels'); return Promise.resolve([]); },
-    providerCheckAll: () => { warnOnce('providerCheckAll'); return Promise.resolve([]); },
+    // Live per-provider discovery over the bus (providers.* capabilities): the
+    // managed provider's model catalog and PATH-detection status, so the web
+    // Spawn dialog matches the desktop instead of falling back to free-text.
+    providerListModels: (provider, cwd) => client.call('providers.listModels', { provider, cwd }),
+    providerCheckAll: () => client.call('providers.checkAll', {}),
     claudeMessage: (sessionId, text) => client.call<{ ok: boolean; mode?: string }>('agents.sendMessage', { sessionId, text }),
     claudeSetPermissionMode: (sessionId, mode) =>
       client.call<{ ok: boolean; mode?: string; error?: string }>('claude.setPermissionMode', { sessionId, mode }),
@@ -268,7 +280,10 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     libraryList: (cwd) => client.call('library.list', { cwd }),
     librarySave: (input) => client.call('library.save', input),
     libraryRemove: (scope, id, cwd, kind) => client.call<void>('library.remove', { scope, id, cwd, kind }).then(() => {}),
-    onLibraryChanged: () => () => {}, // no hub library-change event yet; web won't auto-refresh
+    // The desktop mirrors every library mutation (and external edit its watcher
+    // catches) onto the bus as a flat `library.changed` event; subscribe so the
+    // web client auto-refreshes its prompt/skill list just like the desktop.
+    onLibraryChanged: (callback) => client.subscribe('library.changed', () => callback()),
 
     // ── App info / dialogs ───────────────────────────────────────────────
     getCwd: () => client.call<string>('app.getCwd', {}),

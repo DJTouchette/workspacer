@@ -57,6 +57,9 @@ func (r *registry) methods() []string {
 		"claude.profiles.update",
 		"claude.profiles.remove",
 		"claude.listModels",
+		// provider discovery: model catalog (relayed to claudemon) + PATH detection.
+		"providers.listModels",
+		"providers.checkAll",
 		"config.get",
 		"config.reload",
 		"config.getPath",
@@ -172,6 +175,10 @@ func (r *registry) handle(ctx context.Context, method string, params json.RawMes
 		return r.profilesRemove(params)
 	case "claude.listModels":
 		return jsonResult(r.listModels(ctx))
+	case "providers.listModels":
+		return r.providersListModels(ctx, params)
+	case "providers.checkAll":
+		return r.providersCheckAll()
 	case "config.get":
 		return jsonResult(r.cfg.get())
 	case "config.reload":

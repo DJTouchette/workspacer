@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -121,6 +122,26 @@ func (c *claudemonClient) spawn(ctx context.Context, req spawnReq) (string, erro
 
 func (c *claudemonClient) getSession(ctx context.Context, id string) (json.RawMessage, error) {
 	return c.getRaw(ctx, "/sessions/"+id)
+}
+
+// providerModels live-queries a managed provider's model catalog via
+// GET /providers/:provider/models (services/claudemon handle_provider_models),
+// which spawns the provider's own CLI in cwd. bin is the resolved launcher path
+// (honoring the user's config override); cwd scopes the query. Returns the raw
+// { "models": [...] } body for the handler to unwrap.
+func (c *claudemonClient) providerModels(ctx context.Context, provider, cwd, bin string) (json.RawMessage, error) {
+	q := url.Values{}
+	if cwd != "" {
+		q.Set("cwd", cwd)
+	}
+	if bin != "" {
+		q.Set("bin", bin)
+	}
+	path := "/providers/" + provider + "/models"
+	if enc := q.Encode(); enc != "" {
+		path += "?" + enc
+	}
+	return c.getRaw(ctx, path)
 }
 
 // streamSSE follows an SSE endpoint, calling emit per frame. Uses a no-timeout

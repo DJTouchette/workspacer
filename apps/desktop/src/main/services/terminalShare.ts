@@ -142,6 +142,27 @@ async function runStream(f: Forwarder): Promise<void> {
       },
       onError(err) {
         console.warn(`[terminalShare] stream ${f.sessionId} error, retrying:`, err);
+        // Tell a transient stream hiccup (retry) apart from the PTY having
+        // exited. claudemon keeps a terminated session as a resumable row, so an
+        // exit shows up as 404 *or* a 200 with mode 'stopped' — mirror the
+        // desktop's own liveness probe (claudemonSessionClient.verifyAttachTarget).
+        // On a real exit, publish `pty.exit` so the web client can mark the pane
+        // dead (the desktop learns this over its own MessagePort path), and stop
+        // forwarding — the retry loop would otherwise spin against a gone session.
+        if (f.stopped) return;
+        fetch(`${CLAUDEMON_API_URL}/sessions/${f.sessionId}`)
+          .then(async (res) => {
+            let dead = res.status === 404;
+            if (res.ok) {
+              const body = (await res.json().catch(() => null)) as { mode?: string } | null;
+              dead = body?.mode === 'stopped';
+            }
+            if (dead && !f.stopped) {
+              publishToHub({ type: 'pty.exit', data: { sessionId: f.sessionId } });
+              stopTerminal(f.sessionId);
+            }
+          })
+          .catch(() => { /* daemon unreachable — the SSE backoff handles that */ });
       },
     },
   );

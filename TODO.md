@@ -56,7 +56,7 @@ theme, roughly ordered by severity within each group.
       clients must guess (the TUI tracks providers only for sessions it
       spawned itself; adopted managed sessions default to claude). Add a
       `provider` field to the session payload.
-- [ ] No hub capability for `GET /providers/:provider/models` — provider
+- [x] No hub capability for `GET /providers/:provider/models` — provider
       model listing is REST-only, unreachable for pure bus clients.
 - [ ] OpenCode/Pi lack live model + permission-mode switch (409) — needs
       `register_managed_model_switch` / `register_managed_yolo` equivalents per
@@ -64,12 +64,12 @@ theme, roughly ordered by severity within each group.
 
 ## Web / remote parity
 
-- [ ] `webBackend.ts` HUB-TODO stubs (Phase 3): plugin administration
-      (list/install/inspect/remove/setEnabled/settings, `:250-265`),
-      `providerListModels`/`providerCheckAll` (`:144-145` — Spawn dialog can't
-      list provider models on web), `onTerminalExit`, workflow agent
-      transcript/conversation, `onLibraryChanged` auto-refresh,
-      `importChromeCookies`, `openLogsFolder`.
+- [ ] `webBackend.ts` remaining stubs — deliberately host-trusted/local-only
+      (plugin lifecycle, pane tokens, setRemoteShare, native dialogs,
+      importChromeCookies, openLogsFolder, quit handshake) plus workflow agent
+      transcript/conversation. Now real over the bus: provider
+      listModels/checkAll, onTerminalExit (pty.exit), onLibraryChanged
+      (library.changed).
 - [x] `analytics.*` has no headless provider — `cmd/brain` never registers
       analytics capabilities (`services/hub/cmd/brain/handlers.go:34-105`), so
       `--brain-scope full` without the desktop app returns "no provider".

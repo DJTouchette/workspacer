@@ -25,6 +25,7 @@ import * as yaml from 'js-yaml';
 import type { BrowserWindow } from 'electron';
 import { getConfigDir } from './configService';
 import { slugLibrary } from '../lib/fileUtils';
+import { publishToHub } from './hubClient';
 
 export type LibraryScope = 'global' | 'project' | 'claude';
 export type LibraryKind = 'prompt' | 'skill' | 'agent' | 'mcp';
@@ -343,6 +344,10 @@ class LibraryService {
     if (this.debounce) clearTimeout(this.debounce);
     this.debounce = setTimeout(() => {
       try { this.win?.webContents.send('library:changed'); } catch { /* window gone */ }
+      // Mirror onto the hub bus so the web/remote client auto-refreshes too (the
+      // same both-transports pattern as the fs.changed watch sink in ipc.ts).
+      // No-op when remote sharing is off.
+      publishToHub({ type: 'library.changed' });
     }, 150);
   }
 
