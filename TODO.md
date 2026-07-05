@@ -83,7 +83,7 @@ theme, roughly ordered by severity within each group.
       every control/read route's 4xx + main invalid-state + happy paths and
       spawn validation. Still open: SSE stream routes (don't fit the oneshot
       harness), real-spawn happy paths, `wrapper_ws.rs`, `hook.rs`.
-- [ ] Desktop main: `hubCapabilities.ts` and the four claudemon bridges have
+- [x] Desktop main: `hubCapabilities.ts` and the four claudemon bridges have
       zero tests (this is how the spawn drift went unnoticed).
 - [ ] Renderer: no pane/component tests for `App.tsx`, `ClaudePane.tsx`, or the
       composer/send pipeline.
