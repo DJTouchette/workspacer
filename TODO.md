@@ -73,9 +73,14 @@ theme, roughly ordered by severity within each group.
 - [x] `analytics.*` has no headless provider — `cmd/brain` never registers
       analytics capabilities (`services/hub/cmd/brain/handlers.go:34-105`), so
       `--brain-scope full` without the desktop app returns "no provider".
-- [ ] Plugin settings-value persistence on the hub is schema-only — validation
-      exists, but no Go-side storage/delivery of values and no `wks-settings`
-      handler.
+- [x] Plugin settings-value persistence on the hub: per-plugin
+      `.settings.json` overlay, GetSettings/SetSettings (validated,
+      atomic), `plugin.settings.changed` bus event, GET/POST
+      /plugins/settings routes.
+- [ ] Route the desktop's HUB_PLUGIN_SETTINGS_GET/SET IPC handlers to the
+      hub's /plugins/settings endpoints (currently a desktop-local file) so
+      web/remote plugin settings share one source of truth; renderer should
+      adopt the merged defaults+overlay shape.
 
 ## Test coverage
 

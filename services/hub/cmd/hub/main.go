@@ -181,6 +181,44 @@ func main() {
 		mgr.RevokePaneToken(body.Token)
 		_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 	}))
+	// Per-plugin setting VALUES (the configurable options a plugin declares in its
+	// manifest). Token-guarded like /plugins/tokens — the trusted host reads the
+	// merged values to inject into a pane and writes the user's changes back.
+	//   GET  ?pluginId=<id>            → { values: { <key>: value, … } } (defaults + overlay)
+	//   POST { pluginId, values }      → { values: <merged> }   (validated + persisted;
+	//                                     a null value reverts that key to its default)
+	// A write also publishes plugin.settings.changed on the bus, so sidecars and the
+	// web/remote renderer see the new values without re-fetching.
+	srv.AddRoute("/plugins/settings", guard(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			id := r.URL.Query().Get("pluginId")
+			values, err := mgr.GetSettings(id)
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"values": values})
+			return
+		}
+		var body struct {
+			PluginID string         `json:"pluginId"`
+			Values   map[string]any `json:"values"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.PluginID == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "missing pluginId"})
+			return
+		}
+		merged, err := mgr.SetSettings(body.PluginID, body.Values)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"values": merged})
+	}))
 	// Static UI for webview-only plugins (no sidecar): serve a plugin's declared
 	// `ui` directory at /plugins/ui/<id>/…. Unguarded like the sidecar plugins'
 	// own loopback UI servers — the real boundary is /bus, which is token-scoped.

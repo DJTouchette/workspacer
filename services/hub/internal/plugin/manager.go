@@ -132,6 +132,12 @@ type Manager struct {
 	// best-effort (confine when the platform supports it, else run plain). Set by
 	// the hub from WORKSPACER_PLUGIN_SANDBOX.
 	sandboxMode sandbox.Mode
+
+	// Serializes the read-modify-write of a plugin's persisted settings overlay
+	// (settings.go) so concurrent SetSettings calls can't lose an update or read a
+	// torn file. Separate from mu so settings IO never blocks pane-token / lifecycle
+	// operations.
+	settingsMu sync.Mutex
 }
 
 type loaded struct {
