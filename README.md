@@ -26,13 +26,18 @@ session running on one client can be observed and driven from another.
 
 ```bash
 make install      # install desktop JS deps (root + renderer workspaces)
-make dev          # run the desktop app with remote sharing on
+make dev          # run the desktop app (Vite renderer + Electron, hot reload)
 ```
 
-`make dev` runs `npm run dev:share`, which builds the `hub` binary, starts the
-Vite renderer, launches Electron with hot reload, and enables remote sharing
-(the hub binds a token-authed web endpoint — the URL + token show up in the
-app's Hub status). Use `./dev` for the same dev loop *without* remote sharing.
+`make dev` runs `npm run dev`, which starts the Vite renderer and launches
+Electron with hot reload; the app spawns `claudemon` and `hub` as child
+processes. `./dev` is a thin wrapper around the same npm script.
+
+Remote sharing is off by default and is a **runtime toggle** in the app (Remote
+control → Start sharing) — the hub then binds a token-authed web endpoint whose
+URL + token show up in the app's Hub status. To force it on at launch instead
+(for testing the web/bridged client), use `make dev-share`, which runs
+`npm run dev:share` (sets `WORKSPACER_REMOTE_SHARE=1`).
 
 `claudemon` is built separately — run `make build-claudemon` once (or
 `make build`) before the app can spawn Claude sessions.
@@ -41,8 +46,9 @@ app's Hub status). Use `./dev` for the same dev loop *without* remote sharing.
 
 | Command                  | What it does                                        |
 | ------------------------ | --------------------------------------------------- |
-| `make dev`               | Desktop app in dev mode + remote sharing            |
-| `./dev`                  | Desktop app in dev mode (no remote sharing)         |
+| `make dev`               | Desktop app in dev mode (Vite + Electron)           |
+| `./dev`                  | Same as `make dev` (thin wrapper around `npm run dev`) |
+| `make dev-share`         | Desktop app in dev mode with remote sharing forced on |
 | `make dev-tui`           | Run wks-tui (debug); builds claudemon first         |
 | `make run-tui`           | Run wks-tui (release); builds claudemon + tui first |
 | `make build`             | Build all four components                           |

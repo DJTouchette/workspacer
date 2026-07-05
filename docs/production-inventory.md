@@ -1,7 +1,18 @@
 # Workspacer — Production-Readiness Feature Inventory
 
 > Compiled 2026-06-13 from a full read of all four components after the
-> `apps/` + `services/` monorepo refactor. Status legend:
+> `apps/` + `services/` monorepo refactor.
+>
+> **Refreshed 2026-07-05:** reconciled the doc against the code. Key deltas since
+> the original compile: the classifier + `/items` + SQLite-items inbox stack was
+> **removed** from claudemon (July 2026); daemon auto-restart and real
+> SIGTERM/SIGKILL delivery are now **built**; per-plugin capability grants are now
+> **enforced** (verb + path scoping); the MCP facade has grown to ~45 tools; and
+> several new subsystems landed (headless `brain` capability provider, `/m` mobile
+> client, cross-provider handoff, live permission-mode/model switching, the
+> `agent.snapshot` / `agent.statusline` / `pty.bytes` bus topics). Details inline.
+>
+> Status legend:
 >
 > - **WORKING** — complete and wired end-to-end.
 > - **HALF-BUILT** — partial / placeholder / TODO / experimental; not shippable as-is.
@@ -22,27 +33,30 @@ Three structural facts dominate the keep/drop decision:
    `next-features.md`, the inbox model was **dropped on 2026-06-01** in favor of
    the per-agent workspace model. The spec is now part-aspirational.
 
-2. **An entire backend subsystem is orphaned: the claudemon classifier + `/items`
-   inbox.** claudemon fully implements (with 16 passing tests) a classifier that
-   detects `NeedsInput / Error / Stuck / Done`, writes priority-ranked items to
-   SQLite, and serves them over `/items`, `/items/stream`, `/items/:id/action`.
-   **Nothing consumes it.** The only client chain — `claudemonItems.ts` →
-   `ItemDetailOverlay.tsx` — is dead (imported only by a test). wks-tui reads
-   `/sessions`, not `/items`. This is the single biggest keep/drop question.
-   The v2-spec SQLite schema is largely dead alongside it: the
-   `pending_decisions`, `asks`, and `events_fts` (transcript search) tables are
-   all created but never read or written.
+2. **RESOLVED (removed July 2026): the orphaned classifier + `/items` inbox.**
+   The original compile flagged an entire orphaned backend subsystem — a
+   classifier (`NeedsInput / Error / Stuck / Done`) writing priority-ranked items
+   to SQLite and serving them over `/items`, `/items/stream`,
+   `/items/:id/action`, with no live consumer. That whole stack has since been
+   **deleted** from claudemon: `src/classifier/` is gone, the `/items` routes are
+   gone, and `store/schema.rs` now creates only `sessions` + `events` (the
+   v2-spec `pending_decisions`, `asks`, and `events_fts` tables are gone too). The
+   dead renderer client chain (`claudemonItems.ts` → `ItemDetailOverlay.tsx`) was
+   removed alongside it. The claudemon `/sessions/:id/summarize` (Haiku) endpoint
+   was also removed in this cull. The SQLite store is now purely session/event
+   cold-storage for resume-after-restart.
 
-3. **There are effectively TWO inbox/triage systems.** The *live, working* one in
-   the renderer (`InboxDrawer` + `AttentionContext`, fed from live
-   `ClaudeSessionSnapshot` ambient state) is unrelated to the orphaned classifier
-   pipeline above. We are paying to maintain both halves of a feature that only
-   connects on one side.
+3. **One triage system, not two.** With the classifier pipeline removed, the
+   renderer's live triage surface is the only one: `InboxDrawer` +
+   `AttentionContext`, fed from live `ClaudeSessionSnapshot` ambient state. The
+   "two inbox systems" duplication called out in the original compile no longer
+   exists.
 
-Everything else is mostly healthy. Decisions concentrate in: the orphaned
-classifier/items stack, a handful of dead renderer files, two "Phase 2"
-placeholder panes, no-auto-restart daemon supervision, and platform gaps
-(macOS/Linux cookie import, tray/overlay icons).
+Everything else is mostly healthy. Remaining decisions concentrate in: a couple
+of dead renderer files, two "Phase 2" placeholder panes, and platform gaps
+(macOS/Linux cookie import, tray/overlay icons). Daemon auto-restart and
+SIGTERM/SIGKILL delivery — flagged as gaps in the original compile — are now
+built (see §2/§3).
 
 ---
 
@@ -50,7 +64,7 @@ placeholder panes, no-auto-restart daemon supervision, and platform gaps
 
 | Decision | Outcome | Status |
 |---|---|---|
-| Classifier + `/items` + SQLite inbox | **Park as experimental** — kept, tagged EXPERIMENTAL/PARKED in `classifier/mod.rs`, `store/items.rs`, `api.rs`; not wired to any UI | ✅ done |
+| Classifier + `/items` + SQLite inbox | Parked as experimental on 2026-06-13; **later REMOVED entirely (July 2026)** — `classifier/`, `/items` routes, and the SQLite items/`pending_decisions`/`asks`/`events_fts` tables all deleted | ✅ removed |
 | Dead renderer client chain (`claudemonItems`, `claudemonSessions`, `ItemDetailOverlay`) | Deleted (dead regardless of the park) | ✅ done |
 | Other dead renderer files (`WorkingTimer`, `terminalQueries`, `ScrollIndicator`) | Deleted | ✅ done |
 | NotesPane | **Finished** — real per-agent markdown scratchpad, persists with the session | ✅ done |
@@ -60,10 +74,11 @@ placeholder panes, no-auto-restart daemon supervision, and platform gaps
 | SIGTERM/SIGKILL delivery to sessions | Implemented (`pty::signal_child`, real POSIX signals) | ✅ done |
 | Pre-existing renderer typecheck errors (KeybindingsConfig, createTerminal decl) | Fixed in passing | ✅ done |
 
-**Still open (not in this pass):** macOS/Linux Chrome cookie import; tray/overlay
-icon; git merge / `review_diff` next-action wiring; stale E2E `claudePane.test.ts`;
-untested main-process services; the experimental SQLite tables
-(`pending_decisions`, `asks`, `events_fts`) left in place with the parked stack.
+**Still open (as of the 2026-07-05 refresh):** macOS/Linux Chrome cookie import;
+tray/overlay icon; git merge / `review_diff` next-action wiring; stale E2E
+`claudePane.test.ts`; untested main-process services. (The experimental SQLite
+tables `pending_decisions` / `asks` / `events_fts` that were left in place with
+the parked stack have since been removed — see the classifier cull in §0 and §3.)
 
 ---
 
@@ -81,10 +96,11 @@ untested main-process services; the experimental SQLite tables
 | Overview pane (cross-agent stats) | `panes/OverviewPane.tsx` | WORKING | |
 | Ask pane ("Ask the fleet" supervisor) | `panes/AskPane.tsx`, `askPresets.ts` | WORKING (`_sessionRefs` at line 116 is dead-in-live-file) | |
 | Plugins Manager pane | `panes/PluginsManagerPane.tsx`, `hooks/usePlugins.ts` | WORKING | |
-| Plugin pane (contributed webview) | `ScrollContainer.tsx:141` → BrowserPane | WORKING | |
-| Settings pane (8 sections) | `panes/SettingsPane.tsx`, `components/settings/*` | WORKING | |
-| **Notes pane** | `panes/NotesPane.tsx` | **HALF-BUILT** — renders "Notes placeholder - Phase 2"; reachable via palette (`new-notes`) | |
-| **Agent pane** | `panes/AgentPane.tsx` | **HALF-BUILT** — renders "Agent placeholder - Phase 2"; reachable only via restore/layouts | |
+| Plugin pane (contributed webview) | `ScrollContainer.tsx` `case 'plugin'` → BrowserPane | WORKING | |
+| Editor pane (`'editor'` type) | `ScrollContainer.tsx` `case 'editor'` | WORKING — terminal engine runs the user's `$EDITOR`/nvim in a PTY (`config.editor.terminalCommand`); the removed in-app CodeMirror editor is now the sandboxed `workspacer.editor` plugin, opened via "Open Editor" | |
+| Settings pane (Editor section added) | `panes/SettingsPane.tsx`, `components/settings/*` | WORKING | |
+| Notes pane | `panes/NotesPane.tsx` | WORKING — real per-agent markdown scratchpad (finished per Decisions 2026-06-13); reachable via palette (`new-notes`) | |
+| ~~Agent pane~~ | — | REMOVED (placeholder + `'agent'` pane type deleted per Decisions 2026-06-13) | |
 
 > Note: no built-in **tracker / Jira / ADO / devops / daemon-dashboard** panes
 > exist. They can only appear as plugin webview panes. If they were expected as
@@ -119,16 +135,12 @@ Claude Profiles (CRUD).
 | Spatial & stacked view modes | `ScrollContainer.tsx` | WORKING | |
 | Themes (~18 variants) | `themes.ts`, `hooks/useTheme.ts` | WORKING | |
 
-### DEAD CODE (renderer) — cleanup candidates
-| File | Evidence | Keep? |
-|---|---|---|
-| `components/ItemDetailOverlay.tsx` | imported only by its own test | DROP? |
-| `lib/claudemonItems.ts` | imported only by ItemDetailOverlay (dead) + test; sole `/items` client | DROP? |
-| `lib/claudemonSessions.ts` | imported only by ItemDetailOverlay (dead) | DROP? |
-| `components/claude/WorkingTimer.tsx` | zero importers | DROP? |
-| `lib/terminalQueries.ts` | zero importers (live logic is in `terminalUtils.ts`) | DROP? |
-| `components/ScrollIndicator.tsx` | zero importers | DROP? |
-| `tests/components/ItemDetailOverlay.test.tsx` | tests a dead component | DROP? |
+### DEAD CODE (renderer) — RESOLVED
+The dead renderer files flagged in the original compile have all been deleted:
+`ItemDetailOverlay.tsx`, `lib/claudemonItems.ts`, `lib/claudemonSessions.ts`
+(the dead `/items` client chain), plus `components/claude/WorkingTimer.tsx`,
+`lib/terminalQueries.ts`, `components/ScrollIndicator.tsx`, and the
+`ItemDetailOverlay.test.tsx` test. None remain in the tree.
 
 > `InboxPane` (mentioned in old docs) no longer exists; live equivalent is `InboxDrawer`.
 
@@ -138,8 +150,8 @@ Claude Profiles (CRUD).
 
 | Feature | Location | Status | Keep? |
 |---|---|---|---|
-| claudemon spawn/supervise | `services/claudemonDaemon.ts` | WORKING — **no auto-restart on crash** | |
-| hub spawn/supervise | `services/hubDaemon.ts` | WORKING — **no auto-restart on crash** | |
+| claudemon spawn/supervise | `services/claudemonDaemon.ts` | WORKING — **auto-restart on crash** via `RestartBackoff` (exponential backoff, gives up after repeated failures with a user-facing warning) | |
+| hub spawn/supervise | `services/hubDaemon.ts` | WORKING — auto-restart on crash (shared `RestartBackoff` from `lib/daemonUtils`) | |
 | Binary resolution (dev + packaged) | `claudemonDaemon.ts:30`, `hubDaemon.ts:127`, `electron-builder.yml` | WORKING | |
 | `claude` CLI resolver | `services/claudeResolver.ts` | WORKING (incl. Windows nvm fallback) | |
 | IPC surface (44 channels) | `shared/ipcChannels.ts`, `ipc.ts`, `preload.ts` | WORKING (all wired) | |
@@ -184,17 +196,17 @@ Claude Profiles (CRUD).
 | External wrapper + in-daemon PTY (WebSocket protocol) | `wrapper/*`, `protocol.rs` | WORKING | |
 | `claudemon watch` TUI | `tui/*` | WORKING (cli.rs comment calls it a "stub" — misleading) | |
 | `claudemon init` (merge hooks into settings.json) | `daemon/init.rs` | WORKING | |
-| **Classifier (NeedsInput/Error/Stuck/Done + idle sweep)** | `classifier/*` | WORKING, 16 tests — **but output has no live consumer** | |
-| **Inbox items API (`/items`, `/items/stream`, `/items/:id/action`)** | `daemon/api.rs:733-828`, `store/items.rs` | WORKING — **orphaned (only dead renderer code called it)** | |
-| **SQLite items/events store** (`record_and_classify`, snooze wake) | `store/mod.rs`, `store/items.rs` | WORKING — backs the orphaned items API | |
-| Summarizer (`/sessions/:id/summarize`, Haiku) | `daemon/api.rs:547` | WORKING (depends on `claude` on PATH + API access; failures silently → null) | |
-| Signal delivery (SIGTERM/SIGKILL to child) | `daemon/spawn.rs`, `wrapper/mod.rs` | **HALF-BUILT** — only SIGINT (→Ctrl-C byte) delivered; SIGTERM/SIGKILL are `_ => {}` ("richer delivery TBD") | |
-| Terminal emulator (vt100, answers device queries) | `session/emulator.rs` | **DEAD** — fully implemented + tested but **zero call sites**; viewers get raw PTY bytes, not emulated state | |
-| SQLite `pending_decisions` table | `store/schema.rs` | **DEAD** — created, zero read/write code (v2-spec audit log, never built) | |
-| SQLite `asks` table | `store/schema.rs` | **DEAD** — created, zero read/write code (v2-spec supervisor-ask log, never built) | |
-| SQLite `events_fts` FTS5 table | `store/schema.rs` | **DEAD** — created, no population trigger, no `MATCH` queries (v2-spec transcript search, never wired) | |
-| `ResolveAllForSession` item action | `classifier/types.rs:127` | **DEAD** — defined, never emitted | |
-| `Db::path`, `OpenItem::priority`, `projects_dir()`, `encoded_cwd()` | various `#[allow(dead_code)]` | DEAD — minor | |
+| Cross-provider handoff (`POST /sessions/:id/handoff`) | `daemon/api.rs`, `session/handoff.rs` | WORKING — builds a deterministic brief, persists to `~/.workspacer/handoffs/` unless `no_persist`; successor spawns with the composer pre-filled to read it | |
+| Live permission-mode switch (`POST /sessions/:id/permission-mode`) | `daemon/api.rs` | WORKING — no restart, conversation untouched (claude via shift+tab screen, adapters via provider flag) | |
+| Live model switch (`POST /sessions/:id/model`, `GET /providers/:provider/models`) | `daemon/api.rs`, `daemon/spawn.rs` | WORKING for adapter providers; PTY (claude) sessions switch via the `/model` slash command on the message path | |
+| PTY-bytes SSE (`pty.bytes` events) | `daemon/api.rs` | WORKING — bridged to the hub bus, consumed by the headless `brain` + web/TUI/mobile clients | |
+| ~~Classifier (NeedsInput/Error/Stuck/Done + idle sweep)~~ | — | **REMOVED (July 2026)** — `src/classifier/` deleted; live triage is the renderer `InboxDrawer` fed by snapshots | |
+| ~~Inbox items API (`/items`, `/items/stream`, `/items/:id/action`)~~ | — | **REMOVED (July 2026)** — routes and `store/items.rs` deleted | |
+| SQLite session/event cold-storage | `store/mod.rs`, `store/schema.rs` | WORKING — now only `sessions` + `events` tables; `load_recent_sessions` rehydrates the in-memory list on boot so prior agents reappear as resumable | |
+| ~~Summarizer (`/sessions/:id/summarize`, Haiku)~~ | — | **REMOVED (July 2026)** with the classifier cull | |
+| Signal delivery (SIGTERM/SIGKILL to child) | `daemon/spawn.rs`, `wrapper/mod.rs` | WORKING — non-SIGINT signals routed via `pty::signal_child` (real POSIX signals); SIGINT still delivered as a Ctrl-C byte; shutdown sends SIGKILL | |
+| ~~Terminal emulator (vt100)~~ | — | **REMOVED (July 2026)** — `session/emulator.rs` deleted; viewers get raw PTY bytes (emulation lives client-side) | |
+| ~~SQLite `pending_decisions` / `asks` / `events_fts` tables~~ | — | **REMOVED (July 2026)** — v2-spec tables deleted from `store/schema.rs` (only `sessions` + `events` remain) | |
 
 ---
 
@@ -213,8 +225,9 @@ Claude Profiles (CRUD).
 | Daemon bootstrap (auto-spawn claudemon) | `daemons.rs`, `main.rs` | WORKING | |
 | Test suite | — | **NONE** (only terminal key-encoding unit tests) | |
 
-> wks-tui talks to claudemon HTTP directly; it does **not** use the hub bus and
-> does **not** read `/items`.
+> wks-tui now defaults to the **hub bus** (auto-spawning the hub + headless
+> `brain`); pass `--direct` for the standalone claudemon-HTTP path. The `/items`
+> API it never used has since been removed.
 
 ---
 
@@ -235,20 +248,23 @@ Claude Profiles (CRUD).
 | Event envelope + topic matching | `internal/event` | WORKING (8 cases) | |
 | Claudemon SSE→bus bridge | `internal/claudemon` | WORKING (integration-tested spine) | |
 | Layout document service (get/set/persist/broadcast) | `internal/layout` | WORKING (4 tests) — **remote tmux-mirror, all 4 phases** | |
-| `/remote` mobile web client + xterm mirror | `cmd/hub/remote.*` (embedded) | WORKING (client side; needs Electron providers) | |
+| `/remote` web client + xterm mirror | `cmd/hub/remote.*` (embedded) | WORKING (client side; needs a capability provider) | |
+| `/m` mobile-first remote client | `cmd/hub/main.go` `/m` route, `cmd/hub/mobile.html` (embedded) | WORKING (client side) | |
+| Headless `brain` capability provider | `cmd/brain/*` | WORKING — provides the agent view + capabilities off the bus so web/TUI/mobile clients work without the desktop app; `--scope full` (headless, owns the session store) or `--scope catalog` (file-backed subset, runs alongside the desktop app); env `WKS_BRAIN_SCOPE` | |
+| Bus topics `agent.snapshot` / `agent.statusline` / `pty.bytes` | `cmd/brain/store.go`, `internal/claudemon` bridge | WORKING — the lightweight agent-list + statusline + live-terminal feeds all clients subscribe to | |
 | `/app/` full web app proxy | `cmd/hub/main.go:115` | WORKING (needs `--webapp-dir`) | |
 | Plugin manifest + loader + installer (GitHub/tar.gz, zip-slip guard) | `internal/plugin` | WORKING (14 tests) | |
 | Plugin manager + sidecar lifecycle | `internal/plugin/manager.go` | WORKING | |
 | Process supervisor (health, restart, SIGTERM/KILL) | `internal/supervisor` | WORKING (3 tests) | |
-| MCP facade (`/mcp` + `/sse`, 10 tools) | `cmd/mcp/main.go` | WORKING (2 integration tests; needs Electron providers) | |
+| MCP facade (`/mcp` + `/sse`, ~45 tools) | `cmd/mcp/main.go` | WORKING (2 integration tests; needs a capability provider) — a thin adapter forwarding each tool call to a hub bus method (list/spawn/drive agents, terminals, fs, config, profiles, sessions, layouts, library, analytics, notify) | |
 | Example: rules-engine plugin | `examples/rules-engine` | WORKING (full engine, no tests) | |
 | Example: rivet-bridge plugin | `examples/rivet-bridge` | WORKING (needs external `rivet` binary; one-project limit) | |
 | Example: agent-dashboard plugin | `examples/agent-dashboard` | WORKING (hardcoded bus URL, no token) | |
 | Example: clock-plugin | `examples/clock-plugin` | WORKING — but `emits: example.clock.tick` is **declared, never published** | |
-| Per-method capability tokens (`SetAuthorize`) | `internal/bus/rpc.go:39`, `cmd/hub/main.go:58` | **HALF-BUILT** — seam wired, policy is allow-all (intentional) | |
+| Per-plugin capability grants (verb + path scoping) | `internal/bus/rpc.go` (`authorize`), `internal/capspec`, `internal/bus/policy.go` | WORKING — a plugin is authorized only for the capability methods (verbs) its grant declares, and path-scoped methods (`fs.*`, `search.project`) are confined to the grant's canonical, symlink-resolved roots; unauthorized calls are denied ("plugin not authorized for capability") | |
 | "Ask the fleet" supervisor agents | — | **NOT BUILT** in hub — only named in rivet-bridge comments; renderer AskPane is the real surface | |
 | Auto-surface MCP-spawned sessions as panes | README "next milestones" | **NOT BUILT** | |
-| `agent.snapshot` lightweight event | `docs/rules-engine-plugin.md §12` | **NOT BUILT** (deferred) | |
+| `agent.snapshot` lightweight event | `cmd/brain/store.go` | WORKING — published to the bus by the `brain`; foundation of the agent-list feed (see the bus-topics row above) | |
 
 ---
 
@@ -256,26 +272,24 @@ Claude Profiles (CRUD).
 
 These are the genuine keep/drop / finish/cut calls (not obvious cleanups):
 
-1. **Orphaned classifier + `/items` + SQLite inbox stack (claudemon).** Three
-   options: (a) **revive** — wire it to a renderer surface (replacing or feeding
-   the live InboxDrawer); (b) **drop** — delete classifier/items/SQLite-items +
-   the dead renderer client chain, shrinking claudemon significantly; (c) **park**
-   — keep building, tag it clearly experimental, ship without it.
+1. ~~**Orphaned classifier + `/items` + SQLite inbox stack (claudemon).**~~
+   **RESOLVED — dropped (July 2026).** The classifier, `/items` routes, SQLite
+   items store, and the dead renderer client chain were all deleted; claudemon's
+   SQLite is now session/event cold-storage only. The live `InboxDrawer` is the
+   canonical triage surface.
 
-2. **Two inbox systems.** If we keep the live InboxDrawer (option for #1 = drop),
-   confirm that's the canonical triage surface and remove the v2-spec inbox
-   ambition from docs.
+2. ~~**Two inbox systems.**~~ **RESOLVED** — only the live `InboxDrawer` remains
+   (see #1).
 
-3. **`docs/v2-spec.md`.** Largely superseded. Keep as historical record, rewrite
-   to match the shipped product, or delete.
+3. **`docs/v2-spec.md`.** Deleted per Decisions 2026-06-13 (superseded).
 
-4. **Phase-2 placeholder panes (Notes, Agent).** Finish, or remove (and drop the
-   `new-notes` palette entry).
+4. **Phase-2 placeholder panes.** Partially resolved: NotesPane was finished and
+   the AgentPane placeholder + `'agent'` type were removed (Decisions 2026-06-13).
 
-5. **Daemon supervision & signals.** No auto-restart on crash for claudemon/hub
-   (recommend: add supervised restart). Separately, claudemon only delivers
-   SIGINT to child sessions — SIGTERM/SIGKILL are stubbed, so a runaway Claude
-   session can't be cleanly killed. Both are likely production blockers.
+5. ~~**Daemon supervision & signals.**~~ **RESOLVED.** claudemon/hub now
+   auto-restart on crash with exponential backoff (`RestartBackoff`), and
+   claudemon delivers real SIGTERM/SIGKILL to child sessions via
+   `pty::signal_child` (a runaway session can be cleanly killed).
 
 6. **Platform gaps.** macOS/Linux Chrome cookie import (NOT BUILT); tray icon /
    overlay badge (NOT BUILT). Keep Windows-only, or implement, or cut cookie

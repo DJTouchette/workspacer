@@ -106,13 +106,13 @@ theme, roughly ordered by severity within each group.
 
 ## Docs drift
 
-- [ ] `EDITOR-FEATURES.md` describes the removed in-app CodeMirror editor —
+- [x] `EDITOR-FEATURES.md` describes the removed in-app CodeMirror editor —
       rewrite around the terminal-engine `$EDITOR` pane + editor plugin, or delete.
-- [ ] `docs/production-inventory.md` is stale (2026-06-13): predates `cmd/brain`
+- [x] `docs/production-inventory.md` is stale (2026-06-13): predates `cmd/brain`
       and the capspec authz layer; calls per-method tokens "allow-all
       half-built" (now enforced), says MCP facade has 10 tools (~40), and
       self-contradicts on daemon auto-restart and signal delivery.
-- [ ] `README.md:34` claims `make dev` enables remote sharing — it's
+- [x] `README.md:34` claims `make dev` enables remote sharing — it's
       `make dev-share`; README also says Node 22 while CI uses 20.
 - [x] `chromeCookieImport.ts` header comment implies macOS/Linux unsupported —
       only the DPAPI *fallback* is Windows-only; the default CDP path is
