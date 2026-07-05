@@ -118,7 +118,14 @@ function loadOrCreateToken(): string {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, token, { mode: 0o600 });
   } catch (err) {
-    console.error('[hub] failed to persist remote token:', err);
+    // Non-fatal for this run (we still return the in-memory token), but the
+    // token now lives only in this process: on the next restart a fresh token
+    // is generated, invalidating every previously saved share/webview URL that
+    // carried the old bearer secret. Surface loudly so the cause is visible.
+    console.error(
+      `[hub] failed to persist remote token to ${file} — saved share/webview URLs will stop working after restart:`,
+      err,
+    );
   }
   return token;
 }

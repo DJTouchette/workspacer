@@ -15,9 +15,11 @@
  * use Node's built-in `crypto` for AES-GCM, and Workspacer's already-bundled
  * `better-sqlite3` to read the cookies file.
  *
- * macOS / Linux are not implemented yet — they use Keychain / libsecret with
- * an "AES-128-CBC + PBKDF2 from a known salt" scheme that we'd need a
- * separate code path for.
+ * The DPAPI path described above is Windows-only. It's a fallback: the default
+ * import path (see the IPC handler in ipc.ts) drives a live Chrome over CDP and
+ * is cross-platform. Direct cookie-file decryption on macOS / Linux (Keychain /
+ * libsecret with an "AES-128-CBC + PBKDF2 from a known salt" scheme) is not
+ * implemented — those platforms rely on the CDP path.
  */
 
 import * as fs from 'fs';

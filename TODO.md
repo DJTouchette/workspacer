@@ -50,7 +50,7 @@ theme, roughly ordered by severity within each group.
 - [ ] Hub token-persist write errors swallowed (`hubDaemon.ts:119-121`,
       `manager.go:283`) — a restart mints a new token and silently invalidates
       saved share/webview URLs.
-- [ ] `fileWatchService.ts:87` drops watcher errors to keep the watcher alive —
+- [x] `fileWatchService.ts:87` drops watcher errors to keep the watcher alive —
       errors invisible.
 - [ ] claudemon's `/sessions` JSON carries no `provider`/managed field —
       clients must guess (the TUI tracks providers only for sessions it
@@ -94,15 +94,15 @@ theme, roughly ordered by severity within each group.
 - [ ] No lint/format enforcement in any language — no eslint/prettier,
       no rustfmt/clippy config (`-D warnings` off, 27 tolerated warnings),
       no golangci. Pick and enforce per language.
-- [ ] `make test` skips claudemon entirely (`Makefile:62`); local `test-hub`
+- [x] `make test` skips claudemon entirely (`Makefile:62`); local `test-hub`
       uses `-race` while CI doesn't — align both.
-- [ ] No `typecheck` npm script in apps/desktop (CI calls tsc directly).
+- [x] No `typecheck` npm script in apps/desktop (CI calls tsc directly).
 - [ ] **macOS builds unsigned + un-notarized** (`release.yml:54` disables
       signing) — Gatekeeper-blocked for normal users.
 - [ ] Windows Azure Trusted Signing plumbed but pending manual identity
       validation + cert profile (`docs/windows-code-signing.md`).
 - [ ] No auto-update channel (`--publish never`, no electron-updater).
-- [ ] CI uses Node 20 while README/mise pin Node 22 — align.
+- [x] CI uses Node 20 while README/mise pin Node 22 — align.
 
 ## Docs drift
 
@@ -114,15 +114,15 @@ theme, roughly ordered by severity within each group.
       self-contradicts on daemon auto-restart and signal delivery.
 - [ ] `README.md:34` claims `make dev` enables remote sharing — it's
       `make dev-share`; README also says Node 22 while CI uses 20.
-- [ ] `chromeCookieImport.ts` header comment implies macOS/Linux unsupported —
+- [x] `chromeCookieImport.ts` header comment implies macOS/Linux unsupported —
       only the DPAPI *fallback* is Windows-only; the default CDP path is
       cross-platform. Comment tweak.
 
 ## Cleanup
 
-- [ ] Delete dead `components/claude/InlineFilesSection.tsx` (imported nowhere;
+- [x] Delete dead `components/claude/InlineFilesSection.tsx` (imported nowhere;
       superseded by `InlineWorkLog.tsx`/`ChangedFilesCard.tsx`).
-- [ ] `resolveAttention.ts:3` references "(Phase 2) Fleet Deck card
+- [x] `resolveAttention.ts:3` references "(Phase 2) Fleet Deck card
       quick-actions" that were never wired.
-- [ ] `docs/tui-parity.md` refresh beyond the Phase 8 entry: record the hub-bus
+- [x] `docs/tui-parity.md` refresh beyond the Phase 8 entry: record the hub-bus
       transport, neovim layer, and shipped content search.

@@ -84,7 +84,11 @@ export function startWatch(filePath: string, onEvent?: EmitSink): void {
           try { emit(ev); } catch { /* sink must not break the watcher */ }
           try { onEvent?.(ev); } catch { /* ditto */ }
         }, DEBOUNCE_MS);
-      } catch { /* swallow — keep the watcher alive */ }
+      } catch (err) {
+        // Keep the watcher alive, but make the failure visible — swallowing it
+        // silently hides genuine bugs in the debounce/emit path.
+        console.error(`[fileWatch] event handler failed for ${resolved}:`, err);
+      }
     });
   } catch (err) {
     // ENOENT (file deleted/never existed) or EMFILE etc. — don't register a

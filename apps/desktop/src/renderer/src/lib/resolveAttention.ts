@@ -1,6 +1,6 @@
 /**
  * Cross-agent resolution of attention items — the shared resolve path used by
- * the Triage Inbox and (Phase 2) the Fleet Deck card quick-actions.
+ * the Triage Inbox.
  *
  * Every action here addresses the session by id (claudeApprove / claudeAnswer /
  * claudeMessage / claudeWrite), so the inbox can resolve ANY agent's request

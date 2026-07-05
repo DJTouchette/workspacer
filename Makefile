@@ -14,7 +14,7 @@ CLAUDEMON := services/claudemon
 HUB       := services/hub
 
 .PHONY: dev dev-share dev-tui run-tui install build build-desktop build-hub build-claudemon build-tui \
-        test test-desktop test-hub test-tui package clean
+        test test-desktop test-hub test-tui test-claudemon package clean
 
 ## dev: run the desktop app in dev mode (Vite + Electron). Remote sharing is now
 ##      a runtime toggle (Remote control → Start sharing); use `make dev-share`
@@ -59,13 +59,16 @@ build-tui:
 	cd $(TUI) && cargo build --release
 
 ## test: run all test suites
-test: test-desktop test-hub test-tui
+test: test-desktop test-hub test-claudemon test-tui
 
 test-desktop:
 	cd $(DESKTOP) && npm test
 
 test-hub:
 	cd $(HUB) && go test -race ./...
+
+test-claudemon:
+	cd $(CLAUDEMON) && cargo test
 
 test-tui:
 	cd $(TUI) && cargo test

@@ -2,7 +2,7 @@ name: ci
 
 # Test + typecheck/lint on every PR and every push to master. Complements
 # release.yml (which only smoke-BUILDS the installers). Toolchain setup/versions
-# here mirror release.yml exactly (Node 20, Go 1.25.4, Rust stable, the two
+# here mirror release.yml exactly (Node 22, Go 1.25.4, Rust stable, the two
 # `npm ci`s, and the same caches).
 on:
   pull_request:
@@ -32,7 +32,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
           cache-dependency-path: |
             apps/desktop/package-lock.json
@@ -48,22 +48,15 @@ jobs:
         working-directory: apps/desktop/src/renderer
         run: npm ci
 
-      # tsconfig.main.json emits by default (it's the build config), so force
-      # --noEmit for a pure typecheck.
-      - name: Typecheck main
-        run: npx tsc -p tsconfig.main.json --noEmit
-
-      # renderer tsconfig.json already has noEmit:true.
-      - name: Typecheck renderer
-        working-directory: apps/desktop/src/renderer
-        run: npx tsc -p tsconfig.json --noEmit
+      # `npm run typecheck` => typecheck:main (tsc -p tsconfig.main.json
+      # --noEmit; the main config emits by default, so --noEmit forces a pure
+      # typecheck) + typecheck:renderer (tsc in src/renderer, whose tsconfig
+      # already has noEmit:true).
+      - name: Typecheck
+        run: npm run typecheck
 
       # `npm test` => test:main (vitest run) + test:renderer (vitest run in
       # src/renderer). Both already use `run`, so vitest does not watch.
-      # NOTE (2026-06-29): a few tests are currently failing locally on
-      # in-progress branches (hubCapabilitiesProfiles.test.ts in main; one
-      # renderer test). They are real test failures CI is meant to surface, not
-      # a tooling problem -- once those edits land green this job goes green.
       - name: Test
         env:
           CI: 'true'
@@ -142,5 +135,6 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      # -race matches the Makefile's `make test-hub` target.
       - name: Test
-        run: go test ./...
+        run: go test -race ./...
