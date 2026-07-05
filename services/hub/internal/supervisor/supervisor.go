@@ -45,7 +45,15 @@ type Spec struct {
 	// HealthURL, if set, is polled with GET; 200 == healthy.
 	HealthURL    string
 	HealthPeriod time.Duration // default 2s
-	RestartWait  time.Duration // backoff before restart, default 1s
+
+	// Restart backoff. RestartWait is the initial delay after a crash; each
+	// successive crash doubles it up to MaxRestartWait, so a binary that crashes
+	// on startup backs off instead of hot-looping. The escalation resets to
+	// RestartWait once a run stays up at least RestartResetAfter (a genuinely
+	// healthy run shouldn't inherit a previous crash-loop's long delay).
+	RestartWait       time.Duration // initial backoff, default 1s
+	MaxRestartWait    time.Duration // backoff cap, default 30s
+	RestartResetAfter time.Duration // healthy uptime that resets backoff, default 30s
 }
 
 func (s Spec) healthPeriod() time.Duration {
@@ -60,6 +68,20 @@ func (s Spec) restartWait() time.Duration {
 		return s.RestartWait
 	}
 	return time.Second
+}
+
+func (s Spec) maxRestartWait() time.Duration {
+	if s.MaxRestartWait > 0 {
+		return s.MaxRestartWait
+	}
+	return 30 * time.Second
+}
+
+func (s Spec) restartResetAfter() time.Duration {
+	if s.RestartResetAfter > 0 {
+		return s.RestartResetAfter
+	}
+	return 30 * time.Second
 }
 
 // statusData is the payload of sidecar.* events.
@@ -175,6 +197,17 @@ func (s *Supervisor) run(ctx context.Context) {
 	childEnv := append(append([]string{}, s.spec.Env...),
 		"WORKSPACER_PARENT_PID="+strconv.Itoa(os.Getpid()))
 
+	// Exponential restart backoff, carried across iterations. base is the delay
+	// after the first crash; it doubles up to cap on each successive crash and
+	// resets to base once a run stays up at least resetAfter.
+	base := s.spec.restartWait()
+	maxWait := s.spec.maxRestartWait()
+	resetAfter := s.spec.restartResetAfter()
+	backoff := base
+	if backoff > maxWait {
+		backoff = maxWait
+	}
+
 	for {
 		if ctx.Err() != nil {
 			s.setState(Stopped)
@@ -192,15 +225,19 @@ func (s *Supervisor) run(ctx context.Context) {
 		cmd.WaitDelay = 5 * time.Second
 
 		if err := cmd.Start(); err != nil {
+			// Failed to even launch (bad path, missing binary): this is the classic
+			// startup hot-loop, so back off and escalate without resetting.
 			s.setState(Crashed)
 			s.emit(Crashed, 0, err.Error())
-			if !sleepOrDone(ctx, s.spec.restartWait()) {
+			if !sleepOrDone(ctx, backoff) {
 				s.setState(Stopped)
 				return
 			}
+			backoff = nextBackoff(backoff, maxWait)
 			continue
 		}
 
+		startedAt := time.Now()
 		s.setState(Running)
 		s.emit(Running, cmd.Process.Pid, "")
 
@@ -219,18 +256,35 @@ func (s *Supervisor) run(ctx context.Context) {
 			return
 		}
 
-		// Unexpected exit — report and restart after backoff.
+		// Unexpected exit — report and restart after backoff. A run that stayed up
+		// at least resetAfter counts as healthy, so this crash starts a fresh
+		// escalation rather than inheriting a prior crash-loop's long delay.
+		if time.Since(startedAt) >= resetAfter {
+			backoff = base
+		}
 		s.setState(Crashed)
 		msg := ""
 		if err != nil {
 			msg = err.Error()
 		}
 		s.emit(Crashed, 0, msg)
-		if !sleepOrDone(ctx, s.spec.restartWait()) {
+		if !sleepOrDone(ctx, backoff) {
 			s.setState(Stopped)
 			return
 		}
+		backoff = nextBackoff(backoff, maxWait)
 	}
+}
+
+// nextBackoff doubles the current restart delay, clamped to max. Used to escalate
+// the wait between successive crash restarts so a persistently failing child
+// stops hammering the CPU.
+func nextBackoff(cur, limit time.Duration) time.Duration {
+	next := cur * 2
+	if next <= 0 || next > limit { // <=0 guards the (implausible) doubling overflow
+		return limit
+	}
+	return next
 }
 
 func (s *Supervisor) healthLoop(ctx context.Context, pid int) {

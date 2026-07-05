@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -94,6 +95,15 @@ func (s *Server) RegisterPluginToken(token, pluginID string, grants []capspec.Gr
 	set := make(map[string]capGrant, len(grants))
 	for _, g := range grants {
 		if g.Method == "" {
+			continue
+		}
+		// Fail closed on the drift capspec exists to prevent: a method whose name
+		// marks it filesystem-scoped (fs.*, search.*) but that has no PathParam
+		// entry would be admitted by authorize() with NO path confinement. Refuse
+		// to grant it at all rather than grant it unconfined, and log so the
+		// missing spec is visible instead of becoming a silent privilege escape.
+		if capspec.MissingSpec(g.Method) {
+			log.Printf("[bus] SECURITY: refusing to grant %q to plugin %q — it is named like a filesystem capability but has no internal/capspec.PathParam entry, so it would run unconfined. Add it to capspec (with the params field carrying its path) before granting it.", g.Method, pluginID)
 			continue
 		}
 		set[g.Method] = capGrant{fsRoots: canonRoots(g.FSRoots)}
@@ -382,6 +392,13 @@ func (cn *conn) authorize(method string, params json.RawMessage) error {
 	}
 	field, scoped := capspec.IsPathScoped(method)
 	if !scoped {
+		// Defense in depth: RegisterPluginToken already refuses to grant a method
+		// that looks path-bearing but has no spec, so mayCall should have denied it
+		// before we got here. If one slips through anyway, deny rather than let an
+		// unscoped filesystem method run with no containment.
+		if capspec.LooksPathBearing(method) {
+			return fmt.Errorf("%s: named like a filesystem capability but has no capspec entry; denied to avoid running unconfined", method)
+		}
 		return nil // verb-only capability; mayCall already governs it
 	}
 	if len(g.fsRoots) == 0 {

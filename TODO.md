@@ -12,7 +12,7 @@ theme, roughly ordered by severity within each group.
       plugin-install arbitrary-command RCE + decompression bomb, unallowlisted
       `fs.read`/`fs.write` hub capabilities, session path traversal. Revisit
       before any exposure beyond Tailscale.
-- [ ] **capspec path-scoping is a hand-listed 7-method allowlist**
+- [x] **capspec path-scoping is a hand-listed 7-method allowlist**
       (`services/hub/internal/capspec/capspec.go:16-24`) — any new path-bearing
       capability gets zero FS confinement until manually added, and no test
       guards the list. Add a registration-time check or a test that fails when
@@ -35,7 +35,7 @@ theme, roughly ordered by severity within each group.
 - [ ] **Codex model-switch during boot silently dropped** — HTTP 200 returned,
       then `codex.rs:674` logs "requested before the thread was joined —
       ignored". Queue it and apply after join, or return an error.
-- [ ] **Hub supervisor hot-loops** — fixed 1s restart backoff, no cap
+- [x] **Hub supervisor hot-loops** — fixed 1s restart backoff, no cap
       (`services/hub/internal/supervisor/supervisor.go:58-63`); health-check
       failures are observability-only.
 - [ ] `terminate_managed` leaks the yolo handle — removes
@@ -44,10 +44,10 @@ theme, roughly ordered by severity within each group.
 - [ ] Managed approval cards carry no tool input — `Pending::Approval { raw:
       Value::Null }` (`providers/mod.rs`), so the GUI can't show the payload
       for Codex/OpenCode/Pi approvals the way it can for Claude hook approvals.
-- [ ] Pane-token registration race (`services/hub/internal/plugin/manager.go:230-233`)
+- [x] Pane-token registration race (`services/hub/internal/plugin/manager.go:230-233`)
       — register outside the mutex; concurrent Remove can leave a
       registered-but-untracked token.
-- [ ] Hub token-persist write errors swallowed (`hubDaemon.ts:119-121`,
+- [x] Hub token-persist write errors swallowed (`hubDaemon.ts:119-121`,
       `manager.go:283`) — a restart mints a new token and silently invalidates
       saved share/webview URLs.
 - [x] `fileWatchService.ts:87` drops watcher errors to keep the watcher alive —
@@ -70,7 +70,7 @@ theme, roughly ordered by severity within each group.
       list provider models on web), `onTerminalExit`, workflow agent
       transcript/conversation, `onLibraryChanged` auto-refresh,
       `importChromeCookies`, `openLogsFolder`.
-- [ ] `analytics.*` has no headless provider — `cmd/brain` never registers
+- [x] `analytics.*` has no headless provider — `cmd/brain` never registers
       analytics capabilities (`services/hub/cmd/brain/handlers.go:34-105`), so
       `--brain-scope full` without the desktop app returns "no provider".
 - [ ] Plugin settings-value persistence on the hub is schema-only — validation

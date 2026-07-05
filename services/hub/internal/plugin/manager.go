@@ -217,20 +217,27 @@ func (m *Manager) PaneToken(pluginID string, bindings map[string]string) (string
 	if m.reg == nil {
 		return "", fmt.Errorf("capability enforcement is off; pane tokens unavailable")
 	}
-	m.mu.Lock()
-	l, ok := m.plugins[pluginID]
-	m.mu.Unlock()
-	if !ok {
-		return "", fmt.Errorf("plugin %q is not loaded", pluginID)
-	}
 	tok, err := randomToken()
 	if err != nil {
 		return "", err
 	}
-	m.reg.RegisterPluginToken(tok, pluginID, grantsWithBindings(l.manifest, bindings), eventGrantsFor(l.manifest))
+	// Register the token on the bus and record it here under one hold of m.mu, so
+	// a concurrent Remove (which sweeps paneTokens via revokePaneTokensFor) can't
+	// interleave between the two steps. The old two-step version registered
+	// outside the lock: a Remove that ran after RegisterPluginToken but before the
+	// paneTokens insert would fail to see the token and leave it registered on the
+	// bus but untracked — an unrevocable grant leak. Re-checking m.plugins under
+	// the same lock also means a token is never minted for an already-removed
+	// plugin. (RegisterPluginToken canonicalizes roots under the lock; the manager
+	// lock isn't hot, so the extra hold is acceptable for the atomicity it buys.)
 	m.mu.Lock()
+	defer m.mu.Unlock()
+	l, ok := m.plugins[pluginID]
+	if !ok {
+		return "", fmt.Errorf("plugin %q is not loaded", pluginID)
+	}
+	m.reg.RegisterPluginToken(tok, pluginID, grantsWithBindings(l.manifest, bindings), eventGrantsFor(l.manifest))
 	m.paneTokens[tok] = pluginID
-	m.mu.Unlock()
 	return tok, nil
 }
 
@@ -280,7 +287,14 @@ func loadOrCreatePluginToken(dir string) string {
 	if err != nil {
 		return ""
 	}
-	_ = os.WriteFile(file, []byte(token), 0o600)
+	// Persist so the token is stable across restarts — webview pane and share URLs
+	// embed it, and a fresh token silently invalidates every saved URL. Still
+	// best-effort (we return a usable in-memory token on failure), but a swallowed
+	// write error is exactly how that silent invalidation would go unnoticed, so
+	// log it loudly with the path and likely cause.
+	if err := os.WriteFile(file, []byte(token), 0o600); err != nil {
+		log.Printf("[plugin] ERROR: could not persist bus token to %s: %v — this token is in-memory only, so restarting the hub will mint a new one and invalidate any saved webview/share URLs for this plugin. Check the plugin directory's permissions and free disk space.", file, err)
+	}
 	return token
 }
 

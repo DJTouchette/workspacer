@@ -3,6 +3,7 @@ package plugin
 import (
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/djtouchette/workspacer-hub/internal/capspec"
 	"github.com/djtouchette/workspacer-hub/internal/event"
@@ -52,6 +53,71 @@ func rootsOf(grants []capspec.Grant, method string) []string {
 		}
 	}
 	return nil
+}
+
+// gateRegistrar wraps fakeRegistrar with a hook fired on entry to
+// RegisterPluginToken, so a test can drive a concurrent Remove into the exact
+// register/record window PaneToken must treat atomically.
+type gateRegistrar struct {
+	*fakeRegistrar
+	onRegister func()
+}
+
+func (g *gateRegistrar) RegisterPluginToken(token, id string, grants []capspec.Grant, ev capspec.EventGrants) {
+	if g.onRegister != nil {
+		g.onRegister()
+	}
+	g.fakeRegistrar.RegisterPluginToken(token, id, grants, ev)
+}
+
+// TestPaneTokenRegisterRecordAtomic proves PaneToken registers a token on the bus
+// and records it in paneTokens as one atomic step w.r.t. Remove. It forces the
+// interleave: when PaneToken enters RegisterPluginToken, a Remove is launched on
+// another goroutine and given time to reach its lock. With register+record under
+// one lock hold, Remove blocks until PaneToken finishes, then its sweep sees and
+// revokes the token — nothing leaks. The old register-outside-the-lock code would
+// have Remove sweep before the token was recorded, leaving it registered on the
+// bus but for a plugin that's gone (an unrevocable grant leak).
+func TestPaneTokenRegisterRecordAtomic(t *testing.T) {
+	mf := Manifest{
+		ID:           "acme.editor",
+		Dir:          t.TempDir(),
+		Capabilities: []Capability{{Method: "fs.read", Paths: []string{"${agentCwd}"}}},
+	}
+	reg := newFakeRegistrar()
+	gr := &gateRegistrar{fakeRegistrar: reg}
+	m := loadedManager(t, gr, mf)
+
+	removeDone := make(chan struct{})
+	gr.onRegister = func() {
+		started := make(chan struct{})
+		go func() {
+			close(started)
+			m.Remove("acme.editor") // must block on m.mu until PaneToken unlocks
+			close(removeDone)
+		}()
+		<-started
+		time.Sleep(20 * time.Millisecond) // let Remove reach its lock and park there
+	}
+
+	tok, err := m.PaneToken("acme.editor", map[string]string{"agentCwd": "/work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-removeDone
+
+	if _, ok := reg.grants(tok); ok {
+		t.Fatal("pane token still registered on the bus after Remove — register/record race leaked it")
+	}
+	if n := reg.count(); n != 0 {
+		t.Fatalf("expected no registered tokens after Remove, got %d (leak)", n)
+	}
+	m.mu.Lock()
+	tracked := len(m.paneTokens)
+	m.mu.Unlock()
+	if tracked != 0 {
+		t.Fatalf("manager still tracks %d pane tokens after Remove", tracked)
+	}
 }
 
 func loadedManager(t *testing.T, reg TokenRegistrar, mf Manifest) *Manager {

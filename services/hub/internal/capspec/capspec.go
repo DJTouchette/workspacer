@@ -5,6 +5,8 @@
 // one place, so enforcement and validation can never drift apart.
 package capspec
 
+import "strings"
+
 // PathParam maps a capability method to the params field that carries the
 // filesystem path it operates on. A method present here is "path-scoped": a
 // plugin must declare path roots to be granted it, and the bus confines each
@@ -29,6 +31,42 @@ var PathParam = map[string]string{
 func IsPathScoped(method string) (field string, ok bool) {
 	field, ok = PathParam[method]
 	return field, ok
+}
+
+// pathVerbPrefixes are the capability-name namespaces whose methods, by
+// convention, operate on a filesystem path: everything under fs.* reads/writes
+// the host filesystem, and everything under search.* walks a directory tree. A
+// method under one of these prefixes MUST therefore have a PathParam entry — if
+// it doesn't, IsPathScoped returns false and the bus's authorize() would wave it
+// through with NO filesystem confinement. This is the drift the whole package
+// exists to prevent, so we detect it by name rather than trusting whoever adds
+// the next fs.* method to also remember to scope it.
+var pathVerbPrefixes = []string{"fs.", "search."}
+
+// LooksPathBearing reports whether method's name sits under a known filesystem
+// namespace (fs.*, search.*) and is therefore expected to carry a path that
+// needs confinement. It is a naming convention, not proof: pair it with PathParam
+// via [MissingSpec] to find methods that look path-bearing but were never scoped.
+func LooksPathBearing(method string) bool {
+	for _, p := range pathVerbPrefixes {
+		if strings.HasPrefix(method, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// MissingSpec reports the exact fail-open condition this package guards against:
+// a method whose name marks it path-bearing (fs.*, search.*) yet has no PathParam
+// entry, so it would be granted and called with no filesystem containment.
+// Callers should fail closed on true — the bus refuses to grant such a method and
+// authorize() denies it, and a test cross-checks every registered capability so
+// the omission is caught at build time rather than as a silent privilege escape.
+func MissingSpec(method string) bool {
+	if _, ok := PathParam[method]; ok {
+		return false
+	}
+	return LooksPathBearing(method)
 }
 
 // Grant is one capability a plugin token may call, with optional filesystem

@@ -81,6 +81,12 @@ func (r *registry) methods() []string {
 		"fs.write",
 		"search.project",
 		"notifications.post",
+		// analytics: the desktop owns the real data (a local SQLite session-history
+		// store fed by the app's hook accounting). Headless, there's no such store,
+		// so the brain registers explicit empty-result stubs — a web client asking
+		// for analytics degrades to an empty dashboard instead of "no provider".
+		"analytics.summary",
+		"analytics.recent",
 	}
 }
 
@@ -252,9 +258,40 @@ func (r *registry) handle(ctx context.Context, method string, params json.RawMes
 		return r.searchProject(ctx, params)
 	case "notifications.post":
 		return r.notify(params)
+	case "analytics.summary":
+		return analyticsSummaryStub()
+	case "analytics.recent":
+		return analyticsRecentStub()
 	default:
 		return nil, fmt.Errorf("unknown method %q", method)
 	}
+}
+
+// analyticsSummaryStub is the headless stand-in for the desktop's
+// analytics.summary. The real breakdown comes from the app's local SQLite
+// session-history store, which the brain has no access to — so it returns a
+// well-formed but empty AnalyticsSummary (matching the shape the renderer's
+// AnalyticsPane consumes) plus an "unavailable":"headless" marker. A web client
+// then shows an empty dashboard and, if it cares, can note analytics needs the
+// desktop, rather than erroring on a missing provider.
+func analyticsSummaryStub() (json.RawMessage, error) {
+	return jsonResult(map[string]any{
+		"totals": map[string]any{
+			"sessions": 0, "costUSD": 0, "inputTokens": 0, "outputTokens": 0,
+			"toolCalls": 0, "durationMs": 0, "workflowRuns": 0,
+		},
+		"byDay":       []any{},
+		"byProject":   []any{},
+		"byModel":     []any{},
+		"byProvider":  []any{},
+		"unavailable": "headless",
+	})
+}
+
+// analyticsRecentStub is the headless stand-in for analytics.recent: an empty
+// session list (the renderer expects an array and renders nothing for []).
+func analyticsRecentStub() (json.RawMessage, error) {
+	return jsonResult([]any{})
 }
 
 // ── param shapes (match the MCP facade / app capability inputs) ─────────────

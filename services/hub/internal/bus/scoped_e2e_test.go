@@ -57,3 +57,31 @@ func TestScopedFSCallEnforcedEndToEnd(t *testing.T) {
 		t.Fatalf("error = %q, want it to mention being outside scope", e.Error)
 	}
 }
+
+// TestRegisterRefusesUnspeccedPathCapability proves the capspec allowlist guard:
+// a grant whose method is named like a filesystem capability (fs.*/search.*) but
+// has no capspec.PathParam entry is refused at registration — it would otherwise
+// be admitted by authorize() with zero path confinement. A properly specced
+// sibling in the same grant list is still admitted.
+func TestRegisterRefusesUnspeccedPathCapability(t *testing.T) {
+	_, srv := rpcServerWith(t)
+	srv.RegisterPluginToken("plug-tok", "test.plugin", []capspec.Grant{
+		{Method: "fs.read", FSRoots: []string{t.TempDir()}}, // specced → granted
+		{Method: "fs.append", FSRoots: []string{"/"}},        // no spec → refused
+		{Method: "search.everything"},                        // no spec → refused
+	}, capspec.EventGrants{})
+
+	pi, ok := srv.lookupPluginToken("plug-tok")
+	if !ok {
+		t.Fatal("token was not registered at all")
+	}
+	if _, ok := pi.caps["fs.read"]; !ok {
+		t.Error("fs.read (specced) should have been granted")
+	}
+	if _, ok := pi.caps["fs.append"]; ok {
+		t.Error("fs.append has no capspec entry and must NOT be granted unconfined")
+	}
+	if _, ok := pi.caps["search.everything"]; ok {
+		t.Error("search.everything has no capspec entry and must NOT be granted unconfined")
+	}
+}

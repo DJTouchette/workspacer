@@ -69,6 +69,99 @@ func TestRestartsOnUnexpectedExit(t *testing.T) {
 	cap.waitFor(t, "sidecar.running")
 }
 
+func TestNextBackoff(t *testing.T) {
+	limit := 30 * time.Second
+	cases := []struct {
+		cur, want time.Duration
+	}{
+		{1 * time.Second, 2 * time.Second},
+		{2 * time.Second, 4 * time.Second},
+		{16 * time.Second, 30 * time.Second}, // 32s clamps to the 30s cap
+		{30 * time.Second, 30 * time.Second}, // already at cap, stays
+		{1 << 62, limit},                     // overflow guard clamps to cap
+	}
+	for _, c := range cases {
+		if got := nextBackoff(c.cur, limit); got != c.want {
+			t.Errorf("nextBackoff(%v, %v) = %v, want %v", c.cur, limit, got, c.want)
+		}
+	}
+}
+
+// runningGaps records the wall-clock time of each sidecar.running event.
+func (c *capture) runningGaps(t *testing.T, n int) []time.Duration {
+	t.Helper()
+	times := make([]time.Time, 0, n)
+	timeout := time.After(5 * time.Second)
+	for len(times) < n {
+		select {
+		case ev := <-c.ch:
+			if ev.Type == "sidecar.running" {
+				times = append(times, time.Now())
+			}
+		case <-timeout:
+			t.Fatalf("timed out waiting for %d running events, got %d", n, len(times))
+		}
+	}
+	gaps := make([]time.Duration, 0, n-1)
+	for i := 1; i < len(times); i++ {
+		gaps = append(gaps, times[i].Sub(times[i-1]))
+	}
+	return gaps
+}
+
+// A child that keeps crashing must back off exponentially, not restart on a
+// fixed delay — so the gap between successive restarts grows.
+func TestRestartBackoffEscalates(t *testing.T) {
+	cap := newCapture()
+	s := New(Spec{
+		Name:              "crasher",
+		Command:           "sh",
+		Args:              []string{"-c", "exit 1"},
+		RestartWait:       120 * time.Millisecond,
+		MaxRestartWait:    5 * time.Second,
+		RestartResetAfter: 10 * time.Second, // never resets during this fast test
+	}, cap)
+	s.Start()
+	defer s.Stop()
+
+	// Three restarts → two inter-restart gaps: ~120ms then ~240ms.
+	gaps := cap.runningGaps(t, 3)
+	if gaps[1] <= gaps[0] {
+		t.Fatalf("expected escalating backoff, got gaps %v then %v", gaps[0], gaps[1])
+	}
+	// The second gap should be near double the first (allow generous scheduling
+	// slack): at least 1.5x rather than the fixed-delay 1x.
+	if gaps[1] < gaps[0]*3/2 {
+		t.Fatalf("second gap %v should be ~2x the first %v (fixed-delay regression?)", gaps[1], gaps[0])
+	}
+}
+
+// A restart backoff must reset after the child stays up long enough, so a
+// transient crash after a healthy run doesn't inherit a long delay.
+func TestRestartBackoffResetsAfterHealthyUptime(t *testing.T) {
+	// resetAfter is tiny, so every run (each ~immediately crashing after a short
+	// sleep) counts as "healthy" and the backoff never escalates — successive
+	// gaps stay near the base delay.
+	cap := newCapture()
+	s := New(Spec{
+		Name:              "blip",
+		Command:           "sh",
+		Args:              []string{"-c", "sleep 0.15; exit 1"},
+		RestartWait:       80 * time.Millisecond,
+		MaxRestartWait:    5 * time.Second,
+		RestartResetAfter: 50 * time.Millisecond, // 150ms uptime > this → reset
+	}, cap)
+	s.Start()
+	defer s.Stop()
+
+	gaps := cap.runningGaps(t, 3)
+	// Both gaps ≈ uptime(150ms)+base(80ms); the second must not have escalated to
+	// ~2x base beyond the first. Assert they stay within a tight band.
+	if gaps[1] > gaps[0]*2 {
+		t.Fatalf("backoff should have reset after healthy uptime; gaps %v then %v", gaps[0], gaps[1])
+	}
+}
+
 func TestHealthTransitions(t *testing.T) {
 	var healthy atomic.Bool
 	healthy.Store(true)
