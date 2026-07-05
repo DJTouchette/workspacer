@@ -41,7 +41,9 @@ export interface ListDirResult {
  */
 export function listDir(dirPath: string): ListDirResult {
   const resolved = path.resolve(dirPath);
-  const dirents = fs.readdirSync(resolved, { withFileTypes: true }).filter((e) => e.name !== '.git');
+  const dirents = fs
+    .readdirSync(resolved, { withFileTypes: true })
+    .filter((e) => e.name !== '.git');
 
   // Ask git which of these names are ignored (batched over stdin, one per line).
   let ignored = new Set<string>();
@@ -73,7 +75,11 @@ export function listDir(dirPath: string): ListDirResult {
       const full = path.join(resolved, e.name);
       let isDir = e.isDirectory();
       if (!isDir && e.isSymbolicLink()) {
-        try { isDir = fs.statSync(full).isDirectory(); } catch { /* dangling link */ }
+        try {
+          isDir = fs.statSync(full).isDirectory();
+        } catch {
+          /* dangling link */
+        }
       }
       return { name: e.name, path: full, isDir };
     })

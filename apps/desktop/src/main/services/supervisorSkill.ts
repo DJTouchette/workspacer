@@ -266,7 +266,11 @@ export function ensureSupervisorHome(): string {
  *  (and any editor/watcher) on every spawn. Best-effort. */
 function writeIfChanged(file: string, content: string): void {
   let current = '';
-  try { current = fs.readFileSync(file, 'utf8'); } catch { /* not installed yet */ }
+  try {
+    current = fs.readFileSync(file, 'utf8');
+  } catch {
+    /* not installed yet */
+  }
   if (current !== content) fs.writeFileSync(file, content, 'utf8');
 }
 

@@ -1,12 +1,22 @@
 // ── File Attachment Helpers ──
 
-export const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico', 'tiff']);
+export const IMAGE_EXTS = new Set([
+  'png',
+  'jpg',
+  'jpeg',
+  'gif',
+  'webp',
+  'svg',
+  'bmp',
+  'ico',
+  'tiff',
+]);
 export const PDF_EXTS = new Set(['pdf']);
 
 export interface AttachedFile {
   path: string;
   label: string; // "Image" | "PDF" | "File"
-  name: string;  // basename
+  name: string; // basename
 }
 
 export function classifyFile(filePath: string): AttachedFile {
@@ -17,7 +27,7 @@ export function classifyFile(filePath: string): AttachedFile {
 }
 
 export function buildPromptPrefix(files: AttachedFile[]): string {
-  return files.map(f => `[${f.label}: ${f.path}]`).join(' ') + ' ';
+  return files.map((f) => `[${f.label}: ${f.path}]`).join(' ') + ' ';
 }
 
 /** Extract file paths from a drop or paste event */

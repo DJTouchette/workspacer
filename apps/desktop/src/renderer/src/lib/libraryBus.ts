@@ -15,8 +15,13 @@ export function runLibraryItem(item: LibraryItem, action?: LibraryAction): void 
 
 /** Low-level: deliver text into a Claude pane's input. Targets a specific
  *  sessionId/paneId, or the active pane when neither is given. */
-export function dispatchInsert(text: string, target?: { sessionId?: string; paneId?: string }): void {
-  window.dispatchEvent(new CustomEvent(LIBRARY_INSERT_EVENT, { detail: { ...(target ?? {}), text } }));
+export function dispatchInsert(
+  text: string,
+  target?: { sessionId?: string; paneId?: string },
+): void {
+  window.dispatchEvent(
+    new CustomEvent(LIBRARY_INSERT_EVENT, { detail: { ...(target ?? {}), text } }),
+  );
 }
 
 export interface LibraryRunDetail {

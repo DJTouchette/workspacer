@@ -8,12 +8,14 @@ function mf(partial: Partial<PluginManifest>): PluginManifest {
 
 describe('pluginPermissions', () => {
   it('groups the four grant kinds and omits empty ones', () => {
-    const groups = pluginPermissions(mf({
-      capabilities: ['agents.list'],
-      emits: ['rules.fired'],
-      consumes: ['agent.state_changed'],
-      provides: ['recon.overview'],
-    }));
+    const groups = pluginPermissions(
+      mf({
+        capabilities: ['agents.list'],
+        emits: ['rules.fired'],
+        consumes: ['agent.state_changed'],
+        provides: ['recon.overview'],
+      }),
+    );
     expect(groups.map((g) => g.key)).toEqual(['call', 'publish', 'receive', 'provide']);
 
     const noEvents = pluginPermissions(mf({ capabilities: ['agents.list'] }));
@@ -26,7 +28,15 @@ describe('pluginPermissions', () => {
   });
 
   it('flags write/spawn/steer capabilities as sensitive, reads as normal', () => {
-    const [call] = pluginPermissions(mf({ capabilities: [{ method: 'fs.read', paths: ['${agentCwd}'] }, { method: 'fs.write', paths: ['${agentCwd}'] }, 'agents.spawn'] }));
+    const [call] = pluginPermissions(
+      mf({
+        capabilities: [
+          { method: 'fs.read', paths: ['${agentCwd}'] },
+          { method: 'fs.write', paths: ['${agentCwd}'] },
+          'agents.spawn',
+        ],
+      }),
+    );
     const bySeverity = Object.fromEntries(call.lines.map((l) => [l.label, l.severity]));
     expect(bySeverity['Read files']).toBe('normal');
     expect(bySeverity['Write & change files']).toBe('sensitive');
@@ -34,7 +44,9 @@ describe('pluginPermissions', () => {
   });
 
   it('renders path scopes with friendly binding names', () => {
-    const [call] = pluginPermissions(mf({ capabilities: [{ method: 'fs.write', paths: ['${agentCwd}', '${pluginDir}'] }] }));
+    const [call] = pluginPermissions(
+      mf({ capabilities: [{ method: 'fs.write', paths: ['${agentCwd}', '${pluginDir}'] }] }),
+    );
     expect(call.lines[0].detail).toBe("in the agent's folder, its own folder");
   });
 

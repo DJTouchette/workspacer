@@ -72,14 +72,19 @@ export function resolveAnswer(
  * send_message_now).
  */
 export function resolveReply(sessionId: string, text: string): void {
-  window.electronAPI.claudeMessage(sessionId, text).then((res) => {
-    if (!res.ok) {
-      console.warn(`[resolveAttention] /message rejected (mode=${res.mode}); session is not accepting input`);
-    }
-  }).catch(() => {
-    window.electronAPI.claudeWrite(
-      sessionId,
-      '\x1b[200~' + text.replace(/[\r\n]+$/, '') + '\x1b[201~\r',
-    );
-  });
+  window.electronAPI
+    .claudeMessage(sessionId, text)
+    .then((res) => {
+      if (!res.ok) {
+        console.warn(
+          `[resolveAttention] /message rejected (mode=${res.mode}); session is not accepting input`,
+        );
+      }
+    })
+    .catch(() => {
+      window.electronAPI.claudeWrite(
+        sessionId,
+        '\x1b[200~' + text.replace(/[\r\n]+$/, '') + '\x1b[201~\r',
+      );
+    });
 }

@@ -39,7 +39,10 @@ let connected = false;
 // document — through main, mirroring how the web build calls the bus directly.
 const CALL_TIMEOUT_MS = 15000;
 let callSeq = 0;
-const pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>();
+const pending = new Map<
+  string,
+  { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }
+>();
 
 /** Invoke a capability on the bus and resolve with its result. Rejects if the
  *  socket is down, the call errors, or it times out. Our ids are prefixed `m`
@@ -50,9 +53,12 @@ export function callHub<T = unknown>(method: string, params: unknown = {}): Prom
       reject(new Error('hub not connected'));
       return;
     }
-    const id = 'm' + (++callSeq);
+    const id = 'm' + ++callSeq;
     const timer = setTimeout(() => {
-      if (pending.has(id)) { pending.delete(id); reject(new Error(`hub call timeout: ${method}`)); }
+      if (pending.has(id)) {
+        pending.delete(id);
+        reject(new Error(`hub call timeout: ${method}`));
+      }
     }, CALL_TIMEOUT_MS);
     pending.set(id, { resolve: resolve as (v: unknown) => void, reject, timer });
     send({ op: 'call', id, method, params });
@@ -120,11 +126,21 @@ function connect(): void {
       send({ op: 'register', methods: Array.from(handlers.keys()) });
     }
     forward('hub:status', { connected: true });
-    console.log(`[hub-client] connected; subscribed ${TOPICS.join(',')}; provides ${Array.from(handlers.keys()).join(',') || '(none)'}`);
+    console.log(
+      `[hub-client] connected; subscribed ${TOPICS.join(',')}; provides ${Array.from(handlers.keys()).join(',') || '(none)'}`,
+    );
   });
 
   ws.on('message', (raw: WebSocket.RawData) => {
-    let frame: { op?: string; event?: HubEvent; id?: string; method?: string; params?: unknown; result?: unknown; error?: string };
+    let frame: {
+      op?: string;
+      event?: HubEvent;
+      id?: string;
+      method?: string;
+      params?: unknown;
+      result?: unknown;
+      error?: string;
+    };
     try {
       frame = JSON.parse(raw.toString());
     } catch {
@@ -149,7 +165,8 @@ function connect(): void {
           // client made the edit. Local writes also get an immediate push from
           // the SET handler; a duplicate here just re-injects the same values.
           if (frame.event.type === 'plugin.settings.changed') {
-            const d = frame.event.data as { id?: string; values?: Record<string, unknown> } | undefined;
+            const d = frame.event.data as
+              { id?: string; values?: Record<string, unknown> } | undefined;
             if (d?.id) forward(IPC.HUB_PLUGIN_SETTINGS_CHANGED, d.id, d.values ?? {});
           }
         }
@@ -159,12 +176,20 @@ function connect(): void {
         break;
       case 'result': {
         const c = frame.id ? pending.get(frame.id) : undefined;
-        if (c && frame.id) { pending.delete(frame.id); clearTimeout(c.timer); c.resolve(frame.result); }
+        if (c && frame.id) {
+          pending.delete(frame.id);
+          clearTimeout(c.timer);
+          c.resolve(frame.result);
+        }
         break;
       }
       case 'error': {
         const c = frame.id ? pending.get(frame.id) : undefined;
-        if (c && frame.id) { pending.delete(frame.id); clearTimeout(c.timer); c.reject(new Error(frame.error || 'hub error')); }
+        if (c && frame.id) {
+          pending.delete(frame.id);
+          clearTimeout(c.timer);
+          c.reject(new Error(frame.error || 'hub error'));
+        }
         break;
       }
       // hello / subscribed / registered acks: nothing to do.
@@ -174,13 +199,21 @@ function connect(): void {
   ws.on('close', () => {
     connected = false;
     // Fail any in-flight outbound calls — their socket is gone.
-    for (const [id, c] of pending) { clearTimeout(c.timer); c.reject(new Error('hub disconnected')); pending.delete(id); }
+    for (const [id, c] of pending) {
+      clearTimeout(c.timer);
+      c.reject(new Error('hub disconnected'));
+      pending.delete(id);
+    }
     forward('hub:status', { connected: false });
     scheduleReconnect();
   });
 
   ws.on('error', () => {
-    try { ws?.close(); } catch { /* noop */ }
+    try {
+      ws?.close();
+    } catch {
+      /* noop */
+    }
   });
 }
 
@@ -206,7 +239,11 @@ export function startHubClient(): void {
 
 export function stopHubClient(): void {
   stopped = true;
-  try { ws?.close(); } catch { /* noop */ }
+  try {
+    ws?.close();
+  } catch {
+    /* noop */
+  }
   ws = null;
   // Drain all in-flight outbound calls so their timers don't leak.
   for (const [id, c] of pending) {

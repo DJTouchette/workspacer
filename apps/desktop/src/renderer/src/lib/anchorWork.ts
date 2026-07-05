@@ -1,4 +1,9 @@
-import type { ConversationTurn, ToolCall, SubagentInfo, WorkflowRunInfo } from '../types/claudeSession';
+import type {
+  ConversationTurn,
+  ToolCall,
+  SubagentInfo,
+  WorkflowRunInfo,
+} from '../types/claudeSession';
 
 /**
  * Anchor subagents/workflow runs to the Agent/Workflow tool calls that spawned
@@ -40,7 +45,7 @@ export function anchorWork(
 
   // ── Subagents: exact join on toolUseId, order-match the rest ──
   const toolIdToSubagent = new Map<string, SubagentInfo>();
-  const agentCallIds = new Set(agentCalls.map(c => c.id));
+  const agentCallIds = new Set(agentCalls.map((c) => c.id));
   const orderMatchedSubs: SubagentInfo[] = [];
   for (const sub of subagents) {
     if (sub.toolUseId && agentCallIds.has(sub.toolUseId) && !toolIdToSubagent.has(sub.toolUseId)) {
@@ -49,7 +54,7 @@ export function anchorWork(
       orderMatchedSubs.push(sub);
     }
   }
-  const freeAgentCalls = agentCalls.filter(c => !toolIdToSubagent.has(c.id));
+  const freeAgentCalls = agentCalls.filter((c) => !toolIdToSubagent.has(c.id));
   orderMatchedSubs.forEach((sub, i) => {
     if (i < freeAgentCalls.length) toolIdToSubagent.set(freeAgentCalls[i].id, sub);
   });
@@ -60,12 +65,15 @@ export function anchorWork(
   const orderMatchedRuns: WorkflowRunInfo[] = [];
   for (const run of workflows) {
     const call = workflowCalls.find(
-      c => !toolIdToWorkflow.has(c.id) && typeof c.response === 'string' && c.response.includes(run.runId),
+      (c) =>
+        !toolIdToWorkflow.has(c.id) &&
+        typeof c.response === 'string' &&
+        c.response.includes(run.runId),
     );
     if (call) toolIdToWorkflow.set(call.id, run);
     else orderMatchedRuns.push(run);
   }
-  const freeWorkflowCalls = workflowCalls.filter(c => !toolIdToWorkflow.has(c.id));
+  const freeWorkflowCalls = workflowCalls.filter((c) => !toolIdToWorkflow.has(c.id));
   orderMatchedRuns.forEach((run, i) => {
     if (i < freeWorkflowCalls.length) toolIdToWorkflow.set(freeWorkflowCalls[i].id, run);
   });

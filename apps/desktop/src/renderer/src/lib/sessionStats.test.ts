@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { deriveSessionStats, isSnapshotStale, summarizeFileChanges, STALE_AFTER_MS } from './sessionStats';
+import {
+  deriveSessionStats,
+  isSnapshotStale,
+  summarizeFileChanges,
+  STALE_AFTER_MS,
+} from './sessionStats';
 import type { FileChange, SessionStatusLine, SessionUsage } from '../types/claudeSession';
 
 const usage = (over: Partial<SessionUsage> = {}): SessionUsage =>
@@ -32,7 +37,9 @@ describe('deriveSessionStats — cumulative tokens', () => {
   });
 
   it('falls back to usage when statusLine carries no token counts', () => {
-    expect(deriveSessionStats({ statusLine: {} as SessionStatusLine, usage: usage() }).tokens).toBe(333);
+    expect(deriveSessionStats({ statusLine: {} as SessionStatusLine, usage: usage() }).tokens).toBe(
+      333,
+    );
   });
 });
 

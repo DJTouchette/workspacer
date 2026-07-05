@@ -62,7 +62,9 @@ const RG_BIN: string = (() => {
     const unpacked = bundledRgPath.replace(/\bapp\.asar\b/, 'app.asar.unpacked');
     try {
       if (fs.existsSync(unpacked)) return unpacked;
-    } catch { /* fall through */ }
+    } catch {
+      /* fall through */
+    }
   }
   return 'rg';
 })();
@@ -159,14 +161,21 @@ export async function searchProject(opts: SearchProjectOpts): Promise<SearchProj
     if (!line) continue;
 
     let msg: { type?: string };
-    try { msg = JSON.parse(line); } catch { continue; }
+    try {
+      msg = JSON.parse(line);
+    } catch {
+      continue;
+    }
     if (msg.type !== 'match') continue;
 
     // Cap check AFTER confirming this is a real match: a genuine, dropped match
     // is the only thing that counts as truncation. Checking before the type
     // guard let ripgrep's trailing `end`/`summary` messages flip the flag when
     // the count landed exactly on maxResults (nothing was actually dropped).
-    if (total >= maxResults) { truncated = true; break; }
+    if (total >= maxResults) {
+      truncated = true;
+      break;
+    }
 
     const data = (msg as RgMatchMessage).data;
     const rel = data.path.text;
@@ -174,17 +183,26 @@ export async function searchProject(opts: SearchProjectOpts): Promise<SearchProj
     // rg reports paths relative to cwd; the contract wants absolute paths.
     const abs = path.resolve(cwd, rel);
     const rawText = data.lines.text ?? '';
-    const text = rawText.replace(/\r?\n$/, '').trim().slice(0, MAX_TEXT_LEN);
+    const text = rawText
+      .replace(/\r?\n$/, '')
+      .trim()
+      .slice(0, MAX_TEXT_LEN);
 
     let bucket = byFile.get(abs);
-    if (!bucket) { bucket = { file: abs, matches: [] }; byFile.set(abs, bucket); }
+    if (!bucket) {
+      bucket = { file: abs, matches: [] };
+      byFile.set(abs, bucket);
+    }
 
     // rg emits one 'match' message per matching line, but a line may contain
     // several submatches. Surface each as its own result (column = 1-based byte
     // offset of the submatch start).
     const submatches = data.submatches.length ? data.submatches : [{ start: 0 }];
     for (const sm of submatches) {
-      if (total >= maxResults) { truncated = true; break; }
+      if (total >= maxResults) {
+        truncated = true;
+        break;
+      }
       bucket.matches.push({ line: data.line_number, column: sm.start + 1, text });
       total += 1;
     }

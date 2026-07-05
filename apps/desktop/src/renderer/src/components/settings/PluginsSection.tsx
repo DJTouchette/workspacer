@@ -13,11 +13,16 @@ const PluginSettings: React.FC<{ plugin: PluginManifest }> = ({ plugin }) => {
 
   useEffect(() => {
     let alive = true;
-    window.electronAPI.getPluginSettings?.(plugin.id).then((v) => { if (alive) setValues(v || {}); });
+    window.electronAPI.getPluginSettings?.(plugin.id).then((v) => {
+      if (alive) setValues(v || {});
+    });
     const off = window.electronAPI.onPluginSettingsChanged?.((changedId, next) => {
       if (alive && changedId === plugin.id) setValues(next || {});
     });
-    return () => { alive = false; off?.(); };
+    return () => {
+      alive = false;
+      off?.();
+    };
   }, [plugin.id]);
 
   const update = (key: string, value: unknown) => {
@@ -30,12 +35,23 @@ const PluginSettings: React.FC<{ plugin: PluginManifest }> = ({ plugin }) => {
     const v = valueFor(s);
     switch (s.type) {
       case 'boolean':
-        return <CheckRow key={s.key} label={s.label} checked={!!v} onChange={(nv) => update(s.key, nv)} />;
+        return (
+          <CheckRow
+            key={s.key}
+            label={s.label}
+            checked={!!v}
+            onChange={(nv) => update(s.key, nv)}
+          />
+        );
       case 'number':
         return (
           <Row key={s.key} label={s.label}>
-            <input type="number" style={{ ...inputStyle, width: 80 }} value={Number(v ?? 0)}
-              onChange={(e) => update(s.key, Number(e.target.value))} />
+            <input
+              type="number"
+              style={{ ...inputStyle, width: 80 }}
+              value={Number(v ?? 0)}
+              onChange={(e) => update(s.key, Number(e.target.value))}
+            />
           </Row>
         );
       case 'select':
@@ -43,7 +59,12 @@ const PluginSettings: React.FC<{ plugin: PluginManifest }> = ({ plugin }) => {
           <Row key={s.key} label={s.label}>
             <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
               {(s.options ?? []).map((opt) => (
-                <ModeButton key={opt} label={opt} active={String(v) === opt} onClick={() => update(s.key, opt)} />
+                <ModeButton
+                  key={opt}
+                  label={opt}
+                  active={String(v) === opt}
+                  onClick={() => update(s.key, opt)}
+                />
               ))}
             </div>
           </Row>
@@ -51,8 +72,12 @@ const PluginSettings: React.FC<{ plugin: PluginManifest }> = ({ plugin }) => {
       default: // string
         return (
           <Row key={s.key} label={s.label}>
-            <input style={{ ...inputStyle, width: 160 }} value={String(v ?? '')} spellCheck={false}
-              onChange={(e) => update(s.key, e.target.value)} />
+            <input
+              style={{ ...inputStyle, width: 160 }}
+              value={String(v ?? '')}
+              spellCheck={false}
+              onChange={(e) => update(s.key, e.target.value)}
+            />
           </Row>
         );
     }
@@ -60,11 +85,19 @@ const PluginSettings: React.FC<{ plugin: PluginManifest }> = ({ plugin }) => {
 
   return (
     <div style={{ marginBottom: 10 }}>
-      <div style={{ fontSize: '0.62rem', color: 'var(--wks-text-secondary)', margin: '8px 0 2px' }}>{plugin.name}</div>
+      <div style={{ fontSize: '0.62rem', color: 'var(--wks-text-secondary)', margin: '8px 0 2px' }}>
+        {plugin.name}
+      </div>
       {(plugin.settings ?? []).map((s) => (
         <React.Fragment key={s.key}>
           {control(s)}
-          {s.help && <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)', marginBottom: 2 }}>{s.help}</div>}
+          {s.help && (
+            <div
+              style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)', marginBottom: 2 }}
+            >
+              {s.help}
+            </div>
+          )}
         </React.Fragment>
       ))}
     </div>
@@ -81,7 +114,9 @@ const PluginsSection: React.FC = () => {
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)', marginBottom: 4 }}>
         Options contributed by installed plugins. Changes apply to open plugin panes live.
       </div>
-      {configurable.map((p) => <PluginSettings key={p.id} plugin={p} />)}
+      {configurable.map((p) => (
+        <PluginSettings key={p.id} plugin={p} />
+      ))}
     </Section>
   );
 };

@@ -34,9 +34,14 @@ function ChromeCookieSyncRow() {
       );
       const diag = (res as any).diagnostics ?? {};
       const diagStr = Object.keys(diag).length
-        ? ' — ' + Object.entries(diag).map(([k, v]) => `${k}=${v}`).join(', ')
+        ? ' — ' +
+          Object.entries(diag)
+            .map(([k, v]) => `${k}=${v}`)
+            .join(', ')
         : '';
-      const msg = `Imported ${res.imported}, skipped ${res.skipped}` + diagStr +
+      const msg =
+        `Imported ${res.imported}, skipped ${res.skipped}` +
+        diagStr +
         (res.errors.length ? `\nFirst error: ${res.errors[0]}` : '');
       setLastResult(msg);
     } catch (err: any) {
@@ -104,7 +109,9 @@ function ChromeCookieSyncRow() {
         />
       </Row>
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
-        Reads Chrome's local cookie store and copies into Workspacer's browser session — useful when OAuth (e.g. Microsoft sign-in) won't complete inside an embedded webview. Run while Chrome is closed for best results.
+        Reads Chrome's local cookie store and copies into Workspacer's browser session — useful when
+        OAuth (e.g. Microsoft sign-in) won't complete inside an embedded webview. Run while Chrome
+        is closed for best results.
         {lastResult && (
           <div style={{ marginTop: 4, color: 'var(--wks-text-secondary)' }}>{lastResult}</div>
         )}

@@ -24,7 +24,14 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { spawn, ChildProcess } from 'child_process';
 import { app } from 'electron';
-import { killStaleListener, waitForHealth, PORTS, RestartBackoff, daemonSpawnOptions, gracefulStop } from '../lib/daemonUtils';
+import {
+  killStaleListener,
+  waitForHealth,
+  PORTS,
+  RestartBackoff,
+  daemonSpawnOptions,
+  gracefulStop,
+} from '../lib/daemonUtils';
 import { HUB_BUS_URL, getHubToken } from './hubDaemon';
 
 const PORT = PORTS.mcpFacade;
@@ -55,7 +62,9 @@ export function startMcpFacade(): Promise<void> {
   const bin = mcpBinaryPath();
   if (!fs.existsSync(bin)) {
     return Promise.reject(
-      new Error(`mcp facade binary not found at ${bin} (run: cd services/hub && go build -o mcp ./cmd/mcp)`),
+      new Error(
+        `mcp facade binary not found at ${bin} (run: cd services/hub && go build -o mcp ./cmd/mcp)`,
+      ),
     );
   }
 
@@ -87,8 +96,14 @@ function launch(bin: string): Promise<void> {
     if (!intentionalStop) scheduleRestart(bin);
   });
 
-  readyPromise = waitForHealth(`http://${ADDR}/health`, HEALTH_TIMEOUT_MS, 'mcp', healthAbort.signal)
-    .then(() => { backoff.reset(); });
+  readyPromise = waitForHealth(
+    `http://${ADDR}/health`,
+    HEALTH_TIMEOUT_MS,
+    'mcp',
+    healthAbort.signal,
+  ).then(() => {
+    backoff.reset();
+  });
   return readyPromise;
 }
 
@@ -96,7 +111,9 @@ function launch(bin: string): Promise<void> {
 function scheduleRestart(bin: string): void {
   const delay = backoff.nextDelay();
   if (delay === null) {
-    console.error('[mcp] crashed too many times; giving up auto-restart. Restart the app to recover.');
+    console.error(
+      '[mcp] crashed too many times; giving up auto-restart. Restart the app to recover.',
+    );
     return;
   }
   console.warn(`[mcp] unexpected exit — restarting in ${delay}ms`);

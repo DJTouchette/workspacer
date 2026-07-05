@@ -18,21 +18,39 @@ import type { ClaudeSessionSnapshot } from '../../src/types/claudeSession';
 // xterm needs a real canvas; stub it.
 vi.mock('@xterm/xterm', () => {
   class MockTerminal {
-    cols = 80; rows = 24;
+    cols = 80;
+    rows = 24;
     options: Record<string, unknown> = {};
-    open = vi.fn(); write = vi.fn(); dispose = vi.fn(); focus = vi.fn(); blur = vi.fn();
-    refresh = vi.fn(); clearSelection = vi.fn(); getSelection = vi.fn().mockReturnValue('');
+    open = vi.fn();
+    write = vi.fn();
+    dispose = vi.fn();
+    focus = vi.fn();
+    blur = vi.fn();
+    refresh = vi.fn();
+    clearSelection = vi.fn();
+    getSelection = vi.fn().mockReturnValue('');
     onData = vi.fn().mockReturnValue({ dispose: vi.fn() });
     onBinary = vi.fn().mockReturnValue({ dispose: vi.fn() });
     onResize = vi.fn().mockReturnValue({ dispose: vi.fn() });
-    loadAddon = vi.fn(); attachCustomKeyEventHandler = vi.fn();
+    loadAddon = vi.fn();
+    attachCustomKeyEventHandler = vi.fn();
     parser = { registerCsiHandler: vi.fn() };
   }
   return { Terminal: MockTerminal };
 });
-vi.mock('@xterm/addon-fit', () => ({ FitAddon: class { fit = vi.fn(); activate = vi.fn(); dispose = vi.fn(); } }));
+vi.mock('@xterm/addon-fit', () => ({
+  FitAddon: class {
+    fit = vi.fn();
+    activate = vi.fn();
+    dispose = vi.fn();
+  },
+}));
 vi.mock('@xterm/addon-web-fonts', () => ({
-  WebFontsAddon: class { activate = vi.fn(); dispose = vi.fn(); loadFonts = vi.fn().mockResolvedValue(undefined); },
+  WebFontsAddon: class {
+    activate = vi.fn();
+    dispose = vi.fn();
+    loadFonts = vi.fn().mockResolvedValue(undefined);
+  },
 }));
 
 // PTY-facing write, exposed so tests can assert the question-answer path.
@@ -65,7 +83,15 @@ vi.mock('../../src/hooks/useConfig', () => ({
   useConfig: vi.fn().mockReturnValue({
     config: {
       claude: { defaultView: 'gui', workLog: 'cards' },
-      terminal: { fontSize: 14, fontFamily: 'monospace', cursorBlink: true, scrollback: 1000, cursorStyle: 'block', shell: '', shells: [] },
+      terminal: {
+        fontSize: 14,
+        fontFamily: 'monospace',
+        cursorBlink: true,
+        scrollback: 1000,
+        cursorStyle: 'block',
+        shell: '',
+        shells: [],
+      },
       ui: { navBarHeight: 28, paneHeaderHeight: 22, guiFontScale: 1.15, showComposerSend: true },
       panes: { peek: 80, gap: 16, insertPosition: 'after' },
       keybindings: { prefix: 'ctrl+space', shortcuts: {} },
@@ -110,7 +136,10 @@ describe('ClaudePane send pipeline', () => {
     fireEvent.change(composer(), { target: { value: 'fix the failing test' } });
     fireEvent.keyDown(composer(), { key: 'Enter' });
     await waitFor(() =>
-      expect(window.electronAPI.claudeMessage).toHaveBeenCalledWith('sess-1', 'fix the failing test'),
+      expect(window.electronAPI.claudeMessage).toHaveBeenCalledWith(
+        'sess-1',
+        'fix the failing test',
+      ),
     );
   });
 
@@ -130,7 +159,9 @@ describe('ClaudePane send pipeline', () => {
   });
 
   it('a rejected send (session ended) restores the text to the composer', async () => {
-    (window.electronAPI.claudeMessage as any) = vi.fn().mockResolvedValue({ ok: false, mode: 'stopped' });
+    (window.electronAPI.claudeMessage as any) = vi
+      .fn()
+      .mockResolvedValue({ ok: false, mode: 'stopped' });
     render(<ClaudePane paneId="p4" title="Claude" isActive cwd="/repo" />);
     fireEvent.change(composer(), { target: { value: 'are you alive' } });
     fireEvent.keyDown(composer(), { key: 'Enter' });
@@ -140,27 +171,41 @@ describe('ClaudePane send pipeline', () => {
   it('an Approval card Allow routes to claudeApprove("yes")', async () => {
     mockSession = makeSnapshot({
       ambientState: 'waiting_approval',
-      pendingApproval: { toolName: 'Bash', toolInput: { command: 'npm test' }, timestamp: Date.now() },
+      pendingApproval: {
+        toolName: 'Bash',
+        toolInput: { command: 'npm test' },
+        timestamp: Date.now(),
+      },
     });
     render(<ClaudePane paneId="p5" title="Claude" isActive cwd="/repo" />);
     fireEvent.click(await screen.findByText('Allow'));
-    await waitFor(() => expect(window.electronAPI.claudeApprove).toHaveBeenCalledWith('sess-1', 'yes'));
+    await waitFor(() =>
+      expect(window.electronAPI.claudeApprove).toHaveBeenCalledWith('sess-1', 'yes'),
+    );
   });
 
   it('an Approval card Deny routes to claudeApprove("no")', async () => {
     mockSession = makeSnapshot({
       ambientState: 'waiting_approval',
-      pendingApproval: { toolName: 'Bash', toolInput: { command: 'rm -rf x' }, timestamp: Date.now() },
+      pendingApproval: {
+        toolName: 'Bash',
+        toolInput: { command: 'rm -rf x' },
+        timestamp: Date.now(),
+      },
     });
     render(<ClaudePane paneId="p6" title="Claude" isActive cwd="/repo" />);
     fireEvent.click(await screen.findByText('Deny'));
-    await waitFor(() => expect(window.electronAPI.claudeApprove).toHaveBeenCalledWith('sess-1', 'no'));
+    await waitFor(() =>
+      expect(window.electronAPI.claudeApprove).toHaveBeenCalledWith('sess-1', 'no'),
+    );
   });
 
   it('answering a question writes the option number to the PTY (not /answer)', async () => {
     mockSession = makeSnapshot({
       lastActivity: Date.now(),
-      pendingQuestions: [{ question: 'Pick one', options: [{ label: 'First' }, { label: 'Second' }] }],
+      pendingQuestions: [
+        { question: 'Pick one', options: [{ label: 'First' }, { label: 'Second' }] },
+      ],
     });
     render(<ClaudePane paneId="p7" title="Claude" isActive cwd="/repo" />);
     fireEvent.click(await screen.findByText('Second'));

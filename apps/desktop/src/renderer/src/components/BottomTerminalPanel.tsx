@@ -26,7 +26,9 @@ const BottomTerminalPanel: React.FC<Props> = ({ visible, onClose, cwd, left = SI
   // Lazily mount the terminal the first time it's opened, then never unmount it
   // (unmounting would dispose xterm + drop the PTY).
   const [mounted, setMounted] = useState(false);
-  useEffect(() => { if (visible) setMounted(true); }, [visible]);
+  useEffect(() => {
+    if (visible) setMounted(true);
+  }, [visible]);
 
   // No Escape-to-close here: Escape is a real key inside a terminal (vim, less,
   // readline). Toggle with Ctrl+` or the close button instead.
@@ -35,8 +37,14 @@ const BottomTerminalPanel: React.FC<Props> = ({ visible, onClose, cwd, left = SI
     <div
       aria-hidden={!visible}
       style={{
-        position: 'fixed', left, right: 0, bottom: 0, height: PANEL_H,
-        zIndex: 1700, display: 'flex', flexDirection: 'column',
+        position: 'fixed',
+        left,
+        right: 0,
+        bottom: 0,
+        height: PANEL_H,
+        zIndex: 1700,
+        display: 'flex',
+        flexDirection: 'column',
         backgroundColor: 'var(--wks-bg-surface)',
         borderTop: '1px solid var(--wks-glass-border)',
         // Respect the theme's corner setting (0px when square) on the top edge.

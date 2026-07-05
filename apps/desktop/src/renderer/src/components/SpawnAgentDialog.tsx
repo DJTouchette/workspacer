@@ -9,13 +9,28 @@ import { capsFor } from '../lib/providerCaps';
 const bypassModeFor = (provider: AgentProvider): string =>
   provider === 'claude' ? 'bypassPermissions' : 'yolo';
 
-interface SpawnProfile { id: string; name: string; mcpItemIds?: string[] }
+interface SpawnProfile {
+  id: string;
+  name: string;
+  mcpItemIds?: string[];
+}
 
 interface SpawnAgentDialogProps {
   defaultCwd: string;
   /** Provider pre-selected in the picker (config.agents.defaultProvider). */
   defaultProvider?: AgentProvider;
-  onSpawn: (opts: { cwd: string; name?: string; provider?: AgentProvider; profileId?: string; model?: string; effort?: string; permissionMode?: string; skipPermissions?: boolean; mcpItemIds?: string[]; resumeSessionId?: string }) => void;
+  onSpawn: (opts: {
+    cwd: string;
+    name?: string;
+    provider?: AgentProvider;
+    profileId?: string;
+    model?: string;
+    effort?: string;
+    permissionMode?: string;
+    skipPermissions?: boolean;
+    mcpItemIds?: string[];
+    resumeSessionId?: string;
+  }) => void;
   onCancel: () => void;
 }
 
@@ -32,9 +47,12 @@ const PROVIDERS: { value: AgentProvider; label: string; beta?: boolean }[] = [
 /** Free-text model placeholder per managed provider (their own id formats). */
 function modelPlaceholder(provider: AgentProvider): string {
   switch (provider) {
-    case 'codex': return 'gpt-5.4  (blank = Codex default)';
-    case 'pi': return 'claude-sonnet-4 / gpt-5  (blank = Pi default)';
-    default: return 'anthropic/claude-sonnet-4  (blank = OpenCode default)';
+    case 'codex':
+      return 'gpt-5.4  (blank = Codex default)';
+    case 'pi':
+      return 'claude-sonnet-4 / gpt-5  (blank = Pi default)';
+    default:
+      return 'anthropic/claude-sonnet-4  (blank = OpenCode default)';
   }
 }
 
@@ -46,7 +64,12 @@ interface ProviderDetection {
   customBin: string;
 }
 
-const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, defaultProvider, onSpawn, onCancel }) => {
+const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
+  defaultCwd,
+  defaultProvider,
+  onSpawn,
+  onCancel,
+}) => {
   const [cwd, setCwd] = useState(defaultCwd);
   const [name, setName] = useState('');
   const [provider, setProvider] = useState<AgentProvider>(defaultProvider ?? 'claude');
@@ -58,7 +81,9 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, default
   // value (''=provider default, a model id, or CUSTOM), and `providerCustom`
   // holds the free-text id when CUSTOM — or whenever the live list is empty
   // (e.g. Pi with no authed providers), in which case the field is shown bare.
-  const [providerModels, setProviderModels] = useState<Array<{ id: string; label: string; default: boolean }>>([]);
+  const [providerModels, setProviderModels] = useState<
+    Array<{ id: string; label: string; default: boolean }>
+  >([]);
   const [providerModelsLoading, setProviderModelsLoading] = useState(false);
   const [providerSel, setProviderSel] = useState('');
   const [providerCustom, setProviderCustom] = useState('');
@@ -82,14 +107,19 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, default
   const [effort, setEffort] = useState('');
 
   // Resume an existing Claude session in this cwd. ''=start fresh.
-  const [sessions, setSessions] = useState<Array<{ sessionId: string; timestamp: string; summary: string }>>([]);
+  const [sessions, setSessions] = useState<
+    Array<{ sessionId: string; timestamp: string; summary: string }>
+  >([]);
   const [resumeSessionId, setResumeSessionId] = useState('');
 
-  useEffect(() => { setCwd(defaultCwd); }, [defaultCwd]);
+  useEffect(() => {
+    setCwd(defaultCwd);
+  }, [defaultCwd]);
 
   // Fetch provider detection status once on mount.
   useEffect(() => {
-    window.electronAPI.providerCheckAll?.()
+    window.electronAPI
+      .providerCheckAll?.()
       .then((list) => setProviderDetection(list ?? []))
       .catch(() => {});
   }, []);
@@ -115,7 +145,12 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, default
 
   // Close on Escape regardless of which inner element has focus.
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); onCancel(); } };
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onCancel();
+      }
+    };
     window.addEventListener('keydown', handler, true);
     return () => window.removeEventListener('keydown', handler, true);
   }, [onCancel]);
@@ -123,29 +158,44 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, default
   // Discover resumable sessions whenever the directory settles (debounced).
   useEffect(() => {
     const dir = cwd.trim();
-    if (!dir) { setSessions([]); return; }
+    if (!dir) {
+      setSessions([]);
+      return;
+    }
     let cancelled = false;
     const handle = setTimeout(() => {
-      window.electronAPI.claudeListSessionsForDir?.(dir)
-        .then((list) => { if (!cancelled) setSessions(list ?? []); })
-        .catch(() => { if (!cancelled) setSessions([]); });
+      window.electronAPI
+        .claudeListSessionsForDir?.(dir)
+        .then((list) => {
+          if (!cancelled) setSessions(list ?? []);
+        })
+        .catch(() => {
+          if (!cancelled) setSessions([]);
+        });
     }, 250);
-    return () => { cancelled = true; clearTimeout(handle); };
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
   }, [cwd]);
 
   // If the picked session disappears from the list (cwd changed), reset to fresh.
   useEffect(() => {
-    if (resumeSessionId && !sessions.some((s) => s.sessionId === resumeSessionId)) setResumeSessionId('');
+    if (resumeSessionId && !sessions.some((s) => s.sessionId === resumeSessionId))
+      setResumeSessionId('');
   }, [sessions, resumeSessionId]);
 
   useEffect(() => {
-    window.electronAPI.claudeProfilesList?.()
+    window.electronAPI
+      .claudeProfilesList?.()
       .then((list: any[]) => setProfiles(list ?? []))
       .catch(() => {});
-    window.electronAPI.libraryList?.(defaultCwd || undefined)
+    window.electronAPI
+      .libraryList?.(defaultCwd || undefined)
       .then((list) => setMcpItems((list ?? []).filter((it) => it.kind === 'mcp')))
       .catch(() => {});
-    window.electronAPI.claudeListModels?.()
+    window.electronAPI
+      .claudeListModels?.()
       .then((res) => {
         if (!res) return;
         setAliases(res.aliases ?? []);
@@ -154,8 +204,16 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, default
         // Pre-select the saved default. If it's a concrete id we don't have in
         // a list, keep it as a custom entry so the saved value isn't dropped.
         const d = res.defaultModel ?? '';
-        const known = d === '' || (res.aliases ?? []).some((a) => a.value === d) || (res.seen ?? []).includes(d);
-        if (known) { setModelSel(d); } else { setModelSel(CUSTOM); setCustomModel(d); }
+        const known =
+          d === '' ||
+          (res.aliases ?? []).some((a) => a.value === d) ||
+          (res.seen ?? []).includes(d);
+        if (known) {
+          setModelSel(d);
+        } else {
+          setModelSel(CUSTOM);
+          setCustomModel(d);
+        }
       })
       .catch(() => {});
   }, []);
@@ -167,17 +225,29 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, default
   // providers. An empty list (failure or no authed models) is fine — the field
   // falls back to free-text entry.
   useEffect(() => {
-    if (isClaude) { setProviderModels([]); return; }
+    if (isClaude) {
+      setProviderModels([]);
+      return;
+    }
     setProviderSel('');
     setProviderCustom('');
     setProviderModels([]);
     setProviderModelsLoading(true);
     let cancelled = false;
-    window.electronAPI.providerListModels?.(provider as 'codex' | 'opencode' | 'pi', cwd.trim() || undefined)
-      .then((list) => { if (!cancelled) setProviderModels(list ?? []); })
-      .catch(() => { if (!cancelled) setProviderModels([]); })
-      .finally(() => { if (!cancelled) setProviderModelsLoading(false); });
-    return () => { cancelled = true; };
+    window.electronAPI
+      .providerListModels?.(provider as 'codex' | 'opencode' | 'pi', cwd.trim() || undefined)
+      .then((list) => {
+        if (!cancelled) setProviderModels(list ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setProviderModels([]);
+      })
+      .finally(() => {
+        if (!cancelled) setProviderModelsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [provider]);
 
@@ -187,11 +257,17 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, default
     const dir = cwd.trim();
     let cancelled = false;
     const handle = setTimeout(() => {
-      window.electronAPI.libraryList?.(dir || undefined)
-        .then((list) => { if (!cancelled) setMcpItems((list ?? []).filter((it) => it.kind === 'mcp')); })
+      window.electronAPI
+        .libraryList?.(dir || undefined)
+        .then((list) => {
+          if (!cancelled) setMcpItems((list ?? []).filter((it) => it.kind === 'mcp'));
+        })
         .catch(() => {});
     }, 250);
-    return () => { cancelled = true; clearTimeout(handle); };
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
   }, [cwd]);
 
   // Pre-fill the MCP selection from the chosen profile's default loadout.
@@ -221,14 +297,23 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, default
 
   const saveCustomBin = (value: string) => {
     const binaries = { [provider]: value.trim() };
-    window.electronAPI.saveConfig?.({ agents: { binaries } } as any)
-      .then(() => window.electronAPI.providerCheckAll?.().then((list) => setProviderDetection(list ?? [])).catch(() => {}))
+    window.electronAPI
+      .saveConfig?.({ agents: { binaries } } as any)
+      .then(() =>
+        window.electronAPI
+          .providerCheckAll?.()
+          .then((list) => setProviderDetection(list ?? []))
+          .catch(() => {}),
+      )
       .catch(() => {});
   };
 
   const browseCustomBin = async () => {
     const files = await window.electronAPI.pickFiles?.(undefined);
-    if (files?.length) { setCustomBinPath(files[0]); saveCustomBin(files[0]); }
+    if (files?.length) {
+      setCustomBinPath(files[0]);
+      saveCustomBin(files[0]);
+    }
   };
 
   const currentDetection = providerDetection.find((d) => d.provider === provider);
@@ -241,9 +326,28 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, default
     const skipPermissions = resolvedMode === 'bypassPermissions' || resolvedMode === 'yolo';
     // Claude-only options are dropped for other providers (they run their own
     // TUI in Tier-1 and don't take Claude's profile/model/MCP/resume flags).
-    onSpawn(isClaude
-      ? { cwd: cwd.trim(), name: name.trim() || undefined, profileId: profileId || undefined, model: resolvedModel || undefined, permissionMode: resolvedMode, skipPermissions, mcpItemIds: mcpSel.length ? mcpSel : undefined, resumeSessionId: resumeSessionId || undefined }
-      : { cwd: cwd.trim(), name: name.trim() || undefined, provider, model: resolvedProviderModel || undefined, effort: effort || undefined, permissionMode: resolvedMode, skipPermissions });
+    onSpawn(
+      isClaude
+        ? {
+            cwd: cwd.trim(),
+            name: name.trim() || undefined,
+            profileId: profileId || undefined,
+            model: resolvedModel || undefined,
+            permissionMode: resolvedMode,
+            skipPermissions,
+            mcpItemIds: mcpSel.length ? mcpSel : undefined,
+            resumeSessionId: resumeSessionId || undefined,
+          }
+        : {
+            cwd: cwd.trim(),
+            name: name.trim() || undefined,
+            provider,
+            model: resolvedProviderModel || undefined,
+            effort: effort || undefined,
+            permissionMode: resolvedMode,
+            skipPermissions,
+          },
+    );
   };
 
   const placeholderName = cwd.trim() ? deriveAgentName(cwd.trim()) : 'agent';
@@ -252,26 +356,39 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, default
     <div
       onMouseDown={onCancel}
       style={{
-        position: 'fixed', inset: 0, zIndex: 20000,
+        position: 'fixed',
+        inset: 0,
+        zIndex: 20000,
         backgroundColor: 'var(--wks-overlay, rgba(0,0,0,0.5))',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
       }}
     >
       <div
         onMouseDown={(e) => e.stopPropagation()}
         style={{
-          width: 420, maxWidth: '90vw',
+          width: 420,
+          maxWidth: '90vw',
           backgroundColor: 'var(--wks-glass-strong)',
           backdropFilter: 'blur(var(--wks-glass-blur)) saturate(170%)',
           WebkitBackdropFilter: 'blur(var(--wks-glass-blur)) saturate(170%)',
           border: '1px solid var(--wks-glass-border)',
           borderRadius: 'var(--wks-radius-lg)',
           padding: 20,
-          boxShadow: '0 16px 48px var(--wks-glass-shadow), inset 0 0 0 1.5px var(--wks-glass-highlight)',
+          boxShadow:
+            '0 16px 48px var(--wks-glass-shadow), inset 0 0 0 1.5px var(--wks-glass-highlight)',
           fontFamily: 'inherit',
         }}
       >
-        <div style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--wks-text-primary)', marginBottom: 16 }}>
+        <div
+          style={{
+            fontSize: '0.9rem',
+            fontWeight: 600,
+            color: 'var(--wks-text-primary)',
+            marginBottom: 16,
+          }}
+        >
           Spawn agent
         </div>
 
@@ -281,11 +398,16 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, default
               autoFocus
               value={cwd}
               onChange={(e) => setCwd(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') onCancel(); }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') submit();
+                if (e.key === 'Escape') onCancel();
+              }}
               placeholder="/path/to/project"
               style={inputStyle}
             />
-            <button onClick={browse} style={browseBtnStyle}>Browse…</button>
+            <button onClick={browse} style={browseBtnStyle}>
+              Browse…
+            </button>
           </div>
         </Field>
 
@@ -293,7 +415,10 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, default
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') onCancel(); }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') submit();
+              if (e.key === 'Escape') onCancel();
+            }}
             placeholder={placeholderName}
             style={inputStyle}
           />
@@ -304,31 +429,61 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, default
             {PROVIDERS.map((p) => {
               const active = provider === p.value;
               const det = providerDetection.find((d) => d.provider === p.value);
-              const dotColor = det === undefined ? 'var(--wks-text-disabled)'
-                : det.found ? '#3db86a'
-                : 'var(--wks-danger, #e05555)';
+              const dotColor =
+                det === undefined
+                  ? 'var(--wks-text-disabled)'
+                  : det.found
+                    ? '#3db86a'
+                    : 'var(--wks-danger, #e05555)';
               return (
                 <button
                   key={p.value}
                   onClick={() => setProvider(p.value)}
-                  title={det ? (det.found ? `Found: ${det.resolvedPath}` : 'Not found on PATH') : 'Checking…'}
+                  title={
+                    det
+                      ? det.found
+                        ? `Found: ${det.resolvedPath}`
+                        : 'Not found on PATH'
+                      : 'Checking…'
+                  }
                   style={{
-                    flex: 1, padding: '6px 8px', borderRadius: 6, cursor: 'pointer',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                    fontSize: '0.72rem', fontFamily: 'inherit', fontWeight: 600,
-                    border: active ? '1px solid var(--wks-accent)' : '1px solid var(--wks-border-input)',
+                    flex: 1,
+                    padding: '6px 8px',
+                    borderRadius: 6,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 6,
+                    fontSize: '0.72rem',
+                    fontFamily: 'inherit',
+                    fontWeight: 600,
+                    border: active
+                      ? '1px solid var(--wks-accent)'
+                      : '1px solid var(--wks-border-input)',
                     background: active ? 'var(--wks-accent-bg)' : 'transparent',
-                    color: active ? 'var(--wks-accent-text, var(--wks-text-primary))' : 'var(--wks-text-tertiary)',
+                    color: active
+                      ? 'var(--wks-accent-text, var(--wks-text-primary))'
+                      : 'var(--wks-text-tertiary)',
                   }}
                 >
-                  <AgentLogo provider={p.value} size={14} style={{ flexShrink: 0, opacity: active ? 1 : 0.75 }} />
+                  <AgentLogo
+                    provider={p.value}
+                    size={14}
+                    style={{ flexShrink: 0, opacity: active ? 1 : 0.75 }}
+                  />
                   {p.label}
                   {p.beta && (
                     <span
                       title="Beta — not yet thoroughly tested"
                       style={{
-                        fontSize: '0.5rem', fontWeight: 700, letterSpacing: '0.04em',
-                        lineHeight: 1, padding: '2px 3px', borderRadius: 3, flexShrink: 0,
+                        fontSize: '0.5rem',
+                        fontWeight: 700,
+                        letterSpacing: '0.04em',
+                        lineHeight: 1,
+                        padding: '2px 3px',
+                        borderRadius: 3,
+                        flexShrink: 0,
                         color: 'var(--wks-warning, #e0a000)',
                         border: '1px solid var(--wks-warning, #e0a000)',
                         opacity: active ? 1 : 0.7,
@@ -337,7 +492,15 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, default
                       BETA
                     </span>
                   )}
-                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: dotColor, flexShrink: 0 }} />
+                  <span
+                    style={{
+                      width: 6,
+                      height: 6,
+                      borderRadius: '50%',
+                      background: dotColor,
+                      flexShrink: 0,
+                    }}
+                  />
                 </button>
               );
             })}
@@ -352,7 +515,13 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, default
                 </div>
               ) : (
                 <div>
-                  <div style={{ color: 'var(--wks-danger, #e05555)', fontSize: '0.62rem', marginBottom: 4 }}>
+                  <div
+                    style={{
+                      color: 'var(--wks-danger, #e05555)',
+                      fontSize: '0.62rem',
+                      marginBottom: 4,
+                    }}
+                  >
                     Not found on PATH — set a custom path or install the CLI
                   </div>
                   <div style={{ display: 'flex', gap: 4 }}>
@@ -360,19 +529,30 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, default
                       value={customBinPath}
                       onChange={(e) => setCustomBinPath(e.target.value)}
                       onBlur={(e) => saveCustomBin(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === 'Enter') saveCustomBin(customBinPath); if (e.key === 'Escape') onCancel(); }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') saveCustomBin(customBinPath);
+                        if (e.key === 'Escape') onCancel();
+                      }}
                       placeholder={`/usr/local/bin/${provider}`}
                       spellCheck={false}
                       style={{ ...inputStyle, fontSize: '0.72rem' }}
                     />
-                    <button onClick={browseCustomBin} style={browseBtnStyle}>Browse…</button>
+                    <button onClick={browseCustomBin} style={browseBtnStyle}>
+                      Browse…
+                    </button>
                   </div>
                 </div>
               )}
               {/* Let the user override even when auto-detected */}
               {currentDetection.found && (
                 <details style={{ marginTop: 4 }}>
-                  <summary style={{ fontSize: '0.6rem', color: 'var(--wks-text-faint)', cursor: 'pointer' }}>
+                  <summary
+                    style={{
+                      fontSize: '0.6rem',
+                      color: 'var(--wks-text-faint)',
+                      cursor: 'pointer',
+                    }}
+                  >
                     Override binary path…
                   </summary>
                   <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
@@ -380,12 +560,17 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, default
                       value={customBinPath}
                       onChange={(e) => setCustomBinPath(e.target.value)}
                       onBlur={(e) => saveCustomBin(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === 'Enter') saveCustomBin(customBinPath); if (e.key === 'Escape') onCancel(); }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') saveCustomBin(customBinPath);
+                        if (e.key === 'Escape') onCancel();
+                      }}
                       placeholder={currentDetection.resolvedPath ?? ''}
                       spellCheck={false}
                       style={{ ...inputStyle, fontSize: '0.72rem' }}
                     />
-                    <button onClick={browseCustomBin} style={browseBtnStyle}>Browse…</button>
+                    <button onClick={browseCustomBin} style={browseBtnStyle}>
+                      Browse…
+                    </button>
                   </div>
                 </details>
               )}
@@ -393,9 +578,17 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, default
           )}
 
           {!isClaude && (
-            <div style={{ color: 'var(--wks-text-faint)', fontSize: '0.62rem', marginTop: 5, lineHeight: 1.4 }}>
+            <div
+              style={{
+                color: 'var(--wks-text-faint)',
+                fontSize: '0.62rem',
+                marginTop: 5,
+                lineHeight: 1.4,
+              }}
+            >
               Runs via claudemon's {PROVIDERS.find((p) => p.value === provider)?.label} adapter —
-              conversation and usage stream into the agent view. Approvals are auto-accepted for now.
+              conversation and usage stream into the agent view. Approvals are auto-accepted for
+              now.
             </div>
           )}
         </Field>
@@ -404,11 +597,20 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, default
           <Field label="Model (optional)">
             {providerModels.length > 0 ? (
               <>
-                <select value={providerSel} onChange={(e) => setProviderSel(e.target.value)} style={inputStyle}>
-                  <option value="">Default ({PROVIDERS.find((p) => p.value === provider)?.label} setting)</option>
+                <select
+                  value={providerSel}
+                  onChange={(e) => setProviderSel(e.target.value)}
+                  style={inputStyle}
+                >
+                  <option value="">
+                    Default ({PROVIDERS.find((p) => p.value === provider)?.label} setting)
+                  </option>
                   <optgroup label="Available">
                     {providerModels.map((m) => (
-                      <option key={m.id} value={m.id}>{m.label}{m.default ? '  — default' : ''}</option>
+                      <option key={m.id} value={m.id}>
+                        {m.label}
+                        {m.default ? '  — default' : ''}
+                      </option>
                     ))}
                   </optgroup>
                   <option value={CUSTOM}>Custom…</option>
@@ -417,7 +619,10 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, default
                   <input
                     value={providerCustom}
                     onChange={(e) => setProviderCustom(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') onCancel(); }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') submit();
+                      if (e.key === 'Escape') onCancel();
+                    }}
                     placeholder={modelPlaceholder(provider)}
                     style={{ ...inputStyle, marginTop: 6 }}
                   />
@@ -427,7 +632,10 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, default
               <input
                 value={providerCustom}
                 onChange={(e) => setProviderCustom(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') onCancel(); }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') submit();
+                  if (e.key === 'Escape') onCancel();
+                }}
                 placeholder={providerModelsLoading ? 'Loading models…' : modelPlaceholder(provider)}
                 style={inputStyle}
               />
@@ -437,7 +645,11 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, default
 
         {isClaude && sessions.length > 0 && (
           <Field label="Resume session (optional)">
-            <select value={resumeSessionId} onChange={(e) => setResumeSessionId(e.target.value)} style={inputStyle}>
+            <select
+              value={resumeSessionId}
+              onChange={(e) => setResumeSessionId(e.target.value)}
+              style={inputStyle}
+            >
               <option value="">Start fresh</option>
               {sessions.map((s) => (
                 <option key={s.sessionId} value={s.sessionId}>
@@ -449,43 +661,60 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, default
         )}
 
         {isClaude && (
-        <Field label="Model">
-          <select value={modelSel} onChange={(e) => setModelSel(e.target.value)} style={inputStyle}>
-            <option value="">Default (Claude Code setting)</option>
-            {aliases.length > 0 && (
-              <optgroup label="Latest">
-                {aliases.map((a) => (
-                  <option key={a.value} value={a.value}>{a.label}</option>
-                ))}
-              </optgroup>
+          <Field label="Model">
+            <select
+              value={modelSel}
+              onChange={(e) => setModelSel(e.target.value)}
+              style={inputStyle}
+            >
+              <option value="">Default (Claude Code setting)</option>
+              {aliases.length > 0 && (
+                <optgroup label="Latest">
+                  {aliases.map((a) => (
+                    <option key={a.value} value={a.value}>
+                      {a.label}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              {seen.length > 0 && (
+                <optgroup label="Seen in sessions">
+                  {seen.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              <option value={CUSTOM}>Custom…</option>
+            </select>
+            {modelSel === CUSTOM && (
+              <input
+                value={customModel}
+                onChange={(e) => setCustomModel(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') submit();
+                  if (e.key === 'Escape') onCancel();
+                }}
+                placeholder="claude-opus-4-8  or  opus"
+                style={{ ...inputStyle, marginTop: 6 }}
+              />
             )}
-            {seen.length > 0 && (
-              <optgroup label="Seen in sessions">
-                {seen.map((m) => (
-                  <option key={m} value={m}>{m}</option>
-                ))}
-              </optgroup>
-            )}
-            <option value={CUSTOM}>Custom…</option>
-          </select>
-          {modelSel === CUSTOM && (
-            <input
-              value={customModel}
-              onChange={(e) => setCustomModel(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') onCancel(); }}
-              placeholder="claude-opus-4-8  or  opus"
-              style={{ ...inputStyle, marginTop: 6 }}
-            />
-          )}
-        </Field>
+          </Field>
         )}
 
         {isClaude && profiles.length > 0 && (
           <Field label="Profile (optional)">
-            <select value={profileId} onChange={(e) => setProfileId(e.target.value)} style={inputStyle}>
+            <select
+              value={profileId}
+              onChange={(e) => setProfileId(e.target.value)}
+              style={inputStyle}
+            >
               <option value="">Default</option>
               {profiles.map((p) => (
-                <option key={p.id} value={p.id}>{p.name}</option>
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
               ))}
             </select>
           </Field>
@@ -493,19 +722,44 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, default
 
         {isClaude && mcpItems.length > 0 && (
           <Field label="MCP servers (optional)">
-            <div style={{
-              display: 'flex', flexDirection: 'column', gap: 2,
-              maxHeight: 132, overflowY: 'auto',
-              border: '1px solid var(--wks-border-input)', borderRadius: 4, padding: 4,
-            }}>
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 2,
+                maxHeight: 132,
+                overflowY: 'auto',
+                border: '1px solid var(--wks-border-input)',
+                borderRadius: 4,
+                padding: 4,
+              }}
+            >
               {mcpItems.map((it) => (
-                <label key={it.id} title={it.description || it.id} style={{
-                  display: 'flex', alignItems: 'center', gap: 8, padding: '4px 6px',
-                  borderRadius: 4, cursor: 'pointer', fontSize: '0.75rem',
-                  color: 'var(--wks-text-primary)',
-                }}>
-                  <input type="checkbox" checked={mcpSel.includes(it.id)} onChange={() => toggleMcp(it.id)} style={{ cursor: 'pointer' }} />
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.title}</span>
+                <label
+                  key={it.id}
+                  title={it.description || it.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    padding: '4px 6px',
+                    borderRadius: 4,
+                    cursor: 'pointer',
+                    fontSize: '0.75rem',
+                    color: 'var(--wks-text-primary)',
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={mcpSel.includes(it.id)}
+                    onChange={() => toggleMcp(it.id)}
+                    style={{ cursor: 'pointer' }}
+                  />
+                  <span
+                    style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                  >
+                    {it.title}
+                  </span>
                   <span style={{ fontSize: '0.6rem', color: 'var(--wks-text-faint)' }}>
                     {it.mcp?.url ? (it.mcp.type === 'sse' ? 'sse' : 'http') : 'stdio'}
                   </span>
@@ -523,16 +777,24 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, default
             <select value={effort} onChange={(e) => setEffort(e.target.value)} style={inputStyle}>
               <option value="">Default</option>
               {capsFor(provider).effort!.levels.map((l) => (
-                <option key={l.id} value={l.id}>{l.label}</option>
+                <option key={l.id} value={l.id}>
+                  {l.label}
+                </option>
               ))}
             </select>
           </Field>
         )}
 
         <Field label="Permissions">
-          <select value={permissionMode} onChange={(e) => setPermissionMode(e.target.value)} style={inputStyle}>
+          <select
+            value={permissionMode}
+            onChange={(e) => setPermissionMode(e.target.value)}
+            style={inputStyle}
+          >
             {capsFor(provider).permissionModes.map((m, i) => (
-              <option key={m.id} value={i === 0 ? '' : m.id}>{m.label}</option>
+              <option key={m.id} value={i === 0 ? '' : m.id}>
+                {m.label}
+              </option>
             ))}
           </select>
           {(permissionMode === 'bypassPermissions' || permissionMode === 'yolo') && (
@@ -545,8 +807,12 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({ defaultCwd, default
         </Field>
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}>
-          <button onClick={onCancel} style={secondaryBtnStyle}>Cancel</button>
-          <button onClick={submit} disabled={!cwd.trim()} style={primaryBtnStyle(!cwd.trim())}>Spawn</button>
+          <button onClick={onCancel} style={secondaryBtnStyle}>
+            Cancel
+          </button>
+          <button onClick={submit} disabled={!cwd.trim()} style={primaryBtnStyle(!cwd.trim())}>
+            Spawn
+          </button>
         </div>
       </div>
     </div>
@@ -569,36 +835,60 @@ function relTime(iso: string): string {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div style={{ marginBottom: 12 }}>
-      <div style={{ fontSize: '0.65rem', color: 'var(--wks-text-muted)', marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: '0.65rem', color: 'var(--wks-text-muted)', marginBottom: 4 }}>
+        {label}
+      </div>
       {children}
     </div>
   );
 }
 
 const inputStyle: React.CSSProperties = {
-  flex: 1, width: '100%', boxSizing: 'border-box',
-  fontSize: '0.8rem', fontFamily: 'inherit',
-  background: 'var(--wks-bg-base)', color: 'var(--wks-text-primary)',
-  border: '1px solid var(--wks-border-input)', borderRadius: 4, padding: '6px 8px',
+  flex: 1,
+  width: '100%',
+  boxSizing: 'border-box',
+  fontSize: '0.8rem',
+  fontFamily: 'inherit',
+  background: 'var(--wks-bg-base)',
+  color: 'var(--wks-text-primary)',
+  border: '1px solid var(--wks-border-input)',
+  borderRadius: 4,
+  padding: '6px 8px',
 };
 
 const browseBtnStyle: React.CSSProperties = {
-  fontSize: '0.75rem', fontFamily: 'inherit', cursor: 'pointer',
-  background: 'var(--wks-bg-input)', color: 'var(--wks-text-tertiary)',
-  border: '1px solid var(--wks-border-input)', borderRadius: 4, padding: '0 10px', whiteSpace: 'nowrap',
+  fontSize: '0.75rem',
+  fontFamily: 'inherit',
+  cursor: 'pointer',
+  background: 'var(--wks-bg-input)',
+  color: 'var(--wks-text-tertiary)',
+  border: '1px solid var(--wks-border-input)',
+  borderRadius: 4,
+  padding: '0 10px',
+  whiteSpace: 'nowrap',
 };
 
 const secondaryBtnStyle: React.CSSProperties = {
-  fontSize: '0.78rem', fontFamily: 'inherit', cursor: 'pointer',
-  background: 'transparent', color: 'var(--wks-text-tertiary)',
-  border: '1px solid var(--wks-border-input)', borderRadius: 4, padding: '6px 14px',
+  fontSize: '0.78rem',
+  fontFamily: 'inherit',
+  cursor: 'pointer',
+  background: 'transparent',
+  color: 'var(--wks-text-tertiary)',
+  border: '1px solid var(--wks-border-input)',
+  borderRadius: 4,
+  padding: '6px 14px',
 };
 
 const primaryBtnStyle = (disabled: boolean): React.CSSProperties => ({
-  fontSize: '0.78rem', fontFamily: 'inherit', cursor: disabled ? 'default' : 'pointer',
+  fontSize: '0.78rem',
+  fontFamily: 'inherit',
+  cursor: disabled ? 'default' : 'pointer',
   background: disabled ? 'var(--wks-bg-input)' : 'var(--wks-accent)',
   color: disabled ? 'var(--wks-text-faint)' : 'var(--wks-text-on-accent, #fff)',
-  border: 'none', borderRadius: 4, padding: '6px 14px', fontWeight: 600,
+  border: 'none',
+  borderRadius: 4,
+  padding: '6px 14px',
+  fontWeight: 600,
 });
 
 export default SpawnAgentDialog;

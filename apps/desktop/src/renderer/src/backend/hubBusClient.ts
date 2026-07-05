@@ -59,12 +59,17 @@ export class HubBusClient {
    *   is derived from `location`. The Electron build passes the local hub's URL
    *   explicitly, since there the renderer isn't served off the bus host.
    */
-  constructor(private readonly token: string, private readonly baseUrl?: string) {}
+  constructor(
+    private readonly token: string,
+    private readonly baseUrl?: string,
+  ) {}
 
   /** Bound so it can be added/removed as a DOM listener. The browser throttles a
    *  backgrounded tab's reconnect timer and suspends its socket, so we also
    *  reconnect proactively the moment the page is shown again or the net is back. */
-  private readonly onWake = (): void => { this.wake(); };
+  private readonly onWake = (): void => {
+    this.wake();
+  };
 
   // ── connection lifecycle ──────────────────────────────────────────────
 
@@ -89,7 +94,10 @@ export class HubBusClient {
       this.ws?.readyState === WebSocket.OPEN && Date.now() - this.lastActivity < STALE_MS;
     if (live) return;
     this.backoff = 500;
-    if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     this.detachSocket();
     this.open();
   }
@@ -106,7 +114,11 @@ export class HubBusClient {
     ws.onmessage = null;
     ws.onerror = null;
     ws.onclose = null;
-    try { ws.close(); } catch { /* ignore */ }
+    try {
+      ws.close();
+    } catch {
+      /* ignore */
+    }
     this.setConnected(false);
   }
 
@@ -121,7 +133,8 @@ export class HubBusClient {
   }
 
   private wsURL(): string {
-    const base = this.baseUrl ?? `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/bus`;
+    const base =
+      this.baseUrl ?? `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/bus`;
     const sep = base.includes('?') ? '&' : '?';
     return `${base}${sep}token=${encodeURIComponent(this.token)}`;
   }
@@ -146,7 +159,9 @@ export class HubBusClient {
       for (const frame of queued) this.ws?.send(frame);
       // Let callers re-sync after a reconnect (skipped on the very first connect,
       // where the mount-time fetches already loaded current state).
-      if (this.hasConnectedOnce) { for (const h of this.reconnectHandlers) h(); }
+      if (this.hasConnectedOnce) {
+        for (const h of this.reconnectHandlers) h();
+      }
       this.hasConnectedOnce = true;
     };
 
@@ -160,7 +175,11 @@ export class HubBusClient {
     };
 
     this.ws.onerror = () => {
-      try { this.ws?.close(); } catch { /* ignore */ }
+      try {
+        this.ws?.close();
+      } catch {
+        /* ignore */
+      }
     };
   }
 
@@ -176,10 +195,18 @@ export class HubBusClient {
 
   stop(): void {
     this.closedByUser = true;
-    if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', this.onWake);
+    if (typeof document !== 'undefined')
+      document.removeEventListener('visibilitychange', this.onWake);
     if (typeof window !== 'undefined') window.removeEventListener('online', this.onWake);
-    if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
-    try { this.ws?.close(); } catch { /* ignore */ }
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    try {
+      this.ws?.close();
+    } catch {
+      /* ignore */
+    }
     this.ws = null;
   }
 
@@ -212,10 +239,18 @@ export class HubBusClient {
     }
     if (f.op === 'result') {
       const c = f.id ? this.calls.get(f.id) : undefined;
-      if (c && f.id) { this.calls.delete(f.id); clearTimeout(c.timer); c.resolve(f.result); }
+      if (c && f.id) {
+        this.calls.delete(f.id);
+        clearTimeout(c.timer);
+        c.resolve(f.result);
+      }
     } else if (f.op === 'error') {
       const c = f.id ? this.calls.get(f.id) : undefined;
-      if (c && f.id) { this.calls.delete(f.id); clearTimeout(c.timer); c.reject(new Error(f.error || 'hub error')); }
+      if (c && f.id) {
+        this.calls.delete(f.id);
+        clearTimeout(c.timer);
+        c.reject(new Error(f.error || 'hub error'));
+      }
     } else if (f.op === 'event' && f.event) {
       this.dispatchEvent(f.event);
     }
@@ -233,9 +268,12 @@ export class HubBusClient {
 
   call<T = unknown>(method: string, params: unknown = {}): Promise<T> {
     return new Promise<T>((resolve, reject) => {
-      const id = 'c' + (++this.callSeq);
+      const id = 'c' + ++this.callSeq;
       const timer = setTimeout(() => {
-        if (this.calls.has(id)) { this.calls.delete(id); reject(new Error(`hub call timeout: ${method}`)); }
+        if (this.calls.has(id)) {
+          this.calls.delete(id);
+          reject(new Error(`hub call timeout: ${method}`));
+        }
       }, CALL_TIMEOUT_MS);
       this.calls.set(id, { resolve: resolve as (v: unknown) => void, reject, timer });
       const frame = JSON.stringify({ op: 'call', id, method, params });

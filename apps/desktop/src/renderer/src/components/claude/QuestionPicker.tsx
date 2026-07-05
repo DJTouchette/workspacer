@@ -10,22 +10,40 @@ export const QuestionPicker: React.FC<{
   const single = questions.length === 1 ? questions[0] : null;
 
   return (
-    <div style={{
-      padding: '12px 14px',
-      margin: '8px 0',
-      borderRadius: 10,
-      backgroundColor: 'var(--wks-accent-bg)',
-      border: `1px solid ${colors.accent}`,
-      animation: 'claudeFadeIn 0.2s ease-out',
-    }}>
+    <div
+      style={{
+        padding: '12px 14px',
+        margin: '8px 0',
+        borderRadius: 10,
+        backgroundColor: 'var(--wks-accent-bg)',
+        border: `1px solid ${colors.accent}`,
+        animation: 'claudeFadeIn 0.2s ease-out',
+      }}
+    >
       {questions.map((q, qi) => (
         <div key={q.question} style={{ marginBottom: qi < questions.length - 1 ? 12 : 0 }}>
           {q.header && (
-            <div style={{ fontSize: '0.6rem', color: colors.mutedDim, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>
+            <div
+              style={{
+                fontSize: '0.6rem',
+                color: colors.mutedDim,
+                fontWeight: 600,
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+                marginBottom: 4,
+              }}
+            >
               {q.header}
             </div>
           )}
-          <div style={{ fontSize: '0.82rem', color: colors.textBright, fontWeight: 600, marginBottom: 8 }}>
+          <div
+            style={{
+              fontSize: '0.82rem',
+              color: colors.textBright,
+              fontWeight: 600,
+              marginBottom: 8,
+            }}
+          >
             {q.question}
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -45,7 +63,9 @@ export const QuestionPicker: React.FC<{
                   fontSize: '0.75rem',
                 }}
               >
-                <span style={{ color: colors.accent, fontWeight: 700, marginRight: 8 }}>{oi + 1}.</span>
+                <span style={{ color: colors.accent, fontWeight: 700, marginRight: 8 }}>
+                  {oi + 1}.
+                </span>
                 <span style={{ fontWeight: 600 }}>{opt.label}</span>
                 {opt.description && (
                   <span style={{ color: colors.muted, marginLeft: 8, fontSize: '0.7rem' }}>

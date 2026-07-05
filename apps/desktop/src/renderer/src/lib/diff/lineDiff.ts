@@ -55,9 +55,8 @@ function diffOps(oldLines: string[], newLines: string[]): Op[] {
   for (let i = 0; i <= n; i++) dp.push(new Uint32Array(m + 1));
   for (let i = n - 1; i >= 0; i--) {
     for (let j = m - 1; j >= 0; j--) {
-      dp[i][j] = oldLines[i] === newLines[j]
-        ? dp[i + 1][j + 1] + 1
-        : Math.max(dp[i + 1][j], dp[i][j + 1]);
+      dp[i][j] =
+        oldLines[i] === newLines[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
     }
   }
 
@@ -67,7 +66,8 @@ function diffOps(oldLines: string[], newLines: string[]): Op[] {
   while (i < n && j < m) {
     if (oldLines[i] === newLines[j]) {
       ops.push({ type: 'eq', text: oldLines[i] });
-      i++; j++;
+      i++;
+      j++;
     } else if (dp[i + 1][j] >= dp[i][j + 1]) {
       ops.push({ type: 'del', text: oldLines[i] });
       i++;
@@ -87,8 +87,10 @@ export function inlineRows(oldLines: string[], newLines: string[]): InlineRow[] 
   let oldNo = 1;
   let newNo = 1;
   for (const op of diffOps(oldLines, newLines)) {
-    if (op.type === 'eq') rows.push({ kind: 'context', text: op.text, oldNo: oldNo++, newNo: newNo++ });
-    else if (op.type === 'del') rows.push({ kind: 'del', text: op.text, oldNo: oldNo++, newNo: null });
+    if (op.type === 'eq')
+      rows.push({ kind: 'context', text: op.text, oldNo: oldNo++, newNo: newNo++ });
+    else if (op.type === 'del')
+      rows.push({ kind: 'del', text: op.text, oldNo: oldNo++, newNo: null });
     else rows.push({ kind: 'add', text: op.text, oldNo: null, newNo: newNo++ });
   }
   return rows;
@@ -116,7 +118,11 @@ export function splitRows(oldLines: string[], newLines: string[]): SplitRow[] {
   for (const op of diffOps(oldLines, newLines)) {
     if (op.type === 'eq') {
       flush();
-      rows.push({ left: { text: op.text, no: oldNo++ }, right: { text: op.text, no: newNo++ }, changed: false });
+      rows.push({
+        left: { text: op.text, no: oldNo++ },
+        right: { text: op.text, no: newNo++ },
+        changed: false,
+      });
     } else if (op.type === 'del') {
       delBuf.push({ text: op.text, no: oldNo++ });
     } else {

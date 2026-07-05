@@ -273,11 +273,15 @@ const FileTree: React.FC<FileTreeProps> = ({
             key={entry.key}
             className="wks-review-row"
             onClick={() => onSelect(entry)}
-            onContextMenu={onOpenInEditor ? (e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              setMenu({ x: e.clientX, y: e.clientY, entry });
-            } : undefined}
+            onContextMenu={
+              onOpenInEditor
+                ? (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setMenu({ x: e.clientX, y: e.clientY, entry });
+                  }
+                : undefined
+            }
             title={title}
             style={{
               display: 'flex',
@@ -348,7 +352,13 @@ const FileTree: React.FC<FileTreeProps> = ({
       {renderChildren(tree, 0)}
       {menu && onOpenInEditor && (
         <ContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)}>
-          <ContextMenuItem label="Open in editor" onClick={() => { onOpenInEditor(menu.entry); setMenu(null); }} />
+          <ContextMenuItem
+            label="Open in editor"
+            onClick={() => {
+              onOpenInEditor(menu.entry);
+              setMenu(null);
+            }}
+          />
         </ContextMenu>
       )}
     </div>

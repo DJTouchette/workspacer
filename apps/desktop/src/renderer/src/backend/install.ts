@@ -30,10 +30,18 @@ const TOKEN_KEY = 'hubToken';
 function resolveToken(): string {
   const fromQuery = new URLSearchParams(location.search).get('token');
   if (fromQuery) {
-    try { sessionStorage.setItem(TOKEN_KEY, fromQuery); } catch { /* ignore */ }
+    try {
+      sessionStorage.setItem(TOKEN_KEY, fromQuery);
+    } catch {
+      /* ignore */
+    }
     return fromQuery;
   }
-  try { return sessionStorage.getItem(TOKEN_KEY) || ''; } catch { return ''; }
+  try {
+    return sessionStorage.getItem(TOKEN_KEY) || '';
+  } catch {
+    return '';
+  }
 }
 
 export async function installBackend(): Promise<void> {
@@ -54,7 +62,9 @@ export async function installBackend(): Promise<void> {
     if (!info.busUrl || !info.token) return; // can't reach the bus — stay on IPC
     window.electronAPI = createBridgedBackend(ipc, info.token, info.busUrl);
     // eslint-disable-next-line no-console
-    console.log(`[backend] desktop running on the hub bus (${info.busUrl}); host-only calls stay on IPC.`);
+    console.log(
+      `[backend] desktop running on the hub bus (${info.busUrl}); host-only calls stay on IPC.`,
+    );
   } catch (err) {
     // getRemoteInfo failed (hub not up yet, etc.) — keep the IPC backend as-is.
     // eslint-disable-next-line no-console

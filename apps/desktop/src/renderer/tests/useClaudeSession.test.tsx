@@ -28,7 +28,9 @@ describe('useClaudeSession — stale state on id change', () => {
     await waitFor(() => expect(result.current.session?.sessionId).toBe('A'));
 
     rerender({ id: 'B' }); // B has no snapshot yet
-    await act(async () => { await Promise.resolve(); });
+    await act(async () => {
+      await Promise.resolve();
+    });
 
     expect(result.current.session).toBeNull();
   });
@@ -42,7 +44,9 @@ describe('useClaudeSession — stale state on id change', () => {
     await waitFor(() => expect(result.current.session?.sessionId).toBe('A'));
 
     rerender({ id: null });
-    await act(async () => { await Promise.resolve(); });
+    await act(async () => {
+      await Promise.resolve();
+    });
 
     expect(result.current.session).toBeNull();
   });

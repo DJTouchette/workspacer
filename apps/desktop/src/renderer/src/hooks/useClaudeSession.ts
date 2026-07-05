@@ -25,7 +25,10 @@ const INACTIVE_FLUSH_MS = 1000;
  * Subscribes to Claude session state updates pushed from the main process.
  * Updates are emitted by `claudeSessionStore` whenever a hook event arrives.
  */
-export function useClaudeSession({ ptySessionId, active = true }: UseClaudeSessionOptions): UseClaudeSessionReturn {
+export function useClaudeSession({
+  ptySessionId,
+  active = true,
+}: UseClaudeSessionOptions): UseClaudeSessionReturn {
   const [session, setSession] = useState<ClaudeSessionSnapshot | null>(null);
   const idRef = useRef(ptySessionId);
   idRef.current = ptySessionId;

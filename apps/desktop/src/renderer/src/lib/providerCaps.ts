@@ -132,7 +132,10 @@ const EXTRA_MODE_LABELS: Record<string, string> = {
 };
 
 /** Display label for a permission-mode id ('acceptEdits' → 'Accept edits'). */
-export function permissionModeLabel(provider: AgentProvider | undefined, id: string | undefined): string {
+export function permissionModeLabel(
+  provider: AgentProvider | undefined,
+  id: string | undefined,
+): string {
   const caps = capsFor(provider);
   const fallback = caps.permissionModes[0];
   if (!id) return fallback?.label ?? 'Ask to approve';

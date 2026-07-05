@@ -51,7 +51,9 @@ export async function startClaudemonEventBridge(): Promise<void> {
 
 export function stopClaudemonEventBridge(): void {
   if (abort) {
-    try { abort.abort(); } catch {}
+    try {
+      abort.abort();
+    } catch {}
     abort = null;
   }
 }

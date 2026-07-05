@@ -53,10 +53,7 @@ export interface ConsumeSseStreamOptions {
  * (capped at `backoffMaxMs`) then reconnects, unless the signal is already
  * aborted.
  */
-export async function consumeSseStream(
-  url: string,
-  opts: ConsumeSseStreamOptions,
-): Promise<void> {
+export async function consumeSseStream(url: string, opts: ConsumeSseStreamOptions): Promise<void> {
   const {
     signal,
     accept = 'text/event-stream',

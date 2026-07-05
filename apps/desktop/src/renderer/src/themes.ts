@@ -1332,7 +1332,11 @@ function parseRgb(color: string): [number, number, number] | null {
   const hex = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(c);
   if (hex) {
     let h = hex[1];
-    if (h.length === 3) h = h.split('').map((ch) => ch + ch).join('');
+    if (h.length === 3)
+      h = h
+        .split('')
+        .map((ch) => ch + ch)
+        .join('');
     return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
   }
   const m = /rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/.exec(c);
@@ -1351,7 +1355,16 @@ export function toRgba(color: string, alpha: number): string {
 export function toHex(color: string): string {
   const rgb = parseRgb(color);
   if (!rgb) return '#000000';
-  return '#' + rgb.map((c) => Math.max(0, Math.min(255, Math.round(c))).toString(16).padStart(2, '0')).join('');
+  return (
+    '#' +
+    rgb
+      .map((c) =>
+        Math.max(0, Math.min(255, Math.round(c)))
+          .toString(16)
+          .padStart(2, '0'),
+      )
+      .join('')
+  );
 }
 
 export function cssVarsOf(theme: Theme): Record<string, string> {
@@ -1418,7 +1431,8 @@ export function titleBarOverlayOf(theme: Theme): { color: string; symbolColor: s
   const bg = parseRgb(theme.bgBase);
   if (fg && bg) {
     const blend = fg.map((c, i) => Math.round(c * alpha + bg[i] * (1 - alpha)));
-    const color = '#' + blend.map((c) => Math.max(0, Math.min(255, c)).toString(16).padStart(2, '0')).join('');
+    const color =
+      '#' + blend.map((c) => Math.max(0, Math.min(255, c)).toString(16).padStart(2, '0')).join('');
     return { color, symbolColor: toHex(theme.textSecondary) };
   }
   return { color: toHex(theme.bgElevated), symbolColor: toHex(theme.textSecondary) };
@@ -1436,7 +1450,9 @@ export function isLightTheme(theme: Theme): boolean {
   } else {
     const rgb = /rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/.exec(theme.bgBase);
     if (!rgb) return false; // unknown format — assume dark
-    r = +rgb[1]; g = +rgb[2]; b = +rgb[3];
+    r = +rgb[1];
+    g = +rgb[2];
+    b = +rgb[3];
   }
   return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 > 0.5;
 }

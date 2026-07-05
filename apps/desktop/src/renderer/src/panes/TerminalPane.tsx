@@ -7,7 +7,12 @@ import { usePTY } from '../hooks/usePTY';
 import { useConfig, Config } from '../hooks/useConfig';
 import { useTheme } from '../hooks/useTheme';
 import { claudeColors as colors, ensureKeyframes } from '../components/claude-shared';
-import { quoteFontFamily, fitWithRetry, isTermVisible, refitAndRepaint } from '../lib/terminalUtils';
+import {
+  quoteFontFamily,
+  fitWithRetry,
+  isTermVisible,
+  refitAndRepaint,
+} from '../lib/terminalUtils';
 
 /**
  * MEMORY: dispose the xterm.js instance (canvas + scrollback buffer) of a pane
@@ -49,7 +54,15 @@ interface TerminalPaneProps {
   onPtyReady?: (paneId: string, ptySessionId: string) => void;
 }
 
-const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, shell, cwd, initialCommand, onPtyReady }) => {
+const TerminalPane: React.FC<TerminalPaneProps> = ({
+  paneId,
+  title,
+  isActive,
+  shell,
+  cwd,
+  initialCommand,
+  onPtyReady,
+}) => {
   const ranInitialRef = useRef(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
@@ -114,173 +127,187 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
   // DISPOSE_HIDDEN_TERMINALS is on — for re-creating after an off-screen
   // disposal. `isFirstBuild` is true only for the very first build, which is the
   // one that starts the PTY; re-creations re-attach to the already-live PTY.
-  const buildTerminal = useCallback((container: HTMLDivElement, isFirstBuild: boolean): (() => void) => {
-    const termCfgNow = termCfgRef.current;
+  const buildTerminal = useCallback(
+    (container: HTMLDivElement, isFirstBuild: boolean): (() => void) => {
+      const termCfgNow = termCfgRef.current;
 
-    const term = new Terminal({
-      cursorBlink: termCfgNow.cursorBlink,
-      fontSize: termCfgNow.fontSize,
-      fontFamily: quoteFontFamily(termCfgNow.fontFamily),
-      theme: terminalThemeRef.current,
-      allowProposedApi: true,
-      scrollback: termCfgNow.scrollback,
-      convertEol: false,
-      cursorStyle: termCfgNow.cursorStyle as 'block' | 'underline' | 'bar',
-      drawBoldTextInBrightColors: true,
-    });
+      const term = new Terminal({
+        cursorBlink: termCfgNow.cursorBlink,
+        fontSize: termCfgNow.fontSize,
+        fontFamily: quoteFontFamily(termCfgNow.fontFamily),
+        theme: terminalThemeRef.current,
+        allowProposedApi: true,
+        scrollback: termCfgNow.scrollback,
+        convertEol: false,
+        cursorStyle: termCfgNow.cursorStyle as 'block' | 'underline' | 'bar',
+        drawBoldTextInBrightColors: true,
+      });
 
-    const fitAddon = new FitAddon();
-    term.loadAddon(fitAddon);
+      const fitAddon = new FitAddon();
+      term.loadAddon(fitAddon);
 
-    terminalRef.current = term;
-    fitAddonRef.current = fitAddon;
+      terminalRef.current = term;
+      fitAddonRef.current = fitAddon;
 
-    // Use web-fonts addon to ensure @font-face fonts are loaded before canvas renders
-    const webFontsAddon = new WebFontsAddon();
-    term.loadAddon(webFontsAddon);
+      // Use web-fonts addon to ensure @font-face fonts are loaded before canvas renders
+      const webFontsAddon = new WebFontsAddon();
+      term.loadAddon(webFontsAddon);
 
-    webFontsAddon.loadFonts().then(() => {
-      term.open(container);
-      try { fitAddon.fit(); } catch {}
-      if (isFirstBuild && !ptyStartedRef.current) {
-        // NOW create the PTY with the correct dimensions
-        ptyStartedRef.current = true;
-        startPTY(term.cols, term.rows);
-      } else {
-        // Re-attaching to an already-live PTY after an off-screen disposal.
-        // Push the current geometry so the daemon reflows correctly. The
-        // daemon replays its output ring buffer to a NEW byte-stream
-        // subscriber — but usePTY does not currently re-subscribe on
-        // attachToTerminal, so prior contents only return once usePTY grows a
-        // resubscribe path (see DISPOSE_HIDDEN_TERMINALS note above).
-        resize(term.cols, term.rows);
-      }
-      // The synchronous term.focus() below runs before the terminal is opened
-      // into the DOM, so it's a no-op for a freshly-created pane (e.g. from the
-      // command palette). Re-assert focus here now that it's actually attached.
-      if (isActiveRef.current) requestAnimationFrame(() => term.focus());
-    });
+      webFontsAddon.loadFonts().then(() => {
+        term.open(container);
+        try {
+          fitAddon.fit();
+        } catch {}
+        if (isFirstBuild && !ptyStartedRef.current) {
+          // NOW create the PTY with the correct dimensions
+          ptyStartedRef.current = true;
+          startPTY(term.cols, term.rows);
+        } else {
+          // Re-attaching to an already-live PTY after an off-screen disposal.
+          // Push the current geometry so the daemon reflows correctly. The
+          // daemon replays its output ring buffer to a NEW byte-stream
+          // subscriber — but usePTY does not currently re-subscribe on
+          // attachToTerminal, so prior contents only return once usePTY grows a
+          // resubscribe path (see DISPOSE_HIDDEN_TERMINALS note above).
+          resize(term.cols, term.rows);
+        }
+        // The synchronous term.focus() below runs before the terminal is opened
+        // into the DOM, so it's a no-op for a freshly-created pane (e.g. from the
+        // command palette). Re-assert focus here now that it's actually attached.
+        if (isActiveRef.current) requestAnimationFrame(() => term.focus());
+      });
 
-    // Tell xterm to NOT process keys that the app handles.
-    // Return false = xterm ignores the key, letting our window capture handler take it.
-    term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
-      // Ctrl+Shift+C — copy from terminal
-      if (e.ctrlKey && e.shiftKey && e.key === 'C') {
-        e.preventDefault();
-        const sel = term.getSelection();
-        if (sel) navigator.clipboard.writeText(sel);
-        return false;
-      }
-      // Ctrl+Shift+V — paste. Let xterm's native paste event deliver the text
-      // (single insert, bracketed-paste aware); return false only to suppress ^V.
-      if (e.ctrlKey && e.shiftKey && e.key === 'V') {
-        return false;
-      }
-      // Ctrl+C — copy if there's a selection, otherwise let xterm send SIGINT
-      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'c') {
-        const sel = term.getSelection();
-        if (sel) {
+      // Tell xterm to NOT process keys that the app handles.
+      // Return false = xterm ignores the key, letting our window capture handler take it.
+      term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
+        // Ctrl+Shift+C — copy from terminal
+        if (e.ctrlKey && e.shiftKey && e.key === 'C') {
           e.preventDefault();
-          navigator.clipboard.writeText(sel);
-          term.clearSelection();
+          const sel = term.getSelection();
+          if (sel) navigator.clipboard.writeText(sel);
           return false;
         }
-        return true; // no selection — let xterm send ^C
-      }
-      // Ctrl+V — paste. Handled by xterm's native paste event (single insert,
-      // bracketed-paste aware); return false so xterm doesn't also emit ^V.
-      // Manual clipboard.readText + write here caused a double paste, because
-      // preventDefault on keydown does not stop the browser's native paste event.
-      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'v') {
-        return false;
-      }
-      // Ctrl+T/B/W/D, Ctrl+/, Ctrl+,, Ctrl+S, Ctrl+K, Ctrl+` (toggle terminal) — app-level
-      if (e.ctrlKey && !e.altKey && !e.shiftKey && ['t', 'b', 'w', 'd', '/', '?', ',', 's', 'k', '`'].includes(e.key)) {
-        return false;
-      }
-      // Ctrl+1-9 — jump to pane
-      if (e.ctrlKey && !e.altKey && !e.shiftKey && /^[1-9]$/.test(e.key)) {
-        return false;
-      }
-      // Alt+Arrow — sub-pane navigation
-      if (e.altKey && !e.ctrlKey && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
-        return false;
-      }
-      // Ctrl+Alt+Arrow — tab navigation
-      if (e.ctrlKey && e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
-        return false;
-      }
-      // Ctrl+Shift combos (other than C/V above) — resize/move pane
-      if (e.ctrlKey && e.shiftKey) {
-        return false;
-      }
-      // F2 — rename
-      if (e.key === 'F2') {
-        return false;
-      }
-      // Let xterm handle everything else
-      return true;
-    });
-
-    // Fit multiple times during startup — the container needs time to reach
-    // final size. Guard on the container so a pane created under a hidden agent
-    // doesn't fit a zero-size box.
-    fitWithRetry(fitAddon, container);
-
-    // Point the PTY output stream at this xterm instance. On a re-build this
-    // repoints usePTY's term ref so live bytes flow to the new instance.
-    attachToTerminal(term);
-
-    const onDataDisposable = term.onData((data) => {
-      write(data);
-    });
-
-    const onBinaryDisposable = term.onBinary((data) => {
-      write(data);
-    });
-
-    const observer = new ResizeObserver(() => {
-      // Skip while hidden: toggling a workspace to display:none fires a 0×0
-      // resize, and fitting that collapses the grid and garbles the PTY on show.
-      if (!isTermVisible(container)) return;
-      requestAnimationFrame(() => {
-        try {
-          if (fitAddonRef.current) {
-            fitAddonRef.current.fit();
-          }
-        } catch {
-          // Ignore fit errors during resize
+        // Ctrl+Shift+V — paste. Let xterm's native paste event deliver the text
+        // (single insert, bracketed-paste aware); return false only to suppress ^V.
+        if (e.ctrlKey && e.shiftKey && e.key === 'V') {
+          return false;
         }
+        // Ctrl+C — copy if there's a selection, otherwise let xterm send SIGINT
+        if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'c') {
+          const sel = term.getSelection();
+          if (sel) {
+            e.preventDefault();
+            navigator.clipboard.writeText(sel);
+            term.clearSelection();
+            return false;
+          }
+          return true; // no selection — let xterm send ^C
+        }
+        // Ctrl+V — paste. Handled by xterm's native paste event (single insert,
+        // bracketed-paste aware); return false so xterm doesn't also emit ^V.
+        // Manual clipboard.readText + write here caused a double paste, because
+        // preventDefault on keydown does not stop the browser's native paste event.
+        if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'v') {
+          return false;
+        }
+        // Ctrl+T/B/W/D, Ctrl+/, Ctrl+,, Ctrl+S, Ctrl+K, Ctrl+` (toggle terminal) — app-level
+        if (
+          e.ctrlKey &&
+          !e.altKey &&
+          !e.shiftKey &&
+          ['t', 'b', 'w', 'd', '/', '?', ',', 's', 'k', '`'].includes(e.key)
+        ) {
+          return false;
+        }
+        // Ctrl+1-9 — jump to pane
+        if (e.ctrlKey && !e.altKey && !e.shiftKey && /^[1-9]$/.test(e.key)) {
+          return false;
+        }
+        // Alt+Arrow — sub-pane navigation
+        if (
+          e.altKey &&
+          !e.ctrlKey &&
+          ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)
+        ) {
+          return false;
+        }
+        // Ctrl+Alt+Arrow — tab navigation
+        if (e.ctrlKey && e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+          return false;
+        }
+        // Ctrl+Shift combos (other than C/V above) — resize/move pane
+        if (e.ctrlKey && e.shiftKey) {
+          return false;
+        }
+        // F2 — rename
+        if (e.key === 'F2') {
+          return false;
+        }
+        // Let xterm handle everything else
+        return true;
       });
-    });
-    observer.observe(container);
-    resizeObserverRef.current = observer;
 
-    const onResizeDisposable = term.onResize(({ cols, rows }) => {
-      resize(cols, rows);
-    });
+      // Fit multiple times during startup — the container needs time to reach
+      // final size. Guard on the container so a pane created under a hidden agent
+      // doesn't fit a zero-size box.
+      fitWithRetry(fitAddon, container);
 
-    term.focus();
+      // Point the PTY output stream at this xterm instance. On a re-build this
+      // repoints usePTY's term ref so live bytes flow to the new instance.
+      attachToTerminal(term);
 
-    // Per-instance cleanup: tears down THIS xterm only. Does NOT touch the PTY.
-    return () => {
-      onDataDisposable.dispose();
-      onBinaryDisposable.dispose();
-      onResizeDisposable.dispose();
+      const onDataDisposable = term.onData((data) => {
+        write(data);
+      });
 
-      if (resizeObserverRef.current) {
-        resizeObserverRef.current.disconnect();
-        resizeObserverRef.current = null;
-      }
+      const onBinaryDisposable = term.onBinary((data) => {
+        write(data);
+      });
 
-      term.dispose();
-      terminalRef.current = null;
-      fitAddonRef.current = null;
-    };
-    // termCfg/theme are read via refs so this callback stays stable across
-    // config changes; the deps are the stable usePTY functions.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [attachToTerminal, write, resize, startPTY]);
+      const observer = new ResizeObserver(() => {
+        // Skip while hidden: toggling a workspace to display:none fires a 0×0
+        // resize, and fitting that collapses the grid and garbles the PTY on show.
+        if (!isTermVisible(container)) return;
+        requestAnimationFrame(() => {
+          try {
+            if (fitAddonRef.current) {
+              fitAddonRef.current.fit();
+            }
+          } catch {
+            // Ignore fit errors during resize
+          }
+        });
+      });
+      observer.observe(container);
+      resizeObserverRef.current = observer;
+
+      const onResizeDisposable = term.onResize(({ cols, rows }) => {
+        resize(cols, rows);
+      });
+
+      term.focus();
+
+      // Per-instance cleanup: tears down THIS xterm only. Does NOT touch the PTY.
+      return () => {
+        onDataDisposable.dispose();
+        onBinaryDisposable.dispose();
+        onResizeDisposable.dispose();
+
+        if (resizeObserverRef.current) {
+          resizeObserverRef.current.disconnect();
+          resizeObserverRef.current = null;
+        }
+
+        term.dispose();
+        terminalRef.current = null;
+        fitAddonRef.current = null;
+      };
+      // termCfg/theme are read via refs so this callback stays stable across
+      // config changes; the deps are the stable usePTY functions.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    },
+    [attachToTerminal, write, resize, startPTY],
+  );
 
   // Dispose the live xterm instance (canvas + scrollback) while keeping the DOM
   // container and the PTY alive. Safe to call when already disposed.
@@ -342,24 +369,27 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
       }
     };
 
-    const observer = new IntersectionObserver((entries) => {
-      const entry = entries[entries.length - 1];
-      if (!entry) return;
-      const onScreen = entry.isIntersecting && entry.intersectionRatio > 0;
-      if (onScreen) {
-        // Back in view: cancel any pending disposal and rebuild if needed.
-        clearHiddenTimer();
-        if (xtermDisposedRef.current) recreateTerminal();
-      } else {
-        // Off-screen: arm the disposal timer (idempotent — don't re-arm if
-        // already pending or already disposed).
-        if (xtermDisposedRef.current || hiddenTimerRef.current) return;
-        hiddenTimerRef.current = setTimeout(() => {
-          hiddenTimerRef.current = null;
-          disposeTerminal();
-        }, DISPOSE_HIDDEN_TERMINALS_MS);
-      }
-    }, { threshold: 0 });
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[entries.length - 1];
+        if (!entry) return;
+        const onScreen = entry.isIntersecting && entry.intersectionRatio > 0;
+        if (onScreen) {
+          // Back in view: cancel any pending disposal and rebuild if needed.
+          clearHiddenTimer();
+          if (xtermDisposedRef.current) recreateTerminal();
+        } else {
+          // Off-screen: arm the disposal timer (idempotent — don't re-arm if
+          // already pending or already disposed).
+          if (xtermDisposedRef.current || hiddenTimerRef.current) return;
+          hiddenTimerRef.current = setTimeout(() => {
+            hiddenTimerRef.current = null;
+            disposeTerminal();
+          }, DISPOSE_HIDDEN_TERMINALS_MS);
+        }
+      },
+      { threshold: 0 },
+    );
 
     observer.observe(container);
     intersectionObserverRef.current = observer;
@@ -380,10 +410,12 @@ const TerminalPane: React.FC<TerminalPaneProps> = ({ paneId, title, isActive, sh
       // Re-fit + repaint when pane becomes active — the workspace was likely
       // just toggled back from display:none, leaving stale glyphs. Two frames
       // so layout settles before fitting.
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        refitAndRepaint(fitAddonRef.current, term, containerRef.current);
-        resize(term.cols, term.rows);
-      }));
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          refitAndRepaint(fitAddonRef.current, term, containerRef.current);
+          resize(term.cols, term.rows);
+        }),
+      );
     } else {
       term.blur();
     }

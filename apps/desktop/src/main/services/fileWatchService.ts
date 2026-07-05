@@ -81,8 +81,16 @@ export function startWatch(filePath: string, onEvent?: EmitSink): void {
         entry.timer = setTimeout(() => {
           entry.timer = null;
           const ev: FileChangeEvent = { path: resolved, eventType: entry.lastEventType };
-          try { emit(ev); } catch { /* sink must not break the watcher */ }
-          try { onEvent?.(ev); } catch { /* ditto */ }
+          try {
+            emit(ev);
+          } catch {
+            /* sink must not break the watcher */
+          }
+          try {
+            onEvent?.(ev);
+          } catch {
+            /* ditto */
+          }
         }, DEBOUNCE_MS);
       } catch (err) {
         // Keep the watcher alive, but make the failure visible — swallowing it
@@ -117,7 +125,14 @@ export function stopWatch(filePath: string): void {
   if (!entry) return;
   entry.refcount -= 1;
   if (entry.refcount > 0) return;
-  if (entry.timer) { clearTimeout(entry.timer); entry.timer = null; }
-  try { entry.watcher.close(); } catch { /* already closed */ }
+  if (entry.timer) {
+    clearTimeout(entry.timer);
+    entry.timer = null;
+  }
+  try {
+    entry.watcher.close();
+  } catch {
+    /* already closed */
+  }
   watches.delete(resolved);
 }

@@ -10,7 +10,11 @@ export interface AskPaneProps {
   agents: AgentWorkspace[];
   /** Spawn a supervisor agent and send it the question (or, with no question,
    *  a plain fleet agent staged to start its watch loop). Returns new agent id. */
-  spawnSupervisor: (opts: { question?: string; parentId?: string; provider?: AgentProvider }) => Promise<string>;
+  spawnSupervisor: (opts: {
+    question?: string;
+    parentId?: string;
+    provider?: AgentProvider;
+  }) => Promise<string>;
   /** Navigate the app to a given agent workspace by its AgentWorkspace.id. */
   onJumpToAgent: (agentId: string) => void;
   /** When the Ask pane was opened scoped to a specific agent (AgentWorkspace.id),
@@ -47,7 +51,8 @@ const SupervisorRow: React.FC<{
       transition: 'background 0.1s ease',
     }}
     onMouseEnter={(e) => {
-      (e.currentTarget as HTMLElement).style.background = 'var(--wks-bg-selected, rgba(74,158,255,0.08))';
+      (e.currentTarget as HTMLElement).style.background =
+        'var(--wks-bg-selected, rgba(74,158,255,0.08))';
     }}
     onMouseLeave={(e) => {
       (e.currentTarget as HTMLElement).style.background = 'transparent';
@@ -98,7 +103,12 @@ const SUP_PROVIDERS: { value: AgentProvider; label: string }[] = [
   { value: 'pi', label: 'Pi' },
 ];
 
-const AskPane: React.FC<AskPaneProps> = ({ agents, spawnSupervisor, onJumpToAgent, scopeAgentId }) => {
+const AskPane: React.FC<AskPaneProps> = ({
+  agents,
+  spawnSupervisor,
+  onJumpToAgent,
+  scopeAgentId,
+}) => {
   const prefix = useMemo(() => scopePrefix(scopeAgentId, agents), [scopeAgentId, agents]);
   const { config } = useConfig();
 
@@ -118,10 +128,7 @@ const AskPane: React.FC<AskPaneProps> = ({ agents, spawnSupervisor, onJumpToAgen
     textareaRef.current?.focus();
   }, []);
 
-  const supervisors = useMemo(
-    () => agents.filter((a) => a.kind === 'supervisor'),
-    [agents],
-  );
+  const supervisors = useMemo(() => agents.filter((a) => a.kind === 'supervisor'), [agents]);
 
   // Resolve session refs in supervisor names for potential future rendering use.
   // (kept here so the import of findSessionRefs is exercised)
@@ -328,15 +335,29 @@ const AskPane: React.FC<AskPaneProps> = ({ agents, spawnSupervisor, onJumpToAgen
                   onClick={() => setProvider(p.value)}
                   disabled={spawning}
                   style={{
-                    display: 'inline-flex', alignItems: 'center', gap: 5,
-                    padding: '4px 9px', borderRadius: 6, cursor: spawning ? 'default' : 'pointer',
-                    fontSize: '0.7rem', fontFamily: 'inherit', fontWeight: 600,
-                    border: active ? '1px solid var(--wks-accent)' : '1px solid var(--wks-border-input)',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 5,
+                    padding: '4px 9px',
+                    borderRadius: 6,
+                    cursor: spawning ? 'default' : 'pointer',
+                    fontSize: '0.7rem',
+                    fontFamily: 'inherit',
+                    fontWeight: 600,
+                    border: active
+                      ? '1px solid var(--wks-accent)'
+                      : '1px solid var(--wks-border-input)',
                     background: active ? 'var(--wks-accent-bg)' : 'transparent',
-                    color: active ? 'var(--wks-accent-text, var(--wks-text-primary))' : 'var(--wks-text-tertiary)',
+                    color: active
+                      ? 'var(--wks-accent-text, var(--wks-text-primary))'
+                      : 'var(--wks-text-tertiary)',
                   }}
                 >
-                  <AgentLogo provider={p.value} size={13} style={{ flexShrink: 0, opacity: active ? 1 : 0.75 }} />
+                  <AgentLogo
+                    provider={p.value}
+                    size={13}
+                    style={{ flexShrink: 0, opacity: active ? 1 : 0.75 }}
+                  />
                   {p.label}
                 </button>
               );
@@ -404,8 +425,12 @@ const AskPane: React.FC<AskPaneProps> = ({ agents, spawnSupervisor, onJumpToAgen
               padding: '8px 20px',
               borderRadius: 8,
               border: 'none',
-              background: canSubmit ? 'var(--wks-accent, #4a9eff)' : 'var(--wks-border-subtle, rgba(255,255,255,0.08))',
-              color: canSubmit ? 'var(--wks-text-on-accent, #0d0d10)' : 'var(--wks-text-faint, #666)',
+              background: canSubmit
+                ? 'var(--wks-accent, #4a9eff)'
+                : 'var(--wks-border-subtle, rgba(255,255,255,0.08))',
+              color: canSubmit
+                ? 'var(--wks-text-on-accent, #0d0d10)'
+                : 'var(--wks-text-faint, #666)',
               fontSize: '0.78rem',
               fontWeight: 700,
               fontFamily: 'inherit',

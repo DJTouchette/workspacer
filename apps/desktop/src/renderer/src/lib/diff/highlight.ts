@@ -152,9 +152,9 @@ export function langForPath(path: string): string | null {
 export function langForInfo(info: string): string | null {
   const id = info.trim().toLowerCase().split(/\s+/)[0];
   if (!id) return null;
-  if (id in LANG_LOADERS) return id;        // already a grammar id (typescript, tsx, …)
+  if (id in LANG_LOADERS) return id; // already a grammar id (typescript, tsx, …)
   if (id === 'shell' || id === 'console') return 'shellscript';
-  return LANG_BY_EXT[id] ?? null;           // treat as extension / alias (ts, py, sh, …)
+  return LANG_BY_EXT[id] ?? null; // treat as extension / alias (ts, py, sh, …)
 }
 
 const DARK_THEME = 'github-dark-default';
@@ -192,8 +192,13 @@ function getHighlighter(): Promise<HighlighterCore> {
     // Kick off the cpp grammar (637 kB) during an idle frame so the parse cost
     // doesn't block the first C++ diff render.
     highlighterPromise.then(() => {
-      const ric = typeof requestIdleCallback !== 'undefined' ? requestIdleCallback : (cb: () => void) => setTimeout(cb, 200);
-      ric(() => { ensureLang('cpp').catch(() => {}); });
+      const ric =
+        typeof requestIdleCallback !== 'undefined'
+          ? requestIdleCallback
+          : (cb: () => void) => setTimeout(cb, 200);
+      ric(() => {
+        ensureLang('cpp').catch(() => {});
+      });
     });
   }
   return highlighterPromise;

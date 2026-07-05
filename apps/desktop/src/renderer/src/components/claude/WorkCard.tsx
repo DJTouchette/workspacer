@@ -22,8 +22,15 @@ interface WorkSummary {
 /** Collapse a run of tool calls into a one-line human summary. */
 export function summarizeWork(calls: ToolCall[]): WorkSummary {
   const editedFiles = new Set<string>();
-  let reads = 0, cmds = 0, searches = 0, agents = 0, workflows = 0, other = 0;
-  let added = 0, removed = 0, failed = 0;
+  let reads = 0,
+    cmds = 0,
+    searches = 0,
+    agents = 0,
+    workflows = 0,
+    other = 0;
+  let added = 0,
+    removed = 0,
+    failed = 0;
 
   for (const tc of calls) {
     if (tc.status === 'failed') failed++;
@@ -52,7 +59,8 @@ export function summarizeWork(calls: ToolCall[]): WorkSummary {
   }
 
   const parts: string[] = [];
-  if (editedFiles.size > 0) parts.push(`${editedFiles.size} file${editedFiles.size !== 1 ? 's' : ''} changed`);
+  if (editedFiles.size > 0)
+    parts.push(`${editedFiles.size} file${editedFiles.size !== 1 ? 's' : ''} changed`);
   if (cmds > 0) parts.push(`${cmds} command${cmds !== 1 ? 's' : ''}`);
   if (reads > 0) parts.push(`read ${reads}`);
   if (searches > 0) parts.push(`${searches} search${searches !== 1 ? 'es' : ''}`);
@@ -89,7 +97,7 @@ const WorkCardInner: React.FC<{
   // card (surfaced even when collapsed); don't auto-expand into the raw tool
   // list, which is the "bunch of tool calls" flood during a workflow.
   const hasOrchestration = useMemo(
-    () => toolCalls.some(tc => workflowByToolId?.has(tc.id) || subagentByToolId?.has(tc.id)),
+    () => toolCalls.some((tc) => workflowByToolId?.has(tc.id) || subagentByToolId?.has(tc.id)),
     [toolCalls, workflowByToolId, subagentByToolId],
   );
   // Open while this is the live/last card; collapse once a newer card supersedes
@@ -99,13 +107,17 @@ const WorkCardInner: React.FC<{
   const [filesOpen, setFilesOpen] = useState(false);
   const wasActive = useRef(active);
   useEffect(() => {
-    if (wasActive.current && !active) { setExpanded(false); setFilesOpen(false); }
-    else if (!wasActive.current && active) { setExpanded(true); }
+    if (wasActive.current && !active) {
+      setExpanded(false);
+      setFilesOpen(false);
+    } else if (!wasActive.current && active) {
+      setExpanded(true);
+    }
     wasActive.current = active;
   }, [active]);
 
   const summary = useMemo(() => summarizeWork(toolCalls), [toolCalls]);
-  const anyRunning = live || toolCalls.some(tc => tc.status === 'running');
+  const anyRunning = live || toolCalls.some((tc) => tc.status === 'running');
 
   // Running agent/workflow cards surface even while the card is collapsed —
   // ongoing parallel work shouldn't hide behind a closed disclosure.
@@ -122,16 +134,18 @@ const WorkCardInner: React.FC<{
   }, [expanded, toolCalls, subagentByToolId, workflowByToolId]);
 
   return (
-    <div style={{
-      margin: '4px 0 10px 0',
-      borderRadius: 8,
-      border: `1px solid ${colors.borderSubtle}`,
-      backgroundColor: 'rgba(255,255,255,0.015)',
-      overflow: 'hidden',
-      animation: 'claudeFadeIn 0.2s ease-out',
-    }}>
+    <div
+      style={{
+        margin: '4px 0 10px 0',
+        borderRadius: 8,
+        border: `1px solid ${colors.borderSubtle}`,
+        backgroundColor: 'rgba(255,255,255,0.015)',
+        overflow: 'hidden',
+        animation: 'claudeFadeIn 0.2s ease-out',
+      }}
+    >
       <div
-        onClick={() => setExpanded(e => !e)}
+        onClick={() => setExpanded((e) => !e)}
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -143,14 +157,18 @@ const WorkCardInner: React.FC<{
           color: colors.muted,
         }}
       >
-        {anyRunning ? <AgentSpinner /> : (
-          <span style={{
-            color: summary.failed > 0 ? colors.error : colors.success,
-            fontSize: '0.7rem',
-            width: 12,
-            textAlign: 'center',
-            flexShrink: 0,
-          }}>
+        {anyRunning ? (
+          <AgentSpinner />
+        ) : (
+          <span
+            style={{
+              color: summary.failed > 0 ? colors.error : colors.success,
+              fontSize: '0.7rem',
+              width: 12,
+              textAlign: 'center',
+              flexShrink: 0,
+            }}
+          >
             {summary.failed > 0 ? '✗' : '✓'}
           </span>
         )}
@@ -159,7 +177,10 @@ const WorkCardInner: React.FC<{
         </span>
         {summary.editedFiles.length > 0 && (
           <span
-            onClick={e => { e.stopPropagation(); setFilesOpen(f => !f); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              setFilesOpen((f) => !f);
+            }}
             title={filesOpen ? 'Hide changed files' : 'Show changed files'}
             style={{
               color: filesOpen ? colors.accent : colors.muted,
@@ -176,34 +197,51 @@ const WorkCardInner: React.FC<{
         {(() => {
           const rest = summary.text
             .split(' · ')
-            .filter(p => !/^\d+ files? changed$/.test(p))
+            .filter((p) => !/^\d+ files? changed$/.test(p))
             .join(' · ');
           return rest ? (
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
+            <span
+              style={{
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                minWidth: 0,
+              }}
+            >
               {rest}
             </span>
           ) : null;
         })()}
         <div style={{ flex: 1 }} />
         {(summary.added > 0 || summary.removed > 0) && (
-          <span style={{ fontFamily: 'var(--claude-mono-font, monospace)', fontSize: '0.62rem', flexShrink: 0 }}>
+          <span
+            style={{
+              fontFamily: 'var(--claude-mono-font, monospace)',
+              fontSize: '0.62rem',
+              flexShrink: 0,
+            }}
+          >
             {summary.added > 0 && <span style={{ color: colors.success }}>+{summary.added}</span>}
             {summary.added > 0 && summary.removed > 0 && ' '}
             {summary.removed > 0 && <span style={{ color: colors.error }}>−{summary.removed}</span>}
           </span>
         )}
-        <span style={{ color: colors.mutedDim, fontSize: '0.6rem', flexShrink: 0 }}>{expanded ? '▾' : '▸'}</span>
+        <span style={{ color: colors.mutedDim, fontSize: '0.6rem', flexShrink: 0 }}>
+          {expanded ? '▾' : '▸'}
+        </span>
       </div>
 
       {filesOpen && !expanded && summary.editedFiles.length > 0 && (
-        <div style={{
-          borderTop: `1px solid ${colors.borderSubtle}`,
-          padding: '4px 10px 6px 10px',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 1,
-        }}>
-          {summary.editedFiles.map(filePath => {
+        <div
+          style={{
+            borderTop: `1px solid ${colors.borderSubtle}`,
+            padding: '4px 10px 6px 10px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 1,
+          }}
+        >
+          {summary.editedFiles.map((filePath) => {
             const basename = filePath.replace(/\\/g, '/').split('/').pop() ?? filePath;
             const dir = filePath.replace(/\\/g, '/').split('/').slice(0, -1).join('/');
             return (
@@ -227,19 +265,26 @@ const WorkCardInner: React.FC<{
                   fontFamily: 'var(--claude-mono-font, monospace)',
                   transition: 'background 0.1s',
                 }}
-                onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(255,255,255,0.06)'; }}
-                onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'none'; }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.background =
+                    'rgba(255,255,255,0.06)';
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.background = 'none';
+                }}
               >
                 <span style={{ flexShrink: 0 }}>{basename}</span>
                 {dir && (
-                  <span style={{
-                    color: colors.mutedDim,
-                    fontSize: '0.6rem',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                    minWidth: 0,
-                  }}>
+                  <span
+                    style={{
+                      color: colors.mutedDim,
+                      fontSize: '0.6rem',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                      minWidth: 0,
+                    }}
+                  >
                     {dir}
                   </span>
                 )}
@@ -250,14 +295,14 @@ const WorkCardInner: React.FC<{
       )}
 
       {visibleWhenCollapsed.length > 0 && (
-        <div style={{ padding: '0 10px 6px 10px' }}>
-          {visibleWhenCollapsed}
-        </div>
+        <div style={{ padding: '0 10px 6px 10px' }}>{visibleWhenCollapsed}</div>
       )}
 
       {expanded && (
-        <div style={{ padding: '2px 10px 8px 10px', borderTop: `1px solid ${colors.borderSubtle}` }}>
-          {toolCalls.map(tc => {
+        <div
+          style={{ padding: '2px 10px 8px 10px', borderTop: `1px solid ${colors.borderSubtle}` }}
+        >
+          {toolCalls.map((tc) => {
             const wf = workflowByToolId?.get(tc.id);
             if (wf) return <WorkflowRunCard key={tc.id} run={wf} />;
             const sub = subagentByToolId?.get(tc.id);

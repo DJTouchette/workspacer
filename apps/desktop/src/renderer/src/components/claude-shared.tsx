@@ -98,16 +98,25 @@ export const StatusBadge: React.FC<{
 }> = ({ session, approvalDismissed }) => {
   if (!session) return <span style={statusBadgeStyle('var(--wks-text-muted)')}>no session</span>;
 
-  const state = (session.ambientState === 'waiting_approval' && approvalDismissed)
-    ? 'thinking'
-    : session.ambientState;
+  const state =
+    session.ambientState === 'waiting_approval' && approvalDismissed
+      ? 'thinking'
+      : session.ambientState;
 
   const color = badgeColors[state] ?? '#555';
   const label = badgeLabels[state] ?? state;
 
   return (
     <span style={statusBadgeStyle(color)}>
-      <span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', backgroundColor: color }} />
+      <span
+        style={{
+          display: 'inline-block',
+          width: 7,
+          height: 7,
+          borderRadius: '50%',
+          backgroundColor: color,
+        }}
+      />
       {label}
     </span>
   );
@@ -156,14 +165,15 @@ export function formatToolSummary(tc: ToolCall): { call: string; result: string 
     }
     case 'Workflow': {
       // input.script starts with `export const meta = { name: '...', ... }`
-      const name = tc.input?.name
-        ?? /name:\s*['"`]([^'"`]+)['"`]/.exec(tc.input?.script ?? '')?.[1]
-        ?? 'workflow';
+      const name =
+        tc.input?.name ??
+        /name:\s*['"`]([^'"`]+)['"`]/.exec(tc.input?.script ?? '')?.[1] ??
+        'workflow';
       return { call: `Workflow(${name})`, result: '' };
     }
     default: {
       const vals = Object.values(tc.input ?? {});
-      const firstStr = vals.find(v => typeof v === 'string') as string | undefined;
+      const firstStr = vals.find((v) => typeof v === 'string') as string | undefined;
       return { call: `${tc.name}(${firstStr?.slice(0, 40) ?? ''})`, result: '' };
     }
   }
@@ -174,29 +184,69 @@ export function formatToolSummary(tc: ToolCall): { call: string; result: string 
 export const WorkLogEntry: React.FC<{ tc: ToolCall }> = ({ tc }) => {
   const isRunning = tc.status === 'running';
   const isFailed = tc.status === 'failed';
-  const iconColor = isRunning ? claudeColors.accent : isFailed ? claudeColors.error : claudeColors.success;
+  const iconColor = isRunning
+    ? claudeColors.accent
+    : isFailed
+      ? claudeColors.error
+      : claudeColors.success;
   const { call, result } = formatToolSummary(tc);
 
   return (
     <div style={{ padding: '1px 0' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem', lineHeight: 1.4 }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          fontSize: '0.75rem',
+          lineHeight: 1.4,
+        }}
+      >
         {isRunning ? (
-          <span style={{
-            display: 'inline-block', width: 12, height: 12,
-            border: `1.5px solid ${claudeColors.accent}`, borderTopColor: 'transparent',
-            borderRadius: '50%', animation: 'claudeSpinner 0.8s linear infinite', flexShrink: 0,
-          }} />
+          <span
+            style={{
+              display: 'inline-block',
+              width: 12,
+              height: 12,
+              border: `1.5px solid ${claudeColors.accent}`,
+              borderTopColor: 'transparent',
+              borderRadius: '50%',
+              animation: 'claudeSpinner 0.8s linear infinite',
+              flexShrink: 0,
+            }}
+          />
         ) : (
-          <span style={{ color: iconColor, fontSize: '0.72rem', width: 12, textAlign: 'center', flexShrink: 0 }}>
+          <span
+            style={{
+              color: iconColor,
+              fontSize: '0.72rem',
+              width: 12,
+              textAlign: 'center',
+              flexShrink: 0,
+            }}
+          >
             {isFailed ? '\u2717' : '\u2713'}
           </span>
         )}
-        <span style={{ color: claudeColors.accent, fontFamily: 'var(--claude-mono-font, monospace)', fontSize: '0.72rem' }}>
+        <span
+          style={{
+            color: claudeColors.accent,
+            fontFamily: 'var(--claude-mono-font, monospace)',
+            fontSize: '0.72rem',
+          }}
+        >
           {call}
         </span>
       </div>
       {result && (
-        <div style={{ paddingLeft: 18, fontSize: '0.68rem', color: claudeColors.muted, lineHeight: 1.3 }}>
+        <div
+          style={{
+            paddingLeft: 18,
+            fontSize: '0.68rem',
+            color: claudeColors.muted,
+            lineHeight: 1.3,
+          }}
+        >
           {'\u23BF'} {result}
         </div>
       )}

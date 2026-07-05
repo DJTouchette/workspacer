@@ -94,7 +94,7 @@ describe('buildClaudeArgv', () => {
         extraArgs: ['--model', 'claude-haiku-4-5'],
       });
       // The profile's value should be present; the opts.model should NOT add another --model
-      const count = argv.filter(a => a === '--model').length;
+      const count = argv.filter((a) => a === '--model').length;
       expect(count).toBe(1);
       // The profile's model value appears right after the single --model
       const idx = argv.indexOf('--model');
@@ -132,7 +132,7 @@ describe('buildClaudeArgv', () => {
         skipPermissions: true,
         extraArgs: ['--dangerously-skip-permissions'],
       });
-      const count = argv.filter(a => a === '--dangerously-skip-permissions').length;
+      const count = argv.filter((a) => a === '--dangerously-skip-permissions').length;
       expect(count).toBe(1);
     });
 
@@ -227,7 +227,7 @@ describe('buildClaudeArgv', () => {
         extraArgs: ['--session-id', 'profile-pinned-uuid'],
       });
       // Profile value should be there, but no second --session-id injection
-      const count = argv.filter(a => a === '--session-id').length;
+      const count = argv.filter((a) => a === '--session-id').length;
       expect(count).toBe(1);
       const idx = argv.indexOf('--session-id');
       expect(argv[idx + 1]).toBe('profile-pinned-uuid');
@@ -285,8 +285,8 @@ describe('buildClaudeArgv', () => {
         skipPermissions: true,
         extraArgs: ['--model', 'profile-model', '--dangerously-skip-permissions'],
       });
-      const modelCount = argv.filter(a => a === '--model').length;
-      const skipCount = argv.filter(a => a === '--dangerously-skip-permissions').length;
+      const modelCount = argv.filter((a) => a === '--model').length;
+      const skipCount = argv.filter((a) => a === '--dangerously-skip-permissions').length;
       expect(modelCount).toBe(1);
       expect(skipCount).toBe(1);
     });

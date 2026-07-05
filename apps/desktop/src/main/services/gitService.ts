@@ -52,14 +52,19 @@ function runGit(
   args: string[],
 ): Promise<{ ok: boolean; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    execFile('git', args, { cwd, maxBuffer: MAX_BUFFER, windowsHide: true }, (err, stdout, stderr) => {
-      if (err && (err as NodeJS.ErrnoException).code === 'ENOENT') {
-        // git not on PATH — distinct from a non-zero git exit.
-        reject(new Error('could not run git (is it installed and on PATH?)'));
-        return;
-      }
-      resolve({ ok: !err, stdout: stdout ?? '', stderr: stderr ?? '' });
-    });
+    execFile(
+      'git',
+      args,
+      { cwd, maxBuffer: MAX_BUFFER, windowsHide: true },
+      (err, stdout, stderr) => {
+        if (err && (err as NodeJS.ErrnoException).code === 'ENOENT') {
+          // git not on PATH — distinct from a non-zero git exit.
+          reject(new Error('could not run git (is it installed and on PATH?)'));
+          return;
+        }
+        resolve({ ok: !err, stdout: stdout ?? '', stderr: stderr ?? '' });
+      },
+    );
   });
 }
 

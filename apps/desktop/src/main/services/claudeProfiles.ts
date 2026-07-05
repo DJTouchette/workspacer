@@ -46,14 +46,19 @@ class ClaudeProfileService {
   }
 
   getProfile(id: string): ClaudeProfile | undefined {
-    return this.profiles.find(p => p.id === id);
+    return this.profiles.find((p) => p.id === id);
   }
 
   getDefaultProfile(): ClaudeProfile {
-    return this.profiles.find(p => p.isDefault) ?? this.profiles[0];
+    return this.profiles.find((p) => p.isDefault) ?? this.profiles[0];
   }
 
-  addProfile(name: string, configDir: string, extraArgs: string[], mcpItemIds: string[] = []): ClaudeProfile {
+  addProfile(
+    name: string,
+    configDir: string,
+    extraArgs: string[],
+    mcpItemIds: string[] = [],
+  ): ClaudeProfile {
     const profile: ClaudeProfile = {
       id: crypto.randomUUID(),
       name,
@@ -68,7 +73,7 @@ class ClaudeProfileService {
   }
 
   updateProfile(id: string, updates: Partial<Omit<ClaudeProfile, 'id'>>): ClaudeProfile | null {
-    const profile = this.profiles.find(p => p.id === id);
+    const profile = this.profiles.find((p) => p.id === id);
     if (!profile) return null;
     if (updates.name !== undefined) profile.name = updates.name;
     if (updates.configDir !== undefined) profile.configDir = updates.configDir.trim();
@@ -84,9 +89,9 @@ class ClaudeProfileService {
 
   removeProfile(id: string): void {
     if (id === 'default') return; // Can't remove default
-    this.profiles = this.profiles.filter(p => p.id !== id);
+    this.profiles = this.profiles.filter((p) => p.id !== id);
     // Ensure there's still a default
-    if (!this.profiles.some(p => p.isDefault) && this.profiles.length > 0) {
+    if (!this.profiles.some((p) => p.isDefault) && this.profiles.length > 0) {
       this.profiles[0].isDefault = true;
     }
     this.save();

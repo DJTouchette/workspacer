@@ -10,11 +10,15 @@ function mf(partial: Partial<PluginManifest>): PluginManifest {
 describe('<PluginPermissions>', () => {
   it('renders grouped, human-readable lines with scopes into the DOM', () => {
     // The rules-engine shape: a sensitive emit + capabilities + consumes.
-    render(<PluginPermissions manifest={mf({
-      capabilities: [{ method: 'fs.write', paths: ['${agentCwd}'] }, 'agents.spawn'],
-      emits: ['command.*', 'rules.fired'],
-      consumes: ['agent.state_changed'],
-    })} />);
+    render(
+      <PluginPermissions
+        manifest={mf({
+          capabilities: [{ method: 'fs.write', paths: ['${agentCwd}'] }, 'agents.spawn'],
+          emits: ['command.*', 'rules.fired'],
+          consumes: ['agent.state_changed'],
+        })}
+      />,
+    );
 
     // Group headers.
     expect(screen.getByText('Can')).toBeTruthy();

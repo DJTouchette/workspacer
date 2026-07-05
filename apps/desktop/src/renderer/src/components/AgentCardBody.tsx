@@ -90,7 +90,9 @@ const ToolChipRow: React.FC<{ active?: ToolCall; recent: ToolCall[] }> = ({ acti
               flexShrink: 0,
             }}
           />
-          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{formatToolSummary(active).call}</span>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {formatToolSummary(active).call}
+          </span>
         </span>
       )}
       {recent.map((tc) => (
@@ -112,7 +114,9 @@ const ToolChipRow: React.FC<{ active?: ToolCall; recent: ToolCall[] }> = ({ acti
           >
             {tc.status === 'failed' ? '✗' : '✓'}
           </span>
-          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{formatToolSummary(tc).call}</span>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {formatToolSummary(tc).call}
+          </span>
         </span>
       ))}
     </div>
@@ -168,7 +172,11 @@ const AgentCardBodyInner: React.FC<AgentCardBodyProps> = ({
             : null),
         }}
       >
-        {excerpt ? <Markdown text={excerpt} /> : <span style={{ color: 'var(--wks-text-faint)' }}>{fallback}</span>}
+        {excerpt ? (
+          <Markdown text={excerpt} />
+        ) : (
+          <span style={{ color: 'var(--wks-text-faint)' }}>{fallback}</span>
+        )}
       </div>
       {fileStats.files > 0 && (
         <div
@@ -182,9 +190,15 @@ const AgentCardBodyInner: React.FC<AgentCardBodyProps> = ({
             gap: 6,
           }}
         >
-          <span>~ {fileStats.files} file{fileStats.files !== 1 ? 's' : ''}</span>
-          {fileStats.added > 0 && <span style={{ color: 'var(--wks-success, #3fb950)' }}>+{fileStats.added}</span>}
-          {fileStats.removed > 0 && <span style={{ color: 'var(--wks-error, #f87171)' }}>−{fileStats.removed}</span>}
+          <span>
+            ~ {fileStats.files} file{fileStats.files !== 1 ? 's' : ''}
+          </span>
+          {fileStats.added > 0 && (
+            <span style={{ color: 'var(--wks-success, #3fb950)' }}>+{fileStats.added}</span>
+          )}
+          {fileStats.removed > 0 && (
+            <span style={{ color: 'var(--wks-error, #f87171)' }}>−{fileStats.removed}</span>
+          )}
         </div>
       )}
     </div>

@@ -34,7 +34,9 @@ export async function startClaudemonConversationBridge(): Promise<void> {
         return;
       }
       try {
-        claudeSessionStore.applyConversationDelta(delta as Parameters<typeof claudeSessionStore.applyConversationDelta>[0]);
+        claudeSessionStore.applyConversationDelta(
+          delta as Parameters<typeof claudeSessionStore.applyConversationDelta>[0],
+        );
       } catch (err) {
         console.error('[claudemon-conversation] bad frame', err);
       }
@@ -47,7 +49,9 @@ export async function startClaudemonConversationBridge(): Promise<void> {
 
 export function stopClaudemonConversationBridge(): void {
   if (abort) {
-    try { abort.abort(); } catch {}
+    try {
+      abort.abort();
+    } catch {}
     abort = null;
   }
 }

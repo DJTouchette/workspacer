@@ -37,7 +37,11 @@ export function isEditableTarget(target: EventTarget | null): boolean {
 export function formatCombo(combo: string): string {
   return combo
     .split('+')
-    .map((p) => PART_DISPLAY[p] ?? (p.length === 1 ? p.toUpperCase() : p.charAt(0).toUpperCase() + p.slice(1)))
+    .map(
+      (p) =>
+        PART_DISPLAY[p] ??
+        (p.length === 1 ? p.toUpperCase() : p.charAt(0).toUpperCase() + p.slice(1)),
+    )
     .join('+');
 }
 
@@ -130,20 +134,62 @@ export const ACTION_REGISTRY: ActionMeta[] = [
   { action: 'fleet-open', label: 'Open selected agent', section: 'Fleet Deck', scope: 'fleet' },
   { action: 'fleet-approve-yes', label: 'Approve', section: 'Fleet Deck', scope: 'fleet' },
   { action: 'fleet-approve-no', label: 'Deny', section: 'Fleet Deck', scope: 'fleet' },
-  { action: 'fleet-answer', label: 'Answer question (option)', section: 'Fleet Deck', scope: 'fleet', digitRange: true },
-  { action: 'fleet-cards-left', label: 'Select card left', section: 'Fleet Deck · Cards view', scope: 'fleet' },
-  { action: 'fleet-cards-down', label: 'Select card below', section: 'Fleet Deck · Cards view', scope: 'fleet' },
-  { action: 'fleet-cards-up', label: 'Select card above', section: 'Fleet Deck · Cards view', scope: 'fleet' },
-  { action: 'fleet-cards-right', label: 'Select card right', section: 'Fleet Deck · Cards view', scope: 'fleet' },
-  { action: 'fleet-list-down', label: 'Select next row', section: 'Fleet Deck · List view', scope: 'fleet' },
-  { action: 'fleet-list-up', label: 'Select previous row', section: 'Fleet Deck · List view', scope: 'fleet' },
+  {
+    action: 'fleet-answer',
+    label: 'Answer question (option)',
+    section: 'Fleet Deck',
+    scope: 'fleet',
+    digitRange: true,
+  },
+  {
+    action: 'fleet-cards-left',
+    label: 'Select card left',
+    section: 'Fleet Deck · Cards view',
+    scope: 'fleet',
+  },
+  {
+    action: 'fleet-cards-down',
+    label: 'Select card below',
+    section: 'Fleet Deck · Cards view',
+    scope: 'fleet',
+  },
+  {
+    action: 'fleet-cards-up',
+    label: 'Select card above',
+    section: 'Fleet Deck · Cards view',
+    scope: 'fleet',
+  },
+  {
+    action: 'fleet-cards-right',
+    label: 'Select card right',
+    section: 'Fleet Deck · Cards view',
+    scope: 'fleet',
+  },
+  {
+    action: 'fleet-list-down',
+    label: 'Select next row',
+    section: 'Fleet Deck · List view',
+    scope: 'fleet',
+  },
+  {
+    action: 'fleet-list-up',
+    label: 'Select previous row',
+    section: 'Fleet Deck · List view',
+    scope: 'fleet',
+  },
   // Inbox (active only while the drawer is open)
   { action: 'inbox-move-down', label: 'Select next item', section: 'Inbox', scope: 'inbox' },
   { action: 'inbox-move-up', label: 'Select previous item', section: 'Inbox', scope: 'inbox' },
   { action: 'inbox-open', label: 'Open agent', section: 'Inbox', scope: 'inbox' },
   { action: 'inbox-approve-yes', label: 'Approve', section: 'Inbox', scope: 'inbox' },
   { action: 'inbox-approve-no', label: 'Deny', section: 'Inbox', scope: 'inbox' },
-  { action: 'inbox-answer', label: 'Answer question (option)', section: 'Inbox', scope: 'inbox', digitRange: true },
+  {
+    action: 'inbox-answer',
+    label: 'Answer question (option)',
+    section: 'Inbox',
+    scope: 'inbox',
+    digitRange: true,
+  },
   { action: 'inbox-dismiss', label: 'Dismiss item', section: 'Inbox', scope: 'inbox' },
   { action: 'inbox-snooze', label: 'Snooze item', section: 'Inbox', scope: 'inbox' },
   { action: 'inbox-clear-reviewed', label: 'Clear all reviewed', section: 'Inbox', scope: 'inbox' },
@@ -151,13 +197,12 @@ export const ACTION_REGISTRY: ActionMeta[] = [
 
 /** Action ids that only bind inside their own surface (fleet/inbox); the
  *  global direct-binding matcher must skip these. */
-export const SCOPED_ACTIONS = new Set(
-  ACTION_REGISTRY.filter((a) => a.scope).map((a) => a.action),
-);
+export const SCOPED_ACTIONS = new Set(ACTION_REGISTRY.filter((a) => a.scope).map((a) => a.action));
 
 /** action id → label, derived from the registry. */
-export const ACTION_LABELS: Record<string, string> =
-  Object.fromEntries(ACTION_REGISTRY.map((a) => [a.action, a.label]));
+export const ACTION_LABELS: Record<string, string> = Object.fromEntries(
+  ACTION_REGISTRY.map((a) => [a.action, a.label]),
+);
 
 /** The registry grouped into sections, preserving registry order. Drives the
  *  help overlay and the settings editor. */
@@ -165,7 +210,10 @@ export const ACTION_SECTIONS: { section: string; items: ActionMeta[] }[] = (() =
   const order: string[] = [];
   const bySection = new Map<string, ActionMeta[]>();
   for (const a of ACTION_REGISTRY) {
-    if (!bySection.has(a.section)) { bySection.set(a.section, []); order.push(a.section); }
+    if (!bySection.has(a.section)) {
+      bySection.set(a.section, []);
+      order.push(a.section);
+    }
     bySection.get(a.section)!.push(a);
   }
   return order.map((section) => ({ section, items: bySection.get(section)! }));
@@ -179,7 +227,12 @@ export const DIGIT_RANGE_ACTIONS = new Set(
   ACTION_REGISTRY.filter((a) => a.digitRange).map((a) => a.action),
 );
 
-export interface DigitRangeCombo { ctrl: boolean; alt: boolean; shift: boolean; meta: boolean; }
+export interface DigitRangeCombo {
+  ctrl: boolean;
+  alt: boolean;
+  shift: boolean;
+  meta: boolean;
+}
 
 /** Parse "ctrl+shift+1-9" into its modifier flags; null if it isn't a
  *  digit-range combo. The pressed digit (1–9) is supplied at match time. */
@@ -223,7 +276,10 @@ export function buildChordTree(shortcuts: Record<string, string>): ChordTreeNode
     let node = root;
     for (const step of steps) {
       let child = node.children.find((c) => c.step.toLowerCase() === step.toLowerCase());
-      if (!child) { child = { step, node: { children: [] } }; node.children.push(child); }
+      if (!child) {
+        child = { step, node: { children: [] } };
+        node.children.push(child);
+      }
       node = child.node;
     }
     node.action = action;
@@ -269,7 +325,9 @@ export function chordMenu(
     .sort((a, b) =>
       a.isGroup === b.isGroup
         ? a.keyLabel.localeCompare(b.keyLabel, undefined, { sensitivity: 'base' })
-        : a.isGroup ? -1 : 1,
+        : a.isGroup
+          ? -1
+          : 1,
     );
 }
 
@@ -309,7 +367,13 @@ export function eventMatchesCombo(e: KeyboardEvent, combo: string | undefined): 
 export function digitFromRangeEvent(e: KeyboardEvent, combo: string | undefined): number | null {
   const spec = parseDigitRangeCombo(combo);
   if (!spec) return null;
-  if (e.ctrlKey !== spec.ctrl || e.altKey !== spec.alt || e.shiftKey !== spec.shift || e.metaKey !== spec.meta) return null;
+  if (
+    e.ctrlKey !== spec.ctrl ||
+    e.altKey !== spec.alt ||
+    e.shiftKey !== spec.shift ||
+    e.metaKey !== spec.meta
+  )
+    return null;
   const m = e.code?.match(/^Digit([1-9])$/);
   return m ? parseInt(m[1], 10) : null;
 }

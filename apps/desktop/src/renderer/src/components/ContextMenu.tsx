@@ -84,7 +84,14 @@ export interface ContextMenuProps {
 
 const VIEWPORT_MARGIN = 6;
 
-export function ContextMenu({ x, y, onClose, children, minWidth = 150, zIndex = 10000 }: ContextMenuProps) {
+export function ContextMenu({
+  x,
+  y,
+  onClose,
+  children,
+  minWidth = 150,
+  zIndex = 10000,
+}: ContextMenuProps) {
   ensureContextMenuStyles();
   const ref = useRef<HTMLDivElement>(null);
   // Start at the raw anchor; clamp once we know our measured size.
@@ -160,7 +167,8 @@ export function ContextMenu({ x, y, onClose, children, minWidth = 150, zIndex = 
         backdropFilter: 'blur(var(--wks-glass-blur, 12px)) saturate(160%)',
         WebkitBackdropFilter: 'blur(var(--wks-glass-blur, 12px)) saturate(160%)',
         border: '1px solid var(--wks-glass-border, var(--wks-border-input))',
-        boxShadow: '0 12px 34px var(--wks-glass-shadow, var(--wks-shadow)), inset 0 1px 0 var(--wks-glass-highlight)',
+        boxShadow:
+          '0 12px 34px var(--wks-glass-shadow, var(--wks-shadow)), inset 0 1px 0 var(--wks-glass-highlight)',
         fontSize: '0.76rem',
         // Hide until clamped so the off-screen first paint is never visible.
         visibility: measured ? 'visible' : 'hidden',
@@ -217,7 +225,15 @@ export function ContextMenuItem({
 }
 
 export function ContextMenuSeparator() {
-  return <div style={{ height: 1, background: 'var(--wks-glass-border, var(--wks-border))', margin: '5px 7px' }} />;
+  return (
+    <div
+      style={{
+        height: 1,
+        background: 'var(--wks-glass-border, var(--wks-border))',
+        margin: '5px 7px',
+      }}
+    />
+  );
 }
 
 export function ContextMenuLabel({ children }: { children: React.ReactNode }) {

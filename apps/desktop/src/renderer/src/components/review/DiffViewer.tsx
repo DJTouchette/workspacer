@@ -30,9 +30,7 @@ const HIGHLIGHT_LINE_BUDGET = 10_000;
 const ROW_H = 20;
 const FONT_SIZE = '0.72rem';
 
-type Row =
-  | { type: 'hunk'; header: string }
-  | { type: 'line'; line: DiffLine; key: string };
+type Row = { type: 'hunk'; header: string } | { type: 'line'; line: DiffLine; key: string };
 
 // Row backgrounds. The gutter needs the *opaque* mix (code scrolls beneath it
 // horizontally); the code area can use the transparent tint.
@@ -57,7 +55,12 @@ function withEmphasis(spans: TokenSpan[], emph: [number, number] | undefined): R
   let offset = 0;
   for (const span of spans) {
     const spanEnd = offset + span.text.length;
-    const cuts = [offset, Math.max(offset, Math.min(start, spanEnd)), Math.max(offset, Math.min(end, spanEnd)), spanEnd];
+    const cuts = [
+      offset,
+      Math.max(offset, Math.min(start, spanEnd)),
+      Math.max(offset, Math.min(end, spanEnd)),
+      spanEnd,
+    ];
     for (let i = 0; i < 3; i++) {
       const from = cuts[i];
       const to = cuts[i + 1];

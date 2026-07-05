@@ -29,7 +29,15 @@ interface PluginPaneProps {
  * build, or the hub momentarily down), we render the URL as-is with its baked-in
  * static token. So the webview always loads; scoping is an upgrade, not a gate.
  */
-const PluginPane: React.FC<PluginPaneProps> = ({ paneId, title, isActive, url, hibernated, pluginId, cwd }) => {
+const PluginPane: React.FC<PluginPaneProps> = ({
+  paneId,
+  title,
+  isActive,
+  url,
+  hibernated,
+  pluginId,
+  cwd,
+}) => {
   const canScope = !!(pluginId && cwd && window.electronAPI.pluginPaneToken);
   // null = still minting (agent-scoped panes only); otherwise the URL to load.
   const [resolvedUrl, setResolvedUrl] = useState<string | null>(canScope ? null : url);
@@ -57,7 +65,9 @@ const PluginPane: React.FC<PluginPaneProps> = ({ paneId, title, isActive, url, h
           setResolvedUrl(url); // mint failed → fall back to the static-token URL
         }
       })
-      .catch(() => { if (!cancelled) setResolvedUrl(url); });
+      .catch(() => {
+        if (!cancelled) setResolvedUrl(url);
+      });
 
     return () => {
       cancelled = true;

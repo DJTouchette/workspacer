@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { anchorWork } from '../src/lib/anchorWork';
-import type { ConversationTurn, ToolCall, SubagentInfo, WorkflowRunInfo } from '../src/types/claudeSession';
+import type {
+  ConversationTurn,
+  ToolCall,
+  SubagentInfo,
+  WorkflowRunInfo,
+} from '../src/types/claudeSession';
 
 function call(id: string, name: string, response?: string): ToolCall {
   return { id, name, input: {}, response, status: 'complete', startedAt: 0 };
@@ -52,13 +57,25 @@ describe('anchorWork', () => {
     const conversation = [turnWith(call('toolu_1', 'Agent'))];
     const subagents = [sub('a'), sub('b')];
     const { unanchoredSubagents } = anchorWork(conversation, subagents, []);
-    expect(unanchoredSubagents.map(s => s.id)).toEqual(['b']);
+    expect(unanchoredSubagents.map((s) => s.id)).toEqual(['b']);
   });
 
   it('anchors workflow runs by runId found in the call response', () => {
     const conversation = [
-      turnWith(call('toolu_1', 'Workflow', 'Task ID: x\nTranscript dir: /s/subagents/workflows/wf_aaa-111')),
-      turnWith(call('toolu_2', 'Workflow', 'Task ID: y\nTranscript dir: /s/subagents/workflows/wf_bbb-222')),
+      turnWith(
+        call(
+          'toolu_1',
+          'Workflow',
+          'Task ID: x\nTranscript dir: /s/subagents/workflows/wf_aaa-111',
+        ),
+      ),
+      turnWith(
+        call(
+          'toolu_2',
+          'Workflow',
+          'Task ID: y\nTranscript dir: /s/subagents/workflows/wf_bbb-222',
+        ),
+      ),
     ];
     // Watcher order (startedAt) reversed vs call order.
     const workflows = [run('wf_bbb-222'), run('wf_aaa-111')];
@@ -80,7 +97,7 @@ describe('anchorWork', () => {
   it('leaves a run unanchored when there are no Workflow calls', () => {
     const workflows = [run('wf_aaa-111')];
     const { unanchoredWorkflows } = anchorWork([], [], workflows);
-    expect(unanchoredWorkflows.map(w => w.runId)).toEqual(['wf_aaa-111']);
+    expect(unanchoredWorkflows.map((w) => w.runId)).toEqual(['wf_aaa-111']);
   });
 
   it('ignores non-Agent/Workflow tool calls entirely', () => {

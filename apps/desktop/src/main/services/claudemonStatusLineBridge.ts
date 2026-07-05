@@ -59,7 +59,9 @@ export async function startClaudemonStatusLineBridge(): Promise<void> {
 
 export function stopClaudemonStatusLineBridge(): void {
   if (abort) {
-    try { abort.abort(); } catch {}
+    try {
+      abort.abort();
+    } catch {}
     abort = null;
   }
 }

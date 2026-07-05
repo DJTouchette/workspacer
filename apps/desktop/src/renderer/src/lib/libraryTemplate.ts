@@ -68,7 +68,10 @@ function parseFieldSpec(rest: string): Omit<PromptVar, 'token'> {
   const args = tci >= 0 ? typePart.slice(tci + 1) : '';
 
   if (typeName === 'select' || typeName === 'dropdown' || typeName === 'choice') {
-    const options = args.split(',').map((s) => s.trim()).filter(Boolean);
+    const options = args
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
     const def = rawDefault && options.includes(rawDefault) ? rawDefault : (options[0] ?? '');
     return { label, type: 'select', default: def, options };
   }
@@ -77,7 +80,14 @@ function parseFieldSpec(rest: string): Omit<PromptVar, 'token'> {
     const onValue = on.trim();
     const offValue = off.trim();
     const checkedByDefault = TRUTHY.test(rawDefault);
-    return { label, type: 'toggle', default: checkedByDefault ? onValue : offValue, onValue, offValue, checkedByDefault };
+    return {
+      label,
+      type: 'toggle',
+      default: checkedByDefault ? onValue : offValue,
+      onValue,
+      offValue,
+      checkedByDefault,
+    };
   }
   // `text` → single line; anything else (incl. bare / `area`) → paragraph.
   const type: FieldType = typeName === 'text' ? 'text' : 'area';
@@ -98,16 +108,31 @@ export function parsePromptVars(text: string): PromptVar[] {
 }
 
 /** Gather the auto context (clipboard + selection are read here). */
-export async function gatherAutoContext(base: { cwd?: string; sessionId?: string }): Promise<AutoContext> {
+export async function gatherAutoContext(base: {
+  cwd?: string;
+  sessionId?: string;
+}): Promise<AutoContext> {
   let selection = '';
-  try { selection = window.getSelection?.()?.toString() ?? ''; } catch { /* ignore */ }
+  try {
+    selection = window.getSelection?.()?.toString() ?? '';
+  } catch {
+    /* ignore */
+  }
   let clipboard = '';
-  try { clipboard = (await navigator.clipboard?.readText?.()) ?? ''; } catch { /* permissions/none */ }
+  try {
+    clipboard = (await navigator.clipboard?.readText?.()) ?? '';
+  } catch {
+    /* permissions/none */
+  }
   return { cwd: base.cwd, sessionId: base.sessionId, selection, clipboard };
 }
 
 /** Substitute all tokens. `values` is keyed by the inner token (incl. the `?`). */
-export function applyTemplate(text: string, ctx: AutoContext, values: Record<string, string> = {}): string {
+export function applyTemplate(
+  text: string,
+  ctx: AutoContext,
+  values: Record<string, string> = {},
+): string {
   return text.replace(TOKEN_RE, (_full, raw: string) => {
     const inner = raw.trim();
     if (inner.startsWith('?')) {
@@ -116,19 +141,31 @@ export function applyTemplate(text: string, ctx: AutoContext, values: Record<str
       return parseFieldSpec(inner.slice(1)).default;
     }
     switch (inner) {
-      case 'cwd': return ctx.cwd ?? '';
-      case 'sessionId': return ctx.sessionId ?? '';
-      case 'selection': return ctx.selection ?? '';
-      case 'clipboard': return ctx.clipboard ?? '';
-      default: return ''; // unknown var → empty
+      case 'cwd':
+        return ctx.cwd ?? '';
+      case 'sessionId':
+        return ctx.sessionId ?? '';
+      case 'selection':
+        return ctx.selection ?? '';
+      case 'clipboard':
+        return ctx.clipboard ?? '';
+      default:
+        return ''; // unknown var → empty
     }
   });
 }
 
 /** Frame a skill's body with its title/description so the agent reads it as an
  *  instruction block; prompts insert verbatim. */
-export function renderItemText(item: { kind: string; title: string; description?: string; body: string }): string {
+export function renderItemText(item: {
+  kind: string;
+  title: string;
+  description?: string;
+  body: string;
+}): string {
   if (item.kind !== 'skill') return item.body;
-  const header = item.description ? `# Skill: ${item.title}\n${item.description}\n\n` : `# Skill: ${item.title}\n\n`;
+  const header = item.description
+    ? `# Skill: ${item.title}\n${item.description}\n\n`
+    : `# Skill: ${item.title}\n\n`;
   return header + item.body;
 }

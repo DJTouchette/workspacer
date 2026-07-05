@@ -31,13 +31,22 @@ export function initFileLogging(): void {
     // Rotate a large existing log to .old so the file doesn't grow unbounded.
     try {
       if (fs.statSync(file).size > MAX_BYTES) fs.renameSync(file, `${file}.old`);
-    } catch { /* no existing file */ }
+    } catch {
+      /* no existing file */
+    }
     stream = fs.createWriteStream(file, { flags: 'a' });
 
     for (const ch of ['stdout', 'stderr'] as const) {
       const orig = process[ch].write.bind(process[ch]);
-      (process[ch] as NodeJS.WriteStream).write = ((chunk: string | Uint8Array, ...rest: unknown[]): boolean => {
-        try { stream?.write(typeof chunk === 'string' ? chunk : Buffer.from(chunk)); } catch { /* logging must never throw */ }
+      (process[ch] as NodeJS.WriteStream).write = ((
+        chunk: string | Uint8Array,
+        ...rest: unknown[]
+      ): boolean => {
+        try {
+          stream?.write(typeof chunk === 'string' ? chunk : Buffer.from(chunk));
+        } catch {
+          /* logging must never throw */
+        }
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         return (orig as any)(chunk, ...rest);
       }) as NodeJS.WriteStream['write'];

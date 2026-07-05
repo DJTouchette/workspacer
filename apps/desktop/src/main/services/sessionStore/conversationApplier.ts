@@ -46,12 +46,14 @@ export type ApplyUsageFn = (
 
 /** Check if a message was already added to avoid duplicates (claude's JSONL
  *  occasionally repeats a message, e.g. around compaction). */
-export function isDuplicateMessage(session: ClaudeSessionState, role: string, content: string): boolean {
+export function isDuplicateMessage(
+  session: ClaudeSessionState,
+  role: string,
+  content: string,
+): boolean {
   if (!content) return false;
   const recent = session.conversation.slice(-5);
-  return recent.some(
-    (t) => t.role === role && t.content && t.content === content,
-  );
+  return recent.some((t) => t.role === role && t.content && t.content === content);
 }
 
 /**
@@ -64,9 +66,11 @@ export function isDuplicateMessage(session: ClaudeSessionState, role: string, co
  */
 function isInterruptMarker(item: ConversationItemWire): boolean {
   const text =
-    item.kind === 'user_message' ? item.text :
-    item.kind === 'tool_result' ? item.content :
-    undefined;
+    item.kind === 'user_message'
+      ? item.text
+      : item.kind === 'tool_result'
+        ? item.content
+        : undefined;
   return typeof text === 'string' && text.trimStart().startsWith('[Request interrupted by user');
 }
 
@@ -135,7 +139,12 @@ export function applyConversationItems(
         };
         session.totalToolCalls++;
         // Each tool call is its own turn — interlaced with text in timeline order
-        session.conversation.push({ role: 'assistant', content: '', timestamp: ts, toolCalls: [tc] });
+        session.conversation.push({
+          role: 'assistant',
+          content: '',
+          timestamp: ts,
+          toolCalls: [tc],
+        });
         break;
       }
 
@@ -146,7 +155,7 @@ export function applyConversationItems(
         for (let i = session.conversation.length - 1; i >= 0; i--) {
           const tcs = session.conversation[i].toolCalls;
           if (!tcs) continue;
-          const tc = tcs.find(t => t.id === item.tool_use_id);
+          const tc = tcs.find((t) => t.id === item.tool_use_id);
           if (tc) {
             tc.response = item.content ?? '';
             if (item.is_error) tc.status = 'failed';
@@ -175,8 +184,8 @@ export function applyConversationItems(
     for (const turn of session.conversation) {
       if (turn.toolCalls) for (const tc of turn.toolCalls) convToolIds.add(tc.id);
     }
-    session.completedToolCalls = session.completedToolCalls.filter(tc => !convToolIds.has(tc.id));
-    session.activeToolCalls = session.activeToolCalls.filter(tc => !convToolIds.has(tc.id));
+    session.completedToolCalls = session.completedToolCalls.filter((tc) => !convToolIds.has(tc.id));
+    session.activeToolCalls = session.activeToolCalls.filter((tc) => !convToolIds.has(tc.id));
   }
 
   // Interrupt detection: if the batch *ends* on an interrupt marker, the turn
@@ -185,7 +194,7 @@ export function applyConversationItems(
   // counts: an interrupt mid-batch is history the session already moved past
   // (e.g. a full resync replaying an old interrupt), and any follow-up prompt
   // flips the state back to 'streaming' via its UserPromptSubmit hook anyway.
-  const lastMeaningful = [...items].reverse().find(i => i.kind !== 'usage');
+  const lastMeaningful = [...items].reverse().find((i) => i.kind !== 'usage');
   if (lastMeaningful && isInterruptMarker(lastMeaningful)) {
     applyStopEvent(session);
   }

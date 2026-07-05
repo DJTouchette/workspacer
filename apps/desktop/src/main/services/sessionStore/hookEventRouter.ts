@@ -41,8 +41,8 @@ export function applyHookEvent(session: ClaudeSessionState, event: any): void {
       // that's a prime way active calls "pile up at the bottom". Skip the whole
       // block so file changes aren't double-recorded either.
       if (
-        session.activeToolCalls.some(t => t.id === id) ||
-        session.completedToolCalls.some(t => t.id === id)
+        session.activeToolCalls.some((t) => t.id === id) ||
+        session.completedToolCalls.some((t) => t.id === id)
       ) {
         break;
       }
@@ -88,11 +88,11 @@ export function applyHookEvent(session: ClaudeSessionState, event: any): void {
       // gateway is single-shot, so by the time PostToolUse fires, whatever
       // decision was pending is either resolved or no longer relevant.
       session.pendingApproval = null;
-      const completed = session.activeToolCalls.find(t => t.id === event.tool_use_id);
+      const completed = session.activeToolCalls.find((t) => t.id === event.tool_use_id);
       if (completed) {
         completed.status = 'complete';
         completed.completedAt = Date.now();
-        session.activeToolCalls = session.activeToolCalls.filter(t => t.id !== event.tool_use_id);
+        session.activeToolCalls = session.activeToolCalls.filter((t) => t.id !== event.tool_use_id);
         session.completedToolCalls.push(completed);
         capInPlace(session.completedToolCalls, MAX_COMPLETED_TOOL_CALLS);
         if (completed.name === 'AskUserQuestion') {
@@ -103,11 +103,11 @@ export function applyHookEvent(session: ClaudeSessionState, event: any): void {
     }
 
     case 'PostToolUseFailure': {
-      const failed = session.activeToolCalls.find(t => t.id === event.tool_use_id);
+      const failed = session.activeToolCalls.find((t) => t.id === event.tool_use_id);
       if (failed) {
         failed.status = 'failed';
         failed.completedAt = Date.now();
-        session.activeToolCalls = session.activeToolCalls.filter(t => t.id !== event.tool_use_id);
+        session.activeToolCalls = session.activeToolCalls.filter((t) => t.id !== event.tool_use_id);
         session.completedToolCalls.push(failed);
         capInPlace(session.completedToolCalls, MAX_COMPLETED_TOOL_CALLS);
       }
@@ -134,7 +134,7 @@ export function applyHookEvent(session: ClaudeSessionState, event: any): void {
       break;
 
     case 'SubagentStop': {
-      const sub = session.subagents.find(s => s.id === event.agent_id);
+      const sub = session.subagents.find((s) => s.id === event.agent_id);
       if (sub) {
         sub.status = 'complete';
         sub.completedAt = Date.now();
@@ -168,7 +168,7 @@ export function applyStopEvent(session: ClaudeSessionState): void {
   // Clear tool calls — they're already shown inline in conversation via transcript
   session.activeToolCalls = [];
   session.completedToolCalls = [];
-  session.subagents = session.subagents.filter(s => s.status === 'running');
+  session.subagents = session.subagents.filter((s) => s.status === 'running');
 }
 
 /** Apply the SessionEnd event's synchronous state mutations only. */

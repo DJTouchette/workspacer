@@ -41,8 +41,8 @@ function readPkgVersion(pkgDir: string): string {
 
 /** Numeric semver compare (no prerelease handling — sufficient for claude-code). */
 function compareVersions(a: string, b: string): number {
-  const pa = a.split('.').map(n => parseInt(n, 10) || 0);
-  const pb = b.split('.').map(n => parseInt(n, 10) || 0);
+  const pa = a.split('.').map((n) => parseInt(n, 10) || 0);
+  const pb = b.split('.').map((n) => parseInt(n, 10) || 0);
   for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
     const d = (pa[i] || 0) - (pb[i] || 0);
     if (d) return d;
@@ -58,12 +58,10 @@ function compareVersions(a: string, b: string): number {
  */
 function findClaudeOnPath(): { argv: string[] } | null {
   const dirs = (process.env.PATH || '').split(path.delimiter).filter(Boolean);
-  const shims = process.platform === 'win32'
-    ? ['claude.cmd', 'claude.exe', 'claude']
-    : ['claude'];
+  const shims = process.platform === 'win32' ? ['claude.cmd', 'claude.exe', 'claude'] : ['claude'];
   const nodeName = process.platform === 'win32' ? 'node.exe' : 'node';
   for (const dir of dirs) {
-    if (!shims.some(s => fs.existsSync(path.join(dir, s)))) continue;
+    if (!shims.some((s) => fs.existsSync(path.join(dir, s)))) continue;
     const nodeExe = path.join(dir, nodeName);
     for (const pkg of PKG_NAMES) {
       const argv = entrypointArgv(path.join(dir, 'node_modules', pkg), nodeExe);
@@ -82,7 +80,7 @@ function findClaudeViaNvm(): { argv: string[] } | null {
   const nvmDir = path.join(os.homedir(), 'AppData', 'Local', 'nvm');
   let best: { version: string; argv: string[] } | null = null;
   try {
-    for (const v of fs.readdirSync(nvmDir).filter(d => d.startsWith('v'))) {
+    for (const v of fs.readdirSync(nvmDir).filter((d) => d.startsWith('v'))) {
       const vDir = path.join(nvmDir, v);
       const node = path.join(vDir, 'node.exe');
       for (const pkg of PKG_NAMES) {
@@ -167,7 +165,9 @@ export function buildClaudeArgv(opts: ClaudeArgvOptions = {}): string[] {
   const argv = getBaseArgv();
   if (opts.extraArgs && opts.extraArgs.length) argv.push(...opts.extraArgs);
   // Inject --model unless the profile's extraArgs already pin one.
-  const profilePinsModel = (opts.extraArgs ?? []).some((a) => a === '--model' || a.startsWith('--model='));
+  const profilePinsModel = (opts.extraArgs ?? []).some(
+    (a) => a === '--model' || a.startsWith('--model='),
+  );
   if (opts.model && opts.model.trim() && !profilePinsModel) {
     argv.push('--model', opts.model.trim());
   }
@@ -180,8 +180,16 @@ export function buildClaudeArgv(opts: ClaudeArgvOptions = {}): string[] {
   }
   // Non-bypass permission modes map to --permission-mode, unless a profile
   // already pins one (or bypass is in play — the flags would fight).
-  const profilePinsMode = (opts.extraArgs ?? []).some((a) => a === '--permission-mode' || a.startsWith('--permission-mode='));
-  if (opts.permissionMode && opts.permissionMode !== 'bypassPermissions' && opts.permissionMode !== 'default' && !wantsBypass && !profilePinsMode) {
+  const profilePinsMode = (opts.extraArgs ?? []).some(
+    (a) => a === '--permission-mode' || a.startsWith('--permission-mode='),
+  );
+  if (
+    opts.permissionMode &&
+    opts.permissionMode !== 'bypassPermissions' &&
+    opts.permissionMode !== 'default' &&
+    !wantsBypass &&
+    !profilePinsMode
+  ) {
     argv.push('--permission-mode', opts.permissionMode);
   }
   // Supervisor / MCP extras — appended after profile args so they always land.
@@ -199,7 +207,9 @@ export function buildClaudeArgv(opts: ClaudeArgvOptions = {}): string[] {
     argv.push('--resume', opts.resumeSessionId);
   } else if (opts.sessionId) {
     // Pin the id for a fresh session, unless a profile already set one.
-    const pinsId = (opts.extraArgs ?? []).some((a) => a === '--session-id' || a.startsWith('--session-id='));
+    const pinsId = (opts.extraArgs ?? []).some(
+      (a) => a === '--session-id' || a.startsWith('--session-id='),
+    );
     if (!pinsId) argv.push('--session-id', opts.sessionId);
   }
   return argv;

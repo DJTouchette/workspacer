@@ -14,7 +14,10 @@ interface HubEvent {
  * the IPC-forwarded hub stream — no prop threading. Sits at the bottom of the
  * sidebar. Proof that claudemon → hub → main → renderer round-trips.
  */
-const HubStatus: React.FC<{ onOpenRemote?: () => void; compact?: boolean }> = ({ onOpenRemote, compact }) => {
+const HubStatus: React.FC<{ onOpenRemote?: () => void; compact?: boolean }> = ({
+  onOpenRemote,
+  compact,
+}) => {
   const [connected, setConnected] = useState(false);
   const [count, setCount] = useState(0);
   const [last, setLast] = useState<HubEvent | null>(null);
@@ -22,13 +25,19 @@ const HubStatus: React.FC<{ onOpenRemote?: () => void; compact?: boolean }> = ({
   useEffect(() => {
     // Sync the current state on mount — the one-shot `connected:true` push may
     // have fired before this component subscribed.
-    window.electronAPI.getHubStatus?.().then((s) => setConnected(s.connected)).catch(() => {});
+    window.electronAPI
+      .getHubStatus?.()
+      .then((s) => setConnected(s.connected))
+      .catch(() => {});
     const offStatus = window.electronAPI.onHubStatus?.((s) => setConnected(s.connected));
     const offEvent = window.electronAPI.onHubEvent?.((ev) => {
       setCount((n) => n + 1);
       setLast(ev);
     });
-    return () => { offStatus?.(); offEvent?.(); };
+    return () => {
+      offStatus?.();
+      offEvent?.();
+    };
   }, []);
 
   const color = connected ? 'var(--wks-success, #3fb950)' : 'var(--wks-text-faint, #666)';
@@ -39,17 +48,31 @@ const HubStatus: React.FC<{ onOpenRemote?: () => void; compact?: boolean }> = ({
   // Rail mode: just the status dot, centered — the full readout has no room.
   if (compact) {
     return (
-      <div title={title} style={{
-        flexShrink: 0, boxSizing: 'border-box',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        width: '100%', padding: '8px 0 10px',
-        borderTop: '1px solid var(--wks-border-subtle)', background: 'var(--wks-bg-input)',
-        userSelect: 'none',
-      }}>
-        <span style={{
-          width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
-          backgroundColor: color, boxShadow: connected ? `0 0 6px ${color}` : 'none',
-        }} />
+      <div
+        title={title}
+        style={{
+          flexShrink: 0,
+          boxSizing: 'border-box',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: '100%',
+          padding: '8px 0 10px',
+          borderTop: '1px solid var(--wks-border-subtle)',
+          background: 'var(--wks-bg-input)',
+          userSelect: 'none',
+        }}
+      >
+        <span
+          style={{
+            width: 8,
+            height: 8,
+            borderRadius: '50%',
+            flexShrink: 0,
+            backgroundColor: color,
+            boxShadow: connected ? `0 0 6px ${color}` : 'none',
+          }}
+        />
       </div>
     );
   }
@@ -60,7 +83,9 @@ const HubStatus: React.FC<{ onOpenRemote?: () => void; compact?: boolean }> = ({
       style={{
         flexShrink: 0,
         boxSizing: 'border-box',
-        display: 'flex', alignItems: 'center', gap: 6,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
         padding: '8px 12px 10px',
         fontSize: '0.6rem',
         color: 'var(--wks-text-faint)',
@@ -69,11 +94,16 @@ const HubStatus: React.FC<{ onOpenRemote?: () => void; compact?: boolean }> = ({
         userSelect: 'none',
       }}
     >
-      <span style={{
-        width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
-        backgroundColor: color,
-        boxShadow: connected ? `0 0 5px ${color}` : 'none',
-      }} />
+      <span
+        style={{
+          width: 6,
+          height: 6,
+          borderRadius: '50%',
+          flexShrink: 0,
+          backgroundColor: color,
+          boxShadow: connected ? `0 0 5px ${color}` : 'none',
+        }}
+      />
       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {connected ? `hub · ${count}` : 'hub offline'}
       </span>
@@ -82,13 +112,24 @@ const HubStatus: React.FC<{ onOpenRemote?: () => void; compact?: boolean }> = ({
           onClick={onOpenRemote}
           title="Remote control — drive agents from your phone"
           style={{
-            marginLeft: 'auto', flexShrink: 0,
-            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-            background: 'transparent', border: 'none', padding: 2, cursor: 'pointer',
-            color: 'var(--wks-text-faint)', borderRadius: 4,
+            marginLeft: 'auto',
+            flexShrink: 0,
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'transparent',
+            border: 'none',
+            padding: 2,
+            cursor: 'pointer',
+            color: 'var(--wks-text-faint)',
+            borderRadius: 4,
           }}
-          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-primary)'; }}
-          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-faint)'; }}
+          onMouseEnter={(e) => {
+            (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-primary)';
+          }}
+          onMouseLeave={(e) => {
+            (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-faint)';
+          }}
         >
           <Smartphone size={12} />
         </button>

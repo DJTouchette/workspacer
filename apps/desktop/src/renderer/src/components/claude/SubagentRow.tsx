@@ -21,17 +21,55 @@ export const SubagentRow: React.FC<{
       onClick={onOpen}
       title={onOpen ? 'Watch this agent in a pane' : undefined}
       style={{ padding: '1px 0', cursor: onOpen ? 'pointer' : undefined, borderRadius: 4 }}
-      onMouseEnter={onOpen ? (e) => { e.currentTarget.style.backgroundColor = 'var(--wks-bg-hover)'; } : undefined}
-      onMouseLeave={onOpen ? (e) => { e.currentTarget.style.backgroundColor = 'transparent'; } : undefined}
+      onMouseEnter={
+        onOpen
+          ? (e) => {
+              e.currentTarget.style.backgroundColor = 'var(--wks-bg-hover)';
+            }
+          : undefined
+      }
+      onMouseLeave={
+        onOpen
+          ? (e) => {
+              e.currentTarget.style.backgroundColor = 'transparent';
+            }
+          : undefined
+      }
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem', lineHeight: 1.4 }}>
-        {running
-          ? <AgentSpinner />
-          : <IconDone size={12} strokeWidth={2.2} style={{ color: colors.success, flexShrink: 0 }} accent={colors.success} />}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          fontSize: '0.75rem',
+          lineHeight: 1.4,
+        }}
+      >
+        {running ? (
+          <AgentSpinner />
+        ) : (
+          <IconDone
+            size={12}
+            strokeWidth={2.2}
+            style={{ color: colors.success, flexShrink: 0 }}
+            accent={colors.success}
+          />
+        )}
         <span style={{ color: AGENT_PURPLE, fontWeight: 600 }}>Agent</span>
         <span style={{ color: colors.text, flexShrink: 0 }}>{sub.type}</span>
         {sub.description ? (
-          <span style={{ color: colors.muted, fontSize: '0.7rem', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={sub.description}>
+          <span
+            style={{
+              color: colors.muted,
+              fontSize: '0.7rem',
+              flex: 1,
+              minWidth: 0,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+            title={sub.description}
+          >
             {sub.description}
           </span>
         ) : (
@@ -45,7 +83,8 @@ export const SubagentRow: React.FC<{
       </div>
       {running && sub.lastToolName && (
         <div style={lastToolLineStyle}>
-          {'└'} {sub.lastToolName}{sub.lastToolSummary ? ` ${sub.lastToolSummary}` : ''}
+          {'└'} {sub.lastToolName}
+          {sub.lastToolSummary ? ` ${sub.lastToolSummary}` : ''}
         </div>
       )}
     </div>

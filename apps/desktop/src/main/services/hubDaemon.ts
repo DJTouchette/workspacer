@@ -20,7 +20,14 @@ import { spawn, ChildProcess } from 'child_process';
 import { app } from 'electron';
 import { CLAUDEMON_API_URL } from './claudemonDaemon';
 import { DELEGATE_CATALOG_TO_BRAIN, DESKTOP_RENDERER_USES_BUS } from './brainDelegation';
-import { killStaleListener, waitForHealth as waitForHealthShared, PORTS, RestartBackoff, daemonSpawnOptions, gracefulStop } from '../lib/daemonUtils';
+import {
+  killStaleListener,
+  waitForHealth as waitForHealthShared,
+  PORTS,
+  RestartBackoff,
+  daemonSpawnOptions,
+  gracefulStop,
+} from '../lib/daemonUtils';
 import { getConfigDir } from './configService';
 import { notifySystem } from './systemNotice';
 
@@ -96,7 +103,7 @@ function writeRemoteShareFlag(enabled: boolean): void {
  *  loopback-only when off. */
 function bindAddr(): string {
   return isRemoteEnabled()
-    ? (process.env.WORKSPACER_REMOTE_ADDR || `0.0.0.0:${PORT}`)
+    ? process.env.WORKSPACER_REMOTE_ADDR || `0.0.0.0:${PORT}`
     : `127.0.0.1:${PORT}`;
 }
 
@@ -112,7 +119,9 @@ function loadOrCreateToken(): string {
   try {
     const existing = fs.readFileSync(file, 'utf-8').trim();
     if (existing) return existing;
-  } catch { /* not created yet */ }
+  } catch {
+    /* not created yet */
+  }
   const token = crypto.randomBytes(24).toString('base64url');
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -240,7 +249,9 @@ function ensurePluginsDir(): string {
           seeded.push(name);
         }
       }
-      console.log(`[hub] seeded plugins dir with default examples: ${seeded.join(', ') || '(none found)'}`);
+      console.log(
+        `[hub] seeded plugins dir with default examples: ${seeded.join(', ') || '(none found)'}`,
+      );
     }
   } catch (err) {
     console.error('[hub] failed to prepare plugins dir:', err);
@@ -254,7 +265,11 @@ export function startHub(): Promise<void> {
 
   const bin = hubBinaryPath();
   if (!fs.existsSync(bin)) {
-    return Promise.reject(new Error(`hub binary not found at ${bin} (run: cd services/hub && go build -o hub ./cmd/hub)`));
+    return Promise.reject(
+      new Error(
+        `hub binary not found at ${bin} (run: cd services/hub && go build -o hub ./cmd/hub)`,
+      ),
+    );
   }
 
   intentionalStop = false;
@@ -271,18 +286,24 @@ function launch(bin: string): Promise<void> {
   console.log(`[hub] spawning ${bin} (addr ${addr})`);
   backoff.markStarted();
   const hubArgs = [
-    '--addr', addr,
-    '--claudemon-events', `${CLAUDEMON_API_URL}/events`,
-    '--plugins-dir', pluginsDir,
+    '--addr',
+    addr,
+    '--claudemon-events',
+    `${CLAUDEMON_API_URL}/events`,
+    '--plugins-dir',
+    pluginsDir,
     // Read-only catalog of bundled examples the user can add from the UI.
-    '--examples-dir', bundledExamplesDir(),
+    '--examples-dir',
+    bundledExamplesDir(),
     // Have the hub supervise the headless brain provider. With delegation on it
     // owns the file-backed "catalog" capabilities (main stops registering them —
     // see hubCapabilities + brainDelegation); the brain binary ships next to the
     // hub binary, so the hub auto-detects it. Off → no brain, main stays the
     // provider (kill switch: WORKSPACER_NO_BRAIN=1).
-    '--brain-scope', DELEGATE_CATALOG_TO_BRAIN ? 'catalog' : 'off',
-    '--claudemon', CLAUDEMON_API_URL,
+    '--brain-scope',
+    DELEGATE_CATALOG_TO_BRAIN ? 'catalog' : 'off',
+    '--claudemon',
+    CLAUDEMON_API_URL,
   ];
   if (HUB_TOKEN) hubArgs.push('--token', HUB_TOKEN);
   // Serve the full web app (real renderer) at /app/ when remote sharing is on
@@ -296,15 +317,17 @@ function launch(bin: string): Promise<void> {
   if (remote) {
     // Log the reachable address but NOT the token — the tokened URL/QR lives in
     // the Remote control panel only, so the secret never lands in logs/terminals.
-    console.log(`[hub] remote sharing ON — bound to ${addr}. Open Remote control for the tokened link/QR.`);
+    console.log(
+      `[hub] remote sharing ON — bound to ${addr}. Open Remote control for the tokened link/QR.`,
+    );
   }
 
   // AbortController so a fast-exiting daemon cancels the health-check poll
   // instead of spinning for the full HEALTH_TIMEOUT_MS.
   const healthAbort = new AbortController();
 
-  child.stdout?.on('data', d => process.stdout.write(`[hub] ${d}`));
-  child.stderr?.on('data', d => process.stderr.write(`[hub] ${d}`));
+  child.stdout?.on('data', (d) => process.stdout.write(`[hub] ${d}`));
+  child.stderr?.on('data', (d) => process.stderr.write(`[hub] ${d}`));
   child.on('exit', (code, signal) => {
     console.log(`[hub] exited code=${code} signal=${signal}`);
     child = null;
@@ -313,8 +336,14 @@ function launch(bin: string): Promise<void> {
     if (!intentionalStop) scheduleRestart(bin);
   });
 
-  readyPromise = waitForHealthShared(`http://127.0.0.1:${PORT}/health`, HEALTH_TIMEOUT_MS, 'hub', healthAbort.signal)
-    .then(() => { backoff.reset(); });
+  readyPromise = waitForHealthShared(
+    `http://127.0.0.1:${PORT}/health`,
+    HEALTH_TIMEOUT_MS,
+    'hub',
+    healthAbort.signal,
+  ).then(() => {
+    backoff.reset();
+  });
   return readyPromise;
 }
 
@@ -326,14 +355,15 @@ function scheduleRestart(bin: string): void {
       level: 'warn',
       key: 'hub-crashloop',
       title: 'Control plane (hub) keeps crashing',
-      detail: 'Gave up restarting it. Plugins and remote sharing stay unavailable until you restart the app.',
+      detail:
+        'Gave up restarting it. Plugins and remote sharing stay unavailable until you restart the app.',
     });
     return;
   }
   console.warn(`[hub] unexpected exit — restarting in ${delay}ms`);
   setTimeout(() => {
     if (intentionalStop || child) return; // stopped, or already back up
-    launch(bin).catch(err => console.error('[hub] restart failed health check:', err));
+    launch(bin).catch((err) => console.error('[hub] restart failed health check:', err));
   }, delay);
 }
 

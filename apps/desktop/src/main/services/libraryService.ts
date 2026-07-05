@@ -47,7 +47,7 @@ export interface McpServerConfig {
 }
 
 export interface LibraryItem {
-  id: string;            // filename slug (no extension)
+  id: string; // filename slug (no extension)
   scope: LibraryScope;
   title: string;
   kind: LibraryKind;
@@ -57,8 +57,8 @@ export interface LibraryItem {
   action?: LibraryAction;
   /** MCP server config — present only when kind === 'mcp'. */
   mcp?: McpServerConfig;
-  body: string;          // the prompt/skill text (may contain {{templates}})
-  path: string;          // absolute file path
+  body: string; // the prompt/skill text (may contain {{templates}})
+  path: string; // absolute file path
 }
 
 const slug = slugLibrary;
@@ -101,7 +101,9 @@ function cleanMcp(cfg: McpServerConfig): McpServerConfig {
   return out;
 }
 
-function serialize(item: Pick<LibraryItem, 'title' | 'kind' | 'description' | 'tags' | 'action' | 'mcp' | 'body'>): string {
+function serialize(
+  item: Pick<LibraryItem, 'title' | 'kind' | 'description' | 'tags' | 'action' | 'mcp' | 'body'>,
+): string {
   const fm: Record<string, any> = { title: item.title, kind: item.kind };
   if (item.description) fm.description = item.description;
   if (item.tags && item.tags.length) fm.tags = item.tags;
@@ -126,9 +128,13 @@ function readDir(dir: string, scope: LibraryScope): LibraryItem[] {
       const { data, body } = parseFrontmatter(raw);
       const id = slug(name.replace(/\.md$/i, ''));
       const kind: LibraryKind =
-        data.kind === 'skill' || data.kind === 'agent' || data.kind === 'mcp' ? data.kind : 'prompt';
+        data.kind === 'skill' || data.kind === 'agent' || data.kind === 'mcp'
+          ? data.kind
+          : 'prompt';
       const action: LibraryAction | undefined =
-        data.action === 'insert' || data.action === 'spawn' || data.action === 'copy' ? data.action : undefined;
+        data.action === 'insert' || data.action === 'spawn' || data.action === 'copy'
+          ? data.action
+          : undefined;
       const mcp =
         kind === 'mcp' && data.mcp && typeof data.mcp === 'object'
           ? cleanMcp(data.mcp as McpServerConfig)
@@ -180,19 +186,31 @@ function readClaudeItems(cwd: string): LibraryItem[] {
   try {
     for (const e of fs.readdirSync(claudeSkillsDir(cwd), { withFileTypes: true })) {
       if (!e.isDirectory()) continue;
-      const it = claudeItem(path.join(claudeSkillsDir(cwd), e.name, 'SKILL.md'), slug(e.name), 'skill');
+      const it = claudeItem(
+        path.join(claudeSkillsDir(cwd), e.name, 'SKILL.md'),
+        slug(e.name),
+        'skill',
+      );
       if (it) items.push(it);
     }
-  } catch { /* no .claude/skills */ }
+  } catch {
+    /* no .claude/skills */
+  }
 
   // Agents: flat markdown files
   try {
     for (const name of fs.readdirSync(claudeAgentsDir(cwd))) {
       if (!name.toLowerCase().endsWith('.md')) continue;
-      const it = claudeItem(path.join(claudeAgentsDir(cwd), name), slug(name.replace(/\.md$/i, '')), 'agent');
+      const it = claudeItem(
+        path.join(claudeAgentsDir(cwd), name),
+        slug(name.replace(/\.md$/i, '')),
+        'agent',
+      );
       if (it) items.push(it);
     }
-  } catch { /* no .claude/agents */ }
+  } catch {
+    /* no .claude/agents */
+  }
 
   return items;
 }
@@ -201,7 +219,12 @@ function readClaudeItems(cwd: string): LibraryItem[] {
  * Serialize in Claude Code's frontmatter format (name + description first),
  * preserving any pre-existing keys we don't model (tools, model, metadata...).
  */
-function serializeClaude(existing: Record<string, any>, title: string, description: string | undefined, body: string): string {
+function serializeClaude(
+  existing: Record<string, any>,
+  title: string,
+  description: string | undefined,
+  body: string,
+): string {
   const { name: _n, description: _d, ...rest } = existing;
   const fm: Record<string, any> = { name: title };
   if (description) fm.description = description;
@@ -251,42 +274,64 @@ class LibraryService {
     cwd?: string;
   }): LibraryItem {
     if (input.scope === 'claude') return this.saveClaude(input);
-    const dir = input.scope === 'project'
-      ? projectDir(input.cwd || process.cwd())
-      : globalDir();
+    const dir = input.scope === 'project' ? projectDir(input.cwd || process.cwd()) : globalDir();
     fs.mkdirSync(dir, { recursive: true });
     const id = slug(input.id || input.title);
     const full = path.join(dir, `${id}.md`);
     fs.writeFileSync(full, serialize(input), 'utf-8');
     return {
-      id, scope: input.scope, title: input.title, kind: input.kind,
-      description: input.description, tags: input.tags, action: input.action,
+      id,
+      scope: input.scope,
+      title: input.title,
+      kind: input.kind,
+      description: input.description,
+      tags: input.tags,
+      action: input.action,
       mcp: input.kind === 'mcp' && input.mcp ? cleanMcp(input.mcp) : undefined,
-      body: input.body, path: full,
+      body: input.body,
+      path: full,
     };
   }
 
   /** Write a claude-scoped item back in Claude Code's native format/location. */
   private saveClaude(input: {
-    id?: string; title: string; kind: LibraryKind;
-    description?: string; body: string; cwd?: string;
+    id?: string;
+    title: string;
+    kind: LibraryKind;
+    description?: string;
+    body: string;
+    cwd?: string;
   }): LibraryItem {
     const cwd = input.cwd || process.cwd();
     const kind: 'skill' | 'agent' = input.kind === 'agent' ? 'agent' : 'skill';
     const id = slug(input.id || input.title);
-    const full = kind === 'skill'
-      ? path.join(claudeSkillsDir(cwd), id, 'SKILL.md')
-      : path.join(claudeAgentsDir(cwd), `${id}.md`);
+    const full =
+      kind === 'skill'
+        ? path.join(claudeSkillsDir(cwd), id, 'SKILL.md')
+        : path.join(claudeAgentsDir(cwd), `${id}.md`);
     fs.mkdirSync(path.dirname(full), { recursive: true });
 
     // Preserve frontmatter keys we don't model (tools, model, metadata, ...)
     let existing: Record<string, any> = {};
-    try { existing = parseFrontmatter(fs.readFileSync(full, 'utf-8')).data; } catch { /* new file */ }
-    fs.writeFileSync(full, serializeClaude(existing, input.title, input.description, input.body), 'utf-8');
+    try {
+      existing = parseFrontmatter(fs.readFileSync(full, 'utf-8')).data;
+    } catch {
+      /* new file */
+    }
+    fs.writeFileSync(
+      full,
+      serializeClaude(existing, input.title, input.description, input.body),
+      'utf-8',
+    );
     this.ensureProjectWatch(cwd, true);
     return {
-      id, scope: 'claude', title: input.title, kind,
-      description: input.description, body: input.body, path: full,
+      id,
+      scope: 'claude',
+      title: input.title,
+      kind,
+      description: input.description,
+      body: input.body,
+      path: full,
     };
   }
 
@@ -294,15 +339,27 @@ class LibraryService {
     if (scope === 'claude') {
       const root = cwd || process.cwd();
       if (kind === 'agent') {
-        try { fs.unlinkSync(path.join(claudeAgentsDir(root), `${slug(id)}.md`)); } catch { /* already gone */ }
+        try {
+          fs.unlinkSync(path.join(claudeAgentsDir(root), `${slug(id)}.md`));
+        } catch {
+          /* already gone */
+        }
       } else {
         // A skill is a directory (SKILL.md + optional resources)
-        try { fs.rmSync(path.join(claudeSkillsDir(root), slug(id)), { recursive: true, force: true }); } catch { /* already gone */ }
+        try {
+          fs.rmSync(path.join(claudeSkillsDir(root), slug(id)), { recursive: true, force: true });
+        } catch {
+          /* already gone */
+        }
       }
       return;
     }
     const dir = scope === 'project' ? projectDir(cwd || process.cwd()) : globalDir();
-    try { fs.unlinkSync(path.join(dir, `${slug(id)}.md`)); } catch { /* already gone */ }
+    try {
+      fs.unlinkSync(path.join(dir, `${slug(id)}.md`));
+    } catch {
+      /* already gone */
+    }
   }
 
   // ── watching ──────────────────────────────────────────────────────────────
@@ -311,9 +368,16 @@ class LibraryService {
     if (cwd === this.watchedProjectCwd && !force) return;
     if (cwd !== this.watchedProjectCwd) {
       // Drop the old project's watchers (keep the global one).
-      for (const dir of [projectDir(this.watchedProjectCwd), claudeSkillsDir(this.watchedProjectCwd), claudeAgentsDir(this.watchedProjectCwd)]) {
+      for (const dir of [
+        projectDir(this.watchedProjectCwd),
+        claudeSkillsDir(this.watchedProjectCwd),
+        claudeAgentsDir(this.watchedProjectCwd),
+      ]) {
         const w = this.watchers.get(dir);
-        if (w && this.watchedProjectCwd) { w.close(); this.watchers.delete(dir); }
+        if (w && this.watchedProjectCwd) {
+          w.close();
+          this.watchers.delete(dir);
+        }
       }
       this.watchedProjectCwd = cwd;
     }
@@ -343,7 +407,11 @@ class LibraryService {
   private notifyChanged(): void {
     if (this.debounce) clearTimeout(this.debounce);
     this.debounce = setTimeout(() => {
-      try { this.win?.webContents.send('library:changed'); } catch { /* window gone */ }
+      try {
+        this.win?.webContents.send('library:changed');
+      } catch {
+        /* window gone */
+      }
       // Mirror onto the hub bus so the web/remote client auto-refreshes too (the
       // same both-transports pattern as the fs.changed watch sink in ipc.ts).
       // No-op when remote sharing is off.
@@ -356,42 +424,56 @@ class LibraryService {
   private seedGlobalIfEmpty(): void {
     const dir = globalDir();
     try {
-      if (fs.existsSync(dir) && fs.readdirSync(dir).some((n) => n.toLowerCase().endsWith('.md'))) return;
+      if (fs.existsSync(dir) && fs.readdirSync(dir).some((n) => n.toLowerCase().endsWith('.md')))
+        return;
       fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(path.join(dir, 'summarize-and-plan.md'), serialize({
-        title: 'Summarize & plan',
-        kind: 'prompt',
-        description: 'Have the agent summarize the codebase area and propose a plan.',
-        tags: ['planning'],
-        action: 'insert',
-        body: 'Summarize how `{{cwd}}` is structured at a high level, then propose a step-by-step plan for: {{?What do you want to do?}}\n\nList the files you would touch and call out the riskiest step before writing any code.',
-      }), 'utf-8');
-      fs.writeFileSync(path.join(dir, 'careful-refactor.md'), serialize({
-        title: 'Careful refactor (skill)',
-        kind: 'skill',
-        description: 'A disciplined refactor workflow: small steps, tests between each.',
-        tags: ['refactor', 'tests'],
-        action: 'insert',
-        body: [
-          'When refactoring, follow this workflow strictly:',
-          '',
-          '1. First, identify the smallest safe unit to change and state it.',
-          '2. Make ONE change, then run the relevant tests/build.',
-          '3. Only proceed to the next change once green. Never batch unrelated edits.',
-          '4. Preserve public behavior; if a signature must change, note every caller.',
-          '5. At the end, summarize what changed and what you verified.',
-          '',
-          'Begin by mapping the change surface for: {{?Target to refactor?}}',
-        ].join('\n'),
-      }), 'utf-8');
-      fs.writeFileSync(path.join(dir, 'context7-mcp.md'), serialize({
-        title: 'Context7 (MCP)',
-        kind: 'mcp',
-        description: 'Example MCP server — up-to-date library docs. Select it at spawn to expose its tools.',
-        tags: ['docs', 'example'],
-        mcp: { type: 'stdio', command: 'npx', args: ['-y', '@upstash/context7-mcp'] },
-        body: 'An example MCP server entry. Edit the command/args (or switch to an http URL), then pick it in the spawn dialog to load it for a session.',
-      }), 'utf-8');
+      fs.writeFileSync(
+        path.join(dir, 'summarize-and-plan.md'),
+        serialize({
+          title: 'Summarize & plan',
+          kind: 'prompt',
+          description: 'Have the agent summarize the codebase area and propose a plan.',
+          tags: ['planning'],
+          action: 'insert',
+          body: 'Summarize how `{{cwd}}` is structured at a high level, then propose a step-by-step plan for: {{?What do you want to do?}}\n\nList the files you would touch and call out the riskiest step before writing any code.',
+        }),
+        'utf-8',
+      );
+      fs.writeFileSync(
+        path.join(dir, 'careful-refactor.md'),
+        serialize({
+          title: 'Careful refactor (skill)',
+          kind: 'skill',
+          description: 'A disciplined refactor workflow: small steps, tests between each.',
+          tags: ['refactor', 'tests'],
+          action: 'insert',
+          body: [
+            'When refactoring, follow this workflow strictly:',
+            '',
+            '1. First, identify the smallest safe unit to change and state it.',
+            '2. Make ONE change, then run the relevant tests/build.',
+            '3. Only proceed to the next change once green. Never batch unrelated edits.',
+            '4. Preserve public behavior; if a signature must change, note every caller.',
+            '5. At the end, summarize what changed and what you verified.',
+            '',
+            'Begin by mapping the change surface for: {{?Target to refactor?}}',
+          ].join('\n'),
+        }),
+        'utf-8',
+      );
+      fs.writeFileSync(
+        path.join(dir, 'context7-mcp.md'),
+        serialize({
+          title: 'Context7 (MCP)',
+          kind: 'mcp',
+          description:
+            'Example MCP server — up-to-date library docs. Select it at spawn to expose its tools.',
+          tags: ['docs', 'example'],
+          mcp: { type: 'stdio', command: 'npx', args: ['-y', '@upstash/context7-mcp'] },
+          body: 'An example MCP server entry. Edit the command/args (or switch to an http URL), then pick it in the spawn dialog to load it for a session.',
+        }),
+        'utf-8',
+      );
     } catch {
       /* seeding is best-effort */
     }

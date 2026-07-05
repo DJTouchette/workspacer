@@ -36,7 +36,11 @@ export class ErrorBoundary extends React.Component<Props, State> {
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
     // Surface in devtools/console; the app keeps running.
-    console.error(`[ErrorBoundary${this.props.label ? ` · ${this.props.label}` : ''}]`, error, info.componentStack);
+    console.error(
+      `[ErrorBoundary${this.props.label ? ` · ${this.props.label}` : ''}]`,
+      error,
+      info.componentStack,
+    );
   }
 
   componentDidUpdate(prev: Props) {

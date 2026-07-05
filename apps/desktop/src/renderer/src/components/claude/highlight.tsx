@@ -15,12 +15,21 @@ import { tokenize, MAX_HIGHLIGHT_LINE_LENGTH, type TokenSpan } from '../../lib/d
 export function useHighlight(code: string, lang: string | null): TokenSpan[][] | null {
   const [tokens, setTokens] = useState<TokenSpan[][] | null>(null);
   useEffect(() => {
-    if (!lang || !code) { setTokens(null); return; }
+    if (!lang || !code) {
+      setTokens(null);
+      return;
+    }
     let cancelled = false;
     tokenize(code, lang)
-      .then((result) => { if (!cancelled) setTokens(result); })
-      .catch(() => { if (!cancelled) setTokens(null); });
-    return () => { cancelled = true; };
+      .then((result) => {
+        if (!cancelled) setTokens(result);
+      })
+      .catch(() => {
+        if (!cancelled) setTokens(null);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [code, lang]);
   return tokens;
 }
@@ -33,8 +42,12 @@ export function useHighlight(code: string, lang: string | null): TokenSpan[][] |
 export function renderLine(spans: TokenSpan[] | undefined, fallback: string): React.ReactNode {
   if (!spans || spans.length === 0 || fallback.length > MAX_HIGHLIGHT_LINE_LENGTH) return fallback;
   return spans.map((s, i) =>
-    s.color
-      ? <span key={i} style={{ color: s.color }}>{s.text}</span>
-      : <React.Fragment key={i}>{s.text}</React.Fragment>,
+    s.color ? (
+      <span key={i} style={{ color: s.color }}>
+        {s.text}
+      </span>
+    ) : (
+      <React.Fragment key={i}>{s.text}</React.Fragment>
+    ),
   );
 }

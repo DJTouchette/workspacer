@@ -191,7 +191,9 @@ export function useLayoutSync({
         const norm = loadAgentsFromSession(data.agents, data.activeAgentId);
         lastSyncedRef.current = norm ? project(norm.agents, norm.activeAgentId) : incoming;
       })
-      .catch(() => { /* hub still unreachable — the bus will retry */ });
+      .catch(() => {
+        /* hub still unreachable — the bus will retry */
+      });
   }, [enabled, loadAgentsFromSession]);
   useHubReconnect(resyncOnReconnect);
 
@@ -229,5 +231,10 @@ export function useLayoutSync({
     }, PUSH_DEBOUNCE_MS);
   }, [agents, activeAgentId, enabled, sessionPhase]);
 
-  useEffect(() => () => { if (pushTimerRef.current) clearTimeout(pushTimerRef.current); }, []);
+  useEffect(
+    () => () => {
+      if (pushTimerRef.current) clearTimeout(pushTimerRef.current);
+    },
+    [],
+  );
 }

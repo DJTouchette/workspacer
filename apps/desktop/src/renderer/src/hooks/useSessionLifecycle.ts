@@ -3,7 +3,15 @@
  *
  * Extracted verbatim from App.tsx; all logic is unchanged.
  */
-import { useRef, useCallback, useState, useEffect, type MutableRefObject, type Dispatch, type SetStateAction } from 'react';
+import {
+  useRef,
+  useCallback,
+  useState,
+  useEffect,
+  type MutableRefObject,
+  type Dispatch,
+  type SetStateAction,
+} from 'react';
 import type { AgentWorkspace } from '../types/pane';
 import { migrateSessionData } from '../App';
 import { usePageVisible } from './usePageVisible';
@@ -56,7 +64,9 @@ export function useSessionLifecycle({
   const pageVisible = usePageVisible();
 
   const handlePtyReady = useCallback((paneId: string, ptySessionId: string) => {
-    setPtyMapping((prev) => (prev[paneId] === ptySessionId ? prev : { ...prev, [paneId]: ptySessionId }));
+    setPtyMapping((prev) =>
+      prev[paneId] === ptySessionId ? prev : { ...prev, [paneId]: ptySessionId },
+    );
   }, []);
 
   // Reconcile saved agents against the daemon's live sessions — mark any whose
@@ -65,9 +75,14 @@ export function useSessionLifecycle({
   // for a ~30s grace window after SessionEnd, and treating those ids as alive
   // left restored agents looking live while attached to a dead session.
   const reconcileWithDaemon = useCallback(() => {
-    window.electronAPI.getAllClaudeSessions().then((sessions: any[]) => {
-      reconcileAgents(new Set(sessions.filter((s) => s.status !== 'ended').map((s) => s.sessionId)));
-    }).catch(() => {});
+    window.electronAPI
+      .getAllClaudeSessions()
+      .then((sessions: any[]) => {
+        reconcileAgents(
+          new Set(sessions.filter((s) => s.status !== 'ended').map((s) => s.sessionId)),
+        );
+      })
+      .catch(() => {});
   }, [reconcileAgents]);
 
   // --- Session lifecycle ---
@@ -79,20 +94,30 @@ export function useSessionLifecycle({
     setSessionPhase('active');
   }, [loadAgentsFromSession]);
 
-  const handleResumeSession = useCallback((filename: string) => {
-    setPickerCancellable(false);
-    window.electronAPI.loadSession(filename).then((data: any) => {
-      const { agents: migratedAgents, activeAgentId: migratedActiveId, name: migratedName } = migrateSessionData(data, appCwdRef.current);
-      loadAgentsFromSession(migratedAgents, migratedActiveId);
-      setSessionName(migratedName);
-      setPtyMapping({});
-      setSessionPhase('active');
-      reconcileWithDaemon();
-    }).catch(() => {
-      loadAgentsFromSession([], '');
-      setSessionPhase('active');
-    });
-  }, [loadAgentsFromSession, reconcileWithDaemon, appCwdRef]);
+  const handleResumeSession = useCallback(
+    (filename: string) => {
+      setPickerCancellable(false);
+      window.electronAPI
+        .loadSession(filename)
+        .then((data: any) => {
+          const {
+            agents: migratedAgents,
+            activeAgentId: migratedActiveId,
+            name: migratedName,
+          } = migrateSessionData(data, appCwdRef.current);
+          loadAgentsFromSession(migratedAgents, migratedActiveId);
+          setSessionName(migratedName);
+          setPtyMapping({});
+          setSessionPhase('active');
+          reconcileWithDaemon();
+        })
+        .catch(() => {
+          loadAgentsFromSession([], '');
+          setSessionPhase('active');
+        });
+    },
+    [loadAgentsFromSession, reconcileWithDaemon, appCwdRef],
+  );
 
   const handleDeleteSession = useCallback((filename: string) => {
     window.electronAPI.deleteSession(filename).then(() => {
@@ -100,32 +125,52 @@ export function useSessionLifecycle({
     });
   }, []);
 
-  const saveCurrentSession = useCallback((force?: boolean): Promise<void> => {
-    if (sessionPhase !== 'active') return Promise.resolve();
-    const payload = {
-      name: sessionName,
-      activeAgentId,
-      agents: agents.map((a) => ({
-        ...a,
-        tabs: a.tabs.map((t) => ({ ...t, panes: t.panes.map((p) => ({ ...p })) })),
-      })),
-      ptyMapping: { ...ptyMapping },
-    };
-    const hash = JSON.stringify({
-      n: payload.name,
-      a: payload.activeAgentId,
-      g: payload.agents.map((ag) => ag.id + ag.name + (ag.sessionId || '') + ag.activeTabId
-        // Include canvas so a spatial-mode drag (which only changes t.canvas)
-        // isn't deduped away and actually persists across reloads.
-        + ag.tabs.map((t) => t.id + t.title + (t.activePaneId || '') + (t.canvas ? `${t.canvas.x},${t.canvas.y},${t.canvas.w},${t.canvas.h}` : '')
-          + t.panes.map((p) => p.id + p.type + (p.url || '') + (p.notes || '')).join()).join()),
-    });
-    if (!force && hash === lastSaveHashRef.current) return Promise.resolve();
-    lastSaveHashRef.current = hash;
-    return window.electronAPI.saveSession(payload).then(() => undefined, (err: any) => {
-      console.error('[Session] save failed:', err);
-    });
-  }, [agents, activeAgentId, sessionName, sessionPhase, ptyMapping]);
+  const saveCurrentSession = useCallback(
+    (force?: boolean): Promise<void> => {
+      if (sessionPhase !== 'active') return Promise.resolve();
+      const payload = {
+        name: sessionName,
+        activeAgentId,
+        agents: agents.map((a) => ({
+          ...a,
+          tabs: a.tabs.map((t) => ({ ...t, panes: t.panes.map((p) => ({ ...p })) })),
+        })),
+        ptyMapping: { ...ptyMapping },
+      };
+      const hash = JSON.stringify({
+        n: payload.name,
+        a: payload.activeAgentId,
+        g: payload.agents.map(
+          (ag) =>
+            ag.id +
+            ag.name +
+            (ag.sessionId || '') +
+            ag.activeTabId +
+            // Include canvas so a spatial-mode drag (which only changes t.canvas)
+            // isn't deduped away and actually persists across reloads.
+            ag.tabs
+              .map(
+                (t) =>
+                  t.id +
+                  t.title +
+                  (t.activePaneId || '') +
+                  (t.canvas ? `${t.canvas.x},${t.canvas.y},${t.canvas.w},${t.canvas.h}` : '') +
+                  t.panes.map((p) => p.id + p.type + (p.url || '') + (p.notes || '')).join(),
+              )
+              .join(),
+        ),
+      });
+      if (!force && hash === lastSaveHashRef.current) return Promise.resolve();
+      lastSaveHashRef.current = hash;
+      return window.electronAPI.saveSession(payload).then(
+        () => undefined,
+        (err: any) => {
+          console.error('[Session] save failed:', err);
+        },
+      );
+    },
+    [agents, activeAgentId, sessionName, sessionPhase, ptyMapping],
+  );
 
   useEffect(() => {
     if (sessionPhase !== 'active' || !pageVisible) return;
@@ -171,18 +216,21 @@ export function useSessionLifecycle({
     if (!configLoaded || startupDoneRef.current) return;
     startupDoneRef.current = true;
     const shouldAutoResume = autoResume ?? false;
-    window.electronAPI.listSessions().then((sessions) => {
-      if (sessions.length === 0) {
-        setSessionPhase('active');
-        return;
-      }
-      setSessionList(sessions);
-      if (shouldAutoResume) {
-        handleResumeSession(sessions[0].filename); // most recent (list is sorted desc)
-      } else {
-        setSessionPhase('picker');
-      }
-    }).catch(() => setSessionPhase('active'));
+    window.electronAPI
+      .listSessions()
+      .then((sessions) => {
+        if (sessions.length === 0) {
+          setSessionPhase('active');
+          return;
+        }
+        setSessionList(sessions);
+        if (shouldAutoResume) {
+          handleResumeSession(sessions[0].filename); // most recent (list is sorted desc)
+        } else {
+          setSessionPhase('picker');
+        }
+      })
+      .catch(() => setSessionPhase('active'));
   }, [configLoaded, autoResume, handleResumeSession]);
 
   // Re-open the picker mid-session (Command palette → "Switch session"). Saves
@@ -191,8 +239,12 @@ export function useSessionLifecycle({
   const switchSession = useCallback(() => {
     saveCurrentSession(true);
     setPickerCancellable(true);
-    window.electronAPI.listSessions()
-      .then((sessions) => { setSessionList(sessions); setSessionPhase('picker'); })
+    window.electronAPI
+      .listSessions()
+      .then((sessions) => {
+        setSessionList(sessions);
+        setSessionPhase('picker');
+      })
       .catch(() => setSessionPhase('picker'));
   }, [saveCurrentSession]);
 

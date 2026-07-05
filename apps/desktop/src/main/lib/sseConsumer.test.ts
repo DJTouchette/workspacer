@@ -37,10 +37,7 @@ const enc = (s: string) => new TextEncoder().encode(s);
  * Run the consumer with a mocked fetch and collect all onFrame calls.
  * Aborts after the first backoff cycle (after EOF, we abort immediately).
  */
-async function collect(
-  chunks: Uint8Array[],
-  opts: { joinWith?: string } = {},
-): Promise<string[]> {
+async function collect(chunks: Uint8Array[], opts: { joinWith?: string } = {}): Promise<string[]> {
   const frames: string[] = [];
   const abort = new AbortController();
   const mockFetch = makeFetch(chunks);
@@ -63,7 +60,9 @@ async function collect(
           abort.abort();
         }
       },
-      onError() { /* ignore in tests */ },
+      onError() {
+        /* ignore in tests */
+      },
     });
 
     await p;
@@ -106,7 +105,9 @@ async function collectAll(
       onFrame(data) {
         frames.push(data);
       },
-      onError() { /* ignore */ },
+      onError() {
+        /* ignore */
+      },
     });
 
     await p;
@@ -256,12 +257,19 @@ describe('consumeSseStream — abort / signal behaviour', () => {
     (global as any).fetch = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
-      body: new ReadableStream({ start(c) { c.enqueue(enc('data: x\n\n')); c.close(); } }),
+      body: new ReadableStream({
+        start(c) {
+          c.enqueue(enc('data: x\n\n'));
+          c.close();
+        },
+      }),
     });
 
     await consumeSseStream('http://test/', {
       signal: abort.signal,
-      onFrame(d) { frames.push(d); },
+      onFrame(d) {
+        frames.push(d);
+      },
     });
 
     (global as any).fetch = origFetch;

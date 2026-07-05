@@ -12,7 +12,13 @@
  *
  * Prereq:  npm run build   (main + renderer compiled)
  */
-import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test';
+import {
+  test,
+  expect,
+  _electron as electron,
+  type ElectronApplication,
+  type Page,
+} from '@playwright/test';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -51,7 +57,11 @@ test.describe('Library E2E', () => {
 
   test.afterAll(async () => {
     if (app) await app.close();
-    try { fs.rmSync(cfgHome, { recursive: true, force: true }); } catch { /* ignore */ }
+    try {
+      fs.rmSync(cfgHome, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
   });
 
   test('quick-picker hotkey lists seeded prompts & skills with action hints', async () => {

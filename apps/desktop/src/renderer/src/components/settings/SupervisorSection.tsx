@@ -19,7 +19,8 @@ interface SupervisorSectionProps {
 function useModelOptions(): SelectOption[] {
   const [opts, setOpts] = useState<SelectOption[]>([{ value: '', label: 'App default' }]);
   useEffect(() => {
-    window.electronAPI.claudeListModels?.()
+    window.electronAPI
+      .claudeListModels?.()
       .then((res) => {
         if (!res) return;
         const aliases = (res.aliases ?? []).map((a) => ({ value: a.value, label: a.label }));
@@ -48,8 +49,8 @@ const SupervisorSection: React.FC<SupervisorSectionProps> = ({ config, save }) =
     <Section title="Supervisor">
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)', marginBottom: 8 }}>
         Optional. The fleet supervisor is an agent you start from “Ask the Fleet” that watches your
-        other agents, summarizes what they’re doing (using cheap summarizer workers), and notifies you
-        when a decision is needed. Nothing here runs unless you spawn one.
+        other agents, summarizes what they’re doing (using cheap summarizer workers), and notifies
+        you when a decision is needed. Nothing here runs unless you spawn one.
       </div>
 
       <Row label="Supervisor agent">
@@ -66,9 +67,10 @@ const SupervisorSection: React.FC<SupervisorSectionProps> = ({ config, save }) =
       </Row>
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
         Which CLI the supervisor runs on (also pickable when you launch one from “Ask the Fleet”).
-        Codex, OpenCode, and Pi supervisors are wired to the workspacer MCP facade — the supervisor’s
-        tools to observe and coordinate the fleet — via their own MCP config. Experimental: it needs
-        a CLI build with remote-MCP support; Claude remains the most battle-tested.
+        Codex, OpenCode, and Pi supervisors are wired to the workspacer MCP facade — the
+        supervisor’s tools to observe and coordinate the fleet — via their own MCP config.
+        Experimental: it needs a CLI build with remote-MCP support; Claude remains the most
+        battle-tested.
       </div>
 
       <Row label="Supervisor model">
@@ -80,7 +82,8 @@ const SupervisorSection: React.FC<SupervisorSectionProps> = ({ config, save }) =
         />
       </Row>
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
-        The coordinator model. Keep this strong — it reasons over the fleet and composes notifications.
+        The coordinator model. Keep this strong — it reasons over the fleet and composes
+        notifications.
       </div>
 
       <Row label="Summarizer model">
@@ -92,8 +95,8 @@ const SupervisorSection: React.FC<SupervisorSectionProps> = ({ config, save }) =
         />
       </Row>
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
-        The cheap model the supervisor spawns to read transcripts and write digests. Sonnet by default;
-        Haiku is cheaper.
+        The cheap model the supervisor spawns to read transcripts and write digests. Sonnet by
+        default; Haiku is cheaper.
       </div>
 
       <Row label="Poll interval (seconds)">

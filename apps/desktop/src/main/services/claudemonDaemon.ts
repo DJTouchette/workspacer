@@ -13,7 +13,14 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { spawn, ChildProcess } from 'child_process';
 import { app } from 'electron';
-import { killStaleListener, waitForHealth as waitForHealthShared, PORTS, RestartBackoff, daemonSpawnOptions, gracefulStop } from '../lib/daemonUtils';
+import {
+  killStaleListener,
+  waitForHealth as waitForHealthShared,
+  PORTS,
+  RestartBackoff,
+  daemonSpawnOptions,
+  gracefulStop,
+} from '../lib/daemonUtils';
 import { notifySystem } from './systemNotice';
 
 const HOOK_PORT = PORTS.claudemonHook;
@@ -35,11 +42,19 @@ export function claudemonBinaryPath(): string {
   if (process.env.ELECTRON_DEV || !app.isPackaged) {
     // app.getAppPath() in dev points at apps/desktop (where package.json lives);
     // the claudemon source sits at <repo>/services/claudemon.
-    return path.join(app.getAppPath(), '..', '..', 'services', 'claudemon', 'target', 'release', exeName());
+    return path.join(
+      app.getAppPath(),
+      '..',
+      '..',
+      'services',
+      'claudemon',
+      'target',
+      'release',
+      exeName(),
+    );
   }
   return path.join(process.resourcesPath, 'claudemon', exeName());
 }
-
 
 /** Spawn the daemon. Idempotent — repeat calls return the existing ready promise. */
 export function startClaudemon(): Promise<void> {
@@ -71,8 +86,8 @@ function launch(bin: string): Promise<void> {
   // instead of spinning for the full HEALTH_TIMEOUT_MS.
   const healthAbort = new AbortController();
 
-  child.stdout?.on('data', d => process.stdout.write(`[claudemon] ${d}`));
-  child.stderr?.on('data', d => process.stderr.write(`[claudemon] ${d}`));
+  child.stdout?.on('data', (d) => process.stdout.write(`[claudemon] ${d}`));
+  child.stderr?.on('data', (d) => process.stderr.write(`[claudemon] ${d}`));
   child.on('exit', (code, signal) => {
     console.log(`[claudemon] exited code=${code} signal=${signal}`);
     child = null;
@@ -81,8 +96,14 @@ function launch(bin: string): Promise<void> {
     if (!intentionalStop) scheduleRestart(bin);
   });
 
-  readyPromise = waitForHealthShared(`http://127.0.0.1:${API_PORT}/health`, HEALTH_TIMEOUT_MS, 'claudemon', healthAbort.signal)
-    .then(() => { backoff.reset(); });
+  readyPromise = waitForHealthShared(
+    `http://127.0.0.1:${API_PORT}/health`,
+    HEALTH_TIMEOUT_MS,
+    'claudemon',
+    healthAbort.signal,
+  ).then(() => {
+    backoff.reset();
+  });
   return readyPromise;
 }
 
@@ -94,14 +115,15 @@ function scheduleRestart(bin: string): void {
       level: 'error',
       key: 'claudemon-crashloop',
       title: 'Agent daemon (claudemon) keeps crashing',
-      detail: 'Gave up restarting it after repeated failures. Claude sessions won’t work until you restart the app.',
+      detail:
+        'Gave up restarting it after repeated failures. Claude sessions won’t work until you restart the app.',
     });
     return;
   }
   console.warn(`[claudemon] unexpected exit — restarting in ${delay}ms`);
   setTimeout(() => {
     if (intentionalStop || child) return; // stopped, or already back up
-    launch(bin).catch(err => console.error('[claudemon] restart failed health check:', err));
+    launch(bin).catch((err) => console.error('[claudemon] restart failed health check:', err));
   }, delay);
 }
 
@@ -118,14 +140,20 @@ export function runClaudemonInit(): Promise<void> {
     });
     let stdout = '';
     let stderr = '';
-    proc.stdout?.on('data', d => { stdout += d.toString(); });
-    proc.stderr?.on('data', d => { stderr += d.toString(); });
-    proc.on('exit', code => {
+    proc.stdout?.on('data', (d) => {
+      stdout += d.toString();
+    });
+    proc.stderr?.on('data', (d) => {
+      stderr += d.toString();
+    });
+    proc.on('exit', (code) => {
       if (code === 0) {
         if (stdout.trim()) console.log(`[claudemon init] ${stdout.trim()}`);
         resolve();
       } else {
-        reject(new Error(`claudemon init failed (code=${code}): ${stderr.trim() || stdout.trim()}`));
+        reject(
+          new Error(`claudemon init failed (code=${code}): ${stderr.trim() || stdout.trim()}`),
+        );
       }
     });
     proc.on('error', reject);

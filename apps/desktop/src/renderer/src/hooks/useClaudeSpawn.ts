@@ -143,7 +143,11 @@ export function useClaudeSpawn({
           // Guard each write: a single malformed/edge-case sequence that makes
           // xterm throw must not abort the batch or break the render loop.
           for (const chunk of chunks) {
-            try { term.write(chunk); } catch (err) { console.warn('[useClaudeSpawn] term.write threw:', err); }
+            try {
+              term.write(chunk);
+            } catch (err) {
+              console.warn('[useClaudeSpawn] term.write threw:', err);
+            }
           }
         });
       }
@@ -193,7 +197,7 @@ export function useClaudeSpawn({
         setSpawnError(err instanceof Error ? err : new Error(String(err)));
       }
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /**
@@ -204,50 +208,62 @@ export function useClaudeSpawn({
    * continuous across the restart. Attached viewers must not use this — their
    * session belongs to the agent manager (respawn goes through it instead).
    */
-  const restartSession = useCallback(async (overrides: RestartSessionOverrides) => {
-    const old = sessionIdRef.current;
-    if (!old || isAttachedRef.current) return;
-    if (unsubOutputRef.current) { unsubOutputRef.current(); unsubOutputRef.current = null; }
-    if (unsubExitRef.current) { unsubExitRef.current(); unsubExitRef.current = null; }
-    await window.electronAPI.claudeClose(old).catch(() => {});
-    sessionIdRef.current = null;
-    viewerKeyRef.current = null;
-    setIsReady(false);
-    setSpawnError(null);
-    const { cols, rows } = lastDimsRef.current;
-    try {
-      const id = await window.electronAPI.spawnClaude({
-        cwd: cwdRef.current,
-        profileId: profileRef.current,
-        provider: overrides.provider as 'claude' | 'codex' | 'opencode' | 'pi' | undefined,
-        resumeSessionId: old,
-        model: overrides.model,
-        effort: overrides.effort,
-        permissionMode: overrides.permissionMode,
-        cols,
-        rows,
-      });
-      if (!mountedRef.current) {
-        window.electronAPI.claudeClose(id).catch(() => {});
-        return;
+  const restartSession = useCallback(
+    async (overrides: RestartSessionOverrides) => {
+      const old = sessionIdRef.current;
+      if (!old || isAttachedRef.current) return;
+      if (unsubOutputRef.current) {
+        unsubOutputRef.current();
+        unsubOutputRef.current = null;
       }
-      sessionIdRef.current = id;
-      viewerKeyRef.current = id;
-      setSessionId(id);
-      subscribeStreams(id);
-      setIsReady(true);
-    } catch (err) {
-      console.error('[useClaudeSpawn] restart failed:', err);
-      if (mountedRef.current) {
-        setSpawnError(err instanceof Error ? err : new Error(String(err)));
+      if (unsubExitRef.current) {
+        unsubExitRef.current();
+        unsubExitRef.current = null;
       }
-    }
-  }, [subscribeStreams]);
+      await window.electronAPI.claudeClose(old).catch(() => {});
+      sessionIdRef.current = null;
+      viewerKeyRef.current = null;
+      setIsReady(false);
+      setSpawnError(null);
+      const { cols, rows } = lastDimsRef.current;
+      try {
+        const id = await window.electronAPI.spawnClaude({
+          cwd: cwdRef.current,
+          profileId: profileRef.current,
+          provider: overrides.provider as 'claude' | 'codex' | 'opencode' | 'pi' | undefined,
+          resumeSessionId: old,
+          model: overrides.model,
+          effort: overrides.effort,
+          permissionMode: overrides.permissionMode,
+          cols,
+          rows,
+        });
+        if (!mountedRef.current) {
+          window.electronAPI.claudeClose(id).catch(() => {});
+          return;
+        }
+        sessionIdRef.current = id;
+        viewerKeyRef.current = id;
+        setSessionId(id);
+        subscribeStreams(id);
+        setIsReady(true);
+      } catch (err) {
+        console.error('[useClaudeSpawn] restart failed:', err);
+        if (mountedRef.current) {
+          setSpawnError(err instanceof Error ? err : new Error(String(err)));
+        }
+      }
+    },
+    [subscribeStreams],
+  );
 
-  const startSession = useCallback((cols: number, rows: number) => {
-    if (sessionIdRef.current) return;
-    initSession(cols, rows);
-  }, [initSession]);
+  const startSession = useCallback(
+    (cols: number, rows: number) => {
+      if (sessionIdRef.current) return;
+      initSession(cols, rows);
+    },
+    [initSession],
+  );
 
   const retry = useCallback(() => {
     if (sessionIdRef.current) return;
@@ -285,7 +301,7 @@ export function useClaudeSpawn({
       sessionIdRef.current = null;
       viewerKeyRef.current = null;
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paneId]);
 
   return {

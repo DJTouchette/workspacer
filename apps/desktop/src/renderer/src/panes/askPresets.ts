@@ -9,7 +9,7 @@ export const ASK_PRESETS: AskPreset[] = [
     id: 'standup',
     label: 'Standup',
     prompt:
-      'Give me a standup: for each agent, what it\'s working on, what it did recently, and whether it\'s blocked. Order by what needs my attention first. Reference each session as session:<id>.',
+      "Give me a standup: for each agent, what it's working on, what it did recently, and whether it's blocked. Order by what needs my attention first. Reference each session as session:<id>.",
   },
   {
     id: 'triage',

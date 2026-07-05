@@ -47,11 +47,18 @@ export const lastToolLineStyle: React.CSSProperties = {
 // ── AgentSpinner ──
 
 export const AgentSpinner: React.FC<{ color?: string }> = ({ color = AGENT_PURPLE }) => (
-  <span style={{
-    display: 'inline-block', width: 12, height: 12,
-    border: `1.5px solid ${color}`, borderTopColor: 'transparent',
-    borderRadius: '50%', animation: 'claudeSpinner 0.8s linear infinite', flexShrink: 0,
-  }} />
+  <span
+    style={{
+      display: 'inline-block',
+      width: 12,
+      height: 12,
+      border: `1.5px solid ${color}`,
+      borderTopColor: 'transparent',
+      borderRadius: '50%',
+      animation: 'claudeSpinner 0.8s linear infinite',
+      flexShrink: 0,
+    }}
+  />
 );
 
 // ── agentStatusIcon ──
@@ -60,25 +67,45 @@ export const agentStatusIcon = (status: WorkflowAgentInfo['status']): React.Reac
   switch (status) {
     case 'queued':
       // Pack "queued" clock — quiet/muted, no accent.
-      return <IconQueued size={12} strokeWidth={2.2} style={{ color: colors.mutedDim, flexShrink: 0 }} accent={colors.mutedDim} />;
+      return (
+        <IconQueued
+          size={12}
+          strokeWidth={2.2}
+          style={{ color: colors.mutedDim, flexShrink: 0 }}
+          accent={colors.mutedDim}
+        />
+      );
     case 'running':
       return <AgentSpinner />;
     case 'failed':
       // Pack "error" triangle, tinted red.
-      return <IconError size={12} strokeWidth={2.2} style={{ color: colors.error, flexShrink: 0 }} />;
+      return (
+        <IconError size={12} strokeWidth={2.2} style={{ color: colors.error, flexShrink: 0 }} />
+      );
     default:
       // Pack "done" check-circle, tinted green.
-      return <IconDone size={12} strokeWidth={2.2} style={{ color: colors.success, flexShrink: 0 }} accent={colors.success} />;
+      return (
+        <IconDone
+          size={12}
+          strokeWidth={2.2}
+          style={{ color: colors.success, flexShrink: 0 }}
+          accent={colors.success}
+        />
+      );
   }
 };
 
 // ── WorkflowAgentRow ──
 
-const WorkflowAgentRowInner: React.FC<{ agent: WorkflowAgentInfo; now: number }> = ({ agent, now }) => {
+const WorkflowAgentRowInner: React.FC<{ agent: WorkflowAgentInfo; now: number }> = ({
+  agent,
+  now,
+}) => {
   const running = agent.status === 'running';
   const failed = agent.status === 'failed';
   const title = agent.label ?? agent.promptPreview ?? agent.id;
-  const duration = agent.durationMs ?? (running && agent.startedAt ? now - agent.startedAt : undefined);
+  const duration =
+    agent.durationMs ?? (running && agent.startedAt ? now - agent.startedAt : undefined);
   // The prompt/result are captured by the watcher; let the user expand to read
   // them (and, for a failed agent, see why it failed).
   const canExpand = !!(agent.promptPreview || agent.resultPreview);
@@ -87,8 +114,15 @@ const WorkflowAgentRowInner: React.FC<{ agent: WorkflowAgentInfo; now: number }>
   return (
     <div style={{ padding: '1px 0' }}>
       <div
-        onClick={canExpand ? () => setExpanded(e => !e) : undefined}
-        style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.72rem', lineHeight: 1.4, cursor: canExpand ? 'pointer' : 'default' }}
+        onClick={canExpand ? () => setExpanded((e) => !e) : undefined}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          fontSize: '0.72rem',
+          lineHeight: 1.4,
+          cursor: canExpand ? 'pointer' : 'default',
+        }}
       >
         {agentStatusIcon(agent.status)}
         <span
@@ -109,11 +143,16 @@ const WorkflowAgentRowInner: React.FC<{ agent: WorkflowAgentInfo; now: number }>
         {(agent.costUSD ?? 0) > 0 && <span style={agentMetaStyle}>{fmtUSD(agent.costUSD!)}</span>}
         {agent.toolCalls > 0 && <span style={agentMetaStyle}>{agent.toolCalls} tools</span>}
         {duration !== undefined && <span style={agentMetaStyle}>{fmtDuration(duration)}</span>}
-        {canExpand && <span style={{ color: colors.mutedDim, fontSize: '0.6rem', flexShrink: 0 }}>{expanded ? '▾' : '▸'}</span>}
+        {canExpand && (
+          <span style={{ color: colors.mutedDim, fontSize: '0.6rem', flexShrink: 0 }}>
+            {expanded ? '▾' : '▸'}
+          </span>
+        )}
       </div>
       {running && agent.lastToolName && (
         <div style={lastToolLineStyle}>
-          {'└'} {agent.lastToolName}{agent.lastToolSummary ? ` ${agent.lastToolSummary}` : ''}
+          {'└'} {agent.lastToolName}
+          {agent.lastToolSummary ? ` ${agent.lastToolSummary}` : ''}
         </div>
       )}
       {expanded && (
@@ -127,7 +166,9 @@ const WorkflowAgentRowInner: React.FC<{ agent: WorkflowAgentInfo; now: number }>
           {agent.resultPreview && (
             <div style={agentDetailStyle}>
               <span style={agentDetailLabel}>{failed ? 'Error ' : 'Result '}</span>
-              <span style={{ color: failed ? colors.error : colors.text }}>{agent.resultPreview}</span>
+              <span style={{ color: failed ? colors.error : colors.text }}>
+                {agent.resultPreview}
+              </span>
             </div>
           )}
         </div>

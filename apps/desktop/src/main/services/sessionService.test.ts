@@ -48,13 +48,17 @@ describe('loadSession — containment', () => {
   });
 
   it('rejects a traversal escaping the sessions dir', () => {
-    expect(() => sessionService.loadSession('../secret.yaml')).toThrow(/escapes the sessions directory/);
+    expect(() => sessionService.loadSession('../secret.yaml')).toThrow(
+      /escapes the sessions directory/,
+    );
     // The out-of-tree file is untouched and unread.
     expect(fs.existsSync(secretOutside)).toBe(true);
   });
 
   it('rejects an absolute path', () => {
-    expect(() => sessionService.loadSession('/etc/passwd')).toThrow(/escapes the sessions directory/);
+    expect(() => sessionService.loadSession('/etc/passwd')).toThrow(
+      /escapes the sessions directory/,
+    );
   });
 });
 
@@ -65,7 +69,9 @@ describe('deleteSession — containment', () => {
   });
 
   it('rejects a traversal and leaves the out-of-tree file intact', () => {
-    expect(() => sessionService.deleteSession('../secret.yaml')).toThrow(/escapes the sessions directory/);
+    expect(() => sessionService.deleteSession('../secret.yaml')).toThrow(
+      /escapes the sessions directory/,
+    );
     expect(fs.existsSync(secretOutside)).toBe(true);
   });
 

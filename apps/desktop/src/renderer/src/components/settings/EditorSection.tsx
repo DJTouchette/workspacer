@@ -37,8 +37,16 @@ const EditorSection: React.FC<EditorSectionProps> = ({ config, save }) => {
         <>
           <Row label="Vim mode">
             <div style={{ display: 'flex', gap: 4 }}>
-              <ModeButton label="On" active={vim} onClick={() => save({ editor: { ...editorCfg, vim: true } })} />
-              <ModeButton label="Off" active={!vim} onClick={() => save({ editor: { ...editorCfg, vim: false } })} />
+              <ModeButton
+                label="On"
+                active={vim}
+                onClick={() => save({ editor: { ...editorCfg, vim: true } })}
+              />
+              <ModeButton
+                label="Off"
+                active={!vim}
+                onClick={() => save({ editor: { ...editorCfg, vim: false } })}
+              />
             </div>
           </Row>
           <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>

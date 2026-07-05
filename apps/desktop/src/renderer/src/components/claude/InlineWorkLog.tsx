@@ -14,21 +14,29 @@ const InlineWorkLogInner: React.FC<{
   subagents?: SubagentInfo[];
   workflows?: WorkflowRunInfo[];
 }> = ({ toolCalls, subagents, workflows }) => {
-  if (toolCalls.length === 0 && (!subagents || subagents.length === 0) && (!workflows || workflows.length === 0)) return null;
+  if (
+    toolCalls.length === 0 &&
+    (!subagents || subagents.length === 0) &&
+    (!workflows || workflows.length === 0)
+  )
+    return null;
 
   const overflow = toolCalls.length - MAX_TOOLCALLS_SHOWN;
-  const shownToolCalls = overflow > 0 ? toolCalls.slice(toolCalls.length - MAX_TOOLCALLS_SHOWN) : toolCalls;
+  const shownToolCalls =
+    overflow > 0 ? toolCalls.slice(toolCalls.length - MAX_TOOLCALLS_SHOWN) : toolCalls;
 
   return (
     <div style={{ margin: '4px 0 6px 0', padding: '0 2px' }}>
-      {workflows && workflows.map(run => <WorkflowRunCard key={run.runId} run={run} />)}
-      {subagents && subagents.map(sub => <SubagentRow key={sub.id} sub={sub} />)}
+      {workflows && workflows.map((run) => <WorkflowRunCard key={run.runId} run={run} />)}
+      {subagents && subagents.map((sub) => <SubagentRow key={sub.id} sub={sub} />)}
       {overflow > 0 && (
         <div style={{ fontSize: 11, opacity: 0.55, padding: '2px 4px' }}>
           +{overflow} earlier step{overflow === 1 ? '' : 's'}
         </div>
       )}
-      {shownToolCalls.map(tc => <WorkLogEntry key={tc.id} tc={tc} />)}
+      {shownToolCalls.map((tc) => (
+        <WorkLogEntry key={tc.id} tc={tc} />
+      ))}
     </div>
   );
 };

@@ -1,9 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import {
-  collectEditedFiles,
-  estimateSnapshot,
-  captureTurnSnapshot,
-} from './turnChanges';
+import { collectEditedFiles, estimateSnapshot, captureTurnSnapshot } from './turnChanges';
 import type { ToolCall } from '../types/claudeSession';
 
 const tc = (name: string, input: any): ToolCall => ({
@@ -128,7 +124,10 @@ describe('captureTurnSnapshot', () => {
       gitStatus: vi.fn().mockResolvedValue({ branch: 'main', files: [] }),
       gitNumstat: vi.fn().mockResolvedValue([]),
     };
-    const snap = await captureTurnSnapshot('/repo', new Map([['/repo/a.ts', { added: 5, removed: 2 }]]));
+    const snap = await captureTurnSnapshot(
+      '/repo',
+      new Map([['/repo/a.ts', { added: 5, removed: 2 }]]),
+    );
     expect(snap.gitAvailable).toBe(true);
     expect(snap.files[0]).toMatchObject({ relPath: 'a.ts', added: 5, removed: 2 });
   });
@@ -138,7 +137,10 @@ describe('captureTurnSnapshot', () => {
       gitStatus: vi.fn().mockRejectedValue(new Error('not a git repository')),
       gitNumstat: vi.fn(),
     };
-    const snap = await captureTurnSnapshot('/tmp/nowhere', new Map([['/tmp/nowhere/a.ts', { added: 1, removed: 0 }]]));
+    const snap = await captureTurnSnapshot(
+      '/tmp/nowhere',
+      new Map([['/tmp/nowhere/a.ts', { added: 1, removed: 0 }]]),
+    );
     expect(snap.gitAvailable).toBe(false);
     expect(snap.files[0].relPath).toBe('a.ts');
   });
@@ -154,7 +156,10 @@ describe('captureTurnSnapshot', () => {
         .mockResolvedValueOnce([{ path: 'img.png', added: null, deleted: null }])
         .mockResolvedValueOnce([]),
     };
-    const snap = await captureTurnSnapshot('/repo', new Map([['/repo/img.png', { added: 0, removed: 0 }]]));
+    const snap = await captureTurnSnapshot(
+      '/repo',
+      new Map([['/repo/img.png', { added: 0, removed: 0 }]]),
+    );
     expect(snap.files[0]).toMatchObject({ added: null, removed: null });
   });
 });

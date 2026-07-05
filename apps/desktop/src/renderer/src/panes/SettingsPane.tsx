@@ -38,26 +38,54 @@ const SECTIONS: SectionDef[] = [
     label: 'Session',
     group: 'Agents & AI',
     keywords: [
-      'session', 'agent', 'provider', 'claude', 'codex', 'opencode', 'pi', 'binary',
-      'path', 'tool', 'resume', 'restore', 'auto', 'composer', 'send', 'button', 'view',
-      'gui', 'terminal', 'default', 'spawn', 'model', 'diff', 'font', 'scale',
+      'session',
+      'agent',
+      'provider',
+      'claude',
+      'codex',
+      'opencode',
+      'pi',
+      'binary',
+      'path',
+      'tool',
+      'resume',
+      'restore',
+      'auto',
+      'composer',
+      'send',
+      'button',
+      'view',
+      'gui',
+      'terminal',
+      'default',
+      'spawn',
+      'model',
+      'diff',
+      'font',
+      'scale',
     ],
   },
   {
     key: 'profiles',
     label: 'Claude Profiles',
     group: 'Agents & AI',
-    keywords: [
-      'profile', 'claude', 'model', 'api', 'permissions', 'mcp', 'config', 'key',
-    ],
+    keywords: ['profile', 'claude', 'model', 'api', 'permissions', 'mcp', 'config', 'key'],
   },
   {
     key: 'supervisor',
     label: 'Supervisor',
     group: 'Agents & AI',
     keywords: [
-      'supervisor', 'fleet', 'agent', 'summarize', 'digest', 'model', 'coordinator',
-      'poll', 'notify', 'background',
+      'supervisor',
+      'fleet',
+      'agent',
+      'summarize',
+      'digest',
+      'model',
+      'coordinator',
+      'poll',
+      'notify',
+      'background',
     ],
   },
   // Workspace
@@ -66,8 +94,18 @@ const SECTIONS: SectionDef[] = [
     label: 'Appearance',
     group: 'Workspace',
     keywords: [
-      'appearance', 'theme', 'color', 'corner', 'border', 'font', 'dark', 'light',
-      'radius', 'accent', 'style', 'palette',
+      'appearance',
+      'theme',
+      'color',
+      'corner',
+      'border',
+      'font',
+      'dark',
+      'light',
+      'radius',
+      'accent',
+      'style',
+      'palette',
     ],
   },
   {
@@ -75,8 +113,20 @@ const SECTIONS: SectionDef[] = [
     label: 'Layout',
     group: 'Workspace',
     keywords: [
-      'layout', 'pane', 'tab', 'split', 'gap', 'width', 'view', 'mode', 'position',
-      'sidebar', 'peek', 'tabs', 'spatial', 'stacked',
+      'layout',
+      'pane',
+      'tab',
+      'split',
+      'gap',
+      'width',
+      'view',
+      'mode',
+      'position',
+      'sidebar',
+      'peek',
+      'tabs',
+      'spatial',
+      'stacked',
     ],
   },
   {
@@ -84,8 +134,18 @@ const SECTIONS: SectionDef[] = [
     label: 'Keybindings',
     group: 'Workspace',
     keywords: [
-      'keybinding', 'keyboard', 'shortcut', 'hotkey', 'vim', 'leader', 'bind',
-      'prefix', 'chord', 'ctrl', 'alt', 'key',
+      'keybinding',
+      'keyboard',
+      'shortcut',
+      'hotkey',
+      'vim',
+      'leader',
+      'bind',
+      'prefix',
+      'chord',
+      'ctrl',
+      'alt',
+      'key',
     ],
   },
   // Tools
@@ -94,58 +154,56 @@ const SECTIONS: SectionDef[] = [
     label: 'Terminal',
     group: 'Tools',
     keywords: [
-      'terminal', 'shell', 'bash', 'pwsh', 'powershell', 'zsh', 'fish', 'console',
-      'font', 'scrollback', 'cursor', 'blink',
+      'terminal',
+      'shell',
+      'bash',
+      'pwsh',
+      'powershell',
+      'zsh',
+      'fish',
+      'console',
+      'font',
+      'scrollback',
+      'cursor',
+      'blink',
     ],
   },
   {
     key: 'editor',
     label: 'Editor',
     group: 'Tools',
-    keywords: [
-      'editor', 'file', 'open', 'codemirror', 'vim', 'nvim', 'code', 'command',
-    ],
+    keywords: ['editor', 'file', 'open', 'codemirror', 'vim', 'nvim', 'code', 'command'],
   },
   {
     key: 'browser',
     label: 'Browser',
     group: 'Tools',
-    keywords: [
-      'browser', 'homepage', 'bookmark', 'hibernate', 'web', 'url', 'tab',
-    ],
+    keywords: ['browser', 'homepage', 'bookmark', 'hibernate', 'web', 'url', 'tab'],
   },
   {
     key: 'apps',
     label: 'Apps',
     group: 'Tools',
-    keywords: [
-      'app', 'url', 'launch', 'custom', 'icon', 'link', 'launcher',
-    ],
+    keywords: ['app', 'url', 'launch', 'custom', 'icon', 'link', 'launcher'],
   },
   // System
   {
     key: 'notifications',
     label: 'Notifications',
     group: 'System',
-    keywords: [
-      'notification', 'alert', 'sound', 'done', 'notify', 'badge', 'attention',
-    ],
+    keywords: ['notification', 'alert', 'sound', 'done', 'notify', 'badge', 'attention'],
   },
   {
     key: 'updates',
     label: 'Updates',
     group: 'System',
-    keywords: [
-      'update', 'auto', 'upgrade', 'version', 'release', 'download', 'install', 'channel',
-    ],
+    keywords: ['update', 'auto', 'upgrade', 'version', 'release', 'download', 'install', 'channel'],
   },
   {
     key: 'plugins',
     label: 'Plugins',
     group: 'System',
-    keywords: [
-      'plugin', 'extension', 'vim', 'editor', 'language', 'addon', 'install',
-    ],
+    keywords: ['plugin', 'extension', 'vim', 'editor', 'language', 'addon', 'install'],
   },
 ];
 
@@ -153,8 +211,7 @@ function matchesQuery(section: SectionDef, q: string): boolean {
   if (!q) return true;
   const lower = q.toLowerCase();
   return (
-    section.label.toLowerCase().includes(lower) ||
-    section.keywords.some((kw) => kw.includes(lower))
+    section.label.toLowerCase().includes(lower) || section.keywords.some((kw) => kw.includes(lower))
   );
 }
 
@@ -213,8 +270,12 @@ function Sidebar({ sections, active, onSelect }: NavProps) {
                   onClick={() => onSelect(s.key)}
                   style={{
                     ...NAV_ITEM_BASE,
-                    color: isActive ? 'var(--wks-accent-text, var(--wks-accent))' : 'var(--wks-text-secondary)',
-                    background: isActive ? 'var(--wks-accent-bg, rgba(99,102,241,0.12))' : 'transparent',
+                    color: isActive
+                      ? 'var(--wks-accent-text, var(--wks-accent))'
+                      : 'var(--wks-text-secondary)',
+                    background: isActive
+                      ? 'var(--wks-accent-bg, rgba(99,102,241,0.12))'
+                      : 'transparent',
                     fontWeight: isActive ? 600 : 400,
                   }}
                 >
@@ -240,10 +301,7 @@ const SettingsPane: React.FC<SettingsPaneProps> = () => {
 
   const q = search.trim();
 
-  const visibleSections = useMemo(
-    () => SECTIONS.filter((s) => matchesQuery(s, q)),
-    [q],
-  );
+  const visibleSections = useMemo(() => SECTIONS.filter((s) => matchesQuery(s, q)), [q]);
 
   // When search filters sections, keep activeKey valid.
   useEffect(() => {
@@ -255,7 +313,11 @@ const SettingsPane: React.FC<SettingsPaneProps> = () => {
   // Press / to focus the search box.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === '/' && document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {
+      if (
+        e.key === '/' &&
+        document.activeElement?.tagName !== 'INPUT' &&
+        document.activeElement?.tagName !== 'TEXTAREA'
+      ) {
         e.preventDefault();
         searchRef.current?.focus();
       }
@@ -281,20 +343,34 @@ const SettingsPane: React.FC<SettingsPaneProps> = () => {
 
   const renderSection = (key: string) => {
     switch (key) {
-      case 'session': return <SessionSection config={config} save={save} />;
-      case 'profiles': return <ClaudeProfilesSection />;
-      case 'supervisor': return <SupervisorSection config={config} save={save} />;
-      case 'appearance': return <AppearanceSection config={config} save={save} />;
-      case 'layout': return <LayoutSection config={config} save={save} />;
-      case 'keybindings': return <KeybindingsSection config={config} save={save} />;
-      case 'terminal': return <TerminalSection config={config} save={save} />;
-      case 'editor': return <EditorSection config={config} save={save} />;
-      case 'browser': return <BrowserSection config={config} save={save} />;
-      case 'apps': return <AppsSection config={config} save={save} />;
-      case 'notifications': return <NotificationsSection config={config} save={save} />;
-      case 'updates': return <UpdatesSection config={config} save={save} />;
-      case 'plugins': return <PluginsSection />;
-      default: return null;
+      case 'session':
+        return <SessionSection config={config} save={save} />;
+      case 'profiles':
+        return <ClaudeProfilesSection />;
+      case 'supervisor':
+        return <SupervisorSection config={config} save={save} />;
+      case 'appearance':
+        return <AppearanceSection config={config} save={save} />;
+      case 'layout':
+        return <LayoutSection config={config} save={save} />;
+      case 'keybindings':
+        return <KeybindingsSection config={config} save={save} />;
+      case 'terminal':
+        return <TerminalSection config={config} save={save} />;
+      case 'editor':
+        return <EditorSection config={config} save={save} />;
+      case 'browser':
+        return <BrowserSection config={config} save={save} />;
+      case 'apps':
+        return <AppsSection config={config} save={save} />;
+      case 'notifications':
+        return <NotificationsSection config={config} save={save} />;
+      case 'updates':
+        return <UpdatesSection config={config} save={save} />;
+      case 'plugins':
+        return <PluginsSection />;
+      default:
+        return null;
     }
   };
 
@@ -311,33 +387,61 @@ const SettingsPane: React.FC<SettingsPaneProps> = () => {
       }}
     >
       {/* Top bar: title + search */}
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 16,
-        padding: '14px 20px',
-        borderBottom: '1px solid var(--wks-border-subtle)',
-        flexShrink: 0,
-      }}>
-        <h2 style={{ fontSize: '1.05rem', fontWeight: 700, margin: 0, color: 'var(--wks-text-primary)', letterSpacing: '-0.01em', flexShrink: 0 }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 16,
+          padding: '14px 20px',
+          borderBottom: '1px solid var(--wks-border-subtle)',
+          flexShrink: 0,
+        }}
+      >
+        <h2
+          style={{
+            fontSize: '1.05rem',
+            fontWeight: 700,
+            margin: 0,
+            color: 'var(--wks-text-primary)',
+            letterSpacing: '-0.01em',
+            flexShrink: 0,
+          }}
+        >
           Settings
         </h2>
 
         {/* Search */}
         <div
           style={{
-            display: 'flex', alignItems: 'center', gap: 8,
-            flex: 1, maxWidth: 360,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            flex: 1,
+            maxWidth: 360,
             padding: '0 12px',
             background: 'var(--wks-bg-raised)',
             border: '1px solid var(--wks-border-subtle)',
             borderRadius: '8px',
             transition: 'border-color 0.15s',
           }}
-          onFocusCapture={(e) => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-accent)'; }}
-          onBlurCapture={(e) => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-border-subtle)'; }}
+          onFocusCapture={(e) => {
+            (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-accent)';
+          }}
+          onBlurCapture={(e) => {
+            (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-border-subtle)';
+          }}
         >
-          <span aria-hidden style={{ color: 'var(--wks-text-faint)', fontSize: '0.9rem', flexShrink: 0, lineHeight: 1 }}>⌕</span>
+          <span
+            aria-hidden
+            style={{
+              color: 'var(--wks-text-faint)',
+              fontSize: '0.9rem',
+              flexShrink: 0,
+              lineHeight: 1,
+            }}
+          >
+            ⌕
+          </span>
           <input
             ref={searchRef}
             type="search"
@@ -360,40 +464,56 @@ const SettingsPane: React.FC<SettingsPaneProps> = () => {
           />
           {search && (
             <button
-              onClick={() => { setSearch(''); searchRef.current?.focus(); }}
+              onClick={() => {
+                setSearch('');
+                searchRef.current?.focus();
+              }}
               title="Clear"
               style={{
-                background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px',
-                color: 'var(--wks-text-faint)', fontSize: '1rem', lineHeight: 1, flexShrink: 0,
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                padding: '0 2px',
+                color: 'var(--wks-text-faint)',
+                fontSize: '1rem',
+                lineHeight: 1,
+                flexShrink: 0,
               }}
-            >×</button>
+            >
+              ×
+            </button>
           )}
           {!search && (
-            <kbd style={{
-              fontSize: '0.65rem', padding: '1px 5px',
-              background: 'var(--wks-bg-elevated)', border: '1px solid var(--wks-border)',
-              borderRadius: 3, color: 'var(--wks-text-faint)', flexShrink: 0,
-            }}>/</kbd>
+            <kbd
+              style={{
+                fontSize: '0.65rem',
+                padding: '1px 5px',
+                background: 'var(--wks-bg-elevated)',
+                border: '1px solid var(--wks-border)',
+                borderRadius: 3,
+                color: 'var(--wks-text-faint)',
+                flexShrink: 0,
+              }}
+            >
+              /
+            </kbd>
           )}
         </div>
       </div>
 
       {/* Body: sidebar + content */}
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-
         {/* Left sidebar */}
-        <div style={{
-          width: 192,
-          flexShrink: 0,
-          borderRight: '1px solid var(--wks-border-subtle)',
-          overflowY: 'auto',
-          padding: '4px 8px 24px',
-        }}>
-          <Sidebar
-            sections={visibleSections}
-            active={activeKey}
-            onSelect={handleNavSelect}
-          />
+        <div
+          style={{
+            width: 192,
+            flexShrink: 0,
+            borderRight: '1px solid var(--wks-border-subtle)',
+            overflowY: 'auto',
+            padding: '4px 8px 24px',
+          }}
+        >
+          <Sidebar sections={visibleSections} active={activeKey} onSelect={handleNavSelect} />
         </div>
 
         {/* Content area */}
@@ -407,10 +527,14 @@ const SettingsPane: React.FC<SettingsPaneProps> = () => {
         >
           <div style={{ maxWidth: 680 }}>
             {visibleSections.length === 0 && q ? (
-              <div style={{
-                marginTop: 48, textAlign: 'center',
-                fontSize: '0.85rem', color: 'var(--wks-text-faint)',
-              }}>
+              <div
+                style={{
+                  marginTop: 48,
+                  textAlign: 'center',
+                  fontSize: '0.85rem',
+                  color: 'var(--wks-text-faint)',
+                }}
+              >
                 No settings match &ldquo;{q}&rdquo;
               </div>
             ) : showAll ? (

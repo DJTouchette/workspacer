@@ -46,7 +46,11 @@ import { DropOverlay } from '../components/claude/DropOverlay';
 import { ScrollToBottomButton } from '../components/claude/ScrollToBottomButton';
 import { SessionStatusBar } from '../components/claude/SessionStatusBar';
 import { ComposerControls, type RestartOverrides } from '../components/claude/ComposerControls';
-import { classifyFile, buildPromptPrefix, extractFilePaths } from '../components/claude/fileAttachment';
+import {
+  classifyFile,
+  buildPromptPrefix,
+  extractFilePaths,
+} from '../components/claude/fileAttachment';
 import type { AttachedFile } from '../components/claude/fileAttachment';
 
 interface ClaudePaneProps {
@@ -74,7 +78,18 @@ const CONVERSATION_PAGE_SIZE = 60;
 
 // ── Main component ──
 
-const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, profileId, resumeSessionId, attachSessionId, initialPrompt, provider, onPtyReady }) => {
+const ClaudePane: React.FC<ClaudePaneProps> = ({
+  paneId,
+  title,
+  isActive,
+  cwd,
+  profileId,
+  resumeSessionId,
+  attachSessionId,
+  initialPrompt,
+  provider,
+  onPtyReady,
+}) => {
   const { config } = useConfig();
   // Which surfaces this provider has:
   //   claude            — GUI (hooks/transcript telemetry) + terminal (its PTY)
@@ -137,12 +152,17 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
   viewModeRef.current = viewMode;
 
   // Inject keyframes
-  useEffect(() => { ensureKeyframes(); }, []);
+  useEffect(() => {
+    ensureKeyframes();
+  }, []);
 
   // Set CSS variable for mono font
   useEffect(() => {
     if (typeof document !== 'undefined') {
-      document.documentElement.style.setProperty('--claude-mono-font', termCfg.fontFamily || 'var(--wks-font-mono)');
+      document.documentElement.style.setProperty(
+        '--claude-mono-font',
+        termCfg.fontFamily || 'var(--wks-font-mono)',
+      );
     }
   }, [termCfg.fontFamily]);
 
@@ -152,7 +172,17 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
     }
   }, [agentName]);
 
-  const { sessionId, isReady, spawnError, write, resize, attachToTerminal, startSession, retry, restartSession } = useClaudeSpawn({
+  const {
+    sessionId,
+    isReady,
+    spawnError,
+    write,
+    resize,
+    attachToTerminal,
+    startSession,
+    retry,
+    restartSession,
+  } = useClaudeSpawn({
     paneId,
     cwd,
     profileId,
@@ -218,9 +248,9 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
   // so PreToolUse hooks get parked for our UI to resolve.
   useEffect(() => {
     if (!sessionId) return;
-    window.electronAPI.claudeGate(sessionId, true).catch(err =>
-      console.warn('[ClaudePane] failed to enable approval gate:', err)
-    );
+    window.electronAPI
+      .claudeGate(sessionId, true)
+      .catch((err) => console.warn('[ClaudePane] failed to enable approval gate:', err));
   }, [sessionId]);
 
   // Notify parent of PTY session ID
@@ -240,10 +270,11 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
   // sessionId/paneId, or delivered to the active pane when untargeted.
   useEffect(() => {
     const handler = (e: Event) => {
-      const d = (e as CustomEvent).detail as { text?: string; sessionId?: string; paneId?: string } | undefined;
+      const d = (e as CustomEvent).detail as
+        { text?: string; sessionId?: string; paneId?: string } | undefined;
       if (!d?.text) return;
       const targeted = d.sessionId || d.paneId;
-      const matches = targeted ? (d.sessionId === sessionId || d.paneId === paneId) : isActive;
+      const matches = targeted ? d.sessionId === sessionId || d.paneId === paneId : isActive;
       if (!matches) return;
       setViewMode('gui');
       setInputValue((prev) => (prev.trim() ? `${prev.replace(/\s+$/, '')}\n${d.text}` : d.text!));
@@ -306,7 +337,11 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
       const startWhenSized = () => {
         if (sessionStartedRef.current || !termInitRef.current) return;
         const visible = isTermVisible(container);
-        if (visible) { try { fitAddon.fit(); } catch {} }
+        if (visible) {
+          try {
+            fitAddon.fit();
+          } catch {}
+        }
         const guiHidden = viewModeRef.current === 'gui' && !visible;
         if (visible || guiHidden || attempts >= MAX_ATTEMPTS) {
           sessionStartedRef.current = true;
@@ -335,7 +370,12 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
       // Ctrl+C — copy if selection, SIGINT if not
       if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'c') {
         const sel = term.getSelection();
-        if (sel) { e.preventDefault(); navigator.clipboard.writeText(sel); term.clearSelection(); return false; }
+        if (sel) {
+          e.preventDefault();
+          navigator.clipboard.writeText(sel);
+          term.clearSelection();
+          return false;
+        }
         return true;
       }
       // Ctrl+V — paste. Handled by xterm's native paste event (single insert,
@@ -345,16 +385,31 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
       if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'v') {
         return false;
       }
-      if (e.ctrlKey && !e.altKey && !e.shiftKey && ['t', 'b', 'w', 'd', '/', '?', ',', 's', 'k'].includes(e.key)) return false;
+      if (
+        e.ctrlKey &&
+        !e.altKey &&
+        !e.shiftKey &&
+        ['t', 'b', 'w', 'd', '/', '?', ',', 's', 'k'].includes(e.key)
+      )
+        return false;
       if (e.ctrlKey && !e.altKey && !e.shiftKey && /^[1-9]$/.test(e.key)) return false;
-      if (e.altKey && !e.ctrlKey && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return false;
+      if (
+        e.altKey &&
+        !e.ctrlKey &&
+        ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)
+      )
+        return false;
       if (e.ctrlKey && e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) return false;
       if (e.ctrlKey && e.shiftKey) return false;
       if (e.key === 'F2') return false;
       return true;
     });
 
-    const fitRetry = () => { try { fitAddon.fit(); } catch {} };
+    const fitRetry = () => {
+      try {
+        fitAddon.fit();
+      } catch {}
+    };
     requestAnimationFrame(fitRetry);
     setTimeout(fitRetry, 100);
     setTimeout(fitRetry, 300);
@@ -368,7 +423,11 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
       // Skip while hidden: toggling a workspace to display:none fires a 0×0
       // resize, and fitting that collapses the grid and garbles the PTY on show.
       if (!isTermVisible(container)) return;
-      requestAnimationFrame(() => { try { fitAddonRef.current?.fit(); } catch {} });
+      requestAnimationFrame(() => {
+        try {
+          fitAddonRef.current?.fit();
+        } catch {}
+      });
     });
     observer.observe(container);
 
@@ -451,7 +510,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
   const loadOlderMessages = useCallback(() => {
     const container = scrollContainerRef.current;
     const prevHeight = container?.scrollHeight ?? 0;
-    setVisibleCount(prev => prev + CONVERSATION_PAGE_SIZE);
+    setVisibleCount((prev) => prev + CONVERSATION_PAGE_SIZE);
     // Preserve scroll position after DOM grows upward
     requestAnimationFrame(() => {
       if (container) {
@@ -498,7 +557,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
       if (e.dataTransfer) {
         const paths = extractFilePaths(e.dataTransfer);
         if (paths.length > 0) {
-          setAttachedFiles(prev => [...prev, ...paths.map(classifyFile)]);
+          setAttachedFiles((prev) => [...prev, ...paths.map(classifyFile)]);
           setViewMode('gui');
         }
       }
@@ -526,39 +585,42 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
     const paths = extractFilePaths(e.clipboardData);
     if (paths.length > 0) {
       e.preventDefault();
-      setAttachedFiles(prev => [...prev, ...paths.map(classifyFile)]);
+      setAttachedFiles((prev) => [...prev, ...paths.map(classifyFile)]);
     }
   }, []);
 
   const removeAttachedFile = useCallback((idx: number) => {
-    setAttachedFiles(prev => prev.filter((_, i) => i !== idx));
+    setAttachedFiles((prev) => prev.filter((_, i) => i !== idx));
   }, []);
 
   const openFilePicker = useCallback(async () => {
     const paths = await window.electronAPI.pickFiles(cwd);
     if (paths.length > 0) {
-      setAttachedFiles(prev => [...prev, ...paths.map(classifyFile)]);
+      setAttachedFiles((prev) => [...prev, ...paths.map(classifyFile)]);
       if (viewMode === 'terminal') setViewMode('gui');
     }
   }, [cwd, viewMode]);
 
-  const handleApprovalRespond = useCallback((response: 'yes' | 'no') => {
-    if (!sessionId) return;
-    // If a question picker is also pending (PermissionRequest racing with
-    // AskUserQuestion's PreToolUse), the approval card is stale and shouldn't
-    // do anything — the user actually wants to answer the picker. Writing a
-    // keystroke fallback would select option 1 of the picker by accident.
-    const hasPendingQuestion = (session?.pendingQuestions?.length ?? 0) > 0;
-    window.electronAPI.claudeApprove(sessionId, response).catch(err => {
-      console.warn('[ClaudePane] /approve failed:', err);
-      if (!hasPendingQuestion) {
-        sendApproval('', response === 'yes', write);
-      } else {
-        console.warn('[ClaudePane] suppressed keystroke fallback — question picker is active');
-      }
-    });
-    setApprovalDismissedAt(Date.now());
-  }, [sessionId, write, session?.pendingQuestions]);
+  const handleApprovalRespond = useCallback(
+    (response: 'yes' | 'no') => {
+      if (!sessionId) return;
+      // If a question picker is also pending (PermissionRequest racing with
+      // AskUserQuestion's PreToolUse), the approval card is stale and shouldn't
+      // do anything — the user actually wants to answer the picker. Writing a
+      // keystroke fallback would select option 1 of the picker by accident.
+      const hasPendingQuestion = (session?.pendingQuestions?.length ?? 0) > 0;
+      window.electronAPI.claudeApprove(sessionId, response).catch((err) => {
+        console.warn('[ClaudePane] /approve failed:', err);
+        if (!hasPendingQuestion) {
+          sendApproval('', response === 'yes', write);
+        } else {
+          console.warn('[ClaudePane] suppressed keystroke fallback — question picker is active');
+        }
+      });
+      setApprovalDismissedAt(Date.now());
+    },
+    [sessionId, write, session?.pendingQuestions],
+  );
 
   // Optimistic user messages (shown immediately before JSONL catches up).
   // We dequeue FIFO whenever session.conversation grows by a new user-message,
@@ -591,7 +653,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
       content: fullMessage,
       timestamp: Date.now(),
     };
-    setOptimisticMessages(prev => [...prev, optimisticTurn]);
+    setOptimisticMessages((prev) => [...prev, optimisticTurn]);
     setOptimisticLoading(true);
 
     const rawFallback = () => {
@@ -621,10 +683,12 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
       // The session has ended — nothing was delivered. Retract the optimistic
       // bubble and put the text back in the composer so the send visibly
       // didn't take (instead of a phantom message above a dead session).
-      console.warn(`[ClaudePane] /message rejected (mode=${res.mode}); session is not accepting input`);
-      setOptimisticMessages(prev => prev.filter(t => t !== optimisticTurn));
+      console.warn(
+        `[ClaudePane] /message rejected (mode=${res.mode}); session is not accepting input`,
+      );
+      setOptimisticMessages((prev) => prev.filter((t) => t !== optimisticTurn));
       setOptimisticLoading(false);
-      setInputValue(prev => (prev.trim().length > 0 ? prev : userText));
+      setInputValue((prev) => (prev.trim().length > 0 ? prev : userText));
       return;
     } catch (err) {
       console.warn('[ClaudePane] /message failed:', err);
@@ -635,14 +699,19 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
   // Drop optimistic entries FIFO as session.conversation grows past the
   // count we last consumed. This avoids content-matching pitfalls.
   useEffect(() => {
-    const userCount = (session?.conversation ?? []).filter(t => t.role === 'user').length;
+    const userCount = (session?.conversation ?? []).filter((t) => t.role === 'user').length;
     if (userCount > consumedUserCountRef.current) {
       const newlyConsumed = userCount - consumedUserCountRef.current;
       consumedUserCountRef.current = userCount;
-      setOptimisticMessages(prev => (newlyConsumed >= prev.length ? [] : prev.slice(newlyConsumed)));
+      setOptimisticMessages((prev) =>
+        newlyConsumed >= prev.length ? [] : prev.slice(newlyConsumed),
+      );
     }
     // Clear optimistic loading when server reports idle or we get a response
-    if (optimisticLoading && (session?.ambientState === 'idle' || session?.ambientState === 'streaming')) {
+    if (
+      optimisticLoading &&
+      (session?.ambientState === 'idle' || session?.ambientState === 'streaming')
+    ) {
       setOptimisticLoading(false);
     }
   }, [session?.conversation, session?.ambientState, optimisticLoading]);
@@ -666,24 +735,30 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
   // a moment to round-trip through the JSONL transcript.
   const [questionDismissedAt, setQuestionDismissedAt] = useState(0);
 
-  const handleAnswer = useCallback((payload: { option?: number; text?: string; answers?: string[] }) => {
-    if (!sessionId) return;
-    setQuestionDismissedAt(Date.now());
-    // We write directly to the PTY (via the MessagePort → /sessions/:id/input
-    // path) instead of /sessions/:id/answer. /answer requires mode=Question,
-    // which can race with concurrent hook events that flip the daemon's mode
-    // back to Responding/Approval — and the renderer's view of "picker is up"
-    // is what actually matters here. claude's own TUI picker accepts numeric
-    // input + Enter the same way it accepts any other keystroke.
-    if (payload.option !== undefined) {
-      write(`${payload.option}\r`);
-    } else if (payload.text !== undefined) {
-      write(`${payload.text}\r`);
-    } else if (payload.answers) {
-      for (const ans of payload.answers) write(`${ans}\r`);
-    }
-  }, [sessionId, write]);
-  const serverStreaming = optimisticLoading || session?.ambientState === 'thinking' || session?.ambientState === 'streaming';
+  const handleAnswer = useCallback(
+    (payload: { option?: number; text?: string; answers?: string[] }) => {
+      if (!sessionId) return;
+      setQuestionDismissedAt(Date.now());
+      // We write directly to the PTY (via the MessagePort → /sessions/:id/input
+      // path) instead of /sessions/:id/answer. /answer requires mode=Question,
+      // which can race with concurrent hook events that flip the daemon's mode
+      // back to Responding/Approval — and the renderer's view of "picker is up"
+      // is what actually matters here. claude's own TUI picker accepts numeric
+      // input + Enter the same way it accepts any other keystroke.
+      if (payload.option !== undefined) {
+        write(`${payload.option}\r`);
+      } else if (payload.text !== undefined) {
+        write(`${payload.text}\r`);
+      } else if (payload.answers) {
+        for (const ans of payload.answers) write(`${ans}\r`);
+      }
+    },
+    [sessionId, write],
+  );
+  const serverStreaming =
+    optimisticLoading ||
+    session?.ambientState === 'thinking' ||
+    session?.ambientState === 'streaming';
   // If user cancelled, suppress streaming UI until a new activity cycle begins
   const isStreaming = serverStreaming && (session?.lastActivity ?? 0) > cancelledAt;
   const ambientIdle = session?.ambientState === 'idle';
@@ -705,20 +780,24 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
     let start = base.length;
     while (start > 0 && base[start - 1].role === 'assistant') start--;
     if (start >= base.length) return;
-    const edited = collectEditedFiles(base.slice(start).flatMap(t => t.toolCalls ?? []));
+    const edited = collectEditedFiles(base.slice(start).flatMap((t) => t.toolCalls ?? []));
     if (edited.size === 0) return;
     void ensureTurnSnapshot(sessionId, start, cwd, edited)
-      .then(() => setChangesVersion(v => v + 1))
+      .then(() => setChangesVersion((v) => v + 1))
       .catch(() => {});
   }, [session?.ambientState, session?.conversation, sessionId, cwd]);
 
   // Needs-you dock visibility. Dismissal timestamps give an optimistic hide:
   // the dock vanishes on click while the response round-trips through the
   // daemon. New approvals/questions (newer timestamps) re-show it.
-  const dockApproval = pendingApproval && pendingApproval.timestamp > approvalDismissedAt ? pendingApproval : null;
-  const dockQuestions = pendingQuestions && pendingQuestions.length > 0 && (session?.lastActivity ?? 0) > questionDismissedAt
-    ? pendingQuestions
-    : null;
+  const dockApproval =
+    pendingApproval && pendingApproval.timestamp > approvalDismissedAt ? pendingApproval : null;
+  const dockQuestions =
+    pendingQuestions &&
+    pendingQuestions.length > 0 &&
+    (session?.lastActivity ?? 0) > questionDismissedAt
+      ? pendingQuestions
+      : null;
 
   // Cancel the current task — send Escape and suppress streaming UI
   const cancelTask = useCallback(() => {
@@ -731,15 +810,20 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
   // (dispatch, same pattern as library:insert); an owner pane restarts its own
   // spawn in place. Both resume the same pinned id, so the GUI snapshot stream
   // is continuous.
-  const handleRestartWith = useCallback((overrides: RestartOverrides) => {
-    if (attachSessionId) {
-      window.dispatchEvent(new CustomEvent('agent:respawn', {
-        detail: { sessionId: sessionId ?? attachSessionId, overrides },
-      }));
-    } else {
-      void restartSession({ ...overrides, provider });
-    }
-  }, [attachSessionId, sessionId, restartSession, provider]);
+  const handleRestartWith = useCallback(
+    (overrides: RestartOverrides) => {
+      if (attachSessionId) {
+        window.dispatchEvent(
+          new CustomEvent('agent:respawn', {
+            detail: { sessionId: sessionId ?? attachSessionId, overrides },
+          }),
+        );
+      } else {
+        void restartSession({ ...overrides, provider });
+      }
+    },
+    [attachSessionId, sessionId, restartSession, provider],
+  );
 
   // Escape key cancels in GUI mode (must be after cancelTask/isStreaming declarations)
   useEffect(() => {
@@ -755,7 +839,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
   }, [viewMode, isActive, isStreaming, cancelTask]);
 
   const toggleRail = useCallback(() => {
-    setRailOpen(open => {
+    setRailOpen((open) => {
       localStorage.setItem('wks-claude-rail', open ? '0' : '1');
       return !open;
     });
@@ -769,30 +853,38 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
   // digest from the conversation). Either way the brief lands under
   // ~/.workspacer/handoffs/ and App spawns the successor with its composer
   // pre-filled to read it. Any harness → any harness.
-  const [handoffMenu, setHandoffMenu] = useState<{ x: number; y: number; target?: AgentProvider } | null>(null);
+  const [handoffMenu, setHandoffMenu] = useState<{
+    x: number;
+    y: number;
+    target?: AgentProvider;
+  } | null>(null);
   const [handoffBusy, setHandoffBusy] = useState<'agent' | 'mechanical' | null>(null);
-  const handleHandoff = useCallback(async (target: AgentProvider, kind: 'agent' | 'mechanical') => {
-    const sid = sessionId ?? attachSessionId;
-    if (!sid || handoffBusy) return;
-    setHandoffBusy(kind);
-    try {
-      const res = kind === 'agent'
-        ? await window.electronAPI.claudeHandoffAgentBrief(sid)
-        : await window.electronAPI.claudeHandoffBrief(sid);
-      if (!res.ok || !res.path) {
-        console.warn('[ClaudePane] handoff brief failed:', res.error);
-        return;
+  const handleHandoff = useCallback(
+    async (target: AgentProvider, kind: 'agent' | 'mechanical') => {
+      const sid = sessionId ?? attachSessionId;
+      if (!sid || handoffBusy) return;
+      setHandoffBusy(kind);
+      try {
+        const res =
+          kind === 'agent'
+            ? await window.electronAPI.claudeHandoffAgentBrief(sid)
+            : await window.electronAPI.claudeHandoffBrief(sid);
+        if (!res.ok || !res.path) {
+          console.warn('[ClaudePane] handoff brief failed:', res.error);
+          return;
+        }
+        if ((res as { fallback?: boolean }).fallback) {
+          console.warn('[ClaudePane] agent brief fell back to mechanical:', res.error);
+        }
+        requestHandoff({ targetProvider: target, cwd, briefPath: res.path, sourceSessionId: sid });
+      } catch (err) {
+        console.warn('[ClaudePane] handoff failed:', err);
+      } finally {
+        setHandoffBusy(null);
       }
-      if ((res as { fallback?: boolean }).fallback) {
-        console.warn('[ClaudePane] agent brief fell back to mechanical:', res.error);
-      }
-      requestHandoff({ targetProvider: target, cwd, briefPath: res.path, sourceSessionId: sid });
-    } catch (err) {
-      console.warn('[ClaudePane] handoff failed:', err);
-    } finally {
-      setHandoffBusy(null);
-    }
-  }, [sessionId, attachSessionId, cwd, handoffBusy]);
+    },
+    [sessionId, attachSessionId, cwd, handoffBusy],
+  );
 
   // Inspector-rail hotkey (configurable: keybindings.shortcuts['toggle-inspector']).
   // The rail is per-pane state, so we match the combo here for the active pane
@@ -808,7 +900,13 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
     const needShift = parts.includes('shift');
     const needMeta = parts.includes('meta');
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.ctrlKey !== needCtrl || e.altKey !== needAlt || e.shiftKey !== needShift || e.metaKey !== needMeta) return;
+      if (
+        e.ctrlKey !== needCtrl ||
+        e.altKey !== needAlt ||
+        e.shiftKey !== needShift ||
+        e.metaKey !== needMeta
+      )
+        return;
       if (e.key.toLowerCase() !== key) return;
       e.preventDefault();
       e.stopPropagation();
@@ -837,8 +935,9 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
         }
       }
     }
-    return [...activeToolCalls, ...completedToolCalls]
-      .filter(tc => !conversationToolIds.has(tc.id));
+    return [...activeToolCalls, ...completedToolCalls].filter(
+      (tc) => !conversationToolIds.has(tc.id),
+    );
   }, [activeToolCalls, completedToolCalls, conversation]);
 
   // Auto-scroll conversation to bottom (only when this pane is active —
@@ -850,7 +949,8 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
     const container = scrollContainerRef.current;
     if (!container) return;
     // Only auto-scroll if user is near the bottom
-    const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
+    const isNearBottom =
+      container.scrollHeight - container.scrollTop - container.clientHeight < 100;
     if (isNearBottom) {
       conversationEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
@@ -896,7 +996,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
           workflowByToolId={toolIdToWorkflow}
           live={isStreaming && endIdx === conversation.length - 1}
           cwd={cwd}
-        />
+        />,
       );
       pendingWork = null;
     };
@@ -920,7 +1020,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
           key={`chg-${g.start}`}
           snapshot={snap ?? estimateSnapshot(edited, cwd)}
           cwd={cwd}
-        />
+        />,
       );
     };
 
@@ -982,46 +1082,66 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
     return items;
     // changesVersion re-renders cards once a frozen git snapshot lands.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conversation, visibleCount, toolIdToSubagent, toolIdToWorkflow, isStreaming, ambientIdle, sessionId, cwd, changesVersion, WorkView]);
+  }, [
+    conversation,
+    visibleCount,
+    toolIdToSubagent,
+    toolIdToWorkflow,
+    isStreaming,
+    ambientIdle,
+    sessionId,
+    cwd,
+    changesVersion,
+    WorkView,
+  ]);
 
   return (
-    <div style={{
-      width: '100%',
-      height: '100%',
-      display: 'flex',
-      flexDirection: 'column',
-      backgroundColor: colors.bg,
-      color: colors.text,
-      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-    }}>
+    <div
+      style={{
+        width: '100%',
+        height: '100%',
+        display: 'flex',
+        flexDirection: 'column',
+        backgroundColor: colors.bg,
+        color: colors.text,
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+      }}
+    >
       {/* Content + inspector rail row — the rail is a sibling of the content
           area (not nested in the GUI view) so it stays put across GUI/Term. */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'row', overflow: 'hidden' }}>
-      <div ref={contentAreaRef} style={{ flex: 1, minWidth: 0, overflow: 'hidden', position: 'relative' }}>
-        {isDragOver && <DropOverlay />}
-
-        {/* Terminal view (always mounted, visibility toggled) */}
         <div
-          ref={termContainerRef}
-          style={{
-            position: 'absolute',
-            inset: 0,
-            display: viewMode === 'terminal' ? 'block' : 'none',
-          }}
-        />
+          ref={contentAreaRef}
+          style={{ flex: 1, minWidth: 0, overflow: 'hidden', position: 'relative' }}
+        >
+          {isDragOver && <DropOverlay />}
 
-        {/* GUI view — always mounted; visibility toggled via CSS so scroll
+          {/* Terminal view (always mounted, visibility toggled) */}
+          <div
+            ref={termContainerRef}
+            style={{
+              position: 'absolute',
+              inset: 0,
+              display: viewMode === 'terminal' ? 'block' : 'none',
+            }}
+          />
+
+          {/* GUI view — always mounted; visibility toggled via CSS so scroll
             position, visibleCount, and optimisticMessages survive GUI↔Term. */}
-        <div style={{
-            height: '100%',
-            display: viewMode === 'gui' ? 'flex' : 'none',
-            flexDirection: 'column',
-            overflow: 'hidden',
-            // Drives the conversation/markdown font scaling (see ConversationMessage
-            // + markdown.tsx). Defaults to 1 elsewhere, so the shared markdown
-            // renderer (Library, etc.) is unaffected.
-            ['--claude-gui-font-scale' as string]: config.ui.guiFontScale ?? 1.15,
-          } as React.CSSProperties}>
+          <div
+            style={
+              {
+                height: '100%',
+                display: viewMode === 'gui' ? 'flex' : 'none',
+                flexDirection: 'column',
+                overflow: 'hidden',
+                // Drives the conversation/markdown font scaling (see ConversationMessage
+                // + markdown.tsx). Defaults to 1 elsewhere, so the shared markdown
+                // renderer (Library, etc.) is unaffected.
+                ['--claude-gui-font-scale' as string]: config.ui.guiFontScale ?? 1.15,
+              } as React.CSSProperties
+            }
+          >
             {/* Conversation scroll area */}
             <div
               ref={scrollContainerRef}
@@ -1039,14 +1159,18 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
               }}
             >
               {/* Centered content container */}
-              <div style={{
-                maxWidth: 1040,
-                margin: '0 auto',
-              }}>
+              <div
+                style={{
+                  maxWidth: 1040,
+                  margin: '0 auto',
+                }}
+              >
                 {/* Empty states */}
                 {conversation.length === 0 && !session && spawnError && (
                   <div style={{ textAlign: 'center', marginTop: 60, color: colors.mutedDim }}>
-                    <div style={{ fontSize: '0.8rem', color: colors.error }}>Couldn’t start {agentName}</div>
+                    <div style={{ fontSize: '0.8rem', color: colors.error }}>
+                      Couldn’t start {agentName}
+                    </div>
                     <div style={{ fontSize: '0.7rem', marginTop: 6, color: colors.mutedDim }}>
                       {spawnError.message || `The ${agentName} session failed to start.`}
                     </div>
@@ -1075,7 +1199,9 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
                     <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
                       <BrandSpinner size={26} />
                     </div>
-                    <div style={{ fontSize: '0.8rem', color: colors.muted }}>Connecting to {agentName}…</div>
+                    <div style={{ fontSize: '0.8rem', color: colors.muted }}>
+                      Connecting to {agentName}…
+                    </div>
                     {showHookHint && isClaude && (
                       <div style={{ fontSize: '0.7rem', marginTop: 6, color: colors.mutedDim }}>
                         Still connecting — make sure hooks are configured in ~/.claude/settings.json
@@ -1111,8 +1237,8 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
                         fontFamily: 'inherit',
                       }}
                     >
-                      Load {Math.min(CONVERSATION_PAGE_SIZE, conversation.length - visibleCount)} earlier messages
-                      {' '}({conversation.length - visibleCount} hidden)
+                      Load {Math.min(CONVERSATION_PAGE_SIZE, conversation.length - visibleCount)}{' '}
+                      earlier messages ({conversation.length - visibleCount} hidden)
                     </button>
                   </div>
                 )}
@@ -1125,18 +1251,26 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
                 {/* Live work not yet absorbed into the timeline: in-flight tool
                     calls plus agents/workflows that hooks reported before the
                     transcript caught up. Anchored agents render in WorkCards. */}
-                {(liveToolCalls.length > 0 || unanchoredSubagents.length > 0 || unanchoredWorkflows.length > 0) && (
-                  <InlineWorkLog toolCalls={liveToolCalls} subagents={unanchoredSubagents} workflows={unanchoredWorkflows} />
+                {(liveToolCalls.length > 0 ||
+                  unanchoredSubagents.length > 0 ||
+                  unanchoredWorkflows.length > 0) && (
+                  <InlineWorkLog
+                    toolCalls={liveToolCalls}
+                    subagents={unanchoredSubagents}
+                    workflows={unanchoredWorkflows}
+                  />
                 )}
 
                 {/* Streaming indicator with cancel */}
                 {isStreaming && (
-                  <div style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 10,
-                    padding: '8px 0 4px 0',
-                  }}>
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 10,
+                      padding: '8px 0 4px 0',
+                    }}
+                  >
                     <BrandSpinner size={15} />
                     <button
                       onClick={cancelTask}
@@ -1197,11 +1331,11 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
               }
             />
           </div>
-      </div>
+        </div>
 
-      {/* Inspector rail — files / workflows / agents / usage. Sibling of the
+        {/* Inspector rail — files / workflows / agents / usage. Sibling of the
           content area, so it persists in both GUI and Terminal mode. */}
-      {railOpen && <InspectorRail session={session} onClose={toggleRail} />}
+        {railOpen && <InspectorRail session={session} onClose={toggleRail} />}
       </div>
 
       {/* Status / control bar — pinned to the bottom of the pane (below the
@@ -1210,17 +1344,24 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
           chromeless (transparent, no rule) as a quiet footer line under the
           floating composer; terminal mode keeps the solid toolbar treatment
           so it reads as an edge against the xterm surface. */}
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 10,
-        padding: viewMode === 'gui' ? '2px 18px 8px' : '4px 12px',
-        backgroundColor: viewMode === 'gui' ? 'transparent' : colors.bgToolbar,
-        borderTop: viewMode === 'gui' ? 'none' : `1px solid ${colors.border}`,
-        minHeight: 28,
-        flexShrink: 0,
-      }}>
-        <StatusBadge session={session} approvalDismissed={!!(pendingApproval && pendingApproval.timestamp <= approvalDismissedAt)} />
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          padding: viewMode === 'gui' ? '2px 18px 8px' : '4px 12px',
+          backgroundColor: viewMode === 'gui' ? 'transparent' : colors.bgToolbar,
+          borderTop: viewMode === 'gui' ? 'none' : `1px solid ${colors.border}`,
+          minHeight: 28,
+          flexShrink: 0,
+        }}
+      >
+        <StatusBadge
+          session={session}
+          approvalDismissed={
+            !!(pendingApproval && pendingApproval.timestamp <= approvalDismissedAt)
+          }
+        />
 
         {/* Session controls — model / effort / permission-mode pills. In GUI
             mode these live inside the composer's bottom row (T3-style); keep
@@ -1241,17 +1382,31 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
 
         {(() => {
           const liveAgents =
-            subagents.filter(s => s.status === 'running').length +
-            workflows.flatMap(w => w.agents).filter(a => a.status === 'running').length;
+            subagents.filter((s) => s.status === 'running').length +
+            workflows.flatMap((w) => w.agents).filter((a) => a.status === 'running').length;
           return liveAgents > 0 ? (
-            <span style={{ fontSize: '0.68rem', fontFamily: 'var(--wks-font-mono, monospace)', color: 'var(--wks-purple, #c084fc)', whiteSpace: 'nowrap' }}>
+            <span
+              style={{
+                fontSize: '0.68rem',
+                fontFamily: 'var(--wks-font-mono, monospace)',
+                color: 'var(--wks-purple, #c084fc)',
+                whiteSpace: 'nowrap',
+              }}
+            >
               {liveAgents} subagent{liveAgents !== 1 ? 's' : ''}
             </span>
           ) : null;
         })()}
 
         {attachedFiles.length > 0 && (
-          <span style={{ fontSize: '0.68rem', fontFamily: 'var(--wks-font-mono, monospace)', color: colors.accent, whiteSpace: 'nowrap' }}>
+          <span
+            style={{
+              fontSize: '0.68rem',
+              fontFamily: 'var(--wks-font-mono, monospace)',
+              color: colors.accent,
+              whiteSpace: 'nowrap',
+            }}
+          >
             {attachedFiles.length} file{attachedFiles.length !== 1 ? 's' : ''} attached
           </span>
         )}
@@ -1315,9 +1470,21 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
           <ArrowRightLeft size={13} strokeWidth={1.9} />
         </button>
         {handoffMenu && !handoffMenu.target && (
-          <ContextMenu x={handoffMenu.x} y={handoffMenu.y} onClose={() => setHandoffMenu(null)} minWidth={170}>
+          <ContextMenu
+            x={handoffMenu.x}
+            y={handoffMenu.y}
+            onClose={() => setHandoffMenu(null)}
+            minWidth={170}
+          >
             <ContextMenuLabel>Hand off to…</ContextMenuLabel>
-            {([['claude', 'Claude'], ['codex', 'Codex'], ['opencode', 'OpenCode'], ['pi', 'Pi']] as Array<[AgentProvider, string]>)
+            {(
+              [
+                ['claude', 'Claude'],
+                ['codex', 'Codex'],
+                ['opencode', 'OpenCode'],
+                ['pi', 'Pi'],
+              ] as Array<[AgentProvider, string]>
+            )
               .filter(([id]) => id !== (provider ?? 'claude'))
               .map(([id, label]) => (
                 <ContextMenuItem
@@ -1329,7 +1496,12 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
           </ContextMenu>
         )}
         {handoffMenu?.target && (
-          <ContextMenu x={handoffMenu.x} y={handoffMenu.y} onClose={() => setHandoffMenu(null)} minWidth={230}>
+          <ContextMenu
+            x={handoffMenu.x}
+            y={handoffMenu.y}
+            onClose={() => setHandoffMenu(null)}
+            minWidth={230}
+          >
             <ContextMenuLabel>Brief for {handoffMenu.target} — written by…</ContextMenuLabel>
             <ContextMenuItem
               label="This agent (best, takes a turn)"
@@ -1353,7 +1525,9 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({ paneId, title, isActive, cwd, p
         {/* Inspector rail toggle — available in both GUI and Terminal mode */}
         <button
           onClick={toggleRail}
-          title={railOpen ? 'Hide inspector' : 'Show inspector (files / workflows / agents / usage)'}
+          title={
+            railOpen ? 'Hide inspector' : 'Show inspector (files / workflows / agents / usage)'
+          }
           className={railOpen ? undefined : 'wks-composer-icon-btn'}
           style={{
             ...toggleBtnStyle,

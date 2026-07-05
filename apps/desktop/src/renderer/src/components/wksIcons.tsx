@@ -168,9 +168,7 @@ export const IconRun = glyph((accent) => (
   <path d="M8 5.5v13l11-6.5z" fill={accent} stroke={accent} />
 ));
 
-export const IconStop = glyph(() => (
-  <rect x="6" y="6" width="12" height="12" rx="2.5" />
-));
+export const IconStop = glyph(() => <rect x="6" y="6" width="12" height="12" rx="2.5" />);
 
 export const IconPause = glyph(() => (
   <>
@@ -186,13 +184,9 @@ export const IconRetry = glyph((accent) => (
   </>
 ));
 
-export const IconApprove = glyph((accent) => (
-  <path d="M5 13l4 4L19 7" stroke={accent} />
-));
+export const IconApprove = glyph((accent) => <path d="M5 13l4 4L19 7" stroke={accent} />);
 
-export const IconReject = glyph(() => (
-  <path d="M6 6l12 12M18 6 6 18" />
-));
+export const IconReject = glyph(() => <path d="M6 6l12 12M18 6 6 18" />);
 
 export const IconMerge = glyph((accent) => (
   <>

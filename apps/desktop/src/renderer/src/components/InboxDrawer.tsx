@@ -20,10 +20,20 @@ const DRAWER_WIDTH = 440;
  */
 const InboxDrawer: React.FC = () => {
   const {
-    inboxOpen, closeInbox, feed, counts,
-    selectedItem, moveSelection, setSelectedSig,
-    approve, answer, dismiss, snooze, openAgent,
-    inboxFilter, setInboxFilter,
+    inboxOpen,
+    closeInbox,
+    feed,
+    counts,
+    selectedItem,
+    moveSelection,
+    setSelectedSig,
+    approve,
+    answer,
+    dismiss,
+    snooze,
+    openAgent,
+    inboxFilter,
+    setInboxFilter,
   } = useAttention();
   const reviewCount = Math.max(0, counts.total - counts.needsYou);
 
@@ -79,36 +89,97 @@ const InboxDrawer: React.FC = () => {
         return;
       }
       const it = selectedItem;
-      const stop = () => { e.preventDefault(); e.stopPropagation(); };
+      const stop = () => {
+        e.preventDefault();
+        e.stopPropagation();
+      };
 
       // Escape (close), arrows (move), and Enter (act on the selected card) are
       // fixed; the letter keys are remappable inbox-* bindings.
-      if (e.key === 'Escape') { stop(); closeInbox(); return; }
-      if (eventMatchesCombo(e, sc['inbox-move-down']) || e.key === 'ArrowDown') { stop(); moveSelection(1); return; }
-      if (eventMatchesCombo(e, sc['inbox-move-up']) || e.key === 'ArrowUp') { stop(); moveSelection(-1); return; }
-      if (eventMatchesCombo(e, sc['inbox-clear-reviewed'])) { stop(); clearReviewed(); return; }
+      if (e.key === 'Escape') {
+        stop();
+        closeInbox();
+        return;
+      }
+      if (eventMatchesCombo(e, sc['inbox-move-down']) || e.key === 'ArrowDown') {
+        stop();
+        moveSelection(1);
+        return;
+      }
+      if (eventMatchesCombo(e, sc['inbox-move-up']) || e.key === 'ArrowUp') {
+        stop();
+        moveSelection(-1);
+        return;
+      }
+      if (eventMatchesCombo(e, sc['inbox-clear-reviewed'])) {
+        stop();
+        clearReviewed();
+        return;
+      }
       if (!it) return;
 
-      if (eventMatchesCombo(e, sc['inbox-open'])) { stop(); openAgent(it.agentId); return; }
-      if (eventMatchesCombo(e, sc['inbox-dismiss'])) { stop(); dismiss(it.signature); return; }
-      if (eventMatchesCombo(e, sc['inbox-snooze'])) { stop(); snooze(it.signature, SNOOZE_MINUTES); return; }
+      if (eventMatchesCombo(e, sc['inbox-open'])) {
+        stop();
+        openAgent(it.agentId);
+        return;
+      }
+      if (eventMatchesCombo(e, sc['inbox-dismiss'])) {
+        stop();
+        dismiss(it.signature);
+        return;
+      }
+      if (eventMatchesCombo(e, sc['inbox-snooze'])) {
+        stop();
+        snooze(it.signature, SNOOZE_MINUTES);
+        return;
+      }
 
       if (it.payload.type === 'approval') {
-        if (eventMatchesCombo(e, sc['inbox-approve-yes']) || e.key === 'Enter') { stop(); approve(it, 'yes'); return; }
-        if (eventMatchesCombo(e, sc['inbox-approve-no'])) { stop(); approve(it, 'no'); return; }
+        if (eventMatchesCombo(e, sc['inbox-approve-yes']) || e.key === 'Enter') {
+          stop();
+          approve(it, 'yes');
+          return;
+        }
+        if (eventMatchesCombo(e, sc['inbox-approve-no'])) {
+          stop();
+          approve(it, 'no');
+          return;
+        }
       }
       if (it.payload.type === 'question') {
         const n = digitFromRangeEvent(e, sc['inbox-answer']);
         if (n !== null && n <= (it.payload.questions[0]?.options.length ?? 0)) {
-          stop(); answer(it, { option: n }); return;
+          stop();
+          answer(it, { option: n });
+          return;
         }
-        if (e.key === 'Enter') { stop(); openAgent(it.agentId); return; }
+        if (e.key === 'Enter') {
+          stop();
+          openAgent(it.agentId);
+          return;
+        }
       }
-      if (it.payload.type === 'summary' && e.key === 'Enter') { stop(); openAgent(it.agentId); return; }
+      if (it.payload.type === 'summary' && e.key === 'Enter') {
+        stop();
+        openAgent(it.agentId);
+        return;
+      }
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [inboxOpen, selectedItem, moveSelection, closeInbox, openAgent, dismiss, snooze, approve, answer, clearReviewed, sc]);
+  }, [
+    inboxOpen,
+    selectedItem,
+    moveSelection,
+    closeInbox,
+    openAgent,
+    dismiss,
+    snooze,
+    approve,
+    answer,
+    clearReviewed,
+    sc,
+  ]);
 
   return (
     <>
@@ -116,7 +187,9 @@ const InboxDrawer: React.FC = () => {
       <div
         onClick={closeInbox}
         style={{
-          position: 'fixed', inset: 0, zIndex: 300,
+          position: 'fixed',
+          inset: 0,
+          zIndex: 300,
           background: 'rgba(0,0,0,0.28)',
           opacity: inboxOpen ? 1 : 0,
           pointerEvents: inboxOpen ? 'auto' : 'none',
@@ -125,8 +198,15 @@ const InboxDrawer: React.FC = () => {
       />
       <div
         style={{
-          position: 'fixed', top: 0, right: 0, bottom: 0, width: DRAWER_WIDTH, maxWidth: '92vw',
-          zIndex: 301, display: 'flex', flexDirection: 'column',
+          position: 'fixed',
+          top: 0,
+          right: 0,
+          bottom: 0,
+          width: DRAWER_WIDTH,
+          maxWidth: '92vw',
+          zIndex: 301,
+          display: 'flex',
+          flexDirection: 'column',
           background: 'var(--wks-glass-strong)',
           backdropFilter: 'blur(var(--wks-glass-blur)) saturate(160%)',
           WebkitBackdropFilter: 'blur(var(--wks-glass-blur)) saturate(160%)',
@@ -137,17 +217,43 @@ const InboxDrawer: React.FC = () => {
         }}
       >
         {/* Header — pad past the Windows caption buttons so the close ✕ clears them. */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: `${14 + captionInsetTop()}px 16px 10px` }}>
-          <div style={{ fontSize: '0.95rem', fontWeight: 800, color: 'var(--wks-text-primary)', letterSpacing: '-0.01em' }}>Inbox</div>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            padding: `${14 + captionInsetTop()}px 16px 10px`,
+          }}
+        >
+          <div
+            style={{
+              fontSize: '0.95rem',
+              fontWeight: 800,
+              color: 'var(--wks-text-primary)',
+              letterSpacing: '-0.01em',
+            }}
+          >
+            Inbox
+          </div>
           {counts.needsYou > 0 ? (
-            <span style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--wks-warning, #e0a000)' }}>{counts.needsYou} need you</span>
+            <span
+              style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--wks-warning, #e0a000)' }}
+            >
+              {counts.needsYou} need you
+            </span>
           ) : counts.total > 0 ? (
-            <span style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--wks-success, #3fb950)' }}>{counts.total} to review</span>
+            <span
+              style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--wks-success, #3fb950)' }}
+            >
+              {counts.total} to review
+            </span>
           ) : (
             <span style={{ fontSize: '0.72rem', color: 'var(--wks-text-faint)' }}>all clear</span>
           )}
           <div style={{ flex: 1 }} />
-          <button onClick={closeInbox} title="Close (Esc)" style={closeBtn}>✕</button>
+          <button onClick={closeInbox} title="Close (Esc)" style={closeBtn}>
+            ✕
+          </button>
         </div>
 
         {/* Filter tabs — All / Needs you / Review. `feed` is filtered in context,
@@ -160,17 +266,31 @@ const InboxDrawer: React.FC = () => {
                 key={t.key}
                 onClick={() => setInboxFilter(t.key)}
                 style={{
-                  flex: 1, padding: '4px 6px', borderRadius: 6, cursor: 'pointer',
-                  fontSize: '0.68rem', fontWeight: 600, fontFamily: 'inherit',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
-                  border: active ? '1px solid var(--wks-accent)' : '1px solid var(--wks-border-input)',
+                  flex: 1,
+                  padding: '4px 6px',
+                  borderRadius: 6,
+                  cursor: 'pointer',
+                  fontSize: '0.68rem',
+                  fontWeight: 600,
+                  fontFamily: 'inherit',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 5,
+                  border: active
+                    ? '1px solid var(--wks-accent)'
+                    : '1px solid var(--wks-border-input)',
                   background: active ? 'var(--wks-accent-bg)' : 'transparent',
-                  color: active ? 'var(--wks-accent-text, var(--wks-text-primary))' : 'var(--wks-text-tertiary)',
+                  color: active
+                    ? 'var(--wks-accent-text, var(--wks-text-primary))'
+                    : 'var(--wks-text-tertiary)',
                 }}
               >
                 {t.label}
                 {t.count > 0 && (
-                  <span style={{ fontSize: '0.6rem', fontWeight: 700, opacity: 0.8 }}>{t.count}</span>
+                  <span style={{ fontSize: '0.6rem', fontWeight: 700, opacity: 0.8 }}>
+                    {t.count}
+                  </span>
                 )}
               </button>
             );
@@ -178,9 +298,25 @@ const InboxDrawer: React.FC = () => {
         </div>
 
         {/* Hint strip + bulk actions */}
-        <div style={{ padding: '0 16px 10px', fontSize: '0.62rem', color: 'var(--wks-text-faint)', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <Hint k={`${formatBinding(sc['inbox-move-down'] ?? '')}/${formatBinding(sc['inbox-move-up'] ?? '')}`} t="move" />
-          <Hint k={`${formatBinding(sc['inbox-approve-yes'] ?? '')}/${formatBinding(sc['inbox-approve-no'] ?? '')}`} t="approve" />
+        <div
+          style={{
+            padding: '0 16px 10px',
+            fontSize: '0.62rem',
+            color: 'var(--wks-text-faint)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            flexWrap: 'wrap',
+          }}
+        >
+          <Hint
+            k={`${formatBinding(sc['inbox-move-down'] ?? '')}/${formatBinding(sc['inbox-move-up'] ?? '')}`}
+            t="move"
+          />
+          <Hint
+            k={`${formatBinding(sc['inbox-approve-yes'] ?? '')}/${formatBinding(sc['inbox-approve-no'] ?? '')}`}
+            t="approve"
+          />
           <Hint k={formatBinding(sc['inbox-answer'] ?? '')} t="answer" />
           <Hint k={formatBinding(sc['inbox-open'] ?? '')} t="open" />
           <Hint k={formatBinding(sc['inbox-dismiss'] ?? '')} t="dismiss" />
@@ -190,9 +326,17 @@ const InboxDrawer: React.FC = () => {
               onClick={clearReviewed}
               title={`Dismiss every reviewed (non-blocking) item shown (${formatBinding(sc['inbox-clear-reviewed'] ?? '')})`}
               style={{
-                marginLeft: 'auto', fontSize: '0.62rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
-                border: '1px solid var(--wks-border-input)', borderRadius: 6, padding: '2px 9px',
-                background: 'transparent', color: 'var(--wks-text-secondary)', whiteSpace: 'nowrap',
+                marginLeft: 'auto',
+                fontSize: '0.62rem',
+                fontWeight: 600,
+                fontFamily: 'inherit',
+                cursor: 'pointer',
+                border: '1px solid var(--wks-border-input)',
+                borderRadius: 6,
+                padding: '2px 9px',
+                background: 'transparent',
+                color: 'var(--wks-text-secondary)',
+                whiteSpace: 'nowrap',
               }}
             >
               Clear {reviewedInFeed.length} reviewed
@@ -204,16 +348,38 @@ const InboxDrawer: React.FC = () => {
         <div ref={listRef} style={{ flex: 1, overflowY: 'auto', padding: '4px 14px 18px' }}>
           {feed.length === 0 ? (
             <div style={{ marginTop: 64, textAlign: 'center', color: 'var(--wks-text-faint)' }}>
-              <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 8, color: 'var(--wks-success, #3fb950)' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'center',
+                  marginBottom: 8,
+                  color: 'var(--wks-success, #3fb950)',
+                }}
+              >
                 <CheckCircle2 size={30} strokeWidth={1.75} />
               </div>
-              <div style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--wks-text-secondary)' }}>Inbox zero</div>
-              <div style={{ fontSize: '0.72rem', marginTop: 4, lineHeight: 1.5, maxWidth: 240, marginInline: 'auto' }}>
-                No agent needs you right now. Approvals, questions, and finished runs will surface here.
+              <div
+                style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--wks-text-secondary)' }}
+              >
+                Inbox zero
+              </div>
+              <div
+                style={{
+                  fontSize: '0.72rem',
+                  marginTop: 4,
+                  lineHeight: 1.5,
+                  maxWidth: 240,
+                  marginInline: 'auto',
+                }}
+              >
+                No agent needs you right now. Approvals, questions, and finished runs will surface
+                here.
               </div>
             </div>
           ) : (
-            <div style={{ position: 'relative', width: '100%', height: virtualizer.getTotalSize() }}>
+            <div
+              style={{ position: 'relative', width: '100%', height: virtualizer.getTotalSize() }}
+            >
               {virtualizer.getVirtualItems().map((v) => {
                 const it = feed[v.index];
                 return (
@@ -221,7 +387,14 @@ const InboxDrawer: React.FC = () => {
                     key={it.signature}
                     data-index={v.index}
                     ref={virtualizer.measureElement}
-                    style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${v.start}px)`, paddingBottom: 12 }}
+                    style={{
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
+                      width: '100%',
+                      transform: `translateY(${v.start}px)`,
+                      paddingBottom: 12,
+                    }}
                   >
                     <AttentionCard item={it} selected={selectedItem?.signature === it.signature} />
                   </div>
@@ -236,14 +409,34 @@ const InboxDrawer: React.FC = () => {
 };
 
 const closeBtn: React.CSSProperties = {
-  width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center',
-  border: '1px solid var(--wks-glass-border)', borderRadius: 6, cursor: 'pointer',
-  background: 'var(--wks-bg-surface)', color: 'var(--wks-text-secondary)', fontSize: '0.8rem', lineHeight: 1,
+  width: 26,
+  height: 26,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  border: '1px solid var(--wks-glass-border)',
+  borderRadius: 6,
+  cursor: 'pointer',
+  background: 'var(--wks-bg-surface)',
+  color: 'var(--wks-text-secondary)',
+  fontSize: '0.8rem',
+  lineHeight: 1,
 };
 
 const Hint: React.FC<{ k: string; t: string }> = ({ k, t }) => (
   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-    <kbd style={{ fontSize: '0.58rem', color: 'var(--wks-text-secondary)', border: '1px solid var(--wks-glass-border)', borderRadius: 3, padding: '0 4px', fontFamily: 'monospace' }}>{k}</kbd>
+    <kbd
+      style={{
+        fontSize: '0.58rem',
+        color: 'var(--wks-text-secondary)',
+        border: '1px solid var(--wks-glass-border)',
+        borderRadius: 3,
+        padding: '0 4px',
+        fontFamily: 'monospace',
+      }}
+    >
+      {k}
+    </kbd>
     <span>{t}</span>
   </span>
 );

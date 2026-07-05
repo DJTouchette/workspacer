@@ -92,7 +92,6 @@ function mkEvent(hookName: string, sessionId: string, extra: Record<string, unkn
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 describe('ClaudeSessionStore — handleHookEvent / getSnapshot / getAllSnapshots', () => {
-
   // Each describe block uses a unique session-id namespace so the singleton
   // store's accumulated state doesn't bleed between test groups.
 
@@ -158,18 +157,14 @@ describe('ClaudeSessionStore — handleHookEvent / getSnapshot / getAllSnapshots
 
     it('captures transcript_path from the first event that has it', () => {
       const id = sid('transcript-1');
-      store.handleHookEvent(
-        mkEvent('SessionStart', id, { transcript_path: '/tmp/session.jsonl' }),
-      );
+      store.handleHookEvent(mkEvent('SessionStart', id, { transcript_path: '/tmp/session.jsonl' }));
       const snap = store.getSnapshot(id)!;
       expect(snap.transcriptPath).toBe('/tmp/session.jsonl');
     });
 
     it('does not overwrite an already-set transcript_path', () => {
       const id = sid('transcript-2');
-      store.handleHookEvent(
-        mkEvent('SessionStart', id, { transcript_path: '/tmp/first.jsonl' }),
-      );
+      store.handleHookEvent(mkEvent('SessionStart', id, { transcript_path: '/tmp/first.jsonl' }));
       store.handleHookEvent(
         mkEvent('UserPromptSubmit', id, { transcript_path: '/tmp/second.jsonl' }),
       );
@@ -223,7 +218,7 @@ describe('ClaudeSessionStore — handleHookEvent / getSnapshot / getAllSnapshots
       const snap = store.getSnapshot(id)!;
       expect(snap.activeToolCalls).toHaveLength(1);
       // File change is recorded once, not twice.
-      expect(snap.fileChanges.filter(f => f.path === '/src/a.ts')).toHaveLength(1);
+      expect(snap.fileChanges.filter((f) => f.path === '/src/a.ts')).toHaveLength(1);
     });
 
     it('clears any stale pendingApproval when a new tool call starts', () => {
@@ -280,8 +275,8 @@ describe('ClaudeSessionStore — handleHookEvent / getSnapshot / getAllSnapshots
       );
       const snap = store.getSnapshot(id)!;
       expect(snap.fileChanges).toHaveLength(3);
-      expect(snap.fileChanges.map(f => f.path)).toEqual(['/src/a.ts', '/src/b.ts', '/src/c.ts']);
-      expect(snap.fileChanges.map(f => f.toolName)).toEqual(['Edit', 'Write', 'MultiEdit']);
+      expect(snap.fileChanges.map((f) => f.path)).toEqual(['/src/a.ts', '/src/b.ts', '/src/c.ts']);
+      expect(snap.fileChanges.map((f) => f.toolName)).toEqual(['Edit', 'Write', 'MultiEdit']);
     });
 
     describe('AskUserQuestion', () => {
@@ -335,9 +330,7 @@ describe('ClaudeSessionStore — handleHookEvent / getSnapshot / getAllSnapshots
           tool_use_id: 'tc-post-1',
         }),
       );
-      store.handleHookEvent(
-        mkEvent('PostToolUse', id, { tool_use_id: 'tc-post-1' }),
-      );
+      store.handleHookEvent(mkEvent('PostToolUse', id, { tool_use_id: 'tc-post-1' }));
       const snap = store.getSnapshot(id)!;
       expect(snap.activeToolCalls).toHaveLength(0);
       expect(snap.completedToolCalls).toHaveLength(1);
@@ -358,9 +351,7 @@ describe('ClaudeSessionStore — handleHookEvent / getSnapshot / getAllSnapshots
           tool_use_id: 'tc-pca-1',
         }),
       );
-      store.handleHookEvent(
-        mkEvent('PostToolUse', id, { tool_use_id: 'tc-pca-1' }),
-      );
+      store.handleHookEvent(mkEvent('PostToolUse', id, { tool_use_id: 'tc-pca-1' }));
       expect(store.getSnapshot(id)!.pendingApproval).toBeNull();
     });
 
@@ -378,9 +369,7 @@ describe('ClaudeSessionStore — handleHookEvent / getSnapshot / getAllSnapshots
       );
       expect(store.getSnapshot(id)!.pendingQuestions).not.toBeNull();
 
-      store.handleHookEvent(
-        mkEvent('PostToolUse', id, { tool_use_id: 'tc-paq-1' }),
-      );
+      store.handleHookEvent(mkEvent('PostToolUse', id, { tool_use_id: 'tc-paq-1' }));
       expect(store.getSnapshot(id)!.pendingQuestions).toBeNull();
     });
 
@@ -397,9 +386,7 @@ describe('ClaudeSessionStore — handleHookEvent / getSnapshot / getAllSnapshots
     it('is a no-op for unknown tool_use_id', () => {
       const id = sid('post-noop-1');
       store.handleHookEvent(mkEvent('SessionStart', id));
-      store.handleHookEvent(
-        mkEvent('PostToolUse', id, { tool_use_id: 'unknown-id' }),
-      );
+      store.handleHookEvent(mkEvent('PostToolUse', id, { tool_use_id: 'unknown-id' }));
       const snap = store.getSnapshot(id)!;
       expect(snap.activeToolCalls).toHaveLength(0);
       expect(snap.completedToolCalls).toHaveLength(0);
@@ -419,9 +406,7 @@ describe('ClaudeSessionStore — handleHookEvent / getSnapshot / getAllSnapshots
           tool_use_id: 'tc-fail-1',
         }),
       );
-      store.handleHookEvent(
-        mkEvent('PostToolUseFailure', id, { tool_use_id: 'tc-fail-1' }),
-      );
+      store.handleHookEvent(mkEvent('PostToolUseFailure', id, { tool_use_id: 'tc-fail-1' }));
       const snap = store.getSnapshot(id)!;
       expect(snap.activeToolCalls).toHaveLength(0);
       expect(snap.completedToolCalls).toHaveLength(1);
@@ -431,9 +416,7 @@ describe('ClaudeSessionStore — handleHookEvent / getSnapshot / getAllSnapshots
     it('is a no-op for unknown tool_use_id', () => {
       const id = sid('fail-noop-1');
       store.handleHookEvent(mkEvent('SessionStart', id));
-      store.handleHookEvent(
-        mkEvent('PostToolUseFailure', id, { tool_use_id: 'unknown-id' }),
-      );
+      store.handleHookEvent(mkEvent('PostToolUseFailure', id, { tool_use_id: 'unknown-id' }));
       const snap = store.getSnapshot(id)!;
       expect(snap.completedToolCalls).toHaveLength(0);
     });
@@ -513,7 +496,7 @@ describe('ClaudeSessionStore — handleHookEvent / getSnapshot / getAllSnapshots
       store.handleHookEvent(mkEvent('Stop', id));
       // Stop keeps only running subagents
       const snap = store.getSnapshot(id)!;
-      expect(snap.subagents.every(s => s.status === 'running')).toBe(true);
+      expect(snap.subagents.every((s) => s.status === 'running')).toBe(true);
     });
   });
 
@@ -544,9 +527,7 @@ describe('ClaudeSessionStore — handleHookEvent / getSnapshot / getAllSnapshots
     it('SubagentStop marks the subagent complete', () => {
       const id = sid('subagent-stop-1');
       store.handleHookEvent(mkEvent('SessionStart', id));
-      store.handleHookEvent(
-        mkEvent('SubagentStart', id, { agent_id: 'agent-A', agent_type: 'Z' }),
-      );
+      store.handleHookEvent(mkEvent('SubagentStart', id, { agent_id: 'agent-A', agent_type: 'Z' }));
       store.handleHookEvent(mkEvent('SubagentStop', id, { agent_id: 'agent-A' }));
       const snap = store.getSnapshot(id)!;
       expect(snap.subagents[0].status).toBe('complete');
@@ -567,12 +548,8 @@ describe('ClaudeSessionStore — handleHookEvent / getSnapshot / getAllSnapshots
     it('multiple subagents can run concurrently', () => {
       const id = sid('subagent-multi-1');
       store.handleHookEvent(mkEvent('SessionStart', id));
-      store.handleHookEvent(
-        mkEvent('SubagentStart', id, { agent_id: 'sa-m-1', agent_type: 'A' }),
-      );
-      store.handleHookEvent(
-        mkEvent('SubagentStart', id, { agent_id: 'sa-m-2', agent_type: 'B' }),
-      );
+      store.handleHookEvent(mkEvent('SubagentStart', id, { agent_id: 'sa-m-1', agent_type: 'A' }));
+      store.handleHookEvent(mkEvent('SubagentStart', id, { agent_id: 'sa-m-2', agent_type: 'B' }));
       expect(store.getSnapshot(id)!.subagents).toHaveLength(2);
     });
   });
@@ -583,9 +560,7 @@ describe('ClaudeSessionStore — handleHookEvent / getSnapshot / getAllSnapshots
     it('pushes an assistant message from event.message', () => {
       const id = sid('notif-1');
       store.handleHookEvent(mkEvent('SessionStart', id));
-      store.handleHookEvent(
-        mkEvent('Notification', id, { message: 'Task complete!' }),
-      );
+      store.handleHookEvent(mkEvent('Notification', id, { message: 'Task complete!' }));
       const snap = store.getSnapshot(id)!;
       expect(snap.conversation).toHaveLength(1);
       expect(snap.conversation[0].role).toBe('assistant');
@@ -595,9 +570,7 @@ describe('ClaudeSessionStore — handleHookEvent / getSnapshot / getAllSnapshots
     it('falls back to event.notification when message is absent', () => {
       const id = sid('notif-2');
       store.handleHookEvent(mkEvent('SessionStart', id));
-      store.handleHookEvent(
-        mkEvent('Notification', id, { notification: 'Fallback text' }),
-      );
+      store.handleHookEvent(mkEvent('Notification', id, { notification: 'Fallback text' }));
       expect(store.getSnapshot(id)!.conversation[0].content).toBe('Fallback text');
     });
 
@@ -661,14 +634,21 @@ describe('ClaudeSessionStore — handleHookEvent / getSnapshot / getAllSnapshots
     it('creates user and assistant turns from delta items with real timestamps', () => {
       const id = sid('conv-delta-1');
       store.handleHookEvent(mkEvent('SessionStart', id));
-      store.applyConversationDelta(mkDelta(id, 2, [
-        { kind: 'user_message', text: 'Hello from daemon', timestamp: '2026-06-12T10:00:00Z' },
-        { kind: 'assistant_text', text: 'Hi there!' },
-      ], true));
+      store.applyConversationDelta(
+        mkDelta(
+          id,
+          2,
+          [
+            { kind: 'user_message', text: 'Hello from daemon', timestamp: '2026-06-12T10:00:00Z' },
+            { kind: 'assistant_text', text: 'Hi there!' },
+          ],
+          true,
+        ),
+      );
 
       const snap = store.getSnapshot(id)!;
-      const userTurns = snap.conversation.filter(t => t.role === 'user');
-      const assistantTurns = snap.conversation.filter(t => t.role === 'assistant');
+      const userTurns = snap.conversation.filter((t) => t.role === 'user');
+      const assistantTurns = snap.conversation.filter((t) => t.role === 'assistant');
       expect(userTurns).toHaveLength(1);
       expect(userTurns[0].content).toBe('Hello from daemon');
       expect(userTurns[0].timestamp).toBe(Date.parse('2026-06-12T10:00:00Z'));
@@ -678,9 +658,9 @@ describe('ClaudeSessionStore — handleHookEvent / getSnapshot / getAllSnapshots
 
     it('creates the session when a delta arrives before any hook', () => {
       const id = sid('conv-delta-prehook');
-      store.applyConversationDelta(mkDelta(id, 1, [
-        { kind: 'user_message', text: 'early bird' },
-      ], true));
+      store.applyConversationDelta(
+        mkDelta(id, 1, [{ kind: 'user_message', text: 'early bird' }], true),
+      );
       const snap = store.getSnapshot(id);
       expect(snap).not.toBeNull();
       expect(snap!.conversation[0].content).toBe('early bird');
@@ -689,13 +669,18 @@ describe('ClaudeSessionStore — handleHookEvent / getSnapshot / getAllSnapshots
     it('tool_use items create tool-call turns and increment totalToolCalls', () => {
       const id = sid('conv-delta-tool');
       store.handleHookEvent(mkEvent('SessionStart', id));
-      store.applyConversationDelta(mkDelta(id, 1, [
-        { kind: 'tool_use', id: 'tc-tr-1', name: 'Bash', input: { command: 'ls' } },
-      ], true));
+      store.applyConversationDelta(
+        mkDelta(
+          id,
+          1,
+          [{ kind: 'tool_use', id: 'tc-tr-1', name: 'Bash', input: { command: 'ls' } }],
+          true,
+        ),
+      );
 
       const snap = store.getSnapshot(id)!;
       expect(snap.totalToolCalls).toBe(1);
-      const toolTurns = snap.conversation.filter(t => t.toolCalls && t.toolCalls.length > 0);
+      const toolTurns = snap.conversation.filter((t) => t.toolCalls && t.toolCalls.length > 0);
       expect(toolTurns).toHaveLength(1);
       expect(toolTurns[0].toolCalls![0].name).toBe('Bash');
     });
@@ -703,17 +688,26 @@ describe('ClaudeSessionStore — handleHookEvent / getSnapshot / getAllSnapshots
     it('tool_result items attach to the matching tool call instead of creating turns', () => {
       const id = sid('conv-delta-result');
       store.handleHookEvent(mkEvent('SessionStart', id));
-      store.applyConversationDelta(mkDelta(id, 1, [
-        { kind: 'tool_use', id: 'tc-res-1', name: 'Bash', input: { command: 'pwd' } },
-      ], true));
-      store.applyConversationDelta(mkDelta(id, 2, [
-        { kind: 'tool_result', tool_use_id: 'tc-res-1', content: '/home/user', is_error: false },
-      ]));
+      store.applyConversationDelta(
+        mkDelta(
+          id,
+          1,
+          [{ kind: 'tool_use', id: 'tc-res-1', name: 'Bash', input: { command: 'pwd' } }],
+          true,
+        ),
+      );
+      store.applyConversationDelta(
+        mkDelta(id, 2, [
+          { kind: 'tool_result', tool_use_id: 'tc-res-1', content: '/home/user', is_error: false },
+        ]),
+      );
 
       const snap = store.getSnapshot(id)!;
-      const userTurns = snap.conversation.filter(t => t.role === 'user');
+      const userTurns = snap.conversation.filter((t) => t.role === 'user');
       expect(userTurns).toHaveLength(0);
-      const toolTurns = snap.conversation.filter(t => t.toolCalls?.some(tc => tc.id === 'tc-res-1'));
+      const toolTurns = snap.conversation.filter((t) =>
+        t.toolCalls?.some((tc) => tc.id === 'tc-res-1'),
+      );
       expect(toolTurns).toHaveLength(1);
       expect(toolTurns[0].toolCalls![0].response).toBe('/home/user');
     });
@@ -733,9 +727,14 @@ describe('ClaudeSessionStore — handleHookEvent / getSnapshot / getAllSnapshots
       expect(store.getSnapshot(id)!.activeToolCalls).toHaveLength(1);
 
       // The authoritative transcript catches up with the same tool_use id.
-      store.applyConversationDelta(mkDelta(id, 1, [
-        { kind: 'tool_use', id: 'tc-orphan', name: 'Bash', input: { command: 'ls' } },
-      ], true));
+      store.applyConversationDelta(
+        mkDelta(
+          id,
+          1,
+          [{ kind: 'tool_use', id: 'tc-orphan', name: 'Bash', input: { command: 'ls' } }],
+          true,
+        ),
+      );
       expect(store.getSnapshot(id)!.activeToolCalls).toHaveLength(0);
     });
 
@@ -763,12 +762,12 @@ describe('ClaudeSessionStore — handleHookEvent / getSnapshot / getAllSnapshots
     it('reset replaces the conversation wholesale', () => {
       const id = sid('conv-delta-reset');
       store.handleHookEvent(mkEvent('SessionStart', id));
-      store.applyConversationDelta(mkDelta(id, 1, [
-        { kind: 'user_message', text: 'old history' },
-      ], true));
-      store.applyConversationDelta(mkDelta(id, 1, [
-        { kind: 'user_message', text: 'fresh start' },
-      ], true));
+      store.applyConversationDelta(
+        mkDelta(id, 1, [{ kind: 'user_message', text: 'old history' }], true),
+      );
+      store.applyConversationDelta(
+        mkDelta(id, 1, [{ kind: 'user_message', text: 'fresh start' }], true),
+      );
 
       const snap = store.getSnapshot(id)!;
       expect(snap.conversation).toHaveLength(1);
@@ -783,13 +782,13 @@ describe('ClaudeSessionStore — handleHookEvent / getSnapshot / getAllSnapshots
       vi.stubGlobal('fetch', fetchStub);
       try {
         store.handleHookEvent(mkEvent('SessionStart', id));
-        store.applyConversationDelta(mkDelta(id, 1, [
-          { kind: 'user_message', text: 'first' },
-        ], true));
+        store.applyConversationDelta(
+          mkDelta(id, 1, [{ kind: 'user_message', text: 'first' }], true),
+        );
         // seq jumps from 1 to 5 — frames were missed.
-        store.applyConversationDelta(mkDelta(id, 5, [
-          { kind: 'user_message', text: 'after the gap' },
-        ]));
+        store.applyConversationDelta(
+          mkDelta(id, 5, [{ kind: 'user_message', text: 'after the gap' }]),
+        );
 
         const snap = store.getSnapshot(id)!;
         expect(snap.conversation).toHaveLength(1);
@@ -813,7 +812,9 @@ describe('ClaudeSessionStore — handleHookEvent / getSnapshot / getAllSnapshots
 
     it('every snapshot has a sessionId string', () => {
       const all = store.getAllSnapshots();
-      expect(all.every(s => typeof s.sessionId === 'string' && s.sessionId.length > 0)).toBe(true);
+      expect(all.every((s) => typeof s.sessionId === 'string' && s.sessionId.length > 0)).toBe(
+        true,
+      );
     });
 
     it('snapshot objects are independent copies (spread), not shared references', () => {
@@ -822,7 +823,7 @@ describe('ClaudeSessionStore — handleHookEvent / getSnapshot / getAllSnapshots
       const snap1 = store.getSnapshot(id)!;
       const snap2 = store.getSnapshot(id)!;
       expect(snap1).not.toBe(snap2); // different object references
-      expect(snap1).toEqual(snap2);  // same data
+      expect(snap1).toEqual(snap2); // same data
     });
   });
 
@@ -846,9 +847,7 @@ describe('ClaudeSessionStore — handleHookEvent / getSnapshot / getAllSnapshots
       const idB = sid('iso-sub-B');
       store.handleHookEvent(mkEvent('SessionStart', idA));
       store.handleHookEvent(mkEvent('SessionStart', idB));
-      store.handleHookEvent(
-        mkEvent('SubagentStart', idA, { agent_id: 'sa-iso', agent_type: 'X' }),
-      );
+      store.handleHookEvent(mkEvent('SubagentStart', idA, { agent_id: 'sa-iso', agent_type: 'X' }));
       expect(store.getSnapshot(idA)!.subagents).toHaveLength(1);
       expect(store.getSnapshot(idB)!.subagents).toHaveLength(0);
     });
@@ -866,7 +865,7 @@ describe('ClaudeSessionStore — handleHookEvent / getSnapshot / getAllSnapshots
       store.handleHookEvent(mkEvent('Notification', id, { message: 'Same message' }));
       // Notification does NOT call isDuplicateMessage — both entries appear
       const conv = store.getSnapshot(id)!.conversation;
-      const matches = conv.filter(t => t.content === 'Same message');
+      const matches = conv.filter((t) => t.content === 'Same message');
       expect(matches.length).toBe(2);
     });
   });

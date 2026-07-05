@@ -1,6 +1,13 @@
 import { useEffect, useMemo } from 'react';
 import { useConfig } from './useConfig';
-import { themes, darkTheme, applyTheme, applyCorners, cornersOf, titleBarOverlayOf } from '../themes';
+import {
+  themes,
+  darkTheme,
+  applyTheme,
+  applyCorners,
+  cornersOf,
+  titleBarOverlayOf,
+} from '../themes';
 import type { Theme, TerminalTheme } from '../themes';
 
 export function useTheme(): { theme: Theme; terminalTheme: TerminalTheme } {

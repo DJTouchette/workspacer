@@ -7,7 +7,7 @@ import * as fs from 'fs';
 // PNG via its public/ dir (-> dist/renderer/icon.png); in unbuilt dev runs we
 // fall back to the source master under build/.
 const CANDIDATES = [
-  path.join(__dirname, '..', 'renderer', 'icon.png'),   // packaged / built renderer
+  path.join(__dirname, '..', 'renderer', 'icon.png'), // packaged / built renderer
   path.join(__dirname, '..', '..', 'build', 'icon.png'), // dev, source tree
 ];
 

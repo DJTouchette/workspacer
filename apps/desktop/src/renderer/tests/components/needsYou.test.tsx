@@ -22,10 +22,7 @@ const approval: PendingApproval = {
 const question: PendingQuestion = {
   question: 'Which package manager?',
   header: 'Setup',
-  options: [
-    { label: 'npm', description: 'the default' },
-    { label: 'pnpm' },
-  ],
+  options: [{ label: 'npm', description: 'the default' }, { label: 'pnpm' }],
 };
 
 describe('ApprovalPrompt', () => {
@@ -106,7 +103,14 @@ describe('NeedsYouDock', () => {
 
   it('shows the approval card and routes Allow to onApprove', () => {
     const onApprove = vi.fn();
-    render(<NeedsYouDock approval={approval} questions={null} onApprove={onApprove} onAnswer={vi.fn()} />);
+    render(
+      <NeedsYouDock
+        approval={approval}
+        questions={null}
+        onApprove={onApprove}
+        onAnswer={vi.fn()}
+      />,
+    );
     expect(screen.getByText('Approval needed')).toBeInTheDocument();
     fireEvent.click(screen.getByText('Allow'));
     expect(onApprove).toHaveBeenCalledWith('yes');
@@ -114,7 +118,12 @@ describe('NeedsYouDock', () => {
 
   it('a pending question wins over a racing approval (picker shown, approval hidden)', () => {
     render(
-      <NeedsYouDock approval={approval} questions={[question]} onApprove={vi.fn()} onAnswer={vi.fn()} />,
+      <NeedsYouDock
+        approval={approval}
+        questions={[question]}
+        onApprove={vi.fn()}
+        onAnswer={vi.fn()}
+      />,
     );
     expect(screen.getByText('Claude is asking you')).toBeInTheDocument();
     expect(screen.getByText('Which package manager?')).toBeInTheDocument();
@@ -125,7 +134,12 @@ describe('NeedsYouDock', () => {
   it('labels the count when several questions are docked together', () => {
     const q2: PendingQuestion = { question: 'Second?', options: [{ label: 'a' }] };
     render(
-      <NeedsYouDock approval={null} questions={[question, q2]} onApprove={vi.fn()} onAnswer={vi.fn()} />,
+      <NeedsYouDock
+        approval={null}
+        questions={[question, q2]}
+        onApprove={vi.fn()}
+        onAnswer={vi.fn()}
+      />,
     );
     expect(screen.getByText('2 questions')).toBeInTheDocument();
   });

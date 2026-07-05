@@ -71,27 +71,34 @@ export const Composer: React.FC<ComposerProps> = ({
     ta.style.overflowY = sh > MAX_COMPOSER_HEIGHT ? 'auto' : 'hidden';
   }, [value, taRef]);
 
-  const borderColor = attachedFiles.length > 0
-    ? colors.accent
-    : focused ? 'var(--wks-border-input)' : colors.borderSubtle;
+  const borderColor =
+    attachedFiles.length > 0
+      ? colors.accent
+      : focused
+        ? 'var(--wks-border-input)'
+        : colors.borderSubtle;
 
   return (
-    <div style={{
-      padding: '4px 16px 12px',
-      flexShrink: 0,
-      opacity: dimmed ? 0.55 : 1,
-      transition: 'opacity 0.15s',
-    }}>
+    <div
+      style={{
+        padding: '4px 16px 12px',
+        flexShrink: 0,
+        opacity: dimmed ? 0.55 : 1,
+        transition: 'opacity 0.15s',
+      }}
+    >
       <div style={{ maxWidth: 1040, margin: '0 auto' }}>
-        <div style={{
-          display: 'flex',
-          flexDirection: 'column',
-          borderRadius: 16,
-          border: `1px solid ${borderColor}`,
-          background: 'var(--wks-bg-raised)',
-          boxShadow: '0 4px 24px rgba(0, 0, 0, 0.18)',
-          transition: 'border-color 0.15s',
-        }}>
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            borderRadius: 16,
+            border: `1px solid ${borderColor}`,
+            background: 'var(--wks-bg-raised)',
+            boxShadow: '0 4px 24px rgba(0, 0, 0, 0.18)',
+            transition: 'border-color 0.15s',
+          }}
+        >
           {attachedFiles.length > 0 && (
             <div style={{ padding: '10px 14px 0' }}>
               <FileChips files={attachedFiles} onRemove={onRemoveFile} />
@@ -100,7 +107,11 @@ export const Composer: React.FC<ComposerProps> = ({
           <textarea
             ref={taRef}
             rows={1}
-            placeholder={attachedFiles.length > 0 ? `What should ${agentName} do with these files?` : `Message ${agentName}… (Shift+Enter for newline)`}
+            placeholder={
+              attachedFiles.length > 0
+                ? `What should ${agentName} do with these files?`
+                : `Message ${agentName}… (Shift+Enter for newline)`
+            }
             value={value}
             onChange={(e) => onChange(e.target.value)}
             onPaste={onPaste}
@@ -140,13 +151,15 @@ export const Composer: React.FC<ComposerProps> = ({
               maxHeight: MAX_COMPOSER_HEIGHT,
             }}
           />
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 4,
-            padding: '4px 8px 8px',
-            minWidth: 0,
-          }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 4,
+              padding: '4px 8px 8px',
+              minWidth: 0,
+            }}
+          >
             <button
               onClick={onPickFiles}
               title="Attach files"
@@ -170,7 +183,15 @@ export const Composer: React.FC<ComposerProps> = ({
               +
             </button>
             {controls && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 2, minWidth: 0, overflow: 'hidden' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 2,
+                  minWidth: 0,
+                  overflow: 'hidden',
+                }}
+              >
                 {controls}
               </div>
             )}
@@ -184,7 +205,9 @@ export const Composer: React.FC<ComposerProps> = ({
                   height: 30,
                   borderRadius: '50%',
                   border: 'none',
-                  backgroundColor: canSend ? 'var(--wks-accent)' : 'var(--wks-bg-elevated, rgba(255,255,255,0.06))',
+                  backgroundColor: canSend
+                    ? 'var(--wks-accent)'
+                    : 'var(--wks-bg-elevated, rgba(255,255,255,0.06))',
                   color: canSend ? '#fff' : colors.mutedDim,
                   cursor: canSend ? 'pointer' : 'default',
                   display: 'flex',

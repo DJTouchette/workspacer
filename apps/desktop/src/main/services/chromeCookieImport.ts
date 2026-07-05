@@ -79,7 +79,9 @@ function readLocalStateMasterKey(userDataDir: string): Buffer {
   const parsed = JSON.parse(raw);
   const encryptedKeyB64: string | undefined = parsed?.os_crypt?.encrypted_key;
   if (!encryptedKeyB64) {
-    throw new Error('Local State has no os_crypt.encrypted_key — Chrome may use a newer encryption scheme.');
+    throw new Error(
+      'Local State has no os_crypt.encrypted_key — Chrome may use a newer encryption scheme.',
+    );
   }
   const encryptedKey = Buffer.from(encryptedKeyB64, 'base64');
   // First 5 bytes are the literal ASCII "DPAPI"; strip them off.
@@ -164,29 +166,59 @@ interface CookieRow {
 function findChromeExecutable(): string | null {
   if (process.platform !== 'win32') return null;
   const candidates = [
-    path.join(process.env['PROGRAMFILES'] || 'C:\\Program Files', 'Google', 'Chrome', 'Application', 'chrome.exe'),
-    path.join(process.env['PROGRAMFILES(X86)'] || 'C:\\Program Files (x86)', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+    path.join(
+      process.env['PROGRAMFILES'] || 'C:\\Program Files',
+      'Google',
+      'Chrome',
+      'Application',
+      'chrome.exe',
+    ),
+    path.join(
+      process.env['PROGRAMFILES(X86)'] || 'C:\\Program Files (x86)',
+      'Google',
+      'Chrome',
+      'Application',
+      'chrome.exe',
+    ),
     path.join(process.env['LOCALAPPDATA'] || '', 'Google', 'Chrome', 'Application', 'chrome.exe'),
   ];
-  return candidates.find(p => p && fs.existsSync(p)) ?? null;
+  return candidates.find((p) => p && fs.existsSync(p)) ?? null;
 }
 
 function findEdgeExecutable(): string | null {
   if (process.platform !== 'win32') return null;
   const candidates = [
-    path.join(process.env['PROGRAMFILES'] || 'C:\\Program Files', 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
-    path.join(process.env['PROGRAMFILES(X86)'] || 'C:\\Program Files (x86)', 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+    path.join(
+      process.env['PROGRAMFILES'] || 'C:\\Program Files',
+      'Microsoft',
+      'Edge',
+      'Application',
+      'msedge.exe',
+    ),
+    path.join(
+      process.env['PROGRAMFILES(X86)'] || 'C:\\Program Files (x86)',
+      'Microsoft',
+      'Edge',
+      'Application',
+      'msedge.exe',
+    ),
     path.join(process.env['LOCALAPPDATA'] || '', 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
   ];
-  return candidates.find(p => p && fs.existsSync(p)) ?? null;
+  return candidates.find((p) => p && fs.existsSync(p)) ?? null;
 }
 
 function isProcessRunning(imageName: string): boolean {
   if (process.platform !== 'win32') return false;
   try {
-    const out = execFileSync('tasklist', ['/fi', `imagename eq ${imageName}`, '/fo', 'csv', '/nh'], {
-      encoding: 'utf-8', timeout: 5000, windowsHide: true,
-    });
+    const out = execFileSync(
+      'tasklist',
+      ['/fi', `imagename eq ${imageName}`, '/fo', 'csv', '/nh'],
+      {
+        encoding: 'utf-8',
+        timeout: 5000,
+        windowsHide: true,
+      },
+    );
     return new RegExp(imageName.replace('.', '\\.'), 'i').test(out);
   } catch {
     return false;
@@ -202,11 +234,19 @@ function chromeDebuggingPolicyBlock(): string | null {
     'HKCU\\SOFTWARE\\Policies\\Google\\Chrome',
     'HKLM\\SOFTWARE\\Policies\\Chromium',
   ];
-  const interesting = ['RemoteDebuggingAllowed', 'DeveloperToolsAvailability', 'DeveloperToolsDisabled'];
+  const interesting = [
+    'RemoteDebuggingAllowed',
+    'DeveloperToolsAvailability',
+    'DeveloperToolsDisabled',
+  ];
   const findings: string[] = [];
   for (const key of policyKeys) {
     try {
-      const out = execFileSync('reg', ['query', key], { encoding: 'utf-8', timeout: 3000, windowsHide: true });
+      const out = execFileSync('reg', ['query', key], {
+        encoding: 'utf-8',
+        timeout: 3000,
+        windowsHide: true,
+      });
       for (const name of interesting) {
         const m = new RegExp(`${name}\\s+REG_DWORD\\s+0x([0-9a-f]+)`, 'i').exec(out);
         if (m) {
@@ -236,7 +276,11 @@ function pickPort(): number {
   return 30000 + Math.floor(Math.random() * 25000);
 }
 
-async function waitFor<T>(fn: () => Promise<T | null>, timeoutMs: number, intervalMs: number): Promise<T> {
+async function waitFor<T>(
+  fn: () => Promise<T | null>,
+  timeoutMs: number,
+  intervalMs: number,
+): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   let lastErr: any;
   while (Date.now() < deadline) {
@@ -246,7 +290,7 @@ async function waitFor<T>(fn: () => Promise<T | null>, timeoutMs: number, interv
     } catch (e) {
       lastErr = e;
     }
-    await new Promise(r => setTimeout(r, intervalMs));
+    await new Promise((r) => setTimeout(r, intervalMs));
   }
   throw new Error(`timed out: ${lastErr?.message ?? 'no result'}`);
 }
@@ -256,7 +300,7 @@ interface CDPCookie {
   value: string;
   domain: string;
   path: string;
-  expires: number;       // unix seconds, -1 = session
+  expires: number; // unix seconds, -1 = session
   size: number;
   httpOnly: boolean;
   secure: boolean;
@@ -275,7 +319,9 @@ function copyDir(src: string, dst: string, skip?: (name: string) => boolean): vo
     if (entry.isDirectory()) {
       copyDir(s, d, skip);
     } else if (entry.isFile()) {
-      try { fs.copyFileSync(s, d); } catch {}
+      try {
+        fs.copyFileSync(s, d);
+      } catch {}
     }
   }
 }
@@ -289,10 +335,7 @@ function stageProfileCopy(realUserDataDir: string): string {
 
   // `Local State` has the os_crypt encrypted_key and app_bound_encrypted_key.
   // Without it Chrome can't unwrap any cookie encryption.
-  fs.copyFileSync(
-    path.join(realUserDataDir, 'Local State'),
-    path.join(stagedRoot, 'Local State'),
-  );
+  fs.copyFileSync(path.join(realUserDataDir, 'Local State'), path.join(stagedRoot, 'Local State'));
 
   // `Preferences` is required for Chrome to recognise the profile dir as
   // valid. Without it, Chrome runs through first-run setup.
@@ -324,7 +367,12 @@ function stageProfileCopy(realUserDataDir: string): string {
   return stagedRoot;
 }
 
-async function fetchCookiesViaCDP(opts: { userDataDir: string; browserExe: string; headlessMode: 'new' | 'old' | 'off'; profileDirectory?: string }): Promise<CDPCookie[]> {
+async function fetchCookiesViaCDP(opts: {
+  userDataDir: string;
+  browserExe: string;
+  headlessMode: 'new' | 'old' | 'off';
+  profileDirectory?: string;
+}): Promise<CDPCookie[]> {
   const port = pickPort();
   const tmpDir = path.join(os.tmpdir(), `wks-chrome-cdp-${Date.now()}`);
   fs.mkdirSync(tmpDir, { recursive: true });
@@ -340,19 +388,29 @@ async function fetchCookiesViaCDP(opts: { userDataDir: string; browserExe: strin
   try {
     const junctionDir = path.join(os.tmpdir(), `wks-chrome-link-${Date.now()}`);
     execFileSync('cmd.exe', ['/c', 'mklink', '/J', junctionDir, opts.userDataDir], {
-      windowsHide: true, timeout: 5000, stdio: 'ignore',
+      windowsHide: true,
+      timeout: 5000,
+      stdio: 'ignore',
     });
     stagedProfile = junctionDir;
     cleanupAsJunction = true;
-    console.log(`[chromeCookieImport] using directory junction ${junctionDir} -> ${opts.userDataDir}`);
+    console.log(
+      `[chromeCookieImport] using directory junction ${junctionDir} -> ${opts.userDataDir}`,
+    );
   } catch (err: any) {
-    console.warn('[chromeCookieImport] junction creation failed, falling back to staged copy:', err?.message);
+    console.warn(
+      '[chromeCookieImport] junction creation failed, falling back to staged copy:',
+      err?.message,
+    );
     stagedProfile = stageProfileCopy(opts.userDataDir);
   }
 
-  const headlessArg = opts.headlessMode === 'new' ? ['--headless=new']
-    : opts.headlessMode === 'old' ? ['--headless']
-    : [];
+  const headlessArg =
+    opts.headlessMode === 'new'
+      ? ['--headless=new']
+      : opts.headlessMode === 'old'
+        ? ['--headless']
+        : [];
 
   const profileArg = opts.profileDirectory ? [`--profile-directory=${opts.profileDirectory}`] : [];
   const args = [
@@ -371,32 +429,46 @@ async function fetchCookiesViaCDP(opts: { userDataDir: string; browserExe: strin
     '--mute-audio',
     'about:blank',
   ];
-  console.log(`[chromeCookieImport] spawning ${path.basename(opts.browserExe)} (headless=${opts.headlessMode}, port=${port})`);
-  const child = spawn(opts.browserExe, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  console.log(
+    `[chromeCookieImport] spawning ${path.basename(opts.browserExe)} (headless=${opts.headlessMode}, port=${port})`,
+  );
+  const child = spawn(opts.browserExe, args, {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
+  });
 
   let stderrBuf = '';
   let stdoutBuf = '';
   let exitInfo: { code: number | null; signal: NodeJS.Signals | null } | null = null;
-  child.stdout?.on('data', d => {
+  child.stdout?.on('data', (d) => {
     const s = d.toString();
     stdoutBuf += s;
     // Print live so a hang lets the user see Chrome's banner / policy errors.
     process.stdout.write(`[chrome-stdout] ${s}`);
   });
-  child.stderr?.on('data', d => {
+  child.stderr?.on('data', (d) => {
     const s = d.toString();
     stderrBuf += s;
     process.stderr.write(`[chrome-stderr] ${s}`);
   });
-  child.on('exit', (code, signal) => { exitInfo = { code, signal }; });
+  child.on('exit', (code, signal) => {
+    exitInfo = { code, signal };
+  });
 
   let killed = false;
   const killChrome = () => {
     if (killed) return;
     killed = true;
-    try { child.kill(); } catch {}
+    try {
+      child.kill();
+    } catch {}
     if (process.platform === 'win32') {
-      try { execFileSync('taskkill', ['/F', '/T', '/PID', String(child.pid)], { windowsHide: true, timeout: 3000 }); } catch {}
+      try {
+        execFileSync('taskkill', ['/F', '/T', '/PID', String(child.pid)], {
+          windowsHide: true,
+          timeout: 3000,
+        });
+      } catch {}
     }
   };
 
@@ -404,22 +476,28 @@ async function fetchCookiesViaCDP(opts: { userDataDir: string; browserExe: strin
     // Poll /json/version until Chrome is ready (usually <1s). If Chrome
     // exits before the port opens, surface that immediately with whatever
     // it printed.
-    const versionInfo = await waitFor(async () => {
-      if (exitInfo) {
-        throw new Error(
-          `chrome.exe exited (code=${exitInfo.code} signal=${exitInfo.signal}) before opening the debug port. ` +
-          `stderr: ${stderrBuf.trim().slice(0, 500)} stdout: ${stdoutBuf.trim().slice(0, 200)}`,
-        );
-      }
-      const res = await fetch(`http://127.0.0.1:${port}/json/version`);
-      if (!res.ok) return null;
-      return res.json() as Promise<{ webSocketDebuggerUrl: string }>;
-    }, 15000, 250);
+    const versionInfo = await waitFor(
+      async () => {
+        if (exitInfo) {
+          throw new Error(
+            `chrome.exe exited (code=${exitInfo.code} signal=${exitInfo.signal}) before opening the debug port. ` +
+              `stderr: ${stderrBuf.trim().slice(0, 500)} stdout: ${stdoutBuf.trim().slice(0, 200)}`,
+          );
+        }
+        const res = await fetch(`http://127.0.0.1:${port}/json/version`);
+        if (!res.ok) return null;
+        return res.json() as Promise<{ webSocketDebuggerUrl: string }>;
+      },
+      15000,
+      250,
+    );
 
     const cookies = await new Promise<CDPCookie[]>((resolve, reject) => {
       const ws = new WebSocket(versionInfo.webSocketDebuggerUrl);
       const timeout = setTimeout(() => {
-        try { ws.close(); } catch {}
+        try {
+          ws.close();
+        } catch {}
         reject(new Error('CDP getAllCookies timed out'));
       }, 15000);
 
@@ -428,7 +506,9 @@ async function fetchCookiesViaCDP(opts: { userDataDir: string; browserExe: strin
       // network service lazy-loads cookies — without a page target, the
       // store can be reported as empty.
       ws.on('open', () => {
-        ws.send(JSON.stringify({ id: 1, method: 'Target.createTarget', params: { url: 'about:blank' } }));
+        ws.send(
+          JSON.stringify({ id: 1, method: 'Target.createTarget', params: { url: 'about:blank' } }),
+        );
       });
       let cookiesResolved = false;
       ws.on('message', (data: Buffer | string) => {
@@ -437,7 +517,9 @@ async function fetchCookiesViaCDP(opts: { userDataDir: string; browserExe: strin
           if (msg.id === 1) {
             if (msg.error) {
               clearTimeout(timeout);
-              try { ws.close(); } catch {}
+              try {
+                ws.close();
+              } catch {}
               return reject(new Error(`Target.createTarget failed: ${msg.error.message}`));
             }
             // Give Chrome ~250ms to actually load the network service for
@@ -450,8 +532,11 @@ async function fetchCookiesViaCDP(opts: { userDataDir: string; browserExe: strin
           if (msg.id === 2 && !cookiesResolved) {
             cookiesResolved = true;
             clearTimeout(timeout);
-            try { ws.close(); } catch {}
-            if (msg.error) return reject(new Error(`Storage.getCookies failed: ${msg.error.message}`));
+            try {
+              ws.close();
+            } catch {}
+            if (msg.error)
+              return reject(new Error(`Storage.getCookies failed: ${msg.error.message}`));
             resolve((msg.result?.cookies ?? []) as CDPCookie[]);
           }
         } catch (err) {
@@ -468,13 +553,23 @@ async function fetchCookiesViaCDP(opts: { userDataDir: string; browserExe: strin
     return cookies;
   } finally {
     killChrome();
-    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch {}
     if (cleanupAsJunction) {
       // Remove just the junction, NOT its target. `rmdir` deletes the
       // junction entry without recursing into the real User Data dir.
-      try { execFileSync('cmd.exe', ['/c', 'rmdir', stagedProfile], { windowsHide: true, timeout: 3000, stdio: 'ignore' }); } catch {}
+      try {
+        execFileSync('cmd.exe', ['/c', 'rmdir', stagedProfile], {
+          windowsHide: true,
+          timeout: 3000,
+          stdio: 'ignore',
+        });
+      } catch {}
     } else {
-      try { fs.rmSync(stagedProfile, { recursive: true, force: true }); } catch {}
+      try {
+        fs.rmSync(stagedProfile, { recursive: true, force: true });
+      } catch {}
     }
   }
 }
@@ -491,7 +586,8 @@ interface BrowserSpec {
 function resolveBrowser(kind: BrowserKind): BrowserSpec {
   if (kind === 'edge') {
     const exe = findEdgeExecutable();
-    if (!exe) throw new Error('Could not find msedge.exe. Microsoft Edge is required for this option.');
+    if (!exe)
+      throw new Error('Could not find msedge.exe. Microsoft Edge is required for this option.');
     const userDataDir = edgeUserDataDir();
     if (!userDataDir || !fs.existsSync(userDataDir)) {
       throw new Error(`Edge user data directory not found (looked at: ${userDataDir}).`);
@@ -533,19 +629,23 @@ function listProfiles(userDataDir: string): string[] {
   }
   // Sort so last-used comes first.
   if (lastUsed && profiles.includes(lastUsed)) {
-    return [lastUsed, ...profiles.filter(p => p !== lastUsed)];
+    return [lastUsed, ...profiles.filter((p) => p !== lastUsed)];
   }
   return profiles;
 }
 
 /** Import via the CDP path. Returns the same shape as the direct importer. */
-export async function importChromeCookiesViaCDP(opts: ImportOptions & { browser?: BrowserKind } = {}): Promise<ImportResult> {
+export async function importChromeCookiesViaCDP(
+  opts: ImportOptions & { browser?: BrowserKind } = {},
+): Promise<ImportResult> {
   if (process.platform !== 'win32') {
     throw new Error('CDP-based cookie import is Windows-only in this build.');
   }
   const browser = resolveBrowser(opts.browser ?? 'chrome');
   if (isProcessRunning(browser.imageName)) {
-    throw new Error(`${browser.kind === 'edge' ? 'Microsoft Edge' : 'Google Chrome'} is currently running. Close it and try again — the CDP import needs to launch a temporary headless instance using your real profile.`);
+    throw new Error(
+      `${browser.kind === 'edge' ? 'Microsoft Edge' : 'Google Chrome'} is currently running. Close it and try again — the CDP import needs to launch a temporary headless instance using your real profile.`,
+    );
   }
 
   if (browser.kind === 'chrome') {
@@ -574,15 +674,19 @@ export async function importChromeCookiesViaCDP(opts: ImportOptions & { browser?
     let cookies: CDPCookie[] = [];
     try {
       cookies = await fetchCookiesViaCDP({
-        browserExe: browser.exe, userDataDir: browser.userDataDir,
-        headlessMode: 'old', profileDirectory: profile,
+        browserExe: browser.exe,
+        userDataDir: browser.userDataDir,
+        headlessMode: 'old',
+        profileDirectory: profile,
       });
       modeUsed = 'old';
     } catch (errOld: any) {
       try {
         cookies = await fetchCookiesViaCDP({
-          browserExe: browser.exe, userDataDir: browser.userDataDir,
-          headlessMode: 'new', profileDirectory: profile,
+          browserExe: browser.exe,
+          userDataDir: browser.userDataDir,
+          headlessMode: 'new',
+          profileDirectory: profile,
         });
         modeUsed = 'new';
       } catch (errNew: any) {
@@ -601,18 +705,33 @@ export async function importChromeCookiesViaCDP(opts: ImportOptions & { browser?
     }
   }
   if (allCookies.length === 0 && lastError) {
-    throw new Error(`CDP launch failed across all profiles. Last error: ${lastError?.message ?? lastError}`);
+    throw new Error(
+      `CDP launch failed across all profiles. Last error: ${lastError?.message ?? lastError}`,
+    );
   }
   const cookies = allCookies;
-  console.log(`[chromeCookieImport] CDP total ${cookies.length} unique cookies (browser=${browser.kind}, profiles=${profiles.length})`);
+  console.log(
+    `[chromeCookieImport] CDP total ${cookies.length} unique cookies (browser=${browser.kind}, profiles=${profiles.length})`,
+  );
 
-  const result: ImportResult = { imported: 0, skipped: 0, errors: [], diagnostics: { source: 'cdp', browser: browser.kind, headless: modeUsed, total: cookies.length, ...Object.fromEntries(Object.entries(perProfile).map(([p, n]) => [`profile_${p}`, n])) } };
+  const result: ImportResult = {
+    imported: 0,
+    skipped: 0,
+    errors: [],
+    diagnostics: {
+      source: 'cdp',
+      browser: browser.kind,
+      headless: modeUsed,
+      total: cookies.length,
+      ...Object.fromEntries(Object.entries(perProfile).map(([p, n]) => [`profile_${p}`, n])),
+    },
+  };
   const electronSession = session.fromPartition(PARTITION);
 
   const filter = opts.domainFilter && opts.domainFilter.length > 0 ? opts.domainFilter : null;
   const setErrorCounts: Record<string, number> = {};
   for (const c of cookies) {
-    if (filter && !filter.some(d => c.domain.includes(d))) {
+    if (filter && !filter.some((d) => c.domain.includes(d))) {
       result.skipped++;
       continue;
     }
@@ -620,10 +739,13 @@ export async function importChromeCookiesViaCDP(opts: ImportOptions & { browser?
     const hostNoDot = isWildcard ? c.domain.slice(1) : c.domain;
     const scheme = c.secure ? 'https://' : 'http://';
     const url = `${scheme}${hostNoDot}${c.path.startsWith('/') ? c.path : '/' + c.path}`;
-    const sameSite: 'unspecified' | 'no_restriction' | 'lax' | 'strict' =
-      !c.sameSite ? 'unspecified' :
-      c.sameSite === 'None' ? 'no_restriction' :
-      c.sameSite === 'Lax' ? 'lax' : 'strict';
+    const sameSite: 'unspecified' | 'no_restriction' | 'lax' | 'strict' = !c.sameSite
+      ? 'unspecified'
+      : c.sameSite === 'None'
+        ? 'no_restriction'
+        : c.sameSite === 'Lax'
+          ? 'lax'
+          : 'strict';
     try {
       await electronSession.cookies.set({
         url,
@@ -668,7 +790,7 @@ export async function importChromeCookies(opts: ImportOptions = {}): Promise<Imp
     path.join(userDataDir, 'Default', 'Network', 'Cookies'),
     path.join(userDataDir, 'Default', 'Cookies'),
   ];
-  const cookiesPath = candidates.find(p => fs.existsSync(p));
+  const cookiesPath = candidates.find((p) => fs.existsSync(p));
   if (!cookiesPath) {
     throw new Error(`No Cookies DB found under ${userDataDir}/Default`);
   }
@@ -676,12 +798,15 @@ export async function importChromeCookies(opts: ImportOptions = {}): Promise<Imp
   fs.copyFileSync(cookiesPath, tmp);
 
   const diagnostics: Record<string, number> = {};
-  const bump = (k: string) => { diagnostics[k] = (diagnostics[k] || 0) + 1; };
+  const bump = (k: string) => {
+    diagnostics[k] = (diagnostics[k] || 0) + 1;
+  };
   const result: ImportResult = { imported: 0, skipped: 0, errors: [], diagnostics };
   try {
     const db = new Database(tmp, { readonly: true, fileMustExist: true });
 
-    let sql = 'SELECT host_key, name, encrypted_value, value, path, expires_utc, is_secure, is_httponly, samesite FROM cookies';
+    let sql =
+      'SELECT host_key, name, encrypted_value, value, path, expires_utc, is_secure, is_httponly, samesite FROM cookies';
     const params: any[] = [];
     if (opts.domainFilter && opts.domainFilter.length > 0) {
       const clauses = opts.domainFilter.map(() => 'host_key LIKE ?').join(' OR ');
@@ -726,9 +851,13 @@ export async function importChromeCookies(opts: ImportOptions = {}): Promise<Imp
 
       const expirationDate = chromeTimeToUnixSeconds(row.expires_utc);
       const sameSite: 'unspecified' | 'no_restriction' | 'lax' | 'strict' =
-        row.samesite === -1 ? 'unspecified' :
-        row.samesite === 0 ? 'no_restriction' :
-        row.samesite === 1 ? 'lax' : 'strict';
+        row.samesite === -1
+          ? 'unspecified'
+          : row.samesite === 0
+            ? 'no_restriction'
+            : row.samesite === 1
+              ? 'lax'
+              : 'strict';
 
       try {
         await electronSession.cookies.set({
@@ -752,7 +881,9 @@ export async function importChromeCookies(opts: ImportOptions = {}): Promise<Imp
       }
     }
   } finally {
-    try { fs.unlinkSync(tmp); } catch {}
+    try {
+      fs.unlinkSync(tmp);
+    } catch {}
   }
 
   return result;

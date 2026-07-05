@@ -42,7 +42,9 @@ vi.mock('./libraryService', () => ({
 
 vi.mock('./configService', () => ({
   configService: {
-    getConfig: () => ({ supervisor: { model: 'sup-model', summarizerModel: 'sonnet', pollSeconds: 30 } }),
+    getConfig: () => ({
+      supervisor: { model: 'sup-model', summarizerModel: 'sonnet', pollSeconds: 30 },
+    }),
   },
 }));
 
@@ -71,15 +73,28 @@ function lastArgv(): string[] {
   return (spawnMock.mock.calls.at(-1)![0] as { argv: string[] }).argv;
 }
 /** the full spawn options object from the most recent spawn call. */
-function lastSpawn(): { argv: string[]; cwd: string; env: Record<string, string>; sessionId: string } {
-  return spawnMock.mock.calls.at(-1)![0] as { argv: string[]; cwd: string; env: Record<string, string>; sessionId: string };
+function lastSpawn(): {
+  argv: string[];
+  cwd: string;
+  env: Record<string, string>;
+  sessionId: string;
+} {
+  return spawnMock.mock.calls.at(-1)![0] as {
+    argv: string[];
+    cwd: string;
+    env: Record<string, string>;
+    sessionId: string;
+  };
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   getProfile.mockReturnValue(undefined);
   libraryList.mockReturnValue([]);
-  buildSessionMcpConfig.mockReturnValue({ path: '/cfg/session-mcp/srv.json', toolNames: ['mcp__srv1'] });
+  buildSessionMcpConfig.mockReturnValue({
+    path: '/cfg/session-mcp/srv.json',
+    toolNames: ['mcp__srv1'],
+  });
 });
 
 describe('spawnClaudeAgent — Library MCP servers (mcpItemIds)', () => {
@@ -102,8 +117,8 @@ describe('spawnClaudeAgent — Library MCP servers (mcpItemIds)', () => {
     libraryList.mockReturnValue([
       { id: 'srv1', kind: 'mcp', mcp: { command: 'a' } }, // selected
       { id: 'srv2', kind: 'mcp', mcp: { command: 'b' } }, // NOT selected
-      { id: 'prompt1', kind: 'prompt' },                  // wrong kind
-      { id: 'srv3', kind: 'mcp' },                        // selected but no .mcp
+      { id: 'prompt1', kind: 'prompt' }, // wrong kind
+      { id: 'srv3', kind: 'mcp' }, // selected but no .mcp
     ]);
 
     await spawnClaudeAgent({ cwd: '/proj', mcpItemIds: ['srv1', 'srv3'] });
@@ -192,7 +207,10 @@ describe('spawnClaudeAgent — permission mode + metadata', () => {
 
   it('records provider=claude and defaults permissionMode to default when nothing is passed', async () => {
     await spawnClaudeAgent({ cwd: '/proj' });
-    const meta = setSpawnMeta.mock.calls[0][1] as { provider: string; settings: { permissionMode: string } };
+    const meta = setSpawnMeta.mock.calls[0][1] as {
+      provider: string;
+      settings: { permissionMode: string };
+    };
     expect(meta.provider).toBe('claude');
     expect(meta.settings.permissionMode).toBe('default');
   });

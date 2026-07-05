@@ -83,9 +83,7 @@ describe('Composer', () => {
   });
 
   it('send button enables on attachments alone (no text), and the placeholder flips to the files prompt', () => {
-    const files: AttachedFile[] = [
-      { path: '/repo/a.png', name: 'a.png', label: 'Image' },
-    ];
+    const files: AttachedFile[] = [{ path: '/repo/a.png', name: 'a.png', label: 'Image' }];
     renderComposer({ value: '', attachedFiles: files, agentName: 'Claude' });
     expect(screen.getByLabelText('Send message')).not.toBeDisabled();
     expect(textarea().placeholder).toMatch(/What should Claude do with these files/);

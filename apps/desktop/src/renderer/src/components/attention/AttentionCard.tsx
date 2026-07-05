@@ -7,16 +7,21 @@ import { useAttention, SNOOZE_MINUTES } from '../../contexts/AttentionContext';
 const KIND_VISUAL: Record<AttentionKind, { label: string; color: string; glyph: string }> = {
   approval: { label: 'Needs approval', color: 'var(--wks-error, #f87171)', glyph: '!' },
   question: { label: 'Question', color: 'var(--wks-accent, #4a9eff)', glyph: '?' },
-  error:    { label: 'Error', color: 'var(--wks-error, #f87171)', glyph: '×' },
-  stuck:    { label: 'Stuck', color: 'var(--wks-warning, #e0a000)', glyph: '…' },
-  bigdiff:  { label: 'Review', color: 'var(--wks-warning, #e0a000)', glyph: '±' },
-  done:     { label: 'Finished', color: 'var(--wks-success, #3fb950)', glyph: '✓' },
+  error: { label: 'Error', color: 'var(--wks-error, #f87171)', glyph: '×' },
+  stuck: { label: 'Stuck', color: 'var(--wks-warning, #e0a000)', glyph: '…' },
+  bigdiff: { label: 'Review', color: 'var(--wks-warning, #e0a000)', glyph: '±' },
+  done: { label: 'Finished', color: 'var(--wks-success, #3fb950)', glyph: '✓' },
 };
 
 /** Last path segment, for the compact cwd footer (full path stays in the title). */
 function basename(p?: string): string {
   if (!p) return '';
-  return p.replace(/[/\\]+$/, '').split(/[/\\]/).pop() || p;
+  return (
+    p
+      .replace(/[/\\]+$/, '')
+      .split(/[/\\]/)
+      .pop() || p
+  );
 }
 
 function relTime(ts: number): string {
@@ -38,7 +43,8 @@ interface Props {
  * can't drift, and resolves via the by-sessionId actions on AttentionContext.
  */
 export const AttentionCard: React.FC<Props> = ({ item, selected }) => {
-  const { approve, answer, openAgent, dismiss, snooze, setSelectedSig, respawn, reviewFile } = useAttention();
+  const { approve, answer, openAgent, dismiss, snooze, setSelectedSig, respawn, reviewFile } =
+    useAttention();
   const v = KIND_VISUAL[item.kind];
   // Finished / big-diff cards close the loop with review + respawn affordances.
   const canReview = item.kind === 'done' || item.kind === 'bigdiff';
@@ -51,26 +57,77 @@ export const AttentionCard: React.FC<Props> = ({ item, selected }) => {
       style={{
         borderRadius: 'var(--wks-radius-lg)',
         border: `1px solid ${selected ? v.color : 'var(--wks-glass-border)'}`,
-        boxShadow: selected ? `0 0 0 1px ${v.color}, 0 8px 24px var(--wks-shadow)` : '0 2px 10px var(--wks-shadow)',
+        boxShadow: selected
+          ? `0 0 0 1px ${v.color}, 0 8px 24px var(--wks-shadow)`
+          : '0 2px 10px var(--wks-shadow)',
         background: 'var(--wks-bg-surface)',
         overflow: 'hidden',
         transition: 'border-color 0.12s, box-shadow 0.12s',
       }}
     >
       {/* Header: kind badge + label + agent + relative time */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 12px', borderBottom: '1px solid var(--wks-glass-border)' }}>
-        <span style={{
-          width: 17, height: 17, borderRadius: 5, flexShrink: 0,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          background: `color-mix(in srgb, ${v.color} 18%, transparent)`,
-          border: `1px solid color-mix(in srgb, ${v.color} 45%, transparent)`,
-          color: v.color, fontSize: '0.62rem', fontWeight: 800, lineHeight: 1,
-        }}>{v.glyph}</span>
-        <span style={{ fontSize: '0.72rem', fontWeight: 700, color: v.color, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{v.label}</span>
-        <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--wks-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          padding: '9px 12px',
+          borderBottom: '1px solid var(--wks-glass-border)',
+        }}
+      >
+        <span
+          style={{
+            width: 17,
+            height: 17,
+            borderRadius: 5,
+            flexShrink: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: `color-mix(in srgb, ${v.color} 18%, transparent)`,
+            border: `1px solid color-mix(in srgb, ${v.color} 45%, transparent)`,
+            color: v.color,
+            fontSize: '0.62rem',
+            fontWeight: 800,
+            lineHeight: 1,
+          }}
+        >
+          {v.glyph}
+        </span>
+        <span
+          style={{
+            fontSize: '0.72rem',
+            fontWeight: 700,
+            color: v.color,
+            textTransform: 'uppercase',
+            letterSpacing: '0.04em',
+          }}
+        >
+          {v.label}
+        </span>
+        <span
+          style={{
+            fontSize: '0.78rem',
+            fontWeight: 600,
+            color: 'var(--wks-text-primary)',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
           {item.agentName}
         </span>
-        <span style={{ marginLeft: 'auto', fontSize: '0.66rem', color: 'var(--wks-text-faint)', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>{relTime(item.createdAt)}</span>
+        <span
+          style={{
+            marginLeft: 'auto',
+            fontSize: '0.66rem',
+            color: 'var(--wks-text-faint)',
+            fontVariantNumeric: 'tabular-nums',
+            flexShrink: 0,
+          }}
+        >
+          {relTime(item.createdAt)}
+        </span>
       </div>
 
       {/* Body: the resolver, reused verbatim from ClaudePane */}
@@ -82,20 +139,55 @@ export const AttentionCard: React.FC<Props> = ({ item, selected }) => {
           <QuestionPicker questions={item.payload.questions} onAnswer={(p) => answer(item, p)} />
         )}
         {item.payload.type === 'summary' && (
-          <div style={{ fontSize: '0.78rem', color: 'var(--wks-text-secondary)', lineHeight: 1.5, padding: '6px 2px' }}>
+          <div
+            style={{
+              fontSize: '0.78rem',
+              color: 'var(--wks-text-secondary)',
+              lineHeight: 1.5,
+              padding: '6px 2px',
+            }}
+          >
             {item.detail}
           </div>
         )}
       </div>
 
       {/* Footer: triage actions */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px', borderTop: '1px solid var(--wks-glass-border)', background: 'var(--wks-glass-strong)' }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          padding: '8px 12px',
+          borderTop: '1px solid var(--wks-glass-border)',
+          background: 'var(--wks-glass-strong)',
+        }}
+      >
         <CardBtn label="Open" hint="o" onClick={() => openAgent(item.agentId)} />
         {canReview && <CardBtn label="Review" onClick={() => reviewFile(item.cwd)} />}
-        {canRespawn && <CardBtn label="Respawn" onClick={() => { respawn(item.agentId); openAgent(item.agentId); }} />}
+        {canRespawn && (
+          <CardBtn
+            label="Respawn"
+            onClick={() => {
+              respawn(item.agentId);
+              openAgent(item.agentId);
+            }}
+          />
+        )}
         <CardBtn label="Snooze" hint="s" onClick={() => snooze(item.signature, SNOOZE_MINUTES)} />
         <CardBtn label="Dismiss" hint="e" onClick={() => dismiss(item.signature)} />
-        <span style={{ marginLeft: 'auto', fontSize: '0.62rem', color: 'var(--wks-text-faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 180 }} title={item.cwd}>
+        <span
+          style={{
+            marginLeft: 'auto',
+            fontSize: '0.62rem',
+            color: 'var(--wks-text-faint)',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            maxWidth: 180,
+          }}
+          title={item.cwd}
+        >
           {basename(item.cwd)}
         </span>
       </div>
@@ -103,18 +195,45 @@ export const AttentionCard: React.FC<Props> = ({ item, selected }) => {
   );
 };
 
-const CardBtn: React.FC<{ label: string; hint?: string; onClick: () => void }> = ({ label, hint, onClick }) => (
+const CardBtn: React.FC<{ label: string; hint?: string; onClick: () => void }> = ({
+  label,
+  hint,
+  onClick,
+}) => (
   <button
-    onClick={(e) => { e.stopPropagation(); onClick(); }}
+    onClick={(e) => {
+      e.stopPropagation();
+      onClick();
+    }}
     style={{
-      display: 'inline-flex', alignItems: 'center', gap: 5,
-      fontSize: '0.68rem', fontFamily: 'inherit', fontWeight: 600,
-      padding: '3px 9px', borderRadius: 5, cursor: 'pointer',
-      border: '1px solid var(--wks-glass-border)', background: 'var(--wks-bg-surface)',
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 5,
+      fontSize: '0.68rem',
+      fontFamily: 'inherit',
+      fontWeight: 600,
+      padding: '3px 9px',
+      borderRadius: 5,
+      cursor: 'pointer',
+      border: '1px solid var(--wks-glass-border)',
+      background: 'var(--wks-bg-surface)',
       color: 'var(--wks-text-secondary)',
     }}
   >
     {label}
-    {hint && <kbd style={{ fontSize: '0.58rem', color: 'var(--wks-text-faint)', border: '1px solid var(--wks-glass-border)', borderRadius: 3, padding: '0 3px', fontFamily: 'monospace' }}>{hint}</kbd>}
+    {hint && (
+      <kbd
+        style={{
+          fontSize: '0.58rem',
+          color: 'var(--wks-text-faint)',
+          border: '1px solid var(--wks-glass-border)',
+          borderRadius: 3,
+          padding: '0 3px',
+          fontFamily: 'monospace',
+        }}
+      >
+        {hint}
+      </kbd>
+    )}
   </button>
 );

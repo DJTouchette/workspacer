@@ -1,4 +1,9 @@
-import type { ClaudeSessionSnapshot, FileChange, SessionStatusLine, SessionUsage } from '../types/claudeSession';
+import type {
+  ClaudeSessionSnapshot,
+  FileChange,
+  SessionStatusLine,
+  SessionUsage,
+} from '../types/claudeSession';
 import { collectEditedFiles } from './turnChanges';
 
 /**
@@ -52,7 +57,9 @@ export function fmtResetIn(epochSecs?: number): string | undefined {
 export function fmtResetAt(epochSecs?: number): string | undefined {
   if (!epochSecs) return undefined;
   return new Date(epochSecs * 1000).toLocaleString([], {
-    weekday: 'short', hour: 'numeric', minute: '2-digit',
+    weekday: 'short',
+    hour: 'numeric',
+    minute: '2-digit',
   });
 }
 
@@ -132,12 +139,15 @@ export function deriveSessionStats(
   const sl: SessionStatusLine | undefined = snapshot?.statusLine;
   const usage: SessionUsage | null | undefined = snapshot?.usage;
 
-  const model = sl?.modelDisplay ?? (usage?.model ? usage.model.replace(/^claude-/, '') : undefined);
+  const model =
+    sl?.modelDisplay ?? (usage?.model ? usage.model.replace(/^claude-/, '') : undefined);
 
   // Context %: prefer Claude's own number, else derive from transcript usage.
   const ctxPct =
     sl?.contextUsedPct ??
-    (usage && usage.contextLimit > 0 ? (usage.contextTokens / usage.contextLimit) * 100 : undefined);
+    (usage && usage.contextLimit > 0
+      ? (usage.contextTokens / usage.contextLimit) * 100
+      : undefined);
 
   // Cumulative tokens: statusLine carries in+out; fall back to usage.
   const tokens =

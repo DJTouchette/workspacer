@@ -4,17 +4,35 @@ import type { AttentionItem } from '../src/types/attention';
 
 function item(partial: Partial<AttentionItem>): AttentionItem {
   return {
-    id: 'x', agentId: 'a', agentName: 'A', sessionId: 's', kind: 'done',
-    priority: KIND_PRIORITY.done, createdAt: 0, status: 'open', title: 't',
-    payload: { type: 'summary', summary: '' }, signature: 'sig',
+    id: 'x',
+    agentId: 'a',
+    agentName: 'A',
+    sessionId: 's',
+    kind: 'done',
+    priority: KIND_PRIORITY.done,
+    createdAt: 0,
+    status: 'open',
+    title: 't',
+    payload: { type: 'summary', summary: '' },
+    signature: 'sig',
     ...partial,
   };
 }
 
 describe('attentionRouter', () => {
   it('orders by priority desc, then oldest first within a tier', () => {
-    const approvalOld = item({ kind: 'approval', priority: 100, createdAt: 100, signature: 'a-old' });
-    const approvalNew = item({ kind: 'approval', priority: 100, createdAt: 200, signature: 'a-new' });
+    const approvalOld = item({
+      kind: 'approval',
+      priority: 100,
+      createdAt: 100,
+      signature: 'a-old',
+    });
+    const approvalNew = item({
+      kind: 'approval',
+      priority: 100,
+      createdAt: 200,
+      signature: 'a-new',
+    });
     const done = item({ kind: 'done', priority: 20, createdAt: 50, signature: 'd' });
     const sorted = sortItems([done, approvalNew, approvalOld]);
     expect(sorted.map((i) => i.signature)).toEqual(['a-old', 'a-new', 'd']);

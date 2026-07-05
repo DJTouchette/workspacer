@@ -1,13 +1,24 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { PaneConfig, PaneType, TabConfig, AgentWorkspace, AgentProvider, resolveProvider } from '../types/pane';
+import {
+  PaneConfig,
+  PaneType,
+  TabConfig,
+  AgentWorkspace,
+  AgentProvider,
+  resolveProvider,
+} from '../types/pane';
 
 /** Human label for an agent provider (tab/pane titles). */
 export function providerLabel(provider: AgentProvider | undefined): string {
   switch (resolveProvider(provider)) {
-    case 'codex': return 'Codex';
-    case 'opencode': return 'OpenCode';
-    case 'pi': return 'Pi';
-    default: return 'Claude';
+    case 'codex':
+      return 'Codex';
+    case 'opencode':
+      return 'OpenCode';
+    case 'pi':
+      return 'Pi';
+    default:
+      return 'Claude';
   }
 }
 import { agentIdForSession, dedupeBySessionId } from '../lib/agentIdentity';
@@ -53,7 +64,11 @@ export function deriveAgentName(cwd: string): string {
  * panes (no sessionId param) are left untouched by the caller's guard. A
  * non-URL value (e.g. about:blank) is returned unchanged.
  */
-function withAgentContext(rawUrl: string, sessionId: string | undefined, cwd: string | undefined): string {
+function withAgentContext(
+  rawUrl: string,
+  sessionId: string | undefined,
+  cwd: string | undefined,
+): string {
   try {
     const u = new URL(rawUrl);
     if (sessionId) u.searchParams.set('sessionId', sessionId);
@@ -78,7 +93,12 @@ export function deriveSupervisorName(question: string): string {
  * to the agent's daemon session as a viewer (the session itself was already
  * spawned, so the pane never owns its lifetime).
  */
-function defaultAgentTabs(sessionId: string | undefined, cwd: string, initialPrompt?: string, provider?: AgentProvider): { tabs: TabConfig[]; activeTabId: string } {
+function defaultAgentTabs(
+  sessionId: string | undefined,
+  cwd: string,
+  initialPrompt?: string,
+  provider?: AgentProvider,
+): { tabs: TabConfig[]; activeTabId: string } {
   const paneId = generateId('claude');
   const tabId = generateId('tab');
   const label = providerLabel(provider);
@@ -92,7 +112,9 @@ function defaultAgentTabs(sessionId: string | undefined, cwd: string, initialPro
     initialPrompt,
   };
   return {
-    tabs: [{ id: tabId, title: label, panes: [pane], activePaneId: paneId, lastActiveAt: Date.now() }],
+    tabs: [
+      { id: tabId, title: label, panes: [pane], activePaneId: paneId, lastActiveAt: Date.now() },
+    ],
     activeTabId: tabId,
   };
 }
@@ -104,13 +126,25 @@ export const GLOBAL_WORKSPACE_ID = 'global';
 function overviewTab(): TabConfig {
   const paneId = generateId('pane');
   const tabId = generateId('tab');
-  return { id: tabId, title: 'Overview', panes: [{ id: paneId, type: 'overview', title: 'Overview' }], activePaneId: paneId };
+  return {
+    id: tabId,
+    title: 'Overview',
+    panes: [{ id: paneId, type: 'overview', title: 'Overview' }],
+    activePaneId: paneId,
+  };
 }
 
 /** The agent-less workspace that hosts cross-agent / plugin panes. */
 function makeGlobalWorkspace(): AgentWorkspace {
   const tab = overviewTab();
-  return { id: GLOBAL_WORKSPACE_ID, name: 'Overview', cwd: '', global: true, tabs: [tab], activeTabId: tab.id };
+  return {
+    id: GLOBAL_WORKSPACE_ID,
+    name: 'Overview',
+    cwd: '',
+    global: true,
+    tabs: [tab],
+    activeTabId: tab.id,
+  };
 }
 
 /** Ensure exactly one global workspace exists (pinned first) and that it always
@@ -152,117 +186,156 @@ export function useAgentManager() {
     setAgents((prev) => prev.map((a) => (a.id === agentId ? fn(a) : a)));
   }, []);
 
-  const mutateActiveAgent = useCallback((fn: (a: AgentWorkspace) => AgentWorkspace) => {
-    const aid = activeAgentIdRef.current;
-    if (!aid) return;
-    mutateAgent(aid, fn);
-  }, [mutateAgent]);
+  const mutateActiveAgent = useCallback(
+    (fn: (a: AgentWorkspace) => AgentWorkspace) => {
+      const aid = activeAgentIdRef.current;
+      if (!aid) return;
+      mutateAgent(aid, fn);
+    },
+    [mutateAgent],
+  );
 
   // ── Agent lifecycle ────────────────────────────────────────────────────
 
   /** Spawn a long-lived claudemon session and open a workspace for it. */
-  const spawnAgent = useCallback(async (opts: {
-    cwd: string;
-    name?: string;
-    /** Coding-agent backend to run. Defaults to 'claude'. */
-    provider?: AgentProvider;
-    profileId?: string;
-    model?: string;
-    /** Reasoning-effort level (codex only today). */
-    effort?: string;
-    /** Permission mode (claude default/acceptEdits/plan/bypassPermissions, managed ask/yolo). */
-    permissionMode?: string;
-    skipPermissions?: boolean;
-    /** Library item ids (kind 'mcp') to load for this session. */
-    mcpItemIds?: string[];
-    initialPrompt?: string;
-    /** Resume an existing Claude session (`--resume <id>`) instead of starting fresh. */
-    resumeSessionId?: string;
-    /** When true the spawned session receives the workspacer MCP facade. */
-    supervisor?: boolean;
-    /** Marks this workspace as a supervisor. */
-    kind?: 'supervisor';
-    /** For supervisors: the id of the agent being supervised. */
-    parentId?: string;
-  }) => {
-    const cwd = opts.cwd;
-    let sessionId: string | undefined;
-    try {
-      sessionId = await window.electronAPI.spawnClaude({ cwd, provider: opts.provider, profileId: opts.profileId, model: opts.model, effort: opts.effort, permissionMode: opts.permissionMode, skipPermissions: opts.skipPermissions, mcpItemIds: opts.mcpItemIds, resumeSessionId: opts.resumeSessionId, supervisor: opts.supervisor, cols: 120, rows: 32 });
-    } catch (err) {
-      console.error('[Agent] spawn failed:', err);
-    }
-    const { tabs: agentTabs, activeTabId: agentActiveTab } = defaultAgentTabs(sessionId, cwd, opts.initialPrompt, opts.provider);
-    const agent: AgentWorkspace = {
-      // Deterministic id when we have a session, so every client converges on one
-      // card for it; fall back to a random id only if the spawn failed.
-      id: sessionId ? agentIdForSession(sessionId) : generateId('agent'),
-      name: opts.name?.trim() || deriveAgentName(cwd),
-      cwd,
-      provider: opts.provider,
-      profileId: opts.profileId,
-      model: opts.model,
-      effort: opts.effort,
-      permissionMode: opts.permissionMode,
-      skipPermissions: opts.skipPermissions,
-      mcpItemIds: opts.mcpItemIds,
-      sessionId,
-      kind: opts.kind,
-      parentId: opts.parentId,
-      tabs: agentTabs,
-      activeTabId: agentActiveTab,
-    };
-    // Replace, don't append: a managed (codex/opencode) session pushes its first
-    // snapshot — which the auto-adopt effect turns into a provider-less "Claude"
-    // card — before this spawn's IPC even returns. Both share the deterministic
-    // id, so drop any card already holding this id/session and commit the fully
-    // specified one (correct provider/tabs). Without this the adopted card wins
-    // the `find(byId)` lookup and the pane shows "Claude" for a Codex agent.
-    setAgents((prev) => [
-      ...prev.filter((a) => a.id !== agent.id && (!sessionId || a.sessionId !== sessionId)),
-      agent,
-    ]);
-    setActiveAgentId(agent.id);
-    return agent.id;
-  }, []);
+  const spawnAgent = useCallback(
+    async (opts: {
+      cwd: string;
+      name?: string;
+      /** Coding-agent backend to run. Defaults to 'claude'. */
+      provider?: AgentProvider;
+      profileId?: string;
+      model?: string;
+      /** Reasoning-effort level (codex only today). */
+      effort?: string;
+      /** Permission mode (claude default/acceptEdits/plan/bypassPermissions, managed ask/yolo). */
+      permissionMode?: string;
+      skipPermissions?: boolean;
+      /** Library item ids (kind 'mcp') to load for this session. */
+      mcpItemIds?: string[];
+      initialPrompt?: string;
+      /** Resume an existing Claude session (`--resume <id>`) instead of starting fresh. */
+      resumeSessionId?: string;
+      /** When true the spawned session receives the workspacer MCP facade. */
+      supervisor?: boolean;
+      /** Marks this workspace as a supervisor. */
+      kind?: 'supervisor';
+      /** For supervisors: the id of the agent being supervised. */
+      parentId?: string;
+    }) => {
+      const cwd = opts.cwd;
+      let sessionId: string | undefined;
+      try {
+        sessionId = await window.electronAPI.spawnClaude({
+          cwd,
+          provider: opts.provider,
+          profileId: opts.profileId,
+          model: opts.model,
+          effort: opts.effort,
+          permissionMode: opts.permissionMode,
+          skipPermissions: opts.skipPermissions,
+          mcpItemIds: opts.mcpItemIds,
+          resumeSessionId: opts.resumeSessionId,
+          supervisor: opts.supervisor,
+          cols: 120,
+          rows: 32,
+        });
+      } catch (err) {
+        console.error('[Agent] spawn failed:', err);
+      }
+      const { tabs: agentTabs, activeTabId: agentActiveTab } = defaultAgentTabs(
+        sessionId,
+        cwd,
+        opts.initialPrompt,
+        opts.provider,
+      );
+      const agent: AgentWorkspace = {
+        // Deterministic id when we have a session, so every client converges on one
+        // card for it; fall back to a random id only if the spawn failed.
+        id: sessionId ? agentIdForSession(sessionId) : generateId('agent'),
+        name: opts.name?.trim() || deriveAgentName(cwd),
+        cwd,
+        provider: opts.provider,
+        profileId: opts.profileId,
+        model: opts.model,
+        effort: opts.effort,
+        permissionMode: opts.permissionMode,
+        skipPermissions: opts.skipPermissions,
+        mcpItemIds: opts.mcpItemIds,
+        sessionId,
+        kind: opts.kind,
+        parentId: opts.parentId,
+        tabs: agentTabs,
+        activeTabId: agentActiveTab,
+      };
+      // Replace, don't append: a managed (codex/opencode) session pushes its first
+      // snapshot — which the auto-adopt effect turns into a provider-less "Claude"
+      // card — before this spawn's IPC even returns. Both share the deterministic
+      // id, so drop any card already holding this id/session and commit the fully
+      // specified one (correct provider/tabs). Without this the adopted card wins
+      // the `find(byId)` lookup and the pane shows "Claude" for a Codex agent.
+      setAgents((prev) => [
+        ...prev.filter((a) => a.id !== agent.id && (!sessionId || a.sessionId !== sessionId)),
+        agent,
+      ]);
+      setActiveAgentId(agent.id);
+      return agent.id;
+    },
+    [],
+  );
 
   /** Re-spawn a stopped agent (kept across restarts) and re-point its Claude
    *  panes at the new session. */
-  const respawnAgent = useCallback(async (agentId: string) => {
-    const agent = agentsRef.current.find((a) => a.id === agentId);
-    if (!agent) return;
-    // Resume the prior conversation rather than starting blank: the id the agent
-    // last held doubles as claude's transcript uuid (we pin `--session-id` at
-    // spawn), so `--resume <id>` reopens it. `spawnClaude` returns that same id.
-    const resumeSessionId = agent.lastSessionId;
-    let sessionId: string | undefined;
-    try {
-      sessionId = await window.electronAPI.spawnClaude({ cwd: agent.cwd, provider: agent.provider, profileId: agent.profileId, model: agent.model, effort: agent.effort, permissionMode: agent.permissionMode, skipPermissions: agent.skipPermissions, mcpItemIds: agent.mcpItemIds, resumeSessionId, cols: 120, rows: 32 });
-    } catch (err) {
-      console.error('[Agent] respawn failed:', err);
-    }
-    if (!sessionId) return;
-    const oldSession = agent.sessionId ?? agent.lastSessionId;
-    mutateAgent(agentId, (a) => ({
-      ...a,
-      sessionId,
-      lastSessionId: undefined,
-      tabs: a.tabs.map((t) => ({
-        ...t,
-        panes: t.panes.map((p) => {
-          if (p.type === 'claude' && (p.attachSessionId === oldSession || !p.attachSessionId)) {
-            return { ...p, attachSessionId: sessionId, resumeSessionId: undefined };
-          }
-          // Agent-scope plugin panes carry the session in their webview URL —
-          // re-resolve it to the fresh session so restored panes aren't stale.
-          if (p.type === 'plugin' && typeof p.url === 'string' && p.url.includes('sessionId=')) {
-            return { ...p, url: withAgentContext(p.url, sessionId, a.cwd) };
-          }
-          return p;
-        }),
-      })),
-    }));
-  }, [mutateAgent]);
+  const respawnAgent = useCallback(
+    async (agentId: string) => {
+      const agent = agentsRef.current.find((a) => a.id === agentId);
+      if (!agent) return;
+      // Resume the prior conversation rather than starting blank: the id the agent
+      // last held doubles as claude's transcript uuid (we pin `--session-id` at
+      // spawn), so `--resume <id>` reopens it. `spawnClaude` returns that same id.
+      const resumeSessionId = agent.lastSessionId;
+      let sessionId: string | undefined;
+      try {
+        sessionId = await window.electronAPI.spawnClaude({
+          cwd: agent.cwd,
+          provider: agent.provider,
+          profileId: agent.profileId,
+          model: agent.model,
+          effort: agent.effort,
+          permissionMode: agent.permissionMode,
+          skipPermissions: agent.skipPermissions,
+          mcpItemIds: agent.mcpItemIds,
+          resumeSessionId,
+          cols: 120,
+          rows: 32,
+        });
+      } catch (err) {
+        console.error('[Agent] respawn failed:', err);
+      }
+      if (!sessionId) return;
+      const oldSession = agent.sessionId ?? agent.lastSessionId;
+      mutateAgent(agentId, (a) => ({
+        ...a,
+        sessionId,
+        lastSessionId: undefined,
+        tabs: a.tabs.map((t) => ({
+          ...t,
+          panes: t.panes.map((p) => {
+            if (p.type === 'claude' && (p.attachSessionId === oldSession || !p.attachSessionId)) {
+              return { ...p, attachSessionId: sessionId, resumeSessionId: undefined };
+            }
+            // Agent-scope plugin panes carry the session in their webview URL —
+            // re-resolve it to the fresh session so restored panes aren't stale.
+            if (p.type === 'plugin' && typeof p.url === 'string' && p.url.includes('sessionId=')) {
+              return { ...p, url: withAgentContext(p.url, sessionId, a.cwd) };
+            }
+            return p;
+          }),
+        })),
+      }));
+    },
+    [mutateAgent],
+  );
 
   /**
    * Restart a RUNNING agent with new launch settings (composer pills' restart
@@ -272,41 +345,62 @@ export function useAgentManager() {
    * them. Claude resumes the conversation; managed providers start a fresh
    * provider-side thread (the pill's confirm copy says so).
    */
-  const respawnAgentWithSettings = useCallback(async (
-    sessionId: string,
-    overrides: { model?: string; effort?: string; permissionMode?: string },
-  ) => {
-    const agent = agentsRef.current.find((a) => a.sessionId === sessionId || a.lastSessionId === sessionId);
-    if (!agent) return;
-    const model = overrides.model ?? agent.model;
-    const effort = overrides.effort ?? agent.effort;
-    const permissionMode = overrides.permissionMode ?? agent.permissionMode;
-    // The legacy YOLO boolean must track the mode, or the next plain respawn
-    // would re-apply a bypass the user just switched away from.
-    const skipPermissions = permissionMode
-      ? permissionMode === 'bypassPermissions' || permissionMode === 'yolo'
-      : agent.skipPermissions;
-    if (agent.sessionId) {
-      try { await window.electronAPI.claudeClose(agent.sessionId); } catch { /* already gone */ }
-    }
-    const resumeSessionId = agent.sessionId ?? agent.lastSessionId;
-    let newSessionId: string | undefined;
-    try {
-      newSessionId = await window.electronAPI.spawnClaude({ cwd: agent.cwd, provider: agent.provider, profileId: agent.profileId, model, effort, permissionMode, skipPermissions, mcpItemIds: agent.mcpItemIds, resumeSessionId, cols: 120, rows: 32 });
-    } catch (err) {
-      console.error('[Agent] restart-with-settings failed:', err);
-    }
-    if (!newSessionId) return;
-    mutateAgent(agent.id, (a) => ({
-      ...a,
-      model,
-      effort,
-      permissionMode,
-      skipPermissions,
-      sessionId: newSessionId,
-      lastSessionId: undefined,
-    }));
-  }, [mutateAgent]);
+  const respawnAgentWithSettings = useCallback(
+    async (
+      sessionId: string,
+      overrides: { model?: string; effort?: string; permissionMode?: string },
+    ) => {
+      const agent = agentsRef.current.find(
+        (a) => a.sessionId === sessionId || a.lastSessionId === sessionId,
+      );
+      if (!agent) return;
+      const model = overrides.model ?? agent.model;
+      const effort = overrides.effort ?? agent.effort;
+      const permissionMode = overrides.permissionMode ?? agent.permissionMode;
+      // The legacy YOLO boolean must track the mode, or the next plain respawn
+      // would re-apply a bypass the user just switched away from.
+      const skipPermissions = permissionMode
+        ? permissionMode === 'bypassPermissions' || permissionMode === 'yolo'
+        : agent.skipPermissions;
+      if (agent.sessionId) {
+        try {
+          await window.electronAPI.claudeClose(agent.sessionId);
+        } catch {
+          /* already gone */
+        }
+      }
+      const resumeSessionId = agent.sessionId ?? agent.lastSessionId;
+      let newSessionId: string | undefined;
+      try {
+        newSessionId = await window.electronAPI.spawnClaude({
+          cwd: agent.cwd,
+          provider: agent.provider,
+          profileId: agent.profileId,
+          model,
+          effort,
+          permissionMode,
+          skipPermissions,
+          mcpItemIds: agent.mcpItemIds,
+          resumeSessionId,
+          cols: 120,
+          rows: 32,
+        });
+      } catch (err) {
+        console.error('[Agent] restart-with-settings failed:', err);
+      }
+      if (!newSessionId) return;
+      mutateAgent(agent.id, (a) => ({
+        ...a,
+        model,
+        effort,
+        permissionMode,
+        skipPermissions,
+        sessionId: newSessionId,
+        lastSessionId: undefined,
+      }));
+    },
+    [mutateAgent],
+  );
 
   /**
    * Convenience wrapper to spawn a supervisor agent: derives a name from the
@@ -315,61 +409,90 @@ export function useAgentManager() {
    * staged with a generic kick to start its watch loop instead of a question.
    * Returns the new agent id.
    */
-  const spawnSupervisor = useCallback(async (opts: { question?: string; parentId?: string; cwd?: string; provider?: AgentProvider }): Promise<string> => {
-    const question = opts.question?.trim() || undefined;
-    const name = question ? deriveSupervisorName(question) : '\u{1F9ED} Fleet supervisor';
-    // Claude runs the installed /supervise skill; managed providers have no
-    // skills, so they get a plain-language opener (their facade instructions
-    // already carry the supervisor role).
-    const kick = (opts.provider ?? 'claude') === 'claude'
-      ? '/supervise'
-      : 'Start watching the fleet: call list_agents, then report what each agent is doing.';
-    // A supervisor watches the whole fleet, so unless a cwd is given explicitly
-    // it opens in its dedicated home (~/.workspacer) rather than inheriting some
-    // agent's repo. Resolve it here so the card's cwd matches where the session
-    // actually opens. parentId is kept only for UI nesting.
-    let cwd = opts.cwd;
-    if (!cwd) {
-      try { cwd = await window.electronAPI.getSupervisorHome(); } catch { cwd = ''; }
-    }
-    return spawnAgent({
-      cwd: cwd || '',
-      name,
-      provider: opts.provider,
-      kind: 'supervisor',
-      parentId: opts.parentId,
-      supervisor: true,
-      initialPrompt: question ?? kick,
-    });
-  }, [spawnAgent]);
+  const spawnSupervisor = useCallback(
+    async (opts: {
+      question?: string;
+      parentId?: string;
+      cwd?: string;
+      provider?: AgentProvider;
+    }): Promise<string> => {
+      const question = opts.question?.trim() || undefined;
+      const name = question ? deriveSupervisorName(question) : '\u{1F9ED} Fleet supervisor';
+      // Claude runs the installed /supervise skill; managed providers have no
+      // skills, so they get a plain-language opener (their facade instructions
+      // already carry the supervisor role).
+      const kick =
+        (opts.provider ?? 'claude') === 'claude'
+          ? '/supervise'
+          : 'Start watching the fleet: call list_agents, then report what each agent is doing.';
+      // A supervisor watches the whole fleet, so unless a cwd is given explicitly
+      // it opens in its dedicated home (~/.workspacer) rather than inheriting some
+      // agent's repo. Resolve it here so the card's cwd matches where the session
+      // actually opens. parentId is kept only for UI nesting.
+      let cwd = opts.cwd;
+      if (!cwd) {
+        try {
+          cwd = await window.electronAPI.getSupervisorHome();
+        } catch {
+          cwd = '';
+        }
+      }
+      return spawnAgent({
+        cwd: cwd || '',
+        name,
+        provider: opts.provider,
+        kind: 'supervisor',
+        parentId: opts.parentId,
+        supervisor: true,
+        initialPrompt: question ?? kick,
+      });
+    },
+    [spawnAgent],
+  );
 
   /** Adopt a live daemon session that has no workspace yet (e.g. one spawned via
    *  the MCP facade / by another agent), so it appears as a card. Idempotent:
    *  does nothing if some workspace already owns this sessionId. Resolves nesting
    *  by matching parentSessionId to an existing agent's sessionId. */
-  const adoptAgent = useCallback((opts: { sessionId: string; cwd: string; name?: string; parentSessionId?: string; provider?: AgentProvider }) => {
-    setAgents((prev) => {
-      if (prev.some((a) => a.sessionId === opts.sessionId)) return prev; // already tracked — dedupe inside the updater (race-safe)
-      const parent = opts.parentSessionId ? prev.find((a) => a.sessionId === opts.parentSessionId) : undefined;
-      // Carry the provider so an adopted card (e.g. a Codex session spawned via
-      // the MCP facade or the web client) renders the right label/logo instead
-      // of defaulting to Claude.
-      const { tabs, activeTabId } = defaultAgentTabs(opts.sessionId, opts.cwd, undefined, opts.provider);
-      const agent: AgentWorkspace = {
-        // Same deterministic id any other client would mint for this session, so
-        // concurrent adoptions converge on one card instead of racing ids.
-        id: agentIdForSession(opts.sessionId),
-        name: opts.name?.trim() || deriveAgentName(opts.cwd),
-        cwd: opts.cwd,
-        provider: opts.provider,
-        sessionId: opts.sessionId,
-        parentId: parent?.id,
-        tabs,
-        activeTabId,
-      };
-      return [...prev, agent];
-    });
-  }, []);
+  const adoptAgent = useCallback(
+    (opts: {
+      sessionId: string;
+      cwd: string;
+      name?: string;
+      parentSessionId?: string;
+      provider?: AgentProvider;
+    }) => {
+      setAgents((prev) => {
+        if (prev.some((a) => a.sessionId === opts.sessionId)) return prev; // already tracked — dedupe inside the updater (race-safe)
+        const parent = opts.parentSessionId
+          ? prev.find((a) => a.sessionId === opts.parentSessionId)
+          : undefined;
+        // Carry the provider so an adopted card (e.g. a Codex session spawned via
+        // the MCP facade or the web client) renders the right label/logo instead
+        // of defaulting to Claude.
+        const { tabs, activeTabId } = defaultAgentTabs(
+          opts.sessionId,
+          opts.cwd,
+          undefined,
+          opts.provider,
+        );
+        const agent: AgentWorkspace = {
+          // Same deterministic id any other client would mint for this session, so
+          // concurrent adoptions converge on one card instead of racing ids.
+          id: agentIdForSession(opts.sessionId),
+          name: opts.name?.trim() || deriveAgentName(opts.cwd),
+          cwd: opts.cwd,
+          provider: opts.provider,
+          sessionId: opts.sessionId,
+          parentId: parent?.id,
+          tabs,
+          activeTabId,
+        };
+        return [...prev, agent];
+      });
+    },
+    [],
+  );
 
   /** Explicitly terminate an agent: kill its daemon session and drop it. */
   const terminateAgent = useCallback(async (agentId: string) => {
@@ -388,13 +511,20 @@ export function useAgentManager() {
       return fallbackId ?? '';
     });
     if (agent?.sessionId) {
-      try { await window.electronAPI.claudeClose(agent.sessionId); } catch { /* already gone */ }
+      try {
+        await window.electronAPI.claudeClose(agent.sessionId);
+      } catch {
+        /* already gone */
+      }
     }
   }, []);
 
-  const renameAgent = useCallback((agentId: string, name: string) => {
-    mutateAgent(agentId, (a) => ({ ...a, name }));
-  }, [mutateAgent]);
+  const renameAgent = useCallback(
+    (agentId: string, name: string) => {
+      mutateAgent(agentId, (a) => ({ ...a, name }));
+    },
+    [mutateAgent],
+  );
 
   /**
    * Reconcile saved agents against the daemon's live sessions: any agent whose
@@ -402,11 +532,13 @@ export function useAgentManager() {
    * sidebar can offer a respawn.
    */
   const reconcileAgents = useCallback((liveSessionIds: Set<string>) => {
-    setAgents((prev) => prev.map((a) =>
-      a.sessionId && !liveSessionIds.has(a.sessionId)
-        ? { ...a, sessionId: undefined, lastSessionId: a.sessionId }
-        : a,
-    ));
+    setAgents((prev) =>
+      prev.map((a) =>
+        a.sessionId && !liveSessionIds.has(a.sessionId)
+          ? { ...a, sessionId: undefined, lastSessionId: a.sessionId }
+          : a,
+      ),
+    );
   }, []);
 
   /** Mark the agent owning this session as stopped — its session died mid-run
@@ -414,11 +546,11 @@ export function useAgentManager() {
    *  to "Stopped — click to respawn" immediately instead of waiting for the
    *  next resume-time reconcile (which never happens while the app runs). */
   const stopAgentForSession = useCallback((sessionId: string) => {
-    setAgents((prev) => prev.map((a) =>
-      a.sessionId === sessionId
-        ? { ...a, sessionId: undefined, lastSessionId: sessionId }
-        : a,
-    ));
+    setAgents((prev) =>
+      prev.map((a) =>
+        a.sessionId === sessionId ? { ...a, sessionId: undefined, lastSessionId: sessionId } : a,
+      ),
+    );
   }, []);
 
   const loadAgentsFromSession = useCallback((sessionAgents: AgentWorkspace[], activeId: string) => {
@@ -455,167 +587,218 @@ export function useAgentManager() {
    *  focused instead of opening a duplicate. Returns the (existing or new) tab
    *  id so callers can scroll the view to it — activating a tab alone only
    *  highlights the strip; it never moves the stacked/spatial viewport. */
-  const openPaneIn = useCallback((workspaceId: string, type: PaneType, title: string, url?: string, cwd?: string, pluginId?: string): string => {
-    const ws = agentsRef.current.find((a) => a.id === workspaceId);
-    const existing = ws?.tabs.find((t) => t.panes.length === 1 && t.panes[0].type === type && t.panes[0].title === title);
-    const paneId = generateId('pane');
-    const tabId = existing?.id ?? generateId('tab');
-    setAgents((prev) => withGlobalWorkspace(prev).map((a) => {
-      if (a.id !== workspaceId) return a;
-      if (existing) return { ...a, activeTabId: existing.id };
-      const pane: PaneConfig = { id: paneId, type, title, url, cwd, appMode: true, pluginId };
-      return { ...a, tabs: [...a.tabs, { id: tabId, title, panes: [pane], activePaneId: paneId, lastActiveAt: Date.now() }], activeTabId: tabId };
-    }));
-    setActiveAgentId(workspaceId);
-    return tabId;
-  }, []);
+  const openPaneIn = useCallback(
+    (
+      workspaceId: string,
+      type: PaneType,
+      title: string,
+      url?: string,
+      cwd?: string,
+      pluginId?: string,
+    ): string => {
+      const ws = agentsRef.current.find((a) => a.id === workspaceId);
+      const existing = ws?.tabs.find(
+        (t) => t.panes.length === 1 && t.panes[0].type === type && t.panes[0].title === title,
+      );
+      const paneId = generateId('pane');
+      const tabId = existing?.id ?? generateId('tab');
+      setAgents((prev) =>
+        withGlobalWorkspace(prev).map((a) => {
+          if (a.id !== workspaceId) return a;
+          if (existing) return { ...a, activeTabId: existing.id };
+          const pane: PaneConfig = { id: paneId, type, title, url, cwd, appMode: true, pluginId };
+          return {
+            ...a,
+            tabs: [
+              ...a.tabs,
+              { id: tabId, title, panes: [pane], activePaneId: paneId, lastActiveAt: Date.now() },
+            ],
+            activeTabId: tabId,
+          };
+        }),
+      );
+      setActiveAgentId(workspaceId);
+      return tabId;
+    },
+    [],
+  );
 
   /** Open (or focus) a watch pane for one subagent / workflow run in the
    *  active workspace. Deduped by watch target so clicking the same agent in
    *  the inspector twice focuses the existing pane instead of duplicating. */
-  const openAgentWatch = useCallback((opts: { sessionId: string; kind: 'subagent' | 'workflow' | 'agents'; id: string; title: string }): string => {
-    const aid = activeAgentIdRef.current;
-    if (!aid) return '';
-    const agent = agentsRef.current.find((a) => a.id === aid);
-    if (!agent) return '';
-    const existing = agent.tabs.find((t) =>
-      t.panes.some((p) => p.type === 'agentwatch' && p.watchId === opts.id && p.watchSessionId === opts.sessionId));
-    if (existing) {
-      mutateAgent(aid, (a) => ({ ...a, activeTabId: existing.id }));
-      return existing.id;
-    }
-    const paneId = generateId('agentwatch');
-    const tabId = generateId('tab');
-    const pane: PaneConfig = {
-      id: paneId,
-      type: 'agentwatch',
-      title: opts.title,
-      watchSessionId: opts.sessionId,
-      watchKind: opts.kind,
-      watchId: opts.id,
-    };
-    mutateAgent(aid, (a) => ({
-      ...a,
-      tabs: [...a.tabs, { id: tabId, title: opts.title, panes: [pane], activePaneId: paneId, lastActiveAt: Date.now() }],
-      activeTabId: tabId,
-    }));
-    return tabId;
-  }, [mutateAgent]);
+  const openAgentWatch = useCallback(
+    (opts: {
+      sessionId: string;
+      kind: 'subagent' | 'workflow' | 'agents';
+      id: string;
+      title: string;
+    }): string => {
+      const aid = activeAgentIdRef.current;
+      if (!aid) return '';
+      const agent = agentsRef.current.find((a) => a.id === aid);
+      if (!agent) return '';
+      const existing = agent.tabs.find((t) =>
+        t.panes.some(
+          (p) =>
+            p.type === 'agentwatch' && p.watchId === opts.id && p.watchSessionId === opts.sessionId,
+        ),
+      );
+      if (existing) {
+        mutateAgent(aid, (a) => ({ ...a, activeTabId: existing.id }));
+        return existing.id;
+      }
+      const paneId = generateId('agentwatch');
+      const tabId = generateId('tab');
+      const pane: PaneConfig = {
+        id: paneId,
+        type: 'agentwatch',
+        title: opts.title,
+        watchSessionId: opts.sessionId,
+        watchKind: opts.kind,
+        watchId: opts.id,
+      };
+      mutateAgent(aid, (a) => ({
+        ...a,
+        tabs: [
+          ...a.tabs,
+          {
+            id: tabId,
+            title: opts.title,
+            panes: [pane],
+            activePaneId: paneId,
+            lastActiveAt: Date.now(),
+          },
+        ],
+        activeTabId: tabId,
+      }));
+      return tabId;
+    },
+    [mutateAgent],
+  );
 
   // ── Tab/pane operations (scoped to the active agent) ──────────────────────
 
-  const setActiveTabId = useCallback((tabId: string) => {
-    mutateActiveAgent((a) => ({
-      ...a,
-      activeTabId: tabId,
-      // Record focus time (kept for potential recency features; the stacked
-      // feed itself uses natural tab order, not activity).
-      tabs: a.tabs.map((t) => (t.id === tabId ? { ...t, lastActiveAt: Date.now() } : t)),
-    }));
-  }, [mutateActiveAgent]);
+  const setActiveTabId = useCallback(
+    (tabId: string) => {
+      mutateActiveAgent((a) => ({
+        ...a,
+        activeTabId: tabId,
+        // Record focus time (kept for potential recency features; the stacked
+        // feed itself uses natural tab order, not activity).
+        tabs: a.tabs.map((t) => (t.id === tabId ? { ...t, lastActiveAt: Date.now() } : t)),
+      }));
+    },
+    [mutateActiveAgent],
+  );
 
-  const addTab = useCallback((
-    type: PaneType,
-    title?: string,
-    insertPosition: string = 'after',
-    shell?: string,
-    url?: string,
-    appMode?: boolean,
-    cwd?: string,
-    profileId?: string,
-    resumeSessionId?: string,
-    attachSessionId?: string,
-    initialCommand?: string,
-    filePath?: string,
-    provider?: AgentProvider,
-  ) => {
-    const aid = activeAgentIdRef.current;
-    if (!aid) return '';
-    const paneId = generateId(type);
-    const tabId = generateId('tab');
-    const paneTitle = title ?? defaultTitles[type];
+  const addTab = useCallback(
+    (
+      type: PaneType,
+      title?: string,
+      insertPosition: string = 'after',
+      shell?: string,
+      url?: string,
+      appMode?: boolean,
+      cwd?: string,
+      profileId?: string,
+      resumeSessionId?: string,
+      attachSessionId?: string,
+      initialCommand?: string,
+      filePath?: string,
+      provider?: AgentProvider,
+    ) => {
+      const aid = activeAgentIdRef.current;
+      if (!aid) return '';
+      const paneId = generateId(type);
+      const tabId = generateId('tab');
+      const paneTitle = title ?? defaultTitles[type];
 
-    const pane: PaneConfig = {
-      id: paneId, type, title: paneTitle, shell, url, appMode, cwd, profileId, resumeSessionId, attachSessionId, initialCommand, filePath, provider,
-    };
-    const tab: TabConfig = { id: tabId, title: paneTitle, panes: [pane], activePaneId: paneId, lastActiveAt: Date.now() };
+      const pane: PaneConfig = {
+        id: paneId,
+        type,
+        title: paneTitle,
+        shell,
+        url,
+        appMode,
+        cwd,
+        profileId,
+        resumeSessionId,
+        attachSessionId,
+        initialCommand,
+        filePath,
+        provider,
+      };
+      const tab: TabConfig = {
+        id: tabId,
+        title: paneTitle,
+        panes: [pane],
+        activePaneId: paneId,
+        lastActiveAt: Date.now(),
+      };
 
-    mutateAgent(aid, (a) => {
-      let newTabs: TabConfig[];
-      if (insertPosition === 'after') {
-        const idx = a.tabs.findIndex((t) => t.id === a.activeTabId);
-        if (idx >= 0) {
-          newTabs = [...a.tabs];
-          newTabs.splice(idx + 1, 0, tab);
+      mutateAgent(aid, (a) => {
+        let newTabs: TabConfig[];
+        if (insertPosition === 'after') {
+          const idx = a.tabs.findIndex((t) => t.id === a.activeTabId);
+          if (idx >= 0) {
+            newTabs = [...a.tabs];
+            newTabs.splice(idx + 1, 0, tab);
+          } else {
+            newTabs = [...a.tabs, tab];
+          }
         } else {
           newTabs = [...a.tabs, tab];
         }
-      } else {
-        newTabs = [...a.tabs, tab];
+        return { ...a, tabs: newTabs, activeTabId: tabId };
+      });
+      return tabId;
+    },
+    [mutateAgent],
+  );
+
+  const splitTab = useCallback(
+    (
+      tabId: string,
+      type: PaneType,
+      title?: string,
+      shell?: string,
+      url?: string,
+      appMode?: boolean,
+      cwd?: string,
+    ) => {
+      const paneId = generateId(type);
+      const paneTitle = title ?? defaultTitles[type];
+      const pane: PaneConfig = { id: paneId, type, title: paneTitle, shell, url, appMode, cwd };
+
+      mutateActiveAgent((a) => ({
+        ...a,
+        tabs: a.tabs.map((t) =>
+          t.id === tabId
+            ? { ...t, panes: [...t.panes, pane], activePaneId: paneId, lastActiveAt: Date.now() }
+            : t,
+        ),
+      }));
+      return paneId;
+    },
+    [mutateActiveAgent],
+  );
+
+  const removeTab = useCallback(
+    (tabId: string) => {
+      // Closing the last tab terminates the (non-global) agent.
+      const agent = agentsRef.current.find((a) => a.id === activeAgentIdRef.current);
+      if (
+        agent &&
+        !agent.global &&
+        agent.tabs.length <= 1 &&
+        agent.tabs.some((t) => t.id === tabId)
+      ) {
+        terminateAgent(agent.id);
+        return;
       }
-      return { ...a, tabs: newTabs, activeTabId: tabId };
-    });
-    return tabId;
-  }, [mutateAgent]);
-
-  const splitTab = useCallback((
-    tabId: string,
-    type: PaneType,
-    title?: string,
-    shell?: string,
-    url?: string,
-    appMode?: boolean,
-    cwd?: string,
-  ) => {
-    const paneId = generateId(type);
-    const paneTitle = title ?? defaultTitles[type];
-    const pane: PaneConfig = { id: paneId, type, title: paneTitle, shell, url, appMode, cwd };
-
-    mutateActiveAgent((a) => ({
-      ...a,
-      tabs: a.tabs.map((t) =>
-        t.id === tabId ? { ...t, panes: [...t.panes, pane], activePaneId: paneId, lastActiveAt: Date.now() } : t,
-      ),
-    }));
-    return paneId;
-  }, [mutateActiveAgent]);
-
-  const removeTab = useCallback((tabId: string) => {
-    // Closing the last tab terminates the (non-global) agent.
-    const agent = agentsRef.current.find((a) => a.id === activeAgentIdRef.current);
-    if (agent && !agent.global && agent.tabs.length <= 1 && agent.tabs.some((t) => t.id === tabId)) {
-      terminateAgent(agent.id);
-      return;
-    }
-    mutateActiveAgent((a) => {
-      const filtered = a.tabs.filter((t) => t.id !== tabId);
-      if (filtered.length === 0) return a; // an agent always keeps at least one tab
-      let nextActive = a.activeTabId;
-      if (nextActive === tabId) {
-        const idx = a.tabs.findIndex((t) => t.id === tabId);
-        const next = a.tabs[idx + 1] ?? a.tabs[idx - 1];
-        nextActive = next ? next.id : filtered[0].id;
-      }
-      return { ...a, tabs: filtered, activeTabId: nextActive };
-    });
-  }, [mutateActiveAgent, terminateAgent]);
-
-  const removePane = useCallback((tabId: string, paneId: string) => {
-    // Closing the last pane of the last tab terminates the (non-global) agent.
-    const agent = agentsRef.current.find((a) => a.id === activeAgentIdRef.current);
-    const closingTab = agent?.tabs.find((t) => t.id === tabId);
-    if (agent && !agent.global && closingTab && closingTab.panes.length <= 1 && agent.tabs.length <= 1) {
-      terminateAgent(agent.id);
-      return;
-    }
-    mutateActiveAgent((a) => {
-      const tab = a.tabs.find((t) => t.id === tabId);
-      if (!tab) return a;
-
-      if (tab.panes.length <= 1) {
-        // Last pane → remove the whole tab (but keep at least one tab).
+      mutateActiveAgent((a) => {
         const filtered = a.tabs.filter((t) => t.id !== tabId);
-        if (filtered.length === 0) return a;
+        if (filtered.length === 0) return a; // an agent always keeps at least one tab
         let nextActive = a.activeTabId;
         if (nextActive === tabId) {
           const idx = a.tabs.findIndex((t) => t.id === tabId);
@@ -623,97 +806,164 @@ export function useAgentManager() {
           nextActive = next ? next.id : filtered[0].id;
         }
         return { ...a, tabs: filtered, activeTabId: nextActive };
+      });
+    },
+    [mutateActiveAgent, terminateAgent],
+  );
+
+  const removePane = useCallback(
+    (tabId: string, paneId: string) => {
+      // Closing the last pane of the last tab terminates the (non-global) agent.
+      const agent = agentsRef.current.find((a) => a.id === activeAgentIdRef.current);
+      const closingTab = agent?.tabs.find((t) => t.id === tabId);
+      if (
+        agent &&
+        !agent.global &&
+        closingTab &&
+        closingTab.panes.length <= 1 &&
+        agent.tabs.length <= 1
+      ) {
+        terminateAgent(agent.id);
+        return;
       }
+      mutateActiveAgent((a) => {
+        const tab = a.tabs.find((t) => t.id === tabId);
+        if (!tab) return a;
 
-      return {
+        if (tab.panes.length <= 1) {
+          // Last pane → remove the whole tab (but keep at least one tab).
+          const filtered = a.tabs.filter((t) => t.id !== tabId);
+          if (filtered.length === 0) return a;
+          let nextActive = a.activeTabId;
+          if (nextActive === tabId) {
+            const idx = a.tabs.findIndex((t) => t.id === tabId);
+            const next = a.tabs[idx + 1] ?? a.tabs[idx - 1];
+            nextActive = next ? next.id : filtered[0].id;
+          }
+          return { ...a, tabs: filtered, activeTabId: nextActive };
+        }
+
+        return {
+          ...a,
+          tabs: a.tabs.map((t) => {
+            if (t.id !== tabId) return t;
+            const newPanes = t.panes.filter((p) => p.id !== paneId);
+            const newActive = t.activePaneId === paneId ? newPanes[0]?.id || '' : t.activePaneId;
+            return { ...t, panes: newPanes, activePaneId: newActive };
+          }),
+        };
+      });
+    },
+    [mutateActiveAgent, terminateAgent],
+  );
+
+  const renameTab = useCallback(
+    (tabId: string, title: string) => {
+      mutateActiveAgent((a) => ({
         ...a,
-        tabs: a.tabs.map((t) => {
-          if (t.id !== tabId) return t;
-          const newPanes = t.panes.filter((p) => p.id !== paneId);
-          const newActive = t.activePaneId === paneId ? (newPanes[0]?.id || '') : t.activePaneId;
-          return { ...t, panes: newPanes, activePaneId: newActive };
-        }),
-      };
-    });
-  }, [mutateActiveAgent, terminateAgent]);
+        tabs: a.tabs.map((t) => (t.id === tabId ? { ...t, title } : t)),
+      }));
+    },
+    [mutateActiveAgent],
+  );
 
-  const renameTab = useCallback((tabId: string, title: string) => {
-    mutateActiveAgent((a) => ({
-      ...a,
-      tabs: a.tabs.map((t) => (t.id === tabId ? { ...t, title } : t)),
-    }));
-  }, [mutateActiveAgent]);
+  const updateTabCanvas = useCallback(
+    (tabId: string, canvas: TabConfig['canvas']) => {
+      mutateActiveAgent((a) => ({
+        ...a,
+        tabs: a.tabs.map((t) => (t.id === tabId ? { ...t, canvas } : t)),
+      }));
+    },
+    [mutateActiveAgent],
+  );
 
-  const updateTabCanvas = useCallback((tabId: string, canvas: TabConfig['canvas']) => {
-    mutateActiveAgent((a) => ({
-      ...a,
-      tabs: a.tabs.map((t) => (t.id === tabId ? { ...t, canvas } : t)),
-    }));
-  }, [mutateActiveAgent]);
+  const moveTab = useCallback(
+    (tabId: string, toIndex: number) => {
+      mutateActiveAgent((a) => {
+        const fromIndex = a.tabs.findIndex((t) => t.id === tabId);
+        if (fromIndex < 0) return a;
+        const clamped = Math.max(0, Math.min(toIndex, a.tabs.length - 1));
+        if (fromIndex === clamped) return a;
+        const copy = [...a.tabs];
+        const [moved] = copy.splice(fromIndex, 1);
+        copy.splice(clamped, 0, moved);
+        return { ...a, tabs: copy };
+      });
+    },
+    [mutateActiveAgent],
+  );
 
-  const moveTab = useCallback((tabId: string, toIndex: number) => {
-    mutateActiveAgent((a) => {
-      const fromIndex = a.tabs.findIndex((t) => t.id === tabId);
-      if (fromIndex < 0) return a;
-      const clamped = Math.max(0, Math.min(toIndex, a.tabs.length - 1));
-      if (fromIndex === clamped) return a;
-      const copy = [...a.tabs];
-      const [moved] = copy.splice(fromIndex, 1);
-      copy.splice(clamped, 0, moved);
-      return { ...a, tabs: copy };
-    });
-  }, [mutateActiveAgent]);
+  const setActivePane = useCallback(
+    (tabId: string, paneId: string) => {
+      mutateActiveAgent((a) => ({
+        ...a,
+        tabs: a.tabs.map((t) => (t.id === tabId ? { ...t, activePaneId: paneId } : t)),
+      }));
+    },
+    [mutateActiveAgent],
+  );
 
-  const setActivePane = useCallback((tabId: string, paneId: string) => {
-    mutateActiveAgent((a) => ({
-      ...a,
-      tabs: a.tabs.map((t) => (t.id === tabId ? { ...t, activePaneId: paneId } : t)),
-    }));
-  }, [mutateActiveAgent]);
+  const hibernatePane = useCallback(
+    (tabId: string, paneId: string) => {
+      mutateActiveAgent((a) => ({
+        ...a,
+        tabs: a.tabs.map((t) =>
+          t.id === tabId
+            ? {
+                ...t,
+                panes: t.panes.map((p) => (p.id === paneId ? { ...p, hibernated: true } : p)),
+              }
+            : t,
+        ),
+      }));
+    },
+    [mutateActiveAgent],
+  );
 
-  const hibernatePane = useCallback((tabId: string, paneId: string) => {
-    mutateActiveAgent((a) => ({
-      ...a,
-      tabs: a.tabs.map((t) =>
-        t.id === tabId
-          ? { ...t, panes: t.panes.map((p) => (p.id === paneId ? { ...p, hibernated: true } : p)) }
-          : t,
-      ),
-    }));
-  }, [mutateActiveAgent]);
+  const wakePane = useCallback(
+    (tabId: string, paneId: string) => {
+      mutateActiveAgent((a) => ({
+        ...a,
+        tabs: a.tabs.map((t) =>
+          t.id === tabId
+            ? {
+                ...t,
+                panes: t.panes.map((p) => (p.id === paneId ? { ...p, hibernated: false } : p)),
+              }
+            : t,
+        ),
+      }));
+    },
+    [mutateActiveAgent],
+  );
 
-  const wakePane = useCallback((tabId: string, paneId: string) => {
-    mutateActiveAgent((a) => ({
-      ...a,
-      tabs: a.tabs.map((t) =>
-        t.id === tabId
-          ? { ...t, panes: t.panes.map((p) => (p.id === paneId ? { ...p, hibernated: false } : p)) }
-          : t,
-      ),
-    }));
-  }, [mutateActiveAgent]);
+  const updatePaneUrl = useCallback(
+    (tabId: string, paneId: string, url: string) => {
+      mutateActiveAgent((a) => ({
+        ...a,
+        tabs: a.tabs.map((t) =>
+          t.id === tabId
+            ? { ...t, panes: t.panes.map((p) => (p.id === paneId ? { ...p, url } : p)) }
+            : t,
+        ),
+      }));
+    },
+    [mutateActiveAgent],
+  );
 
-  const updatePaneUrl = useCallback((tabId: string, paneId: string, url: string) => {
-    mutateActiveAgent((a) => ({
-      ...a,
-      tabs: a.tabs.map((t) =>
-        t.id === tabId
-          ? { ...t, panes: t.panes.map((p) => (p.id === paneId ? { ...p, url } : p)) }
-          : t,
-      ),
-    }));
-  }, [mutateActiveAgent]);
-
-  const updatePaneNotes = useCallback((tabId: string, paneId: string, notes: string) => {
-    mutateActiveAgent((a) => ({
-      ...a,
-      tabs: a.tabs.map((t) =>
-        t.id === tabId
-          ? { ...t, panes: t.panes.map((p) => (p.id === paneId ? { ...p, notes } : p)) }
-          : t,
-      ),
-    }));
-  }, [mutateActiveAgent]);
+  const updatePaneNotes = useCallback(
+    (tabId: string, paneId: string, notes: string) => {
+      mutateActiveAgent((a) => ({
+        ...a,
+        tabs: a.tabs.map((t) =>
+          t.id === tabId
+            ? { ...t, panes: t.panes.map((p) => (p.id === paneId ? { ...p, notes } : p)) }
+            : t,
+        ),
+      }));
+    },
+    [mutateActiveAgent],
+  );
 
   const getActiveTab = useCallback((): TabConfig | undefined => {
     const agent = agentsRef.current.find((a) => a.id === activeAgentIdRef.current);

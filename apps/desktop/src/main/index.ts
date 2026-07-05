@@ -9,9 +9,18 @@ import { agentNotifier } from './services/agentNotifier';
 import { claudemonSessionClient } from './services/claudemonSessionClient';
 import { startClaudemon, stopClaudemon, runClaudemonInit } from './services/claudemonDaemon';
 import { startClaudemonHookBridge, stopClaudemonHookBridge } from './services/claudemonHookBridge';
-import { startClaudemonStatusLineBridge, stopClaudemonStatusLineBridge } from './services/claudemonStatusLineBridge';
-import { startClaudemonConversationBridge, stopClaudemonConversationBridge } from './services/claudemonConversationBridge';
-import { startClaudemonEventBridge, stopClaudemonEventBridge } from './services/claudemonEventBridge';
+import {
+  startClaudemonStatusLineBridge,
+  stopClaudemonStatusLineBridge,
+} from './services/claudemonStatusLineBridge';
+import {
+  startClaudemonConversationBridge,
+  stopClaudemonConversationBridge,
+} from './services/claudemonConversationBridge';
+import {
+  startClaudemonEventBridge,
+  stopClaudemonEventBridge,
+} from './services/claudemonEventBridge';
 import { startHub, stopHub } from './services/hubDaemon';
 import { startMcpFacade, stopMcpFacade } from './services/mcpFacadeDaemon';
 import { setHubMainWindow, startHubClient, stopHubClient } from './services/hubClient';
@@ -23,7 +32,11 @@ import { workflowWatcher } from './services/workflowWatcher';
 import { registerHubCapabilities } from './services/hubCapabilities';
 import { database } from './services/db';
 import { appIcon } from './lib/appIcon';
-import { applySafeWebviewPreferences, isWebviewSrcAllowed, type MutableWebPreferences } from './lib/webviewGuard';
+import {
+  applySafeWebviewPreferences,
+  isWebviewSrcAllowed,
+  type MutableWebPreferences,
+} from './lib/webviewGuard';
 import { IPC } from './shared/ipcChannels';
 
 // Font file registry: filename → absolute path (populated during discovery)
@@ -47,7 +60,11 @@ function discoverFontDirs(): string[] {
 // filesystem scanning on subsequent launches.
 const fontCachePath = path.join(getConfigDir(), '.font-cache.json');
 
-interface FontCacheEntry { file: string; fullPath: string; mtime: number }
+interface FontCacheEntry {
+  file: string;
+  fullPath: string;
+  mtime: number;
+}
 
 function loadFontCache(): FontCacheEntry[] | null {
   try {
@@ -84,7 +101,9 @@ async function injectNerdFonts(win: BrowserWindow): Promise<void> {
     entries = [];
     for (const dir of discoverFontDirs()) {
       try {
-        await fs.promises.access(dir).catch(() => { throw new Error('skip'); });
+        await fs.promises.access(dir).catch(() => {
+          throw new Error('skip');
+        });
         const files = await fs.promises.readdir(dir);
         for (const file of files) {
           if (!/NerdFont.*-Regular\.(ttf|otf)$/i.test(file)) continue;
@@ -129,7 +148,10 @@ let mainWindow: BrowserWindow | null = null;
 
 // Register custom protocol to serve local font files to the renderer
 protocol.registerSchemesAsPrivileged([
-  { scheme: 'workspacer-font', privileges: { standard: false, supportFetchAPI: true, corsEnabled: true, bypassCSP: true } },
+  {
+    scheme: 'workspacer-font',
+    privileges: { standard: false, supportFetchAPI: true, corsEnabled: true, bypassCSP: true },
+  },
 ]);
 
 // ── Chromium performance flags (must be set before app.whenReady) ──
@@ -183,9 +205,12 @@ const FIREFOX_UA_MAJOR = '140'; // current ESR — safe to leave for a long time
 
 function uaPlatformToken(): string {
   switch (process.platform) {
-    case 'darwin': return 'Macintosh; Intel Mac OS X 10_15_7';
-    case 'win32': return 'Windows NT 10.0; Win64; x64';
-    default: return 'X11; Linux x86_64';
+    case 'darwin':
+      return 'Macintosh; Intel Mac OS X 10_15_7';
+    case 'win32':
+      return 'Windows NT 10.0; Win64; x64';
+    default:
+      return 'X11; Linux x86_64';
   }
 }
 
@@ -196,9 +221,11 @@ function buildChromeUserAgent(): string {
 
 function buildFirefoxUserAgent(): string {
   const platform =
-    process.platform === 'darwin' ? 'Macintosh; Intel Mac OS X 10.15' :
-    process.platform === 'win32' ? 'Windows NT 10.0; Win64; x64' :
-    'X11; Linux x86_64';
+    process.platform === 'darwin'
+      ? 'Macintosh; Intel Mac OS X 10.15'
+      : process.platform === 'win32'
+        ? 'Windows NT 10.0; Win64; x64'
+        : 'X11; Linux x86_64';
   return `Mozilla/5.0 (${platform}; rv:${FIREFOX_UA_MAJOR}.0) Gecko/20100101 Firefox/${FIREFOX_UA_MAJOR}.0`;
 }
 
@@ -208,9 +235,11 @@ function buildFirefoxUserAgent(): string {
 function isGoogleAuthUrl(url: string): boolean {
   try {
     const host = new URL(url).hostname;
-    return host === 'accounts.google.com'
-      || host.endsWith('.accounts.google.com')
-      || host === 'accounts.youtube.com';
+    return (
+      host === 'accounts.google.com' ||
+      host.endsWith('.accounts.google.com') ||
+      host === 'accounts.youtube.com'
+    );
   } catch {
     return false;
   }
@@ -242,11 +271,14 @@ function createWindow(): void {
     titleBarStyle: 'hidden',
     // Initial colors approximate the default dark theme's title bar; the
     // renderer repaints this to the active theme on mount (window:setOverlay).
-    titleBarOverlay: process.platform === 'win32' ? {
-      color: '#1f1e22',
-      symbolColor: '#c8c8d2',
-      height: 28,
-    } : undefined,
+    titleBarOverlay:
+      process.platform === 'win32'
+        ? {
+            color: '#1f1e22',
+            symbolColor: '#c8c8d2',
+            height: 28,
+          }
+        : undefined,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -296,19 +328,17 @@ function createWindow(): void {
       } catch (err) {
         console.error('[main] claudemon init failed:', err);
       }
-      startClaudemonHookBridge().catch(err =>
-        console.error('[main] hook bridge crashed:', err)
+      startClaudemonHookBridge().catch((err) => console.error('[main] hook bridge crashed:', err));
+      startClaudemonStatusLineBridge().catch((err) =>
+        console.error('[main] statusline bridge crashed:', err),
       );
-      startClaudemonStatusLineBridge().catch(err =>
-        console.error('[main] statusline bridge crashed:', err)
-      );
-      startClaudemonConversationBridge().catch(err =>
-        console.error('[main] conversation bridge crashed:', err)
+      startClaudemonConversationBridge().catch((err) =>
+        console.error('[main] conversation bridge crashed:', err),
       );
       // Managed (Codex/OpenCode/Pi) sessions fire no hooks; this feeds their
       // mode → ambientState so their status isn't stuck on "Idle".
-      startClaudemonEventBridge().catch(err =>
-        console.error('[main] event bridge crashed:', err)
+      startClaudemonEventBridge().catch((err) =>
+        console.error('[main] event bridge crashed:', err),
       );
       // Hub (control-plane / event bus) bridges claudemon onto its bus; the
       // main process connects as a client, forwards events to the renderer, and
@@ -321,30 +351,39 @@ function createWindow(): void {
           // The MCP facade bridges hub capabilities to MCP tools for supervisor
           // sessions. Started after the hub so its bus connection has a target.
           // Optional: a failure only costs the supervisor its action tools.
-          startMcpFacade().catch(err =>
-            console.error('[main] failed to start mcp facade — supervisors will lack action tools:', err)
+          startMcpFacade().catch((err) =>
+            console.error(
+              '[main] failed to start mcp facade — supervisors will lack action tools:',
+              err,
+            ),
           );
         })
-        .catch(err => {
+        .catch((err) => {
           notifySystem({
             level: 'warn',
             key: 'hub-start',
             title: 'Control plane (hub) failed to start',
-            detail: 'Plugins and remote sharing are unavailable. Agents still work locally. ' + (err?.message ?? String(err)),
+            detail:
+              'Plugins and remote sharing are unavailable. Agents still work locally. ' +
+              (err?.message ?? String(err)),
           });
         });
     })
-    .catch(err => {
+    .catch((err) => {
       notifySystem({
         level: 'error',
         key: 'claudemon-start',
         title: 'Agent daemon (claudemon) failed to start',
-        detail: 'Claude sessions won’t receive hook events or appear correctly. ' + (err?.message ?? String(err)),
+        detail:
+          'Claude sessions won’t receive hook events or appear correctly. ' +
+          (err?.message ?? String(err)),
       });
     });
 
   // Prevent Electron from navigating to dropped files
-  mainWindow.webContents.on('will-navigate', (event) => { event.preventDefault(); });
+  mainWindow.webContents.on('will-navigate', (event) => {
+    event.preventDefault();
+  });
 
   if (process.env.ELECTRON_DEV) {
     mainWindow.loadURL('http://localhost:5173');
@@ -360,8 +399,7 @@ function createWindow(): void {
   mainWindow.webContents.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown') return;
     const isToggle =
-      (input.control && input.shift && input.key.toLowerCase() === 'i') ||
-      input.key === 'F12';
+      (input.control && input.shift && input.key.toLowerCase() === 'i') || input.key === 'F12';
     if (isToggle) {
       mainWindow!.webContents.toggleDevTools();
       event.preventDefault();
@@ -372,9 +410,7 @@ function createWindow(): void {
   // Invoked non-blocking — async font-dir scanning must not stall the main thread.
   mainWindow.webContents.on('dom-ready', () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
-      injectNerdFonts(mainWindow).catch((err) =>
-        console.error('[Fonts] discovery failed:', err)
-      );
+      injectNerdFonts(mainWindow).catch((err) => console.error('[Fonts] discovery failed:', err));
     }
   });
 
@@ -408,7 +444,9 @@ app.whenReady().then(() => {
     if (filePath && fs.existsSync(filePath)) {
       const data = fs.readFileSync(filePath);
       const mime = filename.endsWith('.otf') ? 'font/otf' : 'font/ttf';
-      return new Response(data, { headers: { 'Content-Type': mime, 'Access-Control-Allow-Origin': '*' } });
+      return new Response(data, {
+        headers: { 'Content-Type': mime, 'Access-Control-Allow-Origin': '*' },
+      });
     }
     return new Response('Not found', { status: 404 });
   });
@@ -439,7 +477,9 @@ app.whenReady().then(() => {
       // Always drop anything Electron-y from any header that takes a UA string.
       for (const k of Object.keys(headers)) {
         if (/electron|workspacer/i.test(String(headers[k]))) {
-          headers[k] = String(headers[k]).replace(/\sElectron\/\S+/i, '').replace(/\sworkspacer\/\S+/i, '');
+          headers[k] = String(headers[k])
+            .replace(/\sElectron\/\S+/i, '')
+            .replace(/\sworkspacer\/\S+/i, '');
         }
       }
       if (isGoogleAuthUrl(details.url)) {
@@ -454,8 +494,12 @@ app.whenReady().then(() => {
         // Everywhere else: standardise Client Hints to look like real Chrome.
         headers['Sec-CH-UA'] = secChUa;
         headers['Sec-CH-UA-Mobile'] = '?0';
-        headers['Sec-CH-UA-Platform'] = process.platform === 'darwin' ? '"macOS"' :
-                                         process.platform === 'win32' ? '"Windows"' : '"Linux"';
+        headers['Sec-CH-UA-Platform'] =
+          process.platform === 'darwin'
+            ? '"macOS"'
+            : process.platform === 'win32'
+              ? '"Windows"'
+              : '"Linux"';
         // User-Agent itself (belt-and-suspenders — the session-level UA usually
         // sets this, but in some edge cases requests slip through with the old UA).
         headers['User-Agent'] = chromeUA;
@@ -519,7 +563,11 @@ async function gracefulShutdown(): Promise<void> {
     ipcMain.removeAllListeners(IPC.APP_QUIT_SAVED);
   }
   updateService.stop();
-  try { claudemonSessionClient.closeAll(); } catch { /* ignore */ }
+  try {
+    claudemonSessionClient.closeAll();
+  } catch {
+    /* ignore */
+  }
   workflowWatcher.detachAll();
   stopAllTerminals();
   stopClaudemonHookBridge();
@@ -533,7 +581,11 @@ async function gracefulShutdown(): Promise<void> {
     Promise.allSettled([stopMcpFacade(), stopHub(), stopClaudemon()]),
     new Promise<void>((r) => setTimeout(r, 9000)),
   ]);
-  try { database.close(); } catch { /* ignore */ }
+  try {
+    database.close();
+  } catch {
+    /* ignore */
+  }
 }
 
 app.on('before-quit', (event) => {

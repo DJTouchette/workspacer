@@ -32,7 +32,7 @@ export function listClaudeSessionsForDir(cwd: string): ClaudeSessionSummary[] {
 
   if (!fs.existsSync(projectDir)) return [];
 
-  const files = fs.readdirSync(projectDir).filter(f => f.endsWith('.jsonl'));
+  const files = fs.readdirSync(projectDir).filter((f) => f.endsWith('.jsonl'));
   const sessions: ClaudeSessionSummary[] = [];
 
   for (const file of files) {
@@ -50,7 +50,7 @@ export function listClaudeSessionsForDir(cwd: string): ClaudeSessionSummary[] {
       fs.closeSync(fd);
 
       const chunk = buf.toString('utf-8', 0, bytesRead);
-      const lines = chunk.split('\n').filter(l => l.trim());
+      const lines = chunk.split('\n').filter((l) => l.trim());
 
       let timestamp = stat.mtime.toISOString();
       let summary = '';
@@ -69,14 +69,15 @@ export function listClaudeSessionsForDir(cwd: string): ClaudeSessionSummary[] {
           // Look for first user message
           if (!summary && entry.type === 'user' && entry.message) {
             const msg = entry.message;
-            const content = typeof msg.content === 'string'
-              ? msg.content
-              : Array.isArray(msg.content)
+            const content =
+              typeof msg.content === 'string'
                 ? msg.content
-                    .filter((b: any) => b.type === 'text')
-                    .map((b: any) => b.text)
-                    .join('\n')
-                : '';
+                : Array.isArray(msg.content)
+                  ? msg.content
+                      .filter((b: any) => b.type === 'text')
+                      .map((b: any) => b.text)
+                      .join('\n')
+                  : '';
             if (content) {
               summary = content.slice(0, 100).replace(/\n/g, ' ');
             }

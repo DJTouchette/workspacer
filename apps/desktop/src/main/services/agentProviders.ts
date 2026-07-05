@@ -51,7 +51,10 @@ function binNames(base: string): string[] {
  * falls back to a PATH search, then to the bare command name so a freshly-
  * installed CLI still works without a restart.
  */
-export function resolveAgentBinary(provider: Exclude<AgentProvider, 'claude'>, customBin?: string): string {
+export function resolveAgentBinary(
+  provider: Exclude<AgentProvider, 'claude'>,
+  customBin?: string,
+): string {
   if (customBin?.trim()) return customBin.trim();
   // Binary name matches the provider id for every managed CLI (codex/opencode/pi).
   return findOnPath(binNames(provider)) ?? provider;
@@ -62,9 +65,16 @@ export function resolveAgentBinary(provider: Exclude<AgentProvider, 'claude'>, c
  * we check that path directly; otherwise we search PATH.  PATH is read fresh,
  * so a just-installed CLI is detected without a restart.
  */
-export function isAgentBinaryInstalled(provider: Exclude<AgentProvider, 'claude'>, customBin?: string): boolean {
+export function isAgentBinaryInstalled(
+  provider: Exclude<AgentProvider, 'claude'>,
+  customBin?: string,
+): boolean {
   if (customBin?.trim()) {
-    try { return fs.existsSync(customBin.trim()); } catch { return false; }
+    try {
+      return fs.existsSync(customBin.trim());
+    } catch {
+      return false;
+    }
   }
   return findOnPath(binNames(provider)) !== null;
 }
@@ -79,7 +89,9 @@ export function checkAllProviders(
     const customBin = (binaries[provider] ?? '').trim();
     if (customBin) {
       let found = false;
-      try { found = fs.existsSync(customBin); } catch {}
+      try {
+        found = fs.existsSync(customBin);
+      } catch {}
       return { provider, found, resolvedPath: found ? customBin : null, customBin };
     }
     const resolvedPath = findOnPath(binNames(provider));

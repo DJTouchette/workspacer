@@ -47,8 +47,8 @@ describe('dedupeBySessionId', () => {
 
   it('never collapses cards without a sessionId (stopped/local agents)', () => {
     const out = dedupeBySessionId([
-      card('overview'),       // global, no session
-      card('stopped-a'),      // stopped, no session
+      card('overview'), // global, no session
+      card('stopped-a'), // stopped, no session
       card('stopped-b'),
     ]);
     expect(out).toHaveLength(3);

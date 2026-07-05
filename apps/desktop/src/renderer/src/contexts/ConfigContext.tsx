@@ -27,7 +27,8 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
 
   // Initial load on mount.
   useEffect(() => {
-    window.electronAPI.getConfig()
+    window.electronAPI
+      .getConfig()
       .then((cfg) => {
         setConfig(cfg as Config);
         setLoaded(true);
@@ -38,7 +39,8 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const reload = useCallback(() => {
-    window.electronAPI.reloadConfig()
+    window.electronAPI
+      .reloadConfig()
       .then((cfg) => {
         setConfig(cfg as Config);
       })
@@ -46,20 +48,15 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const save = useCallback((partial: Partial<Config>): Promise<Config> => {
-    return window.electronAPI.saveConfig(partial)
-      .then((cfg) => {
-        setConfig(cfg as Config);
-        return cfg as Config;
-      });
+    return window.electronAPI.saveConfig(partial).then((cfg) => {
+      setConfig(cfg as Config);
+      return cfg as Config;
+    });
   }, []);
 
   const value: ConfigContextValue = { config, loaded, reload, save };
 
-  return (
-    <ConfigContext.Provider value={value}>
-      {children}
-    </ConfigContext.Provider>
-  );
+  return <ConfigContext.Provider value={value}>{children}</ConfigContext.Provider>;
 }
 
 // ---------------------------------------------------------------------------

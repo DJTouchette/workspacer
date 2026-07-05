@@ -43,10 +43,10 @@ export function EmptyState({
   return (
     <div style={wrap}>
       {icon && <span style={{ color: 'var(--wks-text-faint)' }}>{icon}</span>}
-      <div style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--wks-text-secondary)' }}>{title}</div>
-      {hint && (
-        <div style={{ fontSize: '0.78rem', maxWidth: 360, lineHeight: 1.5 }}>{hint}</div>
-      )}
+      <div style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--wks-text-secondary)' }}>
+        {title}
+      </div>
+      {hint && <div style={{ fontSize: '0.78rem', maxWidth: 360, lineHeight: 1.5 }}>{hint}</div>}
       {action && <div style={{ marginTop: 4 }}>{action}</div>}
     </div>
   );

@@ -223,7 +223,10 @@ const PER_SESSION_CAP = 50;
 const cache = new Map<string, Map<number, TurnChangeSnapshot>>();
 const inFlight = new Map<string, Promise<TurnChangeSnapshot>>();
 
-export function getTurnSnapshot(sessionId: string, groupKey: number): TurnChangeSnapshot | undefined {
+export function getTurnSnapshot(
+  sessionId: string,
+  groupKey: number,
+): TurnChangeSnapshot | undefined {
   return cache.get(sessionId)?.get(groupKey);
 }
 
@@ -241,7 +244,9 @@ export function ensureTurnSnapshot(
   const pending = inFlight.get(flightKey);
   if (pending) return pending;
 
-  const promise = (cwd ? captureTurnSnapshot(cwd, edited) : Promise.resolve(estimateSnapshot(edited, cwd)))
+  const promise = (
+    cwd ? captureTurnSnapshot(cwd, edited) : Promise.resolve(estimateSnapshot(edited, cwd))
+  )
     .then((snap) => {
       let bySession = cache.get(sessionId);
       if (!bySession) {

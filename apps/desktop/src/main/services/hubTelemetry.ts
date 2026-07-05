@@ -40,12 +40,15 @@ interface SessionMeta {
 
 // Transition memory so the same fact is published at most once.
 const runStatus = new Map<string, WorkflowRunInfo['status']>(); // runId -> last status published
-const agentStatus = new Map<string, 'done' | 'failed'>();        // `${runId}:${agentId}` -> last terminal status
-const sessionRuns = new Map<string, Set<string>>();              // sessionId -> runIds seen (for cleanup)
+const agentStatus = new Map<string, 'done' | 'failed'>(); // `${runId}:${agentId}` -> last terminal status
+const sessionRuns = new Map<string, Set<string>>(); // sessionId -> runIds seen (for cleanup)
 
 function trackRun(sessionId: string, runId: string): void {
   let set = sessionRuns.get(sessionId);
-  if (!set) { set = new Set(); sessionRuns.set(sessionId, set); }
+  if (!set) {
+    set = new Set();
+    sessionRuns.set(sessionId, set);
+  }
   set.add(runId);
 }
 

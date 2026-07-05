@@ -7,9 +7,20 @@ import {
   type WorkflowRunInfo,
   type WorkflowWatcherUpdate,
 } from './workflowWatcher';
-import { publishWorkflowRuns, publishSnapshot, forgetSession as forgetTelemetry } from './hubTelemetry';
-import { applyHookEvent, applyStopEvent, applySessionEndEvent } from './sessionStore/hookEventRouter';
-import { applyConversationItems, type ConversationDeltaWire } from './sessionStore/conversationApplier';
+import {
+  publishWorkflowRuns,
+  publishSnapshot,
+  forgetSession as forgetTelemetry,
+} from './hubTelemetry';
+import {
+  applyHookEvent,
+  applyStopEvent,
+  applySessionEndEvent,
+} from './sessionStore/hookEventRouter';
+import {
+  applyConversationItems,
+  type ConversationDeltaWire,
+} from './sessionStore/conversationApplier';
 import { SessionUsageAccumulator } from './sessionStore/usageAccumulator';
 import { CLAUDEMON_API_URL } from './claudemonDaemon';
 import { writeHistory } from './sessionStore/analyticsWriter';
@@ -39,7 +50,8 @@ const STATUSLINE_DEBOUNCE_MS = 250;
  * owns the hook ingestion. Kept compatible with the renderer's view-side type
  * (`src/renderer/src/types/claudeSession.ts`).
  */
-export type SessionAmbientState = 'idle' | 'thinking' | 'streaming' | 'waiting_input' | 'waiting_approval';
+export type SessionAmbientState =
+  'idle' | 'thinking' | 'streaming' | 'waiting_input' | 'waiting_approval';
 
 /** Launch settings requested at spawn/restart time (composer pill truth
  *  fallback — live statusLine/usage wins for the model when present). */
@@ -201,7 +213,16 @@ class ClaudeSessionStore {
   private usageAccumulator = new SessionUsageAccumulator();
   // Pre-spawn metadata keyed by pinned session id. Recorded before the first
   // hook arrives so adopted cards carry a name and parent from the start.
-  private spawnMeta = new Map<string, { label?: string; parentSessionId?: string; isSupervisor?: boolean; provider?: string; settings?: SessionSpawnSettings }>();
+  private spawnMeta = new Map<
+    string,
+    {
+      label?: string;
+      parentSessionId?: string;
+      isSupervisor?: boolean;
+      provider?: string;
+      settings?: SessionSpawnSettings;
+    }
+  >();
   // Last-applied conversation sequence per session (gap detection for the
   // daemon's delta stream) and sessions with a snapshot resync in flight.
   private convSeq = new Map<string, number>();
@@ -218,7 +239,16 @@ class ClaudeSessionStore {
   /** Record name/parent for a session about to be spawned, keyed by its pinned
    *  id. Consumed when the session first registers (see createSession), so an
    *  adopted card can be named and nested under its spawner. */
-  setSpawnMeta(sessionId: string, meta: { label?: string; parentSessionId?: string; isSupervisor?: boolean; provider?: string; settings?: SessionSpawnSettings }): void {
+  setSpawnMeta(
+    sessionId: string,
+    meta: {
+      label?: string;
+      parentSessionId?: string;
+      isSupervisor?: boolean;
+      provider?: string;
+      settings?: SessionSpawnSettings;
+    },
+  ): void {
     if (!sessionId) return;
     this.spawnMeta.set(sessionId, meta);
     // A restart-with-settings re-spawns onto an id that may still have a live
@@ -341,7 +371,11 @@ class ClaudeSessionStore {
     // rather than on its next poll. No-op when no supervisor is running.
     const isBlocked = (s: SessionAmbientState) => s === 'waiting_approval' || s === 'waiting_input';
     if (isBlocked(session.ambientState) && !isBlocked(prevAmbient)) {
-      supervisorNudge.onBlock(session, session.pendingApproval ? 'approval' : 'question', this.supervisorSessionIds());
+      supervisorNudge.onBlock(
+        session,
+        session.pendingApproval ? 'approval' : 'question',
+        this.supervisorSessionIds(),
+      );
     }
 
     this.mergeWatcherData(session);
@@ -361,20 +395,34 @@ class ClaudeSessionStore {
     if (!session) return;
     let next: SessionAmbientState;
     switch (mode) {
-      case 'responding': next = 'streaming'; break;
-      case 'approval':   next = 'waiting_approval'; break;
-      case 'question':   next = 'waiting_input'; break;
-      case 'input':      next = 'idle'; break;
-      default: return; // 'unknown' / 'stopped' — leave the current state as-is
+      case 'responding':
+        next = 'streaming';
+        break;
+      case 'approval':
+        next = 'waiting_approval';
+        break;
+      case 'question':
+        next = 'waiting_input';
+        break;
+      case 'input':
+        next = 'idle';
+        break;
+      default:
+        return; // 'unknown' / 'stopped' — leave the current state as-is
     }
     const prevAmbient = session.ambientState;
     session.ambientState = next;
     session.lastActivity = Date.now();
     if (next !== prevAmbient) {
       agentNotifier.notifyOnTransition(session, prevAmbient);
-      const isBlocked = (s: SessionAmbientState) => s === 'waiting_approval' || s === 'waiting_input';
+      const isBlocked = (s: SessionAmbientState) =>
+        s === 'waiting_approval' || s === 'waiting_input';
       if (isBlocked(next) && !isBlocked(prevAmbient)) {
-        supervisorNudge.onBlock(session, next === 'waiting_approval' ? 'approval' : 'question', this.supervisorSessionIds());
+        supervisorNudge.onBlock(
+          session,
+          next === 'waiting_approval' ? 'approval' : 'question',
+          this.supervisorSessionIds(),
+        );
       }
     }
     this.pushUpdate(session);
@@ -417,7 +465,8 @@ class ClaudeSessionStore {
 
     this.convSeq.set(sessionId, delta.seq);
     applyConversationItems(session, delta.items, (s, model, usage, key) =>
-      this.usageAccumulator.applyUsage(s, model, usage, key));
+      this.usageAccumulator.applyUsage(s, model, usage, key),
+    );
     session.lastActivity = Date.now();
     this.mergeWatcherData(session);
     this.pushUpdate(session);
@@ -451,13 +500,14 @@ class ClaudeSessionStore {
     try {
       const res = await fetch(`${CLAUDEMON_API_URL}/sessions/${sessionId}/conversation`);
       if (!res.ok) return;
-      const snap = await res.json() as { seq: number; items: ConversationDeltaWire['items'] };
+      const snap = (await res.json()) as { seq: number; items: ConversationDeltaWire['items'] };
       const session = this.sessions.get(sessionId);
       if (!session) return;
       session.conversation = [];
       session.totalToolCalls = 0;
       applyConversationItems(session, snap.items ?? [], (s, model, usage, key) =>
-        this.usageAccumulator.applyUsage(s, model, usage, key));
+        this.usageAccumulator.applyUsage(s, model, usage, key),
+      );
       this.convSeq.set(sessionId, snap.seq ?? 0);
       this.mergeWatcherData(session);
       this.pushUpdate(session);
@@ -525,7 +575,7 @@ class ClaudeSessionStore {
 
     const stripPrefix = (s: string) => s.replace(/^agent-/, '');
     const workflowIds = new Set(update.workflowAgentIds);
-    session.subagents = session.subagents.filter(s => !workflowIds.has(stripPrefix(s.id)));
+    session.subagents = session.subagents.filter((s) => !workflowIds.has(stripPrefix(s.id)));
     for (const sub of session.subagents) {
       const activity = update.subagentActivity[stripPrefix(sub.id)];
       if (!activity) continue;
@@ -549,7 +599,7 @@ class ClaudeSessionStore {
   }
 
   getAllSnapshots(): ClaudeSessionSnapshot[] {
-    return Array.from(this.sessions.values()).map(s => ({ ...s }));
+    return Array.from(this.sessions.values()).map((s) => ({ ...s }));
   }
 
   // ── Internals ──

@@ -38,21 +38,33 @@ const ChordHint: React.FC<ChordHintProps> = ({ path, prefix, shortcuts, showOpti
         WebkitBackdropFilter: 'blur(var(--wks-glass-blur)) saturate(170%)',
         border: '1px solid var(--wks-glass-border)',
         borderRadius: 'var(--wks-radius-md)',
-        boxShadow: '0 12px 36px var(--wks-glass-shadow), inset 0 0 0 1.5px var(--wks-glass-highlight)',
+        boxShadow:
+          '0 12px 36px var(--wks-glass-shadow), inset 0 0 0 1.5px var(--wks-glass-highlight)',
         padding: items.length ? '8px 10px' : '3px 9px',
         maxWidth: 'min(440px, 72vw)',
         fontFamily: 'monospace',
       }}
     >
       {/* Breadcrumb header: prefix chip › group › group … */}
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap',
-        color: 'var(--wks-accent)', fontWeight: 700, fontSize: '0.7rem',
-      }}>
-        <span style={{
-          padding: '1px 6px', borderRadius: '3px',
-          backgroundColor: 'var(--wks-accent)', color: 'var(--wks-text-on-accent, #fff)',
-        }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '5px',
+          flexWrap: 'wrap',
+          color: 'var(--wks-accent)',
+          fontWeight: 700,
+          fontSize: '0.7rem',
+        }}
+      >
+        <span
+          style={{
+            padding: '1px 6px',
+            borderRadius: '3px',
+            backgroundColor: 'var(--wks-accent)',
+            color: 'var(--wks-text-on-accent, #fff)',
+          }}
+        >
           {formatBinding(prefix)}
         </span>
         {crumbs.map((c, i) => (
@@ -65,28 +77,47 @@ const ChordHint: React.FC<ChordHintProps> = ({ path, prefix, shortcuts, showOpti
       </div>
 
       {items.length > 0 && (
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(2, minmax(150px, 1fr))',
-          gap: '1px 16px',
-          marginTop: '8px',
-        }}>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(2, minmax(150px, 1fr))',
+            gap: '1px 16px',
+            marginTop: '8px',
+          }}
+        >
           {items.map((it) => (
-            <div key={it.step} style={{ display: 'flex', alignItems: 'baseline', gap: '7px', padding: '1px 0' }}>
-              <kbd style={{
-                flexShrink: 0, minWidth: '14px', textAlign: 'center',
-                padding: '0 4px', borderRadius: '3px',
-                border: '1px solid var(--wks-border-input)', backgroundColor: 'var(--wks-bg-input)',
-                color: 'var(--wks-text-secondary)', fontSize: '0.62rem', fontWeight: 600,
-              }}>
+            <div
+              key={it.step}
+              style={{ display: 'flex', alignItems: 'baseline', gap: '7px', padding: '1px 0' }}
+            >
+              <kbd
+                style={{
+                  flexShrink: 0,
+                  minWidth: '14px',
+                  textAlign: 'center',
+                  padding: '0 4px',
+                  borderRadius: '3px',
+                  border: '1px solid var(--wks-border-input)',
+                  backgroundColor: 'var(--wks-bg-input)',
+                  color: 'var(--wks-text-secondary)',
+                  fontSize: '0.62rem',
+                  fontWeight: 600,
+                }}
+              >
                 {it.keyLabel}
               </kbd>
-              <span style={{
-                color: it.isGroup ? 'var(--wks-text-secondary)' : 'var(--wks-text-muted)',
-                fontWeight: it.isGroup ? 600 : 400,
-                fontSize: '0.65rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-              }}>
-                {it.label}{it.isGroup ? ' ▸' : ''}
+              <span
+                style={{
+                  color: it.isGroup ? 'var(--wks-text-secondary)' : 'var(--wks-text-muted)',
+                  fontWeight: it.isGroup ? 600 : 400,
+                  fontSize: '0.65rem',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}
+              >
+                {it.label}
+                {it.isGroup ? ' ▸' : ''}
               </span>
             </div>
           ))}
@@ -95,10 +126,17 @@ const ChordHint: React.FC<ChordHintProps> = ({ path, prefix, shortcuts, showOpti
 
       {/* Footer: navigation affordances once you've shown options. */}
       {items.length > 0 && (
-        <div style={{
-          marginTop: '7px', paddingTop: '6px', borderTop: '1px solid var(--wks-border)',
-          fontSize: '0.58rem', color: 'var(--wks-text-faint)', display: 'flex', gap: '12px',
-        }}>
+        <div
+          style={{
+            marginTop: '7px',
+            paddingTop: '6px',
+            borderTop: '1px solid var(--wks-border)',
+            fontSize: '0.58rem',
+            color: 'var(--wks-text-faint)',
+            display: 'flex',
+            gap: '12px',
+          }}
+        >
           {path.length > 0 && <span>⌫ back</span>}
           <span>Esc cancel</span>
         </div>

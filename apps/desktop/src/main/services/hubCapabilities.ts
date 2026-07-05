@@ -40,8 +40,14 @@ import { ensureSupervisorHome } from './supervisorSkill';
 function detectDefaultShell(): string {
   if (process.platform === 'win32') {
     const gitBash = 'C:\\Program Files\\Git\\bin\\bash.exe';
-    try { fs.accessSync(gitBash); return gitBash; } catch {}
-    try { require('child_process').execSync('where pwsh.exe', { stdio: 'ignore' }); return 'pwsh.exe'; } catch {}
+    try {
+      fs.accessSync(gitBash);
+      return gitBash;
+    } catch {}
+    try {
+      require('child_process').execSync('where pwsh.exe', { stdio: 'ignore' });
+      return 'pwsh.exe';
+    } catch {}
     return 'powershell.exe';
   }
   return process.env.SHELL || '/bin/sh';
@@ -105,7 +111,11 @@ function pathWithinRoots(roots: string[], target: string): boolean {
   }
   return roots.some((r) => {
     let cr: string;
-    try { cr = fs.realpathSync(r); } catch { cr = path.resolve(r); }
+    try {
+      cr = fs.realpathSync(r);
+    } catch {
+      cr = path.resolve(r);
+    }
     return ct === cr || ct.startsWith(cr + path.sep);
   });
 }
@@ -189,24 +199,39 @@ export function registerHubCapabilities(): void {
   // capabilities. The session runs headless in claudemon; a desktop pane can
   // attach to it later via the normal attach flow.
   registerCapability('agents.spawn', async (params: unknown) => {
-    const { provider, cwd, profileId, model, effort, permissionMode: reqMode, skipPermissions: reqSkip, resumeSessionId, cols, rows, supervisor, mcpFacade, label, parentSessionId, mcpItemIds } =
-      (params ?? {}) as {
-        provider?: AgentProvider;
-        cwd?: string;
-        profileId?: string;
-        model?: string;
-        effort?: string;
-        permissionMode?: string;
-        skipPermissions?: boolean;
-        resumeSessionId?: string;
-        cols?: number;
-        rows?: number;
-        supervisor?: boolean;
-        mcpFacade?: boolean;
-        label?: string;
-        parentSessionId?: string;
-        mcpItemIds?: string[];
-      };
+    const {
+      provider,
+      cwd,
+      profileId,
+      model,
+      effort,
+      permissionMode: reqMode,
+      skipPermissions: reqSkip,
+      resumeSessionId,
+      cols,
+      rows,
+      supervisor,
+      mcpFacade,
+      label,
+      parentSessionId,
+      mcpItemIds,
+    } = (params ?? {}) as {
+      provider?: AgentProvider;
+      cwd?: string;
+      profileId?: string;
+      model?: string;
+      effort?: string;
+      permissionMode?: string;
+      skipPermissions?: boolean;
+      resumeSessionId?: string;
+      cols?: number;
+      rows?: number;
+      supervisor?: boolean;
+      mcpFacade?: boolean;
+      label?: string;
+      parentSessionId?: string;
+      mcpItemIds?: string[];
+    };
     // SECURITY: this capability is the REMOTE/web/MCP spawn path (the local
     // desktop spawns over IPC). Driving an agent is already code execution on
     // the host, but we refuse to let a remote caller silently auto-bypass every
@@ -214,10 +239,13 @@ export function registerHubCapabilities(): void {
     // still surface and can be answered remotely; a YOLO agent must be started
     // locally. So `skipPermissions` is forced off here.
     if (reqSkip || reqMode === 'bypassPermissions' || reqMode === 'yolo') {
-      console.warn('[hub] agents.spawn: ignoring permission bypass from a bus client — remote spawns never auto-bypass approvals.');
+      console.warn(
+        '[hub] agents.spawn: ignoring permission bypass from a bus client — remote spawns never auto-bypass approvals.',
+      );
     }
     const skipPermissions = false;
-    const permissionMode = reqMode === 'bypassPermissions' || reqMode === 'yolo' ? undefined : reqMode;
+    const permissionMode =
+      reqMode === 'bypassPermissions' || reqMode === 'yolo' ? undefined : reqMode;
     // Managed (Tier-2) backend — Codex / OpenCode / Pi run through claudemon's
     // adapter, not a Claude PTY. Shares the dispatch with the `claude:spawn` IPC
     // handler so this path can't silently fall back to spawning Claude (it did
@@ -225,13 +253,35 @@ export function registerHubCapabilities(): void {
     // from the web/remote client came up as Claude).
     if (provider && provider !== 'claude') {
       const sessionId = await spawnManagedAgent({
-        provider, cwd, model, effort, skipPermissions, resumeSessionId, supervisor, mcpFacade, label, parentSessionId, cols, rows,
+        provider,
+        cwd,
+        model,
+        effort,
+        skipPermissions,
+        resumeSessionId,
+        supervisor,
+        mcpFacade,
+        label,
+        parentSessionId,
+        cols,
+        rows,
       });
       return { sessionId };
     }
     const sessionId = await spawnClaudeAgent({
-      cwd, profileId, model, permissionMode, skipPermissions, resumeSessionId,
-      supervisor, mcpFacade, label, parentSessionId, cols, rows, mcpItemIds,
+      cwd,
+      profileId,
+      model,
+      permissionMode,
+      skipPermissions,
+      resumeSessionId,
+      supervisor,
+      mcpFacade,
+      label,
+      parentSessionId,
+      cols,
+      rows,
+      mcpItemIds,
     });
     return { sessionId };
   });
@@ -260,7 +310,11 @@ export function registerHubCapabilities(): void {
   // Surface an OS notification.
   registerCapability('notifications.post', (params: unknown) => {
     const { title, body } = (params ?? {}) as { title?: string; body?: string };
-    new Notification({ title: title || 'workspacer', body: body || '', icon: appIconPath() ?? undefined }).show();
+    new Notification({
+      title: title || 'workspacer',
+      body: body || '',
+      icon: appIconPath() ?? undefined,
+    }).show();
     return { ok: true };
   });
 
@@ -297,7 +351,11 @@ export function registerHubCapabilities(): void {
   // Remote counterpart of the `claude:setModel` IPC handler; confirmation
   // flows back through the status line, so no store note is needed.
   registerCapability('claude.setModel', async (params: unknown) => {
-    const { sessionId, model, effort } = (params ?? {}) as { sessionId?: string; model?: string; effort?: string };
+    const { sessionId, model, effort } = (params ?? {}) as {
+      sessionId?: string;
+      model?: string;
+      effort?: string;
+    };
     if (!sessionId || (!model && !effort)) {
       throw new Error('claude.setModel requires { sessionId, model and/or effort }');
     }
@@ -371,7 +429,10 @@ export function registerHubCapabilities(): void {
   registerCapability('sessions.conversation', async (params: unknown) => {
     const { sessionId, sinceSeq } = (params ?? {}) as { sessionId?: string; sinceSeq?: number };
     if (!sessionId) throw new Error('sessions.conversation requires { sessionId }');
-    return claudemonSessionClient.getConversation(sessionId, typeof sinceSeq === 'number' ? sinceSeq : undefined);
+    return claudemonSessionClient.getConversation(
+      sessionId,
+      typeof sinceSeq === 'number' ? sinceSeq : undefined,
+    );
   });
 
   // Live terminal mirror: a remote opening the terminal view attaches here,
@@ -414,7 +475,11 @@ export function registerHubCapabilities(): void {
   // matches the phone's screen instead of the desktop pane. The PTY is shared,
   // so this reflows the desktop too — intentional: the active driver sets size.
   registerCapability('sessions.terminalResize', async (params: unknown) => {
-    const { sessionId, cols, rows } = (params ?? {}) as { sessionId?: string; cols?: number; rows?: number };
+    const { sessionId, cols, rows } = (params ?? {}) as {
+      sessionId?: string;
+      cols?: number;
+      rows?: number;
+    };
     if (!sessionId || !cols || !rows) {
       throw new Error('sessions.terminalResize requires { sessionId, cols, rows }');
     }
@@ -443,7 +508,8 @@ export function registerHubCapabilities(): void {
   cat('config.reload', () => configService.reloadConfig());
   cat('config.getPath', () => configService.getConfigPath());
   cat('config.save', (params: unknown) =>
-    configService.saveConfig((params ?? {}) as Parameters<typeof configService.saveConfig>[0]));
+    configService.saveConfig((params ?? {}) as Parameters<typeof configService.saveConfig>[0]),
+  );
 
   // ── Model picker (web parity) ──────────────────────────────────────────
   cat('claude.listModels', () => listClaudeModels());
@@ -456,12 +522,19 @@ export function registerHubCapabilities(): void {
   // (listModels queries the provider's own CLI via claudemon; checkAll only
   // stats binaries on PATH), so they carry none of agents.spawn's bypass risk.
   registerCapability('providers.listModels', (params: unknown) => {
-    const { provider, cwd } = (params ?? {}) as { provider?: 'codex' | 'opencode' | 'pi'; cwd?: string };
+    const { provider, cwd } = (params ?? {}) as {
+      provider?: 'codex' | 'opencode' | 'pi';
+      cwd?: string;
+    };
     if (provider !== 'codex' && provider !== 'opencode' && provider !== 'pi') {
       throw new Error("providers.listModels requires { provider: 'codex'|'opencode'|'pi' }");
     }
     const customBin = configService.getConfig().agents?.binaries?.[provider] ?? '';
-    return claudemonSessionClient.listProviderModels(provider, cwd, resolveAgentBinary(provider, customBin));
+    return claudemonSessionClient.listProviderModels(
+      provider,
+      cwd,
+      resolveAgentBinary(provider, customBin),
+    );
   });
   registerCapability('providers.checkAll', () => {
     const binaries = configService.getConfig().agents?.binaries ?? {};
@@ -519,7 +592,12 @@ export function registerHubCapabilities(): void {
   // ── Claude profiles ────────────────────────────────────────────────────
   cat('claude.profiles.list', () => claudeProfiles.getProfiles());
   cat('claude.profiles.add', (params: unknown) => {
-    const { name, configDir, extraArgs, mcpItemIds } = (params ?? {}) as { name?: string; configDir?: string; extraArgs?: string[]; mcpItemIds?: string[] };
+    const { name, configDir, extraArgs, mcpItemIds } = (params ?? {}) as {
+      name?: string;
+      configDir?: string;
+      extraArgs?: string[];
+      mcpItemIds?: string[];
+    };
     if (!name) throw new Error('claude.profiles.add requires { name }');
     // Forward mcpItemIds — the web/remote client sends the user's selected MCP
     // servers here (matching the desktop IPC path); dropping it silently lost
@@ -553,7 +631,10 @@ export function registerHubCapabilities(): void {
   cat('library.save', (params: unknown) => libraryService.save((params ?? {}) as any));
   cat('library.remove', (params: unknown) => {
     const { scope, id, cwd, kind } = (params ?? {}) as {
-      scope?: 'global' | 'project' | 'claude'; id?: string; cwd?: string; kind?: 'prompt' | 'skill' | 'agent';
+      scope?: 'global' | 'project' | 'claude';
+      id?: string;
+      cwd?: string;
+      kind?: 'prompt' | 'skill' | 'agent';
     };
     if (!scope || !id) throw new Error('library.remove requires { scope, id }');
     libraryService.remove(scope, id, cwd, kind);
@@ -592,7 +673,8 @@ export function registerHubCapabilities(): void {
     assertPathAllowed('fs.listDir', resolved, browseRoots());
     let dirs: string[] = [];
     try {
-      dirs = fs.readdirSync(resolved, { withFileTypes: true })
+      dirs = fs
+        .readdirSync(resolved, { withFileTypes: true })
         .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
         .map((e) => e.name)
         .sort((a, b) => a.localeCompare(b));
@@ -680,7 +762,10 @@ export function registerHubCapabilities(): void {
   });
   registerCapability('git.diff', (params: unknown) => {
     const { cwd, path, staged, untracked } = (params ?? {}) as {
-      cwd?: string; path?: string; staged?: boolean; untracked?: boolean;
+      cwd?: string;
+      path?: string;
+      staged?: boolean;
+      untracked?: boolean;
     };
     if (!cwd) throw new Error('git.diff requires { cwd }');
     guardGitCwd('git.diff', cwd);
@@ -706,7 +791,8 @@ export function registerHubCapabilities(): void {
   });
   registerCapability('git.commit', (params: unknown) => {
     const { cwd, message } = (params ?? {}) as { cwd?: string; message?: string };
-    if (!cwd || typeof message !== 'string') throw new Error('git.commit requires { cwd, message }');
+    if (!cwd || typeof message !== 'string')
+      throw new Error('git.commit requires { cwd, message }');
     guardGitCwd('git.commit', cwd);
     return git.commit(cwd, message).then((output) => ({ ok: true, output }));
   });

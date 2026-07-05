@@ -28,7 +28,12 @@ const NotesPane: React.FC<NotesPaneProps> = ({ notes, onNotesChange }) => {
     const saved = localStorage.getItem(VIEW_KEY);
     return saved === 'write' || saved === 'preview' ? saved : 'split';
   });
-  const setView = (v: View) => { setViewState(v); try { localStorage.setItem(VIEW_KEY, v); } catch {} };
+  const setView = (v: View) => {
+    setViewState(v);
+    try {
+      localStorage.setItem(VIEW_KEY, v);
+    } catch {}
+  };
 
   // Persist (debounced) without re-rendering on every keystroke from the parent.
   const onChangeRef = useRef(onNotesChange);
@@ -44,12 +49,15 @@ const NotesPane: React.FC<NotesPaneProps> = ({ notes, onNotesChange }) => {
   };
 
   // Flush any pending edit on unmount (agent switch / close) so nothing is lost.
-  useEffect(() => () => {
-    if (timer.current) {
-      clearTimeout(timer.current);
-      onChangeRef.current?.(latest.current);
-    }
-  }, []);
+  useEffect(
+    () => () => {
+      if (timer.current) {
+        clearTimeout(timer.current);
+        onChangeRef.current?.(latest.current);
+      }
+    },
+    [],
+  );
 
   const preview = useMemo(() => parseMarkdownBlocks(text), [text]);
 
@@ -61,29 +69,47 @@ const NotesPane: React.FC<NotesPaneProps> = ({ notes, onNotesChange }) => {
     const start = ta.selectionStart;
     const end = ta.selectionEnd;
     update(text.slice(0, start) + '  ' + text.slice(end));
-    requestAnimationFrame(() => { ta.selectionStart = ta.selectionEnd = start + 2; });
+    requestAnimationFrame(() => {
+      ta.selectionStart = ta.selectionEnd = start + 2;
+    });
   };
 
   const showWrite = view !== 'preview';
   const showPreview = view !== 'write';
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--wks-bg-base)' }}>
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+        background: 'var(--wks-bg-base)',
+      }}
+    >
       {/* Toolbar */}
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 2,
-        padding: '4px 6px', flex: '0 0 auto',
-        background: 'var(--wks-bg-raised)',
-        borderBottom: '1px solid var(--wks-border-subtle)',
-      }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 2,
+          padding: '4px 6px',
+          flex: '0 0 auto',
+          background: 'var(--wks-bg-raised)',
+          borderBottom: '1px solid var(--wks-border-subtle)',
+        }}
+      >
         {(['write', 'split', 'preview'] as const).map((v) => (
           <button
             key={v}
             type="button"
             onClick={() => setView(v)}
             style={{
-              fontSize: '0.62rem', fontFamily: 'inherit', cursor: 'pointer',
-              padding: '2px 8px', borderRadius: 4, textTransform: 'capitalize',
+              fontSize: '0.62rem',
+              fontFamily: 'inherit',
+              cursor: 'pointer',
+              padding: '2px 8px',
+              borderRadius: 4,
+              textTransform: 'capitalize',
               border: '1px solid ' + (view === v ? 'var(--wks-accent)' : 'transparent'),
               background: view === v ? 'var(--wks-accent-bg)' : 'transparent',
               color: view === v ? 'var(--wks-accent-text)' : 'var(--wks-text-muted)',
@@ -93,8 +119,10 @@ const NotesPane: React.FC<NotesPaneProps> = ({ notes, onNotesChange }) => {
           </button>
         ))}
         <div style={{ flex: 1 }} />
-        <span style={{ fontSize: '0.58rem', color: 'var(--wks-text-disabled)', userSelect: 'none' }}>
-          **bold**  *italic*  `code`  # heading  - list
+        <span
+          style={{ fontSize: '0.58rem', color: 'var(--wks-text-disabled)', userSelect: 'none' }}
+        >
+          **bold** *italic* `code` # heading - list
         </span>
       </div>
 
@@ -108,26 +136,42 @@ const NotesPane: React.FC<NotesPaneProps> = ({ notes, onNotesChange }) => {
             spellCheck={false}
             placeholder="Jot notes for this agent… (markdown, saved with the session)"
             style={{
-              flex: 1, minWidth: 0, border: 'none', outline: 'none', resize: 'none',
-              padding: '10px 12px', boxSizing: 'border-box',
-              background: 'var(--wks-bg-input)', color: 'var(--wks-text-primary)',
+              flex: 1,
+              minWidth: 0,
+              border: 'none',
+              outline: 'none',
+              resize: 'none',
+              padding: '10px 12px',
+              boxSizing: 'border-box',
+              background: 'var(--wks-bg-input)',
+              color: 'var(--wks-text-primary)',
               fontFamily: 'var(--wks-mono, ui-monospace, monospace)',
-              fontSize: '0.74rem', lineHeight: 1.6,
+              fontSize: '0.74rem',
+              lineHeight: 1.6,
             }}
           />
         )}
         {showPreview && (
-          <div style={{
-            flex: 1, minWidth: 0, overflowY: 'auto',
-            padding: '6px 14px', boxSizing: 'border-box',
-            borderLeft: showWrite ? '1px solid var(--wks-border-subtle)' : 'none',
-            background: 'var(--wks-bg-base)',
-            color: 'var(--wks-text-secondary)',
-            fontSize: '0.78rem',
-          }}>
-            {text.trim()
-              ? preview
-              : <div style={{ color: 'var(--wks-text-disabled)', fontStyle: 'italic', marginTop: 6 }}>Nothing to preview yet.</div>}
+          <div
+            style={{
+              flex: 1,
+              minWidth: 0,
+              overflowY: 'auto',
+              padding: '6px 14px',
+              boxSizing: 'border-box',
+              borderLeft: showWrite ? '1px solid var(--wks-border-subtle)' : 'none',
+              background: 'var(--wks-bg-base)',
+              color: 'var(--wks-text-secondary)',
+              fontSize: '0.78rem',
+            }}
+          >
+            {text.trim() ? (
+              preview
+            ) : (
+              <div style={{ color: 'var(--wks-text-disabled)', fontStyle: 'italic', marginTop: 6 }}>
+                Nothing to preview yet.
+              </div>
+            )}
           </div>
         )}
       </div>

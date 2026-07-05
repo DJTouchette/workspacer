@@ -21,7 +21,9 @@ beforeEach(() => {
   fs.writeFileSync(path.join(dir, 'é.log'), '');
   fs.writeFileSync(path.join(dir, 'keep.txt'), '');
 });
-afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => {
+  fs.rmSync(dir, { recursive: true, force: true });
+});
 
 describe('listDir — gitignore filtering', () => {
   it('hides gitignored files with non-ASCII names', () => {

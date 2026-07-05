@@ -15,7 +15,14 @@ const mkAgent = (id: string, sessionId: string) =>
     name: id,
     cwd: '/x',
     sessionId,
-    tabs: [{ id: `${id}-t`, title: id, panes: [{ id: `${id}-p`, type: 'claude', title: 'C' }], activePaneId: `${id}-p` }],
+    tabs: [
+      {
+        id: `${id}-t`,
+        title: id,
+        panes: [{ id: `${id}-p`, type: 'claude', title: 'C' }],
+        activePaneId: `${id}-p`,
+      },
+    ],
     activeTabId: `${id}-t`,
   }) as any;
 
@@ -25,9 +32,14 @@ describe('useAgentManager.loadAgentsFromSession — active id survives dedupe', 
     act(() => {
       // Two cards share session S1; dedupe keeps 'agent-aaa' (smaller id) and
       // drops 'agent-zzz'. The raw first card is 'agent-zzz'.
-      result.current.loadAgentsFromSession([mkAgent('agent-zzz', 'S1'), mkAgent('agent-aaa', 'S1')], '');
+      result.current.loadAgentsFromSession(
+        [mkAgent('agent-zzz', 'S1'), mkAgent('agent-aaa', 'S1')],
+        '',
+      );
     });
-    expect(result.current.agents.some((a: any) => a.id === result.current.activeAgentId)).toBe(true);
+    expect(result.current.agents.some((a: any) => a.id === result.current.activeAgentId)).toBe(
+      true,
+    );
     expect(result.current.activeAgent).toBeTruthy();
     expect(result.current.tabs.length).toBeGreaterThan(0);
   });
@@ -35,7 +47,10 @@ describe('useAgentManager.loadAgentsFromSession — active id survives dedupe', 
   it('maps an activeId pointing at a dropped card to the surviving same-session card', () => {
     const { result } = renderHook(() => useAgentManager());
     act(() => {
-      result.current.loadAgentsFromSession([mkAgent('agent-zzz', 'S1'), mkAgent('agent-aaa', 'S1')], 'agent-zzz');
+      result.current.loadAgentsFromSession(
+        [mkAgent('agent-zzz', 'S1'), mkAgent('agent-aaa', 'S1')],
+        'agent-zzz',
+      );
     });
     expect(result.current.activeAgentId).toBe('agent-aaa');
     expect(result.current.activeAgent).toBeTruthy();
@@ -44,7 +59,10 @@ describe('useAgentManager.loadAgentsFromSession — active id survives dedupe', 
   it('still honors an activeId that survives dedupe', () => {
     const { result } = renderHook(() => useAgentManager());
     act(() => {
-      result.current.loadAgentsFromSession([mkAgent('agent-aaa', 'S1'), mkAgent('agent-bbb', 'S2')], 'agent-bbb');
+      result.current.loadAgentsFromSession(
+        [mkAgent('agent-aaa', 'S1'), mkAgent('agent-bbb', 'S2')],
+        'agent-bbb',
+      );
     });
     expect(result.current.activeAgentId).toBe('agent-bbb');
   });

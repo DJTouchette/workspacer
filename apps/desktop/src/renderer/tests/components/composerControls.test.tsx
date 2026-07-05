@@ -35,11 +35,13 @@ function snapshot(overrides: Partial<ClaudeSessionSnapshot> = {}): ClaudeSession
   } as ClaudeSessionSnapshot;
 }
 
-function renderControls(props: {
-  provider?: AgentProvider;
-  sessionId?: string | null;
-  snapshot?: ClaudeSessionSnapshot | null;
-} = {}) {
+function renderControls(
+  props: {
+    provider?: AgentProvider;
+    sessionId?: string | null;
+    snapshot?: ClaudeSessionSnapshot | null;
+  } = {},
+) {
   const onRestartWith = vi.fn();
   render(
     <ComposerControls
@@ -106,11 +108,25 @@ describe('ComposerControls — pill labels reflect session state', () => {
 
   it('renders an effort pill for codex and none for claude', () => {
     const { unmount } = render(
-      <ComposerControls provider="codex" sessionId="s" snapshot={snapshot({ settings: { effort: 'high' } })} cwd="/r" onRestartWith={vi.fn()} />,
+      <ComposerControls
+        provider="codex"
+        sessionId="s"
+        snapshot={snapshot({ settings: { effort: 'high' } })}
+        cwd="/r"
+        onRestartWith={vi.fn()}
+      />,
     );
     expect(screen.getByText('High')).toBeInTheDocument();
     unmount();
-    render(<ComposerControls provider="claude" sessionId="s" snapshot={snapshot()} cwd="/r" onRestartWith={vi.fn()} />);
+    render(
+      <ComposerControls
+        provider="claude"
+        sessionId="s"
+        snapshot={snapshot()}
+        cwd="/r"
+        onRestartWith={vi.fn()}
+      />,
+    );
     // Claude has no effort knob, so no effort levels are shown.
     expect(screen.queryByText('High')).not.toBeInTheDocument();
   });
@@ -137,7 +153,10 @@ describe('ComposerControls — claude live switches', () => {
   });
 
   it('switching a claude permission mode calls claudeSetPermissionMode with the mode id', async () => {
-    renderControls({ provider: 'claude', snapshot: snapshot({ settings: { permissionMode: 'default' } }) });
+    renderControls({
+      provider: 'claude',
+      snapshot: snapshot({ settings: { permissionMode: 'default' } }),
+    });
     fireEvent.click(screen.getByText('Ask to approve'));
     const plan = await screen.findByText('Plan mode');
     fireEvent.click(plan);
@@ -147,7 +166,10 @@ describe('ComposerControls — claude live switches', () => {
 
 describe('ComposerControls — managed provider (codex)', () => {
   it('switching a codex model goes through the managed setModel endpoint', async () => {
-    renderControls({ provider: 'codex', snapshot: snapshot({ settings: { model: 'gpt-5-codex' } }) });
+    renderControls({
+      provider: 'codex',
+      snapshot: snapshot({ settings: { model: 'gpt-5-codex' } }),
+    });
     fireEvent.click(screen.getByText('gpt-5-codex'));
     const o3 = await screen.findByText('o3');
     fireEvent.click(o3);
@@ -156,7 +178,10 @@ describe('ComposerControls — managed provider (codex)', () => {
   });
 
   it('picking a restart-only effort level opens a confirm and calls onRestartWith', async () => {
-    const { onRestartWith } = renderControls({ provider: 'codex', snapshot: snapshot({ settings: { effort: 'low' } }) });
+    const { onRestartWith } = renderControls({
+      provider: 'codex',
+      snapshot: snapshot({ settings: { effort: 'low' } }),
+    });
     // The effort pill shows the current level.
     fireEvent.click(screen.getByText('Low'));
     fireEvent.click(await screen.findByText('High'));
@@ -167,8 +192,13 @@ describe('ComposerControls — managed provider (codex)', () => {
   });
 
   it('a failed live model switch falls back to the restart confirm carrying the daemon reason', async () => {
-    api.claudeSetModel = vi.fn().mockResolvedValue({ ok: false, error: 'rollout fallback can’t switch live' });
-    const { onRestartWith } = renderControls({ provider: 'codex', snapshot: snapshot({ settings: { model: 'gpt-5-codex' } }) });
+    api.claudeSetModel = vi
+      .fn()
+      .mockResolvedValue({ ok: false, error: 'rollout fallback can’t switch live' });
+    const { onRestartWith } = renderControls({
+      provider: 'codex',
+      snapshot: snapshot({ settings: { model: 'gpt-5-codex' } }),
+    });
     fireEvent.click(screen.getByText('gpt-5-codex'));
     fireEvent.click(await screen.findByText('o3'));
     // The daemon's reason shows in the fallback confirm.

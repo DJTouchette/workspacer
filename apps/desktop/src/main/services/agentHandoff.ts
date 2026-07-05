@@ -49,7 +49,10 @@ function briefInstruction(briefPath: string): string {
 async function fallbackMechanical(sessionId: string, reason: string): Promise<HandoffBriefResult> {
   const det = await claudemonSessionClient.handoffBrief(sessionId);
   if (det.ok && det.path) return { ok: true, path: det.path, fallback: true, error: reason };
-  return { ok: false, error: `${reason}; mechanical fallback also failed: ${det.error ?? 'unknown'}` };
+  return {
+    ok: false,
+    error: `${reason}; mechanical fallback also failed: ${det.error ?? 'unknown'}`,
+  };
 }
 
 /**
@@ -66,10 +69,16 @@ export async function agentHandoffBrief(sessionId: string): Promise<HandoffBrief
   try {
     const sent = await claudemonSessionClient.message(sessionId, briefInstruction(briefPath));
     if (!sent.ok) {
-      return fallbackMechanical(sessionId, `session can't take a message right now (mode: ${sent.mode ?? 'unknown'})`);
+      return fallbackMechanical(
+        sessionId,
+        `session can't take a message right now (mode: ${sent.mode ?? 'unknown'})`,
+      );
     }
   } catch (err) {
-    return fallbackMechanical(sessionId, `could not reach the source session (${err instanceof Error ? err.message : String(err)})`);
+    return fallbackMechanical(
+      sessionId,
+      `could not reach the source session (${err instanceof Error ? err.message : String(err)})`,
+    );
   }
 
   const deadline = Date.now() + AGENT_BRIEF_TIMEOUT_MS;

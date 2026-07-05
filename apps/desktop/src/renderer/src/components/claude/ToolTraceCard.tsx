@@ -49,18 +49,26 @@ function callTarget(tc: ToolCall): string {
   const base = (p: unknown) =>
     typeof p === 'string' ? (p.replace(/\\/g, '/').split('/').pop() ?? p) : '';
   switch (tc.name) {
-    case 'Read': case 'Edit': case 'MultiEdit': case 'Write':
-    case 'NotebookRead': case 'NotebookEdit':
+    case 'Read':
+    case 'Edit':
+    case 'MultiEdit':
+    case 'Write':
+    case 'NotebookRead':
+    case 'NotebookEdit':
       return base(i.file_path ?? i.notebook_path);
-    case 'Bash': case 'PowerShell':
+    case 'Bash':
+    case 'PowerShell':
       return typeof i.command === 'string' ? i.command : '';
-    case 'Grep': case 'Glob':
+    case 'Grep':
+    case 'Glob':
       return typeof i.pattern === 'string' ? i.pattern : '';
-    case 'Agent': case 'Task':
+    case 'Agent':
+    case 'Task':
       return typeof i.description === 'string' ? i.description : '';
     case 'Workflow':
       return typeof i.name === 'string' ? i.name : 'workflow';
-    case 'WebFetch': case 'WebSearch':
+    case 'WebFetch':
+    case 'WebSearch':
       return typeof (i.url ?? i.query) === 'string' ? (i.url ?? i.query) : '';
     default: {
       const first = Object.values(i).find((v) => typeof v === 'string') as string | undefined;
@@ -136,87 +144,108 @@ const TraceRow: React.FC<{
           borderRadius: 5,
           background: open ? 'rgba(255,255,255,0.04)' : 'transparent',
         }}
-        onMouseEnter={(e) => { if (!open) (e.currentTarget as HTMLDivElement).style.background = 'rgba(255,255,255,0.03)'; }}
-        onMouseLeave={(e) => { if (!open) (e.currentTarget as HTMLDivElement).style.background = 'transparent'; }}
+        onMouseEnter={(e) => {
+          if (!open)
+            (e.currentTarget as HTMLDivElement).style.background = 'rgba(255,255,255,0.03)';
+        }}
+        onMouseLeave={(e) => {
+          if (!open) (e.currentTarget as HTMLDivElement).style.background = 'transparent';
+        }}
       >
         {/* Tool chip */}
-        <span style={{
-          flexShrink: 0,
-          width: 64,
-          fontSize: '0.62rem',
-          fontWeight: 600,
-          fontFamily: 'var(--claude-mono-font, monospace)',
-          color,
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-        }}>
+        <span
+          style={{
+            flexShrink: 0,
+            width: 64,
+            fontSize: '0.62rem',
+            fontWeight: 600,
+            fontFamily: 'var(--claude-mono-font, monospace)',
+            color,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
           {tc.name}
         </span>
         {/* Target */}
-        <span style={{
-          flexShrink: 1,
-          minWidth: 60,
-          maxWidth: '34%',
-          fontSize: '0.66rem',
-          fontFamily: 'var(--claude-mono-font, monospace)',
-          color: colors.text,
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-        }}>
+        <span
+          style={{
+            flexShrink: 1,
+            minWidth: 60,
+            maxWidth: '34%',
+            fontSize: '0.66rem',
+            fontFamily: 'var(--claude-mono-font, monospace)',
+            color: colors.text,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
           {target}
         </span>
         {/* Waterfall lane */}
-        <span style={{
-          flex: 1,
-          minWidth: 40,
-          height: 8,
-          position: 'relative',
-          borderRadius: 4,
-          background: 'rgba(255,255,255,0.045)',
-          overflow: 'hidden',
-        }}>
-          <span style={{
-            position: 'absolute',
-            top: 0,
-            bottom: 0,
-            left: `${leftPct}%`,
-            width: `${widthPct}%`,
+        <span
+          style={{
+            flex: 1,
+            minWidth: 40,
+            height: 8,
+            position: 'relative',
             borderRadius: 4,
-            background: color,
-            opacity: running ? 0.9 : 0.65,
-            animation: running ? 'wks-pulse 1.4s ease-in-out infinite' : undefined,
-          }} />
+            background: 'rgba(255,255,255,0.045)',
+            overflow: 'hidden',
+          }}
+        >
+          <span
+            style={{
+              position: 'absolute',
+              top: 0,
+              bottom: 0,
+              left: `${leftPct}%`,
+              width: `${widthPct}%`,
+              borderRadius: 4,
+              background: color,
+              opacity: running ? 0.9 : 0.65,
+              animation: running ? 'wks-pulse 1.4s ease-in-out infinite' : undefined,
+            }}
+          />
         </span>
         {/* Duration */}
-        <span style={{
-          flexShrink: 0,
-          width: 42,
-          textAlign: 'right',
-          fontSize: '0.62rem',
-          fontVariantNumeric: 'tabular-nums',
-          fontFamily: 'var(--claude-mono-font, monospace)',
-          color: colors.muted,
-        }}>
+        <span
+          style={{
+            flexShrink: 0,
+            width: 42,
+            textAlign: 'right',
+            fontSize: '0.62rem',
+            fontVariantNumeric: 'tabular-nums',
+            fontFamily: 'var(--claude-mono-font, monospace)',
+            color: colors.muted,
+          }}
+        >
           {fmtDuration(dur)}
         </span>
         {/* Status */}
         <span style={{ flexShrink: 0, width: 14, textAlign: 'center', fontSize: '0.68rem' }}>
-          {running
-            ? <AgentSpinner />
-            : <span style={{ color: failed ? colors.error : colors.success }}>{failed ? '✗' : '✓'}</span>}
+          {running ? (
+            <AgentSpinner />
+          ) : (
+            <span style={{ color: failed ? colors.error : colors.success }}>
+              {failed ? '✗' : '✓'}
+            </span>
+          )}
         </span>
       </div>
 
       {open && (
-        <div style={{
-          margin: '0 8px 6px 8px',
-          padding: '4px 8px 8px 8px',
-          borderLeft: `2px solid ${color}`,
-          background: 'rgba(255,255,255,0.02)',
-          borderRadius: '0 6px 6px 0',
-        }}>
+        <div
+          style={{
+            margin: '0 8px 6px 8px',
+            padding: '4px 8px 8px 8px',
+            borderLeft: `2px solid ${color}`,
+            background: 'rgba(255,255,255,0.02)',
+            borderRadius: '0 6px 6px 0',
+          }}
+        >
           <WorkLogEntry tc={tc} />
           {hasDiff(tc) && (
             <DiffView
@@ -233,9 +262,7 @@ const TraceRow: React.FC<{
               {tc.input != null && Object.keys(tc.input ?? {}).length > 0 && (
                 <pre style={detailPre}>{excerptJson(tc.input)}</pre>
               )}
-              {tc.response != null && (
-                <pre style={detailPre}>{excerptJson(tc.response)}</pre>
-              )}
+              {tc.response != null && <pre style={detailPre}>{excerptJson(tc.response)}</pre>}
             </>
           )}
         </div>
@@ -253,7 +280,7 @@ const ToolTraceCardInner: React.FC<{
   cwd?: string;
 }> = ({ toolCalls, subagentByToolId, workflowByToolId, live, isLast }) => {
   const hasOrchestration = useMemo(
-    () => toolCalls.some(tc => workflowByToolId?.has(tc.id) || subagentByToolId?.has(tc.id)),
+    () => toolCalls.some((tc) => workflowByToolId?.has(tc.id) || subagentByToolId?.has(tc.id)),
     [toolCalls, workflowByToolId, subagentByToolId],
   );
   // Same open/collapse lifecycle as WorkCard: open while live/last, collapse
@@ -264,13 +291,17 @@ const ToolTraceCardInner: React.FC<{
   const [openRows, setOpenRows] = useState<Set<string>>(() => new Set());
   const wasActive = useRef(active);
   useEffect(() => {
-    if (wasActive.current && !active) { setExpanded(false); setOpenRows(new Set()); }
-    else if (!wasActive.current && active) { setExpanded(true); }
+    if (wasActive.current && !active) {
+      setExpanded(false);
+      setOpenRows(new Set());
+    } else if (!wasActive.current && active) {
+      setExpanded(true);
+    }
     wasActive.current = active;
   }, [active]);
 
   const summary = useMemo(() => summarizeWork(toolCalls), [toolCalls]);
-  const anyRunning = !!live || toolCalls.some(tc => tc.status === 'running');
+  const anyRunning = !!live || toolCalls.some((tc) => tc.status === 'running');
   const now = useNowTicker(anyRunning && expanded);
 
   // Shared time axis across the run.
@@ -285,9 +316,10 @@ const ToolTraceCardInner: React.FC<{
   const span = Math.max(1, t1 - t0);
 
   const toggleRow = (id: string) =>
-    setOpenRows(prev => {
+    setOpenRows((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
 
@@ -305,16 +337,18 @@ const ToolTraceCardInner: React.FC<{
   }, [expanded, toolCalls, subagentByToolId, workflowByToolId]);
 
   return (
-    <div style={{
-      margin: '4px 0 10px 0',
-      borderRadius: 8,
-      border: `1px solid ${colors.borderSubtle}`,
-      backgroundColor: 'rgba(255,255,255,0.015)',
-      overflow: 'hidden',
-      animation: 'claudeFadeIn 0.2s ease-out',
-    }}>
+    <div
+      style={{
+        margin: '4px 0 10px 0',
+        borderRadius: 8,
+        border: `1px solid ${colors.borderSubtle}`,
+        backgroundColor: 'rgba(255,255,255,0.015)',
+        overflow: 'hidden',
+        animation: 'claudeFadeIn 0.2s ease-out',
+      }}
+    >
       <div
-        onClick={() => setExpanded(e => !e)}
+        onClick={() => setExpanded((e) => !e)}
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -326,11 +360,18 @@ const ToolTraceCardInner: React.FC<{
           color: colors.muted,
         }}
       >
-        {anyRunning ? <AgentSpinner /> : (
-          <span style={{
-            color: summary.failed > 0 ? colors.error : colors.success,
-            fontSize: '0.7rem', width: 12, textAlign: 'center', flexShrink: 0,
-          }}>
+        {anyRunning ? (
+          <AgentSpinner />
+        ) : (
+          <span
+            style={{
+              color: summary.failed > 0 ? colors.error : colors.success,
+              fontSize: '0.7rem',
+              width: 12,
+              textAlign: 'center',
+              flexShrink: 0,
+            }}
+          >
             {summary.failed > 0 ? '✗' : '✓'}
           </span>
         )}
@@ -341,34 +382,57 @@ const ToolTraceCardInner: React.FC<{
           {fmtDuration(span)}
         </span>
         {summary.text && (
-          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
+          <span
+            style={{
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              minWidth: 0,
+            }}
+          >
             {summary.text}
           </span>
         )}
         <div style={{ flex: 1 }} />
         {(summary.added > 0 || summary.removed > 0) && (
-          <span style={{ fontFamily: 'var(--claude-mono-font, monospace)', fontSize: '0.62rem', flexShrink: 0 }}>
+          <span
+            style={{
+              fontFamily: 'var(--claude-mono-font, monospace)',
+              fontSize: '0.62rem',
+              flexShrink: 0,
+            }}
+          >
             {summary.added > 0 && <span style={{ color: colors.success }}>+{summary.added}</span>}
             {summary.added > 0 && summary.removed > 0 && ' '}
             {summary.removed > 0 && <span style={{ color: colors.error }}>−{summary.removed}</span>}
           </span>
         )}
-        <span style={{ color: colors.mutedDim, fontSize: '0.6rem', flexShrink: 0 }}>{expanded ? '▾' : '▸'}</span>
+        <span style={{ color: colors.mutedDim, fontSize: '0.6rem', flexShrink: 0 }}>
+          {expanded ? '▾' : '▸'}
+        </span>
       </div>
 
       {visibleWhenCollapsed.length > 0 && (
-        <div style={{ padding: '0 10px 6px 10px' }}>
-          {visibleWhenCollapsed}
-        </div>
+        <div style={{ padding: '0 10px 6px 10px' }}>{visibleWhenCollapsed}</div>
       )}
 
       {expanded && (
         <div style={{ padding: '2px 2px 6px 2px', borderTop: `1px solid ${colors.borderSubtle}` }}>
-          {toolCalls.map(tc => {
+          {toolCalls.map((tc) => {
             const wf = workflowByToolId?.get(tc.id);
-            if (wf) return <div key={tc.id} style={{ padding: '0 8px' }}><WorkflowRunCard run={wf} /></div>;
+            if (wf)
+              return (
+                <div key={tc.id} style={{ padding: '0 8px' }}>
+                  <WorkflowRunCard run={wf} />
+                </div>
+              );
             const sub = subagentByToolId?.get(tc.id);
-            if (sub) return <div key={tc.id} style={{ padding: '0 8px' }}><SubagentRow sub={sub} /></div>;
+            if (sub)
+              return (
+                <div key={tc.id} style={{ padding: '0 8px' }}>
+                  <SubagentRow sub={sub} />
+                </div>
+              );
             return (
               <TraceRow
                 key={tc.id}

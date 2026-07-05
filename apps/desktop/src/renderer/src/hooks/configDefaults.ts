@@ -16,7 +16,7 @@ export const DEFAULT_SHORTCUTS: Record<string, string> = {
   'prev-agent': 'ctrl+shift+tab',
   'next-attention': 'ctrl+shift+space',
   'spawn-agent': 'ctrl+shift+n',
-  'settings': 'ctrl+,',
+  settings: 'ctrl+,',
   'save-session': 'ctrl+shift+s',
   'open-file': 'ctrl+shift+o',
   'toggle-help': 'f1',
@@ -57,7 +57,7 @@ export const DEFAULT_SHORTCUTS: Record<string, string> = {
   'new-terminal': 'prefix t',
   'new-claude': 'prefix c',
   'new-browser': 'prefix b',
-  'split': 'prefix s',
+  split: 'prefix s',
   'quick-split': 'prefix q',
   'close-pane': 'prefix w',
   'rename-tab': 'prefix r',
@@ -90,7 +90,8 @@ export const DEFAULT_CONFIG: Config = {
   terminal: {
     shell: '',
     shells: [],
-    fontFamily: '"JetBrainsMono Nerd Font Mono", "JetBrainsMono NF", "CaskaydiaMono Nerd Font Mono", "CaskaydiaMono NF", monospace',
+    fontFamily:
+      '"JetBrainsMono Nerd Font Mono", "JetBrainsMono NF", "CaskaydiaMono Nerd Font Mono", "CaskaydiaMono NF", monospace',
     fontSize: 14,
     scrollback: 1500,
     cursorBlink: true,

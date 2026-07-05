@@ -23,8 +23,8 @@ export const IPC = {
   TERMINAL_CREATE: 'terminal:create',
   TERMINAL_RESIZE: 'terminal:resize',
   TERMINAL_CLOSE: 'terminal:close',
-  TERMINAL_PORT: 'terminal:port',   // push (main → renderer, MessagePort)
-  TERMINAL_EXIT: 'terminal:exit',   // push (main → renderer)
+  TERMINAL_PORT: 'terminal:port', // push (main → renderer, MessagePort)
+  TERMINAL_EXIT: 'terminal:exit', // push (main → renderer)
 
   // ── Claude sessions ──
   CLAUDE_SPAWN: 'claude:spawn',
@@ -46,7 +46,7 @@ export const IPC = {
   CLAUDE_ATTACH: 'claude:attach',
   CLAUDE_DETACH: 'claude:detach',
   CLAUDE_GATE: 'claude:gate',
-  CLAUDE_PORT: 'claude:port',       // push (main → renderer, MessagePort)
+  CLAUDE_PORT: 'claude:port', // push (main → renderer, MessagePort)
 
   // ── Claude session store (snapshots) ──
   CLAUDE_SESSION_GET: 'claude-session:get',
@@ -79,8 +79,8 @@ export const IPC = {
   HUB_PLUGIN_SETTINGS_GET: 'hub:pluginSettingsGet',
   HUB_PLUGIN_SETTINGS_SET: 'hub:pluginSettingsSet',
   HUB_PLUGIN_SETTINGS_CHANGED: 'hub:pluginSettingsChanged', // push (main → renderer)
-  HUB_EVENT: 'hub:event',           // push (main → renderer)
-  HUB_STATUS: 'hub:status',         // push (main → renderer)
+  HUB_EVENT: 'hub:event', // push (main → renderer)
+  HUB_STATUS: 'hub:status', // push (main → renderer)
 
   // ── Shared layout document (hub-owned; tmux-style mirror) ──
   LAYOUT_GET: 'layout:get',
@@ -146,4 +146,4 @@ export const IPC = {
 } as const;
 
 export type IpcChannelKey = keyof typeof IPC;
-export type IpcChannelValue = typeof IPC[IpcChannelKey];
+export type IpcChannelValue = (typeof IPC)[IpcChannelKey];

@@ -43,7 +43,9 @@ describe('claudemonSessionClient.signal — allowlist', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     for (const bad of ['SIGUSR1', 'sigterm', 'rm -rf', 'SIGTERM; SIGKILL', '9']) {
-      await expect(claudemonSessionClient.signal('sess-1', bad)).rejects.toThrow(/unrecognized signal/);
+      await expect(claudemonSessionClient.signal('sess-1', bad)).rejects.toThrow(
+        /unrecognized signal/,
+      );
     }
     expect(fetchMock).not.toHaveBeenCalled();
   });

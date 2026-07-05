@@ -24,7 +24,9 @@ class FakeWS {
   constructor(public url: string) {
     FakeWS.instances.push(this);
   }
-  send(data: string): void { this.sent.push(data); }
+  send(data: string): void {
+    this.sent.push(data);
+  }
   close(): void {
     if (this.readyState === FakeWS.CLOSED) return;
     this.readyState = FakeWS.CLOSED;
@@ -86,7 +88,9 @@ describe('HubBusClient reconnect handling', () => {
     vi.advanceTimersByTime(600);
     FakeWS.instances[1].open();
     // The new socket must re-send the subscription so events resume flowing.
-    expect(FakeWS.instances[1].sent.some((f) => f.includes('"subscribe"') && f.includes('agent.*'))).toBe(true);
+    expect(
+      FakeWS.instances[1].sent.some((f) => f.includes('"subscribe"') && f.includes('agent.*')),
+    ).toBe(true);
 
     client.stop();
   });

@@ -11,8 +11,12 @@ import * as path from 'path';
 import { searchProject } from './searchService';
 
 let dir: string;
-beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wks-search-')); });
-afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+beforeEach(() => {
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wks-search-'));
+});
+afterEach(() => {
+  fs.rmSync(dir, { recursive: true, force: true });
+});
 
 describe('searchProject — truncated flag accuracy', () => {
   it('does not flag truncated when match count equals maxResults exactly', async () => {

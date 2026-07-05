@@ -15,8 +15,13 @@ function hash(s: string): string {
 /** First human-meaningful string out of a tool input, for an approval preview. */
 function toolInputPreview(input: any): string {
   if (!input || typeof input !== 'object') return '';
-  const v = input.command ?? input.file_path ?? input.path ?? input.pattern ?? input.url
-    ?? Object.values(input).find((x) => typeof x === 'string');
+  const v =
+    input.command ??
+    input.file_path ??
+    input.path ??
+    input.pattern ??
+    input.url ??
+    Object.values(input).find((x) => typeof x === 'string');
   return typeof v === 'string' ? v.split('\n')[0].slice(0, 80) : '';
 }
 
@@ -55,8 +60,8 @@ function diffSize(snap: ClaudeSessionSnapshot): { lines: number; files: number }
 }
 
 /** Idle/threshold knobs for the heuristic kinds — kept conservative to avoid noise. */
-const BIGDIFF_LINES = 80;          // added+removed lines before a review nudge
-const STUCK_MS = 5 * 60_000;       // an unanswered question idle this long is "stuck"
+const BIGDIFF_LINES = 80; // added+removed lines before a review nudge
+const STUCK_MS = 5 * 60_000; // an unanswered question idle this long is "stuck"
 const ERROR_RECENT_MS = 5 * 60_000; // only surface a trailing tool error this fresh
 
 export interface AttentionFeed {
@@ -110,7 +115,12 @@ export function useAttentionFeed(
       if (cur === 'idle' && wasWorking) {
         doneAtRef.current.set(sid, snapshotBySession[sid].lastActivity || Date.now());
         changed = true;
-      } else if (cur === 'thinking' || cur === 'streaming' || cur === 'waiting_input' || cur === 'waiting_approval') {
+      } else if (
+        cur === 'thinking' ||
+        cur === 'streaming' ||
+        cur === 'waiting_input' ||
+        cur === 'waiting_approval'
+      ) {
         if (doneAtRef.current.delete(sid)) changed = true;
       }
       prevStateRef.current.set(sid, cur);
@@ -125,7 +135,8 @@ export function useAttentionFeed(
   const liveSessionKey = Object.keys(snapshotBySession).sort().join(',');
   useEffect(() => {
     const live = new Set(Object.keys(snapshotBySession));
-    for (const sid of prevStateRef.current.keys()) if (!live.has(sid)) prevStateRef.current.delete(sid);
+    for (const sid of prevStateRef.current.keys())
+      if (!live.has(sid)) prevStateRef.current.delete(sid);
     for (const sid of doneAtRef.current.keys()) if (!live.has(sid)) doneAtRef.current.delete(sid);
     // dismissed/snoozed are keyed by item signature, which is prefixed with the
     // sessionId (`${sid}:kind:…`), so a dead session's entries start with `sid:`.
@@ -133,7 +144,8 @@ export function useAttentionFeed(
       let mutated = false;
       const n = new Set<string>();
       for (const sig of prev) {
-        if (live.has(sig.split(':')[0])) n.add(sig); else mutated = true;
+        if (live.has(sig.split(':')[0])) n.add(sig);
+        else mutated = true;
       }
       return mutated ? n : prev;
     });
@@ -141,7 +153,8 @@ export function useAttentionFeed(
       let mutated = false;
       const n = new Map<string, number>();
       for (const [sig, t] of prev) {
-        if (live.has(sig.split(':')[0])) n.set(sig, t); else mutated = true;
+        if (live.has(sig.split(':')[0])) n.set(sig, t);
+        else mutated = true;
       }
       return mutated ? n : prev;
     });
@@ -178,7 +191,10 @@ export function useAttentionFeed(
         const t = Date.now();
         let mutated = false;
         const n = new Map<string, number>();
-        for (const [sig, until] of prev) { if (until > t) n.set(sig, until); else mutated = true; }
+        for (const [sig, until] of prev) {
+          if (until > t) n.set(sig, until);
+          else mutated = true;
+        }
         return mutated ? n : prev;
       });
     }, 5000);
@@ -198,9 +214,15 @@ export function useAttentionFeed(
         const ap = snap.pendingApproval;
         const sig = `${sid}:approval:${hash(ap.toolName + JSON.stringify(ap.toolInput ?? {}))}`;
         out.push({
-          ...base, id: sig, signature: sig, kind: 'approval', priority: KIND_PRIORITY.approval,
-          createdAt: ap.timestamp || Date.now(), status: 'open',
-          title: ap.toolName, detail: toolInputPreview(ap.toolInput),
+          ...base,
+          id: sig,
+          signature: sig,
+          kind: 'approval',
+          priority: KIND_PRIORITY.approval,
+          createdAt: ap.timestamp || Date.now(),
+          status: 'open',
+          title: ap.toolName,
+          detail: toolInputPreview(ap.toolInput),
           payload: { type: 'approval', approval: ap },
         });
       }
@@ -209,24 +231,36 @@ export function useAttentionFeed(
         const qs = snap.pendingQuestions;
         const sig = `${sid}:question:${hash(qs.map((q) => q.question).join('|'))}`;
         out.push({
-          ...base, id: sig, signature: sig, kind: 'question', priority: KIND_PRIORITY.question,
-          createdAt: Date.now(), status: 'open',
-          title: qs[0]?.header || 'Question', detail: qs[0]?.question,
+          ...base,
+          id: sig,
+          signature: sig,
+          kind: 'question',
+          priority: KIND_PRIORITY.question,
+          createdAt: Date.now(),
+          status: 'open',
+          title: qs[0]?.header || 'Question',
+          detail: qs[0]?.question,
           payload: { type: 'question', questions: qs },
         });
       }
 
       const idle = snap.ambientState === 'idle' || snap.ambientState === 'waiting_input';
-      const blocked = !!snap.pendingApproval || !!(snap.pendingQuestions?.length);
+      const blocked = !!snap.pendingApproval || !!snap.pendingQuestions?.length;
 
       if (enabled('done')) {
         const doneAt = doneAtRef.current.get(sid);
         if (doneAt && !blocked) {
           const sig = `${sid}:done:${doneAt}`;
           out.push({
-            ...base, id: sig, signature: sig, kind: 'done', priority: KIND_PRIORITY.done,
-            createdAt: doneAt, status: 'open',
-            title: 'Finished', detail: lastAssistant(snap) || 'Agent is idle and ready for review',
+            ...base,
+            id: sig,
+            signature: sig,
+            kind: 'done',
+            priority: KIND_PRIORITY.done,
+            createdAt: doneAt,
+            status: 'open',
+            title: 'Finished',
+            detail: lastAssistant(snap) || 'Agent is idle and ready for review',
             payload: { type: 'summary', summary: lastAssistant(snap) },
           });
         }
@@ -238,8 +272,13 @@ export function useAttentionFeed(
         if (lines > BIGDIFF_LINES) {
           const sig = `${sid}:bigdiff:${files}:${Math.round(lines / 20)}`;
           out.push({
-            ...base, id: sig, signature: sig, kind: 'bigdiff', priority: KIND_PRIORITY.bigdiff,
-            createdAt: doneAtRef.current.get(sid) ?? snap.lastActivity ?? Date.now(), status: 'open',
+            ...base,
+            id: sig,
+            signature: sig,
+            kind: 'bigdiff',
+            priority: KIND_PRIORITY.bigdiff,
+            createdAt: doneAtRef.current.get(sid) ?? snap.lastActivity ?? Date.now(),
+            status: 'open',
             title: 'Large change to review',
             detail: `${files} file${files === 1 ? '' : 's'}, ±${lines} lines`,
             payload: { type: 'summary', summary: `${files} files, ±${lines} lines` },
@@ -253,10 +292,16 @@ export function useAttentionFeed(
         if (since && now - since > STUCK_MS) {
           const sig = `${sid}:stuck:${hash(snap.pendingQuestions.map((q) => q.question).join('|'))}`;
           out.push({
-            ...base, id: sig, signature: sig, kind: 'stuck', priority: KIND_PRIORITY.stuck,
-            createdAt: since, status: 'open',
+            ...base,
+            id: sig,
+            signature: sig,
+            kind: 'stuck',
+            priority: KIND_PRIORITY.stuck,
+            createdAt: since,
+            status: 'open',
             title: 'Waiting on you',
-            detail: snap.pendingQuestions[0]?.question || 'An unanswered question is holding this agent.',
+            detail:
+              snap.pendingQuestions[0]?.question || 'An unanswered question is holding this agent.',
             payload: { type: 'summary', summary: 'Agent has been waiting for a while' },
           });
         }
@@ -271,27 +316,46 @@ export function useAttentionFeed(
           if (Date.now() - at < ERROR_RECENT_MS) {
             const sig = `${sid}:error:${last.id}`;
             out.push({
-              ...base, id: sig, signature: sig, kind: 'error', priority: KIND_PRIORITY.error,
-              createdAt: at, status: 'open',
+              ...base,
+              id: sig,
+              signature: sig,
+              kind: 'error',
+              priority: KIND_PRIORITY.error,
+              createdAt: at,
+              status: 'open',
               title: `${last.name} failed`,
-              detail: typeof last.response === 'string' ? last.response.split('\n')[0].slice(0, 120) : 'Last tool call errored.',
+              detail:
+                typeof last.response === 'string'
+                  ? last.response.split('\n')[0].slice(0, 120)
+                  : 'Last tool call errored.',
               payload: { type: 'summary', summary: `${last.name} failed` },
             });
           }
         }
       }
     }
-    const open = out.filter((it) => !dismissed.has(it.signature) && (snoozedUntil.get(it.signature) ?? 0) <= now);
+    const open = out.filter(
+      (it) => !dismissed.has(it.signature) && (snoozedUntil.get(it.signature) ?? 0) <= now,
+    );
     return sortItems(open);
-  // doneTick forces recompute when doneAtRef mutates.
+    // doneTick forces recompute when doneAtRef mutates.
   }, [snapshotBySession, agents, dismissed, snoozedUntil, now, doneTick]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const counts = useMemo(() => {
-    const byKind = { approval: 0, question: 0, stuck: 0, error: 0, done: 0, bigdiff: 0 } as Record<AttentionKind, number>;
+    const byKind = { approval: 0, question: 0, stuck: 0, error: 0, done: 0, bigdiff: 0 } as Record<
+      AttentionKind,
+      number
+    >;
     let needsYou = 0;
     for (const it of items) {
       byKind[it.kind]++;
-      if (it.kind === 'approval' || it.kind === 'question' || it.kind === 'stuck' || it.kind === 'error') needsYou++;
+      if (
+        it.kind === 'approval' ||
+        it.kind === 'question' ||
+        it.kind === 'stuck' ||
+        it.kind === 'error'
+      )
+        needsYou++;
     }
     return { total: items.length, needsYou, byKind };
   }, [items]);
@@ -304,10 +368,18 @@ export function useAttentionFeed(
   }, [items]);
 
   const dismiss = useCallback((signature: string) => {
-    setDismissed((prev) => { const n = new Set(prev); n.add(signature); return n; });
+    setDismissed((prev) => {
+      const n = new Set(prev);
+      n.add(signature);
+      return n;
+    });
   }, []);
   const snooze = useCallback((signature: string, minutes: number) => {
-    setSnoozedUntil((prev) => { const n = new Map(prev); n.set(signature, Date.now() + minutes * 60_000); return n; });
+    setSnoozedUntil((prev) => {
+      const n = new Map(prev);
+      n.set(signature, Date.now() + minutes * 60_000);
+      return n;
+    });
   }, []);
 
   return { items, counts, topByAgent, dismiss, snooze };

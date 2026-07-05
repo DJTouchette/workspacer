@@ -61,16 +61,20 @@ function render(agents: any) {
 }
 
 describe('useSessionLifecycle — autosave dedup hash', () => {
-  it('persists a save when only a tab\'s activePaneId changed', () => {
+  it("persists a save when only a tab's activePaneId changed", () => {
     const { result, rerender } = render(mkAgents('p1'));
 
     act(() => result.current.handleNewSession()); // → phase 'active'
-    act(() => { void result.current.saveCurrentSession(); });
+    act(() => {
+      void result.current.saveCurrentSession();
+    });
     expect(saveSession).toHaveBeenCalledTimes(1);
 
     // Only activePaneId changes (p1 → p2) — everything else identical.
     rerender({ agents: mkAgents('p2') });
-    act(() => { void result.current.saveCurrentSession(); });
+    act(() => {
+      void result.current.saveCurrentSession();
+    });
 
     // Must NOT be deduped away — the active-pane change has to persist.
     expect(saveSession).toHaveBeenCalledTimes(2);
@@ -79,8 +83,12 @@ describe('useSessionLifecycle — autosave dedup hash', () => {
   it('still dedups an identical save', () => {
     const { result } = render(mkAgents('p1'));
     act(() => result.current.handleNewSession());
-    act(() => { void result.current.saveCurrentSession(); });
-    act(() => { void result.current.saveCurrentSession(); });
+    act(() => {
+      void result.current.saveCurrentSession();
+    });
+    act(() => {
+      void result.current.saveCurrentSession();
+    });
     expect(saveSession).toHaveBeenCalledTimes(1);
   });
 });
@@ -91,12 +99,16 @@ describe('useSessionLifecycle — hardening', () => {
     try {
       const { result, rerender } = render(mkAgents('p1'));
       act(() => result.current.handleNewSession()); // → phase 'active'
-      act(() => { vi.advanceTimersByTime(1100); });
+      act(() => {
+        vi.advanceTimersByTime(1100);
+      });
       expect(saveSession).toHaveBeenCalledTimes(1);
 
       // A roster change (e.g. a terminate) re-arms the debounce.
       rerender({ agents: mkAgents('p2') });
-      act(() => { vi.advanceTimersByTime(1100); });
+      act(() => {
+        vi.advanceTimersByTime(1100);
+      });
       expect(saveSession).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
@@ -109,12 +121,17 @@ describe('useSessionLifecycle — hardening', () => {
     (window as any).electronAPI = {
       ...(window as any).electronAPI,
       notifyQuitSaved,
-      onBeforeQuit: vi.fn((cb: () => void) => { quitCb = cb; return () => {}; }),
+      onBeforeQuit: vi.fn((cb: () => void) => {
+        quitCb = cb;
+        return () => {};
+      }),
     };
     const { result } = render(mkAgents('p1'));
     act(() => result.current.handleNewSession());
     expect(quitCb).toBeDefined();
-    await act(async () => { quitCb!(); });
+    await act(async () => {
+      quitCb!();
+    });
     expect(saveSession).toHaveBeenCalled();
     expect(notifyQuitSaved).toHaveBeenCalled();
   });
@@ -126,11 +143,16 @@ describe('useSessionLifecycle — hardening', () => {
     (window as any).electronAPI = {
       ...(window as any).electronAPI,
       notifyQuitSaved,
-      onBeforeQuit: vi.fn((cb: () => void) => { quitCb = cb; return () => {}; }),
+      onBeforeQuit: vi.fn((cb: () => void) => {
+        quitCb = cb;
+        return () => {};
+      }),
     };
     const { result } = render(mkAgents('p1'));
     act(() => result.current.handleNewSession());
-    await act(async () => { quitCb!(); });
+    await act(async () => {
+      quitCb!();
+    });
     expect(notifyQuitSaved).toHaveBeenCalled();
   });
 
@@ -155,7 +177,9 @@ describe('useSessionLifecycle — hardening', () => {
         appCwdRef: { current: '/x' },
       }),
     );
-    await act(async () => { result.current.handleResumeSession('s.yaml'); });
+    await act(async () => {
+      result.current.handleResumeSession('s.yaml');
+    });
     expect(reconcileAgents).toHaveBeenCalledTimes(1);
     const liveSet = reconcileAgents.mock.calls[0][0] as Set<string>;
     expect(liveSet.has('live-1')).toBe(true);

@@ -24,7 +24,11 @@ function kindOf(m: PluginManifest): string {
  * app into the writable plugins dir and supervises it. Each card shows its
  * runtime requirement so the Python/Go sidecars aren't added blindly.
  */
-const ExamplesGalleryDialog: React.FC<ExamplesGalleryDialogProps> = ({ installedIds, onClose, onAdded }) => {
+const ExamplesGalleryDialog: React.FC<ExamplesGalleryDialogProps> = ({
+  installedIds,
+  onClose,
+  onAdded,
+}) => {
   const [examples, setExamples] = useState<PluginManifest[] | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [added, setAdded] = useState<Set<string>>(() => new Set(installedIds));
@@ -38,17 +42,29 @@ const ExamplesGalleryDialog: React.FC<ExamplesGalleryDialogProps> = ({ installed
     });
 
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); onClose(); } };
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+      }
+    };
     window.addEventListener('keydown', handler, true);
     return () => window.removeEventListener('keydown', handler, true);
   }, [onClose]);
 
   useEffect(() => {
     let live = true;
-    window.electronAPI.listExamplePlugins?.()
-      .then((list) => { if (live) setExamples((list as PluginManifest[]) ?? []); })
-      .catch(() => { if (live) setExamples([]); });
-    return () => { live = false; };
+    window.electronAPI
+      .listExamplePlugins?.()
+      .then((list) => {
+        if (live) setExamples((list as PluginManifest[]) ?? []);
+      })
+      .catch(() => {
+        if (live) setExamples([]);
+      });
+    return () => {
+      live = false;
+    };
   }, []);
 
   const add = async (id: string) => {
@@ -73,42 +89,92 @@ const ExamplesGalleryDialog: React.FC<ExamplesGalleryDialogProps> = ({ installed
     <div
       onMouseDown={onClose}
       style={{
-        position: 'fixed', inset: 0, zIndex: 20000,
+        position: 'fixed',
+        inset: 0,
+        zIndex: 20000,
         backgroundColor: 'var(--wks-overlay, rgba(0,0,0,0.5))',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
       }}
     >
       <div
         onMouseDown={(e) => e.stopPropagation()}
         style={{
-          width: 560, maxWidth: '94vw', maxHeight: '82vh', display: 'flex', flexDirection: 'column',
+          width: 560,
+          maxWidth: '94vw',
+          maxHeight: '82vh',
+          display: 'flex',
+          flexDirection: 'column',
           backgroundColor: 'var(--wks-glass-strong)',
           backdropFilter: 'blur(var(--wks-glass-blur)) saturate(170%)',
           WebkitBackdropFilter: 'blur(var(--wks-glass-blur)) saturate(170%)',
           border: '1px solid var(--wks-glass-border)',
-          borderRadius: 'var(--wks-radius-lg)', padding: 20,
-          boxShadow: '0 16px 48px var(--wks-glass-shadow), inset 0 0 0 1.5px var(--wks-glass-highlight)', fontFamily: 'inherit',
+          borderRadius: 'var(--wks-radius-lg)',
+          padding: 20,
+          boxShadow:
+            '0 16px 48px var(--wks-glass-shadow), inset 0 0 0 1.5px var(--wks-glass-highlight)',
+          fontFamily: 'inherit',
         }}
       >
-        <div style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--wks-text-primary)', marginBottom: 4 }}>
+        <div
+          style={{
+            fontSize: '0.9rem',
+            fontWeight: 600,
+            color: 'var(--wks-text-primary)',
+            marginBottom: 4,
+          }}
+        >
           Example plugins
         </div>
         <div style={{ fontSize: '0.68rem', color: 'var(--wks-text-muted)', marginBottom: 14 }}>
-          Bundled with the app — adding one copies it locally, no download. Sidecar examples need the runtime noted on each.
+          Bundled with the app — adding one copies it locally, no download. Sidecar examples need
+          the runtime noted on each.
         </div>
 
         {error && (
-          <div style={{ marginBottom: 10, fontSize: '0.68rem', color: 'var(--wks-danger, #e05555)', wordBreak: 'break-word' }}>
+          <div
+            style={{
+              marginBottom: 10,
+              fontSize: '0.68rem',
+              color: 'var(--wks-danger, #e05555)',
+              wordBreak: 'break-word',
+            }}
+          >
             {error}
           </div>
         )}
 
-        <div style={{ overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 8, paddingRight: 2 }}>
+        <div
+          style={{
+            overflow: 'auto',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 8,
+            paddingRight: 2,
+          }}
+        >
           {examples === null && (
-            <div style={{ padding: 20, textAlign: 'center', color: 'var(--wks-text-faint)', fontSize: '0.75rem' }}>Loading…</div>
+            <div
+              style={{
+                padding: 20,
+                textAlign: 'center',
+                color: 'var(--wks-text-faint)',
+                fontSize: '0.75rem',
+              }}
+            >
+              Loading…
+            </div>
           )}
           {examples?.length === 0 && (
-            <div style={{ padding: 20, textAlign: 'center', color: 'var(--wks-text-faint)', fontSize: '0.75rem' }}>
+            <div
+              style={{
+                padding: 20,
+                textAlign: 'center',
+                color: 'var(--wks-text-faint)',
+                fontSize: '0.75rem',
+              }}
+            >
               No bundled examples found.
             </div>
           )}
@@ -117,33 +183,79 @@ const ExamplesGalleryDialog: React.FC<ExamplesGalleryDialogProps> = ({ installed
             const isAdded = added.has(m.id);
             const busy = busyId === m.id;
             return (
-              <div key={m.id} style={{
-                border: '1px solid var(--wks-border-subtle)', borderRadius: 8, padding: '10px 12px',
-                background: 'var(--wks-bg-surface)',
-              }}>
+              <div
+                key={m.id}
+                style={{
+                  border: '1px solid var(--wks-border-subtle)',
+                  borderRadius: 8,
+                  padding: '10px 12px',
+                  background: 'var(--wks-bg-surface)',
+                }}
+              >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <div style={{ minWidth: 0, flex: 1 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <span style={{ fontSize: '0.82rem', fontWeight: 600 }}>{m.name || m.id}</span>
-                      <span style={{ fontSize: '0.6rem', color: 'var(--wks-text-faint)', border: '1px solid var(--wks-border-subtle)', borderRadius: 3, padding: '1px 5px' }}>{kindOf(m)}</span>
+                      <span
+                        style={{
+                          fontSize: '0.6rem',
+                          color: 'var(--wks-text-faint)',
+                          border: '1px solid var(--wks-border-subtle)',
+                          borderRadius: 3,
+                          padding: '1px 5px',
+                        }}
+                      >
+                        {kindOf(m)}
+                      </span>
                     </div>
-                    <div style={{ fontSize: '0.62rem', color: 'var(--wks-text-faint)', marginTop: 2 }}>{m.id}</div>
-                    <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-                      <span style={{
-                        fontSize: '0.62rem',
-                        color: req.warn ? 'var(--wks-warning, #e0a000)' : 'var(--wks-text-muted)',
-                        display: 'inline-flex', alignItems: 'center', gap: 4,
-                      }}>
-                        {req.warn && <AlertTriangle size={11} strokeWidth={2} />}{req.label}
+                    <div
+                      style={{ fontSize: '0.62rem', color: 'var(--wks-text-faint)', marginTop: 2 }}
+                    >
+                      {m.id}
+                    </div>
+                    <div
+                      style={{
+                        marginTop: 4,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 12,
+                        flexWrap: 'wrap',
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: '0.62rem',
+                          color: req.warn ? 'var(--wks-warning, #e0a000)' : 'var(--wks-text-muted)',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 4,
+                        }}
+                      >
+                        {req.warn && <AlertTriangle size={11} strokeWidth={2} />}
+                        {req.label}
                       </span>
                       <button
                         onClick={() => togglePerms(m.id)}
                         style={{
-                          background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: '0.62rem',
-                          fontFamily: 'inherit', color: 'var(--wks-accent)', display: 'inline-flex', alignItems: 'center', gap: 3,
+                          background: 'none',
+                          border: 'none',
+                          padding: 0,
+                          cursor: 'pointer',
+                          fontSize: '0.62rem',
+                          fontFamily: 'inherit',
+                          color: 'var(--wks-accent)',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 3,
                         }}
                       >
-                        {hasSensitivePermission(m) && <AlertTriangle size={10} strokeWidth={2} style={{ color: 'var(--wks-warning, #e0a000)' }} />}
+                        {hasSensitivePermission(m) && (
+                          <AlertTriangle
+                            size={10}
+                            strokeWidth={2}
+                            style={{ color: 'var(--wks-warning, #e0a000)' }}
+                          />
+                        )}
                         {permsOpen.has(m.id) ? 'Hide permissions' : 'Permissions'}
                       </button>
                     </div>
@@ -152,20 +264,32 @@ const ExamplesGalleryDialog: React.FC<ExamplesGalleryDialogProps> = ({ installed
                     onClick={() => !isAdded && add(m.id)}
                     disabled={isAdded || busy}
                     style={{
-                      fontSize: '0.72rem', fontFamily: 'inherit', flexShrink: 0, alignSelf: 'center',
-                      cursor: (isAdded || busy) ? 'default' : 'pointer',
+                      fontSize: '0.72rem',
+                      fontFamily: 'inherit',
+                      flexShrink: 0,
+                      alignSelf: 'center',
+                      cursor: isAdded || busy ? 'default' : 'pointer',
                       background: isAdded ? 'transparent' : 'var(--wks-accent)',
                       color: isAdded ? 'var(--wks-text-faint)' : 'var(--wks-text-on-accent, #fff)',
                       border: isAdded ? '1px solid var(--wks-border-input)' : 'none',
-                      borderRadius: 5, padding: '5px 14px', fontWeight: 600,
+                      borderRadius: 5,
+                      padding: '5px 14px',
+                      fontWeight: 600,
                     }}
-                  >{isAdded ? 'Added' : busy ? 'Adding…' : 'Add'}</button>
+                  >
+                    {isAdded ? 'Added' : busy ? 'Adding…' : 'Add'}
+                  </button>
                 </div>
                 {permsOpen.has(m.id) && (
-                  <div style={{
-                    marginTop: 8, padding: '8px 10px', borderRadius: 5,
-                    background: 'var(--wks-bg-input)', border: '1px solid var(--wks-border-subtle)',
-                  }}>
+                  <div
+                    style={{
+                      marginTop: 8,
+                      padding: '8px 10px',
+                      borderRadius: 5,
+                      background: 'var(--wks-bg-input)',
+                      border: '1px solid var(--wks-border-subtle)',
+                    }}
+                  >
                     <PluginPermissions manifest={m} compact />
                   </div>
                 )}
@@ -178,11 +302,18 @@ const ExamplesGalleryDialog: React.FC<ExamplesGalleryDialogProps> = ({ installed
           <button
             onClick={onClose}
             style={{
-              fontSize: '0.78rem', fontFamily: 'inherit', cursor: 'pointer',
-              background: 'transparent', color: 'var(--wks-text-tertiary)',
-              border: '1px solid var(--wks-border-input)', borderRadius: 4, padding: '6px 14px',
+              fontSize: '0.78rem',
+              fontFamily: 'inherit',
+              cursor: 'pointer',
+              background: 'transparent',
+              color: 'var(--wks-text-tertiary)',
+              border: '1px solid var(--wks-border-input)',
+              borderRadius: 4,
+              padding: '6px 14px',
             }}
-          >Done</button>
+          >
+            Done
+          </button>
         </div>
       </div>
     </div>

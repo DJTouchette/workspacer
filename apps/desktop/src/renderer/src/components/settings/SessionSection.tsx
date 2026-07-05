@@ -20,7 +20,11 @@ const DIFF_VIEWS: { label: string; value: 'stacked' | 'inline' | 'split' }[] = [
   { label: 'Split', value: 'split' },
 ];
 
-const AGENT_PROVIDERS: { label: string; value: 'claude' | 'codex' | 'opencode' | 'pi'; beta?: boolean }[] = [
+const AGENT_PROVIDERS: {
+  label: string;
+  value: 'claude' | 'codex' | 'opencode' | 'pi';
+  beta?: boolean;
+}[] = [
   { label: 'Claude', value: 'claude' },
   { label: 'Codex', value: 'codex' },
   // Not yet thoroughly tested — flagged Beta so expectations are set.
@@ -49,24 +53,41 @@ const BinaryRow: React.FC<{
   onRefresh: () => void;
 }> = ({ label, providerId, detection, config, save, onRefresh }) => {
   const [value, setValue] = useState(config.agents?.binaries?.[providerId] ?? '');
-  useEffect(() => { setValue(config.agents?.binaries?.[providerId] ?? ''); }, [config.agents?.binaries, providerId]);
+  useEffect(() => {
+    setValue(config.agents?.binaries?.[providerId] ?? '');
+  }, [config.agents?.binaries, providerId]);
 
   const persist = (v: string) => {
-    save({ agents: { ...config.agents, binaries: { ...config.agents?.binaries, [providerId]: v.trim() } } })
-      .then(() => onRefresh()).catch(() => {});
+    save({
+      agents: {
+        ...config.agents,
+        binaries: { ...config.agents?.binaries, [providerId]: v.trim() },
+      },
+    })
+      .then(() => onRefresh())
+      .catch(() => {});
   };
 
   const browse = async () => {
     const files = await window.electronAPI.pickFiles?.(undefined);
-    if (files?.length) { setValue(files[0]); persist(files[0]); }
+    if (files?.length) {
+      setValue(files[0]);
+      persist(files[0]);
+    }
   };
 
-  const dotColor = detection === undefined ? 'var(--wks-text-disabled)'
-    : detection.found ? '#3db86a'
-    : 'var(--wks-danger, #e05555)';
-  const hint = detection === undefined ? 'Checking…'
-    : detection.found ? `Found: ${detection.resolvedPath}`
-    : 'Not found on PATH';
+  const dotColor =
+    detection === undefined
+      ? 'var(--wks-text-disabled)'
+      : detection.found
+        ? '#3db86a'
+        : 'var(--wks-danger, #e05555)';
+  const hint =
+    detection === undefined
+      ? 'Checking…'
+      : detection.found
+        ? `Found: ${detection.resolvedPath}`
+        : 'Not found on PATH';
 
   return (
     <Row label={label}>
@@ -76,27 +97,53 @@ const BinaryRow: React.FC<{
             value={value}
             onChange={(e) => setValue(e.target.value)}
             onBlur={(e) => persist(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') persist(value); }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') persist(value);
+            }}
             placeholder="Auto-detect on PATH"
             spellCheck={false}
             style={{
-              flex: 1, minWidth: 0, fontSize: '0.7rem', fontFamily: 'inherit',
-              background: 'var(--wks-bg-base)', color: 'var(--wks-text-primary)',
-              border: '1px solid var(--wks-border-input)', borderRadius: 4, padding: '4px 7px',
+              flex: 1,
+              minWidth: 0,
+              fontSize: '0.7rem',
+              fontFamily: 'inherit',
+              background: 'var(--wks-bg-base)',
+              color: 'var(--wks-text-primary)',
+              border: '1px solid var(--wks-border-input)',
+              borderRadius: 4,
+              padding: '4px 7px',
             }}
           />
           <button
             onClick={browse}
             style={{
-              fontSize: '0.7rem', fontFamily: 'inherit', cursor: 'pointer', whiteSpace: 'nowrap',
-              background: 'var(--wks-bg-input)', color: 'var(--wks-text-tertiary)',
-              border: '1px solid var(--wks-border-input)', borderRadius: 4, padding: '0 10px',
+              fontSize: '0.7rem',
+              fontFamily: 'inherit',
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+              background: 'var(--wks-bg-input)',
+              color: 'var(--wks-text-tertiary)',
+              border: '1px solid var(--wks-border-input)',
+              borderRadius: 4,
+              padding: '0 10px',
             }}
-          >Browse…</button>
+          >
+            Browse…
+          </button>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.6rem' }}>
-          <span style={{ width: 7, height: 7, borderRadius: '50%', background: dotColor, flexShrink: 0 }} />
-          <span style={{ color: detection?.found ? '#3db86a' : 'var(--wks-text-disabled)' }}>{hint}</span>
+          <span
+            style={{
+              width: 7,
+              height: 7,
+              borderRadius: '50%',
+              background: dotColor,
+              flexShrink: 0,
+            }}
+          />
+          <span style={{ color: detection?.found ? '#3db86a' : 'var(--wks-text-disabled)' }}>
+            {hint}
+          </span>
         </div>
       </div>
     </Row>
@@ -113,14 +160,21 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
 
   const [detection, setDetection] = useState<ProviderDetection[]>([]);
   const refreshDetection = () => {
-    window.electronAPI.providerCheckAll?.().then((list) => setDetection(list ?? [])).catch(() => {});
+    window.electronAPI
+      .providerCheckAll?.()
+      .then((list) => setDetection(list ?? []))
+      .catch(() => {});
   };
-  useEffect(() => { refreshDetection(); }, []);
+  useEffect(() => {
+    refreshDetection();
+  }, []);
 
   // Default directory for new agents. Local state so typing is smooth; persisted
   // on blur / Enter (and immediately when picked via Browse).
   const [defaultCwd, setDefaultCwd] = React.useState(config.agents?.defaultCwd ?? '');
-  React.useEffect(() => { setDefaultCwd(config.agents?.defaultCwd ?? ''); }, [config.agents?.defaultCwd]);
+  React.useEffect(() => {
+    setDefaultCwd(config.agents?.defaultCwd ?? '');
+  }, [config.agents?.defaultCwd]);
   const saveDefaultCwd = (value: string) => {
     const v = value.trim();
     if (v === (config.agents?.defaultCwd ?? '')) return;
@@ -128,7 +182,10 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
   };
   const browseDefaultCwd = async () => {
     const picked = await window.electronAPI.pickFolder?.(defaultCwd || undefined);
-    if (picked) { setDefaultCwd(picked); saveDefaultCwd(picked); }
+    if (picked) {
+      setDefaultCwd(picked);
+      saveDefaultCwd(picked);
+    }
   };
 
   return (
@@ -139,8 +196,8 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
         onChange={(v) => save({ session: { autoResume: v } })}
       />
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
-        Reopens your agents and tabs automatically. Off shows the session picker at startup.
-        Switch sessions any time from the command palette (Ctrl+K → Switch session).
+        Reopens your agents and tabs automatically. Off shows the session picker at startup. Switch
+        sessions any time from the command palette (Ctrl+K → Switch session).
       </div>
 
       <Row label="Default agent">
@@ -166,21 +223,35 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
             value={defaultCwd}
             onChange={(e) => setDefaultCwd(e.target.value)}
             onBlur={(e) => saveDefaultCwd(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') saveDefaultCwd((e.target as HTMLInputElement).value); }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') saveDefaultCwd((e.target as HTMLInputElement).value);
+            }}
             placeholder="App launch directory"
             spellCheck={false}
             style={{
-              flex: 1, minWidth: 0, fontSize: '0.7rem', fontFamily: 'inherit',
-              background: 'var(--wks-bg-base)', color: 'var(--wks-text-primary)',
-              border: '1px solid var(--wks-border-input)', borderRadius: 4, padding: '4px 7px',
+              flex: 1,
+              minWidth: 0,
+              fontSize: '0.7rem',
+              fontFamily: 'inherit',
+              background: 'var(--wks-bg-base)',
+              color: 'var(--wks-text-primary)',
+              border: '1px solid var(--wks-border-input)',
+              borderRadius: 4,
+              padding: '4px 7px',
             }}
           />
           <button
             onClick={browseDefaultCwd}
             style={{
-              fontSize: '0.7rem', fontFamily: 'inherit', cursor: 'pointer', whiteSpace: 'nowrap',
-              background: 'var(--wks-bg-input)', color: 'var(--wks-text-tertiary)',
-              border: '1px solid var(--wks-border-input)', borderRadius: 4, padding: '0 10px',
+              fontSize: '0.7rem',
+              fontFamily: 'inherit',
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+              background: 'var(--wks-bg-input)',
+              color: 'var(--wks-text-tertiary)',
+              border: '1px solid var(--wks-border-input)',
+              borderRadius: 4,
+              padding: '0 10px',
             }}
           >
             Browse…
@@ -188,8 +259,8 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
         </div>
       </Row>
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
-        Where the spawn dialog opens (and where Browse… starts). Leave blank to use the app's
-        launch directory.
+        Where the spawn dialog opens (and where Browse… starts). Leave blank to use the app's launch
+        directory.
       </div>
 
       <Row label="Default Claude view">
@@ -207,8 +278,8 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
         </div>
       </Row>
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
-        Which view a Claude pane opens in. The rich GUI shows the conversation, work cards,
-        and inspector; Terminal is the raw Claude Code TUI. Toggle any time from the pane's top bar.
+        Which view a Claude pane opens in. The rich GUI shows the conversation, work cards, and
+        inspector; Terminal is the raw Claude Code TUI. Toggle any time from the pane's top bar.
       </div>
 
       <Row label="Work log style">
@@ -244,8 +315,8 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
         </div>
       </Row>
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
-        Size of the conversation text in the GUI view (messages, markdown, code blocks).
-        Doesn't affect the terminal view.
+        Size of the conversation text in the GUI view (messages, markdown, code blocks). Doesn't
+        affect the terminal view.
       </div>
 
       <Row label="Diff layout">
@@ -261,8 +332,8 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
         </div>
       </Row>
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
-        How file edits render in the GUI. Stacked shows all removed lines then all added;
-        Inline interleaves them as a unified diff; Split shows old and new side by side.
+        How file edits render in the GUI. Stacked shows all removed lines then all added; Inline
+        interleaves them as a unified diff; Split shows old and new side by side.
       </div>
 
       <CheckRow
@@ -275,12 +346,20 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
         (Shift+Enter for a newline).
       </div>
 
-      <div style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--wks-text-muted)', marginTop: 16, marginBottom: 4 }}>
+      <div
+        style={{
+          fontSize: '0.65rem',
+          fontWeight: 600,
+          color: 'var(--wks-text-muted)',
+          marginTop: 16,
+          marginBottom: 4,
+        }}
+      >
         Tool paths
       </div>
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)', marginBottom: 8 }}>
-        Override the binary path for each coding agent. Leave blank to auto-detect on PATH.
-        A green dot means the CLI was found; red means it's missing or the path is invalid.
+        Override the binary path for each coding agent. Leave blank to auto-detect on PATH. A green
+        dot means the CLI was found; red means it's missing or the path is invalid.
       </div>
       {AGENT_PROVIDERS.map((p) => (
         <BinaryRow

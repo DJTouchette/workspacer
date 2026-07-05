@@ -15,14 +15,28 @@ const ADD_FG = 'rgb(150, 230, 170)';
 const EMPTY_BG = 'rgba(255,255,255,0.02)';
 
 const gutterStyle = (color: string): React.CSSProperties => ({
-  color, userSelect: 'none', width: 36, minWidth: 36, textAlign: 'right',
-  padding: '1px 6px 1px 0', fontSize: '0.65rem',
+  color,
+  userSelect: 'none',
+  width: 36,
+  minWidth: 36,
+  textAlign: 'right',
+  padding: '1px 6px 1px 0',
+  fontSize: '0.65rem',
 });
 const markerStyle = (color: string): React.CSSProperties => ({
-  color, userSelect: 'none', width: 16, minWidth: 16, textAlign: 'center', padding: '1px 0',
+  color,
+  userSelect: 'none',
+  width: 16,
+  minWidth: 16,
+  textAlign: 'center',
+  padding: '1px 0',
 });
 const contentStyle: React.CSSProperties = {
-  padding: '1px 8px 1px 0', whiteSpace: 'pre-wrap', wordBreak: 'break-all', flex: 1, minWidth: 0,
+  padding: '1px 8px 1px 0',
+  whiteSpace: 'pre-wrap',
+  wordBreak: 'break-all',
+  flex: 1,
+  minWidth: 0,
 };
 
 /**
@@ -31,7 +45,11 @@ const contentStyle: React.CSSProperties = {
  *  - inline:  LCS-interleaved unified diff (shared lines shown once)
  *  - split:   side-by-side, removed left / added right, aligned
  */
-export const DiffView: React.FC<{ oldStr: string; newStr: string; filePath?: string }> = ({ oldStr, newStr, filePath }) => {
+export const DiffView: React.FC<{ oldStr: string; newStr: string; filePath?: string }> = ({
+  oldStr,
+  newStr,
+  filePath,
+}) => {
   const { config } = useConfig();
   const mode: DiffViewMode = config.ui.diffView ?? 'stacked';
   const fileName = filePath?.split(/[/\\]/).pop() ?? '';
@@ -47,37 +65,66 @@ export const DiffView: React.FC<{ oldStr: string; newStr: string; filePath?: str
   const newTokens = useHighlight(newStr, lang);
 
   return (
-    <div style={{
-      margin: '6px 0',
-      borderRadius: 6,
-      overflow: 'hidden',
-      border: `1px solid ${colors.borderSubtle}`,
-      fontSize: '0.75rem',
-      fontFamily: 'var(--claude-mono-font, monospace)',
-    }}>
+    <div
+      style={{
+        margin: '6px 0',
+        borderRadius: 6,
+        overflow: 'hidden',
+        border: `1px solid ${colors.borderSubtle}`,
+        fontSize: '0.75rem',
+        fontFamily: 'var(--claude-mono-font, monospace)',
+      }}
+    >
       {fileName && (
-        <div style={{
-          padding: '5px 12px',
-          backgroundColor: 'rgba(255,255,255,0.03)',
-          color: colors.text,
-          fontSize: '0.72rem',
-          fontWeight: 600,
-          borderBottom: `1px solid ${colors.borderSubtle}`,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-        }}>
+        <div
+          style={{
+            padding: '5px 12px',
+            backgroundColor: 'rgba(255,255,255,0.03)',
+            color: colors.text,
+            fontSize: '0.72rem',
+            fontWeight: 600,
+            borderBottom: `1px solid ${colors.borderSubtle}`,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+          }}
+        >
           <span>{fileName}</span>
-          {removedCount > 0 && <span style={{ color: colors.error, fontSize: '0.65rem', fontWeight: 400 }}>-{removedCount}</span>}
-          {addedCount > 0 && <span style={{ color: colors.success, fontSize: '0.65rem', fontWeight: 400 }}>+{addedCount}</span>}
+          {removedCount > 0 && (
+            <span style={{ color: colors.error, fontSize: '0.65rem', fontWeight: 400 }}>
+              -{removedCount}
+            </span>
+          )}
+          {addedCount > 0 && (
+            <span style={{ color: colors.success, fontSize: '0.65rem', fontWeight: 400 }}>
+              +{addedCount}
+            </span>
+          )}
         </div>
       )}
       <div style={{ maxHeight: 600, overflow: 'auto' }}>
-        {mode === 'split'
-          ? <SplitBody oldLines={oldLines} newLines={newLines} oldTokens={oldTokens} newTokens={newTokens} />
-          : mode === 'inline'
-            ? <InlineBody oldLines={oldLines} newLines={newLines} oldTokens={oldTokens} newTokens={newTokens} />
-            : <StackedBody oldLines={oldLines} newLines={newLines} oldTokens={oldTokens} newTokens={newTokens} />}
+        {mode === 'split' ? (
+          <SplitBody
+            oldLines={oldLines}
+            newLines={newLines}
+            oldTokens={oldTokens}
+            newTokens={newTokens}
+          />
+        ) : mode === 'inline' ? (
+          <InlineBody
+            oldLines={oldLines}
+            newLines={newLines}
+            oldTokens={oldTokens}
+            newTokens={newTokens}
+          />
+        ) : (
+          <StackedBody
+            oldLines={oldLines}
+            newLines={newLines}
+            oldTokens={oldTokens}
+            newTokens={newTokens}
+          />
+        )}
       </div>
     </div>
   );
@@ -95,15 +142,35 @@ interface BodyProps {
 const StackedBody: React.FC<BodyProps> = ({ oldLines, newLines, oldTokens, newTokens }) => (
   <>
     {oldLines.map((line, i) => (
-      <div key={`old-${i}`} style={{ display: 'flex', backgroundColor: DEL_BG, color: DEL_FG, lineHeight: 1.5 }}>
-        <span style={{ ...gutterStyle('rgba(248,150,150,0.4)'), borderRight: '1px solid rgba(248,113,113,0.15)' }}>{i + 1}</span>
+      <div
+        key={`old-${i}`}
+        style={{ display: 'flex', backgroundColor: DEL_BG, color: DEL_FG, lineHeight: 1.5 }}
+      >
+        <span
+          style={{
+            ...gutterStyle('rgba(248,150,150,0.4)'),
+            borderRight: '1px solid rgba(248,113,113,0.15)',
+          }}
+        >
+          {i + 1}
+        </span>
         <span style={markerStyle(colors.error)}>-</span>
         <span style={contentStyle}>{renderLine(oldTokens?.[i], line)}</span>
       </div>
     ))}
     {newLines.map((line, i) => (
-      <div key={`new-${i}`} style={{ display: 'flex', backgroundColor: ADD_BG, color: ADD_FG, lineHeight: 1.5 }}>
-        <span style={{ ...gutterStyle('rgba(150,230,170,0.4)'), borderRight: '1px solid rgba(74,222,128,0.15)' }}>{i + 1}</span>
+      <div
+        key={`new-${i}`}
+        style={{ display: 'flex', backgroundColor: ADD_BG, color: ADD_FG, lineHeight: 1.5 }}
+      >
+        <span
+          style={{
+            ...gutterStyle('rgba(150,230,170,0.4)'),
+            borderRight: '1px solid rgba(74,222,128,0.15)',
+          }}
+        >
+          {i + 1}
+        </span>
         <span style={markerStyle(colors.success)}>+</span>
         <span style={contentStyle}>{renderLine(newTokens?.[i], line)}</span>
       </div>
@@ -125,7 +192,14 @@ const InlineBody: React.FC<BodyProps> = ({ oldLines, newLines, oldTokens, newTok
       return (
         <div key={i} style={{ display: 'flex', backgroundColor: bg, color: fg, lineHeight: 1.5 }}>
           <span style={gutterStyle(colors.mutedDim)}>{r.oldNo ?? ''}</span>
-          <span style={{ ...gutterStyle(colors.mutedDim), borderRight: `1px solid ${colors.borderSubtle}` }}>{r.newNo ?? ''}</span>
+          <span
+            style={{
+              ...gutterStyle(colors.mutedDim),
+              borderRight: `1px solid ${colors.borderSubtle}`,
+            }}
+          >
+            {r.newNo ?? ''}
+          </span>
           <span style={markerStyle(markerColor)}>{marker}</span>
           <span style={contentStyle}>{renderLine(tok, r.text)}</span>
         </div>
@@ -142,24 +216,38 @@ const SplitBody: React.FC<BodyProps> = ({ oldLines, newLines, oldTokens, newToke
       const rightChanged = r.changed && r.right;
       return (
         <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', lineHeight: 1.5 }}>
-          <div style={{
-            display: 'flex', minWidth: 0,
-            backgroundColor: leftChanged ? DEL_BG : r.left ? 'transparent' : EMPTY_BG,
-            color: leftChanged ? DEL_FG : colors.text,
-            borderRight: `1px solid ${colors.borderSubtle}`,
-          }}>
+          <div
+            style={{
+              display: 'flex',
+              minWidth: 0,
+              backgroundColor: leftChanged ? DEL_BG : r.left ? 'transparent' : EMPTY_BG,
+              color: leftChanged ? DEL_FG : colors.text,
+              borderRight: `1px solid ${colors.borderSubtle}`,
+            }}
+          >
             <span style={gutterStyle(colors.mutedDim)}>{r.left?.no ?? ''}</span>
-            <span style={markerStyle(leftChanged ? colors.error : colors.mutedDim)}>{leftChanged ? '-' : ''}</span>
-            <span style={contentStyle}>{r.left ? renderLine(oldTokens?.[r.left.no - 1], r.left.text) : ''}</span>
+            <span style={markerStyle(leftChanged ? colors.error : colors.mutedDim)}>
+              {leftChanged ? '-' : ''}
+            </span>
+            <span style={contentStyle}>
+              {r.left ? renderLine(oldTokens?.[r.left.no - 1], r.left.text) : ''}
+            </span>
           </div>
-          <div style={{
-            display: 'flex', minWidth: 0,
-            backgroundColor: rightChanged ? ADD_BG : r.right ? 'transparent' : EMPTY_BG,
-            color: rightChanged ? ADD_FG : colors.text,
-          }}>
+          <div
+            style={{
+              display: 'flex',
+              minWidth: 0,
+              backgroundColor: rightChanged ? ADD_BG : r.right ? 'transparent' : EMPTY_BG,
+              color: rightChanged ? ADD_FG : colors.text,
+            }}
+          >
             <span style={gutterStyle(colors.mutedDim)}>{r.right?.no ?? ''}</span>
-            <span style={markerStyle(rightChanged ? colors.success : colors.mutedDim)}>{rightChanged ? '+' : ''}</span>
-            <span style={contentStyle}>{r.right ? renderLine(newTokens?.[r.right.no - 1], r.right.text) : ''}</span>
+            <span style={markerStyle(rightChanged ? colors.success : colors.mutedDim)}>
+              {rightChanged ? '+' : ''}
+            </span>
+            <span style={contentStyle}>
+              {r.right ? renderLine(newTokens?.[r.right.no - 1], r.right.text) : ''}
+            </span>
           </div>
         </div>
       );
@@ -169,7 +257,10 @@ const SplitBody: React.FC<BodyProps> = ({ oldLines, newLines, oldTokens, newToke
 
 /** Check if a tool call has diff-able content */
 export function hasDiff(tc: { name: string; input?: Record<string, unknown> }): boolean {
-  return (tc.name === 'Edit' || tc.name === 'MultiEdit') && !!(tc.input?.old_string || tc.input?.new_string);
+  return (
+    (tc.name === 'Edit' || tc.name === 'MultiEdit') &&
+    !!(tc.input?.old_string || tc.input?.new_string)
+  );
 }
 
 /** Cap how many read lines we render inline; the rest is summarized. */
@@ -181,7 +272,10 @@ const READ_PREVIEW_MAX = 200;
  * (`␣␣␣123⇥content`); we parse the gutter number off each line and fall back
  * to a sequential index if a line doesn't match.
  */
-export const ReadView: React.FC<{ response: string; filePath?: string }> = ({ response, filePath }) => {
+export const ReadView: React.FC<{ response: string; filePath?: string }> = ({
+  response,
+  filePath,
+}) => {
   const fileName = filePath?.split(/[/\\]/).pop() ?? '';
   const lines = response.split('\n');
   if (lines.length && lines[lines.length - 1] === '') lines.pop(); // trailing newline
@@ -197,39 +291,64 @@ export const ReadView: React.FC<{ response: string; filePath?: string }> = ({ re
   const tokens = useHighlight(parsed.map((p) => p.text).join('\n'), lang);
 
   return (
-    <div style={{
-      margin: '6px 0',
-      borderRadius: 6,
-      overflow: 'hidden',
-      border: `1px solid ${colors.borderSubtle}`,
-      fontSize: '0.75rem',
-      fontFamily: 'var(--claude-mono-font, monospace)',
-    }}>
+    <div
+      style={{
+        margin: '6px 0',
+        borderRadius: 6,
+        overflow: 'hidden',
+        border: `1px solid ${colors.borderSubtle}`,
+        fontSize: '0.75rem',
+        fontFamily: 'var(--claude-mono-font, monospace)',
+      }}
+    >
       {fileName && (
-        <div style={{
-          padding: '5px 12px',
-          backgroundColor: 'rgba(255,255,255,0.03)',
-          color: colors.text,
-          fontSize: '0.72rem',
-          fontWeight: 600,
-          borderBottom: `1px solid ${colors.borderSubtle}`,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-        }}>
+        <div
+          style={{
+            padding: '5px 12px',
+            backgroundColor: 'rgba(255,255,255,0.03)',
+            color: colors.text,
+            fontSize: '0.72rem',
+            fontWeight: 600,
+            borderBottom: `1px solid ${colors.borderSubtle}`,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+          }}
+        >
           <span>{fileName}</span>
-          <span style={{ color: colors.muted, fontSize: '0.65rem', fontWeight: 400 }}>{lines.length} lines</span>
+          <span style={{ color: colors.muted, fontSize: '0.65rem', fontWeight: 400 }}>
+            {lines.length} lines
+          </span>
         </div>
       )}
       <div style={{ maxHeight: 600, overflow: 'auto' }}>
         {parsed.map(({ num, text }, i) => (
           <div key={i} style={{ display: 'flex', lineHeight: 1.5 }}>
-            <span style={{
-              color: colors.mutedDim, userSelect: 'none', width: 44, minWidth: 44,
-              textAlign: 'right', padding: '1px 8px 1px 0', fontSize: '0.65rem',
-              borderRight: `1px solid ${colors.borderSubtle}`,
-            }}>{num}</span>
-            <span style={{ color: colors.text, padding: '1px 8px', whiteSpace: 'pre-wrap', wordBreak: 'break-all', flex: 1 }}>{renderLine(tokens?.[i], text)}</span>
+            <span
+              style={{
+                color: colors.mutedDim,
+                userSelect: 'none',
+                width: 44,
+                minWidth: 44,
+                textAlign: 'right',
+                padding: '1px 8px 1px 0',
+                fontSize: '0.65rem',
+                borderRight: `1px solid ${colors.borderSubtle}`,
+              }}
+            >
+              {num}
+            </span>
+            <span
+              style={{
+                color: colors.text,
+                padding: '1px 8px',
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-all',
+                flex: 1,
+              }}
+            >
+              {renderLine(tokens?.[i], text)}
+            </span>
           </div>
         ))}
         {hidden > 0 && (

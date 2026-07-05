@@ -43,14 +43,17 @@ const RemoteShareDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   };
 
   useEffect(() => {
-    window.electronAPI.getRemoteInfo?.()
+    window.electronAPI
+      .getRemoteInfo?.()
       .then((i) => setInfo(i))
       .catch(() => setInfo(null))
       .finally(() => setLoading(false));
   }, []);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
   }, [onClose]);
@@ -60,29 +63,39 @@ const RemoteShareDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
       await navigator.clipboard.writeText(text);
       setCopied(label);
       setTimeout(() => setCopied((c) => (c === label ? null : c)), 1500);
-    } catch { /* clipboard blocked — nothing we can do */ }
+    } catch {
+      /* clipboard blocked — nothing we can do */
+    }
   };
 
   return (
     <div
       onMouseDown={onClose}
       style={{
-        position: 'fixed', inset: 0, zIndex: 20000,
+        position: 'fixed',
+        inset: 0,
+        zIndex: 20000,
         backgroundColor: 'var(--wks-overlay, rgba(0,0,0,0.5))',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
       }}
     >
       <div
         onMouseDown={(e) => e.stopPropagation()}
         style={{
-          width: 440, maxWidth: '92vw', maxHeight: '90vh', overflowY: 'auto',
+          width: 440,
+          maxWidth: '92vw',
+          maxHeight: '90vh',
+          overflowY: 'auto',
           backgroundColor: 'var(--wks-glass-strong)',
           backdropFilter: 'blur(var(--wks-glass-blur)) saturate(170%)',
           WebkitBackdropFilter: 'blur(var(--wks-glass-blur)) saturate(170%)',
           border: '1px solid var(--wks-glass-border)',
           borderRadius: 'var(--wks-radius-lg)',
           padding: 20,
-          boxShadow: '0 16px 48px var(--wks-glass-shadow), inset 0 0 0 1.5px var(--wks-glass-highlight)',
+          boxShadow:
+            '0 16px 48px var(--wks-glass-shadow), inset 0 0 0 1.5px var(--wks-glass-highlight)',
           fontFamily: 'inherit',
         }}
       >
@@ -92,7 +105,14 @@ const RemoteShareDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             Remote control
           </div>
         </div>
-        <div style={{ fontSize: '0.7rem', color: 'var(--wks-text-muted)', lineHeight: 1.5, marginBottom: 16 }}>
+        <div
+          style={{
+            fontSize: '0.7rem',
+            color: 'var(--wks-text-muted)',
+            lineHeight: 1.5,
+            marginBottom: 16,
+          }}
+        >
           Drive your agents — approve prompts, answer questions, send messages — from a phone or
           another computer on the same Tailscale tailnet.
         </div>
@@ -124,7 +144,9 @@ const RemoteShareDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         )}
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 20 }}>
-          <button onClick={onClose} style={secondaryBtnStyle}>Close</button>
+          <button onClick={onClose} style={secondaryBtnStyle}>
+            Close
+          </button>
         </div>
       </div>
     </div>
@@ -136,9 +158,9 @@ function DisabledState({ busy, onStart }: { busy: boolean; onStart: () => void }
     <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-tertiary)', lineHeight: 1.6 }}>
       <StatusPill on={false} />
       <div style={{ marginBottom: 14 }}>
-        Right now the hub listens on <code style={inlineCode}>localhost</code> only — nothing off this
-        machine can reach it. Start sharing to bind it to your network so a phone or another computer
-        can connect.
+        Right now the hub listens on <code style={inlineCode}>localhost</code> only — nothing off
+        this machine can reach it. Start sharing to bind it to your network so a phone or another
+        computer can connect.
       </div>
 
       <TailscaleNote />
@@ -158,13 +180,30 @@ function DisabledState({ busy, onStart }: { busy: boolean; onStart: () => void }
 function StatusPill({ on }: { on: boolean }) {
   const color = on ? 'var(--wks-success, #3fb950)' : 'var(--wks-text-faint, #666)';
   return (
-    <div style={{
-      display: 'inline-flex', alignItems: 'center', gap: 6, marginBottom: 14,
-      padding: '3px 10px', borderRadius: 999,
-      background: 'var(--wks-bg-input)', border: '1px solid var(--wks-border-input)',
-      color: on ? 'var(--wks-success, #3fb950)' : 'var(--wks-text-muted)', fontSize: '0.65rem', fontWeight: 600,
-    }}>
-      <span style={{ width: 6, height: 6, borderRadius: '50%', background: color, boxShadow: on ? `0 0 5px ${color}` : 'none' }} />
+    <div
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        marginBottom: 14,
+        padding: '3px 10px',
+        borderRadius: 999,
+        background: 'var(--wks-bg-input)',
+        border: '1px solid var(--wks-border-input)',
+        color: on ? 'var(--wks-success, #3fb950)' : 'var(--wks-text-muted)',
+        fontSize: '0.65rem',
+        fontWeight: 600,
+      }}
+    >
+      <span
+        style={{
+          width: 6,
+          height: 6,
+          borderRadius: '50%',
+          background: color,
+          boxShadow: on ? `0 0 5px ${color}` : 'none',
+        }}
+      />
       Remote sharing is {on ? 'ON' : 'OFF'}
     </div>
   );
@@ -173,17 +212,33 @@ function StatusPill({ on }: { on: boolean }) {
 /** How the connection actually reaches another device — Tailscale, in plain terms. */
 function TailscaleNote() {
   return (
-    <div style={{
-      margin: '0 0 16px', padding: '10px 12px', borderRadius: 8,
-      background: 'var(--wks-bg-input)', border: '1px solid var(--wks-border-subtle, var(--wks-border-input))',
-      fontSize: '0.68rem', color: 'var(--wks-text-tertiary)', lineHeight: 1.6,
-    }}>
+    <div
+      style={{
+        margin: '0 0 16px',
+        padding: '10px 12px',
+        borderRadius: 8,
+        background: 'var(--wks-bg-input)',
+        border: '1px solid var(--wks-border-subtle, var(--wks-border-input))',
+        fontSize: '0.68rem',
+        color: 'var(--wks-text-tertiary)',
+        lineHeight: 1.6,
+      }}
+    >
       <div style={{ fontWeight: 600, color: 'var(--wks-text-muted)', marginBottom: 4 }}>
         How this reaches your phone
       </div>
       Sharing exposes the hub on your machine's network address. The clean way to use it from
-      anywhere is <a href="https://tailscale.com/" target="_blank" rel="noreferrer" style={{ color: 'var(--wks-accent, #4a9eff)' }}>Tailscale</a> —
-      a zero-config VPN that puts all your devices on one private network (a “tailnet”) with stable
+      anywhere is{' '}
+      <a
+        href="https://tailscale.com/"
+        target="_blank"
+        rel="noreferrer"
+        style={{ color: 'var(--wks-accent, #4a9eff)' }}
+      >
+        Tailscale
+      </a>{' '}
+      — a zero-config VPN that puts all your devices on one private network (a “tailnet”) with
+      stable
       <code style={inlineCode}>100.x</code> IPs. Install Tailscale on this machine and your phone,
       sign both into the same account, and the URL below works from anywhere — the traffic rides
       Tailscale's encrypted WireGuard tunnel, never the public internet. Without it, sharing only
@@ -193,7 +248,13 @@ function TailscaleNote() {
 }
 
 function EnabledState({
-  info, copied, showToken, busy, onCopy, onToggleToken, onStop,
+  info,
+  copied,
+  showToken,
+  busy,
+  onCopy,
+  onToggleToken,
+  onStop,
 }: {
   info: RemoteInfo;
   copied: string | null;
@@ -216,28 +277,68 @@ function EnabledState({
           /app; mobile is the mobile-first single-page client served at /m. */}
       {hasApp ? (
         <div style={{ display: 'flex', gap: 4, marginBottom: 14 }}>
-          <ModeTab active={mode === 'app'} onClick={() => setMode('app')} title="The full Workspacer UI, in the browser">Full app</ModeTab>
-          <ModeTab active={mode === 'lite'} onClick={() => setMode('lite')} title="Mobile-first client: fleet, decisions, and chat">Mobile</ModeTab>
+          <ModeTab
+            active={mode === 'app'}
+            onClick={() => setMode('app')}
+            title="The full Workspacer UI, in the browser"
+          >
+            Full app
+          </ModeTab>
+          <ModeTab
+            active={mode === 'lite'}
+            onClick={() => setMode('lite')}
+            title="Mobile-first client: fleet, decisions, and chat"
+          >
+            Mobile
+          </ModeTab>
         </div>
       ) : (
-        <div style={{ fontSize: '0.66rem', color: 'var(--wks-text-faint)', marginBottom: 12, lineHeight: 1.5 }}>
+        <div
+          style={{
+            fontSize: '0.66rem',
+            color: 'var(--wks-text-faint)',
+            marginBottom: 12,
+            lineHeight: 1.5,
+          }}
+        >
           Showing the mobile client. Build the full app with{' '}
-          <code style={inlineCode}>npm run build:renderer:web</code> and restart to share the full UI.
+          <code style={inlineCode}>npm run build:renderer:web</code> and restart to share the full
+          UI.
         </div>
       )}
 
       {/* QR — the fast path. White quiet-zone box so it scans on any theme. */}
       <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 14 }}>
         <div style={{ background: '#fff', padding: 12, borderRadius: 8, lineHeight: 0 }}>
-          <QRCodeSVG value={activeUrl} size={188} level="M" marginSize={0} bgColor="#ffffff" fgColor="#000000" />
+          <QRCodeSVG
+            value={activeUrl}
+            size={188}
+            level="M"
+            marginSize={0}
+            bgColor="#ffffff"
+            fgColor="#000000"
+          />
         </div>
       </div>
-      <div style={{ textAlign: 'center', fontSize: '0.68rem', color: 'var(--wks-text-muted)', marginBottom: 16 }}>
-        Scan with your phone's camera to open {mode === 'app' && hasApp ? 'the full app' : 'the mobile client'}.
+      <div
+        style={{
+          textAlign: 'center',
+          fontSize: '0.68rem',
+          color: 'var(--wks-text-muted)',
+          marginBottom: 16,
+        }}
+      >
+        Scan with your phone's camera to open{' '}
+        {mode === 'app' && hasApp ? 'the full app' : 'the mobile client'}.
       </div>
 
-      <CopyRow label="Connection URL" value={activeUrl} display={activeUrl}
-        copied={copied === 'url'} onCopy={() => onCopy('url', activeUrl)} />
+      <CopyRow
+        label="Connection URL"
+        value={activeUrl}
+        display={activeUrl}
+        copied={copied === 'url'}
+        onCopy={() => onCopy('url', activeUrl)}
+      />
 
       <CopyRow
         label="Token"
@@ -246,16 +347,27 @@ function EnabledState({
         copied={copied === 'token'}
         onCopy={() => onCopy('token', info.token)}
         extra={
-          <button onClick={onToggleToken} title={showToken ? 'Hide token' : 'Show token'} style={iconBtnStyle}>
+          <button
+            onClick={onToggleToken}
+            title={showToken ? 'Hide token' : 'Show token'}
+            style={iconBtnStyle}
+          >
             {showToken ? <EyeOff size={13} /> : <Eye size={13} />}
           </button>
         }
       />
 
-      <div style={{
-        marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--wks-border-subtle)',
-        fontSize: '0.68rem', color: 'var(--wks-text-faint)', lineHeight: 1.6, marginBottom: 14,
-      }}>
+      <div
+        style={{
+          marginTop: 14,
+          paddingTop: 12,
+          borderTop: '1px solid var(--wks-border-subtle)',
+          fontSize: '0.68rem',
+          color: 'var(--wks-text-faint)',
+          lineHeight: 1.6,
+          marginBottom: 14,
+        }}
+      >
         The URL already includes the token, so anyone who can open it gets full control. Only share
         it over your trusted tailnet — see below.
       </div>
@@ -270,7 +382,11 @@ function EnabledState({
 }
 
 function CopyRow({
-  label, display, copied, onCopy, extra,
+  label,
+  display,
+  copied,
+  onCopy,
+  extra,
 }: {
   label: string;
   value: string;
@@ -281,17 +397,28 @@ function CopyRow({
 }) {
   return (
     <div style={{ marginBottom: 10 }}>
-      <div style={{ fontSize: '0.62rem', color: 'var(--wks-text-muted)', marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: '0.62rem', color: 'var(--wks-text-muted)', marginBottom: 4 }}>
+        {label}
+      </div>
       <div style={{ display: 'flex', gap: 6, alignItems: 'stretch' }}>
-        <div style={{
-          flex: 1, minWidth: 0,
-          fontSize: '0.72rem', fontFamily: 'var(--wks-font-mono, monospace)',
-          color: 'var(--wks-text-tertiary)',
-          background: 'var(--wks-bg-base)', border: '1px solid var(--wks-border-input)',
-          borderRadius: 4, padding: '6px 8px',
-          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-          display: 'flex', alignItems: 'center',
-        }}>
+        <div
+          style={{
+            flex: 1,
+            minWidth: 0,
+            fontSize: '0.72rem',
+            fontFamily: 'var(--wks-font-mono, monospace)',
+            color: 'var(--wks-text-tertiary)',
+            background: 'var(--wks-bg-base)',
+            border: '1px solid var(--wks-border-input)',
+            borderRadius: 4,
+            padding: '6px 8px',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            display: 'flex',
+            alignItems: 'center',
+          }}
+        >
           {display}
         </div>
         {extra}
@@ -303,14 +430,29 @@ function CopyRow({
   );
 }
 
-function ModeTab({ active, onClick, title, children }: { active: boolean; onClick: () => void; title?: string; children: React.ReactNode }) {
+function ModeTab({
+  active,
+  onClick,
+  title,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  title?: string;
+  children: React.ReactNode;
+}) {
   return (
     <button
       onClick={onClick}
       title={title}
       style={{
-        flex: 1, cursor: 'pointer', fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit',
-        padding: '6px 10px', borderRadius: 6,
+        flex: 1,
+        cursor: 'pointer',
+        fontSize: '0.72rem',
+        fontWeight: 600,
+        fontFamily: 'inherit',
+        padding: '6px 10px',
+        borderRadius: 6,
         background: active ? 'var(--wks-accent-soft, var(--wks-bg-input))' : 'transparent',
         color: active ? 'var(--wks-text-primary)' : 'var(--wks-text-muted)',
         border: `1px solid ${active ? 'var(--wks-accent, #4a9eff)' : 'var(--wks-border-input)'}`,
@@ -322,40 +464,62 @@ function ModeTab({ active, onClick, title, children }: { active: boolean; onClic
 }
 
 const primaryBtnStyle = (disabled: boolean): React.CSSProperties => ({
-  width: '100%', boxSizing: 'border-box',
-  fontSize: '0.8rem', fontWeight: 600, fontFamily: 'inherit',
+  width: '100%',
+  boxSizing: 'border-box',
+  fontSize: '0.8rem',
+  fontWeight: 600,
+  fontFamily: 'inherit',
   cursor: disabled ? 'default' : 'pointer',
   background: disabled ? 'var(--wks-bg-input)' : 'var(--wks-accent, #4a9eff)',
   color: disabled ? 'var(--wks-text-faint)' : 'var(--wks-text-on-accent, #fff)',
-  border: 'none', borderRadius: 6, padding: '9px 14px',
+  border: 'none',
+  borderRadius: 6,
+  padding: '9px 14px',
 });
 
 const dangerBtnStyle = (disabled: boolean): React.CSSProperties => ({
-  width: '100%', boxSizing: 'border-box',
-  fontSize: '0.8rem', fontWeight: 600, fontFamily: 'inherit',
+  width: '100%',
+  boxSizing: 'border-box',
+  fontSize: '0.8rem',
+  fontWeight: 600,
+  fontFamily: 'inherit',
   cursor: disabled ? 'default' : 'pointer',
   background: 'transparent',
   color: disabled ? 'var(--wks-text-faint)' : 'var(--wks-danger, #e05555)',
   border: `1px solid ${disabled ? 'var(--wks-border-input)' : 'var(--wks-danger, #e05555)'}`,
-  borderRadius: 6, padding: '9px 14px',
+  borderRadius: 6,
+  padding: '9px 14px',
 });
 
 const inlineCode: React.CSSProperties = {
   fontFamily: 'var(--wks-font-mono, monospace)',
-  background: 'var(--wks-bg-base)', padding: '1px 4px', borderRadius: 3,
+  background: 'var(--wks-bg-base)',
+  padding: '1px 4px',
+  borderRadius: 3,
 };
 
 const iconBtnStyle: React.CSSProperties = {
-  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-  cursor: 'pointer', flexShrink: 0,
-  background: 'var(--wks-bg-input)', color: 'var(--wks-text-tertiary)',
-  border: '1px solid var(--wks-border-input)', borderRadius: 4, padding: '0 9px',
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  cursor: 'pointer',
+  flexShrink: 0,
+  background: 'var(--wks-bg-input)',
+  color: 'var(--wks-text-tertiary)',
+  border: '1px solid var(--wks-border-input)',
+  borderRadius: 4,
+  padding: '0 9px',
 };
 
 const secondaryBtnStyle: React.CSSProperties = {
-  fontSize: '0.78rem', fontFamily: 'inherit', cursor: 'pointer',
-  background: 'transparent', color: 'var(--wks-text-tertiary)',
-  border: '1px solid var(--wks-border-input)', borderRadius: 4, padding: '6px 14px',
+  fontSize: '0.78rem',
+  fontFamily: 'inherit',
+  cursor: 'pointer',
+  background: 'transparent',
+  color: 'var(--wks-text-tertiary)',
+  border: '1px solid var(--wks-border-input)',
+  borderRadius: 4,
+  padding: '6px 14px',
 };
 
 export default RemoteShareDialog;

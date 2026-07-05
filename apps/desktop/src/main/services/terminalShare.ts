@@ -76,9 +76,7 @@ export function attachTerminal(sessionId: string): void {
   };
   forwarders.set(sessionId, f);
   ensureSweeper();
-  runStream(f).catch((err) =>
-    console.error(`[terminalShare] stream ${sessionId} ended:`, err),
-  );
+  runStream(f).catch((err) => console.error(`[terminalShare] stream ${sessionId} ended:`, err));
 }
 
 /**
@@ -97,8 +95,15 @@ export function stopTerminal(sessionId: string): void {
   const f = forwarders.get(sessionId);
   if (!f) return;
   f.stopped = true;
-  if (f.flushTimer) { clearTimeout(f.flushTimer); f.flushTimer = null; }
-  try { f.abort.abort(); } catch { /* noop */ }
+  if (f.flushTimer) {
+    clearTimeout(f.flushTimer);
+    f.flushTimer = null;
+  }
+  try {
+    f.abort.abort();
+  } catch {
+    /* noop */
+  }
   forwarders.delete(sessionId);
 }
 
@@ -106,7 +111,10 @@ export function stopTerminal(sessionId: string): void {
  *  (We can't just concat the base64 strings — only byte concatenation is
  *  correct unless every chunk is a multiple of 3 bytes.) */
 function flush(f: Forwarder): void {
-  if (f.flushTimer) { clearTimeout(f.flushTimer); f.flushTimer = null; }
+  if (f.flushTimer) {
+    clearTimeout(f.flushTimer);
+    f.flushTimer = null;
+  }
   if (f.stopped || f.pending.length === 0) return;
   const combined = Buffer.concat(f.pending, f.pendingBytes);
   f.pending = [];
@@ -124,46 +132,45 @@ export function stopAllTerminals(): void {
 }
 
 async function runStream(f: Forwarder): Promise<void> {
-  await consumeSseStream(
-    `${CLAUDEMON_API_URL}/sessions/${f.sessionId}/stream`,
-    {
-      signal: f.abort.signal,
-      backoffInitialMs: BACKOFF_INITIAL_MS,
-      backoffMaxMs: BACKOFF_MAX_MS,
-      joinWith: '',
-      onFrame(b64) {
-        // Buffer decoded bytes and coalesce; flush on the next frame tick, or
-        // immediately once enough has piled up (keeps latency bounded).
-        const chunk = Buffer.from(b64, 'base64');
-        f.pending.push(chunk);
-        f.pendingBytes += chunk.length;
-        if (f.pendingBytes >= FLUSH_BYTES) flush(f);
-        else if (!f.flushTimer) f.flushTimer = setTimeout(() => flush(f), FLUSH_MS);
-      },
-      onError(err) {
-        console.warn(`[terminalShare] stream ${f.sessionId} error, retrying:`, err);
-        // Tell a transient stream hiccup (retry) apart from the PTY having
-        // exited. claudemon keeps a terminated session as a resumable row, so an
-        // exit shows up as 404 *or* a 200 with mode 'stopped' — mirror the
-        // desktop's own liveness probe (claudemonSessionClient.verifyAttachTarget).
-        // On a real exit, publish `pty.exit` so the web client can mark the pane
-        // dead (the desktop learns this over its own MessagePort path), and stop
-        // forwarding — the retry loop would otherwise spin against a gone session.
-        if (f.stopped) return;
-        fetch(`${CLAUDEMON_API_URL}/sessions/${f.sessionId}`)
-          .then(async (res) => {
-            let dead = res.status === 404;
-            if (res.ok) {
-              const body = (await res.json().catch(() => null)) as { mode?: string } | null;
-              dead = body?.mode === 'stopped';
-            }
-            if (dead && !f.stopped) {
-              publishToHub({ type: 'pty.exit', data: { sessionId: f.sessionId } });
-              stopTerminal(f.sessionId);
-            }
-          })
-          .catch(() => { /* daemon unreachable — the SSE backoff handles that */ });
-      },
+  await consumeSseStream(`${CLAUDEMON_API_URL}/sessions/${f.sessionId}/stream`, {
+    signal: f.abort.signal,
+    backoffInitialMs: BACKOFF_INITIAL_MS,
+    backoffMaxMs: BACKOFF_MAX_MS,
+    joinWith: '',
+    onFrame(b64) {
+      // Buffer decoded bytes and coalesce; flush on the next frame tick, or
+      // immediately once enough has piled up (keeps latency bounded).
+      const chunk = Buffer.from(b64, 'base64');
+      f.pending.push(chunk);
+      f.pendingBytes += chunk.length;
+      if (f.pendingBytes >= FLUSH_BYTES) flush(f);
+      else if (!f.flushTimer) f.flushTimer = setTimeout(() => flush(f), FLUSH_MS);
     },
-  );
+    onError(err) {
+      console.warn(`[terminalShare] stream ${f.sessionId} error, retrying:`, err);
+      // Tell a transient stream hiccup (retry) apart from the PTY having
+      // exited. claudemon keeps a terminated session as a resumable row, so an
+      // exit shows up as 404 *or* a 200 with mode 'stopped' — mirror the
+      // desktop's own liveness probe (claudemonSessionClient.verifyAttachTarget).
+      // On a real exit, publish `pty.exit` so the web client can mark the pane
+      // dead (the desktop learns this over its own MessagePort path), and stop
+      // forwarding — the retry loop would otherwise spin against a gone session.
+      if (f.stopped) return;
+      fetch(`${CLAUDEMON_API_URL}/sessions/${f.sessionId}`)
+        .then(async (res) => {
+          let dead = res.status === 404;
+          if (res.ok) {
+            const body = (await res.json().catch(() => null)) as { mode?: string } | null;
+            dead = body?.mode === 'stopped';
+          }
+          if (dead && !f.stopped) {
+            publishToHub({ type: 'pty.exit', data: { sessionId: f.sessionId } });
+            stopTerminal(f.sessionId);
+          }
+        })
+        .catch(() => {
+          /* daemon unreachable — the SSE backoff handles that */
+        });
+    },
+  });
 }

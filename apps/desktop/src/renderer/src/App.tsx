@@ -11,7 +11,14 @@ import PluginInstallDialog from './components/PluginInstallDialog';
 import { usePlugins } from './hooks/usePlugins';
 import { useUiEventBus } from './hooks/useUiEventBus';
 import { REVIEW_REQUEST_FILE_EVENT, openReviewFile, type ReviewFileTarget } from './lib/reviewBus';
-import { AGENT_WATCH_EVENT, SESSION_WATCH_EVENT, AGENT_HANDOFF_EVENT, type AgentWatchTarget, type SessionWatchTarget, type HandoffTarget } from './lib/watchBus';
+import {
+  AGENT_WATCH_EVENT,
+  SESSION_WATCH_EVENT,
+  AGENT_HANDOFF_EVENT,
+  type AgentWatchTarget,
+  type SessionWatchTarget,
+  type HandoffTarget,
+} from './lib/watchBus';
 import { EDITOR_OPEN_FILE_EVENT } from './lib/editorBus';
 import { useUiCommands } from './hooks/useUiCommands';
 import type { PluginPane } from './types/plugin';
@@ -40,7 +47,14 @@ import { useLibrary } from './hooks/useLibrary';
 import { useLayoutSync, type HydrationResult } from './hooks/useLayoutSync';
 import { useHubReconnect } from './hooks/useHubReconnect';
 import { useAgentManager, GLOBAL_WORKSPACE_ID } from './hooks/useAgentManager';
-import type { PaneType, AgentWorkspace, AgentProvider, ViewMode, ViewLevel, TabConfig } from './types/pane';
+import type {
+  PaneType,
+  AgentWorkspace,
+  AgentProvider,
+  ViewMode,
+  ViewLevel,
+  TabConfig,
+} from './types/pane';
 import type { SessionAmbientState, ClaudeSessionSnapshot } from './types/claudeSession';
 import { useKeyboardNav } from './hooks/useKeyboardNav';
 import { useIsSmallScreen } from './hooks/useMediaQuery';
@@ -75,13 +89,23 @@ export function migrateSessionData(
 ): { agents: AgentWorkspace[]; activeAgentId: string; name: string } {
   if (data && Array.isArray(data.agents)) {
     // Modern format — pass through as-is.
-    return { agents: data.agents, activeAgentId: data.activeAgentId || '', name: data.name || 'Default' };
+    return {
+      agents: data.agents,
+      activeAgentId: data.activeAgentId || '',
+      name: data.name || 'Default',
+    };
   }
   if (data && (data.tabs?.length > 0 || data.panes?.length > 0)) {
     // Backward compat: old flat workspace → wrap its tabs into one agent.
-    const oldTabs = data.tabs?.length > 0
-      ? data.tabs
-      : data.panes.map((p: any) => ({ id: `tab-${p.id}`, title: p.title, panes: [p], activePaneId: p.id }));
+    const oldTabs =
+      data.tabs?.length > 0
+        ? data.tabs
+        : data.panes.map((p: any) => ({
+            id: `tab-${p.id}`,
+            title: p.title,
+            panes: [p],
+            activePaneId: p.id,
+          }));
     const migrated: AgentWorkspace = {
       id: `agent-migrated-legacy`,
       name: data.name || 'Imported',
@@ -107,9 +131,21 @@ interface AgentViewHandlers {
   onUrlChange: (tabId: string, paneId: string, url: string) => void;
   onNotesChange: (tabId: string, paneId: string, notes: string) => void;
   onNavigateToTab: (tabId: string) => void;
-  onAddTab: (type: PaneType, shell?: string, label?: string, cwd?: string, profileId?: string, resumeSessionId?: string, attachSessionId?: string) => void;
+  onAddTab: (
+    type: PaneType,
+    shell?: string,
+    label?: string,
+    cwd?: string,
+    profileId?: string,
+    resumeSessionId?: string,
+    attachSessionId?: string,
+  ) => void;
   onSplit: (tabId: string, type: PaneType) => void;
-  spawnSupervisor: (opts: { question?: string; parentId?: string; provider?: AgentProvider }) => Promise<string>;
+  spawnSupervisor: (opts: {
+    question?: string;
+    parentId?: string;
+    provider?: AgentProvider;
+  }) => Promise<string>;
   onJumpToAgent: (agentId: string) => void;
 }
 
@@ -138,40 +174,46 @@ interface AgentWorkspaceViewProps {
  * flag (and the genuinely-shared `allAgents`/`ptyMapping`/`viewMode`).
  */
 const AgentWorkspaceView = memo(function AgentWorkspaceView({
-  agent, isActiveAgent, scrollContainerRef, viewMode, ptyMapping, renameSignal,
-  workspaceAgents, appCwd, allAgents, handlers,
+  agent,
+  isActiveAgent,
+  scrollContainerRef,
+  viewMode,
+  ptyMapping,
+  renameSignal,
+  workspaceAgents,
+  appCwd,
+  allAgents,
+  handlers,
 }: AgentWorkspaceViewProps) {
   return (
-    <div
-      style={{ display: isActiveAgent ? 'block' : 'none', height: '100%' }}
-    >
+    <div style={{ display: isActiveAgent ? 'block' : 'none', height: '100%' }}>
       <ErrorBoundary label="Workspace" variant="region" resetKeys={[agent.id]}>
-      <ScrollContainer
-        ref={isActiveAgent ? scrollContainerRef : undefined}
-        agentActive={isActiveAgent}
-        tabs={agent.tabs}
-        activeTabId={agent.activeTabId}
-        onTabFocus={handlers.onTabFocus}
-        onPaneClose={handlers.onPaneClose}
-        onPaneFocus={handlers.onPaneFocus}
-        onTabRename={handlers.onTabRename}
-        onTabMove={handlers.onTabMove}
-        viewMode={viewMode}
-        onTabCanvasChange={handlers.onTabCanvasChange}
-        onPtyReady={handlers.onPtyReady}
-        onUrlChange={handlers.onUrlChange}
-        onNotesChange={handlers.onNotesChange}
-        onNavigateToTab={handlers.onNavigateToTab}
-        onAddTab={handlers.onAddTab}
-        onSplit={handlers.onSplit}
-        ptyMapping={ptyMapping}
-        renameSignal={renameSignal}
-        workspaceAgents={workspaceAgents}
-        appCwd={appCwd}
-        allAgents={allAgents}
-        spawnSupervisor={handlers.spawnSupervisor}
-        onJumpToAgent={handlers.onJumpToAgent}
-      />
+        <ScrollContainer
+          ref={isActiveAgent ? scrollContainerRef : undefined}
+          agentActive={isActiveAgent}
+          tabs={agent.tabs}
+          activeTabId={agent.activeTabId}
+          onTabFocus={handlers.onTabFocus}
+          onPaneClose={handlers.onPaneClose}
+          onPaneFocus={handlers.onPaneFocus}
+          onTabRename={handlers.onTabRename}
+          onTabMove={handlers.onTabMove}
+          viewMode={viewMode}
+          onTabCanvasChange={handlers.onTabCanvasChange}
+          onPtyReady={handlers.onPtyReady}
+          onUrlChange={handlers.onUrlChange}
+          onNotesChange={handlers.onNotesChange}
+          onNavigateToTab={handlers.onNavigateToTab}
+          onAddTab={handlers.onAddTab}
+          onSplit={handlers.onSplit}
+          ptyMapping={ptyMapping}
+          renameSignal={renameSignal}
+          workspaceAgents={workspaceAgents}
+          appCwd={appCwd}
+          allAgents={allAgents}
+          spawnSupervisor={handlers.spawnSupervisor}
+          onJumpToAgent={handlers.onJumpToAgent}
+        />
       </ErrorBoundary>
     </div>
   );
@@ -257,8 +299,8 @@ function App() {
   // On desktop, collapsing shrinks the panel to a 74px monogram rail that still
   // reserves its column, rather than fully hiding.
   const sidebarOverlay = isSmallScreen;
-  const contentLeft = sidebarOverlay ? 0 : (sidebarCollapsed ? SIDEBAR_RAIL_WIDTH : SIDEBAR_WIDTH);
-  const navLeft = sidebarOverlay ? 36 : (sidebarCollapsed ? SIDEBAR_RAIL_WIDTH : SIDEBAR_WIDTH);
+  const contentLeft = sidebarOverlay ? 0 : sidebarCollapsed ? SIDEBAR_RAIL_WIDTH : SIDEBAR_WIDTH;
+  const navLeft = sidebarOverlay ? 36 : sidebarCollapsed ? SIDEBAR_RAIL_WIDTH : SIDEBAR_WIDTH;
 
   // App working directory (used as the default cwd for the spawn dialog + the
   // Library's fallback project root).
@@ -273,7 +315,13 @@ function App() {
   activeAgentRef.current = activeAgent;
   const [appCwd, setAppCwd] = useState('');
   useEffect(() => {
-    window.electronAPI.getCwd().then((cwd) => { appCwdRef.current = cwd; setAppCwd(cwd); }).catch(() => {});
+    window.electronAPI
+      .getCwd()
+      .then((cwd) => {
+        appCwdRef.current = cwd;
+        setAppCwd(cwd);
+      })
+      .catch(() => {});
   }, []);
 
   // Session lifecycle (load / save / auto-resume / picker).
@@ -327,7 +375,9 @@ function App() {
   const { items: libraryItems } = useLibrary(libraryCwd);
   // Toggle the right-side Library panel (bound to the 'library-picker' shortcut,
   // default Ctrl+L). Replaces the old restricted-command-palette quick-picker.
-  const toggleLibraryPanel = useCallback(() => { setShowLibraryPanel((v) => !v); }, []);
+  const toggleLibraryPanel = useCallback(() => {
+    setShowLibraryPanel((v) => !v);
+  }, []);
 
   // Live agent status: sessionId -> ambient state, sourced from claudemon.
   // We also promote the FULL snapshot per session into snapshotBySession — the
@@ -335,7 +385,9 @@ function App() {
   // already re-renders on every status update, so storing the snapshot here is
   // no extra render churn; it just stops throwing the rich payload away.)
   const [statusBySession, setStatusBySession] = useState<Record<string, SessionAmbientState>>({});
-  const [snapshotBySession, setSnapshotBySession] = useState<Record<string, ClaudeSessionSnapshot>>({});
+  const [snapshotBySession, setSnapshotBySession] = useState<Record<string, ClaudeSessionSnapshot>>(
+    {},
+  );
   // Daemon sessions that were already alive when Workspacer launched. claudemon
   // outlives the app, so these are leftovers from a previous run. They must NOT
   // be auto-adopted as orphan cards — the user reaches them only by explicitly
@@ -348,24 +400,27 @@ function App() {
   // `onClaudeSessionUpdate` ticks, so without this re-pull a web tab shows stale
   // (or missing) sessions until a manual refresh.
   const refreshSessionSnapshots = useCallback(() => {
-    window.electronAPI.getAllClaudeSessions().then((sessions: any[]) => {
-      const map: Record<string, SessionAmbientState> = {};
-      const snaps: Record<string, ClaudeSessionSnapshot> = {};
-      for (const s of sessions) {
-        map[s.sessionId] = s.ambientState;
-        snaps[s.sessionId] = s;
-      }
-      if (preexistingSessionIdsRef.current === null) {
-        preexistingSessionIdsRef.current = new Set(sessions.map((s) => s.sessionId));
-      }
-      setStatusBySession(map);
-      setSnapshotBySession(snaps);
-    }).catch(() => {
-      // No daemon / empty list: nothing pre-existed, so adoption can proceed.
-      if (preexistingSessionIdsRef.current === null) {
-        preexistingSessionIdsRef.current = new Set();
-      }
-    });
+    window.electronAPI
+      .getAllClaudeSessions()
+      .then((sessions: any[]) => {
+        const map: Record<string, SessionAmbientState> = {};
+        const snaps: Record<string, ClaudeSessionSnapshot> = {};
+        for (const s of sessions) {
+          map[s.sessionId] = s.ambientState;
+          snaps[s.sessionId] = s;
+        }
+        if (preexistingSessionIdsRef.current === null) {
+          preexistingSessionIdsRef.current = new Set(sessions.map((s) => s.sessionId));
+        }
+        setStatusBySession(map);
+        setSnapshotBySession(snaps);
+      })
+      .catch(() => {
+        // No daemon / empty list: nothing pre-existed, so adoption can proceed.
+        if (preexistingSessionIdsRef.current === null) {
+          preexistingSessionIdsRef.current = new Set();
+        }
+      });
   }, []);
   useHubReconnect(refreshSessionSnapshots);
   useEffect(() => {
@@ -393,7 +448,9 @@ function App() {
       setStatusBySession((prev) => ({ ...prev, [sessionId]: snapshot.ambientState }));
       setSnapshotBySession((prev) => ({ ...prev, [sessionId]: snapshot }));
     });
-    return () => { unsub(); };
+    return () => {
+      unsub();
+    };
   }, [refreshSessionSnapshots, stopAgentForSession]);
 
   // Drop a terminated agent's session snapshot/status from the promoted maps.
@@ -414,11 +471,14 @@ function App() {
     });
   }, []);
 
-  const handleTerminateAgent = useCallback((agentId: string) => {
-    const sid = agents.find((a) => a.id === agentId)?.sessionId;
-    void terminateAgent(agentId);
-    pruneSession(sid);
-  }, [agents, terminateAgent, pruneSession]);
+  const handleTerminateAgent = useCallback(
+    (agentId: string) => {
+      const sid = agents.find((a) => a.id === agentId)?.sessionId;
+      void terminateAgent(agentId);
+      pruneSession(sid);
+    },
+    [agents, terminateAgent, pruneSession],
+  );
 
   // Auto-adopt any live daemon session that has no AgentWorkspace yet (e.g. one
   // spawned externally via the MCP facade or by another agent). Gated on the
@@ -443,7 +503,13 @@ function App() {
       if (agents.some((a) => a.sessionId === sessionId)) continue;
       // Mark as adopted before calling to avoid redundant calls from re-renders.
       adoptedRef.current.add(sessionId);
-      adoptAgent({ sessionId, cwd: snapshot.cwd, name: snapshot.label, parentSessionId: snapshot.parentSessionId, provider: snapshot.provider as AgentProvider | undefined });
+      adoptAgent({
+        sessionId,
+        cwd: snapshot.cwd,
+        name: snapshot.label,
+        parentSessionId: snapshot.parentSessionId,
+        provider: snapshot.provider as AgentProvider | undefined,
+      });
     }
   }, [snapshotBySession, agents, adoptAgent, sessionPhase]);
 
@@ -456,20 +522,29 @@ function App() {
 
   // Altitude: 'piloting' (inside one agent) vs 'fleet' (the cross-agent deck).
   const viewLevel: ViewLevel = config.panes?.viewLevel === 'fleet' ? 'fleet' : 'piloting';
-  const setViewLevel = useCallback((next: ViewLevel) => {
-    saveConfig({ panes: { ...config.panes, viewLevel: next } });
-  }, [config.panes, saveConfig]);
+  const setViewLevel = useCallback(
+    (next: ViewLevel) => {
+      saveConfig({ panes: { ...config.panes, viewLevel: next } });
+    },
+    [config.panes, saveConfig],
+  );
   const toggleFleet = useCallback(() => {
     setViewLevel(viewLevel === 'fleet' ? 'piloting' : 'fleet');
   }, [viewLevel, setViewLevel]);
 
-  const handleUrlChange = useCallback((tabId: string, paneId: string, url: string) => {
-    updatePaneUrl(tabId, paneId, url);
-  }, [updatePaneUrl]);
+  const handleUrlChange = useCallback(
+    (tabId: string, paneId: string, url: string) => {
+      updatePaneUrl(tabId, paneId, url);
+    },
+    [updatePaneUrl],
+  );
 
-  const handleNotesChange = useCallback((tabId: string, paneId: string, notes: string) => {
-    updatePaneNotes(tabId, paneId, notes);
-  }, [updatePaneNotes]);
+  const handleNotesChange = useCallback(
+    (tabId: string, paneId: string, notes: string) => {
+      updatePaneNotes(tabId, paneId, notes);
+    },
+    [updatePaneNotes],
+  );
 
   // Hibernation tracking
   const lastVisibleRef = useRef<Record<string, number>>({});
@@ -527,55 +602,109 @@ function App() {
 
   const insertPosition = config.panes.insertPosition || 'after';
 
-  const addTabWithConfig = useCallback((type: PaneType, title?: string, shell?: string, url?: string, appMode?: boolean, cwd?: string, profileId?: string, resumeSessionId?: string, attachSessionId?: string, initialCommand?: string, filePath?: string, provider?: AgentProvider) => {
-    return addTab(type, title, insertPosition, shell, url, appMode, cwd, profileId, resumeSessionId, attachSessionId, initialCommand, filePath, provider);
-  }, [addTab, insertPosition]);
+  const addTabWithConfig = useCallback(
+    (
+      type: PaneType,
+      title?: string,
+      shell?: string,
+      url?: string,
+      appMode?: boolean,
+      cwd?: string,
+      profileId?: string,
+      resumeSessionId?: string,
+      attachSessionId?: string,
+      initialCommand?: string,
+      filePath?: string,
+      provider?: AgentProvider,
+    ) => {
+      return addTab(
+        type,
+        title,
+        insertPosition,
+        shell,
+        url,
+        appMode,
+        cwd,
+        profileId,
+        resumeSessionId,
+        attachSessionId,
+        initialCommand,
+        filePath,
+        provider,
+      );
+    },
+    [addTab, insertPosition],
+  );
 
   // Open the editor. The default (CodeMirror) engine is now the sandboxed editor
   // *plugin* (workspacer.editor): we open its webview pane rooted at the project
   // dir, optionally on a specific file. The 'terminal' engine is unchanged — it
   // runs the user's $EDITOR (e.g. nvim) in a PTY pane. Outside an agent with no
   // file we fall back to the OS file picker.
-  const openFileInEditor = useCallback(async (filePath?: string) => {
-    let target = filePath;
-    if (!target && !activeAgent?.cwd) {
-      const picked = await window.electronAPI.pickFiles();
-      target = picked?.[0];
-      if (!target) return;
-    }
-    const agentCwd = activeAgent && !activeAgent.global ? activeAgent.cwd : undefined;
-    // Scope/tree root: the project dir when the file is under it (or no file),
-    // else the file's own directory.
-    const dir = (agentCwd && (!target || target.startsWith(agentCwd)))
-      ? agentCwd
-      : (target ? target.replace(/[\\/][^\\/]*$/, '') : agentCwd);
-    const title = target
-      ? (target.split(/[\\/]/).pop() || 'Editor')
-      : (dir ? (dir.split(/[\\/]/).pop() || 'Editor') : 'Editor');
+  const openFileInEditor = useCallback(
+    async (filePath?: string) => {
+      let target = filePath;
+      if (!target && !activeAgent?.cwd) {
+        const picked = await window.electronAPI.pickFiles();
+        target = picked?.[0];
+        if (!target) return;
+      }
+      const agentCwd = activeAgent && !activeAgent.global ? activeAgent.cwd : undefined;
+      // Scope/tree root: the project dir when the file is under it (or no file),
+      // else the file's own directory.
+      const dir =
+        agentCwd && (!target || target.startsWith(agentCwd))
+          ? agentCwd
+          : target
+            ? target.replace(/[\\/][^\\/]*$/, '')
+            : agentCwd;
+      const title = target
+        ? target.split(/[\\/]/).pop() || 'Editor'
+        : dir
+          ? dir.split(/[\\/]/).pop() || 'Editor'
+          : 'Editor';
 
-    // Terminal engine: open the user's editor in a PTY pane (the 'editor' pane
-    // type renders a TerminalPane — see ScrollContainer).
-    if ((config.editor?.engine ?? 'codemirror') === 'terminal') {
-      const newId = addTabWithConfig('editor', title, undefined, undefined, undefined, dir, undefined, undefined, undefined, undefined, target);
-      requestAnimationFrame(() => scrollToTab(newId));
-      return;
-    }
+      // Terminal engine: open the user's editor in a PTY pane (the 'editor' pane
+      // type renders a TerminalPane — see ScrollContainer).
+      if ((config.editor?.engine ?? 'codemirror') === 'terminal') {
+        const newId = addTabWithConfig(
+          'editor',
+          title,
+          undefined,
+          undefined,
+          undefined,
+          dir,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          target,
+        );
+        requestAnimationFrame(() => scrollToTab(newId));
+        return;
+      }
 
-    // Default: the editor plugin. PluginPane mints a bus token scoped to `dir`.
-    const editorPane = pluginPanesRef.current.find((p) => p.pluginId === 'workspacer.editor');
-    if (!editorPane) {
-      console.warn('[editor] the workspacer.editor plugin is not installed; cannot open the editor.');
-      return;
-    }
-    const params = new URLSearchParams();
-    if (dir) params.set('cwd', dir);
-    if (target) params.set('file', target);
-    const sep = editorPane.url.includes('?') ? '&' : '?';
-    const url = params.toString() ? `${editorPane.url}${sep}${params.toString()}` : editorPane.url;
-    const wsId = activeAgent && !activeAgent.global ? activeAgent.id : GLOBAL_WORKSPACE_ID;
-    const editorTabId = openPaneIn(wsId, 'plugin', title, url, dir, editorPane.pluginId);
-    requestAnimationFrame(() => scrollToTab(editorTabId));
-  }, [activeAgent, config, addTabWithConfig, scrollToTab, openPaneIn]);
+      // Default: the editor plugin. PluginPane mints a bus token scoped to `dir`.
+      const editorPane = pluginPanesRef.current.find((p) => p.pluginId === 'workspacer.editor');
+      if (!editorPane) {
+        console.warn(
+          '[editor] the workspacer.editor plugin is not installed; cannot open the editor.',
+        );
+        return;
+      }
+      const params = new URLSearchParams();
+      if (dir) params.set('cwd', dir);
+      if (target) params.set('file', target);
+      const sep = editorPane.url.includes('?') ? '&' : '?';
+      const url = params.toString()
+        ? `${editorPane.url}${sep}${params.toString()}`
+        : editorPane.url;
+      const wsId = activeAgent && !activeAgent.global ? activeAgent.id : GLOBAL_WORKSPACE_ID;
+      const editorTabId = openPaneIn(wsId, 'plugin', title, url, dir, editorPane.pluginId);
+      requestAnimationFrame(() => scrollToTab(editorTabId));
+    },
+    [activeAgent, config, addTabWithConfig, scrollToTab, openPaneIn],
+  );
 
   // Open-in-editor requests (e.g. right-click in the Review pane's file tree).
   useEffect(() => {
@@ -609,7 +738,14 @@ function App() {
         return;
       }
     }
-    const newId = addTabWithConfig('review', 'Review', undefined, undefined, undefined, activeAgent?.cwd);
+    const newId = addTabWithConfig(
+      'review',
+      'Review',
+      undefined,
+      undefined,
+      undefined,
+      activeAgent?.cwd,
+    );
     requestAnimationFrame(() => scrollToTab(newId));
   }, [tabs, activeAgent, addTabWithConfig, setActiveTabId, setActivePane, scrollToTab]);
 
@@ -628,84 +764,131 @@ function App() {
   // Latest attention feed, read via a ref so handleSelectAgent (defined before
   // the feed) can clear an agent's items without depending on `attention`.
   const attentionRef = useRef<AttentionFeed | null>(null);
-  const handleSelectAgent = useCallback((id: string) => {
-    // Opening an agent IS triaging it: clear that agent's inbox notifications
-    // (sidebar dot/glyph + the "needs you" count) so they don't linger after
-    // you've clicked through to deal with it. A genuinely new request resurfaces
-    // later with a different signature. This is the single choke point for both
-    // the sidebar click and the Inbox/Fleet "open agent" action.
-    const att = attentionRef.current;
-    if (att) {
-      for (const it of att.items) {
-        if (it.agentId === id) att.dismiss(it.signature);
+  const handleSelectAgent = useCallback(
+    (id: string) => {
+      // Opening an agent IS triaging it: clear that agent's inbox notifications
+      // (sidebar dot/glyph + the "needs you" count) so they don't linger after
+      // you've clicked through to deal with it. A genuinely new request resurfaces
+      // later with a different signature. This is the single choke point for both
+      // the sidebar click and the Inbox/Fleet "open agent" action.
+      const att = attentionRef.current;
+      if (att) {
+        for (const it of att.items) {
+          if (it.agentId === id) att.dismiss(it.signature);
+        }
       }
-    }
-    setActiveAgentId(id);
-    const agent = agents.find((a) => a.id === id);
-    if (agent && !agent.sessionId) respawnAgent(id);
-  }, [agents, setActiveAgentId, respawnAgent]);
+      setActiveAgentId(id);
+      const agent = agents.find((a) => a.id === id);
+      if (agent && !agent.sessionId) respawnAgent(id);
+    },
+    [agents, setActiveAgentId, respawnAgent],
+  );
 
   // Record a directory at the front of the Overview's recent list (deduped, capped).
-  const recordRecentDir = useCallback((cwd?: string) => {
-    if (!cwd) return;
-    const cur = config.directories?.recent ?? [];
-    if (cur[0] === cwd) return;
-    const recent = [cwd, ...cur.filter((d) => d !== cwd)].slice(0, 8);
-    saveConfig({ directories: { recent, favourites: config.directories?.favourites ?? [] } });
-  }, [config.directories, saveConfig]);
+  const recordRecentDir = useCallback(
+    (cwd?: string) => {
+      if (!cwd) return;
+      const cur = config.directories?.recent ?? [];
+      if (cur[0] === cwd) return;
+      const recent = [cwd, ...cur.filter((d) => d !== cwd)].slice(0, 8);
+      saveConfig({ directories: { recent, favourites: config.directories?.favourites ?? [] } });
+    },
+    [config.directories, saveConfig],
+  );
 
-  const handleSpawnAgent = useCallback((opts: { cwd: string; name?: string; provider?: AgentProvider; profileId?: string; model?: string; effort?: string; permissionMode?: string; skipPermissions?: boolean; mcpItemIds?: string[]; resumeSessionId?: string }) => {
-    setShowSpawnDialog(false);
-    // Remember the picked model + skip-permissions choice so they stick next time
-    // — but only for Claude, so spawning a Codex/OpenCode agent doesn't clobber
-    // the saved Claude defaults (those options don't apply to other providers).
-    if ((opts.provider ?? 'claude') === 'claude') {
-      window.electronAPI.saveConfig({
-        claude: { defaultModel: opts.model ?? '', skipPermissionsDefault: opts.skipPermissions ?? false },
-      }).catch(() => {});
-    }
-    recordRecentDir(opts.cwd);
-    void spawnAgent(opts);
-  }, [spawnAgent, recordRecentDir]);
+  const handleSpawnAgent = useCallback(
+    (opts: {
+      cwd: string;
+      name?: string;
+      provider?: AgentProvider;
+      profileId?: string;
+      model?: string;
+      effort?: string;
+      permissionMode?: string;
+      skipPermissions?: boolean;
+      mcpItemIds?: string[];
+      resumeSessionId?: string;
+    }) => {
+      setShowSpawnDialog(false);
+      // Remember the picked model + skip-permissions choice so they stick next time
+      // — but only for Claude, so spawning a Codex/OpenCode agent doesn't clobber
+      // the saved Claude defaults (those options don't apply to other providers).
+      if ((opts.provider ?? 'claude') === 'claude') {
+        window.electronAPI
+          .saveConfig({
+            claude: {
+              defaultModel: opts.model ?? '',
+              skipPermissionsDefault: opts.skipPermissions ?? false,
+            },
+          })
+          .catch(() => {});
+      }
+      recordRecentDir(opts.cwd);
+      void spawnAgent(opts);
+    },
+    [spawnAgent, recordRecentDir],
+  );
 
   // --- Layout templates ---
 
   // Snapshot the current (non-global) agents as a reusable layout: directories
   // + their pane arrangement, stripped of live session ids.
   const captureLayout = useCallback((): LayoutAgent[] => {
-    return agents.filter((a) => !a.global).map((a) => ({
-      name: a.name,
-      cwd: a.cwd,
-      model: a.model,
-      tabs: a.tabs.map((t) => ({
-        title: t.title,
-        panes: t.panes
-          .filter((p) => p.type !== 'settings')
-          .map((p) => ({ type: p.type, title: p.title, url: p.url, shell: p.shell, cwd: p.cwd, pluginId: p.pluginId })),
-      })),
-    }));
+    return agents
+      .filter((a) => !a.global)
+      .map((a) => ({
+        name: a.name,
+        cwd: a.cwd,
+        model: a.model,
+        tabs: a.tabs.map((t) => ({
+          title: t.title,
+          panes: t.panes
+            .filter((p) => p.type !== 'settings')
+            .map((p) => ({
+              type: p.type,
+              title: p.title,
+              url: p.url,
+              shell: p.shell,
+              cwd: p.cwd,
+              pluginId: p.pluginId,
+            })),
+        })),
+      }));
   }, [agents]);
 
-  const handleSaveLayout = useCallback((name: string) => {
-    window.electronAPI.layoutsSave({ name, agents: captureLayout() }).catch((err: any) => {
-      console.error('[Layout] save failed:', err);
-    });
-  }, [captureLayout]);
+  const handleSaveLayout = useCallback(
+    (name: string) => {
+      window.electronAPI.layoutsSave({ name, agents: captureLayout() }).catch((err: any) => {
+        console.error('[Layout] save failed:', err);
+      });
+    },
+    [captureLayout],
+  );
 
   // Restore a layout: spawn a fresh agent per saved directory, then reopen its
   // non-Claude panes (spawnAgent already creates the primary Claude tab).
-  const handleRestoreLayout = useCallback(async (layout: Layout) => {
-    for (const la of layout.agents) {
-      recordRecentDir(la.cwd);
-      const agentId = await spawnAgent({ cwd: la.cwd, name: la.name, model: la.model });
-      for (const tab of la.tabs) {
-        for (const pane of tab.panes) {
-          if (pane.type === 'claude') continue; // primary Claude tab already created
-          openPaneIn(agentId, pane.type as PaneType, pane.title, pane.url, pane.cwd ?? la.cwd, pane.pluginId);
+  const handleRestoreLayout = useCallback(
+    async (layout: Layout) => {
+      for (const la of layout.agents) {
+        recordRecentDir(la.cwd);
+        const agentId = await spawnAgent({ cwd: la.cwd, name: la.name, model: la.model });
+        for (const tab of la.tabs) {
+          for (const pane of tab.panes) {
+            if (pane.type === 'claude') continue; // primary Claude tab already created
+            openPaneIn(
+              agentId,
+              pane.type as PaneType,
+              pane.title,
+              pane.url,
+              pane.cwd ?? la.cwd,
+              pane.pluginId,
+            );
+          }
         }
       }
-    }
-  }, [spawnAgent, openPaneIn, recordRecentDir]);
+    },
+    [spawnAgent, openPaneIn, recordRecentDir],
+  );
 
   const openAnalytics = useCallback(() => {
     setShowCommandPalette(false);
@@ -729,9 +912,12 @@ function App() {
   }, [openPaneIn, scrollToTab]);
 
   /** Jump to a specific agent by id — passed down to the Ask pane. */
-  const handleJumpToAgent = useCallback((agentId: string) => {
-    handleSelectAgent(agentId);
-  }, [handleSelectAgent]);
+  const handleJumpToAgent = useCallback(
+    (agentId: string) => {
+      handleSelectAgent(agentId);
+    },
+    [handleSelectAgent],
+  );
 
   /** Spawn a fleet supervisor directly (no question) and focus it — the
    *  command-palette shortcut past the Ask pane. Uses the configured
@@ -742,13 +928,16 @@ function App() {
     handleSelectAgent(id);
   }, [spawnSupervisor, handleSelectAgent, config.supervisor?.provider]);
 
-  const goToAgent = useCallback((delta: number) => {
-    if (agents.length === 0) return;
-    const idx = agents.findIndex((a) => a.id === activeAgentId);
-    const base = idx < 0 ? 0 : idx;
-    const next = (base + delta + agents.length) % agents.length;
-    handleSelectAgent(agents[next].id);
-  }, [agents, activeAgentId, handleSelectAgent]);
+  const goToAgent = useCallback(
+    (delta: number) => {
+      if (agents.length === 0) return;
+      const idx = agents.findIndex((a) => a.id === activeAgentId);
+      const base = idx < 0 ? 0 : idx;
+      const next = (base + delta + agents.length) % agents.length;
+      handleSelectAgent(agents[next].id);
+    },
+    [agents, activeAgentId, handleSelectAgent],
+  );
 
   const handlePrevAgent = useCallback(() => goToAgent(-1), [goToAgent]);
   const handleNextAgent = useCallback(() => goToAgent(1), [goToAgent]);
@@ -871,8 +1060,16 @@ function App() {
     onChordPathChange: setChordPath,
     onOpenSettings: openSettings,
     onSaveSession: saveCurrentSession,
-    onOpenCommandPalette: useCallback(() => { setPaletteRestrict(undefined); setPaletteMode('tab'); setShowCommandPalette(true); }, []),
-    onOpenSplitPalette: useCallback(() => { setPaletteRestrict(undefined); setPaletteMode('split'); setShowCommandPalette(true); }, []),
+    onOpenCommandPalette: useCallback(() => {
+      setPaletteRestrict(undefined);
+      setPaletteMode('tab');
+      setShowCommandPalette(true);
+    }, []),
+    onOpenSplitPalette: useCallback(() => {
+      setPaletteRestrict(undefined);
+      setPaletteMode('split');
+      setShowCommandPalette(true);
+    }, []),
     onOpenFile: openFileInEditor,
     onPrevAgent: handlePrevAgent,
     onNextAgent: handleNextAgent,
@@ -891,65 +1088,116 @@ function App() {
   useEffect(() => {
     if (viewLevel !== 'fleet') return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !inboxOpen) { e.preventDefault(); setViewLevel('piloting'); }
+      if (e.key === 'Escape' && !inboxOpen) {
+        e.preventDefault();
+        setViewLevel('piloting');
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [viewLevel, inboxOpen, setViewLevel]);
 
-  const handleTabClick = useCallback((id: string) => {
-    setActiveTabId(id);
-    scrollToTab(id);
-  }, [setActiveTabId, scrollToTab]);
+  const handleTabClick = useCallback(
+    (id: string) => {
+      setActiveTabId(id);
+      scrollToTab(id);
+    },
+    [setActiveTabId, scrollToTab],
+  );
 
-  const handleTabFocus = useCallback((id: string) => {
-    setActiveTabId(id);
-  }, [setActiveTabId]);
+  const handleTabFocus = useCallback(
+    (id: string) => {
+      setActiveTabId(id);
+    },
+    [setActiveTabId],
+  );
 
-  const handlePaneClose = useCallback((tabId: string, paneId: string) => {
-    removePane(tabId, paneId);
-  }, [removePane]);
+  const handlePaneClose = useCallback(
+    (tabId: string, paneId: string) => {
+      removePane(tabId, paneId);
+    },
+    [removePane],
+  );
 
-  const handlePaneFocus = useCallback((tabId: string, paneId: string) => {
-    setActiveTabId(tabId);
-    setActivePane(tabId, paneId);
-  }, [setActiveTabId, setActivePane]);
+  const handlePaneFocus = useCallback(
+    (tabId: string, paneId: string) => {
+      setActiveTabId(tabId);
+      setActivePane(tabId, paneId);
+    },
+    [setActiveTabId, setActivePane],
+  );
 
-  const handleAddTab = useCallback((type: PaneType, shell?: string, label?: string, cwd?: string, profileId?: string, resumeSessionId?: string, attachSessionId?: string) => {
-    // The editor is opened through openFileInEditor (→ the editor plugin, or the
-    // terminal engine), so "New → Editor" / command-palette routes there too.
-    if (type === 'editor') { void openFileInEditor(); return; }
-    // If opening a Claude session that already has a tab, navigate to it.
-    const sessionId = resumeSessionId || attachSessionId;
-    if (type === 'claude' && sessionId) {
-      for (const tab of tabs) {
-        const match = tab.panes.find((p) =>
-          p.resumeSessionId === sessionId ||
-          p.attachSessionId === sessionId ||
-          ptyMapping[p.id] === sessionId,
-        );
-        if (match) {
-          setActiveTabId(tab.id);
-          setActivePane(tab.id, match.id);
-          scrollToTab(tab.id);
-          return;
+  const handleAddTab = useCallback(
+    (
+      type: PaneType,
+      shell?: string,
+      label?: string,
+      cwd?: string,
+      profileId?: string,
+      resumeSessionId?: string,
+      attachSessionId?: string,
+    ) => {
+      // The editor is opened through openFileInEditor (→ the editor plugin, or the
+      // terminal engine), so "New → Editor" / command-palette routes there too.
+      if (type === 'editor') {
+        void openFileInEditor();
+        return;
+      }
+      // If opening a Claude session that already has a tab, navigate to it.
+      const sessionId = resumeSessionId || attachSessionId;
+      if (type === 'claude' && sessionId) {
+        for (const tab of tabs) {
+          const match = tab.panes.find(
+            (p) =>
+              p.resumeSessionId === sessionId ||
+              p.attachSessionId === sessionId ||
+              ptyMapping[p.id] === sessionId,
+          );
+          if (match) {
+            setActiveTabId(tab.id);
+            setActivePane(tab.id, match.id);
+            scrollToTab(tab.id);
+            return;
+          }
         }
       }
-    }
-    // New panes inherit the active agent's working directory. Read it from the
-    // ref so a stale caller closure (e.g. the command palette) still resolves the
-    // currently-selected agent's cwd; fall back to the app's project root so a
-    // terminal opened with no agent (e.g. from the Overview) doesn't land in $HOME.
-    const resolvedCwd = cwd || activeAgentRef.current?.cwd || appCwdRef.current || undefined;
-    const newId = addTabWithConfig(type, label, shell, undefined, undefined, resolvedCwd, profileId, resumeSessionId, attachSessionId);
-    requestAnimationFrame(() => scrollToTab(newId));
-  }, [tabs, ptyMapping, addTabWithConfig, setActiveTabId, setActivePane, scrollToTab, openFileInEditor]);
+      // New panes inherit the active agent's working directory. Read it from the
+      // ref so a stale caller closure (e.g. the command palette) still resolves the
+      // currently-selected agent's cwd; fall back to the app's project root so a
+      // terminal opened with no agent (e.g. from the Overview) doesn't land in $HOME.
+      const resolvedCwd = cwd || activeAgentRef.current?.cwd || appCwdRef.current || undefined;
+      const newId = addTabWithConfig(
+        type,
+        label,
+        shell,
+        undefined,
+        undefined,
+        resolvedCwd,
+        profileId,
+        resumeSessionId,
+        attachSessionId,
+      );
+      requestAnimationFrame(() => scrollToTab(newId));
+    },
+    [
+      tabs,
+      ptyMapping,
+      addTabWithConfig,
+      setActiveTabId,
+      setActivePane,
+      scrollToTab,
+      openFileInEditor,
+    ],
+  );
 
-  const handleSplitPane = useCallback((type: PaneType, shell?: string, label?: string, cwd?: string) => {
-    if (!activeTabId) return;
-    const resolvedCwd = cwd || activeAgentRef.current?.cwd;
-    splitTab(activeTabId, type, label, shell, undefined, undefined, resolvedCwd);
-  }, [activeTabId, splitTab]);
+  const handleSplitPane = useCallback(
+    (type: PaneType, shell?: string, label?: string, cwd?: string) => {
+      if (!activeTabId) return;
+      const resolvedCwd = cwd || activeAgentRef.current?.cwd;
+      splitTab(activeTabId, type, label, shell, undefined, undefined, resolvedCwd);
+    },
+    [activeTabId, splitTab],
+  );
 
   // Open a changed file in the Review pane (from the Claude pane's file list).
   // Focus an existing Review pane in the active agent if there is one, else
@@ -963,7 +1211,10 @@ function App() {
       let existing: { tabId: string; paneId: string } | null = null;
       for (const tab of tabs) {
         const pane = tab.panes.find((p) => p.type === 'review');
-        if (pane) { existing = { tabId: tab.id, paneId: pane.id }; break; }
+        if (pane) {
+          existing = { tabId: tab.id, paneId: pane.id };
+          break;
+        }
       }
       if (existing) {
         setActiveTabId(existing.tabId);
@@ -1002,7 +1253,11 @@ function App() {
       const t = (e as CustomEvent).detail as SessionWatchTarget | undefined;
       if (!t?.sessionId) return;
       for (const tab of tabs) {
-        const match = tab.panes.find((p) => p.type === 'claude' && (p.attachSessionId === t.sessionId || ptyMapping[p.id] === t.sessionId));
+        const match = tab.panes.find(
+          (p) =>
+            p.type === 'claude' &&
+            (p.attachSessionId === t.sessionId || ptyMapping[p.id] === t.sessionId),
+        );
         if (match) {
           setActiveTabId(tab.id);
           setActivePane(tab.id, match.id);
@@ -1010,7 +1265,20 @@ function App() {
           return;
         }
       }
-      const newId = addTabWithConfig('claude', t.title, undefined, undefined, undefined, t.cwd, undefined, undefined, t.sessionId, undefined, undefined, t.provider);
+      const newId = addTabWithConfig(
+        'claude',
+        t.title,
+        undefined,
+        undefined,
+        undefined,
+        t.cwd,
+        undefined,
+        undefined,
+        t.sessionId,
+        undefined,
+        undefined,
+        t.provider,
+      );
       requestAnimationFrame(() => scrollToTab(newId));
     };
     window.addEventListener(SESSION_WATCH_EVENT, handler);
@@ -1023,7 +1291,10 @@ function App() {
   useEffect(() => {
     const handler = (e: Event) => {
       const d = (e as CustomEvent).detail as
-        | { sessionId?: string; overrides?: { model?: string; effort?: string; permissionMode?: string } }
+        | {
+            sessionId?: string;
+            overrides?: { model?: string; effort?: string; permissionMode?: string };
+          }
         | undefined;
       if (!d?.sessionId) return;
       void respawnAgentWithSettings(d.sessionId, d.overrides ?? {});
@@ -1054,10 +1325,13 @@ function App() {
     return () => window.removeEventListener(AGENT_HANDOFF_EVENT, handler);
   }, [spawnAgent]);
 
-  const handleLaunchApp = useCallback((app: { name: string; url: string }) => {
-    const newId = addTab('browser', app.name, insertPosition, undefined, app.url, true);
-    requestAnimationFrame(() => scrollToTab(newId));
-  }, [addTab, insertPosition, scrollToTab]);
+  const handleLaunchApp = useCallback(
+    (app: { name: string; url: string }) => {
+      const newId = addTab('browser', app.name, insertPosition, undefined, app.url, true);
+      requestAnimationFrame(() => scrollToTab(newId));
+    },
+    [addTab, insertPosition, scrollToTab],
+  );
 
   // Publish every UI action (pane open/close, focus changes) onto the hub bus
   // so plugins/MCP can react to what's happening in the app.
@@ -1068,38 +1342,48 @@ function App() {
   pluginPanesRef.current = pluginPanes; // let openFileInEditor resolve the editor plugin
   const [showInstallPlugin, setShowInstallPlugin] = useState(false);
 
-  const handleOpenPlugin = useCallback((pane: PluginPane) => {
-    // Place the pane by its declared scope:
-    //  - global → the Overview workspace
-    //  - agent  → the active agent (else the first real agent), with that
-    //             agent's session/cwd handed to the webview via query params
-    //  - both   → wherever the user currently is
-    const activeIsAgent = !!activeAgent && !activeAgent.global;
-    let target: AgentWorkspace | undefined;
-    if (pane.scope === 'global') {
-      target = undefined; // global
-    } else if (pane.scope === 'agent') {
-      target = activeIsAgent ? activeAgent : agents.find((a) => !a.global);
-    } else {
-      target = activeIsAgent ? activeAgent : undefined; // 'both'
-    }
+  const handleOpenPlugin = useCallback(
+    (pane: PluginPane) => {
+      // Place the pane by its declared scope:
+      //  - global → the Overview workspace
+      //  - agent  → the active agent (else the first real agent), with that
+      //             agent's session/cwd handed to the webview via query params
+      //  - both   → wherever the user currently is
+      const activeIsAgent = !!activeAgent && !activeAgent.global;
+      let target: AgentWorkspace | undefined;
+      if (pane.scope === 'global') {
+        target = undefined; // global
+      } else if (pane.scope === 'agent') {
+        target = activeIsAgent ? activeAgent : agents.find((a) => !a.global);
+      } else {
+        target = activeIsAgent ? activeAgent : undefined; // 'both'
+      }
 
-    // Build the webview URL: always inject the plugin's bus token (so its page
-    // can connect to the hub bus scoped to its capabilities), plus the agent's
-    // session/cwd for agent-scope panes.
-    const params = new URLSearchParams();
-    if (pane.busToken) params.set('busToken', pane.busToken);
-    if (target?.sessionId) params.set('sessionId', target.sessionId);
-    if (target?.cwd) params.set('cwd', target.cwd);
-    const sep = pane.url.includes('?') ? '&' : '?';
-    const url = params.toString() ? `${pane.url}${sep}${params.toString()}` : pane.url;
-    // Pass the plugin id + the agent's cwd so an agent-scoped pane can mint an
-    // ephemeral token confined to that cwd on mount (see PluginPane). The static
-    // busToken stays baked into the URL as the fallback when minting is
-    // unavailable (e.g. the web build, or the hub momentarily unreachable).
-    const tabId = openPaneIn(target ? target.id : GLOBAL_WORKSPACE_ID, 'plugin', pane.title, url, target?.cwd, pane.pluginId);
-    requestAnimationFrame(() => scrollToTab(tabId));
-  }, [openPaneIn, activeAgent, agents, scrollToTab]);
+      // Build the webview URL: always inject the plugin's bus token (so its page
+      // can connect to the hub bus scoped to its capabilities), plus the agent's
+      // session/cwd for agent-scope panes.
+      const params = new URLSearchParams();
+      if (pane.busToken) params.set('busToken', pane.busToken);
+      if (target?.sessionId) params.set('sessionId', target.sessionId);
+      if (target?.cwd) params.set('cwd', target.cwd);
+      const sep = pane.url.includes('?') ? '&' : '?';
+      const url = params.toString() ? `${pane.url}${sep}${params.toString()}` : pane.url;
+      // Pass the plugin id + the agent's cwd so an agent-scoped pane can mint an
+      // ephemeral token confined to that cwd on mount (see PluginPane). The static
+      // busToken stays baked into the URL as the fallback when minting is
+      // unavailable (e.g. the web build, or the hub momentarily unreachable).
+      const tabId = openPaneIn(
+        target ? target.id : GLOBAL_WORKSPACE_ID,
+        'plugin',
+        pane.title,
+        url,
+        target?.cwd,
+        pane.pluginId,
+      );
+      requestAnimationFrame(() => scrollToTab(tabId));
+    },
+    [openPaneIn, activeAgent, agents, scrollToTab],
+  );
 
   // Bind plugin-contributed hotkeys + library-picker shortcut.
   usePluginHotkeys({
@@ -1119,9 +1403,13 @@ function App() {
     },
     spawnAgent: (opts) => {
       const cwd = opts.cwd || activeAgent?.cwd || appCwdRef.current;
-      if (cwd) { recordRecentDir(cwd); void spawnAgent({ cwd, name: opts.name, model: opts.model }); }
+      if (cwd) {
+        recordRecentDir(cwd);
+        void spawnAgent({ cwd, name: opts.name, model: opts.model });
+      }
     },
-    openPane: (paneType, opts) => handleAddTab(paneType as PaneType, undefined, undefined, opts?.cwd),
+    openPane: (paneType, opts) =>
+      handleAddTab(paneType as PaneType, undefined, undefined, opts?.cwd),
     openPlugin: (type) => {
       const pane = pluginPanes.find((p) => p.type === type);
       if (pane) handleOpenPlugin(pane);
@@ -1129,7 +1417,10 @@ function App() {
     closePane: (paneId) => {
       for (const a of agents) {
         for (const t of a.tabs) {
-          if (t.panes.some((p) => p.id === paneId)) { removePane(t.id, paneId); return; }
+          if (t.panes.some((p) => p.id === paneId)) {
+            removePane(t.id, paneId);
+            return;
+          }
         }
       }
     },
@@ -1141,17 +1432,34 @@ function App() {
   const dirScripts = agentCwd ? (config.scripts?.[scriptKey(agentCwd)] ?? []) : [];
 
   // Run a script in a fresh terminal tab rooted at the agent's workspace.
-  const handleRunScript = useCallback((name: string, command: string) => {
-    if (!agentCwd) return;
-    const newId = addTabWithConfig('terminal', name, undefined, undefined, undefined, agentCwd, undefined, undefined, undefined, command);
-    requestAnimationFrame(() => scrollToTab(newId));
-  }, [agentCwd, addTabWithConfig, scrollToTab]);
+  const handleRunScript = useCallback(
+    (name: string, command: string) => {
+      if (!agentCwd) return;
+      const newId = addTabWithConfig(
+        'terminal',
+        name,
+        undefined,
+        undefined,
+        undefined,
+        agentCwd,
+        undefined,
+        undefined,
+        undefined,
+        command,
+      );
+      requestAnimationFrame(() => scrollToTab(newId));
+    },
+    [agentCwd, addTabWithConfig, scrollToTab],
+  );
 
   // Persist this directory's script list to config.
-  const handleSaveScripts = useCallback((entries: { name: string; command: string }[]) => {
-    if (!agentCwd) return;
-    saveConfig({ scripts: { ...(config.scripts ?? {}), [scriptKey(agentCwd)]: entries } });
-  }, [agentCwd, config.scripts, saveConfig]);
+  const handleSaveScripts = useCallback(
+    (entries: { name: string; command: string }[]) => {
+      if (!agentCwd) return;
+      saveConfig({ scripts: { ...(config.scripts ?? {}), [scriptKey(agentCwd)]: entries } });
+    },
+    [agentCwd, config.scripts, saveConfig],
+  );
 
   // --- Render ---
   // Phones get a taller bar so the (fattened) touch targets fit; this height
@@ -1160,10 +1468,12 @@ function App() {
 
   const rawViewMode = config.panes?.viewMode as string | undefined;
   const viewMode: ViewMode =
-    rawViewMode === 'spatial' ? 'spatial'
-    // 'timeline' is the old name for 'stacked' — keep reading old configs.
-    : (rawViewMode === 'stacked' || rawViewMode === 'timeline') ? 'stacked'
-    : 'tabs';
+    rawViewMode === 'spatial'
+      ? 'spatial'
+      : // 'timeline' is the old name for 'stacked' — keep reading old configs.
+        rawViewMode === 'stacked' || rawViewMode === 'timeline'
+        ? 'stacked'
+        : 'tabs';
   const toggleViewMode = useCallback(() => {
     // Cycle: tabs → spatial → stacked → tabs
     const order: ViewMode[] = ['tabs', 'spatial', 'stacked'];
@@ -1173,12 +1483,17 @@ function App() {
   cycleViewModeRef.current = toggleViewMode;
 
   const handleNavBarRename = useCallback(
-    (tabId: string) => { setActiveTabId(tabId); setRenameSignal((s) => s + 1); },
+    (tabId: string) => {
+      setActiveTabId(tabId);
+      setRenameSignal((s) => s + 1);
+    },
     [setActiveTabId],
   );
   const handleNavBarSplit = useCallback(
     // New split panes inherit the active agent's working directory.
-    (tabId: string, type: PaneType) => { splitTab(tabId, type, undefined, undefined, undefined, undefined, activeAgent?.cwd); },
+    (tabId: string, type: PaneType) => {
+      splitTab(tabId, type, undefined, undefined, undefined, undefined, activeAgent?.cwd);
+    },
     [splitTab, activeAgent],
   );
   // In-pane split (the pane-header split button). Ref-based so it stays stable
@@ -1186,7 +1501,15 @@ function App() {
   // the app cwd) just like the navbar split.
   const handlePaneSplit = useCallback(
     (tabId: string, type: PaneType) => {
-      splitTab(tabId, type, undefined, undefined, undefined, undefined, activeAgentRef.current?.cwd || appCwdRef.current || undefined);
+      splitTab(
+        tabId,
+        type,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        activeAgentRef.current?.cwd || appCwdRef.current || undefined,
+      );
     },
     [splitTab],
   );
@@ -1201,31 +1524,50 @@ function App() {
     // Only the (ordered) session ids matter to consumers; depending on `agents`
     // directly would defeat the memo since that ref changes on any tab edit.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [agents.filter((a) => !a.global).map((a) => a.sessionId ?? '').join(',')],
+    [
+      agents
+        .filter((a) => !a.global)
+        .map((a) => a.sessionId ?? '')
+        .join(','),
+    ],
   );
 
   // Bundle the stable per-agent callbacks/props once so the memoized wrapper
   // sees a single stable object instead of ~14 individually-threaded props.
-  const agentViewHandlers = useMemo(() => ({
-    onTabFocus: handleTabFocus,
-    onPaneClose: handlePaneClose,
-    onPaneFocus: handlePaneFocus,
-    onTabRename: renameTab,
-    onTabMove: moveTab,
-    onTabCanvasChange: updateTabCanvas,
-    onPtyReady: handlePtyReady,
-    onUrlChange: handleUrlChange,
-    onNotesChange: handleNotesChange,
-    onNavigateToTab: handleTabClick,
-    onAddTab: handleAddTab,
-    onSplit: handlePaneSplit,
-    spawnSupervisor,
-    onJumpToAgent: handleJumpToAgent,
-  }), [
-    handleTabFocus, handlePaneClose, handlePaneFocus, renameTab, moveTab,
-    updateTabCanvas, handlePtyReady, handleUrlChange, handleNotesChange,
-    handleTabClick, handleAddTab, handlePaneSplit, spawnSupervisor, handleJumpToAgent,
-  ]);
+  const agentViewHandlers = useMemo(
+    () => ({
+      onTabFocus: handleTabFocus,
+      onPaneClose: handlePaneClose,
+      onPaneFocus: handlePaneFocus,
+      onTabRename: renameTab,
+      onTabMove: moveTab,
+      onTabCanvasChange: updateTabCanvas,
+      onPtyReady: handlePtyReady,
+      onUrlChange: handleUrlChange,
+      onNotesChange: handleNotesChange,
+      onNavigateToTab: handleTabClick,
+      onAddTab: handleAddTab,
+      onSplit: handlePaneSplit,
+      spawnSupervisor,
+      onJumpToAgent: handleJumpToAgent,
+    }),
+    [
+      handleTabFocus,
+      handlePaneClose,
+      handlePaneFocus,
+      renameTab,
+      moveTab,
+      updateTabCanvas,
+      handlePtyReady,
+      handleUrlChange,
+      handleNotesChange,
+      handleTabClick,
+      handleAddTab,
+      handlePaneSplit,
+      spawnSupervisor,
+      handleJumpToAgent,
+    ],
+  );
 
   return (
     <AttentionProvider
@@ -1242,271 +1584,348 @@ function App() {
       onSpawnAgent={() => setShowSpawnDialog(true)}
       attention={attention}
     >
-    <div className="app-root">
-      {sidebarOverlay && !sidebarCollapsed && (
-        <div
-          onClick={() => setSidebarCollapsed(true)}
-          style={{
-            position: 'fixed', inset: 0, zIndex: 90,
-            background: 'rgba(0,0,0,0.45)',
-            // @ts-ignore — stay clickable over the draggable navbar region
-            WebkitAppRegion: 'no-drag',
-          }}
-        />
-      )}
-      {/* Desktop always shows the sidebar (a rail when collapsed); mobile shows
-          the full panel as an overlay only while expanded. */}
-      {(!sidebarOverlay || !sidebarCollapsed) && (
-        <ErrorBoundary label="Sidebar" variant="region">
-        <SideBar
-          agents={agents}
-          activeAgentId={activeAgentId}
-          statusBySession={statusBySession}
-          snapshotBySession={snapshotBySession}
-          onSelectAgent={(id) => { handleSelectAgent(id); if (sidebarOverlay) setSidebarCollapsed(true); }}
-          onSpawnAgent={() => setShowSpawnDialog(true)}
-          onTerminateAgent={handleTerminateAgent}
-          onRenameAgent={renameAgent}
-          onJumpToAttention={goToNextAttention}
-          onOpenInbox={openInbox}
-          onToggleFleet={toggleFleet}
-          viewLevel={viewLevel}
-          onOpenRemote={() => setShowRemote(true)}
-          onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
-          onToggleHelp={toggleHelp}
-          onOpenUsage={openAnalytics}
-          onOpenSettings={openSettings}
-          noAttentionFlash={noAttentionFlash}
-          collapsed={!sidebarOverlay && sidebarCollapsed}
-        />
-        </ErrorBoundary>
-      )}
-      {sidebarOverlay && sidebarCollapsed && (
-        <button
-          onClick={() => setSidebarCollapsed(false)}
-          title="Show sidebar (Ctrl+B)"
-          style={{
-            position: 'fixed', zIndex: 200,
-            // Clear the notch/status bar on phones; keep it tight on desktop.
-            top: isSmallScreen ? 'calc(env(safe-area-inset-top) + 6px)' : 6,
-            left: isSmallScreen ? 'calc(env(safe-area-inset-left) + 6px)' : 6,
-            // Larger fingertip target on phones (Apple HIG floor is ~44px).
-            width: isSmallScreen ? 38 : 26, height: isSmallScreen ? 38 : 26,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            border: '1px solid var(--wks-glass-border)', borderRadius: 'var(--wks-radius-md)',
-            background: 'var(--wks-bg-surface)', color: 'var(--wks-text-secondary)',
-            cursor: 'pointer', fontSize: isSmallScreen ? '1.1rem' : '0.95rem', lineHeight: 1,
-            // @ts-ignore — keep it clickable over the draggable navbar region
-            WebkitAppRegion: 'no-drag',
-          }}
-        ><ChevronRight size={16} strokeWidth={2} /></button>
-      )}
-
-      <ErrorBoundary label="Tab bar" variant="region">
-      <NavBar
-        tabs={tabs}
-        activeTabId={activeTabId}
-        onTabClick={handleTabClick}
-        onAddTab={handleAddTab}
-        onCloseTab={removeTab}
-        onRenameTab={handleNavBarRename}
-        onSplitTab={handleNavBarSplit}
-        onMoveTab={moveTab}
-        viewMode={viewMode}
-        onToggleViewMode={toggleViewMode}
-        leftOffset={navLeft}
-        cwd={agentCwd || undefined}
-        scripts={dirScripts}
-        onRunScript={handleRunScript}
-        onSaveScripts={handleSaveScripts}
-      />
-      </ErrorBoundary>
-
-      <div className="app-content" style={{
-        // Panes sit flush under the tab bar's divider (mockup layout).
-        marginTop: `${navHeight}px`,
-        marginLeft: `${contentLeft}px`,
-      }}>
-        {agents.length > 0 ? (
-          // Keep every agent's workspace mounted and just toggle visibility, so
-          // switching agents never unmounts a Claude pane (which would detach
-          // its viewer and clear the terminal). Only the active agent's
-          // container is shown and wired to the scroll ref.
-          agents.map((agent) => (
-            <AgentWorkspaceView
-              key={agent.id}
-              agent={agent}
-              isActiveAgent={agent.id === activeAgentId}
-              scrollContainerRef={scrollContainerRef}
-              viewMode={viewMode}
-              ptyMapping={ptyMapping}
-              renameSignal={renameSignal}
-              workspaceAgents={workspaceAgents}
-              appCwd={appCwd}
-              allAgents={agents}
-              handlers={agentViewHandlers}
-            />
-          ))
-        ) : !config.onboardingDismissed ? (
-          <Onboarding
-            onSpawn={() => setShowSpawnDialog(true)}
-            onDismiss={() => saveConfig({ onboardingDismissed: true })}
-            shortcuts={config.keybindings?.shortcuts ?? {}}
+      <div className="app-root">
+        {sidebarOverlay && !sidebarCollapsed && (
+          <div
+            onClick={() => setSidebarCollapsed(true)}
+            style={{
+              position: 'fixed',
+              inset: 0,
+              zIndex: 90,
+              background: 'rgba(0,0,0,0.45)',
+              // @ts-ignore — stay clickable over the draggable navbar region
+              WebkitAppRegion: 'no-drag',
+            }}
           />
-        ) : (
-          <EmptyState
-            title="No agent selected"
-            hint="Spawn an agent to start a Claude Code session. It stays running until you terminate it, and its tabs & panes are remembered."
-            action={
-              <button
-                onClick={() => setShowSpawnDialog(true)}
-                style={{
-                  fontSize: '0.8rem', fontFamily: 'inherit', fontWeight: 600,
-                  cursor: 'pointer', background: 'var(--wks-accent)', color: 'var(--wks-text-on-accent, #fff)',
-                  border: 'none', borderRadius: 4, padding: '8px 16px',
-                }}
-              >
-                + Spawn agent
-              </button>
+        )}
+        {/* Desktop always shows the sidebar (a rail when collapsed); mobile shows
+          the full panel as an overlay only while expanded. */}
+        {(!sidebarOverlay || !sidebarCollapsed) && (
+          <ErrorBoundary label="Sidebar" variant="region">
+            <SideBar
+              agents={agents}
+              activeAgentId={activeAgentId}
+              statusBySession={statusBySession}
+              snapshotBySession={snapshotBySession}
+              onSelectAgent={(id) => {
+                handleSelectAgent(id);
+                if (sidebarOverlay) setSidebarCollapsed(true);
+              }}
+              onSpawnAgent={() => setShowSpawnDialog(true)}
+              onTerminateAgent={handleTerminateAgent}
+              onRenameAgent={renameAgent}
+              onJumpToAttention={goToNextAttention}
+              onOpenInbox={openInbox}
+              onToggleFleet={toggleFleet}
+              viewLevel={viewLevel}
+              onOpenRemote={() => setShowRemote(true)}
+              onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
+              onToggleHelp={toggleHelp}
+              onOpenUsage={openAnalytics}
+              onOpenSettings={openSettings}
+              noAttentionFlash={noAttentionFlash}
+              collapsed={!sidebarOverlay && sidebarCollapsed}
+            />
+          </ErrorBoundary>
+        )}
+        {sidebarOverlay && sidebarCollapsed && (
+          <button
+            onClick={() => setSidebarCollapsed(false)}
+            title="Show sidebar (Ctrl+B)"
+            style={{
+              position: 'fixed',
+              zIndex: 200,
+              // Clear the notch/status bar on phones; keep it tight on desktop.
+              top: isSmallScreen ? 'calc(env(safe-area-inset-top) + 6px)' : 6,
+              left: isSmallScreen ? 'calc(env(safe-area-inset-left) + 6px)' : 6,
+              // Larger fingertip target on phones (Apple HIG floor is ~44px).
+              width: isSmallScreen ? 38 : 26,
+              height: isSmallScreen ? 38 : 26,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              border: '1px solid var(--wks-glass-border)',
+              borderRadius: 'var(--wks-radius-md)',
+              background: 'var(--wks-bg-surface)',
+              color: 'var(--wks-text-secondary)',
+              cursor: 'pointer',
+              fontSize: isSmallScreen ? '1.1rem' : '0.95rem',
+              lineHeight: 1,
+              // @ts-ignore — keep it clickable over the draggable navbar region
+              WebkitAppRegion: 'no-drag',
+            }}
+          >
+            <ChevronRight size={16} strokeWidth={2} />
+          </button>
+        )}
+
+        <ErrorBoundary label="Tab bar" variant="region">
+          <NavBar
+            tabs={tabs}
+            activeTabId={activeTabId}
+            onTabClick={handleTabClick}
+            onAddTab={handleAddTab}
+            onCloseTab={removeTab}
+            onRenameTab={handleNavBarRename}
+            onSplitTab={handleNavBarSplit}
+            onMoveTab={moveTab}
+            viewMode={viewMode}
+            onToggleViewMode={toggleViewMode}
+            leftOffset={navLeft}
+            cwd={agentCwd || undefined}
+            scripts={dirScripts}
+            onRunScript={handleRunScript}
+            onSaveScripts={handleSaveScripts}
+          />
+        </ErrorBoundary>
+
+        <div
+          className="app-content"
+          style={{
+            // Panes sit flush under the tab bar's divider (mockup layout).
+            marginTop: `${navHeight}px`,
+            marginLeft: `${contentLeft}px`,
+          }}
+        >
+          {agents.length > 0 ? (
+            // Keep every agent's workspace mounted and just toggle visibility, so
+            // switching agents never unmounts a Claude pane (which would detach
+            // its viewer and clear the terminal). Only the active agent's
+            // container is shown and wired to the scroll ref.
+            agents.map((agent) => (
+              <AgentWorkspaceView
+                key={agent.id}
+                agent={agent}
+                isActiveAgent={agent.id === activeAgentId}
+                scrollContainerRef={scrollContainerRef}
+                viewMode={viewMode}
+                ptyMapping={ptyMapping}
+                renameSignal={renameSignal}
+                workspaceAgents={workspaceAgents}
+                appCwd={appCwd}
+                allAgents={agents}
+                handlers={agentViewHandlers}
+              />
+            ))
+          ) : !config.onboardingDismissed ? (
+            <Onboarding
+              onSpawn={() => setShowSpawnDialog(true)}
+              onDismiss={() => saveConfig({ onboardingDismissed: true })}
+              shortcuts={config.keybindings?.shortcuts ?? {}}
+            />
+          ) : (
+            <EmptyState
+              title="No agent selected"
+              hint="Spawn an agent to start a Claude Code session. It stays running until you terminate it, and its tabs & panes are remembered."
+              action={
+                <button
+                  onClick={() => setShowSpawnDialog(true)}
+                  style={{
+                    fontSize: '0.8rem',
+                    fontFamily: 'inherit',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    background: 'var(--wks-accent)',
+                    color: 'var(--wks-text-on-accent, #fff)',
+                    border: 'none',
+                    borderRadius: 4,
+                    padding: '8px 16px',
+                  }}
+                >
+                  + Spawn agent
+                </button>
+              }
+            />
+          )}
+        </div>
+
+        <ShortcutOverlay
+          visible={showHelp}
+          onClose={closeHelp}
+          prefix={kbPrefix}
+          shortcuts={resolvedShortcuts}
+        />
+
+        <CommandPalette
+          visible={showCommandPalette}
+          apps={config.apps ?? []}
+          agentCwd={agentCwd || undefined}
+          mode={paletteMode}
+          restrictTo={paletteRestrict}
+          libraryItems={libraryItems}
+          onClose={useCallback(() => {
+            setShowCommandPalette(false);
+            setPaletteRestrict(undefined);
+          }, [])}
+          onLaunchApp={handleLaunchApp}
+          onAddTab={handleAddTab}
+          onSplitPane={handleSplitPane}
+          pluginPanes={pluginPanes}
+          onOpenPlugin={handleOpenPlugin}
+          onInstallPlugin={() => {
+            setShowCommandPalette(false);
+            setShowInstallPlugin(true);
+          }}
+          onManagePlugins={() => {
+            setShowCommandPalette(false);
+            const tabId = openPaneIn(GLOBAL_WORKSPACE_ID, 'plugins', 'Plugins');
+            requestAnimationFrame(() => scrollToTab(tabId));
+          }}
+          onOpenLibrary={() => {
+            setShowCommandPalette(false);
+            // Open in the active agent's workspace (with its project cwd) so the
+            // pane shows that project's library + .claude skills; fall back to
+            // the global Overview when no agent is focused.
+            const tabId =
+              activeAgent && !activeAgent.global
+                ? openPaneIn(activeAgent.id, 'library', 'Library', undefined, activeAgent.cwd)
+                : openPaneIn(GLOBAL_WORKSPACE_ID, 'library', 'Library');
+            requestAnimationFrame(() => scrollToTab(tabId));
+          }}
+          onSwitchSession={() => {
+            setShowCommandPalette(false);
+            switchSession();
+          }}
+          onOpenAnalytics={openAnalytics}
+          onOpenAgents={openAgentsPane}
+          onOpenLayouts={() => {
+            setShowCommandPalette(false);
+            setShowLayouts(true);
+          }}
+          onOpenRemote={() => {
+            setShowCommandPalette(false);
+            setShowRemote(true);
+          }}
+          onOpenAskPane={openAskPane}
+          onSpawnFleetAgent={() => {
+            void spawnFleetAgent();
+          }}
+          onOpenFile={() => {
+            setShowCommandPalette(false);
+            openFileInEditor();
+          }}
+          shortcuts={resolvedShortcuts}
+          prefix={kbPrefix}
+          onSpawnAgent={() => {
+            setShowCommandPalette(false);
+            setShowSpawnDialog(true);
+          }}
+          onToggleSidebar={() => {
+            setShowCommandPalette(false);
+            setSidebarCollapsed((v) => !v);
+          }}
+          onToggleInbox={() => {
+            setShowCommandPalette(false);
+            setInboxOpen((v) => !v);
+          }}
+          onToggleFleet={() => {
+            setShowCommandPalette(false);
+            toggleFleet();
+          }}
+          onSaveSession={() => {
+            setShowCommandPalette(false);
+            saveCurrentSession();
+          }}
+          onOpenSettings={() => {
+            setShowCommandPalette(false);
+            openSettings();
+          }}
+          onToggleHelp={() => {
+            setShowCommandPalette(false);
+            toggleHelp();
+          }}
+        />
+
+        <LibraryHost
+          activeAgent={activeAgent}
+          appCwd={appCwd}
+          spawnAgent={(opts) => {
+            void spawnAgent(opts);
+          }}
+          recordRecentDir={recordRecentDir}
+        />
+
+        {showInstallPlugin && <PluginInstallDialog onClose={() => setShowInstallPlugin(false)} />}
+
+        {showRemote && (
+          <Suspense fallback={null}>
+            <RemoteShareDialog onClose={() => setShowRemote(false)} />
+          </Suspense>
+        )}
+
+        {/* Host filesystem browser for the web build's pickFolder (inert on desktop). */}
+        <WebFolderPicker />
+
+        {/* Main-process system notices (daemon/startup failures) as in-app banners. */}
+        <SystemNotices />
+
+        <LibrarySidePanel
+          visible={showLibraryPanel}
+          onClose={() => setShowLibraryPanel(false)}
+          cwd={libraryCwd}
+        />
+
+        <BottomTerminalPanel
+          visible={showBottomTerminal}
+          onClose={() => setShowBottomTerminal(false)}
+          cwd={agentCwd || appCwd || undefined}
+          left={contentLeft}
+        />
+
+        {showSpawnDialog && (
+          <SpawnAgentDialog
+            defaultCwd={config.agents?.defaultCwd?.trim() || appCwdRef.current}
+            defaultProvider={config.agents?.defaultProvider}
+            onSpawn={handleSpawnAgent}
+            onCancel={() => setShowSpawnDialog(false)}
+          />
+        )}
+
+        {showLayouts && (
+          <LayoutsDialog
+            agentCount={agents.filter((a) => !a.global).length}
+            onSaveCurrent={handleSaveLayout}
+            onRestore={handleRestoreLayout}
+            onClose={() => setShowLayouts(false)}
+          />
+        )}
+
+        {sessionPhase === 'picker' && (
+          <SessionPicker
+            sessions={sessionList}
+            onNewSession={handleNewSession}
+            onResumeSession={handleResumeSession}
+            onDeleteSession={handleDeleteSession}
+            onCancel={
+              pickerCancellable
+                ? () => {
+                    setPickerCancellable(false);
+                    setSessionPhase('active');
+                  }
+                : undefined
             }
           />
         )}
-      </div>
 
-      <ShortcutOverlay
-        visible={showHelp}
-        onClose={closeHelp}
-        prefix={kbPrefix}
-        shortcuts={resolvedShortcuts}
-      />
-
-      <CommandPalette
-        visible={showCommandPalette}
-        apps={config.apps ?? []}
-        agentCwd={agentCwd || undefined}
-        mode={paletteMode}
-        restrictTo={paletteRestrict}
-        libraryItems={libraryItems}
-        onClose={useCallback(() => { setShowCommandPalette(false); setPaletteRestrict(undefined); }, [])}
-        onLaunchApp={handleLaunchApp}
-        onAddTab={handleAddTab}
-        onSplitPane={handleSplitPane}
-        pluginPanes={pluginPanes}
-        onOpenPlugin={handleOpenPlugin}
-        onInstallPlugin={() => { setShowCommandPalette(false); setShowInstallPlugin(true); }}
-        onManagePlugins={() => { setShowCommandPalette(false); const tabId = openPaneIn(GLOBAL_WORKSPACE_ID, 'plugins', 'Plugins'); requestAnimationFrame(() => scrollToTab(tabId)); }}
-        onOpenLibrary={() => {
-          setShowCommandPalette(false);
-          // Open in the active agent's workspace (with its project cwd) so the
-          // pane shows that project's library + .claude skills; fall back to
-          // the global Overview when no agent is focused.
-          const tabId = activeAgent && !activeAgent.global
-            ? openPaneIn(activeAgent.id, 'library', 'Library', undefined, activeAgent.cwd)
-            : openPaneIn(GLOBAL_WORKSPACE_ID, 'library', 'Library');
-          requestAnimationFrame(() => scrollToTab(tabId));
-        }}
-        onSwitchSession={() => { setShowCommandPalette(false); switchSession(); }}
-        onOpenAnalytics={openAnalytics}
-        onOpenAgents={openAgentsPane}
-        onOpenLayouts={() => { setShowCommandPalette(false); setShowLayouts(true); }}
-        onOpenRemote={() => { setShowCommandPalette(false); setShowRemote(true); }}
-        onOpenAskPane={openAskPane}
-        onSpawnFleetAgent={() => { void spawnFleetAgent(); }}
-        onOpenFile={() => { setShowCommandPalette(false); openFileInEditor(); }}
-        shortcuts={resolvedShortcuts}
-        prefix={kbPrefix}
-        onSpawnAgent={() => { setShowCommandPalette(false); setShowSpawnDialog(true); }}
-        onToggleSidebar={() => { setShowCommandPalette(false); setSidebarCollapsed((v) => !v); }}
-        onToggleInbox={() => { setShowCommandPalette(false); setInboxOpen((v) => !v); }}
-        onToggleFleet={() => { setShowCommandPalette(false); toggleFleet(); }}
-        onSaveSession={() => { setShowCommandPalette(false); saveCurrentSession(); }}
-        onOpenSettings={() => { setShowCommandPalette(false); openSettings(); }}
-        onToggleHelp={() => { setShowCommandPalette(false); toggleHelp(); }}
-      />
-
-      <LibraryHost
-        activeAgent={activeAgent}
-        appCwd={appCwd}
-        spawnAgent={(opts) => { void spawnAgent(opts); }}
-        recordRecentDir={recordRecentDir}
-      />
-
-      {showInstallPlugin && (
-        <PluginInstallDialog onClose={() => setShowInstallPlugin(false)} />
-      )}
-
-      {showRemote && (
-        <Suspense fallback={null}>
-          <RemoteShareDialog onClose={() => setShowRemote(false)} />
-        </Suspense>
-      )}
-
-      {/* Host filesystem browser for the web build's pickFolder (inert on desktop). */}
-      <WebFolderPicker />
-
-      {/* Main-process system notices (daemon/startup failures) as in-app banners. */}
-      <SystemNotices />
-
-      <LibrarySidePanel
-        visible={showLibraryPanel}
-        onClose={() => setShowLibraryPanel(false)}
-        cwd={libraryCwd}
-      />
-
-      <BottomTerminalPanel
-        visible={showBottomTerminal}
-        onClose={() => setShowBottomTerminal(false)}
-        cwd={agentCwd || appCwd || undefined}
-        left={contentLeft}
-      />
-
-      {showSpawnDialog && (
-        <SpawnAgentDialog
-          defaultCwd={config.agents?.defaultCwd?.trim() || appCwdRef.current}
-          defaultProvider={config.agents?.defaultProvider}
-          onSpawn={handleSpawnAgent}
-          onCancel={() => setShowSpawnDialog(false)}
+        <ChordHint
+          path={chordPath}
+          prefix={kbPrefix}
+          shortcuts={resolvedShortcuts}
+          showOptions={kbChordHints}
         />
-      )}
 
-      {showLayouts && (
-        <LayoutsDialog
-          agentCount={agents.filter((a) => !a.global).length}
-          onSaveCurrent={handleSaveLayout}
-          onRestore={handleRestoreLayout}
-          onClose={() => setShowLayouts(false)}
-        />
-      )}
-
-      {sessionPhase === 'picker' && (
-        <SessionPicker
-          sessions={sessionList}
-          onNewSession={handleNewSession}
-          onResumeSession={handleResumeSession}
-          onDeleteSession={handleDeleteSession}
-          onCancel={pickerCancellable ? () => { setPickerCancellable(false); setSessionPhase('active'); } : undefined}
-        />
-      )}
-
-      <ChordHint
-        path={chordPath}
-        prefix={kbPrefix}
-        shortcuts={resolvedShortcuts}
-        showOptions={kbChordHints}
-      />
-
-      {/* Fleet Deck — cross-agent radar overlay. Sits OVER the still-mounted
+        {/* Fleet Deck — cross-agent radar overlay. Sits OVER the still-mounted
           per-agent workspaces, so entering/leaving never remounts a pane. */}
-      {viewLevel === 'fleet' && agents.some((a) => !a.global) && (
-        <FleetDeck top={navHeight} left={contentLeft} />
-      )}
+        {viewLevel === 'fleet' && agents.some((a) => !a.global) && (
+          <FleetDeck top={navHeight} left={contentLeft} />
+        )}
 
-      {/* Triage Inbox — top-level drawer, reachable from any agent. */}
-      <InboxDrawer />
+        {/* Triage Inbox — top-level drawer, reachable from any agent. */}
+        <InboxDrawer />
 
-      {/* Full-height workflow timeline, opened from a WorkflowRunCard. */}
-      <WorkflowOverlay />
-    </div>
+        {/* Full-height workflow timeline, opened from a WorkflowRunCard. */}
+        <WorkflowOverlay />
+      </div>
     </AttentionProvider>
   );
 }

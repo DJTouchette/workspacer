@@ -36,7 +36,10 @@ export async function startClaudemonHookBridge(): Promise<void> {
         // The Rust serializer also flattens payload into the same object, so
         // tool_name / tool_input / etc. are top-level — matching the schema
         // Claude Code itself POSTs.
-        const normalized = { ...(event as Record<string, unknown>), hook_event_name: (event as any).event };
+        const normalized = {
+          ...(event as Record<string, unknown>),
+          hook_event_name: (event as any).event,
+        };
         claudeSessionStore.handleHookEvent(normalized);
       } catch (err) {
         console.error('[claudemon-bridge] bad frame', err);
@@ -50,7 +53,9 @@ export async function startClaudemonHookBridge(): Promise<void> {
 
 export function stopClaudemonHookBridge(): void {
   if (abort) {
-    try { abort.abort(); } catch {}
+    try {
+      abort.abort();
+    } catch {}
     abort = null;
   }
 }

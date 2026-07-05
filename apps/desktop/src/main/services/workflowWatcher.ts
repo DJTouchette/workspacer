@@ -168,7 +168,7 @@ function tailLines(filePath: string, t: TailState): string[] {
     const text = t.remainder + buf.toString('utf8');
     const lines = text.split('\n');
     t.remainder = lines.pop() ?? '';
-    return lines.filter(l => l.trim());
+    return lines.filter((l) => l.trim());
   } catch {
     return [];
   } finally {
@@ -187,7 +187,7 @@ function readJsonSafe(filePath: string): any | null {
 /** Short human summary of a tool invocation, for the "last activity" line. */
 function summarizeToolInput(name: string, input: any): string {
   if (!input || typeof input !== 'object') return '';
-  const base = (p: unknown) => (typeof p === 'string' ? p.split(/[/\\]/).pop() ?? '' : '');
+  const base = (p: unknown) => (typeof p === 'string' ? (p.split(/[/\\]/).pop() ?? '') : '');
   switch (name) {
     case 'Read':
     case 'Edit':
@@ -197,14 +197,16 @@ function summarizeToolInput(name: string, input: any): string {
       return base(input.file_path);
     case 'Bash':
     case 'PowerShell':
-      return String(input.description ?? input.command ?? '').split('\n')[0].slice(0, 60);
+      return String(input.description ?? input.command ?? '')
+        .split('\n')[0]
+        .slice(0, 60);
     case 'Grep':
     case 'Glob':
       return String(input.pattern ?? '').slice(0, 60);
     case 'Agent':
       return String(input.description ?? '').slice(0, 60);
     default: {
-      const v = Object.values(input).find(x => typeof x === 'string') as string | undefined;
+      const v = Object.values(input).find((x) => typeof x === 'string') as string | undefined;
       return (v ?? '').split('\n')[0].slice(0, 60);
     }
   }
@@ -216,7 +218,9 @@ function summarizeToolInput(name: string, input: any): string {
  * evaluating just that object expression is safe; fall back to filename-derived
  * name on any failure.
  */
-function parseScriptMeta(scriptText: string): { name?: string; description?: string; phases?: WorkflowPhaseInfo[] } | null {
+function parseScriptMeta(
+  scriptText: string,
+): { name?: string; description?: string; phases?: WorkflowPhaseInfo[] } | null {
   const m = /export\s+const\s+meta\s*=\s*\{/.exec(scriptText);
   if (!m) return null;
   const start = scriptText.indexOf('{', m.index);
@@ -234,13 +238,19 @@ function parseScriptMeta(scriptText: string): { name?: string; description?: str
     else if (c === '{') depth++;
     else if (c === '}') {
       depth--;
-      if (depth === 0) { end = i; break; }
+      if (depth === 0) {
+        end = i;
+        break;
+      }
     }
   }
   if (end === -1) return null;
   try {
     const literalText = scriptText.slice(start, end + 1);
-    const obj = vm.runInNewContext('(' + literalText + ')', Object.create(null), { timeout: 50, microtaskMode: 'afterEvaluate' });
+    const obj = vm.runInNewContext('(' + literalText + ')', Object.create(null), {
+      timeout: 50,
+      microtaskMode: 'afterEvaluate',
+    });
     if (!obj || typeof obj !== 'object') return null;
     return {
       name: typeof obj.name === 'string' ? obj.name : undefined,
@@ -248,7 +258,10 @@ function parseScriptMeta(scriptText: string): { name?: string; description?: str
       phases: Array.isArray(obj.phases)
         ? obj.phases
             .filter((p: any) => p && typeof p.title === 'string')
-            .map((p: any) => ({ title: p.title, detail: typeof p.detail === 'string' ? p.detail : undefined }))
+            .map((p: any) => ({
+              title: p.title,
+              detail: typeof p.detail === 'string' ? p.detail : undefined,
+            }))
         : undefined,
     };
   } catch {
@@ -259,7 +272,16 @@ function parseScriptMeta(scriptText: string): { name?: string; description?: str
 /** Fold one transcript JSONL entry into live per-agent stats. */
 function applyTranscriptEntry(
   entry: any,
-  stats: { tokens: number; costUSD?: number; toolCalls: number; model?: string; lastToolName?: string; lastToolSummary?: string; promptPreview?: string; startedAt?: number },
+  stats: {
+    tokens: number;
+    costUSD?: number;
+    toolCalls: number;
+    model?: string;
+    lastToolName?: string;
+    lastToolSummary?: string;
+    promptPreview?: string;
+    startedAt?: number;
+  },
   usageDedup: { lastUsageKey: string | null },
 ): void {
   const ts = entry.timestamp ? Date.parse(entry.timestamp) : NaN;
@@ -269,11 +291,15 @@ function applyTranscriptEntry(
   if (!msg) return;
 
   if (entry.type === 'user' && !stats.promptPreview) {
-    const content = typeof msg.content === 'string'
-      ? msg.content
-      : Array.isArray(msg.content)
-        ? msg.content.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('\n')
-        : '';
+    const content =
+      typeof msg.content === 'string'
+        ? msg.content
+        : Array.isArray(msg.content)
+          ? msg.content
+              .filter((b: any) => b.type === 'text')
+              .map((b: any) => b.text)
+              .join('\n')
+          : '';
     if (content) stats.promptPreview = content.slice(0, 160);
   } else if (entry.type === 'assistant') {
     if (msg.model) stats.model = msg.model;
@@ -302,7 +328,11 @@ class WorkflowWatcher {
   private watches = new Map<string, SessionWatch>();
 
   /** Begin watching a session. Idempotent; safe to call once transcriptPath is known. */
-  attach(sessionId: string, transcriptPath: string, onUpdate: (update: WorkflowWatcherUpdate) => void): void {
+  attach(
+    sessionId: string,
+    transcriptPath: string,
+    onUpdate: (update: WorkflowWatcherUpdate) => void,
+  ): void {
     if (this.watches.has(sessionId)) return;
     const sessionDir = transcriptPath.replace(/\.jsonl$/i, '');
     if (sessionDir === transcriptPath) return; // unexpected path shape
@@ -347,7 +377,11 @@ class WorkflowWatcher {
    * one-line summaries) — enough to read what the agent did without shipping
    * the raw JSONL. `null` if the session/run/file is gone.
    */
-  readAgentTranscript(sessionId: string, runId: string | null, agentId: string): { role: string; text: string }[] | null {
+  readAgentTranscript(
+    sessionId: string,
+    runId: string | null,
+    agentId: string,
+  ): { role: string; text: string }[] | null {
     const watch = this.watches.get(sessionId);
     if (!watch) return null;
     const dir = runId ? watch.runs.get(runId)?.dir : path.join(watch.sessionDir, 'subagents');
@@ -363,7 +397,11 @@ class WorkflowWatcher {
     for (const line of raw.split('\n')) {
       if (!line.trim()) continue;
       let j: any;
-      try { j = JSON.parse(line); } catch { continue; }
+      try {
+        j = JSON.parse(line);
+      } catch {
+        continue;
+      }
       const msg = j.message ?? j;
       const role = msg.role ?? j.type;
       if (role !== 'user' && role !== 'assistant') continue;
@@ -376,8 +414,12 @@ class WorkflowWatcher {
           if (b?.type === 'text' && typeof b.text === 'string') parts.push(b.text);
           else if (b?.type === 'tool_use') parts.push(`⚙ ${b.name ?? 'tool'}`);
           else if (b?.type === 'tool_result') {
-            const t = typeof b.content === 'string' ? b.content
-              : Array.isArray(b.content) ? b.content.map((c: any) => (typeof c?.text === 'string' ? c.text : '')).join('') : '';
+            const t =
+              typeof b.content === 'string'
+                ? b.content
+                : Array.isArray(b.content)
+                  ? b.content.map((c: any) => (typeof c?.text === 'string' ? c.text : '')).join('')
+                  : '';
             if (t.trim()) parts.push(`↳ ${t.slice(0, 400)}`);
           }
         }
@@ -396,7 +438,11 @@ class WorkflowWatcher {
    * main GUI view uses can render a subagent's work. `null` if the
    * session/run/file is gone.
    */
-  readAgentConversation(sessionId: string, runId: string | null, agentId: string): AgentConversationTurn[] | null {
+  readAgentConversation(
+    sessionId: string,
+    runId: string | null,
+    agentId: string,
+  ): AgentConversationTurn[] | null {
     const watch = this.watches.get(sessionId);
     if (!watch) return null;
     const dir = runId ? watch.runs.get(runId)?.dir : path.join(watch.sessionDir, 'subagents');
@@ -413,7 +459,11 @@ class WorkflowWatcher {
     for (const line of raw.split('\n')) {
       if (!line.trim()) continue;
       let j: any;
-      try { j = JSON.parse(line); } catch { continue; }
+      try {
+        j = JSON.parse(line);
+      } catch {
+        continue;
+      }
       const msg = j.message ?? j;
       const role = msg.role ?? j.type;
       if (role !== 'user' && role !== 'assistant') continue;
@@ -445,8 +495,12 @@ class WorkflowWatcher {
         } else if (b?.type === 'tool_result' && b.tool_use_id) {
           const tc = toolCallById.get(b.tool_use_id);
           if (tc) {
-            const t = typeof b.content === 'string' ? b.content
-              : Array.isArray(b.content) ? b.content.map((c: any) => (typeof c?.text === 'string' ? c.text : '')).join('') : '';
+            const t =
+              typeof b.content === 'string'
+                ? b.content
+                : Array.isArray(b.content)
+                  ? b.content.map((c: any) => (typeof c?.text === 'string' ? c.text : '')).join('')
+                  : '';
             tc.response = t;
             tc.status = b.is_error ? 'failed' : 'complete';
             tc.completedAt = ts;
@@ -481,7 +535,7 @@ class WorkflowWatcher {
     }
 
     // Idle out when nothing is live and hooks have gone quiet; poke() revives us.
-    const hasLiveRun = Array.from(watch.runs.values()).some(r => !r.finalized);
+    const hasLiveRun = Array.from(watch.runs.values()).some((r) => !r.finalized);
     if (!hasLiveRun && Date.now() - watch.lastPoke > IDLE_AFTER_MS && watch.timer) {
       clearInterval(watch.timer);
       watch.timer = null;
@@ -490,16 +544,21 @@ class WorkflowWatcher {
 
   private buildUpdate(watch: SessionWatch): WorkflowWatcherUpdate {
     const runs = Array.from(watch.runs.values())
-      .map(r => r.info)
+      .map((r) => r.info)
       .sort((a, b) => a.startedAt - b.startedAt)
       .slice(-MAX_RUNS)
       // Deep-ish copy so IPC snapshots don't share mutable state
-      .map(r => {
-        const agents = r.agents.map(a => ({ ...a }));
+      .map((r) => {
+        const agents = r.agents.map((a) => ({ ...a }));
         // Run cost is derivable only from the live per-agent accumulation (the
         // final state file doesn't carry cost), so roll it up at snapshot time.
         const cost = agents.reduce((s, a) => s + (a.costUSD ?? 0), 0);
-        return { ...r, phases: r.phases.map(p => ({ ...p })), agents, totalCostUSD: cost > 0 ? cost : r.totalCostUSD };
+        return {
+          ...r,
+          phases: r.phases.map((p) => ({ ...p })),
+          agents,
+          totalCostUSD: cost > 0 ? cost : r.totalCostUSD,
+        };
       });
 
     const subagentActivity: Record<string, SubagentActivity> = {};
@@ -508,7 +567,7 @@ class WorkflowWatcher {
     // Mirror the MAX_RUNS-sliced `runs` — agents of runs dropped from the
     // snapshot must not stay suppressed (they'd vanish from both the run cards
     // and the plain subagent list).
-    const workflowAgentIds: string[] = runs.flatMap(r => r.agents.map(a => a.id));
+    const workflowAgentIds: string[] = runs.flatMap((r) => r.agents.map((a) => a.id));
     return { runs, subagentActivity, workflowAgentIds };
   }
 
@@ -562,9 +621,9 @@ class WorkflowWatcher {
     // Script copy is written at run start: <sessionDir>/workflows/scripts/<name>-<runId>.js
     try {
       const scriptsRoot = path.join(watch.sessionDir, 'workflows', 'scripts');
-      const scriptFile = fs.readdirSync(scriptsRoot).find(f => f.endsWith(`-${runId}.js`));
+      const scriptFile = fs.readdirSync(scriptsRoot).find((f) => f.endsWith(`-${runId}.js`));
       if (scriptFile) {
-        run.info.name = scriptFile.slice(0, -(`-${runId}.js`.length));
+        run.info.name = scriptFile.slice(0, -`-${runId}.js`.length);
         const meta = parseScriptMeta(fs.readFileSync(path.join(scriptsRoot, scriptFile), 'utf8'));
         if (meta) {
           if (meta.name) run.info.name = meta.name;
@@ -596,7 +655,10 @@ class WorkflowWatcher {
     if (Array.isArray(j.phases)) {
       info.phases = j.phases
         .filter((p: any) => p && typeof p.title === 'string')
-        .map((p: any) => ({ title: p.title, detail: typeof p.detail === 'string' ? p.detail : undefined }));
+        .map((p: any) => ({
+          title: p.title,
+          detail: typeof p.detail === 'string' ? p.detail : undefined,
+        }));
     }
     if (typeof j.totalTokens === 'number') info.totalTokens = j.totalTokens;
     if (typeof j.totalToolCalls === 'number') info.totalToolCalls = j.totalToolCalls;
@@ -613,7 +675,12 @@ class WorkflowWatcher {
           label: typeof p.label === 'string' ? p.label : undefined,
           phaseTitle: typeof p.phaseTitle === 'string' ? p.phaseTitle : undefined,
           model: typeof p.model === 'string' ? p.model : undefined,
-          status: p.state === 'done' ? 'done' : p.state === 'error' || p.state === 'failed' ? 'failed' : 'done',
+          status:
+            p.state === 'done'
+              ? 'done'
+              : p.state === 'error' || p.state === 'failed'
+                ? 'failed'
+                : 'done',
           startedAt: typeof p.startedAt === 'number' ? p.startedAt : undefined,
           durationMs: typeof p.durationMs === 'number' ? p.durationMs : undefined,
           completedAt:
@@ -624,15 +691,22 @@ class WorkflowWatcher {
           toolCalls: typeof p.toolCalls === 'number' ? p.toolCalls : 0,
           lastToolName: typeof p.lastToolName === 'string' ? p.lastToolName : undefined,
           lastToolSummary: typeof p.lastToolSummary === 'string' ? p.lastToolSummary : undefined,
-          promptPreview: typeof p.promptPreview === 'string' ? p.promptPreview.slice(0, 160) : undefined,
-          resultPreview: typeof p.resultPreview === 'string' ? p.resultPreview.slice(0, 200) : undefined,
+          promptPreview:
+            typeof p.promptPreview === 'string' ? p.promptPreview.slice(0, 160) : undefined,
+          resultPreview:
+            typeof p.resultPreview === 'string' ? p.resultPreview.slice(0, 200) : undefined,
         });
       }
       if (agents.length > 0) {
         info.agents = agents;
         run.agents.clear();
         for (const a of agents) {
-          run.agents.set(a.id, { info: a, tail: { offset: 0, remainder: '' }, lastUsageKey: null, lastMtimeMs: 0 });
+          run.agents.set(a.id, {
+            info: a,
+            tail: { offset: 0, remainder: '' },
+            lastUsageKey: null,
+            lastMtimeMs: 0,
+          });
         }
       }
     }
@@ -715,10 +789,12 @@ class WorkflowWatcher {
       } else if (entry.type === 'result') {
         agent.info.status = 'done';
         agent.info.completedAt = Date.now();
-        if (agent.info.startedAt) agent.info.durationMs = agent.info.completedAt - agent.info.startedAt;
+        if (agent.info.startedAt)
+          agent.info.durationMs = agent.info.completedAt - agent.info.startedAt;
         if (entry.result !== undefined && agent.info.resultPreview === undefined) {
           try {
-            const s = typeof entry.result === 'string' ? entry.result : JSON.stringify(entry.result);
+            const s =
+              typeof entry.result === 'string' ? entry.result : JSON.stringify(entry.result);
             agent.info.resultPreview = s.slice(0, 200);
           } catch {}
         }

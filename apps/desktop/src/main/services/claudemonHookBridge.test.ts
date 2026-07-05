@@ -18,10 +18,14 @@ let capturedOpts: any;
 const consumeSseStream = vi.fn(async (_url: string, opts: any) => {
   capturedOpts = opts;
 });
-vi.mock('../lib/sseConsumer', () => ({ consumeSseStream: (...a: unknown[]) => consumeSseStream(...(a as [string, any])) }));
+vi.mock('../lib/sseConsumer', () => ({
+  consumeSseStream: (...a: unknown[]) => consumeSseStream(...(a as [string, any])),
+}));
 
 const handleHookEvent = vi.fn();
-vi.mock('./claudeSessionStore', () => ({ claudeSessionStore: { handleHookEvent: (...a: unknown[]) => handleHookEvent(...a) } }));
+vi.mock('./claudeSessionStore', () => ({
+  claudeSessionStore: { handleHookEvent: (...a: unknown[]) => handleHookEvent(...a) },
+}));
 
 vi.mock('./claudemonDaemon', () => ({ CLAUDEMON_API_URL: 'http://daemon' }));
 
@@ -45,7 +49,9 @@ describe('claudemonHookBridge', () => {
 
   it('translates wire `event` to `hook_event_name` and forwards the flattened payload', async () => {
     await startClaudemonHookBridge();
-    capturedOpts.onFrame(JSON.stringify({ event: 'PreToolUse', session_id: 's1', tool_name: 'Bash' }));
+    capturedOpts.onFrame(
+      JSON.stringify({ event: 'PreToolUse', session_id: 's1', tool_name: 'Bash' }),
+    );
 
     expect(handleHookEvent).toHaveBeenCalledTimes(1);
     const arg = handleHookEvent.mock.calls[0][0];
@@ -65,7 +71,9 @@ describe('claudemonHookBridge', () => {
       throw new Error('store boom');
     });
     await startClaudemonHookBridge();
-    expect(() => capturedOpts.onFrame(JSON.stringify({ event: 'Stop', session_id: 's1' }))).not.toThrow();
+    expect(() =>
+      capturedOpts.onFrame(JSON.stringify({ event: 'Stop', session_id: 's1' })),
+    ).not.toThrow();
   });
 
   it('onError does not throw', async () => {

@@ -1,4 +1,19 @@
-export type PaneType = 'terminal' | 'browser' | 'notes' | 'claude' | 'settings' | 'review' | 'plugin' | 'plugins' | 'overview' | 'library' | 'analytics' | 'ask' | 'editor' | 'agentwatch' | 'agents';
+export type PaneType =
+  | 'terminal'
+  | 'browser'
+  | 'notes'
+  | 'claude'
+  | 'settings'
+  | 'review'
+  | 'plugin'
+  | 'plugins'
+  | 'overview'
+  | 'library'
+  | 'analytics'
+  | 'ask'
+  | 'editor'
+  | 'agentwatch'
+  | 'agents';
 
 /** Coding-agent backend an agent workspace / agent pane runs.
  *  `undefined` is treated as `'claude'` for backward compatibility with sessions

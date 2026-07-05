@@ -8,13 +8,17 @@ import type { Terminal } from '@xterm/xterm';
 
 /** Ensure each CSS font-family name with spaces is quoted */
 export function quoteFontFamily(ff: string): string {
-  return ff.split(',').map(f => {
-    f = f.trim();
-    if (!f) return f;
-    if (/^["']/.test(f) || /^(monospace|sans-serif|serif|cursive|fantasy|system-ui)$/i.test(f)) return f;
-    if (f.includes(' ')) return `"${f}"`;
-    return f;
-  }).join(', ');
+  return ff
+    .split(',')
+    .map((f) => {
+      f = f.trim();
+      if (!f) return f;
+      if (/^["']/.test(f) || /^(monospace|sans-serif|serif|cursive|fantasy|system-ui)$/i.test(f))
+        return f;
+      if (f.includes(' ')) return `"${f}"`;
+      return f;
+    })
+    .join(', ');
 }
 
 /**
@@ -37,7 +41,9 @@ export function isTermVisible(el: HTMLElement | null): boolean {
 export function fitWithRetry(fitAddon: FitAddon, container?: HTMLElement | null): void {
   const fit = () => {
     if (container !== undefined && !isTermVisible(container)) return;
-    try { fitAddon.fit(); } catch {}
+    try {
+      fitAddon.fit();
+    } catch {}
   };
   requestAnimationFrame(fit);
   setTimeout(fit, 100);

@@ -35,11 +35,7 @@ export interface GitNumstatEntry {
 // ── Claude session snapshot (sent over claude-session:get / getAll / update) ──
 
 export type SessionAmbientState =
-  | 'idle'
-  | 'thinking'
-  | 'streaming'
-  | 'waiting_input'
-  | 'waiting_approval';
+  'idle' | 'thinking' | 'streaming' | 'waiting_input' | 'waiting_approval';
 
 export interface ToolCall {
   id: string;

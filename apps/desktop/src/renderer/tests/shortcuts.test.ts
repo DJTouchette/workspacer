@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { formatBinding, buildChordTree, chordNodeAt, chordMenu, chordBreadcrumb } from '../src/lib/shortcuts';
+import {
+  formatBinding,
+  buildChordTree,
+  chordNodeAt,
+  chordMenu,
+  chordBreadcrumb,
+} from '../src/lib/shortcuts';
 
 describe('formatBinding', () => {
   it('formats a direct combo', () => {

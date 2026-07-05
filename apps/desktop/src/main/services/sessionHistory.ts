@@ -14,8 +14,8 @@ export interface SessionHistoryRecord {
   provider: string;
   model: string | null;
   gitBranch: string;
-  startedAt: string;   // ISO
-  endedAt: string;     // ISO ('' while active)
+  startedAt: string; // ISO
+  endedAt: string; // ISO ('' while active)
   durationMs: number;
   inputTokens: number;
   outputTokens: number;
@@ -40,15 +40,15 @@ export interface AnalyticsTotals {
 }
 
 export interface AnalyticsBucket {
-  key: string;       // day (YYYY-MM-DD), cwd, or model
+  key: string; // day (YYYY-MM-DD), cwd, or model
   sessions: number;
   costUSD: number;
-  tokens: number;    // input + output
+  tokens: number; // input + output
 }
 
 export interface AnalyticsSummary {
   totals: AnalyticsTotals;
-  byDay: AnalyticsBucket[];     // chronological, recent window
+  byDay: AnalyticsBucket[]; // chronological, recent window
   byProject: AnalyticsBucket[]; // top spenders
   byModel: AnalyticsBucket[];
   byProvider: AnalyticsBucket[]; // split by coding-agent backend (always all)
@@ -58,7 +58,8 @@ export interface AnalyticsSummary {
  *  provider='' which we treat as 'claude'. */
 function providerFilter(provider?: string): { where: string; params: Record<string, string> } {
   if (!provider) return { where: '', params: {} };
-  if (provider === 'claude') return { where: `WHERE (provider='' OR provider='claude')`, params: {} };
+  if (provider === 'claude')
+    return { where: `WHERE (provider='' OR provider='claude')`, params: {} };
   return { where: `WHERE provider=@provider`, params: { provider } };
 }
 
@@ -105,55 +106,76 @@ class SessionHistoryStore {
    *  visible even while filtered. */
   summary(provider?: string): AnalyticsSummary {
     const empty: AnalyticsSummary = {
-      totals: { sessions: 0, costUSD: 0, inputTokens: 0, outputTokens: 0, toolCalls: 0, durationMs: 0, workflowRuns: 0 },
-      byDay: [], byProject: [], byModel: [], byProvider: [],
+      totals: {
+        sessions: 0,
+        costUSD: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        toolCalls: 0,
+        durationMs: 0,
+        workflowRuns: 0,
+      },
+      byDay: [],
+      byProject: [],
+      byModel: [],
+      byProvider: [],
     };
     try {
       const db = database.db;
       const { where, params } = providerFilter(provider);
       const and = where ? `${where} AND` : 'WHERE';
 
-      const totals = db.prepare(
-        `SELECT COUNT(*) AS sessions, COALESCE(SUM(cost_usd),0) AS costUSD,
+      const totals = db
+        .prepare(
+          `SELECT COUNT(*) AS sessions, COALESCE(SUM(cost_usd),0) AS costUSD,
                 COALESCE(SUM(input_tokens),0) AS inputTokens, COALESCE(SUM(output_tokens),0) AS outputTokens,
                 COALESCE(SUM(tool_calls),0) AS toolCalls, COALESCE(SUM(duration_ms),0) AS durationMs,
                 COALESCE(SUM(workflow_runs),0) AS workflowRuns
          FROM session_history ${where}`,
-      ).get(params) as AnalyticsTotals;
+        )
+        .get(params) as AnalyticsTotals;
 
-      const byDay = db.prepare(
-        `SELECT substr(started_at,1,10) AS key, COUNT(*) AS sessions,
+      const byDay = db
+        .prepare(
+          `SELECT substr(started_at,1,10) AS key, COUNT(*) AS sessions,
                 COALESCE(SUM(cost_usd),0) AS costUSD,
                 COALESCE(SUM(input_tokens+output_tokens),0) AS tokens
          FROM session_history
          ${and} started_at != ''
          GROUP BY key ORDER BY key DESC LIMIT 30`,
-      ).all(params) as AnalyticsBucket[];
+        )
+        .all(params) as AnalyticsBucket[];
 
-      const byProject = db.prepare(
-        `SELECT cwd AS key, COUNT(*) AS sessions,
+      const byProject = db
+        .prepare(
+          `SELECT cwd AS key, COUNT(*) AS sessions,
                 COALESCE(SUM(cost_usd),0) AS costUSD,
                 COALESCE(SUM(input_tokens+output_tokens),0) AS tokens
          FROM session_history ${where}
          GROUP BY cwd ORDER BY costUSD DESC LIMIT 12`,
-      ).all(params) as AnalyticsBucket[];
+        )
+        .all(params) as AnalyticsBucket[];
 
-      const byModel = db.prepare(
-        `SELECT CASE WHEN model='' THEN '(unknown)' ELSE model END AS key, COUNT(*) AS sessions,
+      const byModel = db
+        .prepare(
+          `SELECT CASE WHEN model='' THEN '(unknown)' ELSE model END AS key, COUNT(*) AS sessions,
                 COALESCE(SUM(cost_usd),0) AS costUSD,
                 COALESCE(SUM(input_tokens+output_tokens),0) AS tokens
          FROM session_history ${where}
          GROUP BY model ORDER BY costUSD DESC LIMIT 12`,
-      ).all(params) as AnalyticsBucket[];
+        )
+        .all(params) as AnalyticsBucket[];
 
       // Provider split — always across all rows ('' counts as claude).
-      const byProvider = db.prepare(
-        `SELECT CASE WHEN provider='' THEN 'claude' ELSE provider END AS key, COUNT(*) AS sessions,
+      const byProvider = db
+        .prepare(
+          `SELECT CASE WHEN provider='' THEN 'claude' ELSE provider END AS key, COUNT(*) AS sessions,
                 COALESCE(SUM(cost_usd),0) AS costUSD,
                 COALESCE(SUM(input_tokens+output_tokens),0) AS tokens
          FROM session_history
          GROUP BY key ORDER BY costUSD DESC`,
-      ).all() as AnalyticsBucket[];
+        )
+        .all() as AnalyticsBucket[];
 
       return { totals, byDay: byDay.reverse(), byProject, byModel, byProvider };
     } catch (err) {
@@ -167,8 +189,9 @@ class SessionHistoryStore {
   recent(limit = 100, provider?: string): SessionHistoryRecord[] {
     try {
       const { where, params } = providerFilter(provider);
-      const rows = database.db.prepare(
-        `SELECT session_id AS sessionId, cwd, agent_name AS agentName, provider, model, git_branch AS gitBranch,
+      const rows = database.db
+        .prepare(
+          `SELECT session_id AS sessionId, cwd, agent_name AS agentName, provider, model, git_branch AS gitBranch,
                 started_at AS startedAt, ended_at AS endedAt, duration_ms AS durationMs,
                 input_tokens AS inputTokens, output_tokens AS outputTokens, cost_usd AS costUSD,
                 peak_context AS peakContext, tool_calls AS toolCalls, message_count AS messageCount,
@@ -177,7 +200,8 @@ class SessionHistoryStore {
          FROM session_history ${where}
          ORDER BY (CASE WHEN started_at='' THEN updated_at ELSE started_at END) DESC
          LIMIT @limit`,
-      ).all({ ...params, limit }) as SessionHistoryRecord[];
+        )
+        .all({ ...params, limit }) as SessionHistoryRecord[];
       return rows;
     } catch (err) {
       console.error('[SessionHistory] recent failed:', err);

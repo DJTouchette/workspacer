@@ -30,36 +30,50 @@ export const NeedsYouDock: React.FC<{
   const total = hasQuestion ? questions!.length : 0;
 
   return (
-    <div style={{
-      flexShrink: 0,
-      borderTop: `1px solid ${colors.border}`,
-      backgroundColor: 'rgba(255,255,255,0.02)',
-      maxHeight: '45%',
-      overflowY: 'auto',
-      animation: 'claudeSlideUp 0.18s ease-out',
-    }}>
+    <div
+      style={{
+        flexShrink: 0,
+        borderTop: `1px solid ${colors.border}`,
+        backgroundColor: 'rgba(255,255,255,0.02)',
+        maxHeight: '45%',
+        overflowY: 'auto',
+        animation: 'claudeSlideUp 0.18s ease-out',
+      }}
+    >
       <div style={{ maxWidth: 1040, margin: '0 auto', padding: '6px 16px 2px 16px' }}>
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 6,
-          fontSize: '0.6rem',
-          fontWeight: 700,
-          textTransform: 'uppercase',
-          letterSpacing: '0.06em',
-          color: accent,
-        }}>
-          <span style={{
-            display: 'inline-block',
-            width: 6,
-            height: 6,
-            borderRadius: '50%',
-            backgroundColor: accent,
-            animation: 'claudePulseDot 1.4s ease-in-out infinite',
-          }} />
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            fontSize: '0.6rem',
+            fontWeight: 700,
+            textTransform: 'uppercase',
+            letterSpacing: '0.06em',
+            color: accent,
+          }}
+        >
+          <span
+            style={{
+              display: 'inline-block',
+              width: 6,
+              height: 6,
+              borderRadius: '50%',
+              backgroundColor: accent,
+              animation: 'claudePulseDot 1.4s ease-in-out infinite',
+            }}
+          />
           {label}
           {total > 1 && (
-            <span style={{ marginLeft: 'auto', color: colors.muted, fontWeight: 600, letterSpacing: 0, textTransform: 'none' }}>
+            <span
+              style={{
+                marginLeft: 'auto',
+                color: colors.muted,
+                fontWeight: 600,
+                letterSpacing: 0,
+                textTransform: 'none',
+              }}
+            >
               {total} questions
             </span>
           )}

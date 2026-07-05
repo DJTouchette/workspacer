@@ -19,7 +19,8 @@ export interface ListModelsResult {
 export function listClaudeModels(): ListModelsResult {
   const cfg = configService.getConfig() as any;
   const persisted: string[] = Array.isArray(cfg.claude?.seenModels) ? cfg.claude.seenModels : [];
-  const live = claudeSessionStore.getAllSnapshots()
+  const live = claudeSessionStore
+    .getAllSnapshots()
     .map((s) => s.usage?.model)
     .filter((m): m is string => !!m);
   const seen = Array.from(new Set([...persisted, ...live])).sort();

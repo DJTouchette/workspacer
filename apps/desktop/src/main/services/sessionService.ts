@@ -110,9 +110,15 @@ class SessionService {
           const data = fs.readFileSync(path.join(dir, file), 'utf-8');
           const session = yaml.load(data) as SessionData;
           const agents = session.agents ?? [];
-          const paneCount = agents.length > 0
-            ? agents.reduce((n, a) => n + (a.tabs ?? []).reduce((m, t) => m + (t.panes?.length || 0), 0), 0)
-            : (session.tabs?.reduce((m, t) => m + (t.panes?.length || 0), 0) ?? session.panes?.length ?? 0);
+          const paneCount =
+            agents.length > 0
+              ? agents.reduce(
+                  (n, a) => n + (a.tabs ?? []).reduce((m, t) => m + (t.panes?.length || 0), 0),
+                  0,
+                )
+              : (session.tabs?.reduce((m, t) => m + (t.panes?.length || 0), 0) ??
+                session.panes?.length ??
+                0);
           entries.push({
             name: session.name || file.replace('.yaml', ''),
             filename: file,
@@ -165,7 +171,10 @@ class SessionService {
     }
   }
 
-  enrichPanesWithCwd(panes: SessionPaneData[], ptyMapping: Record<string, string>): SessionPaneData[] {
+  enrichPanesWithCwd(
+    panes: SessionPaneData[],
+    ptyMapping: Record<string, string>,
+  ): SessionPaneData[] {
     return panes
       .filter((p) => p.type !== 'settings')
       .map((pane) => {
@@ -178,7 +187,10 @@ class SessionService {
   }
 
   /** Enrich every pane inside an agent roster's tabs with its terminal cwd. */
-  enrichAgentsWithCwd(agents: SessionAgentData[], ptyMapping: Record<string, string>): SessionAgentData[] {
+  enrichAgentsWithCwd(
+    agents: SessionAgentData[],
+    ptyMapping: Record<string, string>,
+  ): SessionAgentData[] {
     return agents.map((agent) => ({
       ...agent,
       tabs: (agent.tabs ?? []).map((tab) => ({

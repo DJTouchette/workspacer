@@ -48,7 +48,7 @@ export function capabilityMethod(c: PluginCapability): string {
 
 /** The declared filesystem roots of a capability entry (empty for verb-only). */
 export function capabilityPaths(c: PluginCapability): string[] {
-  return typeof c === 'string' ? [] : c.paths ?? [];
+  return typeof c === 'string' ? [] : (c.paths ?? []);
 }
 
 export interface PluginManifest {
@@ -104,7 +104,8 @@ export function pluginRequirement(m: PluginManifest): PluginRequirement {
   const tool = m.install?.[0];
   if (tool === 'go') return { label: 'Needs Go toolchain', warn: true };
   if (tool === 'cargo') return { label: 'Needs Rust toolchain', warn: true };
-  if (tool === 'npm' || tool === 'node' || tool === 'pnpm' || tool === 'yarn') return { label: 'Needs Node.js', warn: true };
+  if (tool === 'npm' || tool === 'node' || tool === 'pnpm' || tool === 'yarn')
+    return { label: 'Needs Node.js', warn: true };
   if (/(^|\/)python/i.test(cmd)) return { label: 'Needs Python 3', warn: true };
   if (/(^|\/)node(\.exe)?$/i.test(cmd)) return { label: 'Needs Node.js', warn: true };
   if (!m.server && m.ui) return { label: 'No dependencies', warn: false };
@@ -149,7 +150,12 @@ export function pluginPaneURL(m: PluginManifest, pane: PluginPaneContribution): 
   }
   if (m.ui) {
     const base = m.uiBase || DEFAULT_HUB_ORIGIN;
-    const sub = pane.path && pane.path !== '/' ? (pane.path.startsWith('/') ? pane.path : `/${pane.path}`) : '/';
+    const sub =
+      pane.path && pane.path !== '/'
+        ? pane.path.startsWith('/')
+          ? pane.path
+          : `/${pane.path}`
+        : '/';
     return `${base}/plugins/ui/${encodeURIComponent(m.id)}${sub}`;
   }
   return 'about:blank';

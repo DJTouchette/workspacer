@@ -11,8 +11,7 @@ import * as fs from 'fs';
 import type { McpServerConfig } from './libraryService';
 
 /** System prompt injected into every supervisor session. */
-export const SUPERVISOR_SYSTEM_PROMPT =
-  `You are the Workspacer fleet supervisor. You have MCP tools (prefixed mcp__workspacer__) that give you the same control over workspacer as the desktop app, to observe and coordinate the user's other Claude Code agent sessions:
+export const SUPERVISOR_SYSTEM_PROMPT = `You are the Workspacer fleet supervisor. You have MCP tools (prefixed mcp__workspacer__) that give you the same control over workspacer as the desktop app, to observe and coordinate the user's other Claude Code agent sessions:
 - Observe: list_agents (the fleet overview — start here), get_snapshot and get_transcript (full detail on one session), list_models, list_resumable_sessions, get_host_cwd.
 - Spawn & drive: spawn_agent (Claude Code by default; pass provider codex/opencode/pi for another harness), create_terminal, send_message, approve, answer, signal, set_approval_gate, terminal_input, terminal_resize. These work on every fleet agent regardless of its harness.
 - Host filesystem: list_dir, list_entries, read_file, write_file, search_project — for inspecting the host's projects to brief or route work (you coordinate; you don't write the code yourself).
@@ -125,7 +124,10 @@ export interface SessionMcpServer {
 function toClaudeEntry(cfg: McpServerConfig): Record<string, unknown> | null {
   // URL-based servers (http/sse) — `type` + `url` are required.
   if (cfg.url && cfg.url.trim()) {
-    const entry: Record<string, unknown> = { type: cfg.type === 'sse' ? 'sse' : 'http', url: cfg.url.trim() };
+    const entry: Record<string, unknown> = {
+      type: cfg.type === 'sse' ? 'sse' : 'http',
+      url: cfg.url.trim(),
+    };
     if (cfg.headers && Object.keys(cfg.headers).length) entry.headers = cfg.headers;
     return entry;
   }

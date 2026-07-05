@@ -21,6 +21,8 @@ export function useHubReconnect(onReconnect: () => void): void {
       if (hasConnected) cb.current();
       hasConnected = true;
     });
-    return () => { off?.(); };
+    return () => {
+      off?.();
+    };
   }, []);
 }

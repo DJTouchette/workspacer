@@ -41,7 +41,6 @@ interface PaneProps {
   children: React.ReactNode;
 }
 
-
 const Pane: React.FC<PaneProps> = ({
   id,
   type,
@@ -72,7 +71,9 @@ const Pane: React.FC<PaneProps> = ({
     const onDown = (e: MouseEvent) => {
       if (splitRef.current && !splitRef.current.contains(e.target as Node)) setSplitMenuOpen(false);
     };
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setSplitMenuOpen(false); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setSplitMenuOpen(false);
+    };
     document.addEventListener('mousedown', onDown, true);
     document.addEventListener('keydown', onKey, true);
     return () => {
@@ -89,7 +90,10 @@ const Pane: React.FC<PaneProps> = ({
     <div ref={splitRef} style={{ position: 'relative' }}>
       <button
         className="pane-split-control"
-        onClick={(e) => { e.stopPropagation(); setSplitMenuOpen((v) => !v); }}
+        onClick={(e) => {
+          e.stopPropagation();
+          setSplitMenuOpen((v) => !v);
+        }}
         title="Split pane"
         style={{
           background: 'none',
@@ -104,8 +108,12 @@ const Pane: React.FC<PaneProps> = ({
           borderRadius: '3px',
           opacity: splitMenuOpen ? 1 : undefined,
         }}
-        onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--wks-bg-hover)'; }}
-        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'; }}
+        onMouseEnter={(e) => {
+          (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--wks-bg-hover)';
+        }}
+        onMouseLeave={(e) => {
+          (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent';
+        }}
       >
         <Columns2 size={13} strokeWidth={1.75} />
       </button>
@@ -125,13 +133,25 @@ const Pane: React.FC<PaneProps> = ({
             boxShadow: '0 8px 28px var(--wks-glass-shadow)',
           }}
         >
-          <div style={{ fontSize: '0.55rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--wks-text-faint)', padding: '2px 8px 4px' }}>
+          <div
+            style={{
+              fontSize: '0.55rem',
+              textTransform: 'uppercase',
+              letterSpacing: '0.05em',
+              color: 'var(--wks-text-faint)',
+              padding: '2px 8px 4px',
+            }}
+          >
             Split into
           </div>
           {SPLIT_TYPES.map(({ type, label }) => (
             <button
               key={type}
-              onClick={(e) => { e.stopPropagation(); setSplitMenuOpen(false); onSplit(type); }}
+              onClick={(e) => {
+                e.stopPropagation();
+                setSplitMenuOpen(false);
+                onSplit(type);
+              }}
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -146,8 +166,12 @@ const Pane: React.FC<PaneProps> = ({
                 cursor: 'pointer',
                 textAlign: 'left',
               }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--wks-bg-hover)'; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'; }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--wks-bg-hover)';
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent';
+              }}
             >
               <PaneIcon type={type} size={13} />
               {label}
@@ -188,51 +212,57 @@ const Pane: React.FC<PaneProps> = ({
     }
   }, [editValue, title, id, onRename]);
 
-  const handleRenameKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      handleFinishRename();
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      setIsEditing(false);
-    }
-    e.stopPropagation();
-  }, [handleFinishRename]);
-
-  const handleHeaderMouseDown = useCallback((e: React.MouseEvent) => {
-    if (!onMoveRef.current) return;
-    if (e.button !== 0) return;
-    if ((e.target as HTMLElement).closest('button')) return;
-    if ((e.target as HTMLElement).closest('input')) return;
-
-    e.preventDefault();
-    e.stopPropagation();
-
-    let lastX = e.clientX;
-    const moveThreshold = 60;
-
-    document.body.style.cursor = 'grabbing';
-    document.body.style.userSelect = 'none';
-
-    const handleMouseMove = (moveEvent: MouseEvent) => {
-      const delta = moveEvent.clientX - lastX;
-      if (Math.abs(delta) > moveThreshold) {
-        const direction = delta > 0 ? 1 : -1;
-        onMoveRef.current?.(id, direction);
-        lastX = moveEvent.clientX;
+  const handleRenameKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        handleFinishRename();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        setIsEditing(false);
       }
-    };
+      e.stopPropagation();
+    },
+    [handleFinishRename],
+  );
 
-    const handleMouseUp = () => {
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
+  const handleHeaderMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      if (!onMoveRef.current) return;
+      if (e.button !== 0) return;
+      if ((e.target as HTMLElement).closest('button')) return;
+      if ((e.target as HTMLElement).closest('input')) return;
 
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-  }, [id]);
+      e.preventDefault();
+      e.stopPropagation();
+
+      let lastX = e.clientX;
+      const moveThreshold = 60;
+
+      document.body.style.cursor = 'grabbing';
+      document.body.style.userSelect = 'none';
+
+      const handleMouseMove = (moveEvent: MouseEvent) => {
+        const delta = moveEvent.clientX - lastX;
+        if (Math.abs(delta) > moveThreshold) {
+          const direction = delta > 0 ? 1 : -1;
+          onMoveRef.current?.(id, direction);
+          lastX = moveEvent.clientX;
+        }
+      };
+
+      const handleMouseUp = () => {
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        document.removeEventListener('mousemove', handleMouseMove);
+        document.removeEventListener('mouseup', handleMouseUp);
+      };
+
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
+    },
+    [id],
+  );
 
   return (
     <div
@@ -268,111 +298,116 @@ const Pane: React.FC<PaneProps> = ({
     >
       {/* Header bar — hidden for single-pane tabs (the tab label suffices). */}
       {!hideHeader && (
-      <div
-        className="pane-header"
-        onMouseDown={handleHeaderMouseDown}
-        style={{
-          height: `${headerHeight}px`,
-          minHeight: `${headerHeight}px`,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '0 8px',
-          // Solid-ish tint, no backdrop-filter: the header sits over the static
-          // app background (blur added nothing visible) and a backdrop-filter
-          // inside the pane's clipped region couples it to heavy repaints from
-          // dynamic panes (streaming Claude transcript / WebGL terminal), which
-          // caused transient compositing garble. See bg-header / bg-elevated.
-          backgroundColor: isActive
-            ? 'var(--wks-bg-header)'
-            : 'var(--wks-bg-elevated)',
-          borderBottom: '1px solid var(--wks-glass-border)',
-          cursor: onMove ? 'grab' : 'default',
-          userSelect: 'none',
-          position: 'relative',
-          zIndex: 1001,
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}>
-          <span style={{ display: 'flex', alignItems: 'center', opacity: 0.75, color: 'var(--wks-text-tertiary)' }}>
-            <PaneIcon type={type} size={12} />
-          </span>
-          {isEditing ? (
-            <input
-              ref={inputRef}
-              value={editValue}
-              onChange={(e) => setEditValue(e.target.value)}
-              onBlur={handleFinishRename}
-              onKeyDown={handleRenameKeyDown}
-              style={{
-                fontSize: '0.6rem',
-                color: 'var(--wks-text-primary)',
-                fontWeight: 500,
-                backgroundColor: 'var(--wks-bg-input)',
-                border: '1px solid var(--wks-accent)',
-                borderRadius: '2px',
-                padding: '0 4px',
-                height: '16px',
-                width: '120px',
-                outline: 'none',
-                fontFamily: 'inherit',
-              }}
-            />
-          ) : (
+        <div
+          className="pane-header"
+          onMouseDown={handleHeaderMouseDown}
+          style={{
+            height: `${headerHeight}px`,
+            minHeight: `${headerHeight}px`,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '0 8px',
+            // Solid-ish tint, no backdrop-filter: the header sits over the static
+            // app background (blur added nothing visible) and a backdrop-filter
+            // inside the pane's clipped region couples it to heavy repaints from
+            // dynamic panes (streaming Claude transcript / WebGL terminal), which
+            // caused transient compositing garble. See bg-header / bg-elevated.
+            backgroundColor: isActive ? 'var(--wks-bg-header)' : 'var(--wks-bg-elevated)',
+            borderBottom: '1px solid var(--wks-glass-border)',
+            cursor: onMove ? 'grab' : 'default',
+            userSelect: 'none',
+            position: 'relative',
+            zIndex: 1001,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}>
             <span
-              onDoubleClick={handleStartRename}
               style={{
-                fontSize: '0.6rem',
-                color: 'var(--wks-text-secondary)',
-                fontWeight: 500,
-                cursor: onRename ? 'text' : 'default',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
+                display: 'flex',
+                alignItems: 'center',
+                opacity: 0.75,
+                color: 'var(--wks-text-tertiary)',
               }}
-              title="Double-click to rename"
             >
-              {title}
+              <PaneIcon type={type} size={12} />
             </span>
-          )}
+            {isEditing ? (
+              <input
+                ref={inputRef}
+                value={editValue}
+                onChange={(e) => setEditValue(e.target.value)}
+                onBlur={handleFinishRename}
+                onKeyDown={handleRenameKeyDown}
+                style={{
+                  fontSize: '0.6rem',
+                  color: 'var(--wks-text-primary)',
+                  fontWeight: 500,
+                  backgroundColor: 'var(--wks-bg-input)',
+                  border: '1px solid var(--wks-accent)',
+                  borderRadius: '2px',
+                  padding: '0 4px',
+                  height: '16px',
+                  width: '120px',
+                  outline: 'none',
+                  fontFamily: 'inherit',
+                }}
+              />
+            ) : (
+              <span
+                onDoubleClick={handleStartRename}
+                style={{
+                  fontSize: '0.6rem',
+                  color: 'var(--wks-text-secondary)',
+                  fontWeight: 500,
+                  cursor: onRename ? 'text' : 'default',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+                title="Double-click to rename"
+              >
+                {title}
+              </span>
+            )}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
+            {splitControl}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onClose(id);
+              }}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: 'var(--wks-text-muted)',
+                cursor: 'pointer',
+                fontSize: '0.85rem',
+                padding: '0 4px',
+                margin: 0,
+                width: 'auto',
+                height: 'auto',
+                lineHeight: '1',
+                borderRadius: '3px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+              onMouseEnter={(e) => {
+                (e.target as HTMLElement).style.backgroundColor = 'var(--wks-bg-hover)';
+                (e.target as HTMLElement).style.color = 'var(--wks-text-primary)';
+              }}
+              onMouseLeave={(e) => {
+                (e.target as HTMLElement).style.backgroundColor = 'transparent';
+                (e.target as HTMLElement).style.color = 'var(--wks-text-muted)';
+              }}
+              title="Close pane"
+            >
+              &#x2715;
+            </button>
+          </div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
-          {splitControl}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onClose(id);
-            }}
-            style={{
-              background: 'none',
-              border: 'none',
-              color: 'var(--wks-text-muted)',
-              cursor: 'pointer',
-              fontSize: '0.85rem',
-              padding: '0 4px',
-              margin: 0,
-              width: 'auto',
-              height: 'auto',
-              lineHeight: '1',
-              borderRadius: '3px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-            onMouseEnter={(e) => {
-              (e.target as HTMLElement).style.backgroundColor = 'var(--wks-bg-hover)';
-              (e.target as HTMLElement).style.color = 'var(--wks-text-primary)';
-            }}
-            onMouseLeave={(e) => {
-              (e.target as HTMLElement).style.backgroundColor = 'transparent';
-              (e.target as HTMLElement).style.color = 'var(--wks-text-muted)';
-            }}
-            title="Close pane"
-          >
-            &#x2715;
-          </button>
-        </div>
-      </div>
       )}
 
       {/* Flush (single-pane) tabs have no header, so float the split control in

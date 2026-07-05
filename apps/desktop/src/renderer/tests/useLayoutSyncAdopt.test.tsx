@@ -23,7 +23,11 @@ beforeEach(() => {
   resolveGet = null;
   (window as any).electronAPI = {
     ...(window as any).electronAPI,
-    layoutGet: vi.fn().mockReturnValue(new Promise((r) => { resolveGet = r; })),
+    layoutGet: vi.fn().mockReturnValue(
+      new Promise((r) => {
+        resolveGet = r;
+      }),
+    ),
     layoutSet,
     onLayoutChanged: vi.fn().mockReturnValue(() => {}),
     onHubStatus: vi.fn().mockReturnValue(() => {}),
@@ -32,7 +36,14 @@ beforeEach(() => {
 
 // A remote layout that carries a real agent but NO global workspace — so the
 // local normalization injects one, making stored state ≠ the raw doc.
-const remoteAgent = { id: 'r1', name: 'Remote', cwd: '/repo', sessionId: 'sess-r1', activeTabId: 't1', tabs: [{ id: 't1', title: 'T', activePaneId: 'p1', panes: [{ id: 'p1', type: 'terminal' }] }] };
+const remoteAgent = {
+  id: 'r1',
+  name: 'Remote',
+  cwd: '/repo',
+  sessionId: 'sess-r1',
+  activeTabId: 't1',
+  tabs: [{ id: 't1', title: 'T', activePaneId: 'p1', panes: [{ id: 'p1', type: 'terminal' }] }],
+};
 
 function useCombined() {
   const mgr = useAgentManager();
@@ -66,7 +77,9 @@ describe('useLayoutSync — adopting a remote layout (#5)', () => {
     expect(result.current.mgr.agents.some((a) => a.global)).toBe(true);
 
     // Let the push debounce (250ms) elapse.
-    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
 
     // A pure adoption must not write anything back to the hub.
     expect(layoutSet).not.toHaveBeenCalled();

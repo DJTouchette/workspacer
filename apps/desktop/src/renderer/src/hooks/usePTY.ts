@@ -1,11 +1,6 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import type { Terminal } from '@xterm/xterm';
-import {
-  CreateTerminal,
-  WriteTerminal,
-  ResizeTerminal,
-  CloseTerminal,
-} from '../lib/terminalApi';
+import { CreateTerminal, WriteTerminal, ResizeTerminal, CloseTerminal } from '../lib/terminalApi';
 import { binaryStringToUint8Array } from '../lib/terminalUtils';
 
 interface UsePTYOptions {
@@ -46,7 +41,15 @@ interface UsePTYReturn {
  * - Provides write/resize functions to interact with the PTY
  * - Cleans up (closes PTY, unsubscribes) on unmount
  */
-export function usePTY({ paneId, shell = '', cwd, profileId, resumeSessionId, onExit, defer = false }: UsePTYOptions): UsePTYReturn {
+export function usePTY({
+  paneId,
+  shell = '',
+  cwd,
+  profileId,
+  resumeSessionId,
+  onExit,
+  defer = false,
+}: UsePTYOptions): UsePTYReturn {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [isReady, setIsReady] = useState(false);
 
@@ -104,7 +107,14 @@ export function usePTY({ paneId, shell = '', cwd, profileId, resumeSessionId, on
   // Core init logic shared by auto and deferred modes
   const initPTY = useCallback(async (cols?: number, rows?: number) => {
     try {
-      const id = await CreateTerminal(shellRef.current, cwdRef.current, cols, rows, profileIdRef.current, resumeSessionIdRef.current);
+      const id = await CreateTerminal(
+        shellRef.current,
+        cwdRef.current,
+        cols,
+        rows,
+        profileIdRef.current,
+        resumeSessionIdRef.current,
+      );
       if (!mountedRef.current) {
         CloseTerminal(id).catch(() => {});
         return;
@@ -146,10 +156,13 @@ export function usePTY({ paneId, shell = '', cwd, profileId, resumeSessionId, on
   }, []);
 
   /** Manually start PTY with known dimensions (for defer mode) */
-  const startPTY = useCallback((cols: number, rows: number) => {
-    if (sessionIdRef.current) return; // already started
-    initPTY(cols, rows);
-  }, [initPTY]);
+  const startPTY = useCallback(
+    (cols: number, rows: number) => {
+      if (sessionIdRef.current) return; // already started
+      initPTY(cols, rows);
+    },
+    [initPTY],
+  );
 
   // Auto-create PTY on mount (unless deferred)
   useEffect(() => {
@@ -183,7 +196,7 @@ export function usePTY({ paneId, shell = '', cwd, profileId, resumeSessionId, on
 
       sessionIdRef.current = null;
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paneId]);
 
   return {

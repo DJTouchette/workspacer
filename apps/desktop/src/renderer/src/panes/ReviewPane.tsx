@@ -1,12 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import {
-  RefreshCw,
-  ArrowUp,
-  CheckCircle2,
-  Copy,
-  Check,
-  FileX2,
-} from 'lucide-react';
+import { RefreshCw, ArrowUp, CheckCircle2, Copy, Check, FileX2 } from 'lucide-react';
 import { IconBranch, IconCommit } from '../components/wksIcons';
 import { claudeColors as colors } from '../components/claude-shared';
 import { GitClient, type GitStatus, type NumstatEntry } from '../lib/gitQueries';
@@ -463,7 +456,10 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive }) => {
         section === 'staged' ? git.unstage(dir, e.file.path) : git.stage(dir, e.file.path),
       ),
     onOpenInEditor: (e: TreeEntry) =>
-      requestOpenInEditor({ path: cwd ? `${cwd.replace(/[\\/]$/, '')}/${e.file.path}` : e.file.path, cwd }),
+      requestOpenInEditor({
+        path: cwd ? `${cwd.replace(/[\\/]$/, '')}/${e.file.path}` : e.file.path,
+        cwd,
+      }),
   });
 
   return (
@@ -481,17 +477,51 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive }) => {
       }}
     >
       {/* Header — title + branch / change summary + actions (mockup "Reviewing changes"). */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexShrink: 0 }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 16,
+          flexShrink: 0,
+        }}
+      >
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: '0.95rem', fontWeight: 700, color: colors.textBright }}>Reviewing changes</div>
-          <div style={{ fontFamily: 'var(--wks-font-mono, monospace)', fontSize: '0.7rem', color: colors.muted, marginTop: 3, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', minWidth: 0 }}>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, minWidth: 0 }} title={cwd}>
-              <IconBranch size={12} strokeWidth={2.2} style={{ flexShrink: 0, color: colors.accent }} accent={colors.accent} />
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{status?.branch ?? 'detached'}</span>
+          <div style={{ fontSize: '0.95rem', fontWeight: 700, color: colors.textBright }}>
+            Reviewing changes
+          </div>
+          <div
+            style={{
+              fontFamily: 'var(--wks-font-mono, monospace)',
+              fontSize: '0.7rem',
+              color: colors.muted,
+              marginTop: 3,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              flexWrap: 'wrap',
+              minWidth: 0,
+            }}
+          >
+            <span
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 5, minWidth: 0 }}
+              title={cwd}
+            >
+              <IconBranch
+                size={12}
+                strokeWidth={2.2}
+                style={{ flexShrink: 0, color: colors.accent }}
+                accent={colors.accent}
+              />
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {status?.branch ?? 'detached'}
+              </span>
             </span>
             {totalChanges > 0 && (
               <>
-                <span>· {totalChanges} file{totalChanges === 1 ? '' : 's'}</span>
+                <span>
+                  · {totalChanges} file{totalChanges === 1 ? '' : 's'}
+                </span>
                 <span style={{ fontVariantNumeric: 'tabular-nums' }}>
                   <span style={{ color: colors.success }}>+{totals.added}</span>{' '}
                   <span style={{ color: colors.error }}>−{totals.deleted}</span>
@@ -505,15 +535,42 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive }) => {
             onClick={() => void refresh()}
             disabled={loadingStatus}
             title="Refresh"
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 13px', borderRadius: 9, border: `1px solid ${colors.borderSubtle}`, background: 'var(--wks-bg-elevated)', color: colors.muted, cursor: 'pointer', fontSize: '0.74rem', fontFamily: 'inherit', fontWeight: 600 }}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '7px 13px',
+              borderRadius: 9,
+              border: `1px solid ${colors.borderSubtle}`,
+              background: 'var(--wks-bg-elevated)',
+              color: colors.muted,
+              cursor: 'pointer',
+              fontSize: '0.74rem',
+              fontFamily: 'inherit',
+              fontWeight: 600,
+            }}
           >
-            <RefreshCw size={13} className={loadingStatus ? 'wks-review-spin' : undefined} /> Refresh
+            <RefreshCw size={13} className={loadingStatus ? 'wks-review-spin' : undefined} />{' '}
+            Refresh
           </button>
           <button
             onClick={() => void runAction((dir) => git.push(dir))}
             disabled={busy}
             title="git push"
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 14px', borderRadius: 9, border: 'none', background: colors.accent, color: 'var(--wks-claude-bg)', cursor: 'pointer', fontSize: '0.74rem', fontFamily: 'inherit', fontWeight: 700 }}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '7px 14px',
+              borderRadius: 9,
+              border: 'none',
+              background: colors.accent,
+              color: 'var(--wks-claude-bg)',
+              cursor: 'pointer',
+              fontSize: '0.74rem',
+              fontFamily: 'inherit',
+              fontWeight: 700,
+            }}
           >
             <ArrowUp size={13} /> Push
           </button>
@@ -521,7 +578,17 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive }) => {
       </div>
 
       {/* Panel — file tree + diff in one rounded bordered surface (mockup). */}
-      <div style={{ flex: 1, minHeight: 0, display: 'flex', border: `1px solid ${colors.borderSubtle}`, borderRadius: 13, overflow: 'hidden', background: 'var(--wks-bg-surface, transparent)' }}>
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          display: 'flex',
+          border: `1px solid ${colors.borderSubtle}`,
+          borderRadius: 13,
+          overflow: 'hidden',
+          background: 'var(--wks-bg-surface, transparent)',
+        }}
+      >
         {/* Left: file tree */}
         <div
           style={{
@@ -534,315 +601,323 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive }) => {
             overflow: 'hidden',
           }}
         >
-        {/* Changed files header */}
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 7,
-            padding: '9px 12px',
-            borderBottom: `1px solid ${colors.borderSubtle}`,
-            fontFamily: 'var(--wks-font-mono, monospace)',
-            fontSize: '0.58rem',
-            textTransform: 'uppercase',
-            letterSpacing: '0.08em',
-            color: colors.muted,
-          }}
-        >
-          <span>Changed files</span>
-          <span style={{ color: colors.textBright }}>{totalChanges}</span>
-        </div>
-
-        {error && (
+          {/* Changed files header */}
           <div
             style={{
-              margin: '0 0 0 0',
-              padding: '8px 10px',
-              borderBottom: `1px solid ${colors.borderSubtle}`,
-              background: 'color-mix(in srgb, var(--wks-error) 10%, transparent)',
-              color: colors.error,
-              fontSize: '0.7rem',
-              lineHeight: 1.45,
               display: 'flex',
-              alignItems: 'flex-start',
-              gap: 6,
-              flexShrink: 0,
+              alignItems: 'center',
+              gap: 7,
+              padding: '9px 12px',
+              borderBottom: `1px solid ${colors.borderSubtle}`,
+              fontFamily: 'var(--wks-font-mono, monospace)',
+              fontSize: '0.58rem',
+              textTransform: 'uppercase',
+              letterSpacing: '0.08em',
+              color: colors.muted,
             }}
           >
-            <span style={{ flex: 1 }}>{error}</span>
-            <button
-              onClick={() => setError('')}
-              aria-label="Dismiss error"
+            <span>Changed files</span>
+            <span style={{ color: colors.textBright }}>{totalChanges}</span>
+          </div>
+
+          {error && (
+            <div
               style={{
-                background: 'none',
-                border: 'none',
-                cursor: 'pointer',
+                margin: '0 0 0 0',
+                padding: '8px 10px',
+                borderBottom: `1px solid ${colors.borderSubtle}`,
+                background: 'color-mix(in srgb, var(--wks-error) 10%, transparent)',
                 color: colors.error,
-                padding: 0,
-                lineHeight: 1,
-                fontSize: '0.85rem',
+                fontSize: '0.7rem',
+                lineHeight: 1.45,
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: 6,
                 flexShrink: 0,
-                opacity: 0.8,
               }}
             >
-              ×
-            </button>
-          </div>
-        )}
-        <div className="wks-review-scroll" style={{ overflowY: 'auto', flex: 1 }}>
-          {!error && totalChanges === 0 && !loadingStatus && (
-            <Centered>
-              <CheckCircle2 size={22} style={{ color: colors.success, opacity: 0.85 }} />
-              <span style={{ color: colors.muted }}>Working tree clean</span>
-            </Centered>
-          )}
-
-          {staged.length > 0 && (
-            <>
-              <SectionHeader
-                label="Staged"
-                count={staged.length}
-                action={{
-                  label: 'Unstage all',
-                  busy,
-                  onClick: () => void runAction((dir) => git.unstage(dir)),
-                }}
-              />
-              <FileTree entries={staged} {...treeProps('staged')} />
-            </>
-          )}
-
-          {unstaged.length > 0 && (
-            <>
-              <SectionHeader
-                label="Changes"
-                count={unstaged.length}
-                action={{
-                  label: 'Stage all',
-                  busy,
-                  onClick: () => void runAction((dir) => git.stage(dir)),
-                }}
-              />
-              <FileTree entries={unstaged} {...treeProps('unstaged')} />
-            </>
-          )}
-
-          {untracked.length > 0 && (
-            <>
-              <SectionHeader
-                label="Untracked"
-                count={untracked.length}
-                // "Stage all" is `git add -A` (everything), so only offer it
-                // here when there are no tracked changes — otherwise the
-                // Changes header already covers it.
-                action={
-                  unstaged.length === 0
-                    ? {
-                        label: 'Stage all',
-                        busy,
-                        onClick: () => void runAction((dir) => git.stage(dir)),
-                      }
-                    : undefined
-                }
-              />
-              <FileTree entries={untracked} {...treeProps('untracked')} />
-            </>
-          )}
-        </div>
-
-        {/* Commit bar — enabled only when something is staged. */}
-        <div
-          style={{
-            borderTop: `1px solid ${colors.borderSubtle}`,
-            padding: 10,
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 7,
-          }}
-        >
-          <textarea
-            className="wks-review-commit-input"
-            value={commitMsg}
-            onChange={(e) => setCommitMsg(e.target.value)}
-            onKeyDown={(e) => {
-              // Cmd/Ctrl+Enter commits, matching the usual editor convention.
-              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && canCommit) {
-                e.preventDefault();
-                commit();
-              }
-            }}
-            placeholder={staged.length > 0 ? 'Commit message… (⌘/Ctrl+Enter)' : 'Stage files to commit'}
-            disabled={busy || staged.length === 0}
-            rows={2}
-            style={{
-              resize: 'none',
-              padding: '7px 9px',
-              borderRadius: 7,
-              border: `1px solid ${colors.borderSubtle}`,
-              background: 'var(--wks-bg-input, transparent)',
-              color: colors.text,
-              fontSize: '0.72rem',
-              fontFamily: 'inherit',
-              boxSizing: 'border-box',
-            }}
-          />
-          <button
-            className="wks-review-commit-btn"
-            onClick={commit}
-            disabled={!canCommit}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 6,
-              padding: '6px 10px',
-              borderRadius: 7,
-              border: 'none',
-              background: canCommit
-                ? colors.accent
-                : 'color-mix(in srgb, var(--wks-text-faint) 12%, transparent)',
-              color: canCommit ? 'var(--wks-claude-bg)' : colors.muted,
-              cursor: canCommit ? 'pointer' : 'default',
-              fontSize: '0.72rem',
-              fontFamily: 'inherit',
-              fontWeight: 600,
-            }}
-          >
-            <IconCommit size={14} strokeWidth={2.2} accent="currentColor" />
-            {`Commit${staged.length > 0 ? ` ${staged.length} file${staged.length > 1 ? 's' : ''}` : ''}`}
-          </button>
-        </div>
-      </div>
-
-      {/* Right: diff */}
-      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-        {selection && (
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 10,
-              padding: '7px 12px',
-              borderBottom: `1px solid ${colors.borderSubtle}`,
-              flexShrink: 0,
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
-              <StatusChip
-                code={
-                  selection.untracked
-                    ? 'A'
-                    : ((selection.staged ? staged : unstaged).find(
-                        (e) => e.file.path === selection.path,
-                      )?.code ?? 'M')
-                }
-              />
-              <PathBreadcrumb path={selection.path} />
-            </div>
-            {selectionStats && selectionStats.added != null && selectionStats.deleted != null && (
-              <>
-                <span
-                  style={{
-                    display: 'flex',
-                    gap: 6,
-                    fontSize: '0.68rem',
-                    fontFamily: 'var(--wks-font-mono, monospace)',
-                    fontVariantNumeric: 'tabular-nums',
-                    flexShrink: 0,
-                  }}
-                >
-                  <span style={{ color: colors.success }}>+{selectionStats.added}</span>
-                  <span style={{ color: colors.error }}>−{selectionStats.deleted}</span>
-                </span>
-                <DiffStatBlocks added={selectionStats.added} deleted={selectionStats.deleted} />
-              </>
-            )}
-            <span
-              style={{
-                fontSize: '0.6rem',
-                fontWeight: 600,
-                letterSpacing: '0.04em',
-                color: colors.muted,
-                border: `1px solid ${colors.borderSubtle}`,
-                borderRadius: 9,
-                padding: '1px 8px',
-                flexShrink: 0,
-                textTransform: 'uppercase',
-              }}
-            >
-              {selection.untracked ? 'untracked' : selection.staged ? 'staged' : 'unstaged'}
-            </span>
-            <button
-              className="wks-icon-btn"
-              title="Copy path"
-              onClick={() => {
-                void navigator.clipboard.writeText(selection.path);
-                setCopied(true);
-                setTimeout(() => setCopied(false), 1200);
-              }}
-            >
-              {copied ? <Check size={13} style={{ color: colors.success }} /> : <Copy size={13} />}
-            </button>
-          </div>
-        )}
-        <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-          {!selection ? (
-            <Centered>
-              {totalChanges === 0 ? (
-                <>
-                  <CheckCircle2 size={26} style={{ color: colors.success, opacity: 0.85 }} />
-                  <span style={{ color: colors.muted }}>Working tree clean — nothing to review.</span>
-                </>
-              ) : (
-                <span style={{ color: colors.muted }}>Select a file to view its diff.</span>
-              )}
-            </Centered>
-          ) : loadingDiff ? (
-            <DiffSkeleton />
-          ) : diffError ? (
-            <Centered>
-              <FileX2 size={22} style={{ color: colors.error, opacity: 0.85 }} />
-              <span style={{ color: colors.error }}>{diffError}</span>
-            </Centered>
-          ) : isLargeGated ? (
-            <Centered>
-              <span style={{ color: colors.muted }}>
-                This diff is {(diffText.length / 1_000_000).toFixed(1)} MB.
-              </span>
+              <span style={{ flex: 1 }}>{error}</span>
               <button
-                onClick={() => setForcedLarge((prev) => new Set(prev).add(selKey(selection)))}
+                onClick={() => setError('')}
+                aria-label="Dismiss error"
                 style={{
-                  padding: '5px 14px',
-                  borderRadius: 6,
-                  border: `1px solid ${colors.borderSubtle}`,
-                  background: 'transparent',
-                  color: colors.text,
+                  background: 'none',
+                  border: 'none',
                   cursor: 'pointer',
-                  fontSize: '0.74rem',
-                  fontFamily: 'inherit',
+                  color: colors.error,
+                  padding: 0,
+                  lineHeight: 1,
+                  fontSize: '0.85rem',
+                  flexShrink: 0,
+                  opacity: 0.8,
                 }}
               >
-                Render anyway
+                ×
               </button>
-            </Centered>
-          ) : !parsed || (parsed.hunks.length === 0 && !parsed.binary) ? (
-            <Centered>
-              <FileX2 size={22} style={{ color: colors.muted, opacity: 0.6 }} />
-              <span style={{ color: colors.muted }}>
-                {parsed && diffText
-                  ? 'No textual changes — file renamed or metadata-only.'
-                  : 'No textual diff to show.'}
-              </span>
-            </Centered>
-          ) : parsed.binary ? (
-            <Centered>
-              <FileX2 size={22} style={{ color: colors.muted, opacity: 0.85 }} />
-              <span style={{ color: colors.muted }}>Binary file — no textual diff.</span>
-            </Centered>
-          ) : (
-            <DiffViewer diff={parsed} path={selection.path} />
+            </div>
           )}
+          <div className="wks-review-scroll" style={{ overflowY: 'auto', flex: 1 }}>
+            {!error && totalChanges === 0 && !loadingStatus && (
+              <Centered>
+                <CheckCircle2 size={22} style={{ color: colors.success, opacity: 0.85 }} />
+                <span style={{ color: colors.muted }}>Working tree clean</span>
+              </Centered>
+            )}
+
+            {staged.length > 0 && (
+              <>
+                <SectionHeader
+                  label="Staged"
+                  count={staged.length}
+                  action={{
+                    label: 'Unstage all',
+                    busy,
+                    onClick: () => void runAction((dir) => git.unstage(dir)),
+                  }}
+                />
+                <FileTree entries={staged} {...treeProps('staged')} />
+              </>
+            )}
+
+            {unstaged.length > 0 && (
+              <>
+                <SectionHeader
+                  label="Changes"
+                  count={unstaged.length}
+                  action={{
+                    label: 'Stage all',
+                    busy,
+                    onClick: () => void runAction((dir) => git.stage(dir)),
+                  }}
+                />
+                <FileTree entries={unstaged} {...treeProps('unstaged')} />
+              </>
+            )}
+
+            {untracked.length > 0 && (
+              <>
+                <SectionHeader
+                  label="Untracked"
+                  count={untracked.length}
+                  // "Stage all" is `git add -A` (everything), so only offer it
+                  // here when there are no tracked changes — otherwise the
+                  // Changes header already covers it.
+                  action={
+                    unstaged.length === 0
+                      ? {
+                          label: 'Stage all',
+                          busy,
+                          onClick: () => void runAction((dir) => git.stage(dir)),
+                        }
+                      : undefined
+                  }
+                />
+                <FileTree entries={untracked} {...treeProps('untracked')} />
+              </>
+            )}
+          </div>
+
+          {/* Commit bar — enabled only when something is staged. */}
+          <div
+            style={{
+              borderTop: `1px solid ${colors.borderSubtle}`,
+              padding: 10,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 7,
+            }}
+          >
+            <textarea
+              className="wks-review-commit-input"
+              value={commitMsg}
+              onChange={(e) => setCommitMsg(e.target.value)}
+              onKeyDown={(e) => {
+                // Cmd/Ctrl+Enter commits, matching the usual editor convention.
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && canCommit) {
+                  e.preventDefault();
+                  commit();
+                }
+              }}
+              placeholder={
+                staged.length > 0 ? 'Commit message… (⌘/Ctrl+Enter)' : 'Stage files to commit'
+              }
+              disabled={busy || staged.length === 0}
+              rows={2}
+              style={{
+                resize: 'none',
+                padding: '7px 9px',
+                borderRadius: 7,
+                border: `1px solid ${colors.borderSubtle}`,
+                background: 'var(--wks-bg-input, transparent)',
+                color: colors.text,
+                fontSize: '0.72rem',
+                fontFamily: 'inherit',
+                boxSizing: 'border-box',
+              }}
+            />
+            <button
+              className="wks-review-commit-btn"
+              onClick={commit}
+              disabled={!canCommit}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 6,
+                padding: '6px 10px',
+                borderRadius: 7,
+                border: 'none',
+                background: canCommit
+                  ? colors.accent
+                  : 'color-mix(in srgb, var(--wks-text-faint) 12%, transparent)',
+                color: canCommit ? 'var(--wks-claude-bg)' : colors.muted,
+                cursor: canCommit ? 'pointer' : 'default',
+                fontSize: '0.72rem',
+                fontFamily: 'inherit',
+                fontWeight: 600,
+              }}
+            >
+              <IconCommit size={14} strokeWidth={2.2} accent="currentColor" />
+              {`Commit${staged.length > 0 ? ` ${staged.length} file${staged.length > 1 ? 's' : ''}` : ''}`}
+            </button>
+          </div>
         </div>
+
+        {/* Right: diff */}
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+          {selection && (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                padding: '7px 12px',
+                borderBottom: `1px solid ${colors.borderSubtle}`,
+                flexShrink: 0,
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
+                <StatusChip
+                  code={
+                    selection.untracked
+                      ? 'A'
+                      : ((selection.staged ? staged : unstaged).find(
+                          (e) => e.file.path === selection.path,
+                        )?.code ?? 'M')
+                  }
+                />
+                <PathBreadcrumb path={selection.path} />
+              </div>
+              {selectionStats && selectionStats.added != null && selectionStats.deleted != null && (
+                <>
+                  <span
+                    style={{
+                      display: 'flex',
+                      gap: 6,
+                      fontSize: '0.68rem',
+                      fontFamily: 'var(--wks-font-mono, monospace)',
+                      fontVariantNumeric: 'tabular-nums',
+                      flexShrink: 0,
+                    }}
+                  >
+                    <span style={{ color: colors.success }}>+{selectionStats.added}</span>
+                    <span style={{ color: colors.error }}>−{selectionStats.deleted}</span>
+                  </span>
+                  <DiffStatBlocks added={selectionStats.added} deleted={selectionStats.deleted} />
+                </>
+              )}
+              <span
+                style={{
+                  fontSize: '0.6rem',
+                  fontWeight: 600,
+                  letterSpacing: '0.04em',
+                  color: colors.muted,
+                  border: `1px solid ${colors.borderSubtle}`,
+                  borderRadius: 9,
+                  padding: '1px 8px',
+                  flexShrink: 0,
+                  textTransform: 'uppercase',
+                }}
+              >
+                {selection.untracked ? 'untracked' : selection.staged ? 'staged' : 'unstaged'}
+              </span>
+              <button
+                className="wks-icon-btn"
+                title="Copy path"
+                onClick={() => {
+                  void navigator.clipboard.writeText(selection.path);
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 1200);
+                }}
+              >
+                {copied ? (
+                  <Check size={13} style={{ color: colors.success }} />
+                ) : (
+                  <Copy size={13} />
+                )}
+              </button>
+            </div>
+          )}
+          <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+            {!selection ? (
+              <Centered>
+                {totalChanges === 0 ? (
+                  <>
+                    <CheckCircle2 size={26} style={{ color: colors.success, opacity: 0.85 }} />
+                    <span style={{ color: colors.muted }}>
+                      Working tree clean — nothing to review.
+                    </span>
+                  </>
+                ) : (
+                  <span style={{ color: colors.muted }}>Select a file to view its diff.</span>
+                )}
+              </Centered>
+            ) : loadingDiff ? (
+              <DiffSkeleton />
+            ) : diffError ? (
+              <Centered>
+                <FileX2 size={22} style={{ color: colors.error, opacity: 0.85 }} />
+                <span style={{ color: colors.error }}>{diffError}</span>
+              </Centered>
+            ) : isLargeGated ? (
+              <Centered>
+                <span style={{ color: colors.muted }}>
+                  This diff is {(diffText.length / 1_000_000).toFixed(1)} MB.
+                </span>
+                <button
+                  onClick={() => setForcedLarge((prev) => new Set(prev).add(selKey(selection)))}
+                  style={{
+                    padding: '5px 14px',
+                    borderRadius: 6,
+                    border: `1px solid ${colors.borderSubtle}`,
+                    background: 'transparent',
+                    color: colors.text,
+                    cursor: 'pointer',
+                    fontSize: '0.74rem',
+                    fontFamily: 'inherit',
+                  }}
+                >
+                  Render anyway
+                </button>
+              </Centered>
+            ) : !parsed || (parsed.hunks.length === 0 && !parsed.binary) ? (
+              <Centered>
+                <FileX2 size={22} style={{ color: colors.muted, opacity: 0.6 }} />
+                <span style={{ color: colors.muted }}>
+                  {parsed && diffText
+                    ? 'No textual changes — file renamed or metadata-only.'
+                    : 'No textual diff to show.'}
+                </span>
+              </Centered>
+            ) : parsed.binary ? (
+              <Centered>
+                <FileX2 size={22} style={{ color: colors.muted, opacity: 0.85 }} />
+                <span style={{ color: colors.muted }}>Binary file — no textual diff.</span>
+              </Centered>
+            ) : (
+              <DiffViewer diff={parsed} path={selection.path} />
+            )}
+          </div>
         </div>
       </div>
     </div>

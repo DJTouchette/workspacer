@@ -30,5 +30,7 @@ export const WorkflowOverlay: React.FC = () => {
   }, [runId, snapshotBySession]);
 
   if (!runId || !found) return null;
-  return <WorkflowTimeline sessionId={found.sessionId} run={found.run} onClose={() => setRunId(null)} />;
+  return (
+    <WorkflowTimeline sessionId={found.sessionId} run={found.run} onClose={() => setRunId(null)} />
+  );
 };

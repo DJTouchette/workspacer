@@ -14,14 +14,19 @@ let capturedOpts: any;
 const consumeSseStream = vi.fn(async (_url: string, opts: any) => {
   capturedOpts = opts;
 });
-vi.mock('../lib/sseConsumer', () => ({ consumeSseStream: (...a: unknown[]) => consumeSseStream(...(a as [string, any])) }));
+vi.mock('../lib/sseConsumer', () => ({
+  consumeSseStream: (...a: unknown[]) => consumeSseStream(...(a as [string, any])),
+}));
 
 const applyManagedMode = vi.fn();
-vi.mock('./claudeSessionStore', () => ({ claudeSessionStore: { applyManagedMode: (...a: unknown[]) => applyManagedMode(...a) } }));
+vi.mock('./claudeSessionStore', () => ({
+  claudeSessionStore: { applyManagedMode: (...a: unknown[]) => applyManagedMode(...a) },
+}));
 
 vi.mock('./claudemonDaemon', () => ({ CLAUDEMON_API_URL: 'http://daemon' }));
 
-const { startClaudemonEventBridge, stopClaudemonEventBridge } = await import('./claudemonEventBridge');
+const { startClaudemonEventBridge, stopClaudemonEventBridge } =
+  await import('./claudemonEventBridge');
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -39,13 +44,17 @@ describe('claudemonEventBridge', () => {
 
   it('applies a Managed mode change to the store', async () => {
     await startClaudemonEventBridge();
-    capturedOpts.onFrame(JSON.stringify({ event: 'Managed', session_id: 's1', state: { mode: 'working' } }));
+    capturedOpts.onFrame(
+      JSON.stringify({ event: 'Managed', session_id: 's1', state: { mode: 'working' } }),
+    );
     expect(applyManagedMode).toHaveBeenCalledWith('s1', 'working');
   });
 
   it('ignores non-Managed events (Spawn / SessionEnd / Claude-PTY updates)', async () => {
     await startClaudemonEventBridge();
-    capturedOpts.onFrame(JSON.stringify({ event: 'Spawn', session_id: 's1', state: { mode: 'working' } }));
+    capturedOpts.onFrame(
+      JSON.stringify({ event: 'Spawn', session_id: 's1', state: { mode: 'working' } }),
+    );
     capturedOpts.onFrame(JSON.stringify({ event: 'SessionEnd', session_id: 's1' }));
     expect(applyManagedMode).not.toHaveBeenCalled();
   });

@@ -22,14 +22,24 @@ beforeEach(() => {
   resolveLayoutGet = null;
   (window as any).electronAPI = {
     ...(window as any).electronAPI,
-    layoutGet: vi.fn().mockReturnValue(new Promise((r) => { resolveLayoutGet = r; })),
+    layoutGet: vi.fn().mockReturnValue(
+      new Promise((r) => {
+        resolveLayoutGet = r;
+      }),
+    ),
     layoutSet: vi.fn().mockResolvedValue({ version: 99 }),
-    onLayoutChanged: vi.fn().mockImplementation((cb: any) => { layoutChangedCb = cb; return () => {}; }),
+    onLayoutChanged: vi.fn().mockImplementation((cb: any) => {
+      layoutChangedCb = cb;
+      return () => {};
+    }),
     onHubStatus: vi.fn().mockReturnValue(() => {}),
   };
 });
 
-function renderSync(load: ReturnType<typeof vi.fn>, opts?: { adoptSharedLayout?: boolean; onHydration?: ReturnType<typeof vi.fn> }) {
+function renderSync(
+  load: ReturnType<typeof vi.fn>,
+  opts?: { adoptSharedLayout?: boolean; onHydration?: ReturnType<typeof vi.fn> },
+) {
   return renderHook(() =>
     useLayoutSync({
       agents: [],
@@ -50,11 +60,18 @@ describe('useLayoutSync — version monotonicity', () => {
     renderSync(load);
 
     // A newer layout (v5) is broadcast before the initial read resolves.
-    act(() => layoutChangedCb!({ version: 5, data: { agents: [mkAgent('v5')], activeAgentId: 'v5' } }));
+    act(() =>
+      layoutChangedCb!({ version: 5, data: { agents: [mkAgent('v5')], activeAgentId: 'v5' } }),
+    );
     // The initial read resolves late carrying an OLDER version (v2).
-    await act(async () => { resolveLayoutGet!({ version: 2, data: { agents: [mkAgent('v2')], activeAgentId: 'v2' } }); await Promise.resolve(); });
+    await act(async () => {
+      resolveLayoutGet!({ version: 2, data: { agents: [mkAgent('v2')], activeAgentId: 'v2' } });
+      await Promise.resolve();
+    });
     // A v3 broadcast arrives — older than the v5 we already applied; must be ignored.
-    act(() => layoutChangedCb!({ version: 3, data: { agents: [mkAgent('v3')], activeAgentId: 'v3' } }));
+    act(() =>
+      layoutChangedCb!({ version: 3, data: { agents: [mkAgent('v3')], activeAgentId: 'v3' } }),
+    );
 
     const appliedIds = load.mock.calls.map((c) => c[0]?.[0]?.id);
     // v3 must never be applied (v5 is newer and already applied).
@@ -68,7 +85,10 @@ describe('useLayoutSync — version monotonicity', () => {
   it('adopts a real layout from the initial read when no broadcast preceded it', async () => {
     const load = vi.fn();
     renderSync(load);
-    await act(async () => { resolveLayoutGet!({ version: 1, data: { agents: [mkAgent('a1')], activeAgentId: 'a1' } }); await Promise.resolve(); });
+    await act(async () => {
+      resolveLayoutGet!({ version: 1, data: { agents: [mkAgent('a1')], activeAgentId: 'a1' } });
+      await Promise.resolve();
+    });
     expect(load.mock.calls.map((c) => c[0]?.[0]?.id)).toContain('a1');
   });
 });
@@ -82,7 +102,10 @@ describe('useLayoutSync — adoption gated on auto-resume', () => {
     const load = vi.fn();
     const onHydration = vi.fn();
     renderSync(load, { adoptSharedLayout: false, onHydration });
-    await act(async () => { resolveLayoutGet!({ version: 4, data: { agents: [mkAgent('old')], activeAgentId: 'old' } }); await Promise.resolve(); });
+    await act(async () => {
+      resolveLayoutGet!({ version: 4, data: { agents: [mkAgent('old')], activeAgentId: 'old' } });
+      await Promise.resolve();
+    });
     expect(load).not.toHaveBeenCalled();
     expect(onHydration).toHaveBeenCalledWith('empty');
   });
@@ -90,10 +113,15 @@ describe('useLayoutSync — adoption gated on auto-resume', () => {
   it('still applies live layout.changed broadcasts when adoptSharedLayout is off', async () => {
     const load = vi.fn();
     renderSync(load, { adoptSharedLayout: false });
-    await act(async () => { resolveLayoutGet!({ version: 1, data: { agents: [mkAgent('old')], activeAgentId: 'old' } }); await Promise.resolve(); });
+    await act(async () => {
+      resolveLayoutGet!({ version: 1, data: { agents: [mkAgent('old')], activeAgentId: 'old' } });
+      await Promise.resolve();
+    });
     // Another client writes while we're up — that's a live mirror, not a stale
     // boot-time document, and must still apply.
-    act(() => layoutChangedCb!({ version: 2, data: { agents: [mkAgent('live')], activeAgentId: 'live' } }));
+    act(() =>
+      layoutChangedCb!({ version: 2, data: { agents: [mkAgent('live')], activeAgentId: 'live' } }),
+    );
     expect(load.mock.calls.map((c) => c[0]?.[0]?.id)).toContain('live');
   });
 });

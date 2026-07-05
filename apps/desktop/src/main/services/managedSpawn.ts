@@ -39,7 +39,12 @@ function configuredBin(provider: Exclude<AgentProvider, 'claude'>): string {
 function assertProviderInstalled(provider: Exclude<AgentProvider, 'claude'>): void {
   if (isAgentBinaryInstalled(provider, configuredBin(provider))) return;
   const title = `${provider} CLI not found`;
-  notifySystem({ level: 'error', key: `missing-${provider}`, title, detail: INSTALL_HINT[provider] });
+  notifySystem({
+    level: 'error',
+    key: `missing-${provider}`,
+    title,
+    detail: INSTALL_HINT[provider],
+  });
   throw new Error(`${title}. ${INSTALL_HINT[provider]}`);
 }
 

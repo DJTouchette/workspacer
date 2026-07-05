@@ -56,11 +56,15 @@ class LayoutService {
   list(): Layout[] {
     this.ensureDir();
     try {
-      return fs.readdirSync(layoutsDir())
+      return fs
+        .readdirSync(layoutsDir())
         .filter((f) => f.endsWith('.yaml'))
         .map((f) => {
-          try { return yaml.load(fs.readFileSync(path.join(layoutsDir(), f), 'utf-8')) as Layout; }
-          catch { return null; }
+          try {
+            return yaml.load(fs.readFileSync(path.join(layoutsDir(), f), 'utf-8')) as Layout;
+          } catch {
+            return null;
+          }
         })
         .filter((l): l is Layout => !!l && Array.isArray(l.agents))
         .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
@@ -78,12 +82,20 @@ class LayoutService {
       createdAt: new Date().toISOString(),
       agents: input.agents ?? [],
     };
-    fs.writeFileSync(path.join(layoutsDir(), `${id}.yaml`), yaml.dump(layout, { lineWidth: -1 }), 'utf-8');
+    fs.writeFileSync(
+      path.join(layoutsDir(), `${id}.yaml`),
+      yaml.dump(layout, { lineWidth: -1 }),
+      'utf-8',
+    );
     return layout;
   }
 
   remove(id: string): void {
-    try { fs.unlinkSync(path.join(layoutsDir(), `${slug(id)}.yaml`)); } catch { /* already gone */ }
+    try {
+      fs.unlinkSync(path.join(layoutsDir(), `${slug(id)}.yaml`));
+    } catch {
+      /* already gone */
+    }
   }
 }
 

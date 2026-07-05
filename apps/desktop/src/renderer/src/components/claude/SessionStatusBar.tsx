@@ -1,6 +1,13 @@
 import React from 'react';
 import type { ClaudeSessionSnapshot } from '../../types/claudeSession';
-import { deriveSessionStats, fmtTokens, fmtUSD, fmtResetIn, fmtResetAt, ctxColor } from '../../lib/sessionStats';
+import {
+  deriveSessionStats,
+  fmtTokens,
+  fmtUSD,
+  fmtResetIn,
+  fmtResetAt,
+  ctxColor,
+} from '../../lib/sessionStats';
 import { IconModel } from '../wksIcons';
 
 /**
@@ -19,12 +26,25 @@ import { IconModel } from '../wksIcons';
 
 function baseName(p: string | undefined): string {
   if (!p) return '';
-  return p.replace(/[/\\]+$/, '').split(/[/\\]/).pop() || p;
+  return (
+    p
+      .replace(/[/\\]+$/, '')
+      .split(/[/\\]/)
+      .pop() || p
+  );
 }
 
 /** A thin vertical rule between HUD groups, replacing the ASCII pipe. */
 const Sep: React.FC = () => (
-  <span style={{ width: 1, height: 17, flexShrink: 0, background: 'var(--wks-border, #555)', opacity: 0.7 }} />
+  <span
+    style={{
+      width: 1,
+      height: 17,
+      flexShrink: 0,
+      background: 'var(--wks-border, #555)',
+      opacity: 0.7,
+    }}
+  />
 );
 
 /** Segmented 10-tick context gauge — filled ticks take the threshold color. */
@@ -37,7 +57,9 @@ const CtxBar: React.FC<{ pct: number }> = ({ pct }) => {
         <span
           key={i}
           style={{
-            width: 5, height: 13, borderRadius: 1,
+            width: 5,
+            height: 13,
+            borderRadius: 1,
             background: i < filled ? color : 'var(--wks-bg-elevated, #444)',
           }}
         />
@@ -73,8 +95,14 @@ interface Props {
 export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = false }) => {
   const dir = baseName(cwd || snapshot?.cwd);
   const {
-    model, ctxPct, tokens, costUSD: cost,
-    fiveHourPct: five, fiveHourResetsAt, sevenDayPct: seven, sevenDayResetsAt,
+    model,
+    ctxPct,
+    tokens,
+    costUSD: cost,
+    fiveHourPct: five,
+    fiveHourResetsAt,
+    sevenDayPct: seven,
+    sevenDayResetsAt,
   } = deriveSessionStats(snapshot);
   // The reset countdowns are computed at render time; between statusLine ticks
   // (e.g. an idle session) they'd freeze, so tick a re-render once a minute
@@ -93,13 +121,20 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = f
   // TUI) wins over the requested-at-spawn setting. Managed providers never
   // send the live value, so they show their spawn setting.
   const modeId = snapshot?.livePermissionMode ?? snapshot?.settings?.permissionMode;
-  const mode = modeId ? MODE_DISPLAY[modeId] ?? { label: modeId, color: 'var(--wks-text-secondary)' } : undefined;
+  const mode = modeId
+    ? (MODE_DISPLAY[modeId] ?? { label: modeId, color: 'var(--wks-text-secondary)' })
+    : undefined;
 
   // (The live-subagent count lives in the ClaudePane toolbar alongside this
   // bar — kept there so the number isn't shown twice.)
 
   // Until the first reading arrives, render nothing so the toolbar stays clean.
-  const hasAny = (showModel && model) || mode || ctxPct !== undefined || tokens !== undefined || cost !== undefined;
+  const hasAny =
+    (showModel && model) ||
+    mode ||
+    ctxPct !== undefined ||
+    tokens !== undefined ||
+    cost !== undefined;
   if (!hasAny) return null;
 
   return (
@@ -116,7 +151,22 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = f
       }}
     >
       {dir && <span style={{ color: 'var(--wks-accent-text)', fontWeight: 600 }}>{dir}</span>}
-      {showModel && model && (<><Sep /><span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--wks-text-secondary)' }}><IconModel size={14} strokeWidth={2} accent="currentColor" />{model}</span></>)}
+      {showModel && model && (
+        <>
+          <Sep />
+          <span
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+              color: 'var(--wks-text-secondary)',
+            }}
+          >
+            <IconModel size={14} strokeWidth={2} accent="currentColor" />
+            {model}
+          </span>
+        </>
+      )}
       {mode && (
         <>
           <Sep />
@@ -131,7 +181,15 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = f
       {ctxPct !== undefined && (
         <>
           <Sep />
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: ctxColor(ctxPct), fontVariantNumeric: 'tabular-nums' }}>
+          <span
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 5,
+              color: ctxColor(ctxPct),
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
             <span style={{ color: 'var(--wks-text-muted)' }}>ctx</span>
             <CtxBar pct={ctxPct} />
             {Math.round(ctxPct)}%
@@ -141,11 +199,23 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = f
       {(tokens !== undefined || cost !== undefined) && (
         <>
           <Sep />
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontVariantNumeric: 'tabular-nums' }}>
+          <span
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 5,
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
             {tokens !== undefined && (
-              <span><span style={{ color: 'var(--wks-text-muted)' }}>tok </span><span style={{ color: 'var(--wks-text-secondary)' }}>{fmtTokens(tokens)}</span></span>
+              <span>
+                <span style={{ color: 'var(--wks-text-muted)' }}>tok </span>
+                <span style={{ color: 'var(--wks-text-secondary)' }}>{fmtTokens(tokens)}</span>
+              </span>
             )}
-            {cost !== undefined && <span style={{ color: 'var(--wks-accent-text)' }}>{fmtUSD(cost)}</span>}
+            {cost !== undefined && (
+              <span style={{ color: 'var(--wks-accent-text)' }}>{fmtUSD(cost)}</span>
+            )}
           </span>
         </>
       )}
@@ -154,15 +224,28 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = f
           <Sep />
           <span style={{ color: 'var(--wks-text-secondary)', fontVariantNumeric: 'tabular-nums' }}>
             {five !== undefined && (
-              <span title={fmtResetAt(fiveHourResetsAt) && `5h window resets ${fmtResetAt(fiveHourResetsAt)}`}>
-                <span style={{ color: 'var(--wks-text-muted)' }}>5h </span>{Math.round(five)}%
+              <span
+                title={
+                  fmtResetAt(fiveHourResetsAt) && `5h window resets ${fmtResetAt(fiveHourResetsAt)}`
+                }
+              >
+                <span style={{ color: 'var(--wks-text-muted)' }}>5h </span>
+                {Math.round(five)}%
                 {fiveReset && <span style={{ color: 'var(--wks-text-muted)' }}>·{fiveReset}</span>}
               </span>
             )}
             {seven !== undefined && (
-              <span title={fmtResetAt(sevenDayResetsAt) && `7d window resets ${fmtResetAt(sevenDayResetsAt)}`}>
-                {' '}<span style={{ color: 'var(--wks-text-muted)' }}>7d </span>{Math.round(seven)}%
-                {sevenReset && <span style={{ color: 'var(--wks-text-muted)' }}>·{sevenReset}</span>}
+              <span
+                title={
+                  fmtResetAt(sevenDayResetsAt) && `7d window resets ${fmtResetAt(sevenDayResetsAt)}`
+                }
+              >
+                {' '}
+                <span style={{ color: 'var(--wks-text-muted)' }}>7d </span>
+                {Math.round(seven)}%
+                {sevenReset && (
+                  <span style={{ color: 'var(--wks-text-muted)' }}>·{sevenReset}</span>
+                )}
               </span>
             )}
           </span>

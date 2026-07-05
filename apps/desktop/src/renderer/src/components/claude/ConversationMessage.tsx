@@ -15,28 +15,34 @@ const ConversationMessageInner: React.FC<{ turn: ConversationTurn }> = ({ turn }
 
   if (isUser) {
     return (
-      <div style={{
-        display: 'flex',
-        justifyContent: 'flex-end',
-        marginBottom: 12,
-        animation: 'claudeFadeIn 0.2s ease-out',
-      }}>
-        <div style={{
-          maxWidth: '80%',
-          padding: '8px 14px',
-          borderRadius: '16px 16px 4px 16px',
-          backgroundColor: colors.userBubble,
-          border: `1px solid ${colors.userBubbleBorder}`,
-        }}>
-          <pre style={{
-            margin: 0,
-            fontSize: 'calc(0.8rem * var(--claude-gui-font-scale, 1))',
-            lineHeight: 1.6,
-            color: colors.text,
-            fontFamily: 'var(--claude-mono-font, monospace)',
-            whiteSpace: 'pre-wrap',
-            wordBreak: 'break-word',
-          }}>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'flex-end',
+          marginBottom: 12,
+          animation: 'claudeFadeIn 0.2s ease-out',
+        }}
+      >
+        <div
+          style={{
+            maxWidth: '80%',
+            padding: '8px 14px',
+            borderRadius: '16px 16px 4px 16px',
+            backgroundColor: colors.userBubble,
+            border: `1px solid ${colors.userBubbleBorder}`,
+          }}
+        >
+          <pre
+            style={{
+              margin: 0,
+              fontSize: 'calc(0.8rem * var(--claude-gui-font-scale, 1))',
+              lineHeight: 1.6,
+              color: colors.text,
+              fontFamily: 'var(--claude-mono-font, monospace)',
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+            }}
+          >
             {turn.content || '(empty)'}
           </pre>
         </div>
@@ -49,17 +55,21 @@ const ConversationMessageInner: React.FC<{ turn: ConversationTurn }> = ({ turn }
   // this message in the timeline, so the chat reads as text → work → text
   // instead of a flat flood of tool rows under every message.
   return (
-    <div style={{
-      marginBottom: 12,
-      animation: 'claudeFadeIn 0.2s ease-out',
-    }}>
+    <div
+      style={{
+        marginBottom: 12,
+        animation: 'claudeFadeIn 0.2s ease-out',
+      }}
+    >
       {parsedContent ? (
-        <div style={{
-          paddingLeft: 4,
-          fontSize: 'calc(0.8rem * var(--claude-gui-font-scale, 1))',
-          lineHeight: 1.6,
-          color: colors.text,
-        }}>
+        <div
+          style={{
+            paddingLeft: 4,
+            fontSize: 'calc(0.8rem * var(--claude-gui-font-scale, 1))',
+            lineHeight: 1.6,
+            color: colors.text,
+          }}
+        >
           {parsedContent}
         </div>
       ) : null}

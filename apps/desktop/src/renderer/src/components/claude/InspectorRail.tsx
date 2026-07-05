@@ -31,7 +31,13 @@ function aggregateFiles(changes: FileChange[]): FileAgg[] {
       byPath.delete(fc.path);
       byPath.set(fc.path, existing);
     } else {
-      byPath.set(fc.path, { path: fc.path, name, dir: segs.slice(-2).join('/'), count: 1, lastTool: fc.toolName });
+      byPath.set(fc.path, {
+        path: fc.path,
+        name,
+        dir: segs.slice(-2).join('/'),
+        count: 1,
+        lastTool: fc.toolName,
+      });
     }
   }
   return Array.from(byPath.values()).reverse(); // most recent first
@@ -47,12 +53,36 @@ const UsageBar: React.FC<{ label: string; pct: number; sub?: string }> = ({ labe
   const color = pct >= 80 ? colors.error : pct >= 50 ? colors.warning : colors.success;
   return (
     <div style={{ marginBottom: 10 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', color: colors.muted, marginBottom: 3 }}>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          fontSize: '0.72rem',
+          color: colors.muted,
+          marginBottom: 3,
+        }}
+      >
         <span>{label}</span>
-        <span style={{ color, fontVariantNumeric: 'tabular-nums' }}>{Math.round(pct)}%{sub ? ` · ${sub}` : ''}</span>
+        <span style={{ color, fontVariantNumeric: 'tabular-nums' }}>
+          {Math.round(pct)}%{sub ? ` · ${sub}` : ''}
+        </span>
       </div>
-      <div style={{ height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.06)', overflow: 'hidden' }}>
-        <div style={{ width: `${Math.min(100, Math.max(0, pct))}%`, height: '100%', backgroundColor: color, transition: 'width 0.3s' }} />
+      <div
+        style={{
+          height: 4,
+          borderRadius: 2,
+          backgroundColor: 'rgba(255,255,255,0.06)',
+          overflow: 'hidden',
+        }}
+      >
+        <div
+          style={{
+            width: `${Math.min(100, Math.max(0, pct))}%`,
+            height: '100%',
+            backgroundColor: color,
+            transition: 'width 0.3s',
+          }}
+        />
       </div>
     </div>
   );
@@ -77,8 +107,8 @@ export const InspectorRail: React.FC<{
   const subagents = session?.subagents ?? [];
   const workflows = session?.workflows ?? [];
   const fileChanges = session?.fileChanges ?? [];
-  const liveWorkflows = workflows.filter(w => w.status === 'running').length;
-  const liveSubagents = subagents.filter(s => s.status === 'running').length;
+  const liveWorkflows = workflows.filter((w) => w.status === 'running').length;
+  const liveSubagents = subagents.filter((s) => s.status === 'running').length;
 
   // Open on whatever's actively happening: a running workflow wins, then a
   // running subagent, else the files list.
@@ -112,8 +142,11 @@ export const InspectorRail: React.FC<{
 
   const sl = session?.statusLine;
   const usage = session?.usage;
-  const ctxPct = sl?.contextUsedPct
-    ?? (usage && usage.contextLimit > 0 ? (usage.contextTokens / usage.contextLimit) * 100 : undefined);
+  const ctxPct =
+    sl?.contextUsedPct ??
+    (usage && usage.contextLimit > 0
+      ? (usage.contextTokens / usage.contextLimit) * 100
+      : undefined);
   const inTok = sl?.totalInputTokens ?? usage?.totalInputTokens;
   const outTok = sl?.totalOutputTokens ?? usage?.totalOutputTokens;
   const cost = sl?.costUSD ?? usage?.costUSD;
@@ -127,25 +160,29 @@ export const InspectorRail: React.FC<{
   ];
 
   return (
-    <div style={{
-      width: 320,
-      flexShrink: 0,
-      display: 'flex',
-      flexDirection: 'column',
-      borderLeft: `1px solid ${colors.border}`,
-      backgroundColor: 'rgba(255,255,255,0.012)',
-      overflow: 'hidden',
-    }}>
-      {/* Tab strip */}
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 2,
-        padding: '4px 6px',
-        borderBottom: `1px solid ${colors.borderSubtle}`,
+    <div
+      style={{
+        width: 320,
         flexShrink: 0,
-      }}>
-        {tabs.map(t => (
+        display: 'flex',
+        flexDirection: 'column',
+        borderLeft: `1px solid ${colors.border}`,
+        backgroundColor: 'rgba(255,255,255,0.012)',
+        overflow: 'hidden',
+      }}
+    >
+      {/* Tab strip */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 2,
+          padding: '4px 6px',
+          borderBottom: `1px solid ${colors.borderSubtle}`,
+          flexShrink: 0,
+        }}
+      >
+        {tabs.map((t) => (
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
@@ -166,14 +203,16 @@ export const InspectorRail: React.FC<{
           >
             {t.label}
             {t.badge !== undefined && (
-              <span style={{
-                fontSize: '0.64rem',
-                padding: '0 5px',
-                borderRadius: 6,
-                backgroundColor: 'rgba(255,255,255,0.08)',
-                color: (t.id === 'agents' || t.id === 'workflows') ? '#c084fc' : colors.muted,
-                fontVariantNumeric: 'tabular-nums',
-              }}>
+              <span
+                style={{
+                  fontSize: '0.64rem',
+                  padding: '0 5px',
+                  borderRadius: 6,
+                  backgroundColor: 'rgba(255,255,255,0.08)',
+                  color: t.id === 'agents' || t.id === 'workflows' ? '#c084fc' : colors.muted,
+                  fontVariantNumeric: 'tabular-nums',
+                }}
+              >
                 {t.badge}
               </span>
             )}
@@ -198,11 +237,11 @@ export const InspectorRail: React.FC<{
 
       {/* Tab body */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '8px 10px' }}>
-        {tab === 'files' && (
-          files.length === 0 ? (
+        {tab === 'files' &&
+          (files.length === 0 ? (
             <div style={emptyStateStyle}>No files changed yet</div>
           ) : (
-            files.map(f => (
+            files.map((f) => (
               <div
                 key={f.path}
                 title={`${f.path}\n\nClick to open in Review`}
@@ -218,66 +257,103 @@ export const InspectorRail: React.FC<{
                   borderBottom: `1px solid ${colors.borderSubtle}`,
                   cursor: 'pointer',
                 }}
-                onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--wks-bg-hover)'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = 'var(--wks-bg-hover)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = 'transparent';
+                }}
               >
-                <span style={{
-                  color: f.lastTool === 'Write' ? colors.success : colors.warning,
-                  fontWeight: 700,
-                  width: 10,
-                  textAlign: 'center',
-                  flexShrink: 0,
-                }}>
+                <span
+                  style={{
+                    color: f.lastTool === 'Write' ? colors.success : colors.warning,
+                    fontWeight: 700,
+                    width: 10,
+                    textAlign: 'center',
+                    flexShrink: 0,
+                  }}
+                >
                   {f.lastTool === 'Write' ? '+' : '~'}
                 </span>
-                <span style={{
-                  color: colors.text,
-                  fontFamily: 'var(--claude-mono-font, monospace)',
-                  fontSize: '0.76rem',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                  minWidth: 0,
-                }}>
+                <span
+                  style={{
+                    color: colors.text,
+                    fontFamily: 'var(--claude-mono-font, monospace)',
+                    fontSize: '0.76rem',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    minWidth: 0,
+                  }}
+                >
                   {f.name}
                 </span>
-                <span style={{ color: colors.mutedDim, fontSize: '0.68rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <span
+                  style={{
+                    color: colors.mutedDim,
+                    fontSize: '0.68rem',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
                   {f.dir}
                 </span>
                 <div style={{ flex: 1 }} />
                 {f.count > 1 && (
-                  <span style={{ color: colors.mutedDim, fontSize: '0.68rem', flexShrink: 0 }}>×{f.count}</span>
+                  <span style={{ color: colors.mutedDim, fontSize: '0.68rem', flexShrink: 0 }}>
+                    ×{f.count}
+                  </span>
                 )}
               </div>
             ))
-          )
-        )}
+          ))}
 
-        {tab === 'workflows' && (
-          workflows.length === 0 ? (
+        {tab === 'workflows' &&
+          (workflows.length === 0 ? (
             <div style={emptyStateStyle}>No workflows running</div>
           ) : (
             <>
               {liveWorkflows > 0 && (
-                <div style={{ fontSize: '0.68rem', color: '#c084fc', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>
+                <div
+                  style={{
+                    fontSize: '0.68rem',
+                    color: '#c084fc',
+                    fontWeight: 600,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                    marginBottom: 6,
+                  }}
+                >
                   {liveWorkflows} running
                 </div>
               )}
-              {workflows.map(run => (
-                <WorkflowRunCard key={run.runId} run={run} onWatch={() => watchWorkflow(run.runId, run.name)} />
+              {workflows.map((run) => (
+                <WorkflowRunCard
+                  key={run.runId}
+                  run={run}
+                  onWatch={() => watchWorkflow(run.runId, run.name)}
+                />
               ))}
             </>
-          )
-        )}
+          ))}
 
-        {tab === 'agents' && (
-          subagents.length === 0 ? (
+        {tab === 'agents' &&
+          (subagents.length === 0 ? (
             <div style={emptyStateStyle}>No subagents yet</div>
           ) : (
             <>
               <div style={{ display: 'flex', alignItems: 'center', marginBottom: 6 }}>
                 {liveSubagents > 0 && (
-                  <span style={{ fontSize: '0.68rem', color: '#c084fc', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  <span
+                    style={{
+                      fontSize: '0.68rem',
+                      color: '#c084fc',
+                      fontWeight: 600,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.05em',
+                    }}
+                  >
                     {liveSubagents} running
                   </span>
                 )}
@@ -296,43 +372,98 @@ export const InspectorRail: React.FC<{
                     color: colors.muted,
                     flexShrink: 0,
                   }}
-                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--wks-bg-hover)'; e.currentTarget.style.color = colors.text; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = colors.muted; }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = 'var(--wks-bg-hover)';
+                    e.currentTarget.style.color = colors.text;
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = 'transparent';
+                    e.currentTarget.style.color = colors.muted;
+                  }}
                 >
                   Fleet view ↗
                 </button>
               </div>
-              {subagents.map(sub => <SubagentRow key={sub.id} sub={sub} onOpen={() => watchSubagent(sub)} />)}
+              {subagents.map((sub) => (
+                <SubagentRow key={sub.id} sub={sub} onOpen={() => watchSubagent(sub)} />
+              ))}
             </>
-          )
-        )}
+          ))}
 
-        {tab === 'usage' && (
-          (!sl && !usage) ? (
+        {tab === 'usage' &&
+          (!sl && !usage ? (
             <div style={emptyStateStyle}>No usage data yet</div>
           ) : (
             <div>
               {model && (
-                <div style={{ fontSize: '0.78rem', color: colors.textBright, fontWeight: 600, marginBottom: 10 }}>
+                <div
+                  style={{
+                    fontSize: '0.78rem',
+                    color: colors.textBright,
+                    fontWeight: 600,
+                    marginBottom: 10,
+                  }}
+                >
                   {model}
                 </div>
               )}
               {ctxPct !== undefined && <UsageBar label="Context window" pct={ctxPct} />}
               {sl?.fiveHourPct !== undefined && (
-                <UsageBar label="5-hour limit" pct={sl.fiveHourPct} sub={sl.fiveHourResetsAt ? `resets ${fmtReset(sl.fiveHourResetsAt)}` : undefined} />
+                <UsageBar
+                  label="5-hour limit"
+                  pct={sl.fiveHourPct}
+                  sub={sl.fiveHourResetsAt ? `resets ${fmtReset(sl.fiveHourResetsAt)}` : undefined}
+                />
               )}
               {sl?.sevenDayPct !== undefined && (
-                <UsageBar label="7-day limit" pct={sl.sevenDayPct} sub={sl.sevenDayResetsAt ? `resets ${fmtReset(sl.sevenDayResetsAt)}` : undefined} />
+                <UsageBar
+                  label="7-day limit"
+                  pct={sl.sevenDayPct}
+                  sub={sl.sevenDayResetsAt ? `resets ${fmtReset(sl.sevenDayResetsAt)}` : undefined}
+                />
               )}
-              <div style={{ fontSize: '0.76rem', color: colors.muted, lineHeight: 1.9, marginTop: 4, fontVariantNumeric: 'tabular-nums' }}>
-                {inTok !== undefined && <div>Input tokens<span style={{ float: 'right', color: colors.text }}>{fmtTokens(inTok) || '0'}</span></div>}
-                {outTok !== undefined && <div>Output tokens<span style={{ float: 'right', color: colors.text }}>{fmtTokens(outTok) || '0'}</span></div>}
-                {cost !== undefined && Number.isFinite(cost) && <div>Cost<span style={{ float: 'right', color: colors.text }}>${cost.toFixed(2)}</span></div>}
-                {session && <div>Tool calls<span style={{ float: 'right', color: colors.text }}>{session.totalToolCalls}</span></div>}
+              <div
+                style={{
+                  fontSize: '0.76rem',
+                  color: colors.muted,
+                  lineHeight: 1.9,
+                  marginTop: 4,
+                  fontVariantNumeric: 'tabular-nums',
+                }}
+              >
+                {inTok !== undefined && (
+                  <div>
+                    Input tokens
+                    <span style={{ float: 'right', color: colors.text }}>
+                      {fmtTokens(inTok) || '0'}
+                    </span>
+                  </div>
+                )}
+                {outTok !== undefined && (
+                  <div>
+                    Output tokens
+                    <span style={{ float: 'right', color: colors.text }}>
+                      {fmtTokens(outTok) || '0'}
+                    </span>
+                  </div>
+                )}
+                {cost !== undefined && Number.isFinite(cost) && (
+                  <div>
+                    Cost
+                    <span style={{ float: 'right', color: colors.text }}>${cost.toFixed(2)}</span>
+                  </div>
+                )}
+                {session && (
+                  <div>
+                    Tool calls
+                    <span style={{ float: 'right', color: colors.text }}>
+                      {session.totalToolCalls}
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
-          )
-        )}
+          ))}
       </div>
     </div>
   );

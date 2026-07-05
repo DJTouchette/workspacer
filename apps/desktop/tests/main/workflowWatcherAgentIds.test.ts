@@ -8,7 +8,10 @@ import { describe, it, expect, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { workflowWatcher, type WorkflowWatcherUpdate } from '../../src/main/services/workflowWatcher';
+import {
+  workflowWatcher,
+  type WorkflowWatcherUpdate,
+} from '../../src/main/services/workflowWatcher';
 
 const made: string[] = [];
 
@@ -47,7 +50,9 @@ describe('WorkflowWatcher.buildUpdate — workflowAgentIds vs MAX_RUNS slice', (
   it('only lists agents of the runs that survive the MAX_RUNS slice', () => {
     const { transcriptPath } = makeSession(4); // MAX_RUNS is 3, so wf_1 is dropped
     let update: WorkflowWatcherUpdate | undefined;
-    workflowWatcher.attach('s1', transcriptPath, (u) => { update = u; });
+    workflowWatcher.attach('s1', transcriptPath, (u) => {
+      update = u;
+    });
 
     expect(update).toBeDefined();
     // Only 3 runs shown — the oldest (wf_1) dropped.

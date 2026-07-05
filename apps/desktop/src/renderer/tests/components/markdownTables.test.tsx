@@ -20,9 +20,7 @@ describe('markdown table rendering', () => {
   });
 
   it('honors column alignment from the delimiter row', () => {
-    const { container } = renderMd(
-      ['| A | B | C |', '|:--|:-:|--:|', '| 1 | 2 | 3 |'].join('\n'),
-    );
+    const { container } = renderMd(['| A | B | C |', '|:--|:-:|--:|', '| 1 | 2 | 3 |'].join('\n'));
     const ths = container.querySelectorAll('thead th');
     expect((ths[0] as HTMLElement).style.textAlign).toBe('left');
     expect((ths[1] as HTMLElement).style.textAlign).toBe('center');
@@ -62,7 +60,15 @@ describe('markdown table rendering', () => {
 
   it('re-renders a drawn table that arrives inside a fenced code block', () => {
     const { container } = renderMd(
-      ['```', '+----+----+', '| a  | b  |', '+----+----+', '| 1  | 2  |', '+----+----+', '```'].join('\n'),
+      [
+        '```',
+        '+----+----+',
+        '| a  | b  |',
+        '+----+----+',
+        '| 1  | 2  |',
+        '+----+----+',
+        '```',
+      ].join('\n'),
     );
     expect(container.querySelector('table')).not.toBeNull();
     expect(container.querySelector('pre')).toBeNull();

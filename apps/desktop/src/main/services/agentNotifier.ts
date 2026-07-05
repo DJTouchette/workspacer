@@ -48,7 +48,11 @@ class AgentNotifier {
     win.removeAllListeners('focus');
     // Stop the taskbar flashing as soon as the user looks at the window.
     win.on('focus', () => {
-      try { win.flashFrame(false); } catch { /* noop */ }
+      try {
+        win.flashFrame(false);
+      } catch {
+        /* noop */
+      }
     });
   }
 
@@ -58,7 +62,8 @@ class AgentNotifier {
   }
 
   private cfg(): NotificationsConfig {
-    const c = ((configService.getConfig() as any).notifications ?? {}) as Partial<NotificationsConfig>;
+    const c = ((configService.getConfig() as any).notifications ??
+      {}) as Partial<NotificationsConfig>;
     return {
       enabled: c.enabled !== false,
       notifyDone: c.notifyDone !== false,
@@ -93,7 +98,9 @@ class AgentNotifier {
 
     const label = agentLabel(session.cwd);
     const title = needsYou
-      ? (next === 'waiting_approval' ? `${label} needs approval` : `${label} is waiting for input`)
+      ? next === 'waiting_approval'
+        ? `${label} needs approval`
+        : `${label} is waiting for input`
       : `${label} finished`;
     const body = needsYou
       ? 'Click to jump to the agent.'
@@ -110,7 +117,11 @@ class AgentNotifier {
     // but only when the window isn't already focused.
     const win = this.mainWindow;
     if (needsYou && win && !win.isDestroyed() && !win.isFocused()) {
-      try { win.flashFrame(true); } catch { /* noop */ }
+      try {
+        win.flashFrame(true);
+      } catch {
+        /* noop */
+      }
     }
   }
 
@@ -123,7 +134,9 @@ class AgentNotifier {
       win.show();
       win.focus();
       win.flashFrame(false);
-    } catch { /* noop */ }
+    } catch {
+      /* noop */
+    }
     win.webContents.send('notify:focus-agent', sessionId);
   }
 }

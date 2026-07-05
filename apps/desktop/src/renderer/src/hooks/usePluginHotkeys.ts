@@ -33,14 +33,20 @@ export function usePluginHotkeys({
     const matches = (combo: string, e: KeyboardEvent): boolean => {
       const parts = combo.toLowerCase().split('+');
       const key = parts[parts.length - 1];
-      return e.ctrlKey === parts.includes('ctrl')
-        && e.shiftKey === parts.includes('shift')
-        && e.altKey === parts.includes('alt')
-        && e.metaKey === parts.includes('meta')
-        && e.key.toLowerCase() === key;
+      return (
+        e.ctrlKey === parts.includes('ctrl') &&
+        e.shiftKey === parts.includes('shift') &&
+        e.altKey === parts.includes('alt') &&
+        e.metaKey === parts.includes('meta') &&
+        e.key.toLowerCase() === key
+      );
     };
     const handler = (e: KeyboardEvent) => {
-      const { pluginHotkeys: hotkeys, pluginPanes: panes, handleOpenPlugin: openPlugin } = handlersRef.current;
+      const {
+        pluginHotkeys: hotkeys,
+        pluginPanes: panes,
+        handleOpenPlugin: openPlugin,
+      } = handlersRef.current;
       for (const h of hotkeys) {
         if (!matches(h.combo, e)) continue;
         e.preventDefault();
@@ -69,9 +75,13 @@ export function usePluginHotkeys({
       if (!combo) return;
       const parts = combo.toLowerCase().split('+');
       const key = parts[parts.length - 1];
-      if (e.ctrlKey === parts.includes('ctrl') && e.shiftKey === parts.includes('shift')
-        && e.altKey === parts.includes('alt') && e.metaKey === parts.includes('meta')
-        && e.key.toLowerCase() === key) {
+      if (
+        e.ctrlKey === parts.includes('ctrl') &&
+        e.shiftKey === parts.includes('shift') &&
+        e.altKey === parts.includes('alt') &&
+        e.metaKey === parts.includes('meta') &&
+        e.key.toLowerCase() === key
+      ) {
         e.preventDefault();
         open();
       }

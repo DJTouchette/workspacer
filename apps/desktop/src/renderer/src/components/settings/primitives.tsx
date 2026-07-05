@@ -13,10 +13,23 @@ export const inputStyle: React.CSSProperties = {
   boxSizing: 'border-box' as const,
 };
 
-export function SmallButton({ label, onClick, primary, danger }: { label: string; onClick: () => void; primary?: boolean; danger?: boolean }) {
+export function SmallButton({
+  label,
+  onClick,
+  primary,
+  danger,
+}: {
+  label: string;
+  onClick: () => void;
+  primary?: boolean;
+  danger?: boolean;
+}) {
   return (
     <button
-      onClick={(e) => { e.stopPropagation(); onClick(); }}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
       style={{
         padding: '4px 10px',
         fontSize: '0.72rem',
@@ -38,22 +51,35 @@ export function SmallButton({ label, onClick, primary, danger }: { label: string
   );
 }
 
-export function Section({ title, children, id }: { title: string; children: React.ReactNode; id?: string }) {
+export function Section({
+  title,
+  children,
+  id,
+}: {
+  title: string;
+  children: React.ReactNode;
+  id?: string;
+}) {
   return (
     <div id={id} style={{ marginBottom: '32px', animation: 'wks-fade-in 0.18s ease' }}>
-      <div style={{
-        fontSize: '0.68rem',
-        fontWeight: 700,
-        color: 'var(--wks-text-faint)',
-        textTransform: 'uppercase',
-        letterSpacing: '0.1em',
-        marginBottom: '16px',
-        paddingBottom: '12px',
-        borderBottom: '1px solid var(--wks-border-subtle)',
-      }}>
+      <div
+        style={{
+          fontSize: '0.68rem',
+          fontWeight: 700,
+          color: 'var(--wks-text-faint)',
+          textTransform: 'uppercase',
+          letterSpacing: '0.1em',
+          marginBottom: '16px',
+          paddingBottom: '12px',
+          borderBottom: '1px solid var(--wks-border-subtle)',
+        }}
+      >
         {title}
       </div>
-      <div className="wks-settings-section-body" style={{ display: 'flex', flexDirection: 'column' }}>
+      <div
+        className="wks-settings-section-body"
+        style={{ display: 'flex', flexDirection: 'column' }}
+      >
         {children}
       </div>
     </div>
@@ -62,11 +88,17 @@ export function Section({ title, children, id }: { title: string; children: Reac
 
 /** A divided settings row: bold label left, control right. */
 const rowFrame: React.CSSProperties = {
-  display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px',
-  padding: '16px 0', borderTop: '1px solid var(--wks-border-subtle)',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: '16px',
+  padding: '16px 0',
+  borderTop: '1px solid var(--wks-border-subtle)',
 };
 const rowLabel: React.CSSProperties = {
-  fontSize: '0.85rem', fontWeight: 500, color: 'var(--wks-text-primary)',
+  fontSize: '0.85rem',
+  fontWeight: 500,
+  color: 'var(--wks-text-primary)',
   flexShrink: 0,
 };
 
@@ -79,22 +111,52 @@ export function Row({ label, children }: { label: string; children: React.ReactN
   );
 }
 
-export function CheckRow({ label, checked, onChange, disabled }: { label: string; checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
+export function CheckRow({
+  label,
+  checked,
+  onChange,
+  disabled,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  disabled?: boolean;
+}) {
   return (
-    <label style={{ ...rowFrame, cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.45 : 1 }}>
+    <label
+      style={{
+        ...rowFrame,
+        cursor: disabled ? 'default' : 'pointer',
+        opacity: disabled ? 0.45 : 1,
+      }}
+    >
       <span style={rowLabel}>{label}</span>
       <input
         type="checkbox"
         checked={checked}
         disabled={disabled}
         onChange={(e) => onChange(e.target.checked)}
-        style={{ accentColor: 'var(--wks-accent)', cursor: disabled ? 'default' : 'pointer', width: 16, height: 16, flexShrink: 0 }}
+        style={{
+          accentColor: 'var(--wks-accent)',
+          cursor: disabled ? 'default' : 'pointer',
+          width: 16,
+          height: 16,
+          flexShrink: 0,
+        }}
       />
     </label>
   );
 }
 
-export function ModeButton({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+export function ModeButton({
+  label,
+  active,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
   return (
     <button
       onClick={onClick}
@@ -187,20 +249,39 @@ export function SearchableSelect({
     el?.scrollIntoView({ block: 'nearest' });
   }, [highlight, open]);
 
-  const choose = (v: string) => { onChange(v); setOpen(false); };
+  const choose = (v: string) => {
+    onChange(v);
+    setOpen(false);
+  };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'ArrowDown') { e.preventDefault(); setHighlight((h) => Math.min(filtered.length - 1, h + 1)); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); setHighlight((h) => Math.max(0, h - 1)); }
-    else if (e.key === 'Enter') { e.preventDefault(); const o = filtered[highlight]; if (o) choose(o.value); }
-    else if (e.key === 'Escape') { e.preventDefault(); setOpen(false); }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setHighlight((h) => Math.min(filtered.length - 1, h + 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setHighlight((h) => Math.max(0, h - 1));
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      const o = filtered[highlight];
+      if (o) choose(o.value);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      setOpen(false);
+    }
   };
 
   const swatchDot = (color: string) => (
-    <span style={{
-      width: 9, height: 9, borderRadius: '50%', background: color, flexShrink: 0,
-      border: '1px solid rgba(255,255,255,0.15)',
-    }} />
+    <span
+      style={{
+        width: 9,
+        height: 9,
+        borderRadius: '50%',
+        background: color,
+        flexShrink: 0,
+        border: '1px solid rgba(255,255,255,0.15)',
+      }}
+    />
   );
 
   return (
@@ -219,20 +300,43 @@ export function SearchableSelect({
         }}
       >
         {selected?.swatch && swatchDot(selected.swatch)}
-        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: selected ? 'var(--wks-text-secondary)' : 'var(--wks-text-faint)' }}>
-          {selected ? selected.label : (placeholder || 'Select…')}
+        <span
+          style={{
+            flex: 1,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            color: selected ? 'var(--wks-text-secondary)' : 'var(--wks-text-faint)',
+          }}
+        >
+          {selected ? selected.label : placeholder || 'Select…'}
         </span>
-        <span style={{ color: 'var(--wks-text-faint)', fontSize: '0.65rem', flexShrink: 0 }}>▾</span>
+        <span style={{ color: 'var(--wks-text-faint)', fontSize: '0.65rem', flexShrink: 0 }}>
+          ▾
+        </span>
       </button>
 
       {open && (
-        <div style={{
-          position: 'absolute', top: 'calc(100% + 4px)', right: 0, width: Math.max(width, 210), zIndex: 100,
-          background: 'var(--wks-bg-elevated)', border: '1px solid var(--wks-border)',
-          borderRadius: 'var(--wks-radius-sm, 5px)', boxShadow: '0 8px 24px var(--wks-shadow, rgba(0,0,0,0.4))',
-          overflow: 'hidden',
-        }}>
-          <div style={{ padding: 7, borderBottom: '1px solid var(--wks-border-subtle, var(--wks-border))' }}>
+        <div
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 4px)',
+            right: 0,
+            width: Math.max(width, 210),
+            zIndex: 100,
+            background: 'var(--wks-bg-elevated)',
+            border: '1px solid var(--wks-border)',
+            borderRadius: 'var(--wks-radius-sm, 5px)',
+            boxShadow: '0 8px 24px var(--wks-shadow, rgba(0,0,0,0.4))',
+            overflow: 'hidden',
+          }}
+        >
+          <div
+            style={{
+              padding: 7,
+              borderBottom: '1px solid var(--wks-border-subtle, var(--wks-border))',
+            }}
+          >
             <input
               ref={inputRef}
               value={query}
@@ -244,7 +348,15 @@ export function SearchableSelect({
           </div>
           <div ref={listRef} style={{ maxHeight: 240, overflowY: 'auto', padding: 4 }}>
             {filtered.length === 0 ? (
-              <div style={{ padding: '10px 12px', fontSize: '0.75rem', color: 'var(--wks-text-faint)' }}>No matches</div>
+              <div
+                style={{
+                  padding: '10px 12px',
+                  fontSize: '0.75rem',
+                  color: 'var(--wks-text-faint)',
+                }}
+              >
+                No matches
+              </div>
             ) : (
               filtered.map((o, i) => {
                 const isSel = o.value === value;
@@ -255,16 +367,35 @@ export function SearchableSelect({
                     onMouseEnter={() => setHighlight(i)}
                     onClick={() => choose(o.value)}
                     style={{
-                      display: 'flex', alignItems: 'center', gap: 8, width: '100%',
-                      padding: '6px 10px', fontSize: '0.78rem', fontFamily: 'inherit',
-                      textAlign: 'left', border: 'none', borderRadius: 4, cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      width: '100%',
+                      padding: '6px 10px',
+                      fontSize: '0.78rem',
+                      fontFamily: 'inherit',
+                      textAlign: 'left',
+                      border: 'none',
+                      borderRadius: 4,
+                      cursor: 'pointer',
                       background: isHi ? 'var(--wks-bg-hover)' : 'transparent',
-                      color: isSel ? 'var(--wks-accent-text, var(--wks-accent))' : 'var(--wks-text-secondary)',
+                      color: isSel
+                        ? 'var(--wks-accent-text, var(--wks-accent))'
+                        : 'var(--wks-text-secondary)',
                       fontWeight: isSel ? 600 : 400,
                     }}
                   >
                     {o.swatch && swatchDot(o.swatch)}
-                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.label}</span>
+                    <span
+                      style={{
+                        flex: 1,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {o.label}
+                    </span>
                     {isSel && <span style={{ flexShrink: 0, fontSize: '0.75rem' }}>✓</span>}
                   </button>
                 );

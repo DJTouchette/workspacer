@@ -12,33 +12,108 @@ interface ClaudeProfile {
 }
 
 const ProfileEditForm: React.FC<{
-  name: string; configDir: string; args: string;
-  mcpItems: LibraryItem[]; mcpSel: string[]; onToggleMcp: (id: string) => void;
-  onNameChange: (v: string) => void; onConfigDirChange: (v: string) => void; onArgsChange: (v: string) => void;
-  onSave: () => void; onCancel: () => void;
-}> = ({ name, configDir, args, mcpItems, mcpSel, onToggleMcp, onNameChange, onConfigDirChange, onArgsChange, onSave, onCancel }) => (
-  <div style={{
-    display: 'flex', flexDirection: 'column', gap: '4px', padding: '8px',
-    backgroundColor: 'var(--wks-bg-surface)', borderRadius: '4px', border: '1px solid var(--wks-border-input)',
-  }}>
-    <input value={name} onChange={e => onNameChange(e.target.value)} placeholder="Profile name" style={inputStyle} autoFocus />
-    <input value={configDir} onChange={e => onConfigDirChange(e.target.value)} placeholder="Config dir (e.g. ~/.claude-work, blank = default)" style={{ ...inputStyle, fontFamily: 'monospace' }} />
+  name: string;
+  configDir: string;
+  args: string;
+  mcpItems: LibraryItem[];
+  mcpSel: string[];
+  onToggleMcp: (id: string) => void;
+  onNameChange: (v: string) => void;
+  onConfigDirChange: (v: string) => void;
+  onArgsChange: (v: string) => void;
+  onSave: () => void;
+  onCancel: () => void;
+}> = ({
+  name,
+  configDir,
+  args,
+  mcpItems,
+  mcpSel,
+  onToggleMcp,
+  onNameChange,
+  onConfigDirChange,
+  onArgsChange,
+  onSave,
+  onCancel,
+}) => (
+  <div
+    style={{
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '4px',
+      padding: '8px',
+      backgroundColor: 'var(--wks-bg-surface)',
+      borderRadius: '4px',
+      border: '1px solid var(--wks-border-input)',
+    }}
+  >
     <input
-      value={args} onChange={e => onArgsChange(e.target.value)}
+      value={name}
+      onChange={(e) => onNameChange(e.target.value)}
+      placeholder="Profile name"
+      style={inputStyle}
+      autoFocus
+    />
+    <input
+      value={configDir}
+      onChange={(e) => onConfigDirChange(e.target.value)}
+      placeholder="Config dir (e.g. ~/.claude-work, blank = default)"
+      style={{ ...inputStyle, fontFamily: 'monospace' }}
+    />
+    <input
+      value={args}
+      onChange={(e) => onArgsChange(e.target.value)}
       placeholder="Extra args (e.g. --dangerously-skip-permissions)"
       style={{ ...inputStyle, fontFamily: 'monospace' }}
-      onKeyDown={e => { if (e.key === 'Enter') onSave(); }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') onSave();
+      }}
     />
     {mcpItems.length > 0 && (
       <div>
-        <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)', textTransform: 'uppercase', letterSpacing: '0.04em', margin: '4px 0 2px' }}>
+        <div
+          style={{
+            fontSize: '0.72rem',
+            color: 'var(--wks-text-disabled)',
+            textTransform: 'uppercase',
+            letterSpacing: '0.04em',
+            margin: '4px 0 2px',
+          }}
+        >
           Default MCP servers
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 1, maxHeight: 120, overflowY: 'auto' }}>
-          {mcpItems.map(it => (
-            <label key={it.id} title={it.description || it.id} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.65rem', color: 'var(--wks-text-secondary)', cursor: 'pointer', padding: '1px 0' }}>
-              <input type="checkbox" checked={mcpSel.includes(it.id)} onChange={() => onToggleMcp(it.id)} style={{ cursor: 'pointer' }} />
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.title}</span>
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 1,
+            maxHeight: 120,
+            overflowY: 'auto',
+          }}
+        >
+          {mcpItems.map((it) => (
+            <label
+              key={it.id}
+              title={it.description || it.id}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                fontSize: '0.65rem',
+                color: 'var(--wks-text-secondary)',
+                cursor: 'pointer',
+                padding: '1px 0',
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={mcpSel.includes(it.id)}
+                onChange={() => onToggleMcp(it.id)}
+                style={{ cursor: 'pointer' }}
+              />
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {it.title}
+              </span>
               <span style={{ fontSize: '0.5rem', color: 'var(--wks-text-faint)' }}>{it.scope}</span>
             </label>
           ))}
@@ -62,18 +137,21 @@ const ClaudeProfilesSection: React.FC = () => {
   const [mcpItems, setMcpItems] = useState<LibraryItem[]>([]);
 
   const load = useCallback(() => {
-    window.electronAPI.claudeProfilesList().then(p => setProfiles(p as ClaudeProfile[]));
+    window.electronAPI.claudeProfilesList().then((p) => setProfiles(p as ClaudeProfile[]));
   }, []);
 
-  useEffect(() => { load(); }, [load]);
   useEffect(() => {
-    window.electronAPI.libraryList?.()
-      .then(list => setMcpItems((list ?? []).filter(it => it.kind === 'mcp')))
+    load();
+  }, [load]);
+  useEffect(() => {
+    window.electronAPI
+      .libraryList?.()
+      .then((list) => setMcpItems((list ?? []).filter((it) => it.kind === 'mcp')))
       .catch(() => {});
   }, []);
 
   const toggleMcp = (id: string) =>
-    setEditMcp(sel => (sel.includes(id) ? sel.filter(x => x !== id) : [...sel, id]));
+    setEditMcp((sel) => (sel.includes(id) ? sel.filter((x) => x !== id) : [...sel, id]));
 
   const startEdit = (profile?: ClaudeProfile) => {
     if (profile) {
@@ -96,9 +174,19 @@ const ClaudeProfilesSection: React.FC = () => {
   const saveEdit = async () => {
     const args = editArgs.trim() ? editArgs.trim().split(/\s+/) : [];
     if (editing === 'new') {
-      await window.electronAPI.claudeProfilesAdd(editName || 'Profile', editConfigDir, args, editMcp);
+      await window.electronAPI.claudeProfilesAdd(
+        editName || 'Profile',
+        editConfigDir,
+        args,
+        editMcp,
+      );
     } else if (editing) {
-      await window.electronAPI.claudeProfilesUpdate(editing, { name: editName, configDir: editConfigDir, extraArgs: args, mcpItemIds: editMcp });
+      await window.electronAPI.claudeProfilesUpdate(editing, {
+        name: editName,
+        configDir: editConfigDir,
+        extraArgs: args,
+        mcpItemIds: editMcp,
+      });
     }
     setEditing(null);
     load();
@@ -117,46 +205,96 @@ const ClaudeProfilesSection: React.FC = () => {
   return (
     <Section title="Claude Code">
       <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-        {profiles.map(p => (
+        {profiles.map((p) => (
           <div key={p.id}>
             {editing === p.id ? (
               <ProfileEditForm
-                name={editName} configDir={editConfigDir} args={editArgs}
-                mcpItems={mcpItems} mcpSel={editMcp} onToggleMcp={toggleMcp}
-                onNameChange={setEditName} onConfigDirChange={setEditConfigDir} onArgsChange={setEditArgs}
-                onSave={saveEdit} onCancel={cancelEdit}
+                name={editName}
+                configDir={editConfigDir}
+                args={editArgs}
+                mcpItems={mcpItems}
+                mcpSel={editMcp}
+                onToggleMcp={toggleMcp}
+                onNameChange={setEditName}
+                onConfigDirChange={setEditConfigDir}
+                onArgsChange={setEditArgs}
+                onSave={saveEdit}
+                onCancel={cancelEdit}
               />
             ) : (
               <div
                 style={{
-                  display: 'flex', alignItems: 'center', gap: '8px',
-                  padding: '4px 8px', borderRadius: '4px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  padding: '4px 8px',
+                  borderRadius: '4px',
                 }}
-                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--wks-bg-hover)'; }}
-                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'; }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--wks-bg-hover)';
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent';
+                }}
               >
-                <span style={{ fontSize: '0.75rem', width: '16px', textAlign: 'center', color: p.isDefault ? 'var(--wks-accent)' : 'var(--wks-text-disabled)' }}>
+                <span
+                  style={{
+                    fontSize: '0.75rem',
+                    width: '16px',
+                    textAlign: 'center',
+                    color: p.isDefault ? 'var(--wks-accent)' : 'var(--wks-text-disabled)',
+                  }}
+                >
                   {p.isDefault ? '♦' : '○'}
                 </span>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: '0.7rem', color: 'var(--wks-text-secondary)', fontWeight: 500 }}>
+                  <div
+                    style={{
+                      fontSize: '0.7rem',
+                      color: 'var(--wks-text-secondary)',
+                      fontWeight: 500,
+                    }}
+                  >
                     {p.name}
-                    {p.isDefault && <span style={{ fontSize: '0.55rem', color: 'var(--wks-accent)', marginLeft: 6 }}>default</span>}
+                    {p.isDefault && (
+                      <span
+                        style={{ fontSize: '0.55rem', color: 'var(--wks-accent)', marginLeft: 6 }}
+                      >
+                        default
+                      </span>
+                    )}
                   </div>
                   {p.configDir && (
-                    <div style={{ fontSize: '0.58rem', color: 'var(--wks-text-faint)', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <div
+                      style={{
+                        fontSize: '0.58rem',
+                        color: 'var(--wks-text-faint)',
+                        fontFamily: 'monospace',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
                       {p.configDir}
                     </div>
                   )}
                   {p.extraArgs.length > 0 && (
-                    <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)', fontFamily: 'monospace' }}>
+                    <div
+                      style={{
+                        fontSize: '0.72rem',
+                        color: 'var(--wks-text-disabled)',
+                        fontFamily: 'monospace',
+                      }}
+                    >
                       {p.extraArgs.join(' ')}
                     </div>
                   )}
                 </div>
                 {!p.isDefault && <SmallButton label="Default" onClick={() => setDefault(p.id)} />}
                 <SmallButton label="Edit" onClick={() => startEdit(p)} />
-                {p.id !== 'default' && <SmallButton label="✕" onClick={() => remove(p.id)} danger />}
+                {p.id !== 'default' && (
+                  <SmallButton label="✕" onClick={() => remove(p.id)} danger />
+                )}
               </div>
             )}
           </div>
@@ -164,22 +302,44 @@ const ClaudeProfilesSection: React.FC = () => {
 
         {editing === 'new' ? (
           <ProfileEditForm
-            name={editName} configDir={editConfigDir} args={editArgs}
-            mcpItems={mcpItems} mcpSel={editMcp} onToggleMcp={toggleMcp}
-            onNameChange={setEditName} onConfigDirChange={setEditConfigDir} onArgsChange={setEditArgs}
-            onSave={saveEdit} onCancel={cancelEdit}
+            name={editName}
+            configDir={editConfigDir}
+            args={editArgs}
+            mcpItems={mcpItems}
+            mcpSel={editMcp}
+            onToggleMcp={toggleMcp}
+            onNameChange={setEditName}
+            onConfigDirChange={setEditConfigDir}
+            onArgsChange={setEditArgs}
+            onSave={saveEdit}
+            onCancel={cancelEdit}
           />
         ) : (
           <button
             onClick={() => startEdit()}
             style={{
-              padding: '6px 12px', fontSize: '0.65rem', fontFamily: 'inherit', fontWeight: 500,
-              backgroundColor: 'transparent', color: 'var(--wks-text-muted)',
-              border: '1px dashed var(--wks-border-input)', borderRadius: '4px',
-              cursor: 'pointer', height: 'auto', lineHeight: '1.4', margin: '4px 0 0', width: '100%',
+              padding: '6px 12px',
+              fontSize: '0.65rem',
+              fontFamily: 'inherit',
+              fontWeight: 500,
+              backgroundColor: 'transparent',
+              color: 'var(--wks-text-muted)',
+              border: '1px dashed var(--wks-border-input)',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              height: 'auto',
+              lineHeight: '1.4',
+              margin: '4px 0 0',
+              width: '100%',
             }}
-            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-accent)'; (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-secondary)'; }}
-            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-border-input)'; (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-muted)'; }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-accent)';
+              (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-secondary)';
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-border-input)';
+              (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-muted)';
+            }}
           >
             + Add Profile
           </button>

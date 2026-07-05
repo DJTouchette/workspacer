@@ -74,7 +74,9 @@ describe('SessionEnd analytics finalization', () => {
       expect(statuses).toContain('ended');
 
       // The finalizing write must carry a real ended_at timestamp.
-      const endedCall = recordMock.mock.calls.map((c) => c[0] as any).find((r) => r.status === 'ended');
+      const endedCall = recordMock.mock.calls
+        .map((c) => c[0] as any)
+        .find((r) => r.status === 'ended');
       expect(endedCall.endedAt).toBeTruthy();
     } finally {
       vi.useRealTimers();

@@ -65,7 +65,9 @@ describe('parseUnifiedDiff', () => {
   });
 
   it('detects binary diffs', () => {
-    const d = parseUnifiedDiff('diff --git a/x.png b/x.png\nBinary files a/x.png and b/x.png differ\n');
+    const d = parseUnifiedDiff(
+      'diff --git a/x.png b/x.png\nBinary files a/x.png and b/x.png differ\n',
+    );
     expect(d.binary).toBe(true);
     expect(d.hunks).toHaveLength(0);
   });

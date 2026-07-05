@@ -174,8 +174,7 @@ export class DatabaseService {
     )`);
 
     const current = db.prepare('SELECT MAX(version) as v FROM _migrations').get() as
-      | { v: number | null }
-      | undefined;
+      { v: number | null } | undefined;
     const currentVersion = current?.v ?? 0;
 
     if (currentVersion < 1) {

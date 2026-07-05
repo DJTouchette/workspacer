@@ -196,7 +196,7 @@ describe('deepMerge semantics – via configService.saveConfig', () => {
     expect(cfg.ui.theme).toBe('dark');
   });
 
-  it('an empty/null config section does not wipe that section\'s defaults', () => {
+  it("an empty/null config section does not wipe that section's defaults", () => {
     // A bare `ui:` line in config.yaml parses to { ui: null }. deepMerge must
     // keep all ui defaults instead of replacing the section with null.
     configService.saveConfig({ ui: null } as any);

@@ -9,50 +9,97 @@ import FleetDeck from '../../src/components/FleetDeck';
 import type { AgentWorkspace } from '../../src/types/pane';
 
 const agents: AgentWorkspace[] = [
-  { id: 'a1', name: 'Refactor agent', cwd: '/repo/refactor', sessionId: 'sess-1', tabs: [], activeTabId: '' },
-  { id: 'a2', name: 'Builder agent', cwd: '/repo/builder', sessionId: 'sess-2', tabs: [], activeTabId: '' },
+  {
+    id: 'a1',
+    name: 'Refactor agent',
+    cwd: '/repo/refactor',
+    sessionId: 'sess-1',
+    tabs: [],
+    activeTabId: '',
+  },
+  {
+    id: 'a2',
+    name: 'Builder agent',
+    cwd: '/repo/builder',
+    sessionId: 'sess-2',
+    tabs: [],
+    activeTabId: '',
+  },
   { id: 'global', name: 'Overview', global: true, cwd: '', tabs: [], activeTabId: '' },
 ];
 
 const snapshotBySession: Record<string, any> = {
   'sess-1': {
-    sessionId: 'sess-1', ambientState: 'waiting_approval', conversation: [],
-    activeToolCalls: [], completedToolCalls: [], fileChanges: [], subagents: [], workflows: [],
+    sessionId: 'sess-1',
+    ambientState: 'waiting_approval',
+    conversation: [],
+    activeToolCalls: [],
+    completedToolCalls: [],
+    fileChanges: [],
+    subagents: [],
+    workflows: [],
     pendingApproval: { toolName: 'Bash', toolInput: { command: 'npm test' }, timestamp: 1000 },
-    pendingQuestions: null, usage: null,
+    pendingQuestions: null,
+    usage: null,
   },
   'sess-2': {
-    sessionId: 'sess-2', ambientState: 'streaming',
+    sessionId: 'sess-2',
+    ambientState: 'streaming',
     conversation: [{ role: 'assistant', content: 'Wiring up the deck', timestamp: 1 }],
-    activeToolCalls: [{ id: 't1', name: 'Edit', input: { file_path: '/repo/builder/App.tsx' }, status: 'running', startedAt: 1 }],
-    completedToolCalls: [], fileChanges: [], subagents: [], workflows: [],
-    pendingApproval: null, pendingQuestions: null,
-    usage: { model: 'claude-opus-4-8', contextTokens: 50000, contextLimit: 200000, totalInputTokens: 0, totalOutputTokens: 0, costUSD: 0.42 },
+    activeToolCalls: [
+      {
+        id: 't1',
+        name: 'Edit',
+        input: { file_path: '/repo/builder/App.tsx' },
+        status: 'running',
+        startedAt: 1,
+      },
+    ],
+    completedToolCalls: [],
+    fileChanges: [],
+    subagents: [],
+    workflows: [],
+    pendingApproval: null,
+    pendingQuestions: null,
+    usage: {
+      model: 'claude-opus-4-8',
+      contextTokens: 50000,
+      contextLimit: 200000,
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      costUSD: 0.42,
+    },
   },
 };
 
 // The feed is lifted to App in production, so the test mirrors that: a tiny
 // harness calls the real useAttentionFeed and passes the same instance to the
 // provider, keeping the test exercising real snapshot-derived attention.
-function Harness({ viewLevel, onOpenAgent }: { viewLevel: 'fleet' | 'piloting'; onOpenAgent: (id: string) => void }) {
+function Harness({
+  viewLevel,
+  onOpenAgent,
+}: {
+  viewLevel: 'fleet' | 'piloting';
+  onOpenAgent: (id: string) => void;
+}) {
   const attention = useAttentionFeed(snapshotBySession, agents);
   return (
     <ConfigProvider>
-    <AttentionProvider
-      agents={agents}
-      activeAgentId="a1"
-      snapshotBySession={snapshotBySession}
-      inboxOpen
-      openInbox={vi.fn()}
-      closeInbox={vi.fn()}
-      viewLevel={viewLevel}
-      setViewLevel={vi.fn()}
-      onOpenAgent={onOpenAgent}
-      attention={attention}
-    >
-      <InboxDrawer />
-      <FleetDeck top={40} left={196} />
-    </AttentionProvider>
+      <AttentionProvider
+        agents={agents}
+        activeAgentId="a1"
+        snapshotBySession={snapshotBySession}
+        inboxOpen
+        openInbox={vi.fn()}
+        closeInbox={vi.fn()}
+        viewLevel={viewLevel}
+        setViewLevel={vi.fn()}
+        onOpenAgent={onOpenAgent}
+        attention={attention}
+      >
+        <InboxDrawer />
+        <FleetDeck top={40} left={196} />
+      </AttentionProvider>
     </ConfigProvider>
   );
 }
@@ -64,7 +111,9 @@ function renderSurfaces(viewLevel: 'fleet' | 'piloting' = 'fleet') {
 }
 
 describe('Mission Control surfaces', () => {
-  beforeEach(() => { vi.clearAllMocks(); });
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
 
   it('renders the inbox with an approval card derived from the snapshot', () => {
     renderSurfaces();

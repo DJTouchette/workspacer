@@ -21,7 +21,14 @@ const LayoutSection: React.FC<LayoutSectionProps> = ({ config, save }) => {
             onChange={(e) => save({ panes: { ...config.panes, peek: parseInt(e.target.value) } })}
             style={{ width: '120px', accentColor: 'var(--wks-accent)' }}
           />
-          <span style={{ fontSize: '0.7rem', fontFamily: 'monospace', color: 'var(--wks-text-tertiary)', minWidth: '32px' }}>
+          <span
+            style={{
+              fontSize: '0.7rem',
+              fontFamily: 'monospace',
+              color: 'var(--wks-text-tertiary)',
+              minWidth: '32px',
+            }}
+          >
             {config.panes?.peek ?? 80}px
           </span>
         </div>
@@ -37,7 +44,14 @@ const LayoutSection: React.FC<LayoutSectionProps> = ({ config, save }) => {
             onChange={(e) => save({ panes: { ...config.panes, gap: parseInt(e.target.value) } })}
             style={{ width: '120px', accentColor: 'var(--wks-accent)' }}
           />
-          <span style={{ fontSize: '0.7rem', fontFamily: 'monospace', color: 'var(--wks-text-tertiary)', minWidth: '32px' }}>
+          <span
+            style={{
+              fontSize: '0.7rem',
+              fontFamily: 'monospace',
+              color: 'var(--wks-text-tertiary)',
+              minWidth: '32px',
+            }}
+          >
             {config.panes?.gap ?? 16}px
           </span>
         </div>

@@ -78,8 +78,8 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
   const sessionId = opts.resumeSessionId || randomUUID();
   // An explicit mode wins; the legacy boolean maps to bypass. Recorded on the
   // snapshot so the composer pill shows truth.
-  const permissionMode = opts.permissionMode
-    ?? (opts.skipPermissions ? 'bypassPermissions' : 'default');
+  const permissionMode =
+    opts.permissionMode ?? (opts.skipPermissions ? 'bypassPermissions' : 'default');
   // Record name/parent before the session registers so adopted cards are
   // enriched from the very first hook event.
   claudeSessionStore.setSpawnMeta(sessionId, {
@@ -100,7 +100,8 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
   let userMcp: { path: string; toolNames: string[] } | null = null;
   if (!wantsFacade && opts.mcpItemIds && opts.mcpItemIds.length) {
     const wanted = new Set(opts.mcpItemIds);
-    const servers = libraryService.list(opts.cwd)
+    const servers = libraryService
+      .list(opts.cwd)
       .filter((it) => it.kind === 'mcp' && it.mcp && wanted.has(it.id))
       .map((it) => ({ id: it.id, mcp: it.mcp! }));
     userMcp = buildSessionMcpConfig(sessionId, servers);
@@ -125,12 +126,13 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
     // Facade sessions get the MCP config + pre-allowed tools + a role prompt.
     // A supervisor also learns its session id and is kicked into /supervise;
     // a plain facade worker just gets the tools.
-    ...(wantsFacade && facadeSpawnArgs({
-      sessionId,
-      supervisor: opts.supervisor,
-      summarizerModel: supCfg?.summarizerModel,
-      pollSeconds: supCfg?.pollSeconds,
-    })),
+    ...(wantsFacade &&
+      facadeSpawnArgs({
+        sessionId,
+        supervisor: opts.supervisor,
+        summarizerModel: supCfg?.summarizerModel,
+        pollSeconds: supCfg?.pollSeconds,
+      })),
     // User-selected MCP servers (non-facade sessions).
     ...(userMcp && {
       mcpConfig: userMcp.path,
@@ -144,5 +146,12 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
   // remote caller instead of failing the spawn.
   let cwd = opts.cwd && fs.existsSync(opts.cwd) ? opts.cwd : (process.env.HOME ?? os.homedir());
   if (opts.supervisor && !opts.cwd) cwd = ensureSupervisorHome();
-  return claudemonSessionClient.spawn({ argv, cwd, cols: opts.cols, rows: opts.rows, env, sessionId });
+  return claudemonSessionClient.spawn({
+    argv,
+    cwd,
+    cols: opts.cols,
+    rows: opts.rows,
+    env,
+    sessionId,
+  });
 }

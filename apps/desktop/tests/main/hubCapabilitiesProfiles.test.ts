@@ -8,14 +8,23 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const { handlers, addProfile } = vi.hoisted(() => ({
   handlers: new Map<string, (params: unknown) => unknown>(),
-  addProfile: vi.fn((name: string, configDir: string, extraArgs: string[], mcpItemIds: string[] = []) => ({
-    id: 'p1', name, configDir, extraArgs, mcpItemIds, isDefault: true,
-  })),
+  addProfile: vi.fn(
+    (name: string, configDir: string, extraArgs: string[], mcpItemIds: string[] = []) => ({
+      id: 'p1',
+      name,
+      configDir,
+      extraArgs,
+      mcpItemIds,
+      isDefault: true,
+    }),
+  ),
 }));
 
 // Capture every registered capability handler.
 vi.mock('../../src/main/services/hubClient', () => ({
-  registerCapability: (name: string, handler: (params: unknown) => unknown) => { handlers.set(name, handler); },
+  registerCapability: (name: string, handler: (params: unknown) => unknown) => {
+    handlers.set(name, handler);
+  },
 }));
 vi.mock('../../src/main/services/claudeProfiles', () => ({ claudeProfiles: { addProfile } }));
 
@@ -28,15 +37,27 @@ vi.mock('electron', () => ({ Notification: { isSupported: () => false } }));
 vi.mock('../../src/main/services/claudeSessionStore', () => ({ claudeSessionStore: {} }));
 vi.mock('../../src/main/services/claudemonSessionClient', () => ({ claudemonSessionClient: {} }));
 vi.mock('../../src/main/services/claudeResolver', () => ({ buildClaudeArgv: vi.fn() }));
-vi.mock('../../src/main/services/configService', () => ({ configService: { getConfig: () => ({}) }, getConfigDir: () => '/tmp' }));
+vi.mock('../../src/main/services/configService', () => ({
+  configService: { getConfig: () => ({}) },
+  getConfigDir: () => '/tmp',
+}));
 vi.mock('../../src/main/services/claudeModels', () => ({ listClaudeModels: vi.fn(() => []) }));
 vi.mock('../../src/main/services/libraryService', () => ({ libraryService: {} }));
 vi.mock('../../src/main/services/sessionService', () => ({ sessionService: {} }));
 vi.mock('../../src/main/services/sessionHistory', () => ({ sessionHistory: {} }));
 vi.mock('../../src/main/services/layoutService', () => ({ layoutService: {} }));
-vi.mock('../../src/main/services/claudeSessionList', () => ({ listClaudeSessionsForDir: vi.fn(() => []) }));
-vi.mock('../../src/main/services/fileService', () => ({ readTextFile: vi.fn(), writeTextFile: vi.fn(), listDir: vi.fn() }));
-vi.mock('../../src/main/services/fileWatchService', () => ({ startWatch: vi.fn(), stopWatch: vi.fn() }));
+vi.mock('../../src/main/services/claudeSessionList', () => ({
+  listClaudeSessionsForDir: vi.fn(() => []),
+}));
+vi.mock('../../src/main/services/fileService', () => ({
+  readTextFile: vi.fn(),
+  writeTextFile: vi.fn(),
+  listDir: vi.fn(),
+}));
+vi.mock('../../src/main/services/fileWatchService', () => ({
+  startWatch: vi.fn(),
+  stopWatch: vi.fn(),
+}));
 vi.mock('../../src/main/services/searchService', () => ({ searchProject: vi.fn() }));
 
 const { registerHubCapabilities } = await import('../../src/main/services/hubCapabilities');

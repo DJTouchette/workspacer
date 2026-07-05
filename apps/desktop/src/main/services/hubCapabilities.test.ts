@@ -38,7 +38,9 @@ vi.mock('./hubClient', () => ({
 vi.mock('./brainDelegation', () => ({ DELEGATE_CATALOG_TO_BRAIN: false }));
 
 const spawnManagedAgent = vi.fn(async () => 'managed-session-id');
-vi.mock('./managedSpawn', () => ({ spawnManagedAgent: (...a: unknown[]) => spawnManagedAgent(...a) }));
+vi.mock('./managedSpawn', () => ({
+  spawnManagedAgent: (...a: unknown[]) => spawnManagedAgent(...a),
+}));
 
 const spawnClaudeAgent = vi.fn(async () => 'claude-session-id');
 vi.mock('./claudeSpawn', () => ({ spawnClaudeAgent: (...a: unknown[]) => spawnClaudeAgent(...a) }));
@@ -82,11 +84,15 @@ vi.mock('./configService', () => ({
 }));
 
 // Handoff brief authored path — used by claude.handoffAgentBrief.
-vi.mock('./agentHandoff', () => ({ agentHandoffBrief: vi.fn(async () => ({ path: '/agent-brief.md' })) }));
+vi.mock('./agentHandoff', () => ({
+  agentHandoffBrief: vi.fn(async () => ({ path: '/agent-brief.md' })),
+}));
 
 // The rest are only referenced inside handlers we do not invoke; mock them so
 // importing hubCapabilities does not pull in Electron/native plumbing.
-vi.mock('electron', () => ({ Notification: vi.fn().mockImplementation(() => ({ show: vi.fn() })) }));
+vi.mock('electron', () => ({
+  Notification: vi.fn().mockImplementation(() => ({ show: vi.fn() })),
+}));
 vi.mock('./claudeProfiles', () => ({ claudeProfiles: {} }));
 vi.mock('../lib/appIcon', () => ({ appIconPath: () => undefined }));
 vi.mock('./claudeModels', () => ({ listClaudeModels: vi.fn(() => []) }));
@@ -95,9 +101,15 @@ vi.mock('./sessionService', () => ({ sessionService: {} }));
 vi.mock('./sessionHistory', () => ({ sessionHistory: {} }));
 vi.mock('./layoutService', () => ({ layoutService: {} }));
 vi.mock('./claudeSessionList', () => ({ listClaudeSessionsForDir: vi.fn() }));
-vi.mock('./fileService', () => ({ readTextFile: vi.fn(), writeTextFile: vi.fn(), listDir: vi.fn(() => ({ path: '', entries: [] })) }));
+vi.mock('./fileService', () => ({
+  readTextFile: vi.fn(),
+  writeTextFile: vi.fn(),
+  listDir: vi.fn(() => ({ path: '', entries: [] })),
+}));
 vi.mock('./fileWatchService', () => ({ startWatch: vi.fn(), stopWatch: vi.fn() }));
-vi.mock('./searchService', () => ({ searchProject: vi.fn(() => ({ results: [], truncated: false })) }));
+vi.mock('./searchService', () => ({
+  searchProject: vi.fn(() => ({ results: [], truncated: false })),
+}));
 vi.mock('./gitService', () => ({
   status: vi.fn(async () => ({ branch: 'main', files: [] })),
   diff: vi.fn(async () => ''),
@@ -147,11 +159,20 @@ describe('registerHubCapabilities — registration', () => {
 
 describe('agents.spawn — dispatch', () => {
   it('routes a managed provider (codex) through spawnManagedAgent, not spawnClaudeAgent', async () => {
-    const res = await call('agents.spawn', { provider: 'codex', cwd: '/proj', model: 'o1', effort: 'high' });
+    const res = await call('agents.spawn', {
+      provider: 'codex',
+      cwd: '/proj',
+      model: 'o1',
+      effort: 'high',
+    });
 
     expect(spawnManagedAgent).toHaveBeenCalledTimes(1);
     expect(spawnClaudeAgent).not.toHaveBeenCalled();
-    const arg = spawnManagedAgent.mock.calls[0][0] as { provider: string; cwd: string; model: string };
+    const arg = spawnManagedAgent.mock.calls[0][0] as {
+      provider: string;
+      cwd: string;
+      model: string;
+    };
     expect(arg.provider).toBe('codex');
     expect(arg.cwd).toBe('/proj');
     expect(arg.model).toBe('o1');
@@ -159,7 +180,11 @@ describe('agents.spawn — dispatch', () => {
   });
 
   it('routes provider=claude (or unset) through spawnClaudeAgent and forwards mcpItemIds', async () => {
-    const res = await call('agents.spawn', { provider: 'claude', cwd: '/proj', mcpItemIds: ['srv1', 'srv2'] });
+    const res = await call('agents.spawn', {
+      provider: 'claude',
+      cwd: '/proj',
+      mcpItemIds: ['srv1', 'srv2'],
+    });
 
     expect(spawnClaudeAgent).toHaveBeenCalledTimes(1);
     expect(spawnManagedAgent).not.toHaveBeenCalled();
@@ -186,7 +211,10 @@ describe('agents.spawn — SECURITY: remote callers cannot auto-bypass approvals
 
   it('drops a bypassPermissions permissionMode to undefined (never auto-bypass)', async () => {
     await call('agents.spawn', { cwd: '/proj', permissionMode: 'bypassPermissions' });
-    const arg = spawnClaudeAgent.mock.calls[0][0] as { skipPermissions: boolean; permissionMode: string | undefined };
+    const arg = spawnClaudeAgent.mock.calls[0][0] as {
+      skipPermissions: boolean;
+      permissionMode: string | undefined;
+    };
     expect(arg.skipPermissions).toBe(false);
     expect(arg.permissionMode).toBeUndefined();
   });
@@ -198,7 +226,12 @@ describe('agents.spawn — SECURITY: remote callers cannot auto-bypass approvals
   });
 
   it('forces skipPermissions off on the managed path too', async () => {
-    await call('agents.spawn', { provider: 'codex', cwd: '/proj', skipPermissions: true, permissionMode: 'yolo' });
+    await call('agents.spawn', {
+      provider: 'codex',
+      cwd: '/proj',
+      skipPermissions: true,
+      permissionMode: 'yolo',
+    });
     const arg = spawnManagedAgent.mock.calls[0][0] as { skipPermissions: boolean };
     expect(arg.skipPermissions).toBe(false);
   });
@@ -219,9 +252,9 @@ describe('providers discovery', () => {
   });
 
   it('providers.listModels rejects an unknown provider', async () => {
-    await expect(async () => await call('providers.listModels', { provider: 'bogus' })).rejects.toThrow(
-      /providers\.listModels requires/,
-    );
+    await expect(
+      async () => await call('providers.listModels', { provider: 'bogus' }),
+    ).rejects.toThrow(/providers\.listModels requires/);
     expect(clientMock.listProviderModels).not.toHaveBeenCalled();
   });
 
@@ -247,9 +280,9 @@ describe('claude control pass-throughs', () => {
   });
 
   it('claude.setPermissionMode validates its params', async () => {
-    await expect(async () => await call('claude.setPermissionMode', { sessionId: 's1' })).rejects.toThrow(
-      /requires \{ sessionId, mode \}/,
-    );
+    await expect(
+      async () => await call('claude.setPermissionMode', { sessionId: 's1' }),
+    ).rejects.toThrow(/requires \{ sessionId, mode \}/);
   });
 
   it('claude.setModel forwards model + effort to claudemon', async () => {
@@ -270,7 +303,9 @@ describe('claude control pass-throughs', () => {
   });
 
   it('claude.handoffBrief rejects a missing sessionId', async () => {
-    await expect(async () => await call('claude.handoffBrief', {})).rejects.toThrow(/requires \{ sessionId \}/);
+    await expect(async () => await call('claude.handoffBrief', {})).rejects.toThrow(
+      /requires \{ sessionId \}/,
+    );
   });
 });
 
@@ -283,9 +318,9 @@ describe('agents.sendMessage', () => {
 
   it('surfaces a not-accepting-input rejection when claudemon returns ok:false', async () => {
     clientMock.message.mockResolvedValueOnce({ ok: false, mode: 'Approval' } as never);
-    await expect(async () => await call('agents.sendMessage', { sessionId: 's1', text: 'hi' })).rejects.toThrow(
-      /not accepting input.*Approval/,
-    );
+    await expect(
+      async () => await call('agents.sendMessage', { sessionId: 's1', text: 'hi' }),
+    ).rejects.toThrow(/not accepting input.*Approval/);
   });
 
   it('validates params before hitting claudemon', async () => {
@@ -306,14 +341,16 @@ describe('error propagation', () => {
 
   it('propagates a rejection from the underlying spawn (does not swallow it)', async () => {
     spawnClaudeAgent.mockRejectedValueOnce(new Error('spawn boom'));
-    await expect(async () => await call('agents.spawn', { cwd: '/proj' })).rejects.toThrow('spawn boom');
+    await expect(async () => await call('agents.spawn', { cwd: '/proj' })).rejects.toThrow(
+      'spawn boom',
+    );
   });
 
   it('propagates a rejection from claudemon.setModel', async () => {
     clientMock.setModel.mockRejectedValueOnce(new Error('daemon down'));
-    await expect(async () => await call('claude.setModel', { sessionId: 's1', model: 'x' })).rejects.toThrow(
-      'daemon down',
-    );
+    await expect(
+      async () => await call('claude.setModel', { sessionId: 's1', model: 'x' }),
+    ).rejects.toThrow('daemon down');
   });
 });
 
@@ -344,9 +381,9 @@ describe('fs.* path confinement (SECURITY.md #8)', () => {
   });
 
   it('fs.write denies writing outside the workspace', () => {
-    expect(() => call('fs.write', { path: path.join(os.homedir(), '.ssh', 'authorized_keys'), contents: 'x' })).toThrow(
-      /outside the allowed workspace/,
-    );
+    expect(() =>
+      call('fs.write', { path: path.join(os.homedir(), '.ssh', 'authorized_keys'), contents: 'x' }),
+    ).toThrow(/outside the allowed workspace/);
     expect(writeTextFile).not.toHaveBeenCalled();
   });
 
@@ -357,7 +394,9 @@ describe('fs.* path confinement (SECURITY.md #8)', () => {
   });
 
   it('search.project denies a cwd outside the workspace', () => {
-    expect(() => call('search.project', { query: 'x', cwd: '/etc' })).toThrow(/outside the allowed workspace/);
+    expect(() => call('search.project', { query: 'x', cwd: '/etc' })).toThrow(
+      /outside the allowed workspace/,
+    );
     expect(searchProject).not.toHaveBeenCalled();
   });
 

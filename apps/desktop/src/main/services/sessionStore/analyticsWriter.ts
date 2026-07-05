@@ -21,11 +21,14 @@ export function gitBranchOf(cwd: string): string {
 export function writeHistory(session: ClaudeSessionState, status: 'active' | 'ended'): void {
   const now = Date.now();
   const workflowFailed = session.workflows.filter((w) => w.status === 'failed').length;
-  const subagentCount = session.subagents.length + session.workflows.reduce((n, w) => n + w.agents.length, 0);
+  const subagentCount =
+    session.subagents.length + session.workflows.reduce((n, w) => n + w.agents.length, 0);
   sessionHistory.record({
     sessionId: session.sessionId,
     cwd: session.cwd,
-    agentName: session.cwd ? path.basename(session.cwd.replace(/[/\\]+$/, '')) : session.sessionId.slice(0, 8),
+    agentName: session.cwd
+      ? path.basename(session.cwd.replace(/[/\\]+$/, ''))
+      : session.sessionId.slice(0, 8),
     provider: session.provider ?? '',
     model: session.usage?.model ?? '',
     gitBranch: gitBranchOf(session.cwd),

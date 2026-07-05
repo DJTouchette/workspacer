@@ -37,7 +37,9 @@ export const SystemNotices: React.FC = () => {
         return [...rest, n];
       });
     });
-    return () => { unsub?.(); };
+    return () => {
+      unsub?.();
+    };
   }, []);
 
   const dismiss = useCallback((idx: number) => {
@@ -47,18 +49,30 @@ export const SystemNotices: React.FC = () => {
   if (notices.length === 0) return null;
 
   return (
-    <div style={{
-      position: 'fixed', top: 38, left: '50%', transform: 'translateX(-50%)',
-      zIndex: 30000, display: 'flex', flexDirection: 'column', gap: 8,
-      width: 'min(560px, calc(100vw - 40px))', pointerEvents: 'none',
-    }}>
+    <div
+      style={{
+        position: 'fixed',
+        top: 38,
+        left: '50%',
+        transform: 'translateX(-50%)',
+        zIndex: 30000,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 8,
+        width: 'min(560px, calc(100vw - 40px))',
+        pointerEvents: 'none',
+      }}
+    >
       {notices.map((n, i) => (
         <div
           key={(n.key ?? 'n') + ':' + i}
           style={{
             pointerEvents: 'auto',
-            display: 'flex', gap: 10, alignItems: 'flex-start',
-            padding: '10px 12px', borderRadius: 8,
+            display: 'flex',
+            gap: 10,
+            alignItems: 'flex-start',
+            padding: '10px 12px',
+            borderRadius: 8,
             background: 'var(--wks-glass-strong, #26242b)',
             backdropFilter: 'blur(var(--wks-glass-blur, 12px)) saturate(160%)',
             WebkitBackdropFilter: 'blur(var(--wks-glass-blur, 12px)) saturate(160%)',
@@ -67,11 +81,21 @@ export const SystemNotices: React.FC = () => {
             color: 'var(--wks-text-primary, #e8e8ee)',
           }}
         >
-          <div style={{ marginTop: 1, flexShrink: 0 }}><Icon level={n.level} /></div>
+          <div style={{ marginTop: 1, flexShrink: 0 }}>
+            <Icon level={n.level} />
+          </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: '0.78rem', fontWeight: 600 }}>{n.title}</div>
             {n.detail && (
-              <div style={{ fontSize: '0.7rem', color: 'var(--wks-text-muted, #a8a8b3)', marginTop: 3, lineHeight: 1.45, wordBreak: 'break-word' }}>
+              <div
+                style={{
+                  fontSize: '0.7rem',
+                  color: 'var(--wks-text-muted, #a8a8b3)',
+                  marginTop: 3,
+                  lineHeight: 1.45,
+                  wordBreak: 'break-word',
+                }}
+              >
                 {n.detail}
               </div>
             )}
@@ -79,9 +103,16 @@ export const SystemNotices: React.FC = () => {
               <button
                 onClick={() => window.electronAPI.openLogsFolder?.()}
                 style={{
-                  marginTop: 6, cursor: 'pointer', fontSize: '0.66rem', fontWeight: 600, fontFamily: 'inherit',
-                  background: 'transparent', color: ACCENT[n.level],
-                  border: `1px solid ${ACCENT[n.level]}`, borderRadius: 4, padding: '2px 8px',
+                  marginTop: 6,
+                  cursor: 'pointer',
+                  fontSize: '0.66rem',
+                  fontWeight: 600,
+                  fontFamily: 'inherit',
+                  background: 'transparent',
+                  color: ACCENT[n.level],
+                  border: `1px solid ${ACCENT[n.level]}`,
+                  borderRadius: 4,
+                  padding: '2px 8px',
                 }}
               >
                 Open logs
@@ -92,8 +123,14 @@ export const SystemNotices: React.FC = () => {
             onClick={() => dismiss(i)}
             title="Dismiss"
             style={{
-              flexShrink: 0, cursor: 'pointer', background: 'transparent', border: 'none',
-              color: 'var(--wks-text-muted, #a8a8b3)', padding: 2, display: 'flex', alignItems: 'center',
+              flexShrink: 0,
+              cursor: 'pointer',
+              background: 'transparent',
+              border: 'none',
+              color: 'var(--wks-text-muted, #a8a8b3)',
+              padding: 2,
+              display: 'flex',
+              alignItems: 'center',
             }}
           >
             <X size={14} />

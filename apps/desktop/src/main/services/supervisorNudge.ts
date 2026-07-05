@@ -29,7 +29,11 @@ class SupervisorNudge {
    * Call when a session has just transitioned into a needs-you state. `kind`
    * is what it's blocked on; `supervisorIds` is every live supervisor session.
    */
-  onBlock(session: ClaudeSessionState, kind: 'approval' | 'question', supervisorIds: string[]): void {
+  onBlock(
+    session: ClaudeSessionState,
+    kind: 'approval' | 'question',
+    supervisorIds: string[],
+  ): void {
     const supervisors = supervisorIds.filter((id) => id !== session.sessionId);
     if (supervisors.length === 0) return; // no supervisor → optional, nothing to do
 

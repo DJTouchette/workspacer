@@ -98,7 +98,9 @@ class UpdateService {
     autoUpdater.on('update-available', (info: UpdateInfo) =>
       console.log(`[updateService] update available: ${info.version} (downloading)`),
     );
-    autoUpdater.on('update-not-available', () => console.log('[updateService] no update available'));
+    autoUpdater.on('update-not-available', () =>
+      console.log('[updateService] no update available'),
+    );
     autoUpdater.on('download-progress', (p) =>
       console.log(`[updateService] downloading ${Math.round(p.percent)}%`),
     );

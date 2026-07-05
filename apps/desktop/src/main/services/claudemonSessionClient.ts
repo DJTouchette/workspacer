@@ -93,7 +93,7 @@ class ClaudemonSessionClient {
     if (!res.ok) {
       throw new Error(`spawn failed: HTTP ${res.status} ${await res.text()}`);
     }
-    const resBody = await res.json() as { session_id: string };
+    const resBody = (await res.json()) as { session_id: string };
     const sessionId = resBody.session_id;
     this.cwds.set(sessionId, rest.cwd);
     this.attachByteStream(sessionId, sessionId, portChannel, 'owner');
@@ -130,7 +130,7 @@ class ClaudemonSessionClient {
     if (!res.ok) {
       throw new Error(`spawn-managed failed: HTTP ${res.status} ${await res.text()}`);
     }
-    const resBody = await res.json() as { session_id: string };
+    const resBody = (await res.json()) as { session_id: string };
     this.cwds.set(resBody.session_id, rest.cwd);
     this.managedIds.add(resBody.session_id);
     return resBody.session_id;
@@ -149,10 +149,18 @@ class ClaudemonSessionClient {
     if (bin) params.set('bin', bin);
     const qs = params.toString();
     try {
-      const res = await fetch(`${CLAUDEMON_API_URL}/providers/${provider}/models${qs ? `?${qs}` : ''}`);
+      const res = await fetch(
+        `${CLAUDEMON_API_URL}/providers/${provider}/models${qs ? `?${qs}` : ''}`,
+      );
       if (!res.ok) return [];
-      const body = await res.json() as { models?: Array<{ id: string; label: string; default?: boolean }> };
-      return (body.models ?? []).map((m) => ({ id: m.id, label: m.label, default: m.default === true }));
+      const body = (await res.json()) as {
+        models?: Array<{ id: string; label: string; default?: boolean }>;
+      };
+      return (body.models ?? []).map((m) => ({
+        id: m.id,
+        label: m.label,
+        default: m.default === true,
+      }));
     } catch {
       return [];
     }
@@ -183,15 +191,19 @@ class ClaudemonSessionClient {
       .then(async (res) => {
         let dead = res.status === 404;
         if (res.ok) {
-          const body = await res.json().catch(() => null) as { mode?: string } | null;
+          const body = (await res.json().catch(() => null)) as { mode?: string } | null;
           dead = body?.mode === 'stopped';
         }
         if (!dead) return;
         const stream = this.streams.get(viewerKey);
         if (stream && stream.sessionId === sessionId) {
           stream.stopped = true;
-          try { stream.abort.abort(); } catch {}
-          try { stream.port.close(); } catch {}
+          try {
+            stream.abort.abort();
+          } catch {}
+          try {
+            stream.port.close();
+          } catch {}
           this.streams.delete(viewerKey);
         }
         const win = this.mainWindow;
@@ -199,7 +211,9 @@ class ClaudemonSessionClient {
           win.webContents.send(IPC.TERMINAL_EXIT, viewerKey);
         }
       })
-      .catch(() => { /* daemon unreachable — the SSE backoff handles that path */ });
+      .catch(() => {
+        /* daemon unreachable — the SSE backoff handles that path */
+      });
   }
 
   /** Detach a viewer without affecting the session itself. */
@@ -207,8 +221,12 @@ class ClaudemonSessionClient {
     const stream = this.streams.get(paneId);
     if (!stream || stream.kind !== 'attached') return;
     stream.stopped = true;
-    try { stream.abort.abort(); } catch {}
-    try { stream.port.close(); } catch {}
+    try {
+      stream.abort.abort();
+    } catch {}
+    try {
+      stream.port.close();
+    } catch {}
     this.streams.delete(paneId);
   }
 
@@ -244,8 +262,8 @@ class ClaudemonSessionClient {
     port1.on('message', (event) => {
       const data = event.data;
       if (typeof data === 'string') {
-        this.input(sessionId, data).catch(err =>
-          console.error(`[claudemonSessionClient] input failed for ${sessionId}:`, err)
+        this.input(sessionId, data).catch((err) =>
+          console.error(`[claudemonSessionClient] input failed for ${sessionId}:`, err),
         );
       }
     });
@@ -256,63 +274,61 @@ class ClaudemonSessionClient {
     // equals the pane id, letting multiple viewers of the same session each
     // have their own port. We send all three names so the preload-side
     // `deliverPort` handler can pick whichever the channel expects.
-    this.mainWindow.webContents.postMessage(
-      portChannel,
-      { sessionId, viewerKey, id: viewerKey },
-      [port2],
-    );
+    this.mainWindow.webContents.postMessage(portChannel, { sessionId, viewerKey, id: viewerKey }, [
+      port2,
+    ]);
 
     // Spawn the SSE byte consumer (background).
-    this.consumeByteStream(stream).catch(err =>
-      console.error(`[claudemonSessionClient] byte stream ended for ${sessionId}:`, err)
+    this.consumeByteStream(stream).catch((err) =>
+      console.error(`[claudemonSessionClient] byte stream ended for ${sessionId}:`, err),
     );
   }
 
   private async consumeByteStream(stream: SessionStream): Promise<void> {
-    await consumeSseStream(
-      `${CLAUDEMON_API_URL}/sessions/${stream.sessionId}/stream`,
-      {
-        signal: stream.abort.signal,
-        backoffInitialMs: BACKOFF_INITIAL_MS,
-        backoffMaxMs: BACKOFF_MAX_MS,
-        joinWith: '',
-        onFrame(b64) {
-          const bytes = Buffer.from(b64, 'base64');
-          // Send as binary string (matches the existing terminal:port shape
-          // that the renderer's onTerminalOutput already decodes from).
-          const binStr = bytes.toString('binary');
-          if (!stream.stopped) {
-            try { stream.port.postMessage(binStr); } catch {}
-          }
-        },
-        onError: (err) => {
-          console.warn(
-            `[claudemonSessionClient] stream ${stream.sessionId} error, retrying:`,
-            err,
-          );
-          // On stream error, check whether the session still exists in
-          // claudemon. A 404 means the PTY process exited and the daemon
-          // dropped the session — fire terminal:exit so the renderer can
-          // mark the pane dead. Only the owner fires the event (attached
-          // viewers don't control session lifecycle).
-          if (stream.kind === 'owner' && !stream.stopped) {
-            fetch(`${CLAUDEMON_API_URL}/sessions/${stream.sessionId}`)
-              .then((res) => {
-                if (res.status === 404 && !stream.stopped) {
-                  stream.stopped = true;
-                  try { stream.abort.abort(); } catch {}
-                  this.streams.delete(stream.viewerKey);
-                  const win = this.mainWindow;
-                  if (win && !win.isDestroyed()) {
-                    win.webContents.send(IPC.TERMINAL_EXIT, stream.sessionId);
-                  }
-                }
-              })
-              .catch(() => { /* best-effort: network hiccup, let the backoff retry */ });
-          }
-        },
+    await consumeSseStream(`${CLAUDEMON_API_URL}/sessions/${stream.sessionId}/stream`, {
+      signal: stream.abort.signal,
+      backoffInitialMs: BACKOFF_INITIAL_MS,
+      backoffMaxMs: BACKOFF_MAX_MS,
+      joinWith: '',
+      onFrame(b64) {
+        const bytes = Buffer.from(b64, 'base64');
+        // Send as binary string (matches the existing terminal:port shape
+        // that the renderer's onTerminalOutput already decodes from).
+        const binStr = bytes.toString('binary');
+        if (!stream.stopped) {
+          try {
+            stream.port.postMessage(binStr);
+          } catch {}
+        }
       },
-    );
+      onError: (err) => {
+        console.warn(`[claudemonSessionClient] stream ${stream.sessionId} error, retrying:`, err);
+        // On stream error, check whether the session still exists in
+        // claudemon. A 404 means the PTY process exited and the daemon
+        // dropped the session — fire terminal:exit so the renderer can
+        // mark the pane dead. Only the owner fires the event (attached
+        // viewers don't control session lifecycle).
+        if (stream.kind === 'owner' && !stream.stopped) {
+          fetch(`${CLAUDEMON_API_URL}/sessions/${stream.sessionId}`)
+            .then((res) => {
+              if (res.status === 404 && !stream.stopped) {
+                stream.stopped = true;
+                try {
+                  stream.abort.abort();
+                } catch {}
+                this.streams.delete(stream.viewerKey);
+                const win = this.mainWindow;
+                if (win && !win.isDestroyed()) {
+                  win.webContents.send(IPC.TERMINAL_EXIT, stream.sessionId);
+                }
+              }
+            })
+            .catch(() => {
+              /* best-effort: network hiccup, let the backoff retry */
+            });
+        }
+      },
+    });
   }
 
   /** Send raw bytes (or a base64-encoded payload) to the session's PTY input. */
@@ -328,7 +344,7 @@ class ClaudemonSessionClient {
       body: JSON.stringify({ text }),
     });
     if (res.status === 409) {
-      const body = await res.json().catch(() => ({} as any)) as { mode?: string };
+      const body = (await res.json().catch(() => ({}) as any)) as { mode?: string };
       return { ok: false, mode: body.mode };
     }
     if (!res.ok) throw new Error(`message HTTP ${res.status}`);
@@ -342,13 +358,16 @@ class ClaudemonSessionClient {
    * be done live (busy, not in the cycle, bypass-spawned) and the caller
    * should offer the restart path. `mode` reports the daemon-confirmed mode.
    */
-  async setPermissionMode(sessionId: string, mode: string): Promise<{ ok: boolean; mode?: string; error?: string }> {
+  async setPermissionMode(
+    sessionId: string,
+    mode: string,
+  ): Promise<{ ok: boolean; mode?: string; error?: string }> {
     const res = await fetch(`${CLAUDEMON_API_URL}/sessions/${sessionId}/permission-mode`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ mode }),
     });
-    const body = await res.json().catch(() => ({} as any)) as { mode?: string; error?: string };
+    const body = (await res.json().catch(() => ({}) as any)) as { mode?: string; error?: string };
     if (res.ok) return { ok: true, mode: body.mode ?? mode };
     return { ok: false, mode: body.mode, error: body.error ?? `HTTP ${res.status}` };
   }
@@ -361,13 +380,17 @@ class ClaudemonSessionClient {
    * don't use this — they switch via the `/model` slash command on the message
    * path.
    */
-  async setModel(sessionId: string, model?: string, effort?: string): Promise<{ ok: boolean; error?: string }> {
+  async setModel(
+    sessionId: string,
+    model?: string,
+    effort?: string,
+  ): Promise<{ ok: boolean; error?: string }> {
     const res = await fetch(`${CLAUDEMON_API_URL}/sessions/${sessionId}/model`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ model, effort }),
     });
-    const body = await res.json().catch(() => ({} as any)) as { error?: string };
+    const body = (await res.json().catch(() => ({}) as any)) as { error?: string };
     if (res.ok) return { ok: true };
     return { ok: false, error: body.error ?? `HTTP ${res.status}` };
   }
@@ -377,24 +400,37 @@ class ClaudemonSessionClient {
    * handoff brief for a session — the markdown a successor agent of any
    * harness reads to take the work over.
    */
-  async handoffBrief(sessionId: string): Promise<{ ok: boolean; markdown?: string; path?: string; error?: string }> {
+  async handoffBrief(
+    sessionId: string,
+  ): Promise<{ ok: boolean; markdown?: string; path?: string; error?: string }> {
     const res = await fetch(`${CLAUDEMON_API_URL}/sessions/${sessionId}/handoff`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({}),
     });
-    const body = await res.json().catch(() => ({} as any)) as { markdown?: string; path?: string; error?: string };
+    const body = (await res.json().catch(() => ({}) as any)) as {
+      markdown?: string;
+      path?: string;
+      error?: string;
+    };
     if (res.ok) return { ok: true, markdown: body.markdown, path: body.path };
     return { ok: false, error: body.error ?? `HTTP ${res.status}` };
   }
 
   /** Resolve a parked approval. */
-  async approve(sessionId: string, decision: 'yes' | 'no' | 'always', reason?: string): Promise<void> {
+  async approve(
+    sessionId: string,
+    decision: 'yes' | 'no' | 'always',
+    reason?: string,
+  ): Promise<void> {
     await this.postJSON(`/sessions/${sessionId}/approve`, { decision, reason });
   }
 
   /** Answer an AskUserQuestion picker. */
-  async answer(sessionId: string, payload: { option?: number; text?: string; answers?: string[] }): Promise<void> {
+  async answer(
+    sessionId: string,
+    payload: { option?: number; text?: string; answers?: string[] },
+  ): Promise<void> {
     await this.postJSON(`/sessions/${sessionId}/answer`, payload);
   }
 
@@ -421,7 +457,10 @@ class ClaudemonSessionClient {
 
   /** Parsed conversation items + the latest sequence number. Pass `sinceSeq` to
    *  fetch only items after that sequence — cheap incremental polling. */
-  async getConversation(sessionId: string, sinceSeq?: number): Promise<{ seq: number; items: any[] }> {
+  async getConversation(
+    sessionId: string,
+    sinceSeq?: number,
+  ): Promise<{ seq: number; items: any[] }> {
     const qs = typeof sinceSeq === 'number' ? `?since=${sinceSeq}` : '';
     const res = await fetch(`${CLAUDEMON_API_URL}/sessions/${sessionId}/conversation${qs}`);
     if (!res.ok) return { seq: 0, items: [] };
@@ -440,8 +479,12 @@ class ClaudemonSessionClient {
     for (const [key, s] of Array.from(this.streams.entries())) {
       if (s.sessionId !== sessionId) continue;
       s.stopped = true;
-      try { s.abort.abort(); } catch {}
-      try { s.port.close(); } catch {}
+      try {
+        s.abort.abort();
+      } catch {}
+      try {
+        s.port.close();
+      } catch {}
       this.streams.delete(key);
     }
     this.cwds.delete(sessionId);
@@ -449,7 +492,9 @@ class ClaudemonSessionClient {
     // Best-effort: SIGTERM the child (for managed sessions the daemon maps
     // this to a provider terminate). The session entry stays around in the
     // daemon as a resumable Stopped row — that's intended.
-    try { await this.signal(sessionId, 'SIGTERM'); } catch {}
+    try {
+      await this.signal(sessionId, 'SIGTERM');
+    } catch {}
   }
 
   closeAll(): void {

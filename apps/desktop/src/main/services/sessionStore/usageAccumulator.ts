@@ -1,9 +1,4 @@
-import {
-  contextTokensOf,
-  contextLimitFor,
-  turnCostUSD,
-  emptyUsage,
-} from '../modelUsage';
+import { contextTokensOf, contextLimitFor, turnCostUSD, emptyUsage } from '../modelUsage';
 import { configService } from '../configService';
 import type { ClaudeSessionState } from '../claudeSessionStore';
 
@@ -68,10 +63,14 @@ export class SessionUsageAccumulator {
   private rememberModel(model: string): void {
     if (this.knownModels === null) {
       const cfg = configService.getConfig() as any;
-      this.knownModels = new Set(Array.isArray(cfg.claude?.seenModels) ? cfg.claude.seenModels : []);
+      this.knownModels = new Set(
+        Array.isArray(cfg.claude?.seenModels) ? cfg.claude.seenModels : [],
+      );
     }
     if (this.knownModels.has(model)) return;
     this.knownModels.add(model);
-    configService.saveConfig({ claude: { seenModels: Array.from(this.knownModels).sort() } } as any);
+    configService.saveConfig({
+      claude: { seenModels: Array.from(this.knownModels).sort() },
+    } as any);
   }
 }

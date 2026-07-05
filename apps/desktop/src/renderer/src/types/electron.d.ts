@@ -39,7 +39,14 @@ export interface ElectronAPI {
   setTitleBarOverlay: (color: string, symbolColor: string) => void;
 
   // Terminal (non-Claude shells) — control on IPC, I/O on MessagePort
-  createTerminal: (shell: string, cwd?: string, cols?: number, rows?: number, profileId?: string, resumeSessionId?: string) => Promise<string>;
+  createTerminal: (
+    shell: string,
+    cwd?: string,
+    cols?: number,
+    rows?: number,
+    profileId?: string,
+    resumeSessionId?: string,
+  ) => Promise<string>;
   writeTerminal: (id: string, data: string) => void;
   resizeTerminal: (id: string, cols: number, rows: number) => Promise<void>;
   closeTerminal: (id: string) => Promise<void>;
@@ -47,19 +54,70 @@ export interface ElectronAPI {
   onTerminalExit: (callback: (id: string) => void) => () => void;
 
   // Claude sessions (delegated to claudemon daemon)
-  spawnClaude: (opts: { cwd?: string; provider?: 'claude' | 'codex' | 'opencode' | 'pi'; profileId?: string; model?: string; effort?: string; permissionMode?: string; skipPermissions?: boolean; resumeSessionId?: string; cols?: number; rows?: number; supervisor?: boolean; label?: string; parentSessionId?: string; mcpItemIds?: string[] }) => Promise<string>;
-  claudeListModels: () => Promise<{ defaultModel: string; skipPermissionsDefault: boolean; aliases: Array<{ value: string; label: string }>; seen: string[] }>;
-  workflowAgentTranscript: (sessionId: string, runId: string | null, agentId: string) => Promise<{ role: string; text: string }[] | null>;
-  workflowAgentConversation: (sessionId: string, runId: string | null, agentId: string) => Promise<import('./claudeSession').ConversationTurn[] | null>;
-  providerListModels: (provider: 'codex' | 'opencode' | 'pi', cwd?: string) => Promise<Array<{ id: string; label: string; default: boolean }>>;
-  providerCheckAll: () => Promise<Array<{ provider: string; found: boolean; resolvedPath: string | null; customBin: string }>>;
+  spawnClaude: (opts: {
+    cwd?: string;
+    provider?: 'claude' | 'codex' | 'opencode' | 'pi';
+    profileId?: string;
+    model?: string;
+    effort?: string;
+    permissionMode?: string;
+    skipPermissions?: boolean;
+    resumeSessionId?: string;
+    cols?: number;
+    rows?: number;
+    supervisor?: boolean;
+    label?: string;
+    parentSessionId?: string;
+    mcpItemIds?: string[];
+  }) => Promise<string>;
+  claudeListModels: () => Promise<{
+    defaultModel: string;
+    skipPermissionsDefault: boolean;
+    aliases: Array<{ value: string; label: string }>;
+    seen: string[];
+  }>;
+  workflowAgentTranscript: (
+    sessionId: string,
+    runId: string | null,
+    agentId: string,
+  ) => Promise<{ role: string; text: string }[] | null>;
+  workflowAgentConversation: (
+    sessionId: string,
+    runId: string | null,
+    agentId: string,
+  ) => Promise<import('./claudeSession').ConversationTurn[] | null>;
+  providerListModels: (
+    provider: 'codex' | 'opencode' | 'pi',
+    cwd?: string,
+  ) => Promise<Array<{ id: string; label: string; default: boolean }>>;
+  providerCheckAll: () => Promise<
+    Array<{ provider: string; found: boolean; resolvedPath: string | null; customBin: string }>
+  >;
   claudeMessage: (sessionId: string, text: string) => Promise<{ ok: boolean; mode?: string }>;
-  claudeSetPermissionMode: (sessionId: string, mode: string) => Promise<{ ok: boolean; mode?: string; error?: string }>;
-  claudeSetModel: (sessionId: string, model?: string, effort?: string) => Promise<{ ok: boolean; error?: string }>;
-  claudeHandoffBrief: (sessionId: string) => Promise<{ ok: boolean; markdown?: string; path?: string; error?: string }>;
-  claudeHandoffAgentBrief: (sessionId: string) => Promise<{ ok: boolean; path?: string; fallback?: boolean; error?: string }>;
-  claudeApprove: (sessionId: string, decision: 'yes' | 'no' | 'always', reason?: string) => Promise<void>;
-  claudeAnswer: (sessionId: string, payload: { option?: number; text?: string; answers?: string[] }) => Promise<void>;
+  claudeSetPermissionMode: (
+    sessionId: string,
+    mode: string,
+  ) => Promise<{ ok: boolean; mode?: string; error?: string }>;
+  claudeSetModel: (
+    sessionId: string,
+    model?: string,
+    effort?: string,
+  ) => Promise<{ ok: boolean; error?: string }>;
+  claudeHandoffBrief: (
+    sessionId: string,
+  ) => Promise<{ ok: boolean; markdown?: string; path?: string; error?: string }>;
+  claudeHandoffAgentBrief: (
+    sessionId: string,
+  ) => Promise<{ ok: boolean; path?: string; fallback?: boolean; error?: string }>;
+  claudeApprove: (
+    sessionId: string,
+    decision: 'yes' | 'no' | 'always',
+    reason?: string,
+  ) => Promise<void>;
+  claudeAnswer: (
+    sessionId: string,
+    payload: { option?: number; text?: string; answers?: string[] },
+  ) => Promise<void>;
   claudeResize: (sessionId: string, cols: number, rows: number) => Promise<void>;
   claudeSignal: (sessionId: string, signal: string) => Promise<void>;
   claudeClose: (sessionId: string) => Promise<void>;
@@ -91,17 +149,34 @@ export interface ElectronAPI {
   layoutsDelete: (id: string) => Promise<void>;
 
   // Claude session discovery
-  claudeListSessionsForDir: (cwd: string) => Promise<{ sessionId: string; timestamp: string; summary: string }[]>;
+  claudeListSessionsForDir: (
+    cwd: string,
+  ) => Promise<{ sessionId: string; timestamp: string; summary: string }[]>;
 
   // Claude profiles
   claudeProfilesList: () => Promise<ClaudeProfile[]>;
-  claudeProfilesAdd: (name: string, configDir: string, extraArgs: string[], mcpItemIds?: string[]) => Promise<ClaudeProfile>;
+  claudeProfilesAdd: (
+    name: string,
+    configDir: string,
+    extraArgs: string[],
+    mcpItemIds?: string[],
+  ) => Promise<ClaudeProfile>;
   claudeProfilesUpdate: (id: string, updates: ProfileUpdate) => Promise<ClaudeProfile>;
   claudeProfilesRemove: (id: string) => Promise<void>;
   getClaudeSession: (sessionId: string) => Promise<ClaudeSessionSnapshot | null>;
   getAllClaudeSessions: () => Promise<ClaudeSessionSnapshot[]>;
-  onClaudeSessionUpdate: (callback: (sessionId: string, snapshot: ClaudeSessionSnapshot) => void) => () => void;
-  onHubEvent: (callback: (event: { id: string; type: string; source: string; time: string; data?: unknown }) => void) => () => void;
+  onClaudeSessionUpdate: (
+    callback: (sessionId: string, snapshot: ClaudeSessionSnapshot) => void,
+  ) => () => void;
+  onHubEvent: (
+    callback: (event: {
+      id: string;
+      type: string;
+      source: string;
+      time: string;
+      data?: unknown;
+    }) => void,
+  ) => () => void;
   onHubStatus: (callback: (status: { connected: boolean }) => void) => () => void;
   getHubStatus: () => Promise<{ connected: boolean }>;
 
@@ -110,9 +185,23 @@ export interface ElectronAPI {
   layoutGet: () => Promise<LayoutDoc>;
   layoutSet: (data: unknown) => Promise<LayoutDoc>;
   onLayoutChanged: (callback: (doc: LayoutDoc) => void) => () => void;
-  getRemoteInfo: () => Promise<{ enabled: boolean; token: string; remoteUrl: string; appUrl: string; busUrl: string; desktopBus?: boolean }>;
+  getRemoteInfo: () => Promise<{
+    enabled: boolean;
+    token: string;
+    remoteUrl: string;
+    appUrl: string;
+    busUrl: string;
+    desktopBus?: boolean;
+  }>;
   /** Toggle remote sharing at runtime (persists + restarts the hub). Returns fresh share info. */
-  setRemoteShare?: (enabled: boolean) => Promise<{ enabled: boolean; token: string; remoteUrl: string; appUrl: string; busUrl: string; desktopBus?: boolean }>;
+  setRemoteShare?: (enabled: boolean) => Promise<{
+    enabled: boolean;
+    token: string;
+    remoteUrl: string;
+    appUrl: string;
+    busUrl: string;
+    desktopBus?: boolean;
+  }>;
   listHubPlugins: () => Promise<PluginManifest[]>;
   hubPublish: (event: { type: string; source?: string; data?: unknown }) => Promise<void>;
   installPlugin: (url: string) => Promise<{ ok: boolean; plugin?: PluginManifest; error?: string }>;
@@ -121,9 +210,14 @@ export interface ElectronAPI {
   /** Read-only catalog of bundled example plugins the user can add. */
   listExamplePlugins: () => Promise<PluginManifest[]>;
   /** Add one bundled example by manifest id (copied from the app's examples dir). */
-  installExamplePlugin: (id: string) => Promise<{ ok: boolean; plugin?: PluginManifest; error?: string }>;
+  installExamplePlugin: (
+    id: string,
+  ) => Promise<{ ok: boolean; plugin?: PluginManifest; error?: string }>;
   removePlugin: (id: string) => Promise<{ ok: boolean; error?: string }>;
-  setPluginEnabled: (id: string, enabled: boolean) => Promise<{ ok: boolean; plugin?: PluginManifest; error?: string }>;
+  setPluginEnabled: (
+    id: string,
+    enabled: boolean,
+  ) => Promise<{ ok: boolean; plugin?: PluginManifest; error?: string }>;
   /** Mint an ephemeral, capability-scoped bus token for an agent-scoped plugin
    *  pane (confines the webview to the agent's cwd). null on failure. */
   pluginPaneToken?: (pluginId: string, agentCwd?: string) => Promise<string | null>;
@@ -132,14 +226,24 @@ export interface ElectronAPI {
   /** Saved values for a plugin's declared settings (defaults applied by the plugin). */
   getPluginSettings?: (pluginId: string) => Promise<Record<string, unknown>>;
   /** Persist (merge) plugin settings; returns the merged values. */
-  setPluginSettings?: (pluginId: string, values: Record<string, unknown>) => Promise<Record<string, unknown>>;
+  setPluginSettings?: (
+    pluginId: string,
+    values: Record<string, unknown>,
+  ) => Promise<Record<string, unknown>>;
   /** Fired when a plugin's settings change, so open panes re-apply them live. */
-  onPluginSettingsChanged?: (callback: (pluginId: string, values: Record<string, unknown>) => void) => () => void;
+  onPluginSettingsChanged?: (
+    callback: (pluginId: string, values: Record<string, unknown>) => void,
+  ) => () => void;
 
   // Library (reusable prompts + skills)
   libraryList: (cwd?: string) => Promise<LibraryItem[]>;
   librarySave: (input: LibrarySaveInput) => Promise<LibraryItem>;
-  libraryRemove: (scope: 'global' | 'project' | 'claude', id: string, cwd?: string, kind?: LibraryKind) => Promise<void>;
+  libraryRemove: (
+    scope: 'global' | 'project' | 'claude',
+    id: string,
+    cwd?: string,
+    kind?: LibraryKind,
+  ) => Promise<void>;
   onLibraryChanged: (callback: () => void) => () => void;
 
   // App info
@@ -152,7 +256,9 @@ export interface ElectronAPI {
   pickFiles: (defaultPath?: string) => Promise<string[]>;
   readFile: (filePath: string) => Promise<{ path: string; contents: string; size: number }>;
   writeFile: (filePath: string, contents: string) => Promise<{ ok: boolean }>;
-  readDir: (dirPath: string) => Promise<{ path: string; entries: { name: string; path: string; isDir: boolean }[] }>;
+  readDir: (
+    dirPath: string,
+  ) => Promise<{ path: string; entries: { name: string; path: string; isDir: boolean }[] }>;
 
   // Watch a single file for external changes; returns an unsubscribe function.
   watchFile: (
@@ -168,11 +274,16 @@ export interface ElectronAPI {
     wholeWord?: boolean;
     regex?: boolean;
     maxResults?: number;
-  }) => Promise<{ results: { file: string; matches: { line: number; column: number; text: string }[] }[]; truncated: boolean }>;
+  }) => Promise<{
+    results: { file: string; matches: { line: number; column: number; text: string }[] }[];
+    truncated: boolean;
+  }>;
 
   // Host filesystem browsing (web folder picker). Optional: only the web build
   // implements it — the desktop uses native OS dialogs instead.
-  fsListDir?: (path?: string) => Promise<{ path: string; parent: string; home: string; dirs: string[] }>;
+  fsListDir?: (
+    path?: string,
+  ) => Promise<{ path: string; parent: string; home: string; dirs: string[] }>;
 
   // Git (review pane). Shells out to git on the host (main process / hub),
   // keyed off the active agent's cwd. A failed git command rejects the promise.
@@ -184,9 +295,17 @@ export interface ElectronAPI {
   gitCommit: (cwd: string, message: string) => Promise<string>;
   gitPush: (cwd: string) => Promise<string>;
 
-
   // Browser cookie import
-  importChromeCookies: (domainFilter?: string[], method?: 'cdp' | 'direct', browser?: 'chrome' | 'edge') => Promise<{ imported: number; skipped: number; errors: string[]; diagnostics?: Record<string, any> }>;
+  importChromeCookies: (
+    domainFilter?: string[],
+    method?: 'cdp' | 'direct',
+    browser?: 'chrome' | 'edge',
+  ) => Promise<{
+    imported: number;
+    skipped: number;
+    errors: string[];
+    diagnostics?: Record<string, any>;
+  }>;
 
   // App lifecycle
   onBeforeQuit: (callback: () => void) => () => void;
@@ -197,7 +316,14 @@ export interface ElectronAPI {
   setActiveSession: (sessionId: string | null) => void;
   onFocusAgent: (callback: (sessionId: string) => void) => () => void;
   /** Main-process system notices (daemon/startup failures) for an in-app banner. */
-  onSystemNotice?: (callback: (notice: { level: 'error' | 'warn' | 'info'; title: string; detail?: string; key?: string }) => void) => () => void;
+  onSystemNotice?: (
+    callback: (notice: {
+      level: 'error' | 'warn' | 'info';
+      title: string;
+      detail?: string;
+      key?: string;
+    }) => void,
+  ) => () => void;
   /** Reveal the logs folder in the OS file manager (for bug reports). */
   openLogsFolder?: () => Promise<{ ok: boolean; error?: string }>;
 }

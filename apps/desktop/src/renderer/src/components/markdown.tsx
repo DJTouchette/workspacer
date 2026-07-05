@@ -19,32 +19,36 @@ const CodeBlock: React.FC<{ code: string; info?: string }> = ({ code, info }) =>
   return (
     <div style={{ margin: '6px 0' }}>
       {info && (
-        <div style={{
-          fontSize: 'calc(0.6rem * var(--claude-gui-font-scale, 1))',
-          color: colors.muted,
-          backgroundColor: 'rgba(255,255,255,0.04)',
-          padding: '2px 10px',
-          borderRadius: '6px 6px 0 0',
-          borderBottom: `1px solid ${colors.border}`,
-          fontFamily: 'var(--claude-mono-font, monospace)',
-        }}>
+        <div
+          style={{
+            fontSize: 'calc(0.6rem * var(--claude-gui-font-scale, 1))',
+            color: colors.muted,
+            backgroundColor: 'rgba(255,255,255,0.04)',
+            padding: '2px 10px',
+            borderRadius: '6px 6px 0 0',
+            borderBottom: `1px solid ${colors.border}`,
+            fontFamily: 'var(--claude-mono-font, monospace)',
+          }}
+        >
           {info}
         </div>
       )}
-      <pre style={{
-        margin: 0,
-        padding: '10px 12px',
-        backgroundColor: 'rgba(0, 0, 0, 0.3)',
-        borderRadius: info ? '0 0 6px 6px' : '6px',
-        fontSize: 'calc(0.75rem * var(--claude-gui-font-scale, 1))',
-        lineHeight: 1.5,
-        color: 'rgb(190, 200, 220)',
-        fontFamily: 'var(--claude-mono-font, monospace)',
-        overflowX: 'auto',
-        whiteSpace: 'pre',
-        border: `1px solid ${colors.border}`,
-        borderTop: info ? 'none' : undefined,
-      }}>
+      <pre
+        style={{
+          margin: 0,
+          padding: '10px 12px',
+          backgroundColor: 'rgba(0, 0, 0, 0.3)',
+          borderRadius: info ? '0 0 6px 6px' : '6px',
+          fontSize: 'calc(0.75rem * var(--claude-gui-font-scale, 1))',
+          lineHeight: 1.5,
+          color: 'rgb(190, 200, 220)',
+          fontFamily: 'var(--claude-mono-font, monospace)',
+          overflowX: 'auto',
+          whiteSpace: 'pre',
+          border: `1px solid ${colors.border}`,
+          borderTop: info ? 'none' : undefined,
+        }}
+      >
         {lines.map((ln, i) => (
           <React.Fragment key={i}>
             {renderLine(tokens?.[i], ln)}
@@ -70,27 +74,42 @@ export function renderInlineMarkdown(text: string): React.ReactNode[] {
     }
 
     if (match[2]) {
-      nodes.push(<strong key={key++} style={{ color: colors.textBright, fontWeight: 700 }}>{match[2]}</strong>);
+      nodes.push(
+        <strong key={key++} style={{ color: colors.textBright, fontWeight: 700 }}>
+          {match[2]}
+        </strong>,
+      );
     } else if (match[3]) {
-      nodes.push(<em key={key++} style={{ color: 'rgb(210, 210, 230)', fontStyle: 'italic' }}>{match[3]}</em>);
+      nodes.push(
+        <em key={key++} style={{ color: 'rgb(210, 210, 230)', fontStyle: 'italic' }}>
+          {match[3]}
+        </em>,
+      );
     } else if (match[4]) {
       nodes.push(
-        <code key={key++} style={{
-          backgroundColor: 'rgba(255, 255, 255, 0.07)',
-          padding: '1px 5px',
-          borderRadius: 3,
-          fontSize: '0.9em',
-          fontFamily: 'var(--claude-mono-font, monospace)',
-          color: 'rgb(180, 210, 255)',
-        }}>
+        <code
+          key={key++}
+          style={{
+            backgroundColor: 'rgba(255, 255, 255, 0.07)',
+            padding: '1px 5px',
+            borderRadius: 3,
+            fontSize: '0.9em',
+            fontFamily: 'var(--claude-mono-font, monospace)',
+            color: 'rgb(180, 210, 255)',
+          }}
+        >
           {match[4]}
-        </code>
+        </code>,
       );
     } else if (match[5] && match[6]) {
       nodes.push(
-        <span key={key++} style={{ color: colors.accent, textDecoration: 'underline', cursor: 'default' }} title={match[6]}>
+        <span
+          key={key++}
+          style={{ color: colors.accent, textDecoration: 'underline', cursor: 'default' }}
+          title={match[6]}
+        >
           {match[5]}
-        </span>
+        </span>,
       );
     }
 
@@ -132,7 +151,7 @@ function splitPipeCells(line: string): string[] {
   let t = line.trim();
   if (t.startsWith('|')) t = t.slice(1);
   if (t.endsWith('|')) t = t.slice(0, -1);
-  return t.split('|').map(c => c.trim());
+  return t.split('|').map((c) => c.trim());
 }
 
 /** A GFM delimiter row: every cell is dashes with optional leading/trailing
@@ -141,12 +160,13 @@ function isPipeSeparator(line: string): boolean {
   const t = line.trim();
   if (!t.includes('-')) return false;
   const cells = splitPipeCells(line);
-  return cells.length > 0 && cells.every(c => /^:?-{1,}:?$/.test(c));
+  return cells.length > 0 && cells.every((c) => /^:?-{1,}:?$/.test(c));
 }
 
 function pipeAligns(sepLine: string): ColAlign[] {
-  return splitPipeCells(sepLine).map(c => {
-    const l = c.startsWith(':'), r = c.endsWith(':');
+  return splitPipeCells(sepLine).map((c) => {
+    const l = c.startsWith(':'),
+      r = c.endsWith(':');
     return l && r ? 'center' : r ? 'right' : 'left';
   });
 }
@@ -170,13 +190,20 @@ function isDrawnContentRow(line: string): boolean {
 }
 
 function splitDrawnCells(line: string): string[] {
-  const cells = line.trim().split(VBAR_RE).map(c => c.trim());
+  const cells = line
+    .trim()
+    .split(VBAR_RE)
+    .map((c) => c.trim());
   if (cells.length && cells[0] === '') cells.shift();
   if (cells.length && cells[cells.length - 1] === '') cells.pop();
   return cells;
 }
 
-interface DrawnTable { header: string[] | null; rows: string[][]; end: number; }
+interface DrawnTable {
+  header: string[] | null;
+  rows: string[][];
+  end: number;
+}
 
 /** Parse a drawn (border-and-bar) table starting at `start`. Returns null if
  *  `start` isn't a border row or the lines don't form a coherent table. The
@@ -191,21 +218,29 @@ function parseDrawnTable(lines: string[], start: number): DrawnTable | null {
   while (i < lines.length) {
     const ln = lines[i];
     if (ln.trim() === '') break;
-    if (isDrawnBorder(ln)) { borders.push(i); i++; continue; }
-    if (isDrawnContentRow(ln)) { content.push({ idx: i, cells: splitDrawnCells(ln) }); i++; continue; }
+    if (isDrawnBorder(ln)) {
+      borders.push(i);
+      i++;
+      continue;
+    }
+    if (isDrawnContentRow(ln)) {
+      content.push({ idx: i, cells: splitDrawnCells(ln) });
+      i++;
+      continue;
+    }
     break;
   }
   if (content.length === 0 || borders.length < 2) return null;
   const secondBorder = borders[1];
-  const before = content.filter(c => c.idx < secondBorder).map(c => c.cells);
-  const after = content.filter(c => c.idx > secondBorder).map(c => c.cells);
+  const before = content.filter((c) => c.idx < secondBorder).map((c) => c.cells);
+  const after = content.filter((c) => c.idx > secondBorder).map((c) => c.cells);
   let header: string[] | null = null;
   let rows: string[][];
   if (before.length > 0 && after.length > 0) {
     header = before[0];
     rows = before.length > 1 ? [...before.slice(1), ...after] : after;
   } else {
-    rows = content.map(c => c.cells);
+    rows = content.map((c) => c.cells);
   }
   return { header, rows, end: i };
 }
@@ -223,30 +258,40 @@ function drawnTableFromBlock(codeLines: string[]): DrawnTable | null {
   return rest >= codeLines.length ? tbl : null;
 }
 
-function renderTable(key: number, header: string[] | null, rows: string[][], aligns?: ColAlign[]): React.ReactNode {
-  const colCount = Math.max(header?.length ?? 0, ...rows.map(r => r.length), 1);
+function renderTable(
+  key: number,
+  header: string[] | null,
+  rows: string[][],
+  aligns?: ColAlign[],
+): React.ReactNode {
+  const colCount = Math.max(header?.length ?? 0, ...rows.map((r) => r.length), 1);
   const cols = Array.from({ length: colCount }, (_, n) => n);
   const align = (ci: number): ColAlign => aligns?.[ci] ?? 'left';
   return (
     <div key={key} style={{ margin: '8px 0', overflowX: 'auto' }}>
-      <table style={{
-        borderCollapse: 'collapse',
-        fontSize: 'calc(0.75rem * var(--claude-gui-font-scale, 1))',
-        lineHeight: 1.5,
-        minWidth: '100%',
-      }}>
+      <table
+        style={{
+          borderCollapse: 'collapse',
+          fontSize: 'calc(0.75rem * var(--claude-gui-font-scale, 1))',
+          lineHeight: 1.5,
+          minWidth: '100%',
+        }}
+      >
         {header && (
           <thead>
             <tr>
-              {cols.map(ci => (
-                <th key={ci} style={{
-                  textAlign: align(ci),
-                  fontWeight: 700,
-                  color: colors.textBright,
-                  padding: '4px 10px',
-                  borderBottom: `1px solid ${colors.divider}`,
-                  whiteSpace: 'nowrap',
-                }}>
+              {cols.map((ci) => (
+                <th
+                  key={ci}
+                  style={{
+                    textAlign: align(ci),
+                    fontWeight: 700,
+                    color: colors.textBright,
+                    padding: '4px 10px',
+                    borderBottom: `1px solid ${colors.divider}`,
+                    whiteSpace: 'nowrap',
+                  }}
+                >
                   {renderInlineMarkdown(header[ci] ?? '')}
                 </th>
               ))}
@@ -255,15 +300,21 @@ function renderTable(key: number, header: string[] | null, rows: string[][], ali
         )}
         <tbody>
           {rows.map((r, ri) => (
-            <tr key={ri} style={{ backgroundColor: ri % 2 === 1 ? 'rgba(255,255,255,0.02)' : 'transparent' }}>
-              {cols.map(ci => (
-                <td key={ci} style={{
-                  textAlign: align(ci),
-                  padding: '3px 10px',
-                  borderBottom: `1px solid ${colors.borderSubtle}`,
-                  color: colors.text,
-                  verticalAlign: 'top',
-                }}>
+            <tr
+              key={ri}
+              style={{ backgroundColor: ri % 2 === 1 ? 'rgba(255,255,255,0.02)' : 'transparent' }}
+            >
+              {cols.map((ci) => (
+                <td
+                  key={ci}
+                  style={{
+                    textAlign: align(ci),
+                    padding: '3px 10px',
+                    borderBottom: `1px solid ${colors.borderSubtle}`,
+                    color: colors.text,
+                    verticalAlign: 'top',
+                  }}
+                >
                   {renderInlineMarkdown(r[ci] ?? '')}
                 </td>
               ))}
@@ -353,18 +404,26 @@ export function parseMarkdownBlocks(text: string): React.ReactNode[] {
     const headingMatch = line.match(/^(#{1,4})\s+(.+)$/);
     if (headingMatch) {
       const level = headingMatch[1].length;
-      const sizes: Record<number, string> = { 1: '0.95rem', 2: '0.88rem', 3: '0.82rem', 4: '0.78rem' };
+      const sizes: Record<number, string> = {
+        1: '0.95rem',
+        2: '0.88rem',
+        3: '0.82rem',
+        4: '0.78rem',
+      };
       blocks.push(
-        <div key={key++} style={{
-          fontSize: `calc(${sizes[level] ?? '0.78rem'} * var(--claude-gui-font-scale, 1))`,
-          fontWeight: 700,
-          color: colors.textBright,
-          margin: `${level === 1 ? 12 : 8}px 0 4px 0`,
-          paddingBottom: level <= 2 ? 4 : 0,
-          borderBottom: level <= 2 ? `1px solid ${colors.divider}` : 'none',
-        }}>
+        <div
+          key={key++}
+          style={{
+            fontSize: `calc(${sizes[level] ?? '0.78rem'} * var(--claude-gui-font-scale, 1))`,
+            fontWeight: 700,
+            color: colors.textBright,
+            margin: `${level === 1 ? 12 : 8}px 0 4px 0`,
+            paddingBottom: level <= 2 ? 4 : 0,
+            borderBottom: level <= 2 ? `1px solid ${colors.divider}` : 'none',
+          }}
+        >
           {renderInlineMarkdown(headingMatch[2])}
-        </div>
+        </div>,
       );
       i++;
       continue;
@@ -381,12 +440,20 @@ export function parseMarkdownBlocks(text: string): React.ReactNode[] {
       blocks.push(
         <div key={key++} style={{ margin: '4px 0' }}>
           {listItems.map((item, idx) => (
-            <div key={idx} style={{ display: 'flex', gap: 6, paddingLeft: Math.min(item.indent, 12) + 4, marginBottom: 2 }}>
+            <div
+              key={idx}
+              style={{
+                display: 'flex',
+                gap: 6,
+                paddingLeft: Math.min(item.indent, 12) + 4,
+                marginBottom: 2,
+              }}
+            >
               <span style={{ color: colors.accent, flexShrink: 0, lineHeight: 1.6 }}>{'•'}</span>
               <span style={{ lineHeight: 1.6 }}>{renderInlineMarkdown(item.content)}</span>
             </div>
           ))}
-        </div>
+        </div>,
       );
       continue;
     }
@@ -403,18 +470,33 @@ export function parseMarkdownBlocks(text: string): React.ReactNode[] {
         <div key={key++} style={{ margin: '4px 0' }}>
           {listItems.map((item, idx) => (
             <div key={idx} style={{ display: 'flex', gap: 6, paddingLeft: 4, marginBottom: 2 }}>
-              <span style={{ color: colors.muted, flexShrink: 0, minWidth: 14, textAlign: 'right', lineHeight: 1.6 }}>{item.num}.</span>
+              <span
+                style={{
+                  color: colors.muted,
+                  flexShrink: 0,
+                  minWidth: 14,
+                  textAlign: 'right',
+                  lineHeight: 1.6,
+                }}
+              >
+                {item.num}.
+              </span>
               <span style={{ lineHeight: 1.6 }}>{renderInlineMarkdown(item.content)}</span>
             </div>
           ))}
-        </div>
+        </div>,
       );
       continue;
     }
 
     // Horizontal rule
     if (/^[-*_]{3,}\s*$/.test(line.trim())) {
-      blocks.push(<hr key={key++} style={{ border: 'none', borderTop: `1px solid ${colors.divider}`, margin: '8px 0' }} />);
+      blocks.push(
+        <hr
+          key={key++}
+          style={{ border: 'none', borderTop: `1px solid ${colors.divider}`, margin: '8px 0' }}
+        />,
+      );
       i++;
       continue;
     }
@@ -427,16 +509,19 @@ export function parseMarkdownBlocks(text: string): React.ReactNode[] {
         i++;
       }
       blocks.push(
-        <div key={key++} style={{
-          borderLeft: `2px solid ${colors.muted}`,
-          paddingLeft: 10,
-          margin: '4px 0',
-          color: 'rgb(160, 165, 185)',
-          fontStyle: 'italic',
-          lineHeight: 1.6,
-        }}>
+        <div
+          key={key++}
+          style={{
+            borderLeft: `2px solid ${colors.muted}`,
+            paddingLeft: 10,
+            margin: '4px 0',
+            color: 'rgb(160, 165, 185)',
+            fontStyle: 'italic',
+            lineHeight: 1.6,
+          }}
+        >
           {renderInlineMarkdown(quoteLines.join(' '))}
-        </div>
+        </div>,
       );
       continue;
     }
@@ -475,7 +560,7 @@ export function parseMarkdownBlocks(text: string): React.ReactNode[] {
     blocks.push(
       <p key={key++} style={{ margin: '3px 0', lineHeight: 1.6, wordBreak: 'break-word' }}>
         {renderInlineMarkdown(paraLines.join('\n'))}
-      </p>
+      </p>,
     );
   }
 

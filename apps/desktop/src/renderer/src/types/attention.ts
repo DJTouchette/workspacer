@@ -7,12 +7,12 @@ import type { PendingApproval, PendingQuestion } from './claudeSession';
  * {@link ../hooks/useAttentionFeed}.
  */
 export type AttentionKind =
-  | 'approval'   // pendingApproval — a tool wants permission
-  | 'question'   // pendingQuestions — AskUserQuestion picker is up
-  | 'stuck'      // classifier loop/idle detection (daemon items stream, future)
-  | 'error'      // classifier error detection (daemon items stream, future)
-  | 'done'       // working → idle transition: the agent finished a task
-  | 'bigdiff';   // a large unreviewed change landed (future)
+  | 'approval' // pendingApproval — a tool wants permission
+  | 'question' // pendingQuestions — AskUserQuestion picker is up
+  | 'stuck' // classifier loop/idle detection (daemon items stream, future)
+  | 'error' // classifier error detection (daemon items stream, future)
+  | 'done' // working → idle transition: the agent finished a task
+  | 'bigdiff'; // a large unreviewed change landed (future)
 
 export type AttentionStatus = 'open' | 'resolved' | 'snoozed' | 'dismissed';
 

@@ -14,7 +14,9 @@ let capturedOpts: any;
 const consumeSseStream = vi.fn(async (_url: string, opts: any) => {
   capturedOpts = opts;
 });
-vi.mock('../lib/sseConsumer', () => ({ consumeSseStream: (...a: unknown[]) => consumeSseStream(...(a as [string, any])) }));
+vi.mock('../lib/sseConsumer', () => ({
+  consumeSseStream: (...a: unknown[]) => consumeSseStream(...(a as [string, any])),
+}));
 
 const applyConversationDelta = vi.fn();
 vi.mock('./claudeSessionStore', () => ({
@@ -23,7 +25,8 @@ vi.mock('./claudeSessionStore', () => ({
 
 vi.mock('./claudemonDaemon', () => ({ CLAUDEMON_API_URL: 'http://daemon' }));
 
-const { startClaudemonConversationBridge, stopClaudemonConversationBridge } = await import('./claudemonConversationBridge');
+const { startClaudemonConversationBridge, stopClaudemonConversationBridge } =
+  await import('./claudemonConversationBridge');
 
 beforeEach(() => {
   vi.clearAllMocks();

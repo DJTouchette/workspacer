@@ -15,8 +15,12 @@ vi.mock('./configService', () => ({ getConfigDir: () => h.dir }));
 
 import { layoutService } from './layoutService';
 
-beforeEach(() => { h.dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wks-layout-')); });
-afterEach(() => { fs.rmSync(h.dir, { recursive: true, force: true }); });
+beforeEach(() => {
+  h.dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wks-layout-'));
+});
+afterEach(() => {
+  fs.rmSync(h.dir, { recursive: true, force: true });
+});
 
 describe('layoutService — save/remove round trip', () => {
   it('removes a layout whose slug is truncated on a dash boundary', () => {

@@ -32,7 +32,9 @@
     "test:main": "vitest run",
     "test:renderer": "cd src/renderer && npx vitest run",
     "test:e2e": "npm run build && npx playwright test",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "format": "prettier --write \"src/**/*.{ts,tsx}\" \"tests/**/*.{ts,tsx}\" \"*.ts\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx}\" \"tests/**/*.{ts,tsx}\" \"*.ts\""
   },
   "dependencies": {
     "@vscode/ripgrep": "^1.18.0",
@@ -52,6 +54,7 @@
     "electron": "^33.0.0",
     "electron-builder": "^25.0.0",
     "esbuild": "^0.21.5",
+    "prettier": "3.9.4",
     "typescript": "^5.6.0",
     "vitest": "^4.1.1",
     "wait-on": "^9.0.4"

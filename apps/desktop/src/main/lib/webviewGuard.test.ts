@@ -5,7 +5,11 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { applySafeWebviewPreferences, isWebviewSrcAllowed, type MutableWebPreferences } from './webviewGuard';
+import {
+  applySafeWebviewPreferences,
+  isWebviewSrcAllowed,
+  type MutableWebPreferences,
+} from './webviewGuard';
 
 describe('applySafeWebviewPreferences', () => {
   it('strips preload and forces node integration off / context isolation on', () => {

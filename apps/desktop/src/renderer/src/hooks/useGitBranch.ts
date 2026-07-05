@@ -29,17 +29,24 @@ function fetchBranch(cwd: string): Promise<string | null> {
 
 export function useGitBranch(cwd: string | undefined): string | null {
   const [branch, setBranch] = useState<string | null>(() =>
-    cwd ? cache.get(cwd)?.branch ?? null : null,
+    cwd ? (cache.get(cwd)?.branch ?? null) : null,
   );
 
   useEffect(() => {
-    if (!cwd) { setBranch(null); return; }
+    if (!cwd) {
+      setBranch(null);
+      return;
+    }
     const cached = cache.get(cwd);
     setBranch(cached?.branch ?? null);
     if (cached && Date.now() - cached.at < TTL_MS) return;
     let alive = true;
-    fetchBranch(cwd).then((b) => { if (alive) setBranch(b); });
-    return () => { alive = false; };
+    fetchBranch(cwd).then((b) => {
+      if (alive) setBranch(b);
+    });
+    return () => {
+      alive = false;
+    };
   }, [cwd]);
 
   return branch;

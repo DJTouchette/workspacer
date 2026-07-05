@@ -38,11 +38,17 @@ export function agentAttentionScore(
 ): number {
   if (topItemPriority > 0) return 1000 + topItemPriority;
   switch (state) {
-    case 'waiting_approval': return 900;
-    case 'waiting_input': return 880;
-    case 'thinking': return 500;
-    case 'streaming': return 480;
-    case 'idle': return 200;
-    default: return 0; // stopped / unknown
+    case 'waiting_approval':
+      return 900;
+    case 'waiting_input':
+      return 880;
+    case 'thinking':
+      return 500;
+    case 'streaming':
+      return 480;
+    case 'idle':
+      return 200;
+    default:
+      return 0; // stopped / unknown
   }
 }

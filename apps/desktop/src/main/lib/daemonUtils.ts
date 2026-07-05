@@ -55,7 +55,11 @@ export function daemonSpawnOptions(extraEnv?: NodeJS.ProcessEnv): SpawnOptions {
  * `mgr.Stop()` — tearing down supervised plugin sidecars — so a bare kill would
  * orphan them. Closing stdin lets the hub exit through that path first.
  */
-export function gracefulStop(child: ChildProcess | null, label: string, graceMs = 4000): Promise<void> {
+export function gracefulStop(
+  child: ChildProcess | null,
+  label: string,
+  graceMs = 4000,
+): Promise<void> {
   return new Promise((resolve) => {
     if (!child || child.exitCode !== null || child.signalCode !== null) {
       resolve();
@@ -71,13 +75,19 @@ export function gracefulStop(child: ChildProcess | null, label: string, graceMs 
     };
     timer = setTimeout(() => {
       console.warn(`[${label}] graceful stop timed out after ${graceMs}ms; forcing kill`);
-      try { child.kill(); } catch { /* already gone */ }
+      try {
+        child.kill();
+      } catch {
+        /* already gone */
+      }
       finish();
     }, graceMs);
     child.once('exit', finish);
     try {
       child.stdin?.end(); // EOF → the daemon's watchdog runs its clean shutdown
-    } catch { /* no stdin pipe — rely on the timeout/kill fallback */ }
+    } catch {
+      /* no stdin pipe — rely on the timeout/kill fallback */
+    }
   });
 }
 

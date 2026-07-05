@@ -34,14 +34,24 @@ class FakePort {
   posted: any[] = [];
   listeners: Array<[string, (e: any) => void]> = [];
   started = false;
-  start() { this.started = true; }
-  close() { this.closed = true; }
-  postMessage(d: any) { this.posted.push(d); }
-  addEventListener(t: string, l: (e: any) => void) { this.listeners.push([t, l]); }
+  start() {
+    this.started = true;
+  }
+  close() {
+    this.closed = true;
+  }
+  postMessage(d: any) {
+    this.posted.push(d);
+  }
+  addEventListener(t: string, l: (e: any) => void) {
+    this.listeners.push([t, l]);
+  }
   removeEventListener(_t: string, l: (e: any) => void) {
     this.listeners = this.listeners.filter(([, ll]) => ll !== l);
   }
-  emit(data: any) { for (const [, l] of this.listeners) l({ data }); }
+  emit(data: any) {
+    for (const [, l] of this.listeners) l({ data });
+  }
 }
 
 async function loadPreload() {

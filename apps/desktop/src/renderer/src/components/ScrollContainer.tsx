@@ -1,7 +1,23 @@
-import React, { useRef, useState, useCallback, useEffect, useImperativeHandle, forwardRef, Suspense } from 'react';
+import React, {
+  useRef,
+  useState,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  forwardRef,
+  Suspense,
+} from 'react';
 import Pane from './Pane';
 import ErrorBoundary from './ErrorBoundary';
-import { PaneConfig, PaneType, TabConfig, CanvasRect, ViewMode, AgentWorkspace, AgentProvider } from '../types/pane';
+import {
+  PaneConfig,
+  PaneType,
+  TabConfig,
+  CanvasRect,
+  ViewMode,
+  AgentWorkspace,
+  AgentProvider,
+} from '../types/pane';
 import { useConfig } from '../hooks/useConfig';
 import { tilingColumns } from '../lib/layoutUtils';
 
@@ -22,7 +38,7 @@ const AgentWatchPane = React.lazy(() => import('../panes/AgentWatchPane'));
 const AgentsPane = React.lazy(() => import('../panes/AgentsPane'));
 
 // --- Spatial-canvas constants -------------------------------------------------
-const CARD_HEADER_H = 26;        // drag-handle strip atop each spatial card
+const CARD_HEADER_H = 26; // drag-handle strip atop each spatial card
 const ZOOM_MIN = 0.25;
 const ZOOM_MAX = 2.5;
 // Default grid slot for a card that has never been placed.
@@ -55,14 +71,25 @@ function shellQuote(p: string): string {
 }
 
 // --- Stacked feed (vertical, Instagram-style) constants -----------------------
-const STK_TOP = 16;     // top/bottom padding
-const STK_GAP = 20;     // vertical gap between cards
-const STK_SIDE = 16;    // min horizontal margin around the centered column
+const STK_TOP = 16; // top/bottom padding
+const STK_GAP = 20; // vertical gap between cards
+const STK_SIDE = 16; // min horizontal margin around the centered column
 const STK_MAX_W = 1600; // max card width
-const STK_MIN_W = 360;  // min card width before it just fills the space
+const STK_MIN_W = 360; // min card width before it just fills the space
 
 const PaneFallback = () => (
-  <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--wks-bg-base)', color: 'var(--wks-text-muted)', fontSize: '0.8rem' }}>
+  <div
+    style={{
+      width: '100%',
+      height: '100%',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: 'var(--wks-bg-base)',
+      color: 'var(--wks-text-muted)',
+      fontSize: '0.8rem',
+    }}
+  >
     Loading…
   </div>
 );
@@ -79,7 +106,15 @@ interface ScrollContainerProps {
   onUrlChange?: (tabId: string, paneId: string, url: string) => void;
   onNotesChange?: (tabId: string, paneId: string, notes: string) => void;
   onNavigateToTab?: (tabId: string) => void;
-  onAddTab?: (type: PaneType, shell?: string, label?: string, cwd?: string, profileId?: string, resumeSessionId?: string, attachSessionId?: string) => void;
+  onAddTab?: (
+    type: PaneType,
+    shell?: string,
+    label?: string,
+    cwd?: string,
+    profileId?: string,
+    resumeSessionId?: string,
+    attachSessionId?: string,
+  ) => void;
   /** Split the given tab by appending a new pane of `type` (in-pane split button). */
   onSplit?: (tabId: string, type: PaneType) => void;
   /** paneId → ptySessionId. For Claude panes, ptySessionId === Claude session id. */
@@ -104,7 +139,11 @@ interface ScrollContainerProps {
   /** Full agent list — passed down to the Ask pane so it can display all agents. */
   allAgents?: AgentWorkspace[];
   /** Spawn a supervisor agent from a question — forwarded to AskPane. */
-  spawnSupervisor?: (opts: { question?: string; parentId?: string; provider?: AgentProvider }) => Promise<string>;
+  spawnSupervisor?: (opts: {
+    question?: string;
+    parentId?: string;
+    provider?: AgentProvider;
+  }) => Promise<string>;
   /** Jump to a specific agent by id — forwarded to AskPane. */
   onJumpToAgent?: (agentId: string) => void;
 }
@@ -122,14 +161,26 @@ interface PaneCallbacks {
   editorTerminalCommand?: string;
   tabs?: TabConfig[];
   onNavigateToTab?: (tabId: string) => void;
-  onAddTab?: (type: PaneType, shell?: string, label?: string, cwd?: string, profileId?: string, resumeSessionId?: string, attachSessionId?: string) => void;
+  onAddTab?: (
+    type: PaneType,
+    shell?: string,
+    label?: string,
+    cwd?: string,
+    profileId?: string,
+    resumeSessionId?: string,
+    attachSessionId?: string,
+  ) => void;
   ptyMapping?: Record<string, string>;
   workspaceAgents?: { sessionId?: string }[];
   appCwd?: string;
   /** Full agent list for the Ask pane. */
   allAgents?: AgentWorkspace[];
   /** Spawn a supervisor — for the Ask pane. */
-  spawnSupervisor?: (opts: { question?: string; parentId?: string; provider?: AgentProvider }) => Promise<string>;
+  spawnSupervisor?: (opts: {
+    question?: string;
+    parentId?: string;
+    provider?: AgentProvider;
+  }) => Promise<string>;
   /** Jump to agent by id — for the Ask pane. */
   onJumpToAgent?: (agentId: string) => void;
 }
@@ -139,25 +190,56 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
     case 'terminal':
       return (
         <Suspense fallback={<PaneFallback />}>
-          <TerminalPane paneId={pane.id} title={pane.title} isActive={isActive} shell={pane.shell} cwd={pane.cwd} initialCommand={pane.initialCommand} onPtyReady={callbacks.onPtyReady} />
+          <TerminalPane
+            paneId={pane.id}
+            title={pane.title}
+            isActive={isActive}
+            shell={pane.shell}
+            cwd={pane.cwd}
+            initialCommand={pane.initialCommand}
+            onPtyReady={callbacks.onPtyReady}
+          />
         </Suspense>
       );
     case 'claude':
       return (
         <Suspense fallback={<PaneFallback />}>
-          <ClaudePane paneId={pane.id} title={pane.title} isActive={isActive} cwd={pane.cwd} profileId={pane.profileId} provider={pane.provider} resumeSessionId={pane.resumeSessionId} attachSessionId={pane.attachSessionId} initialPrompt={pane.initialPrompt} onPtyReady={callbacks.onPtyReady} />
+          <ClaudePane
+            paneId={pane.id}
+            title={pane.title}
+            isActive={isActive}
+            cwd={pane.cwd}
+            profileId={pane.profileId}
+            provider={pane.provider}
+            resumeSessionId={pane.resumeSessionId}
+            attachSessionId={pane.attachSessionId}
+            initialPrompt={pane.initialPrompt}
+            onPtyReady={callbacks.onPtyReady}
+          />
         </Suspense>
       );
     case 'browser':
       return (
         <Suspense fallback={<PaneFallback />}>
-          <BrowserPane paneId={pane.id} title={pane.title} isActive={isActive} initialUrl={pane.url} appMode={pane.appMode} hibernated={pane.hibernated} onUrlChange={(url) => callbacks.onUrlChange?.(pane.id, url)} />
+          <BrowserPane
+            paneId={pane.id}
+            title={pane.title}
+            isActive={isActive}
+            initialUrl={pane.url}
+            appMode={pane.appMode}
+            hibernated={pane.hibernated}
+            onUrlChange={(url) => callbacks.onUrlChange?.(pane.id, url)}
+          />
         </Suspense>
       );
     case 'notes':
       return (
         <Suspense fallback={<PaneFallback />}>
-          <NotesPane title={pane.title} notes={pane.notes} onNotesChange={(notes) => callbacks.onNotesChange?.(pane.id, notes)} />
+          <NotesPane
+            title={pane.title}
+            notes={pane.notes}
+            onNotesChange={(notes) => callbacks.onNotesChange?.(pane.id, notes)}
+          />
         </Suspense>
       );
     case 'editor':
@@ -170,20 +252,44 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
         const editorCmd = callbacks.editorTerminalCommand || 'nvim';
         const cmd = pane.filePath
           ? `${editorCmd} ${shellQuote(pane.filePath)}`
-          : pane.cwd ? `${editorCmd} .` : undefined;
+          : pane.cwd
+            ? `${editorCmd} .`
+            : undefined;
         return (
           <Suspense fallback={<PaneFallback />}>
-            <TerminalPane paneId={pane.id} title={pane.title} isActive={isActive} cwd={pane.cwd} initialCommand={cmd} onPtyReady={callbacks.onPtyReady} />
+            <TerminalPane
+              paneId={pane.id}
+              title={pane.title}
+              isActive={isActive}
+              cwd={pane.cwd}
+              initialCommand={cmd}
+              onPtyReady={callbacks.onPtyReady}
+            />
           </Suspense>
         );
       }
       return (
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--wks-text-faint)', fontSize: '0.8rem', textAlign: 'center', padding: 24 }}>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            height: '100%',
+            color: 'var(--wks-text-faint)',
+            fontSize: '0.8rem',
+            textAlign: 'center',
+            padding: 24,
+          }}
+        >
           The editor is now a plugin. Reopen it from the command palette (Open Editor).
         </div>
       );
     case 'settings':
-      return <Suspense fallback={<PaneFallback />}><SettingsPane title={pane.title} /></Suspense>;
+      return (
+        <Suspense fallback={<PaneFallback />}>
+          <SettingsPane title={pane.title} />
+        </Suspense>
+      );
     case 'review':
       return (
         <Suspense fallback={<PaneFallback />}>
@@ -195,17 +301,41 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
       // mints/revokes an agent-cwd-scoped bus token around it (see PluginPane).
       return (
         <Suspense fallback={<PaneFallback />}>
-          <PluginPane paneId={pane.id} title={pane.title} isActive={isActive} url={pane.url || 'about:blank'} hibernated={pane.hibernated} pluginId={pane.pluginId} cwd={pane.cwd} />
+          <PluginPane
+            paneId={pane.id}
+            title={pane.title}
+            isActive={isActive}
+            url={pane.url || 'about:blank'}
+            hibernated={pane.hibernated}
+            pluginId={pane.pluginId}
+            cwd={pane.cwd}
+          />
         </Suspense>
       );
     case 'plugins':
-      return <Suspense fallback={<PaneFallback />}><PluginsManagerPane title={pane.title} /></Suspense>;
+      return (
+        <Suspense fallback={<PaneFallback />}>
+          <PluginsManagerPane title={pane.title} />
+        </Suspense>
+      );
     case 'overview':
-      return <Suspense fallback={<PaneFallback />}><OverviewPane title={pane.title} agents={callbacks.workspaceAgents} /></Suspense>;
+      return (
+        <Suspense fallback={<PaneFallback />}>
+          <OverviewPane title={pane.title} agents={callbacks.workspaceAgents} />
+        </Suspense>
+      );
     case 'library':
-      return <Suspense fallback={<PaneFallback />}><LibraryPane title={pane.title} cwd={pane.cwd || callbacks.appCwd} /></Suspense>;
+      return (
+        <Suspense fallback={<PaneFallback />}>
+          <LibraryPane title={pane.title} cwd={pane.cwd || callbacks.appCwd} />
+        </Suspense>
+      );
     case 'analytics':
-      return <Suspense fallback={<PaneFallback />}><AnalyticsPane title={pane.title} /></Suspense>;
+      return (
+        <Suspense fallback={<PaneFallback />}>
+          <AnalyticsPane title={pane.title} />
+        </Suspense>
+      );
     case 'ask':
       return (
         <Suspense fallback={<PaneFallback />}>
@@ -230,7 +360,11 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
         </Suspense>
       );
     case 'agents':
-      return <Suspense fallback={<PaneFallback />}><AgentsPane isActive={isActive} /></Suspense>;
+      return (
+        <Suspense fallback={<PaneFallback />}>
+          <AgentsPane isActive={isActive} />
+        </Suspense>
+      );
     default:
       return <div>Unknown pane type</div>;
   }
@@ -321,10 +455,11 @@ function TilingLayout({
         // Liveness (drives throttling/focus) requires the agent to be on
         // screen; in spatial mode every visible card stays live, otherwise only
         // the focused tab (single) or focused pane (multi) is live.
-        const liveActive = agentActive && (forceLive ? true : (single ? isActiveTab : pane.id === activePaneId));
+        const liveActive =
+          agentActive && (forceLive ? true : single ? isActiveTab : pane.id === activePaneId);
         // Visual focus highlight: single-pane tracks the active tab; multi-pane
         // highlights the active pane of the active tab.
-        const isActive = single ? isActiveTab : (pane.id === activePaneId && isActiveTab);
+        const isActive = single ? isActiveTab : pane.id === activePaneId && isActiveTab;
         // Single pane fills the whole tab area (and stays headerless, labelled
         // by the tab). Multi-pane uses the computed grid cell.
         const cellStyle: React.CSSProperties = single
@@ -377,7 +512,34 @@ interface Interaction {
 }
 
 const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
-  ({ tabs, activeTabId, onTabFocus, onPaneClose, onPaneFocus, onTabRename, onTabMove, onPtyReady, onUrlChange, onNotesChange, onNavigateToTab, onAddTab, onSplit, ptyMapping, renameSignal, viewMode = 'tabs', onTabCanvasChange, agentActive = true, workspaceAgents, appCwd, allAgents, spawnSupervisor, onJumpToAgent }, ref) => {
+  (
+    {
+      tabs,
+      activeTabId,
+      onTabFocus,
+      onPaneClose,
+      onPaneFocus,
+      onTabRename,
+      onTabMove,
+      onPtyReady,
+      onUrlChange,
+      onNotesChange,
+      onNavigateToTab,
+      onAddTab,
+      onSplit,
+      ptyMapping,
+      renameSignal,
+      viewMode = 'tabs',
+      onTabCanvasChange,
+      agentActive = true,
+      workspaceAgents,
+      appCwd,
+      allAgents,
+      spawnSupervisor,
+      onJumpToAgent,
+    },
+    ref,
+  ) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const { config } = useConfig();
     const peek = config.panes?.peek ?? 80;
@@ -417,54 +579,66 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
     }, [peek, gap]);
 
     // Resolve a tab's spatial rect: live drag override → persisted → default slot.
-    const rectFor = useCallback((tab: TabConfig, index: number): CanvasRect => {
-      if (liveRect && liveRect.tabId === tab.id) return liveRect.rect;
-      return tab.canvas ?? defaultCanvas(index);
-    }, [liveRect]);
+    const rectFor = useCallback(
+      (tab: TabConfig, index: number): CanvasRect => {
+        if (liveRect && liveRect.tabId === tab.id) return liveRect.rect;
+        return tab.canvas ?? defaultCanvas(index);
+      },
+      [liveRect],
+    );
 
     // Latest tabs in a ref so a deferred scroll (which retries across frames)
     // always sees the current set, even for a tab added the same tick.
     const tabsRef = useRef(tabs);
     tabsRef.current = tabs;
 
-    const scrollToTab = useCallback((id: string) => {
-      // A just-opened tab (e.g. from the command palette) may not be committed to
-      // the DOM on the first frame, so its element/index isn't found yet — which
-      // left the strip highlighting the new tab while the view stayed on the old
-      // pane. Retry across a few frames until the target exists.
-      let attempts = 0;
-      const attempt = () => {
-        const container = containerRef.current;
-        if (!container) return;
+    const scrollToTab = useCallback(
+      (id: string) => {
+        // A just-opened tab (e.g. from the command palette) may not be committed to
+        // the DOM on the first frame, so its element/index isn't found yet — which
+        // left the strip highlighting the new tab while the view stayed on the old
+        // pane. Retry across a few frames until the target exists.
+        let attempts = 0;
+        const attempt = () => {
+          const container = containerRef.current;
+          if (!container) return;
 
-        if (spatial) {
-          // Pan the canvas so the target card is centred in the viewport.
-          const cur = tabsRef.current;
-          const index = cur.findIndex((t) => t.id === id);
-          if (index < 0) { if (attempts++ < 12) requestAnimationFrame(attempt); return; }
-          const tab = cur[index];
-          const rect = tab.canvas ?? defaultCanvas(index);
-          setPan({
-            x: container.clientWidth / 2 - (rect.x + rect.w / 2) * zoom,
-            y: container.clientHeight / 2 - (rect.y + rect.h / 2) * zoom,
-          });
-          return;
-        }
+          if (spatial) {
+            // Pan the canvas so the target card is centred in the viewport.
+            const cur = tabsRef.current;
+            const index = cur.findIndex((t) => t.id === id);
+            if (index < 0) {
+              if (attempts++ < 12) requestAnimationFrame(attempt);
+              return;
+            }
+            const tab = cur[index];
+            const rect = tab.canvas ?? defaultCanvas(index);
+            setPan({
+              x: container.clientWidth / 2 - (rect.x + rect.w / 2) * zoom,
+              y: container.clientHeight / 2 - (rect.y + rect.h / 2) * zoom,
+            });
+            return;
+          }
 
-        const el = container.querySelector(`[data-tab-id="${id}"]`) as HTMLElement | null;
-        if (!el) { if (attempts++ < 12) requestAnimationFrame(attempt); return; }
+          const el = container.querySelector(`[data-tab-id="${id}"]`) as HTMLElement | null;
+          if (!el) {
+            if (attempts++ < 12) requestAnimationFrame(attempt);
+            return;
+          }
 
-        if (stacked) {
-          container.scrollTo({ top: Math.max(0, el.offsetTop - STK_TOP), behavior: 'instant' });
-          return;
-        }
-        const containerRect = container.getBoundingClientRect();
-        const tabRect = el.getBoundingClientRect();
-        const scrollLeft = el.offsetLeft - containerRect.width / 2 + tabRect.width / 2;
-        container.scrollTo({ left: scrollLeft, behavior: 'instant' });
-      };
-      attempt();
-    }, [spatial, stacked, zoom]);
+          if (stacked) {
+            container.scrollTo({ top: Math.max(0, el.offsetTop - STK_TOP), behavior: 'instant' });
+            return;
+          }
+          const containerRect = container.getBoundingClientRect();
+          const tabRect = el.getBoundingClientRect();
+          const scrollLeft = el.offsetLeft - containerRect.width / 2 + tabRect.width / 2;
+          container.scrollTo({ left: scrollLeft, behavior: 'instant' });
+        };
+        attempt();
+      },
+      [spatial, stacked, zoom],
+    );
 
     useImperativeHandle(ref, () => ({ scrollToTab }), [scrollToTab]);
 
@@ -606,35 +780,67 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
       };
     }, [onTabCanvasChange]);
 
-    const beginPan = useCallback((e: React.MouseEvent) => {
-      if (!spatial || e.button !== 0) return;
-      interactionRef.current = { kind: 'pan', startClientX: e.clientX, startClientY: e.clientY, origin: { ...pan }, zoom };
-      document.body.style.cursor = 'grabbing';
-      document.body.style.userSelect = 'none';
-    }, [spatial, pan, zoom]);
+    const beginPan = useCallback(
+      (e: React.MouseEvent) => {
+        if (!spatial || e.button !== 0) return;
+        interactionRef.current = {
+          kind: 'pan',
+          startClientX: e.clientX,
+          startClientY: e.clientY,
+          origin: { ...pan },
+          zoom,
+        };
+        document.body.style.cursor = 'grabbing';
+        document.body.style.userSelect = 'none';
+      },
+      [spatial, pan, zoom],
+    );
 
-    const beginCardMove = useCallback((e: React.MouseEvent, tab: TabConfig, index: number) => {
-      if (e.button !== 0) return;
-      e.stopPropagation();
-      onTabFocus(tab.id);
-      interactionRef.current = { kind: 'move', tabId: tab.id, startClientX: e.clientX, startClientY: e.clientY, origin: rectFor(tab, index), zoom };
-      document.body.style.userSelect = 'none';
-    }, [rectFor, zoom, onTabFocus]);
+    const beginCardMove = useCallback(
+      (e: React.MouseEvent, tab: TabConfig, index: number) => {
+        if (e.button !== 0) return;
+        e.stopPropagation();
+        onTabFocus(tab.id);
+        interactionRef.current = {
+          kind: 'move',
+          tabId: tab.id,
+          startClientX: e.clientX,
+          startClientY: e.clientY,
+          origin: rectFor(tab, index),
+          zoom,
+        };
+        document.body.style.userSelect = 'none';
+      },
+      [rectFor, zoom, onTabFocus],
+    );
 
-    const beginCardResize = useCallback((e: React.MouseEvent, tab: TabConfig, index: number) => {
-      if (e.button !== 0) return;
-      e.stopPropagation();
-      interactionRef.current = { kind: 'resize', tabId: tab.id, startClientX: e.clientX, startClientY: e.clientY, origin: rectFor(tab, index), zoom };
-      document.body.style.cursor = 'nwse-resize';
-      document.body.style.userSelect = 'none';
-    }, [rectFor, zoom]);
+    const beginCardResize = useCallback(
+      (e: React.MouseEvent, tab: TabConfig, index: number) => {
+        if (e.button !== 0) return;
+        e.stopPropagation();
+        interactionRef.current = {
+          kind: 'resize',
+          tabId: tab.id,
+          startClientX: e.clientX,
+          startClientY: e.clientY,
+          origin: rectFor(tab, index),
+          zoom,
+        };
+        document.body.style.cursor = 'nwse-resize';
+        document.body.style.userSelect = 'none';
+      },
+      [rectFor, zoom],
+    );
 
-    const handleTabMove = useCallback((tabId: string, delta: number) => {
-      if (!onTabMove) return;
-      const idx = tabs.findIndex((t) => t.id === tabId);
-      if (idx < 0) return;
-      onTabMove(tabId, idx + delta);
-    }, [tabs, onTabMove]);
+    const handleTabMove = useCallback(
+      (tabId: string, delta: number) => {
+        if (!onTabMove) return;
+        const idx = tabs.findIndex((t) => t.id === tabId);
+        if (idx < 0) return;
+        onTabMove(tabId, idx + delta);
+      },
+      [tabs, onTabMove],
+    );
 
     // --- Stacked feed geometry (vertical, natural order) ----------------------
     // Cards are near-viewport tall and snap, so the feed pages one at a time.
@@ -674,8 +880,7 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
             inset: 0,
             display: spatial ? 'block' : 'none',
             backgroundColor: 'var(--wks-bg-base)',
-            backgroundImage:
-              'radial-gradient(var(--wks-border) 1px, transparent 1px)',
+            backgroundImage: 'radial-gradient(var(--wks-border) 1px, transparent 1px)',
             backgroundSize: `${24 * zoom}px ${24 * zoom}px`,
             backgroundPosition: `${pan.x}px ${pan.y}px`,
             zIndex: 0,
@@ -701,21 +906,21 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
                   zIndex: 1,
                 }
               : stacked
-              ? // Vertical feed: a tall relative block the container scrolls
-                // through; cards are absolutely positioned within it in order.
-                {
-                  position: 'relative',
-                  width: '100%',
-                  height: `${stkTotalH}px`,
-                  zIndex: 1,
-                }
-              : // In tabs mode the wrapper itself must not participate in layout
-                // (a single flex child would shrink instead of letting the cards
-                // overflow & scroll). `display: contents` makes the cards behave
-                // as direct flex children of the scroll container, exactly as
-                // before — while keeping this element (and the pane subtree under
-                // it) at a stable tree position so toggling modes never remounts.
-                { display: 'contents' }
+                ? // Vertical feed: a tall relative block the container scrolls
+                  // through; cards are absolutely positioned within it in order.
+                  {
+                    position: 'relative',
+                    width: '100%',
+                    height: `${stkTotalH}px`,
+                    zIndex: 1,
+                  }
+                : // In tabs mode the wrapper itself must not participate in layout
+                  // (a single flex child would shrink instead of letting the cards
+                  // overflow & scroll). `display: contents` makes the cards behave
+                  // as direct flex children of the scroll container, exactly as
+                  // before — while keeping this element (and the pane subtree under
+                  // it) at a stable tree position so toggling modes never remounts.
+                  { display: 'contents' }
           }
         >
           {tabs.map((tab, index) => {
@@ -752,8 +957,8 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
             const innerH = spatial
               ? rect!.h - CARD_HEADER_H
               : stacked
-              ? stkCardH // no header in stacked → content fills the whole card
-              : containerHeight;
+                ? stkCardH // no header in stacked → content fills the whole card
+                : containerHeight;
 
             const floatingCard: React.CSSProperties = {
               display: 'flex',
@@ -761,8 +966,12 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
               borderRadius: '8px',
               overflow: 'hidden',
               backgroundColor: 'var(--wks-bg-surface)',
-              border: isActiveTab ? '1px solid var(--wks-accent)' : '1px solid var(--wks-glass-border)',
-              boxShadow: isActiveTab ? '0 8px 28px var(--wks-shadow)' : '0 4px 14px var(--wks-shadow)',
+              border: isActiveTab
+                ? '1px solid var(--wks-accent)'
+                : '1px solid var(--wks-glass-border)',
+              boxShadow: isActiveTab
+                ? '0 8px 28px var(--wks-shadow)'
+                : '0 4px 14px var(--wks-shadow)',
             };
             const cardStyle: React.CSSProperties = spatial
               ? {
@@ -774,34 +983,34 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
                   height: `${rect!.h}px`,
                 }
               : stacked
-              ? {
-                  // No card chrome in stacked — just the pane content (theme-aware
-                  // rounded corners, no background/border/shadow frame).
-                  position: 'absolute',
-                  left: `${stkLeft}px`,
-                  top: `${stkY}px`,
-                  width: `${stkCardW}px`,
-                  height: `${stkCardH}px`,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  overflow: 'hidden',
-                  borderRadius: 'var(--wks-radius-lg)',
-                  scrollSnapAlign: 'center',
-                  contentVisibility: 'auto',
-                  containIntrinsicSize: `${stkCardW}px ${stkCardH}px`,
-                }
-              : {
-                  scrollSnapAlign: 'center',
-                  flexShrink: 0,
-                  height: '100%',
-                  display: 'flex',
-                  alignItems: 'stretch',
-                  width: `${tabWidth}px`,
-                  minWidth: `${tabWidth}px`,
-                  // Let the browser skip layout/paint for off-screen tabs.
-                  contentVisibility: 'auto',
-                  containIntrinsicSize: `${tabWidth}px ${containerHeight}px`,
-                };
+                ? {
+                    // No card chrome in stacked — just the pane content (theme-aware
+                    // rounded corners, no background/border/shadow frame).
+                    position: 'absolute',
+                    left: `${stkLeft}px`,
+                    top: `${stkY}px`,
+                    width: `${stkCardW}px`,
+                    height: `${stkCardH}px`,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    overflow: 'hidden',
+                    borderRadius: 'var(--wks-radius-lg)',
+                    scrollSnapAlign: 'center',
+                    contentVisibility: 'auto',
+                    containIntrinsicSize: `${stkCardW}px ${stkCardH}px`,
+                  }
+                : {
+                    scrollSnapAlign: 'center',
+                    flexShrink: 0,
+                    height: '100%',
+                    display: 'flex',
+                    alignItems: 'stretch',
+                    width: `${tabWidth}px`,
+                    minWidth: `${tabWidth}px`,
+                    // Let the browser skip layout/paint for off-screen tabs.
+                    contentVisibility: 'auto',
+                    containIntrinsicSize: `${tabWidth}px ${containerHeight}px`,
+                  };
 
             return (
               <div key={tab.id} data-tab-id={tab.id} style={cardStyle}>
@@ -811,10 +1020,14 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
                 <div
                   key="card-header"
                   onMouseDown={spatial ? (e) => beginCardMove(e, tab, index) : undefined}
-                  onDoubleClick={showHeader && onTabRename ? () => {
-                    const name = window.prompt('Rename tab', tab.title);
-                    if (name != null && name.trim()) onTabRename(tab.id, name.trim());
-                  } : undefined}
+                  onDoubleClick={
+                    showHeader && onTabRename
+                      ? () => {
+                          const name = window.prompt('Rename tab', tab.title);
+                          if (name != null && name.trim()) onTabRename(tab.id, name.trim());
+                        }
+                      : undefined
+                  }
                   style={{
                     display: showHeader ? 'flex' : 'none',
                     alignItems: 'center',
@@ -830,7 +1043,15 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
                 >
                   {/* Title-less drag handle (spatial only) — a subtle grip, no
                       "Claude/Terminal" label. */}
-                  <div style={{ width: 26, height: 3, borderRadius: 2, backgroundColor: 'var(--wks-text-faint)', opacity: 0.45 }} />
+                  <div
+                    style={{
+                      width: 26,
+                      height: 3,
+                      borderRadius: 2,
+                      backgroundColor: 'var(--wks-text-faint)',
+                      opacity: 0.45,
+                    }}
+                  />
                 </div>
 
                 {/* Invisible positioning box; the pane subtree lives here in
@@ -886,11 +1107,10 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
               </div>
             );
           })}
-
         </div>
       </div>
     );
-  }
+  },
 );
 
 ScrollContainer.displayName = 'ScrollContainer';

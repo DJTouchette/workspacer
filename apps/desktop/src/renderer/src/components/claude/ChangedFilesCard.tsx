@@ -52,13 +52,7 @@ const COLOR_BY_LANG: Record<string, string> = {
 const FileGlyph: React.FC<{ path: string }> = ({ path }) => {
   const lang = langForPath(path);
   const color = (lang && COLOR_BY_LANG[lang]) || colors.muted;
-  return (
-    <IconFile
-      size={13}
-      strokeWidth={2}
-      style={{ flexShrink: 0, color, opacity: 0.9 }}
-    />
-  );
+  return <IconFile size={13} strokeWidth={2} style={{ flexShrink: 0, color, opacity: 0.9 }} />;
 };
 
 const headerBtnStyle: React.CSSProperties = {
@@ -167,7 +161,11 @@ export const ChangedFilesCard: React.FC<{
           Changed files ({count})
         </span>
         <span
-          title={snapshot.gitAvailable ? undefined : 'Estimated from tool inputs — git status unavailable'}
+          title={
+            snapshot.gitAvailable
+              ? undefined
+              : 'Estimated from tool inputs — git status unavailable'
+          }
           style={{
             display: 'flex',
             gap: 6,
@@ -178,8 +176,12 @@ export const ChangedFilesCard: React.FC<{
           }}
         >
           {!snapshot.gitAvailable && <span style={{ color: colors.mutedDim }}>~</span>}
-          {snapshot.totalAdded > 0 && <span style={{ color: colors.success }}>+{snapshot.totalAdded}</span>}
-          {snapshot.totalRemoved > 0 && <span style={{ color: colors.error }}>−{snapshot.totalRemoved}</span>}
+          {snapshot.totalAdded > 0 && (
+            <span style={{ color: colors.success }}>+{snapshot.totalAdded}</span>
+          )}
+          {snapshot.totalRemoved > 0 && (
+            <span style={{ color: colors.error }}>−{snapshot.totalRemoved}</span>
+          )}
         </span>
         <div style={{ flex: 1 }} />
         {!tooMany && allDirs.length > 0 && (

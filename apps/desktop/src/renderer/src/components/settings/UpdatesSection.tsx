@@ -11,7 +11,8 @@ interface UpdatesSectionProps {
 
 const UpdatesSection: React.FC<UpdatesSectionProps> = ({ config, save }) => {
   const updates = config.updates ?? UPDATES_DEFAULTS;
-  const set = (patch: Partial<typeof updates>) => save({ updates: { ...UPDATES_DEFAULTS, ...updates, ...patch } });
+  const set = (patch: Partial<typeof updates>) =>
+    save({ updates: { ...UPDATES_DEFAULTS, ...updates, ...patch } });
 
   return (
     <Section title="Updates">
@@ -21,9 +22,8 @@ const UpdatesSection: React.FC<UpdatesSectionProps> = ({ config, save }) => {
         onChange={(v) => set({ enabled: v })}
       />
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
-        Checks the GitHub release feed on launch and every few hours, downloads a newer
-        build in the background, and asks before restarting to install. Only active in the
-        packaged app.
+        Checks the GitHub release feed on launch and every few hours, downloads a newer build in the
+        background, and asks before restarting to install. Only active in the packaged app.
       </div>
     </Section>
   );
