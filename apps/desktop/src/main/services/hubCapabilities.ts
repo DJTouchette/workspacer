@@ -8,12 +8,11 @@ import { Notification } from 'electron';
 import * as os from 'os';
 import * as fs from 'fs';
 import * as path from 'path';
-import { randomUUID } from 'crypto';
 import { claudeSessionStore } from './claudeSessionStore';
 import { claudemonSessionClient } from './claudemonSessionClient';
 import { agentHandoffBrief } from './agentHandoff';
-import { buildClaudeArgv } from './claudeResolver';
 import { spawnManagedAgent } from './managedSpawn';
+import { spawnClaudeAgent } from './claudeSpawn';
 import type { AgentProvider } from './agentProviders';
 import { claudeProfiles } from './claudeProfiles';
 import { registerCapability } from './hubClient';
@@ -33,8 +32,7 @@ import * as git from './gitService';
 import * as terminalShare from './terminalShare';
 import { IPC } from '../shared/ipcChannels';
 import type { SessionData, LayoutInput, ProfileUpdate } from '../shared/ipcTypes';
-import { facadeSpawnArgs } from './mcpConfig';
-import { installSupervisorSkill, ensureSupervisorHome } from './supervisorSkill';
+import { ensureSupervisorHome } from './supervisorSkill';
 
 // Mirror of ipc.ts's shell detection so a capability-spawned terminal picks the
 // same default shell a UI-spawned one would. Kept local to avoid importing the
@@ -98,13 +96,15 @@ export function registerHubCapabilities(): void {
 
   // Control: spawn a brand-new Claude Code agent session. The hub/MCP
   // counterpart of the `claude:spawn` IPC handler — lets a remote client (or
-  // Claude via the MCP facade) start a fresh agent in a directory. Mirrors the
-  // IPC path exactly (pinned session id, profile env, argv), then returns the
-  // new sessionId so the caller can immediately drive it with the other
+  // Claude via the MCP facade) start a fresh agent in a directory. Shares the
+  // spawn body with the IPC path via spawnClaudeAgent (see claudeSpawn.ts) so
+  // the two transports stay identical — including per-spawn Library MCP servers
+  // (`mcpItemIds`), which this path used to silently drop. Returns the new
+  // sessionId so the caller can immediately drive it with the other
   // capabilities. The session runs headless in claudemon; a desktop pane can
   // attach to it later via the normal attach flow.
   registerCapability('agents.spawn', async (params: unknown) => {
-    const { provider, cwd, profileId, model, effort, permissionMode: reqMode, skipPermissions: reqSkip, resumeSessionId, cols, rows, supervisor, mcpFacade, label, parentSessionId } =
+    const { provider, cwd, profileId, model, effort, permissionMode: reqMode, skipPermissions: reqSkip, resumeSessionId, cols, rows, supervisor, mcpFacade, label, parentSessionId, mcpItemIds } =
       (params ?? {}) as {
         provider?: AgentProvider;
         cwd?: string;
@@ -120,6 +120,7 @@ export function registerHubCapabilities(): void {
         mcpFacade?: boolean;
         label?: string;
         parentSessionId?: string;
+        mcpItemIds?: string[];
       };
     // SECURITY: this capability is the REMOTE/web/MCP spawn path (the local
     // desktop spawns over IPC). Driving an agent is already code execution on
@@ -143,54 +144,11 @@ export function registerHubCapabilities(): void {
       });
       return { sessionId };
     }
-    const profile = profileId ? claudeProfiles.getProfile(profileId) : undefined;
-    const env: Record<string, string> = {};
-    if (profile?.configDir) {
-      env.CLAUDE_CONFIG_DIR = profile.configDir.replace(/^~/, os.homedir());
-    }
-    // Pin the id so claude's transcript filename matches our id (see ipc.ts).
-    const sessionId = resumeSessionId || randomUUID();
-    // Record name/parent before the session registers so adopted cards are
-    // enriched from the very first hook event.
-    claudeSessionStore.setSpawnMeta(sessionId, {
-      label,
-      parentSessionId,
-      isSupervisor: supervisor,
-      provider: 'claude',
-      settings: { model, permissionMode: permissionMode ?? 'default' },
+    const sessionId = await spawnClaudeAgent({
+      cwd, profileId, model, permissionMode, skipPermissions, resumeSessionId,
+      supervisor, mcpFacade, label, parentSessionId, cols, rows, mcpItemIds,
     });
-
-    // Supervisors install the /supervise skill and default to the configured
-    // supervisor model. Facade workers (mcpFacade) get the tools but no loop.
-    const supCfg = configService.getConfig().supervisor;
-    let resolvedModel = model;
-    if (supervisor) {
-      installSupervisorSkill();
-      if (!resolvedModel) resolvedModel = supCfg?.model || undefined;
-    }
-    const argv = buildClaudeArgv({
-      extraArgs: profile?.extraArgs,
-      resumeSessionId,
-      model: resolvedModel,
-      skipPermissions,
-      permissionMode: permissionMode as 'default' | 'acceptEdits' | 'plan' | undefined,
-      sessionId,
-      // Full supervisor, or a plain facade worker — both get the MCP facade
-      // config + pre-allowed tools; only a supervisor gets the /supervise loop.
-      ...((supervisor || mcpFacade) && facadeSpawnArgs({
-        sessionId,
-        supervisor,
-        summarizerModel: supCfg?.summarizerModel,
-        pollSeconds: supCfg?.pollSeconds,
-      })),
-    });
-    // Fleet supervisors with no explicit cwd open in their dedicated home
-    // (~/.workspacer); everything else uses the given cwd or falls back to home.
-    const resolvedCwd = supervisor && !cwd
-      ? ensureSupervisorHome()
-      : (cwd && fs.existsSync(cwd) ? cwd : (process.env.HOME ?? os.homedir()));
-    const id = await claudemonSessionClient.spawn({ argv, cwd: resolvedCwd, cols, rows, env, sessionId });
-    return { sessionId: id };
+    return { sessionId };
   });
 
   // Control: open a new shell terminal session. The hub/MCP counterpart of the

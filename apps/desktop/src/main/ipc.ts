@@ -1,7 +1,6 @@
 import { ipcMain, BrowserWindow, dialog, shell } from 'electron';
 import * as os from 'os';
 import * as fs from 'fs';
-import { randomUUID } from 'crypto';
 import { configService } from './services/configService';
 import { libraryService } from './services/libraryService';
 import { sessionService } from './services/sessionService';
@@ -14,12 +13,11 @@ import { workflowWatcher } from './services/workflowWatcher';
 import { agentNotifier } from './services/agentNotifier';
 import { claudemonSessionClient } from './services/claudemonSessionClient';
 import { agentHandoffBrief } from './services/agentHandoff';
-import { buildClaudeArgv } from './services/claudeResolver';
 import { resolveAgentBinary, checkAllProviders } from './services/agentProviders';
 import { spawnManagedAgent } from './services/managedSpawn';
+import { spawnClaudeAgent } from './services/claudeSpawn';
 import { logsDir } from './services/logFile';
-import { facadeSpawnArgs, buildSessionMcpConfig } from './services/mcpConfig';
-import { installSupervisorSkill, ensureSupervisorHome } from './services/supervisorSkill';
+import { ensureSupervisorHome } from './services/supervisorSkill';
 import { importChromeCookies, importChromeCookiesViaCDP } from './services/chromeCookieImport';
 import { claudeProfiles } from './services/claudeProfiles';
 import { listClaudeSessionsForDir } from './services/claudeSessionList';
@@ -139,84 +137,23 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
         rows: opts.rows,
       });
     }
-    const profile = opts.profileId ? claudeProfiles.getProfile(opts.profileId) : undefined;
-    const env: Record<string, string> = {};
-    if (profile?.configDir) {
-      env.CLAUDE_CONFIG_DIR = profile.configDir.replace(/^~/, os.homedir());
-    }
-    // Pin the session id so claude names its transcript `<id>.jsonl` and our
-    // id == claude's id == the filename — correct transcripts even with many
-    // sessions in one cwd. Resuming keeps the existing id.
-    const sessionId = opts.resumeSessionId || randomUUID();
-    // Claude's permission mode: an explicit mode wins; the legacy boolean maps
-    // to bypass. Recorded on the snapshot so the composer pill shows truth.
-    const permissionMode = opts.permissionMode
-      ?? (opts.skipPermissions ? 'bypassPermissions' : 'default');
-    // Record name/parent before the session registers so adopted cards are
-    // enriched from the very first hook event.
-    claudeSessionStore.setSpawnMeta(sessionId, {
+    // Claude (Tier-1) PTY spawn. Shared with the `agents.spawn` hub capability
+    // via spawnClaudeAgent so the two transports can't drift (see claudeSpawn.ts).
+    return spawnClaudeAgent({
+      cwd: opts.cwd,
+      profileId: opts.profileId,
+      model: opts.model,
+      permissionMode: opts.permissionMode,
+      skipPermissions: opts.skipPermissions,
+      resumeSessionId: opts.resumeSessionId,
+      supervisor: opts.supervisor,
+      mcpFacade: opts.mcpFacade,
       label: opts.label,
       parentSessionId: opts.parentSessionId,
-      isSupervisor: opts.supervisor,
-      provider: 'claude',
-      settings: { model: opts.model, permissionMode },
+      cols: opts.cols,
+      rows: opts.rows,
+      mcpItemIds: opts.mcpItemIds,
     });
-
-    // Per-spawn MCP servers selected from the Library (kind 'mcp'). Resolve the
-    // chosen item ids to their configs, write a session-scoped --mcp-config, and
-    // pre-allow their tools. `--strict-mcp-config` so the session sees exactly
-    // these servers, not the user's global ones. Skipped for supervisors, which
-    // get the workspacer facade config instead.
-    // Sessions with the workspacer MCP facade (full supervisors, or plain
-    // facade workers a supervisor spawns) take the facade config instead of the
-    // user's library MCP servers.
-    const wantsFacade = opts.supervisor || opts.mcpFacade;
-    let userMcp: { path: string; toolNames: string[] } | null = null;
-    if (!wantsFacade && opts.mcpItemIds && opts.mcpItemIds.length) {
-      const wanted = new Set(opts.mcpItemIds);
-      const servers = libraryService.list(opts.cwd)
-        .filter((it) => it.kind === 'mcp' && it.mcp && wanted.has(it.id))
-        .map((it) => ({ id: it.id, mcp: it.mcp! }));
-      userMcp = buildSessionMcpConfig(sessionId, servers);
-    }
-
-    // Supervisors: install the /supervise skill and default to the configured
-    // supervisor model when none was passed explicitly.
-    const supCfg = configService.getConfig().supervisor;
-    let model = opts.model;
-    if (opts.supervisor) {
-      installSupervisorSkill();
-      if (!model) model = supCfg?.model || undefined;
-    }
-
-    const argv = buildClaudeArgv({
-      extraArgs: profile?.extraArgs,
-      resumeSessionId: opts.resumeSessionId,
-      model,
-      skipPermissions: opts.skipPermissions,
-      permissionMode: permissionMode as 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions',
-      sessionId,
-      // Facade sessions get the MCP config + pre-allowed tools + a role prompt.
-      // A supervisor also learns its session id and is kicked into /supervise;
-      // a plain facade worker just gets the tools.
-      ...(wantsFacade && facadeSpawnArgs({
-        sessionId,
-        supervisor: opts.supervisor,
-        summarizerModel: supCfg?.summarizerModel,
-        pollSeconds: supCfg?.pollSeconds,
-      })),
-      // User-selected MCP servers (non-facade sessions).
-      ...(userMcp && {
-        mcpConfig: userMcp.path,
-        strictMcpConfig: true,
-        allowedTools: userMcp.toolNames,
-      }),
-    });
-    // Fleet supervisors with no explicit cwd open in their dedicated home
-    // (~/.workspacer) rather than inheriting some agent's repo.
-    let cwd = opts.cwd || process.env.HOME || os.homedir();
-    if (opts.supervisor && !opts.cwd) cwd = ensureSupervisorHome();
-    return claudemonSessionClient.spawn({ argv, cwd, cols: opts.cols, rows: opts.rows, env, sessionId });
   });
 
   // ── Hub (control-plane / event bus) ──
