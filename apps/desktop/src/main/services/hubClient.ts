@@ -13,6 +13,7 @@
 import WebSocket from 'ws';
 import { BrowserWindow } from 'electron';
 import { HUB_BUS_URL, getHubToken } from './hubDaemon';
+import { IPC } from '../shared/ipcChannels';
 
 const TOPICS = ['*'];
 
@@ -141,6 +142,15 @@ function connect(): void {
           // channel so the layout reconciles without filtering the event firehose.
           if (frame.event.type === 'layout.changed') {
             forward('layout:changed', frame.event.data);
+          }
+          // Plugin settings changed somewhere (this desktop, web, or remote).
+          // Bridge it to the renderer's plugin-settings channel so open plugin
+          // panes re-apply and the Settings UI updates live regardless of which
+          // client made the edit. Local writes also get an immediate push from
+          // the SET handler; a duplicate here just re-injects the same values.
+          if (frame.event.type === 'plugin.settings.changed') {
+            const d = frame.event.data as { id?: string; values?: Record<string, unknown> } | undefined;
+            if (d?.id) forward(IPC.HUB_PLUGIN_SETTINGS_CHANGED, d.id, d.values ?? {});
           }
         }
         break;

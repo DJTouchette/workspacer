@@ -93,6 +93,15 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
   const client = new HubBusClient(token, busUrl);
   client.start();
 
+  // Base for the hub's HTTP routes (e.g. /plugins/settings). The web build is
+  // served by the hub, so an empty base resolves relative to the page origin;
+  // when an explicit bus URL is given (ws[s]://host/bus) we derive the matching
+  // http[s]://host origin from it. The token authorizes the guarded routes.
+  const hubHttpBase = busUrl
+    ? busUrl.replace(/^ws/, 'http').replace(/\/bus\/?(\?.*)?$/, '')
+    : '';
+  const hubAuth = { Authorization: `Bearer ${token}` };
+
   // Claude panes key their byte stream + input by a "viewerKey": the sessionId
   // for a pane that spawned the session, but the *paneId* for a pane attached to
   // an already-running session (so multiple viewers can coexist). The desktop
@@ -271,10 +280,39 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     // guarded route); a web/remote client can't, so it keeps its existing token.
     pluginPaneToken: () => Promise.resolve(null),
     revokePluginPaneToken: () => Promise.resolve(),
-    // Plugin settings are host-persisted; the web client has no store of its own.
-    getPluginSettings: () => Promise.resolve({}),
-    setPluginSettings: (_pluginId: string, values: Record<string, unknown>) => Promise.resolve(values),
-    onPluginSettingsChanged: () => () => {},
+    // Plugin settings live on the hub (the single source of truth, merged over
+    // manifest defaults). The web client reads/writes them over the hub's guarded
+    // HTTP route and hears about any edit — its own, the desktop's, or another
+    // remote client's — on the plugin.settings.changed bus event.
+    getPluginSettings: async (pluginId: string) => {
+      try {
+        const res = await fetch(`${hubHttpBase}/plugins/settings?pluginId=${encodeURIComponent(pluginId)}`, { headers: hubAuth });
+        if (!res.ok) return {};
+        const body = await res.json() as { values?: Record<string, unknown> };
+        return body?.values ?? {};
+      } catch {
+        return {};
+      }
+    },
+    setPluginSettings: async (pluginId: string, values: Record<string, unknown>) => {
+      try {
+        const res = await fetch(`${hubHttpBase}/plugins/settings`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...hubAuth },
+          body: JSON.stringify({ pluginId, values }),
+        });
+        if (!res.ok) return values;
+        const body = await res.json() as { values?: Record<string, unknown> };
+        return body?.values ?? values;
+      } catch {
+        return values;
+      }
+    },
+    onPluginSettingsChanged: (callback) =>
+      client.subscribe('plugin.settings.changed', (ev) => {
+        const d = ev.data as { id?: string; values?: Record<string, unknown> } | undefined;
+        if (d?.id) callback(d.id, d.values ?? {});
+      }),
 
     // ── Library ──────────────────────────────────────────────────────────
     libraryList: (cwd) => client.call('library.list', { cwd }),

@@ -78,7 +78,7 @@ theme, roughly ordered by severity within each group.
       `.settings.json` overlay, GetSettings/SetSettings (validated,
       atomic), `plugin.settings.changed` bus event, GET/POST
       /plugins/settings routes.
-- [ ] Route the desktop's HUB_PLUGIN_SETTINGS_GET/SET IPC handlers to the
+- [x] Route the desktop's HUB_PLUGIN_SETTINGS_GET/SET IPC handlers to the
       hub's /plugins/settings endpoints (currently a desktop-local file) so
       web/remote plugin settings share one source of truth; renderer should
       adopt the merged defaults+overlay shape.

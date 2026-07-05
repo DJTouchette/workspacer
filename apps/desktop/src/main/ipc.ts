@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import { configService } from './services/configService';
 import { libraryService } from './services/libraryService';
 import { sessionService } from './services/sessionService';
-import { pluginSettings } from './services/pluginSettingsService';
+import { peekLegacyPluginSettings, clearLegacyPluginSettings } from './services/pluginSettingsMigration';
 import { sessionHistory } from './services/sessionHistory';
 import { layoutService } from './services/layoutService';
 import { claudeSessionStore } from './services/claudeSessionStore';
@@ -233,10 +233,56 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       return null;
     }
   });
-  ipcMain.handle(IPC.HUB_PLUGIN_SETTINGS_GET, (_event, pluginId: string) => pluginSettings.get(pluginId));
-  ipcMain.handle(IPC.HUB_PLUGIN_SETTINGS_SET, (_event, pluginId: string, values: Record<string, unknown>) => {
-    const merged = pluginSettings.set(pluginId, values);
+  // Plugin settings live on the hub (single source of truth, shared with
+  // web/remote): GET returns the manifest defaults with the user's overlay
+  // merged on top, POST validates + persists a partial and returns the merged
+  // result. Both go through the token-guarded /plugins/settings route.
+  const hubGetPluginSettings = async (pluginId: string): Promise<Record<string, unknown>> => {
+    try {
+      const res = await fetch(`${HUB_HTTP_URL}/plugins/settings?pluginId=${encodeURIComponent(pluginId)}`, {
+        headers: hubAuthHeaders(),
+      });
+      if (!res.ok) return {};
+      const body = await res.json() as { values?: Record<string, unknown> };
+      return body?.values ?? {};
+    } catch {
+      return {}; // hub down / plugin not loaded — caller falls back to defaults
+    }
+  };
+  const hubSetPluginSettings = async (
+    pluginId: string,
+    values: Record<string, unknown>,
+  ): Promise<Record<string, unknown> | null> => {
+    try {
+      const res = await fetch(`${HUB_HTTP_URL}/plugins/settings`, {
+        method: 'POST',
+        headers: hubAuthHeaders(),
+        body: JSON.stringify({ pluginId, values }),
+      });
+      if (!res.ok) return null;
+      const body = await res.json() as { values?: Record<string, unknown> };
+      return body?.values ?? {};
+    } catch {
+      return null;
+    }
+  };
+  ipcMain.handle(IPC.HUB_PLUGIN_SETTINGS_GET, async (_event, pluginId: string) => {
+    // A read means this plugin is loaded in the hub, so it's the safe moment to
+    // migrate any legacy locally-stored overlay: push it, then drop the local
+    // copy only once the hub accepted it (a failed push retries on a later read).
+    const legacy = peekLegacyPluginSettings(pluginId);
+    if (legacy) {
+      const migrated = await hubSetPluginSettings(pluginId, legacy);
+      if (migrated !== null) clearLegacyPluginSettings(pluginId);
+    }
+    return hubGetPluginSettings(pluginId);
+  });
+  ipcMain.handle(IPC.HUB_PLUGIN_SETTINGS_SET, async (_event, pluginId: string, values: Record<string, unknown>) => {
+    const merged = await hubSetPluginSettings(pluginId, values);
+    if (merged === null) return {};
     // Tell any open pane of this plugin to re-apply live (the bridge listens).
+    // Remote-origin writes reach the renderer via the plugin.settings.changed
+    // bus event (bridged in hubClient); this is the fast path for local writes.
     mainWindow.webContents.send(IPC.HUB_PLUGIN_SETTINGS_CHANGED, pluginId, merged);
     return merged;
   });

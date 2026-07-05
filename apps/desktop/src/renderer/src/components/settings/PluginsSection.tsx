@@ -3,15 +3,21 @@ import { usePlugins } from '../../hooks/usePlugins';
 import type { PluginManifest, PluginSettingDef } from '../../types/plugin';
 import { Section, Row, CheckRow, ModeButton, inputStyle } from './primitives';
 
-/** Renders + persists one plugin's declared settings. Saved values are an
- *  overlay on the plugin's own defaults, so an unset control shows the default. */
+/** Renders + persists one plugin's declared settings. The host (hub) returns
+ *  values already merged over the plugin's manifest defaults, so every declared
+ *  setting that has a default is present; the `s.default` fallback below only
+ *  covers settings with no declared default. Edits made from web/remote arrive
+ *  on the plugin-settings-changed channel and update the controls live. */
 const PluginSettings: React.FC<{ plugin: PluginManifest }> = ({ plugin }) => {
   const [values, setValues] = useState<Record<string, unknown>>({});
 
   useEffect(() => {
     let alive = true;
     window.electronAPI.getPluginSettings?.(plugin.id).then((v) => { if (alive) setValues(v || {}); });
-    return () => { alive = false; };
+    const off = window.electronAPI.onPluginSettingsChanged?.((changedId, next) => {
+      if (alive && changedId === plugin.id) setValues(next || {});
+    });
+    return () => { alive = false; off?.(); };
   }, [plugin.id]);
 
   const update = (key: string, value: unknown) => {
