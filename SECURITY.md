@@ -21,6 +21,9 @@ Severity is the reviewer's estimate assuming the remote-sharing path is in use.
 ## Open items (decision required)
 
 ### 1. Hub bus WebSocket disables origin checking — High
+**FIXED 2026-07-05** (`5d223ca`): explicit origin policy — no-Origin native
+clients, same-origin-as-Host (incl. Tailscale), loopback any port; cross-site
+browser origins get 403 before any auth work.
 `services/hub/internal/bus/bus.go:132`
 
 `websocket.Accept` is called with `InsecureSkipVerify: true`, skipping the
@@ -34,6 +37,9 @@ defense-in-depth. Decision needed: which origins are legitimate for remote/web
 clients.
 
 ### 2. Hub `register` allows capability hijack — High
+**FIXED 2026-07-05** (`5d223ca`): first-registration-wins — a method owned by
+a different live connection cannot be re-registered (trusted conns included);
+ownership frees on disconnect so reconnect flows are unaffected.
 `services/hub/internal/bus/rpc.go:107`
 
 `register` unconditionally sets `rt.providers[method] = conn.id`, overwriting
@@ -47,6 +53,9 @@ live conn, and/or consult the authorize callback on `register` too. Decision
 needed: the intended capability-ownership / delegation model.
 
 ### 3. Plugin install runs arbitrary commands + unbounded extraction — High
+**PARTIALLY FIXED 2026-07-05** (`aa87c8d`): extraction bounded (512 MiB total /
+128 MiB per file / 10k entries, enforced streaming). The build command still
+runs unconfined — the interactive-consent / sandbox decision remains open.
 `services/hub/internal/plugin/install.go` (`runInstall`, tar extraction);
 route `cmd/hub/main.go` `/plugins/install`
 
@@ -69,6 +78,10 @@ configured. Low sensitivity; consider reducing to `{"status":"ok"}` or gating
 the detailed fields.
 
 ### 5. claudemon API uses permissive CORS on mutation endpoints — High
+**FIXED 2026-07-05**: CORS restricted to loopback origins only (no legitimate
+browser context calls claudemon directly), plus a Host-header guard against
+DNS rebinding; session ids are validated at the API boundary and transcript
+reads are lexically confined to the projects root.
 `services/claudemon/src/daemon/api.rs:94`
 
 `CorsLayer::permissive()` lets any web origin call `POST /sessions/spawn`,
@@ -105,6 +118,9 @@ Recommended: after `path.join`, assert
 decision as #8.)
 
 ### 8. Electron `fs.read` / `fs.write` hub capabilities have no path allowlist — High
+**FIXED 2026-07-05** (`5d223ca`): fs.read/write/listEntries/watch/search are
+canonicalize-then-contain confined to live agent cwds + the config dir
+(fs.listDir to the home tree for the folder picker).
 `apps/desktop/src/main/services/hubCapabilities.ts` (`fs.read`, `fs.write`)
 
 These accept an arbitrary `path` from any bus client and read/write it. Under

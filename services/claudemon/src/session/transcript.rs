@@ -95,7 +95,9 @@ fn read_for_cwd_and_session(cwd: &str, session_id: Option<&str>) -> Result<Trans
         // when several sessions share a cwd that returns a *different* session's
         // transcript. Showing nothing beats showing the wrong conversation.
         let path = dir.join(format!("{session_id}.jsonl"));
-        if path.exists() {
+        // Defense-in-depth: the API boundary already rejects traversal-shaped
+        // ids, but never read a path the id pushed outside the projects root.
+        if is_within(&root, &path) && path.exists() {
             return read_transcript_file(path);
         }
         if let Some(path) = find_session_file(&root, session_id)? {
@@ -150,11 +152,39 @@ fn find_session_file(root: &std::path::Path, session_id: &str) -> Result<Option<
             continue;
         }
         let path = entry.path().join(&filename);
-        if path.exists() {
+        // Defense-in-depth: a session id carrying `..`/separators must not let
+        // `join` climb out of the project subdirectory it's scanning.
+        if is_within(root, &path) && path.exists() {
             return Ok(Some(path));
         }
     }
     Ok(None)
+}
+
+/// True if `path`, resolved lexically (so `..` segments are accounted for),
+/// stays under `root`. Purely lexical — no `canonicalize`, so it doesn't depend
+/// on the file existing and can't be fooled into touching disk while checking.
+fn is_within(root: &std::path::Path, path: &std::path::Path) -> bool {
+    use std::path::Component;
+    let Ok(rel) = path.strip_prefix(root) else {
+        return false;
+    };
+    let mut depth: i32 = 0;
+    for comp in rel.components() {
+        match comp {
+            Component::ParentDir => {
+                depth -= 1;
+                if depth < 0 {
+                    return false;
+                }
+            }
+            Component::CurDir => {}
+            Component::Normal(_) => depth += 1,
+            // An absolute/root/prefix segment in the tail means it escaped.
+            Component::RootDir | Component::Prefix(_) => return false,
+        }
+    }
+    true
 }
 
 /// Parse one transcript's worth of JSONL text into messages. Exposed for

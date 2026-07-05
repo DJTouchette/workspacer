@@ -1,11 +1,12 @@
 use std::{convert::Infallible, time::Duration};
 
 use axum::{
-    extract::{FromRef, Path, Query, State},
-    http::StatusCode,
+    extract::{FromRef, Path, Query, Request, State},
+    http::{header, HeaderValue, Method, StatusCode},
+    middleware::{self, Next},
     response::{
         sse::{Event, KeepAlive, Sse},
-        IntoResponse,
+        IntoResponse, Response,
     },
     routing::{get, post},
     Json, Router,
@@ -15,7 +16,7 @@ use futures::Stream;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio_stream::{wrappers::BroadcastStream, StreamExt};
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 
 use crate::protocol::WrapperMessage;
 use crate::session::{
@@ -52,7 +53,136 @@ impl FromRef<ApiState> for Db {
     }
 }
 
+/// Which extra `Host` header value (beyond loopback) the API accepts. When the
+/// daemon is bound to a concrete non-loopback address (`--host 192.168.1.5`),
+/// that address is a legitimate `Host`; the wildcard binds (`0.0.0.0`, `::`)
+/// carry no meaningful host name, so only loopback is accepted for those and
+/// remote access is expected to go through the hub bus, not this API directly.
+#[derive(Clone, Default)]
+struct AllowedHosts {
+    extra: Option<String>,
+}
+
+impl AllowedHosts {
+    fn new(bind_host: Option<String>) -> Self {
+        // A wildcard bind names no host, so it adds nothing to the allowlist.
+        let extra = bind_host.filter(|h| h != "0.0.0.0" && h != "::" && !h.is_empty());
+        Self { extra }
+    }
+
+    /// Accept the request's `Host` iff it is loopback (127.0.0.0/8, ::1,
+    /// `localhost`) or exactly the configured concrete bind host.
+    fn permits(&self, host_header: &str) -> bool {
+        let host = host_without_port(host_header);
+        if host_is_loopback(host) {
+            return true;
+        }
+        match &self.extra {
+            Some(extra) => host == host_without_port(extra),
+            None => false,
+        }
+    }
+}
+
+/// Strip a trailing `:port` from a `Host`/authority, handling bracketed IPv6
+/// (`[::1]:7891` → `::1`).
+fn host_without_port(h: &str) -> &str {
+    if let Some(rest) = h.strip_prefix('[') {
+        // `[::1]:7891` → `::1`
+        return rest.split(']').next().unwrap_or(h);
+    }
+    h.rsplit_once(':').map(|(host, _)| host).unwrap_or(h)
+}
+
+fn host_is_loopback(host: &str) -> bool {
+    if host == "localhost" {
+        return true;
+    }
+    host.parse::<std::net::IpAddr>()
+        .map(|ip| ip.is_loopback())
+        .unwrap_or(false)
+}
+
+/// True if an `Origin` header names a loopback web origin
+/// (`http(s)://localhost|127.0.0.1|[::1]` with any port). Everything else —
+/// arbitrary websites, `null`/opaque origins — is rejected, so a page the user
+/// happens to be visiting cannot make cross-origin calls to the local daemon.
+fn is_loopback_origin(origin: &HeaderValue) -> bool {
+    let Ok(s) = origin.to_str() else {
+        return false;
+    };
+    let Some(rest) = s
+        .strip_prefix("http://")
+        .or_else(|| s.strip_prefix("https://"))
+    else {
+        return false;
+    };
+    let host = if let Some(v6) = rest.strip_prefix('[') {
+        v6.split(']').next().unwrap_or("")
+    } else {
+        rest.split(['/', ':']).next().unwrap_or("")
+    };
+    host_is_loopback(host)
+}
+
+/// CORS for the local API. No legitimate browser context calls this daemon
+/// directly (the desktop renderer reaches it through the Electron main process
+/// and the hub bus; the web client goes through the hub) — non-browser clients
+/// (Electron main, wks-tui, hub, brain) send no `Origin` and are unaffected by
+/// CORS. We therefore reflect only loopback origins so that a random website
+/// cannot drive a preflighted cross-origin mutation (spawn/commit/push/signal).
+/// Credentials are never reflected (the API uses none).
+fn cors_layer() -> CorsLayer {
+    CorsLayer::new()
+        .allow_origin(AllowOrigin::predicate(|origin, _parts| {
+            is_loopback_origin(origin)
+        }))
+        .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+        .allow_headers([header::CONTENT_TYPE])
+        .allow_credentials(false)
+}
+
+/// Reject requests whose `Host` header is neither loopback nor the configured
+/// bind host. CORS alone can't stop a DNS-rebinding attack (after rebinding,
+/// the malicious page and the daemon share an origin, so no preflight fires);
+/// pinning `Host` to expected values closes that hole for the side-effecting
+/// endpoints. Requests with no `Host` at all (non-browser clients that omit it)
+/// pass through — the rebinding vector requires a browser, which always sends one.
+async fn host_guard(
+    State(allowed): State<AllowedHosts>,
+    req: Request,
+    next: Next,
+) -> Response {
+    match req.headers().get(header::HOST).and_then(|v| v.to_str().ok()) {
+        Some(host) if !allowed.permits(host) => {
+            (StatusCode::FORBIDDEN, "host not allowed").into_response()
+        }
+        _ => next.run(req).await,
+    }
+}
+
+/// Reject session ids that could escape their on-disk transcript/handoff roots.
+/// Real ids are UUIDs or provider tokens: ASCII alphanumerics plus `-` `_` `.`.
+/// Anything with a path separator, a `..` segment, or other bytes is a traversal
+/// attempt (`../../etc/passwd`) and is refused before it reaches the filesystem.
+/// axum percent-decodes the path segment first, so `%2e%2e%2f` is caught here too.
+fn valid_session_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 128
+        && !id.contains("..")
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+}
+
 pub fn router(state: ApiState) -> Router {
+    router_with_host(state, None)
+}
+
+/// Build the API router, accepting `Host` headers for loopback plus (optionally)
+/// the concrete address the daemon is bound to. `router` defaults to loopback-only.
+pub fn router_with_host(state: ApiState, bind_host: Option<String>) -> Router {
+    let allowed_hosts = AllowedHosts::new(bind_host);
     Router::new()
         .route("/sessions", get(list_sessions))
         .route("/sessions/spawn", post(crate::daemon::spawn::handle))
@@ -83,7 +213,12 @@ pub fn router(state: ApiState) -> Router {
         // Bound request bodies (tool inputs, messages) so a hostile or buggy
         // local client can't push an unbounded payload through the fanout + DB.
         .layer(axum::extract::DefaultBodyLimit::max(16 * 1024 * 1024))
-        .layer(CorsLayer::permissive())
+        // Loopback-only CORS (see `cors_layer`) replaces the previous
+        // `CorsLayer::permissive()`, which let any website drive the daemon.
+        .layer(cors_layer())
+        // Host-header guard runs outermost (added last), so a DNS-rebinding
+        // request is refused before it can reach a handler or the CORS layer.
+        .layer(middleware::from_fn_with_state(allowed_hosts, host_guard))
         .with_state(state)
 }
 
@@ -683,6 +818,11 @@ async fn get_transcript(
     State(store): State<SessionStore>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
+    // The id is interpolated into a `<projects>/<cwd>/<id>.jsonl` path below —
+    // refuse traversal-shaped ids before any filesystem work.
+    if !valid_session_id(&id) {
+        return (StatusCode::BAD_REQUEST, "invalid session id").into_response();
+    }
     let Some(state) = store.get(&id) else {
         return (StatusCode::NOT_FOUND, "session not found").into_response();
     };
@@ -762,6 +902,11 @@ async fn post_handoff(
     Path(id): Path<String>,
     Json(payload): Json<HandoffPayload>,
 ) -> impl IntoResponse {
+    // `id` becomes part of the persisted brief's filename under
+    // `~/.workspacer/handoffs/` — reject traversal-shaped ids up front.
+    if !valid_session_id(&id) {
+        return (StatusCode::BAD_REQUEST, "invalid session id").into_response();
+    }
     let (_, items) = conv.snapshot(&id).unwrap_or((0, Vec::new()));
     if items.is_empty() {
         return (
@@ -1627,5 +1772,182 @@ mod tests {
         assert_eq!(items_skip(10, 4, 6), 0); // since older than window → keep all
         assert_eq!(items_skip(10, 4, 8), 2); // since 8 → keep items 9,10
         assert_eq!(items_skip(0, 0, 0), 0); // empty
+    }
+
+    // --- CORS + Host guard --------------------------------------------------
+
+    /// Dispatch through the full router and hand back the raw response so a test
+    /// can inspect headers (CORS) rather than just status + body.
+    async fn response(state: ApiState, req: Request<Body>) -> Response {
+        router(state).oneshot(req).await.expect("router responds")
+    }
+
+    fn preflight(uri: &str, origin: &str) -> Request<Body> {
+        Request::builder()
+            .method("OPTIONS")
+            .uri(uri)
+            .header(header::ORIGIN, origin)
+            .header("access-control-request-method", "POST")
+            .header("access-control-request-headers", "content-type")
+            .body(Body::empty())
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn cors_preflight_from_foreign_origin_gets_no_allow_origin() {
+        // A random website's preflight for a JSON POST to a mutation route must
+        // not be reflected — without an allow-origin header the browser never
+        // sends the actual request.
+        let resp = response(
+            test_state(),
+            preflight("/sessions/sess-1/message", "http://evil.example.com"),
+        )
+        .await;
+        assert!(
+            resp.headers()
+                .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                .is_none(),
+            "foreign origin must not be allowed"
+        );
+    }
+
+    #[tokio::test]
+    async fn cors_preflight_from_loopback_origin_is_allowed() {
+        let resp = response(
+            test_state(),
+            preflight("/sessions/sess-1/message", "http://localhost:5173"),
+        )
+        .await;
+        let acao = resp
+            .headers()
+            .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+            .and_then(|v| v.to_str().ok());
+        assert_eq!(acao, Some("http://localhost:5173"));
+    }
+
+    #[tokio::test]
+    async fn cors_actual_post_from_foreign_origin_gets_no_allow_origin() {
+        let req = Request::builder()
+            .method("POST")
+            .uri("/sessions/nope/message")
+            .header(header::ORIGIN, "http://evil.example.com")
+            .header("content-type", "application/json")
+            .body(Body::from(json!({ "text": "hi" }).to_string()))
+            .unwrap();
+        let resp = response(test_state(), req).await;
+        assert!(resp
+            .headers()
+            .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn host_guard_rejects_non_loopback_host() {
+        // DNS-rebinding defense: a mutation with a foreign Host is refused before
+        // it reaches the handler, even though CORS wouldn't see a preflight.
+        let req = Request::builder()
+            .method("POST")
+            .uri("/sessions/nope/message")
+            .header("content-type", "application/json")
+            .header(header::HOST, "evil.example.com")
+            .body(Body::from(json!({ "text": "hi" }).to_string()))
+            .unwrap();
+        let (status, body) = request(test_state(), req).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(body, b"host not allowed");
+    }
+
+    #[tokio::test]
+    async fn host_guard_allows_loopback_host() {
+        let req = Request::builder()
+            .uri("/health")
+            .header(header::HOST, "127.0.0.1:7891")
+            .body(Body::empty())
+            .unwrap();
+        let (status, body) = request(test_state(), req).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, b"ok");
+    }
+
+    #[test]
+    fn allowed_hosts_permits_loopback_and_configured_only() {
+        let a = AllowedHosts::new(Some("192.168.1.5".into()));
+        assert!(a.permits("127.0.0.1:7891"));
+        assert!(a.permits("localhost:7891"));
+        assert!(a.permits("[::1]:7891"));
+        assert!(a.permits("192.168.1.5:7891"));
+        assert!(!a.permits("evil.example.com"));
+        // A wildcard bind names no host, so only loopback is accepted.
+        let wild = AllowedHosts::new(Some("0.0.0.0".into()));
+        assert!(wild.permits("127.0.0.1"));
+        assert!(!wild.permits("10.0.0.9:7891"));
+    }
+
+    #[test]
+    fn loopback_origin_predicate_matches_only_loopback() {
+        assert!(is_loopback_origin(&HeaderValue::from_static(
+            "http://localhost:5173"
+        )));
+        assert!(is_loopback_origin(&HeaderValue::from_static(
+            "http://127.0.0.1:7891"
+        )));
+        assert!(is_loopback_origin(&HeaderValue::from_static(
+            "https://[::1]:7891"
+        )));
+        assert!(!is_loopback_origin(&HeaderValue::from_static(
+            "http://evil.example.com"
+        )));
+        // Opaque/`null` origins (sandboxed iframes) are not loopback.
+        assert!(!is_loopback_origin(&HeaderValue::from_static("null")));
+    }
+
+    // --- session-id path-traversal guard ------------------------------------
+
+    #[test]
+    fn valid_session_id_accepts_ids_rejects_traversal() {
+        assert!(valid_session_id("abc12345-1234-5678-9abc-def012345678"));
+        assert!(valid_session_id("sess-1"));
+        assert!(valid_session_id("rollout.2026.jsonl_id")); // dots/underscores ok
+        assert!(!valid_session_id(""));
+        assert!(!valid_session_id("../../etc/passwd"));
+        assert!(!valid_session_id(".."));
+        assert!(!valid_session_id("a/b"));
+        assert!(!valid_session_id("a\\b"));
+        assert!(!valid_session_id("foo..bar")); // any `..` segment is refused
+    }
+
+    #[tokio::test]
+    async fn get_transcript_with_traversal_id_is_rejected() {
+        // `%2e%2e%2f…` decodes to `../…`. Whether the router refuses the encoded
+        // separators (404) or the handler's id guard does (400), the request is
+        // rejected with a 4xx and never reaches the filesystem. A plain id like
+        // `sess-1` still 200s (see get_transcript_with_no_file_returns_empty).
+        let (status, _body) = request(
+            test_state(),
+            get("/sessions/..%2f..%2f..%2f..%2fetc%2fpasswd/transcript"),
+        )
+        .await;
+        assert!(status.is_client_error(), "got {status}");
+        assert_ne!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn get_transcript_with_dotdot_segment_id_is_400() {
+        // A single-segment id carrying `..` routes cleanly to the handler, so the
+        // id guard itself is exercised and returns 400.
+        let (status, body) = request(test_state(), get("/sessions/..evil/transcript")).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body, b"invalid session id");
+    }
+
+    #[tokio::test]
+    async fn post_handoff_with_dotdot_segment_id_is_400() {
+        let (status, body) = request(
+            test_state(),
+            post_json("/sessions/..evil/handoff", json!({ "no_persist": true })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body, b"invalid session id");
     }
 }

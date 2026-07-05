@@ -73,11 +73,12 @@ pub async fn run(cfg: ServeConfig) -> Result<()> {
     // Retained past the `store` move into ApiState so shutdown can kill the PTY
     // children the daemon spawned (they have no kill-on-drop).
     let store_for_shutdown = store.clone();
-    let api_app = api::router(api::ApiState {
-        store,
-        db,
-        conv,
-    });
+    let api_app = api::router_with_host(
+        api::ApiState { store, db, conv },
+        // Accept the daemon's own bind address as a valid Host (loopback is
+        // always accepted); wildcard binds add nothing (see `AllowedHosts`).
+        Some(cfg.host.clone()),
+    );
 
     let hook_task = tokio::spawn(async move {
         if let Err(err) = axum::serve(hook_listener, hook_app).await {
