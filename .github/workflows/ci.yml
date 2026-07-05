@@ -48,6 +48,11 @@ jobs:
         working-directory: apps/desktop/src/renderer
         run: npm ci
 
+      # Prettier gate. `.prettierrc` pins the codebase style (singleQuote, semi,
+      # printWidth 100); --check fails if any tracked TS/TSX is unformatted.
+      - name: Format check
+        run: npm run format:check
+
       # `npm run typecheck` => typecheck:main (tsc -p tsconfig.main.json
       # --noEmit; the main config emits by default, so --noEmit forces a pure
       # typecheck) + typecheck:renderer (tsc in src/renderer, whose tsconfig
@@ -76,25 +81,25 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
+          components: clippy, rustfmt
 
       - name: Cache Rust build (claudemon)
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: services/claudemon
 
+      - name: Format check
+        run: cargo fmt --check
+
       - name: Test
         run: cargo test
 
-      # Clippy reports 27 lint warnings today (e.g. write_with_newline,
-      # redundant_locals), so `-D warnings` would fail the build. Run clippy
-      # without `-D warnings` for now (it exits 0); tighten to
-      # `cargo clippy --all-targets -- -D warnings` once those are cleaned up.
+      # The tree is clippy-clean, so warnings are hard errors.
       - name: Clippy
-        run: cargo clippy --all-targets
+        run: cargo clippy --all-targets -- -D warnings
 
   # ---------------------------------------------------------------------------
-  # tui (Rust): cargo test.
+  # tui (Rust): cargo fmt --check + test + clippy.
   # ---------------------------------------------------------------------------
   tui:
     runs-on: ubuntu-latest
@@ -106,14 +111,23 @@ jobs:
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
 
       - name: Cache Rust build (tui)
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: apps/tui
 
+      - name: Format check
+        run: cargo fmt --check
+
       - name: Test
         run: cargo test
+
+      # The tree is clippy-clean, so warnings are hard errors.
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
 
   # ---------------------------------------------------------------------------
   # hub (Go): go vet + go test. Go version pinned to match release.yml.
@@ -131,6 +145,11 @@ jobs:
         with:
           go-version: '1.25.4'
           cache-dependency-path: services/hub/go.sum
+
+      # gofmt is not enforced by `go build`, so guard it explicitly: fail if any
+      # file would be reformatted (gofmt -l prints such files; non-empty = fail).
+      - name: Format check
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
 
       - name: Vet
         run: go vet ./...
