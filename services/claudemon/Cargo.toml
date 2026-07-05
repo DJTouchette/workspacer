@@ -43,7 +43,6 @@ once_cell = "1"
 # used to read the footer's permission-mode marker for the live mode switch.
 vt100 = "0.15"
 rusqlite = { version = "0.32", features = ["bundled"] }
-sha2 = "0.10"
 
 # Real POSIX signal delivery (SIGTERM) to PTY children. Unix only; on Windows
 # the portable-pty kill() path (TerminateProcess) is used instead.

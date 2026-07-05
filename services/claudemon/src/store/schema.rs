@@ -1,8 +1,4 @@
-//! Idempotent schema migration. Tables match §10 of the v2 spec.
-//!
-//! Phase 0 populates only `sessions` and `events`. The remaining tables
-//! (`items`, `pending_decisions`, `asks`, `events_fts`) are created now so
-//! later phases don't have to touch the schema version.
+//! Idempotent schema migration for the daemon's session/event persistence.
 
 use anyhow::Result;
 use rusqlite::Connection;
@@ -47,61 +43,6 @@ CREATE TABLE IF NOT EXISTS events (
   FOREIGN KEY (session_id) REFERENCES sessions(id)
 );
 CREATE INDEX IF NOT EXISTS events_session_time ON events(session_id, timestamp DESC);
-
-CREATE TABLE IF NOT EXISTS items (
-  id TEXT PRIMARY KEY,
-  session_id TEXT NOT NULL,
-  state TEXT NOT NULL,
-  priority INTEGER NOT NULL,
-  kind TEXT NOT NULL,
-  summary TEXT,
-  context_paragraph TEXT,
-  next_action TEXT,
-  triggering_event_id INTEGER,
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
-  resolved_at INTEGER,
-  snoozed_until INTEGER,
-  snoozed_on_event TEXT,
-  flagged INTEGER DEFAULT 0,
-  FOREIGN KEY (session_id) REFERENCES sessions(id),
-  FOREIGN KEY (triggering_event_id) REFERENCES events(id)
-);
-CREATE INDEX IF NOT EXISTS items_state_priority
-  ON items(state, priority DESC, updated_at DESC);
-
-CREATE TABLE IF NOT EXISTS pending_decisions (
-  id TEXT PRIMARY KEY,
-  session_id TEXT NOT NULL,
-  item_id TEXT,
-  kind TEXT NOT NULL,
-  tool_name TEXT,
-  tool_input_json TEXT,
-  prompt_text TEXT,
-  created_at INTEGER NOT NULL,
-  resolved_at INTEGER,
-  resolution TEXT,
-  FOREIGN KEY (session_id) REFERENCES sessions(id),
-  FOREIGN KEY (item_id) REFERENCES items(id)
-);
-
-CREATE TABLE IF NOT EXISTS asks (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  scope TEXT,
-  scope_ref TEXT,
-  question TEXT NOT NULL,
-  response TEXT,
-  tool_calls_json TEXT,
-  cost_usd REAL,
-  duration_ms INTEGER,
-  created_at INTEGER NOT NULL,
-  completed_at INTEGER
-);
-
-CREATE VIRTUAL TABLE IF NOT EXISTS events_fts USING fts5(
-  session_id UNINDEXED, timestamp UNINDEXED, content,
-  content='', tokenize='porter unicode61'
-);
 "#;
 
 #[cfg(test)]
@@ -120,17 +61,10 @@ mod tests {
     }
 
     #[test]
-    fn all_tables_created() {
+    fn core_tables_created() {
         let conn = Connection::open_in_memory().unwrap();
         migrate(&conn).unwrap();
-        for table in [
-            "sessions",
-            "events",
-            "items",
-            "pending_decisions",
-            "asks",
-            "events_fts",
-        ] {
+        for table in ["sessions", "events"] {
             let count: i64 = conn
                 .query_row(
                     "SELECT COUNT(*) FROM sqlite_master WHERE name = ?1",

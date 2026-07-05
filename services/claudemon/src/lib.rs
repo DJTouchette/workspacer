@@ -5,7 +5,6 @@
 //! tests (`tests/*.rs`) and visual previews without redundantly duplicating
 //! file references.
 
-pub mod classifier;
 pub mod cli;
 pub mod daemon;
 pub mod protocol;
