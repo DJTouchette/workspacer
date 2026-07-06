@@ -120,7 +120,9 @@ const WorkCardInner: React.FC<{
   const anyRunning = live || toolCalls.some((tc) => tc.status === 'running');
 
   // Running agent/workflow cards surface even while the card is collapsed —
-  // ongoing parallel work shouldn't hide behind a closed disclosure.
+  // ongoing parallel work shouldn't hide behind a closed disclosure. File
+  // edits surface too: the diff is what the user reviews, so collapsing a run
+  // must not bury it.
   const visibleWhenCollapsed = useMemo(() => {
     if (expanded) return [];
     const out: React.ReactNode[] = [];
@@ -129,6 +131,18 @@ const WorkCardInner: React.FC<{
       if (wf && wf.status === 'running') out.push(<WorkflowRunCard key={`wf-${tc.id}`} run={wf} />);
       const sub = subagentByToolId?.get(tc.id);
       if (sub && sub.status === 'running') out.push(<SubagentRow key={`sub-${tc.id}`} sub={sub} />);
+      if (hasDiff(tc)) {
+        out.push(
+          <React.Fragment key={`edit-${tc.id}`}>
+            <WorkLogEntry tc={tc} />
+            <DiffView
+              oldStr={tc.input?.old_string ?? ''}
+              newStr={tc.input?.new_string ?? ''}
+              filePath={tc.input?.file_path}
+            />
+          </React.Fragment>,
+        );
+      }
     }
     return out;
   }, [expanded, toolCalls, subagentByToolId, workflowByToolId]);
