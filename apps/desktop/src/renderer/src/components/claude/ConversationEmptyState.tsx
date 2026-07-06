@@ -42,12 +42,17 @@ export const ConversationEmptyState: React.FC<{
   useEffect(() => {
     if (!cwd) return;
     let live = true;
-    window.electronAPI
-      .gitStatus(cwd)
-      .then((s) => {
-        if (live) setGit({ branch: s.branch, dirty: s.files.length });
-      })
-      .catch(() => {});
+    // Optional + try/catch: absent on older preloads / web polyfill / test mocks.
+    try {
+      window.electronAPI
+        .gitStatus?.(cwd)
+        ?.then((s) => {
+          if (live) setGit({ branch: s.branch, dirty: s.files.length });
+        })
+        .catch(() => {});
+    } catch {
+      // not a repo / no bridge — the meta line simply omits the git peek
+    }
     return () => {
       live = false;
     };

@@ -204,3 +204,51 @@ describe('applyConversationItems — plan', () => {
     expect(s.plan?.steps[0]).toEqual({ content: 'Real', status: 'pending' });
   });
 });
+
+describe('applyConversationItems — assistant text coalescing by transport', () => {
+  const deltas: ConversationItemWire[] = [
+    { kind: 'assistant_text', text: 'Here' },
+    { kind: 'assistant_text', text: ' is the' },
+    { kind: 'assistant_text', text: ' plan:\n```ts\nconst x = 1;\n```' },
+  ];
+
+  it("claude 'stream' transport coalesces per-token deltas into one turn", () => {
+    const s = mkSession();
+    (s as { provider?: string }).provider = 'claude';
+    (s as { transport?: string }).transport = 'stream';
+    applyConversationItems(s, deltas, noUsage);
+    expect(s.conversation).toHaveLength(1);
+    expect(s.conversation[0].content).toBe('Here is the plan:\n```ts\nconst x = 1;\n```');
+  });
+
+  it('claude PTY transport keeps whole-block push semantics (one turn per block)', () => {
+    const s = mkSession();
+    (s as { provider?: string }).provider = 'claude';
+    applyConversationItems(
+      s,
+      [
+        { kind: 'assistant_text', text: 'Block one.' },
+        { kind: 'assistant_text', text: 'Block two.' },
+      ],
+      noUsage,
+    );
+    expect(s.conversation).toHaveLength(2);
+  });
+
+  it('a stream delta after a tool call starts a fresh bubble instead of merging into it', () => {
+    const s = mkSession();
+    (s as { provider?: string }).provider = 'claude';
+    (s as { transport?: string }).transport = 'stream';
+    applyConversationItems(
+      s,
+      [
+        { kind: 'assistant_text', text: 'Before.' },
+        { kind: 'tool_use', id: 'tu_9', name: 'Bash', input: {} },
+        { kind: 'assistant_text', text: 'After.' },
+      ],
+      noUsage,
+    );
+    expect(s.conversation).toHaveLength(3);
+    expect(s.conversation[2].content).toBe('After.');
+  });
+});

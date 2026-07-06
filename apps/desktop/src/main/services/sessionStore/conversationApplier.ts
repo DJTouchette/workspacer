@@ -141,10 +141,14 @@ export function applyConversationItems(
         // "Hello world"). Coalesce both: if the new text extends the current
         // bubble it's a growing snapshot → replace; otherwise it's a delta →
         // append. (Pushing a message per fragment renders one word per line;
-        // appending snapshots would duplicate.) Claude emits whole text blocks
-        // and re-emits them around compaction, so it keeps the dedup-and-push
-        // path.
-        const streaming = !!session.provider && session.provider !== 'claude';
+        // appending snapshots would duplicate.) Claude's PTY transcript path
+        // emits whole text blocks and re-emits them around compaction, so it
+        // keeps the dedup-and-push path — but Claude's 'stream' transport is a
+        // managed adapter emitting per-token deltas, so it must coalesce like
+        // the rest or every fragment renders as its own paragraph.
+        const streaming =
+          session.transport === 'stream' ||
+          (!!session.provider && session.provider !== 'claude');
         const last = session.conversation[session.conversation.length - 1];
         if (streaming && last && last.role === 'assistant' && !last.toolCalls?.length) {
           if (last.content && text.startsWith(last.content)) {
