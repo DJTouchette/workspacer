@@ -99,8 +99,8 @@ export const DEFAULT_CONFIG: Config = {
   },
   panes: {
     defaultWidth: 800,
-    gap: 16,
-    peek: 80,
+    gap: 0,
+    peek: 0,
     insertPosition: 'after',
     tabPosition: 'top',
     viewMode: 'tabs',

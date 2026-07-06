@@ -174,7 +174,7 @@ describe('deepMerge semantics – via configService.saveConfig', () => {
 
     expect(cfg.panes.default).toEqual(newDefault);
     // Other panes fields survive
-    expect(cfg.panes.gap).toBe(16);
+    expect(cfg.panes.gap).toBe(0);
     expect(cfg.panes.viewMode).toBe('tabs');
   });
 
