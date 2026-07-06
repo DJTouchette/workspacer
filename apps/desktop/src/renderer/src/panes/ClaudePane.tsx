@@ -1279,6 +1279,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
                     )}
                     transport={claudeTransport}
                     cwd={session.cwd || cwd}
+                    initialPrompt={initialPrompt}
                     onPick={(prompt) => {
                       setInputValue(prompt);
                       requestAnimationFrame(() => inputRef.current?.focus());

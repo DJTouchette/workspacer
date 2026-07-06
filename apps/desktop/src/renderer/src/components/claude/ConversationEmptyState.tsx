@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { claudeColors as colors } from '../claude-shared';
 
 /** Starter prompts: short chip label → full prompt dropped into the composer
@@ -29,14 +29,41 @@ export const ConversationEmptyState: React.FC<{
   permissionMode?: string;
   transport?: 'pty' | 'stream';
   cwd?: string;
+  /** Composer pre-fill the pane was spawned with (e.g. a handoff takeover
+   *  message). When present the starter chips hide — picking one would
+   *  clobber the prepared prompt. */
+  initialPrompt?: string;
   onPick: (prompt: string) => void;
-}> = ({ agentName, model, permissionMode, transport, cwd, onPick }) => {
+}> = ({ agentName, model, permissionMode, transport, cwd, initialPrompt, onPick }) => {
   const dirName = cwd ? (cwd.replace(/\/+$/, '').split('/').pop() ?? cwd) : undefined;
+
+  // Git peek: branch + dirty count, best-effort. Not a repo / no git → omit.
+  const [git, setGit] = useState<{ branch: string | null; dirty: number } | null>(null);
+  useEffect(() => {
+    if (!cwd) return;
+    let live = true;
+    window.electronAPI
+      .gitStatus(cwd)
+      .then((s) => {
+        if (live) setGit({ branch: s.branch, dirty: s.files.length });
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [cwd]);
+
+  // Handoff takeover: App.tsx pre-fills the composer with a fixed in-house
+  // message pointing at the brief on disk.
+  const isHandoff = /handoff brief at /i.test(initialPrompt ?? '');
+
   const meta = [
     model,
     permissionMode,
     transport === 'stream' ? 'headless' : undefined,
     dirName,
+    git?.branch ? `⎇ ${git.branch}` : undefined,
+    git && git.dirty > 0 ? `${git.dirty} changed file${git.dirty === 1 ? '' : 's'}` : undefined,
   ].filter(Boolean) as string[];
 
   return (
@@ -75,48 +102,74 @@ export const ConversationEmptyState: React.FC<{
         </div>
       )}
 
-      <div
-        style={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          justifyContent: 'center',
-          gap: 6,
-          marginTop: 20,
-          maxWidth: 460,
-          marginLeft: 'auto',
-          marginRight: 'auto',
-        }}
-      >
-        {STARTERS.map((s) => (
-          <button
-            key={s.label}
-            onClick={() => onPick(s.prompt)}
-            title={s.prompt}
-            style={{
-              fontSize: '0.7rem',
-              fontWeight: 500,
-              padding: '5px 12px',
-              borderRadius: 'var(--wks-radius-pill)',
-              border: `1px solid ${colors.borderSubtle}`,
-              backgroundColor: 'rgba(255,255,255,0.03)',
-              color: colors.text,
-              cursor: 'pointer',
-              fontFamily: 'inherit',
-              transition: 'border-color 0.15s, color 0.15s',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.borderColor = 'var(--wks-border-active)';
-              e.currentTarget.style.color = colors.textBright;
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.borderColor = colors.borderSubtle;
-              e.currentTarget.style.color = colors.text;
-            }}
-          >
-            {s.label}
-          </button>
-        ))}
-      </div>
+      {isHandoff ? (
+        <div
+          style={{
+            margin: '20px auto 0',
+            maxWidth: 420,
+            padding: '10px 14px',
+            borderRadius: 'var(--wks-radius-md)',
+            backgroundColor: 'var(--wks-accent-bg)',
+            border: `1px solid ${colors.borderSubtle}`,
+            fontSize: '0.72rem',
+            color: colors.text,
+            lineHeight: 1.5,
+          }}
+        >
+          <div style={{ fontWeight: 600, color: colors.textBright, marginBottom: 2 }}>
+            Taking over from a handoff
+          </div>
+          The composer is pre-filled to read the brief — press Enter to pick up where the previous
+          agent left off.
+        </div>
+      ) : initialPrompt ? (
+        <div style={{ fontSize: '0.72rem', marginTop: 20, color: colors.muted }}>
+          A prompt is prepared in the composer — press Enter to send it.
+        </div>
+      ) : (
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            justifyContent: 'center',
+            gap: 6,
+            marginTop: 20,
+            maxWidth: 460,
+            marginLeft: 'auto',
+            marginRight: 'auto',
+          }}
+        >
+          {STARTERS.map((s) => (
+            <button
+              key={s.label}
+              onClick={() => onPick(s.prompt)}
+              title={s.prompt}
+              style={{
+                fontSize: '0.7rem',
+                fontWeight: 500,
+                padding: '5px 12px',
+                borderRadius: 'var(--wks-radius-pill)',
+                border: `1px solid ${colors.borderSubtle}`,
+                backgroundColor: 'rgba(255,255,255,0.03)',
+                color: colors.text,
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                transition: 'border-color 0.15s, color 0.15s',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = 'var(--wks-border-active)';
+                e.currentTarget.style.color = colors.textBright;
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.borderColor = colors.borderSubtle;
+                e.currentTarget.style.color = colors.text;
+              }}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div style={{ fontSize: '0.62rem', marginTop: 18, color: colors.mutedDim }}>
         Enter to send · Shift+Enter for a newline · + to attach files
