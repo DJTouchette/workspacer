@@ -1649,8 +1649,6 @@ function App() {
               onOpenRemote={() => setShowRemote(true)}
               onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
               onToggleHelp={toggleHelp}
-              onOpenUsage={openAnalytics}
-              onOpenSettings={openSettings}
               noAttentionFlash={noAttentionFlash}
               collapsed={!sidebarOverlay && sidebarCollapsed}
             />

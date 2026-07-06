@@ -1,17 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { Smartphone } from 'lucide-react';
 
-interface HubEvent {
-  id: string;
-  type: string;
-  source: string;
-  time: string;
-  data?: unknown;
-}
-
 /**
  * Small ambient indicator that the hub event bus is live. Self-subscribes to
- * the IPC-forwarded hub stream — no prop threading. Sits at the bottom of the
+ * the IPC-forwarded hub status — no prop threading. Sits at the bottom of the
  * sidebar. Proof that claudemon → hub → main → renderer round-trips.
  */
 const HubStatus: React.FC<{ onOpenRemote?: () => void; compact?: boolean }> = ({
@@ -19,8 +11,6 @@ const HubStatus: React.FC<{ onOpenRemote?: () => void; compact?: boolean }> = ({
   compact,
 }) => {
   const [connected, setConnected] = useState(false);
-  const [count, setCount] = useState(0);
-  const [last, setLast] = useState<HubEvent | null>(null);
 
   useEffect(() => {
     // Sync the current state on mount — the one-shot `connected:true` push may
@@ -30,20 +20,13 @@ const HubStatus: React.FC<{ onOpenRemote?: () => void; compact?: boolean }> = ({
       .then((s) => setConnected(s.connected))
       .catch(() => {});
     const offStatus = window.electronAPI.onHubStatus?.((s) => setConnected(s.connected));
-    const offEvent = window.electronAPI.onHubEvent?.((ev) => {
-      setCount((n) => n + 1);
-      setLast(ev);
-    });
     return () => {
       offStatus?.();
-      offEvent?.();
     };
   }, []);
 
   const color = connected ? 'var(--wks-success, #3fb950)' : 'var(--wks-text-faint, #666)';
-  const title = connected
-    ? `hub connected · ${count} events${last ? `\nlast: ${last.type} (${last.source})` : ''}`
-    : 'hub disconnected';
+  const title = connected ? 'hub connected' : 'hub disconnected';
 
   // Rail mode: just the status dot, centered — the full readout has no room.
   if (compact) {
@@ -105,7 +88,7 @@ const HubStatus: React.FC<{ onOpenRemote?: () => void; compact?: boolean }> = ({
         }}
       />
       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-        {connected ? `hub · ${count}` : 'hub offline'}
+        {connected ? 'hub' : 'hub offline'}
       </span>
       {onOpenRemote && (
         <button

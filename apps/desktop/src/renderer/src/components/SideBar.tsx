@@ -1,13 +1,6 @@
 import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import {
-  Plus,
-  ChevronLeft,
-  ChevronRight,
-  HelpCircle,
-  BarChart2,
-  Settings as SettingsIcon,
-} from 'lucide-react';
+import { Plus, ChevronLeft, ChevronRight, HelpCircle } from 'lucide-react';
 import { IconInbox, IconFleet, IconWorking } from './wksIcons';
 import { BrandMark, Wordmark } from './Brand';
 import { AgentWorkspace } from '../types/pane';
@@ -101,10 +94,6 @@ interface SideBarProps {
   collapsed?: boolean;
   /** Toggle the keyboard-shortcuts help overlay (footer "?" button). */
   onToggleHelp?: () => void;
-  /** Open (or focus) the Usage & cost / analytics pane. */
-  onOpenUsage?: () => void;
-  /** Open (or focus) the Settings pane. */
-  onOpenSettings?: () => void;
   /** Brief flash on the header when "next attention" found nothing to jump to. */
   noAttentionFlash?: boolean;
 }
@@ -125,8 +114,6 @@ const SideBar: React.FC<SideBarProps> = ({
   onOpenRemote,
   onToggleCollapse,
   onToggleHelp,
-  onOpenUsage,
-  onOpenSettings,
   noAttentionFlash,
   collapsed,
 }) => {
@@ -1121,25 +1108,6 @@ const SideBar: React.FC<SideBarProps> = ({
         </span>
       </button>
 
-      {/* Global nav: jump straight to the cross-agent dashboard panes (mockup
-          surfaces these as standing sidebar rows rather than buried tabs). */}
-      {onOpenUsage && (
-        <SideNavBtn
-          icon={<BarChart2 size={13} strokeWidth={2} />}
-          label="Usage & cost"
-          onClick={onOpenUsage}
-          title="Usage & cost across all agents"
-        />
-      )}
-      {onOpenSettings && (
-        <SideNavBtn
-          icon={<SettingsIcon size={13} strokeWidth={2} />}
-          label="Settings"
-          onClick={onOpenSettings}
-          title="Settings"
-        />
-      )}
-
       {/* Footer: persistent help affordance so onboarding guidance is always
           re-enterable (re-uses the existing keyboard-shortcuts overlay). */}
       {onToggleHelp && (
@@ -1299,51 +1267,5 @@ function dotStyle(color: string, pulse: boolean): React.CSSProperties {
     animation: pulse ? 'wks-pulse 1.8s ease-in-out infinite' : 'none',
   };
 }
-
-/** Standing footer nav row (Usage / Settings) — quiet until hovered, matching
- *  the "Help & shortcuts" affordance directly below it. */
-const SideNavBtn: React.FC<{
-  icon: React.ReactNode;
-  label: string;
-  title: string;
-  onClick: () => void;
-}> = ({ icon, label, title, onClick }) => (
-  <button
-    onClick={onClick}
-    title={title}
-    style={{
-      width: 'calc(100% - 8px)',
-      margin: '0 4px 4px',
-      padding: '6px 8px',
-      display: 'flex',
-      alignItems: 'center',
-      gap: 8,
-      border: '1px solid transparent',
-      borderRadius: 6,
-      cursor: 'pointer',
-      fontSize: '0.72rem',
-      fontFamily: 'inherit',
-      fontWeight: 600,
-      background: 'transparent',
-      color: 'var(--wks-text-muted)',
-      textAlign: 'left',
-      boxSizing: 'border-box',
-      transition: 'background 0.12s, color 0.12s',
-    }}
-    onMouseEnter={(e) => {
-      const t = e.currentTarget as HTMLElement;
-      t.style.background = 'var(--wks-bg-hover)';
-      t.style.color = 'var(--wks-text-primary)';
-    }}
-    onMouseLeave={(e) => {
-      const t = e.currentTarget as HTMLElement;
-      t.style.background = 'transparent';
-      t.style.color = 'var(--wks-text-muted)';
-    }}
-  >
-    <span style={{ width: 8, display: 'inline-flex', justifyContent: 'center' }}>{icon}</span>
-    <span>{label}</span>
-  </button>
-);
 
 export default SideBar;
