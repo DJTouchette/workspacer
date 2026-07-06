@@ -600,7 +600,7 @@ export function useAgentManager() {
    *  If the workspace already has a tab with the same pane type + title, it is
    *  focused instead of opening a duplicate. Returns the (existing or new) tab
    *  id so callers can scroll the view to it — activating a tab alone only
-   *  highlights the strip; it never moves the stacked/spatial viewport. */
+   *  highlights the strip; it never scrolls the workspace viewport. */
   const openPaneIn = useCallback(
     (
       workspaceId: string,
@@ -742,8 +742,7 @@ export function useAgentManager() {
       mutateActiveAgent((a) => ({
         ...a,
         activeTabId: tabId,
-        // Record focus time (kept for potential recency features; the stacked
-        // feed itself uses natural tab order, not activity).
+        // Record focus time (kept for potential recency features).
         tabs: a.tabs.map((t) => (t.id === tabId ? { ...t, lastActiveAt: Date.now() } : t)),
       }));
     },
@@ -926,16 +925,6 @@ export function useAgentManager() {
     [mutateActiveAgent],
   );
 
-  const updateTabCanvas = useCallback(
-    (tabId: string, canvas: TabConfig['canvas']) => {
-      mutateActiveAgent((a) => ({
-        ...a,
-        tabs: a.tabs.map((t) => (t.id === tabId ? { ...t, canvas } : t)),
-      }));
-    },
-    [mutateActiveAgent],
-  );
-
   const moveTab = useCallback(
     (tabId: string, toIndex: number) => {
       mutateActiveAgent((a) => {
@@ -1058,7 +1047,6 @@ export function useAgentManager() {
     removePane,
     renameTab,
     moveTab,
-    updateTabCanvas,
     setActivePane,
     hibernatePane,
     wakePane,

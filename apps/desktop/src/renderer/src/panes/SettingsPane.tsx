@@ -125,8 +125,8 @@ const SECTIONS: SectionDef[] = [
       'sidebar',
       'peek',
       'tabs',
-      'spatial',
-      'stacked',
+      'focus',
+      'fleet',
     ],
   },
   {

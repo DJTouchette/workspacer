@@ -27,7 +27,7 @@ describe('chord tree', () => {
     'new-claude': 'prefix n c',
     'close-pane': 'prefix t w',
     'next-tab': 'prefix t ]',
-    'cycle-view': 'prefix v',
+    'toggle-help': 'prefix v',
   };
 
   it('builds groups from multi-step paths and ignores direct bindings', () => {
@@ -47,8 +47,8 @@ describe('chord tree', () => {
   it('lists groups before actions in the menu, with labels', () => {
     const tree = buildChordTree(shortcuts);
     const root = chordMenu(tree, []);
-    // groups (New, Tab) come first, then the leaf (cycle-view → v)
-    expect(root.map((i) => i.label)).toEqual(['New', 'Tab', 'Cycle view mode']);
+    // groups (New, Tab) come first, then the leaf (toggle-help → v)
+    expect(root.map((i) => i.label)).toEqual(['New', 'Tab', 'Toggle help']);
     expect(root.find((i) => i.step === 'n')?.isGroup).toBe(true);
     expect(root.find((i) => i.step === 'v')?.isGroup).toBe(false);
   });

@@ -12,6 +12,7 @@ import { AgentLogo } from './agentLogos';
 import { InspectorCard } from './claude/InspectorCard';
 import { requestInspector } from '../lib/watchBus';
 import { useAttention } from '../contexts/AttentionContext';
+import { useUiMode } from '../hooks/useUiMode';
 import HubStatus from './HubStatus';
 import { ContextMenu, ContextMenuItem } from './ContextMenu';
 
@@ -122,6 +123,9 @@ const SideBar: React.FC<SideBarProps> = ({
   // Inbox / Fleet. needsYou counts approval/question/stuck/error items.
   const { counts, topByAgent } = useAttention();
   const needYouCount = counts.needsYou;
+  // Focus mode reduces attention to one compact badge pinned in the rail —
+  // "agents need you" must never disappear entirely (UI-mode manifest).
+  const { manifest: uiManifest } = useUiMode();
   // "working" still reflects live ambient state (not an attention kind).
   const workingCount = agents.reduce((n, a) => {
     const s = a.sessionId ? statusBySession[a.sessionId] : undefined;
@@ -432,6 +436,25 @@ const SideBar: React.FC<SideBarProps> = ({
         >
           <Plus size={18} strokeWidth={2.5} />
         </button>
+
+        {/* Compact needs-you badge (focus mode's attention surface) — pinned
+            above the hub dot. Click jumps to the next agent blocked on you. */}
+        {uiManifest.attention === 'badge' && needYouCount > 0 && (
+          <button
+            onClick={onJumpToAttention}
+            title={`${needYouCount} agent${needYouCount === 1 ? '' : 's'} need you — click to jump`}
+            style={{
+              ...pillStyle('var(--wks-warning, #e0a000)'),
+              border: 'none',
+              cursor: 'pointer',
+              flexShrink: 0,
+              margin: '0 0 6px',
+            }}
+          >
+            <span style={dotStyle('var(--wks-warning, #e0a000)', true)} />
+            {needYouCount}
+          </button>
+        )}
 
         <HubStatus onOpenRemote={onOpenRemote} compact />
 

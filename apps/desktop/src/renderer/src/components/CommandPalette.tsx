@@ -24,6 +24,7 @@ import {
   type LucideIcon,
 } from './icons';
 import { shortcutFor } from '../lib/shortcuts';
+import { useUiMode } from '../hooks/useUiMode';
 
 // ── Unified palette item ──
 
@@ -187,6 +188,8 @@ interface CommandPaletteProps {
   onToggleInbox?: () => void;
   /** Toggle the Fleet Deck overlay. */
   onToggleFleet?: () => void;
+  /** Switch between the fleet / focus UI modes. */
+  onToggleUiMode?: () => void;
   /** Save the current workspace session. */
   onSaveSession?: () => void;
   /** Open the Settings pane. */
@@ -226,10 +229,13 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
   onToggleSidebar,
   onToggleInbox,
   onToggleFleet,
+  onToggleUiMode,
   onSaveSession,
   onOpenSettings,
   onToggleHelp,
 }) => {
+  // Current UI mode — the toggle entry's label names the TARGET mode.
+  const { mode: uiMode } = useUiMode();
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [profilePicker, setProfilePicker] = useState<{
@@ -318,6 +324,16 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
       'toggle-fleet',
     );
     add(
+      'cmd-toggle-ui-mode',
+      uiMode === 'focus' ? 'Switch to fleet mode' : 'Switch to focus mode',
+      uiMode === 'focus'
+        ? 'Bring back the full mission-control chrome'
+        : 'Minimal chrome — rail sidebar, no inspector rail or Fleet Deck',
+      <Columns3 size={16} strokeWidth={1.75} />,
+      onToggleUiMode,
+      'toggle-ui-mode',
+    );
+    add(
       'cmd-analytics',
       'Analytics',
       'Session usage & cost',
@@ -404,6 +420,8 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
     onToggleSidebar,
     onToggleInbox,
     onToggleFleet,
+    onToggleUiMode,
+    uiMode,
     onOpenAnalytics,
     onOpenAgents,
     onOpenInspector,

@@ -28,6 +28,10 @@ export interface UIConfig {
   /** How GUI diffs are laid out: 'stacked' (removed block then added block),
    *  'inline' (interleaved unified), or 'split' (side-by-side). Absent = stacked. */
   diffView?: 'stacked' | 'inline' | 'split';
+  /** App-wide UI mode: 'fleet' (full mission-control chrome) or 'focus'
+   *  (minimal — rail sidebar, no inspector rail / Fleet Deck). Absent = fleet.
+   *  See lib/uiMode.ts for the per-mode manifest. */
+  mode?: 'fleet' | 'focus';
 }
 
 export interface TerminalConfig {
@@ -46,8 +50,6 @@ export interface PanesConfig {
   peek: number;
   insertPosition: string;
   tabPosition: 'top' | 'left';
-  /** Global layout paradigm: 'tabs' strip, 'spatial' canvas, or 'stacked' feed. */
-  viewMode: 'tabs' | 'spatial' | 'stacked';
   /** Global altitude: 'piloting' one agent, or the cross-agent 'fleet' deck. */
   viewLevel?: 'fleet' | 'piloting';
   default: Array<{ id: string; type: string; title: string; width: number; order: number }>;

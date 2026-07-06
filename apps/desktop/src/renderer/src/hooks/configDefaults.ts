@@ -24,6 +24,7 @@ export const DEFAULT_SHORTCUTS: Record<string, string> = {
   'toggle-sidebar': 'ctrl+shift+b',
   'toggle-inbox': 'ctrl+shift+i',
   'toggle-fleet': 'ctrl+shift+f',
+  'toggle-ui-mode': 'ctrl+shift+m',
   'toggle-inspector': 'ctrl+shift+e',
   'library-picker': 'ctrl+shift+l',
   'open-review': 'ctrl+shift+g',
@@ -69,7 +70,6 @@ export const DEFAULT_SHORTCUTS: Record<string, string> = {
   'nav-down': 'prefix j',
   'nav-up': 'prefix k',
   'nav-right': 'prefix l',
-  'cycle-view': 'prefix v',
 };
 
 export const DEFAULT_CONFIG: Config = {
@@ -86,6 +86,7 @@ export const DEFAULT_CONFIG: Config = {
     showComposerSend: true,
     guiFontScale: 1.15,
     diffView: 'stacked',
+    mode: 'fleet',
   },
   terminal: {
     shell: '',
@@ -103,7 +104,6 @@ export const DEFAULT_CONFIG: Config = {
     peek: 0,
     insertPosition: 'after',
     tabPosition: 'top',
-    viewMode: 'tabs',
     viewLevel: 'piloting',
     default: [],
   },

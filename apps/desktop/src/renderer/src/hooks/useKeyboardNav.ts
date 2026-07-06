@@ -126,7 +126,7 @@ interface UseKeyboardNavOptions {
   onToggleSidebar?: () => void;
   onToggleInbox?: () => void;
   onToggleFleet?: () => void;
-  onCycleViewMode?: () => void;
+  onToggleUiMode?: () => void;
   onOpenReview?: () => void;
   shortcuts?: Record<string, string>;
 }
@@ -160,7 +160,7 @@ export function useKeyboardNav({
   onToggleSidebar,
   onToggleInbox,
   onToggleFleet,
-  onCycleViewMode,
+  onToggleUiMode,
   onOpenReview,
   onSpawnAgent,
   shortcuts = {},
@@ -338,9 +338,6 @@ export function useKeyboardNav({
           if (idx >= 0 && idx < tabs.length - 1) moveTab(activeTabId, idx + 1);
           return true;
         }
-        case 'cycle-view':
-          onCycleViewMode?.();
-          return true;
         case 'open-review':
           onOpenReview?.();
           return true;
@@ -379,6 +376,9 @@ export function useKeyboardNav({
           return true;
         case 'toggle-fleet':
           onToggleFleet?.();
+          return true;
+        case 'toggle-ui-mode':
+          onToggleUiMode?.();
           return true;
         default:
           return false; // not owned here
@@ -505,7 +505,7 @@ export function useKeyboardNav({
     onToggleSidebar,
     onToggleInbox,
     onToggleFleet,
-    onCycleViewMode,
+    onToggleUiMode,
     onOpenReview,
   ]);
 }

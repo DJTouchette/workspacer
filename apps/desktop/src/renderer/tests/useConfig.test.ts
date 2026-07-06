@@ -45,7 +45,6 @@ function makeConfig(override: Partial<Config> = {}): Config {
       peek: 80,
       insertPosition: 'after',
       tabPosition: 'top',
-      viewMode: 'tabs',
       default: [],
     },
     browser: {

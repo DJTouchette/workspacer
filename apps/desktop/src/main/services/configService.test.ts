@@ -175,7 +175,11 @@ describe('deepMerge semantics – via configService.saveConfig', () => {
     expect(cfg.panes.default).toEqual(newDefault);
     // Other panes fields survive
     expect(cfg.panes.gap).toBe(0);
-    expect(cfg.panes.viewMode).toBe('tabs');
+    expect(cfg.panes.tabPosition).toBe('top');
+  });
+
+  it('defaults ui.mode to fleet', () => {
+    expect(configService.getConfig().ui.mode).toBe('fleet');
   });
 
   it('saves a new scripts entry without touching other top-level keys', () => {

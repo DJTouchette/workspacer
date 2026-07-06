@@ -43,6 +43,9 @@ interface Config {
     guiFontScale?: number;
     /** GUI diff layout: 'stacked' | 'inline' | 'split'. Absent = stacked. */
     diffView?: 'stacked' | 'inline' | 'split';
+    /** App-wide UI mode: 'fleet' (full mission-control chrome) or 'focus'
+     *  (minimal — rail sidebar, no inspector rail / Fleet Deck). */
+    mode?: 'fleet' | 'focus';
   };
   terminal: {
     shell: string;
@@ -64,7 +67,6 @@ interface Config {
     peek: number;
     insertPosition: string;
     tabPosition: string; // 'top' | 'left'
-    viewMode: string; // 'tabs' | 'spatial' | 'stacked'
     viewLevel?: string; // 'piloting' | 'fleet'
     default: Array<{ id: string; type: string; title: string; width: number; order: number }>;
   };
@@ -195,6 +197,7 @@ const DEFAULT_SHORTCUTS: Record<string, string> = {
   'toggle-sidebar': 'ctrl+shift+b',
   'toggle-inbox': 'ctrl+shift+i',
   'toggle-fleet': 'ctrl+shift+f',
+  'toggle-ui-mode': 'ctrl+shift+m',
   'toggle-inspector': 'ctrl+shift+e',
   'library-picker': 'ctrl+shift+l',
   'open-review': 'ctrl+shift+g',
@@ -214,7 +217,6 @@ const DEFAULT_SHORTCUTS: Record<string, string> = {
   'nav-down': 'prefix j',
   'nav-up': 'prefix k',
   'nav-right': 'prefix l',
-  'cycle-view': 'prefix v',
 };
 
 /**
@@ -256,6 +258,7 @@ function defaultConfig(): Config {
       showComposerSend: true,
       guiFontScale: 1.15,
       diffView: 'stacked',
+      mode: 'fleet',
     },
     terminal: {
       shell: '',
@@ -283,7 +286,6 @@ function defaultConfig(): Config {
       peek: 0,
       insertPosition: 'after',
       tabPosition: 'top',
-      viewMode: 'tabs',
       viewLevel: 'piloting',
       default: [
         { id: 'terminal-1', type: 'terminal', title: 'Terminal 1', width: 800, order: 0 },

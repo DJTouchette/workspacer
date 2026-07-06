@@ -82,36 +82,17 @@ export interface PaneConfig {
   inspectorAgentName?: string;
 }
 
-/** Position + size of a tab's card on the spatial canvas, in world coordinates
- *  (pre-zoom). Only used when the global view mode is 'spatial'; absent until the
- *  card is first placed/dragged, at which point a default grid slot is persisted. */
-export interface CanvasRect {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}
-
 export interface TabConfig {
   id: string;
   title: string;
   panes: PaneConfig[];
   activePaneId: string;
-  /** Spatial-canvas placement. See {@link CanvasRect}. */
-  canvas?: CanvasRect;
   /** Epoch ms of the tab's last activity (focus / creation / split).
    *  Absent for tabs predating the feature. */
   lastActiveAt?: number;
 }
 
-/** How the workspace lays out tabs. Global (config.panes.viewMode).
- *  - 'tabs':     the classic horizontal scroll strip (one tab on screen at a time)
- *  - 'spatial':  every tab is a free-floating card on a pannable/zoomable canvas
- *  - 'stacked':  cards in a vertical feed (natural order); wraps top↔bottom */
-export type ViewMode = 'tabs' | 'spatial' | 'stacked';
-
-/** Altitude of the workspace, orthogonal to {@link ViewMode}. Global
- *  (config.panes.viewLevel).
+/** Altitude of the workspace. Global (config.panes.viewLevel).
  *  - 'piloting': you're inside one agent's workspace (the classic view)
  *  - 'fleet':    the Fleet Deck — a cross-agent radar of live agent cards */
 export type ViewLevel = 'fleet' | 'piloting';

@@ -1,6 +1,7 @@
 import React from 'react';
 import { Config } from '../../hooks/useConfig';
-import { Section, Row } from './primitives';
+import { resolveUiMode, type UiMode } from '../../lib/uiMode';
+import { Section, Row, ModeButton } from './primitives';
 
 interface LayoutSectionProps {
   config: Config;
@@ -8,8 +9,24 @@ interface LayoutSectionProps {
 }
 
 const LayoutSection: React.FC<LayoutSectionProps> = ({ config, save }) => {
+  const uiMode = resolveUiMode(config.ui?.mode);
+  const setUiMode = (mode: UiMode) => save({ ui: { ...config.ui, mode } });
   return (
     <Section title="Layout">
+      <Row label="UI mode">
+        <div style={{ display: 'flex', gap: '6px' }}>
+          <ModeButton
+            label="Fleet"
+            active={uiMode === 'fleet'}
+            onClick={() => setUiMode('fleet')}
+          />
+          <ModeButton
+            label="Focus"
+            active={uiMode === 'focus'}
+            onClick={() => setUiMode('focus')}
+          />
+        </div>
+      </Row>
       <Row label="Peek">
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <input

@@ -1,9 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { PaneType, TabConfig, ViewMode } from '../types/pane';
+import { PaneType, TabConfig } from '../types/pane';
 import { useConfig, ScriptEntry, Config } from '../hooks/useConfig';
 import { themes, darkTheme } from '../themes';
 import { useIsSmallScreen } from '../hooks/useMediaQuery';
-import { PaneIcon, Play, Settings, Plus, Columns3, LayoutGrid, Rows3 } from './icons';
+import { PaneIcon, Play, Settings, Plus, Columns3 } from './icons';
 import { AgentLogo } from './agentLogos';
 import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from './ContextMenu';
 import { resolveNavHeight } from '../lib/layoutUtils';
@@ -25,10 +25,6 @@ interface NavBarProps {
   onRenameTab?: (tabId: string) => void;
   onSplitTab?: (tabId: string, type: PaneType) => void;
   onMoveTab?: (tabId: string, toIndex: number) => void;
-  /** Current global layout paradigm ('tabs' | 'spatial'). */
-  viewMode?: ViewMode;
-  /** Toggle between the tab strip and the spatial canvas. */
-  onToggleViewMode?: () => void;
   /** Pixels to inset the bar from the left (to clear the agent sidebar). */
   leftOffset?: number;
   /** Active agent's workspace root — scripts are scoped to this directory. */
@@ -56,8 +52,6 @@ const NavBar: React.FC<NavBarProps> = ({
   onRenameTab,
   onSplitTab,
   onMoveTab,
-  viewMode = 'tabs',
-  onToggleViewMode,
   leftOffset = 0,
   cwd,
   scripts = [],
@@ -69,11 +63,8 @@ const NavBar: React.FC<NavBarProps> = ({
   const navHeight = resolveNavHeight(config.ui.navBarHeight, isSmallScreen);
   // On Windows the native caption buttons (min/max/close) are drawn by the
   // titleBarOverlay in the top-right corner. Reserve that strip so the
-  // right-aligned controls (view-mode toggle, scripts) don't slide under them.
+  // right-aligned controls (theme switcher, scripts) don't slide under them.
   const winControlsWidth = window.electronAPI?.platform === 'win32' ? 138 : 0;
-  // The stacked feed has its own per-card headers, so the horizontal tab strip
-  // is redundant there. Hide it (keep the bar for drag + view toggle).
-  const showTabStrip = viewMode !== 'stacked';
   const shells = config.terminal.shells || [];
   const [showMenu, setShowMenu] = useState(false);
   const [tabContextMenu, setTabContextMenu] = useState<{
@@ -151,80 +142,79 @@ const NavBar: React.FC<NavBarProps> = ({
           overflow: 'hidden',
         }}
       >
-        {showTabStrip &&
-          tabs.map((tab, idx) => {
-            const isActive = tab.id === activeTabId;
-            const singlePane = tab.panes.length === 1;
-            const firstPaneType = tab.panes[0]?.type ?? 'terminal';
-            const firstPaneProvider = tab.panes[0]?.provider;
-            const hasHibernated = tab.panes.some((p) => p.hibernated);
+        {tabs.map((tab, idx) => {
+          const isActive = tab.id === activeTabId;
+          const singlePane = tab.panes.length === 1;
+          const firstPaneType = tab.panes[0]?.type ?? 'terminal';
+          const firstPaneProvider = tab.panes[0]?.provider;
+          const hasHibernated = tab.panes.some((p) => p.hibernated);
 
-            return (
-              <button
-                key={tab.id}
-                onClick={() => onTabClick(tab.id)}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  setTabContextMenu({ tabId: tab.id, tabIdx: idx, x: e.clientX, y: e.clientY });
-                }}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  padding: '0 13px',
-                  margin: 0,
-                  width: 'auto',
-                  height: '28px',
-                  lineHeight: 1,
-                  border: 'none',
-                  borderRadius: 'var(--wks-radius-md)',
-                  cursor: 'pointer',
-                  fontSize: '0.8rem',
-                  fontFamily: 'inherit',
-                  fontWeight: isActive ? 600 : 500,
-                  backgroundColor: isActive ? 'var(--wks-accent-bg)' : 'transparent',
-                  boxShadow: isActive ? 'inset 0 0 0 1px var(--wks-accent-glow)' : 'none',
-                  color: isActive ? 'var(--wks-text-primary)' : 'var(--wks-text-muted)',
-                  opacity: hasHibernated && !isActive ? 0.4 : 1,
-                  transition: 'background-color 0.1s, color 0.1s',
-                  // @ts-ignore
-                  WebkitAppRegion: 'no-drag',
-                  appRegion: 'no-drag',
-                }}
-                onMouseEnter={(e) => {
-                  if (!isActive) {
-                    (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--wks-bg-hover)';
-                    (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-tertiary)';
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (!isActive) {
-                    (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent';
-                    (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-muted)';
-                  }
-                }}
-                title={`${tab.title} (Ctrl+${idx + 1})`}
-              >
-                <span style={{ display: 'flex', alignItems: 'center' }}>
-                  {singlePane ? (
-                    firstPaneType === 'claude' ? (
-                      <AgentLogo provider={firstPaneProvider ?? 'claude'} size={13} />
-                    ) : (
-                      <PaneIcon type={firstPaneType} size={13} />
-                    )
+          return (
+            <button
+              key={tab.id}
+              onClick={() => onTabClick(tab.id)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setTabContextMenu({ tabId: tab.id, tabIdx: idx, x: e.clientX, y: e.clientY });
+              }}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '0 13px',
+                margin: 0,
+                width: 'auto',
+                height: '28px',
+                lineHeight: 1,
+                border: 'none',
+                borderRadius: 'var(--wks-radius-md)',
+                cursor: 'pointer',
+                fontSize: '0.8rem',
+                fontFamily: 'inherit',
+                fontWeight: isActive ? 600 : 500,
+                backgroundColor: isActive ? 'var(--wks-accent-bg)' : 'transparent',
+                boxShadow: isActive ? 'inset 0 0 0 1px var(--wks-accent-glow)' : 'none',
+                color: isActive ? 'var(--wks-text-primary)' : 'var(--wks-text-muted)',
+                opacity: hasHibernated && !isActive ? 0.4 : 1,
+                transition: 'background-color 0.1s, color 0.1s',
+                // @ts-ignore
+                WebkitAppRegion: 'no-drag',
+                appRegion: 'no-drag',
+              }}
+              onMouseEnter={(e) => {
+                if (!isActive) {
+                  (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--wks-bg-hover)';
+                  (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-tertiary)';
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (!isActive) {
+                  (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent';
+                  (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-muted)';
+                }
+              }}
+              title={`${tab.title} (Ctrl+${idx + 1})`}
+            >
+              <span style={{ display: 'flex', alignItems: 'center' }}>
+                {singlePane ? (
+                  firstPaneType === 'claude' ? (
+                    <AgentLogo provider={firstPaneProvider ?? 'claude'} size={13} />
                   ) : (
-                    <Columns3 size={13} strokeWidth={1.75} />
-                  )}
-                </span>
-                <span>{tab.title}</span>
-                {!singlePane && (
-                  <span style={{ fontSize: '0.5rem', opacity: 0.6 }}>{tab.panes.length}</span>
+                    <PaneIcon type={firstPaneType} size={13} />
+                  )
+                ) : (
+                  <Columns3 size={13} strokeWidth={1.75} />
                 )}
-              </button>
-            );
-          })}
+              </span>
+              <span>{tab.title}</span>
+              {!singlePane && (
+                <span style={{ fontSize: '0.5rem', opacity: 0.6 }}>{tab.panes.length}</span>
+              )}
+            </button>
+          );
+        })}
 
-        {showTabStrip && onAddTab && (
+        {onAddTab && (
           <div
             ref={menuRef}
             style={{
@@ -387,66 +377,6 @@ const NavBar: React.FC<NavBarProps> = ({
       {/* Theme switcher — current theme's accent/purple/blue swatch + name,
           with a dropdown to pick any theme. Mirrors the mockup's right cluster. */}
       <ThemeSwitcher config={config} save={save} />
-
-      {/* View-mode toggle (tabs → spatial → stacked). Outside the scrolling
-          tab cluster so it stays visible no matter how many tabs are open. */}
-      {onToggleViewMode &&
-        (() => {
-          const labels: Record<ViewMode, string> = {
-            tabs: 'Tabs',
-            spatial: 'Spatial canvas',
-            stacked: 'Stacked feed',
-          };
-          const nextOf: Record<ViewMode, ViewMode> = {
-            tabs: 'spatial',
-            spatial: 'stacked',
-            stacked: 'tabs',
-          };
-          const active = viewMode !== 'tabs';
-          const Icon =
-            viewMode === 'spatial' ? LayoutGrid : viewMode === 'stacked' ? Rows3 : Columns3;
-          return (
-            <button
-              onClick={onToggleViewMode}
-              title={`View: ${labels[viewMode]} · click for ${labels[nextOf[viewMode]]}`}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                padding: 0,
-                margin: '0 6px 0 4px',
-                width: '28px',
-                height: '28px',
-                lineHeight: 1,
-                border: 'none',
-                borderRadius: 'var(--wks-radius-md)',
-                cursor: 'pointer',
-                fontFamily: 'inherit',
-                flexShrink: 0,
-                backgroundColor: active ? 'var(--wks-accent-bg)' : 'transparent',
-                boxShadow: active ? 'inset 0 0 0 1px var(--wks-accent-glow)' : 'none',
-                color: active ? 'var(--wks-text-primary)' : 'var(--wks-text-faint)',
-                // @ts-ignore
-                WebkitAppRegion: 'no-drag',
-                appRegion: 'no-drag',
-              }}
-              onMouseEnter={(e) => {
-                if (!active) {
-                  (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--wks-bg-hover)';
-                  (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-secondary)';
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (!active) {
-                  (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent';
-                  (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-faint)';
-                }
-              }}
-            >
-              <Icon size={14} strokeWidth={1.75} />
-            </button>
-          );
-        })()}
 
       {/* Per-directory script bar (right side) */}
       {cwd && onRunScript && (

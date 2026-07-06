@@ -216,6 +216,7 @@ export interface AppConfig {
     showComposerSend?: boolean;
     guiFontScale?: number;
     diffView?: 'stacked' | 'inline' | 'split';
+    mode?: 'fleet' | 'focus';
   };
   terminal: {
     shell: string;
@@ -237,7 +238,6 @@ export interface AppConfig {
     peek: number;
     insertPosition: string;
     tabPosition: string;
-    viewMode: string;
     viewLevel?: string;
     default: Array<{ id: string; type: string; title: string; width: number; order: number }>;
   };

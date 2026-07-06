@@ -101,7 +101,6 @@ export const ACTION_REGISTRY: ActionMeta[] = [
   { action: 'next-tab', label: 'Next tab', section: 'Navigation' },
   { action: 'move-tab-left', label: 'Move tab left', section: 'Navigation' },
   { action: 'move-tab-right', label: 'Move tab right', section: 'Navigation' },
-  { action: 'cycle-view', label: 'Cycle view mode', section: 'Navigation' },
   { action: 'nav-left', label: 'Focus pane left', section: 'Navigation' },
   { action: 'nav-right', label: 'Focus pane right', section: 'Navigation' },
   { action: 'nav-up', label: 'Focus pane up', section: 'Navigation' },
@@ -121,6 +120,7 @@ export const ACTION_REGISTRY: ActionMeta[] = [
   { action: 'toggle-terminal', label: 'Toggle terminal', section: 'Panels & Overlays' },
   { action: 'toggle-inbox', label: 'Toggle inbox', section: 'Panels & Overlays' },
   { action: 'toggle-fleet', label: 'Toggle fleet deck', section: 'Panels & Overlays' },
+  { action: 'toggle-ui-mode', label: 'Toggle focus / fleet mode', section: 'Panels & Overlays' },
   { action: 'toggle-inspector', label: 'Toggle inspector', section: 'Panels & Overlays' },
   { action: 'library-picker', label: 'Library picker', section: 'Panels & Overlays' },
   // Tools

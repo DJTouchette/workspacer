@@ -7,6 +7,7 @@ import { useClaudeSpawn } from '../hooks/useClaudeSpawn';
 import { useClaudeSession } from '../hooks/useClaudeSession';
 import { providerLabel } from '../hooks/useAgentManager';
 import { useConfig } from '../hooks/useConfig';
+import { useUiMode } from '../hooks/useUiMode';
 import { useTheme } from '../hooks/useTheme';
 import type { ConversationTurn, ToolCall } from '../types/claudeSession';
 import { anchorWork } from '../lib/anchorWork';
@@ -128,6 +129,9 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   const noopSetView = useCallback((_v: React.SetStateAction<ViewMode>) => {}, []);
   // hasTerminal / viewMode are derived after the session snapshot is available
   // (the snapshot is the authority on the Claude transport) — see below.
+  // Focus mode hides the per-pane inspector rail entirely (mount, composer
+  // toggle, hotkey) — declared in the UI-mode manifest.
+  const { manifest: uiManifest } = useUiMode();
   const [railOpen, setRailOpen] = useState(() => localStorage.getItem('wks-claude-rail') === '1');
   const [inputValue, setInputValue] = useState(initialPrompt ?? '');
   const [showScrollBtn, setShowScrollBtn] = useState(false);
@@ -950,8 +954,10 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   // rather than routing through the global nav handler. Capture phase + stop
   // beats xterm's own key handling when the pane is in terminal mode.
   const inspectorCombo = config.keybindings?.shortcuts?.['toggle-inspector'];
+  const inspectorRailAvailable = uiManifest.inspectorRail;
   useEffect(() => {
-    if (!isActive || !inspectorCombo) return;
+    // No-op in focus mode — the rail never mounts there.
+    if (!isActive || !inspectorCombo || !inspectorRailAvailable) return;
     const parts = inspectorCombo.toLowerCase().split('+');
     const key = parts[parts.length - 1];
     const needCtrl = parts.includes('ctrl');
@@ -973,7 +979,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     };
     window.addEventListener('keydown', handleKeyDown, true);
     return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [isActive, inspectorCombo, toggleRail]);
+  }, [isActive, inspectorCombo, inspectorRailAvailable, toggleRail]);
 
   // Anchor subagents/workflow runs to the Agent/Workflow tool calls that
   // spawned them so they render inline in the timeline (exact toolUseId /
@@ -982,12 +988,14 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   // run finishes — only completed runs anchor into the timeline's WorkCards
   // (anchoring them while running would scroll live work up into history and
   // render it twice).
-  const finishedSubagents = useMemo(() => subagents.filter((s) => s.status !== 'running'), [
-    subagents,
-  ]);
-  const finishedWorkflows = useMemo(() => workflows.filter((w) => w.status !== 'running'), [
-    workflows,
-  ]);
+  const finishedSubagents = useMemo(
+    () => subagents.filter((s) => s.status !== 'running'),
+    [subagents],
+  );
+  const finishedWorkflows = useMemo(
+    () => workflows.filter((w) => w.status !== 'running'),
+    [workflows],
+  );
   const { toolIdToSubagent, toolIdToWorkflow, unanchoredSubagents, unanchoredWorkflows } = useMemo(
     () => anchorWork(conversation, finishedSubagents, finishedWorkflows),
     [conversation, finishedSubagents, finishedWorkflows],
@@ -1419,8 +1427,11 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
         </div>
 
         {/* Inspector rail — files / workflows / agents / usage. Sibling of the
-          content area, so it persists in both GUI and Terminal mode. */}
-        {railOpen && <InspectorRail session={session} onClose={toggleRail} />}
+          content area, so it persists in both GUI and Terminal mode. Never
+          mounts in focus mode (UI-mode manifest). */}
+        {inspectorRailAvailable && railOpen && (
+          <InspectorRail session={session} onClose={toggleRail} />
+        )}
       </div>
 
       {/* Status / control bar — pinned to the bottom of the pane (below the
@@ -1607,23 +1618,26 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
           </ContextMenu>
         )}
 
-        {/* Inspector rail toggle — available in both GUI and Terminal mode */}
-        <button
-          onClick={toggleRail}
-          title={
-            railOpen ? 'Hide inspector' : 'Show inspector (files / workflows / agents / usage)'
-          }
-          className={railOpen ? undefined : 'wks-composer-icon-btn'}
-          style={{
-            ...toggleBtnStyle,
-            display: 'flex',
-            alignItems: 'center',
-            backgroundColor: railOpen ? 'var(--wks-accent-bg)' : 'transparent',
-            color: railOpen ? colors.accent : 'var(--wks-text-muted)',
-          }}
-        >
-          <PanelRight size={13} strokeWidth={1.9} />
-        </button>
+        {/* Inspector rail toggle — available in both GUI and Terminal mode,
+            hidden in focus mode along with the rail itself. */}
+        {inspectorRailAvailable && (
+          <button
+            onClick={toggleRail}
+            title={
+              railOpen ? 'Hide inspector' : 'Show inspector (files / workflows / agents / usage)'
+            }
+            className={railOpen ? undefined : 'wks-composer-icon-btn'}
+            style={{
+              ...toggleBtnStyle,
+              display: 'flex',
+              alignItems: 'center',
+              backgroundColor: railOpen ? 'var(--wks-accent-bg)' : 'transparent',
+              color: railOpen ? colors.accent : 'var(--wks-text-muted)',
+            }}
+          >
+            <PanelRight size={13} strokeWidth={1.9} />
+          </button>
+        )}
 
         {/* View mode toggle — only when the provider offers both surfaces (Claude). */}
         <div style={{ display: showViewToggle ? 'flex' : 'none', gap: 2 }}>

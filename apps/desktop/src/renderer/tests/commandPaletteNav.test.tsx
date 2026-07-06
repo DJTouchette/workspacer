@@ -10,6 +10,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, fireEvent } from '@testing-library/react';
 import CommandPalette from '../src/components/CommandPalette';
+import { ConfigProvider } from '../src/contexts/ConfigContext';
 
 function paletteRows(container: HTMLElement): HTMLElement[] {
   return (Array.from(container.querySelectorAll('div')) as HTMLElement[]).filter(
@@ -23,14 +24,18 @@ const highlightedIndex = (rows: HTMLElement[]) =>
 describe('CommandPalette — keyboard nav order matches visual order', () => {
   it('ArrowDown advances the highlight one visual row at a time', () => {
     const { container } = render(
-      <CommandPalette
-        visible
-        apps={[{ name: 'MyApp', url: 'https://example.com' }]}
-        onClose={vi.fn()}
-        onLaunchApp={vi.fn()}
-        onAddTab={vi.fn()}
-        onSpawnAgent={vi.fn()} // surfaces a "Spawn Agent" command row
-      />,
+      // The palette reads the UI mode from config (useUiMode), so it needs the
+      // ConfigProvider around it like in the app.
+      <ConfigProvider>
+        <CommandPalette
+          visible
+          apps={[{ name: 'MyApp', url: 'https://example.com' }]}
+          onClose={vi.fn()}
+          onLaunchApp={vi.fn()}
+          onAddTab={vi.fn()}
+          onSpawnAgent={vi.fn()} // surfaces a "Spawn Agent" command row
+        />
+      </ConfigProvider>,
     );
 
     const input = container.querySelector('input')!;

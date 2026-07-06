@@ -49,18 +49,12 @@ import { useLibrary } from './hooks/useLibrary';
 import { useLayoutSync, type HydrationResult } from './hooks/useLayoutSync';
 import { useHubReconnect } from './hooks/useHubReconnect';
 import { useAgentManager, GLOBAL_WORKSPACE_ID } from './hooks/useAgentManager';
-import type {
-  PaneType,
-  AgentWorkspace,
-  AgentProvider,
-  ViewMode,
-  ViewLevel,
-  TabConfig,
-} from './types/pane';
+import type { PaneType, AgentWorkspace, AgentProvider, ViewLevel } from './types/pane';
 import type { SessionAmbientState, ClaudeSessionSnapshot } from './types/claudeSession';
 import { useKeyboardNav } from './hooks/useKeyboardNav';
 import { useIsSmallScreen } from './hooks/useMediaQuery';
 import { useConfig, DEFAULT_CONFIG } from './hooks/useConfig';
+import { useUiMode } from './hooks/useUiMode';
 import { useTheme } from './hooks/useTheme';
 import { useSessionLifecycle } from './hooks/useSessionLifecycle';
 import { usePluginHotkeys } from './hooks/usePluginHotkeys';
@@ -128,7 +122,6 @@ interface AgentViewHandlers {
   onPaneFocus: (tabId: string, paneId: string) => void;
   onTabRename: (tabId: string, title: string) => void;
   onTabMove: (tabId: string, toIndex: number) => void;
-  onTabCanvasChange: (tabId: string, canvas: TabConfig['canvas']) => void;
   onPtyReady: (paneId: string, ptySessionId: string) => void;
   onUrlChange: (tabId: string, paneId: string, url: string) => void;
   onNotesChange: (tabId: string, paneId: string, notes: string) => void;
@@ -155,7 +148,6 @@ interface AgentWorkspaceViewProps {
   agent: AgentWorkspace;
   isActiveAgent: boolean;
   scrollContainerRef: React.Ref<ScrollContainerRef>;
-  viewMode: ViewMode;
   ptyMapping: Record<string, string>;
   renameSignal: number;
   workspaceAgents: { sessionId?: string }[];
@@ -173,13 +165,12 @@ interface AgentWorkspaceViewProps {
  * For the memo to actually hold, every prop must be stable across unrelated
  * renders — App passes a single bundled `handlers` object plus memoized
  * arrays, so the only props that move for agent X are X's own `agent`/active
- * flag (and the genuinely-shared `allAgents`/`ptyMapping`/`viewMode`).
+ * flag (and the genuinely-shared `allAgents`/`ptyMapping`).
  */
 const AgentWorkspaceView = memo(function AgentWorkspaceView({
   agent,
   isActiveAgent,
   scrollContainerRef,
-  viewMode,
   ptyMapping,
   renameSignal,
   workspaceAgents,
@@ -200,8 +191,6 @@ const AgentWorkspaceView = memo(function AgentWorkspaceView({
           onPaneFocus={handlers.onPaneFocus}
           onTabRename={handlers.onTabRename}
           onTabMove={handlers.onTabMove}
-          viewMode={viewMode}
-          onTabCanvasChange={handlers.onTabCanvasChange}
           onPtyReady={handlers.onPtyReady}
           onUrlChange={handlers.onUrlChange}
           onNotesChange={handlers.onNotesChange}
@@ -223,6 +212,10 @@ const AgentWorkspaceView = memo(function AgentWorkspaceView({
 
 function App() {
   const { config, loaded: configLoaded, save: saveConfig } = useConfig();
+  // App-wide UI mode (config.ui.mode): 'fleet' keeps the full mission-control
+  // chrome; 'focus' strips down to the piloted agent. A lens, not a layout —
+  // switching modes must never remount panes or touch sessions.
+  const { manifest: uiManifest, toggle: toggleUiMode } = useUiMode();
   useTheme();
 
   // Shared-layout hydration gate (tmux-style mirror). Until the hub's layout
@@ -262,7 +255,6 @@ function App() {
     removePane,
     renameTab,
     moveTab,
-    updateTabCanvas,
     setActivePane,
     hibernatePane,
     wakePane,
@@ -297,13 +289,36 @@ function App() {
       setSidebarCollapsed(isSmallScreen);
     }
   }, [isSmallScreen]);
+  // Focus mode (manifest.sidebar === 'rail') forces the icons-only rail on
+  // desktop; the rail's expand affordance then shows the FULL sidebar as a
+  // temporary overlay (scrim + floating panel) instead of re-reserving the
+  // column. Small screens keep their existing overlay behavior in both modes.
+  const sidebarRailForced = !isSmallScreen && uiManifest.sidebar === 'rail';
+  const [focusSidebarOverlay, setFocusSidebarOverlay] = useState(false);
+  // Leaving focus mode dismisses the overlay and reverts sidebarCollapsed to
+  // the breakpoint default; entering it just dismisses any stale overlay.
+  const prevRailForced = useRef(sidebarRailForced);
+  useEffect(() => {
+    if (sidebarRailForced === prevRailForced.current) return;
+    prevRailForced.current = sidebarRailForced;
+    setFocusSidebarOverlay(false);
+    if (!sidebarRailForced) setSidebarCollapsed(isSmallScreen);
+  }, [sidebarRailForced, isSmallScreen]);
+  // The sidebar toggle (rail chevron, Ctrl+Shift+B, palette): in forced-rail
+  // mode it opens/closes the temporary full-sidebar overlay; otherwise it
+  // collapses/expands the panel as before.
+  const toggleSidebar = useCallback(() => {
+    if (prevRailForced.current) setFocusSidebarOverlay((v) => !v);
+    else setSidebarCollapsed((v) => !v);
+  }, []);
   // Layout offsets. On small screens the sidebar overlays the content, so we
   // never reserve space (navbar keeps a small inset for the floating toggle).
   // On desktop, collapsing shrinks the panel to a 74px monogram rail that still
   // reserves its column, rather than fully hiding.
   const sidebarOverlay = isSmallScreen;
-  const contentLeft = sidebarOverlay ? 0 : sidebarCollapsed ? SIDEBAR_RAIL_WIDTH : SIDEBAR_WIDTH;
-  const navLeft = sidebarOverlay ? 36 : sidebarCollapsed ? SIDEBAR_RAIL_WIDTH : SIDEBAR_WIDTH;
+  const railShown = sidebarCollapsed || sidebarRailForced;
+  const contentLeft = sidebarOverlay ? 0 : railShown ? SIDEBAR_RAIL_WIDTH : SIDEBAR_WIDTH;
+  const navLeft = sidebarOverlay ? 36 : railShown ? SIDEBAR_RAIL_WIDTH : SIDEBAR_WIDTH;
 
   // App working directory (used as the default cwd for the spawn dialog + the
   // Library's fallback project root).
@@ -518,7 +533,7 @@ function App() {
   }, [snapshotBySession, agents, adoptAgent, sessionPhase]);
 
   // Mission Control surfaces: the Triage Inbox (a top-level drawer) and the
-  // Fleet Deck (a cross-agent radar, a global altitude orthogonal to viewMode).
+  // Fleet Deck (a cross-agent radar, a global altitude over the workspaces).
   const [inboxOpen, setInboxOpen] = useState(false);
   const openInbox = useCallback(() => setInboxOpen(true), []);
   const closeInbox = useCallback(() => setInboxOpen(false), []);
@@ -533,8 +548,18 @@ function App() {
     [config.panes, saveConfig],
   );
   const toggleFleet = useCallback(() => {
+    // In focus mode the deck never mounts — instead of a dead key, the fleet
+    // toggle is an escape hatch: switch the UI mode to 'fleet' AND open the
+    // deck in one config write.
+    if (!uiManifest.fleetDeck) {
+      saveConfig({
+        ui: { ...config.ui, mode: 'fleet' },
+        panes: { ...config.panes, viewLevel: 'fleet' },
+      });
+      return;
+    }
     setViewLevel(viewLevel === 'fleet' ? 'piloting' : 'fleet');
-  }, [viewLevel, setViewLevel]);
+  }, [uiManifest.fleetDeck, config.ui, config.panes, saveConfig, viewLevel, setViewLevel]);
 
   const handleUrlChange = useCallback(
     (tabId: string, paneId: string, url: string) => {
@@ -1053,11 +1078,6 @@ function App() {
     return () => cancelAnimationFrame(raf);
   }, [activeAgentId, tabs, activeTabId]);
 
-  // toggleViewMode is defined further down (depends on derived viewMode), so
-  // the keyboard hook reaches it through a ref to avoid a use-before-init.
-  const cycleViewModeRef = useRef<() => void>(() => {});
-  const cycleViewMode = useCallback(() => cycleViewModeRef.current(), []);
-
   useKeyboardNav({
     tabs,
     activeTabId,
@@ -1093,17 +1113,19 @@ function App() {
     onNextAttention: goToNextAttention,
     onSpawnAgent: handleSpawnAgentShortcut,
     onToggleTerminal: useCallback(() => setShowBottomTerminal((v) => !v), []),
-    onToggleSidebar: useCallback(() => setSidebarCollapsed((v) => !v), []),
+    onToggleSidebar: toggleSidebar,
     onToggleInbox: toggleInbox,
     onToggleFleet: toggleFleet,
-    onCycleViewMode: cycleViewMode,
+    onToggleUiMode: toggleUiMode,
     onOpenReview: openReview,
     shortcuts: resolvedShortcuts,
   });
 
-  // Escape exits the Fleet Deck back to piloting (when the inbox isn't capturing).
+  // Escape exits the Fleet Deck back to piloting (when the inbox isn't
+  // capturing). Only while the deck can actually be on screen — in focus mode
+  // it never mounts, so Escape must not be swallowed there.
   useEffect(() => {
-    if (viewLevel !== 'fleet') return;
+    if (!uiManifest.fleetDeck || viewLevel !== 'fleet') return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && !inboxOpen) {
         e.preventDefault();
@@ -1112,7 +1134,7 @@ function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [viewLevel, inboxOpen, setViewLevel]);
+  }, [uiManifest.fleetDeck, viewLevel, inboxOpen, setViewLevel]);
 
   const handleTabClick = useCallback(
     (id: string) => {
@@ -1502,22 +1524,6 @@ function App() {
   // also drives the content top-offset below, so the two stay in sync.
   const navHeight = resolveNavHeight(config.ui.navBarHeight, isSmallScreen);
 
-  const rawViewMode = config.panes?.viewMode as string | undefined;
-  const viewMode: ViewMode =
-    rawViewMode === 'spatial'
-      ? 'spatial'
-      : // 'timeline' is the old name for 'stacked' — keep reading old configs.
-        rawViewMode === 'stacked' || rawViewMode === 'timeline'
-        ? 'stacked'
-        : 'tabs';
-  const toggleViewMode = useCallback(() => {
-    // Cycle: tabs → spatial → stacked → tabs
-    const order: ViewMode[] = ['tabs', 'spatial', 'stacked'];
-    const next = order[(order.indexOf(viewMode) + 1) % order.length];
-    saveConfig({ panes: { ...config.panes, viewMode: next } });
-  }, [viewMode, config.panes, saveConfig]);
-  cycleViewModeRef.current = toggleViewMode;
-
   const handleNavBarRename = useCallback(
     (tabId: string) => {
       setActiveTabId(tabId);
@@ -1577,7 +1583,6 @@ function App() {
       onPaneFocus: handlePaneFocus,
       onTabRename: renameTab,
       onTabMove: moveTab,
-      onTabCanvasChange: updateTabCanvas,
       onPtyReady: handlePtyReady,
       onUrlChange: handleUrlChange,
       onNotesChange: handleNotesChange,
@@ -1593,7 +1598,6 @@ function App() {
       handlePaneFocus,
       renameTab,
       moveTab,
-      updateTabCanvas,
       handlePtyReady,
       handleUrlChange,
       handleNotesChange,
@@ -1655,12 +1659,54 @@ function App() {
               onToggleFleet={toggleFleet}
               viewLevel={viewLevel}
               onOpenRemote={() => setShowRemote(true)}
-              onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
+              onToggleCollapse={toggleSidebar}
               onToggleHelp={toggleHelp}
               noAttentionFlash={noAttentionFlash}
-              collapsed={!sidebarOverlay && sidebarCollapsed}
+              collapsed={!sidebarOverlay && railShown}
             />
           </ErrorBoundary>
+        )}
+        {/* Focus mode: the rail's expand affordance shows the FULL sidebar as a
+          temporary overlay (scrim + floating panel) — the content column stays
+          at rail width. Dismissed by scrim click or agent selection. */}
+        {sidebarRailForced && focusSidebarOverlay && (
+          <>
+            <div
+              onClick={() => setFocusSidebarOverlay(false)}
+              style={{
+                position: 'fixed',
+                inset: 0,
+                zIndex: 90,
+                background: 'rgba(0,0,0,0.45)',
+                // @ts-ignore — stay clickable over the draggable navbar region
+                WebkitAppRegion: 'no-drag',
+              }}
+            />
+            <ErrorBoundary label="Sidebar" variant="region">
+              <SideBar
+                agents={agents}
+                activeAgentId={activeAgentId}
+                statusBySession={statusBySession}
+                snapshotBySession={snapshotBySession}
+                onSelectAgent={(id) => {
+                  handleSelectAgent(id);
+                  setFocusSidebarOverlay(false);
+                }}
+                onSpawnAgent={() => setShowSpawnDialog(true)}
+                onTerminateAgent={handleTerminateAgent}
+                onRenameAgent={renameAgent}
+                onJumpToAttention={goToNextAttention}
+                onOpenInbox={openInbox}
+                onToggleFleet={toggleFleet}
+                viewLevel={viewLevel}
+                onOpenRemote={() => setShowRemote(true)}
+                onToggleCollapse={() => setFocusSidebarOverlay(false)}
+                onToggleHelp={toggleHelp}
+                noAttentionFlash={noAttentionFlash}
+                collapsed={false}
+              />
+            </ErrorBoundary>
+          </>
         )}
         {sidebarOverlay && sidebarCollapsed && (
           <button
@@ -1703,8 +1749,6 @@ function App() {
             onRenameTab={handleNavBarRename}
             onSplitTab={handleNavBarSplit}
             onMoveTab={moveTab}
-            viewMode={viewMode}
-            onToggleViewMode={toggleViewMode}
             leftOffset={navLeft}
             cwd={agentCwd || undefined}
             scripts={dirScripts}
@@ -1732,7 +1776,6 @@ function App() {
                 agent={agent}
                 isActiveAgent={agent.id === activeAgentId}
                 scrollContainerRef={scrollContainerRef}
-                viewMode={viewMode}
                 ptyMapping={ptyMapping}
                 renameSignal={renameSignal}
                 workspaceAgents={workspaceAgents}
@@ -1847,7 +1890,7 @@ function App() {
           }}
           onToggleSidebar={() => {
             setShowCommandPalette(false);
-            setSidebarCollapsed((v) => !v);
+            toggleSidebar();
           }}
           onToggleInbox={() => {
             setShowCommandPalette(false);
@@ -1856,6 +1899,10 @@ function App() {
           onToggleFleet={() => {
             setShowCommandPalette(false);
             toggleFleet();
+          }}
+          onToggleUiMode={() => {
+            setShowCommandPalette(false);
+            toggleUiMode();
           }}
           onSaveSession={() => {
             setShowCommandPalette(false);
@@ -1951,8 +1998,9 @@ function App() {
         />
 
         {/* Fleet Deck — cross-agent radar overlay. Sits OVER the still-mounted
-          per-agent workspaces, so entering/leaving never remounts a pane. */}
-        {viewLevel === 'fleet' && agents.some((a) => !a.global) && (
+          per-agent workspaces, so entering/leaving never remounts a pane.
+          Never mounts in focus mode (manifest.fleetDeck). */}
+        {uiManifest.fleetDeck && viewLevel === 'fleet' && agents.some((a) => !a.global) && (
           <FleetDeck top={navHeight} left={contentLeft} />
         )}
 
