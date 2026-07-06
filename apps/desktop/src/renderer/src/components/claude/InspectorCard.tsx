@@ -341,7 +341,7 @@ export const InspectorCard: React.FC<{
                   padding: '0 5px',
                   borderRadius: 6,
                   backgroundColor: 'rgba(255,255,255,0.08)',
-                  color: t.id === 'agents' || t.id === 'workflows' ? '#c084fc' : colors.muted,
+                  color: t.id === 'agents' || t.id === 'workflows' ? colors.purple : colors.muted,
                   fontVariantNumeric: 'tabular-nums',
                 }}
               >
@@ -458,7 +458,7 @@ export const InspectorCard: React.FC<{
                 <div
                   style={{
                     fontSize: '0.68rem',
-                    color: '#c084fc',
+                    color: 'var(--wks-purple)',
                     fontWeight: 600,
                     textTransform: 'uppercase',
                     letterSpacing: '0.05em',
@@ -488,7 +488,7 @@ export const InspectorCard: React.FC<{
                   <span
                     style={{
                       fontSize: '0.68rem',
-                      color: '#c084fc',
+                      color: 'var(--wks-purple)',
                       fontWeight: 600,
                       textTransform: 'uppercase',
                       letterSpacing: '0.05em',
@@ -566,7 +566,7 @@ export const InspectorCard: React.FC<{
                 style={{
                   fontSize: '0.76rem',
                   color: colors.muted,
-                  lineHeight: 1.9,
+                  lineHeight: 1.6,
                   marginTop: 4,
                   fontVariantNumeric: 'tabular-nums',
                 }}

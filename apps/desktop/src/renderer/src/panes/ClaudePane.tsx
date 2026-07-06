@@ -1229,7 +1229,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
                         fontSize: '0.65rem',
                         fontWeight: 500,
                         padding: '4px 16px',
-                        borderRadius: 12,
+                        borderRadius: 'var(--wks-radius-lg)',
                         border: `1px solid ${colors.border}`,
                         backgroundColor: 'rgba(255,255,255,0.03)',
                         color: colors.muted,

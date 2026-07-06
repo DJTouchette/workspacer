@@ -79,7 +79,7 @@ export const AttentionCard: React.FC<Props> = ({ item, selected }) => {
           style={{
             width: 17,
             height: 17,
-            borderRadius: 5,
+            borderRadius: 'var(--wks-radius-sm)',
             flexShrink: 0,
             display: 'flex',
             alignItems: 'center',
@@ -88,7 +88,7 @@ export const AttentionCard: React.FC<Props> = ({ item, selected }) => {
             border: `1px solid color-mix(in srgb, ${v.color} 45%, transparent)`,
             color: v.color,
             fontSize: '0.62rem',
-            fontWeight: 800,
+            fontWeight: 700,
             lineHeight: 1,
           }}
         >
@@ -213,7 +213,7 @@ const CardBtn: React.FC<{ label: string; hint?: string; onClick: () => void }> =
       fontFamily: 'inherit',
       fontWeight: 600,
       padding: '3px 9px',
-      borderRadius: 5,
+      borderRadius: 'var(--wks-radius-sm)',
       cursor: 'pointer',
       border: '1px solid var(--wks-glass-border)',
       background: 'var(--wks-bg-surface)',
@@ -229,7 +229,7 @@ const CardBtn: React.FC<{ label: string; hint?: string; onClick: () => void }> =
           border: '1px solid var(--wks-glass-border)',
           borderRadius: 3,
           padding: '0 3px',
-          fontFamily: 'monospace',
+          fontFamily: 'var(--wks-font-mono)',
         }}
       >
         {hint}

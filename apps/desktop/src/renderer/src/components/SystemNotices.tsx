@@ -72,7 +72,7 @@ export const SystemNotices: React.FC = () => {
             gap: 10,
             alignItems: 'flex-start',
             padding: '10px 12px',
-            borderRadius: 8,
+            borderRadius: 'var(--wks-radius-md)',
             background: 'var(--wks-glass-strong, #26242b)',
             backdropFilter: 'blur(var(--wks-glass-blur, 12px)) saturate(160%)',
             WebkitBackdropFilter: 'blur(var(--wks-glass-blur, 12px)) saturate(160%)',

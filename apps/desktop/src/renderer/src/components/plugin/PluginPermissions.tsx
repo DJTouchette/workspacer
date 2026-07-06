@@ -29,7 +29,7 @@ export const PluginPermissions: React.FC<{ manifest: PluginManifest; compact?: b
         <div key={g.key}>
           <div
             style={{
-              fontSize: compact ? '0.56rem' : '0.6rem',
+              fontSize: compact ? '0.55rem' : '0.6rem',
               fontWeight: 700,
               textTransform: 'uppercase',
               letterSpacing: '0.05em',

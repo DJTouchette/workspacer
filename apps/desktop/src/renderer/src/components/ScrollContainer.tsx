@@ -975,7 +975,7 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
             const floatingCard: React.CSSProperties = {
               display: 'flex',
               flexDirection: 'column',
-              borderRadius: '8px',
+              borderRadius: 'var(--wks-radius-md)',
               overflow: 'hidden',
               backgroundColor: 'var(--wks-bg-surface)',
               border: isActiveTab

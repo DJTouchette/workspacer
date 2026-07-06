@@ -548,7 +548,7 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
                       style={{
                         width: 8,
                         height: 8,
-                        borderRadius: 99,
+                        borderRadius: 'var(--wks-radius-pill)',
                         flexShrink: 0,
                         background: color,
                       }}

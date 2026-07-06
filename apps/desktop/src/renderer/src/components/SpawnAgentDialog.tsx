@@ -433,7 +433,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                 det === undefined
                   ? 'var(--wks-text-disabled)'
                   : det.found
-                    ? '#3db86a'
+                    ? 'var(--wks-success)'
                     : 'var(--wks-danger, #e05555)';
               return (
                 <button
@@ -510,7 +510,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
           {currentDetection && (
             <div style={{ marginTop: 6 }}>
               {currentDetection.found ? (
-                <div style={{ color: '#3db86a', fontSize: '0.62rem' }}>
+                <div style={{ color: 'var(--wks-success)', fontSize: '0.62rem' }}>
                   ✓ {currentDetection.resolvedPath}
                 </div>
               ) : (

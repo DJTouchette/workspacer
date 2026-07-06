@@ -326,7 +326,7 @@ const FileTree: React.FC<FileTreeProps> = ({
                 style={{
                   flexShrink: 0,
                   padding: '0 7px',
-                  borderRadius: 5,
+                  borderRadius: 'var(--wks-radius-sm)',
                   border: `1px solid ${colors.borderSubtle}`,
                   background: colors.bg,
                   color: colors.text,

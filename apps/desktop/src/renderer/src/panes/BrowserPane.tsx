@@ -376,7 +376,7 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({
         backgroundColor: 'var(--wks-bg-base)',
         color: 'var(--wks-text-primary)',
         fontFamily: 'var(--wks-font-sans)',
-        fontSize: '12px',
+        fontSize: '0.75rem',
       }}
     >
       {/* URL bar + bookmarks — hidden in app mode */}

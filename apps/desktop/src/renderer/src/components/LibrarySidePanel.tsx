@@ -241,7 +241,7 @@ const closeBtn: React.CSSProperties = {
   color: 'var(--wks-text-faint)',
   background: 'transparent',
   border: 'none',
-  borderRadius: 5,
+  borderRadius: 'var(--wks-radius-sm)',
   cursor: 'pointer',
 };
 
@@ -254,14 +254,14 @@ const chip = (active: boolean): React.CSSProperties => ({
   color: active ? 'var(--wks-text-primary)' : 'var(--wks-text-faint)',
   background: active ? 'var(--wks-bg-selected)' : 'transparent',
   border: '1px solid ' + (active ? 'var(--wks-accent)' : 'var(--wks-border)'),
-  borderRadius: 999,
+  borderRadius: 'var(--wks-radius-pill)',
   cursor: 'pointer',
   fontFamily: 'inherit',
 });
 
 const card = (flash: boolean): React.CSSProperties => ({
   padding: 10,
-  borderRadius: 8,
+  borderRadius: 'var(--wks-radius-md)',
   background: 'var(--wks-bg-surface)',
   border: '1px solid ' + (flash ? 'var(--wks-accent)' : 'var(--wks-glass-border)'),
   transition: 'border-color 0.2s',
@@ -273,7 +273,7 @@ const kindBadge = (kind: LibraryKind): React.CSSProperties => ({
   textTransform: 'uppercase',
   letterSpacing: '0.04em',
   padding: '1px 6px',
-  borderRadius: 999,
+  borderRadius: 'var(--wks-radius-pill)',
   color: 'var(--wks-text-muted)',
   background: 'var(--wks-bg-elevated)',
   flexShrink: 0,

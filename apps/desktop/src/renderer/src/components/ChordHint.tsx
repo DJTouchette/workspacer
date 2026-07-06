@@ -42,7 +42,7 @@ const ChordHint: React.FC<ChordHintProps> = ({ path, prefix, shortcuts, showOpti
           '0 12px 36px var(--wks-glass-shadow), inset 0 0 0 1.5px var(--wks-glass-highlight)',
         padding: items.length ? '8px 10px' : '3px 9px',
         maxWidth: 'min(440px, 72vw)',
-        fontFamily: 'monospace',
+        fontFamily: 'var(--wks-font-mono)',
       }}
     >
       {/* Breadcrumb header: prefix chip › group › group … */}

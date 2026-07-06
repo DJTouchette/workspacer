@@ -187,7 +187,7 @@ const ExamplesGalleryDialog: React.FC<ExamplesGalleryDialogProps> = ({
                 key={m.id}
                 style={{
                   border: '1px solid var(--wks-border-subtle)',
-                  borderRadius: 8,
+                  borderRadius: 'var(--wks-radius-md)',
                   padding: '10px 12px',
                   background: 'var(--wks-bg-surface)',
                 }}
@@ -272,7 +272,7 @@ const ExamplesGalleryDialog: React.FC<ExamplesGalleryDialogProps> = ({
                       background: isAdded ? 'transparent' : 'var(--wks-accent)',
                       color: isAdded ? 'var(--wks-text-faint)' : 'var(--wks-text-on-accent, #fff)',
                       border: isAdded ? '1px solid var(--wks-border-input)' : 'none',
-                      borderRadius: 5,
+                      borderRadius: 'var(--wks-radius-sm)',
                       padding: '5px 14px',
                       fontWeight: 600,
                     }}
@@ -285,7 +285,7 @@ const ExamplesGalleryDialog: React.FC<ExamplesGalleryDialogProps> = ({
                     style={{
                       marginTop: 8,
                       padding: '8px 10px',
-                      borderRadius: 5,
+                      borderRadius: 'var(--wks-radius-sm)',
                       background: 'var(--wks-bg-input)',
                       border: '1px solid var(--wks-border-subtle)',
                     }}

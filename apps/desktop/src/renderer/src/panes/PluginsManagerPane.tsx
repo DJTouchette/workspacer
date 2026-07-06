@@ -158,7 +158,7 @@ const PluginsManagerPane: React.FC<{ title?: string }> = () => {
             background: 'transparent',
             color: 'var(--wks-text-secondary, var(--wks-text-primary))',
             border: '1px solid var(--wks-border-input)',
-            borderRadius: 5,
+            borderRadius: 'var(--wks-radius-sm)',
             padding: '5px 12px',
             fontWeight: 600,
           }}
@@ -174,7 +174,7 @@ const PluginsManagerPane: React.FC<{ title?: string }> = () => {
             background: 'var(--wks-accent)',
             color: 'var(--wks-text-on-accent, #fff)',
             border: 'none',
-            borderRadius: 5,
+            borderRadius: 'var(--wks-radius-sm)',
             padding: '5px 12px',
             fontWeight: 600,
           }}
@@ -214,7 +214,7 @@ const PluginsManagerPane: React.FC<{ title?: string }> = () => {
               key={p.id}
               style={{
                 border: '1px solid var(--wks-border-subtle)',
-                borderRadius: 8,
+                borderRadius: 'var(--wks-radius-md)',
                 padding: 12,
                 background: 'var(--wks-bg-surface)',
                 opacity: p.disabled ? 0.6 : 1,
@@ -317,7 +317,7 @@ const PluginsManagerPane: React.FC<{ title?: string }> = () => {
                   style={{
                     marginTop: 8,
                     padding: '8px 10px',
-                    borderRadius: 5,
+                    borderRadius: 'var(--wks-radius-sm)',
                     background: 'var(--wks-bg-input)',
                     border: '1px solid var(--wks-border-subtle)',
                   }}
@@ -330,7 +330,7 @@ const PluginsManagerPane: React.FC<{ title?: string }> = () => {
                   style={{
                     marginTop: 8,
                     padding: '6px 8px',
-                    borderRadius: 5,
+                    borderRadius: 'var(--wks-radius-sm)',
                     background: 'var(--wks-bg-input)',
                     border: '1px solid var(--wks-border-subtle)',
                     fontSize: '0.6rem',

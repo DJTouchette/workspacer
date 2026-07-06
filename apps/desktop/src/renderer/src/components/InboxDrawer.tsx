@@ -228,7 +228,7 @@ const InboxDrawer: React.FC = () => {
           <div
             style={{
               fontSize: '0.95rem',
-              fontWeight: 800,
+              fontWeight: 700,
               color: 'var(--wks-text-primary)',
               letterSpacing: '-0.01em',
             }}
@@ -432,7 +432,7 @@ const Hint: React.FC<{ k: string; t: string }> = ({ k, t }) => (
         border: '1px solid var(--wks-glass-border)',
         borderRadius: 3,
         padding: '0 4px',
-        fontFamily: 'monospace',
+        fontFamily: 'var(--wks-font-mono)',
       }}
     >
       {k}

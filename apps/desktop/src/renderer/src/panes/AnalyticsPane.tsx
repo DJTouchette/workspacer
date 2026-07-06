@@ -257,7 +257,7 @@ const ModelShare: React.FC<{ rows: AnalyticsBucket[] }> = ({ rows }) => {
         style={{
           display: 'flex',
           height: 12,
-          borderRadius: 99,
+          borderRadius: 'var(--wks-radius-pill)',
           overflow: 'hidden',
           background: 'var(--wks-bg-base)',
           marginBottom: 4,
@@ -353,7 +353,7 @@ const ProviderShare: React.FC<{
         style={{
           display: 'flex',
           height: 12,
-          borderRadius: 99,
+          borderRadius: 'var(--wks-radius-pill)',
           overflow: 'hidden',
           background: 'var(--wks-bg-base)',
           marginBottom: 4,
@@ -579,7 +579,7 @@ const BreakdownTable: React.FC<{ rows: AgentAgg[]; metric: BreakdownMetric }> = 
           gridTemplateColumns: BD_COLS,
           gap: 14,
           padding: '11px 16px',
-          fontSize: '0.56rem',
+          fontSize: '0.55rem',
           textTransform: 'uppercase',
           letterSpacing: '0.08em',
           color: 'var(--wks-text-faint)',
@@ -623,7 +623,7 @@ const BreakdownTable: React.FC<{ rows: AgentAgg[]; metric: BreakdownMetric }> = 
                 style={{
                   flex: 1,
                   height: 6,
-                  borderRadius: 99,
+                  borderRadius: 'var(--wks-radius-pill)',
                   background: 'var(--wks-bg-base)',
                   overflow: 'hidden',
                 }}
@@ -632,7 +632,7 @@ const BreakdownTable: React.FC<{ rows: AgentAgg[]; metric: BreakdownMetric }> = 
                   style={{
                     display: 'block',
                     height: '100%',
-                    borderRadius: 99,
+                    borderRadius: 'var(--wks-radius-pill)',
                     background: color,
                     width: `${Math.max(2, share)}%`,
                   }}
@@ -829,7 +829,7 @@ const AnalyticsPane: React.FC<{ title?: string }> = () => {
             alignSelf: 'center',
             background: 'var(--wks-bg-surface)',
             border: '1px solid var(--wks-border-subtle)',
-            borderRadius: 8,
+            borderRadius: 'var(--wks-radius-md)',
             padding: 3,
           }}
         >
@@ -863,7 +863,7 @@ const AnalyticsPane: React.FC<{ title?: string }> = () => {
                 alignItems: 'center',
                 gap: 6,
                 padding: '5px 11px',
-                borderRadius: 99,
+                borderRadius: 'var(--wks-radius-pill)',
                 cursor: 'pointer',
                 fontFamily: 'inherit',
                 fontSize: '0.7rem',
@@ -963,7 +963,7 @@ const AnalyticsPane: React.FC<{ title?: string }> = () => {
                 display: 'flex',
                 background: 'var(--wks-bg-surface)',
                 border: '1px solid var(--wks-border-subtle)',
-                borderRadius: 8,
+                borderRadius: 'var(--wks-radius-md)',
                 padding: 3,
               }}
             >

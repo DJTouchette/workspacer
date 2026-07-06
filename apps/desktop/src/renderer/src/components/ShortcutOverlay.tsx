@@ -86,7 +86,7 @@ const ShortcutOverlay: React.FC<ShortcutOverlayProps> = ({
             }}
           >
             Prefix is{' '}
-            <code style={{ fontFamily: 'monospace', color: 'var(--wks-text-tertiary)' }}>
+            <code style={{ fontFamily: 'var(--wks-font-mono)', color: 'var(--wks-text-tertiary)' }}>
               {formatBinding(prefix)}
             </code>{' '}
             — press it, then the key.
@@ -139,7 +139,7 @@ const ShortcutOverlay: React.FC<ShortcutOverlayProps> = ({
                           style={{
                             padding: '2px 12px 2px 0',
                             color: 'var(--wks-text-tertiary)',
-                            fontFamily: 'monospace',
+                            fontFamily: 'var(--wks-font-mono)',
                             fontSize: '0.65rem',
                             whiteSpace: 'nowrap',
                             width: '45%',

@@ -137,7 +137,7 @@ const WorkCardInner: React.FC<{
     <div
       style={{
         margin: '4px 0 10px 0',
-        borderRadius: 8,
+        borderRadius: 'var(--wks-radius-md)',
         border: `1px solid ${colors.borderSubtle}`,
         backgroundColor: 'rgba(255,255,255,0.015)',
         overflow: 'hidden',

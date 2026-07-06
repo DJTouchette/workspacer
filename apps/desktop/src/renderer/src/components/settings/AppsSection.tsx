@@ -103,7 +103,7 @@ const AppsSection: React.FC<AppsSectionProps> = ({ config, save }) => {
                   value={editUrl}
                   onChange={(e) => setEditUrl(e.target.value)}
                   placeholder="https://..."
-                  style={{ ...inputStyle, fontFamily: 'monospace' }}
+                  style={{ ...inputStyle, fontFamily: 'var(--wks-font-mono)' }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') handleSaveApp();
                   }}
@@ -175,7 +175,7 @@ const AppsSection: React.FC<AppsSectionProps> = ({ config, save }) => {
             borderRadius: '4px',
             cursor: 'pointer',
             height: 'auto',
-            lineHeight: '1.4',
+            lineHeight: 1.4,
             margin: '4px 0 0',
             width: '100%',
           }}

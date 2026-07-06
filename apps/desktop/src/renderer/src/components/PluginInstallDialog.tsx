@@ -171,7 +171,7 @@ const PluginInstallDialog: React.FC<PluginInstallDialogProps> = ({ onClose, onIn
             <div
               style={{
                 border: '1px solid var(--wks-border-subtle)',
-                borderRadius: 8,
+                borderRadius: 'var(--wks-radius-md)',
                 padding: 12,
                 background: 'var(--wks-bg-surface)',
               }}
@@ -266,7 +266,7 @@ const PluginInstallDialog: React.FC<PluginInstallDialogProps> = ({ onClose, onIn
           style={{
             marginTop: 12,
             padding: '8px 10px',
-            borderRadius: 5,
+            borderRadius: 'var(--wks-radius-sm)',
             background: 'var(--wks-bg-input)',
             border: '1px solid var(--wks-border-subtle)',
             fontSize: '0.65rem',

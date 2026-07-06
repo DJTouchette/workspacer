@@ -542,7 +542,7 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
           <div
             style={{
               fontSize: '1.1rem',
-              fontWeight: 800,
+              fontWeight: 700,
               letterSpacing: '-0.01em',
               color: 'var(--wks-text-primary)',
             }}
@@ -572,7 +572,7 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
             fontSize: '0.72rem',
             fontFamily: 'inherit',
             padding: '5px 9px',
-            borderRadius: 8,
+            borderRadius: 'var(--wks-radius-md)',
             border: '1px solid var(--wks-border-subtle)',
             background: 'var(--wks-bg-surface)',
             color: 'var(--wks-text-primary)',
@@ -613,7 +613,7 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
             display: 'flex',
             background: 'var(--wks-bg-surface)',
             border: '1px solid var(--wks-border-subtle)',
-            borderRadius: 8,
+            borderRadius: 'var(--wks-radius-md)',
             padding: 3,
           }}
         >
@@ -636,7 +636,7 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
             fontWeight: 700,
             cursor: 'pointer',
             border: 'none',
-            borderRadius: 8,
+            borderRadius: 'var(--wks-radius-md)',
             padding: '6px 13px',
             background: 'var(--wks-accent)',
             color: 'var(--wks-text-on-accent, #fff)',
@@ -789,7 +789,7 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
                           fontWeight: 600,
                           color: vis.color,
                           border: `1px solid ${vis.color}`,
-                          borderRadius: 99,
+                          borderRadius: 'var(--wks-radius-pill)',
                           padding: '1px 9px',
                           whiteSpace: 'nowrap',
                         }}
@@ -928,7 +928,7 @@ const kbdStyle: React.CSSProperties = {
   border: '1px solid var(--wks-glass-border)',
   borderRadius: 3,
   padding: '0 3px',
-  fontFamily: 'monospace',
+  fontFamily: 'var(--wks-font-mono)',
 };
 
 const CONTENT_SCROLL: React.CSSProperties = {
@@ -989,7 +989,7 @@ const lth: React.CSSProperties = {
   fontWeight: 600,
   textTransform: 'uppercase',
   letterSpacing: '0.05em',
-  fontSize: '0.56rem',
+  fontSize: '0.55rem',
 };
 const lthNum: React.CSSProperties = { ...lth, textAlign: 'right' };
 const ltd: React.CSSProperties = {

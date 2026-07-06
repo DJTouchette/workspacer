@@ -388,7 +388,7 @@ const Pane: React.FC<PaneProps> = ({
                 margin: 0,
                 width: 'auto',
                 height: 'auto',
-                lineHeight: '1',
+                lineHeight: 1,
                 borderRadius: '3px',
                 display: 'flex',
                 alignItems: 'center',

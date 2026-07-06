@@ -187,7 +187,7 @@ function StatusPill({ on }: { on: boolean }) {
         gap: 6,
         marginBottom: 14,
         padding: '3px 10px',
-        borderRadius: 999,
+        borderRadius: 'var(--wks-radius-pill)',
         background: 'var(--wks-bg-input)',
         border: '1px solid var(--wks-border-input)',
         color: on ? 'var(--wks-success, #3fb950)' : 'var(--wks-text-muted)',
@@ -216,7 +216,7 @@ function TailscaleNote() {
       style={{
         margin: '0 0 16px',
         padding: '10px 12px',
-        borderRadius: 8,
+        borderRadius: 'var(--wks-radius-md)',
         background: 'var(--wks-bg-input)',
         border: '1px solid var(--wks-border-subtle, var(--wks-border-input))',
         fontSize: '0.68rem',
@@ -309,7 +309,14 @@ function EnabledState({
 
       {/* QR — the fast path. White quiet-zone box so it scans on any theme. */}
       <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 14 }}>
-        <div style={{ background: '#fff', padding: 12, borderRadius: 8, lineHeight: 0 }}>
+        <div
+          style={{
+            background: '#fff',
+            padding: 12,
+            borderRadius: 'var(--wks-radius-md)',
+            lineHeight: 0,
+          }}
+        >
           <QRCodeSVG
             value={activeUrl}
             size={188}

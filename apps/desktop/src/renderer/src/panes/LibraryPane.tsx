@@ -612,7 +612,7 @@ const inputStyle: React.CSSProperties = {
   fontFamily: 'inherit',
   fontSize: '0.75rem',
   padding: '6px 8px',
-  borderRadius: 5,
+  borderRadius: 'var(--wks-radius-sm)',
   outline: 'none',
   background: 'var(--wks-bg-input)',
   color: 'var(--wks-text-primary)',
@@ -624,7 +624,7 @@ const textareaStyle: React.CSSProperties = {
   fontFamily: 'var(--wks-mono, ui-monospace, monospace)',
   fontSize: '0.72rem',
   padding: '6px 8px',
-  borderRadius: 5,
+  borderRadius: 'var(--wks-radius-sm)',
   outline: 'none',
   resize: 'vertical',
   background: 'var(--wks-bg-input)',
@@ -634,7 +634,7 @@ const textareaStyle: React.CSSProperties = {
 };
 const cardStyle: React.CSSProperties = {
   border: '1px solid var(--wks-border)',
-  borderRadius: 8,
+  borderRadius: 'var(--wks-radius-md)',
   padding: '8px 10px',
   marginBottom: 8,
   background: 'var(--wks-bg-raised)',
@@ -642,7 +642,7 @@ const cardStyle: React.CSSProperties = {
 const tagStyle: React.CSSProperties = {
   fontSize: '0.58rem',
   padding: '1px 6px',
-  borderRadius: 999,
+  borderRadius: 'var(--wks-radius-pill)',
   background: 'var(--wks-bg-selected)',
   color: 'var(--wks-text-secondary)',
 };
@@ -663,7 +663,7 @@ function btn(primary = false): React.CSSProperties {
     fontWeight: 600,
     cursor: 'pointer',
     padding: '5px 12px',
-    borderRadius: 5,
+    borderRadius: 'var(--wks-radius-sm)',
     border: primary ? 'none' : '1px solid var(--wks-border-input)',
     background: primary ? 'var(--wks-accent)' : 'transparent',
     color: primary ? 'var(--wks-text-on-accent, #fff)' : 'var(--wks-text-secondary)',
@@ -692,7 +692,7 @@ function kindBadge(kind: LibraryKind): React.CSSProperties {
   return {
     fontSize: '0.55rem',
     padding: '1px 6px',
-    borderRadius: 999,
+    borderRadius: 'var(--wks-radius-pill)',
     fontWeight: 700,
     textTransform: 'uppercase',
     background: bg,
@@ -705,7 +705,7 @@ function scopeBadge(scope: LibraryScope): React.CSSProperties {
     return {
       fontSize: '0.55rem',
       padding: '1px 6px',
-      borderRadius: 999,
+      borderRadius: 'var(--wks-radius-pill)',
       fontWeight: 600,
       background: 'rgba(251,146,60,0.16)',
       color: '#fb923c',
@@ -714,7 +714,7 @@ function scopeBadge(scope: LibraryScope): React.CSSProperties {
   return {
     fontSize: '0.55rem',
     padding: '1px 6px',
-    borderRadius: 999,
+    borderRadius: 'var(--wks-radius-pill)',
     fontWeight: 600,
     background: 'var(--wks-bg-selected)',
     color: 'var(--wks-text-faint)',

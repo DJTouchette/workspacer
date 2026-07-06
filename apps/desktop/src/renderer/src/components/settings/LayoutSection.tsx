@@ -24,7 +24,7 @@ const LayoutSection: React.FC<LayoutSectionProps> = ({ config, save }) => {
           <span
             style={{
               fontSize: '0.7rem',
-              fontFamily: 'monospace',
+              fontFamily: 'var(--wks-font-mono)',
               color: 'var(--wks-text-tertiary)',
               minWidth: '32px',
             }}
@@ -47,7 +47,7 @@ const LayoutSection: React.FC<LayoutSectionProps> = ({ config, save }) => {
           <span
             style={{
               fontSize: '0.7rem',
-              fontFamily: 'monospace',
+              fontFamily: 'var(--wks-font-mono)',
               color: 'var(--wks-text-tertiary)',
               minWidth: '32px',
             }}

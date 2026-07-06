@@ -141,7 +141,7 @@ const TraceRow: React.FC<{
           padding: '2px 8px',
           cursor: 'pointer',
           userSelect: 'none',
-          borderRadius: 5,
+          borderRadius: 'var(--wks-radius-sm)',
           background: open ? 'rgba(255,255,255,0.04)' : 'transparent',
         }}
         onMouseEnter={(e) => {
@@ -340,7 +340,7 @@ const ToolTraceCardInner: React.FC<{
     <div
       style={{
         margin: '4px 0 10px 0',
-        borderRadius: 8,
+        borderRadius: 'var(--wks-radius-md)',
         border: `1px solid ${colors.borderSubtle}`,
         backgroundColor: 'rgba(255,255,255,0.015)',
         overflow: 'hidden',

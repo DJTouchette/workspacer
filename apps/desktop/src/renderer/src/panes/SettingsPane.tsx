@@ -383,7 +383,7 @@ const SettingsPane: React.FC<SettingsPaneProps> = () => {
         backgroundColor: 'var(--wks-bg-base)',
         color: 'var(--wks-text-secondary)',
         fontFamily: '"Hanken Grotesk", Inter, system-ui, sans-serif',
-        fontSize: '14px',
+        fontSize: '0.85rem',
       }}
     >
       {/* Top bar: title + search */}
@@ -421,7 +421,7 @@ const SettingsPane: React.FC<SettingsPaneProps> = () => {
             padding: '0 12px',
             background: 'var(--wks-bg-raised)',
             border: '1px solid var(--wks-border-subtle)',
-            borderRadius: '8px',
+            borderRadius: 'var(--wks-radius-md)',
             transition: 'border-color 0.15s',
           }}
           onFocusCapture={(e) => {

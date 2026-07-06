@@ -83,7 +83,7 @@ const SectionHeader: React.FC<{
         <span
           style={{
             background: 'var(--wks-bg-hover)',
-            borderRadius: 8,
+            borderRadius: 'var(--wks-radius-md)',
             padding: '0 6px',
             fontSize: '0.58rem',
             lineHeight: '14px',
@@ -100,7 +100,7 @@ const SectionHeader: React.FC<{
         disabled={action.busy}
         style={{
           padding: '1px 7px',
-          borderRadius: 5,
+          borderRadius: 'var(--wks-radius-sm)',
           border: `1px solid ${colors.borderSubtle}`,
           background: 'transparent',
           color: colors.text,

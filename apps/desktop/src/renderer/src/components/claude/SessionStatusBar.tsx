@@ -98,12 +98,12 @@ const PlanTicks: React.FC<{ done: number; total: number }> = ({ done, total }) =
 const MODE_DISPLAY: Record<string, { label: string; color: string }> = {
   default: { label: 'ask', color: 'var(--wks-text-secondary)' },
   plan: { label: 'plan', color: '#38bdf8' },
-  acceptEdits: { label: 'accept edits', color: '#fbbf24' },
-  auto: { label: 'auto', color: '#4ade80' },
-  dontAsk: { label: "don't ask", color: '#fbbf24' },
-  bypassPermissions: { label: 'bypass', color: '#f87171' },
+  acceptEdits: { label: 'accept edits', color: 'var(--wks-warning)' },
+  auto: { label: 'auto', color: 'var(--wks-success)' },
+  dontAsk: { label: "don't ask", color: 'var(--wks-warning)' },
+  bypassPermissions: { label: 'bypass', color: 'var(--wks-error)' },
   ask: { label: 'ask', color: 'var(--wks-text-secondary)' },
-  yolo: { label: 'full access', color: '#f87171' },
+  yolo: { label: 'full access', color: 'var(--wks-error)' },
 };
 
 interface Props {

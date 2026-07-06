@@ -45,7 +45,7 @@ const Onboarding: React.FC<{
           width: 'min(560px, 100%)',
           background: 'var(--wks-bg-surface)',
           border: '1px solid var(--wks-glass-border)',
-          borderRadius: 12,
+          borderRadius: 'var(--wks-radius-lg)',
           padding: '26px 26px 22px',
           boxShadow: '0 12px 40px var(--wks-shadow)',
           animation: 'claudeFadeIn 0.2s ease-out',
@@ -63,7 +63,7 @@ const Onboarding: React.FC<{
               justifyContent: 'center',
               background: 'var(--wks-bg-base)',
               border: '1px solid var(--wks-border-subtle)',
-              borderRadius: 12,
+              borderRadius: 'var(--wks-radius-lg)',
             }}
           >
             <BrandMark size={24} blink />
@@ -74,7 +74,7 @@ const Onboarding: React.FC<{
         <div
           style={{
             fontSize: '1.25rem',
-            fontWeight: 800,
+            fontWeight: 700,
             letterSpacing: '-0.01em',
             color: 'var(--wks-text-primary)',
           }}
@@ -129,7 +129,7 @@ const Onboarding: React.FC<{
                   minWidth: 84,
                   textAlign: 'center',
                   fontSize: '0.68rem',
-                  fontFamily: 'monospace',
+                  fontFamily: 'var(--wks-font-mono)',
                   color: 'var(--wks-text-primary)',
                   border: '1px solid var(--wks-glass-border)',
                   borderRadius: 4,

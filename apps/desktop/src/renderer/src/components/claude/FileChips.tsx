@@ -28,7 +28,11 @@ export const FileChips: React.FC<{ files: AttachedFile[]; onRemove: (idx: number
           <span
             style={{
               color:
-                f.label === 'Image' ? '#c084fc' : f.label === 'PDF' ? colors.error : colors.accent,
+                f.label === 'Image'
+                  ? colors.purple
+                  : f.label === 'PDF'
+                    ? colors.error
+                    : colors.accent,
               fontWeight: 600,
             }}
           >

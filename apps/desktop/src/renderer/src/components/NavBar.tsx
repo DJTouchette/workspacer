@@ -175,7 +175,7 @@ const NavBar: React.FC<NavBarProps> = ({
                   margin: 0,
                   width: 'auto',
                   height: '28px',
-                  lineHeight: '1',
+                  lineHeight: 1,
                   border: 'none',
                   borderRadius: 'var(--wks-radius-md)',
                   cursor: 'pointer',
@@ -255,7 +255,7 @@ const NavBar: React.FC<NavBarProps> = ({
                 padding: '0 6px',
                 margin: '0 0 0 4px',
                 height: '28px',
-                lineHeight: '1',
+                lineHeight: 1,
                 border: 'none',
                 borderRadius: 'var(--wks-radius-md)',
                 cursor: 'pointer',
@@ -417,7 +417,7 @@ const NavBar: React.FC<NavBarProps> = ({
                 margin: '0 6px 0 4px',
                 width: '28px',
                 height: '28px',
-                lineHeight: '1',
+                lineHeight: 1,
                 border: 'none',
                 borderRadius: 'var(--wks-radius-md)',
                 cursor: 'pointer',
@@ -573,7 +573,7 @@ const NavBar: React.FC<NavBarProps> = ({
             style={{
               backgroundColor: 'var(--wks-bg-raised)',
               border: '1px solid var(--wks-border-input)',
-              borderRadius: 8,
+              borderRadius: 'var(--wks-radius-md)',
               width: 'min(320px, 92vw)',
               boxSizing: 'border-box',
               padding: '12px 0',
@@ -638,7 +638,7 @@ const NavBar: React.FC<NavBarProps> = ({
                       style={{
                         fontSize: '0.58rem',
                         color: 'var(--wks-text-faint)',
-                        fontFamily: 'monospace',
+                        fontFamily: 'var(--wks-font-mono)',
                       }}
                     >
                       {p.extraArgs.join(' ')}
@@ -669,7 +669,7 @@ const NavBar: React.FC<NavBarProps> = ({
             style={{
               backgroundColor: 'var(--wks-bg-raised)',
               border: '1px solid var(--wks-border-input)',
-              borderRadius: 8,
+              borderRadius: 'var(--wks-radius-md)',
               width: 'min(400px, 92vw)',
               boxSizing: 'border-box',
               padding: '12px 0',
@@ -780,7 +780,7 @@ const NavBar: React.FC<NavBarProps> = ({
                       style={{
                         fontSize: '0.58rem',
                         color: 'var(--wks-text-faint)',
-                        fontFamily: 'monospace',
+                        fontFamily: 'var(--wks-font-mono)',
                       }}
                     >
                       {formatSessionDate(s.timestamp)}
@@ -908,7 +908,15 @@ const ThemeSwitcher: React.FC<{
     void save({ ui: { ...config.ui, theme: id, cornerStyle: '', borderColor: '' } });
   };
   const dot = (c: string) => (
-    <span style={{ width: 8, height: 8, borderRadius: 99, background: c, flexShrink: 0 }} />
+    <span
+      style={{
+        width: 8,
+        height: 8,
+        borderRadius: 'var(--wks-radius-pill)',
+        background: c,
+        flexShrink: 0,
+      }}
+    />
   );
 
   return (
@@ -970,7 +978,7 @@ const ThemeSwitcher: React.FC<{
             overflowY: 'auto',
             background: 'var(--wks-bg-surface)',
             border: '1px solid var(--wks-border-input)',
-            borderRadius: 8,
+            borderRadius: 'var(--wks-radius-md)',
             padding: '4px 0',
             zIndex: 10000,
             boxShadow: '0 8px 28px var(--wks-shadow)',
@@ -1107,7 +1115,7 @@ const ScriptManager: React.FC<{
       {draft.length === 0 && (
         <div style={{ fontSize: '0.65rem', color: 'var(--wks-text-faint)', padding: '4px 0' }}>
           No scripts yet. Add one below, e.g. “Test” →{' '}
-          <code style={{ fontFamily: 'monospace' }}>npm test</code>.
+          <code style={{ fontFamily: 'var(--wks-font-mono)' }}>npm test</code>.
         </div>
       )}
 
@@ -1123,7 +1131,7 @@ const ScriptManager: React.FC<{
             value={s.command}
             onChange={(e) => update(i, { command: e.target.value })}
             placeholder="bash command (e.g. cargo test)"
-            style={{ ...inputStyle, flex: 1, fontFamily: 'monospace' }}
+            style={{ ...inputStyle, flex: 1, fontFamily: 'var(--wks-font-mono)' }}
             onKeyDown={(e) => {
               if (e.key === 'Enter') onSave(draft.filter((d) => d.name.trim() && d.command.trim()));
             }}
@@ -1231,7 +1239,7 @@ function MenuButton({
         color: 'var(--wks-text-tertiary)',
         textAlign: 'left',
         height: 'auto',
-        lineHeight: '1.4',
+        lineHeight: 1.4,
         transition: 'none',
       }}
       onMouseEnter={(e) => {

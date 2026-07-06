@@ -13,7 +13,7 @@ export const DropOverlay: React.FC = () => (
       backgroundColor: 'rgba(0, 0, 0, 0.6)',
       backdropFilter: 'blur(4px)',
       border: `2px dashed ${colors.accent}`,
-      borderRadius: 8,
+      borderRadius: 'var(--wks-radius-md)',
       pointerEvents: 'none',
     }}
   >

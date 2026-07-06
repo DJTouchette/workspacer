@@ -19,6 +19,7 @@ export const claudeColors = {
   success: 'var(--wks-success)',
   error: 'var(--wks-error)',
   warning: 'var(--wks-warning)',
+  purple: 'var(--wks-purple, #c084fc)',
   text: 'var(--wks-text-secondary)',
   textBright: 'var(--wks-text-primary)',
   border: 'var(--wks-claude-border)',

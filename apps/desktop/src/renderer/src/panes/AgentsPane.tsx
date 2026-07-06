@@ -95,7 +95,7 @@ const AgentsPane: React.FC<{ isActive?: boolean }> = () => {
           flexShrink: 0,
         }}
       >
-        <div style={{ fontSize: '0.95rem', fontWeight: 800, letterSpacing: '-0.01em' }}>Agents</div>
+        <div style={{ fontSize: '0.95rem', fontWeight: 700, letterSpacing: '-0.01em' }}>Agents</div>
         <div
           style={{
             fontSize: '0.7rem',
@@ -121,7 +121,7 @@ const AgentsPane: React.FC<{ isActive?: boolean }> = () => {
             fontSize: '0.72rem',
             fontFamily: 'inherit',
             padding: '5px 9px',
-            borderRadius: 8,
+            borderRadius: 'var(--wks-radius-md)',
             border: '1px solid var(--wks-border-subtle)',
             background: 'var(--wks-bg-surface)',
             color: 'var(--wks-text-primary)',

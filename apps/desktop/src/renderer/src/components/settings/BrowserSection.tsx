@@ -150,7 +150,7 @@ const BrowserSection: React.FC<BrowserSectionProps> = ({ config, save }) => {
             border: '1px solid var(--wks-border)',
             borderRadius: '3px',
             outline: 'none',
-            fontFamily: 'monospace',
+            fontFamily: 'var(--wks-font-mono)',
             textAlign: 'right',
           }}
         />

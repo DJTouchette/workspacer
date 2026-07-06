@@ -58,13 +58,13 @@ const ProfileEditForm: React.FC<{
       value={configDir}
       onChange={(e) => onConfigDirChange(e.target.value)}
       placeholder="Config dir (e.g. ~/.claude-work, blank = default)"
-      style={{ ...inputStyle, fontFamily: 'monospace' }}
+      style={{ ...inputStyle, fontFamily: 'var(--wks-font-mono)' }}
     />
     <input
       value={args}
       onChange={(e) => onArgsChange(e.target.value)}
       placeholder="Extra args (e.g. --dangerously-skip-permissions)"
-      style={{ ...inputStyle, fontFamily: 'monospace' }}
+      style={{ ...inputStyle, fontFamily: 'var(--wks-font-mono)' }}
       onKeyDown={(e) => {
         if (e.key === 'Enter') onSave();
       }}
@@ -269,7 +269,7 @@ const ClaudeProfilesSection: React.FC = () => {
                       style={{
                         fontSize: '0.58rem',
                         color: 'var(--wks-text-faint)',
-                        fontFamily: 'monospace',
+                        fontFamily: 'var(--wks-font-mono)',
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
                         whiteSpace: 'nowrap',
@@ -283,7 +283,7 @@ const ClaudeProfilesSection: React.FC = () => {
                       style={{
                         fontSize: '0.72rem',
                         color: 'var(--wks-text-disabled)',
-                        fontFamily: 'monospace',
+                        fontFamily: 'var(--wks-font-mono)',
                       }}
                     >
                       {p.extraArgs.join(' ')}
@@ -328,7 +328,7 @@ const ClaudeProfilesSection: React.FC = () => {
               borderRadius: '4px',
               cursor: 'pointer',
               height: 'auto',
-              lineHeight: '1.4',
+              lineHeight: 1.4,
               margin: '4px 0 0',
               width: '100%',
             }}

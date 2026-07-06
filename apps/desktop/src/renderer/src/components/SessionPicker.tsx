@@ -189,7 +189,7 @@ const SessionPicker: React.FC<SessionPickerProps> = ({
                       width: 'auto',
                       height: 'auto',
                       borderRadius: '3px',
-                      lineHeight: '1',
+                      lineHeight: 1,
                     }}
                     onMouseEnter={(e) => {
                       (e.currentTarget as HTMLElement).style.color = 'var(--wks-error)';
@@ -243,10 +243,10 @@ function ActionButton({
         backgroundColor: primary ? 'var(--wks-accent)' : 'var(--wks-bg-elevated)',
         color: primary ? '#fff' : 'var(--wks-text-tertiary)',
         border: primary ? '1px solid var(--wks-accent)' : '1px solid var(--wks-border-input)',
-        borderRadius: '5px',
+        borderRadius: 'var(--wks-radius-sm)',
         cursor: 'pointer',
         height: 'auto',
-        lineHeight: '1.4',
+        lineHeight: 1.4,
         margin: 0,
         width: 'auto',
       }}

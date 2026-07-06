@@ -217,7 +217,7 @@ const input: React.CSSProperties = {
   background: 'var(--wks-bg-input, var(--wks-bg-base))',
   color: 'var(--wks-text-primary)',
   border: '1px solid var(--wks-border-input)',
-  borderRadius: 5,
+  borderRadius: 'var(--wks-radius-sm)',
   margin: 0,
 };
 const primaryBtn: React.CSSProperties = {
@@ -229,7 +229,7 @@ const primaryBtn: React.CSSProperties = {
   background: 'var(--wks-accent)',
   color: '#fff',
   border: '1px solid var(--wks-accent)',
-  borderRadius: 5,
+  borderRadius: 'var(--wks-radius-sm)',
   cursor: 'pointer',
   margin: 0,
   whiteSpace: 'nowrap',
@@ -248,7 +248,7 @@ const miniBtn: React.CSSProperties = {
   background: 'transparent',
   color: 'var(--wks-text-muted)',
   border: '1px solid var(--wks-border-input)',
-  borderRadius: 5,
+  borderRadius: 'var(--wks-radius-sm)',
   cursor: 'pointer',
   margin: 0,
   flexShrink: 0,

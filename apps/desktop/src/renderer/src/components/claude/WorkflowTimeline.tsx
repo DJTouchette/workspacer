@@ -143,7 +143,7 @@ export const WorkflowTimeline: React.FC<{
         flexDirection: 'column',
         background: 'var(--wks-bg-raised)',
         border: `1px solid ${colors.border}`,
-        borderRadius: 12,
+        borderRadius: 'var(--wks-radius-lg)',
         overflow: 'hidden',
         boxShadow: '0 24px 64px rgba(0,0,0,0.5)',
       };

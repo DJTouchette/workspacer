@@ -709,7 +709,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
                       style={{
                         fontSize: '0.55rem',
                         color: 'var(--wks-text-faint)',
-                        fontFamily: 'monospace',
+                        fontFamily: 'var(--wks-font-mono)',
                       }}
                     >
                       {p.extraArgs.join(' ')}

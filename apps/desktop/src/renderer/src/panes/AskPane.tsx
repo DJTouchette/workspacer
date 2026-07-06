@@ -300,13 +300,13 @@ const AskPane: React.FC<AskPaneProps> = ({
           style={{
             resize: 'vertical',
             padding: '10px 12px',
-            borderRadius: 8,
+            borderRadius: 'var(--wks-radius-md)',
             border: '1px solid var(--wks-border-subtle, rgba(255,255,255,0.1))',
             background: 'var(--wks-bg-input, rgba(255,255,255,0.03))',
             color: 'var(--wks-text-primary)',
             fontSize: '0.82rem',
             fontFamily: 'inherit',
-            lineHeight: 1.55,
+            lineHeight: 1.5,
             boxSizing: 'border-box',
             width: '100%',
             outline: 'none',
@@ -394,7 +394,7 @@ const AskPane: React.FC<AskPaneProps> = ({
             title="Spawn a supervisor with no question — it just starts watching the fleet"
             style={{
               padding: '8px 14px',
-              borderRadius: 8,
+              borderRadius: 'var(--wks-radius-md)',
               border: '1px solid var(--wks-border-subtle, rgba(255,255,255,0.12))',
               background: 'transparent',
               color: spawning ? 'var(--wks-text-faint, #666)' : 'var(--wks-text-secondary, #aaa)',
@@ -423,7 +423,7 @@ const AskPane: React.FC<AskPaneProps> = ({
             disabled={!canSubmit}
             style={{
               padding: '8px 20px',
-              borderRadius: 8,
+              borderRadius: 'var(--wks-radius-md)',
               border: 'none',
               background: canSubmit
                 ? 'var(--wks-accent, #4a9eff)'
