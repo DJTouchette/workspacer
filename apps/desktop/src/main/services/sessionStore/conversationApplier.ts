@@ -120,6 +120,17 @@ export function applyConversationItems(
   items: ConversationItemWire[],
   applyUsageFn: ApplyUsageFn,
 ): void {
+  // Tool ids already in the timeline. tool_use ids are globally unique
+  // (toolu_…), so a re-delivered call — the transcript repeating rows around
+  // compaction (same reason isDuplicateMessage exists), a resume replay, an
+  // adapter double-emit — must be dropped, not rendered as a duplicate turn.
+  // Maintained as we push so in-batch repeats dedupe too, and reused by the
+  // hook-reaping housekeeping at the bottom.
+  const convToolIds = new Set<string>();
+  for (const turn of session.conversation) {
+    if (turn.toolCalls) for (const tc of turn.toolCalls) convToolIds.add(tc.id);
+  }
+
   for (const item of items) {
     // The daemon tags the discriminant as `kind`, but tolerate `type` too.
     const kind = item.kind ?? item.type;
@@ -163,6 +174,7 @@ export function applyConversationItems(
       }
 
       case 'tool_use': {
+        if (item.id && convToolIds.has(item.id)) break;
         const ts = tsOf(item);
         const tc: ToolCall = {
           id: item.id || `tc-${ts}-${Math.random().toString(36).slice(2, 6)}`,
@@ -172,6 +184,7 @@ export function applyConversationItems(
           startedAt: ts,
           completedAt: ts,
         };
+        convToolIds.add(tc.id);
         session.totalToolCalls++;
         // Each tool call is its own turn — interlaced with text in timeline order
         session.conversation.push({
@@ -233,10 +246,6 @@ export function applyConversationItems(
     items.length > 0 &&
     (session.completedToolCalls.length > 0 || session.activeToolCalls.length > 0)
   ) {
-    const convToolIds = new Set<string>();
-    for (const turn of session.conversation) {
-      if (turn.toolCalls) for (const tc of turn.toolCalls) convToolIds.add(tc.id);
-    }
     session.completedToolCalls = session.completedToolCalls.filter((tc) => !convToolIds.has(tc.id));
     session.activeToolCalls = session.activeToolCalls.filter((tc) => !convToolIds.has(tc.id));
   }

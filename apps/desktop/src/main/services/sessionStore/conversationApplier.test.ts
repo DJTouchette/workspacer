@@ -252,3 +252,36 @@ describe('applyConversationItems — assistant text coalescing by transport', ()
     expect(s.conversation[2].content).toBe('After.');
   });
 });
+
+describe('applyConversationItems — tool_use dedup', () => {
+  const call: ConversationItemWire = {
+    kind: 'tool_use',
+    id: 'toolu_dup',
+    name: 'Bash',
+    input: { command: 'echo hi' },
+  };
+
+  it('drops a re-delivered tool_use in the same batch', () => {
+    const s = mkSession();
+    applyConversationItems(s, [call, { ...call }], noUsage);
+    expect(s.conversation).toHaveLength(1);
+    expect(s.totalToolCalls).toBe(1);
+  });
+
+  it('drops a re-delivered tool_use across batches (compaction/resume replay)', () => {
+    const s = mkSession();
+    applyConversationItems(s, [call], noUsage);
+    applyConversationItems(
+      s,
+      [{ kind: 'assistant_text', text: 'still working' }, { ...call }],
+      noUsage,
+    );
+    expect(s.conversation.filter((t) => t.toolCalls?.length)).toHaveLength(1);
+  });
+
+  it('distinct ids still land as distinct turns', () => {
+    const s = mkSession();
+    applyConversationItems(s, [call, { ...call, id: 'toolu_other' }], noUsage);
+    expect(s.conversation).toHaveLength(2);
+  });
+});
