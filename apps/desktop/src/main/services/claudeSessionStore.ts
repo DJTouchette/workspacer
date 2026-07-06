@@ -688,6 +688,17 @@ class ClaudeSessionStore {
     this.pushUpdate(session);
   }
 
+  /** Optimistically clear the pending question set once a structural answer
+   *  was accepted by the daemon. Without this, the answered questions linger
+   *  on every surface (pane dock, inbox, fleet cards) until the tool's
+   *  PostToolUse hook lands — which reads as the picker re-prompting. */
+  clearPendingQuestions(sessionId: string): void {
+    const session = this.sessions.get(sessionId);
+    if (!session || !session.pendingQuestions) return;
+    session.pendingQuestions = null;
+    this.pushUpdate(session);
+  }
+
   private pushUpdate(session: ClaudeSessionState): void {
     if (!COALESCE_SNAPSHOT_UPDATES) {
       // Original immediate-send path (byte-for-byte identical behaviour).

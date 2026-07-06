@@ -773,15 +773,19 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   const workflows = session?.workflows ?? [];
   const pendingApproval = session?.pendingApproval ?? null;
   const pendingQuestions = session?.pendingQuestions ?? null;
-  // Optimistic dismiss for the question picker — keeps the UI feeling snappy
-  // even when /answer 409s and we fall back to a raw PTY write that takes
-  // a moment to round-trip through the JSONL transcript.
-  const [questionDismissedAt, setQuestionDismissedAt] = useState(0);
+  // Optimistic dismiss for the question picker, keyed on question CONTENT.
+  // The old timestamp gate (lastActivity > dismissedAt) re-showed answered
+  // questions on the very next hook/frame — lastActivity bumps on everything —
+  // so the picker kept re-prompting until PostToolUse cleared the snapshot.
+  // A signature only re-opens the picker when a *different* question set
+  // arrives.
+  const [dismissedQuestionSig, setDismissedQuestionSig] = useState<string | null>(null);
+  const questionSig = pendingQuestions?.map((q) => q.question).join(' ') ?? null;
 
   const handleAnswer = useCallback(
     (payload: { option?: number; text?: string; answers?: string[] }) => {
       if (!sessionId) return;
-      setQuestionDismissedAt(Date.now());
+      setDismissedQuestionSig(questionSig);
       // No-PTY sessions (claude 'stream' transport) have no keystroke path at
       // all — the answer must go through POST /sessions/:id/answer, which the
       // daemon delivers structurally over the adapter's control protocol.
@@ -806,7 +810,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
         for (const ans of payload.answers) write(`${ans}\r`);
       }
     },
-    [sessionId, write, hasTerminal],
+    [sessionId, write, hasTerminal, questionSig],
   );
   const serverStreaming =
     optimisticLoading ||
@@ -846,9 +850,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   const dockApproval =
     pendingApproval && pendingApproval.timestamp > approvalDismissedAt ? pendingApproval : null;
   const dockQuestions =
-    pendingQuestions &&
-    pendingQuestions.length > 0 &&
-    (session?.lastActivity ?? 0) > questionDismissedAt
+    pendingQuestions && pendingQuestions.length > 0 && questionSig !== dismissedQuestionSig
       ? pendingQuestions
       : null;
 

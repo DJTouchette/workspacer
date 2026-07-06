@@ -419,13 +419,21 @@ export function registerHubCapabilities(): void {
     if (option === undefined && text === undefined && answers === undefined) {
       throw new Error('claude.answer requires one of { option, text, answers }');
     }
-    if (option !== undefined) {
+    // Stream-transport sessions have no PTY: raw input can't answer them, so
+    // route structurally through POST /answer (the daemon resolves the parked
+    // AskUserQuestion over the adapter's control protocol). PTY sessions keep
+    // the keystroke path — /answer requires mode=Question, which races hook
+    // mode flips (same reasoning as ClaudePane's handleAnswer).
+    if (claudeSessionStore.getSnapshot(sessionId)?.transport === 'stream') {
+      await claudemonSessionClient.answer(sessionId, { option, text, answers });
+    } else if (option !== undefined) {
       await claudemonSessionClient.input(sessionId, `${option}\r`);
     } else if (text !== undefined) {
       await claudemonSessionClient.input(sessionId, `${text}\r`);
     } else if (answers) {
       for (const a of answers) await claudemonSessionClient.input(sessionId, `${a}\r`);
     }
+    claudeSessionStore.clearPendingQuestions(sessionId);
     return { ok: true };
   });
 

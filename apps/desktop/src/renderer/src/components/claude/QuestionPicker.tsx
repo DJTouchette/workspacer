@@ -104,7 +104,7 @@ export const QuestionPicker: React.FC<{
         )}
         <span
           style={{
-            fontSize: '0.6rem',
+            fontSize: 'calc(0.62rem * var(--claude-gui-font-scale, 1))',
             color: colors.accent,
             fontWeight: 600,
             textTransform: 'uppercase',
@@ -117,7 +117,7 @@ export const QuestionPicker: React.FC<{
           <span
             style={{
               marginLeft: 'auto',
-              fontSize: '0.62rem',
+              fontSize: 'calc(0.64rem * var(--claude-gui-font-scale, 1))',
               color: colors.muted,
               fontVariantNumeric: 'tabular-nums',
               display: 'flex',
@@ -151,7 +151,7 @@ export const QuestionPicker: React.FC<{
       {/* The question itself */}
       <div
         style={{
-          fontSize: '0.85rem',
+          fontSize: 'calc(0.9rem * var(--claude-gui-font-scale, 1))',
           color: colors.textBright,
           fontWeight: 600,
           lineHeight: 1.45,
@@ -205,7 +205,7 @@ export const QuestionPicker: React.FC<{
                   style={{
                     color: colors.accent,
                     fontWeight: 700,
-                    fontSize: '0.7rem',
+                    fontSize: 'calc(0.74rem * var(--claude-gui-font-scale, 1))',
                     fontVariantNumeric: 'tabular-nums',
                     flexShrink: 0,
                   }}
@@ -213,7 +213,7 @@ export const QuestionPicker: React.FC<{
                   {multi ? (selected ? '☑' : '☐') : `${oi + 1}`}
                 </span>
                 <span
-                  style={{ fontWeight: 600, fontSize: '0.76rem', color: colors.textBright }}
+                  style={{ fontWeight: 600, fontSize: 'calc(0.8rem * var(--claude-gui-font-scale, 1))', color: colors.textBright }}
                 >
                   {opt.label}
                 </span>
@@ -222,7 +222,7 @@ export const QuestionPicker: React.FC<{
                 <div
                   style={{
                     color: colors.muted,
-                    fontSize: '0.7rem',
+                    fontSize: 'calc(0.74rem * var(--claude-gui-font-scale, 1))',
                     lineHeight: 1.45,
                     marginTop: 3,
                     paddingLeft: multi ? 22 : 16,
@@ -243,7 +243,7 @@ export const QuestionPicker: React.FC<{
           disabled={multiPicks.size === 0}
           style={{
             marginTop: 8,
-            fontSize: '0.7rem',
+            fontSize: 'calc(0.72rem * var(--claude-gui-font-scale, 1))',
             fontWeight: 600,
             padding: '5px 14px',
             borderRadius: 'var(--wks-radius-sm)',
@@ -270,7 +270,7 @@ export const QuestionPicker: React.FC<{
             }}
             style={{
               flex: 1,
-              fontSize: '0.72rem',
+              fontSize: 'calc(0.76rem * var(--claude-gui-font-scale, 1))',
               padding: '5px 9px',
               borderRadius: 'var(--wks-radius-sm)',
               border: `1px solid ${colors.borderSubtle}`,
@@ -284,7 +284,7 @@ export const QuestionPicker: React.FC<{
             onClick={submitCustom}
             disabled={!customText.trim()}
             style={{
-              fontSize: '0.7rem',
+              fontSize: 'calc(0.72rem * var(--claude-gui-font-scale, 1))',
               fontWeight: 600,
               padding: '5px 14px',
               borderRadius: 'var(--wks-radius-sm)',

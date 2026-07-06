@@ -565,8 +565,15 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   );
   ipcMain.handle(
     IPC.CLAUDE_ANSWER,
-    (_event, sessionId: string, payload: { option?: number; text?: string; answers?: string[] }) =>
-      claudemonSessionClient.answer(sessionId, payload),
+    async (
+      _event,
+      sessionId: string,
+      payload: { option?: number; text?: string; answers?: string[] },
+    ) => {
+      const res = await claudemonSessionClient.answer(sessionId, payload);
+      claudeSessionStore.clearPendingQuestions(sessionId);
+      return res;
+    },
   );
   ipcMain.handle(IPC.CLAUDE_RESIZE, (_event, sessionId: string, cols: number, rows: number) =>
     claudemonSessionClient.resize(sessionId, cols, rows),
