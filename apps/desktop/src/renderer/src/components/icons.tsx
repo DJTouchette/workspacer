@@ -73,6 +73,7 @@ const PANE_ICONS: Record<PaneType, IconComponent> = {
   editor: IconFile,
   agentwatch: Eye,
   agents: Radar,
+  inspector: Columns3,
 };
 
 export interface IconProps {

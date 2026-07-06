@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { Maximize2 } from 'lucide-react';
 import type { AgentWorkspace } from '../types/pane';
 import type { ClaudeSessionSnapshot, SessionAmbientState } from '../types/claudeSession';
 import { QuestionPicker } from './claude/QuestionPicker';
@@ -71,6 +72,9 @@ interface Props {
   /** Override for the card-body click. Default pilots into the agent's
    *  workspace; the Agents pane passes an "open a watch pane" action instead. */
   onOpen?: () => void;
+  /** When set, a small expand button appears in the header — the Fleet Deck
+   *  wires it to flip the card in place into the live InspectorCard. */
+  onInspect?: () => void;
 }
 
 /**
@@ -80,7 +84,7 @@ interface Props {
  * lets you resolve the common cases (approve / answer a question / drop a quick
  * message) without ever leaving the deck.
  */
-export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen }) => {
+export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect }) => {
   const { openAgent, approve, answer, sendMessage, feed } = useAttention();
   const pageVisible = usePageVisible();
   const state = snapshot?.ambientState;
@@ -217,6 +221,39 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen }) => {
           />
           {v.label}
         </span>
+        {onInspect && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onInspect();
+            }}
+            title="Inspect (plan · flows · agents · files · usage) — press i"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+              width: 22,
+              height: 22,
+              padding: 0,
+              borderRadius: 6,
+              border: '1px solid var(--wks-glass-border)',
+              background: 'transparent',
+              color: 'var(--wks-text-faint)',
+              cursor: 'pointer',
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-primary)';
+              (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-accent)';
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-faint)';
+              (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-glass-border)';
+            }}
+          >
+            <Maximize2 size={13} strokeWidth={2} />
+          </button>
+        )}
       </div>
 
       {/* Meta line: model · turns · last activity · folder */}

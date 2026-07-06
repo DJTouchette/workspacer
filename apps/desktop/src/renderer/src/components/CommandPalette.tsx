@@ -164,6 +164,8 @@ interface CommandPaletteProps {
   onOpenAnalytics?: () => void;
   /** Open the Agents pane (all agents as live cards, click to watch one). */
   onOpenAgents?: () => void;
+  /** Open an Inspector pane for the currently-piloted agent (plan/flows/agents/files/usage). */
+  onOpenInspector?: () => void;
   /** Open the layout-templates manager. */
   onOpenLayouts?: () => void;
   /** Open the remote-control (phone sharing) panel. */
@@ -212,6 +214,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
   onSwitchSession,
   onOpenAnalytics,
   onOpenAgents,
+  onOpenInspector,
   onOpenLayouts,
   onOpenRemote,
   onOpenAskPane,
@@ -329,6 +332,13 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
       onOpenAgents,
     );
     add(
+      'cmd-inspector',
+      'Open Inspector Pane',
+      'Plan · flows · agents · files · usage for the current agent, as a live pane',
+      <Columns3 size={16} strokeWidth={1.75} />,
+      onOpenInspector,
+    );
+    add(
       'cmd-layouts',
       'Layouts…',
       'Apply or save a layout template',
@@ -396,6 +406,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
     onToggleFleet,
     onOpenAnalytics,
     onOpenAgents,
+    onOpenInspector,
     onOpenLayouts,
     onSwitchSession,
     onSaveSession,

@@ -15,9 +15,11 @@ import {
   AGENT_WATCH_EVENT,
   SESSION_WATCH_EVENT,
   AGENT_HANDOFF_EVENT,
+  INSPECTOR_OPEN_EVENT,
   type AgentWatchTarget,
   type SessionWatchTarget,
   type HandoffTarget,
+  type InspectorTarget,
 } from './lib/watchBus';
 import { EDITOR_OPEN_FILE_EVENT } from './lib/editorBus';
 import { useUiCommands } from './hooks/useUiCommands';
@@ -249,6 +251,7 @@ function App() {
     loadAgentsFromSession,
     openPaneIn,
     openAgentWatch,
+    openInspector,
     setActiveAgentId,
     tabs,
     activeTabId,
@@ -903,6 +906,17 @@ function App() {
     requestAnimationFrame(() => scrollToTab(tabId));
   }, [openPaneIn, scrollToTab]);
 
+  /** Open an Inspector pane for the currently-piloted agent (command-palette
+   *  entry). The pane binds to that agent's session and live-updates; needs a
+   *  running session to inspect. */
+  const openInspectorForActive = useCallback(() => {
+    setShowCommandPalette(false);
+    const target = activeAgentRef.current;
+    if (!target || target.global || !target.sessionId) return;
+    const tabId = openInspector({ sessionId: target.sessionId, agentName: target.name });
+    if (tabId) requestAnimationFrame(() => scrollToTab(tabId));
+  }, [openInspector, scrollToTab]);
+
   /** Open the Ask pane in the global Overview workspace (command-palette entry
    *  "Ask the fleet"). Reuses an existing Ask tab rather than opening a duplicate. */
   const openAskPane = useCallback(() => {
@@ -1244,6 +1258,20 @@ function App() {
     window.addEventListener(AGENT_WATCH_EVENT, handler);
     return () => window.removeEventListener(AGENT_WATCH_EVENT, handler);
   }, [openAgentWatch, scrollToTab]);
+
+  // Open a standalone Inspector pane for a session (command palette / Fleet Deck
+  // "Open as pane"). openInspector dedupes by session, so a repeat request
+  // focuses the existing pane.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const t = (e as CustomEvent).detail as InspectorTarget | undefined;
+      if (!t?.sessionId) return;
+      const tabId = openInspector({ sessionId: t.sessionId, agentName: t.agentName });
+      if (tabId) requestAnimationFrame(() => scrollToTab(tabId));
+    };
+    window.addEventListener(INSPECTOR_OPEN_EVENT, handler);
+    return () => window.removeEventListener(INSPECTOR_OPEN_EVENT, handler);
+  }, [openInspector, scrollToTab]);
 
   // Watch a whole session in a GUI viewer pane (Agents pane click-through).
   // Focus an existing viewer for that session in the current workspace, else
@@ -1788,6 +1816,7 @@ function App() {
           }}
           onOpenAnalytics={openAnalytics}
           onOpenAgents={openAgentsPane}
+          onOpenInspector={openInspectorForActive}
           onOpenLayouts={() => {
             setShowCommandPalette(false);
             setShowLayouts(true);

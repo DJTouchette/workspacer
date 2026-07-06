@@ -46,6 +46,7 @@ const defaultTitles: Record<PaneType, string> = {
   editor: 'Editor',
   agentwatch: 'Watch',
   agents: 'Agents',
+  inspector: 'Inspector',
 };
 
 /** Derive a human label from a working directory (its basename). */
@@ -676,6 +677,51 @@ export function useAgentManager() {
     [mutateAgent],
   );
 
+  // Open (or focus) a standalone Inspector pane bound to one session's live
+  // snapshot — mirrors openAgentWatch, deduping by the target session so a
+  // repeat request focuses the existing pane.
+  const openInspector = useCallback(
+    (opts: { sessionId: string; agentName?: string }): string => {
+      const aid = activeAgentIdRef.current;
+      if (!aid) return '';
+      const agent = agentsRef.current.find((a) => a.id === aid);
+      if (!agent) return '';
+      const existing = agent.tabs.find((t) =>
+        t.panes.some((p) => p.type === 'inspector' && p.inspectorSessionId === opts.sessionId),
+      );
+      if (existing) {
+        mutateAgent(aid, (a) => ({ ...a, activeTabId: existing.id }));
+        return existing.id;
+      }
+      const title = opts.agentName ? `Inspect: ${opts.agentName}` : 'Inspector';
+      const paneId = generateId('inspector');
+      const tabId = generateId('tab');
+      const pane: PaneConfig = {
+        id: paneId,
+        type: 'inspector',
+        title,
+        inspectorSessionId: opts.sessionId,
+        inspectorAgentName: opts.agentName,
+      };
+      mutateAgent(aid, (a) => ({
+        ...a,
+        tabs: [
+          ...a.tabs,
+          {
+            id: tabId,
+            title,
+            panes: [pane],
+            activePaneId: paneId,
+            lastActiveAt: Date.now(),
+          },
+        ],
+        activeTabId: tabId,
+      }));
+      return tabId;
+    },
+    [mutateAgent],
+  );
+
   // ── Tab/pane operations (scoped to the active agent) ──────────────────────
 
   const setActiveTabId = useCallback(
@@ -988,6 +1034,7 @@ export function useAgentManager() {
     loadAgentsFromSession,
     openPaneIn,
     openAgentWatch,
+    openInspector,
     // tabs (active agent)
     tabs,
     activeTabId,

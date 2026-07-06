@@ -45,6 +45,22 @@ export function requestSessionWatch(target: SessionWatchTarget): void {
   window.dispatchEvent(new CustomEvent(SESSION_WATCH_EVENT, { detail: target }));
 }
 
+export const INSPECTOR_OPEN_EVENT = 'inspector:open';
+
+/** Open a standalone Inspector pane bound to one session's live snapshot. */
+export interface InspectorTarget {
+  /** The claudemon session whose snapshot the pane renders. */
+  sessionId: string;
+  /** Target agent's display name (card header + pane title). */
+  agentName?: string;
+}
+
+/** Open (or focus) an Inspector pane for a session — from the command palette or
+ *  a Fleet Deck card's "Open as pane" action. */
+export function requestInspector(target: InspectorTarget): void {
+  window.dispatchEvent(new CustomEvent(INSPECTOR_OPEN_EVENT, { detail: target }));
+}
+
 export const AGENT_HANDOFF_EVENT = 'agent:handoff';
 
 /** Spawn a successor agent primed with a handoff brief (any → any provider). */

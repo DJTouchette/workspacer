@@ -165,4 +165,21 @@ describe('Mission Control surfaces', () => {
     renderSurfaces('piloting');
     expect(screen.queryByText('Permission Required: Bash')).not.toBeInTheDocument();
   });
+
+  it('flips a Fleet Deck card in place into the live InspectorCard, then collapses', () => {
+    renderSurfaces();
+    // No inspector chrome until a card is expanded.
+    expect(screen.queryByRole('button', { name: /Usage/ })).not.toBeInTheDocument();
+
+    // Click a card's expand affordance → the InspectorCard (its Usage tab +
+    // collapse control) appears in place.
+    fireEvent.click(screen.getAllByTitle(/Inspect \(plan/)[0]);
+    expect(screen.getByRole('button', { name: /Usage/ })).toBeInTheDocument();
+    const collapse = screen.getByTitle('Collapse (Esc)');
+    expect(collapse).toBeInTheDocument();
+
+    // Collapsing returns to the telemetry card (inspector chrome gone).
+    fireEvent.click(collapse);
+    expect(screen.queryByRole('button', { name: /Usage/ })).not.toBeInTheDocument();
+  });
 });

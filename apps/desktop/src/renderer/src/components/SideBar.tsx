@@ -1,4 +1,5 @@
-import React, { useState, useRef, useMemo } from 'react';
+import React, { useState, useRef, useMemo, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Plus,
   ChevronLeft,
@@ -15,6 +16,8 @@ import type { AttentionItem, AttentionKind } from '../types/attention';
 import { deriveSessionStats, fmtTokens, fmtUSD, ctxColor } from '../lib/sessionStats';
 import { agentAttentionScore } from '../lib/attentionRouter';
 import { AgentLogo } from './agentLogos';
+import { InspectorCard } from './claude/InspectorCard';
+import { requestInspector } from '../lib/watchBus';
 import { useAttention } from '../contexts/AttentionContext';
 import HubStatus from './HubStatus';
 import { ContextMenu, ContextMenuItem } from './ContextMenu';
@@ -144,6 +147,59 @@ const SideBar: React.FC<SideBarProps> = ({
   const [renameValue, setRenameValue] = useState('');
   // Type-to-filter the agent list by name or provider (nav rows always shown).
   const [filter, setFilter] = useState('');
+
+  // Hover peek: after a short dwell over an agent row, pop a transient anchored
+  // popover with the compact InspectorCard for that agent (live from its
+  // snapshot). Moving into the popover keeps it open (a close grace bridges the
+  // gap); leaving either dismisses it. Clicking pins it open as its own pane.
+  const [peek, setPeek] = useState<{
+    agentId: string;
+    name: string;
+    sessionId: string;
+    top: number;
+    left: number;
+  } | null>(null);
+  const openTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearTimers = () => {
+    if (openTimerRef.current) {
+      clearTimeout(openTimerRef.current);
+      openTimerRef.current = null;
+    }
+    if (closeTimerRef.current) {
+      clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  };
+  useEffect(() => clearTimers, []);
+  const schedulePeek = (agent: AgentWorkspace, el: HTMLElement) => {
+    if (!agent.sessionId || agent.global) return;
+    const sessionId = agent.sessionId;
+    if (closeTimerRef.current) {
+      clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+    if (openTimerRef.current) clearTimeout(openTimerRef.current);
+    const r = el.getBoundingClientRect();
+    openTimerRef.current = setTimeout(() => {
+      setPeek({ agentId: agent.id, name: agent.name, sessionId, top: r.top, left: r.right + 8 });
+    }, 400);
+  };
+  const scheduleClosePeek = () => {
+    if (openTimerRef.current) {
+      clearTimeout(openTimerRef.current);
+      openTimerRef.current = null;
+    }
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = setTimeout(() => setPeek(null), 160);
+  };
+  const cancelClosePeek = () => {
+    if (closeTimerRef.current) {
+      clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  };
+  const peekSnapshot = peek ? snapshotBySession[peek.sessionId] : undefined;
 
   // Per-session derived stats, memoized by the *snapshot object identity* so a
   // tick on one agent's session doesn't recompute deriveSessionStats for every
@@ -714,11 +770,15 @@ const SideBar: React.FC<SideBarProps> = ({
                   if (!isActive)
                     (e.currentTarget as HTMLElement).style.backgroundColor =
                       'var(--wks-bg-elevated)';
+                  schedulePeek(agent, e.currentTarget as HTMLElement);
                 }}
                 onMouseLeave={(e) => {
                   if (!isActive)
                     (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent';
+                  scheduleClosePeek();
                 }}
+                onFocus={(e) => schedulePeek(agent, e.currentTarget as HTMLElement)}
+                onBlur={scheduleClosePeek}
                 style={{
                   position: 'relative',
                   width: indent ? 'calc(100% - 36px)' : 'calc(100% - 24px)',
@@ -1143,6 +1203,46 @@ const SideBar: React.FC<SideBarProps> = ({
           />
         </ContextMenu>
       )}
+
+      {/* Hover peek — transient anchored popover with the compact InspectorCard.
+          Portalled to the body so the sidebar's overflow clip / stacking can't
+          crop it; clicking pins it open as its own inspector pane. */}
+      {peek &&
+        createPortal(
+          <div
+            onMouseEnter={cancelClosePeek}
+            onMouseLeave={scheduleClosePeek}
+            onClick={() => {
+              requestInspector({ sessionId: peek.sessionId, agentName: peek.name });
+              setPeek(null);
+            }}
+            title="Click to open as a pane"
+            style={{
+              position: 'fixed',
+              top: Math.max(8, Math.min(peek.top, window.innerHeight - 360)),
+              left: peek.left,
+              width: 300,
+              height: 340,
+              zIndex: 400,
+              display: 'flex',
+              flexDirection: 'column',
+              borderRadius: 'var(--wks-radius-lg)',
+              overflow: 'hidden',
+              background: 'var(--wks-bg-surface)',
+              border: '1px solid var(--wks-accent)',
+              boxShadow: '0 10px 34px var(--wks-shadow)',
+              cursor: 'pointer',
+            }}
+          >
+            <InspectorCard
+              snapshot={peekSnapshot}
+              agentName={peek.name}
+              compact
+              initialTab="plan"
+            />
+          </div>,
+          document.body,
+        )}
     </div>
   );
 };

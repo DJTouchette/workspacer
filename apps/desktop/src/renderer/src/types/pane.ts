@@ -13,7 +13,8 @@ export type PaneType =
   | 'ask'
   | 'editor'
   | 'agentwatch'
-  | 'agents';
+  | 'agents'
+  | 'inspector';
 
 /** Coding-agent backend an agent workspace / agent pane runs.
  *  `undefined` is treated as `'claude'` for backward compatibility with sessions
@@ -69,6 +70,12 @@ export interface PaneConfig {
   /** Agent-watch panes only: the subagent id or workflow runId being watched
    *  (for 'agents', the sessionId again — one fleet pane per session). */
   watchId?: string;
+  /** Inspector panes only: the claudemon session whose live snapshot the pane
+   *  renders (plan / flows / agents / files / usage). One pane per session. */
+  inspectorSessionId?: string;
+  /** Inspector panes only: the target agent's display name, shown as the card
+   *  header (the session id alone isn't friendly). */
+  inspectorAgentName?: string;
 }
 
 /** Position + size of a tab's card on the spatial canvas, in world coordinates

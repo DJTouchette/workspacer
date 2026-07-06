@@ -36,6 +36,7 @@ const AnalyticsPane = React.lazy(() => import('../panes/AnalyticsPane'));
 const AskPane = React.lazy(() => import('../panes/AskPane'));
 const AgentWatchPane = React.lazy(() => import('../panes/AgentWatchPane'));
 const AgentsPane = React.lazy(() => import('../panes/AgentsPane'));
+const InspectorPane = React.lazy(() => import('../panes/InspectorPane'));
 
 // --- Spatial-canvas constants -------------------------------------------------
 const CARD_HEADER_H = 26; // drag-handle strip atop each spatial card
@@ -363,6 +364,17 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
       return (
         <Suspense fallback={<PaneFallback />}>
           <AgentsPane isActive={isActive} />
+        </Suspense>
+      );
+    case 'inspector':
+      return (
+        <Suspense fallback={<PaneFallback />}>
+          <InspectorPane
+            title={pane.title}
+            isActive={isActive}
+            inspectorSessionId={pane.inspectorSessionId}
+            inspectorAgentName={pane.inspectorAgentName}
+          />
         </Suspense>
       );
     default:

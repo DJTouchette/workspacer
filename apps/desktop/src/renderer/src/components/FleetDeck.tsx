@@ -1,8 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { X } from 'lucide-react';
+import { X, Minimize2, ExternalLink } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import type { AgentWorkspace } from '../types/pane';
+import type { ClaudeSessionSnapshot } from '../types/claudeSession';
 import { useAttention } from '../contexts/AttentionContext';
 import { AgentCard } from './AgentCard';
+import { InspectorCard } from './claude/InspectorCard';
+import { AgentLogo } from './agentLogos';
+import { requestInspector } from '../lib/watchBus';
 import { StatusGlyph } from './statusGlyph';
 import { shortModelLabel } from '../lib/modelLabel';
 import { agentAttentionScore } from '../lib/attentionRouter';
@@ -48,6 +53,117 @@ interface Props {
   top: number;
   left: number;
 }
+
+/**
+ * An agent card flipped in place into its live Inspector — the shared
+ * {@link InspectorCard} fed the same `snapshotBySession` entry the collapsed card
+ * uses, so it stays live for any agent (not just the piloted one). Sits in the
+ * same grid cell as the collapsed AgentCard; collapse or "open as pane" from the
+ * header. Height is fixed so the card's inner tab body scrolls.
+ */
+const ExpandedAgentCard: React.FC<{
+  agent: AgentWorkspace;
+  snapshot: ClaudeSessionSnapshot | undefined;
+  onCollapse: () => void;
+  onOpenAsPane: () => void;
+}> = ({ agent, snapshot, onCollapse, onOpenAsPane }) => (
+  <div
+    onClick={(e) => e.stopPropagation()}
+    style={{
+      display: 'flex',
+      flexDirection: 'column',
+      height: 440,
+      borderRadius: 'var(--wks-radius-lg)',
+      overflow: 'hidden',
+      background: 'var(--wks-bg-surface)',
+      border: '1.5px solid var(--wks-accent)',
+      boxShadow: '0 4px 16px var(--wks-shadow)',
+    }}
+  >
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        padding: '9px 12px',
+        borderBottom: '1px solid var(--wks-glass-border)',
+        flexShrink: 0,
+      }}
+    >
+      {agent.kind === 'supervisor' ? (
+        <span>🧭</span>
+      ) : (
+        <AgentLogo
+          provider={agent.provider ?? 'claude'}
+          size={14}
+          style={{ color: 'var(--wks-text-tertiary)', flexShrink: 0 }}
+        />
+      )}
+      <span
+        style={{
+          fontSize: '0.9rem',
+          fontWeight: 700,
+          color: 'var(--wks-text-primary)',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          minWidth: 0,
+        }}
+      >
+        {agent.name}
+      </span>
+      <div style={{ flex: 1 }} />
+      <button
+        onClick={onOpenAsPane}
+        title="Open this inspector as its own pane"
+        style={expandBtn}
+        onMouseEnter={(e) => {
+          (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-primary)';
+          (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-accent)';
+        }}
+        onMouseLeave={(e) => {
+          (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-faint)';
+          (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-glass-border)';
+        }}
+      >
+        <ExternalLink size={13} strokeWidth={2} />
+      </button>
+      <button
+        onClick={onCollapse}
+        title="Collapse (Esc)"
+        style={expandBtn}
+        onMouseEnter={(e) => {
+          (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-primary)';
+          (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-accent)';
+        }}
+        onMouseLeave={(e) => {
+          (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-faint)';
+          (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-glass-border)';
+        }}
+      >
+        <Minimize2 size={13} strokeWidth={2} />
+      </button>
+    </div>
+    <div style={{ flex: 1, minHeight: 0 }}>
+      <InspectorCard snapshot={snapshot} />
+    </div>
+  </div>
+);
+
+const expandBtn: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  flexShrink: 0,
+  width: 24,
+  height: 24,
+  padding: 0,
+  borderRadius: 6,
+  border: '1px solid var(--wks-glass-border)',
+  background: 'transparent',
+  color: 'var(--wks-text-faint)',
+  cursor: 'pointer',
+};
 
 /**
  * The Fleet Deck — a NORAD-style cross-agent radar. Every agent is a live
@@ -220,6 +336,8 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
   // acting on the selected agent's top attention item — kept entirely within
   // the deck.
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // The card flipped in place into its live InspectorCard (null = none).
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   // Keep selection valid as the fleet re-sorts / agents come and go.
   useEffect(() => {
     if (displayOrder.length === 0) {
@@ -229,6 +347,21 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
     if (!selectedId || !displayOrder.some((a) => a.id === selectedId))
       setSelectedId(displayOrder[0].id);
   }, [displayOrder, selectedId]);
+  // Drop an expansion if its agent leaves the (filtered) fleet.
+  useEffect(() => {
+    if (expandedId && !displayOrder.some((a) => a.id === expandedId)) setExpandedId(null);
+  }, [displayOrder, expandedId]);
+
+  // Open the selected/expanded agent's inspector as its own pane, leaving the
+  // deck (the pane lands in the currently-piloted workspace, like a watch pane).
+  const openInspectorPane = (agent: (typeof realAgents)[number]) => {
+    if (!agent.sessionId) {
+      openAgent(agent.id);
+      return;
+    }
+    requestInspector({ sessionId: agent.sessionId, agentName: agent.name });
+    setViewLevel('piloting');
+  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -240,6 +373,21 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
         e.stopPropagation();
       };
       const idx = selectedId ? displayOrder.findIndex((a) => a.id === selectedId) : -1;
+
+      // Escape collapses an in-place expansion before the deck's own Esc (exit
+      // fleet) can fire — this handler runs in the capture phase, so stopping
+      // propagation keeps the App-level Esc from also unwinding the deck.
+      if (e.key === 'Escape' && expandedId) {
+        stop();
+        setExpandedId(null);
+        return;
+      }
+      // 'i' flips the focused card in place into its live InspectorCard (toggle).
+      if (e.key === 'i' && idx >= 0) {
+        stop();
+        setExpandedId((cur) => (cur === displayOrder[idx].id ? null : displayOrder[idx].id));
+        return;
+      }
 
       // Movement adapts to the active fleet view: the Cards grid navigates
       // spatially (down = the card BELOW, one row of `cols` later), the List
@@ -336,7 +484,18 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [displayOrder, selectedId, topByAgent, approve, answer, openAgent, sc, fleetView, cols]);
+  }, [
+    displayOrder,
+    selectedId,
+    expandedId,
+    topByAgent,
+    approve,
+    answer,
+    openAgent,
+    sc,
+    fleetView,
+    cols,
+  ]);
 
   // In list mode, keep the j/k-selected row visible as it moves.
   useEffect(() => {
@@ -733,10 +892,24 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
                         transition: 'outline-color 0.12s',
                       }}
                     >
-                      <AgentCard
-                        agent={agent}
-                        snapshot={agent.sessionId ? snapshotBySession[agent.sessionId] : undefined}
-                      />
+                      {expandedId === agent.id ? (
+                        <ExpandedAgentCard
+                          agent={agent}
+                          snapshot={
+                            agent.sessionId ? snapshotBySession[agent.sessionId] : undefined
+                          }
+                          onCollapse={() => setExpandedId(null)}
+                          onOpenAsPane={() => openInspectorPane(agent)}
+                        />
+                      ) : (
+                        <AgentCard
+                          agent={agent}
+                          snapshot={
+                            agent.sessionId ? snapshotBySession[agent.sessionId] : undefined
+                          }
+                          onInspect={() => setExpandedId(agent.id)}
+                        />
+                      )}
                     </div>
                   ))}
                 </div>
