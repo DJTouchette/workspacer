@@ -66,7 +66,7 @@ describe('QuestionPicker', () => {
   it('a single-question picker offers a custom free-text answer', () => {
     const onAnswer = vi.fn();
     render(<QuestionPicker questions={[question]} onAnswer={onAnswer} />);
-    const input = screen.getByPlaceholderText('Or type a custom answer...');
+    const input = screen.getByPlaceholderText('Or type your own answer…');
     fireEvent.change(input, { target: { value: 'yarn' } });
     fireEvent.click(screen.getByText('Send'));
     expect(onAnswer).toHaveBeenCalledWith({ text: 'yarn' });
@@ -80,16 +80,55 @@ describe('QuestionPicker', () => {
   it('Enter in the custom field submits the trimmed text', () => {
     const onAnswer = vi.fn();
     render(<QuestionPicker questions={[question]} onAnswer={onAnswer} />);
-    const input = screen.getByPlaceholderText('Or type a custom answer...');
+    const input = screen.getByPlaceholderText('Or type your own answer…');
     fireEvent.change(input, { target: { value: '  bun  ' } });
     fireEvent.keyDown(input, { key: 'Enter' });
     expect(onAnswer).toHaveBeenCalledWith({ text: 'bun' });
   });
 
-  it('a multi-question set omits the custom free-text field', () => {
-    const q2: PendingQuestion = { question: 'Second?', options: [{ label: 'a' }] };
-    render(<QuestionPicker questions={[question, q2]} onAnswer={vi.fn()} />);
-    expect(screen.queryByPlaceholderText('Or type a custom answer...')).not.toBeInTheDocument();
+  it('a multi-question set steps one question at a time and submits answers together', () => {
+    const onAnswer = vi.fn();
+    const q2: PendingQuestion = {
+      question: 'Second?',
+      options: [{ label: 'aye' }, { label: 'nay' }],
+    };
+    render(<QuestionPicker questions={[question, q2]} onAnswer={onAnswer} />);
+    // Only the first question is visible, with a progress readout.
+    expect(screen.getByText('Which package manager?')).toBeInTheDocument();
+    expect(screen.queryByText('Second?')).not.toBeInTheDocument();
+    expect(screen.getByText('1 of 2')).toBeInTheDocument();
+    // Answering the first advances (no submit yet) …
+    fireEvent.click(screen.getByText('pnpm'));
+    expect(onAnswer).not.toHaveBeenCalled();
+    expect(screen.getByText('Second?')).toBeInTheDocument();
+    // … answering the last submits the whole set as raw per-question answers.
+    fireEvent.click(screen.getByText('aye'));
+    expect(onAnswer).toHaveBeenCalledWith({ answers: ['2', '1'] });
+  });
+
+  it('the back chevron revisits an answered question with its pick highlighted', () => {
+    const onAnswer = vi.fn();
+    const q2: PendingQuestion = { question: 'Second?', options: [{ label: 'aye' }] };
+    render(<QuestionPicker questions={[question, q2]} onAnswer={onAnswer} />);
+    fireEvent.click(screen.getByText('pnpm'));
+    fireEvent.click(screen.getByTitle('Previous question'));
+    expect(screen.getByText('Which package manager?')).toBeInTheDocument();
+    // Changing the pick and re-answering both questions submits the new set.
+    fireEvent.click(screen.getByText('npm'));
+    fireEvent.click(screen.getByText('aye'));
+    expect(onAnswer).toHaveBeenCalledWith({ answers: ['1', '1'] });
+  });
+
+  it('a custom answer mid-set advances like an option pick', () => {
+    const onAnswer = vi.fn();
+    const q2: PendingQuestion = { question: 'Second?', options: [{ label: 'aye' }] };
+    render(<QuestionPicker questions={[question, q2]} onAnswer={onAnswer} />);
+    const input = screen.getByPlaceholderText('Or type your own answer…');
+    fireEvent.change(input, { target: { value: 'yarn' } });
+    fireEvent.click(screen.getByText('Next'));
+    expect(onAnswer).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText('aye'));
+    expect(onAnswer).toHaveBeenCalledWith({ answers: ['yarn', '1'] });
   });
 });
 
