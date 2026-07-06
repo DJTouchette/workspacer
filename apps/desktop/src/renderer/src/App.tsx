@@ -541,6 +541,11 @@ function App() {
 
   // Altitude: 'piloting' (inside one agent) vs 'fleet' (the cross-agent deck).
   const viewLevel: ViewLevel = config.panes?.viewLevel === 'fleet' ? 'fleet' : 'piloting';
+  // Focus mode unmounts the deck but leaves the persisted viewLevel alone — so
+  // altitude consumers (attention auto-dismiss, the sidebar's deck state) must
+  // see the altitude the user actually experiences: always 'piloting' when the
+  // deck can't mount.
+  const effectiveViewLevel: ViewLevel = uiManifest.fleetDeck ? viewLevel : 'piloting';
   const setViewLevel = useCallback(
     (next: ViewLevel) => {
       saveConfig({ panes: { ...config.panes, viewLevel: next } });
@@ -1617,7 +1622,7 @@ function App() {
       inboxOpen={inboxOpen}
       openInbox={openInbox}
       closeInbox={closeInbox}
-      viewLevel={viewLevel}
+      viewLevel={effectiveViewLevel}
       setViewLevel={setViewLevel}
       onOpenAgent={handleSelectAgent}
       onRespawnAgent={respawnAgent}
@@ -1657,7 +1662,7 @@ function App() {
               onJumpToAttention={goToNextAttention}
               onOpenInbox={openInbox}
               onToggleFleet={toggleFleet}
-              viewLevel={viewLevel}
+              viewLevel={effectiveViewLevel}
               onOpenRemote={() => setShowRemote(true)}
               onToggleCollapse={toggleSidebar}
               onToggleHelp={toggleHelp}
@@ -1698,7 +1703,7 @@ function App() {
                 onJumpToAttention={goToNextAttention}
                 onOpenInbox={openInbox}
                 onToggleFleet={toggleFleet}
-                viewLevel={viewLevel}
+                viewLevel={effectiveViewLevel}
                 onOpenRemote={() => setShowRemote(true)}
                 onToggleCollapse={() => setFocusSidebarOverlay(false)}
                 onToggleHelp={toggleHelp}

@@ -449,6 +449,37 @@ function migrateFlatChords(cfg: Config): Config {
   return cfg;
 }
 
+/**
+ * Action ids removed from the app whose bindings linger in real configs: the
+ * full shortcuts map was historically persisted wholesale (first-run defaults,
+ * the keybindings migration, and Settings rebinds), and the chord tree consumes
+ * the record key-by-key — so a removed action would otherwise surface as a dead
+ * which-key leaf. Pruned on read and the cleanup written back to disk.
+ */
+const REMOVED_SHORTCUTS = ['cycle-view'];
+
+function pruneRemovedShortcuts(cfg: Config): Config {
+  const shortcuts = cfg.keybindings?.shortcuts;
+  if (!shortcuts) return cfg;
+
+  let changed = false;
+  for (const action of REMOVED_SHORTCUTS) {
+    if (action in shortcuts) {
+      delete shortcuts[action];
+      changed = true;
+    }
+  }
+  if (!changed) return cfg;
+
+  try {
+    fs.mkdirSync(getConfigDir(), { recursive: true });
+    fs.writeFileSync(getConfigFilePath(), yaml.dump(cfg, { lineWidth: -1 }), 'utf-8');
+  } catch (err) {
+    console.error('[ConfigService] removed-shortcut prune write failed:', err);
+  }
+  return cfg;
+}
+
 class ConfigService {
   private config: Config;
 
@@ -467,8 +498,9 @@ class ConfigService {
       // migrateKeybindings runs first: a legacy-schema config is reset wholesale
       // to the flat defaults, after which migrateFlatChords is a no-op. A modern
       // config passes migrateKeybindings untouched and migrateFlatChords then
-      // upgrades any stale nested-default chords in place.
-      return migrateFlatChords(migrateKeybindings(merged));
+      // upgrades any stale nested-default chords in place. Finally, bindings for
+      // actions that no longer exist are pruned.
+      return pruneRemovedShortcuts(migrateFlatChords(migrateKeybindings(merged)));
     } catch {
       // No config file — write defaults
       this.writeDefaults();

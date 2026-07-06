@@ -310,7 +310,6 @@ export interface SessionTabData {
   title: string;
   panes: SessionPaneData[];
   activePaneId: string;
-  canvas?: { x: number; y: number; w: number; h: number };
   lastActiveAt?: number;
 }
 

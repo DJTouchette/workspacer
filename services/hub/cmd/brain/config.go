@@ -28,7 +28,8 @@ const defaultConfigJSON = `{
   "ui": {
     "animations": false, "theme": "dark", "cornerStyle": "", "borderColor": "",
     "fontFamily": "Inter, system-ui, sans-serif", "fontSize": 14, "borderRadius": 8,
-    "navBarHeight": 34, "paneHeaderHeight": 22, "showComposerSend": true, "guiFontScale": 1.15
+    "navBarHeight": 34, "paneHeaderHeight": 22, "showComposerSend": true, "guiFontScale": 1.15,
+    "mode": "fleet"
   },
   "terminal": {
     "shell": "",
@@ -53,7 +54,7 @@ const defaultConfigJSON = `{
   },
   "panes": {
     "defaultWidth": 800, "gap": 16, "peek": 80, "insertPosition": "after",
-    "tabPosition": "top", "viewMode": "tabs", "viewLevel": "piloting",
+    "tabPosition": "top", "viewLevel": "piloting",
     "default": [
       { "id": "terminal-1", "type": "terminal", "title": "Terminal 1", "width": 800, "order": 0 },
       { "id": "terminal-2", "type": "terminal", "title": "Terminal 2", "width": 800, "order": 1 },
@@ -68,13 +69,14 @@ const defaultConfigJSON = `{
       "next-attention": "ctrl+shift+space", "spawn-agent": "ctrl+shift+n", "settings": "ctrl+,",
       "save-session": "ctrl+shift+s", "open-file": "ctrl+shift+o", "toggle-help": "f1",
       "toggle-terminal": "ctrl+` + "`" + `", "toggle-sidebar": "ctrl+shift+b", "toggle-inbox": "ctrl+shift+i",
-      "toggle-fleet": "ctrl+shift+f", "toggle-inspector": "ctrl+shift+e", "library-picker": "ctrl+shift+l",
+      "toggle-fleet": "ctrl+shift+f", "toggle-ui-mode": "ctrl+shift+m", "toggle-inspector": "ctrl+shift+e",
+      "library-picker": "ctrl+shift+l",
       "open-review": "ctrl+shift+g", "new-terminal": "prefix n t", "new-claude": "prefix n c",
       "new-browser": "prefix n b", "prev-tab": "prefix t [", "next-tab": "prefix t ]",
       "move-tab-left": "prefix t ,", "move-tab-right": "prefix t .", "rename-tab": "prefix t r",
       "close-pane": "prefix t w", "split": "prefix p s", "quick-split": "prefix p c",
       "nav-left": "prefix p h", "nav-down": "prefix p j", "nav-up": "prefix p k",
-      "nav-right": "prefix p l", "cycle-view": "prefix v"
+      "nav-right": "prefix p l"
     }
   },
   "notifications": { "enabled": true, "notifyDone": true, "onlyWhenUnwatched": true, "sound": false },
@@ -167,7 +169,7 @@ func (c *configService) loadFromDisk() map[string]any {
 	if err := yaml.Unmarshal(data, &parsed); err != nil {
 		return defaults
 	}
-	return migrateKeybindings(deepMerge(defaults, parsed))
+	return pruneRemovedShortcuts(migrateKeybindings(deepMerge(defaults, parsed)))
 }
 
 func (c *configService) writeDefaults(defaults map[string]any) {
@@ -215,6 +217,35 @@ func writeConfigYAML(cfg map[string]any) {
 		return
 	}
 	_ = os.WriteFile(configPath(), data, 0o644)
+}
+
+// removedShortcuts are action ids deleted from the app whose bindings were
+// historically persisted to disk (the full shortcuts map used to be written on
+// first run, by migrateKeybindings, and by Settings rebinds). Mirrors
+// configService.pruneRemovedShortcuts: strip them on read so clients never
+// build dead chord-tree leaves, and persist the cleanup.
+var removedShortcuts = []string{"cycle-view"}
+
+func pruneRemovedShortcuts(cfg map[string]any) map[string]any {
+	kb, _ := cfg["keybindings"].(map[string]any)
+	if kb == nil {
+		return cfg
+	}
+	shortcuts, _ := kb["shortcuts"].(map[string]any)
+	if shortcuts == nil {
+		return cfg
+	}
+	changed := false
+	for _, action := range removedShortcuts {
+		if _, ok := shortcuts[action]; ok {
+			delete(shortcuts, action)
+			changed = true
+		}
+	}
+	if changed {
+		writeConfigYAML(cfg)
+	}
+	return cfg
 }
 
 // migrateKeybindings ports configService.migrateKeybindings: the old
