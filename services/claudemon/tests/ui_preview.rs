@@ -45,6 +45,7 @@ fn preview_dashboard_three_sessions() {
             transcript_path: None,
             status_line: None,
             provider: "claude".into(),
+            transport: Default::default(),
             plan: None,
         })
         .session(SessionState {
@@ -59,6 +60,7 @@ fn preview_dashboard_three_sessions() {
             transcript_path: None,
             status_line: None,
             provider: "claude".into(),
+            transport: Default::default(),
             plan: None,
         })
         .session(SessionState {
@@ -77,6 +79,7 @@ fn preview_dashboard_three_sessions() {
             transcript_path: None,
             status_line: None,
             provider: "claude".into(),
+            transport: Default::default(),
             plan: None,
         })
         .connected();
@@ -99,6 +102,7 @@ fn preview_chat_empty() {
             transcript_path: None,
             status_line: None,
             provider: "claude".into(),
+            transport: Default::default(),
             plan: None,
         })
         .connected()
@@ -122,6 +126,7 @@ fn preview_chat_with_text_and_tool_calls() {
             transcript_path: None,
             status_line: None,
             provider: "claude".into(),
+            transport: Default::default(),
             plan: None,
         })
         .connected()
@@ -182,6 +187,7 @@ fn preview_chat_with_pending_approval() {
             transcript_path: None,
             status_line: None,
             provider: "claude".into(),
+            transport: Default::default(),
             plan: None,
         })
         .connected()
@@ -240,6 +246,7 @@ fn preview_chat_with_pending_question() {
             transcript_path: None,
             status_line: None,
             provider: "claude".into(),
+            transport: Default::default(),
             plan: None,
         })
         .connected()
@@ -263,6 +270,7 @@ fn preview_chat_with_input_typed() {
             transcript_path: None,
             status_line: None,
             provider: "claude".into(),
+            transport: Default::default(),
             plan: None,
         })
         .connected()
@@ -287,6 +295,7 @@ fn preview_chat_with_multiline_input() {
             transcript_path: None,
             status_line: None,
             provider: "claude".into(),
+            transport: Default::default(),
             plan: None,
         })
         .connected()

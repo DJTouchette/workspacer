@@ -10,7 +10,7 @@ use time::OffsetDateTime;
 
 use super::conversation::{ConversationItem, ConversationStore};
 use super::permission_mode::{classify_screen, PermissionMode, PermissionSwitchError};
-use super::state::{HookEvent, Pending, Plan, SessionMode, SessionState, StatusLine};
+use super::state::{HookEvent, Pending, Plan, SessionMode, SessionState, StatusLine, Transport};
 use crate::protocol::WrapperMessage;
 
 const BROADCAST_CAPACITY: usize = 256;
@@ -238,11 +238,26 @@ pub struct SessionStore {
     managed_yolo: Arc<DashMap<String, ManagedYoloHandle>>,
     /// Live model/effort switch channels for managed sessions whose adapter can
     /// apply one mid-thread (codex over the app-server ws:
-    /// `thread/settings/update`). Registered by the adapter at session start;
+    /// `thread/settings/update`; the claude stream driver: `set_model`).
+    /// Registered by the adapter at session start;
     /// `POST /sessions/:id/model` sends here. Sessions without an entry
     /// (opencode/pi, codex rollout fallback) can't switch live — the caller
     /// falls back to the restart path.
     managed_model: Arc<DashMap<String, mpsc::UnboundedSender<ModelSwitch>>>,
+    /// Structural AskUserQuestion answers for managed sessions whose driver can
+    /// resolve a parked question over its own protocol (the claude stream
+    /// driver's `can_use_tool` allow-with-answers). `/answer` routes here when
+    /// present instead of writing picker keystrokes to a PTY.
+    managed_answers: Arc<DashMap<String, mpsc::UnboundedSender<ManagedAnswer>>>,
+    /// Structural permission-mode switches for managed sessions whose driver
+    /// speaks Claude's own mode vocabulary (`set_permission_mode` on the
+    /// stream control protocol). Present only for the stream driver — codex
+    /// keeps its ask/yolo flag in `managed_yolo`.
+    managed_permission_modes: Arc<DashMap<String, mpsc::UnboundedSender<ManagedPermissionSwitch>>>,
+    /// Interrupt channels for managed sessions with a structural
+    /// SIGINT-equivalent (the stream driver's `interrupt` control request).
+    /// `/signal {sigint}` routes here when present.
+    managed_interrupts: Arc<DashMap<String, mpsc::UnboundedSender<()>>>,
 }
 
 /// A live model/effort switch request for a managed adapter's driver loop.
@@ -251,6 +266,31 @@ pub struct SessionStore {
 pub struct ModelSwitch {
     pub model: Option<String>,
     pub effort: Option<String>,
+}
+
+/// A structural answer to a managed session's pending `AskUserQuestion` —
+/// the same vocabulary `POST /sessions/:id/answer` accepts for PTY sessions
+/// (option number, free text, or one answer per question), forwarded to the
+/// driver instead of being typed into a picker.
+#[derive(Debug, Clone)]
+pub struct ManagedAnswer {
+    /// 1-indexed option for the current (or only) question.
+    pub option: Option<u8>,
+    /// Free-form text answer.
+    pub text: Option<String>,
+    /// For multi-question prompts: one answer per question in order — an
+    /// option number rendered as a string (`"2"`) or free-form text.
+    pub answers: Option<Vec<String>>,
+}
+
+/// A live permission-mode switch bound for a managed driver that applies
+/// Claude's own modes structurally. The driver resolves `reply` with the mode
+/// the CLI confirmed, or the CLI's error string — so `/permission-mode` can
+/// answer with verified truth rather than fire-and-forget.
+#[derive(Debug)]
+pub struct ManagedPermissionSwitch {
+    pub mode: String,
+    pub reply: oneshot::Sender<Result<String, String>>,
 }
 
 /// A managed session's approval policy, shared with its driver task.
@@ -315,6 +355,9 @@ impl SessionStore {
             term_sizes: Arc::new(DashMap::new()),
             managed_yolo: Arc::new(DashMap::new()),
             managed_model: Arc::new(DashMap::new()),
+            managed_answers: Arc::new(DashMap::new()),
+            managed_permission_modes: Arc::new(DashMap::new()),
+            managed_interrupts: Arc::new(DashMap::new()),
         }
     }
 
@@ -482,6 +525,30 @@ impl SessionStore {
         // Broadcast the *post-aliasing* event so subscribers see the canonical
         // session_id Workspacer (and other clients) already know about.
         let _ = self.hook_tx.send(event.clone());
+
+        // Managed sessions own their mode state machine in the driver (the
+        // stream driver via the control protocol; codex/opencode/pi via their
+        // native events) — a hook must not fight it, and the PTY flush
+        // pipeline it feeds has no PTY here. Claude Code still runs the user's
+        // hooks for headless stream sessions, so this path is hit routinely:
+        // keep the hooks as enrichment only — capture `transcript_path` (the
+        // `/transcript` endpoint needs it) and rely on the rebroadcast above.
+        let managed = self.managed_inputs.contains_key(&event.session_id)
+            || self
+                .states
+                .get(&event.session_id)
+                .is_some_and(|s| s.transport == Transport::Stream);
+        if managed {
+            if let Some(mut entry) = self.states.get_mut(&event.session_id) {
+                if let Some(tp) = event.payload.get("transcript_path").and_then(Value::as_str) {
+                    entry.transcript_path = Some(tp.to_string());
+                }
+                entry.updated_at = OffsetDateTime::now_utc();
+                return entry.clone();
+            }
+            // Managed input registered but no state row (teardown race) —
+            // fall through to the normal path, which creates one.
+        }
 
         let (state, became_input, became_stopped) = {
             let mut entry = self
@@ -732,11 +799,87 @@ impl SessionStore {
         Some(state)
     }
 
+    /// Mark which transport drives this session. Set at spawn time (before the
+    /// driver task starts) so `ingest`'s hooks guard and every snapshot see it
+    /// from the session's first instant. No-op for unknown ids.
+    pub fn set_transport(&self, session_id: &str, transport: Transport) {
+        if let Some(mut entry) = self.states.get_mut(session_id) {
+            entry.transport = transport;
+        }
+    }
+
     /// Register the prompt channel for a managed session. Prompts submitted via
     /// `submit_message` are forwarded here (the adapter's driver task owns the
     /// receiver).
     pub fn register_managed_input(&self, session_id: &str, tx: mpsc::UnboundedSender<String>) {
         self.managed_inputs.insert(session_id.to_string(), tx);
+    }
+
+    /// Register the structural AskUserQuestion answer channel for a managed
+    /// session (the stream driver resolves the parked `can_use_tool` with the
+    /// user's choices).
+    pub fn register_managed_answer(
+        &self,
+        session_id: &str,
+        tx: mpsc::UnboundedSender<ManagedAnswer>,
+    ) {
+        self.managed_answers.insert(session_id.to_string(), tx);
+    }
+
+    /// Forward an AskUserQuestion answer to a managed session's driver.
+    /// Returns false (so `/answer` falls through to the PTY keystroke path)
+    /// when this session has no structural answer channel.
+    pub fn submit_managed_answer(&self, session_id: &str, answer: ManagedAnswer) -> bool {
+        match self.managed_answers.get(session_id) {
+            Some(tx) => tx.send(answer).is_ok(),
+            None => false,
+        }
+    }
+
+    /// Register the structural permission-mode channel for a managed session
+    /// whose driver speaks Claude's own mode vocabulary (stream driver).
+    pub fn register_managed_permission_mode(
+        &self,
+        session_id: &str,
+        tx: mpsc::UnboundedSender<ManagedPermissionSwitch>,
+    ) {
+        self.managed_permission_modes
+            .insert(session_id.to_string(), tx);
+    }
+
+    /// Whether this managed session can switch Claude permission modes
+    /// structurally (drives `/permission-mode` routing).
+    pub fn has_managed_permission_mode(&self, session_id: &str) -> bool {
+        self.managed_permission_modes.contains_key(session_id)
+    }
+
+    /// Forward a structural permission-mode switch to the driver. Returns
+    /// false when the session has no such channel (or the driver is gone).
+    pub fn submit_managed_permission_mode(
+        &self,
+        session_id: &str,
+        switch: ManagedPermissionSwitch,
+    ) -> bool {
+        match self.managed_permission_modes.get(session_id) {
+            Some(tx) => tx.send(switch).is_ok(),
+            None => false,
+        }
+    }
+
+    /// Register the structural interrupt channel for a managed session (the
+    /// stream driver's SIGINT equivalent — an `interrupt` control request).
+    pub fn register_managed_interrupt(&self, session_id: &str, tx: mpsc::UnboundedSender<()>) {
+        self.managed_interrupts.insert(session_id.to_string(), tx);
+    }
+
+    /// Interrupt a managed session's current turn. Returns false when the
+    /// session has no structural interrupt (caller falls back to the PTY /
+    /// terminate paths).
+    pub fn interrupt_managed(&self, session_id: &str) -> bool {
+        match self.managed_interrupts.get(session_id) {
+            Some(tx) => tx.send(()).is_ok(),
+            None => false,
+        }
     }
 
     /// Register the approval-decision channel for a managed session. `/approve`
@@ -801,6 +944,9 @@ impl SessionStore {
         self.managed_decisions.remove(session_id);
         self.managed_model.remove(session_id);
         self.managed_yolo.remove(session_id);
+        self.managed_answers.remove(session_id);
+        self.managed_permission_modes.remove(session_id);
+        self.managed_interrupts.remove(session_id);
         existed
     }
 
@@ -814,6 +960,9 @@ impl SessionStore {
         self.managed_decisions.remove(session_id);
         self.managed_model.remove(session_id);
         self.managed_yolo.remove(session_id);
+        self.managed_answers.remove(session_id);
+        self.managed_permission_modes.remove(session_id);
+        self.managed_interrupts.remove(session_id);
         // Release the hybrid Term view's resources (attached by `attach_pty`).
         // The 256 KiB byte ring per session is the bulk of a managed session's
         // memory; leaving it (and the input wrapper + broadcast) around after the

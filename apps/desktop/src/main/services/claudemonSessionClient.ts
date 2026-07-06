@@ -105,7 +105,10 @@ class ClaudemonSessionClient {
    *  own API (e.g. `opencode serve`) and the renderer observes via the session
    *  snapshot/conversation/status streams like a Claude GUI session. */
   async spawnManaged(args: {
-    provider: 'opencode' | 'codex' | 'pi';
+    /** Provider backend. 'claude' means the headless stream-json adapter
+     *  (`claude --print --input-format stream-json --output-format stream-json`)
+     *  — PTY Claude never goes through spawn-managed (it stays on `spawn`). */
+    provider: 'opencode' | 'codex' | 'pi' | 'claude';
     cwd: string;
     model?: string;
     /** Reasoning-effort level (codex `model_reasoning_effort`); others ignore it. */
@@ -114,14 +117,33 @@ class ClaudemonSessionClient {
     bin?: string;
     /** YOLO / skip approvals — auto-approve every command and file change. */
     yolo?: boolean;
+    /** Claude (stream) only: the full Claude permission mode
+     *  (default/acceptEdits/plan/bypassPermissions) — `--permission-mode`. */
+    permissionMode?: string;
+    /** Claude (stream) only: resume this prior conversation (`--resume <id>`). */
+    resumeSessionId?: string;
+    /** Claude (stream) only: extra argv appended verbatim (profile extras,
+     *  session-scoped `--mcp-config`, …). */
+    extraArgs?: string[];
+    /** Claude (stream) only: env merged over the daemon's environment
+     *  (e.g. a profile's CLAUDE_CONFIG_DIR). */
+    env?: Record<string, string>;
     /** Workspacer MCP facade URL to register with the provider (supervisors). */
     mcp?: string;
     /** Role instructions to prepend to the agent's first turn (supervisors). */
     instructions?: string;
     sessionId?: string;
   }): Promise<string> {
-    const { sessionId: pinnedId, ...rest } = args;
-    const reqBody = { ...rest, ...(pinnedId ? { session_id: pinnedId } : {}) };
+    const { sessionId: pinnedId, permissionMode, resumeSessionId, extraArgs, ...rest } = args;
+    // claudemon's SpawnManagedPayload uses snake_case for multi-word fields;
+    // the resume id rides its `resume` field.
+    const reqBody = {
+      ...rest,
+      ...(pinnedId ? { session_id: pinnedId } : {}),
+      ...(permissionMode ? { permission_mode: permissionMode } : {}),
+      ...(resumeSessionId ? { resume: resumeSessionId } : {}),
+      ...(extraArgs?.length ? { extra_args: extraArgs } : {}),
+    };
     const res = await fetch(`${CLAUDEMON_API_URL}/sessions/spawn-managed`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

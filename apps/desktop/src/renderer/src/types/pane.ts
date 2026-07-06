@@ -38,6 +38,10 @@ export interface PaneConfig {
   profileId?: string;
   /** Coding-agent backend for a 'claude'-type agent pane. undefined ⇒ 'claude'. */
   provider?: AgentProvider;
+  /** Claude agent panes only: 'stream' when the session runs on the headless
+   *  stream-json transport (no PTY — GUI-only pane). undefined defers to the
+   *  session snapshot, then the config default (claude.transport). */
+  transport?: 'pty' | 'stream';
   /** Claude session ID to resume (passed as --resume <id> to a NEW process). */
   resumeSessionId?: string;
   /** Claude session ID to attach to as a viewer — the session is already
@@ -132,6 +136,10 @@ export interface AgentWorkspace {
   /** Coding-agent backend this workspace runs. undefined ⇒ 'claude' (back-compat
    *  for agents spawned before multi-provider support). */
   provider?: AgentProvider;
+  /** Claude only: which transport the agent was spawned on ('pty' classic TUI,
+   *  'stream' headless stream-json). Re-passed on respawn. undefined = the
+   *  config default at spawn time. */
+  transport?: 'pty' | 'stream';
   profileId?: string;
   /** Model passed as `--model` at spawn (alias or full id). '' / undefined = Claude default. */
   model?: string;

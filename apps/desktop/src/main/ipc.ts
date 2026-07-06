@@ -151,6 +151,9 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       opts: {
         cwd?: string;
         provider?: 'claude' | 'codex' | 'opencode' | 'pi';
+        /** Claude only: 'pty' (classic TUI) or 'stream' (headless stream-json,
+         *  managed adapter). Omitted = the config default (claude.transport). */
+        transport?: 'pty' | 'stream';
         profileId?: string;
         model?: string;
         effort?: string;
@@ -188,6 +191,28 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
           parentSessionId: opts.parentSessionId,
           cols: opts.cols,
           rows: opts.rows,
+        });
+      }
+      // Claude on the 'stream' transport is also managed — claudemon's
+      // claude_stream adapter runs headless stream-json (no PTY). Same shared
+      // dispatch as the other managed providers so the IPC and hub-bus spawn
+      // paths can't drift (standing project rule; see managedSpawn.ts).
+      const transport = opts.transport ?? configService.getConfig().claude?.transport ?? 'pty';
+      if (transport === 'stream') {
+        return spawnManagedAgent({
+          provider: 'claude',
+          transport: 'stream',
+          cwd: opts.cwd,
+          profileId: opts.profileId,
+          model: opts.model,
+          permissionMode: opts.permissionMode,
+          skipPermissions: opts.skipPermissions,
+          resumeSessionId: opts.resumeSessionId,
+          supervisor: opts.supervisor,
+          mcpFacade: opts.mcpFacade,
+          label: opts.label,
+          parentSessionId: opts.parentSessionId,
+          mcpItemIds: opts.mcpItemIds,
         });
       }
       // Claude (Tier-1) PTY spawn. Shared with the `agents.spawn` hub capability

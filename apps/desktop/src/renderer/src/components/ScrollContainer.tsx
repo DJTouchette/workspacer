@@ -212,6 +212,7 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
             cwd={pane.cwd}
             profileId={pane.profileId}
             provider={pane.provider}
+            transport={pane.transport}
             resumeSessionId={pane.resumeSessionId}
             attachSessionId={pane.attachSessionId}
             initialPrompt={pane.initialPrompt}

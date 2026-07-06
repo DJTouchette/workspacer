@@ -194,7 +194,8 @@ pub async fn handle(
 /// background, so the UI shows the agent while the server starts.
 #[derive(Debug, Deserialize)]
 pub struct SpawnManagedPayload {
-    /// Provider backend. Only `opencode` is supported today.
+    /// Provider backend: `opencode`, `codex`, `pi`, or `claude` (the headless
+    /// stream-json transport — the PTY path stays on `/sessions/spawn`).
     pub provider: String,
     /// Working directory for the agent.
     pub cwd: String,
@@ -222,6 +223,23 @@ pub struct SpawnManagedPayload {
     /// Caller-pinned session id, so every client converges on one card.
     #[serde(default)]
     pub session_id: Option<String>,
+    /// Claude only: initial permission mode, in the CLI's own vocabulary
+    /// (`acceptEdits`, `plan`, `bypassPermissions`, …) — `--permission-mode`.
+    #[serde(default)]
+    pub permission_mode: Option<String>,
+    /// Claude only: resume this prior session (`--resume <id>`) instead of
+    /// starting fresh with a pinned id.
+    #[serde(default)]
+    pub resume: Option<String>,
+    /// Claude only: extra argv appended verbatim (escape hatch for CLI flags
+    /// the payload doesn't model).
+    #[serde(default)]
+    pub extra_args: Vec<String>,
+    /// Claude only: extra env vars merged on top of the daemon's environment
+    /// (e.g. a Claude profile's `CLAUDE_CONFIG_DIR`) — same semantics as
+    /// `/sessions/spawn`'s `env`.
+    #[serde(default)]
+    pub env: HashMap<String, String>,
 }
 
 pub async fn handle_managed(
@@ -229,15 +247,24 @@ pub async fn handle_managed(
     State(conv): State<ConversationStore>,
     Json(payload): Json<SpawnManagedPayload>,
 ) -> impl IntoResponse {
-    if !matches!(payload.provider.as_str(), "opencode" | "codex" | "pi") {
+    if !matches!(
+        payload.provider.as_str(),
+        "opencode" | "codex" | "pi" | "claude"
+    ) {
         return (
             StatusCode::BAD_REQUEST,
             format!("unsupported managed provider: {}", payload.provider),
         )
             .into_response();
     }
+    // Resuming a claude stream session keeps the CLI's *prior* session id (see
+    // the claude_stream module contract — `--resume` is not re-pinnable), so an
+    // unpinned resume must reuse that id as the row id: otherwise every hook
+    // arrives under the prior id and drives a stale/ghost PTY row while the
+    // stream row never sees its transcript_path.
     let session_id = payload
         .session_id
+        .or_else(|| payload.resume.clone())
         .unwrap_or_else(|| Uuid::new_v4().to_string());
     let bin = payload.bin.unwrap_or_else(|| payload.provider.clone());
 
@@ -247,6 +274,29 @@ pub async fn handle_managed(
         instructions: payload.instructions.clone(),
     };
     match payload.provider.as_str() {
+        // Claude over the headless stream-json transport (2nd claude
+        // transport; the PTY path on `/sessions/spawn` is untouched). The
+        // transport is stamped *before* the driver starts so `ingest`'s hooks
+        // guard and the first snapshot already see it.
+        "claude" => {
+            store.set_transport(&session_id, crate::session::state::Transport::Stream);
+            crate::providers::claude_stream::spawn_session(
+                store.clone(),
+                conv.clone(),
+                crate::providers::claude_stream::SpawnConfig {
+                    session_id: session_id.clone(),
+                    cwd: payload.cwd.clone(),
+                    bin,
+                    model: payload.model.clone(),
+                    permission_mode: payload.permission_mode.clone(),
+                    resume: payload.resume.clone(),
+                    extra_args: payload.extra_args.clone(),
+                    env: payload.env.clone(),
+                    yolo: payload.yolo,
+                    facade,
+                },
+            );
+        }
         "opencode" => crate::providers::opencode::spawn_session(
             store.clone(),
             conv.clone(),

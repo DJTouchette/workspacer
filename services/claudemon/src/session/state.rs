@@ -276,6 +276,22 @@ impl StatusLine {
     }
 }
 
+/// How the daemon talks to a session's agent process.
+///
+/// `Pty` is the classic path: the agent's own TUI in a pseudo-terminal, state
+/// reconstructed from hooks + screen scraping. `Stream` is the headless
+/// stream-json path (`claude --print --input-format stream-json …`), where the
+/// managed driver in `providers::claude_stream` owns the state machine via the
+/// CLI's control protocol and hooks are enrichment-only (see
+/// `SessionStore::ingest`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Transport {
+    #[default]
+    Pty,
+    Stream,
+}
+
 /// How long a stopped session may sit idle before it's archived (hidden from
 /// the default list but kept on disk and resumable). Seven days covers any
 /// agent you'd realistically come back to.
@@ -307,6 +323,13 @@ pub struct SessionState {
     /// `"pi"`). Clients read this instead of guessing from spawn provenance.
     #[serde(default = "default_provider")]
     pub provider: String,
+    /// Which transport drives this session: `"pty"` (default — every
+    /// pre-existing row and the classic wrapper path) or `"stream"` (the
+    /// headless stream-json driver). Additive and back-compatible like
+    /// `provider`; serialized on every snapshot so clients can gate
+    /// transport-specific affordances (e.g. no Term view for `stream`).
+    #[serde(default)]
+    pub transport: Transport,
     /// The agent's current plan / checklist, last-write-wins. Additive and
     /// back-compatible like `provider` — absent until the agent writes a plan,
     /// and omitted from the wire when empty. Fed by `SessionStore::set_plan`.
@@ -335,6 +358,7 @@ impl SessionState {
             transcript_path: None,
             status_line: None,
             provider: default_provider(),
+            transport: Transport::default(),
             plan: None,
         }
     }

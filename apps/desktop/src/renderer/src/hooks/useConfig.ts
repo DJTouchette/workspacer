@@ -137,6 +137,10 @@ export interface Config {
     workLog?: 'cards' | 'trace';
     /** Concrete model ids seen across sessions, surfaced in the spawn dropdown. */
     seenModels?: string[];
+    /** How new Claude sessions run: 'pty' (classic Claude Code TUI — Term +
+     *  GUI) or 'stream' (headless stream-json via claudemon's managed adapter —
+     *  GUI only). Per-spawn overridable in the spawn dialog. Default 'pty'. */
+    transport?: 'pty' | 'stream';
   };
   /** Defaults applied when spawning a new agent. */
   agents?: {

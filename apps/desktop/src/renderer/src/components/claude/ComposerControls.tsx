@@ -100,7 +100,10 @@ export const ComposerControls: React.FC<{
   cwd?: string;
   onRestartWith: (overrides: RestartOverrides) => void;
 }> = ({ provider, sessionId, snapshot, cwd, onRestartWith }) => {
-  const caps = capsFor(provider);
+  // The Claude transport rides on the session snapshot; 'stream' (headless
+  // stream-json, no PTY) swaps in transport-aware caps — see providerCaps.ts.
+  const transport = snapshot?.transport;
+  const caps = capsFor(provider, transport);
   const settings = snapshot?.settings;
   const stats = deriveSessionStats(snapshot);
 
@@ -169,7 +172,11 @@ export const ComposerControls: React.FC<{
       setSwitching(id);
       if (switchTimerRef.current) clearTimeout(switchTimerRef.current);
       switchTimerRef.current = setTimeout(() => setSwitching(null), 15_000);
-      if (caps.modelSource === 'claude') {
+      // PTY Claude only: `/model` is a TUI slash command, typed through the
+      // normal message path. A stream-transport (headless) Claude session has
+      // no TUI to interpret it — the text would land as a literal prompt — so
+      // it takes the structural endpoint below like the managed providers.
+      if (caps.modelSource === 'claude' && transport !== 'stream') {
         window.electronAPI.claudeMessage(sessionId, `/model ${id}`).catch((err) => {
           console.warn('[ComposerControls] live model switch failed:', err);
           setSwitching(null);
@@ -194,7 +201,7 @@ export const ComposerControls: React.FC<{
           setSwitching(null);
         });
     },
-    [sessionId, stats.model, caps.modelSource],
+    [sessionId, stats.model, caps.modelSource, transport],
   );
 
   const pickRestart = (overrides: RestartOverrides, label: string) => {

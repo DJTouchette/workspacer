@@ -180,6 +180,11 @@ export interface ClaudeSessionSnapshot {
   /** Coding-agent backend ('claude' | 'codex' | 'opencode' | 'pi'). Set at spawn
    *  time; lets an adopted card render the right provider label/logo. */
   provider?: string;
+  /** Claude sessions only: 'stream' when the session runs on the headless
+   *  stream-json managed adapter — no PTY, so the pane is GUI-only and answers
+   *  go through POST /answer instead of keystrokes. Absent/'pty' = classic
+   *  PTY TUI transport. */
+  transport?: 'pty' | 'stream';
   /** Requested-at-spawn launch settings — the composer pills' fallback truth
    *  (live statusLine/usage model wins when present). */
   settings?: {

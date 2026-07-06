@@ -19,10 +19,14 @@ interface SpawnAgentDialogProps {
   defaultCwd: string;
   /** Provider pre-selected in the picker (config.agents.defaultProvider). */
   defaultProvider?: AgentProvider;
+  /** Claude transport pre-selected in the picker (config.claude.transport). */
+  defaultTransport?: 'pty' | 'stream';
   onSpawn: (opts: {
     cwd: string;
     name?: string;
     provider?: AgentProvider;
+    /** Claude only: 'pty' | 'stream'. */
+    transport?: 'pty' | 'stream';
     profileId?: string;
     model?: string;
     effort?: string;
@@ -67,12 +71,15 @@ interface ProviderDetection {
 const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   defaultCwd,
   defaultProvider,
+  defaultTransport,
   onSpawn,
   onCancel,
 }) => {
   const [cwd, setCwd] = useState(defaultCwd);
   const [name, setName] = useState('');
   const [provider, setProvider] = useState<AgentProvider>(defaultProvider ?? 'claude');
+  // Claude transport override for this spawn — pre-set from config.claude.transport.
+  const [transport, setTransport] = useState<'pty' | 'stream'>(defaultTransport ?? 'pty');
   const [providerDetection, setProviderDetection] = useState<ProviderDetection[]>([]);
   const [customBinPath, setCustomBinPath] = useState('');
   const isClaude = provider === 'claude';
@@ -331,6 +338,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
         ? {
             cwd: cwd.trim(),
             name: name.trim() || undefined,
+            transport,
             profileId: profileId || undefined,
             model: resolvedModel || undefined,
             permissionMode: resolvedMode,
@@ -640,6 +648,57 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                 style={inputStyle}
               />
             )}
+          </Field>
+        )}
+
+        {isClaude && (
+          <Field label="Transport">
+            <div style={{ display: 'flex', gap: 4 }}>
+              {(
+                [
+                  { value: 'pty', label: 'Terminal (PTY)' },
+                  { value: 'stream', label: 'Headless (stream)' },
+                ] as const
+              ).map((t) => {
+                const active = transport === t.value;
+                return (
+                  <button
+                    key={t.value}
+                    onClick={() => setTransport(t.value)}
+                    style={{
+                      flex: 1,
+                      padding: '6px 8px',
+                      borderRadius: 6,
+                      cursor: 'pointer',
+                      fontSize: '0.72rem',
+                      fontFamily: 'inherit',
+                      fontWeight: 600,
+                      border: active
+                        ? '1px solid var(--wks-accent)'
+                        : '1px solid var(--wks-border-input)',
+                      background: active ? 'var(--wks-accent-bg)' : 'transparent',
+                      color: active
+                        ? 'var(--wks-accent-text, var(--wks-text-primary))'
+                        : 'var(--wks-text-tertiary)',
+                    }}
+                  >
+                    {t.label}
+                  </button>
+                );
+              })}
+            </div>
+            <div
+              style={{
+                color: 'var(--wks-text-faint)',
+                fontSize: '0.62rem',
+                marginTop: 5,
+                lineHeight: 1.4,
+              }}
+            >
+              {transport === 'pty'
+                ? 'The classic Claude Code TUI in a terminal — Term and GUI views.'
+                : 'Headless stream-json via claudemon — structured GUI only, no terminal view.'}
+            </div>
           </Field>
         )}
 

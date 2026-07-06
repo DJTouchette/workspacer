@@ -154,6 +154,7 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
   const autoResume = config.session?.autoResume ?? true;
   const defaultView = config.claude?.defaultView ?? 'terminal';
   const workLog = config.claude?.workLog ?? 'cards';
+  const claudeTransport = config.claude?.transport ?? 'pty';
   const defaultProvider = config.agents?.defaultProvider ?? 'claude';
   const guiFontScale = config.ui.guiFontScale ?? 1.15;
   const diffView = config.ui.diffView ?? 'stacked';
@@ -261,6 +262,26 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
         Where the spawn dialog opens (and where Browse… starts). Leave blank to use the app's launch
         directory.
+      </div>
+
+      <Row label="Claude transport">
+        <div style={{ display: 'flex', gap: 4 }}>
+          <ModeButton
+            label="Terminal (PTY)"
+            active={claudeTransport === 'pty'}
+            onClick={() => save({ claude: { ...config.claude, defaultView, transport: 'pty' } })}
+          />
+          <ModeButton
+            label="Headless (stream)"
+            active={claudeTransport === 'stream'}
+            onClick={() => save({ claude: { ...config.claude, defaultView, transport: 'stream' } })}
+          />
+        </div>
+      </Row>
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
+        How new Claude sessions run. Terminal (PTY) is the classic Claude Code TUI with both Term
+        and GUI views. Headless (stream) runs Claude via claudemon's stream-json adapter — the
+        structured GUI only, no terminal view. Overridable per spawn in the spawn dialog.
       </div>
 
       <Row label="Default Claude view">

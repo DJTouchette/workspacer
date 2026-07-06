@@ -201,6 +201,7 @@ export function registerHubCapabilities(): void {
   registerCapability('agents.spawn', async (params: unknown) => {
     const {
       provider,
+      transport: reqTransport,
       cwd,
       profileId,
       model,
@@ -217,6 +218,8 @@ export function registerHubCapabilities(): void {
       mcpItemIds,
     } = (params ?? {}) as {
       provider?: AgentProvider;
+      /** Claude only: 'pty' | 'stream'. Omitted = the config default. */
+      transport?: 'pty' | 'stream';
       cwd?: string;
       profileId?: string;
       model?: string;
@@ -265,6 +268,26 @@ export function registerHubCapabilities(): void {
         parentSessionId,
         cols,
         rows,
+      });
+      return { sessionId };
+    }
+    // Claude on the 'stream' transport is managed too (claudemon's headless
+    // stream-json adapter, no PTY) — same shared dispatch as the IPC path so
+    // the two spawn transports can't drift (standing project rule).
+    const transport = reqTransport ?? configService.getConfig().claude?.transport ?? 'pty';
+    if (transport === 'stream') {
+      const sessionId = await spawnManagedAgent({
+        provider: 'claude',
+        transport: 'stream',
+        cwd,
+        model,
+        permissionMode,
+        skipPermissions,
+        resumeSessionId,
+        supervisor,
+        mcpFacade,
+        label,
+        parentSessionId,
       });
       return { sessionId };
     }

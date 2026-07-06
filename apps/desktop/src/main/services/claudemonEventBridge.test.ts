@@ -47,7 +47,25 @@ describe('claudemonEventBridge', () => {
     capturedOpts.onFrame(
       JSON.stringify({ event: 'Managed', session_id: 's1', state: { mode: 'working' } }),
     );
-    expect(applyManagedMode).toHaveBeenCalledWith('s1', 'working');
+    expect(applyManagedMode).toHaveBeenCalledWith('s1', 'working', {
+      provider: undefined,
+      transport: undefined,
+    });
+  });
+
+  it('forwards the backend identity (provider/transport) from the state frame', async () => {
+    await startClaudemonEventBridge();
+    capturedOpts.onFrame(
+      JSON.stringify({
+        event: 'Managed',
+        session_id: 's1',
+        state: { mode: 'responding', provider: 'claude', transport: 'stream' },
+      }),
+    );
+    expect(applyManagedMode).toHaveBeenCalledWith('s1', 'responding', {
+      provider: 'claude',
+      transport: 'stream',
+    });
   });
 
   it('ignores non-Managed events (Spawn / SessionEnd / Claude-PTY updates)', async () => {

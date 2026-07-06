@@ -127,6 +127,6 @@ export const DEFAULT_CONFIG: Config = {
   apps: [],
   session: { autoResume: false },
   updates: { enabled: true, channel: 'latest' },
-  claude: { defaultView: 'terminal', workLog: 'cards' },
+  claude: { defaultView: 'terminal', workLog: 'cards', transport: 'pty' },
   supervisor: { model: '', summarizerModel: 'sonnet', pollSeconds: 45 },
 };

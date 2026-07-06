@@ -68,6 +68,10 @@ interface ClaudePaneProps {
    *  other providers (codex/opencode) run their own TUI and are locked to the
    *  terminal view until their managed adapters land. */
   provider?: AgentProvider;
+  /** Claude only: 'stream' when the session runs on the headless stream-json
+   *  transport (no PTY — GUI-only pane). undefined defers to the session
+   *  snapshot, then the config default. */
+  transport?: 'pty' | 'stream';
   onPtyReady?: (paneId: string, ptySessionId: string) => void;
 }
 
@@ -88,6 +92,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   attachSessionId,
   initialPrompt,
   provider,
+  transport: transportProp,
   onPtyReady,
 }) => {
   const { config } = useConfig();
@@ -103,14 +108,15 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   //                       + GUI (the daemon tails pi's session JSONL). Only a
   //                       supervisor pi (MCP facade) is headless `--mode rpc`,
   //                       and its Term is simply blank.
+  //   claude (stream)   — GUI only: the headless stream-json transport runs
+  //                       through claudemon's managed adapter with no PTY, so
+  //                       the Term surface doesn't exist (pi-supervisor-style).
+  //                       Detected below once the session snapshot is in hand.
   const isClaude = (provider ?? 'claude') === 'claude';
   const isHybrid = provider === 'opencode' || provider === 'codex' || provider === 'pi';
   // Display name of the backend for user-facing copy (empty states, composer,
   // exit notice) so a Codex/OpenCode/Pi pane doesn't read as "Claude".
   const agentName = providerLabel(provider);
-  const hasGui = true; // every provider surfaces a structured GUI conversation
-  const hasTerminal = isClaude || isHybrid; // only claude + hybrid have a PTY
-  const showViewToggle = hasGui && hasTerminal; // claude + hybrid get both
   // A spawned-with-prompt pane always opens in GUI; otherwise honour the
   // configured default view. The fallback is the structured GUI — the rich
   // conversation surface every provider has — with the Term a toggle away.
@@ -118,10 +124,8 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     initialPrompt ? 'gui' : (config.claude?.defaultView ?? 'gui'),
   );
   const noopSetView = useCallback((_v: React.SetStateAction<ViewMode>) => {}, []);
-  // Lock to the sole available surface when the provider doesn't offer both;
-  // any auto-switch below then becomes a no-op.
-  const viewMode: ViewMode = !hasGui ? 'terminal' : !hasTerminal ? 'gui' : viewModeState;
-  const setViewMode = showViewToggle ? setViewModeState : noopSetView;
+  // hasTerminal / viewMode are derived after the session snapshot is available
+  // (the snapshot is the authority on the Claude transport) — see below.
   const [railOpen, setRailOpen] = useState(() => localStorage.getItem('wks-claude-rail') === '1');
   const [inputValue, setInputValue] = useState(initialPrompt ?? '');
   const [showScrollBtn, setShowScrollBtn] = useState(false);
@@ -148,8 +152,8 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
 
   // Mirror viewMode into a ref so the run-once xterm-init effect can read the
   // current view without re-running (and re-spawning) on every toggle.
-  const viewModeRef = useRef(viewMode);
-  viewModeRef.current = viewMode;
+  // (Assigned below, once viewMode is derived from the session snapshot.)
+  const viewModeRef = useRef<ViewMode>('gui');
 
   // Inject keyframes
   useEffect(() => {
@@ -243,6 +247,27 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   }, [sessionId, spawnError]);
 
   const { session } = useClaudeSession({ ptySessionId: sessionId, active: isActive });
+
+  // Which surfaces this pane has. The session snapshot is the authority on the
+  // Claude transport ('stream' = headless stream-json, no PTY); until it loads
+  // we trust the pane prop (set at spawn by the agent manager) and then the
+  // config default, so a stream pane never flashes a terminal surface.
+  const claudeTransport: 'pty' | 'stream' = !isClaude
+    ? 'pty'
+    : session
+      ? (session.transport ?? 'pty')
+      : (transportProp ?? config.claude?.transport ?? 'pty');
+  const isStream = isClaude && claudeTransport === 'stream';
+  const hasGui = true; // every provider surfaces a structured GUI conversation
+  // Only PTY claude + hybrid providers have a Term; stream claude is GUI-only
+  // (pi-supervisor-style: there is no PTY to render or write keystrokes to).
+  const hasTerminal = (isClaude && !isStream) || isHybrid;
+  const showViewToggle = hasGui && hasTerminal; // both surfaces → show the toggle
+  // Lock to the sole available surface when the provider doesn't offer both;
+  // any auto-switch below then becomes a no-op.
+  const viewMode: ViewMode = !hasGui ? 'terminal' : !hasTerminal ? 'gui' : viewModeState;
+  const setViewMode = showViewToggle ? setViewModeState : noopSetView;
+  viewModeRef.current = viewMode;
 
   // Enable the approval gateway in claudemon as soon as we have a session id
   // so PreToolUse hooks get parked for our UI to resolve.
@@ -611,6 +636,9 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
       const hasPendingQuestion = (session?.pendingQuestions?.length ?? 0) > 0;
       window.electronAPI.claudeApprove(sessionId, response).catch((err) => {
         console.warn('[ClaudePane] /approve failed:', err);
+        // The keystroke fallback needs a PTY — no-PTY (stream) sessions have
+        // nothing to type into, so /approve is the only path for them.
+        if (!hasTerminal) return;
         if (!hasPendingQuestion) {
           sendApproval('', response === 'yes', write);
         } else {
@@ -619,7 +647,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
       });
       setApprovalDismissedAt(Date.now());
     },
-    [sessionId, write, session?.pendingQuestions],
+    [sessionId, write, session?.pendingQuestions, hasTerminal],
   );
 
   // Optimistic user messages (shown immediately before JSONL catches up).
@@ -657,6 +685,15 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     setOptimisticLoading(true);
 
     const rawFallback = () => {
+      // Keystrokes need a PTY. No-PTY (stream) sessions can't fall back — the
+      // POST /message path is their only transport, so a failure there means
+      // the send visibly didn't take rather than silently going nowhere.
+      if (!hasTerminal) {
+        setOptimisticMessages((prev) => prev.filter((t) => t !== optimisticTurn));
+        setOptimisticLoading(false);
+        setInputValue((prev) => (prev.trim().length > 0 ? prev : userText));
+        return;
+      }
       // Bracketed paste + a separate Enter, in one frame. Writing raw `text\r`
       // makes the TUI fold the CR into the "paste" (a newline in the composer)
       // instead of submitting; the CR after the ESC[201~ end marker is a real
@@ -694,7 +731,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
       console.warn('[ClaudePane] /message failed:', err);
     }
     rawFallback();
-  }, [inputValue, write, attachedFiles, sessionId]);
+  }, [inputValue, write, attachedFiles, sessionId, hasTerminal]);
 
   // Drop optimistic entries FIFO as session.conversation grows past the
   // count we last consumed. This avoids content-matching pitfalls.
@@ -739,12 +776,22 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     (payload: { option?: number; text?: string; answers?: string[] }) => {
       if (!sessionId) return;
       setQuestionDismissedAt(Date.now());
-      // We write directly to the PTY (via the MessagePort → /sessions/:id/input
-      // path) instead of /sessions/:id/answer. /answer requires mode=Question,
-      // which can race with concurrent hook events that flip the daemon's mode
-      // back to Responding/Approval — and the renderer's view of "picker is up"
-      // is what actually matters here. claude's own TUI picker accepts numeric
-      // input + Enter the same way it accepts any other keystroke.
+      // No-PTY sessions (claude 'stream' transport) have no keystroke path at
+      // all — the answer must go through POST /sessions/:id/answer, which the
+      // daemon delivers structurally over the adapter's control protocol.
+      if (!hasTerminal) {
+        window.electronAPI.claudeAnswer(sessionId, payload).catch((err) => {
+          console.warn('[ClaudePane] /answer failed (no PTY fallback exists):', err);
+        });
+        return;
+      }
+      // PTY sessions: write directly to the PTY (via the MessagePort →
+      // /sessions/:id/input path) instead of /sessions/:id/answer. /answer
+      // requires mode=Question, which can race with concurrent hook events that
+      // flip the daemon's mode back to Responding/Approval — and the renderer's
+      // view of "picker is up" is what actually matters here. claude's own TUI
+      // picker accepts numeric input + Enter the same way it accepts any other
+      // keystroke.
       if (payload.option !== undefined) {
         write(`${payload.option}\r`);
       } else if (payload.text !== undefined) {
@@ -753,7 +800,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
         for (const ans of payload.answers) write(`${ans}\r`);
       }
     },
-    [sessionId, write],
+    [sessionId, write, hasTerminal],
   );
   const serverStreaming =
     optimisticLoading ||
@@ -799,11 +846,19 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
       ? pendingQuestions
       : null;
 
-  // Cancel the current task — send Escape and suppress streaming UI
+  // Cancel the current task — send Escape and suppress streaming UI. No-PTY
+  // (stream) sessions have no keystroke path; the daemon interrupts the
+  // managed adapter on SIGINT instead.
   const cancelTask = useCallback(() => {
-    write('\x1b');
+    if (hasTerminal) {
+      write('\x1b');
+    } else if (sessionId) {
+      window.electronAPI
+        .claudeSignal(sessionId, 'SIGINT')
+        .catch((err) => console.warn('[ClaudePane] cancel (SIGINT) failed:', err));
+    }
     setCancelledAt(Date.now());
-  }, [write]);
+  }, [write, hasTerminal, sessionId]);
 
   // Restart the session with new launch settings (composer pills). Two spawn
   // ownerships: an attached viewer's session belongs to the agent manager
@@ -819,10 +874,12 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
           }),
         );
       } else {
-        void restartSession({ ...overrides, provider });
+        // Carry the current transport so an owner stream session restarts on
+        // stream even if the config default changed since it was spawned.
+        void restartSession({ ...overrides, provider, transport: claudeTransport });
       }
     },
-    [attachSessionId, sessionId, restartSession, provider],
+    [attachSessionId, sessionId, restartSession, provider, claudeTransport],
   );
 
   // Escape key cancels in GUI mode (must be after cancelTask/isStreaming declarations)

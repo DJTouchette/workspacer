@@ -21,18 +21,31 @@ function capInPlace<T>(arr: T[], max: number): void {
 export function applyHookEvent(session: ClaudeSessionState, event: any): void {
   const hookName: string = event.hook_event_name ?? event.type ?? '';
 
+  // Stream-transport Claude sessions (headless stream-json, managed adapter)
+  // still fire hooks, but their working/idle/waiting state is owned by the
+  // daemon's managed mode stream (`set_managed_mode` → applyManagedMode) — the
+  // same channel codex/opencode/pi use. Hooks are ENRICHMENT-ONLY for them:
+  // tool cards, file changes, subagents, approval/question payloads and
+  // permission-mode telemetry still apply, but ambientState must not be
+  // written here or the two state machines fight (the PTY-era hazard that
+  // motivated the stream transport in the first place).
+  const hooksOwnAmbient = session.transport !== 'stream';
+  const setAmbient = (state: ClaudeSessionState['ambientState']): void => {
+    if (hooksOwnAmbient) session.ambientState = state;
+  };
+
   switch (hookName) {
     case 'SessionStart':
       session.status = 'active';
-      session.ambientState = 'idle';
+      setAmbient('idle');
       break;
 
     case 'UserPromptSubmit':
-      session.ambientState = 'streaming';
+      setAmbient('streaming');
       break;
 
     case 'PreToolUse': {
-      session.ambientState = 'streaming';
+      setAmbient('streaming');
       const id: string =
         event.tool_use_id ?? `tc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 
@@ -68,7 +81,7 @@ export function applyHookEvent(session: ClaudeSessionState, event: any): void {
       if (tc.name === 'AskUserQuestion' && Array.isArray(tc.input?.questions)) {
         session.pendingQuestions = tc.input.questions;
         session.pendingApproval = null;
-        session.ambientState = 'waiting_input';
+        setAmbient('waiting_input');
       }
 
       if (['Edit', 'MultiEdit', 'Write'].includes(tc.name)) {
@@ -83,7 +96,7 @@ export function applyHookEvent(session: ClaudeSessionState, event: any): void {
     }
 
     case 'PostToolUse': {
-      session.ambientState = 'streaming';
+      setAmbient('streaming');
       // Any completed tool clears any leftover approval card — the daemon
       // gateway is single-shot, so by the time PostToolUse fires, whatever
       // decision was pending is either resolved or no longer relevant.
@@ -121,7 +134,7 @@ export function applyHookEvent(session: ClaudeSessionState, event: any): void {
         suggestions: event.permission_suggestions,
         timestamp: Date.now(),
       };
-      session.ambientState = 'waiting_approval';
+      setAmbient('waiting_approval');
       break;
 
     case 'SubagentStart':

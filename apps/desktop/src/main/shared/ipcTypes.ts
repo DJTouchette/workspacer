@@ -184,6 +184,9 @@ export interface ClaudeSessionSnapshot {
   lastActivity: number;
   totalToolCalls: number;
   usage: SessionUsage | null;
+  /** Claude sessions only: 'stream' when the session runs on the headless
+   *  stream-json managed adapter (no PTY). Absent/'pty' = classic PTY TUI. */
+  transport?: 'pty' | 'stream';
 }
 
 // ── App configuration (config:get / config:save) ──
@@ -259,6 +262,9 @@ export interface AppConfig {
     seenModels: string[];
     skipPermissionsDefault: boolean;
     defaultView: 'gui' | 'terminal';
+    /** How new Claude sessions run: classic PTY TUI, or headless stream-json
+     *  (managed adapter, GUI only). Default 'pty'. */
+    transport?: 'pty' | 'stream';
   };
   supervisor: {
     model: string;

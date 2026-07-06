@@ -51,12 +51,9 @@ function binNames(base: string): string[] {
  * falls back to a PATH search, then to the bare command name so a freshly-
  * installed CLI still works without a restart.
  */
-export function resolveAgentBinary(
-  provider: Exclude<AgentProvider, 'claude'>,
-  customBin?: string,
-): string {
+export function resolveAgentBinary(provider: AgentProvider, customBin?: string): string {
   if (customBin?.trim()) return customBin.trim();
-  // Binary name matches the provider id for every managed CLI (codex/opencode/pi).
+  // Binary name matches the provider id for every CLI (claude/codex/opencode/pi).
   return findOnPath(binNames(provider)) ?? provider;
 }
 
@@ -65,10 +62,7 @@ export function resolveAgentBinary(
  * we check that path directly; otherwise we search PATH.  PATH is read fresh,
  * so a just-installed CLI is detected without a restart.
  */
-export function isAgentBinaryInstalled(
-  provider: Exclude<AgentProvider, 'claude'>,
-  customBin?: string,
-): boolean {
+export function isAgentBinaryInstalled(provider: AgentProvider, customBin?: string): boolean {
   if (customBin?.trim()) {
     try {
       return fs.existsSync(customBin.trim());

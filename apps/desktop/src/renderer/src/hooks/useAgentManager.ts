@@ -99,6 +99,7 @@ function defaultAgentTabs(
   cwd: string,
   initialPrompt?: string,
   provider?: AgentProvider,
+  transport?: 'pty' | 'stream',
 ): { tabs: TabConfig[]; activeTabId: string } {
   const paneId = generateId('claude');
   const tabId = generateId('tab');
@@ -109,6 +110,7 @@ function defaultAgentTabs(
     title: label,
     cwd,
     provider,
+    transport,
     attachSessionId: sessionId,
     initialPrompt,
   };
@@ -205,6 +207,8 @@ export function useAgentManager() {
       name?: string;
       /** Coding-agent backend to run. Defaults to 'claude'. */
       provider?: AgentProvider;
+      /** Claude only: 'pty' | 'stream'. Omitted = the config default. */
+      transport?: 'pty' | 'stream';
       profileId?: string;
       model?: string;
       /** Reasoning-effort level (codex only today). */
@@ -230,6 +234,7 @@ export function useAgentManager() {
         sessionId = await window.electronAPI.spawnClaude({
           cwd,
           provider: opts.provider,
+          transport: opts.transport,
           profileId: opts.profileId,
           model: opts.model,
           effort: opts.effort,
@@ -249,6 +254,7 @@ export function useAgentManager() {
         cwd,
         opts.initialPrompt,
         opts.provider,
+        opts.transport,
       );
       const agent: AgentWorkspace = {
         // Deterministic id when we have a session, so every client converges on one
@@ -257,6 +263,7 @@ export function useAgentManager() {
         name: opts.name?.trim() || deriveAgentName(cwd),
         cwd,
         provider: opts.provider,
+        transport: opts.transport,
         profileId: opts.profileId,
         model: opts.model,
         effort: opts.effort,
@@ -300,6 +307,7 @@ export function useAgentManager() {
         sessionId = await window.electronAPI.spawnClaude({
           cwd: agent.cwd,
           provider: agent.provider,
+          transport: agent.transport,
           profileId: agent.profileId,
           model: agent.model,
           effort: agent.effort,
@@ -376,6 +384,7 @@ export function useAgentManager() {
         newSessionId = await window.electronAPI.spawnClaude({
           cwd: agent.cwd,
           provider: agent.provider,
+          transport: agent.transport,
           profileId: agent.profileId,
           model,
           effort,
@@ -462,6 +471,8 @@ export function useAgentManager() {
       name?: string;
       parentSessionId?: string;
       provider?: AgentProvider;
+      /** Claude only: the transport the session runs on (from its snapshot). */
+      transport?: 'pty' | 'stream';
     }) => {
       setAgents((prev) => {
         if (prev.some((a) => a.sessionId === opts.sessionId)) return prev; // already tracked — dedupe inside the updater (race-safe)
@@ -476,6 +487,7 @@ export function useAgentManager() {
           opts.cwd,
           undefined,
           opts.provider,
+          opts.transport,
         );
         const agent: AgentWorkspace = {
           // Same deterministic id any other client would mint for this session, so
@@ -484,6 +496,7 @@ export function useAgentManager() {
           name: opts.name?.trim() || deriveAgentName(opts.cwd),
           cwd: opts.cwd,
           provider: opts.provider,
+          transport: opts.transport,
           sessionId: opts.sessionId,
           parentId: parent?.id,
           tabs,

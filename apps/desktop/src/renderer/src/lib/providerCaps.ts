@@ -16,6 +16,10 @@
 
 import type { AgentProvider } from '../types/pane';
 
+/** How a Claude session runs: the classic PTY TUI, or the headless
+ *  stream-json managed adapter (GUI only, no PTY). */
+export type ClaudeTransport = 'pty' | 'stream';
+
 export interface EffortLevel {
   id: string;
   label: string;
@@ -120,7 +124,30 @@ export const PROVIDER_CAPS: Record<AgentProvider, ProviderCaps> = {
   },
 };
 
-export function capsFor(provider: AgentProvider | undefined): ProviderCaps {
+/**
+ * Claude on the 'stream' transport (headless stream-json managed adapter).
+ * Same permission-mode vocabulary as PTY Claude, but there is no TUI to type
+ * `/model` into or shift+tab through — switches go through claudemon's
+ * structural endpoints (`/sessions/:id/model`, `/permission-mode`), which the
+ * adapter serves over the SDK control protocol. Both are marked 'live': when
+ * the daemon can't apply one live it answers non-ok and the pill falls back to
+ * the restart confirm (the standard degradation path, same as codex).
+ */
+const CLAUDE_STREAM_CAPS: ProviderCaps = {
+  modelSwitch: 'live',
+  modelSource: 'claude',
+  effort: null,
+  permissionModes: PROVIDER_CAPS.claude.permissionModes,
+  permissionSwitch: 'live',
+  // Restart resumes the same pinned session id (`--resume`), like PTY Claude.
+  restartPreservesConversation: true,
+};
+
+export function capsFor(
+  provider: AgentProvider | undefined,
+  transport?: ClaudeTransport,
+): ProviderCaps {
+  if ((provider ?? 'claude') === 'claude' && transport === 'stream') return CLAUDE_STREAM_CAPS;
   return PROVIDER_CAPS[provider ?? 'claude'] ?? PROVIDER_CAPS.claude;
 }
 

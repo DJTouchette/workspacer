@@ -203,6 +203,10 @@ export interface ClaudeSessionState {
   isSupervisor?: boolean;
   /** Coding-agent backend ('claude' | 'codex' | 'opencode'), for analytics. */
   provider?: string;
+  /** Claude sessions only: 'stream' when the session runs on the headless
+   *  stream-json managed adapter (no PTY; GUI-only pane, hooks are
+   *  enrichment-only). Absent/'pty' = the classic PTY TUI transport. */
+  transport?: 'pty' | 'stream';
   /** Requested-at-spawn launch settings — what the composer pills show when no
    *  live telemetry (statusLine/usage model) is available yet. */
   settings?: SessionSpawnSettings;
@@ -237,6 +241,7 @@ class ClaudeSessionStore {
       parentSessionId?: string;
       isSupervisor?: boolean;
       provider?: string;
+      transport?: 'pty' | 'stream';
       settings?: SessionSpawnSettings;
     }
   >();
@@ -263,6 +268,7 @@ class ClaudeSessionStore {
       parentSessionId?: string;
       isSupervisor?: boolean;
       provider?: string;
+      transport?: 'pty' | 'stream';
       settings?: SessionSpawnSettings;
     },
   ): void {
@@ -407,9 +413,20 @@ class ClaudeSessionStore {
    * waiting signal — without it their status is stuck on the `'idle'` default.
    * No-op for unknown sessions or modes we don't surface.
    */
-  applyManagedMode(sessionId: string, mode: string): void {
+  applyManagedMode(
+    sessionId: string,
+    mode: string,
+    meta?: { provider?: string; transport?: string },
+  ): void {
     const session = this.sessions.get(sessionId);
     if (!session) return;
+    // Daemon truth for sessions this process never spawned (adopted, or
+    // restored after a desktop restart): backfill the backend identity so a
+    // stream-transport Claude session still gates its pane correctly (no Term
+    // view, structural /answer, hooks-enrichment-only). Never overwrite what
+    // spawn metadata already recorded.
+    if (meta?.provider && !session.provider) session.provider = meta.provider;
+    if (meta?.transport === 'stream' && !session.transport) session.transport = 'stream';
     let next: SessionAmbientState;
     switch (mode) {
       case 'responding':
@@ -651,6 +668,7 @@ class ClaudeSessionStore {
       session.parentSessionId = meta.parentSessionId;
       session.isSupervisor = meta.isSupervisor;
       session.provider = meta.provider;
+      session.transport = meta.transport;
       session.settings = meta.settings;
       this.spawnMeta.delete(sessionId);
     }

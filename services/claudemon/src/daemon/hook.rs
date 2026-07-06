@@ -9,7 +9,7 @@ use axum::{
 };
 use serde_json::{json, Value};
 
-use crate::session::{HookEvent, SessionStore};
+use crate::session::{HookEvent, SessionStore, Transport};
 
 /// How long we hold a PreToolUse hook open waiting for a decision when the
 /// session has its gate enabled. Claude Code's own hook timeout is 60s by
@@ -117,7 +117,19 @@ async fn process(store: &SessionStore, event: HookEvent) -> axum::response::Resp
     // user's choice. Approval gating is for "should this tool run at all"
     // events (Bash, Edit, Write, …).
     let is_ask_question = tool.as_deref() == Some("AskUserQuestion");
-    if event_kind == "PreToolUse" && store.gate_enabled(&session_id) && !is_ask_question {
+    // Managed (adapter-driven) sessions — including claude's stream transport,
+    // whose headless CLI still runs the user's hooks — own approvals in their
+    // driver (`can_use_tool` control requests), and `ingest` above already kept
+    // this hook enrichment-only. Parking here would force-flip the mode behind
+    // the driver's back and block the CLI on a decision `/approve` can never
+    // route back to this parked hook (it goes to the driver's decision channel
+    // instead) — so the gate applies to PTY sessions only.
+    let driver_owned = state.transport == Transport::Stream || store.is_managed(&session_id);
+    if event_kind == "PreToolUse"
+        && !driver_owned
+        && store.gate_enabled(&session_id)
+        && !is_ask_question
+    {
         let raw = Value::Object(payload_snapshot);
         let rx = store.park_decision(&session_id, tool, raw);
         match tokio::time::timeout(DECISION_TIMEOUT, rx).await {

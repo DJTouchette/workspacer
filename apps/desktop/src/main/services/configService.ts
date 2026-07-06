@@ -97,6 +97,11 @@ interface Config {
     /** How runs of tool calls render in the GUI: prose summary 'cards', or the
      *  'trace' waterfall monitor (per-call duration bars + dig-in rows). */
     workLog: 'cards' | 'trace';
+    /** How new Claude sessions run: 'pty' (the classic Claude Code TUI in a
+     *  PTY — Term + GUI) or 'stream' (headless `--print --output-format
+     *  stream-json` via claudemon's managed adapter — GUI only). Per-spawn
+     *  overridable in the spawn dialog. */
+    transport: 'pty' | 'stream';
   };
   /** Defaults applied when spawning a new agent. */
   agents: {
@@ -308,6 +313,7 @@ function defaultConfig(): Config {
       skipPermissionsDefault: false,
       defaultView: 'terminal',
       workLog: 'cards',
+      transport: 'pty',
     },
     agents: {
       defaultProvider: 'claude',

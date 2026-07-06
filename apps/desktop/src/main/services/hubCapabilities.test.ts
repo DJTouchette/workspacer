@@ -200,6 +200,61 @@ describe('agents.spawn — dispatch', () => {
     expect(spawnClaudeAgent).toHaveBeenCalledTimes(1);
     expect(spawnManagedAgent).not.toHaveBeenCalled();
   });
+
+  it("routes claude + transport 'stream' through spawnManagedAgent (standing rule: both spawn transports share the managed dispatch)", async () => {
+    const res = await call('agents.spawn', {
+      provider: 'claude',
+      transport: 'stream',
+      cwd: '/proj',
+      model: 'opus',
+    });
+
+    expect(spawnManagedAgent).toHaveBeenCalledTimes(1);
+    expect(spawnClaudeAgent).not.toHaveBeenCalled();
+    const arg = spawnManagedAgent.mock.calls[0][0] as {
+      provider: string;
+      transport: string;
+      cwd: string;
+      model: string;
+    };
+    expect(arg.provider).toBe('claude');
+    expect(arg.transport).toBe('stream');
+    expect(arg.cwd).toBe('/proj');
+    expect(arg.model).toBe('opus');
+    expect(res).toEqual({ sessionId: 'managed-session-id' });
+  });
+
+  it("claude + transport 'pty' (or unset, with no config default) stays on spawnClaudeAgent", async () => {
+    await call('agents.spawn', { provider: 'claude', transport: 'pty', cwd: '/proj' });
+    expect(spawnClaudeAgent).toHaveBeenCalledTimes(1);
+    expect(spawnManagedAgent).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the config default (claude.transport) when the caller omits transport', async () => {
+    getConfig.mockReturnValueOnce({
+      agents: { binaries: { codex: '/custom/codex' } },
+      claude: { transport: 'stream' },
+    } as never);
+    await call('agents.spawn', { provider: 'claude', cwd: '/proj' });
+    expect(spawnManagedAgent).toHaveBeenCalledTimes(1);
+    expect(spawnClaudeAgent).not.toHaveBeenCalled();
+  });
+
+  it('sanitizes permission bypass on the claude-stream path too', async () => {
+    await call('agents.spawn', {
+      provider: 'claude',
+      transport: 'stream',
+      cwd: '/proj',
+      skipPermissions: true,
+      permissionMode: 'bypassPermissions',
+    });
+    const arg = spawnManagedAgent.mock.calls[0][0] as {
+      skipPermissions: boolean;
+      permissionMode: string | undefined;
+    };
+    expect(arg.skipPermissions).toBe(false);
+    expect(arg.permissionMode).toBeUndefined();
+  });
 });
 
 describe('agents.spawn — SECURITY: remote callers cannot auto-bypass approvals', () => {

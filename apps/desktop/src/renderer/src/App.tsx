@@ -512,6 +512,7 @@ function App() {
         name: snapshot.label,
         parentSessionId: snapshot.parentSessionId,
         provider: snapshot.provider as AgentProvider | undefined,
+        transport: snapshot.transport,
       });
     }
   }, [snapshotBySession, agents, adoptAgent, sessionPhase]);
@@ -804,6 +805,8 @@ function App() {
       cwd: string;
       name?: string;
       provider?: AgentProvider;
+      /** Claude only: 'pty' | 'stream'. Omitted = the config default. */
+      transport?: 'pty' | 'stream';
       profileId?: string;
       model?: string;
       effort?: string;
@@ -1908,6 +1911,7 @@ function App() {
           <SpawnAgentDialog
             defaultCwd={config.agents?.defaultCwd?.trim() || appCwdRef.current}
             defaultProvider={config.agents?.defaultProvider}
+            defaultTransport={config.claude?.transport}
             onSpawn={handleSpawnAgent}
             onCancel={() => setShowSpawnDialog(false)}
           />

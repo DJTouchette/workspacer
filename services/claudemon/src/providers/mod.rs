@@ -13,6 +13,7 @@
 //! that drives the stores. The live process/transport clients live in each
 //! provider module.
 
+pub mod claude_stream;
 pub mod codex;
 pub mod codex_rollout;
 pub mod opencode;
@@ -432,8 +433,11 @@ impl UsageAcc {
         }
     }
 
-    /// Fold in a rate-limit reading — latest wins per window (they only move
+    /// Fold in a rate-limit reading — latest wins per field (they only move
     /// forward between readings; a lower % just means the window rolled).
+    /// Field-wise, because the wire doesn't always pair them: Claude's
+    /// `rate_limit_event` can carry `resetsAt` without `utilization`, and that
+    /// reading must still land instead of being dropped.
     fn merge_rate_limits(
         &mut self,
         five_hour_pct: Option<f64>,
@@ -443,10 +447,14 @@ impl UsageAcc {
     ) {
         if five_hour_pct.is_some() {
             self.five_hour_pct = five_hour_pct;
+        }
+        if five_hour_resets_at.is_some() {
             self.five_hour_resets_at = five_hour_resets_at;
         }
         if seven_day_pct.is_some() {
             self.seven_day_pct = seven_day_pct;
+        }
+        if seven_day_resets_at.is_some() {
             self.seven_day_resets_at = seven_day_resets_at;
         }
     }
@@ -726,6 +734,20 @@ mod tests {
         // Unknown model + no reported window → no context meter.
         assert!(sl.context_used_pct.is_none());
         assert!(sl.received_at.is_some());
+    }
+
+    #[test]
+    fn rate_limit_reading_without_utilization_still_lands() {
+        // Claude's `rate_limit_event` can carry only `resetsAt` (no
+        // `utilization`) — the reset time must reach the status line anyway,
+        // and a later pct-only reading must not clobber it.
+        let mut acc = UsageAcc::new();
+        acc.merge_rate_limits(None, Some(1_783_314_600), None, None);
+        acc.merge_rate_limits(Some(19.0), None, None, None);
+        let sl = acc.status_line();
+        assert_eq!(sl.five_hour_resets_at, Some(1_783_314_600));
+        assert_eq!(sl.five_hour_pct, Some(19.0));
+        assert!(sl.seven_day_pct.is_none());
     }
 
     #[test]

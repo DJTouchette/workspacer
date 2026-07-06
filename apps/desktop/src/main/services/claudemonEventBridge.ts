@@ -27,7 +27,11 @@ export async function startClaudemonEventBridge(): Promise<void> {
     backoffMaxMs: 5000,
     joinWith: '\n',
     onFrame(dataString) {
-      let update: { session_id?: string; event?: string; state?: { mode?: string } };
+      let update: {
+        session_id?: string;
+        event?: string;
+        state?: { mode?: string; provider?: string; transport?: string };
+      };
       try {
         update = JSON.parse(dataString);
       } catch (err) {
@@ -40,7 +44,15 @@ export async function startClaudemonEventBridge(): Promise<void> {
       if (update?.event !== 'Managed') return;
       const mode = update.state?.mode;
       if (update.session_id && typeof mode === 'string') {
-        claudeSessionStore.applyManagedMode(update.session_id, mode);
+        // Forward the daemon's backend identity too: a session the desktop
+        // didn't spawn this run (adopted, or restored after an app restart)
+        // has no spawn metadata, and for a stream-transport Claude session
+        // the transport gates the whole pane (no Term view, /answer path,
+        // hooks-enrichment-only guard).
+        claudeSessionStore.applyManagedMode(update.session_id, mode, {
+          provider: update.state?.provider,
+          transport: update.state?.transport,
+        });
       }
     },
     onError(err) {

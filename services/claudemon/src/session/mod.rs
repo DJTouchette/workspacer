@@ -10,5 +10,7 @@ pub mod usage;
 pub use conversation::ConversationStore;
 pub use permission_mode::{PermissionMode, PermissionSwitchError};
 #[allow(unused_imports)]
-pub use state::{HookEvent, SessionMode, SessionState, StatusLine};
-pub use store::{MessageOutcome, ModelSwitch, SessionStore};
+pub use state::{HookEvent, SessionMode, SessionState, StatusLine, Transport};
+pub use store::{
+    ManagedAnswer, ManagedPermissionSwitch, MessageOutcome, ModelSwitch, SessionStore,
+};

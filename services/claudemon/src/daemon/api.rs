@@ -533,6 +533,26 @@ async fn post_answer(
         )
             .into_response();
     }
+    if payload.option.is_none() && payload.text.is_none() && payload.answers.is_none() {
+        return (
+            StatusCode::BAD_REQUEST,
+            "expected `option`, `text`, or `answers`",
+        )
+            .into_response();
+    }
+    // Managed stream sessions resolve the parked AskUserQuestion structurally
+    // (the driver answers the CLI's `can_use_tool` with the chosen options) —
+    // there are no picker keystrokes to type.
+    if store.submit_managed_answer(
+        &id,
+        crate::session::ManagedAnswer {
+            option: payload.option,
+            text: payload.text.clone(),
+            answers: payload.answers.clone(),
+        },
+    ) {
+        return Json(json!({ "ok": true, "managed": true })).into_response();
+    }
     let Some(handle) = store.wrapper(&id) else {
         return (StatusCode::NOT_FOUND, "no wrapper attached").into_response();
     };
@@ -600,6 +620,12 @@ async fn post_signal(
             (StatusCode::NOT_FOUND, "no managed session").into_response()
         };
     }
+    // SIGINT on a driver with a structural interrupt (the stream transport's
+    // `interrupt` control request) — the Ctrl-C equivalent: stop the current
+    // turn, keep the session alive.
+    if matches!(payload.signal, crate::protocol::Signal::Sigint) && store.interrupt_managed(&id) {
+        return Json(json!({ "ok": true, "signal": payload.signal })).into_response();
+    }
     let Some(handle) = store.wrapper(&id) else {
         return (StatusCode::NOT_FOUND, "no wrapper attached").into_response();
     };
@@ -634,6 +660,42 @@ async fn post_permission_mode(
     Path(id): Path<String>,
     Json(payload): Json<PermissionModePayload>,
 ) -> impl IntoResponse {
+    // Stream-transport sessions speak Claude's own mode vocabulary through the
+    // control protocol (`set_permission_mode`), so the switch is structural and
+    // confirmed by the CLI — no ask/yolo indirection, no keystrokes.
+    if store.has_managed_permission_mode(&id) {
+        if !stream_permission_mode_valid(&payload.mode) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "ok": false, "error": format!("unknown permission mode '{}'", payload.mode) })),
+            )
+                .into_response();
+        }
+        let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+        if !store.submit_managed_permission_mode(
+            &id,
+            crate::session::ManagedPermissionSwitch {
+                mode: payload.mode.clone(),
+                reply: reply_tx,
+            },
+        ) {
+            return (StatusCode::GONE, "session driver disconnected").into_response();
+        }
+        return match tokio::time::timeout(Duration::from_secs(10), reply_rx).await {
+            Ok(Ok(Ok(mode))) => Json(json!({ "ok": true, "mode": mode })).into_response(),
+            Ok(Ok(Err(err))) => (
+                StatusCode::CONFLICT,
+                Json(json!({ "ok": false, "error": err })),
+            )
+                .into_response(),
+            // Driver died or the CLI never answered — unverified.
+            _ => (
+                StatusCode::CONFLICT,
+                Json(json!({ "ok": false, "error": "the agent did not confirm the mode switch" })),
+            )
+                .into_response(),
+        };
+    }
     let result = if store.is_managed(&id) {
         if payload.mode != "ask" && payload.mode != "yolo" {
             return (
@@ -710,6 +772,14 @@ async fn post_permission_mode(
     }
 }
 
+/// The permission modes a stream-transport session accepts: Claude's four
+/// canonical modes plus the newer CLI spellings (`--permission-mode` choices
+/// in 2.1.x). Validated here so an obvious typo 400s instead of riding to the
+/// CLI; the CLI still gets the final say via its control response.
+fn stream_permission_mode_valid(mode: &str) -> bool {
+    PermissionMode::parse(mode).is_some() || matches!(mode, "auto" | "manual" | "dontAsk")
+}
+
 #[derive(Debug, Deserialize)]
 struct ModelSwitchPayload {
     #[serde(default)]
@@ -720,10 +790,12 @@ struct ModelSwitchPayload {
 
 /// Live model/effort switch for a managed session, no restart, conversation
 /// untouched. Codex over the app-server ws applies it to the running thread
-/// via `thread/settings/update`; providers without a switch channel (opencode/
-/// pi, codex rollout fallback) get a 409 so the caller can offer the restart
-/// path. PTY (claude) sessions switch through their own `/model` slash command
-/// on the message path — this endpoint is the managed-provider counterpart.
+/// via `thread/settings/update`; the claude stream driver sends the control
+/// protocol's `set_model` (verified live in 2.1.201 — the next turn runs the
+/// new model). Providers without a switch channel (opencode/pi, codex rollout
+/// fallback) get a 409 so the caller can offer the restart path. PTY (claude)
+/// sessions switch through their own `/model` slash command on the message
+/// path — this endpoint is the managed-provider counterpart.
 async fn post_model(
     State(store): State<SessionStore>,
     Path(id): Path<String>,

@@ -57,6 +57,9 @@ export interface ElectronAPI {
   spawnClaude: (opts: {
     cwd?: string;
     provider?: 'claude' | 'codex' | 'opencode' | 'pi';
+    /** Claude only: 'pty' (classic TUI) or 'stream' (headless stream-json).
+     *  Omitted = the config default (claude.transport). */
+    transport?: 'pty' | 'stream';
     profileId?: string;
     model?: string;
     effort?: string;

@@ -26,6 +26,9 @@ interface UseClaudeSpawnOptions {
 /** Settings overrides for restartSession (composer pills' restart path). */
 export interface RestartSessionOverrides {
   provider?: string;
+  /** Claude only: keep the session on its current transport ('pty' | 'stream')
+   *  across the restart, instead of falling back to the config default. */
+  transport?: 'pty' | 'stream';
   model?: string;
   effort?: string;
   permissionMode?: string;
@@ -231,6 +234,7 @@ export function useClaudeSpawn({
           cwd: cwdRef.current,
           profileId: profileRef.current,
           provider: overrides.provider as 'claude' | 'codex' | 'opencode' | 'pi' | undefined,
+          transport: overrides.transport,
           resumeSessionId: old,
           model: overrides.model,
           effort: overrides.effort,
