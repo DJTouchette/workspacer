@@ -1253,11 +1253,14 @@ function App() {
       const t = (e as CustomEvent).detail as AgentWatchTarget | undefined;
       if (!t?.sessionId || !t.id || !t.kind) return;
       const tabId = openAgentWatch(t);
+      // The pane lives under the Fleet Deck overlay — drop to piloting so the
+      // click visibly lands on the opened transcript instead of nothing.
+      if (viewLevel === 'fleet') setViewLevel('piloting');
       if (tabId) requestAnimationFrame(() => scrollToTab(tabId));
     };
     window.addEventListener(AGENT_WATCH_EVENT, handler);
     return () => window.removeEventListener(AGENT_WATCH_EVENT, handler);
-  }, [openAgentWatch, scrollToTab]);
+  }, [openAgentWatch, scrollToTab, viewLevel, setViewLevel]);
 
   // Open a standalone Inspector pane for a session (command palette / Fleet Deck
   // "Open as pane"). openInspector dedupes by session, so a repeat request
@@ -1267,11 +1270,13 @@ function App() {
       const t = (e as CustomEvent).detail as InspectorTarget | undefined;
       if (!t?.sessionId) return;
       const tabId = openInspector({ sessionId: t.sessionId, agentName: t.agentName });
+      // Same as agent-watch: surface the pane from under the Fleet Deck.
+      if (viewLevel === 'fleet') setViewLevel('piloting');
       if (tabId) requestAnimationFrame(() => scrollToTab(tabId));
     };
     window.addEventListener(INSPECTOR_OPEN_EVENT, handler);
     return () => window.removeEventListener(INSPECTOR_OPEN_EVENT, handler);
-  }, [openInspector, scrollToTab]);
+  }, [openInspector, scrollToTab, viewLevel, setViewLevel]);
 
   // Watch a whole session in a GUI viewer pane (Agents pane click-through).
   // Focus an existing viewer for that session in the current workspace, else
