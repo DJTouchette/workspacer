@@ -29,6 +29,8 @@ import { clearMdCache } from '../components/markdown';
 // ── Sub-components ──
 import { InlineWorkLog } from '../components/claude/InlineWorkLog';
 import { ConversationMessage } from '../components/claude/ConversationMessage';
+import { ConversationEmptyState } from '../components/claude/ConversationEmptyState';
+import { permissionModeLabel } from '../lib/providerCaps';
 import { TurnDivider } from '../components/claude/TurnDivider';
 import { NeedsYouDock } from '../components/claude/NeedsYouDock';
 import { Composer } from '../components/claude/Composer';
@@ -1268,13 +1270,20 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
                 )}
 
                 {conversation.length === 0 && session && (
-                  <div style={{ textAlign: 'center', marginTop: 60, color: colors.mutedDim }}>
-                    <div style={{ fontSize: '2rem', marginBottom: 12, opacity: 0.4 }}>{'◆'}</div>
-                    <div style={{ fontSize: '0.8rem', color: colors.muted }}>Session connected</div>
-                    <div style={{ fontSize: '0.7rem', marginTop: 6, color: colors.mutedDim }}>
-                      Waiting for conversation activity...
-                    </div>
-                  </div>
+                  <ConversationEmptyState
+                    agentName={agentName}
+                    model={session.statusLine?.modelDisplay ?? session.settings?.model}
+                    permissionMode={permissionModeLabel(
+                      provider,
+                      session.livePermissionMode ?? session.settings?.permissionMode,
+                    )}
+                    transport={claudeTransport}
+                    cwd={session.cwd || cwd}
+                    onPick={(prompt) => {
+                      setInputValue(prompt);
+                      requestAnimationFrame(() => inputRef.current?.focus());
+                    }}
+                  />
                 )}
 
                 {/* Load older messages */}
