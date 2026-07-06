@@ -96,6 +96,43 @@ describe('applyHookEvent — stream sessions: hooks are enrichment-only', () => 
     expect(s.ambientState).toBe('streaming'); // mode comes from the daemon
   });
 
+  it("a subagent's tool call (agent_id present) stays out of the live work log", () => {
+    const s = mkSession('pty');
+    s.pendingApproval = { toolName: 'Bash', toolInput: {}, timestamp: 1 } as never;
+    applyHookEvent(s, {
+      hook_event_name: 'PreToolUse',
+      tool_use_id: 'sub-1',
+      tool_name: 'Bash',
+      tool_input: { command: 'echo hi' },
+      agent_id: 'agent-abc',
+      agent_type: 'general-purpose',
+    });
+    expect(s.activeToolCalls).toHaveLength(0);
+    // …and it must not clear the parent's pending approval card.
+    expect(s.pendingApproval).not.toBeNull();
+    applyHookEvent(s, {
+      hook_event_name: 'PostToolUse',
+      tool_use_id: 'sub-1',
+      tool_name: 'Bash',
+      agent_id: 'agent-abc',
+    });
+    expect(s.pendingApproval).not.toBeNull();
+  });
+
+  it("a subagent's file edit is still recorded as a file change", () => {
+    const s = mkSession('pty');
+    applyHookEvent(s, {
+      hook_event_name: 'PreToolUse',
+      tool_use_id: 'sub-2',
+      tool_name: 'Write',
+      tool_input: { file_path: '/tmp/x.txt', content: 'hi' },
+      agent_id: 'agent-abc',
+    });
+    expect(s.activeToolCalls).toHaveLength(0);
+    expect(s.fileChanges).toHaveLength(1);
+    expect(s.fileChanges[0].path).toBe('/tmp/x.txt');
+  });
+
   it("normalizes the tool input's camelCase multiSelect to multi_select", () => {
     const s = mkSession('pty');
     applyHookEvent(s, {

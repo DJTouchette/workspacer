@@ -46,6 +46,25 @@ export function applyHookEvent(session: ClaudeSessionState, event: any): void {
 
     case 'PreToolUse': {
       setAmbient('streaming');
+
+      // Tool calls executed inside a subagent carry agent_id (verified on CLI
+      // 2.1.201: the subagent's Bash hook has agent_id/agent_type, the parent's
+      // own calls don't). They belong to the subagent's transcript and watch
+      // pane — not the main chat's live work log — and a parallel subagent
+      // tool must not clear the parent's pending approval/question cards.
+      // Its file edits are still real changes, so those are recorded.
+      if (event.agent_id) {
+        if (['Edit', 'MultiEdit', 'Write'].includes(event.tool_name)) {
+          session.fileChanges.push({
+            path: event.tool_input?.file_path ?? 'unknown',
+            toolName: event.tool_name,
+            input: event.tool_input ?? {},
+            timestamp: Date.now(),
+          });
+        }
+        break;
+      }
+
       const id: string =
         event.tool_use_id ?? `tc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 
@@ -104,6 +123,9 @@ export function applyHookEvent(session: ClaudeSessionState, event: any): void {
 
     case 'PostToolUse': {
       setAmbient('streaming');
+      // Subagent tool completions aren't tracked here (see PreToolUse) and
+      // must not clear the parent's pending cards.
+      if (event.agent_id) break;
       // Any completed tool clears any leftover approval card — the daemon
       // gateway is single-shot, so by the time PostToolUse fires, whatever
       // decision was pending is either resolved or no longer relevant.

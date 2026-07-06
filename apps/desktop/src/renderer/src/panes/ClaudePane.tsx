@@ -978,9 +978,27 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   // Anchor subagents/workflow runs to the Agent/Workflow tool calls that
   // spawned them so they render inline in the timeline (exact toolUseId /
   // runId joins with order-match fallback — see lib/anchorWork.ts).
+  // Running agents/workflows stay pinned in the bottom live log until every
+  // run finishes — only completed runs anchor into the timeline's WorkCards
+  // (anchoring them while running would scroll live work up into history and
+  // render it twice).
+  const finishedSubagents = useMemo(() => subagents.filter((s) => s.status !== 'running'), [
+    subagents,
+  ]);
+  const finishedWorkflows = useMemo(() => workflows.filter((w) => w.status !== 'running'), [
+    workflows,
+  ]);
   const { toolIdToSubagent, toolIdToWorkflow, unanchoredSubagents, unanchoredWorkflows } = useMemo(
-    () => anchorWork(conversation, subagents, workflows),
-    [conversation, subagents, workflows],
+    () => anchorWork(conversation, finishedSubagents, finishedWorkflows),
+    [conversation, finishedSubagents, finishedWorkflows],
+  );
+  const liveSubagents = useMemo(
+    () => [...subagents.filter((s) => s.status === 'running'), ...unanchoredSubagents],
+    [subagents, unanchoredSubagents],
+  );
+  const liveWorkflows = useMemo(
+    () => [...workflows.filter((w) => w.status === 'running'), ...unanchoredWorkflows],
+    [workflows, unanchoredWorkflows],
   );
 
   // Show active + completed tool calls, excluding any already in conversation
@@ -1319,12 +1337,12 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
                     calls plus agents/workflows that hooks reported before the
                     transcript caught up. Anchored agents render in WorkCards. */}
                 {(liveToolCalls.length > 0 ||
-                  unanchoredSubagents.length > 0 ||
-                  unanchoredWorkflows.length > 0) && (
+                  liveSubagents.length > 0 ||
+                  liveWorkflows.length > 0) && (
                   <InlineWorkLog
                     toolCalls={liveToolCalls}
-                    subagents={unanchoredSubagents}
-                    workflows={unanchoredWorkflows}
+                    subagents={liveSubagents}
+                    workflows={liveWorkflows}
                   />
                 )}
 
