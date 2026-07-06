@@ -79,7 +79,14 @@ export function applyHookEvent(session: ClaudeSessionState, event: any): void {
       // exclusive: a picker means claude is asking the user, not asking for
       // tool permission.
       if (tc.name === 'AskUserQuestion' && Array.isArray(tc.input?.questions)) {
-        session.pendingQuestions = tc.input.questions;
+        // The raw tool input spells it `multiSelect`; our types (and the
+        // picker) read snake_case, so normalize at the ingest seam.
+        session.pendingQuestions = tc.input.questions.map(
+          (q: { multi_select?: boolean; multiSelect?: boolean }) => ({
+            ...q,
+            multi_select: q.multi_select ?? q.multiSelect ?? false,
+          }),
+        );
         session.pendingApproval = null;
         setAmbient('waiting_input');
       }

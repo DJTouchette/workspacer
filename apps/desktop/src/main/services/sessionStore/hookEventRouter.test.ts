@@ -96,6 +96,23 @@ describe('applyHookEvent — stream sessions: hooks are enrichment-only', () => 
     expect(s.ambientState).toBe('streaming'); // mode comes from the daemon
   });
 
+  it("normalizes the tool input's camelCase multiSelect to multi_select", () => {
+    const s = mkSession('pty');
+    applyHookEvent(s, {
+      hook_event_name: 'PreToolUse',
+      tool_use_id: 't3',
+      tool_name: 'AskUserQuestion',
+      tool_input: {
+        questions: [
+          { question: 'Pick several', multiSelect: true, options: [{ label: 'a' }] },
+          { question: 'Pick one', options: [{ label: 'b' }] },
+        ],
+      },
+    });
+    expect(s.pendingQuestions?.[0].multi_select).toBe(true);
+    expect(s.pendingQuestions?.[1].multi_select).toBe(false);
+  });
+
   it('SessionStart still marks the session active', () => {
     const s = mkSession('stream');
     s.status = 'starting';

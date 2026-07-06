@@ -96,7 +96,9 @@ pub struct PendingQuestion {
     pub question: String,
     #[serde(default)]
     pub header: Option<String>,
-    #[serde(default)]
+    /// The wire (AskUserQuestion tool input) spells this `multiSelect`;
+    /// clients read the serialized snake_case form.
+    #[serde(default, alias = "multiSelect")]
     pub multi_select: bool,
     #[serde(default)]
     pub options: Vec<PendingOption>,
@@ -989,5 +991,28 @@ mod tests {
                 "as_str() diverges from serde for {variant:?}"
             );
         }
+    }
+
+    #[test]
+    fn pending_question_accepts_both_multi_select_spellings() {
+        // The AskUserQuestion tool input spells it camelCase; clients read the
+        // serialized snake_case form.
+        let camel: PendingQuestion = serde_json::from_value(serde_json::json!({
+            "question": "Pick several", "multiSelect": true,
+            "options": [{ "label": "a" }]
+        }))
+        .unwrap();
+        assert!(camel.multi_select);
+        let snake: PendingQuestion = serde_json::from_value(serde_json::json!({
+            "question": "Pick several", "multi_select": true,
+            "options": [{ "label": "a" }]
+        }))
+        .unwrap();
+        assert!(snake.multi_select);
+        assert!(serde_json::to_value(&camel)
+            .unwrap()
+            .get("multi_select")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap());
     }
 }
