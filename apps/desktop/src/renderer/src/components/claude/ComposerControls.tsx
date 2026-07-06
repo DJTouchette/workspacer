@@ -26,6 +26,7 @@ import type { ClaudeSessionSnapshot } from '../../types/claudeSession';
 import type { AgentProvider } from '../../types/pane';
 import { capsFor, permissionModeLabel } from '../../lib/providerCaps';
 import { deriveSessionStats } from '../../lib/sessionStats';
+import { shortModelLabel } from '../../lib/modelLabel';
 import { claudeColors as colors } from '../claude-shared';
 import {
   ContextMenu,
@@ -44,7 +45,67 @@ export interface RestartOverrides {
 interface ModelOption {
   id: string;
   label: string;
+  /** One-line purpose blurb rendered under the name. */
+  tagline?: string;
+  /** Context-window badge ('200K' | '1M'). */
+  context?: string;
+  /** True for concrete ids observed in sessions (grouped after the aliases). */
+  seen?: boolean;
 }
+
+/** Context-window chip; the 1M window gets the accent treatment. */
+const CtxBadge: React.FC<{ ctx: string }> = ({ ctx }) => {
+  const big = ctx === '1M';
+  return (
+    <span
+      style={{
+        fontSize: '0.55rem',
+        fontWeight: 700,
+        padding: '1px 5px',
+        borderRadius: 'var(--wks-radius-pill)',
+        letterSpacing: '0.04em',
+        fontFamily: 'var(--wks-font-mono, monospace)',
+        flexShrink: 0,
+        color: big ? 'var(--wks-accent-text)' : 'var(--wks-text-faint)',
+        border: `1px solid ${
+          big ? 'color-mix(in srgb, var(--wks-accent) 45%, transparent)' : 'var(--wks-border-subtle)'
+        }`,
+        backgroundColor: big ? 'color-mix(in srgb, var(--wks-accent) 12%, transparent)' : 'transparent',
+      }}
+    >
+      {ctx}
+    </span>
+  );
+};
+
+/** Rich two-line model row: name + context badge (+ ✓ current), tagline under. */
+const modelItemLabel = (m: ModelOption, current: boolean): React.ReactNode => (
+  <span style={{ display: 'block', minWidth: 0 }}>
+    <span style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+      <span style={{ fontWeight: 600 }}>{m.label}</span>
+      {m.context && <CtxBadge ctx={m.context} />}
+      {current && (
+        <span style={{ color: 'var(--wks-success)', fontSize: '0.65rem', flexShrink: 0 }}>✓</span>
+      )}
+    </span>
+    {m.tagline && (
+      <span
+        style={{
+          display: 'block',
+          fontSize: '0.62rem',
+          fontWeight: 400,
+          color: 'var(--wks-text-faint)',
+          marginTop: 1,
+          lineHeight: 1.35,
+          whiteSpace: 'normal',
+          maxWidth: 240,
+        }}
+      >
+        {m.tagline}
+      </span>
+    )}
+  </span>
+);
 
 type MenuKind = 'model' | 'effort' | 'permission';
 
@@ -136,8 +197,21 @@ export const ComposerControls: React.FC<{
         const res = await window.electronAPI.claudeListModels();
         const seen = (res.seen ?? [])
           .filter((id) => !res.aliases.some((a) => a.value === id))
-          .map((id) => ({ id, label: id }));
-        setModels([...res.aliases.map((a) => ({ id: a.value, label: a.label })), ...seen]);
+          .map((id) => ({
+            id,
+            label: shortModelLabel(id) || id,
+            context: id.includes('[1m]') ? '1M' : undefined,
+            seen: true,
+          }));
+        setModels([
+          ...res.aliases.map((a) => ({
+            id: a.value,
+            label: a.label,
+            tagline: a.tagline,
+            context: a.context,
+          })),
+          ...seen,
+        ]);
       } else {
         const res = await window.electronAPI.providerListModels(
           provider as 'codex' | 'opencode' | 'pi',
@@ -308,7 +382,12 @@ export const ComposerControls: React.FC<{
       </button>
 
       {menu && !menu.confirm && (
-        <ContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)} minWidth={190}>
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+          minWidth={menu.kind === 'model' ? 250 : 190}
+        >
           {menu.kind === 'model' && (
             <>
               <ContextMenuLabel>
@@ -318,21 +397,40 @@ export const ComposerControls: React.FC<{
               {models !== null && models.length === 0 && (
                 <ContextMenuItem label="No models found" onClick={() => {}} disabled />
               )}
-              {models?.map((m) => (
-                <ContextMenuItem
-                  key={m.id}
-                  label={m.label}
-                  onClick={() => {
-                    if (caps.modelSwitch === 'live') {
-                      const at = { x: menu.x, y: menu.y };
-                      setMenu(null);
-                      liveModelSwitch(m.id, m.label, at);
-                    } else {
-                      pickRestart({ model: m.id }, m.label);
-                    }
-                  }}
-                />
-              ))}
+              {models?.map((m, i) => {
+                // Live telemetry reports concrete ids; aliases match by family
+                // label (e.g. "claude-sonnet-5" ↔ Sonnet, but not Sonnet 1M
+                // unless the id carries the [1m] marker).
+                const cur = stats.model
+                  ? m.id === stats.model ||
+                    (shortModelLabel(stats.model)
+                      .toLowerCase()
+                      .startsWith(m.label.split(' ')[0].toLowerCase()) &&
+                      stats.model.includes('[1m]') === m.id.includes('[1m]'))
+                  : false;
+                return (
+                  <React.Fragment key={m.id}>
+                    {m.seen && !models[i - 1]?.seen && (
+                      <>
+                        <ContextMenuSeparator />
+                        <ContextMenuLabel>Recently used</ContextMenuLabel>
+                      </>
+                    )}
+                    <ContextMenuItem
+                      label={modelItemLabel(m, cur)}
+                      onClick={() => {
+                        if (caps.modelSwitch === 'live') {
+                          const at = { x: menu.x, y: menu.y };
+                          setMenu(null);
+                          liveModelSwitch(m.id, m.label, at);
+                        } else {
+                          pickRestart({ model: m.id }, m.label);
+                        }
+                      }}
+                    />
+                  </React.Fragment>
+                );
+              })}
             </>
           )}
           {menu.kind === 'effort' && caps.effort && (

@@ -9,10 +9,19 @@
 import { configService } from './configService';
 import { claudeSessionStore } from './claudeSessionStore';
 
+export interface ClaudeModelAlias {
+  value: string;
+  label: string;
+  /** One-line purpose blurb rendered under the name in pickers. */
+  tagline?: string;
+  /** Context-window badge, e.g. '200K' | '1M'. */
+  context?: string;
+}
+
 export interface ListModelsResult {
   defaultModel: string;
   skipPermissionsDefault: boolean;
-  aliases: Array<{ value: string; label: string }>;
+  aliases: ClaudeModelAlias[];
   seen: string[];
 }
 
@@ -27,11 +36,40 @@ export function listClaudeModels(): ListModelsResult {
   return {
     defaultModel: typeof cfg.claude?.defaultModel === 'string' ? cfg.claude.defaultModel : '',
     skipPermissionsDefault: cfg.claude?.skipPermissionsDefault === true,
+    // Each alias tracks the newest model of its family, so these need zero
+    // maintenance as Claude Code updates. `sonnet[1m]` is Claude Code's own
+    // alias for the million-token-context Sonnet.
     aliases: [
-      { value: 'fable', label: 'Fable — latest' },
-      { value: 'opus', label: 'Opus — latest' },
-      { value: 'sonnet', label: 'Sonnet — latest' },
-      { value: 'haiku', label: 'Haiku — latest' },
+      {
+        value: 'fable',
+        label: 'Fable',
+        tagline: 'Most capable — Mythos-class flagship',
+        context: '200K',
+      },
+      {
+        value: 'opus',
+        label: 'Opus',
+        tagline: 'Deep reasoning for the hardest problems',
+        context: '200K',
+      },
+      {
+        value: 'sonnet',
+        label: 'Sonnet',
+        tagline: 'Fast, balanced daily driver',
+        context: '200K',
+      },
+      {
+        value: 'sonnet[1m]',
+        label: 'Sonnet 1M',
+        tagline: 'Whole codebases in a single context window',
+        context: '1M',
+      },
+      {
+        value: 'haiku',
+        label: 'Haiku',
+        tagline: 'Fastest and lightest, for quick cheap tasks',
+        context: '200K',
+      },
     ],
     seen,
   };

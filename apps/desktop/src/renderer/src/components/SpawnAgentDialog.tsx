@@ -104,7 +104,9 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
 
   // Model selection. `modelSel` is the dropdown value (''=Default, an alias/id,
   // or the CUSTOM sentinel); `customModel` holds the free-text id when CUSTOM.
-  const [aliases, setAliases] = useState<Array<{ value: string; label: string }>>([]);
+  const [aliases, setAliases] = useState<
+    Array<{ value: string; label: string; tagline?: string; context?: string }>
+  >([]);
   const [seen, setSeen] = useState<string[]>([]);
   const [modelSel, setModelSel] = useState<string>('');
   const [customModel, setCustomModel] = useState('');
@@ -732,6 +734,8 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                   {aliases.map((a) => (
                     <option key={a.value} value={a.value}>
                       {a.label}
+                      {a.context ? ` · ${a.context} context` : ''}
+                      {a.tagline ? ` — ${a.tagline}` : ''}
                     </option>
                   ))}
                 </optgroup>

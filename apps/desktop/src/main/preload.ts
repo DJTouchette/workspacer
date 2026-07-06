@@ -205,7 +205,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   claudeListModels: (): Promise<{
     defaultModel: string;
     skipPermissionsDefault: boolean;
-    aliases: Array<{ value: string; label: string }>;
+    aliases: Array<{ value: string; label: string; tagline?: string; context?: string }>;
     seen: string[];
   }> => ipcRenderer.invoke(IPC.CLAUDE_LIST_MODELS),
   workflowAgentTranscript: (
