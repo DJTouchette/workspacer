@@ -530,12 +530,19 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     }
   }, [terminalTheme]);
 
+  // Sticky-bottom autoscroll: follow new content while the user sits at the
+  // bottom; the moment they scroll up (same threshold that reveals the
+  // scroll-to-bottom button) the view stops following, and it resumes when
+  // they return. A ref, not state — read from the ResizeObserver below.
+  const stickToBottomRef = useRef(true);
+
   // Track scroll position for "scroll to bottom" button + lazy load older messages
   const handleScroll = useCallback(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
     const distFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
     setShowScrollBtn(distFromBottom > 150);
+    stickToBottomRef.current = distFromBottom <= 150;
   }, []);
 
   const loadOlderMessages = useCallback(() => {
@@ -552,6 +559,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   }, []);
 
   const scrollToBottom = useCallback(() => {
+    stickToBottomRef.current = true;
     conversationEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, []);
 
@@ -689,6 +697,9 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     };
     setOptimisticMessages((prev) => [...prev, optimisticTurn]);
     setOptimisticLoading(true);
+    // Sending re-sticks the view: your own message (and the reply) should be
+    // in sight even if you'd scrolled up — the ResizeObserver does the rest.
+    stickToBottomRef.current = true;
 
     const rawFallback = () => {
       // Keystrokes need a PTY. No-PTY (stream) sessions can't fall back — the
@@ -1027,33 +1038,26 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     );
   }, [activeToolCalls, completedToolCalls, conversation]);
 
-  // Auto-scroll conversation to bottom (only when this pane is active —
-  // scrollIntoView scrolls all ancestors, which would yank the outer
-  // ScrollContainer back to this tab even when viewing another tab)
+  // Auto-scroll: a ResizeObserver on the content column follows EVERY kind of
+  // growth — streaming text (which grows an existing bubble without changing
+  // any list length, so a dependency-array effect misses it), late-loading
+  // diffs, cards expanding — as long as the user is stuck to the bottom
+  // (stickToBottomRef, maintained by handleScroll). Scrolling is an instant
+  // scrollTop assignment on our own container: no smooth animation to race
+  // the near-bottom check, and (unlike scrollIntoView) it can't yank ancestor
+  // scrollers to this tab while another one is active.
   useEffect(() => {
-    if (!isActive) return;
     if (viewMode !== 'gui') return;
     const container = scrollContainerRef.current;
-    if (!container) return;
-    // Only auto-scroll if user is near the bottom
-    const isNearBottom =
-      container.scrollHeight - container.scrollTop - container.clientHeight < 100;
-    if (isNearBottom) {
-      conversationEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [
-    isActive,
-    viewMode,
-    session?.conversation?.length,
-    session?.activeToolCalls?.length,
-    session?.completedToolCalls?.length,
-    session?.lastActivity,
-    session?.subagents?.length,
-    session?.workflows?.length,
-    liveToolCalls.length,
-    optimisticMessages.length,
-    isStreaming,
-  ]);
+    const content = container?.firstElementChild;
+    if (!container || !content) return;
+    const ro = new ResizeObserver(() => {
+      if (!stickToBottomRef.current) return;
+      container.scrollTop = container.scrollHeight;
+    });
+    ro.observe(content);
+    return () => ro.disconnect();
+  }, [viewMode]);
 
   // Which work-log surface renders a run of tool calls: prose summary cards,
   // or the waterfall trace monitor (see ToolTraceCard). Same props either way.
