@@ -98,7 +98,7 @@ function excerptJson(v: unknown, max = 4000): string {
 const detailPre: React.CSSProperties = {
   margin: '4px 0 0 0',
   padding: '6px 8px',
-  borderRadius: 6,
+  borderRadius: 'var(--wks-radius-sm)',
   background: 'rgba(0,0,0,0.25)',
   border: `1px solid ${colors.borderSubtle}`,
   fontFamily: 'var(--claude-mono-font, monospace)',
@@ -191,7 +191,7 @@ const TraceRow: React.FC<{
             minWidth: 40,
             height: 8,
             position: 'relative',
-            borderRadius: 4,
+            borderRadius: 'var(--wks-radius-pill)',
             background: 'rgba(255,255,255,0.045)',
             overflow: 'hidden',
           }}
@@ -203,7 +203,7 @@ const TraceRow: React.FC<{
               bottom: 0,
               left: `${leftPct}%`,
               width: `${widthPct}%`,
-              borderRadius: 4,
+              borderRadius: 'var(--wks-radius-pill)',
               background: color,
               opacity: running ? 0.9 : 0.65,
               animation: running ? 'wks-pulse 1.4s ease-in-out infinite' : undefined,
@@ -243,7 +243,7 @@ const TraceRow: React.FC<{
             padding: '4px 8px 8px 8px',
             borderLeft: `2px solid ${color}`,
             background: 'rgba(255,255,255,0.02)',
-            borderRadius: '0 6px 6px 0',
+            borderRadius: '0 var(--wks-radius-sm) var(--wks-radius-sm) 0',
           }}
         >
           <WorkLogEntry tc={tc} />

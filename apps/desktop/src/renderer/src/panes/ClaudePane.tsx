@@ -1088,7 +1088,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
       if (turn.role === 'user') {
         flushWork();
         closeGroup(true);
-        if (gi > 0) items.push(<TurnDivider key={`div-${gi}`} />);
+        if (gi > 0) items.push(<TurnDivider key={`div-${gi}`} label={null} />);
         items.push(<ConversationMessage key={`msg-${gi}`} turn={turn} />);
         prevRole = 'user';
         return;
@@ -1336,7 +1336,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
                         fontWeight: 500,
                         padding: '2px 10px',
                         border: `1px solid ${colors.muted}`,
-                        borderRadius: 4,
+                        borderRadius: 'var(--wks-radius-sm)',
                         backgroundColor: 'transparent',
                         color: colors.muted,
                         cursor: 'pointer',

@@ -276,7 +276,7 @@ export const WorkflowTimeline: React.FC<{
                         position: 'relative',
                         height: 16,
                         background: 'var(--wks-bg-base)',
-                        borderRadius: 4,
+                        borderRadius: 'var(--wks-radius-sm)',
                         border: sel
                           ? `1px solid ${AGENT_PURPLE}`
                           : `1px solid ${colors.borderSubtle}`,
@@ -290,7 +290,7 @@ export const WorkflowTimeline: React.FC<{
                           left: `${leftPct}%`,
                           width: `${widthPct}%`,
                           background: statusColor(a.status),
-                          borderRadius: 3,
+                          borderRadius: 'var(--wks-radius-sm)',
                           minWidth: 3,
                           opacity: a.status === 'queued' ? 0.4 : 0.85,
                         }}

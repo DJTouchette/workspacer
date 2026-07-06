@@ -27,24 +27,25 @@ const ConversationMessageInner: React.FC<{ turn: ConversationTurn }> = ({ turn }
           style={{
             maxWidth: '80%',
             padding: '8px 14px',
-            borderRadius: '16px 16px 4px 16px',
+            // Speech-tail bubble via the radius tokens so corners follow the
+            // user's corner-style setting (square collapses to 0 like the rest).
+            borderRadius:
+              'var(--wks-radius-lg) var(--wks-radius-lg) var(--wks-radius-sm) var(--wks-radius-lg)',
             backgroundColor: colors.userBubble,
             border: `1px solid ${colors.userBubbleBorder}`,
           }}
         >
-          <pre
+          <div
             style={{
-              margin: 0,
               fontSize: 'calc(0.8rem * var(--claude-gui-font-scale, 1))',
               lineHeight: 1.6,
-              color: colors.text,
-              fontFamily: 'var(--claude-mono-font, monospace)',
+              color: colors.textBright,
               whiteSpace: 'pre-wrap',
               wordBreak: 'break-word',
             }}
           >
             {turn.content || '(empty)'}
-          </pre>
+          </div>
         </div>
       </div>
     );

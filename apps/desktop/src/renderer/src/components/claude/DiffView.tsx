@@ -68,7 +68,7 @@ export const DiffView: React.FC<{ oldStr: string; newStr: string; filePath?: str
     <div
       style={{
         margin: '6px 0',
-        borderRadius: 6,
+        borderRadius: 'var(--wks-radius-sm)',
         overflow: 'hidden',
         border: `1px solid ${colors.borderSubtle}`,
         fontSize: '0.75rem',
@@ -294,7 +294,7 @@ export const ReadView: React.FC<{ response: string; filePath?: string }> = ({
     <div
       style={{
         margin: '6px 0',
-        borderRadius: 6,
+        borderRadius: 'var(--wks-radius-sm)',
         overflow: 'hidden',
         border: `1px solid ${colors.borderSubtle}`,
         fontSize: '0.75rem',

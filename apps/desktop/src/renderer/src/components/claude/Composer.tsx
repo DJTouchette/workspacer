@@ -92,7 +92,7 @@ export const Composer: React.FC<ComposerProps> = ({
           style={{
             display: 'flex',
             flexDirection: 'column',
-            borderRadius: 16,
+            borderRadius: 'var(--wks-radius-lg)',
             border: `1px solid ${borderColor}`,
             background: 'var(--wks-bg-raised)',
             boxShadow: '0 4px 24px rgba(0, 0, 0, 0.18)',
@@ -132,7 +132,7 @@ export const Composer: React.FC<ComposerProps> = ({
               }
             }}
             style={{
-              fontSize: '0.82rem',
+              fontSize: '0.8rem',
               // border-box so the auto-grow height (set to scrollHeight) matches
               // the text exactly.
               boxSizing: 'border-box',

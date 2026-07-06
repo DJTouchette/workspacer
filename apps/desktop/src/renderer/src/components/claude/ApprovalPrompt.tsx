@@ -11,9 +11,9 @@ export const ApprovalPrompt: React.FC<{
     style={{
       padding: '12px 14px',
       margin: '8px 0',
-      borderRadius: 10,
-      backgroundColor: 'rgba(248, 113, 113, 0.06)',
-      border: `1px solid rgba(248, 113, 113, 0.2)`,
+      borderRadius: 'var(--wks-radius-md)',
+      backgroundColor: 'color-mix(in srgb, var(--wks-error) 6%, transparent)',
+      border: '1px solid color-mix(in srgb, var(--wks-error) 20%, transparent)',
       animation: 'claudeFadeIn 0.2s ease-out',
     }}
   >
@@ -23,11 +23,11 @@ export const ApprovalPrompt: React.FC<{
     <pre
       style={{
         fontSize: '0.7rem',
-        color: 'rgb(180, 180, 200)',
+        color: colors.text,
         margin: '4px 0 8px 0',
         padding: 8,
-        backgroundColor: 'rgba(0, 0, 0, 0.3)',
-        borderRadius: 6,
+        backgroundColor: 'rgba(0, 0, 0, 0.25)',
+        borderRadius: 'var(--wks-radius-sm)',
         maxHeight: 120,
         overflow: 'auto',
         whiteSpace: 'pre-wrap',

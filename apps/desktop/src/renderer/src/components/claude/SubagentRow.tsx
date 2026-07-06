@@ -20,7 +20,11 @@ export const SubagentRow: React.FC<{
     <div
       onClick={onOpen}
       title={onOpen ? 'Watch this agent in a pane' : undefined}
-      style={{ padding: '1px 0', cursor: onOpen ? 'pointer' : undefined, borderRadius: 4 }}
+      style={{
+        padding: '1px 0',
+        cursor: onOpen ? 'pointer' : undefined,
+        borderRadius: 'var(--wks-radius-sm)',
+      }}
       onMouseEnter={
         onOpen
           ? (e) => {

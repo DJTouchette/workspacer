@@ -145,7 +145,7 @@ export const WorkflowRunCard: React.FC<{
       style={{
         margin: '4px 0',
         border: `1px solid ${colors.borderSubtle}`,
-        borderRadius: 6,
+        borderRadius: 'var(--wks-radius-sm)',
         backgroundColor: 'rgba(255,255,255,0.02)',
         overflow: 'hidden',
       }}

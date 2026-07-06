@@ -256,7 +256,7 @@ const WorkCardInner: React.FC<{
                   background: 'none',
                   border: 'none',
                   padding: '2px 4px',
-                  borderRadius: 4,
+                  borderRadius: 'var(--wks-radius-sm)',
                   cursor: 'pointer',
                   textAlign: 'left',
                   width: '100%',

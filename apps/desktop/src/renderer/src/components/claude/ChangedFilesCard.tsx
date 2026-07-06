@@ -57,7 +57,7 @@ const FileGlyph: React.FC<{ path: string }> = ({ path }) => {
 
 const headerBtnStyle: React.CSSProperties = {
   padding: '2px 9px',
-  borderRadius: 6,
+  borderRadius: 'var(--wks-radius-sm)',
   border: `1px solid ${colors.borderSubtle}`,
   background: 'transparent',
   color: colors.text,

@@ -63,7 +63,7 @@ const pillStyle: React.CSSProperties = {
   alignItems: 'center',
   gap: 5,
   padding: '3px 8px',
-  borderRadius: 7,
+  borderRadius: 'var(--wks-radius-sm)',
   border: 'none',
   background: 'transparent',
   color: colors.muted,

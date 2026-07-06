@@ -14,7 +14,7 @@ export const QuestionPicker: React.FC<{
       style={{
         padding: '12px 14px',
         margin: '8px 0',
-        borderRadius: 10,
+        borderRadius: 'var(--wks-radius-md)',
         backgroundColor: 'var(--wks-accent-bg)',
         border: `1px solid ${colors.accent}`,
         animation: 'claudeFadeIn 0.2s ease-out',
@@ -38,7 +38,7 @@ export const QuestionPicker: React.FC<{
           )}
           <div
             style={{
-              fontSize: '0.82rem',
+              fontSize: '0.8rem',
               color: colors.textBright,
               fontWeight: 600,
               marginBottom: 8,
@@ -54,7 +54,7 @@ export const QuestionPicker: React.FC<{
                 style={{
                   textAlign: 'left',
                   padding: '6px 10px',
-                  borderRadius: 6,
+                  borderRadius: 'var(--wks-radius-sm)',
                   border: `1px solid ${colors.border}`,
                   backgroundColor: 'rgba(255,255,255,0.03)',
                   color: colors.text,
@@ -94,7 +94,7 @@ export const QuestionPicker: React.FC<{
               flex: 1,
               fontSize: '0.75rem',
               padding: '4px 8px',
-              borderRadius: 4,
+              borderRadius: 'var(--wks-radius-sm)',
               border: `1px solid ${colors.border}`,
               backgroundColor: 'rgba(255,255,255,0.03)',
               color: colors.text,
@@ -113,10 +113,10 @@ export const QuestionPicker: React.FC<{
             style={{
               fontSize: '0.7rem',
               padding: '4px 12px',
-              borderRadius: 4,
+              borderRadius: 'var(--wks-radius-sm)',
               border: `1px solid ${colors.accent}`,
-              backgroundColor: customText.trim() ? colors.accent : 'transparent',
-              color: customText.trim() ? '#0d0d10' : colors.muted,
+              backgroundColor: customText.trim() ? 'var(--wks-accent)' : 'transparent',
+              color: customText.trim() ? '#fff' : colors.muted,
               cursor: customText.trim() ? 'pointer' : 'default',
               fontFamily: 'inherit',
             }}
