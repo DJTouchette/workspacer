@@ -23,7 +23,7 @@ use std::time::Duration;
 
 use directories::BaseDirs;
 use serde_json::Value;
-use tokio::io::{AsyncBufReadExt, AsyncSeekExt, BufReader};
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 use super::{apply_updates, AgentUpdate, UsageAcc};
 use crate::session::state::SessionMode;
@@ -247,9 +247,19 @@ fn function_output_text(output: Option<&Value>) -> (String, bool) {
     }
     match output {
         Some(Value::String(s)) => {
-            // custom_tool_call_output wraps its envelope in the string.
+            // custom_tool_call_output (and Codex's shell exec) wrap their
+            // envelope in the string: `{"output":"…","metadata":{"exit_code":…}}`.
+            // Only that exact shape is unwrapped — any other JSON-object string
+            // is a legitimate tool result (e.g. an MCP tool that answers with a
+            // JSON payload) and must be shown verbatim: flattening it would drop
+            // fields, and reading a `success: false` field in it as a failure
+            // would invent errors the tool never reported.
             if let Ok(Value::Object(map)) = serde_json::from_str::<Value>(s) {
-                return object_text(&map);
+                let looks_like_envelope = map.get("output").is_some_and(Value::is_string)
+                    && map.get("metadata").is_some_and(Value::is_object);
+                if looks_like_envelope {
+                    return object_text(&map);
+                }
             }
             (s.clone(), false)
         }
@@ -435,6 +445,27 @@ pub fn spawn_tailer(store: SessionStore, conv: ConversationStore, session_id: St
     });
 }
 
+/// Fold a freshly-read chunk into the carried partial-line bytes, returning
+/// every now-complete line. The carry is the ONE mechanism for lines caught
+/// mid-write (the read offset always advances past every byte read) — carrying
+/// the partial AND rewinding the offset would replay those bytes twice and
+/// corrupt the record. It is raw *bytes*, not a `String`, because a poll can
+/// also land mid-UTF-8-character: decoding happens only on complete lines, and
+/// lossily, so one bad byte degrades a single line instead of killing the
+/// tailer. Same pattern as the transcript tailer in `session::conversation`.
+fn drain_complete_lines(carry: &mut Vec<u8>, chunk: &[u8]) -> Vec<String> {
+    carry.extend_from_slice(chunk);
+    let Some(idx) = carry.iter().rposition(|&b| b == b'\n') else {
+        return Vec::new(); // still no complete line — keep carrying
+    };
+    let rest = carry.split_off(idx + 1);
+    let complete = std::mem::replace(carry, rest);
+    String::from_utf8_lossy(&complete)
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
 /// Tail a rollout file from the beginning, folding each new line into the stores
 /// until the session is gone. Reads any already-written lines first (so a
 /// resumed session replays its history into the GUI), then polls for appends by
@@ -452,7 +483,8 @@ async fn tail(
     store.set_managed_mode(session_id, SessionMode::Input, None);
 
     let mut offset: u64 = 0;
-    let mut leftover = String::new();
+    // Bytes of a trailing record caught mid-write (see `drain_complete_lines`).
+    let mut carry: Vec<u8> = Vec::new();
     loop {
         // The session vanished (deregistered / exited) — stop tailing.
         if store.get(session_id).is_none() {
@@ -465,27 +497,16 @@ async fn tail(
         let len = file.metadata().await.map(|m| m.len()).unwrap_or(offset);
         if len > offset {
             file.seek(std::io::SeekFrom::Start(offset)).await?;
-            let mut reader = BufReader::new(file);
-            let mut line = String::new();
-            loop {
-                line.clear();
-                let n = reader.read_line(&mut line).await?;
-                if n == 0 {
-                    break;
-                }
-                offset += n as u64;
-                // A trailing partial line (no newline yet) — stash and retry next poll.
-                if !line.ends_with('\n') {
-                    leftover = std::mem::take(&mut line);
-                    offset -= leftover.len() as u64;
-                    break;
-                }
-                let full = if leftover.is_empty() {
-                    line.clone()
-                } else {
-                    format!("{}{}", std::mem::take(&mut leftover), line)
-                };
-                let trimmed = full.trim();
+            // Bound the read to the length we statted so `offset` stays
+            // consistent even if the file grows while we read.
+            let mut chunk = Vec::with_capacity((len - offset) as usize);
+            (&mut file)
+                .take(len - offset)
+                .read_to_end(&mut chunk)
+                .await?;
+            offset += chunk.len() as u64;
+            for line in drain_complete_lines(&mut carry, &chunk) {
+                let trimmed = line.trim();
                 if trimmed.is_empty() {
                     continue;
                 }
@@ -695,6 +716,97 @@ mod tests {
                 content: "boom".into(),
                 is_error: true,
             }]
+        );
+    }
+
+    #[test]
+    fn function_call_output_plain_json_string_passes_through_verbatim() {
+        // An MCP / generic function tool may legitimately answer with a JSON
+        // object *string*. It is NOT the codex exec envelope (no `output` +
+        // `metadata`), so it must be shown verbatim — not flattened to one
+        // field, and a `success: false` field inside it must not be read as a
+        // tool failure.
+        let payload = "{\"success\":false,\"reason\":\"no deploy yet\"}";
+        let v = item(json!({ "type": "function_call_output", "call_id": "c20",
+            "output": payload }));
+        assert_eq!(
+            translate(&v),
+            vec![AgentUpdate::ToolResult {
+                tool_use_id: "c20".into(),
+                content: payload.into(),
+                is_error: false,
+            }]
+        );
+        // A JSON string with a `text` field is still not the envelope: keep the
+        // full payload, don't collapse it to the `text` field.
+        let rich = "{\"text\":\"3 issues\",\"issues\":[1,2,3]}";
+        let v = item(json!({ "type": "function_call_output", "call_id": "c21",
+            "output": rich }));
+        assert_eq!(
+            translate(&v),
+            vec![AgentUpdate::ToolResult {
+                tool_use_id: "c21".into(),
+                content: rich.into(),
+                is_error: false,
+            }]
+        );
+    }
+
+    #[test]
+    fn drain_complete_lines_reassembles_record_split_across_reads() {
+        // Simulates the tailer's poll catching a JSONL record mid-write: the
+        // first read ends inside the record, the second delivers the rest. The
+        // record must come out whole, exactly once.
+        let record = r#"{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"OK"}]}}"#;
+        let full = format!("{record}\n");
+        let (a, b) = full.as_bytes().split_at(30);
+
+        let mut carry = Vec::new();
+        assert!(
+            drain_complete_lines(&mut carry, a).is_empty(),
+            "no complete line yet"
+        );
+        let lines = drain_complete_lines(&mut carry, b);
+        assert_eq!(lines, vec![record.to_string()]);
+        assert!(carry.is_empty(), "nothing left carried");
+
+        // And the reassembled line parses + translates like any other.
+        let value: Value = serde_json::from_str(&lines[0]).unwrap();
+        assert_eq!(
+            translate(&value),
+            vec![AgentUpdate::AssistantText("OK".into())]
+        );
+    }
+
+    #[test]
+    fn drain_complete_lines_survives_read_boundary_inside_utf8_char() {
+        // The read boundary lands inside a multi-byte character ("é" = 2 bytes).
+        // The old read_line-based tailer returned InvalidData here and died for
+        // the rest of the session; the byte carry must reassemble it losslessly.
+        let full = "{\"k\":\"café\"}\n".as_bytes().to_vec();
+        let split = full.iter().position(|&b| b == 0xC3).unwrap() + 1; // mid-'é'
+        let (a, b) = full.split_at(split);
+
+        let mut carry = Vec::new();
+        assert!(drain_complete_lines(&mut carry, a).is_empty());
+        assert_eq!(
+            drain_complete_lines(&mut carry, b),
+            vec!["{\"k\":\"café\"}".to_string()]
+        );
+    }
+
+    #[test]
+    fn drain_complete_lines_handles_multiple_lines_and_trailing_partial() {
+        let mut carry = Vec::new();
+        let lines = drain_complete_lines(&mut carry, b"{\"a\":1}\n{\"b\":2}\n{\"c\"");
+        assert_eq!(
+            lines,
+            vec!["{\"a\":1}".to_string(), "{\"b\":2}".to_string()]
+        );
+        assert_eq!(carry, b"{\"c\"");
+        assert_eq!(
+            drain_complete_lines(&mut carry, b":3}\n"),
+            vec!["{\"c\":3}".to_string()]
         );
     }
 

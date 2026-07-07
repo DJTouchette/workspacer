@@ -26,6 +26,7 @@
 //! The pure `translate(method, params)` is unit-tested; the live ws client
 //! needs a real `codex` binary to validate end-to-end.
 
+use std::collections::VecDeque;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -42,7 +43,7 @@ use tokio_tungstenite::tungstenite::Message;
 use super::{apply_updates, AgentUpdate, Facade, ModelInfo, UsageAcc};
 use crate::protocol::Signal;
 use crate::session::conversation::ConversationItem;
-use crate::session::state::SessionMode;
+use crate::session::state::{Pending, SessionMode};
 use crate::session::{ConversationStore, SessionStore};
 use crate::wrapper::pty;
 
@@ -442,6 +443,68 @@ fn command_text(params: &Value) -> Option<String> {
     }
 }
 
+/// An approval request parked while the user decides: the JSON-RPC request id
+/// (what the decision must answer) together with the display fields, so a
+/// request queued *behind* the surfaced one can be re-surfaced when it reaches
+/// the head of the FIFO. Mirrors `claude_stream::ParkedCanUse`.
+#[derive(Debug)]
+struct ParkedApproval {
+    id: Value,
+    tool: Option<String>,
+    summary: Option<String>,
+    raw: Value,
+}
+
+/// Surface a parked approval as the session's pending card. The store's pending
+/// is a single slot, so only the FIFO *head* is ever displayed — later requests
+/// wait parked and are re-surfaced by [`resolve_approval`] when the head is
+/// answered, keeping the displayed card and the answered request in sync.
+fn surface_approval(
+    store: &SessionStore,
+    session_id: &str,
+    cur_mode: &mut SessionMode,
+    parked: &ParkedApproval,
+) {
+    store.set_managed_mode(
+        session_id,
+        SessionMode::Approval,
+        Some(Pending::Approval {
+            tool: parked.tool.clone(),
+            summary: parked.summary.clone(),
+            raw: parked.raw.clone(),
+        }),
+    );
+    *cur_mode = SessionMode::Approval;
+}
+
+/// Answer the FIFO head of the parked approvals with the user's decision, then
+/// surface the next parked request (parallel tool calls can park several) or —
+/// when the queue is empty — return the session to Responding. Answering the
+/// head (the request `surface_approval` displayed) is what guarantees the user
+/// approves the card they actually saw.
+fn resolve_approval(
+    store: &SessionStore,
+    session_id: &str,
+    out_tx: &mpsc::UnboundedSender<Value>,
+    pending_approvals: &mut VecDeque<ParkedApproval>,
+    cur_mode: &mut SessionMode,
+    approve: bool,
+) {
+    let Some(parked) = pending_approvals.pop_front() else {
+        tracing::debug!(session = %session_id, "codex: decision with no parked approval — dropped");
+        return;
+    };
+    let result = json!({ "decision": if approve { "accept" } else { "decline" } });
+    let _ = out_tx.send(json!({ "jsonrpc": "2.0", "id": parked.id, "result": result }));
+    match pending_approvals.front() {
+        Some(next) => surface_approval(store, session_id, cur_mode, next),
+        None => {
+            store.set_managed_mode(session_id, SessionMode::Responding, None);
+            *cur_mode = SessionMode::Responding;
+        }
+    }
+}
+
 // ── Model listing ────────────────────────────────────────────────────────────
 
 /// List the models Codex offers (cached; see [`super::cached_or_fetch`]).
@@ -630,6 +693,11 @@ async fn run_rollout_fallback(
     effort: Option<String>,
     bin: &str,
     yolo: bool,
+    // Prompts the user sent on the ws path that were never delivered (buffered
+    // while waiting for the TUI's thread). Already echoed into the conversation
+    // store and already instruction-wrapped — deliver them to the fallback TUI
+    // instead of silently dropping a message the GUI shows as sent.
+    initial_prompts: Vec<String>,
 ) -> anyhow::Result<()> {
     // Plain codex TUI (no `--remote`): it owns its own session and writes a rollout.
     let mut argv = vec![bin.to_string()];
@@ -663,18 +731,23 @@ async fn run_rollout_fallback(
     store.register_managed_input(session_id, tx);
     let mut tui_check = tokio::time::interval(std::time::Duration::from_secs(2));
 
+    // Replay the undelivered ws-path prompts. They were already pushed into the
+    // conversation store when first sent, so only the PTY write happens here. A
+    // short grace period lets the fresh TUI bring up its composer (and enable
+    // bracketed paste) before input lands — best-effort, like all PTY input.
+    if !initial_prompts.is_empty() {
+        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+        for text in &initial_prompts {
+            write_prompt(&tui, text).await;
+        }
+    }
+
     loop {
         tokio::select! {
             msg = rx.recv() => match msg {
                 Some(text) => {
                     conv.push(session_id, vec![ConversationItem::UserMessage { text: text.clone(), timestamp: None }]);
-                    // Bracketed paste + Enter (same as the Claude PTY path) so the
-                    // TUI submits instead of folding the CR into the paste.
-                    let body = text.trim_end_matches(['\r', '\n']);
-                    let mut bytes = b"\x1b[200~".to_vec();
-                    bytes.extend_from_slice(body.as_bytes());
-                    bytes.extend_from_slice(b"\x1b[201~\r");
-                    let _ = pty::write_bytes(&tui, &bytes).await;
+                    write_prompt(&tui, &text).await;
                 }
                 None => break, // managed input dropped → terminated
             },
@@ -688,6 +761,17 @@ async fn run_rollout_fallback(
     }
     let _ = pty::signal_child(&tui, Signal::Sigkill);
     Ok(())
+}
+
+/// Write one prompt into a fallback TUI's PTY as a bracketed paste + Enter
+/// (same as the Claude PTY path), so the TUI submits it instead of folding the
+/// CR into the paste.
+async fn write_prompt(tui: &Arc<pty::PtyHandle>, text: &str) {
+    let body = text.trim_end_matches(['\r', '\n']);
+    let mut bytes = b"\x1b[200~".to_vec();
+    bytes.extend_from_slice(body.as_bytes());
+    bytes.extend_from_slice(b"\x1b[201~\r");
+    let _ = pty::write_bytes(tui, &bytes).await;
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -710,8 +794,18 @@ async fn run_session(
         Ok(t) => t,
         Err(err) => {
             tracing::warn!(?err, session = %session_id, "codex app-server ws path unavailable — falling back to the rollout hybrid (Term + transcript-tailed GUI)");
-            return run_rollout_fallback(store, conv, session_id, cwd, model, effort, bin, yolo)
-                .await;
+            return run_rollout_fallback(
+                store,
+                conv,
+                session_id,
+                cwd,
+                model,
+                effort,
+                bin,
+                yolo,
+                Vec::new(),
+            )
+            .await;
         }
     };
     let (mut ws_write, mut ws_read) = ws_stream.split();
@@ -785,12 +879,13 @@ async fn run_session(
     // setting so the status line isn't blank (and the window-table fallback has
     // something to key on if the event omits `modelContextWindow`).
     acc.seed_model(model.as_deref());
-    // JSON-RPC ids of approval requests awaiting the user's decision (non-YOLO),
-    // FIFO. A queue (not a single slot) so two requests arriving before the user
-    // answers don't drop the first and deadlock the agent. YOLO answers inline and
-    // never parks one here.
-    let mut pending_approvals: std::collections::VecDeque<Value> =
-        std::collections::VecDeque::new();
+    // Approval requests awaiting the user's decision (non-YOLO), FIFO — the
+    // JSON-RPC request id plus the display fields. A queue (not a single slot)
+    // so two requests arriving before the user answers don't drop the first and
+    // deadlock the agent; only the head is surfaced as the store's pending, and
+    // a decision answers that head (see `resolve_approval`). YOLO answers inline
+    // and never parks one here.
+    let mut pending_approvals: VecDeque<ParkedApproval> = VecDeque::new();
     // Role instructions to prepend to the first turn only (supervisors).
     let mut pending_instructions: Option<String> = facade.instructions.clone();
     // A model/effort switch requested before the thread is joined can't be sent
@@ -886,12 +981,7 @@ async fn run_session(
             },
             decision = drx.recv() => match decision {
                 Some(approve) => {
-                    if let Some(id) = pending_approvals.pop_front() {
-                        let result = json!({ "decision": if approve { "accept" } else { "decline" } });
-                        let _ = out_tx.send(json!({ "jsonrpc": "2.0", "id": id, "result": result }));
-                        store.set_managed_mode(session_id, SessionMode::Responding, None);
-                        cur_mode = SessionMode::Responding;
-                    }
+                    resolve_approval(store, session_id, &out_tx, &mut pending_approvals, &mut cur_mode, approve);
                 }
                 None => break,
             },
@@ -930,9 +1020,22 @@ async fn run_session(
     }
 
     // The thread protocol drifted (ws up, but we never rejoined): degrade to the
-    // rollout hybrid so the pane still works.
+    // rollout hybrid so the pane still works — carrying any prompts that were
+    // buffered while waiting for the thread, so a message the GUI already shows
+    // as sent still reaches the agent.
     if needs_fallback {
-        return run_rollout_fallback(store, conv, session_id, cwd, model, effort, bin, yolo).await;
+        return run_rollout_fallback(
+            store,
+            conv,
+            session_id,
+            cwd,
+            model,
+            effort,
+            bin,
+            yolo,
+            pending_prompts,
+        )
+        .await;
     }
     Ok(())
 }
@@ -1008,7 +1111,7 @@ fn handle_message(
     cur_mode: &mut SessionMode,
     acc: &mut UsageAcc,
     yolo: &AtomicBool,
-    pending_approvals: &mut std::collections::VecDeque<Value>,
+    pending_approvals: &mut VecDeque<ParkedApproval>,
     pending_switch: &mut Option<crate::session::ModelSwitch>,
 ) {
     // A response to one of our requests:
@@ -1070,22 +1173,47 @@ fn handle_message(
         }
     }
 
-    let updates = translate(method, &params);
+    let mut updates = translate(method, &params);
+    // Approval cards must NOT flow through `apply_updates`: the store's pending
+    // is a single slot, so a second request would overwrite the displayed card
+    // while the decision channel answers FIFO — the user could approve a command
+    // whose card they never saw. Strip the card fields out here and park them
+    // WITH the request id below; only the queue head is ever surfaced.
+    let mut approval_card: Option<(Option<String>, Option<String>, Value)> = None;
+    updates.retain(|u| match u {
+        AgentUpdate::PermissionPending {
+            tool, summary, raw, ..
+        } => {
+            approval_card = Some((tool.clone(), summary.clone(), raw.clone()));
+            false
+        }
+        _ => true,
+    });
     if !updates.is_empty() {
         apply_updates(store, conv, session_id, updates, cur_mode, acc);
     }
 
     // Server→client *requests* (they carry an id) must be answered or the agent
     // blocks. For an approval request: YOLO accepts inline; otherwise we park the
-    // request id and surface it, so the user's /approve decision is forwarded
-    // (see the decision branch in run_session).
+    // request id + card and surface the FIFO head, so the user's /approve
+    // decision answers the request that's actually on screen (see
+    // `resolve_approval`, called from the decision branch in run_session).
     if value.get("id").is_some() && method.ends_with("/requestApproval") {
         let id = value.get("id").cloned().unwrap_or(Value::Null);
         if yolo.load(Ordering::Relaxed) {
             let _ = out_tx
                 .send(json!({ "jsonrpc": "2.0", "id": id, "result": { "decision": "accept" } }));
         } else {
-            pending_approvals.push_back(id);
+            let (tool, summary, raw) = approval_card.take().unwrap_or((None, None, Value::Null));
+            pending_approvals.push_back(ParkedApproval {
+                id,
+                tool,
+                summary,
+                raw,
+            });
+            if pending_approvals.len() == 1 {
+                surface_approval(store, session_id, cur_mode, &pending_approvals[0]);
+            }
         }
     }
 }
@@ -1541,5 +1669,167 @@ mod tests {
         assert_eq!(sent["params"]["threadId"], "t1");
         assert_eq!(sent["params"]["model"], "gpt-5.5-codex");
         assert_eq!(sent["params"]["effort"], "high");
+    }
+
+    /// The store's pending approval summary, for asserting which card is shown.
+    fn pending_summary(store: &SessionStore, session_id: &str) -> Option<String> {
+        match store.get(session_id).unwrap().pending {
+            Some(Pending::Approval { summary, .. }) => summary,
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn concurrent_approvals_surface_fifo_head_and_answer_it() {
+        let store = SessionStore::new();
+        store.register_managed("s", "/w", "codex");
+        let conv = ConversationStore::new();
+        let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Value>();
+        let mut thread_id = Some("t".to_string());
+        let mut subscribed = true;
+        let mut pending_prompts: Vec<String> = Vec::new();
+        let mut req_id = 2u64;
+        let mut cur_mode = SessionMode::Responding;
+        let mut acc = UsageAcc::new();
+        let yolo = AtomicBool::new(false);
+        let mut pending_approvals: VecDeque<ParkedApproval> = VecDeque::new();
+        let mut pending_switch = None;
+
+        let approval_req = |id: u64, cmd: &str| {
+            json!({
+                "jsonrpc": "2.0", "id": id,
+                "method": "item/commandExecution/requestApproval",
+                "params": { "command": cmd }
+            })
+        };
+        let mut handle =
+            |v: &Value,
+             cur_mode: &mut SessionMode,
+             pending_approvals: &mut VecDeque<ParkedApproval>| {
+                handle_message(
+                    v,
+                    &store,
+                    &conv,
+                    "s",
+                    &out_tx,
+                    &mut thread_id,
+                    &mut subscribed,
+                    &mut pending_prompts,
+                    &mut req_id,
+                    cur_mode,
+                    &mut acc,
+                    &yolo,
+                    pending_approvals,
+                    &mut pending_switch,
+                );
+            };
+
+        // Two approval requests arrive before the user answers either.
+        handle(
+            &approval_req(7, "rm -rf /tmp/x"),
+            &mut cur_mode,
+            &mut pending_approvals,
+        );
+        handle(
+            &approval_req(8, "echo hi"),
+            &mut cur_mode,
+            &mut pending_approvals,
+        );
+        assert_eq!(pending_approvals.len(), 2);
+        assert_eq!(cur_mode, SessionMode::Approval);
+        // The DISPLAYED card is the FIFO head (first request) — a later request
+        // must not overwrite it while the head is what a decision answers.
+        assert_eq!(
+            pending_summary(&store, "s").as_deref(),
+            Some("rm -rf /tmp/x")
+        );
+
+        // Decision 1 (deny): answers the surfaced (first) request…
+        resolve_approval(
+            &store,
+            "s",
+            &out_tx,
+            &mut pending_approvals,
+            &mut cur_mode,
+            false,
+        );
+        let sent = out_rx.try_recv().expect("first decision forwarded");
+        assert_eq!(sent["id"], json!(7));
+        assert_eq!(sent["result"]["decision"], "decline");
+        // …and the second parked request re-surfaces instead of being dropped.
+        assert_eq!(cur_mode, SessionMode::Approval);
+        assert_eq!(pending_summary(&store, "s").as_deref(), Some("echo hi"));
+
+        // Decision 2 (approve): answers the second request and resumes the turn.
+        resolve_approval(
+            &store,
+            "s",
+            &out_tx,
+            &mut pending_approvals,
+            &mut cur_mode,
+            true,
+        );
+        let sent = out_rx.try_recv().expect("second decision forwarded");
+        assert_eq!(sent["id"], json!(8));
+        assert_eq!(sent["result"]["decision"], "accept");
+        assert_eq!(cur_mode, SessionMode::Responding);
+        assert!(pending_summary(&store, "s").is_none());
+        assert!(pending_approvals.is_empty());
+
+        // A stray decision with nothing parked is a no-op, not a panic.
+        resolve_approval(
+            &store,
+            "s",
+            &out_tx,
+            &mut pending_approvals,
+            &mut cur_mode,
+            true,
+        );
+        assert!(out_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn yolo_approval_is_answered_inline_and_never_parked() {
+        let store = SessionStore::new();
+        store.register_managed("s2", "/w", "codex");
+        let conv = ConversationStore::new();
+        let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Value>();
+        let mut thread_id = Some("t".to_string());
+        let mut subscribed = true;
+        let mut pending_prompts: Vec<String> = Vec::new();
+        let mut req_id = 2u64;
+        let mut cur_mode = SessionMode::Responding;
+        let mut acc = UsageAcc::new();
+        let yolo = AtomicBool::new(true);
+        let mut pending_approvals: VecDeque<ParkedApproval> = VecDeque::new();
+        let mut pending_switch = None;
+
+        handle_message(
+            &json!({
+                "jsonrpc": "2.0", "id": 9,
+                "method": "item/commandExecution/requestApproval",
+                "params": { "command": "ls" }
+            }),
+            &store,
+            &conv,
+            "s2",
+            &out_tx,
+            &mut thread_id,
+            &mut subscribed,
+            &mut pending_prompts,
+            &mut req_id,
+            &mut cur_mode,
+            &mut acc,
+            &yolo,
+            &mut pending_approvals,
+            &mut pending_switch,
+        );
+        let sent = out_rx.try_recv().expect("yolo auto-accept");
+        assert_eq!(sent["id"], json!(9));
+        assert_eq!(sent["result"]["decision"], "accept");
+        assert!(pending_approvals.is_empty());
+        // The stripped PermissionPending must not have flipped the mode either.
+        assert_eq!(cur_mode, SessionMode::Responding);
+        assert!(pending_summary(&store, "s2").is_none());
     }
 }
