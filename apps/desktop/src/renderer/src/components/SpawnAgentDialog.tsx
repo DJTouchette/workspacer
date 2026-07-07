@@ -68,6 +68,12 @@ interface ProviderDetection {
   customBin: string;
 }
 
+/**
+ * The "new agent" screen. Despite the (legacy) name it renders as a full-bleed
+ * workspace page — a blank agent about to be born — not a floating modal:
+ * provider mark up top, a hero working-directory input, provider logo cards,
+ * then the remaining knobs as a quiet row of composer-style pills.
+ */
 const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   defaultCwd,
   defaultProvider,
@@ -101,6 +107,8 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   // from the chosen profile's default loadout; overridable here.
   const [mcpItems, setMcpItems] = useState<LibraryItem[]>([]);
   const [mcpSel, setMcpSel] = useState<string[]>([]);
+  // Whether the MCP chip strip is expanded (the pill just shows the count).
+  const [mcpOpen, setMcpOpen] = useState(false);
 
   // Model selection. `modelSel` is the dropdown value (''=Default, an alias/id,
   // or the CUSTOM sentinel); `customModel` holds the free-text id when CUSTOM.
@@ -114,6 +122,9 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   // and reasoning effort ('' = provider default; codex only). See providerCaps.
   const [permissionMode, setPermissionMode] = useState('');
   const [effort, setEffort] = useState('');
+
+  // Hero input focus — drives the underline accent (no :focus-within inline).
+  const [cwdFocus, setCwdFocus] = useState(false);
 
   // Resume an existing Claude session in this cwd. ''=start fresh.
   const [sessions, setSessions] = useState<
@@ -361,81 +372,352 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   };
 
   const placeholderName = cwd.trim() ? deriveAgentName(cwd.trim()) : 'agent';
+  const providerLabel = PROVIDERS.find((p) => p.value === provider)?.label ?? provider;
+  const bypassSelected = permissionMode === 'bypassPermissions' || permissionMode === 'yolo';
+
+  // Enter/Escape on the text inputs — same behavior as the old modal.
+  const keySubmit = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') submit();
+    if (e.key === 'Escape') onCancel();
+  };
+
+  // ── Options as composer-style pills — only the relevant knobs appear ──────
+  const pills: React.ReactNode[] = [];
+
+  if (isClaude) {
+    pills.push(
+      <PillGroup label="model">
+        <select value={modelSel} onChange={(e) => setModelSel(e.target.value)} style={pillSelect}>
+          <option value="">Default (Claude Code setting)</option>
+          {aliases.length > 0 && (
+            <optgroup label="Latest">
+              {aliases.map((a) => (
+                <option key={a.value} value={a.value}>
+                  {a.label}
+                  {a.context ? ` · ${a.context}` : ''}
+                </option>
+              ))}
+            </optgroup>
+          )}
+          {seen.length > 0 && (
+            <optgroup label="Seen in sessions">
+              {seen.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </optgroup>
+          )}
+          <option value={CUSTOM}>Custom…</option>
+        </select>
+      </PillGroup>,
+    );
+  } else if (providerModels.length > 0) {
+    pills.push(
+      <PillGroup label="model">
+        <select
+          value={providerSel}
+          onChange={(e) => setProviderSel(e.target.value)}
+          style={pillSelect}
+        >
+          <option value="">Default ({providerLabel} setting)</option>
+          <optgroup label="Available">
+            {providerModels.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.label}
+                {m.default ? '  — default' : ''}
+              </option>
+            ))}
+          </optgroup>
+          <option value={CUSTOM}>Custom…</option>
+        </select>
+      </PillGroup>,
+    );
+  } else {
+    pills.push(
+      <PillGroup label="model">
+        <input
+          value={providerCustom}
+          onChange={(e) => setProviderCustom(e.target.value)}
+          onKeyDown={keySubmit}
+          placeholder={providerModelsLoading ? 'Loading models…' : modelPlaceholder(provider)}
+          spellCheck={false}
+          style={{ ...inlineInput, width: 250 }}
+        />
+      </PillGroup>,
+    );
+  }
+
+  if (isClaude) {
+    pills.push(
+      <PillGroup
+        label="transport"
+        title={
+          transport === 'pty'
+            ? 'The classic Claude Code TUI in a terminal — Term and GUI views.'
+            : 'Headless stream-json via claudemon — structured GUI only, no terminal view.'
+        }
+      >
+        {(
+          [
+            { value: 'pty', label: 'terminal' },
+            { value: 'stream', label: 'headless' },
+          ] as const
+        ).map((t) => (
+          <button
+            key={t.value}
+            onClick={() => setTransport(t.value)}
+            style={segBtn(transport === t.value)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </PillGroup>,
+    );
+  }
+
+  if (isClaude && sessions.length > 0) {
+    pills.push(
+      <PillGroup label="resume">
+        <select
+          value={resumeSessionId}
+          onChange={(e) => setResumeSessionId(e.target.value)}
+          style={pillSelect}
+        >
+          <option value="">Start fresh</option>
+          {sessions.map((s) => (
+            <option key={s.sessionId} value={s.sessionId}>
+              {relTime(s.timestamp)} — {s.summary}
+            </option>
+          ))}
+        </select>
+      </PillGroup>,
+    );
+  }
+
+  if (isClaude && profiles.length > 0) {
+    pills.push(
+      <PillGroup label="profile">
+        <select value={profileId} onChange={(e) => setProfileId(e.target.value)} style={pillSelect}>
+          <option value="">Default</option>
+          {profiles.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+      </PillGroup>,
+    );
+  }
+
+  if (isClaude && mcpItems.length > 0) {
+    pills.push(
+      <PillGroup label="mcp">
+        <button
+          className="wks-composer-ctl"
+          onClick={() => setMcpOpen((o) => !o)}
+          title="Only the checked servers are exposed to this session (--strict-mcp-config)."
+          style={{ ...pillBtn, color: mcpSel.length ? 'var(--wks-text-primary)' : pillBtn.color }}
+        >
+          {mcpSel.length}/{mcpItems.length} server{mcpItems.length === 1 ? '' : 's'}
+          <span style={{ fontSize: '0.55rem', opacity: 0.8 }}>{mcpOpen ? '▲' : '▼'}</span>
+        </button>
+      </PillGroup>,
+    );
+  }
+
+  if (capsFor(provider).effort) {
+    pills.push(
+      <PillGroup label="effort">
+        <select value={effort} onChange={(e) => setEffort(e.target.value)} style={pillSelect}>
+          <option value="">Default</option>
+          {capsFor(provider).effort!.levels.map((l) => (
+            <option key={l.id} value={l.id}>
+              {l.label}
+            </option>
+          ))}
+        </select>
+      </PillGroup>,
+    );
+  }
+
+  pills.push(
+    <PillGroup label="permissions">
+      <select
+        value={permissionMode}
+        onChange={(e) => setPermissionMode(e.target.value)}
+        style={{
+          ...pillSelect,
+          color: bypassSelected ? 'var(--wks-danger, #e05555)' : pillSelect.color,
+        }}
+      >
+        {capsFor(provider).permissionModes.map((m, i) => (
+          <option key={m.id} value={i === 0 ? '' : m.id}>
+            {m.label}
+          </option>
+        ))}
+      </select>
+    </PillGroup>,
+  );
 
   return (
     <div
-      onMouseDown={onCancel}
       style={{
         position: 'fixed',
         inset: 0,
         zIndex: 20000,
-        backgroundColor: 'var(--wks-overlay, rgba(0,0,0,0.5))',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
+        background: 'var(--wks-bg-base)',
+        overflow: 'hidden',
+        animation: 'wks-fade-in 0.25s ease-out',
       }}
     >
+      {/* Soft accent glow behind the centerpiece — pure decoration */}
       <div
-        onMouseDown={(e) => e.stopPropagation()}
+        aria-hidden
         style={{
-          width: 420,
-          maxWidth: '90vw',
-          backgroundColor: 'var(--wks-glass-strong)',
-          backdropFilter: 'blur(var(--wks-glass-blur)) saturate(170%)',
-          WebkitBackdropFilter: 'blur(var(--wks-glass-blur)) saturate(170%)',
-          border: '1px solid var(--wks-glass-border)',
-          borderRadius: 'var(--wks-radius-lg)',
-          padding: 20,
-          boxShadow:
-            '0 16px 48px var(--wks-glass-shadow), inset 0 0 0 1.5px var(--wks-glass-highlight)',
-          fontFamily: 'inherit',
+          position: 'absolute',
+          top: '-18%',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          width: 720,
+          height: 720,
+          borderRadius: '50%',
+          background:
+            'radial-gradient(circle, color-mix(in srgb, var(--wks-accent) 8%, transparent) 0%, transparent 65%)',
+          pointerEvents: 'none',
         }}
-      >
+      />
+
+      <div style={{ position: 'relative', height: '100%', overflowY: 'auto' }}>
         <div
           style={{
-            fontSize: '0.9rem',
-            fontWeight: 600,
-            color: 'var(--wks-text-primary)',
-            marginBottom: 16,
+            minHeight: '100%',
+            maxWidth: 660,
+            margin: '0 auto',
+            padding: '9vh 32px 40px',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            boxSizing: 'border-box',
           }}
         >
-          Spawn agent
-        </div>
-
-        <Field label="Working directory">
-          <div style={{ display: 'flex', gap: 6 }}>
-            <input
-              autoFocus
-              value={cwd}
-              onChange={(e) => setCwd(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') submit();
-                if (e.key === 'Escape') onCancel();
-              }}
-              placeholder="/path/to/project"
-              style={inputStyle}
-            />
-            <button onClick={browse} style={browseBtnStyle}>
-              Browse…
-            </button>
-          </div>
-        </Field>
-
-        <Field label="Name (optional)">
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') submit();
-              if (e.key === 'Escape') onCancel();
+          {/* ── Centerpiece: the agent about to be born ─────────────────── */}
+          <div
+            style={{
+              width: 64,
+              height: 64,
+              borderRadius: '50%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              border: '1px solid var(--wks-border-input)',
+              background: 'color-mix(in srgb, var(--wks-accent) 5%, transparent)',
+              color: 'var(--wks-text-primary)',
             }}
-            placeholder={placeholderName}
-            style={inputStyle}
-          />
-        </Field>
+          >
+            <AgentLogo provider={provider} size={30} />
+          </div>
+          <div
+            style={{
+              marginTop: 16,
+              fontSize: '1.05rem',
+              fontWeight: 650,
+              letterSpacing: '-0.01em',
+              color: 'var(--wks-text-primary)',
+            }}
+          >
+            New agent
+          </div>
+          <div style={{ marginTop: 5, fontSize: '0.72rem', color: 'var(--wks-text-muted)' }}>
+            Give it a home directory and set it loose.
+          </div>
 
-        <Field label="Agent">
-          <div style={{ display: 'flex', gap: 4 }}>
+          {/* ── Hero: working directory ─────────────────────────────────── */}
+          <div style={{ width: '100%', maxWidth: 560, marginTop: 40 }}>
+            <div style={quietLabel}>working directory</div>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                marginTop: 6,
+                paddingBottom: 7,
+                borderBottom: `1px solid ${
+                  cwdFocus ? 'var(--wks-accent)' : 'var(--wks-border-input)'
+                }`,
+                transition: 'border-color 0.15s',
+              }}
+            >
+              <span
+                aria-hidden
+                style={{
+                  fontFamily: 'var(--wks-font-mono)',
+                  fontSize: '0.95rem',
+                  color: cwdFocus ? 'var(--wks-accent)' : 'var(--wks-text-faint)',
+                  userSelect: 'none',
+                  transition: 'color 0.15s',
+                }}
+              >
+                ❯
+              </span>
+              <input
+                autoFocus
+                value={cwd}
+                onChange={(e) => setCwd(e.target.value)}
+                onKeyDown={keySubmit}
+                onFocus={() => setCwdFocus(true)}
+                onBlur={() => setCwdFocus(false)}
+                placeholder="/path/to/project"
+                spellCheck={false}
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  background: 'transparent',
+                  border: 'none',
+                  outline: 'none',
+                  fontFamily: 'var(--wks-font-mono)',
+                  fontSize: '0.98rem',
+                  color: 'var(--wks-text-primary)',
+                  padding: 0,
+                }}
+              />
+              <button onClick={browse} className="wks-composer-ctl" style={ghostBtnSmall}>
+                Browse…
+              </button>
+            </div>
+
+            {/* Optional name — a ghost input, not a form row */}
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={keySubmit}
+              placeholder={`name it (optional) · ${placeholderName}`}
+              spellCheck={false}
+              style={{
+                marginTop: 10,
+                width: '100%',
+                background: 'transparent',
+                border: 'none',
+                outline: 'none',
+                fontFamily: 'var(--wks-font-mono)',
+                fontSize: '0.72rem',
+                color: 'var(--wks-text-tertiary)',
+                padding: 0,
+              }}
+            />
+          </div>
+
+          {/* ── Provider: a row of logo cards ───────────────────────────── */}
+          <div
+            style={{
+              display: 'flex',
+              gap: 8,
+              marginTop: 34,
+              width: '100%',
+              maxWidth: 560,
+              justifyContent: 'center',
+            }}
+          >
             {PROVIDERS.map((p) => {
               const active = provider === p.value;
               const det = providerDetection.find((d) => d.provider === p.value);
@@ -458,83 +740,157 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                   }
                   style={{
                     flex: 1,
-                    padding: '6px 8px',
-                    borderRadius: 6,
-                    cursor: 'pointer',
+                    maxWidth: 136,
+                    position: 'relative',
                     display: 'flex',
+                    flexDirection: 'column',
                     alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: 6,
-                    fontSize: '0.72rem',
+                    gap: 7,
+                    padding: '14px 8px 11px',
+                    borderRadius: 'var(--wks-radius-md, 8px)',
+                    cursor: 'pointer',
                     fontFamily: 'inherit',
-                    fontWeight: 600,
                     border: active
                       ? '1px solid var(--wks-accent)'
                       : '1px solid var(--wks-border-input)',
                     background: active ? 'var(--wks-accent-bg)' : 'transparent',
-                    color: active
-                      ? 'var(--wks-accent-text, var(--wks-text-primary))'
-                      : 'var(--wks-text-tertiary)',
+                    transition: 'border-color 0.15s, background-color 0.15s',
                   }}
                 >
-                  <AgentLogo
-                    provider={p.value}
-                    size={14}
-                    style={{ flexShrink: 0, opacity: active ? 1 : 0.75 }}
-                  />
-                  {p.label}
-                  {p.beta && (
-                    <span
-                      title="Beta — not yet thoroughly tested"
-                      style={{
-                        fontSize: '0.5rem',
-                        fontWeight: 700,
-                        letterSpacing: '0.04em',
-                        lineHeight: 1,
-                        padding: '2px 3px',
-                        borderRadius: 3,
-                        flexShrink: 0,
-                        color: 'var(--wks-warning, #e0a000)',
-                        border: '1px solid var(--wks-warning, #e0a000)',
-                        opacity: active ? 1 : 0.7,
-                      }}
-                    >
-                      BETA
-                    </span>
-                  )}
                   <span
+                    aria-hidden
                     style={{
+                      position: 'absolute',
+                      top: 8,
+                      right: 8,
                       width: 6,
                       height: 6,
                       borderRadius: '50%',
                       background: dotColor,
-                      flexShrink: 0,
                     }}
                   />
+                  <AgentLogo
+                    provider={p.value}
+                    size={20}
+                    style={{
+                      color: 'var(--wks-text-primary)',
+                      opacity: active ? 1 : 0.65,
+                      transition: 'opacity 0.15s',
+                    }}
+                  />
+                  <span
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 5,
+                      fontSize: '0.68rem',
+                      fontWeight: 600,
+                      color: active
+                        ? 'var(--wks-accent-text, var(--wks-text-primary))'
+                        : 'var(--wks-text-tertiary)',
+                    }}
+                  >
+                    {p.label}
+                    {p.beta && (
+                      <span
+                        title="Beta — not yet thoroughly tested"
+                        style={{
+                          fontSize: '0.5rem',
+                          fontWeight: 700,
+                          letterSpacing: '0.04em',
+                          lineHeight: 1,
+                          padding: '2px 3px',
+                          borderRadius: 3,
+                          color: 'var(--wks-warning, #e0a000)',
+                          border: '1px solid var(--wks-warning, #e0a000)',
+                          opacity: active ? 1 : 0.7,
+                        }}
+                      >
+                        BETA
+                      </span>
+                    )}
+                  </span>
                 </button>
               );
             })}
           </div>
 
-          {/* Detection status + custom binary path for the selected provider */}
+          {/* Detection status + custom binary for the selected provider */}
           {currentDetection && (
-            <div style={{ marginTop: 6 }}>
+            <div style={{ width: '100%', maxWidth: 560, marginTop: 10, textAlign: 'center' }}>
               {currentDetection.found ? (
-                <div style={{ color: 'var(--wks-success)', fontSize: '0.62rem' }}>
-                  ✓ {currentDetection.resolvedPath}
-                </div>
+                <>
+                  <div
+                    style={{
+                      color: 'var(--wks-text-faint)',
+                      fontSize: '0.62rem',
+                      fontFamily: 'var(--wks-font-mono)',
+                    }}
+                  >
+                    <span style={{ color: 'var(--wks-success)' }}>✓</span>{' '}
+                    {currentDetection.resolvedPath}
+                  </div>
+                  <details style={{ marginTop: 4 }}>
+                    <summary
+                      style={{
+                        fontSize: '0.6rem',
+                        color: 'var(--wks-text-faint)',
+                        cursor: 'pointer',
+                        listStylePosition: 'inside',
+                      }}
+                    >
+                      custom binary…
+                    </summary>
+                    <div
+                      style={{
+                        display: 'flex',
+                        gap: 8,
+                        marginTop: 6,
+                        justifyContent: 'center',
+                        alignItems: 'center',
+                      }}
+                    >
+                      <input
+                        value={customBinPath}
+                        onChange={(e) => setCustomBinPath(e.target.value)}
+                        onBlur={(e) => saveCustomBin(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') saveCustomBin(customBinPath);
+                          if (e.key === 'Escape') onCancel();
+                        }}
+                        placeholder={currentDetection.resolvedPath ?? ''}
+                        spellCheck={false}
+                        style={{ ...inlineInput, flex: 1, maxWidth: 380 }}
+                      />
+                      <button
+                        onClick={browseCustomBin}
+                        className="wks-composer-ctl"
+                        style={ghostBtnSmall}
+                      >
+                        Browse…
+                      </button>
+                    </div>
+                  </details>
+                </>
               ) : (
                 <div>
                   <div
                     style={{
                       color: 'var(--wks-danger, #e05555)',
                       fontSize: '0.62rem',
-                      marginBottom: 4,
+                      marginBottom: 6,
                     }}
                   >
                     Not found on PATH — set a custom path or install the CLI
                   </div>
-                  <div style={{ display: 'flex', gap: 4 }}>
+                  <div
+                    style={{
+                      display: 'flex',
+                      gap: 8,
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                    }}
+                  >
                     <input
                       value={customBinPath}
                       onChange={(e) => setCustomBinPath(e.target.value)}
@@ -545,44 +901,17 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                       }}
                       placeholder={`/usr/local/bin/${provider}`}
                       spellCheck={false}
-                      style={{ ...inputStyle, fontSize: '0.72rem' }}
+                      style={{ ...inlineInput, flex: 1, maxWidth: 380 }}
                     />
-                    <button onClick={browseCustomBin} style={browseBtnStyle}>
+                    <button
+                      onClick={browseCustomBin}
+                      className="wks-composer-ctl"
+                      style={ghostBtnSmall}
+                    >
                       Browse…
                     </button>
                   </div>
                 </div>
-              )}
-              {/* Let the user override even when auto-detected */}
-              {currentDetection.found && (
-                <details style={{ marginTop: 4 }}>
-                  <summary
-                    style={{
-                      fontSize: '0.6rem',
-                      color: 'var(--wks-text-faint)',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    Override binary path…
-                  </summary>
-                  <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
-                    <input
-                      value={customBinPath}
-                      onChange={(e) => setCustomBinPath(e.target.value)}
-                      onBlur={(e) => saveCustomBin(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') saveCustomBin(customBinPath);
-                        if (e.key === 'Escape') onCancel();
-                      }}
-                      placeholder={currentDetection.resolvedPath ?? ''}
-                      spellCheck={false}
-                      style={{ ...inputStyle, fontSize: '0.72rem' }}
-                    />
-                    <button onClick={browseCustomBin} style={browseBtnStyle}>
-                      Browse…
-                    </button>
-                  </div>
-                </details>
               )}
             </div>
           )}
@@ -590,291 +919,179 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
           {!isClaude && (
             <div
               style={{
+                marginTop: 10,
+                maxWidth: 460,
+                textAlign: 'center',
                 color: 'var(--wks-text-faint)',
                 fontSize: '0.62rem',
-                marginTop: 5,
-                lineHeight: 1.4,
+                lineHeight: 1.5,
               }}
             >
-              Runs via claudemon's {PROVIDERS.find((p) => p.value === provider)?.label} adapter —
-              conversation and usage stream into the agent view. Approvals are auto-accepted for
-              now.
+              Runs via claudemon's {providerLabel} adapter — conversation and usage stream into the
+              agent view. Approvals are auto-accepted for now.
             </div>
           )}
-        </Field>
 
-        {!isClaude && (
-          <Field label="Model (optional)">
-            {providerModels.length > 0 ? (
-              <>
-                <select
-                  value={providerSel}
-                  onChange={(e) => setProviderSel(e.target.value)}
-                  style={inputStyle}
-                >
-                  <option value="">
-                    Default ({PROVIDERS.find((p) => p.value === provider)?.label} setting)
-                  </option>
-                  <optgroup label="Available">
-                    {providerModels.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.label}
-                        {m.default ? '  — default' : ''}
-                      </option>
-                    ))}
-                  </optgroup>
-                  <option value={CUSTOM}>Custom…</option>
-                </select>
-                {providerSel === CUSTOM && (
-                  <input
-                    value={providerCustom}
-                    onChange={(e) => setProviderCustom(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') submit();
-                      if (e.key === 'Escape') onCancel();
-                    }}
-                    placeholder={modelPlaceholder(provider)}
-                    style={{ ...inputStyle, marginTop: 6 }}
-                  />
-                )}
-              </>
-            ) : (
-              <input
-                value={providerCustom}
-                onChange={(e) => setProviderCustom(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') submit();
-                  if (e.key === 'Escape') onCancel();
-                }}
-                placeholder={providerModelsLoading ? 'Loading models…' : modelPlaceholder(provider)}
-                style={inputStyle}
-              />
-            )}
-          </Field>
-        )}
-
-        {isClaude && (
-          <Field label="Transport">
-            <div style={{ display: 'flex', gap: 4 }}>
-              {(
-                [
-                  { value: 'pty', label: 'Terminal (PTY)' },
-                  { value: 'stream', label: 'Headless (stream)' },
-                ] as const
-              ).map((t) => {
-                const active = transport === t.value;
-                return (
-                  <button
-                    key={t.value}
-                    onClick={() => setTransport(t.value)}
-                    style={{
-                      flex: 1,
-                      padding: '6px 8px',
-                      borderRadius: 6,
-                      cursor: 'pointer',
-                      fontSize: '0.72rem',
-                      fontFamily: 'inherit',
-                      fontWeight: 600,
-                      border: active
-                        ? '1px solid var(--wks-accent)'
-                        : '1px solid var(--wks-border-input)',
-                      background: active ? 'var(--wks-accent-bg)' : 'transparent',
-                      color: active
-                        ? 'var(--wks-accent-text, var(--wks-text-primary))'
-                        : 'var(--wks-text-tertiary)',
-                    }}
-                  >
-                    {t.label}
-                  </button>
-                );
-              })}
-            </div>
-            <div
-              style={{
-                color: 'var(--wks-text-faint)',
-                fontSize: '0.62rem',
-                marginTop: 5,
-                lineHeight: 1.4,
-              }}
-            >
-              {transport === 'pty'
-                ? 'The classic Claude Code TUI in a terminal — Term and GUI views.'
-                : 'Headless stream-json via claudemon — structured GUI only, no terminal view.'}
-            </div>
-          </Field>
-        )}
-
-        {isClaude && sessions.length > 0 && (
-          <Field label="Resume session (optional)">
-            <select
-              value={resumeSessionId}
-              onChange={(e) => setResumeSessionId(e.target.value)}
-              style={inputStyle}
-            >
-              <option value="">Start fresh</option>
-              {sessions.map((s) => (
-                <option key={s.sessionId} value={s.sessionId}>
-                  {relTime(s.timestamp)} — {s.summary}
-                </option>
-              ))}
-            </select>
-          </Field>
-        )}
-
-        {isClaude && (
-          <Field label="Model">
-            <select
-              value={modelSel}
-              onChange={(e) => setModelSel(e.target.value)}
-              style={inputStyle}
-            >
-              <option value="">Default (Claude Code setting)</option>
-              {aliases.length > 0 && (
-                <optgroup label="Latest">
-                  {aliases.map((a) => (
-                    <option key={a.value} value={a.value}>
-                      {a.label}
-                      {a.context ? ` · ${a.context}` : ''}
-                    </option>
-                  ))}
-                </optgroup>
-              )}
-              {seen.length > 0 && (
-                <optgroup label="Seen in sessions">
-                  {seen.map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
-                </optgroup>
-              )}
-              <option value={CUSTOM}>Custom…</option>
-            </select>
-            {modelSel === CUSTOM && (
-              <input
-                value={customModel}
-                onChange={(e) => setCustomModel(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') submit();
-                  if (e.key === 'Escape') onCancel();
-                }}
-                placeholder="claude-opus-4-8  or  opus"
-                style={{ ...inputStyle, marginTop: 6 }}
-              />
-            )}
-          </Field>
-        )}
-
-        {isClaude && profiles.length > 0 && (
-          <Field label="Profile (optional)">
-            <select
-              value={profileId}
-              onChange={(e) => setProfileId(e.target.value)}
-              style={inputStyle}
-            >
-              <option value="">Default</option>
-              {profiles.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-        )}
-
-        {isClaude && mcpItems.length > 0 && (
-          <Field label="MCP servers (optional)">
-            <div
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 2,
-                maxHeight: 132,
-                overflowY: 'auto',
-                border: '1px solid var(--wks-border-input)',
-                borderRadius: 4,
-                padding: 4,
-              }}
-            >
-              {mcpItems.map((it) => (
-                <label
-                  key={it.id}
-                  title={it.description || it.id}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    padding: '4px 6px',
-                    borderRadius: 4,
-                    cursor: 'pointer',
-                    fontSize: '0.75rem',
-                    color: 'var(--wks-text-primary)',
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={mcpSel.includes(it.id)}
-                    onChange={() => toggleMcp(it.id)}
-                    style={{ cursor: 'pointer' }}
-                  />
-                  <span
-                    style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                  >
-                    {it.title}
-                  </span>
-                  <span style={{ fontSize: '0.6rem', color: 'var(--wks-text-faint)' }}>
-                    {it.mcp?.url ? (it.mcp.type === 'sse' ? 'sse' : 'http') : 'stdio'}
-                  </span>
-                </label>
-              ))}
-            </div>
-            <div style={{ color: 'var(--wks-text-faint)', fontSize: '0.62rem', marginTop: 3 }}>
-              Only the checked servers are exposed to this session (--strict-mcp-config).
-            </div>
-          </Field>
-        )}
-
-        {capsFor(provider).effort && (
-          <Field label="Reasoning effort">
-            <select value={effort} onChange={(e) => setEffort(e.target.value)} style={inputStyle}>
-              <option value="">Default</option>
-              {capsFor(provider).effort!.levels.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.label}
-                </option>
-              ))}
-            </select>
-          </Field>
-        )}
-
-        <Field label="Permissions">
-          <select
-            value={permissionMode}
-            onChange={(e) => setPermissionMode(e.target.value)}
-            style={inputStyle}
+          {/* ── The rest: composer-style pills ──────────────────────────── */}
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 6,
+              rowGap: 12,
+              marginTop: 30,
+              maxWidth: 620,
+            }}
           >
-            {capsFor(provider).permissionModes.map((m, i) => (
-              <option key={m.id} value={i === 0 ? '' : m.id}>
-                {m.label}
-              </option>
+            {pills.map((pill, i) => (
+              <React.Fragment key={i}>
+                {i > 0 && <PillSep />}
+                {pill}
+              </React.Fragment>
             ))}
-          </select>
-          {(permissionMode === 'bypassPermissions' || permissionMode === 'yolo') && (
-            <div style={{ color: 'var(--wks-danger, #e05555)', fontSize: '0.65rem', marginTop: 3 }}>
+          </div>
+
+          {/* Custom model id — free text, shown when Custom… is picked */}
+          {isClaude && modelSel === CUSTOM && (
+            <input
+              value={customModel}
+              onChange={(e) => setCustomModel(e.target.value)}
+              onKeyDown={keySubmit}
+              placeholder="claude-opus-4-8  or  opus"
+              spellCheck={false}
+              style={{ ...inlineInput, marginTop: 12, width: 280, textAlign: 'center' }}
+            />
+          )}
+          {!isClaude && providerModels.length > 0 && providerSel === CUSTOM && (
+            <input
+              value={providerCustom}
+              onChange={(e) => setProviderCustom(e.target.value)}
+              onKeyDown={keySubmit}
+              placeholder={modelPlaceholder(provider)}
+              spellCheck={false}
+              style={{ ...inlineInput, marginTop: 12, width: 300, textAlign: 'center' }}
+            />
+          )}
+
+          {/* MCP chip strip — expanded from the pill */}
+          {isClaude && mcpItems.length > 0 && mcpOpen && (
+            <div style={{ marginTop: 14, maxWidth: 560, textAlign: 'center' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  justifyContent: 'center',
+                  gap: 6,
+                }}
+              >
+                {mcpItems.map((it) => {
+                  const on = mcpSel.includes(it.id);
+                  return (
+                    <button
+                      key={it.id}
+                      onClick={() => toggleMcp(it.id)}
+                      title={it.description || it.id}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        fontSize: '0.68rem',
+                        fontWeight: 500,
+                        fontFamily: 'inherit',
+                        padding: '4px 11px',
+                        borderRadius: 'var(--wks-radius-pill, 999px)',
+                        cursor: 'pointer',
+                        maxWidth: 220,
+                        border: on
+                          ? '1px solid var(--wks-accent)'
+                          : '1px solid var(--wks-border-input)',
+                        background: on ? 'var(--wks-accent-bg)' : 'transparent',
+                        color: on
+                          ? 'var(--wks-accent-text, var(--wks-text-primary))'
+                          : 'var(--wks-text-tertiary)',
+                        transition: 'border-color 0.15s, color 0.15s',
+                      }}
+                    >
+                      <span
+                        style={{
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {it.title}
+                      </span>
+                      <span style={{ fontSize: '0.58rem', color: 'var(--wks-text-faint)' }}>
+                        {it.mcp?.url ? (it.mcp.type === 'sse' ? 'sse' : 'http') : 'stdio'}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              <div style={{ color: 'var(--wks-text-faint)', fontSize: '0.6rem', marginTop: 7 }}>
+                Only the checked servers are exposed to this session (--strict-mcp-config).
+              </div>
+            </div>
+          )}
+
+          {/* Bypass danger note — always visible when a bypass mode is picked */}
+          {bypassSelected && (
+            <div
+              style={{
+                marginTop: 12,
+                fontSize: '0.68rem',
+                color: 'var(--wks-danger, #e05555)',
+                textAlign: 'center',
+              }}
+            >
               {isClaude
                 ? 'Dangerous — bypasses all approval prompts (--dangerously-skip-permissions).'
                 : 'Dangerous — auto-approves every command and file change, no prompts.'}
             </div>
           )}
-        </Field>
 
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}>
-          <button onClick={onCancel} style={secondaryBtnStyle}>
-            Cancel
-          </button>
-          <button onClick={submit} disabled={!cwd.trim()} style={primaryBtnStyle(!cwd.trim())}>
-            Spawn
-          </button>
+          {/* ── Launch ──────────────────────────────────────────────────── */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginTop: 38 }}>
+            <button
+              onClick={onCancel}
+              className="wks-composer-ctl"
+              style={{
+                fontSize: '0.78rem',
+                fontFamily: 'inherit',
+                fontWeight: 500,
+                cursor: 'pointer',
+                background: 'transparent',
+                color: 'var(--wks-text-muted)',
+                border: 'none',
+                borderRadius: 'var(--wks-radius-md, 6px)',
+                padding: '9px 16px',
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={submit}
+              disabled={!cwd.trim()}
+              style={{
+                fontSize: '0.82rem',
+                fontFamily: 'inherit',
+                fontWeight: 600,
+                cursor: !cwd.trim() ? 'default' : 'pointer',
+                background: !cwd.trim() ? 'var(--wks-bg-input)' : 'var(--wks-accent)',
+                color: !cwd.trim() ? 'var(--wks-text-faint)' : 'var(--wks-text-on-accent, #fff)',
+                border: 'none',
+                borderRadius: 'var(--wks-radius-md, 6px)',
+                padding: '9px 26px',
+              }}
+            >
+              Spawn agent
+            </button>
+          </div>
+          <div style={{ marginTop: 14, fontSize: '0.62rem', color: 'var(--wks-text-faint)' }}>
+            enter to spawn · esc to cancel
+          </div>
         </div>
       </div>
     </div>
@@ -894,63 +1111,117 @@ function relTime(iso: string): string {
   return `${Math.floor(h / 24)}d ago`;
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+/** A quiet label + control pair — the composer-pill idiom, no boxy fieldsets. */
+function PillGroup({
+  label,
+  title,
+  children,
+}: {
+  label: string;
+  title?: string;
+  children: React.ReactNode;
+}) {
   return (
-    <div style={{ marginBottom: 12 }}>
-      <div style={{ fontSize: '0.65rem', color: 'var(--wks-text-muted)', marginBottom: 4 }}>
-        {label}
-      </div>
+    <span
+      title={title}
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '0 2px' }}
+    >
+      <span style={quietLabel}>{label}</span>
       {children}
-    </div>
+    </span>
   );
 }
 
-const inputStyle: React.CSSProperties = {
-  flex: 1,
-  width: '100%',
-  boxSizing: 'border-box',
-  fontSize: '0.8rem',
-  fontFamily: 'inherit',
-  background: 'var(--wks-bg-base)',
-  color: 'var(--wks-text-primary)',
-  border: '1px solid var(--wks-border-input)',
-  borderRadius: 4,
-  padding: '6px 8px',
-};
+/** Thin vertical rule between pill groups (same idiom as ComposerControls). */
+const PillSep: React.FC = () => (
+  <span
+    aria-hidden
+    style={{ width: 1, height: 14, flexShrink: 0, background: 'var(--wks-border-input)' }}
+  />
+);
 
-const browseBtnStyle: React.CSSProperties = {
-  fontSize: '0.75rem',
-  fontFamily: 'inherit',
-  cursor: 'pointer',
-  background: 'var(--wks-bg-input)',
-  color: 'var(--wks-text-tertiary)',
-  border: '1px solid var(--wks-border-input)',
-  borderRadius: 4,
-  padding: '0 10px',
+const quietLabel: React.CSSProperties = {
+  fontSize: '0.58rem',
+  fontWeight: 600,
+  letterSpacing: '0.08em',
+  textTransform: 'uppercase',
+  color: 'var(--wks-text-faint)',
+  userSelect: 'none',
   whiteSpace: 'nowrap',
 };
 
-const secondaryBtnStyle: React.CSSProperties = {
-  fontSize: '0.78rem',
-  fontFamily: 'inherit',
-  cursor: 'pointer',
+/** Flat, borderless select styled like a composer pill. */
+const pillSelect: React.CSSProperties = {
   background: 'transparent',
+  border: 'none',
+  borderRadius: 'var(--wks-radius-sm, 4px)',
+  padding: '3px 4px',
+  fontSize: '0.72rem',
+  fontWeight: 600,
+  fontFamily: 'inherit',
   color: 'var(--wks-text-tertiary)',
-  border: '1px solid var(--wks-border-input)',
-  borderRadius: 4,
-  padding: '6px 14px',
+  cursor: 'pointer',
+  maxWidth: 230,
+  textOverflow: 'ellipsis',
 };
 
-const primaryBtnStyle = (disabled: boolean): React.CSSProperties => ({
-  fontSize: '0.78rem',
-  fontFamily: 'inherit',
-  cursor: disabled ? 'default' : 'pointer',
-  background: disabled ? 'var(--wks-bg-input)' : 'var(--wks-accent)',
-  color: disabled ? 'var(--wks-text-faint)' : 'var(--wks-text-on-accent, #fff)',
+/** Flat pill button (MCP count toggle). */
+const pillBtn: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 5,
+  background: 'transparent',
   border: 'none',
-  borderRadius: 4,
-  padding: '6px 14px',
+  borderRadius: 'var(--wks-radius-sm, 4px)',
+  padding: '3px 8px',
+  fontSize: '0.72rem',
   fontWeight: 600,
+  fontFamily: 'inherit',
+  color: 'var(--wks-text-tertiary)',
+  cursor: 'pointer',
+  whiteSpace: 'nowrap',
+};
+
+/** Segmented toggle inside a pill group (claude transport). */
+const segBtn = (active: boolean): React.CSSProperties => ({
+  fontSize: '0.7rem',
+  fontWeight: 600,
+  fontFamily: 'inherit',
+  cursor: 'pointer',
+  padding: '3px 10px',
+  borderRadius: 999,
+  border: 'none',
+  background: active ? 'var(--wks-accent-bg)' : 'transparent',
+  color: active ? 'var(--wks-accent-text, var(--wks-text-primary))' : 'var(--wks-text-muted)',
+  transition: 'background-color 0.15s, color 0.15s',
 });
+
+/** Low-chrome mono text input — underline only. */
+const inlineInput: React.CSSProperties = {
+  background: 'transparent',
+  border: 'none',
+  outline: 'none',
+  borderBottom: '1px solid var(--wks-border-input)',
+  fontFamily: 'var(--wks-font-mono)',
+  fontSize: '0.7rem',
+  color: 'var(--wks-text-primary)',
+  padding: '2px 2px 4px',
+  boxSizing: 'border-box',
+};
+
+/** Small ghost button (Browse…) — flat, rounds via the composer hover class. */
+const ghostBtnSmall: React.CSSProperties = {
+  fontSize: '0.68rem',
+  fontFamily: 'inherit',
+  fontWeight: 600,
+  cursor: 'pointer',
+  background: 'transparent',
+  color: 'var(--wks-text-muted)',
+  border: 'none',
+  borderRadius: 'var(--wks-radius-sm, 4px)',
+  padding: '4px 9px',
+  whiteSpace: 'nowrap',
+  flexShrink: 0,
+};
 
 export default SpawnAgentDialog;
