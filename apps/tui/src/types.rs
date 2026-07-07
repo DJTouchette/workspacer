@@ -115,6 +115,13 @@ fn default_provider() -> String {
     "claude".to_string()
 }
 
+/// Serde default for [`Agent::transport`] — sessions are PTY-backed unless the
+/// daemon says otherwise (it serializes `"stream"` for headless stream-json
+/// sessions; older daemons omit the field entirely).
+fn default_transport() -> String {
+    "pty".to_string()
+}
+
 /// One live session, as returned by claudemon's `GET /sessions`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Agent {
@@ -127,6 +134,12 @@ pub struct Agent {
     /// defaults to `"claude"` so older daemons deserialize unchanged.
     #[serde(default = "default_provider")]
     pub provider: String,
+    /// How the daemon talks to the session: `"pty"` (a real terminal we can
+    /// stream and type into) or `"stream"` (a headless stream-json adapter —
+    /// no PTY exists, so the TUI renders the transcript only). Serde defaults
+    /// to `"pty"` so older daemons deserialize unchanged.
+    #[serde(default = "default_transport")]
+    pub transport: String,
     /// The current session mode. Defaults to `AgentMode::Unknown` when the
     /// field is absent, and falls back to `AgentMode::Other` for unrecognised
     /// values so deserialization never panics on future daemon versions.
@@ -184,6 +197,26 @@ pub struct QuestionOption {
     pub description: Option<String>,
 }
 
+/// A content fingerprint of a pending question set, so stepper state
+/// ([`crate::app::QuestionFlow`]) can detect when the set it tracks was
+/// superseded by a *different* set of the same length — length alone would
+/// silently carry old answers over to questions the user never saw.
+pub fn question_fingerprint(qs: &[Question]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for q in qs {
+        q.question.hash(&mut h);
+        q.header.hash(&mut h);
+        q.multi_select.hash(&mut h);
+        for o in &q.options {
+            o.label.hash(&mut h);
+        }
+        // Separator so option/question boundaries can't alias.
+        u8::MAX.hash(&mut h);
+    }
+    h.finish()
+}
+
 impl Agent {
     pub fn state(&self) -> &str {
         match &self.mode {
@@ -214,6 +247,12 @@ impl Agent {
     /// True when the session has ended.
     pub fn is_stopped(&self) -> bool {
         self.mode == AgentMode::Stopped
+    }
+
+    /// True for headless stream-transport sessions — no PTY exists to attach,
+    /// so the chat view is transcript-only.
+    pub fn is_stream(&self) -> bool {
+        self.transport == "stream"
     }
 
     pub fn cwd_str(&self) -> &str {
@@ -302,11 +341,14 @@ pub enum Role {
 pub enum Part {
     Text(String),
     /// A tool call. `result` is the (truncated) tool output once it lands,
-    /// prefixed with `error: ` when the tool failed.
+    /// prefixed with `error: ` when the tool failed. `edits` carries the
+    /// `(old_string, new_string)` pairs of an Edit/MultiEdit call so the
+    /// renderer can show a compact colored diff under the row.
     Tool {
         name: String,
         summary: String,
         result: Option<String>,
+        edits: Vec<(String, String)>,
     },
 }
 
@@ -334,6 +376,7 @@ pub fn search_lines(turns: &[Turn]) -> Vec<String> {
                     name,
                     summary,
                     result,
+                    ..
                 } => {
                     let mut s = format!("{name} {summary}");
                     if let Some(r) = result {
@@ -360,8 +403,20 @@ pub fn search_lines(turns: &[Turn]) -> Vec<String> {
 /// one turn, and a `tool_result` attaches back to its `tool_use` by id — so the
 /// parsed view shows tool *output*, not just the call (richer than the old
 /// transcript path).
-pub fn turns_from_conversation(v: &Value) -> Vec<Turn> {
-    use std::collections::HashMap;
+///
+/// `transport` is the session's wire transport (see [`Agent::transport`]). It
+/// decides how consecutive `assistant_text` items coalesce into one text part:
+/// stream sessions store per-token fragments, so they concatenate verbatim
+/// (never trimming a fragment — the joined text is trimmed once at the end);
+/// PTY sessions store whole blocks, joined with a blank line.
+///
+/// A re-delivered `tool_use` id (transcript compaction repeats a call, resume
+/// replays history) folds into nothing — ids are globally unique, so a second
+/// occurrence is always a duplicate (mirror of the desktop conversationApplier
+/// dedup).
+pub fn turns_from_conversation(v: &Value, transport: &str) -> Vec<Turn> {
+    use std::collections::{HashMap, HashSet};
+    let stream = transport == "stream";
     let items = v
         .get("items")
         .and_then(|i| i.as_array())
@@ -371,9 +426,13 @@ pub fn turns_from_conversation(v: &Value) -> Vec<Turn> {
     let mut turns: Vec<Turn> = Vec::new();
     // tool_use id → (turn index, part index), so a later result can attach.
     let mut tool_loc: HashMap<String, (usize, usize)> = HashMap::new();
+    // Every tool_use id seen, for dropping re-delivered duplicates.
+    let mut seen_tool_ids: HashSet<String> = HashSet::new();
+    // Consecutive assistant_text fragments, coalesced into one part at flush.
+    let mut text_buf: Vec<String> = Vec::new();
 
     // Append a part to the open turn, starting a new turn on a role change.
-    let push = |turns: &mut Vec<Turn>, role: Role, part: Part| -> (usize, usize) {
+    fn push(turns: &mut Vec<Turn>, role: Role, part: Part) -> (usize, usize) {
         if turns.last().map(|t| t.role) != Some(role) {
             turns.push(Turn {
                 role,
@@ -383,11 +442,31 @@ pub fn turns_from_conversation(v: &Value) -> Vec<Turn> {
         let ti = turns.len() - 1;
         turns[ti].parts.push(part);
         (ti, turns[ti].parts.len() - 1)
-    };
+    }
+
+    // Join the buffered fragments into ONE text part. Stream fragments concat
+    // verbatim (they're per-token slices of one message); PTY blocks join with
+    // a blank line. The combined text is trimmed exactly once, at the end.
+    fn flush_text(turns: &mut Vec<Turn>, text_buf: &mut Vec<String>, stream: bool) {
+        if text_buf.is_empty() {
+            return;
+        }
+        let joined = if stream {
+            text_buf.concat()
+        } else {
+            text_buf.join("\n\n")
+        };
+        text_buf.clear();
+        let text = joined.trim();
+        if !text.is_empty() {
+            push(turns, Role::Assistant, Part::Text(text.to_string()));
+        }
+    }
 
     for item in &items {
         match item.get("kind").and_then(|k| k.as_str()).unwrap_or("") {
             "user_message" => {
+                flush_text(&mut turns, &mut text_buf, stream);
                 let text = item
                     .get("text")
                     .and_then(|t| t.as_str())
@@ -399,23 +478,40 @@ pub fn turns_from_conversation(v: &Value) -> Vec<Turn> {
                 push(&mut turns, Role::User, Part::Text(text.to_string()));
             }
             "assistant_text" => {
-                let text = item
-                    .get("text")
-                    .and_then(|t| t.as_str())
-                    .unwrap_or("")
-                    .trim();
-                if text.is_empty() {
-                    continue;
+                let text = item.get("text").and_then(|t| t.as_str()).unwrap_or("");
+                if stream {
+                    // Never trim or drop a fragment — whitespace-only tokens
+                    // are the joining glue between words.
+                    if !text.is_empty() {
+                        text_buf.push(text.to_string());
+                    }
+                } else {
+                    let block = text.trim();
+                    if !block.is_empty() {
+                        text_buf.push(block.to_string());
+                    }
                 }
-                push(&mut turns, Role::Assistant, Part::Text(text.to_string()));
             }
             "tool_use" => {
+                // Dedup by id first, so a replayed call vanishes without even
+                // breaking the coalescing of the text around it.
+                if let Some(id) = item
+                    .get("id")
+                    .and_then(|i| i.as_str())
+                    .filter(|s| !s.is_empty())
+                {
+                    if !seen_tool_ids.insert(id.to_string()) {
+                        continue;
+                    }
+                }
+                flush_text(&mut turns, &mut text_buf, stream);
                 let name = item
                     .get("name")
                     .and_then(|n| n.as_str())
                     .unwrap_or("tool")
                     .to_string();
                 let summary = tool_summary(item.get("input"));
+                let edits = edit_pairs(item.get("input"));
                 let loc = push(
                     &mut turns,
                     Role::Assistant,
@@ -423,6 +519,7 @@ pub fn turns_from_conversation(v: &Value) -> Vec<Turn> {
                         name,
                         summary,
                         result: None,
+                        edits,
                     },
                 );
                 if let Some(id) = item
@@ -434,6 +531,7 @@ pub fn turns_from_conversation(v: &Value) -> Vec<Turn> {
                 }
             }
             "tool_result" => {
+                flush_text(&mut turns, &mut text_buf, stream);
                 let tid = item
                     .get("tool_use_id")
                     .and_then(|t| t.as_str())
@@ -463,10 +561,47 @@ pub fn turns_from_conversation(v: &Value) -> Vec<Turn> {
                     }
                 }
             }
-            _ => {} // usage and any future kinds
+            "usage" => {
+                // Ignored entirely — claudemon interleaves a usage item before
+                // every PTY assistant row's text, so treating it as a boundary
+                // would defeat the blank-line block coalescing above.
+            }
+            _ => {
+                // Any future kinds — still a boundary between assistant
+                // messages, so close any open text run.
+                flush_text(&mut turns, &mut text_buf, stream);
+            }
         }
     }
+    flush_text(&mut turns, &mut text_buf, stream);
     turns
+}
+
+/// The `(old_string, new_string)` pairs of an Edit/MultiEdit input, if any:
+/// a top-level `old_string`/`new_string` pair (Edit), plus every entry of an
+/// `edits` array (MultiEdit). Empty for every other tool shape.
+fn edit_pairs(input: Option<&Value>) -> Vec<(String, String)> {
+    let Some(obj) = input.and_then(|v| v.as_object()) else {
+        return Vec::new();
+    };
+    let pair_of = |o: &serde_json::Map<String, Value>| -> Option<(String, String)> {
+        let old = o.get("old_string").and_then(|v| v.as_str())?;
+        let new = o.get("new_string").and_then(|v| v.as_str())?;
+        (!old.is_empty() || !new.is_empty()).then(|| (old.to_string(), new.to_string()))
+    };
+    let mut out = Vec::new();
+    if let Some(p) = pair_of(obj) {
+        out.push(p);
+    }
+    if let Some(edits) = obj.get("edits").and_then(|e| e.as_array()) {
+        out.extend(
+            edits
+                .iter()
+                .filter_map(|e| e.as_object())
+                .filter_map(pair_of),
+        );
+    }
+    out
 }
 
 /// Slash-command echoes, injected reminders, and background-task notifications
@@ -624,7 +759,7 @@ mod tests {
             { "kind": "tool_use", "id": "t2", "name": "Edit", "input": {"file_path": "/x.rs"} },
             { "kind": "tool_result", "tool_use_id": "t2", "content": "boom", "is_error": true },
         ]});
-        let turns = turns_from_conversation(&v);
+        let turns = turns_from_conversation(&v, "pty");
         assert_eq!(
             turns.len(),
             2,
@@ -657,9 +792,146 @@ mod tests {
             { "kind": "user_message", "text": "<system-reminder>noise</system-reminder>" },
             { "kind": "user_message", "text": "real" },
         ]});
-        let turns = turns_from_conversation(&v);
+        let turns = turns_from_conversation(&v, "pty");
         assert_eq!(turns.len(), 1);
         assert!(matches!(&turns[0].parts[0], Part::Text(t) if t == "real"));
+    }
+
+    #[test]
+    fn transport_wire_field_parses_and_defaults_to_pty() {
+        let a: Agent = serde_json::from_value(serde_json::json!({
+            "session_id": "x", "mode": "input", "transport": "stream"
+        }))
+        .unwrap();
+        assert_eq!(a.transport, "stream");
+        assert!(a.is_stream());
+
+        // Absent transport (older daemon / PTY session) defaults to "pty".
+        let a: Agent = serde_json::from_value(serde_json::json!({
+            "session_id": "y", "mode": "input"
+        }))
+        .unwrap();
+        assert_eq!(a.transport, "pty");
+        assert!(!a.is_stream());
+    }
+
+    #[test]
+    fn redelivered_tool_use_dedups_by_id() {
+        // Transcript compaction / resume replays re-deliver the same call; ids
+        // are globally unique, so the second occurrence folds into nothing.
+        let v = serde_json::json!({ "items": [
+            { "kind": "tool_use", "id": "toolu_1", "name": "Bash", "input": {"command": "ls"} },
+            { "kind": "tool_result", "tool_use_id": "toolu_1", "content": "ok" },
+            { "kind": "tool_use", "id": "toolu_1", "name": "Bash", "input": {"command": "ls"} },
+            { "kind": "tool_use", "id": "toolu_2", "name": "Read", "input": {"file_path": "/f"} },
+        ]});
+        let turns = turns_from_conversation(&v, "pty");
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].parts.len(), 2, "the duplicate call is dropped");
+        assert!(matches!(&turns[0].parts[0], Part::Tool { name, .. } if name == "Bash"));
+        assert!(matches!(&turns[0].parts[1], Part::Tool { name, .. } if name == "Read"));
+    }
+
+    #[test]
+    fn stream_transport_concats_fragments_verbatim() {
+        // Stream sessions store per-token fragments; they must join into ONE
+        // text part with no per-fragment trimming ("Hello" + " " + "world").
+        let v = serde_json::json!({ "items": [
+            { "kind": "assistant_text", "text": "Hel" },
+            { "kind": "assistant_text", "text": "lo" },
+            { "kind": "assistant_text", "text": " " },
+            { "kind": "assistant_text", "text": "world" },
+            { "kind": "assistant_text", "text": "\n" },
+        ]});
+        let turns = turns_from_conversation(&v, "stream");
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].parts.len(), 1, "fragments coalesce into one part");
+        assert!(
+            matches!(&turns[0].parts[0], Part::Text(t) if t == "Hello world"),
+            "verbatim concat, trimmed once at the end: {:?}",
+            turns[0].parts[0]
+        );
+    }
+
+    #[test]
+    fn stream_fragments_split_on_intervening_items() {
+        // A tool call between text runs is a real boundary — two text parts.
+        let v = serde_json::json!({ "items": [
+            { "kind": "assistant_text", "text": "first " },
+            { "kind": "assistant_text", "text": "message" },
+            { "kind": "tool_use", "id": "t1", "name": "Bash", "input": {} },
+            { "kind": "assistant_text", "text": "second" },
+        ]});
+        let turns = turns_from_conversation(&v, "stream");
+        let parts = &turns[0].parts;
+        assert_eq!(parts.len(), 3);
+        assert!(matches!(&parts[0], Part::Text(t) if t == "first message"));
+        assert!(matches!(&parts[2], Part::Text(t) if t == "second"));
+    }
+
+    #[test]
+    fn pty_transport_joins_whole_blocks_with_a_blank_line() {
+        let v = serde_json::json!({ "items": [
+            { "kind": "assistant_text", "text": "block one\n" },
+            { "kind": "assistant_text", "text": "  block two  " },
+        ]});
+        let turns = turns_from_conversation(&v, "pty");
+        assert_eq!(turns[0].parts.len(), 1, "blocks coalesce into one part");
+        assert!(
+            matches!(&turns[0].parts[0], Part::Text(t) if t == "block one\n\nblock two"),
+            "got {:?}",
+            turns[0].parts[0]
+        );
+    }
+
+    #[test]
+    fn usage_items_do_not_break_pty_block_coalescing() {
+        // Real PTY conversations interleave a usage item before every
+        // assistant row's text; it's ignored, not a text-run boundary.
+        let v = serde_json::json!({ "items": [
+            { "kind": "usage", "usage": {"input_tokens": 1} },
+            { "kind": "assistant_text", "text": "para one" },
+            { "kind": "usage", "usage": {"input_tokens": 2} },
+            { "kind": "assistant_text", "text": "para two" },
+        ]});
+        let turns = turns_from_conversation(&v, "pty");
+        assert_eq!(turns[0].parts.len(), 1, "blocks coalesce across usage");
+        assert!(
+            matches!(&turns[0].parts[0], Part::Text(t) if t == "para one\n\npara two"),
+            "got {:?}",
+            turns[0].parts[0]
+        );
+    }
+
+    #[test]
+    fn edit_and_multiedit_inputs_carry_diff_pairs() {
+        let v = serde_json::json!({ "items": [
+            { "kind": "tool_use", "id": "e1", "name": "Edit",
+              "input": {"file_path": "/a.rs", "old_string": "foo", "new_string": "bar"} },
+            { "kind": "tool_use", "id": "e2", "name": "MultiEdit",
+              "input": {"file_path": "/b.rs", "edits": [
+                  {"old_string": "x", "new_string": "y"},
+                  {"old_string": "p", "new_string": "q"}
+              ]} },
+            { "kind": "tool_use", "id": "e3", "name": "Bash", "input": {"command": "ls"} },
+        ]});
+        let turns = turns_from_conversation(&v, "pty");
+        let parts = &turns[0].parts;
+        match &parts[0] {
+            Part::Tool { edits, .. } => assert_eq!(edits, &[("foo".into(), "bar".into())]),
+            other => panic!("expected Edit tool, got {other:?}"),
+        }
+        match &parts[1] {
+            Part::Tool { edits, .. } => assert_eq!(
+                edits,
+                &[("x".to_string(), "y".to_string()), ("p".into(), "q".into())]
+            ),
+            other => panic!("expected MultiEdit tool, got {other:?}"),
+        }
+        match &parts[2] {
+            Part::Tool { edits, .. } => assert!(edits.is_empty(), "Bash carries no diff"),
+            other => panic!("expected Bash tool, got {other:?}"),
+        }
     }
 
     #[test]

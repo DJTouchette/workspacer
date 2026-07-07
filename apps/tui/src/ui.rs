@@ -339,7 +339,12 @@ fn render_detail(f: &mut Frame, area: Rect, app: &App) {
         lines.push(kv(t, "event", ev));
     }
     lines.push(Line::raw(""));
-    lines.extend(ask_lines(t, a, area.width.saturating_sub(2)));
+    lines.extend(ask_lines(
+        t,
+        a,
+        app.question_flow.as_ref(),
+        area.width.saturating_sub(2),
+    ));
 
     let p = Paragraph::new(lines)
         .block(block)
@@ -365,7 +370,17 @@ fn approval_input(raw: &Value) -> String {
 }
 
 /// The pending approval / question block, shared by the detail and chat panes.
-fn ask_lines(t: &Theme, a: &Agent, width: u16) -> Vec<Line<'static>> {
+///
+/// Multi-question sets render ONE question at a time with a `Q n of m`
+/// progress marker, stepping via `flow` (see [`crate::app::QuestionFlow`]);
+/// multi-select questions render ☐/☑ checkboxes that digits toggle and Enter
+/// confirms.
+fn ask_lines(
+    t: &Theme,
+    a: &Agent,
+    flow: Option<&crate::app::QuestionFlow>,
+    width: u16,
+) -> Vec<Line<'static>> {
     let w = width.max(10) as usize;
     let mut out = Vec::new();
     if let Some((tool, raw)) = a.approval() {
@@ -384,45 +399,107 @@ fn ask_lines(t: &Theme, a: &Agent, width: u16) -> Vec<Line<'static>> {
             "[y]es  [n]o  [a]lways",
             Style::default().fg(t.ok),
         )));
-    } else if let Some(qs) = a.questions() {
-        if let Some(q) = qs.first() {
+    } else if let Some(qs) = a.questions().filter(|q| !q.is_empty()) {
+        let n = qs.len();
+        // The stepper's flow only applies when it tracks this exact set
+        // (same session, length, AND content — not a superseded look-alike).
+        let flow = flow.filter(|f| f.tracks(&a.session_id, qs));
+        let idx = flow.map(|f| f.idx.min(n - 1)).unwrap_or(0);
+        let q = &qs[idx];
+
+        let mut head = vec![Span::styled(
+            q.header.clone().unwrap_or_else(|| "Question".into()),
+            Style::default().fg(t.warn).add_modifier(Modifier::BOLD),
+        )];
+        if n > 1 {
+            head.push(Span::styled(
+                format!("  · Q {} of {n}", idx + 1),
+                Style::default().fg(t.dim),
+            ));
+        }
+        out.push(Line::from(head));
+        for piece in wrap(&q.question, w) {
+            out.push(Line::raw(piece));
+        }
+
+        // The recorded pick for a revisited question renders highlighted.
+        let prev_pick = flow.and_then(|f| f.answers[idx].as_deref());
+        let picks = flow.map(|f| &f.picks[idx]);
+        if q.multi_select && !q.options.is_empty() {
+            for (i, o) in q.options.iter().enumerate().take(9) {
+                let checked = picks.is_some_and(|p| p.contains(&i));
+                let (bx, style) = if checked {
+                    ("☑", Style::default().fg(t.ok))
+                } else {
+                    ("☐", Style::default().fg(t.dim))
+                };
+                out.push(Line::from(vec![
+                    Span::styled(format!(" {}. ", i + 1), Style::default().fg(t.accent)),
+                    Span::styled(format!("{bx} "), style),
+                    Span::raw(o.label.clone()),
+                ]));
+                push_option_desc(&mut out, t, w, o);
+            }
+            out.push(Line::raw(""));
             out.push(Line::from(Span::styled(
-                q.header.clone().unwrap_or_else(|| "Question".into()),
-                Style::default().fg(t.warn).add_modifier(Modifier::BOLD),
+                back_hint("1-9 toggle · enter confirm", idx),
+                Style::default().fg(t.dim),
             )));
-            for piece in wrap(&q.question, w) {
-                out.push(Line::raw(piece));
+        } else if !q.options.is_empty() {
+            for (i, o) in q.options.iter().enumerate().take(9) {
+                let chosen = prev_pick == Some((i + 1).to_string().as_str());
+                let label_style = if chosen {
+                    Style::default().fg(t.accent).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                };
+                let marker = if chosen { "❯" } else { " " };
+                out.push(Line::from(vec![
+                    Span::styled(marker.to_string(), Style::default().fg(t.accent)),
+                    Span::styled(format!("{}. ", i + 1), Style::default().fg(t.accent)),
+                    Span::styled(o.label.clone(), label_style),
+                ]));
+                push_option_desc(&mut out, t, w, o);
             }
-            // Single-question, single-select → numbered options.
-            if qs.len() == 1 && !q.multi_select && !q.options.is_empty() {
-                for (i, o) in q.options.iter().enumerate().take(9) {
-                    out.push(Line::from(vec![
-                        Span::styled(format!(" {}. ", i + 1), Style::default().fg(t.accent)),
-                        Span::raw(o.label.clone()),
-                    ]));
-                    if let Some(desc) = o.description.as_ref().filter(|d| !d.is_empty()) {
-                        for piece in wrap(desc, w.saturating_sub(4)) {
-                            out.push(Line::from(Span::styled(
-                                format!("    {piece}"),
-                                Style::default().fg(t.dim),
-                            )));
-                        }
-                    }
-                }
-                out.push(Line::raw(""));
-                out.push(Line::from(Span::styled(
-                    "press 1-9 to answer, or i to type",
-                    Style::default().fg(t.dim),
-                )));
-            } else {
-                out.push(Line::from(Span::styled(
-                    "press i to type your answer",
-                    Style::default().fg(t.dim),
-                )));
-            }
+            out.push(Line::raw(""));
+            out.push(Line::from(Span::styled(
+                back_hint("press 1-9 to answer, or i to type", idx),
+                Style::default().fg(t.dim),
+            )));
+        } else {
+            out.push(Line::from(Span::styled(
+                back_hint("press i to type your answer", idx),
+                Style::default().fg(t.dim),
+            )));
         }
     }
     out
+}
+
+/// A question option's dim description lines, wrapped and indented.
+fn push_option_desc(
+    out: &mut Vec<Line<'static>>,
+    t: &Theme,
+    w: usize,
+    o: &crate::types::QuestionOption,
+) {
+    if let Some(desc) = o.description.as_ref().filter(|d| !d.is_empty()) {
+        for piece in wrap(desc, w.saturating_sub(4)) {
+            out.push(Line::from(Span::styled(
+                format!("    {piece}"),
+                Style::default().fg(t.dim),
+            )));
+        }
+    }
+}
+
+/// Append the mid-set `esc back` hint to a question footer.
+fn back_hint(base: &str, idx: usize) -> String {
+    if idx > 0 {
+        format!("{base} · esc back")
+    } else {
+        base.to_string()
+    }
 }
 
 // ── chat view ────────────────────────────────────────────────────────────────
@@ -437,7 +514,14 @@ fn render_chat(f: &mut Frame, area: Rect, app: &mut App) {
     // Reserve space for the ask block (if any) and the composer.
     let ask = agent
         .as_ref()
-        .map(|a| ask_lines(&app.theme, a, area.width.saturating_sub(2)))
+        .map(|a| {
+            ask_lines(
+                &app.theme,
+                a,
+                app.question_flow.as_ref(),
+                area.width.saturating_sub(2),
+            )
+        })
         .unwrap_or_default();
     let ask_h = if ask.is_empty() {
         0
@@ -456,15 +540,37 @@ fn render_chat(f: &mut Frame, area: Rect, app: &mut App) {
         .split(area);
 
     // Transcript — manually wrapped so the scroll offset maps to visible lines.
-    let inner_w = rows[0].width.saturating_sub(2);
-    let lines = transcript_lines(app, inner_w as usize);
-    let viewport = rows[0].height.saturating_sub(2);
-    let max_scroll = (lines.len().min(u16::MAX as usize) as u16).saturating_sub(viewport);
-    if app.chat_follow {
-        app.chat_scroll = max_scroll;
-    } else {
-        app.chat_scroll = app.chat_scroll.min(max_scroll);
+    // The folded + wrapped lines are memoized on the app (the main loop draws
+    // on every event — PTY chunks, SSE nudges, keystrokes, the tick — and a
+    // full markdown re-parse of a long conversation per draw is far too slow);
+    // the cache is invalidated whenever turns/echo change, and rebuilt here
+    // when the width differs.
+    let inner_w = rows[0].width.saturating_sub(2) as usize;
+    let stale = app
+        .transcript_cache
+        .as_ref()
+        .is_none_or(|c| c.width != inner_w);
+    if stale {
+        let lines = transcript_lines(app, inner_w);
+        app.transcript_cache = Some(crate::app::TranscriptCache {
+            width: inner_w,
+            lines,
+        });
     }
+    let cache = app.transcript_cache.as_ref().expect("cache just ensured");
+    let total = cache.lines.len();
+    let viewport = rows[0].height.saturating_sub(2) as usize;
+    let max_scroll = total.saturating_sub(viewport);
+    let scroll = if app.chat_follow {
+        max_scroll
+    } else {
+        app.chat_scroll.min(max_scroll)
+    };
+    // Only the visible window feeds the widget: scrolling by slice keeps the
+    // offset in usize (no u16 ceiling on very long transcripts) and clones a
+    // viewport's worth of lines instead of the whole conversation.
+    let visible: Vec<Line> = cache.lines[scroll..(scroll + viewport).min(total)].to_vec();
+    app.chat_scroll = scroll;
     let working = agent.as_ref().is_some_and(|a| a.is_busy());
     let block = Block::default()
         .borders(Borders::ALL)
@@ -478,9 +584,7 @@ fn render_chat(f: &mut Frame, area: Rect, app: &mut App) {
             Line::from("")
         })
         .border_style(Style::default().fg(app.theme.dim));
-    let transcript = Paragraph::new(lines)
-        .block(block)
-        .scroll((app.chat_scroll, 0));
+    let transcript = Paragraph::new(visible).block(block);
     f.render_widget(transcript, rows[0]);
 
     if ask_h > 0 {
@@ -532,24 +636,37 @@ fn render_composer(f: &mut Frame, area: Rect, app: &App, agent: &Option<Agent>) 
     );
 }
 
+/// One buffered tool call in a consecutive run (see [`flush_tool_run`]).
+struct ToolRow {
+    name: String,
+    summary: String,
+    result: Option<String>,
+    /// Edit/MultiEdit `(old, new)` pairs — rendered as a compact diff and kept
+    /// visible even when the run collapses to a summary line.
+    edits: Vec<(String, String)>,
+}
+
 /// Build the fully-wrapped, styled transcript lines for the current turns.
 ///
-/// Consecutive tool-only assistant turns are coalesced into one compact
-/// "N tool calls · …" line so a workflow's long tool runs don't flood the view
-/// (the terminal analogue of the desktop's grouped WorkCard). Turns that carry
-/// text render in full.
+/// Message text renders through the TUI's own markdown renderer
+/// ([`crate::render::markdown_lines`]). Consecutive tool-only assistant turns
+/// are coalesced into one compact "N tool calls · …" line so a workflow's long
+/// tool runs don't flood the view (the terminal analogue of the desktop's
+/// grouped WorkCard) — except Edit/MultiEdit rows, whose diffs stay visible
+/// beneath the summary. A pending optimistic send echo renders as a trailing
+/// user turn.
 fn transcript_lines(app: &App, width: usize) -> Vec<Line<'static>> {
     let t = &app.theme;
     let w = width.max(10);
     let mut out: Vec<Line> = Vec::new();
-    if app.turns.is_empty() {
+    if app.turns.is_empty() && app.pending_echo.is_none() {
         out.push(Line::from(Span::styled(
             "no messages yet",
             Style::default().fg(t.dim),
         )));
         return out;
     }
-    let mut run: Vec<(String, String, Option<String>)> = Vec::new();
+    let mut run: Vec<ToolRow> = Vec::new();
     for turn in &app.turns {
         let tool_only = turn.role == Role::Assistant
             && !turn.parts.is_empty()
@@ -560,49 +677,35 @@ fn transcript_lines(app: &App, width: usize) -> Vec<Line<'static>> {
                     name,
                     summary,
                     result,
+                    edits,
                 } = p
                 {
-                    run.push((name.clone(), summary.clone(), result.clone()));
+                    run.push(ToolRow {
+                        name: name.clone(),
+                        summary: summary.clone(),
+                        result: result.clone(),
+                        edits: edits.clone(),
+                    });
                 }
             }
             continue;
         }
         flush_tool_run(&mut out, &mut run, t, w);
 
-        let (label, color) = match turn.role {
-            Role::User => ("▍ you", t.accent),
-            Role::Assistant => ("▍ claude", t.ok),
-        };
-        out.push(Line::from(Span::styled(
-            label,
-            Style::default().fg(color).add_modifier(Modifier::BOLD),
-        )));
+        push_role_label(&mut out, t, turn.role);
         for part in &turn.parts {
             match part {
                 Part::Text(text) => {
-                    for paragraph in text.split('\n') {
-                        if paragraph.is_empty() {
-                            out.push(Line::raw(""));
-                        } else {
-                            for piece in wrap(paragraph, w) {
-                                out.push(Line::raw(piece));
-                            }
-                        }
-                    }
+                    out.extend(crate::render::markdown_lines(text, t, w));
                 }
                 Part::Tool {
                     name,
                     summary,
                     result,
+                    edits,
                 } => {
-                    let text = if summary.is_empty() {
-                        format!("⚙ {name}")
-                    } else {
-                        format!("⚙ {name} · {summary}")
-                    };
-                    for piece in wrap(&text, w) {
-                        out.push(Line::from(Span::styled(piece, Style::default().fg(t.dim))));
-                    }
+                    push_tool_row(&mut out, t, w, name, summary);
+                    push_edit_diff(&mut out, t, w, edits);
                     if let Some(res) = result {
                         push_tool_result(&mut out, res, t, w);
                     }
@@ -612,7 +715,42 @@ fn transcript_lines(app: &App, width: usize) -> Vec<Line<'static>> {
         out.push(Line::raw(""));
     }
     flush_tool_run(&mut out, &mut run, t, w);
+
+    // Optimistic echo: the just-sent message, until a refold carries it.
+    if let Some(echo) = app.pending_echo.as_deref() {
+        push_role_label(&mut out, t, Role::User);
+        out.extend(crate::render::markdown_lines(echo, t, w));
+        out.push(Line::from(Span::styled(
+            "…sending",
+            Style::default().fg(t.dim).add_modifier(Modifier::ITALIC),
+        )));
+        out.push(Line::raw(""));
+    }
     out
+}
+
+/// The `▍ you` / `▍ claude` turn header.
+fn push_role_label(out: &mut Vec<Line<'static>>, t: &Theme, role: Role) {
+    let (label, color) = match role {
+        Role::User => ("▍ you", t.accent),
+        Role::Assistant => ("▍ claude", t.ok),
+    };
+    out.push(Line::from(Span::styled(
+        label,
+        Style::default().fg(color).add_modifier(Modifier::BOLD),
+    )));
+}
+
+/// The dim `⚙ name · summary` line for one tool call.
+fn push_tool_row(out: &mut Vec<Line<'static>>, t: &Theme, w: usize, name: &str, summary: &str) {
+    let text = if summary.is_empty() {
+        format!("⚙ {name}")
+    } else {
+        format!("⚙ {name} · {summary}")
+    };
+    for piece in wrap(&text, w) {
+        out.push(Line::from(Span::styled(piece, Style::default().fg(t.dim))));
+    }
 }
 
 /// Render a tool's result as a dimmed, indented `↳` snippet (red when it's an
@@ -634,33 +772,51 @@ fn push_tool_result(out: &mut Vec<Line<'static>>, res: &str, t: &Theme, w: usize
     }
 }
 
+/// A compact colored diff for an Edit/MultiEdit call: `-` old lines in the
+/// bad role, `+` new lines in the ok role (the review pane's convention),
+/// capped with a `… +k more lines` tail.
+fn push_edit_diff(out: &mut Vec<Line<'static>>, t: &Theme, w: usize, edits: &[(String, String)]) {
+    const MAX_LINES: usize = 12;
+    if edits.is_empty() {
+        return;
+    }
+    let mut rows: Vec<(char, &str)> = Vec::new();
+    for (old, new) in edits {
+        rows.extend(old.lines().map(|l| ('-', l)));
+        rows.extend(new.lines().map(|l| ('+', l)));
+    }
+    let total = rows.len();
+    for (sign, text) in rows.into_iter().take(MAX_LINES) {
+        let color = if sign == '-' { t.bad } else { t.ok };
+        let line = crate::types::truncate(&format!("  {sign} {text}"), w);
+        out.push(Line::from(Span::styled(line, Style::default().fg(color))));
+    }
+    if total > MAX_LINES {
+        out.push(Line::from(Span::styled(
+            format!("    … +{} more lines", total - MAX_LINES),
+            Style::default().fg(t.dim),
+        )));
+    }
+}
+
 /// Emit the buffered run of consecutive tool calls and clear it: a single
 /// detailed `⚙ name · summary` line for one call, or a collapsed
-/// `⚙ N tool calls · names` summary for several.
-fn flush_tool_run(
-    out: &mut Vec<Line<'static>>,
-    run: &mut Vec<(String, String, Option<String>)>,
-    t: &Theme,
-    w: usize,
-) {
+/// `⚙ N tool calls · names` summary for several. Edit/MultiEdit rows survive
+/// the collapse — their rows + diffs still render beneath the summary
+/// (desktop parity: edits are the part of a work run you want to see).
+fn flush_tool_run(out: &mut Vec<Line<'static>>, run: &mut Vec<ToolRow>, t: &Theme, w: usize) {
     if run.is_empty() {
         return;
     }
     if run.len() == 1 {
-        let (name, summary, result) = &run[0];
-        let text = if summary.is_empty() {
-            format!("⚙ {name}")
-        } else {
-            format!("⚙ {name} · {summary}")
-        };
-        for piece in wrap(&text, w) {
-            out.push(Line::from(Span::styled(piece, Style::default().fg(t.dim))));
-        }
-        if let Some(res) = result {
+        let row = &run[0];
+        push_tool_row(out, t, w, &row.name, &row.summary);
+        push_edit_diff(out, t, w, &row.edits);
+        if let Some(res) = &row.result {
             push_tool_result(out, res, t, w);
         }
     } else {
-        let names: Vec<&str> = run.iter().map(|(n, _, _)| n.as_str()).collect();
+        let names: Vec<&str> = run.iter().map(|r| r.name.as_str()).collect();
         let text = format!(
             "⚙ {} tool calls · {}",
             run.len(),
@@ -668,6 +824,11 @@ fn flush_tool_run(
         );
         for piece in wrap(&text, w) {
             out.push(Line::from(Span::styled(piece, Style::default().fg(t.dim))));
+        }
+        // Edits stay visible under the collapsed summary.
+        for row in run.iter().filter(|r| !r.edits.is_empty()) {
+            push_tool_row(out, t, w, &row.name, &row.summary);
+            push_edit_diff(out, t, w, &row.edits);
         }
     }
     out.push(Line::raw(""));
@@ -1884,43 +2045,11 @@ fn mode_chip(app: &App, in_agent: bool, on_shell: bool) -> (&'static str, Color)
 
 // ── text wrapping ───────────────────────────────────────────────────────────
 
-/// Greedy word-wrap to `width` columns, hard-splitting tokens longer than the
-/// line. Good enough for transcript/JSON display; avoids pulling in a crate.
+/// Greedy word-wrap to `width` display columns, hard-splitting tokens longer
+/// than the line. Display-width-aware (wide glyphs count 2) — see
+/// [`crate::render::wrap`].
 fn wrap(s: &str, width: usize) -> Vec<String> {
-    let width = width.max(1);
-    let mut lines = Vec::new();
-    let mut cur = String::new();
-    for word in s.split(' ') {
-        if word.chars().count() > width {
-            // Flush, then hard-split the long token.
-            if !cur.is_empty() {
-                lines.push(std::mem::take(&mut cur));
-            }
-            let mut chunk = String::new();
-            for ch in word.chars() {
-                if chunk.chars().count() == width {
-                    lines.push(std::mem::take(&mut chunk));
-                }
-                chunk.push(ch);
-            }
-            cur = chunk;
-            continue;
-        }
-        let extra = if cur.is_empty() { 0 } else { 1 };
-        if cur.chars().count() + extra + word.chars().count() > width {
-            lines.push(std::mem::take(&mut cur));
-            cur.push_str(word);
-        } else {
-            if !cur.is_empty() {
-                cur.push(' ');
-            }
-            cur.push_str(word);
-        }
-    }
-    if !cur.is_empty() || lines.is_empty() {
-        lines.push(cur);
-    }
-    lines
+    crate::render::wrap_plain(s, width)
 }
 
 // ── state_color characterization tests ──────────────────────────────────────
@@ -2038,6 +2167,152 @@ mod tests {
     #[test]
     fn summarize_tool_names_single() {
         assert_eq!(summarize_tool_names(&["Grep"]), "Grep");
+    }
+
+    // ── transcript rendering: diffs, collapsed runs, echo, questions ─────────
+
+    fn line_texts(lines: &[Line<'_>]) -> Vec<String> {
+        lines
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect()
+    }
+
+    #[test]
+    fn edit_diff_renders_minus_bad_plus_ok() {
+        let t = Theme::default();
+        let mut out = Vec::new();
+        push_edit_diff(
+            &mut out,
+            &t,
+            60,
+            &[("old line".to_string(), "new line".to_string())],
+        );
+        let texts = line_texts(&out);
+        assert_eq!(texts, vec!["  - old line", "  + new line"]);
+        assert_eq!(out[0].spans[0].style.fg, Some(t.bad), "- lines in bad");
+        assert_eq!(out[1].spans[0].style.fg, Some(t.ok), "+ lines in ok");
+    }
+
+    #[test]
+    fn edit_diff_caps_with_a_more_lines_tail() {
+        let t = Theme::default();
+        let old = (1..=10)
+            .map(|i| format!("o{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let new = (1..=10)
+            .map(|i| format!("n{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut out = Vec::new();
+        push_edit_diff(&mut out, &t, 60, &[(old, new)]);
+        assert_eq!(out.len(), 13, "12 diff lines + the tail");
+        let texts = line_texts(&out);
+        assert_eq!(texts[12], "    … +8 more lines");
+        assert_eq!(out[12].spans[0].style.fg, Some(t.dim));
+    }
+
+    #[test]
+    fn collapsed_tool_run_keeps_edit_diffs_visible() {
+        let t = Theme::default();
+        let row = |name: &str, edits: Vec<(String, String)>| ToolRow {
+            name: name.into(),
+            summary: if edits.is_empty() {
+                String::new()
+            } else {
+                "/a.rs".into()
+            },
+            result: None,
+            edits,
+        };
+        let mut out = Vec::new();
+        let mut run = vec![
+            row("Read", Vec::new()),
+            row("Edit", vec![("foo".into(), "bar".into())]),
+            row("Bash", Vec::new()),
+        ];
+        flush_tool_run(&mut out, &mut run, &t, 60);
+        let texts = line_texts(&out);
+        assert!(
+            texts[0].starts_with("⚙ 3 tool calls ·"),
+            "run collapses: {:?}",
+            texts[0]
+        );
+        assert!(
+            texts.iter().any(|l| l.contains("Edit · /a.rs")),
+            "the edit row still renders beneath the summary: {texts:?}"
+        );
+        assert!(texts.iter().any(|l| l == "  - foo"));
+        assert!(texts.iter().any(|l| l == "  + bar"));
+    }
+
+    #[test]
+    fn ask_lines_renders_the_stepper_and_multiselect_checkboxes() {
+        let t = Theme::default();
+        let a: Agent = serde_json::from_value(serde_json::json!({
+            "session_id": "s1", "mode": "question",
+            "pending": {"kind": "question", "questions": [
+                {"question": "Pick one", "options": [{"label": "A"}, {"label": "B"}]},
+                {"question": "Choose", "multi_select": true,
+                 "options": [{"label": "X"}, {"label": "Y"}]}
+            ]}
+        }))
+        .unwrap();
+
+        // Before any interaction: Q1 renders with its progress marker.
+        let texts = line_texts(&ask_lines(&t, &a, None, 60));
+        assert!(texts[0].contains("Q 1 of 2"), "got {:?}", texts[0]);
+        assert!(texts.iter().any(|l| l.contains("1. A")));
+        assert!(
+            !texts.iter().any(|l| l.contains("esc back")),
+            "no back hint on the first question"
+        );
+
+        // Mid-set on the multi-select: checkboxes reflect the toggles.
+        let mut flow = crate::app::QuestionFlow::new("s1".into(), a.questions().unwrap());
+        flow.idx = 1;
+        flow.answers[0] = Some("2".into());
+        flow.picks[1].insert(0);
+        let texts = line_texts(&ask_lines(&t, &a, Some(&flow), 60));
+        assert!(texts[0].contains("Q 2 of 2"), "got {:?}", texts[0]);
+        assert!(texts.iter().any(|l| l.contains("☑ X")), "{texts:?}");
+        assert!(texts.iter().any(|l| l.contains("☐ Y")), "{texts:?}");
+        assert!(texts
+            .iter()
+            .any(|l| l.contains("enter confirm") && l.contains("esc back")));
+
+        // Revisiting Q1: the recorded pick renders highlighted.
+        flow.idx = 0;
+        let lines = ask_lines(&t, &a, Some(&flow), 60);
+        let texts = line_texts(&lines);
+        let b_row = texts.iter().position(|l| l.contains("2. B")).unwrap();
+        assert!(texts[b_row].starts_with('❯'), "got {:?}", texts[b_row]);
+        let b_label = lines[b_row]
+            .spans
+            .iter()
+            .find(|s| s.content.as_ref() == "B")
+            .expect("label span");
+        assert!(b_label.style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn transcript_renders_a_pending_echo_as_a_user_turn() {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let (ptx, _prx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            crate::claudemon::Claudemon::new("http://127.0.0.1:59999".into()),
+            Vec::new(),
+            Vec::new(),
+            crate::config::Config::default(),
+            tx,
+            ptx,
+        );
+        app.pending_echo = Some("on my way".into());
+        let texts = line_texts(&transcript_lines(&app, 40));
+        assert!(texts.iter().any(|l| l == "▍ you"), "{texts:?}");
+        assert!(texts.iter().any(|l| l == "on my way"));
+        assert!(texts.iter().any(|l| l == "…sending"));
     }
 
     /// Exhaustive table for all known inputs.

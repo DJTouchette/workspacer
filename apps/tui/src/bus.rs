@@ -243,6 +243,19 @@ impl Driver {
         }
     }
 
+    pub async fn answer_all(&self, sid: &str, answers: Vec<String>) -> Result<()> {
+        match &self.bus {
+            Some(b) => b
+                .call(
+                    "claude.answer",
+                    json!({ "sessionId": sid, "answers": answers }),
+                )
+                .await
+                .map(|_| ()),
+            None => self.claudemon.answer_all(sid, &answers).await,
+        }
+    }
+
     pub async fn answer_option(&self, sid: &str, option: u64) -> Result<()> {
         match &self.bus {
             Some(b) => b

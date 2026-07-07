@@ -35,6 +35,12 @@ pub enum AppMsg {
         turns: Vec<Turn>,
     },
     Toast(String),
+    /// A chat send failed after its optimistic echo was drawn: drop the echo,
+    /// restore the composer text, and toast the error.
+    SendFailed {
+        text: String,
+        error: String,
+    },
     /// A session has no PTY to stream (external/observed-only) — fall back to
     /// the transcript view for it.
     TerminalUnavailable(String),
@@ -377,6 +383,58 @@ fn fuzzy_match(needle: &str, haystack: &str) -> bool {
 
 const TOAST_TTL: Duration = Duration::from_millis(2500);
 
+/// Progress through a pending multi-question / multi-select set (desktop
+/// `/answer` parity): one question renders at a time, digits answer or toggle,
+/// and the collected raw answers post as `{answers: [...]}` after the last.
+/// Raw per question: a 1-indexed digit string for a pick, free text otherwise,
+/// or the chosen labels joined `", "` for a multi-select.
+#[derive(Debug, Clone)]
+/// The memoized transcript render (see [`App::transcript_cache`]).
+pub struct TranscriptCache {
+    /// The wrap width the lines were built for.
+    pub width: usize,
+    /// Every folded + wrapped transcript line; the renderer slices out the
+    /// visible viewport.
+    pub lines: Vec<ratatui::text::Line<'static>>,
+}
+
+pub struct QuestionFlow {
+    /// The session whose pending question set this tracks.
+    pub session_id: String,
+    /// Content fingerprint of the tracked set (see
+    /// [`crate::types::question_fingerprint`]) — a superseded set of the same
+    /// length must not inherit this flow's position and recorded answers.
+    pub fingerprint: u64,
+    /// Index of the question currently on screen.
+    pub idx: usize,
+    /// Raw answer per question, filled as the user advances (kept when
+    /// stepping back, so a revisited pick renders highlighted).
+    pub answers: Vec<Option<String>>,
+    /// Per-question multi-select toggles (indices into that question's
+    /// options), in option order.
+    pub picks: Vec<std::collections::BTreeSet<usize>>,
+}
+
+impl QuestionFlow {
+    pub fn new(session_id: String, qs: &[crate::types::Question]) -> Self {
+        QuestionFlow {
+            session_id,
+            fingerprint: crate::types::question_fingerprint(qs),
+            idx: 0,
+            answers: vec![None; qs.len()],
+            picks: vec![std::collections::BTreeSet::new(); qs.len()],
+        }
+    }
+
+    /// Whether this flow tracks exactly `sid`'s question set `qs` (same
+    /// session, same length, same content).
+    pub fn tracks(&self, sid: &str, qs: &[crate::types::Question]) -> bool {
+        self.session_id == sid
+            && self.answers.len() == qs.len()
+            && self.fingerprint == crate::types::question_fingerprint(qs)
+    }
+}
+
 /// State of the git review pane (mirrors the desktop Review pane): the work
 /// tree's branch + changed files on the left, the selected file's unified diff
 /// on the right. Opened over an agent and keyed by that agent's cwd.
@@ -540,9 +598,17 @@ pub struct App {
 
     pub view: View,
     pub turns: Vec<Turn>,
+    /// Memoized transcript render: the fully folded + wrapped lines for the
+    /// current `turns`/`pending_echo` at a given width. The main loop draws on
+    /// every event (PTY chunks, SSE nudges, keystrokes, the tick), so without
+    /// this every draw would re-parse the whole conversation's markdown.
+    /// Cleared by [`App::invalidate_transcript_cache`] whenever the inputs
+    /// change; the renderer refills it when the width differs.
+    pub transcript_cache: Option<TranscriptCache>,
     /// Top-line offset of the transcript viewport. Authoritative after each
-    /// render, which clamps it to the content height.
-    pub chat_scroll: u16,
+    /// render, which clamps it to the content height. `usize` on purpose: a
+    /// very long transcript can wrap to more than `u16::MAX` lines.
+    pub chat_scroll: usize,
     /// When true, the transcript sticks to the bottom as new content streams
     /// in; the renderer keeps `chat_scroll` pinned to the max. Any manual
     /// scroll clears it.
@@ -550,6 +616,13 @@ pub struct App {
     /// True when the composer is capturing keystrokes (vim insert mode).
     pub insert_mode: bool,
     pub input: String,
+    /// Optimistic local echo of the last sent chat message: rendered as a
+    /// pending user turn until a refold's trailing user message matches it
+    /// (or the send fails, which restores the composer).
+    pub pending_echo: Option<String>,
+    /// Progress through the open agent's multi-question / multi-select set;
+    /// `None` until the user starts answering (renderers fall back to Q1).
+    pub question_flow: Option<QuestionFlow>,
 
     /// Chords typed so far toward a multi-key binding (e.g. after the leader).
     /// Empty when no sequence is in flight; drives the which-key popup.
@@ -619,10 +692,13 @@ impl App {
             selected: 0,
             view: View::List,
             turns: Vec::new(),
+            transcript_cache: None,
             chat_scroll: 0,
             chat_follow: false,
             insert_mode: false,
             input: String::new(),
+            pending_echo: None,
+            question_flow: None,
             pending_keys: Vec::new(),
             toast: None,
         }
@@ -655,6 +731,12 @@ impl App {
         self.toast = Some((msg.into(), Instant::now()));
     }
 
+    /// Drop the memoized transcript render. Must be called whenever `turns`
+    /// or `pending_echo` change; the renderer rebuilds it on the next draw.
+    pub(super) fn invalidate_transcript_cache(&mut self) {
+        self.transcript_cache = None;
+    }
+
     // ── inbound messages ──────────────────────────────────────────────────
 
     pub fn apply_msg(&mut self, msg: AppMsg) {
@@ -665,9 +747,37 @@ impl App {
                 // While following, the renderer keeps us pinned to the bottom.
                 if self.chat_session_id().as_deref() == Some(session_id.as_str()) {
                     self.turns = turns;
+                    // The optimistic echo retires once the refold carries the
+                    // sent message as its trailing user turn.
+                    if let Some(echo) = self.pending_echo.as_deref() {
+                        let landed = self
+                            .turns
+                            .iter()
+                            .rev()
+                            .find(|t| t.role == crate::types::Role::User)
+                            .is_some_and(|t| {
+                                t.parts
+                                    .iter()
+                                    .any(|p| matches!(p, crate::types::Part::Text(s) if s == echo))
+                            });
+                        if landed {
+                            self.pending_echo = None;
+                        }
+                    }
+                    self.invalidate_transcript_cache();
                 }
             }
             AppMsg::Toast(t) => self.set_toast(t),
+            AppMsg::SendFailed { text, error } => {
+                self.pending_echo = None;
+                self.invalidate_transcript_cache();
+                // Give the user their message back to retry (unless they've
+                // already started typing something else).
+                if self.input.is_empty() {
+                    self.input = text;
+                }
+                self.set_toast(format!("Failed: {error}"));
+            }
             AppMsg::TerminalUnavailable(sid) => self.mark_no_terminal(sid),
             AppMsg::ShellSpawned {
                 agent_id,
@@ -887,6 +997,20 @@ impl App {
         self.jumplist.retain(|sid| live.contains(sid));
         if self.jump_idx >= self.jumplist.len() {
             self.jump_idx = self.jumplist.len().saturating_sub(1);
+        }
+        // Drop the question stepper once its session's question set is gone
+        // (answered, superseded by a different set — even one of the same
+        // length — or the session ended).
+        if let Some(flow) = &self.question_flow {
+            let still_pending = self
+                .all_agents
+                .iter()
+                .find(|a| a.session_id == flow.session_id)
+                .and_then(|a| a.questions())
+                .is_some_and(|qs| flow.tracks(&flow.session_id, qs));
+            if !still_pending {
+                self.question_flow = None;
+            }
         }
     }
 
@@ -1163,10 +1287,29 @@ impl App {
         }
     }
 
+    /// A session's wire transport (`"pty"`/`"stream"`), defaulting to PTY for
+    /// sessions not (yet) in the live list.
+    pub(super) fn transport_for(&self, sid: &str) -> String {
+        self.all_agents
+            .iter()
+            .find(|a| a.session_id == sid)
+            .map(|a| a.transport.clone())
+            .unwrap_or_else(|| "pty".to_string())
+    }
+
+    /// True for headless stream-transport sessions — no PTY to warm or attach.
+    pub fn is_stream_session(&self, sid: &str) -> bool {
+        self.all_agents
+            .iter()
+            .find(|a| a.session_id == sid)
+            .is_some_and(|a| a.is_stream())
+    }
+
     pub(super) fn load_transcript(&self, session_id: String) {
         let cm = self.claudemon.clone();
         let tx = self.tx.clone();
-        tokio::spawn(async move { fetch_transcript(&cm, &tx, session_id).await });
+        let transport = self.transport_for(&session_id);
+        tokio::spawn(async move { fetch_transcript(&cm, &tx, session_id, transport).await });
     }
 
     /// Run a control future, toast the outcome, then refresh the list (and the
@@ -1179,14 +1322,16 @@ impl App {
         let cm = self.claudemon.clone();
         let tx = self.tx.clone();
         let ok_msg = ok_msg.to_string();
-        let reopen = self.chat_session_id();
+        let reopen = self
+            .chat_session_id()
+            .map(|sid| (sid.clone(), self.transport_for(&sid)));
         tokio::spawn(async move {
             match fut.await {
                 Ok(_) => {
                     let _ = tx.send(AppMsg::Toast(ok_msg));
                     fetch_agents(&cm, &tx).await;
-                    if let Some(sid) = reopen {
-                        fetch_transcript(&cm, &tx, sid).await;
+                    if let Some((sid, transport)) = reopen {
+                        fetch_transcript(&cm, &tx, sid, transport).await;
                     }
                 }
                 Err(e) => {
@@ -1369,6 +1514,13 @@ impl App {
         if self.terms.contains_key(&session_id) || self.no_terminal.contains(&session_id) {
             return;
         }
+        // Headless stream sessions have no PTY by construction — never open
+        // (and endlessly retry) a stream for them. Recording the fact keeps
+        // watch panes labelled "transcript only" instead of "starting…".
+        if self.is_stream_session(&session_id) {
+            self.no_terminal.insert(session_id);
+            return;
+        }
         self.terms.insert(session_id.clone(), Term::new());
 
         // Bus mode: attach the lease (which replays the ring buffer) and keep it
@@ -1454,6 +1606,11 @@ impl App {
                 self.load_transcript(sid);
             }
             ChatMode::Transcript => {
+                // Headless stream sessions have no PTY — the toggle is a no-op.
+                if self.is_stream_session(&sid) {
+                    self.set_toast("headless session — no terminal");
+                    return;
+                }
                 if self.no_terminal.contains(&sid) {
                     self.set_toast("no terminal — external session (transcript only)");
                     return;
@@ -2161,6 +2318,164 @@ mod tests {
         let form = app.spawn_form.as_mut().unwrap();
         form.provider_idx = 1; // "codex"
         assert_eq!(SPAWN_PROVIDERS[form.provider_idx], "codex");
+    }
+
+    fn agent_stream(id: &str) -> Agent {
+        serde_json::from_value(serde_json::json!({
+            "session_id": id, "cwd": "/repo", "mode": "responding", "transport": "stream"
+        }))
+        .unwrap()
+    }
+
+    fn user_turn(text: &str) -> Turn {
+        Turn {
+            role: crate::types::Role::User,
+            parts: vec![crate::types::Part::Text(text.into())],
+        }
+    }
+
+    #[tokio::test]
+    async fn stream_sessions_open_transcript_only_without_warming_a_pty() {
+        let mut app = test_app();
+        app.set_agents(vec![agent_stream("s1")]);
+        app.selected = 1;
+        app.open_agent();
+        assert_eq!(
+            app.chat_mode,
+            ChatMode::Transcript,
+            "headless sessions default straight to the transcript"
+        );
+        assert!(
+            app.terms.is_empty(),
+            "no PTY stream is warmed for a stream-transport session"
+        );
+
+        // The `t` terminal toggle is a no-op with a toast.
+        app.toggle_chat_mode();
+        assert_eq!(app.chat_mode, ChatMode::Transcript);
+        assert!(app.terms.is_empty());
+        assert_eq!(app.toast(), Some("headless session — no terminal"));
+    }
+
+    #[tokio::test]
+    async fn ensure_terminal_never_streams_a_headless_session() {
+        let mut app = test_app();
+        app.set_agents(vec![agent_stream("s1")]);
+        app.ensure_terminal("s1".into());
+        assert!(app.terms.is_empty() && app.term_tasks.is_empty());
+        assert!(
+            app.no_terminal.contains("s1"),
+            "recorded so watch panes say 'transcript only'"
+        );
+    }
+
+    #[tokio::test]
+    async fn send_echo_survives_stale_refolds_and_retires_on_match() {
+        let mut app = test_app();
+        app.set_agents(vec![agent_cwd("s1", "/repo", "input")]);
+        app.selected = 1;
+        app.open_agent();
+        app.input = "hello there".into();
+        app.send_input();
+        assert_eq!(app.pending_echo.as_deref(), Some("hello there"));
+        assert!(app.input.is_empty(), "the composer clears on send");
+
+        // A refold that doesn't yet carry the message keeps the echo…
+        app.apply_msg(AppMsg::Transcript {
+            session_id: "s1".into(),
+            turns: vec![user_turn("an older message")],
+        });
+        assert_eq!(app.pending_echo.as_deref(), Some("hello there"));
+
+        // …and the refold whose trailing user message matches retires it.
+        app.apply_msg(AppMsg::Transcript {
+            session_id: "s1".into(),
+            turns: vec![user_turn("an older message"), user_turn("hello there")],
+        });
+        assert!(app.pending_echo.is_none());
+    }
+
+    #[tokio::test]
+    async fn send_failure_restores_the_composer_and_drops_the_echo() {
+        let mut app = test_app();
+        app.set_agents(vec![agent_cwd("s1", "/repo", "input")]);
+        app.selected = 1;
+        app.open_agent();
+        app.input = "ship it".into();
+        app.send_input();
+        assert!(app.pending_echo.is_some());
+
+        app.apply_msg(AppMsg::SendFailed {
+            text: "ship it".into(),
+            error: "connection refused".into(),
+        });
+        assert!(app.pending_echo.is_none());
+        assert_eq!(app.input, "ship it", "the message comes back to retry");
+        assert_eq!(app.toast(), Some("Failed: connection refused"));
+    }
+
+    #[tokio::test]
+    async fn a_transcript_refold_invalidates_the_memoized_render() {
+        let mut app = test_app();
+        app.set_agents(vec![agent_cwd("s1", "/repo", "input")]);
+        app.selected = 1;
+        app.open_agent();
+        app.transcript_cache = Some(TranscriptCache {
+            width: 80,
+            lines: Vec::new(),
+        });
+        app.apply_msg(AppMsg::Transcript {
+            session_id: "s1".into(),
+            turns: vec![user_turn("fresh")],
+        });
+        assert!(
+            app.transcript_cache.is_none(),
+            "new turns drop the cached lines so the next draw re-renders"
+        );
+    }
+
+    fn questions(v: serde_json::Value) -> Vec<crate::types::Question> {
+        serde_json::from_value(v).unwrap()
+    }
+
+    #[test]
+    fn question_flow_clears_when_the_set_is_gone() {
+        let mut app = test_app();
+        let qs = questions(serde_json::json!([
+            {"question": "One?"}, {"question": "Two?"}
+        ]));
+        app.question_flow = Some(QuestionFlow::new("s1".into(), &qs));
+        // s1 is live but no longer has a pending question → the stepper drops.
+        app.set_agents(vec![agent("s1")]);
+        assert!(app.question_flow.is_none());
+    }
+
+    #[test]
+    fn question_flow_clears_when_a_same_length_set_supersedes_it() {
+        // A different question set of the SAME length (the old one was
+        // resolved elsewhere, the agent asked again) must not inherit the
+        // stale flow's position and recorded answers.
+        let mut app = test_app();
+        let old = questions(serde_json::json!([
+            {"question": "Old one?"}, {"question": "Old two?"}
+        ]));
+        let mut flow = QuestionFlow::new("s1".into(), &old);
+        flow.idx = 1;
+        flow.answers[0] = Some("2".into());
+        app.question_flow = Some(flow);
+
+        let asking: Agent = serde_json::from_value(serde_json::json!({
+            "session_id": "s1", "cwd": "/w", "mode": "question",
+            "pending": {"kind": "question", "questions": [
+                {"question": "New one?"}, {"question": "New two?"}
+            ]}
+        }))
+        .unwrap();
+        app.set_agents(vec![asking]);
+        assert!(
+            app.question_flow.is_none(),
+            "the superseded flow drops instead of answering unseen questions"
+        );
     }
 
     #[tokio::test]

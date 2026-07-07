@@ -18,6 +18,7 @@ mod names;
 mod notes;
 mod pins;
 mod profiles;
+mod render;
 mod terminal;
 mod theme;
 mod types;

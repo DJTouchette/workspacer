@@ -23,6 +23,8 @@ directories = "5"
 base64 = "0.22"
 uuid = { version = "1", features = ["v4"] }
 tui-term = "0.2" # re-exports vt100 as tui_term::vt100 (version-locked)
+pulldown-cmark = { version = "0.13.4", default-features = false }
+unicode-width = "=0.2.0" # version-locked to ratatui 0.29's exact pin
 
 [profile.release]
 lto = "thin"

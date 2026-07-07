@@ -25,13 +25,17 @@ pub(super) async fn fetch_agents(cm: &Claudemon, tx: &UnboundedSender<AppMsg>) {
     let _ = tx.send(AppMsg::Agents(list));
 }
 
+/// Fetch and refold a session's conversation. `transport` is the session's
+/// wire transport (`"pty"`/`"stream"`) — it drives how the fold coalesces
+/// assistant text (see [`turns_from_conversation`]).
 pub(super) async fn fetch_transcript(
     cm: &Claudemon,
     tx: &UnboundedSender<AppMsg>,
     session_id: String,
+    transport: String,
 ) {
     if let Ok(v) = cm.conversation(&session_id).await {
-        let turns = turns_from_conversation(&v);
+        let turns = turns_from_conversation(&v, &transport);
         let _ = tx.send(AppMsg::Transcript { session_id, turns });
     }
 }
@@ -44,9 +48,10 @@ pub(super) async fn fetch_search_index(
     tx: &UnboundedSender<AppMsg>,
     session_id: String,
     name: String,
+    transport: String,
 ) {
     let lines = match cm.conversation(&session_id).await {
-        Ok(v) => search_lines(&turns_from_conversation(&v)),
+        Ok(v) => search_lines(&turns_from_conversation(&v, &transport)),
         Err(_) => Vec::new(),
     };
     let _ = tx.send(AppMsg::SearchEntries {

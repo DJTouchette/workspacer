@@ -135,6 +135,18 @@ impl Claudemon {
         .await
     }
 
+    /// Answer a multi-question set in one shot: one raw answer per question
+    /// (a 1-indexed digit string for a pick, free text otherwise, or joined
+    /// labels for a multi-select). The daemon maps digits to labels on both
+    /// transports and types them sequentially into the PTY picker.
+    pub async fn answer_all(&self, session_id: &str, answers: &[String]) -> Result<()> {
+        self.post_ok(
+            &format!("/sessions/{session_id}/answer"),
+            &json!({ "answers": answers }),
+        )
+        .await
+    }
+
     pub async fn message(&self, session_id: &str, text: &str) -> Result<()> {
         self.post_ok(
             &format!("/sessions/{session_id}/message"),
@@ -1122,5 +1134,18 @@ mod tests {
         assert_eq!(method, "GET");
         assert!(path.starts_with("/providers/codex/models"), "got {path}");
         assert!(path.contains("cwd="), "cwd query missing: {path}");
+    }
+
+    #[tokio::test]
+    async fn answer_all_posts_the_raw_answers_array() {
+        let (base, srv) = mock_server(200, "OK", r#"{"ok":true}"#).await;
+        Claudemon::new(base)
+            .answer_all("s1", &["2".to_string(), "free text".to_string()])
+            .await
+            .expect("ok");
+        let (method, path, body) = srv.await.unwrap();
+        assert_eq!(method, "POST");
+        assert_eq!(path, "/sessions/s1/answer");
+        assert_eq!(body["answers"], json!(["2", "free text"]));
     }
 }

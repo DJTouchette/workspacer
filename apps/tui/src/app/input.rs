@@ -120,6 +120,26 @@ impl App {
             return;
         }
 
+        // Question stepper keys, intercepted before the keymap (like the
+        // positional 1-9 answer keys): Enter confirms the current multi-select
+        // question's toggles; Esc steps back to the previous question mid-set.
+        // Only where the stepper is actually visible (the list detail pane and
+        // the transcript's ask block) — in terminal mode no stepper renders
+        // and Enter must keep meaning attach.
+        if self.pending_keys.is_empty()
+            && self.target_has_question()
+            && self.key_context() != Context::AgentTerminal
+        {
+            if key.code == KeyCode::Enter && self.current_question_is_multiselect() {
+                self.question_confirm_multiselect();
+                return;
+            }
+            if key.code == KeyCode::Esc && self.question_can_step_back() {
+                self.question_back();
+                return;
+            }
+        }
+
         // Vim count prefix: a leading digit accumulates a count for the next
         // motion (e.g. `3j`). Skipped when a question is pending — there `1`-`9`
         // answer it — and `0` only extends an existing count (never starts one).
@@ -251,11 +271,11 @@ impl App {
             InsertMode => self.insert_mode = true,
             ScrollDown => {
                 self.chat_follow = false;
-                self.chat_scroll = self.chat_scroll.saturating_add(n as u16);
+                self.chat_scroll = self.chat_scroll.saturating_add(n);
             }
             ScrollUp => {
                 self.chat_follow = false;
-                self.chat_scroll = self.chat_scroll.saturating_sub(n as u16);
+                self.chat_scroll = self.chat_scroll.saturating_sub(n);
             }
             Approve => self.approve("yes", "Approved"),
             Deny => self.approve("no", "Denied"),
@@ -287,11 +307,17 @@ impl App {
     /// Open the content-search modal and kick off indexing: fetch each non-shell
     /// session's transcript in the background; lines stream in as `SearchEntries`.
     pub(super) fn open_search(&mut self) {
-        let targets: Vec<(String, String)> = self
+        let targets: Vec<(String, String, String)> = self
             .all_agents
             .iter()
             .filter(|a| !self.is_shell_session(&a.session_id))
-            .map(|a| (a.session_id.clone(), self.agent_name(a)))
+            .map(|a| {
+                (
+                    a.session_id.clone(),
+                    self.agent_name(a),
+                    a.transport.clone(),
+                )
+            })
             .collect();
         self.search = Some(SearchState {
             query: String::new(),
@@ -300,10 +326,10 @@ impl App {
             selected: 0,
             pending: targets.len(),
         });
-        for (sid, name) in targets {
+        for (sid, name, transport) in targets {
             let cm = self.claudemon.clone();
             let tx = self.tx.clone();
-            tokio::spawn(async move { fetch_search_index(&cm, &tx, sid, name).await });
+            tokio::spawn(async move { fetch_search_index(&cm, &tx, sid, name, transport).await });
         }
     }
 
@@ -1414,10 +1440,17 @@ impl App {
         self.chat_follow = true;
         self.insert_mode = false;
         self.term_attached = false;
+        self.pending_echo = None;
+        self.invalidate_transcript_cache();
         let Some(tab) = self.active_tab().cloned() else {
             return;
         };
-        if tab.kind == TabKind::Claude && self.no_terminal.contains(&tab.session_id) {
+        // Headless stream sessions and known no-PTY sessions are proactively
+        // transcript-only — never warm a PTY stream that can't exist.
+        let transcript_only = tab.kind == TabKind::Claude
+            && (self.no_terminal.contains(&tab.session_id)
+                || self.is_stream_session(&tab.session_id));
+        if transcript_only {
             self.chat_mode = ChatMode::Transcript;
             self.load_transcript(tab.session_id);
         } else {
@@ -1674,7 +1707,9 @@ impl App {
         self.term_attached = false;
         self.insert_mode = false;
         self.input.clear();
+        self.pending_echo = None;
         self.turns.clear();
+        self.invalidate_transcript_cache();
         self.tiles.clear();
         self.tile_focus = 0;
     }
@@ -1714,21 +1749,178 @@ impl App {
         self.dispatch(ok, async move { drv.approve(&sid, &decision, None).await });
     }
 
-    /// Answer the first pending question with the option at 1-based key `c`.
-    pub(super) fn answer_option(&mut self, c: char) {
-        let Some(agent) = self.target_agent() else {
-            return;
+    /// The target's pending questions as `(session id, questions)`, when any.
+    fn target_questions(&self) -> Option<(String, Vec<crate::types::Question>)> {
+        let agent = self.target_agent()?;
+        let qs = agent.questions().filter(|q| !q.is_empty())?;
+        Some((agent.session_id.clone(), qs.to_vec()))
+    }
+
+    /// The index of the question currently on screen (the flow's position, or
+    /// the first question before any interaction). Only a flow that tracks
+    /// this exact set counts — a stale flow for a superseded set must not
+    /// position us on a question the user never stepped to.
+    fn current_question_idx(&self, sid: &str, qs: &[crate::types::Question]) -> usize {
+        self.question_flow
+            .as_ref()
+            .filter(|f| f.tracks(sid, qs))
+            .map(|f| f.idx.min(qs.len() - 1))
+            .unwrap_or(0)
+    }
+
+    /// Whether the question currently on screen is a multi-select (so Enter
+    /// confirms toggles instead of falling through to the keymap).
+    fn current_question_is_multiselect(&self) -> bool {
+        let Some((sid, qs)) = self.target_questions() else {
+            return false;
         };
-        if !agent.has_question() {
+        let idx = self.current_question_idx(&sid, &qs);
+        qs[idx].multi_select
+    }
+
+    /// Whether Esc should step back to the previous question (mid-set only).
+    fn question_can_step_back(&self) -> bool {
+        let Some((sid, qs)) = self.target_questions() else {
+            return false;
+        };
+        self.question_flow
+            .as_ref()
+            .is_some_and(|f| f.tracks(&sid, &qs) && f.idx > 0)
+    }
+
+    /// The stepper state for the pending set, created (or reset) on demand —
+    /// including when the tracked set was superseded by a different one of
+    /// the same length (its answers would otherwise leak into the new set).
+    fn ensure_question_flow(
+        &mut self,
+        sid: &str,
+        qs: &[crate::types::Question],
+    ) -> &mut super::QuestionFlow {
+        let stale = self
+            .question_flow
+            .as_ref()
+            .is_none_or(|f| !f.tracks(sid, qs));
+        if stale {
+            self.question_flow = Some(super::QuestionFlow::new(sid.to_string(), qs));
+        }
+        self.question_flow.as_mut().expect("flow just ensured")
+    }
+
+    /// Record the current question's raw answer, then advance — or, after the
+    /// last question, POST the whole set as `{answers: [raw…]}` (the daemon
+    /// maps digit strings to labels on both transports and types them
+    /// sequentially into the PTY picker).
+    fn question_record_and_advance(
+        &mut self,
+        sid: &str,
+        qs: &[crate::types::Question],
+        raw: String,
+    ) {
+        let n = qs.len();
+        let flow = self.ensure_question_flow(sid, qs);
+        let idx = flow.idx.min(n - 1);
+        flow.answers[idx] = Some(raw);
+        if idx + 1 < n {
+            flow.idx = idx + 1;
             return;
         }
-        let option = (c as u8 - b'0') as u64; // '1'..='9' → 1..=9
-        let sid = agent.session_id.clone();
+        let answers: Vec<String> = flow
+            .answers
+            .iter()
+            .map(|a| a.clone().unwrap_or_default())
+            .collect();
+        self.question_flow = None;
+        let sid = sid.to_string();
         let drv = self.driver();
         self.dispatch(
             "Answered",
-            async move { drv.answer_option(&sid, option).await },
+            async move { drv.answer_all(&sid, answers).await },
         );
+    }
+
+    /// Revisit the previous question (its recorded pick renders highlighted).
+    fn question_back(&mut self) {
+        if let Some(f) = self.question_flow.as_mut() {
+            f.idx = f.idx.saturating_sub(1);
+        }
+    }
+
+    /// Confirm the current multi-select question: the toggled labels, joined
+    /// `", "`, become its raw answer. A single-question set answers
+    /// immediately on the `{text}` fast path; mid-set it records and advances.
+    fn question_confirm_multiselect(&mut self) {
+        let Some((sid, qs)) = self.target_questions() else {
+            return;
+        };
+        let n = qs.len();
+        let idx = self.current_question_idx(&sid, &qs);
+        let q = &qs[idx];
+        if !q.multi_select {
+            return;
+        }
+        let picks = self
+            .question_flow
+            .as_ref()
+            .filter(|f| f.tracks(&sid, &qs))
+            .map(|f| f.picks[idx].clone())
+            .unwrap_or_default();
+        let labels: Vec<String> = picks
+            .iter()
+            .filter_map(|&i| q.options.get(i))
+            .map(|o| o.label.clone())
+            .collect();
+        if labels.is_empty() {
+            self.set_toast("nothing selected — 1-9 toggle options");
+            return;
+        }
+        let raw = labels.join(", ");
+        if n == 1 {
+            self.question_flow = None;
+            let drv = self.driver();
+            self.dispatch("Answered", async move { drv.answer_text(&sid, &raw).await });
+            return;
+        }
+        self.question_record_and_advance(&sid, &qs, raw);
+    }
+
+    /// A digit key (1-9) against the pending question set: toggles an option
+    /// of a multi-select, answers a single question immediately (the `{option}`
+    /// fast path), or answers the current question of a multi-question set and
+    /// advances the stepper.
+    pub(super) fn answer_option(&mut self, c: char) {
+        let Some((sid, qs)) = self.target_questions() else {
+            return;
+        };
+        let n = qs.len();
+        let digit = (c as u8 - b'1') as usize; // '1'..='9' → 0-based option
+        let idx = self.current_question_idx(&sid, &qs);
+        let q = &qs[idx];
+        if q.multi_select {
+            if digit < q.options.len() {
+                let flow = self.ensure_question_flow(&sid, &qs);
+                let set = &mut flow.picks[idx];
+                if !set.remove(&digit) {
+                    set.insert(digit);
+                }
+            }
+            return;
+        }
+        // Out-of-range picks are ignored (when the option list is known).
+        if !q.options.is_empty() && digit >= q.options.len() {
+            return;
+        }
+        if n == 1 {
+            // Single question keeps the immediate `{option}` fast path.
+            self.question_flow = None;
+            let option = (digit + 1) as u64;
+            let drv = self.driver();
+            self.dispatch(
+                "Answered",
+                async move { drv.answer_option(&sid, option).await },
+            );
+            return;
+        }
+        self.question_record_and_advance(&sid, &qs, (digit + 1).to_string());
     }
 
     pub(super) fn signal(&mut self, signal: &str, ok: &str) {
@@ -1742,25 +1934,61 @@ impl App {
 
     /// Send the composer's contents — as an answer if the agent is on a
     /// question, otherwise as a chat message. Mirrors the `/remote` heuristic.
+    ///
+    /// Free text against a multi-question set answers the CURRENT question and
+    /// advances the stepper (submission happens after the last); a chat message
+    /// echoes optimistically into the transcript until the refold carries it.
     pub(super) fn send_input(&mut self) {
         let text = self.input.trim().to_string();
         if text.is_empty() {
+            return;
+        }
+        if let Some((sid, qs)) = self.target_questions() {
+            self.input.clear();
+            if qs.len() > 1 {
+                self.question_record_and_advance(&sid, &qs, text);
+                return;
+            }
+            self.question_flow = None;
+            let drv = self.driver();
+            self.dispatch(
+                "Answered",
+                async move { drv.answer_text(&sid, &text).await },
+            );
             return;
         }
         let Some(agent) = self.target_agent() else {
             return;
         };
         let sid = agent.session_id.clone();
-        let answering = agent.has_question();
+        self.input.clear();
+        // Optimistic echo: render the message as a pending user turn now; the
+        // refold that includes it (or a failure) retires it. Slash commands
+        // don't echo — the daemon records them as filtered meta
+        // (<command-name>…), so no refold could ever retire theirs.
+        if !text.starts_with('/') {
+            self.pending_echo = Some(text.clone());
+            self.invalidate_transcript_cache();
+        }
         let drv = self.driver();
-        self.dispatch("Sent", async move {
-            if answering {
-                drv.answer_text(&sid, &text).await
-            } else {
-                drv.message(&sid, &text).await
+        let cm = self.claudemon.clone();
+        let tx = self.tx.clone();
+        let transport = self.transport_for(&sid);
+        tokio::spawn(async move {
+            match drv.message(&sid, &text).await {
+                Ok(_) => {
+                    let _ = tx.send(AppMsg::Toast("Sent".into()));
+                    fetch_agents(&cm, &tx).await;
+                    super::tasks::fetch_transcript(&cm, &tx, sid, transport).await;
+                }
+                Err(e) => {
+                    let _ = tx.send(AppMsg::SendFailed {
+                        text,
+                        error: e.to_string(),
+                    });
+                }
             }
         });
-        self.input.clear();
     }
 }
 
@@ -1816,6 +2044,33 @@ mod tests {
             "session_id": id, "cwd": format!("/work/{id}"), "mode": "question",
             "pending": {"kind": "question", "questions": [
                 {"question": "Which?", "options": [{"label": "A"}, {"label": "B"}]}
+            ]}
+        }))
+        .unwrap()
+    }
+
+    /// An agent parked on a single multi-select question.
+    fn agent_asking_multiselect(id: &str) -> Agent {
+        serde_json::from_value(serde_json::json!({
+            "session_id": id, "cwd": format!("/work/{id}"), "mode": "question",
+            "pending": {"kind": "question", "questions": [
+                {"question": "Choose", "multi_select": true,
+                 "options": [{"label": "X"}, {"label": "Y"}]}
+            ]}
+        }))
+        .unwrap()
+    }
+
+    /// An agent on a three-question set: a pick, a multi-select, and free text.
+    fn agent_asking_many(id: &str) -> Agent {
+        serde_json::from_value(serde_json::json!({
+            "session_id": id, "cwd": format!("/work/{id}"), "mode": "question",
+            "pending": {"kind": "question", "questions": [
+                {"question": "Pick one",
+                 "options": [{"label": "A"}, {"label": "B"}]},
+                {"question": "Choose tools", "multi_select": true,
+                 "options": [{"label": "X"}, {"label": "Y"}, {"label": "Z"}]},
+                {"question": "Anything else?", "options": []}
             ]}
         }))
         .unwrap()
@@ -2134,6 +2389,163 @@ mod tests {
             Some(3),
             "without a question, the same digit starts a count"
         );
+    }
+
+    // ── question stepper: multi-question + multi-select routing ─────────────
+
+    #[tokio::test]
+    async fn multi_question_digits_answer_and_advance() {
+        let mut app = test_app();
+        app.set_agents(vec![agent_asking_many("s1")]);
+        app.selected = 1;
+
+        // Q1 (single pick): a digit records the 1-indexed raw and advances.
+        app.handle_key(ch('2'));
+        let flow = app.question_flow.as_ref().expect("flow started");
+        assert_eq!(flow.idx, 1, "advanced to Q2");
+        assert_eq!(flow.answers[0].as_deref(), Some("2"));
+        assert_eq!(app.count, None, "digit answered, never a vim count");
+    }
+
+    #[tokio::test]
+    async fn multiselect_digits_toggle_and_enter_confirms() {
+        let mut app = test_app();
+        app.set_agents(vec![agent_asking_many("s1")]);
+        app.selected = 1;
+        app.handle_key(ch('1')); // Q1 answered → Q2 (multi-select)
+
+        // Digits TOGGLE options — no advance.
+        app.handle_key(ch('1'));
+        app.handle_key(ch('3'));
+        {
+            let flow = app.question_flow.as_ref().unwrap();
+            assert_eq!(flow.idx, 1, "toggles don't advance");
+            assert!(flow.picks[1].contains(&0) && flow.picks[1].contains(&2));
+        }
+        app.handle_key(ch('3')); // toggle Z back off
+        assert!(!app.question_flow.as_ref().unwrap().picks[1].contains(&2));
+
+        // Enter confirms: the chosen labels joined ", " become the raw answer.
+        app.handle_key(ch('2')); // also pick Y → X + Y
+        app.handle_key(code(KeyCode::Enter));
+        let flow = app.question_flow.as_ref().unwrap();
+        assert_eq!(flow.idx, 2, "confirmed and advanced to Q3");
+        assert_eq!(flow.answers[1].as_deref(), Some("X, Y"));
+    }
+
+    #[tokio::test]
+    async fn multiselect_enter_with_nothing_selected_toasts() {
+        let mut app = test_app();
+        app.set_agents(vec![agent_asking_many("s1")]);
+        app.selected = 1;
+        app.handle_key(ch('1')); // → Q2 (multi-select), nothing toggled
+        app.handle_key(code(KeyCode::Enter));
+        let flow = app.question_flow.as_ref().unwrap();
+        assert_eq!(flow.idx, 1, "empty confirm doesn't advance");
+        assert_eq!(app.toast(), Some("nothing selected — 1-9 toggle options"));
+    }
+
+    #[tokio::test]
+    async fn esc_revisits_the_previous_question_mid_set() {
+        let mut app = test_app();
+        app.set_agents(vec![agent_asking_many("s1")]);
+        app.selected = 1;
+        app.handle_key(ch('1')); // Q1 → Q2
+        app.handle_key(code(KeyCode::Esc));
+        let flow = app.question_flow.as_ref().unwrap();
+        assert_eq!(flow.idx, 0, "esc steps back");
+        assert_eq!(
+            flow.answers[0].as_deref(),
+            Some("1"),
+            "the recorded pick is kept (renders highlighted)"
+        );
+        // Re-answering overwrites and advances again.
+        app.handle_key(ch('2'));
+        let flow = app.question_flow.as_ref().unwrap();
+        assert_eq!(flow.idx, 1);
+        assert_eq!(flow.answers[0].as_deref(), Some("2"));
+    }
+
+    #[tokio::test]
+    async fn free_text_answers_the_current_question_and_last_answer_submits() {
+        let mut app = test_app();
+        app.set_agents(vec![agent_asking_many("s1")]);
+        app.selected = 1;
+        app.handle_key(ch('1')); // Q1 → Q2
+
+        // Free text mid-set answers the CURRENT question and advances (it
+        // must not submit the whole set yet).
+        app.input = "custom tools".into();
+        app.send_input();
+        {
+            let flow = app.question_flow.as_ref().unwrap();
+            assert_eq!(flow.idx, 2, "advanced, not submitted");
+            assert_eq!(flow.answers[1].as_deref(), Some("custom tools"));
+        }
+
+        // Answering the final question submits {answers:[…]} and clears the flow.
+        app.input = "nothing else".into();
+        app.send_input();
+        assert!(
+            app.question_flow.is_none(),
+            "the whole set posted and the stepper reset"
+        );
+    }
+
+    #[tokio::test]
+    async fn single_question_keeps_the_immediate_fast_path() {
+        let mut app = test_app();
+        app.set_agents(vec![agent_asking("s1")]);
+        app.selected = 1;
+        app.handle_key(ch('1'));
+        assert!(
+            app.question_flow.is_none(),
+            "a single pick answers immediately — no stepper survives"
+        );
+    }
+
+    #[tokio::test]
+    async fn enter_still_opens_an_agent_on_a_single_select_question() {
+        // The Enter interception only applies to multi-select questions; a
+        // plain question must not shadow Enter = OpenAgent in the list.
+        let mut app = test_app();
+        app.set_agents(vec![agent_asking("s1")]);
+        app.selected = 1;
+        app.handle_key(code(KeyCode::Enter));
+        assert!(
+            matches!(&app.view, crate::app::View::Agent { id } if id == "s1"),
+            "enter opened the agent"
+        );
+    }
+
+    #[tokio::test]
+    async fn enter_still_attaches_in_terminal_mode_on_a_multiselect_question() {
+        // No stepper renders in terminal chat mode (its footer advertises
+        // "enter to attach") — Enter must attach, not confirm invisible
+        // toggles. The list detail pane and the transcript keep the stepper.
+        let mut app = test_app();
+        app.set_agents(vec![agent_asking_multiselect("s1")]);
+        app.selected = 1;
+        app.handle_key(ch('l')); // open via 'l' (Enter confirms from the list)
+        assert!(matches!(&app.view, crate::app::View::Agent { id } if id == "s1"));
+        assert_eq!(app.chat_mode, crate::app::ChatMode::Terminal);
+
+        app.handle_key(code(KeyCode::Enter));
+        assert!(app.term_attached(), "enter attached to the terminal");
+        assert_eq!(app.toast(), None, "no 'nothing selected' toast");
+    }
+
+    #[tokio::test]
+    async fn a_slash_command_send_does_not_leave_a_pending_echo() {
+        // Slash commands are stored as filtered meta (<command-name>…), so a
+        // refold could never retire their echo — they don't echo at all.
+        let mut app = test_app();
+        app.set_agents(vec![agent("s1", "responding")]);
+        app.selected = 1;
+        app.input = "/compact".into();
+        app.send_input();
+        assert!(app.pending_echo.is_none(), "no ghost '…sending' turn");
+        assert!(app.input.is_empty(), "the composer still clears");
     }
 
     // ── open modals swallow keys (no leak to global actions) ────────────────
