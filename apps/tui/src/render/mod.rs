@@ -5,4 +5,4 @@ pub mod markdown;
 pub mod wrap;
 
 pub use markdown::markdown_lines;
-pub use wrap::wrap_plain;
+pub use wrap::{truncate_width, wrap_plain};

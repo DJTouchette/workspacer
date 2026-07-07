@@ -1895,6 +1895,16 @@ impl App {
         let digit = (c as u8 - b'1') as usize; // '1'..='9' → 0-based option
         let idx = self.current_question_idx(&sid, &qs);
         let q = &qs[idx];
+        // In terminal mode no stepper renders (mirroring the Enter/Esc gate at
+        // the top of handle_key), so digits must not drive an invisible flow —
+        // recording hidden answers or toggling unseen checkboxes, then blind-
+        // submitting the set. Only the single plain question keeps its
+        // immediate `{option}` fast path: the daemon types that pick into the
+        // PTY picker where the user can see it.
+        if self.key_context() == Context::AgentTerminal && (n > 1 || q.multi_select) {
+            self.set_toast("switch to transcript (t) to answer");
+            return;
+        }
         if q.multi_select {
             if digit < q.options.len() {
                 let flow = self.ensure_question_flow(&sid, &qs);
@@ -2533,6 +2543,64 @@ mod tests {
         app.handle_key(code(KeyCode::Enter));
         assert!(app.term_attached(), "enter attached to the terminal");
         assert_eq!(app.toast(), None, "no 'nothing selected' toast");
+    }
+
+    #[tokio::test]
+    async fn terminal_mode_digits_do_not_drive_the_invisible_stepper() {
+        // In terminal chat mode no stepper renders — a digit against a
+        // multi-question set must not silently record an answer and advance
+        // toward a blind submit. It toasts the way out instead.
+        let mut app = test_app();
+        app.set_agents(vec![agent_asking_many("s1")]);
+        app.selected = 1;
+        app.handle_key(ch('l')); // open via 'l' → ChatMode::Terminal, unattached
+        assert!(matches!(&app.view, crate::app::View::Agent { id } if id == "s1"));
+        assert_eq!(app.chat_mode, crate::app::ChatMode::Terminal);
+
+        app.handle_key(ch('1'));
+        assert!(
+            app.question_flow.is_none(),
+            "no hidden answer was recorded in terminal mode"
+        );
+        assert_eq!(app.toast(), Some("switch to transcript (t) to answer"));
+    }
+
+    #[tokio::test]
+    async fn terminal_mode_digits_do_not_toggle_invisible_multiselect_boxes() {
+        // A single multi-select question is just as invisible in terminal
+        // mode, and Enter there means attach — so the toggles could never be
+        // confirmed. Digits must not accumulate hidden picks.
+        let mut app = test_app();
+        app.set_agents(vec![agent_asking_multiselect("s1")]);
+        app.selected = 1;
+        app.handle_key(ch('l'));
+        assert_eq!(app.chat_mode, crate::app::ChatMode::Terminal);
+
+        app.handle_key(ch('1'));
+        assert!(
+            app.question_flow.is_none(),
+            "no invisible checkbox was toggled"
+        );
+        assert_eq!(app.toast(), Some("switch to transcript (t) to answer"));
+    }
+
+    #[tokio::test]
+    async fn terminal_mode_single_question_keeps_the_visible_fast_path() {
+        // One plain question keeps the immediate `{option}` POST: the daemon
+        // types the pick into the PTY picker, which the terminal pane shows.
+        let mut app = test_app();
+        app.set_agents(vec![agent_asking("s1")]);
+        app.selected = 1;
+        app.handle_key(ch('l'));
+        assert_eq!(app.chat_mode, crate::app::ChatMode::Terminal);
+
+        app.handle_key(ch('1'));
+        assert!(app.question_flow.is_none(), "fast path never opens a flow");
+        assert_ne!(
+            app.toast(),
+            Some("switch to transcript (t) to answer"),
+            "the single-question answer is not blocked"
+        );
     }
 
     #[tokio::test]

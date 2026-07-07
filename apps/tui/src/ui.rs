@@ -788,7 +788,10 @@ fn push_edit_diff(out: &mut Vec<Line<'static>>, t: &Theme, w: usize, edits: &[(S
     let total = rows.len();
     for (sign, text) in rows.into_iter().take(MAX_LINES) {
         let color = if sign == '-' { t.bad } else { t.ok };
-        let line = crate::types::truncate(&format!("  {sign} {text}"), w);
+        // Display-width truncation: render_chat's Paragraph has no .wrap(),
+        // so a row measured in chars (wide glyphs = 2 columns) would clip at
+        // the pane border and hide the `…` marker entirely.
+        let line = crate::render::truncate_width(&format!("  {sign} {text}"), w);
         out.push(Line::from(Span::styled(line, Style::default().fg(color))));
     }
     if total > MAX_LINES {
@@ -2192,6 +2195,25 @@ mod tests {
         assert_eq!(texts, vec!["  - old line", "  + new line"]);
         assert_eq!(out[0].spans[0].style.fg, Some(t.bad), "- lines in bad");
         assert_eq!(out[1].spans[0].style.fg, Some(t.ok), "+ lines in ok");
+    }
+
+    #[test]
+    fn edit_diff_truncates_by_display_width_not_char_count() {
+        // The chat Paragraph has no .wrap(): a row wider than the pane clips
+        // at the border. Wide glyphs count 2 columns, so char-count truncation
+        // would leave this CJK row ~2x the pane width with the '…' invisible.
+        let t = Theme::default();
+        let old = "宽".repeat(30); // 60 columns of content
+        let mut out = Vec::new();
+        push_edit_diff(&mut out, &t, 20, &[(old, "x".to_string())]);
+        let texts = line_texts(&out);
+        assert!(
+            crate::render::wrap::display_width(&texts[0]) <= 20,
+            "the - row fits the pane: {:?}",
+            texts[0]
+        );
+        assert!(texts[0].ends_with('…'), "the truncation marker is visible");
+        assert_eq!(texts[1], "  + x", "short rows pass through untouched");
     }
 
     #[test]

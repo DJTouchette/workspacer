@@ -108,9 +108,20 @@ impl Renderer<'_> {
                     .push(Span::styled(if done { "☑ " } else { "☐ " }, style));
             }
             Event::Html(s) | Event::InlineHtml(s) => {
-                // No HTML rendering — surface it verbatim as dim text.
+                // No HTML rendering — surface it verbatim as dim text. Block
+                // HTML arrives with embedded/trailing newlines; keep its line
+                // structure (wrap_spans treats '\n' as a zero-width word char
+                // and ratatui drops it at render time, so the whole block
+                // would otherwise mush into one line split at random columns).
                 let style = Style::default().fg(self.t.dim);
-                self.inline.push(Span::styled(s.into_string(), style));
+                for (i, piece) in s.split('\n').enumerate() {
+                    if i > 0 {
+                        self.break_line();
+                    }
+                    if !piece.is_empty() {
+                        self.inline.push(Span::styled(piece.to_string(), style));
+                    }
+                }
             }
             Event::FootnoteReference(_) | Event::InlineMath(_) | Event::DisplayMath(_) => {}
         }
@@ -343,7 +354,11 @@ impl Renderer<'_> {
         self.out.push(Line::from(line));
 
         for code_line in code.trim_end_matches('\n').split('\n') {
-            for piece in hard_split(code_line, avail) {
+            // Expand tabs: ratatui filters control chars at render time (a
+            // kept tab would draw as nothing) and unicode_width counts them
+            // 0 — tab-indented code (Go, Makefiles) would render flush-left.
+            let code_line = code_line.replace('\t', "    ");
+            for piece in hard_split(&code_line, avail) {
                 let mut line = rest.clone();
                 line.push(Span::styled("│ ", dim));
                 line.push(Span::styled(piece, Style::default().fg(self.t.fg)));
@@ -562,6 +577,39 @@ mod tests {
         // (each glyph is 2 wide — 6 would fit by char count).
         let lines = markdown_lines("宽字符测试啊", &theme(), 10);
         assert_eq!(text_of(&lines), vec!["宽字符测试", "啊"]);
+    }
+
+    #[test]
+    fn html_block_keeps_its_line_structure() {
+        // Multi-line HTML must not mush into one giant "word" that hard-splits
+        // mid-tag; each source line stays its own rendered line.
+        let md = "<div>\n<span>hello world</span>\n</div>";
+        let lines = markdown_lines(md, &theme(), 30);
+        assert_eq!(
+            text_of(&lines),
+            vec!["<div>", "<span>hello world</span>", "</div>"]
+        );
+        // And no line carries a raw newline for ratatui to silently drop.
+        for l in text_of(&lines) {
+            assert!(!l.contains('\n'), "no embedded newline in {l:?}");
+        }
+    }
+
+    #[test]
+    fn inline_html_stays_inline() {
+        let lines = markdown_lines("a <br> b", &theme(), 40);
+        assert_eq!(text_of(&lines), vec!["a <br> b"]);
+    }
+
+    #[test]
+    fn code_block_tabs_expand_to_spaces() {
+        // Tabs are control chars: ratatui filters them at render time and
+        // unicode_width counts them 0, so kept tabs would erase indentation.
+        let md = "```go\n\tfmt.Println(1)\n```";
+        let lines = markdown_lines(md, &theme(), 40);
+        let texts = text_of(&lines);
+        assert_eq!(texts[1], "│     fmt.Println(1)", "tab became four spaces");
+        assert!(!texts[1].contains('\t'), "no raw tab survives");
     }
 
     #[test]

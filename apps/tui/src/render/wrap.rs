@@ -15,6 +15,29 @@ pub fn display_width(s: &str) -> usize {
     s.chars().map(|c| c.width().unwrap_or(0)).sum()
 }
 
+/// Truncate `s` to at most `max` display columns, appending `…` when it's cut
+/// — the display-width sibling of `crate::types::truncate` (which counts
+/// chars). For lines that render without wrapping: wide glyphs (CJK, emoji)
+/// count their real column width, so the result never overflows the pane.
+pub fn truncate_width(s: &str, max: usize) -> String {
+    if display_width(s) <= max {
+        return s.to_string();
+    }
+    let budget = max.saturating_sub(1); // one column reserved for the ellipsis
+    let mut out = String::new();
+    let mut w = 0usize;
+    for ch in s.chars() {
+        let cw = ch.width().unwrap_or(0);
+        if w + cw > budget {
+            break;
+        }
+        out.push(ch);
+        w += cw;
+    }
+    out.push('…');
+    out
+}
+
 /// One styled run of characters that wraps as a unit boundary: either a run of
 /// spaces or a run of non-space characters, from a single source span.
 struct Atom {
@@ -201,6 +224,29 @@ mod tests {
         // A wide glyph never straddles the boundary: after 5 of 6 columns the
         // next glyph (2 wide) moves whole to the next line.
         assert_eq!(wrap_plain("abcde你", 6), vec!["abcde", "你"]);
+    }
+
+    #[test]
+    fn truncate_width_passes_short_strings_through() {
+        assert_eq!(truncate_width("hello", 10), "hello");
+        assert_eq!(truncate_width("hello", 5), "hello", "exact fit is kept");
+        assert_eq!(truncate_width("", 4), "");
+    }
+
+    #[test]
+    fn truncate_width_cuts_at_display_columns_with_ellipsis() {
+        assert_eq!(truncate_width("abcdefgh", 5), "abcd…");
+        assert!(display_width(&truncate_width("abcdefgh", 5)) <= 5);
+    }
+
+    #[test]
+    fn truncate_width_counts_wide_glyphs_as_two_columns() {
+        // 4 CJK glyphs = 8 columns; at max 5 only two glyphs (4) + '…' fit.
+        assert_eq!(truncate_width("宽字符测", 5), "宽字…");
+        assert!(display_width(&truncate_width("宽字符测", 5)) <= 5);
+        // A wide glyph never straddles the budget: 3 columns fit one glyph,
+        // the next (2 wide) would exceed the 2-column budget and is dropped.
+        assert_eq!(truncate_width("宽字符测", 3), "宽…");
     }
 
     #[test]
