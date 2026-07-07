@@ -172,6 +172,46 @@ html, body {
   transition: background-color 0.12s, color 0.12s;
 }
 
+/* Streaming cancel — a quiet stop glyph beside the spinner; the label only
+ * fades in on hover so the resting state stays featherweight. */
+.wks-stop-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 20px;
+  padding: 0 7px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--wks-text-muted);
+  cursor: pointer;
+  font-family: inherit;
+  transition: color 0.12s, background-color 0.12s;
+}
+.wks-stop-btn .wks-stop-square {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: currentColor;
+  flex: none;
+}
+.wks-stop-btn .wks-stop-hint {
+  font-size: 0.6rem;
+  letter-spacing: 0.05em;
+  opacity: 0;
+  transform: translateX(-3px);
+  transition: opacity 0.12s, transform 0.12s;
+  white-space: nowrap;
+}
+.wks-stop-btn:hover {
+  color: var(--wks-error);
+  background-color: color-mix(in srgb, var(--wks-error) 12%, transparent);
+}
+.wks-stop-btn:hover .wks-stop-hint {
+  opacity: 1;
+  transform: none;
+}
+
 /* Shared frosted-glass surface. Apply alongside per-element layout styles. */
 .wks-glass {
   background-color: var(--wks-glass-bg);

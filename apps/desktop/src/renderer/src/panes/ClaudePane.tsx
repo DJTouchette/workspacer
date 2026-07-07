@@ -1373,20 +1373,12 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
                     <BrandSpinner size={15} />
                     <button
                       onClick={cancelTask}
-                      style={{
-                        fontSize: '0.65rem',
-                        fontWeight: 500,
-                        padding: '2px 10px',
-                        border: `1px solid ${colors.muted}`,
-                        borderRadius: 'var(--wks-radius-sm)',
-                        backgroundColor: 'transparent',
-                        color: colors.muted,
-                        cursor: 'pointer',
-                        fontFamily: 'inherit',
-                      }}
+                      className="wks-stop-btn"
                       title="Cancel (Esc)"
+                      aria-label="Cancel"
                     >
-                      Cancel
+                      <span className="wks-stop-square" />
+                      <span className="wks-stop-hint">esc to stop</span>
                     </button>
                   </div>
                 )}
