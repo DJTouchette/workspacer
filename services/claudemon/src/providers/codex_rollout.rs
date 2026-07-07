@@ -116,7 +116,7 @@ fn translate_response_item(payload: &Value) -> Vec<AgentUpdate> {
                 .to_string();
             // `arguments` is a JSON string; parse it so the GUI can render fields
             // (command, path, …). Fall back to the raw string if it isn't JSON.
-            let input = payload
+            let mut input = payload
                 .get("arguments")
                 .and_then(Value::as_str)
                 .and_then(|s| serde_json::from_str::<Value>(s).ok())
@@ -131,9 +131,40 @@ fn translate_response_item(payload: &Value) -> Vec<AgentUpdate> {
                     out.push(AgentUpdate::Plan(plan));
                 }
             }
+            // An apply_patch function call carries the raw patch text (as the
+            // whole arguments string, or under `input`/`patch`) — normalize to
+            // `{ path, diff }` so the GUI can name the file and show the diff.
+            if name == "apply_patch" {
+                if let Some(patch) = patch_text_of(&input) {
+                    input = apply_patch_input(&patch);
+                }
+            }
             out.push(AgentUpdate::ToolUse { id, name, input });
         }
-        "function_call_output" => {
+        // Codex ≥0.14x emits apply_patch as a *custom* tool call: `input` is the
+        // raw "*** Begin Patch …" text (not JSON). Without this arm the rollout
+        // path drops every file edit on the floor.
+        "custom_tool_call" => {
+            let name = payload
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("tool")
+                .to_string();
+            let id = payload
+                .get("call_id")
+                .or_else(|| payload.get("id"))
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let raw = payload.get("input").and_then(Value::as_str).unwrap_or("");
+            let input = if name == "apply_patch" {
+                apply_patch_input(raw)
+            } else {
+                serde_json::json!({ "input": raw })
+            };
+            out.push(AgentUpdate::ToolUse { id, name, input });
+        }
+        "function_call_output" | "custom_tool_call_output" => {
             let tool_use_id = payload
                 .get("call_id")
                 .or_else(|| payload.get("id"))
@@ -152,25 +183,77 @@ fn translate_response_item(payload: &Value) -> Vec<AgentUpdate> {
     out
 }
 
-/// Flatten a `function_call_output.output` (a string, or an object that may carry
-/// `content`/`text` and a success flag) into display text + an error flag.
-fn function_output_text(output: Option<&Value>) -> (String, bool) {
-    match output {
-        Some(Value::String(s)) => (s.clone(), false),
-        Some(Value::Object(map)) => {
-            let is_error = map
-                .get("success")
-                .and_then(Value::as_bool)
-                .map(|ok| !ok)
-                .unwrap_or(false);
-            let text = map
-                .get("content")
-                .and_then(Value::as_str)
-                .map(str::to_string)
-                .or_else(|| map.get("text").and_then(Value::as_str).map(str::to_string))
-                .unwrap_or_else(|| Value::Object(map.clone()).to_string());
-            (text, is_error)
+/// Pull the raw patch text out of an apply_patch call's parsed arguments: the
+/// whole value when it's a string, else an `input` / `patch` string field.
+fn patch_text_of(input: &Value) -> Option<String> {
+    match input {
+        Value::String(s) => Some(s.clone()),
+        Value::Object(map) => map
+            .get("input")
+            .or_else(|| map.get("patch"))
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        _ => None,
+    }
+}
+
+/// Build the ToolUse input for an apply_patch call from its raw patch text
+/// (`*** Begin Patch\n*** Update File: path\n…`): the touched paths give the
+/// GUI a `path` headline, and the whole patch rides as `diff` (rendered as the
+/// inline diff, same key the app-server path uses).
+fn apply_patch_input(patch: &str) -> Value {
+    let mut paths: Vec<String> = Vec::new();
+    for line in patch.lines() {
+        for prefix in ["*** Update File: ", "*** Add File: ", "*** Delete File: "] {
+            if let Some(rest) = line.strip_prefix(prefix) {
+                paths.push(rest.trim().to_string());
+            }
         }
+    }
+    let mut input = serde_json::json!({ "diff": patch });
+    if let Some(first) = paths.first() {
+        input["path"] = serde_json::json!(first);
+    }
+    if paths.len() > 1 {
+        input["paths"] = serde_json::json!(paths);
+    }
+    input
+}
+
+/// Flatten a `function_call_output.output` / `custom_tool_call_output.output`
+/// (a string, an object that may carry `content`/`text`/`output` and a success
+/// flag, or — custom tool calls — a string that itself encodes such an object,
+/// e.g. `"{\"output\":\"…\",\"metadata\":{\"exit_code\":0}}"`) into display
+/// text + an error flag.
+fn function_output_text(output: Option<&Value>) -> (String, bool) {
+    fn object_text(map: &serde_json::Map<String, Value>) -> (String, bool) {
+        let is_error = map
+            .get("success")
+            .and_then(Value::as_bool)
+            .map(|ok| !ok)
+            .or_else(|| {
+                map.get("metadata")
+                    .and_then(|m| m.get("exit_code"))
+                    .and_then(Value::as_i64)
+                    .map(|code| code != 0)
+            })
+            .unwrap_or(false);
+        let text = ["content", "output", "text"]
+            .iter()
+            .find_map(|k| map.get(*k).and_then(Value::as_str))
+            .map(str::to_string)
+            .unwrap_or_else(|| Value::Object(map.clone()).to_string());
+        (text, is_error)
+    }
+    match output {
+        Some(Value::String(s)) => {
+            // custom_tool_call_output wraps its envelope in the string.
+            if let Ok(Value::Object(map)) = serde_json::from_str::<Value>(s) {
+                return object_text(&map);
+            }
+            (s.clone(), false)
+        }
+        Some(Value::Object(map)) => object_text(map),
         Some(other) => (other.to_string(), false),
         None => (String::new(), false),
     }
@@ -534,6 +617,83 @@ mod tests {
                 tool_use_id: "c2".into(),
                 content: "boom".into(),
                 is_error: true
+            }]
+        );
+    }
+
+    #[test]
+    fn custom_apply_patch_call_yields_path_and_diff() {
+        // The shape Codex ≥0.14x actually writes: a custom_tool_call whose
+        // `input` is the raw patch text.
+        let patch =
+            "*** Begin Patch\n*** Update File: app/models/user.rb\n@@\n-old\n+new\n*** End Patch";
+        let v = item(json!({ "type": "custom_tool_call", "name": "apply_patch",
+            "call_id": "c9", "input": patch, "status": "completed" }));
+        assert_eq!(
+            translate(&v),
+            vec![AgentUpdate::ToolUse {
+                id: "c9".into(),
+                name: "apply_patch".into(),
+                input: json!({ "diff": patch, "path": "app/models/user.rb" }),
+            }]
+        );
+    }
+
+    #[test]
+    fn custom_apply_patch_multi_file_lists_all_paths() {
+        let patch = "*** Begin Patch\n*** Add File: a.rs\n+x\n*** Delete File: b.rs\n*** End Patch";
+        let v = item(json!({ "type": "custom_tool_call", "name": "apply_patch",
+            "call_id": "c10", "input": patch }));
+        match &translate(&v)[0] {
+            AgentUpdate::ToolUse { input, .. } => {
+                assert_eq!(input["path"], "a.rs");
+                assert_eq!(input["paths"], json!(["a.rs", "b.rs"]));
+                assert_eq!(input["diff"], patch);
+            }
+            other => panic!("expected ToolUse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn function_call_apply_patch_normalizes_wrapped_patch_text() {
+        // Some builds route apply_patch through a function_call whose JSON
+        // arguments wrap the patch under `input`.
+        let v = item(
+            json!({ "type": "function_call", "name": "apply_patch", "call_id": "c11",
+            "arguments": "{\"input\":\"*** Begin Patch\\n*** Update File: src/x.ts\\n@@\\n+hi\\n*** End Patch\"}" }),
+        );
+        match &translate(&v)[0] {
+            AgentUpdate::ToolUse { name, input, .. } => {
+                assert_eq!(name, "apply_patch");
+                assert_eq!(input["path"], "src/x.ts");
+                assert!(input["diff"].as_str().unwrap().contains("+hi"));
+            }
+            other => panic!("expected ToolUse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn custom_tool_call_output_unwraps_json_envelope() {
+        // The output string itself encodes {"output": …, "metadata": {exit_code}}.
+        let v = item(json!({ "type": "custom_tool_call_output", "call_id": "c9",
+            "output": "{\"output\":\"Success. Updated the following files:\\nM app/models/user.rb\\n\",\"metadata\":{\"exit_code\":0,\"duration_seconds\":0.0}}" }));
+        assert_eq!(
+            translate(&v),
+            vec![AgentUpdate::ToolResult {
+                tool_use_id: "c9".into(),
+                content: "Success. Updated the following files:\nM app/models/user.rb\n".into(),
+                is_error: false,
+            }]
+        );
+        // Non-zero exit_code in the envelope flags the error.
+        let err = item(json!({ "type": "custom_tool_call_output", "call_id": "c12",
+            "output": "{\"output\":\"boom\",\"metadata\":{\"exit_code\":1}}" }));
+        assert_eq!(
+            translate(&err),
+            vec![AgentUpdate::ToolResult {
+                tool_use_id: "c12".into(),
+                content: "boom".into(),
+                is_error: true,
             }]
         );
     }

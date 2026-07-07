@@ -1,15 +1,18 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { ToolCall, SubagentInfo, WorkflowRunInfo } from '../../types/claudeSession';
 import { claudeColors as colors, WorkLogEntry } from '../claude-shared';
-import { DiffView, hasDiff, ReadView, hasRead } from './DiffView';
+import { DiffView, PatchDiffView, hasDiff, ReadView, hasRead } from './DiffView';
 import { SubagentRow } from './SubagentRow';
 import { WorkflowRunCard } from './WorkflowRunCard';
 import { AgentSpinner } from './WorkflowAgentRow';
 import { FileLink } from './FileLink';
+import { patchLineCounts } from '../../lib/turnChanges';
 
-const EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'NotebookEdit']);
-const CMD_TOOLS = new Set(['Bash', 'PowerShell']);
-const SEARCH_TOOLS = new Set(['Grep', 'Glob']);
+// Tool-name sets span providers: claude Edit/Bash/Grep · codex
+// apply_patch/shell/exec_command/web_search · opencode/pi patch.
+const EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'NotebookEdit', 'apply_patch', 'patch']);
+const CMD_TOOLS = new Set(['Bash', 'PowerShell', 'shell', 'exec_command']);
+const SEARCH_TOOLS = new Set(['Grep', 'Glob', 'web_search', 'WebSearch']);
 
 interface WorkSummary {
   text: string;
@@ -35,17 +38,32 @@ export function summarizeWork(calls: ToolCall[]): WorkSummary {
   for (const tc of calls) {
     if (tc.status === 'failed') failed++;
     if (EDIT_TOOLS.has(tc.name)) {
-      if (tc.input?.file_path) editedFiles.add(tc.input.file_path);
-      // MultiEdit carries its changes in an `edits` array rather than top-level
-      // old_string/new_string — sum across each sub-edit.
-      const edits = Array.isArray(tc.input?.edits)
-        ? tc.input.edits
-        : [{ old_string: tc.input?.old_string, new_string: tc.input?.new_string }];
-      for (const e of edits) {
-        const old = e?.old_string ?? '';
-        const nw = e?.new_string ?? '';
-        if (old) removed += old.split('\n').length;
-        if (nw) added += nw.split('\n').length;
+      const filePath = tc.input?.file_path ?? tc.input?.path;
+      if (filePath) editedFiles.add(filePath);
+      // Codex apply_patch may touch several files in one call — `changes`
+      // carries them all (`[{ path, kind, diff }]`).
+      if (Array.isArray(tc.input?.changes)) {
+        for (const ch of tc.input.changes) {
+          if (typeof ch?.path === 'string' && ch.path) editedFiles.add(ch.path);
+        }
+      }
+      if (typeof tc.input?.diff === 'string') {
+        // apply_patch-style input: count the patch's +/- lines.
+        const counts = patchLineCounts(tc.input.diff);
+        added += counts.added;
+        removed += counts.removed;
+      } else {
+        // MultiEdit carries its changes in an `edits` array rather than top-level
+        // old_string/new_string — sum across each sub-edit.
+        const edits = Array.isArray(tc.input?.edits)
+          ? tc.input.edits
+          : [{ old_string: tc.input?.old_string, new_string: tc.input?.new_string }];
+        for (const e of edits) {
+          const old = e?.old_string ?? '';
+          const nw = e?.new_string ?? '';
+          if (old) removed += old.split('\n').length;
+          if (nw) added += nw.split('\n').length;
+        }
       }
     } else if (tc.name === 'Write') {
       if (tc.input?.file_path) editedFiles.add(tc.input.file_path);
@@ -135,12 +153,20 @@ const WorkCardInner: React.FC<{
         out.push(
           <React.Fragment key={`edit-${tc.id}`}>
             <WorkLogEntry tc={tc} />
-            <DiffView
-              oldStr={tc.input?.old_string ?? ''}
-              newStr={tc.input?.new_string ?? ''}
-              filePath={tc.input?.file_path}
-              cwd={cwd}
-            />
+            {typeof tc.input?.diff === 'string' ? (
+              <PatchDiffView
+                patch={tc.input.diff}
+                filePath={tc.input?.file_path ?? tc.input?.path}
+                cwd={cwd}
+              />
+            ) : (
+              <DiffView
+                oldStr={tc.input?.old_string ?? ''}
+                newStr={tc.input?.new_string ?? ''}
+                filePath={tc.input?.file_path}
+                cwd={cwd}
+              />
+            )}
           </React.Fragment>,
         );
       }
@@ -312,14 +338,21 @@ const WorkCardInner: React.FC<{
             return (
               <React.Fragment key={tc.id}>
                 <WorkLogEntry tc={tc} />
-                {hasDiff(tc) && (
-                  <DiffView
-                    oldStr={tc.input?.old_string ?? ''}
-                    newStr={tc.input?.new_string ?? ''}
-                    filePath={tc.input?.file_path}
-                    cwd={cwd}
-                  />
-                )}
+                {hasDiff(tc) &&
+                  (typeof tc.input?.diff === 'string' ? (
+                    <PatchDiffView
+                      patch={tc.input.diff}
+                      filePath={tc.input?.file_path ?? tc.input?.path}
+                      cwd={cwd}
+                    />
+                  ) : (
+                    <DiffView
+                      oldStr={tc.input?.old_string ?? ''}
+                      newStr={tc.input?.new_string ?? ''}
+                      filePath={tc.input?.file_path}
+                      cwd={cwd}
+                    />
+                  ))}
                 {hasRead(tc) && (
                   <ReadView
                     response={String(tc.response)}

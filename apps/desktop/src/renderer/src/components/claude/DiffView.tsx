@@ -262,11 +262,120 @@ const SplitBody: React.FC<BodyProps> = ({ oldLines, newLines, oldTokens, newToke
 
 /** Check if a tool call has diff-able content */
 export function hasDiff(tc: { name: string; input?: Record<string, unknown> }): boolean {
-  return (
+  if (
     (tc.name === 'Edit' || tc.name === 'MultiEdit') &&
     !!(tc.input?.old_string || tc.input?.new_string)
+  ) {
+    return true;
+  }
+  // Codex apply_patch (and opencode/pi patch) carry a unified patch under
+  // `diff` — rendered by PatchDiffView instead of the old/new pair.
+  return (
+    (tc.name === 'apply_patch' || tc.name === 'patch') &&
+    typeof tc.input?.diff === 'string' &&
+    tc.input.diff.length > 0
   );
 }
+
+/** One classified patch line for PatchDiffView. */
+type PatchLineKind = 'add' | 'del' | 'hunk' | 'context';
+
+function classifyPatchLine(line: string): PatchLineKind {
+  if (line.startsWith('@@') || line.startsWith('***') || line.startsWith('diff ')) return 'hunk';
+  if (line.startsWith('+++') || line.startsWith('---')) return 'hunk';
+  if (line.startsWith('+')) return 'add';
+  if (line.startsWith('-')) return 'del';
+  return 'context';
+}
+
+/**
+ * Render a unified patch (codex apply_patch `diff`, either git-unified or the
+ * `*** Begin Patch` envelope) as a +/- colorized line list, consistent with
+ * DiffView's stacked layout. No per-side line numbers — a patch's hunks don't
+ * map to one contiguous range.
+ */
+export const PatchDiffView: React.FC<{
+  patch: string;
+  filePath?: string;
+  /** Session cwd — resolves relative paths for the header FileLink. */
+  cwd?: string;
+}> = ({ patch, filePath, cwd }) => {
+  const fileName = filePath?.split(/[/\\]/).pop() ?? '';
+  const lines = patch.split('\n');
+  if (lines.length && lines[lines.length - 1] === '') lines.pop();
+  const addedCount = lines.filter((l) => classifyPatchLine(l) === 'add').length;
+  const removedCount = lines.filter((l) => classifyPatchLine(l) === 'del').length;
+
+  return (
+    <div
+      style={{
+        margin: '6px 0',
+        borderRadius: 'var(--wks-radius-sm)',
+        overflow: 'hidden',
+        border: `1px solid ${colors.borderSubtle}`,
+        fontSize: '0.75rem',
+        fontFamily: 'var(--claude-mono-font, monospace)',
+      }}
+    >
+      {fileName && (
+        <div
+          style={{
+            padding: '5px 12px',
+            backgroundColor: 'rgba(255,255,255,0.03)',
+            color: colors.text,
+            fontSize: '0.72rem',
+            fontWeight: 600,
+            borderBottom: `1px solid ${colors.borderSubtle}`,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+          }}
+        >
+          <FileLink path={filePath!} cwd={cwd}>
+            {fileName}
+          </FileLink>
+          {removedCount > 0 && (
+            <span style={{ color: colors.error, fontSize: '0.65rem', fontWeight: 400 }}>
+              -{removedCount}
+            </span>
+          )}
+          {addedCount > 0 && (
+            <span style={{ color: colors.success, fontSize: '0.65rem', fontWeight: 400 }}>
+              +{addedCount}
+            </span>
+          )}
+        </div>
+      )}
+      <div style={{ maxHeight: 600, overflow: 'auto' }}>
+        {lines.map((line, i) => {
+          const kind = classifyPatchLine(line);
+          const bg = kind === 'add' ? ADD_BG : kind === 'del' ? DEL_BG : 'transparent';
+          const fg =
+            kind === 'add'
+              ? ADD_FG
+              : kind === 'del'
+                ? DEL_FG
+                : kind === 'hunk'
+                  ? colors.mutedDim
+                  : colors.text;
+          const marker = kind === 'add' ? '+' : kind === 'del' ? '-' : ' ';
+          const markerColor =
+            kind === 'add' ? colors.success : kind === 'del' ? colors.error : colors.mutedDim;
+          const text = kind === 'add' || kind === 'del' ? line.slice(1) : line;
+          return (
+            <div
+              key={i}
+              style={{ display: 'flex', backgroundColor: bg, color: fg, lineHeight: 1.5 }}
+            >
+              <span style={markerStyle(markerColor)}>{marker}</span>
+              <span style={{ ...contentStyle, paddingLeft: 4 }}>{text}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
 
 /** Cap how many read lines we render inline; the rest is summarized. */
 const READ_PREVIEW_MAX = 200;

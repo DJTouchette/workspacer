@@ -339,7 +339,11 @@ mod tests {
         )]);
         let u = from_transcript(&t).unwrap();
         // 1M input * $10 + 1M output * $50 = $60
-        assert!((u.cost_usd - 60.0).abs() < 1e-9, "fable cost={}", u.cost_usd);
+        assert!(
+            (u.cost_usd - 60.0).abs() < 1e-9,
+            "fable cost={}",
+            u.cost_usd
+        );
     }
 
     /// legacy opus 4.1/4.0: $15/M in, $75/M out (longest-prefix wins)

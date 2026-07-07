@@ -12,6 +12,7 @@ function mkSession(): ClaudeSessionState {
     conversation: [],
     activeToolCalls: [],
     completedToolCalls: [],
+    fileChanges: [],
     subagents: [],
     pendingApproval: { toolName: 'Bash', toolInput: {}, timestamp: 1 },
     pendingQuestions: null,
@@ -250,6 +251,95 @@ describe('applyConversationItems — assistant text coalescing by transport', ()
     );
     expect(s.conversation).toHaveLength(3);
     expect(s.conversation[2].content).toBe('After.');
+  });
+});
+
+describe('applyConversationItems — managed-provider file changes', () => {
+  it('a codex apply_patch tool_use records a fileChange (managed providers fire no hooks)', () => {
+    const s = mkSession();
+    (s as { provider?: string }).provider = 'codex';
+    applyConversationItems(
+      s,
+      [
+        {
+          kind: 'tool_use',
+          id: 'tu_p1',
+          name: 'apply_patch',
+          input: { path: '/w/src/a.rs', diff: '@@\n-old\n+new' },
+        },
+      ],
+      noUsage,
+    );
+    expect(s.fileChanges).toHaveLength(1);
+    expect(s.fileChanges[0].path).toBe('/w/src/a.rs');
+    expect(s.fileChanges[0].toolName).toBe('apply_patch');
+  });
+
+  it('a multi-file apply_patch (changes array) records one fileChange per path', () => {
+    const s = mkSession();
+    (s as { provider?: string }).provider = 'codex';
+    applyConversationItems(
+      s,
+      [
+        {
+          kind: 'tool_use',
+          id: 'tu_p2',
+          name: 'apply_patch',
+          input: {
+            path: 'src/a.rs',
+            changes: [
+              { path: 'src/a.rs', kind: 'update', diff: '@@\n+x' },
+              { path: 'src/b.rs', kind: 'add', diff: '@@\n+y' },
+            ],
+          },
+        },
+      ],
+      noUsage,
+    );
+    expect(s.fileChanges.map((fc) => fc.path)).toEqual(['src/a.rs', 'src/b.rs']);
+  });
+
+  it('a re-delivered tool_use id does not double-record the fileChange', () => {
+    const s = mkSession();
+    (s as { provider?: string }).provider = 'codex';
+    const call: ConversationItemWire = {
+      kind: 'tool_use',
+      id: 'tu_p3',
+      name: 'apply_patch',
+      input: { path: 'src/a.rs', diff: '@@\n+x' },
+    };
+    applyConversationItems(s, [call], noUsage);
+    applyConversationItems(s, [{ ...call }], noUsage);
+    expect(s.fileChanges).toHaveLength(1);
+  });
+
+  it('claude sessions keep the hook path — no fileChange recorded here', () => {
+    const s = mkSession();
+    (s as { provider?: string }).provider = 'claude';
+    applyConversationItems(
+      s,
+      [
+        {
+          kind: 'tool_use',
+          id: 'tu_p4',
+          name: 'Edit',
+          input: { file_path: '/w/x.ts', old_string: 'a', new_string: 'b' },
+        },
+      ],
+      noUsage,
+    );
+    expect(s.fileChanges).toHaveLength(0);
+  });
+
+  it('non-edit managed tools (shell) record nothing', () => {
+    const s = mkSession();
+    (s as { provider?: string }).provider = 'codex';
+    applyConversationItems(
+      s,
+      [{ kind: 'tool_use', id: 'tu_p5', name: 'shell', input: { command: 'ls' } }],
+      noUsage,
+    );
+    expect(s.fileChanges).toHaveLength(0);
   });
 });
 

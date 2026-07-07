@@ -192,9 +192,13 @@ pub fn translate(method: &str, params: &Value) -> Vec<AgentUpdate> {
     out
 }
 
-/// Map a started/completed `item` to a tool-use update. Only `item/started`
-/// emits tool-uses (so a tool isn't recorded twice); assistant text arrives via
-/// `item/agentMessage/delta`, so completed agentMessage items are not re-emitted.
+/// Map a started/completed `item` to tool updates. `item/started` emits the
+/// [`AgentUpdate::ToolUse`] (so a tool isn't recorded twice) and
+/// `item/completed` emits the matching [`AgentUpdate::ToolResult`] — the
+/// completed `ThreadItem` carries the output fields (`aggregatedOutput` /
+/// `exitCode` / mcp `result`), which never appear on the started one.
+/// Assistant text arrives via `item/agentMessage/delta`, so completed
+/// agentMessage items are not re-emitted.
 fn translate_item(method: &str, item: &Value, out: &mut Vec<AgentUpdate>) {
     let ty = item
         .get("type")
@@ -212,14 +216,19 @@ fn translate_item(method: &str, item: &Value, out: &mut Vec<AgentUpdate>) {
         }
         return;
     }
-    if method != "item/started" {
-        return;
-    }
     let id = item
         .get("id")
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_string();
+    match method {
+        "item/started" => translate_item_started(ty, id, item, out),
+        "item/completed" => translate_item_completed(ty, id, item, out),
+        _ => {}
+    }
+}
+
+fn translate_item_started(ty: &str, id: String, item: &Value, out: &mut Vec<AgentUpdate>) {
     match ty {
         "commandExecution" => {
             let input = item
@@ -234,11 +243,10 @@ fn translate_item(method: &str, item: &Value, out: &mut Vec<AgentUpdate>) {
             });
         }
         "fileChange" => {
-            let input = json!({ "path": item.get("path").cloned().unwrap_or(Value::Null) });
             out.push(AgentUpdate::ToolUse {
                 id,
                 name: "apply_patch".into(),
-                input,
+                input: file_change_input(item),
             });
         }
         "mcpToolCall" => {
@@ -269,6 +277,150 @@ fn translate_item(method: &str, item: &Value, out: &mut Vec<AgentUpdate>) {
         }
         _ => {}
     }
+}
+
+/// Map a completed item to the `ToolResult` joined to the started `ToolUse` by
+/// item id, normalizing the per-type output fields the same way the rollout
+/// path's `function_output_text` does (plain display text + an error flag).
+fn translate_item_completed(ty: &str, id: String, item: &Value, out: &mut Vec<AgentUpdate>) {
+    // `CommandExecutionStatus` / `PatchApplyStatus` / `McpToolCallStatus`:
+    // inProgress | completed | failed (| declined). A decline is surfaced as an
+    // error so the card doesn't render as a silent success.
+    let failed = matches!(
+        item.get("status").and_then(Value::as_str).unwrap_or(""),
+        "failed" | "declined"
+    );
+    match ty {
+        "commandExecution" => {
+            let mut content = item
+                .get("aggregatedOutput")
+                .or_else(|| item.get("output"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let exit_code = item.get("exitCode").and_then(Value::as_i64);
+            if content.is_empty() {
+                if let Some(code) = exit_code {
+                    content = format!("exit code {code}");
+                }
+            }
+            out.push(AgentUpdate::ToolResult {
+                tool_use_id: id,
+                content,
+                is_error: failed || exit_code.is_some_and(|c| c != 0),
+            });
+        }
+        "fileChange" => {
+            // Summarize the patch outcome per file, mirroring the rollout
+            // path's "Success. Updated the following files:\nM path" shape.
+            let lines: Vec<String> = item
+                .get("changes")
+                .and_then(Value::as_array)
+                .map(|changes| {
+                    changes
+                        .iter()
+                        .filter_map(|c| {
+                            let path = c.get("path").and_then(Value::as_str)?;
+                            let mark = match c.get("kind").and_then(Value::as_str) {
+                                Some("add") => "A",
+                                Some("delete") => "D",
+                                _ => "M",
+                            };
+                            Some(format!("{mark} {path}"))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let content = if failed {
+                format!("Patch failed:\n{}", lines.join("\n"))
+            } else if lines.is_empty() {
+                "Success.".to_string()
+            } else {
+                format!(
+                    "Success. Updated the following files:\n{}",
+                    lines.join("\n")
+                )
+            };
+            out.push(AgentUpdate::ToolResult {
+                tool_use_id: id,
+                content,
+                is_error: failed,
+            });
+        }
+        "mcpToolCall" => {
+            let (content, is_error) = mcp_result_text(item);
+            out.push(AgentUpdate::ToolResult {
+                tool_use_id: id,
+                content,
+                is_error: failed || is_error,
+            });
+        }
+        "webSearch" => {
+            // No result payload on the wire — the empty result still marks the
+            // call complete in the GUI card.
+            out.push(AgentUpdate::ToolResult {
+                tool_use_id: id,
+                content: String::new(),
+                is_error: false,
+            });
+        }
+        _ => {}
+    }
+}
+
+/// The ToolUse input for a `fileChange` item. Modern wire (`FileUpdateChange`):
+/// `changes: [{ path, kind, diff }]` where `diff` is that file's unified patch.
+/// Surface the first path as the headline `path`, the concatenated patches as
+/// `diff` (what the GUI's inline diff renders), and the raw `changes` for
+/// multi-file awareness. Older builds that sent a bare `path` still work.
+fn file_change_input(item: &Value) -> Value {
+    if let Some(changes) = item.get("changes").and_then(Value::as_array) {
+        let path = changes
+            .iter()
+            .find_map(|c| c.get("path").and_then(Value::as_str));
+        let diff = changes
+            .iter()
+            .filter_map(|c| c.get("diff").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut input = json!({ "path": path, "changes": changes });
+        if !diff.is_empty() {
+            input["diff"] = json!(diff);
+        }
+        return input;
+    }
+    json!({ "path": item.get("path").cloned().unwrap_or(Value::Null) })
+}
+
+/// Flatten a completed `mcpToolCall`'s `result` / `error` into display text +
+/// an error flag. The result is an MCP `CallToolResult`: `content` is a list of
+/// content items whose text parts carry `text`; `structuredContent` is the
+/// typed alternative.
+fn mcp_result_text(item: &Value) -> (String, bool) {
+    if let Some(msg) = item
+        .get("error")
+        .and_then(|e| e.get("message"))
+        .and_then(Value::as_str)
+    {
+        return (msg.to_string(), true);
+    }
+    let Some(result) = item.get("result").filter(|r| !r.is_null()) else {
+        return (String::new(), false);
+    };
+    if let Some(parts) = result.get("content").and_then(Value::as_array) {
+        let text = parts
+            .iter()
+            .filter_map(|p| p.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !text.is_empty() {
+            return (text, false);
+        }
+    }
+    if let Some(sc) = result.get("structuredContent").filter(|v| !v.is_null()) {
+        return (sc.to_string(), false);
+    }
+    (result.to_string(), false)
 }
 
 /// The command string for an approval request, whether it's a plain string or a
@@ -1054,9 +1206,118 @@ mod tests {
     }
 
     #[test]
-    fn item_completed_does_not_double_emit_tool_use() {
-        let p = json!({ "item": { "type": "commandExecution", "id": "i1", "command": "ls" } });
-        assert!(translate("item/completed", &p).is_empty());
+    fn item_completed_emits_tool_result_not_a_second_tool_use() {
+        let p = json!({ "item": { "type": "commandExecution", "id": "i1", "command": "ls",
+            "status": "completed", "aggregatedOutput": "a.txt\nb.txt\n", "exitCode": 0 } });
+        assert_eq!(
+            translate("item/completed", &p),
+            vec![AgentUpdate::ToolResult {
+                tool_use_id: "i1".into(),
+                content: "a.txt\nb.txt\n".into(),
+                is_error: false,
+            }]
+        );
+    }
+
+    #[test]
+    fn completed_command_with_nonzero_exit_is_error() {
+        let p = json!({ "item": { "type": "commandExecution", "id": "i2", "command": "false",
+            "status": "failed", "exitCode": 1 } });
+        assert_eq!(
+            translate("item/completed", &p),
+            vec![AgentUpdate::ToolResult {
+                tool_use_id: "i2".into(),
+                content: "exit code 1".into(),
+                is_error: true,
+            }]
+        );
+    }
+
+    #[test]
+    fn file_change_started_carries_paths_and_diff() {
+        // Modern `FileChangeThreadItem`: no top-level path — the files live in
+        // `changes: [{ path, kind, diff }]`.
+        let p = json!({ "item": { "type": "fileChange", "id": "i3", "status": "inProgress",
+            "changes": [
+                { "path": "src/a.rs", "kind": "update", "diff": "@@ -1 +1 @@\n-old\n+new" },
+                { "path": "src/b.rs", "kind": "add", "diff": "@@ -0,0 +1 @@\n+hello" }
+            ] } });
+        let updates = translate("item/started", &p);
+        assert_eq!(updates.len(), 1);
+        match &updates[0] {
+            AgentUpdate::ToolUse { id, name, input } => {
+                assert_eq!(id, "i3");
+                assert_eq!(name, "apply_patch");
+                assert_eq!(input["path"], "src/a.rs");
+                let diff = input["diff"].as_str().unwrap();
+                assert!(diff.contains("-old") && diff.contains("+hello"));
+                assert_eq!(input["changes"].as_array().unwrap().len(), 2);
+            }
+            other => panic!("expected ToolUse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn file_change_completed_summarizes_files_and_flags_decline() {
+        let changes = json!([
+            { "path": "src/a.rs", "kind": "update", "diff": "@@\n+x" },
+            { "path": "src/b.rs", "kind": "add", "diff": "@@\n+y" }
+        ]);
+        let ok = json!({ "item": { "type": "fileChange", "id": "i4", "status": "completed",
+            "changes": changes } });
+        assert_eq!(
+            translate("item/completed", &ok),
+            vec![AgentUpdate::ToolResult {
+                tool_use_id: "i4".into(),
+                content: "Success. Updated the following files:\nM src/a.rs\nA src/b.rs".into(),
+                is_error: false,
+            }]
+        );
+        let declined = json!({ "item": { "type": "fileChange", "id": "i5", "status": "declined",
+            "changes": changes } });
+        match &translate("item/completed", &declined)[0] {
+            AgentUpdate::ToolResult { is_error, .. } => assert!(is_error),
+            other => panic!("expected ToolResult, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn mcp_tool_call_completed_maps_result_text_and_error() {
+        let ok = json!({ "item": { "type": "mcpToolCall", "id": "m1", "status": "completed",
+            "server": "workspacer", "tool": "list_agents", "arguments": {},
+            "result": { "content": [ { "type": "text", "text": "3 agents" } ] } } });
+        assert_eq!(
+            translate("item/completed", &ok),
+            vec![AgentUpdate::ToolResult {
+                tool_use_id: "m1".into(),
+                content: "3 agents".into(),
+                is_error: false,
+            }]
+        );
+        let err = json!({ "item": { "type": "mcpToolCall", "id": "m2", "status": "failed",
+            "server": "workspacer", "tool": "list_agents", "arguments": {},
+            "error": { "message": "server unavailable" } } });
+        assert_eq!(
+            translate("item/completed", &err),
+            vec![AgentUpdate::ToolResult {
+                tool_use_id: "m2".into(),
+                content: "server unavailable".into(),
+                is_error: true,
+            }]
+        );
+    }
+
+    #[test]
+    fn web_search_completed_emits_empty_result() {
+        let p = json!({ "item": { "type": "webSearch", "id": "w1", "query": "rust patterns" } });
+        assert_eq!(
+            translate("item/completed", &p),
+            vec![AgentUpdate::ToolResult {
+                tool_use_id: "w1".into(),
+                content: String::new(),
+                is_error: false,
+            }]
+        );
     }
 
     #[test]

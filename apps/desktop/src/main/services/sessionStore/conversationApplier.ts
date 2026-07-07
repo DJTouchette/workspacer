@@ -115,6 +115,43 @@ function tsOf(item: ConversationItemWire): number {
   return Date.now();
 }
 
+/** Edit-shaped tool names (lowercased) across managed providers: codex
+ *  apply_patch · opencode/pi edit/write/patch. Same family turnChanges.ts keys
+ *  on in the renderer. */
+const MANAGED_EDIT_TOOLS = new Set([
+  'apply_patch',
+  'patch',
+  'edit',
+  'multiedit',
+  'write',
+  'notebookedit',
+]);
+
+/**
+ * Record a managed (non-claude) provider's file edit into `session.fileChanges`.
+ * Claude sessions get these from PreToolUse hooks (hookEventRouter); managed
+ * providers fire no hooks, so without this their InspectorCard Files tab and
+ * fleet-deck file stats stay empty. Runs inside the tool_use dedup (a
+ * re-delivered id never reaches here), so entries aren't double-recorded.
+ */
+function recordManagedFileChange(session: ClaudeSessionState, tc: ToolCall, ts: number): void {
+  if (!MANAGED_EDIT_TOOLS.has(tc.name.toLowerCase())) return;
+  const paths: string[] = [];
+  // Multi-file apply_patch (codex app-server): `changes: [{ path, kind, diff }]`.
+  if (Array.isArray(tc.input?.changes)) {
+    for (const ch of tc.input.changes) {
+      if (typeof ch?.path === 'string' && ch.path) paths.push(ch.path);
+    }
+  }
+  if (paths.length === 0) {
+    const single = tc.input?.file_path ?? tc.input?.path ?? tc.input?.filePath;
+    if (typeof single === 'string' && single) paths.push(single);
+  }
+  for (const path of paths) {
+    session.fileChanges.push({ path, toolName: tc.name, input: tc.input, timestamp: ts });
+  }
+}
+
 /**
  * Fold a batch of conversation items into the session, mutating it in place
  * (same contract as hookEventRouter: caller owns side-effects like pushUpdate).
@@ -162,8 +199,7 @@ export function applyConversationItems(
         // managed adapter emitting per-token deltas, so it must coalesce like
         // the rest or every fragment renders as its own paragraph.
         const streaming =
-          session.transport === 'stream' ||
-          (!!session.provider && session.provider !== 'claude');
+          session.transport === 'stream' || (!!session.provider && session.provider !== 'claude');
         const last = session.conversation[session.conversation.length - 1];
         if (streaming && last && last.role === 'assistant' && !last.toolCalls?.length) {
           if (last.content && text.startsWith(last.content)) {
@@ -197,6 +233,12 @@ export function applyConversationItems(
           timestamp: ts,
           toolCalls: [tc],
         });
+        // Managed providers fire no PreToolUse hooks, so their file edits are
+        // recorded here off the conversation stream instead (claude keeps the
+        // hook path — doing both would double-count).
+        if (session.provider && session.provider !== 'claude') {
+          recordManagedFileChange(session, tc, ts);
+        }
         // Fallback for daemons that don't yet emit a dedicated `plan` item:
         // Claude's TodoWrite call carries the whole checklist in input.todos.
         // Newest write wins either way (a later `plan` item or TodoWrite call

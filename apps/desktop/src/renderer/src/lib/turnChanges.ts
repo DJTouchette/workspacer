@@ -37,29 +37,64 @@ export interface EditEstimate {
   removed: number;
 }
 
+/** Count the +/- body lines of a unified patch (codex apply_patch `diff`,
+ *  git-unified or the `*** Begin Patch` envelope), ignoring headers. */
+export function patchLineCounts(diff: string): EditEstimate {
+  let added = 0;
+  let removed = 0;
+  for (const line of diff.split('\n')) {
+    if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('***')) continue;
+    if (line.startsWith('+')) added++;
+    else if (line.startsWith('-')) removed++;
+  }
+  return { added, removed };
+}
+
 /** Files a run of tool calls edited, keyed by the tool-reported path (usually
  *  absolute), with line-count estimates from the tool inputs. Codex's
- *  apply_patch carries only a path, so its estimates stay 0/0. */
+ *  apply_patch carries its patch under `diff` (and multi-file calls under
+ *  `changes: [{ path, diff }]`) — counted from the patch's +/- lines. */
 export function collectEditedFiles(calls: ToolCall[]): Map<string, EditEstimate> {
   const out = new Map<string, EditEstimate>();
   for (const tc of calls) {
     if (!EDIT_TOOL_NAMES.has(tc.name?.toLowerCase() ?? '')) continue;
+    // Multi-file apply_patch (codex app-server): one change per file, each with
+    // its own unified diff.
+    if (Array.isArray(tc.input?.changes) && tc.input.changes.length > 0) {
+      for (const ch of tc.input.changes) {
+        if (typeof ch?.path !== 'string' || !ch.path) continue;
+        const est = out.get(ch.path) ?? { added: 0, removed: 0 };
+        if (typeof ch?.diff === 'string') {
+          const counts = patchLineCounts(ch.diff);
+          est.added += counts.added;
+          est.removed += counts.removed;
+        }
+        out.set(ch.path, est);
+      }
+      continue;
+    }
     const path = tc.input?.file_path ?? tc.input?.path ?? tc.input?.filePath;
     if (typeof path !== 'string' || !path) continue;
     const est = out.get(path) ?? { added: 0, removed: 0 };
-    // MultiEdit carries its changes in an `edits` array rather than top-level
-    // old_string/new_string — same shape summarizeWork (WorkCard) counts.
-    const edits = Array.isArray(tc.input?.edits)
-      ? tc.input.edits
-      : [{ old_string: tc.input?.old_string, new_string: tc.input?.new_string }];
-    for (const e of edits) {
-      const old = typeof e?.old_string === 'string' ? e.old_string : '';
-      const nw = typeof e?.new_string === 'string' ? e.new_string : '';
-      if (old) est.removed += old.split('\n').length;
-      if (nw) est.added += nw.split('\n').length;
-    }
-    if (typeof tc.input?.content === 'string' && tc.input.content) {
-      est.added += tc.input.content.split('\n').length;
+    if (typeof tc.input?.diff === 'string') {
+      const counts = patchLineCounts(tc.input.diff);
+      est.added += counts.added;
+      est.removed += counts.removed;
+    } else {
+      // MultiEdit carries its changes in an `edits` array rather than top-level
+      // old_string/new_string — same shape summarizeWork (WorkCard) counts.
+      const edits = Array.isArray(tc.input?.edits)
+        ? tc.input.edits
+        : [{ old_string: tc.input?.old_string, new_string: tc.input?.new_string }];
+      for (const e of edits) {
+        const old = typeof e?.old_string === 'string' ? e.old_string : '';
+        const nw = typeof e?.new_string === 'string' ? e.new_string : '';
+        if (old) est.removed += old.split('\n').length;
+        if (nw) est.added += nw.split('\n').length;
+      }
+      if (typeof tc.input?.content === 'string' && tc.input.content) {
+        est.added += tc.input.content.split('\n').length;
+      }
     }
     out.set(path, est);
   }

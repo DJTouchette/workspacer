@@ -881,7 +881,10 @@ mod tests {
         let items = items_from_row(&main);
         assert!(matches!(
             &items[0],
-            ConversationItem::Usage { sidechain: false, .. }
+            ConversationItem::Usage {
+                sidechain: false,
+                ..
+            }
         ));
         let wire = serde_json::to_value(&items[0]).unwrap();
         assert!(

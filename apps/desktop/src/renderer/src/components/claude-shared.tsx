@@ -4,6 +4,7 @@
  */
 import React from 'react';
 import type { ClaudeSessionSnapshot, ToolCall } from '../types/claudeSession';
+import { patchLineCounts } from '../lib/turnChanges';
 
 // ── Color Palette ──
 
@@ -151,14 +152,39 @@ export function formatToolSummary(tc: ToolCall): { call: string; result: string 
       const lines = tc.input?.content ? tc.input.content.split('\n').length : 0;
       return { call: `Write(${file})`, result: lines > 0 ? `${lines} lines` : '' };
     }
-    case 'Bash': {
-      const cmd = (tc.input?.command ?? '').split('\n')[0].slice(0, 60);
-      return { call: `Bash(${cmd})`, result: '' };
+    // Codex file edits: `apply_patch` (opencode/pi: `patch`) carry the whole
+    // unified patch under `diff`, so line counts come from its +/- lines.
+    case 'apply_patch':
+    case 'patch': {
+      const file = fp(tc.input?.file_path ?? tc.input?.path ?? '');
+      const counts = typeof tc.input?.diff === 'string' ? patchLineCounts(tc.input.diff) : null;
+      const parts: string[] = [];
+      if (counts?.removed) parts.push(`-${counts.removed}`);
+      if (counts?.added) parts.push(`+${counts.added}`);
+      return {
+        call: `Edit(${file || 'patch'})`,
+        result: parts.length ? parts.join(' ') + ' lines' : '',
+      };
+    }
+    // Bash (claude) and its codex analogues: `shell` (app-server, argv array or
+    // string) and `exec_command` (rollout, `cmd`).
+    case 'Bash':
+    case 'shell':
+    case 'exec_command': {
+      const raw = tc.input?.command ?? tc.input?.cmd ?? '';
+      const flat = Array.isArray(raw) ? raw.join(' ') : String(raw);
+      const cmd = flat.split('\n')[0].slice(0, 60);
+      return { call: `${tc.name === 'Bash' ? 'Bash' : 'Shell'}(${cmd})`, result: '' };
     }
     case 'Grep':
     case 'Glob': {
       const pat = tc.input?.pattern ?? '';
       return { call: `Search(pattern: "${pat}")`, result: '' };
+    }
+    case 'web_search':
+    case 'WebSearch': {
+      const q = tc.input?.query ?? '';
+      return { call: `Search("${q}")`, result: '' };
     }
     case 'Agent': {
       const desc = tc.input?.description ?? 'subagent';

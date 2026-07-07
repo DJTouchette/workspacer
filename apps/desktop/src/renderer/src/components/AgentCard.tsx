@@ -10,6 +10,7 @@ import { StatusGlyph } from './statusGlyph';
 import { AgentLogo } from './agentLogos';
 import { shortModelLabel } from '../lib/modelLabel';
 import {
+  deriveSessionStats,
   fmtTokens,
   fmtUSD,
   ctxColor,
@@ -90,8 +91,18 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
   const state = snapshot?.ambientState;
   const v = stateVisual(agent.sessionId ? state : undefined);
   const usage = snapshot?.usage;
-  const ctxFrac =
-    usage && usage.contextLimit > 0 ? Math.min(1, usage.contextTokens / usage.contextLimit) : 0;
+  // Managed providers (codex/opencode) have no transcript-derived `usage` —
+  // their telemetry rides the statusLine. deriveSessionStats merges both (same
+  // fallback InspectorCard's Usage tab uses), so the tile's model / context
+  // meter / cost light up for every provider.
+  const stats = deriveSessionStats(snapshot);
+  const ctxPct = stats.ctxPct;
+  const ctxTokens =
+    usage && usage.contextTokens > 0
+      ? usage.contextTokens
+      : ctxPct !== undefined && snapshot?.statusLine?.contextWindowSize
+        ? Math.round((ctxPct / 100) * snapshot.statusLine.contextWindowSize)
+        : undefined;
 
   const activeTool = snapshot?.activeToolCalls?.[snapshot.activeToolCalls.length - 1];
   const runningSubs = (snapshot?.subagents ?? []).filter((s) => s.status === 'running').length;
@@ -268,8 +279,8 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
           color: 'var(--wks-text-faint)',
         }}
       >
-        {usage?.model && (
-          <span style={{ color: 'var(--wks-text-secondary)' }}>{shortModelLabel(usage.model)}</span>
+        {stats.model && (
+          <span style={{ color: 'var(--wks-text-secondary)' }}>{shortModelLabel(stats.model)}</span>
         )}
         {turns > 0 && (
           <span>
@@ -350,7 +361,7 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
 
       {/* Metrics: context bar + cost */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 14px 10px' }}>
-        {usage && usage.contextTokens > 0 ? (
+        {ctxPct !== undefined ? (
           <>
             <span
               style={{
@@ -365,24 +376,28 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
                 style={{
                   display: 'block',
                   height: '100%',
-                  width: `${Math.max(2, ctxFrac * 100)}%`,
-                  background: ctxColor(ctxFrac * 100),
+                  width: `${Math.min(100, Math.max(2, ctxPct))}%`,
+                  background: ctxColor(ctxPct),
                 }}
               />
             </span>
             <span
               style={{
                 fontSize: '0.64rem',
-                color: ctxColor(ctxFrac * 100),
+                color: ctxColor(ctxPct),
                 fontVariantNumeric: 'tabular-nums',
                 flexShrink: 0,
               }}
             >
-              {fmtTokens(usage.contextTokens)} · {Math.round(ctxFrac * 100)}%
+              {ctxTokens !== undefined ? `${fmtTokens(ctxTokens)} · ` : ''}
+              {Math.round(ctxPct)}%
             </span>
-            <span style={{ fontSize: '0.64rem', color: 'var(--wks-text-faint)', flexShrink: 0 }}>
-              {fmtUSD(usage.costUSD)}
-            </span>
+            {/* Cost only when known — codex has no pricing, so no fake $0.00. */}
+            {stats.costUSD !== undefined && (
+              <span style={{ fontSize: '0.64rem', color: 'var(--wks-text-faint)', flexShrink: 0 }}>
+                {fmtUSD(stats.costUSD)}
+              </span>
+            )}
           </>
         ) : (
           <span style={{ fontSize: '0.64rem', color: 'var(--wks-text-faint)' }}>
