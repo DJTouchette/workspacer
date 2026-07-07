@@ -674,12 +674,16 @@ export function registerHubCapabilities(): void {
 
   // ── Analytics ──────────────────────────────────────────────────────────
   registerCapability('analytics.summary', (params: unknown) => {
-    const { provider } = (params ?? {}) as { provider?: string };
-    return sessionHistory.summary(provider);
+    const { provider, since } = (params ?? {}) as { provider?: string; since?: string };
+    return sessionHistory.summary(provider, since);
   });
   registerCapability('analytics.recent', (params: unknown) => {
-    const { limit, provider } = (params ?? {}) as { limit?: number; provider?: string };
-    return sessionHistory.recent(limit, provider);
+    const { limit, provider, since } = (params ?? {}) as {
+      limit?: number;
+      provider?: string;
+      since?: string;
+    };
+    return sessionHistory.recent(limit, provider, since);
   });
 
   // ── Approval gate + host cwd ───────────────────────────────────────────

@@ -290,8 +290,9 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     loadSession: (filename) => client.call('sessions.load', { filename }),
     saveSession: (data) => client.call<string>('sessions.save', data),
     deleteSession: (filename) => client.call<void>('sessions.delete', { filename }).then(() => {}),
-    analyticsSummary: (provider) => client.call('analytics.summary', { provider }),
-    analyticsRecent: (limit, provider) => client.call('analytics.recent', { limit, provider }),
+    analyticsSummary: (provider, since) => client.call('analytics.summary', { provider, since }),
+    analyticsRecent: (limit, provider, since) =>
+      client.call('analytics.recent', { limit, provider, since }),
     layoutsList: () => client.call('layouts.list', {}),
     layoutsSave: (layout) => client.call('layouts.save', layout),
     layoutsDelete: (id) => client.call<void>('layouts.delete', { id }).then(() => {}),

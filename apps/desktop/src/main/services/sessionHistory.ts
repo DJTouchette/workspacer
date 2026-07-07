@@ -54,13 +54,28 @@ export interface AnalyticsSummary {
   byProvider: AnalyticsBucket[]; // split by coding-agent backend (always all)
 }
 
-/** SQL fragment + bind params for an optional provider filter. Legacy rows have
- *  provider='' which we treat as 'claude'. */
-function providerFilter(provider?: string): { where: string; params: Record<string, string> } {
-  if (!provider) return { where: '', params: {} };
-  if (provider === 'claude')
-    return { where: `WHERE (provider='' OR provider='claude')`, params: {} };
-  return { where: `WHERE provider=@provider`, params: { provider } };
+/** SQL fragment + bind params for the optional provider / time-range filters.
+ *  Legacy rows have provider='' which we treat as 'claude'. `since` is an ISO
+ *  timestamp; started_at is stored as ISO so plain string compare orders it.
+ *  `alias` qualifies the filtered columns when the query joins tables. */
+function rowFilter(
+  provider?: string,
+  since?: string,
+  alias = '',
+): { where: string; params: Record<string, string> } {
+  const col = alias ? `${alias}.` : '';
+  const clauses: string[] = [];
+  const params: Record<string, string> = {};
+  if (provider === 'claude') clauses.push(`(${col}provider='' OR ${col}provider='claude')`);
+  else if (provider) {
+    clauses.push(`${col}provider=@provider`);
+    params.provider = provider;
+  }
+  if (since) {
+    clauses.push(`${col}started_at >= @since`);
+    params.since = since;
+  }
+  return { where: clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '', params };
 }
 
 class SessionHistoryStore {
@@ -101,10 +116,44 @@ class SessionHistoryStore {
     }
   }
 
+  /** Upsert a session's per-model usage split (main thread + subagent turns).
+   *  Values are cumulative session totals per model, so a plain replace is
+   *  idempotent under repeated snapshots. */
+  recordModels(
+    sessionId: string,
+    models: Record<string, { inputTokens: number; outputTokens: number; costUSD: number }>,
+  ): void {
+    const entries = Object.entries(models);
+    if (entries.length === 0) return;
+    try {
+      const stmt = database.db.prepare(
+        `INSERT INTO session_model_usage (session_id, model, input_tokens, output_tokens, cost_usd, updated_at)
+         VALUES (@sessionId, @model, @inputTokens, @outputTokens, @costUSD, @updatedAt)
+         ON CONFLICT(session_id, model) DO UPDATE SET
+           input_tokens=excluded.input_tokens, output_tokens=excluded.output_tokens,
+           cost_usd=excluded.cost_usd, updated_at=excluded.updated_at`,
+      );
+      const updatedAt = new Date().toISOString();
+      for (const [model, m] of entries) {
+        stmt.run({
+          sessionId,
+          model,
+          inputTokens: m.inputTokens,
+          outputTokens: m.outputTokens,
+          costUSD: m.costUSD,
+          updatedAt,
+        });
+      }
+    } catch (err) {
+      console.error('[SessionHistory] recordModels failed:', err);
+    }
+  }
+
   /** Aggregate analytics. With `provider`, the totals/breakdowns are scoped to
-   *  that backend; `byProvider` is always computed across all so the split is
-   *  visible even while filtered. */
-  summary(provider?: string): AnalyticsSummary {
+   *  that backend; `byProvider` is always computed across all providers so the
+   *  split is visible even while filtered. With `since` (ISO), everything —
+   *  including `byProvider` — is scoped to sessions started at/after it. */
+  summary(provider?: string, since?: string): AnalyticsSummary {
     const empty: AnalyticsSummary = {
       totals: {
         sessions: 0,
@@ -122,8 +171,12 @@ class SessionHistoryStore {
     };
     try {
       const db = database.db;
-      const { where, params } = providerFilter(provider);
+      const { where, params } = rowFilter(provider, since);
       const and = where ? `${where} AND` : 'WHERE';
+      // One daily bar per day in the window; unbounded ranges cap at 90 bars.
+      const dayLimit = since
+        ? Math.max(1, Math.ceil((Date.now() - Date.parse(since)) / 86_400_000))
+        : 90;
 
       const totals = db
         .prepare(
@@ -142,9 +195,9 @@ class SessionHistoryStore {
                 COALESCE(SUM(input_tokens+output_tokens),0) AS tokens
          FROM session_history
          ${and} started_at != ''
-         GROUP BY key ORDER BY key DESC LIMIT 30`,
+         GROUP BY key ORDER BY key DESC LIMIT @dayLimit`,
         )
-        .all(params) as AnalyticsBucket[];
+        .all({ ...params, dayLimit }) as AnalyticsBucket[];
 
       const byProject = db
         .prepare(
@@ -156,26 +209,46 @@ class SessionHistoryStore {
         )
         .all(params) as AnalyticsBucket[];
 
+      // Per-model: prefer the session_model_usage split (attributes subagent
+      // turns to the model that ran them); sessions recorded before the split
+      // existed fall back to their single-model session_history row.
+      const aliased = rowFilter(provider, since, 'sh');
+      const aliasedAnd = aliased.where ? `${aliased.where} AND` : 'WHERE';
       const byModel = db
         .prepare(
-          `SELECT CASE WHEN model='' THEN '(unknown)' ELSE model END AS key, COUNT(*) AS sessions,
+          `SELECT CASE WHEN model='' THEN '(unknown)' ELSE model END AS key,
+                COUNT(DISTINCT session_id) AS sessions,
                 COALESCE(SUM(cost_usd),0) AS costUSD,
-                COALESCE(SUM(input_tokens+output_tokens),0) AS tokens
-         FROM session_history ${where}
-         GROUP BY model ORDER BY costUSD DESC LIMIT 12`,
+                COALESCE(SUM(tokens),0) AS tokens
+         FROM (
+           SELECT smu.session_id, smu.model, smu.cost_usd,
+                  smu.input_tokens + smu.output_tokens AS tokens
+           FROM session_model_usage smu
+           JOIN session_history sh ON sh.session_id = smu.session_id
+           ${aliased.where}
+           UNION ALL
+           SELECT sh.session_id, sh.model, sh.cost_usd,
+                  sh.input_tokens + sh.output_tokens AS tokens
+           FROM session_history sh
+           ${aliasedAnd} NOT EXISTS (
+             SELECT 1 FROM session_model_usage smu WHERE smu.session_id = sh.session_id
+           )
+         )
+         GROUP BY key ORDER BY costUSD DESC LIMIT 12`,
         )
-        .all(params) as AnalyticsBucket[];
+        .all(aliased.params) as AnalyticsBucket[];
 
-      // Provider split — always across all rows ('' counts as claude).
+      // Provider split — all providers ('' counts as claude), same time window.
+      const providerTime = rowFilter(undefined, since);
       const byProvider = db
         .prepare(
           `SELECT CASE WHEN provider='' THEN 'claude' ELSE provider END AS key, COUNT(*) AS sessions,
                 COALESCE(SUM(cost_usd),0) AS costUSD,
                 COALESCE(SUM(input_tokens+output_tokens),0) AS tokens
-         FROM session_history
+         FROM session_history ${providerTime.where}
          GROUP BY key ORDER BY costUSD DESC`,
         )
-        .all() as AnalyticsBucket[];
+        .all(providerTime.params) as AnalyticsBucket[];
 
       return { totals, byDay: byDay.reverse(), byProject, byModel, byProvider };
     } catch (err) {
@@ -185,10 +258,10 @@ class SessionHistoryStore {
   }
 
   /** Recent sessions, newest first, for the analytics table. Optionally scoped
-   *  to one provider. */
-  recent(limit = 100, provider?: string): SessionHistoryRecord[] {
+   *  to one provider and/or a time range (ISO `since`). */
+  recent(limit = 100, provider?: string, since?: string): SessionHistoryRecord[] {
     try {
-      const { where, params } = providerFilter(provider);
+      const { where, params } = rowFilter(provider, since);
       const rows = database.db
         .prepare(
           `SELECT session_id AS sessionId, cwd, agent_name AS agentName, provider, model, git_branch AS gitBranch,

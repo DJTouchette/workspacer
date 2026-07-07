@@ -130,6 +130,23 @@ ALTER TABLE session_history ADD COLUMN provider TEXT DEFAULT '';
 CREATE INDEX IF NOT EXISTS idx_session_history_provider ON session_history(provider);
 `;
 
+// v4: per-model usage split within a session (main thread + subagent turns),
+// so the "By model" analytics attribute tokens/cost to the model that actually
+// spent them instead of pinning a whole session to its last main-thread model.
+const MIGRATION_V4 = `
+CREATE TABLE IF NOT EXISTS session_model_usage (
+  session_id TEXT NOT NULL,
+  model TEXT NOT NULL,
+  input_tokens INTEGER DEFAULT 0,
+  output_tokens INTEGER DEFAULT 0,
+  cost_usd REAL DEFAULT 0,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (session_id, model)
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_model_usage_model ON session_model_usage(model);
+`;
+
 function getDbPath(): string {
   return path.join(getConfigDir(), 'workspacer.db');
 }
@@ -208,6 +225,17 @@ export class DatabaseService {
         );
       })();
       console.log('[DatabaseService] applied migration v3');
+    }
+
+    if (currentVersion < 4) {
+      db.transaction(() => {
+        db.exec(MIGRATION_V4);
+        db.prepare('INSERT INTO _migrations (version, applied_at) VALUES (?, ?)').run(
+          4,
+          new Date().toISOString(),
+        );
+      })();
+      console.log('[DatabaseService] applied migration v4');
     }
   }
 

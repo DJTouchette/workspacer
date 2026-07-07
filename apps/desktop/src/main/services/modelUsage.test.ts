@@ -97,29 +97,29 @@ describe('turnCostUSD', () => {
   // Helper: turn 1M tokens into a cost to verify the formula
   // USD = (input * r.input + cacheWrite * r.input*1.25 + cacheRead * r.input*0.1 + output * r.output) / 1_000_000
 
-  describe('claude-opus rates (input=15, output=75)', () => {
-    const model = 'claude-opus-4';
+  describe('claude-opus rates (input=5, output=25)', () => {
+    const model = 'claude-opus-4-8';
 
     it('plain input tokens only', () => {
       const cost = turnCostUSD(model, { input_tokens: 1_000_000 });
-      expect(cost).toBeCloseTo(15, 6);
+      expect(cost).toBeCloseTo(5, 6);
     });
 
     it('output tokens only', () => {
       const cost = turnCostUSD(model, { output_tokens: 1_000_000 });
-      expect(cost).toBeCloseTo(75, 6);
+      expect(cost).toBeCloseTo(25, 6);
     });
 
     it('cache-write tokens cost 1.25× input rate', () => {
-      // 1M cache-write tokens at opus: 15 * 1.25 = 18.75
+      // 1M cache-write tokens at opus: 5 * 1.25 = 6.25
       const cost = turnCostUSD(model, { cache_creation_input_tokens: 1_000_000 });
-      expect(cost).toBeCloseTo(18.75, 6);
+      expect(cost).toBeCloseTo(6.25, 6);
     });
 
     it('cache-read tokens cost 0.1× input rate', () => {
-      // 1M cache-read tokens at opus: 15 * 0.1 = 1.5
+      // 1M cache-read tokens at opus: 5 * 0.1 = 0.5
       const cost = turnCostUSD(model, { cache_read_input_tokens: 1_000_000 });
-      expect(cost).toBeCloseTo(1.5, 6);
+      expect(cost).toBeCloseTo(0.5, 6);
     });
 
     it('combined all token types', () => {
@@ -129,11 +129,33 @@ describe('turnCostUSD', () => {
         cache_creation_input_tokens: 300,
         cache_read_input_tokens: 400,
       };
-      // (100*15 + 300*18.75 + 400*1.5 + 200*75) / 1_000_000
-      // = (1500 + 5625 + 600 + 15000) / 1_000_000
-      // = 22725 / 1_000_000
-      const expected = 22_725 / 1_000_000;
+      // (100*5 + 300*6.25 + 400*0.5 + 200*25) / 1_000_000
+      // = (500 + 1875 + 200 + 5000) / 1_000_000
+      // = 7575 / 1_000_000
+      const expected = 7_575 / 1_000_000;
       expect(turnCostUSD(model, usage)).toBeCloseTo(expected, 10);
+    });
+  });
+
+  describe('claude-fable rates (input=10, output=50)', () => {
+    const model = 'claude-fable-5';
+
+    it('plain input tokens only', () => {
+      expect(turnCostUSD(model, { input_tokens: 1_000_000 })).toBeCloseTo(10, 6);
+    });
+
+    it('output tokens only', () => {
+      expect(turnCostUSD(model, { output_tokens: 1_000_000 })).toBeCloseTo(50, 6);
+    });
+  });
+
+  describe('legacy opus rates (input=15, output=75)', () => {
+    it('claude-opus-4-1 keeps the older pricing', () => {
+      expect(turnCostUSD('claude-opus-4-1-20250805', { input_tokens: 1_000_000 })).toBeCloseTo(
+        15,
+        6,
+      );
+      expect(turnCostUSD('claude-opus-4-0', { output_tokens: 1_000_000 })).toBeCloseTo(75, 6);
     });
   });
 
@@ -193,11 +215,12 @@ describe('turnCostUSD', () => {
 
   describe('longest-prefix-first matching', () => {
     it('claude-opus prefix matches any claude-opus-* variant', () => {
-      // Both should use opus rates (15/75)
-      const costA = turnCostUSD('claude-opus-4', { input_tokens: 1_000_000 });
+      // Both should use current opus rates (5/25); the longer claude-opus-4-1
+      // prefix only diverts the legacy models.
+      const costA = turnCostUSD('claude-opus-4-7', { input_tokens: 1_000_000 });
       const costB = turnCostUSD('claude-opus-4-5', { input_tokens: 1_000_000 });
-      expect(costA).toBeCloseTo(15, 6);
-      expect(costB).toBeCloseTo(15, 6);
+      expect(costA).toBeCloseTo(5, 6);
+      expect(costB).toBeCloseTo(5, 6);
     });
 
     it('claude-sonnet prefix matches any claude-sonnet-* variant', () => {

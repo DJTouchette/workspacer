@@ -691,11 +691,13 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   });
 
   // ── Analytics (old-session metadata) ──
-  ipcMain.handle(IPC.ANALYTICS_SUMMARY, (_event, provider?: string) =>
-    sessionHistory.summary(provider),
+  ipcMain.handle(IPC.ANALYTICS_SUMMARY, (_event, provider?: string, since?: string) =>
+    sessionHistory.summary(provider, since),
   );
-  ipcMain.handle(IPC.ANALYTICS_RECENT, (_event, limit?: number, provider?: string) =>
-    sessionHistory.recent(limit, provider),
+  ipcMain.handle(
+    IPC.ANALYTICS_RECENT,
+    (_event, limit?: number, provider?: string, since?: string) =>
+      sessionHistory.recent(limit, provider, since),
   );
 
   // ── Layout templates (reusable directory + pane arrangements) ──

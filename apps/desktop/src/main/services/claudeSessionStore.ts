@@ -498,8 +498,8 @@ class ClaudeSessionStore {
     }
 
     this.convSeq.set(sessionId, delta.seq);
-    applyConversationItems(session, delta.items, (s, model, usage, key) =>
-      this.usageAccumulator.applyUsage(s, model, usage, key),
+    applyConversationItems(session, delta.items, (s, model, usage, key, sidechain) =>
+      this.usageAccumulator.applyUsage(s, model, usage, key, sidechain),
     );
     session.lastActivity = Date.now();
     this.mergeWatcherData(session);
@@ -539,8 +539,8 @@ class ClaudeSessionStore {
       if (!session) return;
       session.conversation = [];
       session.totalToolCalls = 0;
-      applyConversationItems(session, snap.items ?? [], (s, model, usage, key) =>
-        this.usageAccumulator.applyUsage(s, model, usage, key),
+      applyConversationItems(session, snap.items ?? [], (s, model, usage, key, sidechain) =>
+        this.usageAccumulator.applyUsage(s, model, usage, key, sidechain),
       );
       this.convSeq.set(sessionId, snap.seq ?? 0);
       this.mergeWatcherData(session);

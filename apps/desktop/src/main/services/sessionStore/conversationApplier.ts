@@ -35,6 +35,9 @@ export interface ConversationItemWire {
   model?: string;
   usage?: any;
   message_id?: string;
+  /** True for a subagent (isSidechain) turn's usage — counts toward totals,
+   *  never toward the main thread's context gauge. */
+  sidechain?: boolean;
   // plan (tolerant of updatedAt / updated_at)
   steps?: PlanStepWire[];
   updatedAt?: number | string;
@@ -71,6 +74,7 @@ export type ApplyUsageFn = (
   model: string | null,
   usage: any,
   key: string | null,
+  sidechain?: boolean,
 ) => void;
 
 /** Check if a message was already added to avoid duplicates (claude's JSONL
@@ -232,7 +236,13 @@ export function applyConversationItems(
       }
 
       case 'usage':
-        applyUsageFn(session, item.model ?? null, item.usage ?? {}, item.message_id ?? null);
+        applyUsageFn(
+          session,
+          item.model ?? null,
+          item.usage ?? {},
+          item.message_id ?? null,
+          item.sidechain === true,
+        );
         break;
     }
   }

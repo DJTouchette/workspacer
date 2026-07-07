@@ -89,3 +89,58 @@ describe('SessionUsageAccumulator.applyUsage — replay must not double-count', 
     expect(s.usage!.totalInputTokens).toBe(100);
   });
 });
+
+describe('SessionUsageAccumulator.applyUsage — subagent (sidechain) turns', () => {
+  let acc: SessionUsageAccumulator;
+  beforeEach(() => {
+    acc = new SessionUsageAccumulator();
+  });
+
+  it('counts sidechain tokens/cost into the totals at the subagent model rates', () => {
+    const s = mkSession();
+    acc.applyUsage(s, 'claude-fable-5', { input_tokens: 1_000, output_tokens: 500 }, 'm1');
+    const mainCost = s.usage!.costUSD;
+    // haiku subagent: 1M in + 1M out at $1/$5 = $6
+    acc.applyUsage(
+      s,
+      'claude-haiku-4-5',
+      { input_tokens: 1_000_000, output_tokens: 1_000_000 },
+      'sub1',
+      true,
+    );
+    expect(s.usage!.totalInputTokens).toBe(1_001_000);
+    expect(s.usage!.totalOutputTokens).toBe(1_000_500);
+    expect(s.usage!.costUSD).toBeCloseTo(mainCost + 6, 9);
+  });
+
+  it('never moves the context gauge, peak, or reported model', () => {
+    const s = mkSession();
+    acc.applyUsage(s, 'claude-fable-5', { input_tokens: 1_000 }, 'm1');
+    acc.applyUsage(s, 'claude-haiku-4-5', { input_tokens: 500_000 }, 'sub1', true);
+    expect(s.usage!.model).toBe('claude-fable-5');
+    expect(s.usage!.contextTokens).toBe(1_000);
+    expect(s.peakContext).toBe(1_000);
+    expect(s.usage!.contextLimit).toBe(200_000);
+  });
+
+  it('splits tokens/cost per model across main and sidechain turns', () => {
+    const s = mkSession();
+    acc.applyUsage(s, 'claude-fable-5', { input_tokens: 1_000, output_tokens: 500 }, 'm1');
+    acc.applyUsage(s, 'claude-haiku-4-5', { input_tokens: 200, output_tokens: 100 }, 'sub1', true);
+    acc.applyUsage(s, 'claude-haiku-4-5', { input_tokens: 300, output_tokens: 50 }, 'sub2', true);
+    const models = s.usage!.models;
+    expect(models['claude-fable-5']).toMatchObject({ inputTokens: 1_000, outputTokens: 500 });
+    expect(models['claude-haiku-4-5']).toMatchObject({ inputTokens: 500, outputTokens: 150 });
+    // fable: (1000*10 + 500*50)/1e6 ; haiku: (500*1 + 150*5)/1e6
+    expect(models['claude-fable-5'].costUSD).toBeCloseTo(0.035, 9);
+    expect(models['claude-haiku-4-5'].costUSD).toBeCloseTo(0.00125, 9);
+  });
+
+  it('dedups replayed sidechain usage like main-thread usage', () => {
+    const s = mkSession();
+    acc.applyUsage(s, 'claude-haiku-4-5', { input_tokens: 100, output_tokens: 10 }, 'sub1', true);
+    acc.applyUsage(s, 'claude-haiku-4-5', { input_tokens: 100, output_tokens: 10 }, 'sub1', true);
+    expect(s.usage!.totalInputTokens).toBe(100);
+    expect(s.usage!.models['claude-haiku-4-5'].inputTokens).toBe(100);
+  });
+});

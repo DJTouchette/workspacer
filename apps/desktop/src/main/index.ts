@@ -31,6 +31,7 @@ import { stopAllTerminals } from './services/terminalShare';
 import { workflowWatcher } from './services/workflowWatcher';
 import { registerHubCapabilities } from './services/hubCapabilities';
 import { database } from './services/db';
+import { backfillAnalyticsFromTranscripts } from './services/analyticsBackfill';
 import { appIcon } from './lib/appIcon';
 import {
   applySafeWebviewPreferences,
@@ -538,6 +539,14 @@ app.whenReady().then(() => {
   });
 
   createWindow();
+
+  // One-shot analytics backfill (re-derives historical usage from transcripts;
+  // marker-guarded no-op after the first run). Deferred off the startup path.
+  setTimeout(() => {
+    backfillAnalyticsFromTranscripts().catch((err) =>
+      console.error('[AnalyticsBackfill] failed:', err),
+    );
+  }, 5_000);
 });
 
 let shuttingDown = false;

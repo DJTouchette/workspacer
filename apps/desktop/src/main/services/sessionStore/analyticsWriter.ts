@@ -46,4 +46,7 @@ export function writeHistory(session: ClaudeSessionState, status: 'active' | 'en
     workflowFailed,
     status,
   });
+  // Per-model split (main thread + subagent turns). Cumulative totals, so the
+  // replace-style upsert stays idempotent across repeated snapshots.
+  if (session.usage?.models) sessionHistory.recordModels(session.sessionId, session.usage.models);
 }

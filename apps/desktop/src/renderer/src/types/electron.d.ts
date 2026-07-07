@@ -76,7 +76,7 @@ export interface ElectronAPI {
   claudeListModels: () => Promise<{
     defaultModel: string;
     skipPermissionsDefault: boolean;
-    aliases: Array<{ value: string; label: string; tagline?: string; context?: string }>;
+    aliases: Array<{ value: string; label: string; context?: string }>;
     seen: string[];
   }>;
   workflowAgentTranscript: (
@@ -143,8 +143,12 @@ export interface ElectronAPI {
   deleteSession: (filename: string) => Promise<void>;
 
   // Analytics (old-session metadata)
-  analyticsSummary: (provider?: string) => Promise<AnalyticsSummary>;
-  analyticsRecent: (limit?: number, provider?: string) => Promise<SessionHistoryRecord[]>;
+  analyticsSummary: (provider?: string, since?: string) => Promise<AnalyticsSummary>;
+  analyticsRecent: (
+    limit?: number,
+    provider?: string,
+    since?: string,
+  ) => Promise<SessionHistoryRecord[]>;
 
   // Layout templates
   layoutsList: () => Promise<Layout[]>;

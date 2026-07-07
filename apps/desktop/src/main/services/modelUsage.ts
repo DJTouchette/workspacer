@@ -16,6 +16,13 @@ export interface RawUsage {
   cache_read_input_tokens?: number;
 }
 
+/** Cumulative tokens/cost attributed to one model within a session. */
+export interface ModelUsageSlice {
+  inputTokens: number; // cumulative incl. cache tiers
+  outputTokens: number;
+  costUSD: number;
+}
+
 export interface SessionUsage {
   model: string | null;
   contextTokens: number; // latest turn's input side (point-in-time)
@@ -23,6 +30,9 @@ export interface SessionUsage {
   totalInputTokens: number; // cumulative (incl. cache), for cost
   totalOutputTokens: number; // cumulative
   costUSD: number; // cumulative
+  /** Per-model split of the cumulative figures — main thread and subagent
+   *  (sidechain) turns alike, keyed by concrete model id. */
+  models: Record<string, ModelUsageSlice>;
 }
 
 interface ModelRates {
@@ -36,9 +46,15 @@ interface ModelRates {
 const DEFAULT_RATES: ModelRates = { input: 3, output: 15, contextLimit: 200_000 };
 
 // Keyed by a prefix of the transcript `model` id (e.g. "claude-opus-4-8").
-// Matched longest-prefix-first so "claude-opus-4-8" wins over "claude-opus".
+// Matched longest-prefix-first so "claude-opus-4-1" wins over "claude-opus".
+// Current list pricing (2026-06): Fable $10/$50, Opus 4.5+ $5/$25,
+// Sonnet $3/$15, Haiku $1/$5. Opus 4.1 and older kept the $15/$75 rates.
 const MODEL_RATES: Record<string, ModelRates> = {
-  'claude-opus': { input: 15, output: 75, contextLimit: 200_000 },
+  'claude-fable': { input: 10, output: 50, contextLimit: 200_000 },
+  'claude-mythos': { input: 10, output: 50, contextLimit: 200_000 },
+  'claude-opus': { input: 5, output: 25, contextLimit: 200_000 },
+  'claude-opus-4-1': { input: 15, output: 75, contextLimit: 200_000 },
+  'claude-opus-4-0': { input: 15, output: 75, contextLimit: 200_000 },
   'claude-sonnet': { input: 3, output: 15, contextLimit: 200_000 },
   'claude-haiku': { input: 1, output: 5, contextLimit: 200_000 },
 };
@@ -96,5 +112,6 @@ export function emptyUsage(): SessionUsage {
     totalInputTokens: 0,
     totalOutputTokens: 0,
     costUSD: 0,
+    models: {},
   };
 }

@@ -171,10 +171,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke(IPC.SESSION_DELETE, filename),
 
   // ── Analytics ──
-  analyticsSummary: (provider?: string): Promise<unknown> =>
-    ipcRenderer.invoke(IPC.ANALYTICS_SUMMARY, provider),
-  analyticsRecent: (limit?: number, provider?: string): Promise<unknown[]> =>
-    ipcRenderer.invoke(IPC.ANALYTICS_RECENT, limit, provider),
+  analyticsSummary: (provider?: string, since?: string): Promise<unknown> =>
+    ipcRenderer.invoke(IPC.ANALYTICS_SUMMARY, provider, since),
+  analyticsRecent: (limit?: number, provider?: string, since?: string): Promise<unknown[]> =>
+    ipcRenderer.invoke(IPC.ANALYTICS_RECENT, limit, provider, since),
 
   // ── Layout templates ──
   layoutsList: (): Promise<unknown[]> => ipcRenderer.invoke(IPC.LAYOUTS_LIST),
@@ -205,7 +205,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   claudeListModels: (): Promise<{
     defaultModel: string;
     skipPermissionsDefault: boolean;
-    aliases: Array<{ value: string; label: string; tagline?: string; context?: string }>;
+    aliases: Array<{ value: string; label: string; context?: string }>;
     seen: string[];
   }> => ipcRenderer.invoke(IPC.CLAUDE_LIST_MODELS),
   workflowAgentTranscript: (

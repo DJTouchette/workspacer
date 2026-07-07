@@ -127,6 +127,8 @@ export interface SessionUsage {
   totalInputTokens: number; // cumulative (incl. cache)
   totalOutputTokens: number; // cumulative
   costUSD: number; // cumulative
+  /** Per-model split (main thread + subagent turns), keyed by model id. */
+  models?: Record<string, { inputTokens: number; outputTokens: number; costUSD: number }>;
 }
 
 /**

@@ -18,27 +18,35 @@ export class SessionUsageAccumulator {
    * Context = latest turn's input side (overwritten each time, idempotent).
    * Totals/cost accumulate, deduped by message id so streamed blocks of the
    * same message aren't counted twice.
+   *
+   * `sidechain` marks a subagent (isSidechain) turn: its tokens/cost count
+   * toward the session totals and the per-model split — priced at the
+   * subagent's own model rates — but it must not move the main thread's
+   * context gauge or reported model.
    */
   applyUsage(
     session: ClaudeSessionState,
     model: string | null,
     usage: any,
     key: string | null,
+    sidechain = false,
   ): void {
     if (!session.usage) session.usage = emptyUsage();
     const u = session.usage;
+    if (!u.models) u.models = {}; // sessions restored from pre-split snapshots
 
-    const ctx = contextTokensOf(usage);
-    u.contextTokens = ctx;
-    if (ctx > session.peakContext) session.peakContext = ctx;
-    if (model) {
-      u.model = model;
-      this.rememberModel(model);
+    if (model) this.rememberModel(model);
+    if (!sidechain) {
+      const ctx = contextTokensOf(usage);
+      u.contextTokens = ctx;
+      if (ctx > session.peakContext) session.peakContext = ctx;
+      if (model) u.model = model;
+      // Use the session's high-water mark, not just this turn: 1M mode is a
+      // session-level property, so once any turn has exceeded the 200k window
+      // the limit must stay promoted even when a later turn's context is
+      // smaller.
+      u.contextLimit = contextLimitFor(u.model, session.peakContext);
     }
-    // Use the session's high-water mark, not just this turn: 1M mode is a
-    // session-level property, so once any turn has exceeded the 200k window the
-    // limit must stay promoted even when a later turn's context is smaller.
-    u.contextLimit = contextLimitFor(u.model, session.peakContext);
 
     // Cumulative — only once per distinct message, ever (idempotent under
     // replay, not just consecutive dedup).
@@ -48,9 +56,22 @@ export class SessionUsageAccumulator {
       if (seen.has(key)) return;
       seen.add(key);
     }
-    u.totalInputTokens += ctx;
-    u.totalOutputTokens += usage.output_tokens ?? 0;
-    u.costUSD += turnCostUSD(u.model, usage);
+    const turnModel = model ?? u.model;
+    const inputTokens = contextTokensOf(usage);
+    const outputTokens = usage.output_tokens ?? 0;
+    const costUSD = turnCostUSD(turnModel, usage);
+    u.totalInputTokens += inputTokens;
+    u.totalOutputTokens += outputTokens;
+    u.costUSD += costUSD;
+
+    const slice = (u.models[turnModel ?? '(unknown)'] ??= {
+      inputTokens: 0,
+      outputTokens: 0,
+      costUSD: 0,
+    });
+    slice.inputTokens += inputTokens;
+    slice.outputTokens += outputTokens;
+    slice.costUSD += costUSD;
   }
 
   /** Remove all per-session state for a session that has been evicted. */
@@ -61,6 +82,9 @@ export class SessionUsageAccumulator {
   /** Persist a concrete model id to config the first time we see it, so the
    *  spawn dropdown can offer it across restarts. */
   private rememberModel(model: string): void {
+    // `<synthetic>` is Claude Code's placeholder id on synthetic messages, not
+    // a launchable model — keep it out of the persisted picker list.
+    if (model.startsWith('<')) return;
     if (this.knownModels === null) {
       const cfg = configService.getConfig() as any;
       this.knownModels = new Set(
