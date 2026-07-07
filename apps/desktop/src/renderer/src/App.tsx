@@ -4,7 +4,7 @@ import './App.css';
 import NavBar from './components/NavBar';
 import SideBar, { SIDEBAR_WIDTH, SIDEBAR_RAIL_WIDTH } from './components/SideBar';
 import ErrorBoundary from './components/ErrorBoundary';
-import { EmptyState } from './components/PaneMessage';
+import { HomeSpace } from './components/HomeSpace';
 import Onboarding from './components/Onboarding';
 import { resolveNavHeight } from './lib/layoutUtils';
 import PluginInstallDialog from './components/PluginInstallDialog';
@@ -1800,27 +1800,9 @@ function App() {
               shortcuts={config.keybindings?.shortcuts ?? {}}
             />
           ) : (
-            <EmptyState
-              title="No agent selected"
-              hint="Spawn an agent to start a Claude Code session. It stays running until you terminate it, and its tabs & panes are remembered."
-              action={
-                <button
-                  onClick={() => setShowSpawnDialog(true)}
-                  style={{
-                    fontSize: '0.8rem',
-                    fontFamily: 'inherit',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                    background: 'var(--wks-accent)',
-                    color: 'var(--wks-text-on-accent, #fff)',
-                    border: 'none',
-                    borderRadius: 4,
-                    padding: '8px 16px',
-                  }}
-                >
-                  + Spawn agent
-                </button>
-              }
+            <HomeSpace
+              onSpawn={() => setShowSpawnDialog(true)}
+              spawnShortcut={config.keybindings?.shortcuts?.['spawn-agent'] ?? 'ctrl+shift+n'}
             />
           )}
         </div>
