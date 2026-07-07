@@ -812,10 +812,14 @@ function App() {
         }
       }
       setActiveAgentId(id);
+      // The deck is an altitude, not a mode: picking a specific agent from
+      // anywhere (sidebar included) means "fly me there" — descend to piloting
+      // so the fleet overlay doesn't keep covering the newly active workspace.
+      if (viewLevel === 'fleet') setViewLevel('piloting');
       const agent = agents.find((a) => a.id === id);
       if (agent && !agent.sessionId) respawnAgent(id);
     },
-    [agents, setActiveAgentId, respawnAgent],
+    [agents, setActiveAgentId, respawnAgent, viewLevel, setViewLevel],
   );
 
   // Record a directory at the front of the Overview's recent list (deduped, capped).
