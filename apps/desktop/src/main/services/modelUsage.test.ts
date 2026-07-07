@@ -157,6 +157,31 @@ describe('turnCostUSD', () => {
       );
       expect(turnCostUSD('claude-opus-4-0', { output_tokens: 1_000_000 })).toBeCloseTo(75, 6);
     });
+
+    it("claude-opus-4-20250514 (Opus 4.0's real dated id) prices at 15/75, not the generic opus 5/25", () => {
+      // The transcript carries the dated id, which does NOT start with the
+      // 'claude-opus-4-0' alias — it needs the 'claude-opus-4-20' entry.
+      expect(turnCostUSD('claude-opus-4-20250514', { input_tokens: 1_000_000 })).toBeCloseTo(15, 6);
+      expect(turnCostUSD('claude-opus-4-20250514', { output_tokens: 1_000_000 })).toBeCloseTo(
+        75,
+        6,
+      );
+    });
+
+    it('claude-3-opus-20240229 prices at 15/75, not the 3/15 default', () => {
+      expect(turnCostUSD('claude-3-opus-20240229', { input_tokens: 1_000_000 })).toBeCloseTo(15, 6);
+      expect(turnCostUSD('claude-3-opus-20240229', { output_tokens: 1_000_000 })).toBeCloseTo(
+        75,
+        6,
+      );
+    });
+
+    it('dated Opus 4.5+ ids still get current opus rates (no over-greedy legacy match)', () => {
+      expect(turnCostUSD('claude-opus-4-5-20251101', { input_tokens: 1_000_000 })).toBeCloseTo(
+        5,
+        6,
+      );
+    });
   });
 
   describe('claude-sonnet rates (input=3, output=15)', () => {

@@ -280,6 +280,10 @@ export function registerHubCapabilities(): void {
         provider: 'claude',
         transport: 'stream',
         cwd,
+        // Profile + per-spawn Library MCP servers must ride through here just
+        // like on the IPC stream branch (ipc.ts) — this path used to drop both,
+        // so a remote stream spawn silently ignored the chosen profile/servers.
+        profileId,
         model,
         permissionMode,
         skipPermissions,
@@ -288,6 +292,7 @@ export function registerHubCapabilities(): void {
         mcpFacade,
         label,
         parentSessionId,
+        mcpItemIds,
       });
       return { sessionId };
     }

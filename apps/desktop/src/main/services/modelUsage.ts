@@ -49,12 +49,22 @@ const DEFAULT_RATES: ModelRates = { input: 3, output: 15, contextLimit: 200_000 
 // Matched longest-prefix-first so "claude-opus-4-1" wins over "claude-opus".
 // Current list pricing (2026-06): Fable $10/$50, Opus 4.5+ $5/$25,
 // Sonnet $3/$15, Haiku $1/$5. Opus 4.1 and older kept the $15/$75 rates.
+//
+// NOTE on the legacy Opus keys: transcripts carry the *dated* ids. Opus 4.0 is
+// 'claude-opus-4-20250514' — which does NOT start with the 'claude-opus-4-0'
+// alias — so it needs its own 'claude-opus-4-20' prefix (dated 4.0 ids are the
+// only ids that continue "4-2" with a "0"). Opus 4.1 is
+// 'claude-opus-4-1-20250805', which the 'claude-opus-4-1' prefix does match.
+// Claude 3 Opus ids ('claude-3-opus-20240229') don't start with 'claude-opus'
+// at all, hence the separate 'claude-3-opus' entry.
 const MODEL_RATES: Record<string, ModelRates> = {
   'claude-fable': { input: 10, output: 50, contextLimit: 200_000 },
   'claude-mythos': { input: 10, output: 50, contextLimit: 200_000 },
   'claude-opus': { input: 5, output: 25, contextLimit: 200_000 },
   'claude-opus-4-1': { input: 15, output: 75, contextLimit: 200_000 },
   'claude-opus-4-0': { input: 15, output: 75, contextLimit: 200_000 },
+  'claude-opus-4-20': { input: 15, output: 75, contextLimit: 200_000 },
+  'claude-3-opus': { input: 15, output: 75, contextLimit: 200_000 },
   'claude-sonnet': { input: 3, output: 15, contextLimit: 200_000 },
   'claude-haiku': { input: 1, output: 5, contextLimit: 200_000 },
 };

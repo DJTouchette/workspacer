@@ -84,17 +84,25 @@ describe('getConfigDir – platform branches', () => {
 // We test deepMerge indirectly through configService.saveConfig / getConfig.
 // We mock fs so the constructor does not read or write real files.
 
+const enoent = () => {
+  const err = new Error('ENOENT: no such file or directory') as NodeJS.ErrnoException;
+  err.code = 'ENOENT';
+  throw err;
+};
+
 vi.mock('fs', () => ({
-  readFileSync: vi.fn().mockImplementation(() => {
-    throw new Error('ENOENT');
-  }),
+  readFileSync: vi.fn().mockImplementation(() => enoent()),
   writeFileSync: vi.fn(),
   mkdirSync: vi.fn(),
+  copyFileSync: vi.fn(),
 }));
 
 // Import after the mock is registered so the ConfigService constructor sees it.
 // Because vitest hoists vi.mock, this import runs after the mock.
+import * as fsMock from 'fs';
 import { configService } from './configService';
+
+const mockedFs = vi.mocked(fsMock);
 
 describe('deepMerge semantics – via configService.saveConfig', () => {
   beforeEach(() => {
@@ -237,5 +245,90 @@ describe('deepMerge semantics – via configService.saveConfig', () => {
     const before = configService.getConfig().ui.theme;
     configService.saveConfig({});
     expect(configService.getConfig().ui.theme).toBe(before);
+  });
+});
+
+// ─── fail-safe on broken/unreadable config files ─────────────────────────────
+// A YAML syntax error (or a transient read failure) must never wipe the user's
+// config: no writeDefaults() over the file, saves blocked while broken, and the
+// unparseable file backed up.
+
+describe('loadFromDisk fail-safe — broken or unreadable config.yaml', () => {
+  beforeEach(() => {
+    mockedFs.readFileSync.mockReset().mockImplementation(() => enoent());
+    mockedFs.writeFileSync.mockReset();
+    mockedFs.copyFileSync.mockReset();
+    mockedFs.mkdirSync.mockReset();
+  });
+
+  afterEach(() => {
+    // Leave the singleton in the healthy first-run state for other suites.
+    mockedFs.readFileSync.mockReset().mockImplementation(() => enoent());
+    configService.reloadConfig();
+  });
+
+  it('ENOENT (first run) still seeds the file with defaults', () => {
+    const cfg = configService.reloadConfig();
+    expect(cfg.ui.theme).toBe('dark');
+    // writeDefaults ran: defaults were persisted for the first run.
+    expect(mockedFs.writeFileSync).toHaveBeenCalledTimes(1);
+  });
+
+  it('a YAML parse error falls back to defaults WITHOUT overwriting the file', () => {
+    mockedFs.readFileSync.mockReturnValue('ui:\n  theme: [unclosed');
+    const cfg = configService.reloadConfig();
+
+    // Defaults in memory…
+    expect(cfg.ui.theme).toBe('dark');
+    // …but the broken file is never overwritten (no writeDefaults, no save).
+    expect(mockedFs.writeFileSync).not.toHaveBeenCalled();
+    // The unparseable file is backed up next to the original.
+    expect(mockedFs.copyFileSync).toHaveBeenCalledTimes(1);
+    const [src, dest] = mockedFs.copyFileSync.mock.calls[0] as [string, string];
+    expect(String(dest)).toContain(`${src}.broken-`);
+  });
+
+  it('saveConfig refuses to persist while the on-disk config is broken', () => {
+    mockedFs.readFileSync.mockReturnValue('ui:\n  theme: [unclosed');
+    configService.reloadConfig();
+    mockedFs.writeFileSync.mockClear();
+
+    const cfg = configService.saveConfig({ ui: { theme: 'light' } as any });
+
+    // The change applies in memory…
+    expect(cfg.ui.theme).toBe('light');
+    // …but nothing is written over the user's broken file.
+    expect(mockedFs.writeFileSync).not.toHaveBeenCalled();
+  });
+
+  it('a non-ENOENT read error uses defaults in memory and blocks writes', () => {
+    mockedFs.readFileSync.mockImplementation(() => {
+      const err = new Error('EACCES: permission denied') as NodeJS.ErrnoException;
+      err.code = 'EACCES';
+      throw err;
+    });
+    const cfg = configService.reloadConfig();
+
+    expect(cfg.ui.theme).toBe('dark');
+    // No writeDefaults (that's only for ENOENT), no backup (nothing readable).
+    expect(mockedFs.writeFileSync).not.toHaveBeenCalled();
+    expect(mockedFs.copyFileSync).not.toHaveBeenCalled();
+
+    configService.saveConfig({ ui: { theme: 'light' } as any });
+    expect(mockedFs.writeFileSync).not.toHaveBeenCalled();
+  });
+
+  it('a successful reload clears the block and saves persist again', () => {
+    mockedFs.readFileSync.mockReturnValueOnce('ui:\n  theme: [unclosed');
+    configService.reloadConfig();
+
+    // File fixed: parses fine now.
+    mockedFs.readFileSync.mockReturnValue('ui:\n  theme: light\n');
+    const cfg = configService.reloadConfig();
+    expect(cfg.ui.theme).toBe('light');
+
+    mockedFs.writeFileSync.mockClear();
+    configService.saveConfig({ ui: { fontSize: 16 } as any });
+    expect(mockedFs.writeFileSync).toHaveBeenCalledTimes(1);
   });
 });

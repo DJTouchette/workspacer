@@ -485,6 +485,11 @@ function pruneRemovedShortcuts(cfg: Config): Config {
 
 class ConfigService {
   private config: Config;
+  /** Set when the on-disk config exists but could not be read or parsed. While
+   *  true we run on in-memory defaults and REFUSE to write config.yaml — saving
+   *  would replace the user's (broken but recoverable) file with defaults.
+   *  Cleared on the next successful load (reloadConfig / restart). */
+  private persistBlocked = false;
 
   constructor() {
     this.config = this.loadFromDisk();
@@ -493,9 +498,30 @@ class ConfigService {
   private loadFromDisk(): Config {
     const defaults = defaultConfig();
     const configPath = getConfigFilePath();
+    this.persistBlocked = false;
+
+    let data: string;
+    try {
+      data = fs.readFileSync(configPath, 'utf-8');
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        // First run — no config file yet: seed it with defaults.
+        this.writeDefaults();
+        return defaults;
+      }
+      // Transient read failure (EACCES, EBUSY, …): the file exists but we
+      // couldn't read it. Run on defaults in memory and never write over a
+      // file we couldn't read.
+      this.persistBlocked = true;
+      console.error(
+        `[ConfigService] FAILED TO READ ${configPath} — running on defaults in memory; ` +
+          'saves are disabled until the file loads (fix it, then reload):',
+        err,
+      );
+      return defaults;
+    }
 
     try {
-      const data = fs.readFileSync(configPath, 'utf-8');
       const parsed = yaml.load(data) as Partial<Config>;
       const merged = deepMerge(defaults, parsed) as Config;
       // migrateKeybindings runs first: a legacy-schema config is reset wholesale
@@ -504,9 +530,23 @@ class ConfigService {
       // upgrades any stale nested-default chords in place. Finally, bindings for
       // actions that no longer exist are pruned.
       return pruneRemovedShortcuts(migrateFlatChords(migrateKeybindings(merged)));
-    } catch {
-      // No config file — write defaults
-      this.writeDefaults();
+    } catch (err) {
+      // Malformed YAML (e.g. a hand-edit left a syntax error). This must NOT
+      // wipe the user's config: back the broken file up, log loudly, run on
+      // defaults in memory, and block saves so nothing overwrites the file.
+      this.persistBlocked = true;
+      console.error(
+        `[ConfigService] FAILED TO PARSE ${configPath} — running on defaults in memory; ` +
+          'your config file was NOT modified and saves are disabled until it parses:',
+        err,
+      );
+      try {
+        const backupPath = `${configPath}.broken-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+        fs.copyFileSync(configPath, backupPath);
+        console.error(`[ConfigService] backed up the unparseable config to ${backupPath}`);
+      } catch (backupErr) {
+        console.error('[ConfigService] failed to back up the broken config:', backupErr);
+      }
       return defaults;
     }
   }
@@ -541,6 +581,16 @@ class ConfigService {
       this.config.ui.customThemes = (uiPartial.customThemes ?? {}) as NonNullable<
         Config['ui']['customThemes']
       >;
+    }
+    if (this.persistBlocked) {
+      // The on-disk config failed to load (unreadable or unparseable): keep the
+      // change in memory only. Writing here would replace the user's file with
+      // defaults + this partial — permanent loss of everything else in it.
+      console.error(
+        '[ConfigService] config file failed to load — change kept in memory only, ' +
+          'NOT saved to disk (fix or remove the broken config.yaml, then reload).',
+      );
+      return this.config;
     }
     try {
       const dir = getConfigDir();

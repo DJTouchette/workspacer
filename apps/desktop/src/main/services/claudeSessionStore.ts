@@ -323,6 +323,12 @@ class ClaudeSessionStore {
     let session = this.sessions.get(sessionId);
     if (!session) {
       session = this.createSession(sessionId, cwd);
+    } else if (!session.cwd && cwd) {
+      // Sessions first seen via a conversation delta are created with cwd ''
+      // (the delta wire carries no cwd) — backfill it from the first hook that
+      // has it, so project attribution, git-branch lookup and the agent-card
+      // name work instead of sticking to the empty string forever.
+      session.cwd = cwd;
     }
 
     // Capture transcript path from first event that has it
@@ -346,6 +352,16 @@ class ClaudeSessionStore {
 
     // Conversation content arrives via claudemon's transcript tailer
     // (applyConversationDelta) — no JSONL reads happen in this process.
+
+    // A new turn re-arms the analytics snapshot. historyWritten was previously
+    // set by the first Stop and never cleared, so only that first Stop ever
+    // wrote history — every later turn's Stop bailed and the 'active' row kept
+    // turn-1 usage until (if ever) a clean SessionEnd arrived. Skip re-arming
+    // after SessionEnd so a stray late prompt can't let a pending Stop timer
+    // overwrite the final 'ended' row with an 'active' one.
+    if (hookName === 'UserPromptSubmit' && session.status !== 'ended') {
+      session.historyWritten = false;
+    }
 
     // Snapshot the ambient state so the notifier can detect transitions
     // (needs-you / done) after the switch below applies the new state.

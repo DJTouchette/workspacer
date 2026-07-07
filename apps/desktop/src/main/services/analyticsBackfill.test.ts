@@ -1,31 +1,43 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
 // The backfill module pulls in the sqlite singleton (Electron-native) and the
-// history store at module scope — stub both; these tests only exercise the
-// pure transcript-recompute path.
-vi.mock('./db', () => ({ database: { get db() { throw new Error('db not used'); } } }));
+// history store at module scope — stub both. The recompute tests never touch
+// the db; the backfill-run tests swap in a hand-rolled fake via dbState.
+const dbState = vi.hoisted(() => ({ current: null as unknown }));
+vi.mock('./db', () => ({
+  database: {
+    get db() {
+      if (!dbState.current) throw new Error('db not used');
+      return dbState.current;
+    },
+  },
+}));
 vi.mock('./sessionHistory', () => ({ sessionHistory: { recordModels: vi.fn() } }));
 
-import { recomputeSession } from './analyticsBackfill';
+// indexTranscripts() walks ~/.claude/projects — point homedir at a per-test
+// sandbox (empty string = passthrough to the real homedir).
+const homeState = vi.hoisted(() => ({ dir: '' }));
+vi.mock('os', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('os')>();
+  return {
+    ...actual,
+    homedir: () => homeState.dir || actual.homedir(),
+  };
+});
+
+import { recomputeSession, backfillAnalyticsFromTranscripts } from './analyticsBackfill';
+import { sessionHistory } from './sessionHistory';
 
 function writeTranscript(rows: object[]): string {
-  const file = path.join(
-    fs.mkdtempSync(path.join(os.tmpdir(), 'wks-backfill-')),
-    'session.jsonl',
-  );
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-backfill-')), 'session.jsonl');
   fs.writeFileSync(file, rows.map((r) => JSON.stringify(r)).join('\n') + '\n');
   return file;
 }
 
-const assistant = (
-  id: string,
-  model: string,
-  usage: object,
-  extra: object = {},
-): object => ({
+const assistant = (id: string, model: string, usage: object, extra: object = {}): object => ({
   type: 'assistant',
   message: { id, model, role: 'assistant', usage, content: [] },
   ...extra,
@@ -151,5 +163,123 @@ describe('recomputeSession — separate subagent transcript files', () => {
     expect(re!.inputTokens).toBe(100);
     expect(re!.model).toBeNull();
     expect(re!.peakContext).toBe(0);
+  });
+});
+
+// ─── backfillAnalyticsFromTranscripts — the marker-guarded rewrite pass ──────
+
+interface FakeDb {
+  db: unknown;
+  markers: Set<string>;
+  updateRun: ReturnType<typeof vi.fn>;
+  deleteRun: ReturnType<typeof vi.fn>;
+  markerRun: ReturnType<typeof vi.fn>;
+}
+
+/** Minimal better-sqlite3 stand-in dispatching on SQL text. */
+function fakeDb(rows: { sessionId: string; costUSD: number }[]): FakeDb {
+  const markers = new Set<string>();
+  const updateRun = vi.fn();
+  const deleteRun = vi.fn();
+  const markerRun = vi.fn((name: string) => {
+    markers.add(name);
+  });
+  const db = {
+    exec: vi.fn(),
+    prepare: (sql: string) => {
+      if (sql.includes('SELECT 1 FROM _backfills')) {
+        return { get: (name: string) => (markers.has(name) ? { 1: 1 } : undefined) };
+      }
+      if (sql.includes('SELECT session_id')) return { all: () => rows };
+      if (sql.includes('UPDATE session_history')) return { run: updateRun };
+      if (sql.includes('DELETE FROM session_model_usage')) return { run: deleteRun };
+      if (sql.includes('INSERT INTO _backfills')) return { run: markerRun };
+      throw new Error(`fakeDb: unexpected sql: ${sql}`);
+    },
+  };
+  return { db, markers, updateRun, deleteRun, markerRun };
+}
+
+/** Seed a sandbox home with ~/.claude/projects/<dir>/<sessionId>.jsonl. */
+function seedTranscript(sessionId: string, rows: object[]): void {
+  const dir = path.join(homeState.dir, '.claude', 'projects', '-proj');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, `${sessionId}.jsonl`),
+    rows.map((r) => JSON.stringify(r)).join('\n') + '\n',
+  );
+}
+
+describe('backfillAnalyticsFromTranscripts', () => {
+  beforeEach(() => {
+    homeState.dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wks-backfill-home-'));
+    vi.mocked(sessionHistory.recordModels).mockClear();
+  });
+
+  afterEach(() => {
+    dbState.current = null;
+    homeState.dir = '';
+  });
+
+  it('clears stale session_model_usage rows BEFORE re-recording the recomputed split', async () => {
+    const fake = fakeDb([{ sessionId: 'sess-1', costUSD: 1 }]);
+    dbState.current = fake.db;
+    seedTranscript('sess-1', [
+      assistant('m1', 'claude-opus-4-8', { input_tokens: 1_000_000, output_tokens: 0 }),
+    ]);
+
+    await backfillAnalyticsFromTranscripts();
+
+    // The session_history row was rewritten from the transcript.
+    expect(fake.updateRun).toHaveBeenCalledTimes(1);
+    expect(fake.updateRun.mock.calls[0][0]).toMatchObject({
+      sessionId: 'sess-1',
+      model: 'claude-opus-4-8',
+      inputTokens: 1_000_000,
+    });
+    // Stale per-model slices are deleted, then the recomputed split recorded —
+    // otherwise rows for keys the recompute no longer produces (e.g. a live
+    // '(unknown)' slice) survive and double-count in the by-model analytics.
+    expect(fake.deleteRun).toHaveBeenCalledTimes(1);
+    expect(fake.deleteRun).toHaveBeenCalledWith('sess-1');
+    expect(sessionHistory.recordModels).toHaveBeenCalledTimes(1);
+    expect(fake.deleteRun.mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(sessionHistory.recordModels).mock.invocationCallOrder[0],
+    );
+    // Marker written as v2 (re-runs the pass over v1-era rows).
+    expect(fake.markerRun).toHaveBeenCalledWith('transcript-usage-v2', expect.any(String));
+  });
+
+  it('is idempotent — the marker short-circuits a second run', async () => {
+    const fake = fakeDb([{ sessionId: 'sess-1', costUSD: 1 }]);
+    dbState.current = fake.db;
+    seedTranscript('sess-1', [
+      assistant('m1', 'claude-haiku-4-5', { input_tokens: 10, output_tokens: 1 }),
+    ]);
+
+    await backfillAnalyticsFromTranscripts();
+    await backfillAnalyticsFromTranscripts();
+
+    expect(fake.updateRun).toHaveBeenCalledTimes(1);
+    expect(fake.deleteRun).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves sessions whose transcript is gone untouched (no delete, no rewrite)', async () => {
+    const fake = fakeDb([
+      { sessionId: 'sess-kept', costUSD: 1 },
+      { sessionId: 'sess-gone', costUSD: 2 },
+    ]);
+    dbState.current = fake.db;
+    seedTranscript('sess-kept', [
+      assistant('m1', 'claude-haiku-4-5', { input_tokens: 10, output_tokens: 1 }),
+    ]);
+
+    await backfillAnalyticsFromTranscripts();
+
+    expect(fake.updateRun).toHaveBeenCalledTimes(1);
+    expect(fake.updateRun.mock.calls[0][0]).toMatchObject({ sessionId: 'sess-kept' });
+    // The transcript-less session keeps its old (approximate) model rows too.
+    expect(fake.deleteRun).toHaveBeenCalledTimes(1);
+    expect(fake.deleteRun).toHaveBeenCalledWith('sess-kept');
   });
 });

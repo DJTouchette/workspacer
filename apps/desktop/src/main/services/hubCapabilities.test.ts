@@ -224,6 +224,24 @@ describe('agents.spawn — dispatch', () => {
     expect(res).toEqual({ sessionId: 'managed-session-id' });
   });
 
+  it("forwards profileId and mcpItemIds on the claude 'stream' branch (parity with the IPC stream path — this branch used to drop both)", async () => {
+    await call('agents.spawn', {
+      provider: 'claude',
+      transport: 'stream',
+      cwd: '/proj',
+      profileId: 'profile-1',
+      mcpItemIds: ['mcp-a', 'mcp-b'],
+    });
+
+    expect(spawnManagedAgent).toHaveBeenCalledTimes(1);
+    const arg = spawnManagedAgent.mock.calls[0][0] as {
+      profileId?: string;
+      mcpItemIds?: string[];
+    };
+    expect(arg.profileId).toBe('profile-1');
+    expect(arg.mcpItemIds).toEqual(['mcp-a', 'mcp-b']);
+  });
+
   it("claude + transport 'pty' (or unset, with no config default) stays on spawnClaudeAgent", async () => {
     await call('agents.spawn', { provider: 'claude', transport: 'pty', cwd: '/proj' });
     expect(spawnClaudeAgent).toHaveBeenCalledTimes(1);

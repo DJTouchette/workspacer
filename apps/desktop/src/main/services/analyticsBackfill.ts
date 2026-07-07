@@ -24,7 +24,12 @@ import { database } from './db';
 import { sessionHistory } from './sessionHistory';
 import { contextTokensOf, turnCostUSD, type ModelUsageSlice } from './modelUsage';
 
-const BACKFILL_NAME = 'transcript-usage-v1';
+// v2: re-run over v1 rows — v1 priced Opus 4.0 dated ids ('claude-opus-4-2…')
+// at the generic Opus rate because the 'claude-opus-4-0' rate key never
+// matched them, and it left stale session_model_usage slices behind (rows for
+// model keys the recompute no longer produced survived and double-counted in
+// the by-model analytics).
+const BACKFILL_NAME = 'transcript-usage-v2';
 
 export interface RecomputedUsage {
   /** Last main-thread model ('' when the transcript never named one). */
@@ -207,6 +212,13 @@ export async function backfillAnalyticsFromTranscripts(): Promise<void> {
        cost_usd=@costUSD, peak_context=@peakContext, updated_at=@updatedAt
      WHERE session_id=@sessionId`,
   );
+  // The recompute re-attributes usage (e.g. live-recorded '(unknown)' slices
+  // get a concrete model from the transcript), but recordModels only UPSERTS
+  // the keys it is given — rows for keys the recompute no longer produces
+  // would survive and double-count in the by-model analytics (summary() UNIONs
+  // every session_model_usage row per session). Clear the session's split
+  // first so the recomputed rows are the whole truth.
+  const clearModels = db.prepare(`DELETE FROM session_model_usage WHERE session_id=?`);
 
   let updated = 0;
   let skipped = 0;
@@ -239,6 +251,7 @@ export async function backfillAnalyticsFromTranscripts(): Promise<void> {
       peakContext: re.peakContext,
       updatedAt: new Date().toISOString(),
     });
+    clearModels.run(row.sessionId);
     sessionHistory.recordModels(row.sessionId, re.models);
     updated++;
   }
