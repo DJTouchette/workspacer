@@ -4,6 +4,7 @@ import { langForPath } from '../../lib/diff/highlight';
 import { useHighlight, renderLine } from './highlight';
 import { inlineRows, splitRows } from '../../lib/diff/lineDiff';
 import { useConfig } from '../../hooks/useConfig';
+import { FileLink } from './FileLink';
 
 /** How the GUI lays out a diff. See config.ui.diffView. */
 export type DiffViewMode = 'stacked' | 'inline' | 'split';
@@ -45,11 +46,13 @@ const contentStyle: React.CSSProperties = {
  *  - inline:  LCS-interleaved unified diff (shared lines shown once)
  *  - split:   side-by-side, removed left / added right, aligned
  */
-export const DiffView: React.FC<{ oldStr: string; newStr: string; filePath?: string }> = ({
-  oldStr,
-  newStr,
-  filePath,
-}) => {
+export const DiffView: React.FC<{
+  oldStr: string;
+  newStr: string;
+  filePath?: string;
+  /** Session cwd — resolves relative paths for the header FileLink. */
+  cwd?: string;
+}> = ({ oldStr, newStr, filePath, cwd }) => {
   const { config } = useConfig();
   const mode: DiffViewMode = config.ui.diffView ?? 'stacked';
   const fileName = filePath?.split(/[/\\]/).pop() ?? '';
@@ -89,7 +92,9 @@ export const DiffView: React.FC<{ oldStr: string; newStr: string; filePath?: str
             gap: 8,
           }}
         >
-          <span>{fileName}</span>
+          <FileLink path={filePath!} cwd={cwd}>
+            {fileName}
+          </FileLink>
           {removedCount > 0 && (
             <span style={{ color: colors.error, fontSize: '0.65rem', fontWeight: 400 }}>
               -{removedCount}
@@ -272,10 +277,12 @@ const READ_PREVIEW_MAX = 200;
  * (`␣␣␣123⇥content`); we parse the gutter number off each line and fall back
  * to a sequential index if a line doesn't match.
  */
-export const ReadView: React.FC<{ response: string; filePath?: string }> = ({
-  response,
-  filePath,
-}) => {
+export const ReadView: React.FC<{
+  response: string;
+  filePath?: string;
+  /** Session cwd — resolves relative paths for the header FileLink. */
+  cwd?: string;
+}> = ({ response, filePath, cwd }) => {
   const fileName = filePath?.split(/[/\\]/).pop() ?? '';
   const lines = response.split('\n');
   if (lines.length && lines[lines.length - 1] === '') lines.pop(); // trailing newline
@@ -315,7 +322,9 @@ export const ReadView: React.FC<{ response: string; filePath?: string }> = ({
             gap: 8,
           }}
         >
-          <span>{fileName}</span>
+          <FileLink path={filePath!} cwd={cwd}>
+            {fileName}
+          </FileLink>
           <span style={{ color: colors.muted, fontSize: '0.65rem', fontWeight: 400 }}>
             {lines.length} lines
           </span>

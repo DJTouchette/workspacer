@@ -2,7 +2,8 @@
  * Inline "Changed files" card at the end of a completed agent turn: a header
  * with total +/− counts and Collapse all / View diff actions over a collapsible
  * directory tree (per-file line counts, file-type-tinted glyphs). Clicking a
- * file jumps to the Review pane; right-click opens it in the editor.
+ * file jumps to the Review pane; right-click offers the shared file actions
+ * (editor / markdown preview / open in browser / show in folder / copy path).
  *
  * Data is a frozen `TurnChangeSnapshot` (see lib/turnChanges.ts) — historical
  * cards must not drift as later turns touch the same files. When the snapshot
@@ -15,7 +16,7 @@ import FileTree, { collectDirPaths, type TreeEntry } from '../review/FileTree';
 import type { NumstatEntry } from '../../lib/gitQueries';
 import type { TurnChangeSnapshot } from '../../lib/turnChanges';
 import { requestReviewFile } from '../../lib/reviewBus';
-import { requestOpenInEditor } from '../../lib/editorBus';
+import { FileActionMenuItems } from './FileLink';
 import { langForPath } from '../../lib/diff/highlight';
 import { IconFile } from '../wksIcons';
 
@@ -215,9 +216,11 @@ export const ChangedFilesCard: React.FC<{
               const f = snapshot.files.find((x) => x.relPath === entry.file.path);
               requestReviewFile({ path: f?.path ?? entry.file.path, cwd });
             }}
-            onOpenInEditor={(entry) => {
+            renderContextMenuItems={(entry, close) => {
               const f = snapshot.files.find((x) => x.relPath === entry.file.path);
-              requestOpenInEditor({ path: f?.path ?? entry.file.path, cwd });
+              return (
+                <FileActionMenuItems path={f?.path ?? entry.file.path} cwd={cwd} onClose={close} />
+              );
             }}
           />
         )}

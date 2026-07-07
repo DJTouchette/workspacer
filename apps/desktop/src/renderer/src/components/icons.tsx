@@ -30,6 +30,7 @@ import {
   Rows3,
   Eye,
   Radar,
+  BookOpen,
   type LucideIcon,
 } from 'lucide-react';
 import { PaneType } from '../types/pane';
@@ -74,6 +75,7 @@ const PANE_ICONS: Record<PaneType, IconComponent> = {
   agentwatch: Eye,
   agents: Radar,
   inspector: Columns3,
+  mdpreview: BookOpen,
 };
 
 export interface IconProps {

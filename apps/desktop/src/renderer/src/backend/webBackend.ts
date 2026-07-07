@@ -232,6 +232,17 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
         'fs.listEntries',
         { path: dirPath },
       ),
+    // Best effort on web: the file lives on the host, so a file:// URL only
+    // works when the browser runs on the same machine. Reveal-in-folder can't
+    // work at all remotely.
+    fileOpenExternal: (filePath) => {
+      window.open(`file://${filePath}`, '_blank');
+      return Promise.resolve({ ok: true });
+    },
+    fileShowInFolder: () => {
+      warnOnce('fileShowInFolder');
+      return Promise.resolve({ ok: false, error: 'not available on web' });
+    },
 
     // Start the host-side watch, then subscribe to the bus topic that watch
     // publishes (fs.changed, payload { path, eventType }) and filter by path.

@@ -22,6 +22,7 @@ import {
   type InspectorTarget,
 } from './lib/watchBus';
 import { EDITOR_OPEN_FILE_EVENT } from './lib/editorBus';
+import { MARKDOWN_PREVIEW_EVENT, type MarkdownPreviewTarget } from './lib/previewBus';
 import { useUiCommands } from './hooks/useUiCommands';
 import type { PluginPane } from './types/plugin';
 import SpawnAgentDialog from './components/SpawnAgentDialog';
@@ -245,6 +246,7 @@ function App() {
     openPaneIn,
     openAgentWatch,
     openInspector,
+    openMarkdownPreview,
     setActiveAgentId,
     tabs,
     activeTabId,
@@ -749,6 +751,19 @@ function App() {
     window.addEventListener(EDITOR_OPEN_FILE_EVENT, handler);
     return () => window.removeEventListener(EDITOR_OPEN_FILE_EVENT, handler);
   }, [openFileInEditor]);
+
+  // Markdown-preview requests (FileLink left-click on a .md path). The opener
+  // dedupes by file, so a repeat click focuses the existing preview pane.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const t = (e as CustomEvent).detail as MarkdownPreviewTarget | undefined;
+      if (!t?.path) return;
+      const tabId = openMarkdownPreview({ path: t.path, cwd: t.cwd });
+      if (tabId) requestAnimationFrame(() => scrollToTab(tabId));
+    };
+    window.addEventListener(MARKDOWN_PREVIEW_EVENT, handler);
+    return () => window.removeEventListener(MARKDOWN_PREVIEW_EVENT, handler);
+  }, [openMarkdownPreview, scrollToTab]);
 
   const openSettings = useCallback(() => {
     const existing = tabs.find((t) => t.panes.length === 1 && t.panes[0].type === 'settings');

@@ -29,6 +29,7 @@ const AskPane = React.lazy(() => import('../panes/AskPane'));
 const AgentWatchPane = React.lazy(() => import('../panes/AgentWatchPane'));
 const AgentsPane = React.lazy(() => import('../panes/AgentsPane'));
 const InspectorPane = React.lazy(() => import('../panes/InspectorPane'));
+const MarkdownPreviewPane = React.lazy(() => import('../panes/MarkdownPreviewPane'));
 
 /** POSIX single-quote a path so it's safe as a terminal-editor argument. */
 function shellQuote(p: string): string {
@@ -328,6 +329,16 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
             isActive={isActive}
             inspectorSessionId={pane.inspectorSessionId}
             inspectorAgentName={pane.inspectorAgentName}
+          />
+        </Suspense>
+      );
+    case 'mdpreview':
+      return (
+        <Suspense fallback={<PaneFallback />}>
+          <MarkdownPreviewPane
+            title={pane.title}
+            previewPath={pane.previewPath}
+            previewCwd={pane.previewCwd}
           />
         </Suspense>
       );

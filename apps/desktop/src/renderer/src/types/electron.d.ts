@@ -266,6 +266,10 @@ export interface ElectronAPI {
   readDir: (
     dirPath: string,
   ) => Promise<{ path: string; entries: { name: string; path: string; isDir: boolean }[] }>;
+  /** Open a file with the OS default handler via a file:// URL (browser for .html). */
+  fileOpenExternal: (filePath: string) => Promise<{ ok: boolean; error?: string }>;
+  /** Reveal a file in the OS file manager. No-ops ({ok:false}) on web. */
+  fileShowInFolder: (filePath: string) => Promise<{ ok: boolean; error?: string }>;
 
   // Watch a single file for external changes; returns an unsubscribe function.
   watchFile: (

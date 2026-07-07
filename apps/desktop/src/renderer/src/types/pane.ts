@@ -14,7 +14,8 @@ export type PaneType =
   | 'editor'
   | 'agentwatch'
   | 'agents'
-  | 'inspector';
+  | 'inspector'
+  | 'mdpreview';
 
 /** Coding-agent backend an agent workspace / agent pane runs.
  *  `undefined` is treated as `'claude'` for backward compatibility with sessions
@@ -80,6 +81,11 @@ export interface PaneConfig {
   /** Inspector panes only: the target agent's display name, shown as the card
    *  header (the session id alone isn't friendly). */
   inspectorAgentName?: string;
+  /** Markdown-preview panes only: absolute path of the previewed file. */
+  previewPath?: string;
+  /** Markdown-preview panes only: the repo/working dir the file belongs to
+   *  (threaded to "Open in editor" so the editor roots at the project). */
+  previewCwd?: string;
 }
 
 export interface TabConfig {

@@ -1,6 +1,7 @@
 import { ipcMain, BrowserWindow, dialog, shell } from 'electron';
 import * as os from 'os';
 import * as fs from 'fs';
+import { pathToFileURL } from 'url';
 import { configService } from './services/configService';
 import { libraryService } from './services/libraryService';
 import { sessionService } from './services/sessionService';
@@ -724,6 +725,33 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     writeTextFile(filePath, contents),
   );
   ipcMain.handle(IPC.FILE_LIST_DIR, (_event, dirPath: string) => listDir(dirPath));
+
+  // Open a file with the OS default handler (browser for .html) via a file://
+  // URL, and reveal a file in the OS file manager. Both validate existence
+  // first — shell.openExternal on a missing path fails silently on some
+  // platforms, which reads as a dead click.
+  ipcMain.handle(IPC.FILE_OPEN_EXTERNAL, async (_event, filePath: string) => {
+    try {
+      await fs.promises.access(filePath);
+    } catch {
+      return { ok: false, error: `File not found: ${filePath}` };
+    }
+    try {
+      await shell.openExternal(pathToFileURL(filePath).toString());
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+  ipcMain.handle(IPC.FILE_SHOW_IN_FOLDER, async (_event, filePath: string) => {
+    try {
+      await fs.promises.access(filePath);
+    } catch {
+      return { ok: false, error: `File not found: ${filePath}` };
+    }
+    shell.showItemInFolder(filePath);
+    return { ok: true };
+  });
 
   // Watch a single file for external changes. Changes are pushed back via the
   // FILE_CHANGED channel (and the hub bus) by the sink installed above.

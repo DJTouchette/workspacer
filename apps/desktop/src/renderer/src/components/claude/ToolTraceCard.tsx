@@ -7,6 +7,7 @@ import { WorkflowRunCard } from './WorkflowRunCard';
 import { AgentSpinner } from './WorkflowAgentRow';
 import { summarizeWork } from './WorkCard';
 import { useNowTicker } from './useNowTicker';
+import { FileLink } from './FileLink';
 
 /**
  * ToolTraceCard — the "Trace" work-log style: a run of tool calls rendered as
@@ -41,6 +42,24 @@ function categoryOf(tc: ToolCall): keyof typeof CATEGORY_COLOR {
   if (n === 'Agent' || n === 'Workflow' || n === 'Task') return 'agent';
   if (n === 'WebFetch' || n === 'WebSearch') return 'web';
   return 'other';
+}
+
+/** File path a call targets, when the tool is file-shaped — makes the row's
+ *  target text an openable FileLink instead of plain text. */
+function callTargetFile(tc: ToolCall): string | undefined {
+  switch (tc.name) {
+    case 'Read':
+    case 'Edit':
+    case 'MultiEdit':
+    case 'Write':
+    case 'NotebookRead':
+    case 'NotebookEdit': {
+      const p = tc.input?.file_path ?? tc.input?.notebook_path;
+      return typeof p === 'string' && p ? p : undefined;
+    }
+    default:
+      return undefined;
+  }
 }
 
 /** Short human target for the row: file basename, command, pattern, … */
@@ -118,7 +137,8 @@ const TraceRow: React.FC<{
   now: number;
   open: boolean;
   onToggle: () => void;
-}> = ({ tc, t0, span, now, open, onToggle }) => {
+  cwd?: string;
+}> = ({ tc, t0, span, now, open, onToggle, cwd }) => {
   const cat = categoryOf(tc);
   const running = tc.status === 'running';
   const failed = tc.status === 'failed';
@@ -128,6 +148,7 @@ const TraceRow: React.FC<{
   const widthPct = Math.min(100 - leftPct, Math.max(0.75, ((end - tc.startedAt) / span) * 100));
   const dur = end - tc.startedAt;
   const target = callTarget(tc);
+  const targetFile = callTargetFile(tc);
 
   return (
     <>
@@ -168,22 +189,42 @@ const TraceRow: React.FC<{
         >
           {tc.name}
         </span>
-        {/* Target */}
-        <span
-          style={{
-            flexShrink: 1,
-            minWidth: 60,
-            maxWidth: '34%',
-            fontSize: '0.66rem',
-            fontFamily: 'var(--claude-mono-font, monospace)',
-            color: colors.text,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {target}
-        </span>
+        {/* Target — file targets are openable (FileLink stops propagation, so
+            clicking elsewhere on the row still expands it) */}
+        {targetFile ? (
+          <FileLink
+            path={targetFile}
+            cwd={cwd}
+            style={{
+              flexShrink: 1,
+              minWidth: 60,
+              maxWidth: '34%',
+              fontSize: '0.66rem',
+              color: colors.text,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {target}
+          </FileLink>
+        ) : (
+          <span
+            style={{
+              flexShrink: 1,
+              minWidth: 60,
+              maxWidth: '34%',
+              fontSize: '0.66rem',
+              fontFamily: 'var(--claude-mono-font, monospace)',
+              color: colors.text,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {target}
+          </span>
+        )}
         {/* Waterfall lane */}
         <span
           style={{
@@ -252,10 +293,11 @@ const TraceRow: React.FC<{
               oldStr={tc.input?.old_string ?? ''}
               newStr={tc.input?.new_string ?? ''}
               filePath={tc.input?.file_path}
+              cwd={cwd}
             />
           )}
           {hasRead(tc) && (
-            <ReadView response={String(tc.response)} filePath={tc.input?.file_path} />
+            <ReadView response={String(tc.response)} filePath={tc.input?.file_path} cwd={cwd} />
           )}
           {!hasDiff(tc) && !hasRead(tc) && (
             <>
@@ -278,7 +320,7 @@ const ToolTraceCardInner: React.FC<{
   live?: boolean;
   isLast?: boolean;
   cwd?: string;
-}> = ({ toolCalls, subagentByToolId, workflowByToolId, live, isLast }) => {
+}> = ({ toolCalls, subagentByToolId, workflowByToolId, live, isLast, cwd }) => {
   const hasOrchestration = useMemo(
     () => toolCalls.some((tc) => workflowByToolId?.has(tc.id) || subagentByToolId?.has(tc.id)),
     [toolCalls, workflowByToolId, subagentByToolId],
@@ -442,6 +484,7 @@ const ToolTraceCardInner: React.FC<{
                 now={now}
                 open={openRows.has(tc.id)}
                 onToggle={() => toggleRow(tc.id)}
+                cwd={cwd}
               />
             );
           })}

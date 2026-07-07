@@ -161,6 +161,10 @@ export interface FileTreeProps {
   stats: ReadonlyMap<string, NumstatEntry>;
   /** Right-click → "Open in editor". Omit to disable the context menu. */
   onOpenInEditor?: (entry: TreeEntry) => void;
+  /** Replaces the default context-menu body (a single "Open in editor" item)
+   *  with custom items — e.g. the chat's full file-action menu. Call `close`
+   *  from every item's handler. */
+  renderContextMenuItems?: (entry: TreeEntry, close: () => void) => React.ReactNode;
   /** Controlled collapse state (keys from `collectDirPaths`). Omit for the
    *  default internal state. */
   collapsed?: ReadonlySet<string>;
@@ -182,6 +186,7 @@ const FileTree: React.FC<FileTreeProps> = ({
   busy,
   stats,
   onOpenInEditor,
+  renderContextMenuItems,
   collapsed: collapsedProp,
   onToggleDir,
   renderIcon,
@@ -274,7 +279,7 @@ const FileTree: React.FC<FileTreeProps> = ({
             className="wks-review-row"
             onClick={() => onSelect(entry)}
             onContextMenu={
-              onOpenInEditor
+              onOpenInEditor || renderContextMenuItems
                 ? (e) => {
                     e.preventDefault();
                     e.stopPropagation();
@@ -350,15 +355,19 @@ const FileTree: React.FC<FileTreeProps> = ({
   return (
     <div style={{ paddingBottom: 2 }}>
       {renderChildren(tree, 0)}
-      {menu && onOpenInEditor && (
+      {menu && (onOpenInEditor || renderContextMenuItems) && (
         <ContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)}>
-          <ContextMenuItem
-            label="Open in editor"
-            onClick={() => {
-              onOpenInEditor(menu.entry);
-              setMenu(null);
-            }}
-          />
+          {renderContextMenuItems ? (
+            renderContextMenuItems(menu.entry, () => setMenu(null))
+          ) : (
+            <ContextMenuItem
+              label="Open in editor"
+              onClick={() => {
+                onOpenInEditor!(menu.entry);
+                setMenu(null);
+              }}
+            />
+          )}
         </ContextMenu>
       )}
     </div>

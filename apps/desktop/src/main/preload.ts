@@ -487,6 +487,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     dirPath: string,
   ): Promise<{ path: string; entries: { name: string; path: string; isDir: boolean }[] }> =>
     ipcRenderer.invoke(IPC.FILE_LIST_DIR, dirPath),
+  // Open a file with the OS default handler (file:// URL — browser for .html).
+  fileOpenExternal: (filePath: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke(IPC.FILE_OPEN_EXTERNAL, filePath),
+  // Reveal a file in the OS file manager.
+  fileShowInFolder: (filePath: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke(IPC.FILE_SHOW_IN_FOLDER, filePath),
 
   // Watch a single file. Starts the watch in main and listens on the push
   // channel, filtering by path so multiple watchers on different files don't

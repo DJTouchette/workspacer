@@ -5,7 +5,7 @@ import { DiffView, hasDiff, ReadView, hasRead } from './DiffView';
 import { SubagentRow } from './SubagentRow';
 import { WorkflowRunCard } from './WorkflowRunCard';
 import { AgentSpinner } from './WorkflowAgentRow';
-import { requestOpenInEditor } from '../../lib/editorBus';
+import { FileLink } from './FileLink';
 
 const EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'NotebookEdit']);
 const CMD_TOOLS = new Set(['Bash', 'PowerShell']);
@@ -139,13 +139,14 @@ const WorkCardInner: React.FC<{
               oldStr={tc.input?.old_string ?? ''}
               newStr={tc.input?.new_string ?? ''}
               filePath={tc.input?.file_path}
+              cwd={cwd}
             />
           </React.Fragment>,
         );
       }
     }
     return out;
-  }, [expanded, toolCalls, subagentByToolId, workflowByToolId]);
+  }, [expanded, toolCalls, subagentByToolId, workflowByToolId, cwd]);
 
   return (
     <div
@@ -259,32 +260,19 @@ const WorkCardInner: React.FC<{
             const basename = filePath.replace(/\\/g, '/').split('/').pop() ?? filePath;
             const dir = filePath.replace(/\\/g, '/').split('/').slice(0, -1).join('/');
             return (
-              <button
+              <FileLink
                 key={filePath}
-                title={filePath}
-                onClick={() => requestOpenInEditor({ path: filePath, cwd })}
+                path={filePath}
+                cwd={cwd}
                 style={{
                   display: 'flex',
                   alignItems: 'baseline',
                   gap: 6,
-                  background: 'none',
-                  border: 'none',
                   padding: '2px 4px',
                   borderRadius: 'var(--wks-radius-sm)',
-                  cursor: 'pointer',
-                  textAlign: 'left',
                   width: '100%',
                   color: colors.accent,
                   fontSize: '0.68rem',
-                  fontFamily: 'var(--claude-mono-font, monospace)',
-                  transition: 'background 0.1s',
-                }}
-                onMouseEnter={(e) => {
-                  (e.currentTarget as HTMLButtonElement).style.background =
-                    'rgba(255,255,255,0.06)';
-                }}
-                onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLButtonElement).style.background = 'none';
                 }}
               >
                 <span style={{ flexShrink: 0 }}>{basename}</span>
@@ -302,7 +290,7 @@ const WorkCardInner: React.FC<{
                     {dir}
                   </span>
                 )}
-              </button>
+              </FileLink>
             );
           })}
         </div>
@@ -329,10 +317,15 @@ const WorkCardInner: React.FC<{
                     oldStr={tc.input?.old_string ?? ''}
                     newStr={tc.input?.new_string ?? ''}
                     filePath={tc.input?.file_path}
+                    cwd={cwd}
                   />
                 )}
                 {hasRead(tc) && (
-                  <ReadView response={String(tc.response)} filePath={tc.input?.file_path} />
+                  <ReadView
+                    response={String(tc.response)}
+                    filePath={tc.input?.file_path}
+                    cwd={cwd}
+                  />
                 )}
               </React.Fragment>
             );

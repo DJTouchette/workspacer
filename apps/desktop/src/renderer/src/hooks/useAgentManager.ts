@@ -47,6 +47,7 @@ const defaultTitles: Record<PaneType, string> = {
   agentwatch: 'Watch',
   agents: 'Agents',
   inspector: 'Inspector',
+  mdpreview: 'Preview',
 };
 
 /** Derive a human label from a working directory (its basename). */
@@ -735,6 +736,52 @@ export function useAgentManager() {
     [mutateAgent],
   );
 
+  // Open (or focus) a markdown Preview pane for one file in the active
+  // workspace — mirrors openInspector, deduping by the previewed path so a
+  // repeat click on the same file focuses the existing pane.
+  const openMarkdownPreview = useCallback(
+    (opts: { path: string; cwd?: string }): string => {
+      const aid = activeAgentIdRef.current;
+      if (!aid) return '';
+      const agent = agentsRef.current.find((a) => a.id === aid);
+      if (!agent) return '';
+      const existing = agent.tabs.find((t) =>
+        t.panes.some((p) => p.type === 'mdpreview' && p.previewPath === opts.path),
+      );
+      if (existing) {
+        mutateAgent(aid, (a) => ({ ...a, activeTabId: existing.id }));
+        return existing.id;
+      }
+      const title = opts.path.replace(/\\/g, '/').split('/').pop() ?? 'Preview';
+      const paneId = generateId('mdpreview');
+      const tabId = generateId('tab');
+      const pane: PaneConfig = {
+        id: paneId,
+        type: 'mdpreview',
+        title,
+        previewPath: opts.path,
+        previewCwd: opts.cwd,
+        cwd: opts.cwd,
+      };
+      mutateAgent(aid, (a) => ({
+        ...a,
+        tabs: [
+          ...a.tabs,
+          {
+            id: tabId,
+            title,
+            panes: [pane],
+            activePaneId: paneId,
+            lastActiveAt: Date.now(),
+          },
+        ],
+        activeTabId: tabId,
+      }));
+      return tabId;
+    },
+    [mutateAgent],
+  );
+
   // ── Tab/pane operations (scoped to the active agent) ──────────────────────
 
   const setActiveTabId = useCallback(
@@ -1037,6 +1084,7 @@ export function useAgentManager() {
     openPaneIn,
     openAgentWatch,
     openInspector,
+    openMarkdownPreview,
     // tabs (active agent)
     tabs,
     activeTabId,
