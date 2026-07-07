@@ -1,35 +1,49 @@
 import React, { useCallback, useRef, useState } from 'react';
 import { Config } from '../../hooks/useConfig';
-import { themes, darkTheme, toHex } from '../../themes';
-import { Section, Row, ModeButton, SearchableSelect } from './primitives';
+import {
+  themes,
+  toHex,
+  resolveTheme,
+  themeDisplayName,
+  themeColorsOf,
+  isCustomThemeId,
+  newCustomThemeId,
+} from '../../themes';
+import type { CustomTheme } from '../../themes';
+import { Section, Row, ModeButton, SmallButton, SearchableSelect, inputStyle } from './primitives';
+import ThemeMaker from './ThemeMaker';
 
 interface AppearanceSectionProps {
   config: Config;
   save: (partial: Partial<Config>) => Promise<Config>;
 }
 
-/** "tokyo-night" → "Tokyo Night", "ayu-dark" → "Ayu Dark". */
-function prettyThemeLabel(id: string): string {
-  return id
-    .split('-')
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(' ');
-}
-
 const AppearanceSection: React.FC<AppearanceSectionProps> = ({ config, save }) => {
-  const activeTheme = themes[config.ui.theme] ?? darkTheme;
+  const customThemes = config.ui.customThemes ?? {};
+  const activeTheme = resolveTheme(config.ui.theme, customThemes);
   const borderHex = toHex(config.ui.borderColor || activeTheme.borderActive || activeTheme.accent);
   const [saved, setSaved] = useState(false);
   const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Inline "New theme…" name prompt.
+  const [naming, setNaming] = useState(false);
+  const [newName, setNewName] = useState('');
 
   const themeOptions = React.useMemo(
-    () =>
-      Object.entries(themes).map(([id, t]) => ({
+    () => [
+      ...Object.entries(themes).map(([id, t]) => ({
         value: id,
-        label: prettyThemeLabel(id),
+        label: themeDisplayName(id),
         swatch: t.accent,
+        group: 'Built-in',
       })),
-    [],
+      ...Object.keys(customThemes).map((id) => ({
+        value: id,
+        label: themeDisplayName(id, customThemes),
+        swatch: resolveTheme(id, customThemes).accent,
+        group: 'Custom',
+      })),
+    ],
+    [customThemes],
   );
 
   const saveWithFeedback = useCallback(
@@ -41,6 +55,24 @@ const AppearanceSection: React.FC<AppearanceSectionProps> = ({ config, save }) =
     },
     [save],
   );
+
+  /** Fork the CURRENT theme (as rendered) into a new custom theme and switch
+   *  to it — the editor below opens automatically. Colors are fully resolved
+   *  at creation, so later built-in tweaks never restyle it. */
+  const createTheme = useCallback(() => {
+    const name = newName.trim() || 'My theme';
+    const id = newCustomThemeId(name, customThemes);
+    // Fork of a fork keeps pointing at the original built-in base.
+    const base = isCustomThemeId(config.ui.theme)
+      ? (customThemes[config.ui.theme]?.base ?? 'dark')
+      : config.ui.theme || 'dark';
+    const spec: CustomTheme = { name, base, colors: themeColorsOf(activeTheme) };
+    setNaming(false);
+    setNewName('');
+    void saveWithFeedback({
+      ui: { ...config.ui, theme: id, customThemes: { ...customThemes, [id]: spec } },
+    });
+  }, [newName, customThemes, config.ui, activeTheme, saveWithFeedback]);
 
   return (
     <Section title="Appearance">
@@ -65,18 +97,55 @@ const AppearanceSection: React.FC<AppearanceSectionProps> = ({ config, save }) =
         </div>
       )}
       <Row label="Theme">
-        <SearchableSelect
-          value={config.ui.theme}
-          options={themeOptions}
-          /* Switching theme re-adopts that theme's own corner style and
-           * border color (overrides cleared). */
-          onChange={(themeName) =>
-            saveWithFeedback({
-              ui: { ...config.ui, theme: themeName, cornerStyle: '', borderColor: '' },
-            })
-          }
-        />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {!naming && <SmallButton label="New theme…" onClick={() => setNaming(true)} />}
+          <SearchableSelect
+            value={config.ui.theme}
+            options={themeOptions}
+            /* Switching theme re-adopts that theme's own corner style and
+             * border color (overrides cleared). */
+            onChange={(themeName) =>
+              saveWithFeedback({
+                ui: { ...config.ui, theme: themeName, cornerStyle: '', borderColor: '' },
+              })
+            }
+          />
+        </div>
       </Row>
+      {naming && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 0 12px' }}>
+          <input
+            type="text"
+            autoFocus
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') createTheme();
+              if (e.key === 'Escape') {
+                setNaming(false);
+                setNewName('');
+              }
+            }}
+            placeholder="Theme name"
+            spellCheck={false}
+            style={{ ...inputStyle, flex: 1, minWidth: 0 }}
+          />
+          <SmallButton label="Create" primary onClick={createTheme} />
+          <SmallButton
+            label="Cancel"
+            onClick={() => {
+              setNaming(false);
+              setNewName('');
+            }}
+          />
+          <span style={{ fontSize: '0.7rem', color: 'var(--wks-text-disabled)', flexShrink: 0 }}>
+            copies {themeDisplayName(config.ui.theme || 'dark', customThemes)}
+          </span>
+        </div>
+      )}
+      {isCustomThemeId(config.ui.theme) && customThemes[config.ui.theme] && (
+        <ThemeMaker config={config} save={save} themeId={config.ui.theme} />
+      )}
       <Row label="Corners">
         <div style={{ display: 'flex', gap: '4px' }}>
           <ModeButton

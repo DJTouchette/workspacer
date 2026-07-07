@@ -206,6 +206,8 @@ export interface AppConfig {
   ui: {
     animations: boolean;
     theme: string;
+    /** User-made themes keyed by namespaced id ('custom:<slug>'). */
+    customThemes?: Record<string, { name: string; base?: string; colors: Record<string, unknown> }>;
     cornerStyle: string;
     borderColor: string;
     fontFamily: string;

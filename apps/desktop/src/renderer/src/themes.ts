@@ -1282,6 +1282,90 @@ export const themes: Record<string, Theme> = {
   synthwave: synthwaveTheme,
 };
 
+// ── Custom themes ──
+
+/** Editable token set for a custom theme: every flat Theme color plus a
+ *  partial terminal palette. `name` / `corners` are managed separately
+ *  (display name lives on CustomTheme; corners via the cornerStyle override). */
+export type ThemeColors = Omit<Partial<Theme>, 'name' | 'corners' | 'terminal'> & {
+  terminal?: Partial<TerminalTheme>;
+};
+
+/** A user-made theme, persisted in config.ui.customThemes. Colors are fully
+ *  resolved from the base theme at creation time, so resolution stays trivial
+ *  and later changes to built-ins never restyle saved themes. `base` is kept
+ *  for backfilling tokens added after the theme was saved, and as the
+ *  fallback when the theme is deleted. */
+export interface CustomTheme {
+  /** Display name (the id stays stable across renames). */
+  name: string;
+  /** Built-in theme id this was forked from (fallback + token backfill). */
+  base?: string;
+  colors: ThemeColors;
+}
+
+export type CustomThemes = Record<string, CustomTheme>;
+
+export const CUSTOM_THEME_PREFIX = 'custom:';
+
+export function isCustomThemeId(id: string | undefined): boolean {
+  return !!id && id.startsWith(CUSTOM_THEME_PREFIX);
+}
+
+/** Namespaced id for a new custom theme ('custom:<slug>'), de-duplicated
+ *  against the ids already in use so two themes can share a display name. */
+export function newCustomThemeId(name: string, existing?: CustomThemes): string {
+  const slug =
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'theme';
+  let id = CUSTOM_THEME_PREFIX + slug;
+  let n = 2;
+  while (existing && id in existing) id = `${CUSTOM_THEME_PREFIX}${slug}-${n++}`;
+  return id;
+}
+
+/**
+ * Single theme resolver — use this instead of reading the `themes` registry
+ * directly, so custom themes work everywhere a built-in does (CSS vars,
+ * corners, light/dark detection, terminal palette, webview injection, the
+ * Windows title bar). Unknown ids fall back to dark.
+ */
+export function resolveTheme(id: string | undefined, customThemes?: CustomThemes): Theme {
+  const custom = id ? customThemes?.[id] : undefined;
+  if (custom) {
+    const base = themes[custom.base ?? ''] ?? darkTheme;
+    // Saved themes are stored fully resolved, but spread over the base anyway
+    // so a theme saved before a token existed still gets every value.
+    return {
+      ...base,
+      ...custom.colors,
+      terminal: { ...base.terminal, ...(custom.colors?.terminal ?? {}) },
+      name: id as string,
+    };
+  }
+  return themes[id ?? ''] ?? darkTheme;
+}
+
+/** Every color token of a resolved theme as a plain serializable map — the
+ *  payload stored for a custom theme (name/corners are managed separately). */
+export function themeColorsOf(theme: Theme): ThemeColors {
+  const { name: _name, corners: _corners, terminal, ...colors } = theme;
+  return { ...colors, terminal: { ...terminal } };
+}
+
+/** Human label for a theme id: the custom theme's display name, or the
+ *  built-in id prettified ("tokyo-night" → "Tokyo Night"). */
+export function themeDisplayName(id: string, customThemes?: CustomThemes): string {
+  const custom = customThemes?.[id];
+  if (custom) return custom.name;
+  return (id || 'dark')
+    .split('-')
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
 // ── Corner styles ──
 
 /** Curated default corner style per theme, so each theme keeps its character

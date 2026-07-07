@@ -1,21 +1,15 @@
 import { useEffect, useMemo } from 'react';
 import { useConfig } from './useConfig';
-import {
-  themes,
-  darkTheme,
-  applyTheme,
-  applyCorners,
-  cornersOf,
-  titleBarOverlayOf,
-} from '../themes';
+import { resolveTheme, applyTheme, applyCorners, cornersOf, titleBarOverlayOf } from '../themes';
 import type { Theme, TerminalTheme } from '../themes';
 
 export function useTheme(): { theme: Theme; terminalTheme: TerminalTheme } {
   const { config } = useConfig();
   const themeName = config.ui.theme || 'dark';
   const cornerOverride = config.ui.cornerStyle || '';
+  const customThemes = config.ui.customThemes;
 
-  const theme = useMemo(() => themes[themeName] ?? darkTheme, [themeName]);
+  const theme = useMemo(() => resolveTheme(themeName, customThemes), [themeName, customThemes]);
   const corners = useMemo(() => cornersOf(theme, cornerOverride), [theme, cornerOverride]);
   // Focused-pane border: user override wins, else the theme's own.
   const borderColor = config.ui.borderColor || theme.borderActive || theme.accent;

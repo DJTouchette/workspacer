@@ -29,6 +29,9 @@ interface Config {
   ui: {
     animations: boolean;
     theme: string;
+    /** User-made themes keyed by namespaced id ('custom:<slug>'). Renderer-
+     *  owned shape (see renderer themes.ts); saved wholesale, never merged. */
+    customThemes?: Record<string, { name: string; base?: string; colors: Record<string, unknown> }>;
     /** User override for corner style ('' = use the theme's own default). */
     cornerStyle: string;
     /** User override for the focused-pane border color ('' = theme default). */
@@ -530,6 +533,15 @@ class ConfigService {
 
   saveConfig(partial: Partial<Config>): Config {
     this.config = deepMerge(this.config, partial);
+    // ui.customThemes is a map of user-created entries: when the caller sends
+    // it, it is the whole truth. Deep-merge would resurrect deleted themes, so
+    // replace it wholesale instead.
+    const uiPartial = (partial as { ui?: { customThemes?: unknown } }).ui;
+    if (uiPartial && 'customThemes' in uiPartial) {
+      this.config.ui.customThemes = (uiPartial.customThemes ?? {}) as NonNullable<
+        Config['ui']['customThemes']
+      >;
+    }
     try {
       const dir = getConfigDir();
       fs.mkdirSync(dir, { recursive: true });

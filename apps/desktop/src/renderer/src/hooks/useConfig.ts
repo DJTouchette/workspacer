@@ -1,5 +1,6 @@
 import { useConfigContext } from '../contexts/ConfigContext';
 import type { AgentProvider } from '../types/pane';
+import type { CustomThemes } from '../themes';
 
 export interface ShellOption {
   name: string;
@@ -10,6 +11,10 @@ export interface ShellOption {
 export interface UIConfig {
   animations: boolean;
   theme: string;
+  /** User-made themes, keyed by namespaced id ('custom:<slug>'). Each stores a
+   *  display name, the built-in it was forked from, and a fully resolved flat
+   *  token map — see resolveTheme() in themes.ts. */
+  customThemes?: CustomThemes;
   /** User override for corner style ('' = use the theme's own default). */
   cornerStyle: string;
   /** User override for the focused-pane border color ('' = theme default). */

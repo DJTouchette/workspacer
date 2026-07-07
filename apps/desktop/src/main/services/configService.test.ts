@@ -192,6 +192,24 @@ describe('deepMerge semantics – via configService.saveConfig', () => {
     expect(cfg.terminal.fontSize).toBe(14);
   });
 
+  it('replaces ui.customThemes wholesale — deleting a custom theme persists', () => {
+    const two = {
+      'custom:one': { name: 'One', base: 'dark', colors: { accent: '#ff0000' } },
+      'custom:two': { name: 'Two', base: 'nord', colors: { accent: '#00ff00' } },
+    };
+    configService.saveConfig({ ui: { customThemes: two } as any });
+    expect(Object.keys(configService.getConfig().ui.customThemes ?? {})).toHaveLength(2);
+
+    // Delete one theme: the saved map is the whole truth — deep-merge must NOT
+    // resurrect the removed entry.
+    const one = { 'custom:two': two['custom:two'] };
+    configService.saveConfig({ ui: { customThemes: one } as any });
+    const cfg = configService.getConfig();
+    expect(cfg.ui.customThemes).toEqual(one);
+    // Sibling ui keys survive the partial save.
+    expect(cfg.ui.theme).toBe('dark');
+  });
+
   it('source null/undefined values do not overwrite target (deepMerge guard)', () => {
     // A null leaf must NOT clobber the default — null means "unset", so the
     // default value survives.

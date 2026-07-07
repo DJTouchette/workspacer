@@ -186,6 +186,9 @@ export interface SelectOption {
   label: string;
   /** Optional color chip shown left of the label. */
   swatch?: string;
+  /** Optional group heading (optgroup-style): a quiet header row is rendered
+   *  above the first option of each run of consecutive equal groups. */
+  group?: string;
 }
 
 /**
@@ -245,7 +248,9 @@ export function SearchableSelect({
 
   React.useEffect(() => {
     if (!open) return;
-    const el = listRef.current?.children[highlight] as HTMLElement | undefined;
+    // Group headers share the list container, so target options by index.
+    const el = listRef.current?.querySelector(`[data-opt-idx="${highlight}"]`) as
+      HTMLElement | undefined;
     el?.scrollIntoView({ block: 'nearest' });
   }, [highlight, open]);
 
@@ -361,43 +366,60 @@ export function SearchableSelect({
               filtered.map((o, i) => {
                 const isSel = o.value === value;
                 const isHi = i === highlight;
+                const showHeader = !!o.group && (i === 0 || filtered[i - 1].group !== o.group);
                 return (
-                  <button
-                    key={o.value}
-                    onMouseEnter={() => setHighlight(i)}
-                    onClick={() => choose(o.value)}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      width: '100%',
-                      padding: '6px 10px',
-                      fontSize: '0.78rem',
-                      fontFamily: 'inherit',
-                      textAlign: 'left',
-                      border: 'none',
-                      borderRadius: 4,
-                      cursor: 'pointer',
-                      background: isHi ? 'var(--wks-bg-hover)' : 'transparent',
-                      color: isSel
-                        ? 'var(--wks-accent-text, var(--wks-accent))'
-                        : 'var(--wks-text-secondary)',
-                      fontWeight: isSel ? 600 : 400,
-                    }}
-                  >
-                    {o.swatch && swatchDot(o.swatch)}
-                    <span
+                  <React.Fragment key={o.value}>
+                    {showHeader && (
+                      <div
+                        style={{
+                          padding: '6px 10px 2px',
+                          fontSize: '0.62rem',
+                          fontWeight: 700,
+                          letterSpacing: '0.06em',
+                          textTransform: 'uppercase',
+                          color: 'var(--wks-text-faint)',
+                        }}
+                      >
+                        {o.group}
+                      </div>
+                    )}
+                    <button
+                      data-opt-idx={i}
+                      onMouseEnter={() => setHighlight(i)}
+                      onClick={() => choose(o.value)}
                       style={{
-                        flex: 1,
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        width: '100%',
+                        padding: '6px 10px',
+                        fontSize: '0.78rem',
+                        fontFamily: 'inherit',
+                        textAlign: 'left',
+                        border: 'none',
+                        borderRadius: 4,
+                        cursor: 'pointer',
+                        background: isHi ? 'var(--wks-bg-hover)' : 'transparent',
+                        color: isSel
+                          ? 'var(--wks-accent-text, var(--wks-accent))'
+                          : 'var(--wks-text-secondary)',
+                        fontWeight: isSel ? 600 : 400,
                       }}
                     >
-                      {o.label}
-                    </span>
-                    {isSel && <span style={{ flexShrink: 0, fontSize: '0.75rem' }}>✓</span>}
-                  </button>
+                      {o.swatch && swatchDot(o.swatch)}
+                      <span
+                        style={{
+                          flex: 1,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {o.label}
+                      </span>
+                      {isSel && <span style={{ flexShrink: 0, fontSize: '0.75rem' }}>✓</span>}
+                    </button>
+                  </React.Fragment>
                 );
               })
             )}

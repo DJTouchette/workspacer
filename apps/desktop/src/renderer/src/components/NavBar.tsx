@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { PaneType, TabConfig } from '../types/pane';
 import { useConfig, ScriptEntry, Config } from '../hooks/useConfig';
-import { themes, darkTheme } from '../themes';
+import { themes, resolveTheme, themeDisplayName } from '../themes';
 import { useIsSmallScreen } from '../hooks/useMediaQuery';
 import { PaneIcon, Play, Settings, Plus, Columns3 } from './icons';
 import { AgentLogo } from './agentLogos';
@@ -792,14 +792,6 @@ const NavBar: React.FC<NavBarProps> = ({
   );
 };
 
-/** "tokyo-night" → "Tokyo Night". */
-function prettyThemeLabel(id: string): string {
-  return id
-    .split('-')
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(' ');
-}
-
 /** Right-cluster theme picker: a pill showing the active theme's 3-dot swatch
  *  and name; clicking opens a dropdown of every theme. Wired through config so
  *  the choice persists (and re-adopts that theme's corners/border). */
@@ -811,8 +803,17 @@ const ThemeSwitcher: React.FC<{
   const wrapRef = useRef<HTMLDivElement>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
   const [pos, setPos] = useState<{ left: number; top: number }>({ left: 0, top: 0 });
-  const active = themes[config.ui.theme] ?? darkTheme;
+  const customThemes = config.ui.customThemes;
+  const active = resolveTheme(config.ui.theme, customThemes);
   const dots = [active.accent, active.terminal.magenta, active.terminal.blue];
+  // Built-ins first, then the user's custom themes (each resolved so the
+  // swatch dots reflect its actual palette).
+  const entries: Array<[string, ReturnType<typeof resolveTheme>]> = [
+    ...Object.entries(themes),
+    ...Object.keys(customThemes ?? {}).map(
+      (id) => [id, resolveTheme(id, customThemes)] as [string, ReturnType<typeof resolveTheme>],
+    ),
+  ];
 
   useEffect(() => {
     if (!open) return;
@@ -895,7 +896,9 @@ const ThemeSwitcher: React.FC<{
             <React.Fragment key={i}>{dot(c)}</React.Fragment>
           ))}
         </span>
-        <span style={{ whiteSpace: 'nowrap' }}>{prettyThemeLabel(config.ui.theme || 'dark')}</span>
+        <span style={{ whiteSpace: 'nowrap' }}>
+          {themeDisplayName(config.ui.theme || 'dark', customThemes)}
+        </span>
       </button>
       {open && (
         <div
@@ -914,51 +917,71 @@ const ThemeSwitcher: React.FC<{
             boxShadow: '0 8px 28px var(--wks-shadow)',
           }}
         >
-          {Object.entries(themes).map(([id, t]) => {
+          {entries.map(([id, t], i) => {
             const isCur = id === config.ui.theme;
+            const firstCustom = i === Object.keys(themes).length;
             return (
-              <button
-                key={id}
-                onClick={() => pick(id)}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  width: '100%',
-                  padding: '6px 12px',
-                  border: 'none',
-                  background: isCur ? 'var(--wks-bg-selected)' : 'transparent',
-                  color: isCur ? 'var(--wks-text-primary)' : 'var(--wks-text-tertiary)',
-                  cursor: 'pointer',
-                  fontFamily: 'inherit',
-                  fontSize: '0.72rem',
-                  textAlign: 'left',
-                }}
-                onMouseEnter={(e) => {
-                  if (!isCur)
-                    (e.currentTarget as HTMLElement).style.background = 'var(--wks-bg-hover)';
-                }}
-                onMouseLeave={(e) => {
-                  if (!isCur) (e.currentTarget as HTMLElement).style.background = 'transparent';
-                }}
-              >
-                <span style={{ display: 'flex', gap: 3 }}>
-                  {dot(t.accent)}
-                  {dot(t.terminal.magenta)}
-                  {dot(t.terminal.blue)}
-                </span>
-                <span
+              <React.Fragment key={id}>
+                {firstCustom && (
+                  <div
+                    style={{
+                      padding: '5px 12px 2px',
+                      fontSize: '0.6rem',
+                      fontWeight: 700,
+                      letterSpacing: '0.06em',
+                      textTransform: 'uppercase',
+                      color: 'var(--wks-text-faint)',
+                      borderTop: '1px solid var(--wks-border-subtle)',
+                      marginTop: 4,
+                    }}
+                  >
+                    Custom
+                  </div>
+                )}
+                <button
+                  onClick={() => pick(id)}
                   style={{
-                    flex: 1,
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    width: '100%',
+                    padding: '6px 12px',
+                    border: 'none',
+                    background: isCur ? 'var(--wks-bg-selected)' : 'transparent',
+                    color: isCur ? 'var(--wks-text-primary)' : 'var(--wks-text-tertiary)',
+                    cursor: 'pointer',
+                    fontFamily: 'inherit',
+                    fontSize: '0.72rem',
+                    textAlign: 'left',
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!isCur)
+                      (e.currentTarget as HTMLElement).style.background = 'var(--wks-bg-hover)';
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!isCur) (e.currentTarget as HTMLElement).style.background = 'transparent';
                   }}
                 >
-                  {prettyThemeLabel(id)}
-                </span>
-                {isCur && <span style={{ color: 'var(--wks-accent)', fontSize: '0.7rem' }}>✓</span>}
-              </button>
+                  <span style={{ display: 'flex', gap: 3 }}>
+                    {dot(t.accent)}
+                    {dot(t.terminal.magenta)}
+                    {dot(t.terminal.blue)}
+                  </span>
+                  <span
+                    style={{
+                      flex: 1,
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                    }}
+                  >
+                    {themeDisplayName(id, customThemes)}
+                  </span>
+                  {isCur && (
+                    <span style={{ color: 'var(--wks-accent)', fontSize: '0.7rem' }}>✓</span>
+                  )}
+                </button>
+              </React.Fragment>
             );
           })}
         </div>
