@@ -37,13 +37,19 @@ const DEFAULT_RATES: Rates = Rates {
 };
 
 /// Longest-prefix match on the transcript `model` id (mirrors modelUsage.ts).
+/// Current list pricing (2026-06): Fable $10/$50, Opus 4.5+ $5/$25,
+/// Sonnet $3/$15, Haiku $1/$5. Opus 4.1 and older kept the $15/$75 rates.
 fn rates_for(model: Option<&str>) -> Rates {
     let Some(model) = model else {
         return DEFAULT_RATES;
     };
     // (prefix, input, output)
-    const TABLE: [(&str, f64, f64); 3] = [
-        ("claude-opus", 15.0, 75.0),
+    const TABLE: [(&str, f64, f64); 7] = [
+        ("claude-fable", 10.0, 50.0),
+        ("claude-mythos", 10.0, 50.0),
+        ("claude-opus", 5.0, 25.0),
+        ("claude-opus-4-1", 15.0, 75.0),
+        ("claude-opus-4-0", 15.0, 75.0),
         ("claude-sonnet", 3.0, 15.0),
         ("claude-haiku", 1.0, 5.0),
     ];
@@ -130,34 +136,45 @@ fn from_transcript_value(tx: &Value) -> Option<Usage> {
         if m.get("role").and_then(|r| r.as_str()) != Some("assistant") {
             continue;
         }
-        let Some(msg) = m.get("raw").and_then(|r| r.get("message")) else {
+        let Some(raw) = m.get("raw") else { continue };
+        let Some(msg) = raw.get("message") else {
             continue;
         };
         let Some(u) = msg.get("usage") else { continue };
         any = true;
 
-        // Point-in-time: overwrite with the latest turn.
-        usage.context_tokens = context_tokens_of(u);
-        if let Some(model) = msg.get("model").and_then(|m| m.as_str()) {
-            usage.model = Some(model.to_string());
+        let sidechain = raw
+            .get("isSidechain")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let row_model = msg.get("model").and_then(|m| m.as_str());
+
+        // Point-in-time context/model: main thread only (see from_transcript).
+        if !sidechain {
+            usage.context_tokens = context_tokens_of(u);
+            if let Some(model) = row_model {
+                usage.model = Some(model.to_string());
+            }
+            usage.context_limit = context_limit_for(usage.model.as_deref(), usage.context_tokens);
         }
-        usage.context_limit = context_limit_for(usage.model.as_deref(), usage.context_tokens);
 
         // Cumulative cost — once per distinct message id.
         let id = msg.get("id").and_then(|i| i.as_str()).unwrap_or("");
         if !id.is_empty() && !seen.insert(id.to_string()) {
             continue;
         }
-        usage.cost_usd += turn_cost_usd(usage.model.as_deref(), u);
+        usage.cost_usd += turn_cost_usd(row_model.or(usage.model.as_deref()), u);
     }
 
     any.then_some(usage)
 }
 
 /// Fold a claudemon [`Transcript`] into a [`Usage`]. Context/model come from
-/// the last assistant turn; cost accumulates, deduped by message id so streamed
-/// blocks of one message aren't double-counted. Returns `None` if no assistant
-/// usage was found (empty transcript, no usage blocks, etc.).
+/// the last *main-thread* assistant turn; cost accumulates across main and
+/// sub-agent (isSidechain) turns alike — each priced at its own model's rates —
+/// deduped by message id so streamed blocks of one message aren't
+/// double-counted. Returns `None` if no assistant usage was found (empty
+/// transcript, no usage blocks, etc.).
 ///
 /// Each `TranscriptMessage.raw` is the whole JSONL row:
 /// `{"type": "assistant", "message": {"id": "...", "model": "...", "usage": {...}}}`.
@@ -177,19 +194,30 @@ pub fn from_transcript(tx: &Transcript) -> Option<Usage> {
         let Some(u) = msg.get("usage") else { continue };
         any = true;
 
-        // Point-in-time: overwrite with the latest turn.
-        usage.context_tokens = context_tokens_of(u);
-        if let Some(model) = msg.get("model").and_then(|m| m.as_str()) {
-            usage.model = Some(model.to_string());
-        }
-        usage.context_limit = context_limit_for(usage.model.as_deref(), usage.context_tokens);
+        let sidechain = m
+            .raw
+            .get("isSidechain")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let row_model = msg.get("model").and_then(|m| m.as_str());
 
-        // Cumulative cost — once per distinct message id.
+        // Point-in-time context/model: main thread only — a sub-agent's turn
+        // must not clobber the session's context gauge or reported model.
+        if !sidechain {
+            usage.context_tokens = context_tokens_of(u);
+            if let Some(model) = row_model {
+                usage.model = Some(model.to_string());
+            }
+            usage.context_limit = context_limit_for(usage.model.as_deref(), usage.context_tokens);
+        }
+
+        // Cumulative cost — once per distinct message id, at the row's own
+        // model rates (sub-agents often run a different model).
         let id = msg.get("id").and_then(|i| i.as_str()).unwrap_or("");
         if !id.is_empty() && !seen.insert(id.to_string()) {
             continue;
         }
-        usage.cost_usd += turn_cost_usd(usage.model.as_deref(), u);
+        usage.cost_usd += turn_cost_usd(row_model.or(usage.model.as_deref()), u);
     }
 
     any.then_some(usage)
@@ -198,14 +226,36 @@ pub fn from_transcript(tx: &Transcript) -> Option<Usage> {
 /// Compute usage for a session given its `transcript_path`. Returns a zeroed
 /// default if the path is `None`, the file doesn't exist, or contains no
 /// assistant usage blocks.
+///
+/// Sub-agent transcripts (`<transcript-stem>/subagents/*.jsonl` — where
+/// current Claude Code writes Task/teammate agents) fold in as cost/spend
+/// only: their rows are `isSidechain`, so [`from_transcript`] keeps them off
+/// the context gauge automatically.
 pub fn usage_for_path(transcript_path: Option<&str>) -> Usage {
     let Some(path) = transcript_path else {
         return Usage::default();
     };
-    match super::transcript::read_at(path) {
+    let mut usage = match super::transcript::read_at(path) {
         Ok(tx) => from_transcript(&tx).unwrap_or_default(),
         Err(_) => Usage::default(),
+    };
+    if let Some(stem) = path.strip_suffix(".jsonl") {
+        if let Ok(rd) = std::fs::read_dir(format!("{stem}/subagents")) {
+            for ent in rd.flatten() {
+                let p = ent.path();
+                if p.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+                    continue;
+                }
+                let Some(p) = p.to_str() else { continue };
+                if let Ok(tx) = super::transcript::read_at(p) {
+                    if let Some(side) = from_transcript(&tx) {
+                        usage.cost_usd += side.cost_usd;
+                    }
+                }
+            }
+        }
     }
+    usage
 }
 
 #[cfg(test)]
@@ -260,20 +310,55 @@ mod tests {
 
     // ── pricing pin tests (mirror modelUsage.test.ts) ────────────────────────
 
-    /// opus: $15/M in, $75/M out
+    /// opus (4.5+): $5/M in, $25/M out
     #[test]
-    fn pricing_opus_in15_out75() {
+    fn pricing_opus_in5_out25() {
         let t = tx(vec![assistant_msg(
             "m1",
-            "claude-opus-4-5",
+            "claude-opus-4-8",
             1_000_000,
             0,
             0,
             1_000_000,
         )]);
         let u = from_transcript(&t).unwrap();
-        // 1M input * $15 + 1M output * $75 = $90
-        assert!((u.cost_usd - 90.0).abs() < 1e-9, "opus cost={}", u.cost_usd);
+        // 1M input * $5 + 1M output * $25 = $30
+        assert!((u.cost_usd - 30.0).abs() < 1e-9, "opus cost={}", u.cost_usd);
+    }
+
+    /// fable: $10/M in, $50/M out
+    #[test]
+    fn pricing_fable_in10_out50() {
+        let t = tx(vec![assistant_msg(
+            "m1",
+            "claude-fable-5",
+            1_000_000,
+            0,
+            0,
+            1_000_000,
+        )]);
+        let u = from_transcript(&t).unwrap();
+        // 1M input * $10 + 1M output * $50 = $60
+        assert!((u.cost_usd - 60.0).abs() < 1e-9, "fable cost={}", u.cost_usd);
+    }
+
+    /// legacy opus 4.1/4.0: $15/M in, $75/M out (longest-prefix wins)
+    #[test]
+    fn pricing_legacy_opus_in15_out75() {
+        let t = tx(vec![assistant_msg(
+            "m1",
+            "claude-opus-4-1-20250805",
+            1_000_000,
+            0,
+            0,
+            1_000_000,
+        )]);
+        let u = from_transcript(&t).unwrap();
+        assert!(
+            (u.cost_usd - 90.0).abs() < 1e-9,
+            "legacy opus cost={}",
+            u.cost_usd
+        );
     }
 
     /// sonnet: $3/M in, $15/M out
@@ -423,6 +508,29 @@ mod tests {
             / 1_000_000.0;
         assert!(
             (u.cost_usd - expected).abs() < 1e-12,
+            "cost={} expected={}",
+            u.cost_usd,
+            expected
+        );
+    }
+
+    /// Sub-agent (isSidechain) turns: cost counts at the sub-agent's own model
+    /// rates, but context/model stay pinned to the main thread's last turn.
+    #[test]
+    fn sidechain_cost_counts_but_context_stays_main_thread() {
+        let mut side = assistant_msg("sub1", "claude-haiku-4-5", 1_000_000, 0, 0, 1_000_000);
+        side.raw["isSidechain"] = serde_json::json!(true);
+        let t = tx(vec![
+            assistant_msg("m1", "claude-fable-5", 1_000, 0, 0, 500),
+            side, // runs after the main turn — must not clobber context/model
+        ]);
+        let u = from_transcript(&t).unwrap();
+        assert_eq!(u.model.as_deref(), Some("claude-fable-5"));
+        assert_eq!(u.context_tokens, 1_000, "sidechain must not move the gauge");
+        // main fable turn (1k in, 500 out) + sidechain haiku turn (1M in, 1M out at $1/$5)
+        let expected = (1_000.0 * 10.0 + 500.0 * 50.0) / 1_000_000.0 + (1.0 + 5.0);
+        assert!(
+            (u.cost_usd - expected).abs() < 1e-9,
             "cost={} expected={}",
             u.cost_usd,
             expected

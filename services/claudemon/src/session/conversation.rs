@@ -57,13 +57,17 @@ pub enum ConversationItem {
         timestamp: Option<String>,
     },
     /// Token usage riding on an assistant message. `message_id` lets clients
-    /// dedup the per-block repetition of one streamed message.
+    /// dedup the per-block repetition of one streamed message. `sidechain`
+    /// marks usage from a sub-agent (isSidechain) row: real spend that belongs
+    /// in the session's totals, but not in the main thread's context gauge.
     Usage {
         #[serde(skip_serializing_if = "Option::is_none")]
         model: Option<String>,
         usage: Value,
         #[serde(skip_serializing_if = "Option::is_none")]
         message_id: Option<String>,
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        sidechain: bool,
     },
     /// The agent's current plan / checklist (Claude's `TodoWrite`, Codex's
     /// `update_plan`). Last-write-wins full replacement — clients keep the
@@ -97,8 +101,17 @@ struct TailLog {
     /// Bytes after the last newline — kept as raw bytes so a UTF-8 sequence
     /// split across reads survives intact.
     partial: Vec<u8>,
+    /// Cursors for the session's sub-agent transcripts
+    /// (`<transcript-stem>/subagents/*.jsonl`), keyed by absolute path.
+    side: std::collections::HashMap<String, SideCursor>,
     items: Vec<ConversationItem>,
     seq: u64,
+}
+
+#[derive(Default, Clone)]
+struct SideCursor {
+    offset: u64,
+    partial: Vec<u8>,
 }
 
 /// Shared handle: the tailer task writes, API handlers read/subscribe.
@@ -194,6 +207,9 @@ pub fn spawn_tailer(sessions: SessionStore, conv: ConversationStore) {
                 if let Err(err) = tail_one(&sessions, &conv, &state.session_id, &path).await {
                     tracing::debug!(?err, session = %state.session_id, "transcript tail failed");
                 }
+                if let Err(err) = tail_subagents(&conv, &state.session_id, &path).await {
+                    tracing::debug!(?err, session = %state.session_id, "subagent tail failed");
+                }
             }
         }
     });
@@ -271,6 +287,9 @@ async fn tail_one(
         if reset {
             entry.items.clear();
             entry.seq = 0;
+            // Sub-agent usage was cleared with the items — rewind those
+            // cursors so the next subagent pass re-emits it into the new log.
+            entry.side.clear();
         }
         entry.path = path.to_string();
         entry.offset = offset;
@@ -297,6 +316,108 @@ async fn tail_one(
     Ok(())
 }
 
+/// Tail the session's sub-agent transcripts. Current Claude Code writes each
+/// sub-agent (Task tool / teammate) to its own JSONL under
+/// `<transcript-stem>/subagents/`, so their spend never appears in the main
+/// file. Only usage is extracted — tagged `sidechain: true` — and pushed into
+/// the same per-session delta stream/snapshot the main tailer feeds.
+async fn tail_subagents(
+    conv: &ConversationStore,
+    session_id: &str,
+    main_path: &str,
+) -> std::io::Result<()> {
+    let Some(stem) = main_path.strip_suffix(".jsonl") else {
+        return Ok(());
+    };
+    let dir = format!("{stem}/subagents");
+    let mut rd = match tokio::fs::read_dir(&dir).await {
+        Ok(rd) => rd,
+        Err(_) => return Ok(()), // no sub-agents (yet) — the common case
+    };
+    let mut files: Vec<String> = Vec::new();
+    while let Ok(Some(ent)) = rd.next_entry().await {
+        let p = ent.path();
+        if p.extension().and_then(|e| e.to_str()) == Some("jsonl") {
+            if let Some(s) = p.to_str() {
+                files.push(s.to_string());
+            }
+        }
+    }
+    files.sort();
+
+    let mut items = Vec::new();
+    for file in files {
+        // Copy the cursor out; never hold the DashMap guard across an await.
+        let (mut offset, partial) = conv
+            .logs
+            .get(session_id)
+            .and_then(|l| l.side.get(&file).cloned())
+            .map(|c| (c.offset, c.partial))
+            .unwrap_or((0, Vec::new()));
+        let Ok(meta) = tokio::fs::metadata(&file).await else {
+            continue;
+        };
+        let len = meta.len();
+        let mut buf = partial;
+        if len < offset {
+            // Truncated/replaced — re-read from the top. (Duplicate usage from
+            // the re-read is deduped client-side by message id.)
+            offset = 0;
+            buf.clear();
+        }
+        if len == offset {
+            continue;
+        }
+        let mut f = tokio::fs::File::open(&file).await?;
+        f.seek(SeekFrom::Start(offset)).await?;
+        let mut chunk = Vec::with_capacity((len - offset) as usize);
+        (&mut f).take(len - offset).read_to_end(&mut chunk).await?;
+        offset += chunk.len() as u64;
+        buf.extend_from_slice(&chunk);
+
+        let new_partial = match buf.iter().rposition(|&b| b == b'\n') {
+            Some(idx) => buf.split_off(idx + 1),
+            None => std::mem::take(&mut buf),
+        };
+        for line in String::from_utf8_lossy(&buf).lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            if let Ok(value) = serde_json::from_str::<Value>(line) {
+                items.extend(sidechain_usage_from_row(&value));
+            }
+        }
+        conv.logs
+            .entry(session_id.to_string())
+            .or_default()
+            .side
+            .insert(
+                file,
+                SideCursor {
+                    offset,
+                    partial: new_partial,
+                },
+            );
+    }
+
+    if items.is_empty() {
+        return Ok(());
+    }
+    let delta = {
+        let mut entry = conv.logs.entry(session_id.to_string()).or_default();
+        entry.seq += items.len() as u64;
+        entry.items.extend(items.iter().cloned());
+        ConversationDelta {
+            session_id: session_id.to_string(),
+            seq: entry.seq,
+            reset: false,
+            items,
+        }
+    };
+    let _ = conv.tx.send(delta);
+    Ok(())
+}
+
 /// Parse one transcript row into zero or more conversation items.
 ///
 /// Mirrors what clients used to derive themselves: user text, assistant text
@@ -318,6 +439,33 @@ fn is_injected_meta(text: &str) -> bool {
     TAGS.iter().any(|tag| t.starts_with(tag))
 }
 
+/// Extract the `Usage` item off an assistant transcript row, if it carries a
+/// usage block. `sidechain` tags spend that belongs to a sub-agent's run.
+fn usage_item_from_assistant_row(value: &Value, sidechain: bool) -> Option<ConversationItem> {
+    let msg = value.get("message")?;
+    let usage = msg.get("usage")?;
+    Some(ConversationItem::Usage {
+        model: msg.get("model").and_then(Value::as_str).map(str::to_owned),
+        usage: usage.clone(),
+        message_id: msg
+            .get("id")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .or_else(|| value.get("uuid").and_then(Value::as_str).map(str::to_owned)),
+        sidechain,
+    })
+}
+
+/// Parse one *sub-agent* transcript row (from a `subagents/*.jsonl` file next
+/// to the main transcript). Only the usage matters — the sub-agent's timeline
+/// is surfaced through the agent cards, never the main conversation.
+pub fn sidechain_usage_from_row(value: &Value) -> Option<ConversationItem> {
+    if value.get("type").and_then(Value::as_str) != Some("assistant") {
+        return None;
+    }
+    usage_item_from_assistant_row(value, true)
+}
+
 pub fn items_from_row(value: &Value) -> Vec<ConversationItem> {
     let mut out = Vec::new();
     if value
@@ -327,16 +475,23 @@ pub fn items_from_row(value: &Value) -> Vec<ConversationItem> {
     {
         return out;
     }
-    // Sub-agent steps (Task tool / workflow agents) are written into the same
-    // transcript tagged `isSidechain: true`. They belong to the sub-agent's own
-    // run — surfaced separately via the subagent/workflow cards — not the main
-    // timeline. Without this, every tool call a sub-agent makes (Bash, Read, …)
-    // floods the conversation as orphaned rows under the spawning Agent card.
+    // Sub-agent steps (Task tool / workflow agents) tagged `isSidechain: true`
+    // belong to the sub-agent's own run — surfaced separately via the
+    // subagent/workflow cards — not the main timeline. Without this, every
+    // tool call a sub-agent makes (Bash, Read, …) floods the conversation as
+    // orphaned rows under the spawning Agent card. Their token usage is real
+    // spend though, so that alone still surfaces — as a usage-only item
+    // tagged `sidechain` for the accounting path. (Current Claude Code writes
+    // sub-agents to their own `subagents/*.jsonl` files, tailed separately —
+    // this branch covers older transcripts that interleave them.)
     if value
         .get("isSidechain")
         .and_then(Value::as_bool)
         .unwrap_or(false)
     {
+        if value.get("type").and_then(Value::as_str) == Some("assistant") {
+            out.extend(usage_item_from_assistant_row(value, true));
+        }
         return out;
     }
     let row_type = value.get("type").and_then(Value::as_str).unwrap_or("");
@@ -393,17 +548,7 @@ pub fn items_from_row(value: &Value) -> Vec<ConversationItem> {
             }
         }
         "assistant" => {
-            if let Some(usage) = msg.get("usage") {
-                out.push(ConversationItem::Usage {
-                    model: msg.get("model").and_then(Value::as_str).map(str::to_owned),
-                    usage: usage.clone(),
-                    message_id: msg
-                        .get("id")
-                        .and_then(Value::as_str)
-                        .map(str::to_owned)
-                        .or_else(|| value.get("uuid").and_then(Value::as_str).map(str::to_owned)),
-                });
-            }
+            out.extend(usage_item_from_assistant_row(value, false));
             for b in blocks(msg.get("content").unwrap_or(&Value::Null)) {
                 match b {
                     Block::Text { text } if !text.trim().is_empty() => {
@@ -692,6 +837,57 @@ mod tests {
         let items = items_from_row(&main_agent);
         assert_eq!(items.len(), 1);
         assert!(matches!(&items[0], ConversationItem::ToolUse { name, .. } if name == "Agent"));
+    }
+
+    #[test]
+    fn sidechain_usage_surfaces_as_tagged_usage_item() {
+        // A sub-agent's assistant row stays off the timeline, but its token
+        // usage is real spend — it must surface as a usage-only item tagged
+        // `sidechain: true` (and nothing else: no text, no tool_use).
+        let row = json!({
+            "type": "assistant",
+            "isSidechain": true,
+            "message": {
+                "role": "assistant",
+                "id": "msg_sub1",
+                "model": "claude-haiku-4-5",
+                "usage": { "input_tokens": 10, "output_tokens": 20 },
+                "content": [
+                    { "type": "text", "text": "subagent narration" },
+                    { "type": "tool_use", "id": "tu_x", "name": "Bash", "input": { "command": "ls" } }
+                ]
+            }
+        });
+        let items = items_from_row(&row);
+        assert_eq!(items.len(), 1, "only the usage item, no timeline items");
+        assert!(matches!(
+            &items[0],
+            ConversationItem::Usage { model: Some(m), message_id: Some(id), sidechain: true, .. }
+                if m == "claude-haiku-4-5" && id == "msg_sub1"
+        ));
+
+        // Main-thread usage keeps sidechain: false (and serializes without the
+        // field at all — legacy clients see the exact old wire shape).
+        let main = json!({
+            "type": "assistant",
+            "message": {
+                "role": "assistant",
+                "id": "msg_main",
+                "model": "claude-fable-5",
+                "usage": { "input_tokens": 5 },
+                "content": []
+            }
+        });
+        let items = items_from_row(&main);
+        assert!(matches!(
+            &items[0],
+            ConversationItem::Usage { sidechain: false, .. }
+        ));
+        let wire = serde_json::to_value(&items[0]).unwrap();
+        assert!(
+            wire.get("sidechain").is_none(),
+            "sidechain: false must be omitted from the wire"
+        );
     }
 
     #[test]
