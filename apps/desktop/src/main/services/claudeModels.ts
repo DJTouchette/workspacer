@@ -83,6 +83,7 @@ export function listClaudeModels(): ListModelsResult {
     aliases: [
       { value: 'fable', label: label('fable', 'Fable'), context: '200K' },
       { value: 'opus', label: label('opus', 'Opus'), context: '200K' },
+      { value: 'opus[1m]', label: label('opus', 'Opus'), context: '1M' },
       { value: 'sonnet', label: label('sonnet', 'Sonnet'), context: '200K' },
       { value: 'sonnet[1m]', label: label('sonnet', 'Sonnet'), context: '1M' },
       { value: 'haiku', label: label('haiku', 'Haiku'), context: '200K' },
