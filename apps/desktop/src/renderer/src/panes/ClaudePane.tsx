@@ -754,7 +754,14 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   // count we last consumed. This avoids content-matching pitfalls.
   useEffect(() => {
     const userCount = (session?.conversation ?? []).filter((t) => t.role === 'user').length;
-    if (userCount > consumedUserCountRef.current) {
+    if (userCount < consumedUserCountRef.current) {
+      // The conversation reset under the same session id (managed-provider
+      // restart starts a fresh provider-side thread). Re-baseline the consumed
+      // count and drop optimistic turns — their real counterparts belong to
+      // the old thread and will never arrive to dequeue them.
+      consumedUserCountRef.current = userCount;
+      setOptimisticMessages([]);
+    } else if (userCount > consumedUserCountRef.current) {
       const newlyConsumed = userCount - consumedUserCountRef.current;
       consumedUserCountRef.current = userCount;
       setOptimisticMessages((prev) =>
@@ -791,6 +798,14 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   // A signature only re-opens the picker when a *different* question set
   // arrives.
   const [dismissedQuestionSig, setDismissedQuestionSig] = useState<string | null>(null);
+  // When the snapshot's questions clear (PostToolUse), the answered request is
+  // over — reset the dismissal so a textually identical LATER question set
+  // still re-opens the picker.
+  useEffect(() => {
+    if (!session?.pendingQuestions || session.pendingQuestions.length === 0) {
+      setDismissedQuestionSig(null);
+    }
+  }, [session?.pendingQuestions]);
   const questionSig = pendingQuestions?.map((q) => q.question).join(' ') ?? null;
 
   const handleAnswer = useCallback(

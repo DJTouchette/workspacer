@@ -205,6 +205,9 @@ const ThemeMaker: React.FC<ThemeMakerProps> = ({ config, save, themeId }) => {
   const configRef = useRef(config);
   configRef.current = config;
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The debounced save waiting on timerRef, so unmount can flush it. A pending
+  // save holds the user's last edit — dropping it would silently revert.
+  const pendingSaveRef = useRef<(() => void) | null>(null);
 
   // Re-seed the draft when the edited theme changes (not on every config echo
   // of our own debounced saves — that would clobber in-flight typing).
@@ -216,6 +219,7 @@ const ThemeMaker: React.FC<ThemeMakerProps> = ({ config, save, themeId }) => {
   useEffect(() => {
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
+      pendingSaveRef.current?.();
     };
   }, []);
 
@@ -231,13 +235,16 @@ const ThemeMaker: React.FC<ThemeMakerProps> = ({ config, save, themeId }) => {
       draftRef.current = next;
       setDraft(next);
       if (timerRef.current) clearTimeout(timerRef.current);
-      timerRef.current = setTimeout(() => {
+      const flush = () => {
         timerRef.current = null;
+        pendingSaveRef.current = null;
         const cfg = configRef.current;
         void save({
           ui: { ...cfg.ui, customThemes: { ...cfg.ui.customThemes, [themeId]: next } },
         });
-      }, 300);
+      };
+      pendingSaveRef.current = flush;
+      timerRef.current = setTimeout(flush, 300);
     },
     [save, themeId],
   );
