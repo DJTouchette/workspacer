@@ -45,8 +45,6 @@ export interface RestartOverrides {
 interface ModelOption {
   id: string;
   label: string;
-  /** One-line purpose blurb rendered under the name. */
-  tagline?: string;
   /** Context-window badge ('200K' | '1M'). */
   context?: string;
   /** True for concrete ids observed in sessions (grouped after the aliases). */
@@ -78,31 +76,13 @@ const CtxBadge: React.FC<{ ctx: string }> = ({ ctx }) => {
   );
 };
 
-/** Rich two-line model row: name + context badge (+ ✓ current), tagline under. */
+/** Model row: name + context badge (+ ✓ current). */
 const modelItemLabel = (m: ModelOption, current: boolean): React.ReactNode => (
-  <span style={{ display: 'block', minWidth: 0 }}>
-    <span style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-      <span style={{ fontWeight: 600 }}>{m.label}</span>
-      {m.context && <CtxBadge ctx={m.context} />}
-      {current && (
-        <span style={{ color: 'var(--wks-success)', fontSize: '0.65rem', flexShrink: 0 }}>✓</span>
-      )}
-    </span>
-    {m.tagline && (
-      <span
-        style={{
-          display: 'block',
-          fontSize: '0.62rem',
-          fontWeight: 400,
-          color: 'var(--wks-text-faint)',
-          marginTop: 1,
-          lineHeight: 1.35,
-          whiteSpace: 'normal',
-          maxWidth: 240,
-        }}
-      >
-        {m.tagline}
-      </span>
+  <span style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+    <span style={{ fontWeight: 600 }}>{m.label}</span>
+    {m.context && <CtxBadge ctx={m.context} />}
+    {current && (
+      <span style={{ color: 'var(--wks-success)', fontSize: '0.65rem', flexShrink: 0 }}>✓</span>
     )}
   </span>
 );
@@ -195,21 +175,17 @@ export const ComposerControls: React.FC<{
     try {
       if (caps.modelSource === 'claude') {
         const res = await window.electronAPI.claudeListModels();
-        const seen = (res.seen ?? [])
-          .filter((id) => !res.aliases.some((a) => a.value === id))
-          .map((id) => ({
-            id,
-            label: shortModelLabel(id) || id,
-            context: id.includes('[1m]') ? '1M' : undefined,
-            seen: true,
-          }));
+        // Date-stamped variants of one model shorten to the same label — keep
+        // the first so the menu never shows two identical rows.
+        const seen: ModelOption[] = [];
+        for (const id of res.seen ?? []) {
+          if (res.aliases.some((a) => a.value === id)) continue;
+          const label = shortModelLabel(id) || id;
+          if (seen.some((s) => s.label === label)) continue;
+          seen.push({ id, label, context: id.includes('[1m]') ? '1M' : '200K', seen: true });
+        }
         setModels([
-          ...res.aliases.map((a) => ({
-            id: a.value,
-            label: a.label,
-            tagline: a.tagline,
-            context: a.context,
-          })),
+          ...res.aliases.map((a) => ({ id: a.value, label: a.label, context: a.context })),
           ...seen,
         ]);
       } else {
