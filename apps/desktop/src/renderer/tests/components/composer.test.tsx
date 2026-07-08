@@ -17,6 +17,7 @@ function renderComposer(props: Partial<React.ComponentProps<typeof Composer>> = 
   const onChange = vi.fn();
   const onPickFiles = vi.fn();
   const onRemoveFile = vi.fn();
+  const onSlashPick = vi.fn();
   const attachedFiles: AttachedFile[] = props.attachedFiles ?? [];
   render(
     <Composer
@@ -26,11 +27,18 @@ function renderComposer(props: Partial<React.ComponentProps<typeof Composer>> = 
       onPickFiles={onPickFiles}
       attachedFiles={attachedFiles}
       onRemoveFile={onRemoveFile}
+      onSlashPick={onSlashPick}
       {...props}
     />,
   );
-  return { onSend, onChange, onPickFiles, onRemoveFile };
+  return { onSend, onChange, onPickFiles, onRemoveFile, onSlashPick };
 }
+
+const SLASH_ITEMS = [
+  { id: 'a', label: 'review', hint: 'code review', kind: 'skill' },
+  { id: 'b', label: 'refactor', hint: 'clean up', kind: 'skill' },
+  { id: 'c', label: 'commit', hint: 'write a message', kind: 'prompt' },
+];
 
 const textarea = () => screen.getByRole('textbox') as HTMLTextAreaElement;
 
@@ -104,5 +112,73 @@ describe('Composer', () => {
     const { onPickFiles } = renderComposer();
     fireEvent.click(screen.getByTitle('Attach files'));
     expect(onPickFiles).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Composer / command picker', () => {
+  it('opens a filtered picker when the input is a bare "/token"', () => {
+    renderComposer({ value: '/re', slashItems: SLASH_ITEMS });
+    expect(screen.getByRole('listbox')).toBeInTheDocument();
+    const opts = screen.getAllByRole('option');
+    // "re" matches review + refactor (label prefix), not commit.
+    expect(opts).toHaveLength(2);
+    expect(opts.map((o) => o.textContent)).toEqual([
+      expect.stringContaining('review'),
+      expect.stringContaining('refactor'),
+    ]);
+  });
+
+  it('does not open without slashItems (a leading "/" is just text)', () => {
+    const { onSend } = renderComposer({ value: '/review' });
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    fireEvent.keyDown(textarea(), { key: 'Enter' });
+    expect(onSend).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes once the token gains a space (arguments) — Enter then sends', () => {
+    const { onSend, onSlashPick } = renderComposer({
+      value: '/review src',
+      slashItems: SLASH_ITEMS,
+    });
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    fireEvent.keyDown(textarea(), { key: 'Enter' });
+    expect(onSlashPick).not.toHaveBeenCalled();
+    expect(onSend).toHaveBeenCalledTimes(1);
+  });
+
+  it('Enter picks the highlighted item and does NOT send', () => {
+    const { onSend, onSlashPick } = renderComposer({ value: '/re', slashItems: SLASH_ITEMS });
+    fireEvent.keyDown(textarea(), { key: 'Enter' });
+    expect(onSlashPick).toHaveBeenCalledWith('a'); // review, first match
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it('ArrowDown moves the highlight before Enter picks', () => {
+    const { onSlashPick } = renderComposer({ value: '/re', slashItems: SLASH_ITEMS });
+    fireEvent.keyDown(textarea(), { key: 'ArrowDown' });
+    fireEvent.keyDown(textarea(), { key: 'Enter' });
+    expect(onSlashPick).toHaveBeenCalledWith('b'); // refactor, second match
+  });
+
+  it('Tab also picks the highlighted item', () => {
+    const { onSlashPick } = renderComposer({ value: '/commit', slashItems: SLASH_ITEMS });
+    fireEvent.keyDown(textarea(), { key: 'Tab' });
+    expect(onSlashPick).toHaveBeenCalledWith('c');
+  });
+
+  it('pointerdown on an option picks it', () => {
+    const { onSlashPick } = renderComposer({ value: '/', slashItems: SLASH_ITEMS });
+    const opts = screen.getAllByRole('option');
+    fireEvent.pointerDown(opts[2]);
+    expect(onSlashPick).toHaveBeenCalledWith('c');
+  });
+
+  it('Escape dismisses the picker; a subsequent Enter falls through to send', () => {
+    const { onSend, onSlashPick } = renderComposer({ value: '/re', slashItems: SLASH_ITEMS });
+    fireEvent.keyDown(textarea(), { key: 'Escape' });
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    fireEvent.keyDown(textarea(), { key: 'Enter' });
+    expect(onSlashPick).not.toHaveBeenCalled();
+    expect(onSend).toHaveBeenCalledTimes(1);
   });
 });

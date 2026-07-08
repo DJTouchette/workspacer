@@ -11,13 +11,18 @@ export function useLibrary(cwd?: string) {
   const [loaded, setLoaded] = useState(false);
 
   const reload = useCallback(() => {
-    window.electronAPI
-      .libraryList(cwd)
-      .then((list) => {
-        setItems(Array.isArray(list) ? list : []);
-        setLoaded(true);
-      })
-      .catch(() => setLoaded(true));
+    // Optional-chain: a backend that doesn't implement library listing (or a
+    // test harness with a partial electronAPI mock) simply yields an empty
+    // library instead of throwing.
+    const p = window.electronAPI.libraryList?.(cwd);
+    if (!p) {
+      setLoaded(true);
+      return;
+    }
+    p.then((list) => {
+      setItems(Array.isArray(list) ? list : []);
+      setLoaded(true);
+    }).catch(() => setLoaded(true));
   }, [cwd]);
 
   useEffect(() => {

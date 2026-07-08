@@ -55,6 +55,9 @@ import {
   extractFilePaths,
 } from '../components/claude/fileAttachment';
 import type { AttachedFile } from '../components/claude/fileAttachment';
+import { useLibrary } from '../hooks/useLibrary';
+import { runLibraryItem } from '../lib/libraryBus';
+import type { SlashItem } from '../lib/slashItems';
 
 interface ClaudePaneProps {
   paneId: string;
@@ -260,6 +263,37 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   // opens, diffs, git lookups and the file picker resolve against the tree
   // the agent is editing.
   const effectiveCwd = session?.liveCwd || cwd;
+
+  // "/" command picker data: skills and reusable prompts from the merged library
+  // (project + global) for this cwd. Both are insertable message content, so a
+  // pick runs the item's library action — the same templating + insert path the
+  // command palette uses — dropping the result into this composer. This gives
+  // the GUI composer a slash menu it otherwise lacks, which matters most on the
+  // stream transport (no TUI to type "/foo" into).
+  const { items: libraryItems } = useLibrary(effectiveCwd);
+  const slashItems: SlashItem[] = useMemo(
+    () =>
+      libraryItems
+        .filter((it) => it.kind === 'skill' || it.kind === 'prompt')
+        .map((it) => ({ id: it.id, label: it.title, hint: it.description, kind: it.kind })),
+    [libraryItems],
+  );
+  const handleSlashPick = useCallback(
+    (id: string) => {
+      const item = libraryItems.find((it) => it.id === id);
+      if (!item) return;
+      // Clear the "/query" first so the inserted content replaces it: the
+      // library:insert handler appends to the current input, and LibraryHost's
+      // (async) templating fires after this state update commits, so `prev` is
+      // empty by the time it inserts.
+      setInputValue('');
+      // Force 'insert' regardless of the item's default action — in a message
+      // composer the intent is always to drop the content in, never to spawn a
+      // fresh agent or copy to the clipboard.
+      runLibraryItem(item, 'insert');
+    },
+    [libraryItems],
+  );
 
   // Which surfaces this pane has. The session snapshot is the authority on the
   // Claude transport ('stream' = headless stream-json, no PTY); until it loads
@@ -1478,6 +1512,8 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
               inputRef={inputRef}
               showSendButton={config.ui.showComposerSend !== false}
               agentName={agentName}
+              slashItems={isClaude ? slashItems : undefined}
+              onSlashPick={handleSlashPick}
               controls={
                 <ComposerControls
                   provider={provider ?? 'claude'}
