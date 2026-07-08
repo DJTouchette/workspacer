@@ -28,7 +28,7 @@ import { slugLibrary } from '../lib/fileUtils';
 import { publishToHub } from './hubClient';
 
 export type LibraryScope = 'global' | 'project' | 'claude';
-export type LibraryKind = 'prompt' | 'skill' | 'agent' | 'mcp';
+export type LibraryKind = 'prompt' | 'skill' | 'agent' | 'mcp' | 'command';
 export type LibraryAction = 'insert' | 'spawn' | 'copy';
 
 /**
@@ -74,6 +74,9 @@ function claudeSkillsDir(cwd: string): string {
 }
 function claudeAgentsDir(cwd: string): string {
   return path.join(cwd, '.claude', 'agents');
+}
+function claudeCommandsDir(cwd: string): string {
+  return path.join(cwd, '.claude', 'commands');
 }
 
 /** Split a markdown file into its YAML frontmatter + body. */
@@ -161,7 +164,11 @@ function readDir(dir: string, scope: LibraryScope): LibraryItem[] {
 // ── Claude Code project assets (.claude/skills, .claude/agents) ──────────────
 
 /** Build a LibraryItem from a Claude-format markdown file (name/description frontmatter). */
-function claudeItem(full: string, id: string, kind: 'skill' | 'agent'): LibraryItem | null {
+function claudeItem(
+  full: string,
+  id: string,
+  kind: 'skill' | 'agent' | 'command',
+): LibraryItem | null {
   try {
     const raw = fs.readFileSync(full, 'utf-8');
     const { data, body } = parseFrontmatter(raw);
@@ -210,6 +217,23 @@ function readClaudeItems(cwd: string): LibraryItem[] {
     }
   } catch {
     /* no .claude/agents */
+  }
+
+  // Custom slash commands: flat markdown files. Claude command frontmatter has
+  // no `name` (the file's slug is the command), so claudeItem falls back to the
+  // id for the title — which is exactly what the "/" picker shows after the "/".
+  try {
+    for (const name of fs.readdirSync(claudeCommandsDir(cwd))) {
+      if (!name.toLowerCase().endsWith('.md')) continue;
+      const it = claudeItem(
+        path.join(claudeCommandsDir(cwd), name),
+        slug(name.replace(/\.md$/i, '')),
+        'command',
+      );
+      if (it) items.push(it);
+    }
+  } catch {
+    /* no .claude/commands */
   }
 
   return items;
@@ -303,12 +327,15 @@ class LibraryService {
     cwd?: string;
   }): LibraryItem {
     const cwd = input.cwd || process.cwd();
-    const kind: 'skill' | 'agent' = input.kind === 'agent' ? 'agent' : 'skill';
+    const kind: 'skill' | 'agent' | 'command' =
+      input.kind === 'agent' ? 'agent' : input.kind === 'command' ? 'command' : 'skill';
     const id = slug(input.id || input.title);
     const full =
       kind === 'skill'
         ? path.join(claudeSkillsDir(cwd), id, 'SKILL.md')
-        : path.join(claudeAgentsDir(cwd), `${id}.md`);
+        : kind === 'command'
+          ? path.join(claudeCommandsDir(cwd), `${id}.md`)
+          : path.join(claudeAgentsDir(cwd), `${id}.md`);
     fs.mkdirSync(path.dirname(full), { recursive: true });
 
     // Preserve frontmatter keys we don't model (tools, model, metadata, ...)
@@ -344,6 +371,12 @@ class LibraryService {
         } catch {
           /* already gone */
         }
+      } else if (kind === 'command') {
+        try {
+          fs.unlinkSync(path.join(claudeCommandsDir(root), `${slug(id)}.md`));
+        } catch {
+          /* already gone */
+        }
       } else {
         // A skill is a directory (SKILL.md + optional resources)
         try {
@@ -372,6 +405,7 @@ class LibraryService {
         projectDir(this.watchedProjectCwd),
         claudeSkillsDir(this.watchedProjectCwd),
         claudeAgentsDir(this.watchedProjectCwd),
+        claudeCommandsDir(this.watchedProjectCwd),
       ]) {
         const w = this.watchers.get(dir);
         if (w && this.watchedProjectCwd) {
@@ -387,6 +421,7 @@ class LibraryService {
     // gets picked up. Skills need recursive (SKILL.md is one level down).
     this.watch(claudeSkillsDir(cwd), { createIfMissing: false, recursive: true });
     this.watch(claudeAgentsDir(cwd), { createIfMissing: false });
+    this.watch(claudeCommandsDir(cwd), { createIfMissing: false });
   }
 
   private watch(dir: string, opts: { createIfMissing?: boolean; recursive?: boolean } = {}): void {

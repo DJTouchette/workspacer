@@ -90,6 +90,42 @@ func TestLibraryClaudeAssets(t *testing.T) {
 	}
 }
 
+func TestLibraryClaudeCommands(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	cwd := t.TempDir()
+	writeFile(t, filepath.Join(libraryGlobalDir(), "x.md"), "---\ntitle: X\n---\n\nx\n") // suppress seed
+	// Claude command frontmatter carries no `name`; the filename is the command.
+	writeFile(t, filepath.Join(claudeCommandsDir(cwd), "deploy.md"), "---\ndescription: Ship it\n---\n\nRun the deploy playbook.\n")
+
+	var cmd *libraryItem
+	for _, it := range listLibrary(cwd) {
+		if it.Kind == "command" {
+			c := it
+			cmd = &c
+		}
+	}
+	if cmd == nil || cmd.Scope != "claude" || cmd.ID != "deploy" {
+		t.Fatalf("command not discovered: %+v", cmd)
+	}
+	// No `name` in frontmatter → title falls back to the id (the "/deploy" name).
+	if cmd.Title != "deploy" || cmd.Description != "Ship it" {
+		t.Fatalf("command title/description wrong: %+v", cmd)
+	}
+
+	// Save routes a command to .claude/commands (not skills/agents)…
+	if _, err := saveLibrary(libraryInput{Scope: "claude", Kind: "command", ID: "release", Title: "release", Body: "cut a release", Cwd: cwd}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(claudeCommandsDir(cwd), "release.md")); err != nil {
+		t.Fatalf("saved command not at .claude/commands/release.md: %v", err)
+	}
+	// …and remove deletes the command file, not a same-named skill dir.
+	removeLibrary("claude", "deploy", cwd, "command")
+	if _, err := os.Stat(filepath.Join(claudeCommandsDir(cwd), "deploy.md")); !os.IsNotExist(err) {
+		t.Fatal("command file should be removed")
+	}
+}
+
 func TestLibrarySaveAndRemoveGlobal(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 

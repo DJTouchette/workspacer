@@ -201,6 +201,7 @@ const LibraryPane: React.FC<Props> = ({ cwd }) => {
                 {draft.scope !== 'claude' && <option value="prompt">prompt</option>}
                 <option value="skill">skill</option>
                 <option value="agent">agent</option>
+                {draft.scope === 'claude' && <option value="command">command</option>}
                 {draft.scope !== 'claude' && <option value="mcp">mcp</option>}
               </select>
             </Field>
@@ -209,11 +210,13 @@ const LibraryPane: React.FC<Props> = ({ cwd }) => {
                 value={draft.scope}
                 onChange={(e) => {
                   const scope = e.target.value as LibraryScope;
-                  // .claude only stores skills and agents, never prompts or mcp
-                  const kind =
-                    scope === 'claude' && (draft.kind === 'prompt' || draft.kind === 'mcp')
-                      ? 'skill'
-                      : draft.kind;
+                  // .claude stores skills, agents and commands, never prompts or
+                  // mcp; the workspacer library (global/project) is the inverse —
+                  // it has no 'command' kind. Coerce across the boundary.
+                  let kind = draft.kind;
+                  if (scope === 'claude' && (draft.kind === 'prompt' || draft.kind === 'mcp'))
+                    kind = 'skill';
+                  else if (scope !== 'claude' && draft.kind === 'command') kind = 'prompt';
                   setDraft({ ...draft, scope, kind });
                 }}
                 style={inputStyle}
@@ -285,7 +288,13 @@ const LibraryPane: React.FC<Props> = ({ cwd }) => {
           {draft.scope === 'claude' && (
             <div style={{ fontSize: '0.62rem', color: 'var(--wks-text-faint)', marginTop: 4 }}>
               Saves to{' '}
-              <code>{`${cwd ?? '.'}/${draft.kind === 'agent' ? '.claude/agents/<id>.md' : '.claude/skills/<id>/SKILL.md'}`}</code>{' '}
+              <code>{`${cwd ?? '.'}/${
+                draft.kind === 'agent'
+                  ? '.claude/agents/<id>.md'
+                  : draft.kind === 'command'
+                    ? '.claude/commands/<id>.md'
+                    : '.claude/skills/<id>/SKILL.md'
+              }`}</code>{' '}
               in Claude Code's native format — extra frontmatter (tools, model, ...) is preserved.
             </div>
           )}
@@ -687,6 +696,7 @@ function kindBadge(kind: LibraryKind): React.CSSProperties {
     skill: { bg: 'rgba(192,132,252,0.18)', fg: 'var(--wks-purple, #c084fc)' },
     agent: { bg: 'rgba(74,222,128,0.18)', fg: 'var(--wks-success)' },
     mcp: { bg: 'rgba(251,146,60,0.18)', fg: 'var(--wks-warning)' },
+    command: { bg: 'rgba(56,189,248,0.18)', fg: 'var(--wks-info, #38bdf8)' },
   };
   const { bg, fg } = palette[kind] ?? palette.prompt;
   return {

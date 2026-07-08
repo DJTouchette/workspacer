@@ -1,5 +1,8 @@
 export type LibraryScope = 'global' | 'project' | 'claude';
-export type LibraryKind = 'prompt' | 'skill' | 'agent' | 'mcp';
+/** 'command' is a Claude Code custom slash command (`.claude/commands/*.md`),
+ *  surfaced read-mostly alongside skills so the composer's "/" picker can list
+ *  them. */
+export type LibraryKind = 'prompt' | 'skill' | 'agent' | 'mcp' | 'command';
 export type LibraryAction = 'insert' | 'spawn' | 'copy';
 
 /** An MCP server definition, in Claude Code's `mcpServers` shape. Mirrors the

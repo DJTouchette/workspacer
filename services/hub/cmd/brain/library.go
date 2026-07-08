@@ -47,6 +47,7 @@ func libraryGlobalDir() string            { return filepath.Join(configDir(), "l
 func libraryProjectDir(cwd string) string { return filepath.Join(cwd, ".workspacer", "library") }
 func claudeSkillsDir(cwd string) string   { return filepath.Join(cwd, ".claude", "skills") }
 func claudeAgentsDir(cwd string) string   { return filepath.Join(cwd, ".claude", "agents") }
+func claudeCommandsDir(cwd string) string { return filepath.Join(cwd, ".claude", "commands") }
 
 var (
 	reFrontmatter  = regexp.MustCompile(`(?s)^---\r?\n(.*?)\r?\n---\r?\n?(.*)$`)
@@ -245,6 +246,20 @@ func readClaudeItems(cwd string) []libraryItem {
 			}
 		}
 	}
+	// Custom slash commands: flat .md files. Their frontmatter carries no `name`
+	// (the filename is the command), so readClaudeItem falls back to the id for
+	// the title — exactly what the composer's "/" picker shows after the "/".
+	if entries, err := os.ReadDir(claudeCommandsDir(cwd)); err == nil {
+		for _, e := range entries {
+			name := e.Name()
+			if e.IsDir() || !strings.HasSuffix(strings.ToLower(name), ".md") {
+				continue
+			}
+			if it := readClaudeItem(filepath.Join(claudeCommandsDir(cwd), name), slugLibrary(strings.TrimSuffix(name, ".md")), "command"); it != nil {
+				items = append(items, *it)
+			}
+		}
+	}
 	return items
 }
 
@@ -325,12 +340,17 @@ func saveLibraryClaude(in libraryInput) (*libraryItem, error) {
 	kind := "skill"
 	if in.Kind == "agent" {
 		kind = "agent"
+	} else if in.Kind == "command" {
+		kind = "command"
 	}
 	id := slugLibrary(firstNonEmpty(in.ID, in.Title))
 	var full string
-	if kind == "skill" {
+	switch kind {
+	case "skill":
 		full = filepath.Join(claudeSkillsDir(cwd), id, "SKILL.md")
-	} else {
+	case "command":
+		full = filepath.Join(claudeCommandsDir(cwd), id+".md")
+	default:
 		full = filepath.Join(claudeAgentsDir(cwd), id+".md")
 	}
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
@@ -349,9 +369,12 @@ func saveLibraryClaude(in libraryInput) (*libraryItem, error) {
 func removeLibrary(scope, id, cwd, kind string) {
 	if scope == "claude" {
 		root := firstNonEmpty(cwd, mustCwd())
-		if kind == "agent" {
+		switch kind {
+		case "agent":
 			_ = os.Remove(filepath.Join(claudeAgentsDir(root), slugLibrary(id)+".md"))
-		} else {
+		case "command":
+			_ = os.Remove(filepath.Join(claudeCommandsDir(root), slugLibrary(id)+".md"))
+		default:
 			_ = os.RemoveAll(filepath.Join(claudeSkillsDir(root), slugLibrary(id)))
 		}
 		return

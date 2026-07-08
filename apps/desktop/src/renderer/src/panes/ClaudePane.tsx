@@ -58,6 +58,7 @@ import type { AttachedFile } from '../components/claude/fileAttachment';
 import { useLibrary } from '../hooks/useLibrary';
 import { runLibraryItem } from '../lib/libraryBus';
 import type { SlashItem } from '../lib/slashItems';
+import type { LibraryItem } from '../types/library';
 
 interface ClaudePaneProps {
   paneId: string;
@@ -271,16 +272,32 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   // the GUI composer a slash menu it otherwise lacks, which matters most on the
   // stream transport (no TUI to type "/foo" into).
   const { items: libraryItems } = useLibrary(effectiveCwd);
+  // Key by scope:kind:id, not the bare LibraryItem.id — that id is only a
+  // filename slug, so a skill and a command (or a global and a claude item) can
+  // share one, which would collide React keys and the pick lookup. The composite
+  // is unique and the picker resolves back through this map.
+  const slashLookup = useMemo(() => {
+    const m = new Map<string, LibraryItem>();
+    for (const it of libraryItems) {
+      if (it.kind === 'skill' || it.kind === 'prompt' || it.kind === 'command') {
+        m.set(`${it.scope}:${it.kind}:${it.id}`, it);
+      }
+    }
+    return m;
+  }, [libraryItems]);
   const slashItems: SlashItem[] = useMemo(
     () =>
-      libraryItems
-        .filter((it) => it.kind === 'skill' || it.kind === 'prompt')
-        .map((it) => ({ id: it.id, label: it.title, hint: it.description, kind: it.kind })),
-    [libraryItems],
+      Array.from(slashLookup, ([key, it]) => ({
+        id: key,
+        label: it.title,
+        hint: it.description,
+        kind: it.kind,
+      })),
+    [slashLookup],
   );
   const handleSlashPick = useCallback(
-    (id: string) => {
-      const item = libraryItems.find((it) => it.id === id);
+    (key: string) => {
+      const item = slashLookup.get(key);
       if (!item) return;
       // Clear the "/query" first so the inserted content replaces it: the
       // library:insert handler appends to the current input, and LibraryHost's
@@ -292,7 +309,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
       // fresh agent or copy to the clipboard.
       runLibraryItem(item, 'insert');
     },
-    [libraryItems],
+    [slashLookup],
   );
 
   // Which surfaces this pane has. The session snapshot is the authority on the
