@@ -19,6 +19,8 @@ export interface ClaudeModelAlias {
 export interface ListModelsResult {
   defaultModel: string;
   skipPermissionsDefault: boolean;
+  /** Permission mode remembered from the last spawn ('' = provider default). */
+  defaultPermissionMode: string;
   aliases: ClaudeModelAlias[];
   seen: string[];
 }
@@ -77,6 +79,8 @@ export function listClaudeModels(): ListModelsResult {
   return {
     defaultModel: typeof cfg.claude?.defaultModel === 'string' ? cfg.claude.defaultModel : '',
     skipPermissionsDefault: cfg.claude?.skipPermissionsDefault === true,
+    defaultPermissionMode:
+      typeof cfg.claude?.defaultPermissionMode === 'string' ? cfg.claude.defaultPermissionMode : '',
     // Each alias tracks the newest model of its family, so these need zero
     // maintenance as Claude Code updates. `sonnet[1m]` is Claude Code's own
     // alias for the million-token-context Sonnet.

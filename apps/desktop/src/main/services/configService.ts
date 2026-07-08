@@ -97,6 +97,10 @@ interface Config {
     seenModels: string[];
     /** Default for the spawn dialog's `--dangerously-skip-permissions` toggle. */
     skipPermissionsDefault: boolean;
+    /** Permission mode pre-selected in the spawn dialog ('' = the provider's
+     *  own default, i.e. 'Ask to approve'). Remembered from the last spawn so a
+     *  chosen mode (plan / accept edits) sticks for the next new agent. */
+    defaultPermissionMode: string;
     /** Which view a Claude pane opens in by default: rich 'gui' or raw 'terminal'. */
     defaultView: 'gui' | 'terminal';
     /** How runs of tool calls render in the GUI: prose summary 'cards', or the
@@ -316,6 +320,7 @@ function defaultConfig(): Config {
       defaultModel: '',
       seenModels: [],
       skipPermissionsDefault: false,
+      defaultPermissionMode: '',
       defaultView: 'terminal',
       workLog: 'cards',
       transport: 'pty',

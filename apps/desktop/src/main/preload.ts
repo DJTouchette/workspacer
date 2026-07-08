@@ -205,6 +205,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   claudeListModels: (): Promise<{
     defaultModel: string;
     skipPermissionsDefault: boolean;
+    defaultPermissionMode: string;
     aliases: Array<{ value: string; label: string; context?: string }>;
     seen: string[];
   }> => ipcRenderer.invoke(IPC.CLAUDE_LIST_MODELS),

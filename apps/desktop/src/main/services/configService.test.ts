@@ -134,6 +134,26 @@ describe('deepMerge semantics – via configService.saveConfig', () => {
     expect(cfg.terminal.shells).toHaveLength(1);
   });
 
+  it('persists the spawn defaults (model + permission mode) without clobbering claude siblings', () => {
+    // The exact partial the "new agent" flow saves (App.tsx handleSpawnAgent):
+    // the picked model, the bypass toggle, and the permission mode. All three
+    // must stick so the next new agent reopens on them instead of the defaults.
+    configService.saveConfig({
+      claude: {
+        defaultModel: 'opus',
+        skipPermissionsDefault: false,
+        defaultPermissionMode: 'plan',
+      } as any,
+    });
+    const cfg = configService.getConfig() as any;
+
+    expect(cfg.claude.defaultModel).toBe('opus');
+    expect(cfg.claude.defaultPermissionMode).toBe('plan');
+    // Sibling claude defaults survive the partial save.
+    expect(cfg.claude.defaultView).toBe('terminal');
+    expect(cfg.claude.transport).toBe('pty');
+  });
+
   it('preserves unrelated top-level sections when saving a partial', () => {
     configService.saveConfig({ session: { autoResume: false } });
     const cfg = configService.getConfig();

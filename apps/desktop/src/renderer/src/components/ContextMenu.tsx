@@ -139,7 +139,7 @@ export function ContextMenu({
   }, [x, y]);
 
   useEffect(() => {
-    const onPointerDown = (e: MouseEvent) => {
+    const onPointerDown = (e: Event) => {
       if (ref.current && !ref.current.contains(e.target as Node)) onClose();
     };
     const onKey = (e: KeyboardEvent) => {
@@ -148,11 +148,15 @@ export function ContextMenu({
         onClose();
       }
     };
-    // capture so we beat element-level handlers and close reliably
-    window.addEventListener('mousedown', onPointerDown, true);
+    // `pointerdown` (not `mousedown`) so touch closes the menu too: iOS Safari /
+    // Chrome only synthesize mouse events unreliably, so a mousedown-only guard
+    // left the menu unable to close — and tapping an item could dismiss the whole
+    // pane instead of registering. Pointer events fire on the first touch for
+    // both mouse and touch. Capture so we beat element-level handlers.
+    window.addEventListener('pointerdown', onPointerDown, true);
     window.addEventListener('keydown', onKey, true);
     return () => {
-      window.removeEventListener('mousedown', onPointerDown, true);
+      window.removeEventListener('pointerdown', onPointerDown, true);
       window.removeEventListener('keydown', onKey, true);
     };
   }, [onClose]);

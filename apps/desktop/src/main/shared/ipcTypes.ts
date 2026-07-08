@@ -266,6 +266,7 @@ export interface AppConfig {
     defaultModel: string;
     seenModels: string[];
     skipPermissionsDefault: boolean;
+    defaultPermissionMode?: string;
     defaultView: 'gui' | 'terminal';
     /** How new Claude sessions run: classic PTY TUI, or headless stream-json
      *  (managed adapter, GUI only). Default 'pty'. */

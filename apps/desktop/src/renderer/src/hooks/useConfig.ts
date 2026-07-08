@@ -144,6 +144,9 @@ export interface Config {
     workLog?: 'cards' | 'trace';
     /** Concrete model ids seen across sessions, surfaced in the spawn dropdown. */
     seenModels?: string[];
+    /** Permission mode pre-selected in the spawn dialog, remembered from the
+     *  last spawn ('' = provider default). */
+    defaultPermissionMode?: string;
     /** How new Claude sessions run: 'pty' (classic Claude Code TUI — Term +
      *  GUI) or 'stream' (headless stream-json via claudemon's managed adapter —
      *  GUI only). Per-spawn overridable in the spawn dialog. Default 'pty'. */

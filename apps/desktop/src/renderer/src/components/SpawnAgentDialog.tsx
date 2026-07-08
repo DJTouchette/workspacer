@@ -220,6 +220,16 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
         if (!res) return;
         setAliases(res.aliases ?? []);
         setSeen(res.seen ?? []);
+        // Seed the permission pill from the last spawn's saved mode, but only
+        // when it's valid for the pre-selected provider (the saved value is a
+        // Claude-family mode; a managed provider keeps its own default). The
+        // bypass default (below) still wins so an explicit "Full access" default
+        // isn't lost.
+        if (
+          res.defaultPermissionMode &&
+          capsFor(provider).permissionModes.some((m) => m.id === res.defaultPermissionMode)
+        )
+          setPermissionMode(res.defaultPermissionMode);
         if (res.skipPermissionsDefault === true) setPermissionMode(bypassModeFor(provider));
         // Pre-select the saved default. If it's a concrete id we don't have in
         // a list, keep it as a custom entry so the saved value isn't dropped.

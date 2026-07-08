@@ -865,7 +865,7 @@ function App() {
       resumeSessionId?: string;
     }) => {
       setShowSpawnDialog(false);
-      // Remember the picked model + skip-permissions choice so they stick next time
+      // Remember the picked model + permission choices so they stick next time
       // — but only for Claude, so spawning a Codex/OpenCode agent doesn't clobber
       // the saved Claude defaults (those options don't apply to other providers).
       if ((opts.provider ?? 'claude') === 'claude') {
@@ -874,6 +874,9 @@ function App() {
             claude: {
               defaultModel: opts.model ?? '',
               skipPermissionsDefault: opts.skipPermissions ?? false,
+              // Remember the chosen permission mode too, so the next new agent
+              // reopens on it instead of snapping back to the default.
+              defaultPermissionMode: opts.permissionMode ?? '',
             },
           })
           .catch(() => {});

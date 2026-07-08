@@ -76,6 +76,7 @@ export interface ElectronAPI {
   claudeListModels: () => Promise<{
     defaultModel: string;
     skipPermissionsDefault: boolean;
+    defaultPermissionMode: string;
     aliases: Array<{ value: string; label: string; context?: string }>;
     seen: string[];
   }>;

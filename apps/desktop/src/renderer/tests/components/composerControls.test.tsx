@@ -59,6 +59,7 @@ beforeEach(() => {
   api.claudeListModels = vi.fn().mockResolvedValue({
     defaultModel: 'sonnet',
     skipPermissionsDefault: false,
+    defaultPermissionMode: '',
     aliases: [
       { value: 'opus', label: 'Opus' },
       { value: 'sonnet', label: 'Sonnet' },
