@@ -66,9 +66,13 @@ const CtxBadge: React.FC<{ ctx: string }> = ({ ctx }) => {
         flexShrink: 0,
         color: big ? 'var(--wks-accent-text)' : 'var(--wks-text-faint)',
         border: `1px solid ${
-          big ? 'color-mix(in srgb, var(--wks-accent) 45%, transparent)' : 'var(--wks-border-subtle)'
+          big
+            ? 'color-mix(in srgb, var(--wks-accent) 45%, transparent)'
+            : 'var(--wks-border-subtle)'
         }`,
-        backgroundColor: big ? 'color-mix(in srgb, var(--wks-accent) 12%, transparent)' : 'transparent',
+        backgroundColor: big
+          ? 'color-mix(in srgb, var(--wks-accent) 12%, transparent)'
+          : 'transparent',
       }}
     >
       {ctx}
@@ -377,12 +381,18 @@ export const ComposerControls: React.FC<{
                 // Live telemetry reports concrete ids; aliases match by family
                 // label (e.g. "claude-sonnet-5" ↔ Sonnet, but not Sonnet 1M
                 // unless the id carries the [1m] marker).
-                const cur = stats.model
-                  ? m.id === stats.model ||
-                    (shortModelLabel(stats.model)
+                // Coerce both sides to strings before the split/includes work:
+                // over the hub bus the live model can arrive non-string, and a
+                // model-list row can lack a label — either would throw here and
+                // blank the pane.
+                const stModel = typeof stats.model === 'string' ? stats.model : '';
+                const mLabel = m.label ?? '';
+                const cur = stModel
+                  ? m.id === stModel ||
+                    (shortModelLabel(stModel)
                       .toLowerCase()
-                      .startsWith(m.label.split(' ')[0].toLowerCase()) &&
-                      stats.model.includes('[1m]') === m.id.includes('[1m]'))
+                      .startsWith(mLabel.split(' ')[0].toLowerCase()) &&
+                      stModel.includes('[1m]') === m.id.includes('[1m]'))
                   : false;
                 return (
                   <React.Fragment key={m.id}>

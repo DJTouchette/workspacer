@@ -9,7 +9,10 @@
  *    "gpt-5.4"                         → "gpt-5.4"
  */
 export function shortModelLabel(model?: string): string {
-  if (!model) return '';
+  // Guard the type, not just falsiness: a model value deserialized from the hub
+  // bus (web/remote) isn't guaranteed to be a string, and calling `.replace` on
+  // a non-string would throw inside a render and blank the pane.
+  if (!model || typeof model !== 'string') return '';
   return model
     .replace(/^[\w.-]+\//, '') // drop a "provider/" prefix (opencode)
     .replace(/^claude-/, '') // drop the claude vendor prefix

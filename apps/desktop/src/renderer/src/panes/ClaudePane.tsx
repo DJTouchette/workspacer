@@ -1543,8 +1543,12 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
 
         {(() => {
           const liveAgents =
-            subagents.filter((s) => s.status === 'running').length +
-            workflows.flatMap((w) => w.agents).filter((a) => a.status === 'running').length;
+            subagents.filter((s) => s?.status === 'running').length +
+            // `w.agents` is typed as a required array, but a snapshot arriving
+            // over the hub bus (web/remote) can omit it — flatMap would then
+            // fold in `undefined` and the `.filter` below would throw, blanking
+            // the whole pane. Default to [] so a lean bus payload can't crash it.
+            workflows.flatMap((w) => w.agents ?? []).filter((a) => a?.status === 'running').length;
           return liveAgents > 0 ? (
             <span
               style={{
