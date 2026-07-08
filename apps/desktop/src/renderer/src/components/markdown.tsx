@@ -60,13 +60,22 @@ const CodeBlock: React.FC<{ code: string; info?: string }> = ({ code, info }) =>
   );
 };
 
-/** Render inline markdown: **bold**, *italic*, `code`, [links](url) */
-export function renderInlineMarkdown(text: string): React.ReactNode[] {
+/** Nesting cap for inline rendering — real markdown nests a level or two
+ *  (bold around code); the cap only guards pathological input. */
+const MAX_INLINE_DEPTH = 4;
+
+/** Render inline markdown: **bold**, *italic*, `code` / ``code``, [links](url).
+ *  Bold/italic/link content renders recursively, so spans Claude nests all the
+ *  time — **`path/to.rs`**, *see `foo`* — style the inner code instead of
+ *  leaking literal backticks into the styled text. Code spans stay literal. */
+export function renderInlineMarkdown(text: string, depth = 0): React.ReactNode[] {
   const nodes: React.ReactNode[] = [];
-  const regex = /(\*\*(.+?)\*\*|\*(.+?)\*|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\))/g;
+  const regex = /(\*\*(.+?)\*\*|\*(.+?)\*|``(.+?)``|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\))/g;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
   let key = 0;
+  const nested = (inner: string): React.ReactNode =>
+    depth < MAX_INLINE_DEPTH ? renderInlineMarkdown(inner, depth + 1) : inner;
 
   while ((match = regex.exec(text)) !== null) {
     if (match.index > lastIndex) {
@@ -76,16 +85,22 @@ export function renderInlineMarkdown(text: string): React.ReactNode[] {
     if (match[2]) {
       nodes.push(
         <strong key={key++} style={{ color: colors.textBright, fontWeight: 700 }}>
-          {match[2]}
+          {nested(match[2])}
         </strong>,
       );
     } else if (match[3]) {
       nodes.push(
         <em key={key++} style={{ color: 'rgb(210, 210, 230)', fontStyle: 'italic' }}>
-          {match[3]}
+          {nested(match[3])}
         </em>,
       );
-    } else if (match[4]) {
+    } else if (match[4] || match[5]) {
+      // ``…`` lets the content carry backticks; per CommonMark, one space is
+      // stripped from each end when both are present (`` `x` `` → `x`).
+      let code = match[4] ?? match[5];
+      if (match[4] && code.startsWith(' ') && code.endsWith(' ') && code.trim() !== '') {
+        code = code.slice(1, -1);
+      }
       nodes.push(
         <code
           key={key++}
@@ -98,17 +113,17 @@ export function renderInlineMarkdown(text: string): React.ReactNode[] {
             color: 'rgb(180, 210, 255)',
           }}
         >
-          {match[4]}
+          {code}
         </code>,
       );
-    } else if (match[5] && match[6]) {
+    } else if (match[6] && match[7]) {
       nodes.push(
         <span
           key={key++}
           style={{ color: colors.accent, textDecoration: 'underline', cursor: 'default' }}
-          title={match[6]}
+          title={match[7]}
         >
-          {match[5]}
+          {nested(match[6])}
         </span>,
       );
     }
