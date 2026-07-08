@@ -320,4 +320,10 @@ html, body {
     width: 8px;
     height: 8px;
   }
+
+  /* No hover on touch: the split control would be unreachable if it stayed
+   * hidden until :hover. Keep it faintly visible instead. */
+  .pane-split-floating {
+    opacity: 0.55;
+  }
 }

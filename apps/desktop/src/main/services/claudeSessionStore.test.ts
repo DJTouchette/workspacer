@@ -141,3 +141,43 @@ describe('cwd backfill for delta-created sessions', () => {
     expect(claudeSessionStore.getSnapshot(sid)?.cwd).toBe(path.resolve('/first'));
   });
 });
+
+describe('liveCwd follows the agent into and out of a worktree', () => {
+  it('tracks a mid-session cwd change without touching the spawn cwd', () => {
+    const sid = uniqueId();
+
+    hook(sid, 'UserPromptSubmit', '/proj');
+    expect(claudeSessionStore.getSnapshot(sid)?.liveCwd).toBeUndefined();
+
+    // Agent enters a worktree — subsequent hooks carry the worktree cwd.
+    hook(sid, 'PostToolUse', '/proj-worktrees/feature-x');
+    const snap = claudeSessionStore.getSnapshot(sid);
+    expect(snap?.cwd).toBe(path.resolve('/proj'));
+    expect(snap?.liveCwd).toBe(path.resolve('/proj-worktrees/feature-x'));
+  });
+
+  it('clears liveCwd when the agent returns home', () => {
+    const sid = uniqueId();
+
+    hook(sid, 'UserPromptSubmit', '/proj');
+    hook(sid, 'PostToolUse', '/proj-worktrees/feature-x');
+    expect(claudeSessionStore.getSnapshot(sid)?.liveCwd).toBe(
+      path.resolve('/proj-worktrees/feature-x'),
+    );
+
+    hook(sid, 'PostToolUse', '/proj');
+    expect(claudeSessionStore.getSnapshot(sid)?.liveCwd).toBeUndefined();
+  });
+
+  it('an event with no cwd leaves liveCwd untouched', () => {
+    const sid = uniqueId();
+
+    hook(sid, 'UserPromptSubmit', '/proj');
+    hook(sid, 'PostToolUse', '/proj-worktrees/feature-x');
+
+    claudeSessionStore.handleHookEvent({ hook_event_name: 'Stop', session_id: sid });
+    expect(claudeSessionStore.getSnapshot(sid)?.liveCwd).toBe(
+      path.resolve('/proj-worktrees/feature-x'),
+    );
+  });
+});

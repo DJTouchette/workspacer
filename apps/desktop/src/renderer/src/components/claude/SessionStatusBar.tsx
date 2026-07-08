@@ -21,8 +21,9 @@ import { IconModel } from '../wksIcons';
  * 5h/7d rate-limit windows). Where the statusLine hasn't arrived yet we fall
  * back to the transcript-derived `usage` so it isn't blank.
  *
- * Note: git branch isn't shown — it lives only in Claude's statusLine *script*
- * (which shells out to git), not in the JSON channel we ingest.
+ * Git branch comes from a lightweight `gitStatus` poll against the agent's
+ * effective cwd (`snapshot.liveCwd` — the worktree the agent entered — falling
+ * back to the spawn cwd). When the agent works in a worktree, a chip marks it.
  */
 
 function baseName(p: string | undefined): string {
@@ -117,7 +118,43 @@ interface Props {
 }
 
 export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = false }) => {
-  const dir = baseName(cwd || snapshot?.cwd);
+  // Follow the agent: liveCwd is set only while it works somewhere other than
+  // the spawn dir (a git worktree), so its presence doubles as the indicator.
+  const activeCwd = snapshot?.liveCwd || cwd || snapshot?.cwd;
+  const inWorktree = !!snapshot?.liveCwd;
+  const dir = baseName(activeCwd);
+
+  // Branch of the effective cwd — fetched on cwd change and on a slow clock
+  // (branches move on checkout/commit, not per-keystroke). Best-effort: not a
+  // repo / no bridge → no branch segment.
+  const [branch, setBranch] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    if (!activeCwd) {
+      setBranch(null);
+      return;
+    }
+    let live = true;
+    const fetchBranch = () => {
+      try {
+        window.electronAPI
+          .gitStatus?.(activeCwd)
+          ?.then((s) => {
+            if (live) setBranch(s.branch);
+          })
+          .catch(() => {
+            if (live) setBranch(null);
+          });
+      } catch {
+        // web polyfill / test mocks without gitStatus
+      }
+    };
+    fetchBranch();
+    const t = setInterval(fetchBranch, 60_000);
+    return () => {
+      live = false;
+      clearInterval(t);
+    };
+  }, [activeCwd]);
   const {
     model,
     ctxPct,
@@ -180,7 +217,37 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = f
         whiteSpace: 'nowrap',
       }}
     >
-      {dir && <span style={{ color: 'var(--wks-accent-text)', fontWeight: 600 }}>{dir}</span>}
+      {dir && (
+        <span title={activeCwd} style={{ color: 'var(--wks-accent-text)', fontWeight: 600 }}>
+          {dir}
+        </span>
+      )}
+      {branch && (
+        <span
+          title={inWorktree ? `On ${branch} — worktree at ${activeCwd}` : `On ${branch}`}
+          style={{ color: 'var(--wks-text-secondary)' }}
+        >
+          {'⎇'} {branch}
+        </span>
+      )}
+      {inWorktree && (
+        <span
+          title={`Agent is working in a git worktree: ${activeCwd}`}
+          style={{
+            fontSize: '0.6rem',
+            fontWeight: 700,
+            padding: '1px 6px',
+            borderRadius: 'var(--wks-radius-pill, 999px)',
+            letterSpacing: '0.04em',
+            color: 'var(--wks-accent-text)',
+            border: '1px solid color-mix(in srgb, var(--wks-accent) 45%, transparent)',
+            background: 'color-mix(in srgb, var(--wks-accent) 12%, transparent)',
+            flexShrink: 0,
+          }}
+        >
+          worktree
+        </span>
+      )}
       {showModel && model && (
         <>
           <Sep />

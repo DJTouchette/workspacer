@@ -30,7 +30,7 @@ import { clearMdCache } from '../components/markdown';
 // ── Sub-components ──
 import { InlineWorkLog } from '../components/claude/InlineWorkLog';
 import { ConversationMessage } from '../components/claude/ConversationMessage';
-import { ConversationEmptyState } from '../components/claude/ConversationEmptyState';
+import { ConversationEmptyState, AgentHero } from '../components/claude/ConversationEmptyState';
 import { permissionModeLabel } from '../lib/providerCaps';
 import { TurnDivider } from '../components/claude/TurnDivider';
 import { NeedsYouDock } from '../components/claude/NeedsYouDock';
@@ -253,6 +253,13 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   }, [sessionId, spawnError]);
 
   const { session } = useClaudeSession({ ptySessionId: sessionId, active: isActive });
+
+  // Where the agent is actually working right now. `cwd` (the spawn dir)
+  // stays authoritative for spawn/restart; `effectiveCwd` follows the agent
+  // into a git worktree (session.liveCwd, tracked from per-hook cwds) so file
+  // opens, diffs, git lookups and the file picker resolve against the tree
+  // the agent is editing.
+  const effectiveCwd = session?.liveCwd || cwd;
 
   // Which surfaces this pane has. The session snapshot is the authority on the
   // Claude transport ('stream' = headless stream-json, no PTY); until it loads
@@ -633,12 +640,12 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   }, []);
 
   const openFilePicker = useCallback(async () => {
-    const paths = await window.electronAPI.pickFiles(cwd);
+    const paths = await window.electronAPI.pickFiles(effectiveCwd);
     if (paths.length > 0) {
       setAttachedFiles((prev) => [...prev, ...paths.map(classifyFile)]);
       if (viewMode === 'terminal') setViewMode('gui');
     }
-  }, [cwd, viewMode]);
+  }, [effectiveCwd, viewMode]);
 
   const handleApprovalRespond = useCallback(
     (response: 'yes' | 'no') => {
@@ -865,10 +872,10 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     if (start >= base.length) return;
     const edited = collectEditedFiles(base.slice(start).flatMap((t) => t.toolCalls ?? []));
     if (edited.size === 0) return;
-    void ensureTurnSnapshot(sessionId, start, cwd, edited)
+    void ensureTurnSnapshot(sessionId, start, effectiveCwd, edited)
       .then(() => setChangesVersion((v) => v + 1))
       .catch(() => {});
-  }, [session?.ambientState, session?.conversation, sessionId, cwd]);
+  }, [session?.ambientState, session?.conversation, sessionId, effectiveCwd]);
 
   // Needs-you dock visibility. Dismissal timestamps give an optimistic hide:
   // the dock vanishes on click while the response round-trips through the
@@ -1101,7 +1108,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
           subagentByToolId={toolIdToSubagent}
           workflowByToolId={toolIdToWorkflow}
           live={isStreaming && endIdx === conversation.length - 1}
-          cwd={cwd}
+          cwd={effectiveCwd}
         />,
       );
       pendingWork = null;
@@ -1124,8 +1131,8 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
       items.push(
         <ChangedFilesCard
           key={`chg-${g.start}`}
-          snapshot={snap ?? estimateSnapshot(edited, cwd)}
-          cwd={cwd}
+          snapshot={snap ?? estimateSnapshot(edited, effectiveCwd)}
+          cwd={effectiveCwd}
         />,
       );
     };
@@ -1196,7 +1203,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     isStreaming,
     ambientIdle,
     sessionId,
-    cwd,
+    effectiveCwd,
     changesVersion,
     WorkView,
   ]);
@@ -1273,17 +1280,38 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
               >
                 {/* Empty states */}
                 {conversation.length === 0 && !session && spawnError && (
-                  <div style={{ textAlign: 'center', marginTop: 60, color: colors.mutedDim }}>
-                    <div style={{ fontSize: '0.8rem', color: colors.error }}>
-                      Couldn’t start {agentName}
-                    </div>
-                    <div style={{ fontSize: '0.7rem', marginTop: 6, color: colors.mutedDim }}>
+                  <div
+                    style={{
+                      position: 'relative',
+                      textAlign: 'center',
+                      marginTop: 48,
+                      color: colors.mutedDim,
+                      animation: 'claudeFadeIn 0.2s ease-out',
+                    }}
+                  >
+                    <AgentHero
+                      provider={provider ?? 'claude'}
+                      dimLogo
+                      title={`Couldn’t start ${agentName}`}
+                      titleColor={colors.error}
+                    />
+                    <div
+                      style={{
+                        position: 'relative',
+                        fontSize: '0.72rem',
+                        margin: '8px auto 0',
+                        maxWidth: 420,
+                        lineHeight: 1.5,
+                        color: colors.mutedDim,
+                      }}
+                    >
                       {spawnError.message || `The ${agentName} session failed to start.`}
                     </div>
                     <button
                       onClick={retry}
                       style={{
-                        marginTop: 14,
+                        position: 'relative',
+                        marginTop: 16,
                         fontSize: '0.7rem',
                         fontWeight: 600,
                         padding: '4px 16px',
@@ -1301,15 +1329,38 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
                 )}
 
                 {conversation.length === 0 && !session && !spawnError && (
-                  <div style={{ textAlign: 'center', marginTop: 60, color: colors.mutedDim }}>
-                    <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
-                      <BrandSpinner size={26} />
-                    </div>
-                    <div style={{ fontSize: '0.8rem', color: colors.muted }}>
-                      Connecting to {agentName}…
+                  <div
+                    style={{
+                      position: 'relative',
+                      textAlign: 'center',
+                      marginTop: 48,
+                      color: colors.mutedDim,
+                      animation: 'claudeFadeIn 0.2s ease-out',
+                    }}
+                  >
+                    <AgentHero
+                      provider={provider ?? 'claude'}
+                      title={<>Connecting to {agentName}…</>}
+                    />
+                    <div
+                      style={{
+                        position: 'relative',
+                        display: 'flex',
+                        justifyContent: 'center',
+                        marginTop: 18,
+                      }}
+                    >
+                      <BrandSpinner size={20} />
                     </div>
                     {showHookHint && isClaude && (
-                      <div style={{ fontSize: '0.7rem', marginTop: 6, color: colors.mutedDim }}>
+                      <div
+                        style={{
+                          position: 'relative',
+                          fontSize: '0.7rem',
+                          marginTop: 14,
+                          color: colors.mutedDim,
+                        }}
+                      >
                         Still connecting — make sure hooks are configured in ~/.claude/settings.json
                       </div>
                     )}
@@ -1319,13 +1370,14 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
                 {conversation.length === 0 && session && (
                   <ConversationEmptyState
                     agentName={agentName}
+                    provider={provider ?? 'claude'}
                     model={session.statusLine?.modelDisplay ?? session.settings?.model}
                     permissionMode={permissionModeLabel(
                       provider,
                       session.livePermissionMode ?? session.settings?.permissionMode,
                     )}
                     transport={claudeTransport}
-                    cwd={session.cwd || cwd}
+                    cwd={session.liveCwd || session.cwd || cwd}
                     initialPrompt={initialPrompt}
                     onPick={(prompt) => {
                       setInputValue(prompt);

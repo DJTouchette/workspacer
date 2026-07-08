@@ -154,6 +154,9 @@ export interface SessionStatusLine {
 export interface ClaudeSessionSnapshot {
   sessionId: string;
   cwd: string;
+  /** Where the agent currently works when that differs from `cwd` — e.g.
+   *  inside a git worktree entered mid-session. Undefined while at home. */
+  liveCwd?: string;
   ptyId: string;
 
   status: 'starting' | 'active' | 'ended';

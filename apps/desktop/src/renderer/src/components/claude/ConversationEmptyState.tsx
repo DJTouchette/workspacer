@@ -1,5 +1,64 @@
 import React, { useEffect, useState } from 'react';
 import { claudeColors as colors } from '../claude-shared';
+import { AgentLogo } from '../agentLogos';
+import type { AgentProvider } from '../../types/pane';
+
+/** Spawn-dialog visual language for a pane's beginning screens: a soft accent
+ *  glow behind a circular provider badge, then a title. Shared by the
+ *  connecting / ready / failed empty states so they read as one family.
+ *  The parent container must be `position: relative` (the glow anchors to it). */
+export const AgentHero: React.FC<{
+  provider: AgentProvider;
+  title: React.ReactNode;
+  titleColor?: string;
+  dimLogo?: boolean;
+}> = ({ provider, title, titleColor, dimLogo }) => (
+  <>
+    <div
+      aria-hidden
+      style={{
+        position: 'absolute',
+        top: -64,
+        left: 0,
+        right: 0,
+        height: 340,
+        background:
+          'radial-gradient(ellipse 420px 300px at 50% 20%, color-mix(in srgb, var(--wks-accent) 8%, transparent) 0%, transparent 70%)',
+        pointerEvents: 'none',
+      }}
+    />
+    <div
+      style={{
+        position: 'relative',
+        width: 64,
+        height: 64,
+        margin: '0 auto',
+        borderRadius: '50%',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        border: '1px solid var(--wks-border-input)',
+        background: 'color-mix(in srgb, var(--wks-accent) 5%, transparent)',
+        color: 'var(--wks-text-primary)',
+        opacity: dimLogo ? 0.6 : 1,
+      }}
+    >
+      <AgentLogo provider={provider} size={30} />
+    </div>
+    <div
+      style={{
+        position: 'relative',
+        marginTop: 16,
+        fontSize: '1.05rem',
+        fontWeight: 650,
+        letterSpacing: '-0.01em',
+        color: titleColor ?? colors.textBright,
+      }}
+    >
+      {title}
+    </div>
+  </>
+);
 
 /** Starter prompts: short chip label → full prompt dropped into the composer
  *  (not auto-sent — the user can edit before committing). */
@@ -25,6 +84,7 @@ const STARTERS: { label: string; prompt: string }[] = [
 
 export const ConversationEmptyState: React.FC<{
   agentName: string;
+  provider?: AgentProvider;
   model?: string;
   permissionMode?: string;
   transport?: 'pty' | 'stream';
@@ -34,7 +94,7 @@ export const ConversationEmptyState: React.FC<{
    *  clobber the prepared prompt. */
   initialPrompt?: string;
   onPick: (prompt: string) => void;
-}> = ({ agentName, model, permissionMode, transport, cwd, initialPrompt, onPick }) => {
+}> = ({ agentName, provider, model, permissionMode, transport, cwd, initialPrompt, onPick }) => {
   const dirName = cwd ? (cwd.replace(/\/+$/, '').split('/').pop() ?? cwd) : undefined;
 
   // Git peek: branch + dirty count, best-effort. Not a repo / no git → omit.
@@ -74,21 +134,20 @@ export const ConversationEmptyState: React.FC<{
   return (
     <div
       style={{
+        position: 'relative',
         textAlign: 'center',
         marginTop: 48,
         color: colors.mutedDim,
         animation: 'claudeFadeIn 0.2s ease-out',
       }}
     >
-      <div style={{ fontSize: '1.6rem', marginBottom: 10, opacity: 0.35 }}>{'◆'}</div>
-      <div style={{ fontSize: '0.85rem', color: colors.textBright, fontWeight: 600 }}>
-        {agentName} is ready
-      </div>
+      <AgentHero provider={provider ?? 'claude'} title={`${agentName} is ready`} />
       {meta.length > 0 && (
         <div
           style={{
-            fontSize: '0.68rem',
-            marginTop: 6,
+            position: 'relative',
+            fontSize: '0.7rem',
+            marginTop: 8,
             color: colors.muted,
             display: 'flex',
             justifyContent: 'center',

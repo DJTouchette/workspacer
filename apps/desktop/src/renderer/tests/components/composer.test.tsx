@@ -37,7 +37,7 @@ const textarea = () => screen.getByRole('textbox') as HTMLTextAreaElement;
 describe('Composer', () => {
   it('placeholder names the active agent backend', () => {
     renderComposer({ agentName: 'Codex' });
-    expect(textarea().placeholder).toMatch(/Message Codex/);
+    expect(textarea().placeholder).toMatch(/Give Codex something to do/);
   });
 
   it('Enter sends when there is text', () => {

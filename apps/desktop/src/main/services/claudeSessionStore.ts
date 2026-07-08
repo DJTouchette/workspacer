@@ -171,6 +171,9 @@ export interface SessionStatusLine {
 export interface ClaudeSessionState {
   sessionId: string;
   cwd: string;
+  /** Where the agent currently works when that differs from `cwd` — e.g.
+   *  inside a git worktree entered mid-session. Undefined while at home. */
+  liveCwd?: string;
   ptyId: string; // workspacer PTY id this session is bound to
   transcriptPath: string; // path to JSONL transcript file
 
@@ -329,6 +332,16 @@ class ClaudeSessionStore {
       // has it, so project attribution, git-branch lookup and the agent-card
       // name work instead of sticking to the empty string forever.
       session.cwd = cwd;
+    }
+
+    // Live cwd: hooks carry the session's *current* working directory on
+    // every event, and it moves when the agent enters/exits a git worktree
+    // (EnterWorktree tool). `cwd` stays the spawn directory (spawn/restart
+    // paths depend on it); `liveCwd` follows the agent so file opens, diffs
+    // and git lookups resolve against where the work actually happens.
+    // Cleared (undefined) when the agent returns home.
+    if (cwd && session.cwd) {
+      session.liveCwd = cwd === session.cwd ? undefined : cwd;
     }
 
     // Capture transcript path from first event that has it

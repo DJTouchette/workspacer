@@ -110,7 +110,7 @@ export const Composer: React.FC<ComposerProps> = ({
             placeholder={
               attachedFiles.length > 0
                 ? `What should ${agentName} do with these files?`
-                : `Message ${agentName}… (Shift+Enter for newline)`
+                : `Give ${agentName} something to do…`
             }
             value={value}
             onChange={(e) => onChange(e.target.value)}

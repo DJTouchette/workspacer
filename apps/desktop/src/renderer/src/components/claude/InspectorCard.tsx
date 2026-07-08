@@ -364,7 +364,9 @@ export const InspectorCard: React.FC<{
               <div
                 key={f.path}
                 title={`${f.path}\n\nClick to open in Review`}
-                onClick={() => requestReviewFile({ path: f.path, cwd: session?.cwd })}
+                onClick={() =>
+                  requestReviewFile({ path: f.path, cwd: session?.liveCwd ?? session?.cwd })
+                }
                 style={{
                   display: 'flex',
                   alignItems: 'baseline',

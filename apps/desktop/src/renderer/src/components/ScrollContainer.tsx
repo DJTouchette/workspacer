@@ -12,6 +12,7 @@ import ErrorBoundary from './ErrorBoundary';
 import { PaneConfig, PaneType, TabConfig, AgentWorkspace, AgentProvider } from '../types/pane';
 import { useConfig } from '../hooks/useConfig';
 import { tilingColumns } from '../lib/layoutUtils';
+import { useIsSmallScreen } from '../hooks/useMediaQuery';
 
 // Lazy-load pane types that aren't needed on initial render
 const TerminalPane = React.lazy(() => import('../panes/TerminalPane'));
@@ -388,13 +389,21 @@ function TilingLayout({
 }) {
   const single = panes.length === 1;
   const count = panes.length;
-  const cols = tilingColumns(count);
+  // Phones: side-by-side columns would give each pane a sliver of a ~375px
+  // viewport, so split tabs stack vertically instead — one full-width pane
+  // per row.
+  const isSmallScreen = useIsSmallScreen();
+  const cols = isSmallScreen ? 1 : tilingColumns(count);
   const rows = Math.ceil(count / cols);
 
   const layouts: Array<{ col: number; row: number; colSpan: number; rowSpan: number }> = [];
 
   if (count === 1) {
     layouts.push({ col: 0, row: 0, colSpan: 1, rowSpan: 1 });
+  } else if (isSmallScreen) {
+    for (let i = 0; i < count; i++) {
+      layouts.push({ col: 0, row: i, colSpan: 1, rowSpan: 1 });
+    }
   } else if (count === 2) {
     layouts.push({ col: 0, row: 0, colSpan: 1, rowSpan: 1 });
     layouts.push({ col: 1, row: 0, colSpan: 1, rowSpan: 1 });
@@ -500,6 +509,7 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
   ) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const { config } = useConfig();
+    const isSmallScreen = useIsSmallScreen();
     const peek = config.panes?.peek ?? 80;
     const gap = config.panes?.gap ?? 16;
     const editorEngine = config.editor?.engine ?? 'codemirror';
@@ -513,8 +523,15 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
       if (!container) return;
 
       const updateSize = () => {
-        const w = container.clientWidth - 2 * peek - gap;
-        setTabWidth(Math.max(400, w));
+        // Phones (the web share UI on a phone especially): one full-bleed tab
+        // per screen. The desktop peek margins + 400px floor would force every
+        // tab wider than the viewport and turn paging into sideways crawling.
+        if (isSmallScreen) {
+          setTabWidth(Math.max(1, container.clientWidth));
+        } else {
+          const w = container.clientWidth - 2 * peek - gap;
+          setTabWidth(Math.max(400, w));
+        }
         setContainerHeight(container.clientHeight - 16);
       };
 
@@ -522,7 +539,7 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
       const observer = new ResizeObserver(updateSize);
       observer.observe(container);
       return () => observer.disconnect();
-    }, [peek, gap]);
+    }, [peek, gap, isSmallScreen]);
 
     const scrollToTab = useCallback((id: string) => {
       // A just-opened tab (e.g. from the command palette) may not be committed to

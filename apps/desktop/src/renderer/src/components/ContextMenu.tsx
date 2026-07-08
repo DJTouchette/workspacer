@@ -102,27 +102,40 @@ export function ContextMenu({
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const rect = el.getBoundingClientRect();
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
 
-    let left = x;
-    let top = y;
-    // Overflow right → flip to the left of the anchor (or clamp).
-    if (left + rect.width + VIEWPORT_MARGIN > vw) {
-      left = Math.max(VIEWPORT_MARGIN, x - rect.width);
-      if (left + rect.width + VIEWPORT_MARGIN > vw) left = vw - rect.width - VIEWPORT_MARGIN;
-    }
-    // Overflow bottom → flip above the anchor (or clamp).
-    if (top + rect.height + VIEWPORT_MARGIN > vh) {
-      top = Math.max(VIEWPORT_MARGIN, y - rect.height);
-      if (top + rect.height + VIEWPORT_MARGIN > vh) top = vh - rect.height - VIEWPORT_MARGIN;
-    }
-    left = Math.max(VIEWPORT_MARGIN, left);
-    top = Math.max(VIEWPORT_MARGIN, top);
+    const clamp = () => {
+      const rect = el.getBoundingClientRect();
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
 
-    setPos({ left, top });
-    setMeasured(true);
+      let left = x;
+      let top = y;
+      // Overflow right → flip to the left of the anchor (or clamp).
+      if (left + rect.width + VIEWPORT_MARGIN > vw) {
+        left = Math.max(VIEWPORT_MARGIN, x - rect.width);
+        if (left + rect.width + VIEWPORT_MARGIN > vw) left = vw - rect.width - VIEWPORT_MARGIN;
+      }
+      // Overflow bottom → flip above the anchor (or clamp).
+      if (top + rect.height + VIEWPORT_MARGIN > vh) {
+        top = Math.max(VIEWPORT_MARGIN, y - rect.height);
+        if (top + rect.height + VIEWPORT_MARGIN > vh) top = vh - rect.height - VIEWPORT_MARGIN;
+      }
+      left = Math.max(VIEWPORT_MARGIN, left);
+      top = Math.max(VIEWPORT_MARGIN, top);
+
+      setPos({ left, top });
+      setMeasured(true);
+    };
+
+    clamp();
+    // Re-clamp when the menu's size changes after mount — e.g. the model menu
+    // opens as a one-row "Loading…" and grows once the list arrives. Without
+    // this the grown menu keeps the small-menu position and spills downward
+    // off-screen instead of flipping above the anchor.
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(clamp);
+    ro.observe(el);
+    return () => ro.disconnect();
   }, [x, y]);
 
   useEffect(() => {

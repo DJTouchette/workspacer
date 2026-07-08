@@ -1,4 +1,5 @@
 import React from 'react';
+import { fuzzyScoreAny } from '../../lib/fuzzy';
 
 export const inputStyle: React.CSSProperties = {
   height: '30px',
@@ -31,19 +32,24 @@ export function SmallButton({
         onClick();
       }}
       style={{
-        padding: '4px 10px',
+        padding: '4px 12px',
         fontSize: '0.72rem',
         fontFamily: 'inherit',
-        fontWeight: 500,
+        fontWeight: 600,
         backgroundColor: primary ? 'var(--wks-accent)' : 'transparent',
-        color: danger ? 'var(--wks-error)' : primary ? '#fff' : 'var(--wks-text-muted)',
-        border: primary ? '1px solid var(--wks-accent)' : '1px solid var(--wks-border)',
-        borderRadius: 'var(--wks-radius-sm)',
+        color: danger
+          ? 'var(--wks-error)'
+          : primary
+            ? 'var(--wks-text-on-accent, #fff)'
+            : 'var(--wks-text-muted)',
+        border: primary ? '1px solid var(--wks-accent)' : '1px solid var(--wks-border-subtle)',
+        borderRadius: 'var(--wks-radius-pill, 999px)',
         cursor: 'pointer',
         height: 'auto',
         lineHeight: 1.4,
         margin: 0,
         width: 'auto',
+        transition: 'background 0.12s, color 0.12s, border-color 0.12s',
       }}
     >
       {label}
@@ -64,13 +70,13 @@ export function Section({
     <div id={id} style={{ marginBottom: '32px', animation: 'wks-fade-in 0.18s ease' }}>
       <div
         style={{
-          fontSize: '0.68rem',
-          fontWeight: 700,
+          fontSize: '0.58rem',
+          fontWeight: 600,
           color: 'var(--wks-text-faint)',
           textTransform: 'uppercase',
-          letterSpacing: '0.1em',
-          marginBottom: '16px',
-          paddingBottom: '12px',
+          letterSpacing: '0.08em',
+          marginBottom: '14px',
+          paddingBottom: '10px',
           borderBottom: '1px solid var(--wks-border-subtle)',
         }}
       >
@@ -131,19 +137,55 @@ export function CheckRow({
       }}
     >
       <span style={rowLabel}>{label}</span>
-      <input
-        type="checkbox"
-        checked={checked}
-        disabled={disabled}
-        onChange={(e) => onChange(e.target.checked)}
-        style={{
-          accentColor: 'var(--wks-accent)',
-          cursor: disabled ? 'default' : 'pointer',
-          width: 16,
-          height: 16,
-          flexShrink: 0,
-        }}
-      />
+      {/* Toggle switch. The real checkbox stays in the tree (visually hidden,
+          not display:none) so keyboard focus, Space toggling and form
+          semantics keep working. */}
+      <span style={{ position: 'relative', display: 'inline-flex', flexShrink: 0 }}>
+        <input
+          type="checkbox"
+          checked={checked}
+          disabled={disabled}
+          onChange={(e) => onChange(e.target.checked)}
+          style={{
+            position: 'absolute',
+            inset: 0,
+            opacity: 0,
+            margin: 0,
+            cursor: disabled ? 'default' : 'pointer',
+          }}
+        />
+        <span
+          aria-hidden
+          style={{
+            width: 32,
+            height: 18,
+            borderRadius: 'var(--wks-radius-pill, 999px)',
+            background: checked
+              ? 'var(--wks-accent)'
+              : 'color-mix(in srgb, var(--wks-text-faint) 25%, transparent)',
+            border: '1px solid',
+            borderColor: checked ? 'var(--wks-accent)' : 'var(--wks-border)',
+            transition: 'background 0.15s, border-color 0.15s',
+            boxSizing: 'border-box',
+            display: 'inline-block',
+            position: 'relative',
+            pointerEvents: 'none',
+          }}
+        >
+          <span
+            style={{
+              position: 'absolute',
+              top: 2,
+              left: checked ? 16 : 2,
+              width: 12,
+              height: 12,
+              borderRadius: '50%',
+              background: checked ? 'var(--wks-text-on-accent, #fff)' : 'var(--wks-text-muted)',
+              transition: 'left 0.15s ease, background 0.15s',
+            }}
+          />
+        </span>
+      </span>
     </label>
   );
 }
@@ -164,16 +206,20 @@ export function ModeButton({
         padding: '4px 14px',
         fontSize: '0.75rem',
         fontFamily: 'inherit',
-        fontWeight: active ? 600 : 400,
-        backgroundColor: active ? 'var(--wks-accent)' : 'var(--wks-bg-elevated)',
-        color: active ? '#fff' : 'var(--wks-text-muted)',
-        border: active ? '1px solid var(--wks-accent)' : '1px solid var(--wks-border)',
-        borderRadius: 'var(--wks-radius-sm)',
+        fontWeight: 600,
+        backgroundColor: active ? 'var(--wks-accent-bg, rgba(99,102,241,0.14))' : 'transparent',
+        color: active ? 'var(--wks-accent-text, var(--wks-accent))' : 'var(--wks-text-muted)',
+        border: '1px solid',
+        borderColor: active
+          ? 'color-mix(in srgb, var(--wks-accent) 45%, transparent)'
+          : 'var(--wks-border-subtle)',
+        borderRadius: 'var(--wks-radius-pill, 999px)',
         cursor: 'pointer',
         height: '28px',
         lineHeight: 1,
         margin: 0,
         width: 'auto',
+        transition: 'background 0.12s, color 0.12s, border-color 0.12s',
       }}
     >
       {label}
@@ -217,11 +263,14 @@ export function SearchableSelect({
 
   const selected = options.find((o) => o.value === value);
   const filtered = React.useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = query.trim();
     if (!q) return options;
-    return options.filter(
-      (o) => o.label.toLowerCase().includes(q) || o.value.toLowerCase().includes(q),
-    );
+    // Fuzzy match on label + value, ranked best-first (stable within ties).
+    return options
+      .map((o) => ({ o, score: fuzzyScoreAny(q, [o.label, o.value]) }))
+      .filter((x) => x.score > -Infinity)
+      .sort((a, b) => b.score - a.score)
+      .map((x) => x.o);
   }, [options, query]);
 
   React.useEffect(() => {

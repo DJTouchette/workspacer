@@ -1271,9 +1271,15 @@ function App() {
       const target = (e as CustomEvent).detail as ReviewFileTarget | undefined;
       if (!target?.path) return;
       const cwd = target.cwd || activeAgent?.cwd;
+      // Only reuse a Review pane diffing the SAME tree. A worktree request
+      // must not land on the home repo's pane — ReviewPane ignores open-file
+      // events whose cwd differs from its own, so the click would do nothing.
+      const norm = (p?: string) => (p ?? '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
       let existing: { tabId: string; paneId: string } | null = null;
       for (const tab of tabs) {
-        const pane = tab.panes.find((p) => p.type === 'review');
+        const pane = tab.panes.find(
+          (p) => p.type === 'review' && (!cwd || !p.cwd || norm(p.cwd) === norm(cwd)),
+        );
         if (pane) {
           existing = { tabId: tab.id, paneId: pane.id };
           break;

@@ -1,5 +1,8 @@
 import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import { useConfig } from '../hooks/useConfig';
+import { fuzzyScoreAny } from '../lib/fuzzy';
+import { Settings as SettingsIcon } from '../components/icons';
+import { useIsSmallScreen } from '../hooks/useMediaQuery';
 import AppearanceSection from '../components/settings/AppearanceSection';
 import LayoutSection from '../components/settings/LayoutSection';
 import TerminalSection from '../components/settings/TerminalSection';
@@ -207,12 +210,11 @@ const SECTIONS: SectionDef[] = [
   },
 ];
 
-function matchesQuery(section: SectionDef, q: string): boolean {
-  if (!q) return true;
-  const lower = q.toLowerCase();
-  return (
-    section.label.toLowerCase().includes(lower) || section.keywords.some((kw) => kw.includes(lower))
-  );
+/** Fuzzy score of a query against a section's label + keywords; -Infinity = no
+ *  match. Fuzzy means "kbd" finds Keybindings and "permode" finds permission
+ *  keywords — characters must appear in order but not adjacently. */
+function sectionScore(section: SectionDef, q: string): number {
+  return fuzzyScoreAny(q, [section.label, ...section.keywords]);
 }
 
 // ── Sidebar nav ───────────────────────────────────────────────────────────────
@@ -224,12 +226,12 @@ interface NavProps {
 }
 
 const NAV_GROUP_LABEL: React.CSSProperties = {
-  fontSize: '0.62rem',
-  fontWeight: 700,
+  fontSize: '0.58rem',
+  fontWeight: 600,
   textTransform: 'uppercase',
-  letterSpacing: '0.09em',
-  color: 'var(--wks-text-disabled)',
-  padding: '14px 12px 4px',
+  letterSpacing: '0.08em',
+  color: 'var(--wks-text-faint)',
+  padding: '14px 12px 5px',
 };
 
 const NAV_ITEM_BASE: React.CSSProperties = {
@@ -294,6 +296,7 @@ function Sidebar({ sections, active, onSelect }: NavProps) {
 
 const SettingsPane: React.FC<SettingsPaneProps> = () => {
   const { config, save } = useConfig();
+  const isSmallScreen = useIsSmallScreen();
   const [search, setSearch] = useState('');
   const [activeKey, setActiveKey] = useState('session');
   const searchRef = useRef<HTMLInputElement>(null);
@@ -301,7 +304,15 @@ const SettingsPane: React.FC<SettingsPaneProps> = () => {
 
   const q = search.trim();
 
-  const visibleSections = useMemo(() => SECTIONS.filter((s) => matchesQuery(s, q)), [q]);
+  // Fuzzy-filter and rank: best match first while searching; registry order
+  // otherwise (stable sort keeps ties in registry order).
+  const visibleSections = useMemo(() => {
+    if (!q) return SECTIONS;
+    return SECTIONS.map((s) => ({ s, score: sectionScore(s, q) }))
+      .filter((x) => x.score > -Infinity)
+      .sort((a, b) => b.score - a.score)
+      .map((x) => x.s);
+  }, [q]);
 
   // When search filters sections, keep activeKey valid.
   useEffect(() => {
@@ -377,34 +388,68 @@ const SettingsPane: React.FC<SettingsPaneProps> = () => {
   return (
     <div
       style={{
+        position: 'relative',
         display: 'flex',
         flexDirection: 'column',
         height: '100%',
+        overflow: 'hidden',
         backgroundColor: 'var(--wks-bg-base)',
         color: 'var(--wks-text-secondary)',
         fontFamily: '"Hanken Grotesk", Inter, system-ui, sans-serif',
         fontSize: '0.85rem',
       }}
     >
-      {/* Top bar: title + search */}
+      {/* Soft accent glow behind the hero — same decoration as the spawn
+          dialog and the Overview/Usage panes. */}
+      <div
+        aria-hidden
+        style={{
+          position: 'absolute',
+          top: -420,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          width: 720,
+          height: 720,
+          borderRadius: '50%',
+          background:
+            'radial-gradient(circle, color-mix(in srgb, var(--wks-accent) 8%, transparent) 0%, transparent 65%)',
+          pointerEvents: 'none',
+        }}
+      />
+
+      {/* ── Hero: badge + title + search ─────────────────────────────────── */}
       <div
         style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 16,
-          padding: '14px 20px',
-          borderBottom: '1px solid var(--wks-border-subtle)',
+          position: 'relative',
+          textAlign: 'center',
+          padding: '28px 20px 18px',
           flexShrink: 0,
+          animation: 'wks-fade-in 0.25s ease-out',
         }}
       >
+        <div
+          style={{
+            width: 52,
+            height: 52,
+            margin: '0 auto',
+            borderRadius: '50%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            border: '1px solid var(--wks-border-input)',
+            background: 'color-mix(in srgb, var(--wks-accent) 5%, transparent)',
+            color: 'var(--wks-accent-text, var(--wks-text-primary))',
+          }}
+        >
+          <SettingsIcon size={22} strokeWidth={1.7} />
+        </div>
         <h2
           style={{
             fontSize: '1.05rem',
-            fontWeight: 700,
-            margin: 0,
+            fontWeight: 650,
+            margin: '12px 0 0',
             color: 'var(--wks-text-primary)',
             letterSpacing: '-0.01em',
-            flexShrink: 0,
           }}
         >
           Settings
@@ -416,12 +461,12 @@ const SettingsPane: React.FC<SettingsPaneProps> = () => {
             display: 'flex',
             alignItems: 'center',
             gap: 8,
-            flex: 1,
-            maxWidth: 360,
-            padding: '0 12px',
+            maxWidth: 420,
+            margin: '14px auto 0',
+            padding: '0 14px',
             background: 'var(--wks-bg-raised)',
             border: '1px solid var(--wks-border-subtle)',
-            borderRadius: 'var(--wks-radius-md)',
+            borderRadius: 'var(--wks-radius-pill, 999px)',
             transition: 'border-color 0.15s',
           }}
           onFocusCapture={(e) => {
@@ -501,20 +546,68 @@ const SettingsPane: React.FC<SettingsPaneProps> = () => {
         </div>
       </div>
 
-      {/* Body: sidebar + content */}
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        {/* Left sidebar */}
+      {/* Phones: the 192px sidebar would eat half the viewport — swap it for
+          a horizontally scrollable chip row above the content. */}
+      {isSmallScreen && (
         <div
           style={{
-            width: 192,
+            display: 'flex',
+            gap: 6,
+            overflowX: 'auto',
             flexShrink: 0,
-            borderRight: '1px solid var(--wks-border-subtle)',
-            overflowY: 'auto',
-            padding: '4px 8px 24px',
+            padding: '2px 14px 10px',
+            scrollbarWidth: 'none',
           }}
         >
-          <Sidebar sections={visibleSections} active={activeKey} onSelect={handleNavSelect} />
+          {visibleSections.map((s) => {
+            const active = s.key === activeKey;
+            return (
+              <button
+                key={s.key}
+                onClick={() => handleNavSelect(s.key)}
+                style={{
+                  flexShrink: 0,
+                  padding: '5px 12px',
+                  fontSize: '0.72rem',
+                  fontFamily: 'inherit',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  borderRadius: 'var(--wks-radius-pill, 999px)',
+                  border: '1px solid',
+                  borderColor: active
+                    ? 'color-mix(in srgb, var(--wks-accent) 45%, transparent)'
+                    : 'var(--wks-border-subtle)',
+                  background: active
+                    ? 'var(--wks-accent-bg, rgba(99,102,241,0.14))'
+                    : 'transparent',
+                  color: active
+                    ? 'var(--wks-accent-text, var(--wks-accent))'
+                    : 'var(--wks-text-secondary)',
+                }}
+              >
+                {s.label}
+              </button>
+            );
+          })}
         </div>
+      )}
+
+      {/* Body: sidebar + content */}
+      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+        {/* Left sidebar (desktop only — phones use the chip row above) */}
+        {!isSmallScreen && (
+          <div
+            style={{
+              width: 192,
+              flexShrink: 0,
+              borderRight: '1px solid var(--wks-border-subtle)',
+              overflowY: 'auto',
+              padding: '4px 8px 24px',
+            }}
+          >
+            <Sidebar sections={visibleSections} active={activeKey} onSelect={handleNavSelect} />
+          </div>
+        )}
 
         {/* Content area */}
         <div
@@ -522,7 +615,7 @@ const SettingsPane: React.FC<SettingsPaneProps> = () => {
           style={{
             flex: 1,
             overflowY: 'auto',
-            padding: '24px 32px',
+            padding: isSmallScreen ? '14px 16px' : '24px 32px',
           }}
         >
           <div style={{ maxWidth: 680 }}>

@@ -3,6 +3,7 @@ import type { AnalyticsSummary, AnalyticsBucket, SessionHistoryRecord } from '..
 import { usePageVisible } from '../hooks/usePageVisible';
 import { shortModelLabel } from '../lib/modelLabel';
 import { AgentLogo } from '../components/agentLogos';
+import { BarChart3 } from '../components/icons';
 import type { AgentProvider } from '../types/pane';
 
 /** Provider filter selection. 'all' folds every backend together. */
@@ -75,7 +76,7 @@ const Stat: React.FC<{ label: string; value: string; sub?: string; color?: strin
   >
     <div
       style={{
-        fontSize: '0.6rem',
+        fontSize: '0.58rem',
         color: 'var(--wks-text-faint)',
         textTransform: 'uppercase',
         letterSpacing: '0.08em',
@@ -112,12 +113,12 @@ const Stat: React.FC<{ label: string; value: string; sub?: string; color?: strin
 const SectionTitle: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <div
     style={{
-      fontSize: '0.62rem',
+      fontSize: '0.58rem',
       color: 'var(--wks-text-faint)',
       textTransform: 'uppercase',
-      letterSpacing: '0.05em',
+      letterSpacing: '0.08em',
       fontWeight: 600,
-      margin: '18px 0 8px',
+      margin: '20px 0 8px',
     }}
   >
     {children}
@@ -600,192 +601,270 @@ const AnalyticsPane: React.FC<{ title?: string }> = () => {
   return (
     <div
       style={{
+        position: 'relative',
         height: '100%',
-        overflow: 'auto',
-        padding: '18px 20px',
+        overflow: 'hidden',
         background: 'var(--wks-bg-base)',
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 11, marginBottom: 12 }}>
-        <div style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--wks-text-primary)' }}>
-          Usage &amp; cost
-        </div>
-        <div
-          style={{
-            fontSize: '0.72rem',
-            color: 'var(--wks-text-secondary)',
-            fontVariantNumeric: 'tabular-nums',
-          }}
-        >
-          {range.caption} · {provider === 'all' ? 'all agents' : providerLabel(provider)}
-        </div>
-        <div style={{ flex: 1 }} />
-        <div
-          style={{
-            display: 'flex',
-            alignSelf: 'center',
-            background: 'var(--wks-bg-surface)',
-            border: '1px solid var(--wks-border-subtle)',
-            borderRadius: 'var(--wks-radius-md)',
-            padding: 3,
-          }}
-        >
-          {RANGES.map((r) => (
-            <SegBtn key={r.id} active={rangeId === r.id} onClick={() => pickRange(r.id)}>
-              {r.label}
-            </SegBtn>
-          ))}
-        </div>
-        <button
-          onClick={refresh}
-          style={{ ...refreshBtn, alignSelf: 'center', marginLeft: 0 }}
-          title="Refresh"
-        >
-          ↻
-        </button>
-      </div>
+      {/* Soft accent glow behind the hero — same decoration as the spawn
+          dialog and Overview, fixed while the content scrolls beneath it. */}
+      <div
+        aria-hidden
+        style={{
+          position: 'absolute',
+          top: '-22%',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          width: 720,
+          height: 720,
+          borderRadius: '50%',
+          background:
+            'radial-gradient(circle, color-mix(in srgb, var(--wks-accent) 8%, transparent) 0%, transparent 65%)',
+          pointerEvents: 'none',
+        }}
+      />
 
-      {/* Provider filter — scope every figure to one backend, or fold them all
-          together. The "By provider" card below always shows the full split. */}
-      <div style={{ display: 'flex', gap: 6, marginBottom: 18, flexWrap: 'wrap' }}>
-        {PROVIDER_FILTERS.map((p) => {
-          const active = provider === p.value;
-          return (
-            <button
-              key={p.value}
-              onClick={() => pickProvider(p.value)}
+      <div style={{ position: 'relative', height: '100%', overflowY: 'auto' }}>
+        <div
+          style={{
+            maxWidth: 860,
+            margin: '0 auto',
+            padding: '44px 28px 40px',
+            boxSizing: 'border-box',
+            animation: 'wks-fade-in 0.25s ease-out',
+          }}
+        >
+          {/* ── Hero ────────────────────────────────────────────────────── */}
+          <div style={{ textAlign: 'center', marginBottom: 24 }}>
+            <div
               style={{
+                width: 64,
+                height: 64,
+                margin: '0 auto',
+                borderRadius: '50%',
                 display: 'flex',
                 alignItems: 'center',
-                gap: 6,
-                padding: '5px 11px',
-                borderRadius: 'var(--wks-radius-pill)',
-                cursor: 'pointer',
-                fontFamily: 'inherit',
-                fontSize: '0.7rem',
-                fontWeight: 600,
-                border: `1px solid ${active ? 'var(--wks-accent)' : 'var(--wks-border-subtle)'}`,
-                background: active
-                  ? 'color-mix(in srgb, var(--wks-accent) 16%, transparent)'
-                  : 'var(--wks-bg-surface)',
-                color: active ? 'var(--wks-text-primary)' : 'var(--wks-text-secondary)',
+                justifyContent: 'center',
+                border: '1px solid var(--wks-border-input)',
+                background: 'color-mix(in srgb, var(--wks-accent) 5%, transparent)',
+                color: 'var(--wks-accent-text, var(--wks-text-primary))',
               }}
             >
-              {p.value !== 'all' && (
-                <AgentLogo provider={p.value} size={13} style={{ flex: 'none' }} />
-              )}
-              {p.label}
-            </button>
-          );
-        })}
-      </div>
+              <BarChart3 size={26} strokeWidth={1.7} />
+            </div>
+            <div
+              style={{
+                marginTop: 16,
+                fontSize: '1.05rem',
+                fontWeight: 650,
+                letterSpacing: '-0.01em',
+                color: 'var(--wks-text-primary)',
+              }}
+            >
+              Usage &amp; cost
+            </div>
+            <div
+              style={{
+                marginTop: 6,
+                fontSize: '0.72rem',
+                color: 'var(--wks-text-muted)',
+                fontVariantNumeric: 'tabular-nums',
+                display: 'flex',
+                justifyContent: 'center',
+                alignItems: 'center',
+                gap: 7,
+                flexWrap: 'wrap',
+              }}
+            >
+              <span>{range.caption}</span>
+              <span style={{ color: 'var(--wks-text-disabled)' }}>·</span>
+              <span>{provider === 'all' ? 'all agents' : providerLabel(provider)}</span>
+            </div>
+          </div>
 
-      {/* Totals */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
-          gap: 12,
-          marginBottom: 14,
-        }}
-      >
-        <Stat label="Sessions" value={String(t?.sessions ?? 0)} />
-        <Stat
-          label="Total cost"
-          value={fmtUSD(t?.costUSD ?? 0)}
-          color="var(--wks-accent)"
-          sub={`${fmtUSD(weekSpend)} this week`}
-        />
-        <Stat label="Tokens" value={fmtTokens((t?.inputTokens ?? 0) + (t?.outputTokens ?? 0))} />
-        <Stat label="Tool calls" value={fmtTokens(t?.toolCalls ?? 0)} />
-        <Stat label="Workflow runs" value={String(t?.workflowRuns ?? 0)} />
-        <Stat label="Active time" value={fmtDuration(t?.durationMs ?? 0)} />
-      </div>
-
-      {/* Daily spend + provider split */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'minmax(280px, 1.7fr) minmax(220px, 1fr)',
-          gap: 12,
-          marginBottom: 14,
-        }}
-      >
-        <ChartCard title="Daily spend" caption={`${fmtUSD(periodSpend)} this period`}>
-          <CostBars data={byDay} />
-        </ChartCard>
-        <ChartCard title="By provider" caption="all backends">
-          <ProviderShare rows={summary?.byProvider ?? []} active={provider} onPick={pickProvider} />
-        </ChartCard>
-      </div>
-
-      <ChartCard title="By model" style={{ marginBottom: 14 }}>
-        <ModelShare rows={summary?.byModel ?? []} />
-      </ChartCard>
-
-      <SectionTitle>Sessions</SectionTitle>
-      {recent.length === 0 ? (
-        <Empty />
-      ) : (
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.7rem' }}>
-          <thead>
-            <tr style={{ color: 'var(--wks-text-faint)', textAlign: 'left' }}>
-              <th style={th}>Project</th>
-              <th style={th}>Model</th>
-              <th style={thNum}>Tokens</th>
-              <th style={thNum}>Cost</th>
-              <th style={thNum}>Tools</th>
-              <th style={thNum}>Duration</th>
-              <th style={th}>When</th>
-            </tr>
-          </thead>
-          <tbody>
-            {recent.map((r) => (
-              <tr key={r.sessionId} style={{ borderTop: '1px solid var(--wks-border-subtle)' }}>
-                <td
-                  style={{ ...td, color: 'var(--wks-text-primary)', fontWeight: 500 }}
-                  title={r.cwd}
-                >
-                  <span
+          {/* ── Controls: provider filter · time range · refresh ─────────── */}
+          {/* Provider pills scope every figure to one backend, or fold them all
+              together. The "By provider" card below always shows the full split. */}
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              gap: 12,
+              flexWrap: 'wrap',
+              marginBottom: 26,
+            }}
+          >
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {PROVIDER_FILTERS.map((p) => {
+                const active = provider === p.value;
+                return (
+                  <button
+                    key={p.value}
+                    onClick={() => pickProvider(p.value)}
                     style={{
-                      display: 'inline-flex',
+                      display: 'flex',
                       alignItems: 'center',
                       gap: 6,
-                      verticalAlign: 'middle',
+                      padding: '5px 11px',
+                      borderRadius: 'var(--wks-radius-pill)',
+                      cursor: 'pointer',
+                      fontFamily: 'inherit',
+                      fontSize: '0.7rem',
+                      fontWeight: 600,
+                      border: `1px solid ${active ? 'var(--wks-accent)' : 'var(--wks-border-subtle)'}`,
+                      background: active
+                        ? 'color-mix(in srgb, var(--wks-accent) 16%, transparent)'
+                        : 'var(--wks-bg-surface)',
+                      color: active ? 'var(--wks-text-primary)' : 'var(--wks-text-secondary)',
                     }}
                   >
-                    <AgentLogo
-                      provider={(r.provider || 'claude') as AgentProvider}
-                      size={12}
-                      style={{ flex: 'none', color: 'var(--wks-text-faint)' }}
-                    />
-                    {r.agentName || basename(r.cwd)}
-                  </span>
-                  {r.status === 'active' && (
-                    <span
-                      style={{
-                        marginLeft: 6,
-                        fontSize: '0.55rem',
-                        color: 'var(--wks-success, #4ade80)',
-                      }}
+                    {p.value !== 'all' && (
+                      <AgentLogo provider={p.value} size={13} style={{ flex: 'none' }} />
+                    )}
+                    {p.label}
+                  </button>
+                );
+              })}
+            </div>
+            <div
+              style={{
+                display: 'flex',
+                background: 'var(--wks-bg-surface)',
+                border: '1px solid var(--wks-border-subtle)',
+                borderRadius: 'var(--wks-radius-md)',
+                padding: 3,
+              }}
+            >
+              {RANGES.map((r) => (
+                <SegBtn key={r.id} active={rangeId === r.id} onClick={() => pickRange(r.id)}>
+                  {r.label}
+                </SegBtn>
+              ))}
+            </div>
+            <button onClick={refresh} style={{ ...refreshBtn, marginLeft: 0 }} title="Refresh">
+              ↻
+            </button>
+          </div>
+
+          {/* Totals */}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+              gap: 12,
+              marginBottom: 14,
+            }}
+          >
+            <Stat label="Sessions" value={String(t?.sessions ?? 0)} />
+            <Stat
+              label="Total cost"
+              value={fmtUSD(t?.costUSD ?? 0)}
+              color="var(--wks-accent)"
+              sub={`${fmtUSD(weekSpend)} this week`}
+            />
+            <Stat
+              label="Tokens"
+              value={fmtTokens((t?.inputTokens ?? 0) + (t?.outputTokens ?? 0))}
+            />
+            <Stat label="Tool calls" value={fmtTokens(t?.toolCalls ?? 0)} />
+            <Stat label="Workflow runs" value={String(t?.workflowRuns ?? 0)} />
+            <Stat label="Active time" value={fmtDuration(t?.durationMs ?? 0)} />
+          </div>
+
+          {/* Daily spend + provider split */}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'minmax(280px, 1.7fr) minmax(220px, 1fr)',
+              gap: 12,
+              marginBottom: 14,
+            }}
+          >
+            <ChartCard title="Daily spend" caption={`${fmtUSD(periodSpend)} this period`}>
+              <CostBars data={byDay} />
+            </ChartCard>
+            <ChartCard title="By provider" caption="all backends">
+              <ProviderShare
+                rows={summary?.byProvider ?? []}
+                active={provider}
+                onPick={pickProvider}
+              />
+            </ChartCard>
+          </div>
+
+          <ChartCard title="By model" style={{ marginBottom: 14 }}>
+            <ModelShare rows={summary?.byModel ?? []} />
+          </ChartCard>
+
+          <SectionTitle>Sessions</SectionTitle>
+          {recent.length === 0 ? (
+            <Empty />
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.7rem' }}>
+              <thead>
+                <tr style={{ color: 'var(--wks-text-faint)', textAlign: 'left' }}>
+                  <th style={th}>Project</th>
+                  <th style={th}>Model</th>
+                  <th style={thNum}>Tokens</th>
+                  <th style={thNum}>Cost</th>
+                  <th style={thNum}>Tools</th>
+                  <th style={thNum}>Duration</th>
+                  <th style={th}>When</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recent.map((r) => (
+                  <tr key={r.sessionId} style={{ borderTop: '1px solid var(--wks-border-subtle)' }}>
+                    <td
+                      style={{ ...td, color: 'var(--wks-text-primary)', fontWeight: 500 }}
+                      title={r.cwd}
                     >
-                      ● live
-                    </span>
-                  )}
-                </td>
-                <td style={{ ...td, color: 'var(--wks-text-secondary)' }}>{shortModel(r.model)}</td>
-                <td style={tdNum}>{fmtTokens(r.inputTokens + r.outputTokens)}</td>
-                <td style={{ ...tdNum, color: 'var(--wks-accent)' }}>{fmtUSD(r.costUSD)}</td>
-                <td style={tdNum}>{r.toolCalls}</td>
-                <td style={tdNum}>{fmtDuration(r.durationMs)}</td>
-                <td style={{ ...td, color: 'var(--wks-text-faint)' }}>
-                  {r.startedAt ? new Date(r.startedAt).toLocaleString() : ''}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+                      <span
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          verticalAlign: 'middle',
+                        }}
+                      >
+                        <AgentLogo
+                          provider={(r.provider || 'claude') as AgentProvider}
+                          size={12}
+                          style={{ flex: 'none', color: 'var(--wks-text-faint)' }}
+                        />
+                        {r.agentName || basename(r.cwd)}
+                      </span>
+                      {r.status === 'active' && (
+                        <span
+                          style={{
+                            marginLeft: 6,
+                            fontSize: '0.55rem',
+                            color: 'var(--wks-success, #4ade80)',
+                          }}
+                        >
+                          ● live
+                        </span>
+                      )}
+                    </td>
+                    <td style={{ ...td, color: 'var(--wks-text-secondary)' }}>
+                      {shortModel(r.model)}
+                    </td>
+                    <td style={tdNum}>{fmtTokens(r.inputTokens + r.outputTokens)}</td>
+                    <td style={{ ...tdNum, color: 'var(--wks-accent)' }}>{fmtUSD(r.costUSD)}</td>
+                    <td style={tdNum}>{r.toolCalls}</td>
+                    <td style={tdNum}>{fmtDuration(r.durationMs)}</td>
+                    <td style={{ ...td, color: 'var(--wks-text-faint)' }}>
+                      {r.startedAt ? new Date(r.startedAt).toLocaleString() : ''}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
     </div>
   );
 };

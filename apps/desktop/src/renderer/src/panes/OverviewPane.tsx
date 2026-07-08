@@ -74,10 +74,19 @@ function fmtReset(epochSecs: number | undefined): string {
   return `resets in ${Math.round(h / 24)}d`;
 }
 
+/** Freshest rate-limit statusLine seen this app run. The windows are
+ *  account-global but ride on per-session statusLines, and the store evicts a
+ *  session ~30s after it ends — so a refetch with no live Claude session would
+ *  blank the card even though the account data is still valid. Module-level so
+ *  it also survives pane remounts. */
+let lastRateLimit: { sl: NonNullable<Snap['statusLine']>; ts: number } | null = null;
+
 /**
  * The 5h/7d rate-limit windows are account-global (identical across every
  * session), so we surface them once. Pick the freshest statusLine that carries
- * them — newest `receivedAt` wins.
+ * them — newest `receivedAt` wins — and fall back to the last reading seen
+ * when the current snapshots carry none (the reset countdowns stay honest:
+ * they render from absolute epochs).
  */
 const RateLimitCard: React.FC<{ snaps: Snap[] }> = ({ snaps }) => {
   let best: NonNullable<Snap['statusLine']> | null = null;
@@ -91,6 +100,8 @@ const RateLimitCard: React.FC<{ snaps: Snap[] }> = ({ snaps }) => {
       best = sl;
     }
   }
+  if (best && bestTs >= (lastRateLimit?.ts ?? -1)) lastRateLimit = { sl: best, ts: bestTs };
+  else if (!best && lastRateLimit) best = lastRateLimit.sl;
   if (!best) return null;
 
   const Row: React.FC<{ label: string; pct?: number; reset?: number }> = ({ label, pct, reset }) =>
@@ -154,7 +165,7 @@ const RateLimitCard: React.FC<{ snaps: Snap[] }> = ({ snaps }) => {
     >
       <div
         style={{
-          fontSize: '0.6rem',
+          fontSize: '0.58rem',
           color: 'var(--wks-text-faint)',
           textTransform: 'uppercase',
           letterSpacing: '0.08em',
@@ -202,7 +213,7 @@ const Stat: React.FC<{
   >
     <div
       style={{
-        fontSize: '0.6rem',
+        fontSize: '0.58rem',
         color: 'var(--wks-text-faint)',
         textTransform: 'uppercase',
         letterSpacing: '0.08em',
@@ -250,14 +261,18 @@ const DirRow: React.FC<{
       alignItems: 'center',
       gap: 10,
       padding: '7px 10px',
-      borderRadius: 7,
+      borderRadius: 9,
+      border: '1px solid transparent',
       cursor: 'pointer',
+      transition: 'background 0.12s, border-color 0.12s',
     }}
     onMouseEnter={(e) => {
       (e.currentTarget as HTMLElement).style.background = 'var(--wks-bg-selected)';
+      (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-border-subtle)';
     }}
     onMouseLeave={(e) => {
       (e.currentTarget as HTMLElement).style.background = 'transparent';
+      (e.currentTarget as HTMLElement).style.borderColor = 'transparent';
     }}
   >
     <span
@@ -343,8 +358,15 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
   useEffect(() => {
     refresh();
     const off = window.electronAPI.onClaudeSessionUpdate?.(() => throttledRefresh());
+    // Idle heartbeat: the update feed goes quiet when no agent is emitting
+    // events, freezing everything time- or externally-driven — the "resets in
+    // Xm" countdown, rate-limit bars fed by sessions running outside
+    // workspacer, and ended sessions the store evicts silently. A slow clock
+    // keeps the dashboard honest between events.
+    const tick = setInterval(refresh, 30_000);
     return () => {
       off?.();
+      clearInterval(tick);
       if (pendingRef.current !== null) {
         clearTimeout(pendingRef.current);
         pendingRef.current = null;
@@ -393,219 +415,279 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
   return (
     <div
       style={{
+        position: 'relative',
         height: '100%',
-        overflow: 'auto',
+        overflow: 'hidden',
         background: 'var(--wks-bg-base)',
         color: 'var(--wks-text-primary)',
-        padding: 18,
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 11, marginBottom: 16 }}>
+      {/* Soft accent glow behind the hero — same decoration as the spawn
+          dialog, fixed while the content scrolls beneath it. */}
+      <div
+        aria-hidden
+        style={{
+          position: 'absolute',
+          top: '-22%',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          width: 720,
+          height: 720,
+          borderRadius: '50%',
+          background:
+            'radial-gradient(circle, color-mix(in srgb, var(--wks-accent) 8%, transparent) 0%, transparent 65%)',
+          pointerEvents: 'none',
+        }}
+      />
+
+      <div style={{ position: 'relative', height: '100%', overflowY: 'auto' }}>
         <div
           style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            fontSize: '1.05rem',
-            fontWeight: 700,
+            maxWidth: 860,
+            margin: '0 auto',
+            padding: '44px 28px 40px',
+            boxSizing: 'border-box',
+            animation: 'wks-fade-in 0.25s ease-out',
           }}
         >
-          <Home size={18} strokeWidth={1.9} /> Workspace
-        </div>
-        <div
-          style={{
-            fontSize: '0.72rem',
-            color: 'var(--wks-text-secondary)',
-            fontVariantNumeric: 'tabular-nums',
-          }}
-        >
-          {agents} agent{agents === 1 ? '' : 's'} · {working} working · {needsYou} need
-          {needsYou === 1 ? 's' : ''} you
-        </div>
-        <button
-          onClick={browse}
-          style={{
-            marginLeft: 'auto',
-            fontSize: '0.72rem',
-            fontFamily: 'inherit',
-            cursor: 'pointer',
-            background: 'var(--wks-accent)',
-            color: 'var(--wks-text-on-accent, #fff)',
-            border: 'none',
-            borderRadius: 6,
-            padding: '6px 12px',
-            fontWeight: 600,
-          }}
-        >
-          ＋ New agent…
-        </button>
-      </div>
+          {/* ── Hero: the workspace at a glance ─────────────────────────── */}
+          <div style={{ textAlign: 'center', marginBottom: 30 }}>
+            <div
+              style={{
+                width: 64,
+                height: 64,
+                margin: '0 auto',
+                borderRadius: '50%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                border: '1px solid var(--wks-border-input)',
+                background: 'color-mix(in srgb, var(--wks-accent) 5%, transparent)',
+                color: 'var(--wks-accent-text, var(--wks-text-primary))',
+              }}
+            >
+              <Home size={26} strokeWidth={1.7} />
+            </div>
+            <div
+              style={{
+                marginTop: 16,
+                fontSize: '1.05rem',
+                fontWeight: 650,
+                letterSpacing: '-0.01em',
+                color: 'var(--wks-text-primary)',
+              }}
+            >
+              Workspace
+            </div>
+            <div
+              style={{
+                marginTop: 6,
+                fontSize: '0.72rem',
+                color: 'var(--wks-text-muted)',
+                fontVariantNumeric: 'tabular-nums',
+                display: 'flex',
+                justifyContent: 'center',
+                alignItems: 'center',
+                gap: 7,
+                flexWrap: 'wrap',
+              }}
+            >
+              <span>
+                {agents} agent{agents === 1 ? '' : 's'}
+              </span>
+              <span style={{ color: 'var(--wks-text-disabled)' }}>·</span>
+              <span>{working} working</span>
+              <span style={{ color: 'var(--wks-text-disabled)' }}>·</span>
+              <span>
+                {needsYou} need{needsYou === 1 ? 's' : ''} you
+              </span>
+            </div>
+            <button
+              onClick={browse}
+              style={{
+                marginTop: 20,
+                fontSize: '0.75rem',
+                fontFamily: 'inherit',
+                cursor: 'pointer',
+                background: 'var(--wks-accent)',
+                color: 'var(--wks-text-on-accent, #fff)',
+                border: 'none',
+                borderRadius: 8,
+                padding: '7px 20px',
+                fontWeight: 600,
+              }}
+            >
+              ＋ New agent…
+            </button>
+          </div>
 
-      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 22 }}>
-        <Stat
-          label="Agents"
-          value={String(agents)}
-          sub={working ? `${working} working` : 'all idle'}
-          onClick={() => setViewLevel('fleet')}
-          clickTitle="Open the Fleet deck"
-        />
-        <Stat
-          label="Working"
-          value={String(working)}
-          color={working ? 'var(--wks-busy, var(--wks-accent, #4a9eff))' : undefined}
-          onClick={() => setViewLevel('fleet')}
-          clickTitle="Open the Fleet deck"
-        />
-        <Stat
-          label="Need you"
-          value={String(needsYou)}
-          color={needsYou ? 'var(--wks-warning, #e0a000)' : undefined}
-          onClick={openInbox}
-          clickTitle="Open the Inbox"
-        />
-        <Stat label="Total cost" value={fmtUSD(totalCost)} sub="this session" />
-        {/* Account-wide 5h/7d rate-limit windows (scanned across all sessions,
-            not just workspacer's — they're global to the account). */}
-        <RateLimitCard snaps={snaps} />
-      </div>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 26 }}>
+            <Stat
+              label="Agents"
+              value={String(agents)}
+              sub={working ? `${working} working` : 'all idle'}
+              onClick={() => setViewLevel('fleet')}
+              clickTitle="Open the Fleet deck"
+            />
+            <Stat
+              label="Working"
+              value={String(working)}
+              color={working ? 'var(--wks-busy, var(--wks-accent, #4a9eff))' : undefined}
+              onClick={() => setViewLevel('fleet')}
+              clickTitle="Open the Fleet deck"
+            />
+            <Stat
+              label="Need you"
+              value={String(needsYou)}
+              color={needsYou ? 'var(--wks-warning, #e0a000)' : undefined}
+              onClick={openInbox}
+              clickTitle="Open the Inbox"
+            />
+            <Stat label="Total cost" value={fmtUSD(totalCost)} sub="this session" />
+            {/* Account-wide 5h/7d rate-limit windows (scanned across all sessions,
+                not just workspacer's — they're global to the account). */}
+            <RateLimitCard snaps={snaps} />
+          </div>
 
-      {plugins.length > 0 && (
-        <Section title="Plugins">
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
-              gap: 12,
-              padding: '0 2px',
-            }}
-          >
-            {plugins.map((p) => {
-              const hasServer = !!p.server;
-              const state = hasServer ? (pluginStates[p.id] ?? 'starting') : 'no server';
-              const color = pluginStateColor(hasServer ? pluginStates[p.id] : undefined);
-              const glyph = p.panes?.[0]?.icon || (p.name || p.id).charAt(0).toUpperCase();
-              return (
-                <div
-                  key={p.id}
-                  title={`${p.name || p.id}${hasServer ? ` — ${state}` : ''}`}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 12,
-                    padding: '13px 14px',
-                    background: 'var(--wks-bg-raised)',
-                    border: '1px solid var(--wks-border-subtle)',
-                    borderRadius: 'var(--wks-radius-md, 13px)',
-                  }}
-                >
-                  <span
-                    style={{
-                      width: 34,
-                      height: 34,
-                      borderRadius: 9,
-                      flexShrink: 0,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      background: 'var(--wks-bg-base)',
-                      border: '1px solid var(--wks-border-subtle)',
-                      fontSize: '0.95rem',
-                      color: 'var(--wks-accent)',
-                    }}
-                  >
-                    {glyph}
-                  </span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
+          {plugins.length > 0 && (
+            <Section title="Plugins">
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+                  gap: 12,
+                  padding: '0 2px',
+                }}
+              >
+                {plugins.map((p) => {
+                  const hasServer = !!p.server;
+                  const state = hasServer ? (pluginStates[p.id] ?? 'starting') : 'no server';
+                  const color = pluginStateColor(hasServer ? pluginStates[p.id] : undefined);
+                  const glyph = p.panes?.[0]?.icon || (p.name || p.id).charAt(0).toUpperCase();
+                  return (
                     <div
+                      key={p.id}
+                      title={`${p.name || p.id}${hasServer ? ` — ${state}` : ''}`}
                       style={{
-                        fontSize: '0.82rem',
-                        fontWeight: 600,
-                        color: 'var(--wks-text-primary)',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 12,
+                        padding: '13px 14px',
+                        background: 'var(--wks-bg-raised)',
+                        border: '1px solid var(--wks-border-subtle)',
+                        borderRadius: 'var(--wks-radius-md, 13px)',
                       }}
                     >
-                      {p.name || p.id}
+                      <span
+                        style={{
+                          width: 34,
+                          height: 34,
+                          borderRadius: 9,
+                          flexShrink: 0,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          background: 'var(--wks-bg-base)',
+                          border: '1px solid var(--wks-border-subtle)',
+                          fontSize: '0.95rem',
+                          color: 'var(--wks-accent)',
+                        }}
+                      >
+                        {glyph}
+                      </span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div
+                          style={{
+                            fontSize: '0.82rem',
+                            fontWeight: 600,
+                            color: 'var(--wks-text-primary)',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {p.name || p.id}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: '0.62rem',
+                            color: 'var(--wks-text-faint)',
+                            marginTop: 1,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {hasServer
+                            ? state
+                            : `${p.panes?.length ?? 0} pane${(p.panes?.length ?? 0) === 1 ? '' : 's'}`}
+                        </div>
+                      </div>
+                      {hasServer && (
+                        <span
+                          style={{
+                            width: 8,
+                            height: 8,
+                            borderRadius: 'var(--wks-radius-pill)',
+                            flexShrink: 0,
+                            background: color,
+                          }}
+                        />
+                      )}
                     </div>
-                    <div
-                      style={{
-                        fontSize: '0.62rem',
-                        color: 'var(--wks-text-faint)',
-                        marginTop: 1,
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {hasServer
-                        ? state
-                        : `${p.panes?.length ?? 0} pane${(p.panes?.length ?? 0) === 1 ? '' : 's'}`}
-                    </div>
-                  </div>
-                  {hasServer && (
-                    <span
-                      style={{
-                        width: 8,
-                        height: 8,
-                        borderRadius: 'var(--wks-radius-pill)',
-                        flexShrink: 0,
-                        background: color,
-                      }}
-                    />
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </Section>
-      )}
+                  );
+                })}
+              </div>
+            </Section>
+          )}
 
-      {favourites.length > 0 && (
-        <Section title="Favourites">
-          {favourites.map((d) => (
-            <DirRow
-              key={d}
-              dir={d}
-              fav
-              onSpawn={() => spawnIn(d)}
-              onToggleFav={() => toggleFav(d)}
-            />
-          ))}
-        </Section>
-      )}
+          {favourites.length > 0 && (
+            <Section title="Favourites">
+              {favourites.map((d) => (
+                <DirRow
+                  key={d}
+                  dir={d}
+                  fav
+                  onSpawn={() => spawnIn(d)}
+                  onToggleFav={() => toggleFav(d)}
+                />
+              ))}
+            </Section>
+          )}
 
-      <Section title="Recent directories">
-        {recentOnly.length === 0 ? (
-          <div style={{ padding: '10px', fontSize: '0.72rem', color: 'var(--wks-text-faint)' }}>
-            No recent directories yet. Spawn an agent and it'll show up here for quick relaunch.
-          </div>
-        ) : (
-          recentOnly.map((d) => (
-            <DirRow
-              key={d}
-              dir={d}
-              fav={false}
-              onSpawn={() => spawnIn(d)}
-              onToggleFav={() => toggleFav(d)}
-            />
-          ))
-        )}
-      </Section>
+          <Section title="Recent directories">
+            {recentOnly.length === 0 ? (
+              <div style={{ padding: '10px', fontSize: '0.72rem', color: 'var(--wks-text-faint)' }}>
+                No recent directories yet. Spawn an agent and it'll show up here for quick relaunch.
+              </div>
+            ) : (
+              recentOnly.map((d) => (
+                <DirRow
+                  key={d}
+                  dir={d}
+                  fav={false}
+                  onSpawn={() => spawnIn(d)}
+                  onToggleFav={() => toggleFav(d)}
+                />
+              ))
+            )}
+          </Section>
+        </div>
+      </div>
     </div>
   );
 };
 
 const Section: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
-  <div style={{ marginBottom: 18 }}>
+  <div style={{ marginBottom: 24 }}>
     <div
       style={{
         fontSize: '0.58rem',
-        color: 'var(--wks-text-disabled)',
+        color: 'var(--wks-text-faint)',
         fontWeight: 600,
         textTransform: 'uppercase',
-        letterSpacing: '0.05em',
-        padding: '0 10px 4px',
+        letterSpacing: '0.08em',
+        padding: '0 10px 6px',
       }}
     >
       {title}
