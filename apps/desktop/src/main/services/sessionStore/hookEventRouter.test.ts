@@ -157,3 +157,29 @@ describe('applyHookEvent — stream sessions: hooks are enrichment-only', () => 
     expect(s.status).toBe('active');
   });
 });
+
+describe('applyHookEvent — PostToolUse completion + failure', () => {
+  it('marks a tool complete on a clean PostToolUse', () => {
+    const s = mkSession('pty');
+    applyHookEvent(s, { hook_event_name: 'PreToolUse', tool_use_id: 'tu1', tool_name: 'Bash' });
+    applyHookEvent(s, {
+      hook_event_name: 'PostToolUse',
+      tool_use_id: 'tu1',
+      tool_response: { stdout: 'ok' },
+    });
+    expect(s.activeToolCalls).toHaveLength(0);
+    expect(s.completedToolCalls[0]?.status).toBe('complete');
+    expect(s.completedToolCalls[0]?.completedAt).toBeDefined();
+  });
+
+  it('marks a tool failed when tool_response is an error', () => {
+    const s = mkSession('pty');
+    applyHookEvent(s, { hook_event_name: 'PreToolUse', tool_use_id: 'tu2', tool_name: 'Bash' });
+    applyHookEvent(s, {
+      hook_event_name: 'PostToolUse',
+      tool_use_id: 'tu2',
+      tool_response: { is_error: true, stderr: 'boom' },
+    });
+    expect(s.completedToolCalls[0]?.status).toBe('failed');
+  });
+});

@@ -41,6 +41,7 @@ const HOOK_EVENTS: &[&str] = {
         HookEventKind::SessionEnd.as_str(),
         HookEventKind::UserPromptSubmit.as_str(),
         HookEventKind::PreToolUse.as_str(),
+        HookEventKind::PostToolUse.as_str(),
         HookEventKind::Notification.as_str(),
         HookEventKind::Stop.as_str(),
         HookEventKind::SubagentStart.as_str(),

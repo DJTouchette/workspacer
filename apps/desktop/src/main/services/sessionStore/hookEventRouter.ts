@@ -18,6 +18,17 @@ function capInPlace<T>(arr: T[], max: number): void {
   if (arr.length > max) arr.splice(0, arr.length - max);
 }
 
+/** Whether a PostToolUse `tool_response` payload signals a tool failure.
+ *  Claude wraps errors as `{is_error:true}`; some tools return a plain string. */
+function toolResponseIsError(resp: unknown): boolean {
+  if (!resp) return false;
+  if (typeof resp === 'object') {
+    const r = resp as { is_error?: unknown; isError?: unknown };
+    return r.is_error === true || r.isError === true;
+  }
+  return false;
+}
+
 export function applyHookEvent(session: ClaudeSessionState, event: any): void {
   const hookName: string = event.hook_event_name ?? event.type ?? '';
 
@@ -132,7 +143,11 @@ export function applyHookEvent(session: ClaudeSessionState, event: any): void {
       session.pendingApproval = null;
       const completed = session.activeToolCalls.find((t) => t.id === event.tool_use_id);
       if (completed) {
-        completed.status = 'complete';
+        // Claude's real PostToolUse fires on success AND failure; the tool's
+        // error shows up in `tool_response` (either `{is_error:true}` or a
+        // string that reads as an error). Mark failed so the trace work-log
+        // shows it as such rather than a normal completion.
+        completed.status = toolResponseIsError(event.tool_response) ? 'failed' : 'complete';
         completed.completedAt = Date.now();
         session.activeToolCalls = session.activeToolCalls.filter((t) => t.id !== event.tool_use_id);
         session.completedToolCalls.push(completed);

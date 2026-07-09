@@ -57,6 +57,7 @@ impl HookEventKind {
         Self::SessionEnd,
         Self::UserPromptSubmit,
         Self::PreToolUse,
+        Self::PostToolUse,
         Self::Notification,
         Self::Stop,
         Self::SubagentStart,
