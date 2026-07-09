@@ -141,9 +141,27 @@ export async function setTailscaleServe(port: number, enable: boolean): Promise<
 
   const err = (r.stderr || 'tailscale serve failed').trim();
   const lower = err.toLowerCase();
-  // Classify the two failures worth guiding the user through.
+  // When a tailnet-level feature is off, Tailscale prints a node-specific opt-in
+  // link (e.g. https://login.tailscale.com/f/serve?node=…). Pull it out so the
+  // hint is one click instead of a hunt through the admin console.
+  const optInUrl = err.match(/https:\/\/login\.tailscale\.com\/\S+/)?.[0];
+  // Classify the failures worth guiding the user through. Order matters: the
+  // "not enabled on your tailnet" messages embed an https:// URL, so they must be
+  // matched before the generic https/cert branch, which would otherwise swallow
+  // them and point at the wrong admin page.
   if (lower.includes('operator') || lower.includes('access denied') || lower.includes('permission')) {
     return { ok: false, error: err, hint: OPERATOR_HINT };
+  }
+  if (lower.includes('not enabled')) {
+    // Serve (and/or HTTPS certs) must be turned on for the tailnet first — a
+    // one-time admin opt-in, not something we can do from here.
+    return {
+      ok: false,
+      error: err,
+      hint: optInUrl
+        ? `Enable this once for your tailnet: ${optInUrl}`
+        : 'Enable HTTPS + Serve for your tailnet in the Tailscale admin console (DNS → HTTPS Certificates, then allow Serve).',
+    };
   }
   if (lower.includes('https') || lower.includes('cert')) {
     return {

@@ -125,6 +125,7 @@ export const IPC = {
   FILE_CHANGED: 'file:changed', // push (main → renderer)
   FILE_OPEN_EXTERNAL: 'file:open-external', // invoke: open file:// URL in the OS default app/browser
   FILE_SHOW_IN_FOLDER: 'file:show-in-folder', // invoke: reveal in the OS file manager
+  SHELL_OPEN_EXTERNAL: 'shell:open-external', // invoke: open an http(s) URL in the OS default browser
 
   // ── Project search (editor search sidebar) ──
   SEARCH_PROJECT: 'search:project',

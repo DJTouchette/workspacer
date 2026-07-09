@@ -283,6 +283,8 @@ export interface ElectronAPI {
   fileOpenExternal: (filePath: string) => Promise<{ ok: boolean; error?: string }>;
   /** Reveal a file in the OS file manager. No-ops ({ok:false}) on web. */
   fileShowInFolder: (filePath: string) => Promise<{ ok: boolean; error?: string }>;
+  /** Open an http(s) URL in the OS default browser. Scheme-checked in main. */
+  openExternalUrl?: (url: string) => Promise<{ ok: boolean; error?: string }>;
 
   // Watch a single file for external changes; returns an unsubscribe function.
   watchFile: (

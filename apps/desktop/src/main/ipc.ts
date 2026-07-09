@@ -749,6 +749,26 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
   });
+  // Open an http(s) URL in the OS default browser (e.g. a Tailscale opt-in link
+  // from the Remote Share dialog). Scheme-checked so this can't be coaxed into
+  // launching file:// or arbitrary custom-protocol handlers.
+  ipcMain.handle(IPC.SHELL_OPEN_EXTERNAL, async (_event, url: string) => {
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return { ok: false, error: 'Invalid URL' };
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return { ok: false, error: `Refusing to open ${parsed.protocol} URL` };
+    }
+    try {
+      await shell.openExternal(parsed.toString());
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
   ipcMain.handle(IPC.FILE_SHOW_IN_FOLDER, async (_event, filePath: string) => {
     try {
       await fs.promises.access(filePath);

@@ -255,6 +255,38 @@ function TailscaleNote() {
   );
 }
 
+/** Render text, turning any embedded http(s) URL into a click-to-open link so
+ *  Tailscale's node-specific opt-in URLs are one tap, not a copy-paste chore. */
+function LinkifiedHint({ text }: { text: string }) {
+  const parts = text.split(/(https?:\/\/\S+)/g);
+  return (
+    <>
+      {parts.map((part, i) =>
+        /^https?:\/\//.test(part) ? (
+          <a
+            key={i}
+            href={part}
+            onClick={(e) => {
+              e.preventDefault();
+              window.electronAPI.openExternalUrl?.(part);
+            }}
+            style={{
+              color: 'var(--wks-accent, #4a9eff)',
+              textDecoration: 'underline',
+              cursor: 'pointer',
+              wordBreak: 'break-all',
+            }}
+          >
+            {part}
+          </a>
+        ) : (
+          <React.Fragment key={i}>{part}</React.Fragment>
+        ),
+      )}
+    </>
+  );
+}
+
 /**
  * One-tap HTTPS via `tailscale serve`. A raw http://100.x tailnet URL is
  * encrypted on the wire but is NOT a browser "secure context", so the /m PWA
@@ -345,7 +377,7 @@ function TailscaleHttps({
         <button
           onClick={() => onToggle(!on)}
           disabled={enableDisabled}
-          style={on ? secondaryBtnStyle : primaryBtnStyle(enableDisabled)}
+          style={{ flexShrink: 0, ...(on ? secondaryBtnStyle : compactAccentBtnStyle(enableDisabled)) }}
         >
           {busy ? '…' : on ? 'Turn off' : 'Enable'}
         </button>
@@ -360,7 +392,7 @@ function TailscaleHttps({
             fontFamily: 'var(--wks-font-mono)',
           }}
         >
-          {ts.hint}
+          <LinkifiedHint text={ts.hint} />
         </div>
       )}
       {msg && (
@@ -372,7 +404,7 @@ function TailscaleHttps({
             lineHeight: 1.5,
           }}
         >
-          {msg}
+          <LinkifiedHint text={msg} />
         </div>
       )}
       {on && (
@@ -666,6 +698,22 @@ const primaryBtnStyle = (disabled: boolean): React.CSSProperties => ({
   border: 'none',
   borderRadius: 6,
   padding: '9px 14px',
+});
+
+// Compact accent button for the inline HTTPS row — same footprint as the
+// secondary "Turn off" button so the row doesn't jump between states. (The
+// full-width primaryBtnStyle is for the standalone Start/Stop actions.)
+const compactAccentBtnStyle = (disabled: boolean): React.CSSProperties => ({
+  flexShrink: 0,
+  fontSize: '0.78rem',
+  fontWeight: 600,
+  fontFamily: 'inherit',
+  cursor: disabled ? 'default' : 'pointer',
+  background: disabled ? 'var(--wks-bg-input)' : 'var(--wks-accent, #4a9eff)',
+  color: disabled ? 'var(--wks-text-faint)' : 'var(--wks-text-on-accent, #fff)',
+  border: 'none',
+  borderRadius: 4,
+  padding: '6px 14px',
 });
 
 const dangerBtnStyle = (disabled: boolean): React.CSSProperties => ({
