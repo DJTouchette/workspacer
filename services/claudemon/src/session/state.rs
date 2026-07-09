@@ -230,6 +230,14 @@ pub struct StatusLine {
     /// Unix epoch seconds the monthly overage window resets at.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub monthly_resets_at: Option<i64>,
+    /// Human warning message when a window crosses its warning threshold
+    /// (Claude's `status: allowed_warning`). Cleared when comfortable again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_limit_warning: Option<String>,
+    /// The monthly overage is disabled for lack of credits (Claude's
+    /// `overageDisabledReason: out_of_credits`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overage_out_of_credits: Option<bool>,
     /// When the daemon received this line, so clients can age out stale data.
     #[serde(
         default,
@@ -291,6 +299,10 @@ impl StatusLine {
             monthly_resets_at: monthly
                 .and_then(|m| m.get("resets_at"))
                 .and_then(Value::as_i64),
+            // The interactive statusLine JSON doesn't carry warning/overage
+            // status — those ride the stream `rate_limit_event` only.
+            rate_limit_warning: None,
+            overage_out_of_credits: None,
             received_at: Some(OffsetDateTime::now_utc()),
         }
     }

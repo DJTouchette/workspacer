@@ -46,6 +46,12 @@ pub struct StatusLine {
     /// Monthly overage/credit window used %, 0–100 (Claude stream `overage`).
     #[serde(default)]
     pub monthly_pct: Option<f64>,
+    /// Human warning when a window crosses its threshold (stream only).
+    #[serde(default)]
+    pub rate_limit_warning: Option<String>,
+    /// Monthly overage disabled for lack of credits (stream only).
+    #[serde(default)]
+    pub overage_out_of_credits: Option<bool>,
 }
 
 /// Model / context-% / cost for a session, resolving claudemon's authoritative

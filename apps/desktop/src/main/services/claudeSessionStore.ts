@@ -169,6 +169,10 @@ export interface SessionStatusLine {
    *  the interactive statusLine and providers without a monthly window. */
   monthlyPct?: number;
   monthlyResetsAt?: number;
+  /** Human warning when a window crosses its threshold (stream only). */
+  rateLimitWarning?: string;
+  /** Monthly overage disabled for lack of credits (stream only). */
+  overageOutOfCredits?: boolean;
   receivedAt?: string;
 }
 

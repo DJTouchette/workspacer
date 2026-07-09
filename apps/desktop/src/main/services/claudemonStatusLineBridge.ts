@@ -6,11 +6,52 @@
  * path). Reconnects with exponential backoff if the daemon restarts.
  */
 
+import { Notification } from 'electron';
 import { claudeSessionStore } from './claudeSessionStore';
 import { CLAUDEMON_API_URL } from './claudemonDaemon';
 import { consumeSseStream } from '../lib/sseConsumer';
+import { configService } from './configService';
+import { notifySystem } from './systemNotice';
 
 let abort: AbortController | null = null;
+
+// Rate-limit warnings are account-global but arrive on every session's tick, so
+// we dedup globally by which window is warning — a climbing % on the same window
+// must not re-fire. Cleared when the account is comfortable again so the next
+// episode re-alerts.
+let lastWarnedWindow: string | null = null;
+
+/** Coarse window key ('5h' | '7d' | 'monthly') from a warning message. */
+function windowKeyOf(msg: string): string {
+  if (msg.includes('7-day')) return '7d';
+  if (msg.includes('monthly')) return 'monthly';
+  return '5h';
+}
+
+/** Fire a rate-limit warning once per window-warning episode: an OS
+ *  notification (respecting the master switch + sound) plus an in-app banner. */
+function raiseRateLimitWarning(message: string | undefined): void {
+  if (!message) {
+    lastWarnedWindow = null; // comfortable again → allow the next episode to alert
+    return;
+  }
+  const key = windowKeyOf(message);
+  if (key === lastWarnedWindow) return; // same window still warning — no re-fire
+  lastWarnedWindow = key;
+
+  const cfg = (configService.getConfig() as any).notifications ?? {};
+  const enabled = cfg.enabled !== false;
+  if (enabled && Notification.isSupported()) {
+    new Notification({
+      title: 'Approaching a usage limit',
+      body: message,
+      silent: cfg.sound !== true,
+    }).show();
+  }
+  // The in-app banner always shows (it's the app's own surface, not an OS
+  // notification); a stable key means a later window replaces rather than stacks.
+  notifySystem({ level: 'warn', key: 'rate-limit-warning', title: message });
+}
 
 export async function startClaudemonStatusLineBridge(): Promise<void> {
   // Idempotent: if already running, skip re-starting.
@@ -47,8 +88,11 @@ export async function startClaudemonStatusLineBridge(): Promise<void> {
           sevenDayResetsAt: sl.seven_day_resets_at,
           monthlyPct: sl.monthly_pct,
           monthlyResetsAt: sl.monthly_resets_at,
+          rateLimitWarning: sl.rate_limit_warning,
+          overageOutOfCredits: sl.overage_out_of_credits,
           receivedAt: sl.received_at,
         });
+        raiseRateLimitWarning(sl.rate_limit_warning);
       } catch (err) {
         console.error('[claudemon-statusline] bad frame', err);
       }

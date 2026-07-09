@@ -334,6 +334,15 @@ fn render_detail(f: &mut Frame, area: Rect, app: &App) {
         if let Some(p) = sl.monthly_pct {
             lines.push(kv(t, "Mo", &format!("{p:.0}% used")));
         }
+        if sl.overage_out_of_credits == Some(true) {
+            lines.push(kv(t, "overage", "out of credits"));
+        }
+        if let Some(w) = &sl.rate_limit_warning {
+            lines.push(Line::from(Span::styled(
+                format!("⚠ {w}"),
+                Style::default().fg(t.warn),
+            )));
+        }
     }
     if a.tool_calls > 0 {
         lines.push(kv(t, "tools", &a.tool_calls.to_string()));

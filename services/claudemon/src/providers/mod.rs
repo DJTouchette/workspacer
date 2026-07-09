@@ -195,6 +195,15 @@ pub enum AgentUpdate {
         monthly_pct: Option<f64>,
         monthly_resets_at: Option<i64>,
     },
+    /// Account rate-limit *status* (distinct from the utilization windows above,
+    /// which Claude only sends near a limit). `warning` is a human message when a
+    /// window crosses its warning threshold (`status: allowed_warning`), else
+    /// `None` (which clears a prior warning). `out_of_credits` reflects the
+    /// monthly overage being disabled for lack of credits. Latest-wins.
+    RateLimitStatus {
+        warning: Option<String>,
+        out_of_credits: Option<bool>,
+    },
     /// A session-level error message.
     Error(String),
     /// The agent's current plan / checklist (Codex's `update_plan` / todo list).
@@ -398,6 +407,8 @@ pub struct UsageAcc {
     seven_day_resets_at: Option<i64>,
     monthly_pct: Option<f64>,
     monthly_resets_at: Option<i64>,
+    rate_limit_warning: Option<String>,
+    overage_out_of_credits: Option<bool>,
 }
 
 impl UsageAcc {
@@ -477,6 +488,16 @@ impl UsageAcc {
         }
     }
 
+    /// Fold in a rate-limit *status* reading. Both fields are latest-wins,
+    /// including clearing a warning back to `None` when a later event reports the
+    /// window is comfortable again.
+    fn merge_rate_limit_status(&mut self, warning: Option<String>, out_of_credits: Option<bool>) {
+        self.rate_limit_warning = warning;
+        if out_of_credits.is_some() {
+            self.overage_out_of_credits = out_of_credits;
+        }
+    }
+
     /// Build the `StatusLine` for `SessionStore::apply_status_line` — the same
     /// shape Claude's own statusLine feeds, so the renderer's bottom bar (model
     /// · context meter · tokens · cost) renders identically for every provider.
@@ -506,6 +527,8 @@ impl UsageAcc {
             seven_day_resets_at: self.seven_day_resets_at,
             monthly_pct: self.monthly_pct,
             monthly_resets_at: self.monthly_resets_at,
+            rate_limit_warning: self.rate_limit_warning.clone(),
+            overage_out_of_credits: self.overage_out_of_credits,
             received_at: Some(OffsetDateTime::now_utc()),
         }
     }
@@ -586,6 +609,13 @@ pub fn apply_updates(
                     *monthly_pct,
                     *monthly_resets_at,
                 );
+                usage_changed = true;
+            }
+            AgentUpdate::RateLimitStatus {
+                warning,
+                out_of_credits,
+            } => {
+                acc.merge_rate_limit_status(warning.clone(), *out_of_credits);
                 usage_changed = true;
             }
             AgentUpdate::Error(msg) => {

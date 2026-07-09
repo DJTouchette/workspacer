@@ -151,6 +151,10 @@ export interface SessionStatusLine {
   /** Monthly overage/credit window (Claude stream `overage` type only). */
   monthlyPct?: number;
   monthlyResetsAt?: number;
+  /** Human warning when a window crosses its threshold (stream only). */
+  rateLimitWarning?: string;
+  /** Monthly overage disabled for lack of credits (stream only). */
+  overageOutOfCredits?: boolean;
   receivedAt?: string;
 }
 

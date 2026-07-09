@@ -259,8 +259,8 @@ pub fn translate(value: &Value, totals: &mut StreamTotals) -> Vec<AgentUpdate> {
             let info = value.get("rate_limit_info").unwrap_or(&Value::Null);
             let pct = info.get("utilization").and_then(Value::as_f64);
             let resets = info.get("resetsAt").and_then(Value::as_i64);
+            let kind = info.get("rateLimitType").and_then(Value::as_str);
             if pct.is_some() || resets.is_some() {
-                let kind = info.get("rateLimitType").and_then(Value::as_str);
                 let is_seven_day = kind.is_some_and(|t| t.starts_with("seven_day"));
                 let is_overage = kind == Some("overage");
                 let bucket = |on: bool| if on { (pct, resets) } else { (None, None) };
@@ -277,10 +277,38 @@ pub fn translate(value: &Value, totals: &mut StreamTotals) -> Vec<AgentUpdate> {
                     monthly_resets_at,
                 });
             }
+            // Status (distinct from utilization): a warning fires only when a
+            // window crosses its threshold, so it's our main "approaching limit"
+            // signal. Emitted on every event so a warning clears when the account
+            // is comfortable again. `out_of_credits` marks a disabled overage.
+            let status = info.get("status").and_then(Value::as_str);
+            let warning = (status == Some("allowed_warning")).then(|| rate_limit_warning(kind, pct));
+            let out_of_credits = info
+                .get("overageDisabledReason")
+                .and_then(Value::as_str)
+                .map(|r| r == "out_of_credits");
+            out.push(AgentUpdate::RateLimitStatus {
+                warning,
+                out_of_credits,
+            });
         }
         _ => {}
     }
     out
+}
+
+/// Human warning string for a window that crossed its threshold, mirroring the
+/// CLI's own "You're close to your …" phrasing.
+fn rate_limit_warning(kind: Option<&str>, pct: Option<f64>) -> String {
+    let label = match kind {
+        Some("overage") => "monthly",
+        Some(t) if t.starts_with("seven_day") => "7-day",
+        _ => "5-hour",
+    };
+    match pct {
+        Some(p) => format!("You're close to your {label} usage limit — {p:.0}% used"),
+        None => format!("You're close to your {label} usage limit"),
+    }
 }
 
 fn usage_model(model: &str) -> AgentUpdate {
@@ -1161,47 +1189,60 @@ mod tests {
         let updates = t(json!({ "type": "rate_limit_event", "rate_limit_info": {
             "status": "allowed", "resetsAt": 1783314600, "rateLimitType": "five_hour",
             "utilization": 19.0 } }));
-        assert_eq!(
-            updates,
-            vec![AgentUpdate::RateLimits {
-                five_hour_pct: Some(19.0),
-                five_hour_resets_at: Some(1783314600),
-                seven_day_pct: None,
-                seven_day_resets_at: None,
-                monthly_pct: None,
-                monthly_resets_at: None,
-            }]
-        );
+        assert!(updates.contains(&AgentUpdate::RateLimits {
+            five_hour_pct: Some(19.0),
+            five_hour_resets_at: Some(1783314600),
+            seven_day_pct: None,
+            seven_day_resets_at: None,
+            monthly_pct: None,
+            monthly_resets_at: None,
+        }));
         let updates = t(json!({ "type": "rate_limit_event", "rate_limit_info": {
             "status": "allowed", "resetsAt": 1783914600, "rateLimitType": "seven_day_sonnet",
             "utilization": 3.0 } }));
-        assert_eq!(
-            updates,
-            vec![AgentUpdate::RateLimits {
-                five_hour_pct: None,
-                five_hour_resets_at: None,
-                seven_day_pct: Some(3.0),
-                seven_day_resets_at: Some(1783914600),
-                monthly_pct: None,
-                monthly_resets_at: None,
-            }]
-        );
+        assert!(updates.contains(&AgentUpdate::RateLimits {
+            five_hour_pct: None,
+            five_hour_resets_at: None,
+            seven_day_pct: Some(3.0),
+            seven_day_resets_at: Some(1783914600),
+            monthly_pct: None,
+            monthly_resets_at: None,
+        }));
         // `overage` is the monthly window — it must land in `monthly_*`, never
         // in the 5h fields (the bug this parser rewrite fixes).
         let updates = t(json!({ "type": "rate_limit_event", "rate_limit_info": {
             "status": "allowed_warning", "resetsAt": 1785000000, "rateLimitType": "overage",
             "utilization": 61.0 } }));
-        assert_eq!(
-            updates,
-            vec![AgentUpdate::RateLimits {
-                five_hour_pct: None,
-                five_hour_resets_at: None,
-                seven_day_pct: None,
-                seven_day_resets_at: None,
-                monthly_pct: Some(61.0),
-                monthly_resets_at: Some(1785000000),
-            }]
-        );
+        assert!(updates.contains(&AgentUpdate::RateLimits {
+            five_hour_pct: None,
+            five_hour_resets_at: None,
+            seven_day_pct: None,
+            seven_day_resets_at: None,
+            monthly_pct: Some(61.0),
+            monthly_resets_at: Some(1785000000),
+        }));
+    }
+
+    #[test]
+    fn rate_limit_event_emits_status_and_warning() {
+        // A comfortable window: no warning, no overage flag (real-world shape
+        // captured from the CLI — reset present, utilization absent).
+        let updates = t(json!({ "type": "rate_limit_event", "rate_limit_info": {
+            "status": "allowed", "resetsAt": 1783571400, "rateLimitType": "five_hour",
+            "overageStatus": "rejected", "overageDisabledReason": "out_of_credits" } }));
+        assert!(updates.contains(&AgentUpdate::RateLimitStatus {
+            warning: None,
+            out_of_credits: Some(true),
+        }));
+
+        // Threshold crossed → a human warning naming the window + %.
+        let updates = t(json!({ "type": "rate_limit_event", "rate_limit_info": {
+            "status": "allowed_warning", "resetsAt": 1783314600, "rateLimitType": "five_hour",
+            "utilization": 92.0 } }));
+        let warned = updates.iter().any(|u| matches!(u,
+            AgentUpdate::RateLimitStatus { warning: Some(w), .. }
+            if w.contains("5-hour") && w.contains("92%")));
+        assert!(warned, "expected a 5-hour warning at 92%");
     }
 
     #[test]

@@ -159,6 +159,10 @@ export interface DerivedSessionStats {
   monthlyPct?: number;
   /** Unix epoch seconds the monthly overage window resets at. */
   monthlyResetsAt?: number;
+  /** Active "approaching a limit" warning (stream only). */
+  rateLimitWarning?: string;
+  /** Monthly overage disabled for lack of credits (stream only). */
+  overageOutOfCredits?: boolean;
 }
 
 export function deriveSessionStats(
@@ -196,5 +200,7 @@ export function deriveSessionStats(
     sevenDayResetsAt: sl?.sevenDayResetsAt,
     monthlyPct: sl?.monthlyPct,
     monthlyResetsAt: sl?.monthlyResetsAt,
+    rateLimitWarning: sl?.rateLimitWarning,
+    overageOutOfCredits: sl?.overageOutOfCredits,
   };
 }

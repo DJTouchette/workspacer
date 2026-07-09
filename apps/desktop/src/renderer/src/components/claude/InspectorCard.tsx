@@ -584,6 +584,16 @@ export const InspectorCard: React.FC<{
                   sub={sl?.monthlyResetsAt ? `resets ${fmtReset(sl.monthlyResetsAt)}` : undefined}
                 />
               )}
+              {sl?.rateLimitWarning && (
+                <div style={{ fontSize: '0.72rem', color: colors.warning, marginBottom: 6 }}>
+                  ⚠ {sl.rateLimitWarning}
+                </div>
+              )}
+              {sl?.overageOutOfCredits && (
+                <div style={{ fontSize: '0.72rem', color: colors.muted, marginBottom: 6 }}>
+                  Monthly overage: out of credits
+                </div>
+              )}
               <div
                 style={{
                   fontSize: '0.76rem',
