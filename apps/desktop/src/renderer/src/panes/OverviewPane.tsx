@@ -404,9 +404,15 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
       data: { cwd },
     });
   };
-  const browse = async () => {
-    const dir = await window.electronAPI.pickFolder?.();
-    if (dir) spawnIn(dir);
+  // Open the new-agent view at the default directory, same as every other spawn
+  // entry point — the working directory is picked/changed inside the dialog, so
+  // no OS folder prompt up front.
+  const newAgent = () => {
+    window.electronAPI.hubPublish?.({
+      type: 'command.open_spawn_dialog',
+      source: 'workspacer.overview',
+      data: {},
+    });
   };
   const toggleFav = (dir: string) => {
     const set = new Set(favourites);
@@ -506,7 +512,7 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
               </span>
             </div>
             <button
-              onClick={browse}
+              onClick={newAgent}
               style={{
                 marginTop: 20,
                 fontSize: '0.75rem',
