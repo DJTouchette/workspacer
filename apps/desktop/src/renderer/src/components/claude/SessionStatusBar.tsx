@@ -205,6 +205,7 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = f
     (showModel && model) ||
     mode ||
     plan ||
+    snapshot?.compacting ||
     ctxPct !== undefined ||
     tokens !== undefined ||
     cost !== undefined;
@@ -298,6 +299,17 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = f
             <span style={{ color: 'var(--wks-text-muted)' }}>plan</span>
             <PlanTicks done={plan.done} total={plan.total} />
             {plan.done}/{plan.total}
+          </span>
+        </>
+      )}
+      {snapshot?.compacting && (
+        <>
+          <Sep />
+          <span
+            title="Claude is compacting its context window"
+            style={{ color: 'var(--wks-warn, #d29922)', fontVariantNumeric: 'tabular-nums' }}
+          >
+            compacting…
           </span>
         </>
       )}

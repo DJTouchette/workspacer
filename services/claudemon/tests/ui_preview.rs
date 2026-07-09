@@ -47,6 +47,9 @@ fn preview_dashboard_three_sessions() {
             provider: "claude".into(),
             transport: Default::default(),
             plan: None,
+            compacting: false,
+            last_compact_at: None,
+            compaction_count: 0,
         })
         .session(SessionState {
             session_id: "9e8d7c6b-aaaa-bbbb-cccc-dddddddddddd".into(),
@@ -62,6 +65,9 @@ fn preview_dashboard_three_sessions() {
             provider: "claude".into(),
             transport: Default::default(),
             plan: None,
+            compacting: false,
+            last_compact_at: None,
+            compaction_count: 0,
         })
         .session(SessionState {
             session_id: "11223344-eeee-ffff-0000-987654321000".into(),
@@ -81,6 +87,9 @@ fn preview_dashboard_three_sessions() {
             provider: "claude".into(),
             transport: Default::default(),
             plan: None,
+            compacting: false,
+            last_compact_at: None,
+            compaction_count: 0,
         })
         .connected();
     let snap = snapshot_dashboard(b, 100, 24);
@@ -104,6 +113,9 @@ fn preview_chat_empty() {
             provider: "claude".into(),
             transport: Default::default(),
             plan: None,
+            compacting: false,
+            last_compact_at: None,
+            compaction_count: 0,
         })
         .connected()
         .chat_for("demo-session-id");
@@ -128,6 +140,9 @@ fn preview_chat_with_text_and_tool_calls() {
             provider: "claude".into(),
             transport: Default::default(),
             plan: None,
+            compacting: false,
+            last_compact_at: None,
+            compaction_count: 0,
         })
         .connected()
         .chat_for_with_transcript("demo-session-id", Transcript {
@@ -189,6 +204,9 @@ fn preview_chat_with_pending_approval() {
             provider: "claude".into(),
             transport: Default::default(),
             plan: None,
+            compacting: false,
+            last_compact_at: None,
+            compaction_count: 0,
         })
         .connected()
         .chat_for_with_transcript("demo-session-id", Transcript {
@@ -248,6 +266,9 @@ fn preview_chat_with_pending_question() {
             provider: "claude".into(),
             transport: Default::default(),
             plan: None,
+            compacting: false,
+            last_compact_at: None,
+            compaction_count: 0,
         })
         .connected()
         .chat_for("demo-session-id");
@@ -272,6 +293,9 @@ fn preview_chat_with_input_typed() {
             provider: "claude".into(),
             transport: Default::default(),
             plan: None,
+            compacting: false,
+            last_compact_at: None,
+            compaction_count: 0,
         })
         .connected()
         .chat_for("demo-session-id")
@@ -297,6 +321,9 @@ fn preview_chat_with_multiline_input() {
             provider: "claude".into(),
             transport: Default::default(),
             plan: None,
+            compacting: false,
+            last_compact_at: None,
+            compaction_count: 0,
         })
         .connected()
         .chat_for("demo-session-id")

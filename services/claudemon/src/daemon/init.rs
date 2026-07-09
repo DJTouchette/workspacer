@@ -45,6 +45,8 @@ const HOOK_EVENTS: &[&str] = {
         HookEventKind::Stop.as_str(),
         HookEventKind::SubagentStart.as_str(),
         HookEventKind::SubagentStop.as_str(),
+        HookEventKind::PreCompact.as_str(),
+        HookEventKind::PostCompact.as_str(),
     ]
 };
 

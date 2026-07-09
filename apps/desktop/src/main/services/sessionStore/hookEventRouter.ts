@@ -184,6 +184,18 @@ export function applyHookEvent(session: ClaudeSessionState, event: any): void {
       break;
     }
 
+    // Context compaction brackets (enrichment-only, like tool cards — safe for
+    // stream sessions too since they don't touch ambientState).
+    case 'PreCompact':
+      session.compacting = true;
+      break;
+
+    case 'PostCompact':
+      session.compacting = false;
+      session.lastCompactAt = Date.now();
+      session.compactionCount = (session.compactionCount ?? 0) + 1;
+      break;
+
     case 'Notification':
       session.conversation.push({
         role: 'assistant',

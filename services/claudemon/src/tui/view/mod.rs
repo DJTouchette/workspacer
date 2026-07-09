@@ -601,6 +601,9 @@ mod tests {
             provider: "claude".into(),
             transport: Default::default(),
             plan: None,
+            compacting: false,
+            last_compact_at: None,
+            compaction_count: 0,
         };
         app.sessions.insert(session.session_id.clone(), session);
         app.order.push("test-session-id".into());

@@ -208,4 +208,10 @@ export interface ClaudeSessionSnapshot {
    *  shift+tab in the TUI), unlike `settings.permissionMode` which is frozen
    *  at spawn. Claude sessions only; managed providers fire no hooks. */
   livePermissionMode?: string;
+  /** Context compaction from the PreCompact/PostCompact hooks: `compacting` is
+   *  true mid-compaction; `lastCompactAt` (ms) + `compactionCount` badge a
+   *  recently-compacted / churning session. */
+  compacting?: boolean;
+  lastCompactAt?: number;
+  compactionCount?: number;
 }

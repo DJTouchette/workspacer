@@ -21,6 +21,8 @@ pub enum HookEventKind {
     Stop,
     SubagentStart,
     SubagentStop,
+    PreCompact,
+    PostCompact,
     PermissionRequest,
 }
 
@@ -39,6 +41,8 @@ impl HookEventKind {
             Self::Stop => "Stop",
             Self::SubagentStart => "SubagentStart",
             Self::SubagentStop => "SubagentStop",
+            Self::PreCompact => "PreCompact",
+            Self::PostCompact => "PostCompact",
             Self::PermissionRequest => "PermissionRequest",
         }
     }
@@ -57,6 +61,8 @@ impl HookEventKind {
         Self::Stop,
         Self::SubagentStart,
         Self::SubagentStop,
+        Self::PreCompact,
+        Self::PostCompact,
     ];
 }
 
@@ -367,6 +373,16 @@ pub struct SessionState {
     /// and omitted from the wire when empty. Fed by `SessionStore::set_plan`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan: Option<Plan>,
+    /// Context compaction, driven by the `PreCompact`/`PostCompact` hooks.
+    /// `compacting` is true between the two; `last_compact_at` (unix seconds) and
+    /// `compaction_count` let clients badge a recently-compacted session and
+    /// surface churn. Additive/back-compatible like the fields above.
+    #[serde(default)]
+    pub compacting: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_compact_at: Option<i64>,
+    #[serde(default)]
+    pub compaction_count: u64,
 }
 
 /// Serde default for [`SessionState::provider`] — the un-managed PTY path is
@@ -392,6 +408,9 @@ impl SessionState {
             provider: default_provider(),
             transport: Transport::default(),
             plan: None,
+            compacting: false,
+            last_compact_at: None,
+            compaction_count: 0,
         }
     }
 
@@ -496,6 +515,21 @@ impl SessionState {
                 self.pending = None;
             }
 
+            // Context compaction brackets: PreCompact starts it (Claude is busy
+            // rewriting context, not idle), PostCompact ends it and records the
+            // event so clients can badge a recently-compacted / churning session.
+            HookEventKind::PreCompact => {
+                self.compacting = true;
+                if self.mode != SessionMode::Approval && self.mode != SessionMode::Question {
+                    self.mode = SessionMode::Responding;
+                }
+            }
+            HookEventKind::PostCompact => {
+                self.compacting = false;
+                self.last_compact_at = Some(OffsetDateTime::now_utc().unix_timestamp());
+                self.compaction_count = self.compaction_count.saturating_add(1);
+            }
+
             HookEventKind::Notification => {}
         }
     }
@@ -547,6 +581,21 @@ mod tests {
             timestamp: None,
             payload: map,
         }
+    }
+
+    #[test]
+    fn compaction_hooks_bracket_the_compacting_flag() {
+        let mut state = SessionState::new("s".into(), None);
+        assert!(!state.compacting);
+        assert_eq!(state.compaction_count, 0);
+
+        state.apply(&make_event("PreCompact"));
+        assert!(state.compacting, "PreCompact starts compaction");
+
+        state.apply(&make_event("PostCompact"));
+        assert!(!state.compacting, "PostCompact ends compaction");
+        assert_eq!(state.compaction_count, 1);
+        assert!(state.last_compact_at.is_some());
     }
 
     #[test]

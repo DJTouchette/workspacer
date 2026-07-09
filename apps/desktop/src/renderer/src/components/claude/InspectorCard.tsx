@@ -633,6 +633,14 @@ export const InspectorCard: React.FC<{
                     </span>
                   </div>
                 )}
+                {session && (session.compactionCount ?? 0) > 0 && (
+                  <div title="Context compactions this session (frequent = context churn)">
+                    Compactions
+                    <span style={{ float: 'right', color: colors.text }}>
+                      {session.compacting ? `${session.compactionCount}· now` : session.compactionCount}
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
           ))}

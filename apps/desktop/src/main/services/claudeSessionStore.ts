@@ -228,6 +228,12 @@ export interface ClaudeSessionState {
   livePermissionMode?: string;
   /** Guards against double history writes (Stop 1500ms timeout vs SessionEnd). */
   historyWritten?: boolean;
+  /** Context compaction, from the PreCompact/PostCompact hooks: `compacting` is
+   *  true while Claude is rewriting context; `lastCompactAt` (ms) and
+   *  `compactionCount` badge a recently-compacted / churning session. */
+  compacting?: boolean;
+  lastCompactAt?: number;
+  compactionCount?: number;
 }
 
 // Serialisable snapshot sent over IPC
