@@ -210,6 +210,18 @@ export interface ElectronAPI {
     busUrl: string;
     desktopBus?: boolean;
   }>;
+  /** Tailscale HTTPS status for the /m PWA (CLI present, node name, serve state). */
+  tailscaleGetInfo?: () => Promise<{
+    available: boolean;
+    magicName: string | null;
+    serveActive: boolean;
+    canServe: boolean;
+    hint?: string;
+  }>;
+  /** Enable/disable `tailscale serve` in front of the hub port. */
+  tailscaleSetServe?: (
+    enable: boolean,
+  ) => Promise<{ ok: boolean; error?: string; hint?: string }>;
   listHubPlugins: () => Promise<PluginManifest[]>;
   hubPublish: (event: { type: string; source?: string; data?: unknown }) => Promise<void>;
   installPlugin: (url: string) => Promise<{ ok: boolean; plugin?: PluginManifest; error?: string }>;

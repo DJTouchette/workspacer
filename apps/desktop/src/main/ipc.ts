@@ -31,10 +31,12 @@ import { searchProject } from './services/searchService';
 import * as git from './services/gitService';
 import {
   HUB_HTTP_URL,
+  HUB_PORT,
   getHubToken,
   getRemoteShareInfo,
   setRemoteShare,
 } from './services/hubDaemon';
+import { getTailscaleInfo, setTailscaleServe } from './services/tailscaleServe';
 import { publishToHub, isHubConnected, callHub } from './services/hubClient';
 import { IPC } from './shared/ipcChannels';
 import type {
@@ -285,6 +287,10 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // Connection info for the remote-control client (URL + token for a QR/share).
   ipcMain.handle(IPC.HUB_GET_REMOTE_INFO, () => getRemoteShareInfo());
   ipcMain.handle(IPC.HUB_SET_REMOTE_SHARE, (_event, enabled: boolean) => setRemoteShare(!!enabled));
+  ipcMain.handle(IPC.TAILSCALE_GET_INFO, () => getTailscaleInfo(HUB_PORT));
+  ipcMain.handle(IPC.TAILSCALE_SET_SERVE, (_event, enable: boolean) =>
+    setTailscaleServe(HUB_PORT, !!enable),
+  );
   ipcMain.handle(IPC.LOGS_OPEN_FOLDER, async () => {
     const dir = logsDir();
     try {

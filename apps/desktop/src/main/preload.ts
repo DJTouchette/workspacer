@@ -412,6 +412,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     busUrl: string;
     desktopBus: boolean;
   }> => ipcRenderer.invoke(IPC.HUB_SET_REMOTE_SHARE, enabled),
+  tailscaleGetInfo: (): Promise<{
+    available: boolean;
+    magicName: string | null;
+    serveActive: boolean;
+    canServe: boolean;
+    hint?: string;
+  }> => ipcRenderer.invoke(IPC.TAILSCALE_GET_INFO),
+  tailscaleSetServe: (
+    enable: boolean,
+  ): Promise<{ ok: boolean; error?: string; hint?: string }> =>
+    ipcRenderer.invoke(IPC.TAILSCALE_SET_SERVE, enable),
   openLogsFolder: (): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke(IPC.LOGS_OPEN_FOLDER),
   installPlugin: (url: string): Promise<{ ok: boolean; plugin?: unknown; error?: string }> =>

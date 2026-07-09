@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Smartphone, Copy, Check, Eye, EyeOff } from 'lucide-react';
 
@@ -12,6 +12,14 @@ interface RemoteInfo {
   appUrl: string;
   /** Bare bus URL (no token) for diagnostics. */
   busUrl: string;
+}
+
+interface TailscaleInfoUI {
+  available: boolean;
+  magicName: string | null;
+  serveActive: boolean;
+  canServe: boolean;
+  hint?: string;
 }
 
 /**
@@ -247,6 +255,142 @@ function TailscaleNote() {
   );
 }
 
+/**
+ * One-tap HTTPS via `tailscale serve`. A raw http://100.x tailnet URL is
+ * encrypted on the wire but is NOT a browser "secure context", so the /m PWA
+ * can't install or receive push there. When Tailscale can serve, this fronts
+ * the hub at https://<node>.ts.net and the QR/URLs above switch to it.
+ */
+function TailscaleHttps({
+  ts,
+  on,
+  busy,
+  msg,
+  onToggle,
+}: {
+  ts: TailscaleInfoUI | null;
+  on: boolean;
+  busy: boolean;
+  msg: string | null;
+  onToggle: (enable: boolean) => void;
+}) {
+  // No CLI / not logged in: nothing to offer; the general note below still
+  // explains the tailnet.
+  if (!ts || !ts.available) return null;
+  const enableDisabled = busy || (!on && !ts.canServe);
+  // Tailscale is here but HTTPS isn't on yet — surface this as a recommendation
+  // (accent highlight) rather than a neutral row, so it reads as a prompt.
+  const recommend = !on;
+  return (
+    <div
+      style={{
+        border: `1px solid ${recommend ? 'var(--wks-accent)' : 'var(--wks-border-subtle)'}`,
+        borderRadius: 'var(--wks-radius-md)',
+        padding: '10px 12px',
+        marginBottom: 16,
+        background: recommend
+          ? 'color-mix(in srgb, var(--wks-accent) 8%, transparent)'
+          : 'var(--wks-bg-elevated)',
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div
+            style={{
+              fontSize: '0.72rem',
+              fontWeight: 600,
+              color: 'var(--wks-text-primary)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+            }}
+          >
+            HTTPS via Tailscale
+            {on && <span style={{ color: 'var(--wks-success, #3fb950)' }}> · on</span>}
+            {recommend && (
+              <span
+                style={{
+                  fontSize: '0.56rem',
+                  fontWeight: 700,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.04em',
+                  color: 'var(--wks-accent-text, var(--wks-accent))',
+                  background: 'color-mix(in srgb, var(--wks-accent) 16%, transparent)',
+                  padding: '1px 6px',
+                  borderRadius: 5,
+                }}
+              >
+                Recommended
+              </span>
+            )}
+          </div>
+          <div
+            style={{
+              fontSize: '0.64rem',
+              color: 'var(--wks-text-faint)',
+              marginTop: 2,
+              lineHeight: 1.5,
+            }}
+          >
+            {on && ts.magicName ? (
+              <>
+                Serving at <code style={inlineCode}>{ts.magicName}</code> — home-screen install +
+                notifications work.
+              </>
+            ) : (
+              <>Needed to install the app and get notifications (a secure origin).</>
+            )}
+          </div>
+        </div>
+        <button
+          onClick={() => onToggle(!on)}
+          disabled={enableDisabled}
+          style={on ? secondaryBtnStyle : primaryBtnStyle(enableDisabled)}
+        >
+          {busy ? '…' : on ? 'Turn off' : 'Enable'}
+        </button>
+      </div>
+      {!on && !ts.canServe && ts.hint && (
+        <div
+          style={{
+            fontSize: '0.62rem',
+            color: 'var(--wks-warning, #e0a000)',
+            marginTop: 8,
+            lineHeight: 1.5,
+            fontFamily: 'var(--wks-font-mono)',
+          }}
+        >
+          {ts.hint}
+        </div>
+      )}
+      {msg && (
+        <div
+          style={{
+            fontSize: '0.62rem',
+            color: 'var(--wks-danger, #e05555)',
+            marginTop: 8,
+            lineHeight: 1.5,
+          }}
+        >
+          {msg}
+        </div>
+      )}
+      {on && (
+        <div
+          style={{
+            fontSize: '0.6rem',
+            color: 'var(--wks-text-faint)',
+            marginTop: 8,
+            lineHeight: 1.5,
+          }}
+        >
+          Turning off clears this machine's <code style={inlineCode}>tailscale serve</code> config.
+        </div>
+      )}
+    </div>
+  );
+}
+
 function EnabledState({
   info,
   copied,
@@ -267,7 +411,39 @@ function EnabledState({
   const hasApp = !!info.appUrl;
   // Prefer the full app when it's available; fall back to the lite client.
   const [mode, setMode] = useState<'app' | 'lite'>(hasApp ? 'app' : 'lite');
-  const activeUrl = mode === 'app' && hasApp ? info.appUrl : info.remoteUrl;
+
+  // Tailscale HTTPS: when `tailscale serve` fronts the hub, we can hand out a
+  // real https://<node>.ts.net URL — a secure origin, so the /m PWA can install
+  // and receive push. Falls back to the plain-http tailnet URL otherwise.
+  const [ts, setTs] = useState<TailscaleInfoUI | null>(null);
+  const [tsBusy, setTsBusy] = useState(false);
+  const [tsMsg, setTsMsg] = useState<string | null>(null);
+  const refreshTs = useCallback(() => {
+    window.electronAPI.tailscaleGetInfo?.().then(setTs).catch(() => setTs(null));
+  }, []);
+  useEffect(() => {
+    refreshTs();
+  }, [refreshTs]);
+
+  const httpsOn = !!(ts && ts.serveActive && ts.magicName);
+  const tokenQ = info.token ? `?token=${encodeURIComponent(info.token)}` : '';
+  const remoteUrl = httpsOn ? `https://${ts!.magicName}/m${tokenQ}` : info.remoteUrl;
+  const appUrl = httpsOn && hasApp ? `https://${ts!.magicName}/app/${tokenQ}` : info.appUrl;
+  const activeUrl = mode === 'app' && hasApp ? appUrl : remoteUrl;
+
+  const toggleServe = async (enable: boolean) => {
+    setTsBusy(true);
+    setTsMsg(null);
+    try {
+      const r = await window.electronAPI.tailscaleSetServe?.(enable);
+      if (r && !r.ok) setTsMsg(r.hint || r.error || 'Tailscale command failed');
+    } catch {
+      setTsMsg('Tailscale command failed');
+    } finally {
+      setTsBusy(false);
+      refreshTs();
+    }
+  };
 
   return (
     <div>
@@ -339,24 +515,13 @@ function EnabledState({
         {mode === 'app' && hasApp ? 'the full app' : 'the mobile client'}.
       </div>
 
-      {mode !== 'app' && (
-        <div
-          style={{
-            textAlign: 'center',
-            fontSize: '0.66rem',
-            color: 'var(--wks-text-faint)',
-            lineHeight: 1.6,
-            marginBottom: 16,
-            padding: '0 6px',
-          }}
-        >
-          Add it to your home screen to install the app. For lock-screen
-          notifications when an agent needs you, open it over HTTPS (e.g.{' '}
-          <code style={{ fontFamily: 'var(--wks-font-mono)' }}>tailscale serve</code> on a{' '}
-          <code style={{ fontFamily: 'var(--wks-font-mono)' }}>.ts.net</code> name) — browsers only
-          allow notifications on a secure origin.
-        </div>
-      )}
+      <TailscaleHttps
+        ts={ts}
+        on={httpsOn}
+        busy={tsBusy}
+        msg={tsMsg}
+        onToggle={toggleServe}
+      />
 
       <CopyRow
         label="Connection URL"

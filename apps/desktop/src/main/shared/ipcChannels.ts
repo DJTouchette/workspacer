@@ -68,6 +68,8 @@ export const IPC = {
   HUB_GET_STATUS: 'hub:getStatus',
   HUB_GET_REMOTE_INFO: 'hub:getRemoteInfo',
   HUB_SET_REMOTE_SHARE: 'hub:setRemoteShare',
+  TAILSCALE_GET_INFO: 'tailscale:getInfo',
+  TAILSCALE_SET_SERVE: 'tailscale:setServe',
   HUB_INSTALL_PLUGIN: 'hub:installPlugin',
   HUB_INSPECT_PLUGIN: 'hub:inspectPlugin',
   HUB_LIST_EXAMPLES: 'hub:listExamples',
