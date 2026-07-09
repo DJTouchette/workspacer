@@ -133,7 +133,11 @@ export async function getTailscaleInfo(port: number): Promise<TailscaleInfo> {
 /** Enable or disable HTTPS serving of the hub port. Reversible. */
 export async function setTailscaleServe(port: number, enable: boolean): Promise<ServeResult> {
   const r = enable
-    ? await run(['serve', '--bg', String(port)])
+    ? // When Serve isn't enabled for the tailnet, the CLI blocks ~90s before it
+      // returns the actionable "Serve is not enabled..." error (with the opt-in
+      // URL we parse below). The default 8s timeout would kill it first and hand
+      // back a bare "timeout", so give the enable path room to surface that error.
+      await run(['serve', '--bg', String(port)], 120000)
     : // `reset` clears the whole serve config (there's no per-target off in the
       // stable CLI); the dialog warns about this before calling.
       await run(['serve', 'reset']);
