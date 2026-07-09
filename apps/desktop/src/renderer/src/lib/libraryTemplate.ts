@@ -155,15 +155,32 @@ export function applyTemplate(
   });
 }
 
-/** Frame a skill's body with its title/description so the agent reads it as an
- *  instruction block; prompts insert verbatim. */
+/**
+ * Turn a library item into the text delivered to an agent (insert/spawn/copy).
+ *
+ * Skills need scope-aware handling:
+ *  - A workspacer skill (scope global/project) is NOT a registered skill — it's
+ *    reusable instruction text the agent has never seen, so we paste its body,
+ *    framed with a title/description header so it reads as an instruction block.
+ *  - A claude skill (scope 'claude') is a REAL `.claude/skills` skill Claude
+ *    already discovers and invokes by name. Pasting its whole SKILL.md body is
+ *    redundant (and defeats the skill's own progressive-disclosure loading), so
+ *    we substitute a short invocation reference instead.
+ *
+ * Prompts (and everything non-skill) insert verbatim.
+ */
 export function renderItemText(item: {
   kind: string;
+  scope?: string;
   title: string;
   description?: string;
   body: string;
 }): string {
   if (item.kind !== 'skill') return item.body;
+  if (item.scope === 'claude') {
+    // Reference the real skill by name; Claude loads and runs it itself.
+    return `Use the "${item.title}" skill.`;
+  }
   const header = item.description
     ? `# Skill: ${item.title}\n${item.description}\n\n`
     : `# Skill: ${item.title}\n\n`;
