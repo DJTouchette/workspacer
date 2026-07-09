@@ -284,6 +284,20 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
         structured GUI only, no terminal view. Overridable per spawn in the spawn dialog.
       </div>
 
+      <CheckRow
+        label="Keep hooks out of my global Claude settings (experimental)"
+        checked={config.claude?.settingsOverlay === true}
+        onChange={(v) =>
+          save({ claude: { ...config.claude, defaultView, settingsOverlay: v } })
+        }
+      />
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
+        Installs claudemon's hooks and status-line into a private overlay file passed to Claude via
+        --settings, instead of writing them into ~/.claude/settings.json. Applies to new sessions;
+        toggling on also removes any previously-installed entries from your global file. Restart the
+        app after changing this.
+      </div>
+
       <Row label="Default Claude view">
         <div style={{ display: 'flex', gap: 4 }}>
           <ModeButton

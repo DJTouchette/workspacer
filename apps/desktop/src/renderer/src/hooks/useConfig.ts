@@ -151,6 +151,10 @@ export interface Config {
      *  GUI) or 'stream' (headless stream-json via claudemon's managed adapter —
      *  GUI only). Per-spawn overridable in the spawn dialog. Default 'pty'. */
     transport?: 'pty' | 'stream';
+    /** Experimental: install claudemon's hooks + statusLine into a private
+     *  overlay file passed to Claude via --settings, instead of mutating the
+     *  user's global ~/.claude/settings.json. Default off. */
+    settingsOverlay?: boolean;
   };
   /** Defaults applied when spawning a new agent. */
   agents?: {

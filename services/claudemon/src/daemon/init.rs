@@ -155,6 +155,151 @@ pub async fn run_with_port(dry_run: bool, hook_port: u16) -> Result<()> {
     Ok(())
 }
 
+/// Write claudemon's hooks + statusLine to a standalone *overlay* file passed to
+/// `claude` via `--settings`, rather than mutating the user's global
+/// `~/.claude/settings.json`.
+///
+/// The overlay contains ONLY our entries (a fresh doc). `--settings` layers
+/// additively over the user's still-loaded `user`/`project`/`local` sources, so
+/// everything they have keeps working; we only contribute our hooks + a
+/// statusLine that wraps whatever command they already had (read read-only from
+/// their global file). To avoid our hooks firing twice — once from the overlay
+/// and once from a prior `claudemon init` that wrote into the global file — we
+/// also strip any previously-installed claudemon entries from the global file
+/// (the only mutation, and a purely subtractive cleanup of our own tag).
+pub async fn run_overlay(dry_run: bool, hook_port: u16, overlay_path: &PathBuf) -> Result<()> {
+    let global = settings_path()?;
+
+    // Read the user's existing statusLine command (if any) so we can wrap it —
+    // read-only; we never write their global file's statusLine.
+    let global_doc = match fs::read_to_string(&global) {
+        Ok(text) if text.trim().is_empty() => Value::Object(Default::default()),
+        Ok(text) => serde_json::from_str(&text)
+            .with_context(|| format!("parsing {}", global.display()))?,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Value::Object(Default::default()),
+        Err(err) => return Err(err).with_context(|| format!("reading {}", global.display())),
+    };
+    let inner_status = global_doc
+        .get("statusLine")
+        .and_then(|sl| sl.get("command"))
+        .and_then(Value::as_str)
+        // Don't wrap our own forwarder if a prior overlay-less run left it there.
+        .filter(|c| !c.contains(STATUS_TAG))
+        .map(str::to_owned);
+
+    // Build the overlay: a fresh doc carrying only our hooks + statusLine.
+    let command = hook_command(hook_port);
+    let (overlay_doc, _) = merge_hooks(Value::Object(Default::default()), &command);
+    let mut overlay_doc = overlay_doc;
+    if let Some(obj) = overlay_doc.as_object_mut() {
+        obj.insert(
+            "statusLine".to_string(),
+            json!({
+                "type": "command",
+                "command": status_line_command(hook_port, inner_status.as_deref()),
+            }),
+        );
+    }
+    let overlay_formatted = serde_json::to_string_pretty(&overlay_doc)? + "\n";
+
+    // Strip our previously-installed entries from the global file (subtractive).
+    let (stripped_global, removed) = strip_our_entries(global_doc);
+
+    if dry_run {
+        println!("# would write overlay to {}", overlay_path.display());
+        println!("{overlay_formatted}");
+        if removed {
+            println!("# would strip claudemon entries from {}", global.display());
+        }
+        return Ok(());
+    }
+
+    write_atomic(overlay_path, &overlay_formatted)
+        .with_context(|| format!("writing overlay {}", overlay_path.display()))?;
+    println!("✓ wrote overlay settings to {}", overlay_path.display());
+
+    if removed {
+        let stripped_formatted = serde_json::to_string_pretty(&stripped_global)? + "\n";
+        write_atomic(&global, &stripped_formatted)
+            .with_context(|| format!("rewriting {}", global.display()))?;
+        println!("✓ stripped stale claudemon entries from {}", global.display());
+    }
+    Ok(())
+}
+
+/// Atomic write: tmpfile in the same dir, fsync, then rename over the target.
+fn write_atomic(path: &PathBuf, contents: &str) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+    }
+    let tmp = path.with_extension("json.claudemon.tmp");
+    {
+        let mut f = fs::File::create(&tmp).with_context(|| format!("creating {}", tmp.display()))?;
+        f.write_all(contents.as_bytes())?;
+        f.sync_all()?;
+    }
+    fs::rename(&tmp, path)
+        .with_context(|| format!("renaming {} → {}", tmp.display(), path.display()))?;
+    Ok(())
+}
+
+/// Remove claudemon's own tagged hook groups and statusLine from a settings doc,
+/// leaving every user-authored entry intact. Returns the pruned doc and whether
+/// anything was removed. Used by the overlay path to prevent double-firing hooks
+/// when a prior `claudemon init` had written into the global file.
+fn strip_our_entries(mut doc: Value) -> (Value, bool) {
+    let Some(obj) = doc.as_object_mut() else {
+        return (doc, false);
+    };
+    let mut removed = false;
+
+    // Drop our statusLine wrapper (leave a user's own untouched).
+    if obj
+        .get("statusLine")
+        .and_then(|sl| sl.get("command"))
+        .and_then(Value::as_str)
+        .is_some_and(|c| c.contains(STATUS_TAG))
+    {
+        obj.remove("statusLine");
+        removed = true;
+    }
+
+    // Drop our hook groups per event, pruning now-empty event arrays.
+    if let Some(hooks) = obj.get_mut("hooks").and_then(Value::as_object_mut) {
+        let mut empty_events = Vec::new();
+        for (event, arr) in hooks.iter_mut() {
+            let Some(arr) = arr.as_array_mut() else {
+                continue;
+            };
+            let before = arr.len();
+            arr.retain(|group| {
+                let ours = group
+                    .get("hooks")
+                    .and_then(Value::as_array)
+                    .is_some_and(|inner| {
+                        inner.iter().any(|h| {
+                            h.get("command")
+                                .and_then(Value::as_str)
+                                .is_some_and(|c| c.contains(TAG))
+                        })
+                    });
+                !ours
+            });
+            if arr.len() != before {
+                removed = true;
+            }
+            if arr.is_empty() {
+                empty_events.push(event.clone());
+            }
+        }
+        for ev in empty_events {
+            hooks.remove(&ev);
+        }
+    }
+
+    (doc, removed)
+}
+
 /// Merge our statusLine forwarder into the settings doc, returning `true` if it
 /// changed anything.
 ///
@@ -364,6 +509,50 @@ mod tests {
         // The original command appears exactly once — no nested re-wrap.
         let occurrences = after_first.matches("my-statusline.sh").count();
         assert_eq!(occurrences, 1, "inner command must not be wrapped twice");
+    }
+
+    #[test]
+    fn strip_removes_only_our_entries() {
+        // A file with both user-authored and claudemon entries.
+        let cmd = hook_command(7890);
+        let (mut doc, _) = merge_hooks(
+            json!({
+                "hooks": {
+                    "PreToolUse": [
+                        { "matcher": "Bash", "hooks": [
+                            { "type": "command", "command": "echo user-hook" }
+                        ]}
+                    ]
+                },
+                "statusLine": { "type": "command", "command": "bash ~/mine.sh" }
+            }),
+            &cmd,
+        );
+        merge_status_line(&mut doc, 7890);
+
+        let (pruned, removed) = strip_our_entries(doc);
+        assert!(removed);
+        // Our SessionStart group is gone (and the now-empty event pruned).
+        assert!(pruned["hooks"].get("SessionStart").is_none());
+        // The user's PreToolUse hook survives, and our group there is gone.
+        let pre = pruned["hooks"]["PreToolUse"].as_array().unwrap();
+        assert_eq!(pre.len(), 1, "only the user hook should remain");
+        assert_eq!(pre[0]["hooks"][0]["command"], json!("echo user-hook"));
+        // Our statusLine wrapper (which had wrapped the user's) is removed.
+        assert!(pruned.get("statusLine").is_none());
+    }
+
+    #[test]
+    fn strip_is_noop_without_our_entries() {
+        let doc = json!({
+            "hooks": { "PreToolUse": [
+                { "matcher": "Bash", "hooks": [{ "type": "command", "command": "echo user" }] }
+            ]},
+            "statusLine": { "type": "command", "command": "bash ~/mine.sh" }
+        });
+        let (pruned, removed) = strip_our_entries(doc.clone());
+        assert!(!removed);
+        assert_eq!(pruned, doc, "a file with no claudemon entries is untouched");
     }
 
     #[test]

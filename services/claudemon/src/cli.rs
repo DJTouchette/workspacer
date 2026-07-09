@@ -38,6 +38,14 @@ pub enum Command {
         /// curl command we install.
         #[arg(long, default_value_t = 7890)]
         hook_port: u16,
+        /// Write claudemon's hooks + statusLine to this standalone overlay file
+        /// (a claudemon-owned settings.json passed to `claude` via `--settings`)
+        /// instead of merging into the user's global `~/.claude/settings.json`.
+        /// When set, the user's global file is left untouched except that any
+        /// previously-installed claudemon entries are stripped, so the overlay
+        /// is the single source of our hooks (no double-fire).
+        #[arg(long)]
+        overlay: Option<PathBuf>,
     },
     /// Run a command under a PTY wrapper so the daemon can relay input.
     Wrap {
@@ -70,9 +78,14 @@ pub async fn dispatch(cli: Cli) -> Result<()> {
             };
             crate::daemon::run(cfg).await
         }
-        Command::Init { dry_run, hook_port } => {
-            crate::daemon::init::run_with_port(dry_run, hook_port).await
-        }
+        Command::Init {
+            dry_run,
+            hook_port,
+            overlay,
+        } => match overlay {
+            Some(path) => crate::daemon::init::run_overlay(dry_run, hook_port, &path).await,
+            None => crate::daemon::init::run_with_port(dry_run, hook_port).await,
+        },
         Command::Wrap { daemon, argv } => crate::wrapper::run_with_daemon(argv, &daemon).await,
         Command::Watch { api } => crate::tui::run(api).await,
     }

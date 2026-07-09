@@ -22,10 +22,24 @@ import {
   gracefulStop,
 } from '../lib/daemonUtils';
 import { notifySystem } from './systemNotice';
+import { configService } from './configService';
 
 const HOOK_PORT = PORTS.claudemonHook;
 const API_PORT = PORTS.claudemonApi;
 const HEALTH_TIMEOUT_MS = 5000;
+
+/** Private overlay settings file claudemon writes when `claude.settingsOverlay`
+ *  is on — passed to `claude` via `--settings` so we never touch the user's
+ *  global `~/.claude/settings.json`. Resolved lazily (not at module load) so it
+ *  doesn't call into electron's `app` before it's ready or under test mocks. */
+export function claudemonOverlayPath(): string {
+  return path.join(app.getPath('home'), '.workspacer', 'claude-settings.json');
+}
+
+/** True when the experimental settings-overlay mode is enabled in config. */
+export function claudeSettingsOverlayEnabled(): boolean {
+  return configService.getConfig().claude?.settingsOverlay === true;
+}
 
 let child: ChildProcess | null = null;
 let readyPromise: Promise<void> | null = null;
@@ -127,14 +141,23 @@ function scheduleRestart(bin: string): void {
   }, delay);
 }
 
-/** Run `claudemon init` to merge hook entries into ~/.claude/settings.json. */
+/**
+ * Run `claudemon init`. By default this merges hook entries into the user's
+ * global `~/.claude/settings.json`. When `claude.settingsOverlay` is enabled it
+ * instead writes them to our private overlay file (`--overlay`) and strips any
+ * stale global entries, leaving the global file otherwise untouched.
+ */
 export function runClaudemonInit(): Promise<void> {
   const bin = claudemonBinaryPath();
   if (!fs.existsSync(bin)) {
     return Promise.reject(new Error(`claudemon binary not found at ${bin}`));
   }
+  const args = ['init', '--hook-port', String(HOOK_PORT)];
+  if (claudeSettingsOverlayEnabled()) {
+    args.push('--overlay', claudemonOverlayPath());
+  }
   return new Promise((resolve, reject) => {
-    const proc = spawn(bin, ['init', '--hook-port', String(HOOK_PORT)], {
+    const proc = spawn(bin, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     });

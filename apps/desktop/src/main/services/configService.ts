@@ -111,6 +111,10 @@ interface Config {
      *  stream-json` via claudemon's managed adapter — GUI only). Per-spawn
      *  overridable in the spawn dialog. */
     transport: 'pty' | 'stream';
+    /** Experimental: install claudemon's hooks + statusLine into a private
+     *  overlay settings file passed to `claude` via `--settings`, instead of
+     *  mutating the user's global `~/.claude/settings.json`. Default off. */
+    settingsOverlay?: boolean;
   };
   /** Defaults applied when spawning a new agent. */
   agents: {
@@ -324,6 +328,7 @@ function defaultConfig(): Config {
       defaultView: 'terminal',
       workLog: 'cards',
       transport: 'pty',
+      settingsOverlay: false,
     },
     agents: {
       defaultProvider: 'claude',

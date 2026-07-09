@@ -25,6 +25,7 @@ import { libraryService } from './libraryService';
 import { resolveAgentBinary, isAgentBinaryInstalled, type AgentProvider } from './agentProviders';
 import { configService } from './configService';
 import { MCP_FACADE_URL, managedFacadeInstructions, buildSessionMcpConfig } from './mcpConfig';
+import { claudemonOverlayPath, claudeSettingsOverlayEnabled } from './claudemonDaemon';
 import { ensureSupervisorHome } from './supervisorSkill';
 import { notifySystem } from './systemNotice';
 
@@ -149,6 +150,12 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
     env.CLAUDE_CONFIG_DIR = profile.configDir.replace(/^~/, os.homedir());
   }
   const extraArgs: string[] = [...(profile?.extraArgs ?? [])];
+  // Overlay settings (hooks + statusLine) so stream sessions carry our hooks
+  // without mutating the user's global settings.json — the stream analogue of
+  // the PTY path's `--settings` in buildClaudeArgv.
+  if (isClaudeStream && claudeSettingsOverlayEnabled()) {
+    extraArgs.push('--settings', claudemonOverlayPath());
+  }
   if (isClaudeStream && !wantsFacade && opts.mcpItemIds && opts.mcpItemIds.length) {
     const wanted = new Set(opts.mcpItemIds);
     const servers = libraryService

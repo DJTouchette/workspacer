@@ -159,11 +159,23 @@ export interface ClaudeArgvOptions {
    * overwriting whatever the profile or user already configured.
    */
   appendSystemPrompt?: string;
+  /**
+   * Path to a claudemon-owned overlay settings file, passed as `--settings`.
+   * Loads additively over the user's normal settings sources, so it carries our
+   * hooks + statusLine without mutating `~/.claude/settings.json`. Set only when
+   * the `claude.settingsOverlay` mode is enabled.
+   */
+  settingsFile?: string;
 }
 
 export function buildClaudeArgv(opts: ClaudeArgvOptions = {}): string[] {
   const argv = getBaseArgv();
   if (opts.extraArgs && opts.extraArgs.length) argv.push(...opts.extraArgs);
+  // Our overlay settings, if enabled. `--settings` layers additively, so a
+  // profile's own `--settings` (in extraArgs) still applies alongside it.
+  if (opts.settingsFile) {
+    argv.push('--settings', opts.settingsFile);
+  }
   // Inject --model unless the profile's extraArgs already pin one.
   const profilePinsModel = (opts.extraArgs ?? []).some(
     (a) => a === '--model' || a.startsWith('--model='),

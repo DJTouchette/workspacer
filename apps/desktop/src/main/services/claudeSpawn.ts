@@ -25,6 +25,7 @@ import { claudeSessionStore } from './claudeSessionStore';
 import { claudemonSessionClient } from './claudemonSessionClient';
 import { claudeProfiles } from './claudeProfiles';
 import { buildClaudeArgv } from './claudeResolver';
+import { claudemonOverlayPath, claudeSettingsOverlayEnabled } from './claudemonDaemon';
 import { facadeSpawnArgs, buildSessionMcpConfig } from './mcpConfig';
 import { libraryService } from './libraryService';
 import { configService } from './configService';
@@ -120,6 +121,7 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
     extraArgs: profile?.extraArgs,
     resumeSessionId: opts.resumeSessionId,
     model,
+    settingsFile: claudeSettingsOverlayEnabled() ? claudemonOverlayPath() : undefined,
     skipPermissions: opts.skipPermissions,
     permissionMode: permissionMode as 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions',
     sessionId,
