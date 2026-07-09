@@ -273,6 +273,10 @@ function App() {
   const [paletteMode, setPaletteMode] = useState<'tab' | 'split'>('tab');
   const [paletteRestrict, setPaletteRestrict] = useState<'library' | undefined>(undefined);
   const [showSpawnDialog, setShowSpawnDialog] = useState(false);
+  // When the new-agent view is opened for a specific directory (e.g. a
+  // dashboard favourite/recent), this holds its cwd so the dialog opens
+  // pre-filled there instead of at the configured default. Cleared on close.
+  const [spawnDialogCwd, setSpawnDialogCwd] = useState<string | null>(null);
   const [showLayouts, setShowLayouts] = useState(false);
   const [showRemote, setShowRemote] = useState(false);
   const [showLibraryPanel, setShowLibraryPanel] = useState(false);
@@ -865,10 +869,17 @@ function App() {
       resumeSessionId?: string;
     }) => {
       setShowSpawnDialog(false);
+      setSpawnDialogCwd(null);
+      const provider = opts.provider ?? 'claude';
+      // Remember the harness/provider used so the next new-agent view reopens on
+      // it (this is what makes a favourite launch restore your last choice).
+      window.electronAPI
+        .saveConfig({ agents: { defaultProvider: provider } })
+        .catch(() => {});
       // Remember the picked model + permission choices so they stick next time
       // — but only for Claude, so spawning a Codex/OpenCode agent doesn't clobber
       // the saved Claude defaults (those options don't apply to other providers).
-      if ((opts.provider ?? 'claude') === 'claude') {
+      if (provider === 'claude') {
         window.electronAPI
           .saveConfig({
             claude: {
@@ -877,6 +888,9 @@ function App() {
               // Remember the chosen permission mode too, so the next new agent
               // reopens on it instead of snapping back to the default.
               defaultPermissionMode: opts.permissionMode ?? '',
+              // Remember the transport (PTY vs headless stream) too, so the next
+              // new-agent view reopens on the last harness used.
+              ...(opts.transport ? { transport: opts.transport } : {}),
             },
           })
           .catch(() => {});
@@ -1499,6 +1513,10 @@ function App() {
         void spawnAgent({ cwd, name: opts.name, model: opts.model });
       }
     },
+    openSpawnDialog: (opts) => {
+      setSpawnDialogCwd(opts.cwd?.trim() || null);
+      setShowSpawnDialog(true);
+    },
     openPane: (paneType, opts) =>
       handleAddTab(paneType as PaneType, undefined, undefined, opts?.cwd),
     openPlugin: (type) => {
@@ -1971,11 +1989,16 @@ function App() {
 
         {showSpawnDialog && (
           <SpawnAgentDialog
-            defaultCwd={config.agents?.defaultCwd?.trim() || appCwdRef.current}
+            defaultCwd={
+              spawnDialogCwd || config.agents?.defaultCwd?.trim() || appCwdRef.current
+            }
             defaultProvider={config.agents?.defaultProvider}
             defaultTransport={config.claude?.transport}
             onSpawn={handleSpawnAgent}
-            onCancel={() => setShowSpawnDialog(false)}
+            onCancel={() => {
+              setShowSpawnDialog(false);
+              setSpawnDialogCwd(null);
+            }}
           />
         )}
 

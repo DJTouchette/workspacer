@@ -12,6 +12,8 @@ import { useEffect, useRef } from 'react';
 export interface UiCommandHandlers {
   focusAgent: (idOrSession: string) => void;
   spawnAgent: (opts: { cwd?: string; name?: string; model?: string }) => void;
+  /** Open the new-agent view pre-filled (does not spawn until confirmed). */
+  openSpawnDialog: (opts: { cwd?: string }) => void;
   openPane: (paneType: string, opts?: { cwd?: string }) => void;
   openPlugin: (paneType: string) => void;
   closePane: (paneId: string) => void;
@@ -33,6 +35,9 @@ export function useUiCommands(handlers: UiCommandHandlers): void {
           break;
         case 'command.spawn_agent':
           ref.current.spawnAgent({ cwd: d.cwd, name: d.name, model: d.model });
+          break;
+        case 'command.open_spawn_dialog':
+          ref.current.openSpawnDialog({ cwd: d.cwd });
           break;
         case 'command.open_pane':
           if (d.paneType) ref.current.openPane(d.paneType, { cwd: d.cwd });

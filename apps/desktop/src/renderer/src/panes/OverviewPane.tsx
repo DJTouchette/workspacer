@@ -255,7 +255,7 @@ const DirRow: React.FC<{
 }> = ({ dir, fav, onSpawn, onToggleFav }) => (
   <div
     onClick={onSpawn}
-    title={`Launch an agent in ${dir}`}
+    title={`New agent in ${dir}`}
     style={{
       display: 'flex',
       alignItems: 'center',
@@ -394,9 +394,12 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
   const needsYou = counts.needsYou;
   const totalCost = own.reduce((n, s) => n + (s.usage?.costUSD ?? 0), 0);
 
+  // Directory rows open the new-agent view pre-filled with this cwd (and the
+  // last harness/provider used, restored from config in the dialog) rather than
+  // spawning straight away — so you can tweak the model/provider before launch.
   const spawnIn = (cwd: string) => {
     window.electronAPI.hubPublish?.({
-      type: 'command.spawn_agent',
+      type: 'command.open_spawn_dialog',
       source: 'workspacer.overview',
       data: { cwd },
     });
