@@ -135,27 +135,102 @@ pub async fn run(cfg: ServeConfig) -> Result<()> {
 /// Resolves when our parent process exits, so a daemon launched by the desktop
 /// app never outlives it (no orphaned listeners holding ports 7890/7891).
 ///
-/// Detection is via stdin EOF: the launcher hands us a stdin pipe and holds the
-/// write end open for its whole life; when it dies — even on a force-kill the OS
-/// can't notify us about — the kernel closes the pipe and our read returns EOF.
-/// Cross-platform (Win/Mac/Linux), no polling, no process-handle APIs.
+/// Two independent triggers race, and whichever fires first wins:
+///
+///  1. **stdin EOF** — the launcher hands us a stdin pipe and holds the write
+///     end open for its whole life; when it dies the kernel closes the pipe and
+///     our read returns EOF. Fastest path when it works.
+///  2. **parent-pid poll** — the safety net for Windows, where libuv marks the
+///     stdio pipe handles inheritable, so a sibling daemon inherits a duplicate
+///     of *our* stdin write handle. That duplicate keeps the pipe open after the
+///     launcher dies, so EOF never arrives and the daemons keep each other's
+///     ports hostage. Polling `WORKSPACER_PARENT_PID` for the launcher's death
+///     doesn't depend on the pipe, so it frees the ports regardless.
 ///
 /// Gated on `WORKSPACER_PARENT_PID` (set by the launcher): when it's unset — a
-/// manual `claudemon serve` from a terminal — this never resolves, so the
-/// daemon keeps running. We discard any bytes; only EOF matters.
+/// manual `claudemon serve` from a terminal — neither trigger resolves, so the
+/// daemon keeps running.
 async fn wait_for_parent_exit() {
-    use tokio::io::AsyncReadExt;
-    if std::env::var_os("WORKSPACER_PARENT_PID").is_none() {
+    let Some(pid_os) = std::env::var_os("WORKSPACER_PARENT_PID") else {
         std::future::pending::<()>().await;
         return;
-    }
-    let mut stdin = tokio::io::stdin();
-    let mut buf = [0u8; 256];
-    loop {
-        match stdin.read(&mut buf).await {
-            Ok(0) | Err(_) => break, // parent closed the pipe (exited)
-            Ok(_) => {}              // ignore anything the parent writes
+    };
+    let parent_pid: Option<u32> = pid_os.to_str().and_then(|s| s.trim().parse().ok());
+
+    // Path 1: stdin EOF. We discard any bytes the parent writes; only EOF matters.
+    let eof = async {
+        use tokio::io::AsyncReadExt;
+        let mut stdin = tokio::io::stdin();
+        let mut buf = [0u8; 256];
+        loop {
+            match stdin.read(&mut buf).await {
+                Ok(0) | Err(_) => break, // parent closed the pipe (exited)
+                Ok(_) => {}              // ignore anything the parent writes
+            }
         }
+    };
+
+    // Path 2: poll the launcher pid. If it didn't parse, this arm never resolves
+    // and we fall back to the EOF path alone.
+    let poll = async {
+        match parent_pid {
+            Some(pid) => loop {
+                tokio::time::sleep(PARENT_POLL_INTERVAL).await;
+                if !parent_alive(pid) {
+                    break; // launcher gone
+                }
+            },
+            None => std::future::pending::<()>().await,
+        }
+    };
+
+    tokio::select! {
+        _ = eof => {}
+        _ = poll => {}
+    }
+}
+
+/// How often the parent-pid safety net checks whether the launcher is still alive.
+const PARENT_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// Whether process `pid` is still running. Probes existence without disturbing
+/// the process; on any ambiguity it errs toward "alive" so we never shut down a
+/// daemon whose launcher is actually still up.
+#[cfg(unix)]
+fn parent_alive(pid: u32) -> bool {
+    use nix::errno::Errno;
+    use nix::sys::signal::kill;
+    use nix::unistd::Pid;
+    // Signal 0 delivers nothing; it just checks that the pid is a live process.
+    match kill(Pid::from_raw(pid as i32), None) {
+        Ok(()) => true,
+        Err(Errno::EPERM) => true, // exists, but we may not signal it
+        Err(_) => false,           // ESRCH (gone) or anything else → treat as dead
+    }
+}
+
+/// Windows equivalent via a minimal Win32 FFI — open a handle to the launcher
+/// and check whether it has become signaled (i.e. exited). Kept dependency-free
+/// on purpose (no windows-api crate pulled in for one liveness probe).
+#[cfg(windows)]
+fn parent_alive(pid: u32) -> bool {
+    const SYNCHRONIZE: u32 = 0x0010_0000;
+    const WAIT_OBJECT_0: u32 = 0;
+    type Handle = *mut core::ffi::c_void;
+    extern "system" {
+        fn OpenProcess(access: u32, inherit_handle: i32, pid: u32) -> Handle;
+        fn WaitForSingleObject(handle: Handle, millis: u32) -> u32;
+        fn CloseHandle(handle: Handle) -> i32;
+    }
+    unsafe {
+        let handle = OpenProcess(SYNCHRONIZE, 0, pid);
+        if handle.is_null() {
+            return false; // can't open the pid → it's gone
+        }
+        let waited = WaitForSingleObject(handle, 0);
+        CloseHandle(handle);
+        // WAIT_OBJECT_0 means the process object is signaled == it has exited.
+        waited != WAIT_OBJECT_0
     }
 }
 
