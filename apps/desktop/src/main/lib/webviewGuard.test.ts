@@ -66,6 +66,18 @@ describe('isWebviewSrcAllowed', () => {
     }
   });
 
+  it('blocks non-blank about: URLs (only about:blank is allowed)', () => {
+    for (const src of [
+      'about:version',
+      'about:config',
+      'about:srcdoc',
+      'about:blank#x',
+      'about:blank?y',
+    ]) {
+      expect(isWebviewSrcAllowed(src), src).toBe(false);
+    }
+  });
+
   it('fails closed on an unparseable src', () => {
     expect(isWebviewSrcAllowed('http://[::bad')).toBe(false);
   });

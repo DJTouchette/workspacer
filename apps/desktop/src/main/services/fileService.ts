@@ -45,26 +45,33 @@ export function listDir(dirPath: string): ListDirResult {
     .readdirSync(resolved, { withFileTypes: true })
     .filter((e) => e.name !== '.git');
 
-  // Ask git which of these names are ignored (batched over stdin, one per line).
+  // Ask git which of these names are ignored (batched over stdin). We use `-z`
+  // so paths are NUL-delimited on both stdin and stdout: a filename may legally
+  // contain a newline, and a linefeed-delimited protocol would split it into
+  // two bogus paths so the echoed match never equals the readdir name.
   let ignored = new Set<string>();
   if (dirents.length) {
-    const names = dirents.map((e) => e.name).join('\n');
+    const names = dirents.map((e) => e.name).join('\0');
     try {
       // core.quotePath=false keeps non-ASCII names unquoted so they match the
       // decoded names fs.readdir returns (otherwise git emits e.g. "\303\251.log"
       // and the ignore filter silently misses unicode-named files).
-      const out = execFileSync('git', ['-c', 'core.quotePath=false', 'check-ignore', '--stdin'], {
-        cwd: resolved,
-        input: names,
-        encoding: 'utf8',
-      });
-      ignored = new Set(out.split('\n').filter(Boolean));
+      const out = execFileSync(
+        'git',
+        ['-c', 'core.quotePath=false', 'check-ignore', '-z', '--stdin'],
+        {
+          cwd: resolved,
+          input: names,
+          encoding: 'utf8',
+        },
+      );
+      ignored = new Set(out.split('\0').filter(Boolean));
     } catch (err) {
       // exit 1 = nothing ignored (stdout still holds any matches); 128 = not a
       // git repo / git missing → no filtering at all.
       const e = err as { status?: number; stdout?: string };
       if (e.status === 1 && typeof e.stdout === 'string') {
-        ignored = new Set(e.stdout.split('\n').filter(Boolean));
+        ignored = new Set(e.stdout.split('\0').filter(Boolean));
       }
     }
   }

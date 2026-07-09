@@ -98,12 +98,12 @@ export function isDuplicateMessage(
  * prompt.
  */
 function isInterruptMarker(item: ConversationItemWire): boolean {
+  // Resolve the discriminant tolerantly (`kind ?? type`), same as the main
+  // switch — a marker tagged with `type` would otherwise go undetected and
+  // leave the session stuck on 'streaming'.
+  const kind = item.kind ?? item.type;
   const text =
-    item.kind === 'user_message'
-      ? item.text
-      : item.kind === 'tool_result'
-        ? item.content
-        : undefined;
+    kind === 'user_message' ? item.text : kind === 'tool_result' ? item.content : undefined;
   return typeof text === 'string' && text.trimStart().startsWith('[Request interrupted by user');
 }
 
@@ -308,7 +308,7 @@ export function applyConversationItems(
   // counts: an interrupt mid-batch is history the session already moved past
   // (e.g. a full resync replaying an old interrupt), and any follow-up prompt
   // flips the state back to 'streaming' via its UserPromptSubmit hook anyway.
-  const lastMeaningful = [...items].reverse().find((i) => i.kind !== 'usage');
+  const lastMeaningful = [...items].reverse().find((i) => (i.kind ?? i.type) !== 'usage');
   if (lastMeaningful && isInterruptMarker(lastMeaningful)) {
     applyStopEvent(session);
   }

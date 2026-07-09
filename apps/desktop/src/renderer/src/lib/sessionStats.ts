@@ -29,7 +29,10 @@ import { collectEditedFiles } from './turnChanges';
 
 /** 142345 → "142k", 1_200_000 → "1.2M", ≥10M → "12M" (drops the decimal). */
 export function fmtTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`;
+  // Switch to "M" once rounding the thousands would reach 1000 — otherwise
+  // values in [999_500, 999_999] round to a 4-digit "1000k".
+  if (n >= 1_000_000 || Math.round(n / 1_000) >= 1_000)
+    return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`;
   if (n >= 1_000) return `${Math.round(n / 1_000)}k`;
   return `${n}`;
 }

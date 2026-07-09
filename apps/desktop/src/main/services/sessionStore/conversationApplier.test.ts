@@ -82,6 +82,32 @@ describe('applyConversationItems — interrupt detection', () => {
     expect(s.ambientState).toBe('idle');
   });
 
+  it('detects a trailing interrupt marker tagged with `type` instead of `kind`', () => {
+    const s = mkSession();
+    // The main switch resolves the discriminant as `kind ?? type`; the interrupt
+    // path must be equally tolerant or a type-tagged marker leaves it streaming.
+    applyConversationItems(
+      s,
+      [{ type: 'user_message', text: '[Request interrupted by user]' } as ConversationItemWire],
+      noUsage,
+    );
+    expect(s.ambientState).toBe('idle');
+    expect(s.pendingApproval).toBeNull();
+  });
+
+  it('detects a type-tagged interrupt even behind a trailing type-tagged usage item', () => {
+    const s = mkSession();
+    applyConversationItems(
+      s,
+      [
+        { type: 'tool_result', tool_use_id: 'tu_1', content: '[Request interrupted by user for tool use]', is_error: true } as ConversationItemWire,
+        { type: 'usage', model: 'claude-sonnet-4-5', usage: {}, message_id: 'm1' } as ConversationItemWire,
+      ],
+      noUsage,
+    );
+    expect(s.ambientState).toBe('idle');
+  });
+
   it('ordinary user messages do not trip the marker check', () => {
     const s = mkSession();
     applyConversationItems(

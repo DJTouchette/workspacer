@@ -55,5 +55,7 @@ export function isWebviewSrcAllowed(src: string | undefined): boolean {
   } catch {
     return false; // unparseable — fail closed
   }
-  return scheme === 'http:' || scheme === 'https:' || scheme === 'about:';
+  // Only http/https reach here; about:blank is already allowed above, and every
+  // other about: URL (about:config, about:srcdoc, about:blank#x, …) is rejected.
+  return scheme === 'http:' || scheme === 'https:';
 }

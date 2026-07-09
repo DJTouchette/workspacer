@@ -32,4 +32,14 @@ describe('listDir — gitignore filtering', () => {
     expect(names).not.toContain('ascii.log'); // sanity: ASCII ignore works
     expect(names).not.toContain('é.log'); // the bug: unicode ignore leaked
   });
+
+  it('hides a gitignored file whose name contains a newline', () => {
+    // A newline-delimited stdin protocol splits this name into two paths, so
+    // the echoed match never equals the readdir name and the ignore leaks.
+    const weird = 'a\nb.log';
+    fs.writeFileSync(path.join(dir, weird), '');
+    const names = listDir(dir).entries.map((e) => e.name);
+    expect(names).toContain('keep.txt');
+    expect(names).not.toContain(weird);
+  });
 });

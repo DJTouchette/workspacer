@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   deriveSessionStats,
+  fmtTokens,
   isSnapshotStale,
   summarizeFileChanges,
   STALE_AFTER_MS,
@@ -40,6 +41,27 @@ describe('deriveSessionStats — cumulative tokens', () => {
     expect(deriveSessionStats({ statusLine: {} as SessionStatusLine, usage: usage() }).tokens).toBe(
       333,
     );
+  });
+});
+
+describe('fmtTokens', () => {
+  it('formats sub-million counts with a k suffix', () => {
+    expect(fmtTokens(0)).toBe('0');
+    expect(fmtTokens(999)).toBe('999');
+    expect(fmtTokens(142_345)).toBe('142k');
+    expect(fmtTokens(999_499)).toBe('999k');
+  });
+
+  it('switches to M rather than emitting a 4-digit "1000k" near the boundary', () => {
+    // Math.round(999_999 / 1000) === 1000, which must not render as "1000k".
+    expect(fmtTokens(999_500)).toBe('1.0M');
+    expect(fmtTokens(999_999)).toBe('1.0M');
+    expect(fmtTokens(1_000_000)).toBe('1.0M');
+  });
+
+  it('drops the decimal at/above 10M', () => {
+    expect(fmtTokens(1_200_000)).toBe('1.2M');
+    expect(fmtTokens(12_000_000)).toBe('12M');
   });
 });
 

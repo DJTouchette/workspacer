@@ -48,6 +48,26 @@ describe('useAttentionFeed — stuck detection (#7)', () => {
   });
 });
 
+describe('useAttentionFeed — question createdAt', () => {
+  it('stamps a question item with the arrival time, not the current clock', () => {
+    const asked = T0 - 600_000; // question arrived 10 minutes ago
+    const snapshots = {
+      s1: {
+        ambientState: 'waiting_input',
+        lastActivity: asked,
+        pendingQuestions: [{ question: 'Pick a branch?', header: 'Question' }],
+      } as any,
+    };
+    const { result } = renderHook(() => useAttentionFeed(snapshots, [agent('a1', 's1')]));
+
+    const q = result.current.items.find((it) => it.kind === 'question');
+    expect(q).toBeDefined();
+    // Must reflect when the question arrived (like the co-present stuck item),
+    // not Date.now() — otherwise its age always renders as "now".
+    expect(q!.createdAt).toBe(asked);
+  });
+});
+
 describe('useAttentionFeed — snooze pruning (#12)', () => {
   it('stops the ticker once the only snooze has expired (entry pruned)', async () => {
     const snapshots = {

@@ -182,6 +182,16 @@ describe('turnCostUSD', () => {
         6,
       );
     });
+
+    it('Opus minor versions 4.10–4.19 get current opus rates, not the legacy 4.1 rate', () => {
+      // 'claude-opus-4-1' must not swallow '4-10'…'4-19'; those are current
+      // Opus generations and price at 5/25, not the legacy 15/75.
+      expect(turnCostUSD('claude-opus-4-10-20260101', { input_tokens: 1_000_000 })).toBeCloseTo(
+        5,
+        6,
+      );
+      expect(turnCostUSD('claude-opus-4-15', { output_tokens: 1_000_000 })).toBeCloseTo(25, 6);
+    });
   });
 
   describe('claude-sonnet rates (input=3, output=15)', () => {

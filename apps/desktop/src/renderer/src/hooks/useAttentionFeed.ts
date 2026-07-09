@@ -236,7 +236,9 @@ export function useAttentionFeed(
           signature: sig,
           kind: 'question',
           priority: KIND_PRIORITY.question,
-          createdAt: Date.now(),
+          // Arrival time (like the sibling stuck item), not the current clock —
+          // Date.now() here re-stamps every recompute so the age always shows "now".
+          createdAt: snap.lastActivity || Date.now(),
           status: 'open',
           title: qs[0]?.header || 'Question',
           detail: qs[0]?.question,

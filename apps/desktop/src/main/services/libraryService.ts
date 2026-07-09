@@ -189,15 +189,17 @@ function claudeItem(
 function readClaudeItems(cwd: string): LibraryItem[] {
   const items: LibraryItem[] = [];
 
+  // The id for a claude item is its REAL on-disk basename (skill dir name, or
+  // agent/command filename sans .md), NOT a slug of it. Slugging here loses the
+  // 1:1 map back to disk: two names that slug to the same id would collide in
+  // list()'s Map (dropping one), and save/remove re-slugging the id would miss
+  // the real path. The basename is already unique per directory.
+
   // Skills: one directory per skill, content in SKILL.md
   try {
     for (const e of fs.readdirSync(claudeSkillsDir(cwd), { withFileTypes: true })) {
       if (!e.isDirectory()) continue;
-      const it = claudeItem(
-        path.join(claudeSkillsDir(cwd), e.name, 'SKILL.md'),
-        slug(e.name),
-        'skill',
-      );
+      const it = claudeItem(path.join(claudeSkillsDir(cwd), e.name, 'SKILL.md'), e.name, 'skill');
       if (it) items.push(it);
     }
   } catch {
@@ -210,7 +212,7 @@ function readClaudeItems(cwd: string): LibraryItem[] {
       if (!name.toLowerCase().endsWith('.md')) continue;
       const it = claudeItem(
         path.join(claudeAgentsDir(cwd), name),
-        slug(name.replace(/\.md$/i, '')),
+        name.replace(/\.md$/i, ''),
         'agent',
       );
       if (it) items.push(it);
@@ -220,14 +222,14 @@ function readClaudeItems(cwd: string): LibraryItem[] {
   }
 
   // Custom slash commands: flat markdown files. Claude command frontmatter has
-  // no `name` (the file's slug is the command), so claudeItem falls back to the
-  // id for the title — which is exactly what the "/" picker shows after the "/".
+  // no `name` (the file's basename is the command), so claudeItem falls back to
+  // the id for the title — which is exactly what the "/" picker shows after "/".
   try {
     for (const name of fs.readdirSync(claudeCommandsDir(cwd))) {
       if (!name.toLowerCase().endsWith('.md')) continue;
       const it = claudeItem(
         path.join(claudeCommandsDir(cwd), name),
-        slug(name.replace(/\.md$/i, '')),
+        name.replace(/\.md$/i, ''),
         'command',
       );
       if (it) items.push(it);
@@ -329,7 +331,9 @@ class LibraryService {
     const cwd = input.cwd || process.cwd();
     const kind: 'skill' | 'agent' | 'command' =
       input.kind === 'agent' ? 'agent' : input.kind === 'command' ? 'command' : 'skill';
-    const id = slug(input.id || input.title);
+    // An existing item's id IS its real on-disk basename (see readClaudeItems),
+    // so edit it in place; only slug when minting a brand-new item from a title.
+    const id = input.id ? input.id : slug(input.title);
     const full =
       kind === 'skill'
         ? path.join(claudeSkillsDir(cwd), id, 'SKILL.md')
@@ -365,22 +369,24 @@ class LibraryService {
   remove(scope: LibraryScope, id: string, cwd?: string, kind?: LibraryKind): void {
     if (scope === 'claude') {
       const root = cwd || process.cwd();
+      // The id is the item's real on-disk basename (from list()); use it verbatim
+      // rather than re-slugging, or a non-slug-stable name unlinks nothing.
       if (kind === 'agent') {
         try {
-          fs.unlinkSync(path.join(claudeAgentsDir(root), `${slug(id)}.md`));
+          fs.unlinkSync(path.join(claudeAgentsDir(root), `${id}.md`));
         } catch {
           /* already gone */
         }
       } else if (kind === 'command') {
         try {
-          fs.unlinkSync(path.join(claudeCommandsDir(root), `${slug(id)}.md`));
+          fs.unlinkSync(path.join(claudeCommandsDir(root), `${id}.md`));
         } catch {
           /* already gone */
         }
       } else {
         // A skill is a directory (SKILL.md + optional resources)
         try {
-          fs.rmSync(path.join(claudeSkillsDir(root), slug(id)), { recursive: true, force: true });
+          fs.rmSync(path.join(claudeSkillsDir(root), id), { recursive: true, force: true });
         } catch {
           /* already gone */
         }
