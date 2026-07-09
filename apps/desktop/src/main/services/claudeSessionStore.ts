@@ -2,6 +2,7 @@ import * as path from 'path';
 import { BrowserWindow } from 'electron';
 import { agentNotifier } from './agentNotifier';
 import { supervisorNudge } from './supervisorNudge';
+import { checkBudget } from './budgetWatcher';
 import {
   workflowWatcher,
   type WorkflowRunInfo,
@@ -560,6 +561,7 @@ class ClaudeSessionStore {
     );
     session.lastActivity = Date.now();
     this.mergeWatcherData(session);
+    checkBudget(session); // transcript-derived cost path (e.g. PTY sessions)
     this.pushUpdate(session);
     this.scheduleManagedHistory(session);
   }
@@ -623,6 +625,8 @@ class ClaudeSessionStore {
     if (!session) return;
     // Always record the latest value immediately (trailing-edge debounce).
     session.statusLine = statusLine;
+    // Stream sessions get Claude's authoritative cost here — check the budget.
+    checkBudget(session);
     if (STATUSLINE_DEBOUNCE_MS <= 0) {
       // Debounce disabled — original immediate-push behaviour.
       this.pushUpdate(session);

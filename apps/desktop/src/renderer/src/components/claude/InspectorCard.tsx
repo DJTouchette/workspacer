@@ -8,6 +8,7 @@ import { fmtTokens } from './agentUtils';
 import { planProgress } from '../../lib/sessionStats';
 import { requestReviewFile } from '../../lib/reviewBus';
 import { requestAgentWatch } from '../../lib/watchBus';
+import { useConfigContext } from '../../contexts/ConfigContext';
 
 export type RailTab = 'files' | 'plan' | 'workflows' | 'agents' | 'usage';
 
@@ -54,6 +55,60 @@ const fmtReset = (epochSec?: number): string => {
 // `pct` is optional: many accounts report a window's reset time without a
 // utilization %. In that case we show the label + `sub` (the reset) and an empty
 // meter track rather than hiding the window entirely.
+/** Per-session cost budget: a tiny inline dollar input tucked into the usage
+ *  stats. Empty/0 disables it. When set, an OS notification fires (from the main
+ *  process) once the session's spend crosses the threshold. */
+const BudgetRow: React.FC<{ sessionId: string; cost?: number }> = ({ sessionId, cost }) => {
+  const { config, save } = useConfigContext();
+  const budget = config.claude?.budgets?.[sessionId];
+  const [draft, setDraft] = useState(budget != null ? String(budget) : '');
+  useEffect(() => {
+    setDraft(budget != null ? String(budget) : '');
+  }, [budget]);
+
+  const persist = (raw: string): void => {
+    const n = parseFloat(raw);
+    const budgets = { ...(config.claude?.budgets ?? {}) };
+    if (!raw.trim() || !Number.isFinite(n) || n <= 0) delete budgets[sessionId];
+    else budgets[sessionId] = n;
+    void save({
+      claude: { ...config.claude, defaultView: config.claude?.defaultView ?? 'terminal', budgets },
+    });
+  };
+
+  const over = budget != null && cost !== undefined && cost >= budget;
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <span title="Notify once this session's spend crosses this amount">Budget</span>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+        {over && <span style={{ color: colors.error, fontSize: '0.66rem' }}>over</span>}
+        <span style={{ color: colors.muted }}>$</span>
+        <input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={(e) => persist(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') persist((e.target as HTMLInputElement).value);
+          }}
+          placeholder="—"
+          inputMode="decimal"
+          style={{
+            width: 46,
+            textAlign: 'right',
+            fontSize: '0.72rem',
+            fontFamily: 'inherit',
+            color: over ? colors.error : colors.text,
+            background: 'rgba(255,255,255,0.05)',
+            border: '1px solid rgba(255,255,255,0.1)',
+            borderRadius: 4,
+            padding: '1px 5px',
+          }}
+        />
+      </span>
+    </div>
+  );
+};
+
 const UsageBar: React.FC<{ label: string; pct?: number; sub?: string }> = ({ label, pct, sub }) => {
   const color =
     pct === undefined
@@ -683,6 +738,7 @@ export const InspectorCard: React.FC<{
                     </span>
                   </div>
                 )}
+                {session && <BudgetRow sessionId={session.sessionId} cost={cost} />}
               </div>
             </div>
           ))}

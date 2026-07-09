@@ -115,6 +115,10 @@ interface Config {
      *  overlay settings file passed to `claude` via `--settings`, instead of
      *  mutating the user's global `~/.claude/settings.json`. Default off. */
     settingsOverlay?: boolean;
+    /** Optional per-session cost budgets (USD), keyed by session id. Set from
+     *  the inspector; an OS notification fires once when a session's spend
+     *  crosses its budget. Absent/0 = no budget. */
+    budgets?: Record<string, number>;
   };
   /** Defaults applied when spawning a new agent. */
   agents: {
@@ -319,15 +323,16 @@ function defaultConfig(): Config {
     editor: {
       engine: 'codemirror',
       terminalCommand: 'nvim',
+      vim: true,
     },
     claude: {
-      defaultModel: '',
+      defaultModel: 'opus[1m]',
       seenModels: [],
-      skipPermissionsDefault: false,
-      defaultPermissionMode: '',
+      skipPermissionsDefault: true,
+      defaultPermissionMode: 'bypassPermissions',
       defaultView: 'terminal',
       workLog: 'cards',
-      transport: 'pty',
+      transport: 'stream',
       settingsOverlay: false,
     },
     agents: {

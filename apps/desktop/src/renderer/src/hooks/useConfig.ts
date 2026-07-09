@@ -155,6 +155,9 @@ export interface Config {
      *  overlay file passed to Claude via --settings, instead of mutating the
      *  user's global ~/.claude/settings.json. Default off. */
     settingsOverlay?: boolean;
+    /** Optional per-session cost budgets (USD), keyed by session id. Set from
+     *  the inspector; an OS notification fires once when spend crosses it. */
+    budgets?: Record<string, number>;
   };
   /** Defaults applied when spawning a new agent. */
   agents?: {
