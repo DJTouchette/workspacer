@@ -164,12 +164,17 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = f
     fiveHourResetsAt,
     sevenDayPct: seven,
     sevenDayResetsAt,
+    monthlyPct: monthly,
+    monthlyResetsAt,
   } = deriveSessionStats(snapshot);
   // The reset countdowns are computed at render time; between statusLine ticks
   // (e.g. an idle session) they'd freeze, so tick a re-render once a minute
   // while any reset timestamp is on display.
   const [, bumpClock] = React.useReducer((n: number) => n + 1, 0);
-  const hasResets = fiveHourResetsAt !== undefined || sevenDayResetsAt !== undefined;
+  const hasResets =
+    fiveHourResetsAt !== undefined ||
+    sevenDayResetsAt !== undefined ||
+    monthlyResetsAt !== undefined;
   React.useEffect(() => {
     if (!hasResets) return;
     const timer = setInterval(bumpClock, 60_000);
@@ -177,6 +182,7 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = f
   }, [hasResets]);
   const fiveReset = fmtResetIn(fiveHourResetsAt);
   const sevenReset = fmtResetIn(sevenDayResetsAt);
+  const monthlyReset = fmtResetIn(monthlyResetsAt);
 
   // Permission mode: live hook telemetry (follows shift+tab cycling in the
   // TUI) wins over the requested-at-spawn setting. Managed providers never
@@ -336,38 +342,45 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = f
           </span>
         </>
       )}
-      {(five !== undefined || seven !== undefined) && (
-        <>
-          <Sep />
-          <span style={{ color: 'var(--wks-text-secondary)', fontVariantNumeric: 'tabular-nums' }}>
-            {five !== undefined && (
-              <span
-                title={
-                  fmtResetAt(fiveHourResetsAt) && `5h window resets ${fmtResetAt(fiveHourResetsAt)}`
-                }
-              >
-                <span style={{ color: 'var(--wks-text-muted)' }}>5h </span>
-                {Math.round(five)}%
-                {fiveReset && <span style={{ color: 'var(--wks-text-muted)' }}>·{fiveReset}</span>}
-              </span>
-            )}
-            {seven !== undefined && (
-              <span
-                title={
-                  fmtResetAt(sevenDayResetsAt) && `7d window resets ${fmtResetAt(sevenDayResetsAt)}`
-                }
-              >
-                {' '}
-                <span style={{ color: 'var(--wks-text-muted)' }}>7d </span>
-                {Math.round(seven)}%
-                {sevenReset && (
-                  <span style={{ color: 'var(--wks-text-muted)' }}>·{sevenReset}</span>
-                )}
-              </span>
-            )}
-          </span>
-        </>
-      )}
+      {(() => {
+        // Render each account window when Claude gives us EITHER a utilization %
+        // OR just a reset time (many accounts only report the reset while
+        // comfortably within a window — see the rate-limit plumbing notes).
+        const windows = [
+          { label: '5h', name: '5h window', pct: five, reset: fiveReset, at: fiveHourResetsAt },
+          { label: '7d', name: '7d window', pct: seven, reset: sevenReset, at: sevenDayResetsAt },
+          { label: 'Mo', name: 'Monthly window', pct: monthly, reset: monthlyReset, at: monthlyResetsAt },
+        ].filter((w) => w.pct !== undefined || w.at !== undefined);
+        if (!windows.length) return null;
+        return (
+          <>
+            <Sep />
+            <span style={{ color: 'var(--wks-text-secondary)', fontVariantNumeric: 'tabular-nums' }}>
+              {windows.map((w, i) => {
+                const at = fmtResetAt(w.at);
+                return (
+                  <span key={w.label} title={at ? `${w.name} resets ${at}` : undefined}>
+                    {i > 0 ? ' ' : ''}
+                    <span style={{ color: 'var(--wks-text-muted)' }}>{w.label} </span>
+                    {w.pct !== undefined ? (
+                      <>
+                        {Math.round(w.pct)}%
+                        {w.reset && (
+                          <span style={{ color: 'var(--wks-text-muted)' }}>·{w.reset}</span>
+                        )}
+                      </>
+                    ) : (
+                      <span style={{ color: 'var(--wks-text-muted)' }}>
+                        {w.reset ? `resets ${w.reset}` : 'ok'}
+                      </span>
+                    )}
+                  </span>
+                );
+              })}
+            </span>
+          </>
+        );
+      })()}
     </span>
   );
 };

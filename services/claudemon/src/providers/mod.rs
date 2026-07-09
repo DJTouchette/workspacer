@@ -182,13 +182,18 @@ pub enum AgentUpdate {
         /// Absent → [`context_window_for`] falls back to a table by model id.
         context_window: Option<u64>,
     },
-    /// The account's 5h/7d rate-limit windows, when the provider reports them
-    /// (Codex does) — same meaning as the fields Claude's statusLine carries.
+    /// The account's rolling rate-limit windows, when the provider reports them
+    /// (Codex does; Claude's stream `rate_limit_event` does) — same meaning as
+    /// the fields Claude's statusLine carries. `monthly` is the overage/credit
+    /// window (Claude's `overage` `rateLimitType`); providers without one leave
+    /// it `None`.
     RateLimits {
         five_hour_pct: Option<f64>,
         five_hour_resets_at: Option<i64>,
         seven_day_pct: Option<f64>,
         seven_day_resets_at: Option<i64>,
+        monthly_pct: Option<f64>,
+        monthly_resets_at: Option<i64>,
     },
     /// A session-level error message.
     Error(String),
@@ -239,6 +244,9 @@ pub(crate) fn rate_limits_from(v: &Value) -> Option<AgentUpdate> {
         five_hour_resets_at: five.1,
         seven_day_pct: seven.0,
         seven_day_resets_at: seven.1,
+        // Codex reports only primary/secondary windows; no monthly overage.
+        monthly_pct: None,
+        monthly_resets_at: None,
     })
 }
 
@@ -388,6 +396,8 @@ pub struct UsageAcc {
     five_hour_resets_at: Option<i64>,
     seven_day_pct: Option<f64>,
     seven_day_resets_at: Option<i64>,
+    monthly_pct: Option<f64>,
+    monthly_resets_at: Option<i64>,
 }
 
 impl UsageAcc {
@@ -444,6 +454,8 @@ impl UsageAcc {
         five_hour_resets_at: Option<i64>,
         seven_day_pct: Option<f64>,
         seven_day_resets_at: Option<i64>,
+        monthly_pct: Option<f64>,
+        monthly_resets_at: Option<i64>,
     ) {
         if five_hour_pct.is_some() {
             self.five_hour_pct = five_hour_pct;
@@ -456,6 +468,12 @@ impl UsageAcc {
         }
         if seven_day_resets_at.is_some() {
             self.seven_day_resets_at = seven_day_resets_at;
+        }
+        if monthly_pct.is_some() {
+            self.monthly_pct = monthly_pct;
+        }
+        if monthly_resets_at.is_some() {
+            self.monthly_resets_at = monthly_resets_at;
         }
     }
 
@@ -486,6 +504,8 @@ impl UsageAcc {
             five_hour_resets_at: self.five_hour_resets_at,
             seven_day_pct: self.seven_day_pct,
             seven_day_resets_at: self.seven_day_resets_at,
+            monthly_pct: self.monthly_pct,
+            monthly_resets_at: self.monthly_resets_at,
             received_at: Some(OffsetDateTime::now_utc()),
         }
     }
@@ -555,12 +575,16 @@ pub fn apply_updates(
                 five_hour_resets_at,
                 seven_day_pct,
                 seven_day_resets_at,
+                monthly_pct,
+                monthly_resets_at,
             } => {
                 acc.merge_rate_limits(
                     *five_hour_pct,
                     *five_hour_resets_at,
                     *seven_day_pct,
                     *seven_day_resets_at,
+                    *monthly_pct,
+                    *monthly_resets_at,
                 );
                 usage_changed = true;
             }
@@ -742,12 +766,25 @@ mod tests {
         // `utilization`) — the reset time must reach the status line anyway,
         // and a later pct-only reading must not clobber it.
         let mut acc = UsageAcc::new();
-        acc.merge_rate_limits(None, Some(1_783_314_600), None, None);
-        acc.merge_rate_limits(Some(19.0), None, None, None);
+        acc.merge_rate_limits(None, Some(1_783_314_600), None, None, None, None);
+        acc.merge_rate_limits(Some(19.0), None, None, None, None, None);
         let sl = acc.status_line();
         assert_eq!(sl.five_hour_resets_at, Some(1_783_314_600));
         assert_eq!(sl.five_hour_pct, Some(19.0));
         assert!(sl.seven_day_pct.is_none());
+    }
+
+    #[test]
+    fn monthly_overage_window_reaches_status_line() {
+        // The `overage` window is a distinct bucket — it must not land in the
+        // 5h/7d fields, and its reset time must survive a later pct-only read.
+        let mut acc = UsageAcc::new();
+        acc.merge_rate_limits(None, None, None, None, Some(42.0), Some(1_785_000_000));
+        acc.merge_rate_limits(Some(19.0), None, None, None, None, None);
+        let sl = acc.status_line();
+        assert_eq!(sl.monthly_pct, Some(42.0));
+        assert_eq!(sl.monthly_resets_at, Some(1_785_000_000));
+        assert_eq!(sl.five_hour_pct, Some(19.0));
     }
 
     #[test]

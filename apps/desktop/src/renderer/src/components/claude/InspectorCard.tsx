@@ -51,8 +51,18 @@ const fmtReset = (epochSec?: number): string => {
   return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 };
 
-const UsageBar: React.FC<{ label: string; pct: number; sub?: string }> = ({ label, pct, sub }) => {
-  const color = pct >= 80 ? colors.error : pct >= 50 ? colors.warning : colors.success;
+// `pct` is optional: many accounts report a window's reset time without a
+// utilization %. In that case we show the label + `sub` (the reset) and an empty
+// meter track rather than hiding the window entirely.
+const UsageBar: React.FC<{ label: string; pct?: number; sub?: string }> = ({ label, pct, sub }) => {
+  const color =
+    pct === undefined
+      ? colors.muted
+      : pct >= 80
+        ? colors.error
+        : pct >= 50
+          ? colors.warning
+          : colors.success;
   return (
     <div style={{ marginBottom: 10 }}>
       <div
@@ -66,7 +76,8 @@ const UsageBar: React.FC<{ label: string; pct: number; sub?: string }> = ({ labe
       >
         <span>{label}</span>
         <span style={{ color, fontVariantNumeric: 'tabular-nums' }}>
-          {Math.round(pct)}%{sub ? ` · ${sub}` : ''}
+          {pct !== undefined ? `${Math.round(pct)}%` : sub ? '' : 'ok'}
+          {pct !== undefined && sub ? ` · ${sub}` : pct === undefined && sub ? sub : ''}
         </span>
       </div>
       <div
@@ -77,14 +88,16 @@ const UsageBar: React.FC<{ label: string; pct: number; sub?: string }> = ({ labe
           overflow: 'hidden',
         }}
       >
-        <div
-          style={{
-            width: `${Math.min(100, Math.max(0, pct))}%`,
-            height: '100%',
-            backgroundColor: color,
-            transition: 'width 0.3s',
-          }}
-        />
+        {pct !== undefined && (
+          <div
+            style={{
+              width: `${Math.min(100, Math.max(0, pct))}%`,
+              height: '100%',
+              backgroundColor: color,
+              transition: 'width 0.3s',
+            }}
+          />
+        )}
       </div>
     </div>
   );
@@ -550,18 +563,25 @@ export const InspectorCard: React.FC<{
                 </div>
               )}
               {ctxPct !== undefined && <UsageBar label="Context window" pct={ctxPct} />}
-              {sl?.fiveHourPct !== undefined && (
+              {(sl?.fiveHourPct !== undefined || sl?.fiveHourResetsAt !== undefined) && (
                 <UsageBar
                   label="5-hour limit"
-                  pct={sl.fiveHourPct}
-                  sub={sl.fiveHourResetsAt ? `resets ${fmtReset(sl.fiveHourResetsAt)}` : undefined}
+                  pct={sl?.fiveHourPct}
+                  sub={sl?.fiveHourResetsAt ? `resets ${fmtReset(sl.fiveHourResetsAt)}` : undefined}
                 />
               )}
-              {sl?.sevenDayPct !== undefined && (
+              {(sl?.sevenDayPct !== undefined || sl?.sevenDayResetsAt !== undefined) && (
                 <UsageBar
                   label="7-day limit"
-                  pct={sl.sevenDayPct}
-                  sub={sl.sevenDayResetsAt ? `resets ${fmtReset(sl.sevenDayResetsAt)}` : undefined}
+                  pct={sl?.sevenDayPct}
+                  sub={sl?.sevenDayResetsAt ? `resets ${fmtReset(sl.sevenDayResetsAt)}` : undefined}
+                />
+              )}
+              {(sl?.monthlyPct !== undefined || sl?.monthlyResetsAt !== undefined) && (
+                <UsageBar
+                  label="Monthly limit"
+                  pct={sl?.monthlyPct}
+                  sub={sl?.monthlyResetsAt ? `resets ${fmtReset(sl.monthlyResetsAt)}` : undefined}
                 />
               )}
               <div

@@ -148,6 +148,9 @@ export interface SessionStatusLine {
   fiveHourResetsAt?: number;
   sevenDayPct?: number;
   sevenDayResetsAt?: number;
+  /** Monthly overage/credit window (Claude stream `overage` type only). */
+  monthlyPct?: number;
+  monthlyResetsAt?: number;
   receivedAt?: string;
 }
 

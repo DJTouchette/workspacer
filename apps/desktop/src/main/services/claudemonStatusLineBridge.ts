@@ -45,6 +45,8 @@ export async function startClaudemonStatusLineBridge(): Promise<void> {
           fiveHourResetsAt: sl.five_hour_resets_at,
           sevenDayPct: sl.seven_day_pct,
           sevenDayResetsAt: sl.seven_day_resets_at,
+          monthlyPct: sl.monthly_pct,
+          monthlyResetsAt: sl.monthly_resets_at,
           receivedAt: sl.received_at,
         });
       } catch (err) {

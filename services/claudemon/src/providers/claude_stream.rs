@@ -243,30 +243,38 @@ pub fn translate(value: &Value, totals: &mut StreamTotals) -> Vec<AgentUpdate> {
             out.push(AgentUpdate::Idle);
         }
         // The account window currently binding this session. One window per
-        // event (`rateLimitType` names it); utilization is a 0–100 percent.
+        // event, named by `rateLimitType`; utilization is a 0–100 percent.
+        //
+        // The CLI's `rateLimitType` enum is
+        // `five_hour | seven_day | seven_day_opus | seven_day_sonnet
+        //  | seven_day_overage_included | overage`. We bucket it three ways:
+        //   - `five_hour`      → the 5h window
+        //   - any `seven_day*` → the weekly window
+        //   - `overage`        → the monthly overage/credit window
+        // Routing by the exact type matters: an `overage` event must NOT land
+        // in the 5h field — the previous `starts_with("seven_day")` default did
+        // exactly that, corrupting the 5h gauge — and the monthly window needs
+        // its own bucket.
         "rate_limit_event" => {
             let info = value.get("rate_limit_info").unwrap_or(&Value::Null);
             let pct = info.get("utilization").and_then(Value::as_f64);
             let resets = info.get("resetsAt").and_then(Value::as_i64);
             if pct.is_some() || resets.is_some() {
-                let seven_day = info
-                    .get("rateLimitType")
-                    .and_then(Value::as_str)
-                    .is_some_and(|t| t.starts_with("seven_day"));
-                out.push(if seven_day {
-                    AgentUpdate::RateLimits {
-                        five_hour_pct: None,
-                        five_hour_resets_at: None,
-                        seven_day_pct: pct,
-                        seven_day_resets_at: resets,
-                    }
-                } else {
-                    AgentUpdate::RateLimits {
-                        five_hour_pct: pct,
-                        five_hour_resets_at: resets,
-                        seven_day_pct: None,
-                        seven_day_resets_at: None,
-                    }
+                let kind = info.get("rateLimitType").and_then(Value::as_str);
+                let is_seven_day = kind.is_some_and(|t| t.starts_with("seven_day"));
+                let is_overage = kind == Some("overage");
+                let bucket = |on: bool| if on { (pct, resets) } else { (None, None) };
+                let (five_hour_pct, five_hour_resets_at) =
+                    bucket(!is_seven_day && !is_overage);
+                let (seven_day_pct, seven_day_resets_at) = bucket(is_seven_day);
+                let (monthly_pct, monthly_resets_at) = bucket(is_overage);
+                out.push(AgentUpdate::RateLimits {
+                    five_hour_pct,
+                    five_hour_resets_at,
+                    seven_day_pct,
+                    seven_day_resets_at,
+                    monthly_pct,
+                    monthly_resets_at,
                 });
             }
         }
@@ -1160,6 +1168,8 @@ mod tests {
                 five_hour_resets_at: Some(1783314600),
                 seven_day_pct: None,
                 seven_day_resets_at: None,
+                monthly_pct: None,
+                monthly_resets_at: None,
             }]
         );
         let updates = t(json!({ "type": "rate_limit_event", "rate_limit_info": {
@@ -1172,6 +1182,24 @@ mod tests {
                 five_hour_resets_at: None,
                 seven_day_pct: Some(3.0),
                 seven_day_resets_at: Some(1783914600),
+                monthly_pct: None,
+                monthly_resets_at: None,
+            }]
+        );
+        // `overage` is the monthly window — it must land in `monthly_*`, never
+        // in the 5h fields (the bug this parser rewrite fixes).
+        let updates = t(json!({ "type": "rate_limit_event", "rate_limit_info": {
+            "status": "allowed_warning", "resetsAt": 1785000000, "rateLimitType": "overage",
+            "utilization": 61.0 } }));
+        assert_eq!(
+            updates,
+            vec![AgentUpdate::RateLimits {
+                five_hour_pct: None,
+                five_hour_resets_at: None,
+                seven_day_pct: None,
+                seven_day_resets_at: None,
+                monthly_pct: Some(61.0),
+                monthly_resets_at: Some(1785000000),
             }]
         );
     }

@@ -331,6 +331,9 @@ fn render_detail(f: &mut Frame, area: Rect, app: &App) {
         if let Some(p) = sl.seven_day_pct {
             lines.push(kv(t, "7d", &format!("{p:.0}% used")));
         }
+        if let Some(p) = sl.monthly_pct {
+            lines.push(kv(t, "Mo", &format!("{p:.0}% used")));
+        }
     }
     if a.tool_calls > 0 {
         lines.push(kv(t, "tools", &a.tool_calls.to_string()));
@@ -1088,7 +1091,9 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
     let rate = app
         .status_lines
         .values()
-        .find(|s| s.five_hour_pct.is_some() || s.seven_day_pct.is_some());
+        .find(|s| {
+            s.five_hour_pct.is_some() || s.seven_day_pct.is_some() || s.monthly_pct.is_some()
+        });
 
     let mut lines = vec![
         Line::from(Span::styled(
@@ -1129,6 +1134,12 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
         if let Some(p) = s.seven_day_pct {
             spans.push(Span::styled(
                 format!("   7d {p:.0}%"),
+                Style::default().fg(rate_color(t, p)),
+            ));
+        }
+        if let Some(p) = s.monthly_pct {
+            spans.push(Span::styled(
+                format!("   Mo {p:.0}%"),
                 Style::default().fg(rate_color(t, p)),
             ));
         }

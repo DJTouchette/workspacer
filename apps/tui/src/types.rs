@@ -43,6 +43,9 @@ pub struct StatusLine {
     /// 7d rate-limit window used %, 0–100 (Pro/Max only).
     #[serde(default)]
     pub seven_day_pct: Option<f64>,
+    /// Monthly overage/credit window used %, 0–100 (Claude stream `overage`).
+    #[serde(default)]
+    pub monthly_pct: Option<f64>,
 }
 
 /// Model / context-% / cost for a session, resolving claudemon's authoritative

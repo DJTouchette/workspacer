@@ -44,6 +44,8 @@ interface Snap {
     fiveHourResetsAt?: number;
     sevenDayPct?: number;
     sevenDayResetsAt?: number;
+    monthlyPct?: number;
+    monthlyResetsAt?: number;
     receivedAt?: string;
   };
 }
@@ -93,7 +95,16 @@ const RateLimitCard: React.FC<{ snaps: Snap[] }> = ({ snaps }) => {
   let bestTs = -1;
   for (const s of snaps) {
     const sl = s.statusLine;
-    if (!sl || (sl.fiveHourPct === undefined && sl.sevenDayPct === undefined)) continue;
+    if (
+      !sl ||
+      (sl.fiveHourPct === undefined &&
+        sl.sevenDayPct === undefined &&
+        sl.monthlyPct === undefined &&
+        sl.fiveHourResetsAt === undefined &&
+        sl.sevenDayResetsAt === undefined &&
+        sl.monthlyResetsAt === undefined)
+    )
+      continue;
     const ts = sl.receivedAt ? Date.parse(sl.receivedAt) : 0;
     if (ts >= bestTs) {
       bestTs = ts;
@@ -104,8 +115,11 @@ const RateLimitCard: React.FC<{ snaps: Snap[] }> = ({ snaps }) => {
   else if (!best && lastRateLimit) best = lastRateLimit.sl;
   if (!best) return null;
 
+  // Render a window when Claude gives us a utilization % OR just a reset time.
+  // Many accounts only report the reset while comfortably within a window, so a
+  // pct-less row shows the label + reset countdown (an empty meter track).
   const Row: React.FC<{ label: string; pct?: number; reset?: number }> = ({ label, pct, reset }) =>
-    pct === undefined ? null : (
+    pct === undefined && reset === undefined ? null : (
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <span
           style={{ fontSize: '0.62rem', color: 'var(--wks-text-faint)', width: 22, flexShrink: 0 }}
@@ -121,27 +135,29 @@ const RateLimitCard: React.FC<{ snaps: Snap[] }> = ({ snaps }) => {
             overflow: 'hidden',
           }}
         >
-          <span
-            style={{
-              display: 'block',
-              height: '100%',
-              width: `${Math.max(2, Math.min(100, pct))}%`,
-              background: limitColor(pct),
-            }}
-          />
+          {pct !== undefined && (
+            <span
+              style={{
+                display: 'block',
+                height: '100%',
+                width: `${Math.max(2, Math.min(100, pct))}%`,
+                background: limitColor(pct),
+              }}
+            />
+          )}
         </span>
         <span
           style={{
             fontSize: '0.66rem',
             fontWeight: 700,
-            color: limitColor(pct),
+            color: pct !== undefined ? limitColor(pct) : 'var(--wks-text-faint)',
             fontVariantNumeric: 'tabular-nums',
             flexShrink: 0,
           }}
         >
-          {Math.round(pct)}%
+          {pct !== undefined ? `${Math.round(pct)}%` : reset ? `resets ${fmtReset(reset)}` : 'ok'}
         </span>
-        {reset ? (
+        {pct !== undefined && reset ? (
           <span style={{ fontSize: '0.55rem', color: 'var(--wks-text-faint)', flexShrink: 0 }}>
             {fmtReset(reset)}
           </span>
@@ -175,6 +191,7 @@ const RateLimitCard: React.FC<{ snaps: Snap[] }> = ({ snaps }) => {
       </div>
       <Row label="5h" pct={best.fiveHourPct} reset={best.fiveHourResetsAt} />
       <Row label="7d" pct={best.sevenDayPct} reset={best.sevenDayResetsAt} />
+      <Row label="Mo" pct={best.monthlyPct} reset={best.monthlyResetsAt} />
     </div>
   );
 };

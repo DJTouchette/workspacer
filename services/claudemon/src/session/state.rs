@@ -222,6 +222,14 @@ pub struct StatusLine {
     /// Unix epoch seconds the 7d window resets at.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seven_day_resets_at: Option<i64>,
+    /// Monthly overage/credit window utilization (0–100). Sourced from Claude's
+    /// stream `overage` `rateLimitType`; absent for the interactive statusLine
+    /// (which carries only 5h/7d) and for providers without a monthly window.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub monthly_pct: Option<f64>,
+    /// Unix epoch seconds the monthly overage window resets at.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub monthly_resets_at: Option<i64>,
     /// When the daemon received this line, so clients can age out stale data.
     #[serde(
         default,
@@ -240,6 +248,10 @@ impl StatusLine {
         let rl = v.get("rate_limits");
         let five = rl.and_then(|r| r.get("five_hour"));
         let seven = rl.and_then(|r| r.get("seven_day"));
+        // The interactive statusLine has historically carried only 5h/7d; read
+        // `monthly` best-effort so we pick it up automatically if Claude ever
+        // adds it, without depending on it.
+        let monthly = rl.and_then(|r| r.get("monthly"));
         StatusLine {
             model_display: v
                 .get("model")
@@ -272,6 +284,12 @@ impl StatusLine {
                 .and_then(Value::as_f64),
             seven_day_resets_at: seven
                 .and_then(|s| s.get("resets_at"))
+                .and_then(Value::as_i64),
+            monthly_pct: monthly
+                .and_then(|m| m.get("used_percentage"))
+                .and_then(Value::as_f64),
+            monthly_resets_at: monthly
+                .and_then(|m| m.get("resets_at"))
                 .and_then(Value::as_i64),
             received_at: Some(OffsetDateTime::now_utc()),
         }

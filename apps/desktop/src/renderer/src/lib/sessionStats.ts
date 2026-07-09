@@ -155,6 +155,10 @@ export interface DerivedSessionStats {
   sevenDayPct?: number;
   /** Unix epoch seconds the 7d rate-limit window resets at. */
   sevenDayResetsAt?: number;
+  /** Monthly overage/credit window utilization (stream `overage` type). */
+  monthlyPct?: number;
+  /** Unix epoch seconds the monthly overage window resets at. */
+  monthlyResetsAt?: number;
 }
 
 export function deriveSessionStats(
@@ -190,5 +194,7 @@ export function deriveSessionStats(
     fiveHourResetsAt: sl?.fiveHourResetsAt,
     sevenDayPct: sl?.sevenDayPct,
     sevenDayResetsAt: sl?.sevenDayResetsAt,
+    monthlyPct: sl?.monthlyPct,
+    monthlyResetsAt: sl?.monthlyResetsAt,
   };
 }

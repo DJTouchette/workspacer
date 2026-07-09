@@ -853,6 +853,8 @@ mod tests {
                     five_hour_resets_at: Some(1783121345),
                     seven_day_pct: Some(3.0),
                     seven_day_resets_at: Some(1783708145),
+                    monthly_pct: None,
+                    monthly_resets_at: None,
                 },
             ]
         );
