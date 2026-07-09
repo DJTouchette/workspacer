@@ -3,233 +3,248 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover" />
-<meta name="theme-color" content="#0e0e11" />
+<meta name="theme-color" content="#18181b" />
 <meta name="format-detection" content="telephone=no" />
 <title>Workspacer Mobile</title>
-<link rel="stylesheet" href="xterm.css">
 <style>
+  /* Palette mirrors the desktop app's default "dark" theme (src/themes.ts) so
+     the phone client reads as the same product as the new-agent screen and the
+     dashboard — same blue accent, same raised-card surfaces, same type ramp.
+     Self-contained: no xterm, no bundler, no external assets. Every session is
+     driven through its snapshot (conversation + pending state) over the hub bus,
+     so this works identically for stream-mode and PTY agents with no terminal. */
   :root {
-    --bg: #0e0e11; --panel: #16161b; --panel2: #1d1d24; --line: #2a2a33;
-    --text: #e7e7ea; --dim: #9a9aa6; --faint: #6b6b76;
-    --accent: #e6c200; --accent-dim: #6b5e16;
-    --green: #57b85b; --blue: #5b9bd5; --amber: #e6a23c; --red: #e06c6c; --err: #e06c6c;
-    --radius: 14px;
-    --safe-t: env(safe-area-inset-top); --safe-b: env(safe-area-inset-bottom);
+    --bg:#18181b; --raised:#1c1c20; --surface:#1e1e21; --elevated:#202024;
+    --input:#141418; --hover:#26262c; --selected:#2d303c;
+    --line:#323237; --line-subtle:#2d2d32; --line-input:#37373c;
+    --text:#dcdceb; --text2:#c8c8d2; --muted:#8c8c9b; --faint:#787887; --disabled:#5a5a64;
+    --accent:#5078c8; --accent-text:#60a5fa; --accent-bg:rgba(96,165,250,0.14);
+    --accent-glow:rgba(80,120,200,0.18);
+    --success:#4ade80; --error:#f87171; --warning:#facc15;
+    --user-bubble:rgba(60,90,160,0.15); --user-border:rgba(60,90,160,0.28);
+    --radius:13px; --radius-sm:9px;
+    --safe-t:env(safe-area-inset-top); --safe-b:env(safe-area-inset-bottom);
+    --mono:"JetBrainsMono Nerd Font Mono","SF Mono",ui-monospace,Menlo,monospace;
   }
-  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-  html, body { margin: 0; height: 100%; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { margin:0; height:100%; }
   body {
-    background: var(--bg); color: var(--text);
-    font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    overscroll-behavior-y: none;
+    background:var(--bg); color:var(--text);
+    font:15px/1.45 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    overscroll-behavior-y:none;
   }
-  /* Subtract the iOS keyboard height (--kb, set from visualViewport) so the
-     bottom controls stay above the keyboard. ~0 on Android, so it's a no-op. */
-  #app { display: flex; flex-direction: column; height: calc(100dvh - var(--kb, 0px)); }
+  button { font-family:inherit; }
+  #app { display:flex; flex-direction:column; height:calc(100dvh - var(--kb,0px)); }
 
   /* Header */
   header {
-    flex: 0 0 auto; display: flex; align-items: center; gap: 10px;
-    padding: calc(10px + var(--safe-t)) 16px 10px; background: var(--panel);
-    border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5;
+    flex:0 0 auto; display:flex; align-items:center; gap:10px;
+    padding:calc(11px + var(--safe-t)) 16px 11px; background:var(--raised);
+    border-bottom:1px solid var(--line-subtle); position:sticky; top:0; z-index:5;
   }
   header .back {
-    border: none; background: var(--panel2); color: var(--text);
-    width: 34px; height: 34px; border-radius: 10px; font-size: 18px;
-    display: none; align-items: center; justify-content: center; flex: 0 0 auto;
+    border:none; background:var(--elevated); color:var(--text);
+    width:34px; height:34px; border-radius:10px; font-size:22px; line-height:1;
+    display:none; align-items:center; justify-content:center; flex:0 0 auto;
   }
-  header.has-back .back { display: inline-flex; }
-  header h1 { font-size: 17px; margin: 0; font-weight: 650; flex: 1;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  header .sub { font-size: 12px; color: var(--dim); font-weight: 400; }
-  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--err); flex: 0 0 auto; }
-  .dot.on { background: var(--green); }
+  header.has-back .back { display:inline-flex; }
+  header .titles { flex:1; min-width:0; }
+  header h1 { font-size:17px; margin:0; font-weight:650; letter-spacing:-0.01em;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  header .sub { font-size:12px; color:var(--muted); font-weight:400; margin-top:1px;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .dot { width:9px; height:9px; border-radius:50%; background:var(--error); flex:0 0 auto;
+    box-shadow:0 0 0 3px rgba(248,113,113,0.12); transition:background .2s,box-shadow .2s; }
+  .dot.on { background:var(--success); box-shadow:0 0 0 3px rgba(74,222,128,0.12); }
 
-  /* Scroll area (fleet / needs lists) */
-  main { flex: 1 1 auto; overflow-y: auto; -webkit-overflow-scrolling: touch;
-    padding: 12px 12px calc(12px + var(--safe-b)); }
+  /* Scroll area (list views) */
+  main { flex:1 1 auto; overflow-y:auto; -webkit-overflow-scrolling:touch;
+    padding:12px 12px calc(14px + var(--safe-b)); position:relative; }
 
   /* Cards */
   .card {
-    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
-    padding: 14px; margin-bottom: 10px;
+    background:var(--raised); border:1px solid var(--line-subtle); border-radius:var(--radius);
+    padding:14px; margin-bottom:10px; position:relative; overflow:hidden;
   }
-  .card.tap:active { background: var(--panel2); }
-  .row { display: flex; align-items: center; gap: 10px; }
-  .grow { flex: 1; min-width: 0; }
-  .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .path { color: var(--faint); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .meta { color: var(--dim); font-size: 12px; margin-top: 6px; display: flex; gap: 12px; flex-wrap: wrap; }
-
-  .badge { font-size: 11px; font-weight: 700; padding: 4px 9px; border-radius: 999px;
-    text-transform: uppercase; letter-spacing: .03em; flex: 0 0 auto; }
-  .b-idle { background: #23232b; color: var(--dim); }
-  .b-work { background: rgba(91,155,213,.16); color: var(--blue); }
-  .b-need { background: rgba(230,162,60,.18); color: var(--amber); }
-  .b-err  { background: rgba(224,108,108,.18); color: var(--red); }
-
-  .empty { text-align: center; color: var(--faint); padding: 48px 20px; }
-  .empty .big { font-size: 30px; margin-bottom: 8px; }
-
-  /* Decision card (Needs You tab) */
-  .decision .ctx {
-    background: var(--bg); border: 1px solid var(--line); border-radius: 10px;
-    padding: 10px; margin: 10px 0; font: 12.5px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
-    color: var(--text); white-space: pre-wrap; word-break: break-word; max-height: 220px; overflow: auto;
+  .card.tap:active { background:var(--hover); }
+  .card.blocked { border-color:var(--warning); }
+  .card.blocked::before {
+    content:''; position:absolute; left:0; top:0; bottom:0; width:3px; background:var(--warning);
   }
-  .qtext { margin: 6px 0 10px; }
-  .btns { display: flex; gap: 8px; flex-wrap: wrap; }
-  button.act {
-    flex: 1 1 auto; min-width: 84px; min-height: 46px; border-radius: 11px; border: 1px solid var(--line);
-    background: var(--panel2); color: var(--text); font-size: 15px; font-weight: 600;
-  }
-  button.act:active { filter: brightness(1.3); }
-  button.yes { background: rgba(87,184,91,.18); border-color: var(--green); color: #b6e7b8; }
-  button.no  { background: rgba(224,108,108,.16); border-color: var(--red); color: #f0bcbc; }
-  button.always { background: rgba(230,194,0,.14); border-color: var(--accent-dim); color: #efe09a; }
-  button.opt { flex-basis: 100%; text-align: left; justify-content: flex-start; }
+  .row { display:flex; align-items:center; gap:10px; }
+  .grow { flex:1; min-width:0; }
+  .name { font-weight:600; font-size:15px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .path { font-family:var(--mono); font-size:11px; color:var(--faint); margin-top:5px;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .meta { color:var(--muted); font-size:12px; margin-top:8px; display:flex; gap:6px 12px; flex-wrap:wrap;
+    align-items:center; }
+  .meta .mono { font-family:var(--mono); font-size:11px; }
 
-  /* ── Terminal view ──────────────────────────────────────────────────────
-     The agent screen IS the TUI: a live xterm mirror of the real Claude Code
-     pane, with a key bar for what phone keyboards can't type and a composer
-     that delivers through claudemon's verified send pipeline. */
-  #termwrap { flex: 1 1 auto; display: none; flex-direction: column; min-height: 0; }
-  #termwrap.show { display: flex; }
-  #term { flex: 1 1 auto; min-height: 0; background: #000; padding: 4px 2px 0 6px; position: relative; }
-  #term .xterm { height: 100%; }
-  /* One-finger scroll through scrollback; xterm handles the touches. */
-  #term .xterm-viewport { touch-action: pan-y; }
-  #termBottom {
-    position: absolute; right: 12px; bottom: 10px; z-index: 3; display: none;
-    border: 1px solid var(--line); border-radius: 999px; background: rgba(22,22,27,.92);
-    color: var(--text); font-size: 12px; font-weight: 600; padding: 7px 13px;
-  }
-  #termBottom.show { display: block; }
+  /* State chip */
+  .chip { font-size:11px; font-weight:600; padding:3px 9px; border-radius:999px; flex:0 0 auto;
+    display:inline-flex; align-items:center; gap:6px; }
+  .chip .pulse { width:6px; height:6px; border-radius:50%; background:currentColor; }
+  .chip.work { color:var(--accent-text); background:var(--accent-bg); }
+  .chip.work .pulse { animation:pulse 1.1s ease-in-out infinite; }
+  .chip.wait { color:#1a1205; background:var(--warning); }
+  .chip.idle { color:var(--muted); background:var(--elevated); }
+  .chip.stop { color:var(--faint); background:var(--elevated); }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.25} }
 
-  /* Blocked strip: approvals/questions surfaced right above the key bar so a
-     decision is one tap even while watching the TUI. */
-  #ask { flex: 0 0 auto; background: var(--panel); border-top: 1px solid var(--line);
-    max-height: 42vh; overflow-y: auto; }
-  #ask .inner { padding: 10px 12px; }
-  #ask .ask-title { font-size: 12.5px; font-weight: 700; color: var(--amber); margin-bottom: 6px; }
-  #ask pre {
-    background: var(--bg); border: 1px solid var(--line); border-radius: 9px; padding: 8px;
-    margin: 0 0 8px; font: 12px/1.4 ui-monospace, Menlo, monospace;
-    white-space: pre-wrap; word-break: break-word; max-height: 130px; overflow: auto;
-  }
-  #ask button.act { min-height: 42px; font-size: 14px; }
-  #ask button.opt small { display: block; color: var(--dim); font-weight: 400; font-size: 12px; }
+  .badge { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.04em;
+    color:#1a1205; background:var(--warning); padding:2px 7px; border-radius:6px; }
+  .tag { font-size:10px; font-weight:600; color:var(--muted); background:var(--elevated);
+    padding:2px 7px; border-radius:6px; letter-spacing:.02em; }
 
-  /* Key bar: the keys the soft keyboard doesn't offer. Horizontally
-     scrollable; big tap targets; ⇧Tab front and center for mode cycling. */
-  #keybar {
-    flex: 0 0 auto; display: flex; gap: 6px; padding: 8px 8px;
-    background: var(--panel); border-top: 1px solid var(--line);
-    overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none;
-  }
-  #keybar::-webkit-scrollbar { display: none; }
-  #keybar button {
-    flex: 0 0 auto; min-width: 46px; height: 42px; padding: 0 12px;
-    border-radius: 10px; border: 1px solid var(--line); background: var(--panel2);
-    color: var(--text); font-size: 13.5px; font-weight: 600;
-    font-family: ui-monospace, Menlo, monospace;
-  }
-  #keybar button:active { filter: brightness(1.35); }
-  #keybar button.on { border-color: var(--accent); color: var(--accent); }
-  #keybar button.warn { color: #f0bcbc; }
+  /* Decision block (approvals / questions) */
+  .decision { background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-sm);
+    padding:12px; margin-top:10px; }
+  .decision .q { font-weight:600; font-size:14px; margin-bottom:2px; }
+  .decision .tool { font-family:var(--mono); font-size:12px; color:var(--accent-text); }
+  .decision .inp { font-family:var(--mono); font-size:11.5px; color:var(--muted); margin-top:6px;
+    white-space:pre-wrap; word-break:break-word; max-height:120px; overflow:auto;
+    background:var(--input); border:1px solid var(--line-subtle); border-radius:7px; padding:8px; }
+  .btns { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
+  .btn { flex:1 1 auto; min-width:76px; border:1px solid var(--line-input); background:var(--elevated);
+    color:var(--text); font-size:13px; font-weight:600; padding:10px 12px; border-radius:9px; cursor:pointer; }
+  .btn:active { background:var(--hover); }
+  .btn.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  .btn.danger { color:var(--error); border-color:rgba(248,113,113,0.4); }
+  .btn.good { color:var(--success); border-color:rgba(74,222,128,0.4); }
+  .btn.opt { flex:1 1 100%; text-align:left; }
+  .btn.opt.picked { border-color:var(--accent); background:var(--accent-bg); color:var(--accent-text); }
+  .btn .odesc { display:block; font-weight:400; font-size:11.5px; color:var(--muted); margin-top:3px; }
+  .qgroup { margin-top:10px; }
+  .qgroup:first-child { margin-top:0; }
 
-  /* Composer (terminal view): reliable sends via claudemon settle+verify. */
-  .composer { flex: 0 0 auto; display: none; gap: 8px; padding: 10px 12px calc(10px + var(--safe-b));
-    background: var(--panel); border-top: 1px solid var(--line); }
-  .composer.show { display: flex; }
-  .composer textarea {
-    flex: 1; resize: none; max-height: 120px; min-height: 44px; padding: 11px 12px;
-    background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 12px;
-    font: inherit; outline: none;
-    font-size: 16px; /* >=16px stops iOS from auto-zooming on focus */
-  }
-  .composer button { width: 48px; border-radius: 12px; border: none; background: var(--accent); color: #1a1505;
-    font-size: 20px; font-weight: 700; flex: 0 0 auto; }
-  .composer button:disabled { opacity: .4; }
+  /* Chat view */
+  #chat { flex:1 1 auto; display:none; flex-direction:column; min-height:0; }
+  #chat.show { display:flex; }
+  #transcript { flex:1 1 auto; overflow-y:auto; -webkit-overflow-scrolling:touch;
+    padding:14px 12px 8px; }
+  .turn { margin-bottom:12px; display:flex; }
+  .turn.user { justify-content:flex-end; }
+  .bubble { max-width:86%; padding:10px 12px; border-radius:14px; font-size:14.5px; line-height:1.5;
+    white-space:pre-wrap; word-break:break-word; }
+  .turn.user .bubble { background:var(--user-bubble); border:1px solid var(--user-border);
+    border-bottom-right-radius:5px; }
+  .turn.assistant .bubble { background:var(--raised); border:1px solid var(--line-subtle);
+    border-bottom-left-radius:5px; }
+  .bubble pre { background:var(--input); border:1px solid var(--line-subtle); border-radius:8px;
+    padding:9px; overflow:auto; font-family:var(--mono); font-size:12px; margin:6px 0; }
+  .bubble code { font-family:var(--mono); font-size:12.5px; }
+  .toolchip { display:flex; align-items:center; gap:8px; font-family:var(--mono); font-size:12px;
+    color:var(--text2); background:var(--elevated); border:1px solid var(--line-subtle);
+    border-radius:8px; padding:7px 10px; margin:6px 0; }
+  .toolchip .tn { color:var(--accent-text); font-weight:600; flex:0 0 auto; }
+  .toolchip .ti { color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .toolchip .sd { width:7px; height:7px; border-radius:50%; flex:0 0 auto; margin-left:auto; }
+  .sd.running { background:var(--accent-text); animation:pulse 1.1s ease-in-out infinite; }
+  .sd.complete { background:var(--success); }
+  .sd.failed { background:var(--error); }
 
-  /* Bottom tab bar */
-  nav {
-    flex: 0 0 auto; display: flex; background: var(--panel); border-top: 1px solid var(--line);
-    padding-bottom: var(--safe-b);
-  }
-  nav button {
-    flex: 1; border: none; background: none; color: var(--dim); padding: 9px 0 8px;
-    font-size: 11px; display: flex; flex-direction: column; align-items: center; gap: 3px; position: relative;
-  }
-  nav button .ico { font-size: 20px; line-height: 1; }
-  nav button.active { color: var(--accent); }
-  nav .pill { position: absolute; top: 4px; right: 50%; transform: translateX(22px);
-    background: var(--red); color: #fff; font-size: 10px; font-weight: 700; min-width: 17px;
-    height: 17px; border-radius: 9px; padding: 0 4px; display: none; align-items: center; justify-content: center; }
-  nav .pill.show { display: flex; }
+  /* Pinned decision above composer in chat */
+  #chatDecision { flex:0 0 auto; padding:0 12px; }
+  #chatDecision:empty { display:none; }
+  #chatDecision .decision { margin:0 0 10px; }
 
-  /* Gate */
-  .gate { padding: 40px 22px; }
-  .gate h2 { margin: 0 0 6px; }
-  .gate p { color: var(--dim); margin: 0 0 18px; }
-  .gate input { width: 100%; padding: 13px; border-radius: 11px; border: 1px solid var(--line);
-    background: var(--bg); color: var(--text); font-size: 16px; margin-bottom: 12px; }
-  .gate button { width: 100%; padding: 14px; border-radius: 11px; border: none;
-    background: var(--accent); color: #1a1505; font-size: 15px; font-weight: 700; }
+  /* Composer */
+  #composer { flex:0 0 auto; display:flex; gap:8px; align-items:flex-end;
+    padding:10px 12px calc(10px + var(--safe-b)); background:var(--raised);
+    border-top:1px solid var(--line-subtle); }
+  #composer textarea { flex:1; resize:none; border:1px solid var(--line-input); background:var(--input);
+    color:var(--text); border-radius:12px; padding:10px 12px; font-size:15px; font-family:inherit;
+    max-height:120px; line-height:1.4; }
+  #composer textarea:focus { outline:none; border-color:var(--accent); }
+  #send { flex:0 0 auto; width:44px; height:44px; border-radius:12px; border:none; background:var(--accent);
+    color:#fff; font-size:19px; display:flex; align-items:center; justify-content:center; }
+  #send:disabled { opacity:.5; }
 
-  .toast { position: fixed; left: 50%; bottom: calc(76px + var(--safe-b)); transform: translateX(-50%);
-    background: #2b2b34; color: var(--text); padding: 10px 16px; border-radius: 10px; font-size: 13px;
-    opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 20; border: 1px solid var(--line);
-    max-width: 86vw; }
-  .toast.show { opacity: 1; }
+  /* Spawn form */
+  .form { max-width:560px; margin:0 auto; }
+  .field { margin-bottom:16px; }
+  .label { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.07em;
+    color:var(--faint); margin-bottom:7px; }
+  .form input[type=text] { width:100%; border:1px solid var(--line-input); background:var(--input);
+    color:var(--text); border-radius:10px; padding:11px 12px; font-size:15px; font-family:var(--mono); }
+  .form input:focus { outline:none; border-color:var(--accent); }
+  .chips { display:flex; gap:7px; flex-wrap:wrap; margin-top:9px; }
+  .chipbtn { border:1px solid var(--line-input); background:var(--elevated); color:var(--text2);
+    font-size:12px; font-family:var(--mono); padding:6px 10px; border-radius:8px; cursor:pointer; }
+  .chipbtn:active { background:var(--hover); }
+  .seg { display:flex; gap:7px; flex-wrap:wrap; }
+  .seg button { flex:1 1 auto; min-width:78px; border:1px solid var(--line-input); background:var(--elevated);
+    color:var(--text2); font-size:13px; font-weight:600; padding:10px; border-radius:9px; cursor:pointer; }
+  .seg button.on { border-color:var(--accent); background:var(--accent-bg); color:var(--accent-text); }
+  .note { font-size:12px; color:var(--muted); margin-top:8px; display:flex; align-items:center; gap:7px; }
+  .spawnBtn { width:100%; border:none; background:var(--accent); color:#fff; font-size:15px; font-weight:650;
+    padding:14px; border-radius:12px; cursor:pointer; margin-top:4px; }
+  .spawnBtn:disabled { opacity:.55; }
+
+  /* Empty / gate states */
+  .empty { text-align:center; color:var(--muted); padding:56px 20px; }
+  .empty .ic { font-size:34px; opacity:.5; }
+  .empty .big { font-size:15px; font-weight:600; color:var(--text2); margin-top:12px; }
+  .empty .small { font-size:13px; color:var(--faint); margin-top:6px; }
+  .glow { position:absolute; top:-10%; left:50%; transform:translateX(-50%); width:460px; height:460px;
+    border-radius:50%; pointer-events:none; z-index:0;
+    background:radial-gradient(circle, var(--accent-glow) 0%, transparent 65%); }
+  .gate { max-width:420px; margin:40px auto; padding:0 8px; text-align:center; position:relative; z-index:1; }
+  .gate h2 { font-size:20px; margin:0 0 6px; }
+  .gate p { color:var(--muted); font-size:14px; margin:0 0 18px; }
+  .gate input { width:100%; border:1px solid var(--line-input); background:var(--input); color:var(--text);
+    border-radius:10px; padding:12px; font-size:15px; margin-bottom:10px; font-family:var(--mono); }
+  .gate button { width:100%; border:none; background:var(--accent); color:#fff; font-size:15px; font-weight:650;
+    padding:13px; border-radius:11px; }
+
+  /* Bottom nav */
+  nav { flex:0 0 auto; display:flex; background:var(--raised); border-top:1px solid var(--line-subtle);
+    padding-bottom:var(--safe-b); }
+  nav button { flex:1; position:relative; border:none; background:none; color:var(--faint);
+    font-size:12px; font-weight:600; padding:11px 0 12px; display:flex; flex-direction:column;
+    align-items:center; gap:3px; }
+  nav button .ni { font-size:19px; line-height:1; }
+  nav button.active { color:var(--accent-text); }
+  nav .pill { position:absolute; top:5px; left:50%; margin-left:6px; min-width:16px; height:16px;
+    padding:0 4px; border-radius:8px; background:var(--warning); color:#1a1205; font-size:10px;
+    font-weight:800; display:none; align-items:center; justify-content:center; }
+  nav .pill.show { display:inline-flex; }
+
+  /* Toast */
+  .toast { position:fixed; left:50%; bottom:calc(76px + var(--safe-b)); transform:translateX(-50%) translateY(10px);
+    background:var(--elevated); border:1px solid var(--line); color:var(--text); font-size:13px; font-weight:500;
+    padding:9px 15px; border-radius:10px; opacity:0; pointer-events:none; transition:opacity .18s,transform .18s;
+    z-index:20; max-width:82vw; text-align:center; }
+  .toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
 </style>
 </head>
 <body>
 <div id="app">
   <header id="hdr">
-    <button class="back" id="back" aria-label="Back">‹</button>
-    <h1 id="title">Fleet<span class="sub" id="sub"></span></h1>
-    <span class="dot" id="dot"></span>
+    <button class="back" id="backBtn" aria-label="Back">‹</button>
+    <div class="titles"><h1 id="title">Fleet</h1><div class="sub" id="sub"></div></div>
+    <span class="dot" id="dot" title="connection"></span>
   </header>
+
   <main id="main"></main>
 
-  <!-- Terminal view: xterm mirror + decision strip + key bar + composer -->
-  <div id="termwrap">
-    <div id="term"><button id="termBottom">↓ latest</button></div>
-    <div id="ask"></div>
-    <div id="keybar">
-      <button data-key="esc" class="warn">Esc</button>
-      <button data-key="stab" title="Shift+Tab — cycle permission mode">⇧Tab</button>
-      <button data-key="tab">Tab</button>
-      <button data-key="up">↑</button>
-      <button data-key="down">↓</button>
-      <button data-key="left">←</button>
-      <button data-key="right">→</button>
-      <button data-key="enter">⏎</button>
-      <button data-act="ctrl" id="ctrlKey">Ctrl</button>
-      <button data-key="ctrlc" class="warn">^C</button>
-      <button data-key="bksp">⌫</button>
-      <button data-key="pgup">PgUp</button>
-      <button data-key="pgdn">PgDn</button>
-      <button data-act="kb" title="Type directly into the terminal">⌨</button>
-      <button data-act="fontdown">A−</button>
-      <button data-act="fontup">A+</button>
+  <section id="chat">
+    <div id="transcript"></div>
+    <div id="chatDecision"></div>
+    <div id="composer">
+      <textarea id="msg" rows="1" placeholder="Message…" autocomplete="off"></textarea>
+      <button id="send" aria-label="Send">↑</button>
     </div>
-    <div class="composer show" id="composer">
-      <textarea id="msg" rows="1" placeholder="Message this agent…" autocomplete="off"></textarea>
-      <button id="send">↑</button>
-    </div>
-  </div>
+  </section>
 
   <nav id="nav">
-    <button data-tab="fleet" class="active"><span class="ico">▦</span>Fleet</button>
-    <button data-tab="needs"><span class="ico">●</span>Needs You<span class="pill" id="needPill"></span></button>
+    <button data-tab="fleet" class="active"><span class="ni">▦</span>Fleet</button>
+    <button data-tab="needs"><span class="ni">◎</span>Needs You<span class="pill" id="needPill">0</span></button>
+    <button data-tab="spawn"><span class="ni">＋</span>New</button>
   </nav>
 </div>
-<div class="toast" id="toast"></div>
+<div id="toast" class="toast"></div>
 
-<script src="xterm.js"></script>
-<script src="addon-fit.js"></script>
 <script>
 (() => {
   const qs = new URLSearchParams(location.search);
@@ -237,549 +252,442 @@
   if (token) sessionStorage.setItem('hubToken', token);
 
   const $ = (id) => document.getElementById(id);
-  const main = $('main'), dot = $('dot'), titleEl = $('title'), subEl = $('sub');
-  const backBtn = $('back'), hdr = $('hdr'), nav = $('nav');
-  const termwrap = $('termwrap'), askEl = $('ask'), keybar = $('keybar');
-  const msgEl = $('msg'), sendBtn = $('send'), toastEl = $('toast'), needPill = $('needPill');
+  const hdr = $('hdr'), titleEl = $('title'), subEl = $('sub'), dot = $('dot');
+  const main = $('main'), chatEl = $('chat'), transcript = $('transcript');
+  const chatDecision = $('chatDecision'), nav = $('nav'), needPill = $('needPill');
+  const msgEl = $('msg'), sendBtn = $('send'), backBtn = $('backBtn'), toastEl = $('toast');
 
-  let ws = null, backoff = 500, calls = new Map(), callSeq = 0;
-  let reconnectTimer = null;
-  let lastActivity = 0;            // ms of the last inbound frame; drives staleness check
+  // ── transport (hub bus over /bus) ──────────────────────────────────────────
+  let ws = null, callSeq = 0, backoff = 500, reconnectTimer = null, reconcileTimer = null, watchdog = null, lastActivity = 0;
+  const calls = new Map();
   const STALE_MS = 30000;
-  const sessions = new Map();          // sessionId -> agents.list row
-  let view = { name: 'fleet' };        // 'fleet' | 'needs' | { name:'term', sessionId }
 
-  // Terminal mirror state
-  let term = null, fitAddon = null;
-  let termSessionId = '';
-  let termKeepalive = null, termResizeTimer = null;
-  let ctrlSticky = false;
-  let termFont = Number(localStorage.getItem('wksMobTermFont') || 13) || 13;
+  // Live session snapshots, keyed by sessionId. Each is a full
+  // ClaudeSessionSnapshot (conversation, pendingApproval, pendingQuestions,
+  // ambientState, usage, …) — the single source every view renders from.
+  const sessions = new Map();
+  let cfg = null;               // cached config.get (spawn defaults + dirs)
+  let view = { name: 'fleet' };  // {name:'fleet'|'needs'|'spawn'|'chat', sessionId?}
+  const picks = new Map();       // per-question option picks in the open decision
 
-  // ── helpers ──────────────────────────────────────────────────────────────
-  function esc(s) {
-    return String(s == null ? '' : s)
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  }
-  function basename(p) {
-    if (!p) return 'Agent';
-    const parts = String(p).replace(/[/\\]+$/, '').split(/[/\\]/);
-    return parts[parts.length - 1] || p;
-  }
-  function toast(m) {
-    toastEl.textContent = m; toastEl.classList.add('show');
-    clearTimeout(toast._t); toast._t = setTimeout(() => toastEl.classList.remove('show'), 2200);
-  }
+  function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+  function basename(p) { p = String(p || '').replace(/[\/\\]+$/, ''); const i = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\')); return i >= 0 ? p.slice(i + 1) : p; }
+  function toast(m) { toastEl.textContent = m; toastEl.classList.add('show'); clearTimeout(toast._t); toast._t = setTimeout(() => toastEl.classList.remove('show'), 2200); }
+  function fmtUSD(n) { n = n || 0; return n >= 0.01 ? '$' + n.toFixed(2) : n > 0 ? '<$0.01' : '$0.00'; }
   function isBlocked(s) { return !!(s && (s.pendingApproval || (s.pendingQuestions && s.pendingQuestions.length))); }
+  function isLive(s) { return s && s.status !== 'ended'; }
+  function agentName(s) { return basename(s.liveCwd || s.cwd) || (s.sessionId || '').slice(0, 8) || 'agent'; }
 
-  function stateInfo(s) {
-    if (s.pendingApproval) return { cls: 'b-need', label: 'needs approval' };
-    if (s.pendingQuestions && s.pendingQuestions.length) return { cls: 'b-need', label: 'has a question' };
-    const st = (s.state || '').toLowerCase();
-    if (st === 'waiting_approval') return { cls: 'b-need', label: 'needs approval' };
-    if (st === 'waiting_input') return { cls: 'b-need', label: 'needs you' };
-    if (st === 'streaming') return { cls: 'b-work', label: 'working' };
-    if (st === 'thinking') return { cls: 'b-work', label: 'thinking' };
-    if (st === 'error') return { cls: 'b-err', label: 'error' };
-    return { cls: 'b-idle', label: 'idle' };
+  function stateChip(s) {
+    if (!isLive(s)) return '<span class="chip stop">Stopped</span>';
+    if (s.pendingApproval) return '<span class="chip wait">Needs approval</span>';
+    if (s.pendingQuestions && s.pendingQuestions.length) return '<span class="chip wait">Needs answer</span>';
+    const a = s.ambientState;
+    if (a === 'streaming' || a === 'thinking') return '<span class="chip work"><span class="pulse"></span>Working</span>';
+    return '<span class="chip idle">Idle</span>';
   }
   function ctxPct(s) {
-    if (s.contextLimit > 0 && s.contextTokens >= 0) return Math.round(100 * s.contextTokens / s.contextLimit) + '% ctx';
-    return '';
+    const u = s.usage; if (!u || !u.contextLimit) return -1;
+    return Math.min(100, Math.round((u.contextTokens / u.contextLimit) * 100));
   }
 
-  // ── transport ────────────────────────────────────────────────────────────
-  function wsURL() {
-    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    return `${proto}//${location.host}/bus?token=${encodeURIComponent(token)}`;
-  }
   function call(method, params) {
     return new Promise((resolve, reject) => {
       if (!ws || ws.readyState !== WebSocket.OPEN) return reject(new Error('offline'));
       const id = 'c' + (++callSeq);
       calls.set(id, { resolve, reject });
       ws.send(JSON.stringify({ op: 'call', id, method, params: params || {} }));
-      setTimeout(() => { if (calls.has(id)) { calls.delete(id); reject(new Error('timeout')); } }, 12000);
+      setTimeout(() => { if (calls.has(id)) { calls.delete(id); reject(new Error('timeout')); } }, 15000);
     });
   }
-  async function doCall(method, params, okMsg) {
-    try { await call(method, params); if (okMsg) toast(okMsg); await refresh(); }
-    catch (e) { toast('Failed: ' + (e.message || e)); }
+  function wsURL() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${proto}//${location.host}/bus?token=${encodeURIComponent(token)}`;
   }
 
-  // agents.list rows come desktop-shaped (sessionId/state/contextTokens) when
-  // the app provides live caps, or as raw claudemon rows (session_id/mode/
-  // usage.*) from the brain's fallback. Normalize both so the UI never keys a
-  // card on `undefined`, and drop dead/archived history rows from the fleet.
-  function normRow(s) {
-    return {
-      ...s,
-      sessionId: s.sessionId || s.session_id || '',
-      state: s.state || s.mode || '',
-      model: s.model ?? (s.usage && s.usage.model) ?? '',
-      contextTokens: s.contextTokens ?? (s.usage && s.usage.context_tokens) ?? -1,
-      contextLimit: s.contextLimit ?? (s.usage && s.usage.context_limit) ?? 0,
-    };
-  }
-  function isLive(s) {
-    if (s.archived) return false;
-    const st = (s.state || '').toLowerCase();
-    return st !== 'stopped' && st !== 'ended';
-  }
-
-  async function refresh() {
+  // ── data ───────────────────────────────────────────────────────────────────
+  async function seed() {
     try {
-      const list = await call('agents.list', {});
+      const list = await call('sessions.snapshots', {});
       sessions.clear();
-      for (const raw of (list || [])) {
-        const s = normRow(raw);
-        if (s.sessionId && isLive(s)) sessions.set(s.sessionId, s);
-      }
-      updateNeedPill();
-      if (view.name === 'fleet') renderFleet();
-      else if (view.name === 'needs') renderNeeds();
-      else if (view.name === 'term') { renderTermHeader(); renderAsk(); }
-    } catch (e) { /* connection state shows it */ }
+      for (const s of (list || [])) if (s && s.sessionId) sessions.set(s.sessionId, s);
+      afterData();
+    } catch (e) { /* connection dot shows offline */ }
+  }
+  function upsert(snap) {
+    if (!snap || !snap.sessionId) return;
+    sessions.set(snap.sessionId, snap);
+    afterData(snap.sessionId);
+  }
+  function afterData(changedId) {
+    updateNeedPill();
+    if (view.name === 'fleet') renderFleet();
+    else if (view.name === 'needs') renderNeeds();
+    else if (view.name === 'chat' && (!changedId || changedId === view.sessionId)) renderChat();
   }
   function updateNeedPill() {
-    let n = 0; for (const s of sessions.values()) if (isBlocked(s)) n++;
+    let n = 0; for (const s of sessions.values()) if (isLive(s) && isBlocked(s)) n++;
     needPill.textContent = n; needPill.classList.toggle('show', n > 0);
   }
+  function liveList() {
+    return [...sessions.values()].filter(isLive)
+      .sort((a, b) => (isBlocked(b) - isBlocked(a)) || (b.lastActivity || 0) - (a.lastActivity || 0));
+  }
 
-  // ── list views ────────────────────────────────────────────────────────────
+  // ── tabs / navigation ──────────────────────────────────────────────────────
   function setTab(tab) {
-    leaveTerminal();
     view = { name: tab };
     for (const b of nav.querySelectorAll('button')) b.classList.toggle('active', b.dataset.tab === tab);
     hdr.classList.remove('has-back');
-    termwrap.classList.remove('show');
-    main.style.display = 'block';
-    nav.style.display = 'flex';
-    if (tab === 'fleet') { titleEl.firstChild.nodeValue = 'Fleet'; subEl.textContent = ''; renderFleet(); }
-    else { titleEl.firstChild.nodeValue = 'Needs You'; subEl.textContent = ''; renderNeeds(); }
+    chatEl.classList.remove('show'); main.style.display = 'block'; nav.style.display = 'flex';
+    subEl.textContent = '';
+    if (tab === 'fleet') { titleEl.textContent = 'Fleet'; renderFleet(); }
+    else if (tab === 'needs') { titleEl.textContent = 'Needs You'; renderNeeds(); }
+    else if (tab === 'spawn') { titleEl.textContent = 'New agent'; renderSpawn(); }
     main.scrollTop = 0;
   }
 
+  // ── fleet ──────────────────────────────────────────────────────────────────
   function renderFleet() {
-    const list = [...sessions.values()];
-    if (!list.length) { main.innerHTML = emptyHtml('▦', 'No agents running', 'Spawn one from the desktop app.'); return; }
-    list.sort((a, b) => (isBlocked(b) - isBlocked(a)));
-    main.innerHTML = list.map(cardHtml).join('');
-    bindCards();
+    const list = liveList();
+    if (!list.length) {
+      main.innerHTML = `<div class="glow"></div>` +
+        emptyHtml('▦', 'No agents running', 'Tap ＋ New to spawn one.');
+      return;
+    }
+    main.innerHTML = list.map(fleetCard).join('');
+    for (const el of main.querySelectorAll('.card.tap')) el.onclick = () => openChat(el.dataset.id);
   }
-  function cardHtml(s) {
-    const st = stateInfo(s);
-    const bits = [ctxPct(s), s.model ? esc(s.model) : ''].filter(Boolean);
-    return `<div class="card tap" data-id="${esc(s.sessionId)}">
+  function fleetCard(s) {
+    const bits = [];
+    const m = s.usage && s.usage.model; if (m) bits.push(`<span class="mono">${esc(shortModel(m))}</span>`);
+    const p = ctxPct(s); if (p >= 0) bits.push(`${p}% ctx`);
+    if (s.usage && s.usage.costUSD) bits.push(fmtUSD(s.usage.costUSD));
+    if (s.transport === 'stream') bits.push(`<span class="tag">stream</span>`);
+    return `<div class="card tap ${isBlocked(s) ? 'blocked' : ''}" data-id="${esc(s.sessionId)}">
       <div class="row">
-        <div class="grow">
-          <div class="name">${esc(basename(s.cwd))}</div>
-          <div class="path">${esc(s.cwd || '')}</div>
-        </div>
-        <span class="badge ${st.cls}">${esc(st.label)}</span>
+        <div class="grow"><div class="name">${esc(agentName(s))}</div></div>
+        ${stateChip(s)}
       </div>
-      <div class="meta">${bits.map(b => `<span>${b}</span>`).join('')}</div>
+      <div class="path">${esc(s.liveCwd || s.cwd || '')}</div>
+      ${bits.length ? `<div class="meta">${bits.join('<span style="color:var(--disabled)">·</span>')}</div>` : ''}
     </div>`;
   }
-  function bindCards() {
-    for (const el of main.querySelectorAll('.card.tap')) el.onclick = () => openAgent(el.dataset.id);
+  function shortModel(m) { return String(m).replace(/^claude-/, '').replace(/-20\d{6}$/, '').replace(/\[1m\]/, ' 1m'); }
+
+  // ── needs you ──────────────────────────────────────────────────────────────
+  function renderNeeds() {
+    const list = liveList().filter(isBlocked);
+    if (!list.length) { main.innerHTML = emptyHtml('◎', 'Nothing needs you', 'Approvals and questions show up here.'); return; }
+    main.innerHTML = list.map(s =>
+      `<div class="card blocked">
+        <div class="row"><div class="grow"><div class="name">${esc(agentName(s))}</div>
+          <div class="path">${esc(s.liveCwd || s.cwd || '')}</div></div>
+          <button class="btn" style="flex:0 0 auto;min-width:0;padding:8px 12px" data-open="${esc(s.sessionId)}">Open</button></div>
+        ${decisionHtml(s)}
+      </div>`).join('');
+    bindDecisions(main);
+    for (const b of main.querySelectorAll('[data-open]')) b.onclick = () => openChat(b.dataset.open);
   }
 
-  function renderNeeds() {
-    const list = [...sessions.values()].filter(isBlocked);
-    if (!list.length) { main.innerHTML = emptyHtml('✓', "You're all caught up", 'No agent is waiting on a decision.'); return; }
-    main.innerHTML = list.map(decisionHtml).join('');
-    bindDecisions(main);
-  }
+  // ── decision (approval / questions) rendering + binding ─────────────────────
   function decisionHtml(s) {
-    const name = esc(basename(s.cwd));
-    let body;
     if (s.pendingApproval) {
       const a = s.pendingApproval;
-      const ctx = a.toolName + (a.toolInput ? '\n' + summarizeInput(a.toolInput) : '');
-      body = `<div class="ctx">${esc(ctx)}</div>
+      return `<div class="decision" data-id="${esc(s.sessionId)}" data-kind="approval">
+        <div class="q">Approve <span class="tool">${esc(a.toolName)}</span>?</div>
+        <div class="inp">${esc(summarizeInput(a.toolInput))}</div>
         <div class="btns">
-          <button class="act yes" data-act="approve" data-d="yes">Approve</button>
-          <button class="act no" data-act="approve" data-d="no">Deny</button>
-          <button class="act always" data-act="approve" data-d="always">Always</button>
-        </div>`;
-    } else {
-      const q = (s.pendingQuestions && s.pendingQuestions[0]) || {};
-      const opts = (q.options || []).map((o, i) =>
-        `<button class="act opt" data-act="answer" data-opt="${i + 1}">${i + 1}. ${esc(o.label)}${o.description ? ' — ' + esc(o.description) : ''}</button>`).join('');
-      body = `<div class="qtext">${esc(q.question || 'Question')}</div>
-        <div class="btns">${opts}</div>
-        <div class="composer-inline btns" style="margin-top:8px">
-          <input class="ans-text" placeholder="Or type an answer…" style="flex:1;min-width:0;padding:11px;border-radius:11px;border:1px solid var(--line);background:var(--bg);color:var(--text);font:inherit" />
-          <button class="act" data-act="answer-text">Send</button>
-        </div>`;
+          <button class="btn good" data-d="yes">Approve</button>
+          <button class="btn" data-d="always">Always</button>
+          <button class="btn danger" data-d="no">Deny</button>
+        </div>
+      </div>`;
     }
-    return `<div class="card decision" data-id="${esc(s.sessionId)}">
-      <div class="row"><div class="grow"><div class="name">${name}</div>
-      <div class="path">${esc(s.cwd || '')}</div></div>
-      <span class="badge b-need">${s.pendingApproval ? 'approval' : 'question'}</span></div>
-      ${body}</div>`;
-  }
-  function summarizeInput(input) {
-    try {
-      if (typeof input === 'string') return input;
-      if (input.command) return '$ ' + input.command;
-      if (input.file_path) return input.file_path + (input.content ? '\n' + String(input.content).slice(0, 600) : '');
-      const j = JSON.stringify(input, null, 1);
-      return j.length > 800 ? j.slice(0, 800) + '…' : j;
-    } catch { return ''; }
+    if (s.pendingQuestions && s.pendingQuestions.length) {
+      const groups = s.pendingQuestions.map((q, qi) => {
+        const opts = (q.options || []).map((o, oi) =>
+          `<button class="btn opt" data-q="${qi}" data-opt="${oi + 1}">${esc(o.label)}${o.description ? `<span class="odesc">${esc(o.description)}</span>` : ''}</button>`).join('');
+        return `<div class="qgroup"><div class="q">${esc(q.question)}</div><div class="btns" style="flex-direction:column">${opts}</div></div>`;
+      }).join('');
+      const multi = s.pendingQuestions.length > 1;
+      return `<div class="decision" data-id="${esc(s.sessionId)}" data-kind="question" data-n="${s.pendingQuestions.length}">
+        ${groups}
+        ${multi ? `<div class="btns"><button class="btn primary" data-submit>Submit answers</button></div>` : ''}
+      </div>`;
+    }
+    return '';
   }
   function bindDecisions(root) {
-    for (const card of root.querySelectorAll('.card.decision, .decision-strip')) {
-      const id = card.dataset.id;
-      for (const b of card.querySelectorAll('[data-act="approve"]'))
-        b.onclick = () => doCall('claude.approve', { sessionId: id, decision: b.dataset.d }, 'Sent: ' + b.dataset.d);
-      for (const b of card.querySelectorAll('[data-act="answer"]'))
-        b.onclick = () => doCall('claude.answer', { sessionId: id, option: Number(b.dataset.opt) }, 'Answered');
-      const at = card.querySelector('[data-act="answer-text"]');
-      if (at) at.onclick = () => {
-        const inp = card.querySelector('.ans-text'); const v = (inp.value || '').trim();
-        if (!v) return; doCall('claude.answer', { sessionId: id, text: v }, 'Answered');
-      };
-    }
-  }
-
-  function emptyHtml(icon, big, sub) {
-    return `<div class="empty"><div class="big">${icon}</div><div>${esc(big)}</div>
-      <div style="color:var(--faint);font-size:13px;margin-top:6px">${esc(sub)}</div></div>`;
-  }
-
-  // ── terminal view ──────────────────────────────────────────────────────
-  // The agent screen is a live mirror of the real TUI (claudemon streams the
-  // PTY over the bus). Keystrokes go straight to the PTY; whole messages go
-  // through claudemon's settle+verify /message pipeline so they can never be
-  // half-typed into a busy prompt.
-  function openAgent(sessionId) {
-    view = { name: 'term', sessionId };
-    hdr.classList.add('has-back');
-    nav.style.display = 'none';
-    main.style.display = 'none';
-    termwrap.classList.add('show');
-    renderTermHeader();
-    renderAsk();
-    enterTerminal(sessionId);
-  }
-  function closeAgent() { setTab('fleet'); }
-
-  function renderTermHeader() {
-    if (view.name !== 'term') return;
-    const s = sessions.get(view.sessionId);
-    titleEl.firstChild.nodeValue = s ? basename(s.cwd) : 'Agent';
-    subEl.textContent = s ? '  ' + stateInfo(s).label : '  session ended';
-  }
-
-  // Approvals/questions pinned above the key bar — one tap, no typing.
-  function renderAsk() {
-    if (view.name !== 'term') { askEl.innerHTML = ''; return; }
-    const s = sessions.get(view.sessionId);
-    if (!isBlocked(s)) { askEl.innerHTML = ''; return; }
-    let body;
-    if (s.pendingApproval) {
-      const a = s.pendingApproval;
-      body = `<div class="ask-title">Wants to run ${esc(a.toolName)}</div>
-        <pre>${esc(summarizeInput(a.toolInput || {}))}</pre>
-        <div class="btns">
-          <button class="act yes" data-act="approve" data-d="yes">Approve</button>
-          <button class="act no" data-act="approve" data-d="no">Deny</button>
-          <button class="act always" data-act="approve" data-d="always">Always</button>
-        </div>`;
-    } else {
-      const q = s.pendingQuestions[0] || {};
-      body = `<div class="ask-title">${esc(q.header || 'Question')}</div>
-        <div class="qtext" style="font-size:13.5px">${esc(q.question || '')}</div>
-        <div class="btns">${(q.options || []).map((o, i) =>
-          `<button class="act opt" data-act="answer" data-opt="${i + 1}">${i + 1}. ${esc(o.label)}${o.description ? `<small>${esc(o.description)}</small>` : ''}</button>`).join('')}
-        </div>`;
-    }
-    askEl.innerHTML = `<div class="inner decision-strip" data-id="${esc(s.sessionId)}">${body}</div>`;
-    bindDecisions(askEl);
-  }
-
-  function enterTerminal(sessionId) {
-    if (!window.Terminal) { toast('Terminal library failed to load'); return; }
-    leaveTerminal();
-    termSessionId = sessionId;
-
-    const host = $('term');
-    term = new Terminal({
-      convertEol: false, scrollback: 5000, fontSize: termFont,
-      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-      theme: { background: '#000000' }, disableStdin: false, cursorBlink: true,
-    });
-    try { fitAddon = new FitAddon.FitAddon(); term.loadAddon(fitAddon); } catch {}
-    term.open(host);
-    // Direct typing (via the ⌨ button + soft keyboard) forwards raw to the
-    // PTY. A sticky Ctrl rewrites the next letter into its control code.
-    term.onData(d => {
-      if (ctrlSticky) {
-        if (d.length === 1) {
-          const c = d.toLowerCase().charCodeAt(0);
-          if (c >= 97 && c <= 122) d = String.fromCharCode(c - 96);
-          else if (d === ' ') d = '\x00';
+    for (const d of root.querySelectorAll('.decision')) {
+      const id = d.dataset.id;
+      if (d.dataset.kind === 'approval') {
+        for (const b of d.querySelectorAll('[data-d]')) b.onclick = () => approve(id, b.dataset.d);
+      } else if (d.dataset.kind === 'question') {
+        const n = Number(d.dataset.n || 1);
+        for (const b of d.querySelectorAll('[data-opt]')) {
+          b.onclick = () => {
+            const qi = Number(b.dataset.q);
+            picks.set(id + ':' + qi, Number(b.dataset.opt));
+            for (const sib of d.querySelectorAll(`[data-q="${qi}"]`)) sib.classList.toggle('picked', sib === b);
+            if (n === 1) submitAnswers(id, d);   // single question → answer immediately
+          };
         }
-        setCtrlSticky(false);
+        const sub = d.querySelector('[data-submit]');
+        if (sub) sub.onclick = () => submitAnswers(id, d);
       }
-      termSend(d);
-    });
-    term.onScroll(updateTermBottom);
-
-    requestAnimationFrame(refitTerm);
-    window.addEventListener('resize', scheduleRefit);
-    window.addEventListener('orientationchange', scheduleRefit);
-    if (window.visualViewport) window.visualViewport.addEventListener('resize', scheduleRefit);
-
-    subscribePty(sessionId, true);
-    call('sessions.attachTerminal', { sessionId }).catch(() => {});
-    clearInterval(termKeepalive);
-    termKeepalive = setInterval(() => {
-      if (view.name !== 'term') return;
-      // If the lease lapsed (e.g. a hiccup), re-attach to restart + re-prime.
-      call('sessions.terminalKeepalive', { sessionId: termSessionId })
-        .then(r => { if (r && r.ok === false) call('sessions.attachTerminal', { sessionId: termSessionId }).catch(() => {}); })
-        .catch(() => {});
-    }, 8000);
-  }
-
-  function leaveTerminal() {
-    window.removeEventListener('resize', scheduleRefit);
-    window.removeEventListener('orientationchange', scheduleRefit);
-    if (window.visualViewport) window.visualViewport.removeEventListener('resize', scheduleRefit);
-    clearTimeout(termResizeTimer); termResizeTimer = null;
-    setCtrlSticky(false);
-    clearInterval(termKeepalive); termKeepalive = null;
-    if (termSessionId) {
-      subscribePty(termSessionId, false);
-      call('sessions.detachTerminal', { sessionId: termSessionId }).catch(() => {});
     }
-    if (term) { try { term.dispose(); } catch {} term = null; fitAddon = null; }
-    termSessionId = '';
+  }
+  function summarizeInput(input) {
+    if (input == null) return '';
+    if (typeof input === 'string') return input;
+    const o = input;
+    if (o.command) return o.command;
+    if (o.file_path) return o.file_path + (o.content ? '\n' + String(o.content).slice(0, 400) : '');
+    if (o.path) return o.path;
+    if (o.url) return o.url;
+    if (o.pattern) return o.pattern;
+    try { return JSON.stringify(o, null, 2).slice(0, 600); } catch { return String(o); }
   }
 
-  function subscribePty(sessionId, on) {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    ws.send(JSON.stringify({ op: on ? 'subscribe' : 'unsubscribe', topics: ['pty.bytes.' + sessionId] }));
+  // ── actions ────────────────────────────────────────────────────────────────
+  function approve(id, decision) {
+    call('claude.approve', { sessionId: id, decision })
+      .then(() => toast(decision === 'no' ? 'Denied' : 'Approved'))
+      .catch(e => toast('Failed: ' + (e.message || e)));
   }
-
-  // Decode one base64 PTY chunk and write the raw bytes into xterm.
-  function writePty(b64) {
-    if (!term) return;
-    try {
-      const bin = atob(b64);
-      const bytes = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      term.write(bytes, updateTermBottom);
-    } catch {}
-  }
-
-  // Ordered PTY input: keystrokes buffer while a call is in flight and flush
-  // as one chunk when it returns. Firing a bus call per character lets fast
-  // typing arrive out of order ("cat -v" landing as "cat v-").
-  let inputBuf = '', inputPumping = false;
-  function termSend(data) {
-    if (!termSessionId || !data) return;
-    inputBuf += data;
-    pumpInput();
-  }
-  async function pumpInput() {
-    if (inputPumping) return;
-    inputPumping = true;
-    while (inputBuf && termSessionId) {
-      const data = inputBuf; inputBuf = '';
-      try { await call('sessions.terminalInput', { sessionId: termSessionId, data }); }
-      catch (e) { toast('Key failed: ' + (e.message || e)); }
+  function submitAnswers(id, decisionEl) {
+    const n = Number(decisionEl.dataset.n || 1);
+    const answers = [];
+    for (let qi = 0; qi < n; qi++) {
+      const pick = picks.get(id + ':' + qi);
+      if (!pick) { toast('Pick an option for every question'); return; }
+      answers.push(String(pick));   // daemon maps 1-indexed picks → option labels
     }
-    inputPumping = false;
+    call('claude.answer', { sessionId: id, answers })
+      .then(() => { toast('Answered'); for (let qi = 0; qi < n; qi++) picks.delete(id + ':' + qi); })
+      .catch(e => toast('Failed: ' + (e.message || e)));
   }
 
-  // Key bar sequences — the keys phone keyboards can't produce. ⇧Tab (CSI Z)
-  // cycles Claude Code's permission modes; Esc interrupts; ^C cancels.
-  const KEYSEQ = {
-    esc: '\x1b', stab: '\x1b[Z', tab: '\t', enter: '\r', bksp: '\x7f', ctrlc: '\x03',
-    up: '\x1b[A', down: '\x1b[B', left: '\x1b[D', right: '\x1b[C',
-    pgup: '\x1b[5~', pgdn: '\x1b[6~',
-  };
-  function setCtrlSticky(on) {
-    ctrlSticky = on;
-    $('ctrlKey').classList.toggle('on', on);
+  // ── chat ───────────────────────────────────────────────────────────────────
+  function openChat(id) {
+    const s = sessions.get(id); if (!s) return;
+    view = { name: 'chat', sessionId: id };
+    for (const b of nav.querySelectorAll('button')) b.classList.remove('active');
+    hdr.classList.add('has-back'); main.style.display = 'none'; nav.style.display = 'none';
+    chatEl.classList.add('show');
+    renderChat(true);
+    msgEl.focus();
   }
-  keybar.querySelectorAll('[data-key]').forEach(btn => {
-    btn.onclick = () => {
-      let seq = KEYSEQ[btn.dataset.key] || '';
-      if (ctrlSticky && seq.length === 1) {
-        const c = seq.toLowerCase().charCodeAt(0);
-        if (c >= 97 && c <= 122) seq = String.fromCharCode(c - 96);
-        setCtrlSticky(false);
-      }
-      termSend(seq);
-    };
-  });
-  keybar.querySelectorAll('[data-act]').forEach(btn => {
-    btn.onclick = () => {
-      const a = btn.dataset.act;
-      if (a === 'ctrl') setCtrlSticky(!ctrlSticky);
-      else if (a === 'kb') { if (term) term.focus(); }
-      else if (a === 'fontup') setTermFont(termFont + 1);
-      else if (a === 'fontdown') setTermFont(termFont - 1);
-    };
-  });
-  $('termBottom').onclick = () => { if (term) { term.scrollToBottom(); updateTermBottom(); } };
+  function renderChat(scrollBottom) {
+    const s = sessions.get(view.sessionId);
+    if (!s) { setTab('fleet'); return; }
+    titleEl.textContent = agentName(s);
+    subEl.innerHTML = stateChip(s) + (s.transport === 'stream' ? ' <span class="tag">stream</span>' : '');
 
-  function setTermFont(px) {
-    termFont = Math.max(8, Math.min(20, px));
-    localStorage.setItem('wksMobTermFont', String(termFont));
-    if (term) {
-      try { term.options.fontSize = termFont; }
-      catch { try { term.setOption('fontSize', termFont); } catch {} }
+    const atBottom = scrollBottom || (transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 60);
+    const turns = s.conversation || [];
+    if (!turns.length) {
+      transcript.innerHTML = `<div class="empty"><div class="big">No messages yet</div><div class="small">Say something to get started.</div></div>`;
+    } else {
+      transcript.innerHTML = turns.map(turnHtml).join('');
     }
-    refitTerm();
+    chatDecision.innerHTML = isBlocked(s) ? decisionHtml(s) : '';
+    if (chatDecision.firstChild) bindDecisions(chatDecision);
+    if (atBottom) transcript.scrollTop = transcript.scrollHeight;
+    sendBtn.disabled = !isLive(s);
+  }
+  function turnHtml(t) {
+    let inner = renderBody(t.content || '');
+    if (t.toolCalls && t.toolCalls.length) inner += t.toolCalls.map(toolChip).join('');
+    if (!inner.trim()) return '';
+    return `<div class="turn ${t.role === 'user' ? 'user' : 'assistant'}"><div class="bubble">${inner}</div></div>`;
+  }
+  function toolChip(tc) {
+    return `<div class="toolchip"><span class="tn">${esc(tc.name)}</span>` +
+      `<span class="ti">${esc(oneLine(summarizeInput(tc.input)))}</span>` +
+      `<span class="sd ${esc(tc.status || 'complete')}"></span></div>`;
+  }
+  function oneLine(s) { return String(s || '').split('\n')[0].slice(0, 80); }
+  // Minimal, safe markdown: escape everything, then lift ``` fenced blocks to
+  // <pre> and `inline` to <code>. No HTML ever reaches the DOM unescaped.
+  function renderBody(text) {
+    const parts = String(text).split(/```/);
+    return parts.map((seg, i) => {
+      if (i % 2 === 1) { const body = seg.replace(/^[a-zA-Z0-9_-]*\n/, ''); return `<pre>${esc(body)}</pre>`; }
+      return esc(seg).replace(/`([^`]+)`/g, (_, c) => `<code>${c}</code>`);
+    }).join('');
   }
 
-  // Fit xterm to the phone, then resize the shared PTY to that grid so the
-  // TUI rewraps for this screen instead of the desktop pane.
-  function refitTerm() {
-    if (!term || !fitAddon || view.name !== 'term') return;
-    try { fitAddon.fit(); } catch {}
-    const cols = Math.max(20, term.cols || 80);
-    const rows = Math.max(6, term.rows || 24);
-    call('sessions.terminalResize', { sessionId: termSessionId, cols, rows }).catch(() => {});
-  }
-  function scheduleRefit() {
-    clearTimeout(termResizeTimer);
-    termResizeTimer = setTimeout(refitTerm, 160);
-  }
-  function updateTermBottom() {
-    const jb = $('termBottom');
-    if (!jb || !term) return;
-    const b = term.buffer.active;
-    jb.classList.toggle('show', b.viewportY < b.baseY);
-  }
-
-  // ── composer: verified sends ───────────────────────────────────────────
-  // Whole messages go through claudemon's settle+verify /message pipeline —
-  // delivered at the prompt, or queued and flushed when the turn ends. Never
-  // half-typed into a busy TUI.
   function sendMessage() {
-    if (view.name !== 'term') return;
-    const text = (msgEl.value || '').trim();
-    if (!text) return;
+    if (view.name !== 'chat') return;
+    const text = (msgEl.value || '').trim(); if (!text) return;
     sendBtn.disabled = true;
     call('agents.sendMessage', { sessionId: view.sessionId, text })
-      .then(() => { msgEl.value = ''; autosize(); toast('Sent ✓'); })
-      .catch((e) => toast('Send failed: ' + (e.message || e)))
+      .then(() => { msgEl.value = ''; autosize(); toast('Sent'); })
+      .catch(e => toast('Send failed: ' + (e.message || e)))
       .finally(() => { sendBtn.disabled = false; });
   }
   function autosize() { msgEl.style.height = 'auto'; msgEl.style.height = Math.min(msgEl.scrollHeight, 120) + 'px'; }
 
-  // ── events / connection ────────────────────────────────────────────────────
-  function setConnected(on) { dot.classList.toggle('on', on); }
-
-  function gate() {
-    nav.style.display = 'none'; termwrap.classList.remove('show'); main.style.display = 'block';
-    hdr.classList.remove('has-back');
-    titleEl.firstChild.nodeValue = 'Workspacer'; subEl.textContent = '';
-    main.innerHTML = `<div class="gate"><h2>Token required</h2>
-      <p>Paste your workspacer remote token to connect.</p>
-      <input id="tok" placeholder="token" autocomplete="off" />
-      <button id="tokGo">Connect</button></div>`;
-    $('tokGo').onclick = () => {
-      const v = ($('tok').value || '').trim(); if (!v) return;
-      token = v; sessionStorage.setItem('hubToken', v); connect();
-    };
-    $('tok').addEventListener('keydown', e => { if (e.key === 'Enter') $('tokGo').click(); });
+  // ── spawn ──────────────────────────────────────────────────────────────────
+  const PROVIDERS = [['claude', 'Claude'], ['codex', 'Codex'], ['opencode', 'OpenCode'], ['pi', 'Pi']];
+  let spawnState = { cwd: '', provider: 'claude', model: '' };
+  function renderSpawn() {
+    const dirs = cfg && cfg.directories || {};
+    const favs = dirs.favourites || [], recent = (dirs.recent || []).filter(d => !(favs.includes(d)));
+    const quick = [...favs, ...recent].slice(0, 8);
+    if (!spawnState.provider) spawnState.provider = (cfg && cfg.agents && cfg.agents.defaultProvider) || 'claude';
+    main.innerHTML = `<div class="glow"></div><div class="form">
+      <div class="field">
+        <div class="label">Working directory</div>
+        <input id="spCwd" type="text" placeholder="/path/to/project" value="${esc(spawnState.cwd)}" />
+        ${quick.length ? `<div class="chips">${quick.map(d => `<button class="chipbtn" data-dir="${esc(d)}">${esc(basename(d))}</button>`).join('')}</div>` : ''}
+      </div>
+      <div class="field">
+        <div class="label">Harness</div>
+        <div class="seg">${PROVIDERS.map(([v, l]) => `<button data-prov="${v}" class="${spawnState.provider === v ? 'on' : ''}">${l}</button>`).join('')}</div>
+      </div>
+      <div class="field">
+        <div class="label">Model <span style="text-transform:none;color:var(--faint);font-weight:400">(optional)</span></div>
+        <input id="spModel" type="text" placeholder="blank = default" value="${esc(spawnState.model)}" />
+      </div>
+      <button class="spawnBtn" id="spGo">Spawn agent</button>
+      <div class="note">◆ Runs in stream mode (chat, no terminal).</div>
+    </div>`;
+    $('spCwd').oninput = e => spawnState.cwd = e.target.value;
+    $('spModel').oninput = e => spawnState.model = e.target.value;
+    for (const b of main.querySelectorAll('[data-dir]')) b.onclick = () => { spawnState.cwd = b.dataset.dir; $('spCwd').value = b.dataset.dir; };
+    for (const b of main.querySelectorAll('[data-prov]')) b.onclick = () => { spawnState.provider = b.dataset.prov; renderSpawn(); };
+    $('spGo').onclick = doSpawn;
+  }
+  function doSpawn() {
+    const cwd = (spawnState.cwd || '').trim();
+    if (!cwd) { toast('Enter a working directory'); return; }
+    const btn = $('spGo'); btn.disabled = true; btn.textContent = 'Spawning…';
+    const opts = { cwd, provider: spawnState.provider, transport: 'stream' };
+    if ((spawnState.model || '').trim()) opts.model = spawnState.model.trim();
+    call('agents.spawn', opts)
+      .then(r => {
+        const id = r && r.sessionId;
+        toast('Spawned');
+        spawnState = { cwd: '', provider: spawnState.provider, model: '' };
+        if (id) { setTimeout(() => { seed().then(() => { if (sessions.get(id)) openChat(id); else setTab('fleet'); }); }, 400); }
+        else setTab('fleet');
+      })
+      .catch(e => { toast('Spawn failed: ' + (e.message || e)); btn.disabled = false; btn.textContent = 'Spawn agent'; });
   }
 
+  // ── misc render helpers ─────────────────────────────────────────────────────
+  function emptyHtml(ic, big, small) {
+    return `<div class="empty"><div class="ic">${ic}</div><div class="big">${esc(big)}</div><div class="small">${esc(small)}</div></div>`;
+  }
+
+  // ── connection ──────────────────────────────────────────────────────────────
+  function setConnected(on) { dot.classList.toggle('on', on); }
+  function gate() {
+    nav.style.display = 'none'; chatEl.classList.remove('show'); main.style.display = 'block';
+    hdr.classList.remove('has-back'); titleEl.textContent = 'Workspacer'; subEl.textContent = '';
+    main.innerHTML = `<div class="glow"></div><div class="gate"><h2>Connect</h2>
+      <p>Paste your workspacer remote token.</p>
+      <input id="tok" placeholder="token" autocomplete="off" />
+      <button id="tokGo">Connect</button></div>`;
+    $('tokGo').onclick = () => { const v = ($('tok').value || '').trim(); if (!v) return; token = v; sessionStorage.setItem('hubToken', v); connect(); };
+    $('tok').addEventListener('keydown', e => { if (e.key === 'Enter') $('tokGo').click(); });
+  }
+  // Detach + close a socket without letting its late close/error callbacks run
+  // (they'd race a newer connection). Safe to call on any socket.
+  function killSocket(sock) {
+    if (!sock) return;
+    try { sock.onopen = sock.onmessage = sock.onerror = sock.onclose = null; sock.close(); } catch {}
+  }
   function connect() {
     if (!token) return gate();
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    clearTimeout(watchdog);
     setConnected(false);
-    try { ws = new WebSocket(wsURL()); } catch { return scheduleReconnect(); }
-    ws.onopen = () => {
+    let sock;
+    try { sock = new WebSocket(wsURL()); } catch { return scheduleReconnect(); }
+    ws = sock;
+    // Phones routinely hand us a WebSocket whose handshake hangs — the host or
+    // the Tailscale link was asleep, so it neither opens nor errors and the OS
+    // won't give up for 30–75s. Without this we'd sit "connecting" that whole
+    // time. If onopen hasn't fired quickly, abandon it and retry.
+    watchdog = setTimeout(() => {
+      if (sock.readyState !== WebSocket.OPEN) { killSocket(sock); if (ws === sock) ws = null; scheduleReconnect(); }
+    }, 4500);
+    sock.onopen = () => {
+      clearTimeout(watchdog);
       backoff = 500; lastActivity = Date.now(); setConnected(true);
-      ws.send(JSON.stringify({ op: 'subscribe', topics: ['agent.state_changed', 'agent.snapshot'] }));
-      // Re-pull current state on every (re)connect — while the socket was down
-      // we missed the events that normally keep us live. If a terminal was
-      // open, re-subscribe + re-attach so the stream re-primes from the ring
-      // buffer.
-      if (view.name === 'term' && termSessionId) {
-        subscribePty(termSessionId, true);
-        call('sessions.attachTerminal', { sessionId: termSessionId }).catch(() => {});
-        refresh();
-      } else if (view.name === 'fleet') setTab('fleet');
-      else refresh();
+      sock.send(JSON.stringify({ op: 'subscribe', topics: ['agent.snapshot'] }));
+      if (!cfg) call('config.get', {}).then(c => { cfg = c; }).catch(() => {});
+      seed();
+      // Reconcile every 25s so the fleet self-heals if an event was missed while
+      // the socket blipped. Doubles as a heartbeat that keeps lastActivity fresh
+      // (< STALE_MS) so wake() won't needlessly tear down a healthy idle socket.
+      clearInterval(reconcileTimer);
+      reconcileTimer = setInterval(() => { if (ws && ws.readyState === WebSocket.OPEN) seed(); }, 25000);
     };
-    ws.onmessage = (ev) => {
+    sock.onmessage = (ev) => {
       lastActivity = Date.now();
       let f; try { f = JSON.parse(ev.data); } catch { return; }
       if (f.op === 'result') { const c = calls.get(f.id); if (c) { calls.delete(f.id); c.resolve(f.result); } }
       else if (f.op === 'error' && f.id) { const c = calls.get(f.id); if (c) { calls.delete(f.id); c.reject(new Error(f.error || 'error')); } }
       else if (f.op === 'event' && f.event) {
         const t = f.event.type || '';
-        if (t.startsWith('pty.bytes.')) {
-          // The event's data IS the base64 chunk (a bare JSON string).
-          if (t === 'pty.bytes.' + termSessionId && typeof f.event.data === 'string') writePty(f.event.data);
-        } else if (t === 'agent.state_changed' || t === 'agent.snapshot') {
-          refresh();
-        }
+        // agent.snapshot carries the full snapshot — apply it incrementally.
+        // A periodic seed() (below) reconciles anything missed (e.g. a session
+        // that vanished without a final ended snapshot).
+        if (t === 'agent.snapshot' && f.event.data && f.event.data.sessionId) upsert(f.event.data);
       }
     };
-    ws.onclose = (ev) => {
+    sock.onclose = (ev) => {
+      clearTimeout(watchdog);
+      if (ws === sock) ws = null;
       setConnected(false);
       if (ev.code === 1008 || ev.code === 4401) { token = ''; sessionStorage.removeItem('hubToken'); return gate(); }
       scheduleReconnect();
     };
-    ws.onerror = () => { try { ws.close(); } catch {} };
+    sock.onerror = () => { try { sock.close(); } catch {} };
   }
   function scheduleReconnect() {
     if (reconnectTimer) return;
     reconnectTimer = setTimeout(() => { reconnectTimer = null; connect(); }, backoff);
-    backoff = Math.min(backoff * 2, 8000);
+    backoff = Math.min(backoff * 2, 5000);
   }
-
-  // Mobile browsers throttle a backgrounded tab's reconnect timer and suspend
-  // its socket, so on returning to the page we'd sit on a dead socket (and stale
-  // fleet) until a manual refresh. Reconnect immediately when the page is shown
-  // again or the network returns, unless the socket is provably still live.
+  // Mobile browsers suspend a backgrounded tab's socket (often without ever
+  // firing close), so on return we'd sit on a dead socket. Reconnect on every
+  // signal that we're foreground again — visibility, bfcache restore (pageshow),
+  // window focus, and network-online — unless the socket is provably still live.
   function wake() {
     if (!token || document.visibilityState === 'hidden') return;
     const live = ws && ws.readyState === WebSocket.OPEN && Date.now() - lastActivity < STALE_MS;
     if (live) return;
     backoff = 500;
-    try { if (ws) { ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null; ws.close(); } } catch {}
-    ws = null;
-    connect();
+    clearTimeout(watchdog);
+    killSocket(ws); ws = null; connect();
   }
   document.addEventListener('visibilitychange', wake);
   window.addEventListener('online', wake);
+  window.addEventListener('focus', wake);
+  window.addEventListener('pageshow', wake);   // iOS Safari bfcache restore
 
-  // ── wiring ──────────────────────────────────────────────────────────────
+  // ── wiring ──────────────────────────────────────────────────────────────────
   for (const b of nav.querySelectorAll('button')) b.onclick = () => setTab(b.dataset.tab);
-  backBtn.onclick = closeAgent;
+  backBtn.onclick = () => setTab('fleet');
   sendBtn.onclick = sendMessage;
   msgEl.addEventListener('input', autosize);
-  msgEl.addEventListener('keydown', e => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
-  });
+  msgEl.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
 
-  // iOS keyboard handling: the software keyboard shrinks the visual viewport but
-  // not the layout viewport, so the bottom controls would sit behind it. Expose
-  // the keyboard height as --kb (consumed by #app's height calc) and refit the
-  // terminal to the shrunken area. On Android the layout already resizes, so
-  // the delta stays ~0 and this changes nothing.
+  // iOS software keyboard: expose its height as --kb so the composer floats above it.
   if (window.visualViewport) {
     const vv = window.visualViewport;
     const applyKb = () => {
       const kb = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
       document.documentElement.style.setProperty('--kb', (kb > 80 ? kb : 0) + 'px');
-      if (view.name === 'term') scheduleRefit();
+      if (view.name === 'chat') transcript.scrollTop = transcript.scrollHeight;
     };
-    vv.addEventListener('resize', applyKb);
-    vv.addEventListener('scroll', applyKb);
-    applyKb();
+    vv.addEventListener('resize', applyKb); vv.addEventListener('scroll', applyKb); applyKb();
   }
 
   connect();
