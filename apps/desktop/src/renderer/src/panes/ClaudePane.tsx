@@ -9,7 +9,7 @@ import { providerLabel } from '../hooks/useAgentManager';
 import { useConfig } from '../hooks/useConfig';
 import { useUiMode } from '../hooks/useUiMode';
 import { useTheme } from '../hooks/useTheme';
-import type { ConversationTurn, ToolCall } from '../types/claudeSession';
+import type { ConversationTurn, ToolCall, PendingQuestion } from '../types/claudeSession';
 import { anchorWork } from '../lib/anchorWork';
 import type { AgentProvider } from '../types/pane';
 import {
@@ -34,6 +34,10 @@ import { ConversationEmptyState, AgentHero } from '../components/claude/Conversa
 import { permissionModeLabel } from '../lib/providerCaps';
 import { TurnDivider } from '../components/claude/TurnDivider';
 import { NeedsYouDock } from '../components/claude/NeedsYouDock';
+import {
+  AnsweredQuestionCard,
+  type ResolvedQuestionRecord,
+} from '../components/claude/AnsweredQuestionCard';
 import { Composer } from '../components/claude/Composer';
 import { WorkCard } from '../components/claude/WorkCard';
 import { ToolTraceCard } from '../components/claude/ToolTraceCard';
@@ -59,6 +63,33 @@ import { useLibrary } from '../hooks/useLibrary';
 import { runLibraryItem } from '../lib/libraryBus';
 import type { SlashItem } from '../lib/slashItems';
 import type { LibraryItem } from '../types/library';
+
+/**
+ * Map a submitted answer payload back to human-readable display strings (one per
+ * question) for the persistent answered-question card. The picker encodes picks
+ * as 1-indexed option numbers; here we resolve those back to their labels, and
+ * pass free text / joined multi-select labels through unchanged.
+ */
+function describeAnswers(
+  questions: PendingQuestion[],
+  payload: { option?: number; text?: string; answers?: string[] },
+): string[] {
+  if (payload.option !== undefined) {
+    const opt = questions[0]?.options?.[payload.option - 1];
+    return [opt?.label ?? String(payload.option)];
+  }
+  if (payload.text !== undefined) return [payload.text];
+  if (payload.answers) {
+    return payload.answers.map((raw, i) => {
+      const n = Number(raw);
+      if (Number.isInteger(n) && String(n) === raw) {
+        return questions[i]?.options?.[n - 1]?.label ?? raw;
+      }
+      return raw;
+    });
+  }
+  return [];
+}
 
 interface ClaudePaneProps {
   paneId: string;
@@ -819,6 +850,9 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
       // the old thread and will never arrive to dequeue them.
       consumedUserCountRef.current = userCount;
       setOptimisticMessages([]);
+      // The old thread's answered-question cards anchored to indices that no
+      // longer exist — drop them so they don't render against the new thread.
+      setResolvedQuestions([]);
     } else if (userCount > consumedUserCountRef.current) {
       const newlyConsumed = userCount - consumedUserCountRef.current;
       consumedUserCountRef.current = userCount;
@@ -866,10 +900,36 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   }, [session?.pendingQuestions]);
   const questionSig = pendingQuestions?.map((q) => q.question).join(' ') ?? null;
 
+  // Durable record of resolved questions, injected into the transcript so you
+  // can always see what you were asked and picked. Kept in renderer state (not
+  // the daemon snapshot) and anchored by conversation index, so it survives the
+  // snapshot rebuilds that happen on every resync. Cleared when the session or
+  // its conversation is reset (see the optimistic-reset effect + sessionId one).
+  const [resolvedQuestions, setResolvedQuestions] = useState<ResolvedQuestionRecord[]>([]);
+  useEffect(() => {
+    setResolvedQuestions([]);
+  }, [sessionId]);
+  const recordResolved = useCallback(
+    (declined: boolean, answers: string[] | null) => {
+      if (!pendingQuestions || pendingQuestions.length === 0) return;
+      const sig = questionSig ?? '';
+      const anchorLen = (session?.conversation ?? []).length;
+      setResolvedQuestions((prev) => {
+        if (prev.some((r) => r.sig === sig && r.anchorLen === anchorLen)) return prev;
+        return [
+          ...prev,
+          { sig, anchorLen, timestamp: Date.now(), questions: pendingQuestions, answers, declined },
+        ];
+      });
+    },
+    [pendingQuestions, questionSig, session?.conversation],
+  );
+
   const handleAnswer = useCallback(
     (payload: { option?: number; text?: string; answers?: string[] }) => {
       if (!sessionId) return;
       setDismissedQuestionSig(questionSig);
+      if (pendingQuestions) recordResolved(false, describeAnswers(pendingQuestions, payload));
       // No-PTY sessions (claude 'stream' transport) have no keystroke path at
       // all — the answer must go through POST /sessions/:id/answer, which the
       // daemon delivers structurally over the adapter's control protocol.
@@ -894,7 +954,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
         for (const ans of payload.answers) write(`${ans}\r`);
       }
     },
-    [sessionId, write, hasTerminal, questionSig],
+    [sessionId, write, hasTerminal, questionSig, pendingQuestions, recordResolved],
   );
   const serverStreaming =
     optimisticLoading ||
@@ -951,6 +1011,15 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     }
     setCancelledAt(Date.now());
   }, [write, hasTerminal, sessionId]);
+
+  // Decline the pending question(s): leave a "declined" trace in the transcript,
+  // hide the picker, and cancel the agent's current turn (the chosen semantics —
+  // declining stops the turn rather than answering it).
+  const handleDecline = useCallback(() => {
+    recordResolved(true, null);
+    setDismissedQuestionSig(questionSig);
+    cancelTask();
+  }, [recordResolved, questionSig, cancelTask]);
 
   // Restart the session with new launch settings (composer pills). Two spawn
   // ownerships: an attached viewer's session belongs to the agent manager
@@ -1146,6 +1215,17 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     // Seed prevRole from turn before the window so the first divider renders correctly
     let prevRole: string | null = startIdx > 0 ? conversation[startIdx - 1].role : null;
 
+    // Resolved-question cards, bucketed by the conversation index they anchor
+    // to (clamped into the visible window). Emitted right before the turn at
+    // that index — or at the very end for ones answered at the current tail.
+    const cardsByAnchor = new Map<number, ResolvedQuestionRecord[]>();
+    for (const r of resolvedQuestions) {
+      const a = Math.max(startIdx, Math.min(r.anchorLen, conversation.length));
+      const arr = cardsByAnchor.get(a);
+      if (arr) arr.push(r);
+      else cardsByAnchor.set(a, [r]);
+    }
+
     let pendingWork: { calls: ToolCall[]; keyStart: number; endIdx: number } | null = null;
     const workCardIdxs: number[] = []; // positions of WorkCards in `items`
     const flushWork = () => {
@@ -1163,6 +1243,17 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
         />,
       );
       pendingWork = null;
+    };
+
+    // Flush any answered-question cards anchored at this index, as their own
+    // block between turns (flush pending work first so a card never lands mid-card).
+    const emitCards = (anchor: number) => {
+      const rs = cardsByAnchor.get(anchor);
+      if (!rs) return;
+      flushWork();
+      rs.forEach((r, k) =>
+        items.push(<AnsweredQuestionCard key={`aq-${anchor}-${k}`} record={r} />),
+      );
     };
 
     // A "turn group" spans the assistant turns between two user messages —
@@ -1190,6 +1281,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
 
     visibleTurns.forEach((turn, vi) => {
       const gi = startIdx + vi; // global index for stable keys
+      emitCards(gi);
       const calls = turn.toolCalls ?? [];
 
       if (turn.role === 'user') {
@@ -1235,6 +1327,8 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     // The trailing group only gets its card once the turn actually ended —
     // idle, not merely "not streaming" (waiting_approval is mid-turn).
     closeGroup(ambientIdle);
+    // Questions answered at the current tail (no turns have arrived after).
+    emitCards(conversation.length);
 
     // Keep the most recent work card expanded after work ends, so the latest
     // step stays open without a click. Older cards collapse as usual.
@@ -1248,6 +1342,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     conversation,
+    resolvedQuestions,
     visibleCount,
     toolIdToSubagent,
     toolIdToWorkflow,
@@ -1514,6 +1609,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
               questions={dockQuestions}
               onApprove={handleApprovalRespond}
               onAnswer={handleAnswer}
+              onDecline={handleDecline}
             />
 
             {/* Composer / Input area — session pills live inside its bottom row */}

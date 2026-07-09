@@ -18,7 +18,8 @@ export const NeedsYouDock: React.FC<{
   questions: PendingQuestion[] | null;
   onApprove: (response: 'yes' | 'no') => void;
   onAnswer: (payload: { option?: number; text?: string; answers?: string[] }) => void;
-}> = ({ approval, questions, onApprove, onAnswer }) => {
+  onDecline?: () => void;
+}> = ({ approval, questions, onApprove, onAnswer, onDecline }) => {
   const hasQuestion = !!(questions && questions.length > 0);
   if (!hasQuestion && !approval) return null;
 
@@ -79,7 +80,7 @@ export const NeedsYouDock: React.FC<{
           )}
         </div>
         {hasQuestion ? (
-          <QuestionPicker questions={questions!} onAnswer={onAnswer} />
+          <QuestionPicker questions={questions!} onAnswer={onAnswer} onDecline={onDecline} />
         ) : (
           <ApprovalPrompt approval={approval!} onRespond={onApprove} />
         )}

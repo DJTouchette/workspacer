@@ -124,8 +124,42 @@
   .btn.opt { flex:1 1 100%; text-align:left; }
   .btn.opt.picked { border-color:var(--accent); background:var(--accent-bg); color:var(--accent-text); }
   .btn .odesc { display:block; font-weight:400; font-size:11.5px; color:var(--muted); margin-top:3px; }
-  .qgroup { margin-top:10px; }
+  .qgroup { margin-top:14px; }
   .qgroup:first-child { margin-top:0; }
+  .qgroup .q { margin-bottom:8px; line-height:1.4; }
+
+  /* Redesigned question options — number badge + label + description */
+  .qopt { display:flex; align-items:flex-start; gap:10px; width:100%; text-align:left; margin-top:6px;
+    border:1px solid var(--line-input); background:rgba(255,255,255,0.02); color:var(--text);
+    border-radius:var(--radius-sm); padding:10px 11px; cursor:pointer; font-family:inherit; }
+  .qopt:active { background:var(--hover); }
+  .qopt.picked { border-color:var(--accent); background:var(--accent-bg); }
+  .qnum { flex:0 0 auto; width:20px; height:20px; border-radius:6px; display:flex; align-items:center;
+    justify-content:center; font-size:11px; font-weight:700; border:1px solid var(--line-input);
+    color:var(--muted); }
+  .qopt.picked .qnum { background:var(--accent); border-color:var(--accent); color:#fff; }
+  .qtext { flex:1; min-width:0; }
+  .qlabel { display:block; font-weight:600; font-size:14px; color:var(--text); line-height:1.35; }
+  .qdesc { display:block; font-size:12px; color:var(--muted); margin-top:3px; line-height:1.45; }
+  .qdecline { margin-top:12px; padding-top:10px; border-top:1px solid var(--line-subtle);
+    display:flex; justify-content:flex-end; }
+  .qdecline button { background:transparent; border:1px solid var(--line-input); color:var(--muted);
+    font-size:12px; font-weight:600; padding:7px 13px; border-radius:8px; font-family:inherit; }
+  .qdecline button:active { color:var(--error); border-color:rgba(248,113,113,0.5);
+    background:rgba(248,113,113,0.08); }
+
+  /* Persistent "you answered / declined" card in the transcript */
+  .aqcard { margin:6px 0 12px; border:1px solid var(--line-subtle); border-left:2px solid var(--accent);
+    background:rgba(255,255,255,0.02); border-radius:var(--radius-sm); padding:9px 12px; }
+  .aqcard.declined { border-left-color:var(--error); }
+  .aqhead { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.05em;
+    color:var(--accent-text); margin-bottom:7px; display:flex; align-items:center; gap:5px; }
+  .aqcard.declined .aqhead { color:var(--error); }
+  .aqrow { margin-bottom:8px; }
+  .aqrow:last-child { margin-bottom:0; }
+  .aqq { font-size:13px; color:var(--muted); line-height:1.4; margin-bottom:2px; }
+  .aqa { font-size:13.5px; color:var(--text); font-weight:600; line-height:1.4; }
+  .aqbody { font-size:13px; color:var(--muted); line-height:1.5; }
 
   /* Chat view */
   #chat { flex:1 1 auto; display:none; flex-direction:column; min-height:0; }
@@ -142,7 +176,36 @@
     border-bottom-left-radius:5px; }
   .bubble pre { background:var(--input); border:1px solid var(--line-subtle); border-radius:8px;
     padding:9px; overflow:auto; font-family:var(--mono); font-size:12px; margin:6px 0; }
-  .bubble code { font-family:var(--mono); font-size:12.5px; }
+  .bubble code { font-family:var(--mono); font-size:12.5px; background:rgba(255,255,255,0.06);
+    padding:1px 5px; border-radius:4px; color:#bcd4ff; }
+  .bubble pre code { background:none; padding:0; border-radius:0; color:inherit; }
+
+  /* Markdown blocks (assistant bubbles). User bubbles stay plain pre-wrap. */
+  .bubble.md { white-space:normal; }
+  .bubble.md > :first-child { margin-top:0; }
+  .bubble.md > :last-child { margin-bottom:0; }
+  .md-p { margin:8px 0; }
+  .md-h { margin:13px 0 6px; font-weight:700; line-height:1.3; letter-spacing:-0.01em; }
+  h1.md-h { font-size:1.16em; } h2.md-h { font-size:1.08em; }
+  h3.md-h { font-size:1em; } h4.md-h { font-size:0.92em; }
+  h1.md-h, h2.md-h { border-bottom:1px solid var(--line-subtle); padding-bottom:4px; }
+  .md-list { margin:8px 0; padding-left:22px; }
+  .md-list li { margin:3px 0; }
+  .md-q { margin:8px 0; padding:3px 0 3px 12px; border-left:3px solid var(--line);
+    color:var(--text2); font-style:italic; }
+  .md-hr { border:none; border-top:1px solid var(--line); margin:13px 0; }
+  .bubble.md a { color:var(--accent-text); text-decoration:underline; }
+  .bubble.md strong { color:#fff; font-weight:650; }
+  .bubble.md em { color:var(--text); }
+
+  /* "Responding" indicator — the desktop BrandSpinner: {␣} with a sliding bar. */
+  .thinking { display:flex; align-items:center; padding:2px 2px 6px; }
+  .brand { display:inline-flex; align-items:center; font-family:var(--mono); font-weight:700;
+    font-size:15px; color:var(--accent-text); }
+  .brand .track { position:relative; display:inline-block; width:13px; height:11px; margin:0 2px; }
+  .brand .bar { position:absolute; top:1px; left:0; width:3px; height:9px; border-radius:1px;
+    background:currentColor; animation:brandSlide .8s ease-in-out infinite alternate; }
+  @keyframes brandSlide { from{transform:translateX(0)} to{transform:translateX(10px)} }
   .toolchip { display:flex; align-items:center; gap:8px; font-family:var(--mono); font-size:12px;
     color:var(--text2); background:var(--elevated); border:1px solid var(--line-subtle);
     border-radius:8px; padding:7px 10px; margin:6px 0; }
@@ -285,12 +348,14 @@
   let cfg = null;               // cached config.get (spawn defaults + dirs)
   let view = { name: 'fleet' };  // {name:'fleet'|'needs'|'spawn'|'chat', sessionId?}
   const picks = new Map();       // per-question option picks in the open decision
+  const resolvedQs = new Map();  // sessionId -> [{sig, anchorLen, questions, answers, declined}]
 
   function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
   function basename(p) { p = String(p || '').replace(/[\/\\]+$/, ''); const i = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\')); return i >= 0 ? p.slice(i + 1) : p; }
   function toast(m) { toastEl.textContent = m; toastEl.classList.add('show'); clearTimeout(toast._t); toast._t = setTimeout(() => toastEl.classList.remove('show'), 2200); }
   function fmtUSD(n) { n = n || 0; return n >= 0.01 ? '$' + n.toFixed(2) : n > 0 ? '<$0.01' : '$0.00'; }
   function isBlocked(s) { return !!(s && (s.pendingApproval || (s.pendingQuestions && s.pendingQuestions.length))); }
+  function isWorking(s) { const a = s && s.ambientState; return isLive(s) && !isBlocked(s) && (a === 'streaming' || a === 'thinking'); }
   function isLive(s) { return s && s.status !== 'ended'; }
   function agentName(s) { return basename(s.liveCwd || s.cwd) || (s.sessionId || '').slice(0, 8) || 'agent'; }
 
@@ -428,13 +493,18 @@
     if (s.pendingQuestions && s.pendingQuestions.length) {
       const groups = s.pendingQuestions.map((q, qi) => {
         const opts = (q.options || []).map((o, oi) =>
-          `<button class="btn opt" data-q="${qi}" data-opt="${oi + 1}">${esc(o.label)}${o.description ? `<span class="odesc">${esc(o.description)}</span>` : ''}</button>`).join('');
-        return `<div class="qgroup"><div class="q">${esc(q.question)}</div><div class="btns" style="flex-direction:column">${opts}</div></div>`;
+          `<button class="qopt" data-q="${qi}" data-opt="${oi + 1}">` +
+            `<span class="qnum">${oi + 1}</span>` +
+            `<span class="qtext"><span class="qlabel">${esc(o.label)}</span>` +
+            `${o.description ? `<span class="qdesc">${esc(o.description)}</span>` : ''}</span>` +
+          `</button>`).join('');
+        return `<div class="qgroup"><div class="q">${esc(q.question)}</div>${opts}</div>`;
       }).join('');
       const multi = s.pendingQuestions.length > 1;
       return `<div class="decision" data-id="${esc(s.sessionId)}" data-kind="question" data-n="${s.pendingQuestions.length}">
         ${groups}
         ${multi ? `<div class="btns"><button class="btn primary" data-submit>Submit answers</button></div>` : ''}
+        <div class="qdecline"><button data-decline>Decline &amp; stop</button></div>
       </div>`;
     }
     return '';
@@ -456,6 +526,8 @@
         }
         const sub = d.querySelector('[data-submit]');
         if (sub) sub.onclick = () => submitAnswers(id, d);
+        const dec = d.querySelector('[data-decline]');
+        if (dec) dec.onclick = () => declineQuestion(id);
       }
     }
   }
@@ -485,9 +557,80 @@
       if (!pick) { toast('Pick an option for every question'); return; }
       answers.push(String(pick));   // daemon maps 1-indexed picks → option labels
     }
+    // Capture the question set + anchor now — the snapshot may clear
+    // pendingQuestions before the call resolves.
+    const s = sessions.get(id);
+    const questions = (s && s.pendingQuestions) || [];
+    const anchorLen = ((s && s.conversation) || []).length;
     call('claude.answer', { sessionId: id, answers })
-      .then(() => { toast('Answered'); for (let qi = 0; qi < n; qi++) picks.delete(id + ':' + qi); })
+      .then(() => {
+        recordResolved(id, false, describeAnswers(questions, answers), questions, anchorLen);
+        toast('Answered');
+        for (let qi = 0; qi < n; qi++) picks.delete(id + ':' + qi);
+        if (view.name === 'chat' && view.sessionId === id) renderChat();
+      })
       .catch(e => toast('Failed: ' + (e.message || e)));
+  }
+
+  // Decline the pending question(s): leave a "declined" trace in the transcript
+  // and cancel the agent's turn (SIGINT) — mirrors the desktop decline.
+  function declineQuestion(id) {
+    const s = sessions.get(id);
+    const questions = (s && s.pendingQuestions) || [];
+    const anchorLen = ((s && s.conversation) || []).length;
+    recordResolved(id, true, null, questions, anchorLen);
+    call('claude.signal', { sessionId: id, signal: 'SIGINT' })
+      .then(() => toast('Declined')).catch(e => toast('Failed: ' + (e.message || e)));
+    if (view.name === 'chat' && view.sessionId === id) renderChat();
+  }
+
+  // ── resolved-question records (persistent chat cards) ───────────────────────
+  // Kept client-side, keyed by sessionId and anchored by conversation length, so
+  // they survive the snapshot rebuilds that replace s.conversation wholesale.
+  function recordResolved(id, declined, answers, questions, anchorLen) {
+    if (!questions || !questions.length) return;
+    const sig = questions.map(q => q.question).join(' ');
+    const list = resolvedQs.get(id) || [];
+    if (list.some(r => r.sig === sig && r.anchorLen === anchorLen)) return;
+    list.push({ sig, anchorLen, questions, answers, declined });
+    resolvedQs.set(id, list);
+  }
+  // Map raw 1-indexed picks back to their option labels for display.
+  function describeAnswers(questions, raw) {
+    return (raw || []).map((a, i) => {
+      const n = Number(a), q = questions[i];
+      if (Number.isInteger(n) && String(n) === a && q && q.options && q.options[n - 1]) return q.options[n - 1].label;
+      return a;
+    });
+  }
+  function answeredCardHtml(r) {
+    if (r.declined) {
+      const body = r.questions.length > 1
+        ? `You declined ${r.questions.length} questions — the turn was cancelled.`
+        : 'You declined to answer — the turn was cancelled.';
+      return `<div class="aqcard declined"><div class="aqhead">⊘ Declined</div><div class="aqbody">${esc(body)}</div></div>`;
+    }
+    const rows = r.questions.map((q, i) =>
+      `<div class="aqrow"><div class="aqq">${esc(q.question)}</div>` +
+      `<div class="aqa">↳ ${esc((r.answers && r.answers[i]) || '—')}</div></div>`).join('');
+    return `<div class="aqcard"><div class="aqhead">✓ You answered</div><div class="aqbody">${rows}</div></div>`;
+  }
+  // Interleave answered-question cards with the conversation turns at their anchor.
+  function transcriptHtml(s) {
+    const turns = s.conversation || [];
+    const cards = resolvedQs.get(s.sessionId) || [];
+    const byAnchor = new Map();
+    for (const r of cards) {
+      const a = Math.max(0, Math.min(r.anchorLen, turns.length));
+      let arr = byAnchor.get(a); if (!arr) { arr = []; byAnchor.set(a, arr); } arr.push(r);
+    }
+    const parts = [];
+    for (let i = 0; i <= turns.length; i++) {
+      const cs = byAnchor.get(i);
+      if (cs) for (const r of cs) parts.push(answeredCardHtml(r));
+      if (i < turns.length) parts.push(turnHtml(turns[i]));
+    }
+    return parts.join('');
   }
 
   // ── chat ───────────────────────────────────────────────────────────────────
@@ -507,22 +650,26 @@
     subEl.innerHTML = stateChip(s) + (s.transport === 'stream' ? ' <span class="tag">stream</span>' : '');
 
     const atBottom = scrollBottom || (transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 60);
-    const turns = s.conversation || [];
-    if (!turns.length) {
-      transcript.innerHTML = `<div class="empty"><div class="big">No messages yet</div><div class="small">Say something to get started.</div></div>`;
-    } else {
-      transcript.innerHTML = turns.map(turnHtml).join('');
-    }
+    const body = transcriptHtml(s);   // turns + answered-question cards, interleaved
+    const parts = [];
+    if (body) parts.push(body);
+    if (isWorking(s)) parts.push(thinkingHtml());   // BrandSpinner while responding
+    transcript.innerHTML = parts.length
+      ? parts.join('')
+      : `<div class="empty"><div class="big">No messages yet</div><div class="small">Say something to get started.</div></div>`;
     chatDecision.innerHTML = isBlocked(s) ? decisionHtml(s) : '';
     if (chatDecision.firstChild) bindDecisions(chatDecision);
     if (atBottom) transcript.scrollTop = transcript.scrollHeight;
     sendBtn.disabled = !isLive(s);
   }
   function turnHtml(t) {
-    let inner = renderBody(t.content || '');
+    const isUser = t.role === 'user';
+    // User text stays literal (matches the desktop app, which only markdown-
+    // renders assistant turns); the .bubble's pre-wrap preserves its newlines.
+    let inner = isUser ? esc(t.content || '') : renderMarkdown(t.content || '');
     if (t.toolCalls && t.toolCalls.length) inner += t.toolCalls.map(toolChip).join('');
     if (!inner.trim()) return '';
-    return `<div class="turn ${t.role === 'user' ? 'user' : 'assistant'}"><div class="bubble">${inner}</div></div>`;
+    return `<div class="turn ${isUser ? 'user' : 'assistant'}"><div class="bubble ${isUser ? '' : 'md'}">${inner}</div></div>`;
   }
   function toolChip(tc) {
     return `<div class="toolchip"><span class="tn">${esc(tc.name)}</span>` +
@@ -530,14 +677,71 @@
       `<span class="sd ${esc(tc.status || 'complete')}"></span></div>`;
   }
   function oneLine(s) { return String(s || '').split('\n')[0].slice(0, 80); }
-  // Minimal, safe markdown: escape everything, then lift ``` fenced blocks to
-  // <pre> and `inline` to <code>. No HTML ever reaches the DOM unescaped.
-  function renderBody(text) {
-    const parts = String(text).split(/```/);
-    return parts.map((seg, i) => {
-      if (i % 2 === 1) { const body = seg.replace(/^[a-zA-Z0-9_-]*\n/, ''); return `<pre>${esc(body)}</pre>`; }
-      return esc(seg).replace(/`([^`]+)`/g, (_, c) => `<code>${c}</code>`);
-    }).join('');
+  // The desktop {␣} BrandSpinner, shown while the agent is streaming/thinking.
+  function thinkingHtml() {
+    return `<div class="turn assistant"><div class="thinking">` +
+      `<span class="brand">{<span class="track"><span class="bar"></span></span>}</span></div></div>`;
+  }
+
+  // ── safe markdown → HTML (self-contained, mirrors the desktop feature set) ───
+  // Everything is escaped before it reaches the DOM; only the tags we emit here
+  // are ever unescaped. Supports: #-#### headings, **bold**, *italic*, `code`,
+  // ```fences```, - / * / 1. lists, > quotes, --- rules, and [text](url) links.
+  function safeUrl(u) { u = String(u || '').trim(); return /^(https?:|mailto:|\/)/i.test(u) ? u : null; }
+  function renderInline(text, depth) {
+    depth = depth || 0;
+    const re = /(\*\*([\s\S]+?)\*\*|\*([^*\n]+?)\*|`([^`]+)`|\[([^\]]+)\]\(([^)\s]+)\))/g;
+    let out = '', last = 0, m;
+    while ((m = re.exec(text))) {
+      out += esc(text.slice(last, m.index));
+      if (m[2] !== undefined) out += `<strong>${depth < 4 ? renderInline(m[2], depth + 1) : esc(m[2])}</strong>`;
+      else if (m[3] !== undefined) out += `<em>${depth < 4 ? renderInline(m[3], depth + 1) : esc(m[3])}</em>`;
+      else if (m[4] !== undefined) out += `<code>${esc(m[4])}</code>`;
+      else {
+        const url = safeUrl(m[6]), label = depth < 4 ? renderInline(m[5], depth + 1) : esc(m[5]);
+        out += url ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${label}</a>` : label;
+      }
+      last = re.lastIndex;
+    }
+    return out + esc(text.slice(last));
+  }
+  const RE_FENCE = /^\s*```/, RE_HEAD = /^(#{1,4})\s+(.+)$/, RE_HR = /^\s*([-*_])(\s*\1){2,}\s*$/,
+        RE_QUOTE = /^\s*>/, RE_LI = /^\s*([-*+]|\d+[.)])\s+/, RE_OL = /^\s*\d+[.)]\s+/;
+  function isBlockStart(l) { return RE_FENCE.test(l) || RE_HEAD.test(l) || RE_HR.test(l) || RE_QUOTE.test(l) || RE_LI.test(l); }
+  function renderMarkdown(text) {
+    const lines = String(text).replace(/\r\n?/g, '\n').split('\n');
+    const out = [];
+    let i = 0;
+    while (i < lines.length) {
+      const line = lines[i];
+      if (RE_FENCE.test(line)) {                              // fenced code (unclosed → to end, for streaming)
+        i++; const buf = [];
+        while (i < lines.length && !RE_FENCE.test(lines[i])) { buf.push(lines[i]); i++; }
+        if (i < lines.length) i++;
+        out.push(`<pre>${esc(buf.join('\n'))}</pre>`); continue;
+      }
+      const h = RE_HEAD.exec(line);
+      if (h) { const n = h[1].length; out.push(`<h${n} class="md-h">${renderInline(h[2].trim())}</h${n}>`); i++; continue; }
+      if (RE_HR.test(line)) { out.push('<hr class="md-hr">'); i++; continue; }
+      if (RE_QUOTE.test(line)) {
+        const buf = [];
+        while (i < lines.length && RE_QUOTE.test(lines[i])) { buf.push(lines[i].replace(/^\s*>\s?/, '')); i++; }
+        out.push(`<blockquote class="md-q">${renderInline(buf.join(' '))}</blockquote>`); continue;
+      }
+      if (RE_LI.test(line)) {
+        const ordered = RE_OL.test(line), items = [];
+        while (i < lines.length && RE_LI.test(lines[i])) {
+          items.push(`<li>${renderInline(lines[i].replace(RE_LI, ''))}</li>`); i++;
+        }
+        const tag = ordered ? 'ol' : 'ul';
+        out.push(`<${tag} class="md-list">${items.join('')}</${tag}>`); continue;
+      }
+      if (!line.trim()) { i++; continue; }
+      const buf = [];
+      while (i < lines.length && lines[i].trim() && !isBlockStart(lines[i])) { buf.push(lines[i]); i++; }
+      out.push(`<p class="md-p">${renderInline(buf.join('\n')).replace(/\n/g, '<br>')}</p>`);
+    }
+    return out.join('');
   }
 
   function sendMessage() {
