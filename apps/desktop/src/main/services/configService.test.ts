@@ -151,7 +151,7 @@ describe('deepMerge semantics – via configService.saveConfig', () => {
     expect(cfg.claude.defaultPermissionMode).toBe('plan');
     // Sibling claude defaults survive the partial save.
     expect(cfg.claude.defaultView).toBe('terminal');
-    expect(cfg.claude.transport).toBe('pty');
+    expect(cfg.claude.transport).toBe('stream');
   });
 
   it('preserves unrelated top-level sections when saving a partial', () => {
