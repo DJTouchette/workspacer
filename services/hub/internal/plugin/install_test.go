@@ -99,6 +99,31 @@ func TestInstallFromTarballHappy(t *testing.T) {
 	}
 }
 
+// TestInstallFromFlatTarball covers a direct (non-GitHub) .tar.gz whose files
+// sit at the archive root with no wrapping "<repo>-<ref>/" dir. The old code
+// hard-stripped one leading path component for every archive, so every root
+// entry of a flat tarball was discarded and the install failed with
+// "no plugin.json found". locateManifestDir already handles root-or-one-level,
+// so extraction must not blindly strip.
+func TestInstallFromFlatTarball(t *testing.T) {
+	data := rawTarGz(t, map[string]string{
+		"plugin.json": `{"id":"flat.plugin","name":"Flat","apiVersion":"1"}`,
+		"index.html":  "<html>flat</html>",
+	})
+	dir := t.TempDir()
+
+	m, err := installFromTarball(dir, serveTarball(t, data), "flat", nil)
+	if err != nil {
+		t.Fatalf("flat tarball rejected: %v", err)
+	}
+	if m.ID != "flat.plugin" {
+		t.Fatalf("manifest = %+v", m)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "flat-plugin", "index.html")); err != nil {
+		t.Errorf("index.html from a flat tarball not installed: %v", err)
+	}
+}
+
 func TestInstallReinstallOverwrites(t *testing.T) {
 	dir := t.TempDir()
 	mk := func(html string) string {

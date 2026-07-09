@@ -199,6 +199,13 @@ func (c *configService) reload() map[string]any {
 func (c *configService) save(partial map[string]any) map[string]any {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	// Fold in any external write (e.g. the desktop app editing config.yaml in its
+	// own process) before merging our partial, so a stale cache doesn't clobber
+	// it. Mirrors the mtime gate in get().
+	if c.current == nil || configMtime().After(c.loadedAt) {
+		c.current = c.loadFromDisk()
+		c.loadedAt = configMtime()
+	}
 	merged := deepMerge(c.current, partial)
 	writeConfigYAML(merged)
 	c.current = merged

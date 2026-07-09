@@ -302,7 +302,10 @@ fn set_session_model(client: &reqwest::Client, base: &str, oc_id: &str, id: &str
     if provider.is_empty() || model.is_empty() {
         return;
     }
-    let url = format!("{base}/api/session/{oc_id}/model");
+    // Note: no `/api` prefix — every other OpenCode endpoint (session create,
+    // message, permissions, event, health) posts to `{base}/…` directly, so the
+    // stray prefix here made the model switch silently 404.
+    let url = format!("{base}/session/{oc_id}/model");
     let body = serde_json::json!({ "model": { "providerID": provider, "id": model } });
     let c = client.clone();
     tokio::spawn(async move {

@@ -165,6 +165,10 @@ pub fn build_brief(
             }
         }
     }
+    // A file that was both read and edited is a *modified* file — the two
+    // buckets were filled independently, so drop from read-only anything that
+    // also landed in edited (else it's mislabeled "not modified").
+    read_only.retain(|p| !edited.contains(p));
     if !edited.is_empty() {
         out.push_str("\n## Files modified\n\n");
         for p in edited.iter().take(MAX_FILES) {
@@ -333,6 +337,23 @@ mod tests {
         assert!(brief.contains("`src/auth.rs`"), "read file listed");
         assert!(brief.contains("Fixed the null check"));
         assert!(brief.contains("abc12345-xyz"));
+    }
+
+    #[test]
+    fn file_read_then_edited_is_not_listed_as_read_only() {
+        // A file that was both Read and Edited must appear only under "Files
+        // modified", never also under "read/inspected (not modified)".
+        let items = vec![
+            tool("Read", json!({ "file_path": "a.rs" })),
+            tool("Edit", json!({ "file_path": "a.rs" })),
+        ];
+        let brief = build_brief("s", None, &items);
+        assert!(brief.contains("Files modified"), "should be listed as modified");
+        assert!(brief.contains("`a.rs`"));
+        assert!(
+            !brief.contains("not modified"),
+            "an edited file must not also appear as read-only:\n{brief}"
+        );
     }
 
     #[test]

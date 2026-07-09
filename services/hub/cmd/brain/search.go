@@ -84,6 +84,16 @@ func searchProject(ctx context.Context, opts searchOpts) (searchProjectResult, e
 		}
 	}
 
+	return parseRipgrepJSON(out, opts.Cwd, maxResults), nil
+}
+
+// parseRipgrepJSON turns `rg --json` output into grouped per-file results. Split
+// out from searchProject so it's unit-testable without a live ripgrep. Every
+// submatch on a line becomes its own result (a line with N occurrences yields N
+// columns) — the previous code kept only the first submatch, silently dropping
+// the rest and reporting one match where there were several.
+func parseRipgrepJSON(out []byte, cwd string, maxResults int) searchProjectResult {
+	res := searchProjectResult{Results: []searchFileResult{}}
 	byFile := map[string]*searchFileResult{}
 	var order []string
 	total := 0
@@ -105,35 +115,46 @@ func searchProject(ctx context.Context, opts searchOpts) (searchProjectResult, e
 		if json.Unmarshal([]byte(line), &msg) != nil || msg.Type != "match" {
 			continue
 		}
-		if total >= maxResults {
-			res.Truncated = true
-			break
-		}
 		rel := msg.Data.Path.Text
 		if rel == "" {
 			continue
 		}
-		abs := filepath.Join(opts.Cwd, rel) // rg reports paths relative to cwd
-		col := 1
-		if len(msg.Data.Submatches) > 0 {
-			col = msg.Data.Submatches[0].Start + 1
+		abs := filepath.Join(cwd, rel) // rg reports paths relative to cwd
+		text := clip(strings.TrimSpace(strings.TrimRight(msg.Data.Lines.Text, "\r\n")), searchMaxTextLen)
+		// One column per submatch. rg still emits a match message even with an
+		// empty submatch list (rare), so fall back to column 1 rather than drop
+		// the whole line.
+		cols := make([]int, 0, len(msg.Data.Submatches))
+		for _, sm := range msg.Data.Submatches {
+			cols = append(cols, sm.Start+1)
 		}
-		m := searchMatch{
-			Line:   msg.Data.LineNumber,
-			Column: col,
-			Text:   clip(strings.TrimSpace(strings.TrimRight(msg.Data.Lines.Text, "\r\n")), searchMaxTextLen),
+		if len(cols) == 0 {
+			cols = []int{1}
 		}
-		bucket := byFile[abs]
-		if bucket == nil {
-			bucket = &searchFileResult{File: abs}
-			byFile[abs] = bucket
-			order = append(order, abs)
+		for _, col := range cols {
+			if total >= maxResults {
+				res.Truncated = true
+				break
+			}
+			bucket := byFile[abs]
+			if bucket == nil {
+				bucket = &searchFileResult{File: abs}
+				byFile[abs] = bucket
+				order = append(order, abs)
+			}
+			bucket.Matches = append(bucket.Matches, searchMatch{
+				Line:   msg.Data.LineNumber,
+				Column: col,
+				Text:   text,
+			})
+			total++
 		}
-		bucket.Matches = append(bucket.Matches, m)
-		total++
+		if res.Truncated {
+			break
+		}
 	}
 	for _, k := range order {
 		res.Results = append(res.Results, *byFile[k])
 	}
-	return res, nil
+	return res
 }

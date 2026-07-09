@@ -380,6 +380,12 @@ func (m *Manager) Add(mf Manifest) {
 		if m.reg != nil && prev.token != "" && prev.token != l.token {
 			m.reg.UnregisterPluginToken(prev.token)
 		}
+		// Sweep the previous incarnation's ephemeral pane tokens, mirroring
+		// Remove. Without this, disabling a plugin (SetEnabled→Add with Disabled)
+		// leaves its open webviews holding live bus grants, and reloading with
+		// reduced capabilities leaves panes on the OLD, broader grants. The host
+		// re-mints pane tokens against the new manifest when panes reopen.
+		m.revokePaneTokensFor(mf.ID)
 	}
 
 	m.pub.Publish(event.New("plugin.loaded", "hub", mf))

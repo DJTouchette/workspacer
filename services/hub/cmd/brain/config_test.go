@@ -36,6 +36,45 @@ func TestConfigGetReloadsOnExternalChange(t *testing.T) {
 	}
 }
 
+// TestConfigSaveFoldsInExternalChange proves save() re-reads a config.yaml that
+// was changed under it (e.g. by the desktop app) before merging its own partial,
+// instead of clobbering that change with a stale in-memory cache. get() is
+// mtime-gated for exactly this reason; save() must honour the same gate.
+func TestConfigSaveFoldsInExternalChange(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	c := newConfigService()
+	// Prime the in-memory cache — theme defaults to dark.
+	if ui := c.get()["ui"].(map[string]any); ui["theme"] != "dark" {
+		t.Fatalf("precondition: default theme should be dark, got %v", ui["theme"])
+	}
+
+	// The desktop app rewrites config.yaml in its own process, changing the theme.
+	p := filepath.Join(dir, "workspacer", "config.yaml")
+	if err := os.WriteFile(p, []byte("ui:\n  theme: external\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	future := time.Now().Add(2 * time.Second) // strictly newer, independent of fs resolution
+	_ = os.Chtimes(p, future, future)
+
+	// The brain saves an unrelated partial. It must fold the external theme in,
+	// not overwrite it from the stale cache.
+	merged := c.save(map[string]any{"editor": map[string]any{"vim": true}})
+
+	if ui := merged["ui"].(map[string]any); ui["theme"] != "external" {
+		t.Errorf("save clobbered the external theme: got %v, want external", ui["theme"])
+	}
+	if ed := merged["editor"].(map[string]any); ed["vim"] != true {
+		t.Errorf("save dropped its own partial: editor.vim = %v", ed["vim"])
+	}
+	// Confirm it's what actually landed on disk.
+	fresh := newConfigService().get()
+	if ui := fresh["ui"].(map[string]any); ui["theme"] != "external" {
+		t.Errorf("persisted theme = %v, want external (external write was clobbered)", ui["theme"])
+	}
+}
+
 func TestDefaultConfigParses(t *testing.T) {
 	cfg := defaultConfig()
 	if len(cfg) == 0 {

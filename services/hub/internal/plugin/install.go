@@ -83,7 +83,7 @@ func inspectTarball(tarballURL string) (Manifest, error) {
 		return Manifest{}, err
 	}
 	defer os.RemoveAll(tmp)
-	if err := extractTarGz(resp.Body, tmp, 1); err != nil {
+	if err := extractTarGz(resp.Body, tmp, 0); err != nil { // see installFromTarball: locateManifestDir resolves root-or-one-level
 		return Manifest{}, fmt.Errorf("extract: %w", err)
 	}
 	src, err := locateManifestDir(tmp)
@@ -244,10 +244,13 @@ func installFromTarball(pluginsDir, tarballURL, fallbackName string, progress fu
 	}
 	defer os.RemoveAll(tmp)
 
-	// GitHub tarballs wrap everything in a single top-level "<repo>-<ref>/" dir;
-	// strip it so the plugin's files land at the temp root.
+	// Extract verbatim (no component stripping). GitHub tarballs wrap everything
+	// in a single top-level "<repo>-<ref>/" dir; a direct .tar.gz may be flat
+	// (files at the root) instead. locateManifestDir handles both by looking at
+	// the root and one level down, so blindly stripping a component here would
+	// discard a flat archive's files entirely.
 	progress("extracting")
-	if err := extractTarGz(resp.Body, tmp, 1); err != nil {
+	if err := extractTarGz(resp.Body, tmp, 0); err != nil {
 		return Manifest{}, fmt.Errorf("extract: %w", err)
 	}
 

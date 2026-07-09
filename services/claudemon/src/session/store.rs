@@ -675,6 +675,16 @@ impl SessionStore {
             payload: serde_json::Map::new(),
         };
         let _ = self.ingest(synthetic);
+        // Sweep the per-session auxiliary maps so they don't accrue a permanent
+        // entry per session across spawn/stop churn (drop_pending_spawn does the
+        // same). Done after the SessionEnd ingest so anything it touches (e.g.
+        // the flush epoch) is cleared too. `states` is intentionally kept — the
+        // session lingers as a resumable Stopped row.
+        self.input_since.remove(session_id);
+        self.flush_epochs.remove(session_id);
+        self.client_input_at.remove(session_id);
+        self.paste_modes.remove(session_id);
+        self.term_sizes.remove(session_id);
     }
 
     /// Register an in-daemon spawn before claude's SessionStart hook fires.
@@ -1620,6 +1630,38 @@ mod tests {
         b.extend_from_slice(text.as_bytes());
         b.extend_from_slice(b"\x1b[201~\r");
         b
+    }
+
+    #[test]
+    fn deregister_wrapper_sweeps_per_session_aux_maps() {
+        let store = SessionStore::new();
+        store.register_wrapper("s1", "/w", handle());
+        // Populate the per-session auxiliary maps the way live traffic would.
+        store.flush_epochs.insert("s1".into(), 3);
+        store
+            .input_since
+            .insert("s1".into(), tokio::time::Instant::now());
+        store
+            .client_input_at
+            .insert("s1".into(), tokio::time::Instant::now());
+        store.term_sizes.insert("s1".into(), (80, 24));
+        store
+            .paste_modes
+            .insert("s1".into(), PasteModeTracker::default());
+
+        store.deregister_wrapper("s1");
+
+        // Transport maps AND the auxiliary maps must all be swept so they don't
+        // accrue a permanent entry per session across spawn/stop churn.
+        assert!(!store.wrappers.contains_key("s1"), "wrappers leaked");
+        assert!(!store.flush_epochs.contains_key("s1"), "flush_epochs leaked");
+        assert!(!store.input_since.contains_key("s1"), "input_since leaked");
+        assert!(
+            !store.client_input_at.contains_key("s1"),
+            "client_input_at leaked"
+        );
+        assert!(!store.term_sizes.contains_key("s1"), "term_sizes leaked");
+        assert!(!store.paste_modes.contains_key("s1"), "paste_modes leaked");
     }
 
     #[test]

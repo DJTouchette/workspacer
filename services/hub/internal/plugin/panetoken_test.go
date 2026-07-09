@@ -218,6 +218,51 @@ func TestRemoveSweepsPaneTokens(t *testing.T) {
 	}
 }
 
+// TestReloadSweepsPaneTokens proves that reloading a plugin through Add (the
+// path SetEnabled and reinstall take) revokes its open panes' ephemeral bus
+// tokens, exactly as Remove does. The bug: Add's replace branch stopped the old
+// sidecar and dropped the per-plugin token but never swept paneTokens, so
+// disabling a plugin (or reinstalling it with fewer capabilities) left its
+// still-open webviews holding their original, broader bus grants.
+func TestReloadSweepsPaneTokens(t *testing.T) {
+	reg := newFakeRegistrar()
+	dir := t.TempDir()
+	mf := Manifest{
+		ID:           "acme.editor",
+		Dir:          dir,
+		Panes:        []PaneContribution{{Type: "acme.editor", Title: "Editor"}},
+		Capabilities: []Capability{{Method: "fs.read", Paths: []string{"${agentCwd}"}}},
+	}
+	m := loadedManager(t, reg, mf)
+
+	// Two open panes mint ephemeral tokens on the bus.
+	if _, err := m.PaneToken("acme.editor", map[string]string{"agentCwd": "/a"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.PaneToken("acme.editor", map[string]string{"agentCwd": "/b"}); err != nil {
+		t.Fatal(err)
+	}
+	if reg.count() != 2 {
+		t.Fatalf("expected 2 pane tokens registered, got %d", reg.count())
+	}
+
+	// Disable = reload via Add with Disabled set. It must confine the open
+	// panes: their bus tokens are revoked and no longer tracked.
+	dmf := mf
+	dmf.Disabled = true
+	m.Add(dmf)
+
+	if reg.count() != 0 {
+		t.Fatalf("disabling the plugin must sweep its pane tokens; %d still registered on the bus", reg.count())
+	}
+	m.mu.Lock()
+	tracked := len(m.paneTokens)
+	m.mu.Unlock()
+	if tracked != 0 {
+		t.Fatalf("manager still tracks %d pane tokens after reload", tracked)
+	}
+}
+
 func TestPaneTokenUnknownPluginAndNoEnforcement(t *testing.T) {
 	reg := newFakeRegistrar()
 	m := loadedManager(t, reg, Manifest{ID: "acme.editor", Dir: "/plugins/acme"})
