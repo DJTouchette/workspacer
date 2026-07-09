@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { X, Minimize2, ExternalLink } from 'lucide-react';
+import { X, Minimize2, ExternalLink, Search, Radar, CornerDownLeft } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { AgentWorkspace } from '../types/pane';
 import type { ClaudeSessionSnapshot } from '../types/claudeSession';
@@ -31,8 +31,26 @@ function ensureFleetKeyframes() {
   if (typeof document === 'undefined' || document.getElementById(STYLE_ID)) return;
   const s = document.createElement('style');
   s.id = STYLE_ID;
-  s.textContent =
-    '@keyframes fleetPulse { 0%,100% { box-shadow: 0 0 0 1px currentColor; } 50% { box-shadow: 0 0 0 3px currentColor, 0 0 18px currentColor; } }';
+  // Pulse for blocked agents + a single keyboard-focus ring for the whole deck.
+  // Inline styles can't express :focus-visible, so the deck opts in via the
+  // `.fleet-root` class and everything focusable inside gets a consistent ring
+  // (buttons/rows) or accent halo (text fields) — the deck had none before.
+  s.textContent = `
+    @keyframes fleetPulse { 0%,100% { box-shadow: 0 0 0 1px currentColor; } 50% { box-shadow: 0 0 0 3px currentColor, 0 0 18px currentColor; } }
+    .fleet-root button:focus-visible,
+    .fleet-root [role="button"]:focus-visible,
+    .fleet-root tr:focus-visible {
+      outline: 2px solid var(--wks-accent);
+      outline-offset: 2px;
+      border-radius: var(--wks-radius-sm);
+    }
+    .fleet-root input:focus-visible,
+    .fleet-root textarea:focus-visible {
+      outline: none;
+      border-color: var(--wks-accent);
+      box-shadow: 0 0 0 3px var(--wks-accent-glow);
+    }
+  `;
   document.head.appendChild(s);
 }
 
@@ -158,11 +176,12 @@ const expandBtn: React.CSSProperties = {
   width: 24,
   height: 24,
   padding: 0,
-  borderRadius: 6,
+  borderRadius: 'var(--wks-radius-md)',
   border: '1px solid var(--wks-glass-border)',
   background: 'transparent',
   color: 'var(--wks-text-faint)',
   cursor: 'pointer',
+  transition: 'color 0.12s, border-color 0.12s',
 };
 
 /**
@@ -522,8 +541,11 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
     if (i >= 0) rowVirtualizer.scrollToIndex(Math.floor(i / cols), { align: 'auto' });
   }, [selectedId, fleetView, displayOrder, cols, rowVirtualizer]);
 
+  const selectedAgent = displayOrder.find((a) => a.id === selectedId);
+
   return (
     <div
+      className="fleet-root"
       style={{
         position: 'fixed',
         top,
@@ -537,76 +559,84 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
       }}
     >
       {/* Deck header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 22px 10px' }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 11, minWidth: 0 }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          padding: '14px 22px 12px',
+          borderBottom: '1px solid var(--wks-border-subtle)',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, minWidth: 0 }}>
           <div
             style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 8,
               fontSize: '1.1rem',
               fontWeight: 700,
               letterSpacing: '-0.01em',
               color: 'var(--wks-text-primary)',
             }}
           >
+            <Radar size={17} strokeWidth={2.2} style={{ color: 'var(--wks-accent)' }} />
             Fleet
           </div>
+          {/* Scannable status chips — dot + count, colour-keyed by state. */}
           <div
             style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 12,
               fontSize: '0.72rem',
-              color: 'var(--wks-text-secondary)',
               fontVariantNumeric: 'tabular-nums',
+              color: 'var(--wks-text-secondary)',
               whiteSpace: 'nowrap',
             }}
           >
-            {realAgents.length} agent{realAgents.length === 1 ? '' : 's'} · {working} working ·{' '}
-            {counts.needsYou} need{counts.needsYou === 1 ? 's' : ''} you
+            <StatChip color="var(--wks-text-tertiary)" glow={false}>
+              {realAgents.length} agent{realAgents.length === 1 ? '' : 's'}
+            </StatChip>
+            <StatChip color="var(--wks-busy, var(--wks-accent))" glow={working > 0}>
+              {working} working
+            </StatChip>
+            <StatChip color="var(--wks-warning)" glow={counts.needsYou > 0}>
+              {counts.needsYou} need{counts.needsYou === 1 ? 's' : ''} you
+            </StatChip>
           </div>
         </div>
         <div style={{ flex: 1 }} />
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Filter agents…"
-          spellCheck={false}
-          style={{
-            width: 160,
-            fontSize: '0.72rem',
-            fontFamily: 'inherit',
-            padding: '5px 9px',
-            borderRadius: 'var(--wks-radius-md)',
-            border: '1px solid var(--wks-border-subtle)',
-            background: 'var(--wks-bg-surface)',
-            color: 'var(--wks-text-primary)',
-          }}
-        />
-        <span
-          style={{
-            fontSize: '0.62rem',
-            color: 'var(--wks-text-faint)',
-            display: 'inline-flex',
-            gap: 6,
-          }}
-        >
-          {fleetView === 'cards' ? (
-            <span>
-              <kbd style={kbdStyle}>{formatBinding(sc['fleet-cards-left'] ?? '')}</kbd>/
-              <kbd style={kbdStyle}>{formatBinding(sc['fleet-cards-down'] ?? '')}</kbd>/
-              <kbd style={kbdStyle}>{formatBinding(sc['fleet-cards-up'] ?? '')}</kbd>/
-              <kbd style={kbdStyle}>{formatBinding(sc['fleet-cards-right'] ?? '')}</kbd> move
-            </span>
-          ) : (
-            <span>
-              <kbd style={kbdStyle}>{formatBinding(sc['fleet-list-down'] ?? '')}</kbd>/
-              <kbd style={kbdStyle}>{formatBinding(sc['fleet-list-up'] ?? '')}</kbd> move
-            </span>
-          )}
-          <span>
-            <kbd style={kbdStyle}>{formatBinding(sc['fleet-approve-yes'] ?? '')}</kbd>/
-            <kbd style={kbdStyle}>{formatBinding(sc['fleet-approve-no'] ?? '')}</kbd> approve
-          </span>
-          <span>
-            <kbd style={kbdStyle}>{formatBinding(sc['fleet-answer'] ?? '')}</kbd> answer
-          </span>
-        </span>
+        {/* Filter with a leading search glyph */}
+        <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+          <Search
+            size={13}
+            strokeWidth={2.2}
+            style={{
+              position: 'absolute',
+              left: 9,
+              color: 'var(--wks-text-faint)',
+              pointerEvents: 'none',
+            }}
+          />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Filter agents…"
+            spellCheck={false}
+            style={{
+              width: 168,
+              fontSize: '0.72rem',
+              fontFamily: 'inherit',
+              padding: '5px 9px 5px 28px',
+              borderRadius: 'var(--wks-radius-md)',
+              border: '1px solid var(--wks-border-subtle)',
+              background: 'var(--wks-bg-surface)',
+              color: 'var(--wks-text-primary)',
+              transition: 'border-color 0.12s, box-shadow 0.12s',
+            }}
+          />
+        </div>
         {/* Cards / List toggle */}
         <div
           style={{
@@ -640,6 +670,14 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
             padding: '6px 13px',
             background: 'var(--wks-accent)',
             color: 'var(--wks-text-on-accent, #fff)',
+            boxShadow: '0 1px 3px var(--wks-shadow)',
+            transition: 'filter 0.12s',
+          }}
+          onMouseEnter={(e) => {
+            (e.currentTarget as HTMLElement).style.filter = 'brightness(1.08)';
+          }}
+          onMouseLeave={(e) => {
+            (e.currentTarget as HTMLElement).style.filter = '';
           }}
         >
           <span style={{ fontSize: '0.95rem', lineHeight: 1 }}>+</span> Spawn agent
@@ -656,10 +694,19 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
             fontWeight: 600,
             cursor: 'pointer',
             border: '1px solid var(--wks-glass-border)',
-            borderRadius: 6,
+            borderRadius: 'var(--wks-radius-md)',
             padding: '5px 12px',
             background: 'var(--wks-bg-surface)',
             color: 'var(--wks-text-secondary)',
+            transition: 'border-color 0.12s, color 0.12s',
+          }}
+          onMouseEnter={(e) => {
+            (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-primary)';
+            (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-border)';
+          }}
+          onMouseLeave={(e) => {
+            (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-secondary)';
+            (e.currentTarget as HTMLElement).style.borderColor = 'var(--wks-glass-border)';
           }}
         >
           <X size={13} strokeWidth={2} /> Exit fleet <kbd style={kbdStyle}>Esc</kbd>
@@ -669,19 +716,44 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
       {/* Content: empty state · dense list · windowed card grid */}
       {realAgents.length === 0 ? (
         <div style={CONTENT_SCROLL}>
-          <div style={{ marginTop: 80, textAlign: 'center', color: 'var(--wks-text-faint)' }}>
+          <div
+            style={{
+              marginTop: 80,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              textAlign: 'center',
+              color: 'var(--wks-text-faint)',
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 56,
+                height: 56,
+                borderRadius: '50%',
+                marginBottom: 18,
+                background: 'var(--wks-bg-surface)',
+                border: '1px solid var(--wks-border-subtle)',
+                color: 'var(--wks-text-tertiary)',
+              }}
+            >
+              <Radar size={26} strokeWidth={1.8} />
+            </div>
             <div
               style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--wks-text-secondary)' }}
             >
               No agents in the fleet
             </div>
-            <div style={{ fontSize: '0.78rem', marginTop: 6 }}>
+            <div style={{ fontSize: '0.78rem', marginTop: 6, maxWidth: 300 }}>
               Spawn an agent and it'll appear here as a live card.
             </div>
             <button
               onClick={spawnAgent}
               style={{
-                marginTop: 16,
+                marginTop: 18,
                 fontSize: '0.8rem',
                 fontFamily: 'inherit',
                 fontWeight: 700,
@@ -689,8 +761,9 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
                 background: 'var(--wks-accent)',
                 color: 'var(--wks-text-on-accent, #fff)',
                 border: 'none',
-                borderRadius: 6,
+                borderRadius: 'var(--wks-radius-md)',
                 padding: '8px 16px',
+                boxShadow: '0 1px 3px var(--wks-shadow)',
               }}
             >
               + Spawn agent
@@ -746,7 +819,9 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
                       if (!sel) (e.currentTarget as HTMLElement).style.background = 'transparent';
                     }}
                   >
-                    <td style={ltd}>
+                    <td
+                      style={sel ? { ...ltd, boxShadow: `inset 3px 0 0 var(--wks-accent)` } : ltd}
+                    >
                       <span
                         style={{
                           display: 'inline-flex',
@@ -918,16 +993,128 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
           </div>
         </div>
       )}
+
+      {/* Footer console — persistent, contextual keyboard affordances + the
+          currently-selected agent. Moved out of the cramped header so hints stay
+          visible without stealing header width. */}
+      <div
+        style={{
+          flexShrink: 0,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 16,
+          padding: '7px 22px',
+          borderTop: '1px solid var(--wks-border-subtle)',
+          background: 'var(--wks-bg-surface)',
+          fontSize: '0.62rem',
+          color: 'var(--wks-text-faint)',
+          whiteSpace: 'nowrap',
+          overflow: 'hidden',
+        }}
+      >
+        <Hint>
+          {fleetView === 'cards' ? (
+            <>
+              <kbd style={kbdStyle}>{formatBinding(sc['fleet-cards-left'] ?? '')}</kbd>
+              <kbd style={kbdStyle}>{formatBinding(sc['fleet-cards-down'] ?? '')}</kbd>
+              <kbd style={kbdStyle}>{formatBinding(sc['fleet-cards-up'] ?? '')}</kbd>
+              <kbd style={kbdStyle}>{formatBinding(sc['fleet-cards-right'] ?? '')}</kbd>
+            </>
+          ) : (
+            <>
+              <kbd style={kbdStyle}>{formatBinding(sc['fleet-list-down'] ?? '')}</kbd>
+              <kbd style={kbdStyle}>{formatBinding(sc['fleet-list-up'] ?? '')}</kbd>
+            </>
+          )}
+          <span>move</span>
+        </Hint>
+        <Hint>
+          <kbd style={kbdStyle}>i</kbd>
+          <span>inspect</span>
+        </Hint>
+        <Hint>
+          <kbd style={kbdStyle}>{formatBinding(sc['fleet-approve-yes'] ?? '')}</kbd>
+          <kbd style={kbdStyle}>{formatBinding(sc['fleet-approve-no'] ?? '')}</kbd>
+          <span>approve</span>
+        </Hint>
+        <Hint>
+          <kbd style={kbdStyle}>{formatBinding(sc['fleet-answer'] ?? '')}</kbd>
+          <span>answer</span>
+        </Hint>
+        <div style={{ flex: 1, minWidth: 8 }} />
+        {selectedAgent && (
+          <span
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              color: 'var(--wks-text-secondary)',
+              minWidth: 0,
+            }}
+          >
+            <span style={{ color: 'var(--wks-text-faint)' }}>Selected</span>
+            <span
+              style={{
+                fontWeight: 700,
+                color: 'var(--wks-text-primary)',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}
+            >
+              {selectedAgent.name}
+            </span>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <CornerDownLeft size={11} strokeWidth={2.2} /> open
+            </span>
+          </span>
+        )}
+      </div>
     </div>
   );
 };
 
+/** Footer hint group: keys + a label, evenly spaced. */
+const Hint: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>{children}</span>
+);
+
+/** Header status chip — a state-coloured dot + count. Glows when the count is
+ *  live (>0) so "2 working" / "1 needs you" read at a glance. */
+const StatChip: React.FC<{ color: string; glow: boolean; children: React.ReactNode }> = ({
+  color,
+  glow,
+  children,
+}) => (
+  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+    <span
+      style={{
+        width: 7,
+        height: 7,
+        borderRadius: '50%',
+        background: color,
+        boxShadow: glow ? `0 0 7px ${color}` : 'none',
+      }}
+    />
+    <span style={{ color: glow ? 'var(--wks-text-secondary)' : 'var(--wks-text-faint)' }}>
+      {children}
+    </span>
+  </span>
+);
+
 const kbdStyle: React.CSSProperties = {
-  fontSize: '0.58rem',
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  minWidth: 15,
+  height: 15,
+  fontSize: '0.6rem',
+  lineHeight: 1,
   color: 'var(--wks-text-secondary)',
   border: '1px solid var(--wks-glass-border)',
-  borderRadius: 3,
-  padding: '0 3px',
+  borderBottomWidth: 2,
+  borderRadius: 'var(--wks-radius-sm)',
+  background: 'var(--wks-bg-elevated)',
+  padding: '0 4px',
   fontFamily: 'var(--wks-font-mono)',
 };
 
@@ -947,7 +1134,7 @@ const SegBtn: React.FC<{ active: boolean; onClick: () => void; children: React.R
     onClick={onClick}
     style={{
       border: 'none',
-      borderRadius: 6,
+      borderRadius: 'var(--wks-radius-sm)',
       padding: '5px 13px',
       cursor: 'pointer',
       fontFamily: 'inherit',
@@ -955,6 +1142,8 @@ const SegBtn: React.FC<{ active: boolean; onClick: () => void; children: React.R
       fontWeight: 600,
       background: active ? 'var(--wks-bg-selected)' : 'transparent',
       color: active ? 'var(--wks-text-primary)' : 'var(--wks-text-faint)',
+      boxShadow: active ? '0 1px 2px var(--wks-shadow)' : 'none',
+      transition: 'color 0.12s',
     }}
   >
     {children}
@@ -985,11 +1174,16 @@ function listStateVisual(s: string | undefined): { color: string; label: string;
 }
 
 const lth: React.CSSProperties = {
-  padding: '6px 10px',
-  fontWeight: 600,
+  position: 'sticky',
+  top: 0,
+  zIndex: 2,
+  background: 'var(--wks-bg-base)',
+  boxShadow: 'inset 0 -1px 0 var(--wks-border-subtle)',
+  padding: '7px 10px',
+  fontWeight: 700,
   textTransform: 'uppercase',
-  letterSpacing: '0.05em',
-  fontSize: '0.55rem',
+  letterSpacing: '0.06em',
+  fontSize: '0.6rem',
 };
 const lthNum: React.CSSProperties = { ...lth, textAlign: 'right' };
 const ltd: React.CSSProperties = {

@@ -47,9 +47,17 @@ function stateVisual(s: SessionAmbientState | undefined): StateVisual {
     case 'waiting_input':
       return { color: 'var(--wks-warning, #e0a000)', label: 'Waiting for input', pulse: true };
     case 'thinking':
-      return { color: 'var(--wks-accent, #4a9eff)', label: 'Thinking', pulse: false };
+      return {
+        color: 'var(--wks-busy, var(--wks-accent, #4a9eff))',
+        label: 'Thinking',
+        pulse: false,
+      };
     case 'streaming':
-      return { color: 'var(--wks-accent, #4a9eff)', label: 'Working', pulse: false };
+      return {
+        color: 'var(--wks-busy, var(--wks-accent, #4a9eff))',
+        label: 'Working',
+        pulse: false,
+      };
     case 'idle':
       return { color: 'var(--wks-success, #3fb950)', label: 'Idle', pulse: false };
     default:
@@ -165,13 +173,18 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
         border: `1.5px solid ${v.color}`,
         boxShadow: v.pulse ? `0 0 0 1px ${v.color}` : '0 4px 16px var(--wks-shadow)',
         animation: v.pulse && pageVisible ? 'fleetPulse 1.8s ease-in-out infinite' : undefined,
-        transition: 'transform 0.1s ease, box-shadow 0.12s ease',
+        transition: 'transform 0.12s ease, box-shadow 0.14s ease',
       }}
       onMouseEnter={(e) => {
-        (e.currentTarget as HTMLElement).style.transform = 'translateY(-2px)';
+        const el = e.currentTarget as HTMLElement;
+        el.style.transform = 'translateY(-2px)';
+        // Don't fight the pulse animation's box-shadow on blocked cards.
+        if (!v.pulse) el.style.boxShadow = '0 10px 28px var(--wks-shadow)';
       }}
       onMouseLeave={(e) => {
-        (e.currentTarget as HTMLElement).style.transform = '';
+        const el = e.currentTarget as HTMLElement;
+        el.style.transform = '';
+        if (!v.pulse) el.style.boxShadow = '0 4px 16px var(--wks-shadow)';
       }}
     >
       {/* Header */}
@@ -247,11 +260,12 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
               width: 22,
               height: 22,
               padding: 0,
-              borderRadius: 6,
+              borderRadius: 'var(--wks-radius-md)',
               border: '1px solid var(--wks-glass-border)',
               background: 'transparent',
               color: 'var(--wks-text-faint)',
               cursor: 'pointer',
+              transition: 'color 0.12s, border-color 0.12s',
             }}
             onMouseEnter={(e) => {
               (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-primary)';
@@ -491,7 +505,7 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
                   maxHeight: 90,
                   fontSize: '0.74rem',
                   padding: '6px 9px',
-                  borderRadius: 6,
+                  borderRadius: 'var(--wks-radius-md)',
                   lineHeight: 1.4,
                   border: '1px solid var(--wks-glass-border)',
                   background: 'var(--wks-bg-input, rgba(255,255,255,0.03))',
@@ -508,12 +522,12 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
                   fontWeight: 700,
                   fontFamily: 'inherit',
                   padding: '6px 12px',
-                  borderRadius: 6,
+                  borderRadius: 'var(--wks-radius-md)',
                   cursor: draft.trim() ? 'pointer' : 'default',
                   flexShrink: 0,
                   border: `1px solid ${draft.trim() ? 'var(--wks-accent, #4a9eff)' : 'var(--wks-glass-border)'}`,
                   background: draft.trim() ? 'var(--wks-accent, #4a9eff)' : 'transparent',
-                  color: draft.trim() ? '#0d0d10' : 'var(--wks-text-faint)',
+                  color: draft.trim() ? 'var(--wks-text-on-accent, #fff)' : 'var(--wks-text-faint)',
                 }}
               >
                 Send
@@ -532,7 +546,7 @@ function qa(color: string): React.CSSProperties {
     fontWeight: 700,
     fontFamily: 'inherit',
     padding: '4px 14px',
-    borderRadius: 6,
+    borderRadius: 'var(--wks-radius-md)',
     border: `1px solid ${color}`,
     background: 'transparent',
     color,
