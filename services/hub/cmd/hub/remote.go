@@ -28,3 +28,26 @@ var xtermCSS []byte
 
 //go:embed addon-fit.js
 var addonFitJS []byte
+
+// PWA assets for the /m mobile client: web manifest, service worker (background
+// Web Push + shell cache), and app icons. Served unguarded — the browser
+// fetches manifest/SW/icons without our bus token, and none carry secrets (the
+// real boundary is /bus).
+//
+//go:embed manifest.webmanifest
+var manifestJSON []byte
+
+//go:embed sw.js
+var swJS []byte
+
+//go:embed icon-192.png
+var icon192 []byte
+
+//go:embed icon-512.png
+var icon512 []byte
+
+//go:embed icon-maskable-512.png
+var iconMaskable512 []byte
+
+//go:embed apple-touch-icon.png
+var appleTouchIcon []byte

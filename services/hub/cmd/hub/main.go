@@ -22,6 +22,7 @@ import (
 	"github.com/djtouchette/workspacer-hub/internal/layout"
 	"github.com/djtouchette/workspacer-hub/internal/parentwatch"
 	"github.com/djtouchette/workspacer-hub/internal/plugin"
+	"github.com/djtouchette/workspacer-hub/internal/push"
 	"github.com/djtouchette/workspacer-hub/internal/sandbox"
 	"github.com/djtouchette/workspacer-hub/internal/supervisor"
 )
@@ -64,6 +65,16 @@ func defaultLayoutFile() string {
 	return filepath.Join(dir, "workspacer-hub", "layout.json")
 }
 
+// defaultPushDir returns where the VAPID keypair + push subscriptions live:
+// <user-config-dir>/workspacer-hub, falling back to the working directory.
+func defaultPushDir() string {
+	dir, err := os.UserConfigDir()
+	if err != nil || dir == "" {
+		return "."
+	}
+	return filepath.Join(dir, "workspacer-hub")
+}
+
 func main() {
 	addr := flag.String("addr", "127.0.0.1:7895", "listen address for the bus + health endpoints")
 	claudemonEvents := flag.String("claudemon-events", "", "claudemon /events SSE URL to bridge onto the bus (e.g. http://127.0.0.1:7891/events)")
@@ -72,6 +83,7 @@ func main() {
 	webappDir := flag.String("webapp-dir", os.Getenv("WORKSPACER_WEBAPP_DIR"), "directory of the built web app (dist/web) to serve at /app/ for full remote parity; empty = disabled")
 	token := flag.String("token", os.Getenv("HUB_TOKEN"), "shared secret required to reach /bus + mutating routes (empty = no auth, localhost-only default)")
 	layoutFile := flag.String("layout-file", defaultLayoutFile(), "path to persist the shared workspace layout document (empty = memory only)")
+	pushDir := flag.String("push-dir", defaultPushDir(), "directory holding the VAPID keypair + Web Push subscriptions (for the /m PWA's background notifications)")
 	brainScope := flag.String("brain-scope", "off", "supervise the brain capability provider: off | full (whole surface, headless) | catalog (file-backed subset, when the desktop app owns the live caps)")
 	brainBin := flag.String("brain-bin", "", "path to the brain binary to supervise; empty = auto-detect (sibling of the hub binary, then PATH)")
 	claudemonURL := flag.String("claudemon", "http://127.0.0.1:7891", "claudemon API base URL the supervised brain talks to")
@@ -97,6 +109,21 @@ func main() {
 	srv.RegisterLocal("layout.set", lay.Set)
 	if *layoutFile != "" {
 		log.Printf("layout document persisted at %s", *layoutFile)
+	}
+
+	// Web Push: registered as in-process bus RPC (push.key / push.subscribe /
+	// push.unsubscribe), so the /m PWA subscribes over its existing authed bus
+	// connection. A snapshot watcher (started below) turns "needs you"
+	// transitions into lock-screen notifications. Best-effort: a failure here
+	// (e.g. unwritable state dir) disables push but never blocks the hub.
+	pushMgr, err := push.New(*pushDir)
+	if err != nil {
+		log.Printf("push: disabled (%v)", err)
+		pushMgr = nil
+	} else {
+		srv.RegisterLocal("push.key", pushMgr.RPCKey)
+		srv.RegisterLocal("push.subscribe", pushMgr.RPCSubscribe)
+		srv.RegisterLocal("push.unsubscribe", pushMgr.RPCUnsubscribe)
 	}
 
 	// guard wraps a mutating/sensitive route so it requires the bus token.
@@ -231,12 +258,39 @@ func main() {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write(remoteHTML)
 	}))
-	// Mobile-first client (fleet / needs-you / chat) — the default phone entry.
-	// Same bus protocol + token guard as /remote.
-	srv.AddRoute("/m", guard(func(w http.ResponseWriter, _ *http.Request) {
+	// Mobile-first client (fleet / needs-you / chat / spawn) — the default phone
+	// entry, and an installable PWA. Unguarded: an installed PWA launches at
+	// start_url /m with no token in the URL, so the shell must load; the client
+	// then gates on its stored token and the real boundary stays /bus. The HTML
+	// carries no secrets.
+	srv.AddRoute("/m", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write(mobileHTML)
-	}))
+	})
+	// PWA assets for /m — all public (the browser fetches them without our token).
+	// manifest + SW revalidate often (so updates ship); icons long-cache.
+	srv.AddRoute("/manifest.webmanifest", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/manifest+json; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		_, _ = w.Write(manifestJSON)
+	})
+	srv.AddRoute("/sw.js", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Service-Worker-Allowed", "/")
+		_, _ = w.Write(swJS)
+	})
+	icon := func(body []byte) http.HandlerFunc {
+		return func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "image/png")
+			w.Header().Set("Cache-Control", "public, max-age=86400")
+			_, _ = w.Write(body)
+		}
+	}
+	srv.AddRoute("/icon-192.png", icon(icon192))
+	srv.AddRoute("/icon-512.png", icon(icon512))
+	srv.AddRoute("/icon-maskable-512.png", icon(iconMaskable512))
+	srv.AddRoute("/apple-touch-icon.png", icon(appleTouchIcon))
 	// Static xterm assets for the remote's live terminal mirror. Unguarded:
 	// they're public library code, and <script>/<link> tags can't carry the
 	// bus token. Long-cache since they're content-pinned to a vendored version.
@@ -454,6 +508,11 @@ func main() {
 	if *claudemonEvents != "" {
 		log.Printf("bridging claudemon events from %s", *claudemonEvents)
 		go claudemon.NewBridge(*claudemonEvents, b).Run(ctx)
+	}
+
+	// Watch agent snapshots and fire background Web Push on the "needs you" edge.
+	if pushMgr != nil {
+		go pushMgr.Watch(ctx, b)
 	}
 
 	go func() {

@@ -339,6 +339,25 @@ function EnabledState({
         {mode === 'app' && hasApp ? 'the full app' : 'the mobile client'}.
       </div>
 
+      {mode !== 'app' && (
+        <div
+          style={{
+            textAlign: 'center',
+            fontSize: '0.66rem',
+            color: 'var(--wks-text-faint)',
+            lineHeight: 1.6,
+            marginBottom: 16,
+            padding: '0 6px',
+          }}
+        >
+          Add it to your home screen to install the app. For lock-screen
+          notifications when an agent needs you, open it over HTTPS (e.g.{' '}
+          <code style={{ fontFamily: 'var(--wks-font-mono)' }}>tailscale serve</code> on a{' '}
+          <code style={{ fontFamily: 'var(--wks-font-mono)' }}>.ts.net</code> name) — browsers only
+          allow notifications on a secure origin.
+        </div>
+      )}
+
       <CopyRow
         label="Connection URL"
         value={activeUrl}

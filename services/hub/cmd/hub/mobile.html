@@ -6,6 +6,12 @@
 <meta name="theme-color" content="#18181b" />
 <meta name="format-detection" content="telephone=no" />
 <title>Workspacer Mobile</title>
+<link rel="manifest" href="/manifest.webmanifest" />
+<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Workspacer" />
 <style>
   /* Palette mirrors the desktop app's default "dark" theme (src/themes.ts) so
      the phone client reads as the same product as the new-agent screen and the
@@ -56,6 +62,10 @@
   .dot { width:9px; height:9px; border-radius:50%; background:var(--error); flex:0 0 auto;
     box-shadow:0 0 0 3px rgba(248,113,113,0.12); transition:background .2s,box-shadow .2s; }
   .dot.on { background:var(--success); box-shadow:0 0 0 3px rgba(74,222,128,0.12); }
+  header .bell { border:none; background:var(--elevated); color:var(--muted); width:34px; height:34px;
+    border-radius:10px; font-size:15px; line-height:1; display:inline-flex; align-items:center;
+    justify-content:center; flex:0 0 auto; filter:grayscale(1) opacity(0.7); }
+  header .bell.on { color:var(--accent-text); filter:none; }
 
   /* Scroll area (list views) */
   main { flex:1 1 auto; overflow-y:auto; -webkit-overflow-scrolling:touch;
@@ -223,6 +233,7 @@
   <header id="hdr">
     <button class="back" id="backBtn" aria-label="Back">‹</button>
     <div class="titles"><h1 id="title">Fleet</h1><div class="sub" id="sub"></div></div>
+    <button class="bell" id="bell" aria-label="Enable notifications" hidden>&#128276;</button>
     <span class="dot" id="dot" title="connection"></span>
   </header>
 
@@ -248,11 +259,16 @@
 <script>
 (() => {
   const qs = new URLSearchParams(location.search);
-  let token = qs.get('token') || sessionStorage.getItem('hubToken') || '';
-  if (token) sessionStorage.setItem('hubToken', token);
+  let token = qs.get('token') || localStorage.getItem("hubToken") || '';
+  if (token) localStorage.setItem("hubToken", token);
+
+  // A notification tap deep-links to an agent: /m?agent=<id>, or a postMessage
+  // from the service worker into an already-open window. Opened once its
+  // snapshot is known (see maybeOpenPending).
+  let pendingAgent = qs.get('agent') || '';
 
   const $ = (id) => document.getElementById(id);
-  const hdr = $('hdr'), titleEl = $('title'), subEl = $('sub'), dot = $('dot');
+  const hdr = $('hdr'), titleEl = $('title'), subEl = $('sub'), dot = $('dot'), bell = $('bell');
   const main = $('main'), chatEl = $('chat'), transcript = $('transcript');
   const chatDecision = $('chatDecision'), nav = $('nav'), needPill = $('needPill');
   const msgEl = $('msg'), sendBtn = $('send'), backBtn = $('backBtn'), toastEl = $('toast');
@@ -321,9 +337,14 @@
   }
   function afterData(changedId) {
     updateNeedPill();
+    maybeOpenPending();
     if (view.name === 'fleet') renderFleet();
     else if (view.name === 'needs') renderNeeds();
     else if (view.name === 'chat' && (!changedId || changedId === view.sessionId)) renderChat();
+  }
+  // Open the agent a notification pointed us at, as soon as its snapshot lands.
+  function maybeOpenPending() {
+    if (pendingAgent && sessions.get(pendingAgent)) { const id = pendingAgent; pendingAgent = ''; openChat(id); }
   }
   function updateNeedPill() {
     let n = 0; for (const s of sessions.values()) if (isLive(s) && isBlocked(s)) n++;
@@ -583,6 +604,53 @@
     return `<div class="empty"><div class="ic">${ic}</div><div class="big">${esc(big)}</div><div class="small">${esc(small)}</div></div>`;
   }
 
+  // ── Web Push (background "needs you" notifications) ─────────────────────────
+  // A PWA can't hold a socket open in the background, so we register for Web
+  // Push instead: the hub sends one when an agent needs you, the service worker
+  // wakes to show a lock-screen notification, and tapping it deep-links here.
+  const pushOk = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  let swReg = null;
+  function updateBell() {
+    if (!pushOk) { bell.hidden = true; return; }
+    bell.hidden = false;
+    bell.classList.toggle('on', Notification.permission === 'granted');
+  }
+  function urlB64ToUint8(b64) {
+    const pad = '='.repeat((4 - (b64.length % 4)) % 4);
+    const s = (b64 + pad).replace(/-/g, '+').replace(/_/g, '/');
+    const raw = atob(s), arr = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+    return arr;
+  }
+  async function registerSW() {
+    if (!pushOk) return null;
+    if (swReg) return swReg;
+    try { swReg = await navigator.serviceWorker.register('/sw.js'); return swReg; } catch { return null; }
+  }
+  // Subscribe this device for push and register the subscription with the hub.
+  // `silent` skips the permission prompt + toasts — used on connect to refresh
+  // an existing grant (e.g. after the hub restarted and lost the subscription).
+  async function ensurePush(silent) {
+    if (!pushOk) { if (!silent) toast('Push not supported here'); return; }
+    if (Notification.permission === 'denied') { if (!silent) toast('Notifications are blocked in settings'); return; }
+    if (Notification.permission !== 'granted') {
+      if (silent) return;
+      if ((await Notification.requestPermission()) !== 'granted') { updateBell(); return; }
+    }
+    const reg = await registerSW(); if (!reg) return;
+    try {
+      let sub = await reg.pushManager.getSubscription();
+      if (!sub) {
+        const r = await call('push.key', {});
+        if (!r || !r.publicKey) return;
+        sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToUint8(r.publicKey) });
+      }
+      await call('push.subscribe', sub.toJSON());
+      updateBell();
+      if (!silent) toast('Notifications on');
+    } catch (e) { if (!silent) toast("Couldn't enable: " + (e.message || e)); }
+  }
+
   // ── connection ──────────────────────────────────────────────────────────────
   function setConnected(on) { dot.classList.toggle('on', on); }
   function gate() {
@@ -592,7 +660,7 @@
       <p>Paste your workspacer remote token.</p>
       <input id="tok" placeholder="token" autocomplete="off" />
       <button id="tokGo">Connect</button></div>`;
-    $('tokGo').onclick = () => { const v = ($('tok').value || '').trim(); if (!v) return; token = v; sessionStorage.setItem('hubToken', v); connect(); };
+    $('tokGo').onclick = () => { const v = ($('tok').value || '').trim(); if (!v) return; token = v; localStorage.setItem("hubToken", v); connect(); };
     $('tok').addEventListener('keydown', e => { if (e.key === 'Enter') $('tokGo').click(); });
   }
   // Detach + close a socket without letting its late close/error callbacks run
@@ -622,6 +690,8 @@
       sock.send(JSON.stringify({ op: 'subscribe', topics: ['agent.snapshot'] }));
       if (!cfg) call('config.get', {}).then(c => { cfg = c; }).catch(() => {});
       seed();
+      // Refresh a prior push grant against the (possibly restarted) hub.
+      if (pushOk && Notification.permission === 'granted') ensurePush(true);
       // Reconcile every 25s so the fleet self-heals if an event was missed while
       // the socket blipped. Doubles as a heartbeat that keeps lastActivity fresh
       // (< STALE_MS) so wake() won't needlessly tear down a healthy idle socket.
@@ -645,7 +715,7 @@
       clearTimeout(watchdog);
       if (ws === sock) ws = null;
       setConnected(false);
-      if (ev.code === 1008 || ev.code === 4401) { token = ''; sessionStorage.removeItem('hubToken'); return gate(); }
+      if (ev.code === 1008 || ev.code === 4401) { token = ''; localStorage.removeItem("hubToken"); return gate(); }
       scheduleReconnect();
     };
     sock.onerror = () => { try { sock.close(); } catch {} };
@@ -675,7 +745,19 @@
   // ── wiring ──────────────────────────────────────────────────────────────────
   for (const b of nav.querySelectorAll('button')) b.onclick = () => setTab(b.dataset.tab);
   backBtn.onclick = () => setTab('fleet');
+  bell.onclick = () => ensurePush(false);
   sendBtn.onclick = sendMessage;
+
+  // PWA: register the service worker up front (enables push after a grant and
+  // caches the shell), reflect notification state on the bell, and let a
+  // notification tap deep-link into an already-open window.
+  updateBell();
+  if (pushOk) {
+    registerSW();
+    navigator.serviceWorker.addEventListener('message', (e) => {
+      if (e.data && e.data.type === 'open-agent' && e.data.sessionId) { pendingAgent = e.data.sessionId; maybeOpenPending(); }
+    });
+  }
   msgEl.addEventListener('input', autosize);
   msgEl.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
 
