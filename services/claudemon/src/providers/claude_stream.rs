@@ -299,6 +299,40 @@ pub fn translate(value: &Value, totals: &mut StreamTotals) -> Vec<AgentUpdate> {
     out
 }
 
+/// If `value` is a `system/background_tasks_changed` frame, report whether any
+/// background task is currently running; `None` for every other frame.
+///
+/// The async Agent/Task tool runs as a background task: the CLI emits this frame
+/// with the full *live* task set on each change — non-empty while a subagent
+/// works, `[]` once it drains (verified against a CLI 2.1.204 stream capture).
+/// The driver tracks this so the parent isn't marked idle mid-subagent (see
+/// [`handle_line`]).
+fn background_tasks_active(value: &Value) -> Option<bool> {
+    if value.get("type").and_then(Value::as_str) != Some("system")
+        || value.get("subtype").and_then(Value::as_str) != Some("background_tasks_changed")
+    {
+        return None;
+    }
+    Some(
+        value
+            .get("tasks")
+            .and_then(Value::as_array)
+            .is_some_and(|t| !t.is_empty()),
+    )
+}
+
+/// Whether a `result` frame is an interrupt or a fatal error — those always
+/// idle (and abandon any running background task), never held busy. A plain
+/// user-Esc reports `aborted_streaming`; genuine failures set `is_error`.
+fn result_is_abort_or_error(value: &Value) -> bool {
+    value.get("type").and_then(Value::as_str) == Some("result")
+        && (value.get("terminal_reason").and_then(Value::as_str) == Some("aborted_streaming")
+            || value
+                .get("is_error")
+                .and_then(Value::as_bool)
+                .unwrap_or(false))
+}
+
 /// Extract the session's capabilities from the stream `system/init` frame.
 /// Counts are array lengths; missing keys read as 0 / `None`.
 fn capabilities_from_init(v: &Value) -> Capabilities {
@@ -682,6 +716,10 @@ async fn run_session(
     // answered with content, not a yes/no.
     let mut pending_approvals: VecDeque<ParkedCanUse> = VecDeque::new();
     let mut pending_question: Option<ParkedCanUse> = None;
+    // Whether an async Agent/Task subagent is running in the background. While
+    // true, the parent's dispatch-turn `result` is held busy instead of idling
+    // the session (the subagent is still working).
+    let mut bg_tasks_active = false;
     // Role instructions to prepend to the first prompt only (supervisors).
     let mut pending_instructions: Option<String> = cfg.facade.instructions.clone();
 
@@ -699,7 +737,7 @@ async fn run_session(
                         &value, store, conv, &session_id, &out_tx,
                         &mut cur_mode, &mut acc, &mut totals,
                         &yolo_live, &mut pending_approvals, &mut pending_question,
-                        &mut pending_controls,
+                        &mut pending_controls, &mut bg_tasks_active,
                     );
                 }
                 Ok(None) => break, // stdout EOF — child is exiting
@@ -829,7 +867,7 @@ async fn run_session(
                         &value, store, conv, &session_id, &out_tx,
                         &mut cur_mode, &mut acc, &mut totals,
                         &yolo_live, &mut pending_approvals, &mut pending_question,
-                        &mut pending_controls,
+                        &mut pending_controls, &mut bg_tasks_active,
                     );
                 }
                 break;
@@ -875,6 +913,7 @@ fn handle_line(
     pending_approvals: &mut VecDeque<ParkedCanUse>,
     pending_question: &mut Option<ParkedCanUse>,
     pending_controls: &mut HashMap<String, PendingControl>,
+    bg_tasks_active: &mut bool,
 ) {
     match value.get("type").and_then(Value::as_str).unwrap_or("") {
         // The CLI answered one of our control requests.
@@ -1012,15 +1051,51 @@ fn handle_line(
             }
         }
         _ => {
-            // A `result` closes the turn. Any still-parked `can_use_tool`
-            // requests belong to a turn the CLI abandoned (interrupt / fatal
-            // error) and their request ids are dead — drop them so a later
-            // `/approve` or `/answer` can't answer a canceled request.
-            if value.get("type").and_then(Value::as_str) == Some("result") {
+            // The async Agent/Task tool runs as a *background task*: the parent's
+            // dispatch turn ends (emitting a `result`) while the subagent keeps
+            // working, and a fresh turn resumes only once it drains. Track the
+            // live task set so that turn-closing `result` doesn't flip the parent
+            // idle mid-subagent — the real idle rides the trailing `result` after
+            // the task set empties. (Verified against a CLI 2.1.204 capture.)
+            if let Some(active) = background_tasks_active(value) {
+                *bg_tasks_active = active;
+                // A subagent is running while the parent looks idle (its own turn
+                // already closed) — reassert working. Guarded to Input so a parked
+                // approval/question is never clobbered.
+                if active && *cur_mode == SessionMode::Input {
+                    apply_updates(
+                        store,
+                        conv,
+                        session_id,
+                        vec![AgentUpdate::Busy],
+                        cur_mode,
+                        acc,
+                    );
+                }
+                return;
+            }
+
+            let is_result = value.get("type").and_then(Value::as_str) == Some("result");
+            let abort_or_error = result_is_abort_or_error(value);
+            // Hold the turn-closing `result` busy iff a background task is still
+            // running and this isn't an interrupt/error.
+            let suppress_idle = is_result && *bg_tasks_active && !abort_or_error;
+            if abort_or_error {
+                *bg_tasks_active = false;
+            }
+
+            // A real turn-closing `result` drops any dead parked `can_use_tool`
+            // requests so a later `/approve` or `/answer` can't answer a canceled
+            // one. A mid-subagent dispatch `result` is NOT the end — keep the
+            // parked cards.
+            if is_result && !suppress_idle {
                 pending_approvals.clear();
                 *pending_question = None;
             }
-            let updates = translate(value, totals);
+            let mut updates = translate(value, totals);
+            if suppress_idle {
+                updates.retain(|u| !matches!(u, AgentUpdate::Idle));
+            }
             if !updates.is_empty() {
                 apply_updates(store, conv, session_id, updates, cur_mode, acc);
             }
@@ -1163,6 +1238,54 @@ mod tests {
             "message": { "content": [ { "type": "tool_use", "id": "x", "name": "Bash", "input": {} } ] }
         }))
         .is_empty());
+    }
+
+    #[test]
+    fn background_tasks_changed_reports_live_task_set() {
+        // Non-empty task set → a subagent is running; empty → drained. The CLI
+        // sends the full live set on each change, so length is the whole signal.
+        assert_eq!(
+            background_tasks_active(&json!({ "type": "system",
+                "subtype": "background_tasks_changed",
+                "tasks": [{ "task_id": "a", "task_type": "local_agent" }] })),
+            Some(true)
+        );
+        assert_eq!(
+            background_tasks_active(&json!({ "type": "system",
+                "subtype": "background_tasks_changed", "tasks": [] })),
+            Some(false)
+        );
+        // Any other frame is None — it isn't a background-task signal.
+        assert_eq!(
+            background_tasks_active(&json!({ "type": "system", "subtype": "init" })),
+            None
+        );
+        assert_eq!(
+            background_tasks_active(&json!({ "type": "result", "subtype": "success" })),
+            None
+        );
+        // background_tasks_changed carries nothing for `translate` — it's handled
+        // by the driver, not the pure event mapper.
+        assert!(t(json!({ "type": "system", "subtype": "background_tasks_changed",
+            "tasks": [{ "task_id": "a" }] }))
+        .is_empty());
+    }
+
+    #[test]
+    fn result_abort_and_error_are_flagged_success_is_not() {
+        // Success closes the turn normally (held busy only while a task runs).
+        assert!(!result_is_abort_or_error(
+            &json!({ "type": "result", "subtype": "success", "is_error": false })
+        ));
+        // A user Esc reports aborted_streaming — always idles.
+        assert!(result_is_abort_or_error(&json!({ "type": "result",
+            "subtype": "error_during_execution", "terminal_reason": "aborted_streaming" })));
+        // A genuine failure — always idles, abandoning any running task.
+        assert!(result_is_abort_or_error(
+            &json!({ "type": "result", "subtype": "error_during_execution", "is_error": true })
+        ));
+        // Non-result frames are never abort/error.
+        assert!(!result_is_abort_or_error(&json!({ "type": "assistant" })));
     }
 
     #[test]
