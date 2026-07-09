@@ -256,6 +256,78 @@ hub → caller:   {"op":"result","id":"req-1","result":{...}}</code></pre>
 <p>A plugin is a polyglot sidecar (any language) plus a <code>plugin.json</code> manifest that declares what it contributes. The hub reads <code>&lt;plugins-dir&gt;/&lt;name&gt;/plugin.json</code>, validates it, starts the sidecar, and announces the contribution on the bus (<code>plugin.loaded</code> / <code>plugin.unloaded</code>). The desktop renderer picks that up and registers the pane types, command-palette entries, and hotkeys.</p>
 <p>Point the hub at a plugins dir:</p>
 <pre><code>go run ./cmd/hub --plugins-dir /path/to/plugins</code></pre>
+<p>In the running app the plugins dir is <code>&lt;configDir&gt;/plugins</code>, and the Plugins Manager installs into it for you. For development, drop your plugin's folder in there (or point a dev hub at your own dir) and it loads on the next scan.</p>
+
+<h3>the two kinds of plugin</h3>
+<p>Every plugin is a folder with a <code>plugin.json</code> at its root. What that manifest declares decides which of two shapes it takes. The split is exactly the <code>server</code> vs <code>ui</code> field, and it's the first decision you make.</p>
+<h4>1. webview-only plugin (<code>ui</code>)</h4>
+<p>Set <code>ui</code> to a subdirectory of static assets and <strong>omit <code>server</code></strong>. There is no process to run: the hub (trusted) serves your files at <code>/plugins/ui/&lt;id&gt;/</code>, and your page opens as a pane in a webview. The webview talks to the bus over a WebSocket using a <strong>per-plugin token the host injects into the pane URL</strong> (<code>?busToken=…</code>), scoped to exactly the capabilities your manifest declares. Because there's no arbitrary process, there's nothing to escape the bus through, so capability scoping fully confines it.</p>
+<ul>
+<li>Reach for it when your plugin <em>is</em> a UI: a dashboard, a panel, an editor, a rule editor.</li>
+<li>Any language that compiles to static HTML/JS/CSS. No build step needed if you ship plain files.</li>
+<li>Examples: <code>hello-scoped</code> (the minimal one), <code>agent-dashboard</code>, the sandboxed <code>editor</code>.</li>
+</ul>
+<h4>2. sidecar plugin (<code>server</code>)</h4>
+<p>Set <code>server.command</code> to a long-lived process the hub spawns and supervises (spawn → health-poll → restart-on-crash, SIGTERM then SIGKILL on stop). It's a polyglot sidecar: <strong>any language</strong>. It connects to the bus itself, so it can run <em>always-on with no pane at all</em> (an automation), <code>provide</code> capabilities other clients call, and/or serve its own webview panes from its port (the hub proxies <code>http://127.0.0.1:&lt;port&gt;&lt;path&gt;</code>).</p>
+<ul>
+<li>Reach for it when your plugin <em>does</em> something in the background: reacts to events, calls out to another service, answers capabilities for the rest of the fleet.</li>
+<li>Give it a <code>port</code> + <code>health</code> path so the supervisor can health-check it and surface <code>sidecar.*</code> status colors.</li>
+<li>Examples: <code>rules-engine</code> (event→action interpreter + rule-editor pane), <code>rivet-bridge</code> (re-exposes an external MCP server as hub capabilities).</li>
+</ul>
+<p>The two aren't mutually exclusive in spirit — a sidecar can also serve panes — but a single manifest sets <em>either</em> <code>server</code> <em>or</em> <code>ui</code> as the way its panes are served. If it declares panes with neither, the loader rejects it (the webview would have no URL to load).</p>
+
+<h3>write your first plugin</h3>
+<p>The fastest path is a <strong>webview-only</strong> plugin that lists the running agents. Three files, no build step. (This is the shipped <code>hello-scoped</code> example, trimmed.)</p>
+<h4>1. the folder</h4>
+<pre><code>my-hello/
+  plugin.json
+  ui/
+    index.html</code></pre>
+<h4>2. the manifest</h4>
+<pre><code>{
+  "id": "example.hello",
+  "name": "Hello",
+  "apiVersion": "1",
+  "ui": "ui",
+  "panes": [
+    { "type": "example.hello", "title": "Hello", "icon": "👋", "scope": "both" }
+  ],
+  "hotkeys": [
+    { "id": "open-hello", "default": "ctrl+shift+h", "command": "open-pane:example.hello" }
+  ],
+  "capabilities": ["agents.list"]
+}</code></pre>
+<p><code>ui: "ui"</code> makes it webview-only. <code>panes</code> contributes one pane type; <code>hotkeys</code> binds a key to open it; <code>capabilities</code> asks for the single verb <code>agents.list</code> and nothing else. Ask for only what you use — the bus rejects any call you didn't declare.</p>
+<h4>3. the page</h4>
+<p>The host injects your scoped token as <code>?busToken=…</code> on the pane URL. Open one WebSocket to the bus with it, then <code>call</code> a capability or <code>subscribe</code> to events. The whole client is a few lines:</p>
+<pre><code>const token = new URLSearchParams(location.search).get('busToken') || '';
+const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+const ws = new WebSocket(`${proto}//${location.host}/bus?token=${encodeURIComponent(token)}`);
+
+let nextId = 1;
+const pending = new Map();
+function call(method, params = {}) {
+  return new Promise((resolve, reject) =&gt; {
+    const id = 'c' + nextId++;
+    pending.set(id, { resolve, reject });
+    ws.send(JSON.stringify({ op: 'call', id, method, params }));
+  });
+}
+
+ws.onopen = async () =&gt; {
+  const agents = await call('agents.list');       // one of your declared caps
+  document.body.textContent = `${agents.length} agent(s) running`;
+};
+ws.onmessage = (ev) =&gt; {
+  const f = JSON.parse(ev.data);
+  if (f.op === 'result' &amp;&amp; pending.has(f.id)) { pending.get(f.id).resolve(f.result); pending.delete(f.id); }
+  if (f.op === 'error'  &amp;&amp; pending.has(f.id)) { pending.get(f.id).reject(new Error(f.error)); pending.delete(f.id); }
+};</code></pre>
+<p>Style it with the injected <code>--wks-*</code> theme tokens (with fallbacks) so it matches the app; see <a href="#plugins">theming</a> below.</p>
+<h4>4. load it</h4>
+<p>Drop <code>my-hello/</code> into your plugins dir (in the app: <code>&lt;configDir&gt;/plugins</code>; in dev: whatever you passed to <code>--plugins-dir</code>). The hub scans it, validates the manifest, and emits <code>plugin.loaded</code>; the renderer registers your pane and hotkey. Open it with <code>Ctrl+Shift+H</code> or from the command palette. To share it later, push the folder to GitHub and install it by URL from the Plugins Manager.</p>
+<p>To make this a <strong>sidecar</strong> instead, drop <code>ui</code>, add a <code>server</code> block pointing at your process (and an <code>install</code> build step if it needs compiling), and connect to the bus from that process the same way — same frames, same token model.</p>
+
 <h3>the manifest (plugin.json)</h3>
 <p>Schema version is <code>"apiVersion": "1"</code> (the loader rejects anything else). Real fields, from <code>internal/plugin/manifest.go</code>:</p>
 <ul>
@@ -270,6 +342,79 @@ hub → caller:   {"op":"result","id":"req-1","result":{...}}</code></pre>
 <li><code>settings</code>, typed settings (<code>boolean</code>/<code>number</code>/<code>string</code>/<code>select</code>) the host renders in Settings and delivers into the webview as <code>window.__WKS_SETTINGS__</code> + a <code>wks-settings</code> event.</li>
 <li><code>install</code>, a one-time setup argv run in the plugin dir after a GitHub install (e.g. <code>["go","build","-o","rules-engine","."]</code>).</li>
 </ul>
+
+<h3>talking to the bus</h3>
+<p>Whether webview or sidecar, a plugin is just another client on the hub bus. It opens one WebSocket to <code>ws://&lt;addr&gt;/bus?token=&lt;busToken&gt;</code> (webviews get the token in the pane URL as <code>?busToken=</code>; sidecars get theirs in the <code>HUB_TOKEN</code> environment variable) and exchanges JSON frames. Three ops matter:</p>
+<pre><code>// subscribe to events (topics you declared in "consumes")
+ws.send(JSON.stringify({ op: 'subscribe', topics: ['agent.*', 'ui.*'] }));
+
+// publish an event (a type you declared in "emits")
+ws.send(JSON.stringify({ op: 'publish',
+  event: { type: 'command.focus_agent', source: 'example.hello', data: { sessionId } } }));
+
+// call a capability (a method you declared in "capabilities"); reply comes back as op:'result'
+ws.send(JSON.stringify({ op: 'call', id: 'c1', method: 'agents.list', params: {} }));</code></pre>
+<p>Two rules the bus enforces against your declared grants: you can only <code>call</code> a method you listed in <code>capabilities</code>, and you can only <code>publish</code> a type you listed in <code>emits</code> — an undeclared call or publish is refused. Topic patterns (in <code>subscribe</code>, <code>consumes</code>, <code>emits</code>) are exact (<code>agent.spawned</code>), namespace wildcard (<code>agent.*</code>), or all (<code>*</code>).</p>
+
+<h3>events: what you can consume and emit</h3>
+<p>Events are fire-and-forget pub/sub (state changes, lifecycle, UI activity). Declare the ones you subscribe to in <code>consumes</code> and the ones you publish in <code>emits</code>. Capabilities (next section) are the request/reply channel — use those when you need an answer or want to <em>make</em> something happen.</p>
+<h4>consume — events the fleet publishes to you</h4>
+<ul>
+<li><code>agent.spawned</code>, an agent session started.</li>
+<li><code>agent.state_changed</code>, an agent's live state changed, the workhorse event: the state dot (idle / working / needs-approval / done), context %, token/cost, and pending approvals/questions. Published by claudemon.</li>
+<li><code>agent.snapshot</code>, a full per-agent snapshot (state + usage) for a session, from the catalog/headless provider.</li>
+<li><code>agent.statusline</code>, the context % / cost / rate-limit status line for an agent.</li>
+<li><code>agent.done</code>, an agent finished working (working → idle) — the "it needs you or it's finished" signal.</li>
+<li><code>agent.terminated</code>, an agent session ended and its card went away.</li>
+<li><code>sidecar.running</code> / <code>sidecar.healthy</code> / <code>sidecar.unhealthy</code> / <code>sidecar.crashed</code> / <code>sidecar.stopped</code>, a plugin sidecar's supervisor state (these back the health colors in the Plugins Manager).</li>
+<li><code>plugin.loaded</code> / <code>plugin.unloaded</code>, a plugin was loaded or removed.</li>
+<li><code>plugin.settings.changed</code>, a plugin's settings were edited in Settings.</li>
+<li><code>plugin.install.progress</code>, progress frames during an install.</li>
+<li><code>plugin.sandboxed</code> / <code>plugin.unsandboxed</code> / <code>plugin.sandbox.refused</code>, sandbox-state transitions for a plugin.</li>
+<li><code>ui.pane.opened</code> / <code>ui.pane.focused</code> / <code>ui.tab.focused</code>, renderer activity — which pane/tab the user is looking at (subscribe to <code>ui.*</code> to follow focus).</li>
+<li><code>fs.changed</code>, a file you're watching changed (paired with the <code>fs.watch</code> capability).</li>
+<li><code>git.changed</code>, a repo's git state changed (what the Review pane listens to).</li>
+</ul>
+<p>Subscribing to a namespace (<code>agent.*</code>, <code>sidecar.*</code>, <code>plugin.*</code>, <code>ui.*</code>) is the easy way to catch a whole family without listing each type.</p>
+<h4>emit — events you publish</h4>
+<ul>
+<li><strong>Your own namespaced events</strong>, anything under your plugin's namespace, e.g. <code>example.hello.tick</code> or <code>rules.fired</code>. Declare each type (or a <code>myplugin.*</code> wildcard) in <code>emits</code>. Other plugins can <code>consume</code> them.</li>
+<li><code>command.focus_agent</code>, ask the app to focus an agent, <code>data: { sessionId }</code>. The renderer acts on it (the agent-dashboard uses this to jump the desktop to a card).</li>
+<li><code>command.spawn_agent</code>, ask the app to spawn an agent.</li>
+</ul>
+<p>The <code>command.*</code> namespace is the "ask the host to do something" channel: you publish, the desktop renderer picks it up and acts. A hotkey can fire one directly with <code>"command": "emit:&lt;eventType&gt;"</code> instead of opening a pane.</p>
+
+<h3>capabilities: what you can call and provide</h3>
+<p>Capabilities are request/reply methods. List the ones you <strong>call</strong> in <code>capabilities</code>; register the ones you <strong>answer</strong> in <code>provides</code>. The methods the host registers today (provided by the desktop app, or headlessly by <code>cmd/brain</code>) — the same surface the MCP facade re-exposes as tools:</p>
+<h4>agents &amp; sessions</h4>
+<ul>
+<li><code>agents.list</code>, running agents with state / usage / pending asks.</li>
+<li><code>agents.sendMessage</code>, send a prompt to an agent (<code>{ sessionId, text }</code>).</li>
+<li><code>agents.spawn</code> / <code>agents.kill</code>, start a new agent (returns its sessionId) / terminate one.</li>
+<li><code>agents.poll</code>, pull the latest agent set.</li>
+<li><code>claude.approve</code> / <code>claude.answer</code> / <code>claude.signal</code> / <code>claude.gate</code>, resolve an approval, answer an AskUserQuestion, send a signal (SIGINT/SIGTERM/…), gate a deferred hook.</li>
+<li><code>claude.listModels</code> / <code>claude.sessionsForDir</code>, model list and resumable sessions for a directory.</li>
+<li><code>sessions.list</code> / <code>sessions.snapshot</code> / <code>sessions.snapshots</code>, live session state.</li>
+<li><code>sessions.transcript</code> / <code>sessions.conversation</code>, read a session's transcript / structured conversation.</li>
+<li><code>sessions.save</code> / <code>sessions.load</code> / <code>sessions.delete</code>, saved-session management.</li>
+<li><code>sessions.terminalInput</code> / <code>sessions.terminalResize</code> / <code>sessions.attachTerminal</code> / <code>sessions.detachTerminal</code> / <code>sessions.terminalKeepalive</code>, drive a PTY.</li>
+</ul>
+<h4>notifications</h4>
+<ul>
+<li><code>notifications.post</code>, show a desktop notification (<code>{ title, body }</code>).</li>
+</ul>
+<h4>filesystem &amp; search (path-scoped)</h4>
+<p>These are the only methods that <strong>must</strong> use the object form and declare <code>paths</code> (with <code>${pluginDir}</code>, <code>${agentCwd}</code>, or an absolute path). Without a path scope the loader rejects them — a plugin can never get unrestricted host filesystem access.</p>
+<ul>
+<li><code>fs.read</code> / <code>fs.write</code> / <code>fs.append</code> / <code>fs.copy</code>, file I/O confined to your declared paths.</li>
+<li><code>fs.listEntries</code> / <code>fs.listDir</code> / <code>fs.realpath</code>, browse and resolve within scope.</li>
+<li><code>fs.watch</code> / <code>fs.unwatch</code>, watch for external changes (delivered back as the <code>fs.changed</code> event).</li>
+<li><code>search.project</code> (ripgrep-backed, scoped to a <code>cwd</code>), and the broader <code>search.files</code> / <code>search.everything</code>.</li>
+</ul>
+<h4>provide your own</h4>
+<p>List method names in <code>provides</code> and answer them on the bus, and you become a first-class capability provider the rest of the fleet (dashboards, rules, supervisors, the MCP facade) can call — that's how <code>rivet-bridge</code> exposes <code>recon.*</code> / <code>witness.*</code> / <code>schema.*</code>. The router is single-owner per method, so pick a namespace nobody else claims.</p>
+<blockquote>The exact params/return shape of each host capability isn't a frozen public API yet — treat <code>services/hub/examples/</code> and <code>apps/desktop/src/main/services/hubCapabilities.ts</code> as the source of truth for field names, and the MCP tool list (below) for the stable subset.</blockquote>
+
 <h3>the plugin manager</h3>
 <p>The plugin manager (<code>internal/plugin/manager.go</code>) owns the loaded set. <code>Add</code> starts the sidecar and emits <code>plugin.loaded</code>; <code>Remove</code> stops it, drops its bus token, and emits <code>plugin.unloaded</code>, returning the dir so the caller can delete it without a second lookup (closes the TOCTOU window). <code>SetEnabled</code> toggles a <code>.disabled</code> marker file and reloads, so you can disable a plugin without uninstalling it. Each plugin gets a per-plugin bus token (persisted to <code>.bus-token</code>, stable across restarts) bound to exactly its declared capability grants.</p>
 <h3>the installer</h3>
