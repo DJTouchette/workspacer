@@ -1,10 +1,10 @@
 {
   "name": "workspacer",
   "version": "1.0.1",
-  "description": "A horizontal-scroll workspace for agent-driven development",
+  "description": "A control plane and IDE for coding agents",
   "homepage": "https://github.com/DJTouchette/workspacer",
   "author": "Damien Touchette <damien.touchette@businessinfusions.com>",
-  "license": "MIT",
+  "license": "BUSL-1.1",
   "main": "dist/main/index.js",
   "scripts": {
     "dev": "concurrently -k \"npm run dev:renderer\" \"npm run dev:main\"",

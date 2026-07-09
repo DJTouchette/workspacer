@@ -3,7 +3,7 @@ name = "claudemon"
 version = "0.1.0"
 edition = "2021"
 description = "Observability and remote-control daemon for Claude Code sessions"
-license = "MIT"
+license = "BUSL-1.1"
 
 [[bin]]
 name = "claudemon"

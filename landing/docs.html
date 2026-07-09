@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>work{spacer} :: docs</title>
-<meta name="description" content="Documentation for work{spacer}, a local-first cockpit for running many coding agents side by side." />
+<meta name="description" content="Documentation for work{spacer}, a local-first control plane and IDE for running many coding agents side by side." />
 <style>
   :root {
     --bg: #1e2326; --bg-2: #232a2e; --panel: #272e33;
@@ -118,7 +118,7 @@
   <main>
     <section id="overview" class="doc">
 <h2>overview</h2>
-<p>work{spacer} is a local-first cockpit for running many long-lived coding-agent sessions side by side. You run it on your own machine. Nothing here is a hosted service.</p>
+<p>work{spacer} is a local-first control plane and IDE for coding agents: a place to run many long-lived agent sessions side by side, watch every one of them, and review and ship the code they write. You run it on your own machine. Nothing here is a hosted service.</p>
 <h3>the problem</h3>
 <p>One <code>claude</code> session is easy. You sit in the terminal it runs in and watch it. That breaks the moment you have more than one going at once. Tabbing between terminals, you lose track of which agent is working, which one is blocked on an approval, and which one finished ten minutes ago and is sitting idle. You can't babysit a whole fleet at the same time, and most of the switching you do doesn't pay off.</p>
 <p>work{spacer} keeps the ambient state of every agent in front of you so you only switch when it's worth it. The sidebar shows a per-agent state dot, context %, and token/cost, with an "N need you / N working" header. A Triage Inbox drawer collects the approvals and questions waiting on you across all agents, and you can jump straight to the next agent that needs you. OS notifications fire on needs-approval / needs-input (and optionally on done), suppressed for the agent you're already watching. The point is to make switching a decision you make, not a thing you do constantly out of fear of missing something.</p>
@@ -636,7 +636,7 @@ claudemon init --hook-port 8888 # match a non-default hook port</code></pre>
 <li><strong>Sessions</strong> are saved as <code>.yaml</code> files under <code>sessions/</code>; with <code>session.autoResume: true</code> the most recent one is restored on launch.</li>
 </ul>
 </section>
-    <div class="foot">work{spacer} :: local-first cockpit for coding agents :: MIT</div>
+    <div class="foot">work{spacer} :: local-first control plane for coding agents :: source-available (BSL 1.1)</div>
   </main>
 </div>
 
