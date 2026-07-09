@@ -562,6 +562,48 @@ export const InspectorCard: React.FC<{
                   {model}
                 </div>
               )}
+              {sl?.capabilities &&
+                (() => {
+                  const c = sl.capabilities;
+                  const chips: string[] = [];
+                  if (c.fastMode) chips.push('⚡ Fast');
+                  if (c.apiKeySource && c.apiKeySource !== 'none')
+                    chips.push(`key: ${c.apiKeySource}`);
+                  if (c.outputStyle && c.outputStyle !== 'default')
+                    chips.push(`style: ${c.outputStyle}`);
+                  if (c.mcpServers) chips.push(`${c.mcpServers} MCP`);
+                  if (c.skills) chips.push(`${c.skills} skills`);
+                  if (c.plugins) chips.push(`${c.plugins} plugins`);
+                  if (c.agents) chips.push(`${c.agents} agents`);
+                  if (c.memoryFiles) chips.push(`${c.memoryFiles} memory`);
+                  if (!chips.length) return null;
+                  return (
+                    <div
+                      style={{
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        gap: 4,
+                        marginBottom: 10,
+                      }}
+                    >
+                      {chips.map((chip) => (
+                        <span
+                          key={chip}
+                          style={{
+                            fontSize: '0.66rem',
+                            color: colors.muted,
+                            background: 'rgba(255,255,255,0.05)',
+                            borderRadius: 4,
+                            padding: '1px 6px',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {chip}
+                        </span>
+                      ))}
+                    </div>
+                  );
+                })()}
               {ctxPct !== undefined && <UsageBar label="Context window" pct={ctxPct} />}
               {(sl?.fiveHourPct !== undefined || sl?.fiveHourResetsAt !== undefined) && (
                 <UsageBar

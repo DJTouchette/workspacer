@@ -192,6 +192,35 @@ impl PlanStatus {
     }
 }
 
+/// Session capabilities parsed from the stream `system/init` frame (stream
+/// transport only — the PTY statusLine doesn't carry them). Static for the life
+/// of the session; ride the StatusLine channel so they reach clients on the
+/// first tick without a separate feed.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Capabilities {
+    /// Whether fast mode is active (`fast_mode_state`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fast_mode: Option<bool>,
+    /// Active output style, e.g. "default" / "explanatory".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_style: Option<String>,
+    /// Where the session's credentials come from ("none"/"user"/… — subscription
+    /// vs API key).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key_source: Option<String>,
+    /// Counts of the capabilities available to the session.
+    #[serde(default)]
+    pub mcp_servers: u32,
+    #[serde(default)]
+    pub skills: u32,
+    #[serde(default)]
+    pub plugins: u32,
+    #[serde(default)]
+    pub agents: u32,
+    #[serde(default)]
+    pub memory_files: u32,
+}
+
 /// Live telemetry from Claude Code's `statusLine` command.
 ///
 /// This is a *different channel* from hooks: Claude pipes this JSON only to the
@@ -244,6 +273,9 @@ pub struct StatusLine {
     /// `overageDisabledReason: out_of_credits`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub overage_out_of_credits: Option<bool>,
+    /// Session capabilities from the stream `init` frame (stream only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<Capabilities>,
     /// When the daemon received this line, so clients can age out stale data.
     #[serde(
         default,
@@ -306,9 +338,10 @@ impl StatusLine {
                 .and_then(|m| m.get("resets_at"))
                 .and_then(Value::as_i64),
             // The interactive statusLine JSON doesn't carry warning/overage
-            // status — those ride the stream `rate_limit_event` only.
+            // status or capabilities — those ride the stream events only.
             rate_limit_warning: None,
             overage_out_of_credits: None,
+            capabilities: None,
             received_at: Some(OffsetDateTime::now_utc()),
         }
     }

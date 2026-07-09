@@ -35,7 +35,7 @@ use tokio::sync::mpsc;
 
 use super::{apply_updates, AgentUpdate, Facade, UsageAcc};
 use crate::session::conversation::ConversationItem;
-use crate::session::state::{Pending, PendingQuestion, SessionMode};
+use crate::session::state::{Capabilities, Pending, PendingQuestion, SessionMode};
 use crate::session::store::{ManagedAnswer, ManagedPermissionSwitch};
 use crate::session::transcript::{blocks, flatten_tool_result, Block};
 use crate::session::{ConversationStore, SessionStore};
@@ -94,11 +94,13 @@ pub fn translate(value: &Value, totals: &mut StreamTotals) -> Vec<AgentUpdate> {
     }
     match value.get("type").and_then(Value::as_str).unwrap_or("") {
         "system" => match value.get("subtype").and_then(Value::as_str).unwrap_or("") {
-            // Start of every turn: names the session's current model.
+            // Start of every turn: names the session's current model, and (once)
+            // enumerates the session's capabilities.
             "init" => {
                 if let Some(model) = value.get("model").and_then(Value::as_str) {
                     out.push(usage_model(model));
                 }
+                out.push(AgentUpdate::Capabilities(capabilities_from_init(value)));
             }
             // The CLI is calling the API — the turn is running.
             "status" => {
@@ -295,6 +297,45 @@ pub fn translate(value: &Value, totals: &mut StreamTotals) -> Vec<AgentUpdate> {
         _ => {}
     }
     out
+}
+
+/// Extract the session's capabilities from the stream `system/init` frame.
+/// Counts are array lengths; missing keys read as 0 / `None`.
+fn capabilities_from_init(v: &Value) -> Capabilities {
+    // Count array items or object keys — the CLI shapes some of these as lists
+    // (skills, memory_paths) and others as name-keyed maps (agents, mcp_servers).
+    let len = |key: &str| match v.get(key) {
+        Some(Value::Array(a)) => a.len() as u32,
+        Some(Value::Object(o)) => o.len() as u32,
+        _ => 0,
+    };
+    // `fast_mode_state` shape isn't guaranteed — accept a bool, a known string,
+    // or an object carrying an enabled/active flag.
+    let fast_mode = match v.get("fast_mode_state") {
+        Some(Value::Bool(b)) => Some(*b),
+        Some(Value::String(s)) => Some(matches!(s.as_str(), "on" | "enabled" | "active")),
+        Some(Value::Object(o)) => o
+            .get("enabled")
+            .or_else(|| o.get("active"))
+            .and_then(Value::as_bool),
+        _ => None,
+    };
+    Capabilities {
+        fast_mode,
+        output_style: v
+            .get("output_style")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        api_key_source: v
+            .get("apiKeySource")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        mcp_servers: len("mcp_servers"),
+        skills: len("skills"),
+        plugins: len("plugins"),
+        agents: len("agents"),
+        memory_files: len("memory_paths"),
+    }
 }
 
 /// Human warning string for a window that crossed its threshold, mirroring the
@@ -1007,10 +1048,10 @@ mod tests {
 
     #[test]
     fn system_init_names_the_model() {
-        assert_eq!(
-            t(json!({ "type": "system", "subtype": "init", "model": "claude-haiku-4-5" })),
-            vec![usage_model("claude-haiku-4-5")]
-        );
+        // init also emits a Capabilities update; the model naming must still be present.
+        let updates =
+            t(json!({ "type": "system", "subtype": "init", "model": "claude-haiku-4-5" }));
+        assert!(updates.contains(&usage_model("claude-haiku-4-5")));
     }
 
     #[test]
@@ -1243,6 +1284,31 @@ mod tests {
             AgentUpdate::RateLimitStatus { warning: Some(w), .. }
             if w.contains("5-hour") && w.contains("92%")));
         assert!(warned, "expected a 5-hour warning at 92%");
+    }
+
+    #[test]
+    fn init_frame_yields_capabilities() {
+        let updates = t(json!({ "type": "system", "subtype": "init",
+            "model": "claude-opus-4-8",
+            "output_style": "default", "apiKeySource": "none",
+            "fast_mode_state": { "enabled": true },
+            "mcp_servers": { "workspacer": {}, "linear": {} },
+            "skills": ["a", "b", "c"],
+            "plugins": [],
+            "agents": { "reviewer": {} },
+            "memory_paths": ["~/CLAUDE.md"] }));
+        let caps = updates.iter().find_map(|u| match u {
+            AgentUpdate::Capabilities(c) => Some(c.clone()),
+            _ => None,
+        });
+        let caps = caps.expect("init should emit capabilities");
+        assert_eq!(caps.fast_mode, Some(true));
+        assert_eq!(caps.output_style.as_deref(), Some("default"));
+        assert_eq!(caps.mcp_servers, 2);
+        assert_eq!(caps.skills, 3);
+        assert_eq!(caps.plugins, 0);
+        assert_eq!(caps.agents, 1);
+        assert_eq!(caps.memory_files, 1);
     }
 
     #[test]

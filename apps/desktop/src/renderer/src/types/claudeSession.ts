@@ -155,7 +155,21 @@ export interface SessionStatusLine {
   rateLimitWarning?: string;
   /** Monthly overage disabled for lack of credits (stream only). */
   overageOutOfCredits?: boolean;
+  /** Session capabilities from the stream init frame (stream only). */
+  capabilities?: SessionCapabilities;
   receivedAt?: string;
+}
+
+/** Capabilities parsed from Claude's stream `init` frame (stream sessions). */
+export interface SessionCapabilities {
+  fastMode?: boolean;
+  outputStyle?: string;
+  apiKeySource?: string;
+  mcpServers?: number;
+  skills?: number;
+  plugins?: number;
+  agents?: number;
+  memoryFiles?: number;
 }
 
 export interface ClaudeSessionSnapshot {

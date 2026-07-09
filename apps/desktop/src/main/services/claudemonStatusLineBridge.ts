@@ -90,6 +90,18 @@ export async function startClaudemonStatusLineBridge(): Promise<void> {
           monthlyResetsAt: sl.monthly_resets_at,
           rateLimitWarning: sl.rate_limit_warning,
           overageOutOfCredits: sl.overage_out_of_credits,
+          capabilities: sl.capabilities
+            ? {
+                fastMode: sl.capabilities.fast_mode,
+                outputStyle: sl.capabilities.output_style,
+                apiKeySource: sl.capabilities.api_key_source,
+                mcpServers: sl.capabilities.mcp_servers,
+                skills: sl.capabilities.skills,
+                plugins: sl.capabilities.plugins,
+                agents: sl.capabilities.agents,
+                memoryFiles: sl.capabilities.memory_files,
+              }
+            : undefined,
           receivedAt: sl.received_at,
         });
         raiseRateLimitWarning(sl.rate_limit_warning);

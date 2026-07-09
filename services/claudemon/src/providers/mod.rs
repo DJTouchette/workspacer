@@ -39,7 +39,9 @@ use tokio::sync::mpsc;
 
 use crate::protocol::{Signal, WrapperMessage};
 use crate::session::conversation::ConversationItem;
-use crate::session::state::{Pending, Plan, PlanStatus, PlanStep, SessionMode, StatusLine};
+use crate::session::state::{
+    Capabilities, Pending, Plan, PlanStatus, PlanStep, SessionMode, StatusLine,
+};
 use crate::session::store::WrapperHandle;
 use crate::session::{ConversationStore, SessionStore};
 use crate::wrapper::pty;
@@ -204,6 +206,9 @@ pub enum AgentUpdate {
         warning: Option<String>,
         out_of_credits: Option<bool>,
     },
+    /// Session capabilities parsed from the stream `init` frame (fast mode,
+    /// output style, MCP/skill/plugin/agent/memory counts). Set once per session.
+    Capabilities(Capabilities),
     /// A session-level error message.
     Error(String),
     /// The agent's current plan / checklist (Codex's `update_plan` / todo list).
@@ -409,6 +414,7 @@ pub struct UsageAcc {
     monthly_resets_at: Option<i64>,
     rate_limit_warning: Option<String>,
     overage_out_of_credits: Option<bool>,
+    capabilities: Option<Capabilities>,
 }
 
 impl UsageAcc {
@@ -529,6 +535,7 @@ impl UsageAcc {
             monthly_resets_at: self.monthly_resets_at,
             rate_limit_warning: self.rate_limit_warning.clone(),
             overage_out_of_credits: self.overage_out_of_credits,
+            capabilities: self.capabilities.clone(),
             received_at: Some(OffsetDateTime::now_utc()),
         }
     }
@@ -616,6 +623,10 @@ pub fn apply_updates(
                 out_of_credits,
             } => {
                 acc.merge_rate_limit_status(warning.clone(), *out_of_credits);
+                usage_changed = true;
+            }
+            AgentUpdate::Capabilities(caps) => {
+                acc.capabilities = Some(caps.clone());
                 usage_changed = true;
             }
             AgentUpdate::Error(msg) => {
