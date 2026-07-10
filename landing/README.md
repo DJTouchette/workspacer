@@ -33,8 +33,10 @@ Written in a relaxed voice with no em dashes. The feature claims map to things
 that ship today: the agent providers (Claude Code, Codex, OpenCode, and Pi in
 beta) with their two integration tiers, ambient awareness and the Triage Inbox,
 the GUI agent pane, the review pane, the pane types, UI modes (fleet/focus),
-the remote clients (the `/m` mobile PWA with push, `/remote`, and the full app
-at `/app`), plugins, the MCP facade, and the desktop + claudemon + hub split.
+the remote clients (the `/m` mobile PWA, `/remote`, and the full app at
+`/app`), plugins, the MCP facade, and the desktop + claudemon + hub split.
+Push notifications are deliberately not promised on the marketing page until
+they're reliable.
 
 ## Docs
 

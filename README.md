@@ -61,8 +61,8 @@ rest of the fleet; check on a running job from your phone.
   and configurable OS notifications.
 - **Remote & multi-client** — drive the same fleet from a terminal client
   (`wks-tui`), a browser, or your phone: the `/m` mobile client is an
-  installable PWA with background push when an agent needs you. Opt-in,
-  token-authed sharing with one-tap HTTPS over Tailscale.
+  installable PWA built for clearing approvals on the go. Opt-in, token-authed
+  sharing with one-tap HTTPS over Tailscale.
 - **Extensible** — a plugin system (drop in a manifest, get a supervised
   sidecar with its own panes) and an MCP facade that exposes the fleet as tools
   a supervisor agent can drive.

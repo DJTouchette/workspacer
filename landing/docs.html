@@ -91,6 +91,7 @@
   <a class="brand" href="index.html" style="text-decoration:none;">
     <span class="mark" style="font-size:17px;">{<span class="bar"></span>}</span>
     <span class="wordmark" style="font-size:16px;">work<span class="sp">{spacer}</span></span>
+    <span style="font-size:10px;letter-spacing:0.09em;text-transform:uppercase;color:var(--amber);border:1px solid var(--amber);border-radius:3px;padding:1px 6px;">alpha</span>
   </a>
   <div class="links">
     <a href="index.html">home</a>
@@ -468,7 +469,7 @@ claudemon init --dry-run        # preview the merged file, write nothing</code><
 <p>The agent label is the basename of its working directory. Clicking a notification restores and focuses the window and jumps the renderer to that agent.</p>
 <p><strong>Suppressed for the watched agent.</strong> With <code>onlyWhenUnwatched</code> on (the default), no notification fires for the exact session you currently have on screen with the window focused. The renderer keeps the main process informed of which session is active as you switch agents.</p>
 <p><strong>Taskbar flash.</strong> On a needs-you event, when the window isn't focused, work{spacer} flashes the taskbar (the Windows "attention" signal). The flash stops as soon as you focus the window.</p>
-<p>There is no tray icon or taskbar overlay badge today. Away from the desk entirely, the <a href="#remote">mobile PWA</a> delivers the same needs-approval / needs-input alerts as background push notifications on your phone.</p>
+<p>There is no tray icon or taskbar overlay badge today. Away from the desk entirely, the <a href="#remote">mobile PWA</a> has background push wired up for the same needs-approval / needs-input alerts, though it's still being stabilized.</p>
 <h3>notification config</h3>
 <p>The <code>notifications</code> block in config (Settings ▸ Notifications) has four keys, all booleans:</p>
 <ul>
@@ -502,7 +503,7 @@ claudemon init --dry-run        # preview the merged file, write nothing</code><
 <h3>the web clients</h3>
 <p>Three browser clients, nothing to install on the remote device (though the mobile one is installable if you want it on your home screen):</p>
 <ul>
-<li><strong>Mobile</strong> (<code>/m</code>): a phone-first, decision-first client — a live fleet list, a "Needs You" queue of approvals and questions with big approve/answer buttons, per-agent chat, and spawn. It's an <strong>installable PWA</strong>: add it to your home screen (over the HTTPS/Tailscale option) and it delivers <strong>background push notifications</strong> when an agent needs you, deep-linking straight to that agent — even with the browser closed. This is what the QR points at by default.</li>
+<li><strong>Mobile</strong> (<code>/m</code>): a phone-first, decision-first client — a live fleet list, a "Needs You" queue of approvals and questions with big approve/answer buttons, per-agent chat, and spawn. It's an <strong>installable PWA</strong>: add it to your home screen over the HTTPS/Tailscale option. Background push notifications (an alert when an agent needs you, even with the browser closed) are wired up but still being stabilized — don't rely on them yet. This is what the QR points at by default.</li>
 <li><strong>Terminal mirror</strong> (<code>/remote</code>): a lightweight client with the agent list, chat, approvals, and a live mirror of the agent's real terminal. Works offline over Tailscale.</li>
 <li><strong>Full app</strong> (<code>/app</code>): the complete work{spacer} interface running in the browser, with full desktop parity. Available when sharing is on and a web build is present.</li>
 </ul>

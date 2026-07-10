@@ -92,7 +92,7 @@ remote/web/phone clients all view and drive the same fleet.
 | Jump-to-next-attention | Hotkey to cycle to the next agent waiting on you | 🔵 Working |
 | OS notifications | Fire on needs-approval / needs-input and (optionally) done; suppressed for the watched agent; taskbar flash | 🔵 Working |
 | Notification config | `enabled` / `notifyDone` / `onlyWhenUnwatched` / `sound` | 🔵 Working |
-| Mobile push | Background Web Push to the `/m` PWA on needs-approval / needs-input (hub `internal/push`, VAPID) | 🔵 Working |
+| Mobile push | Background Web Push to the `/m` PWA on needs-approval / needs-input (hub `internal/push`, VAPID); wired end-to-end but delivery not yet reliable | 🟡 Partial |
 | Per-session budgets | Cost ceiling per session with a one-shot notification when crossed | 🔵 Working |
 | Tray / overlay badge | — | ⚪ Not built |
 
@@ -118,7 +118,7 @@ remote/web/phone clients all view and drive the same fleet.
 |---|---|---|
 | Hub event bus | WebSocket pub/sub + RPC capability router; bus token auth | 🟢 Solid |
 | Layout mirroring (tmux-style) | Hub-owned shared layout doc; desktop ⇄ web/phone mirror cards, tabs, active tab | 🔵 Working |
-| Mobile PWA (`/m`) | Phone-first decision client (fleet, Needs You queue, chat, spawn); installable PWA with background Web Push, the default QR target | 🔵 Working |
+| Mobile PWA (`/m`) | Phone-first decision client (fleet, Needs You queue, chat, spawn); installable PWA, the default QR target (push: see §5) | 🔵 Working |
 | Terminal-mirror client (`/remote`) | Lightweight client: agent list, chat, approvals, live xterm terminal mirror | 🔵 Working |
 | Full web app (`/app/`) | Serves the real renderer bundle over the bus (when remote sharing + web build present) | 🔵 Working |
 | Remote sharing | Runtime toggle (Start sharing) or `WORKSPACER_REMOTE_SHARE`; binds off-loopback with a bearer token; QR share dialog | 🔵 Working |
