@@ -385,6 +385,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke(IPC.HUB_PUBLISH, event),
   getHubStatus: (): Promise<{ connected: boolean }> => ipcRenderer.invoke(IPC.HUB_GET_STATUS),
 
+  // ── Git worktrees (agent isolation) ──
+  worktreeInfo: (cwd: string): Promise<unknown> => ipcRenderer.invoke(IPC.WORKTREE_INFO, cwd),
+  worktreeCreate: (opts: {
+    repoCwd: string;
+    name?: string;
+    rootOverride?: string;
+  }): Promise<unknown> => ipcRenderer.invoke(IPC.WORKTREE_CREATE, opts),
+
   // ── In-app updates (electron-updater; unsupported in dev/web) ──
   updatesGetStatus: (): Promise<unknown> => ipcRenderer.invoke(IPC.UPDATES_STATUS_GET),
   updatesCheck: (): Promise<unknown> => ipcRenderer.invoke(IPC.UPDATES_CHECK),

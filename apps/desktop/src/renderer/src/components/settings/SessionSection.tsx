@@ -181,6 +181,17 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
     if (v === (config.agents?.defaultCwd ?? '')) return;
     save({ agents: { ...config.agents, defaultCwd: v } });
   };
+  // Worktree root: local state for smooth typing, persisted on blur/Enter.
+  const [worktreeRoot, setWorktreeRoot] = React.useState(config.agents?.worktreeRoot ?? '');
+  React.useEffect(() => {
+    setWorktreeRoot(config.agents?.worktreeRoot ?? '');
+  }, [config.agents?.worktreeRoot]);
+  const saveWorktreeRoot = (value: string) => {
+    const v = value.trim();
+    if (v === (config.agents?.worktreeRoot ?? '')) return;
+    save({ agents: { ...config.agents, worktreeRoot: v } });
+  };
+
   const browseDefaultCwd = async () => {
     const picked = await window.electronAPI.pickFolder?.(defaultCwd || undefined);
     if (picked) {
@@ -262,6 +273,46 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
         Where the spawn dialog opens (and where Browse… starts). Leave blank to use the app's launch
         directory.
+      </div>
+
+      <CheckRow
+        label="Start new agents in a git worktree"
+        checked={config.agents?.spawnInWorktree ?? false}
+        onChange={(v) => save({ agents: { ...config.agents, spawnInWorktree: v } })}
+      />
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
+        Pre-checks "isolated worktree" in the spawn dialog: each agent gets a fresh git worktree on
+        its own branch, so parallel agents in one repo never collide and everything scoped to the
+        agent (plugins, watchers, checks) is confined to its tree. Worktrees persist until you
+        remove them (<code>git worktree remove</code>) — they may hold uncommitted work.
+      </div>
+
+      <Row label="Worktree location">
+        <input
+          value={worktreeRoot}
+          onChange={(e) => setWorktreeRoot(e.target.value)}
+          onBlur={(e) => saveWorktreeRoot(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') saveWorktreeRoot((e.target as HTMLInputElement).value);
+          }}
+          placeholder="~/.workspacer/worktrees"
+          spellCheck={false}
+          style={{
+            flex: 1,
+            minWidth: 0,
+            fontSize: '0.7rem',
+            fontFamily: 'inherit',
+            background: 'var(--wks-bg-base)',
+            color: 'var(--wks-text-primary)',
+            border: '1px solid var(--wks-border-input)',
+            borderRadius: 4,
+            padding: '4px 7px',
+          }}
+        />
+      </Row>
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
+        Parent directory for agent worktrees (created as &lt;repo&gt;/&lt;agent&gt; inside it).
+        Leave blank for the default.
       </div>
 
       <Row label="Claude transport">

@@ -167,6 +167,10 @@ export interface Config {
      *  falls back to the app's launch cwd. Set this so new agents don't default
      *  to the install path. */
     defaultCwd?: string;
+    /** Pre-check "isolated worktree" in the spawn dialog. */
+    spawnInWorktree?: boolean;
+    /** Parent directory for agent worktrees ('' = ~/.workspacer/worktrees). */
+    worktreeRoot?: string;
     /** User-configured binary paths per provider. '' = auto-detect on PATH. */
     binaries?: {
       claude?: string;

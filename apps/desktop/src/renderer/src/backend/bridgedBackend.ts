@@ -88,6 +88,8 @@ const HOST_ONLY = [
   'onSystemNotice', // main-process daemon/startup notices; IPC-only push
   'openLogsFolder', // opens the host's logs dir in its file manager
   'onLibraryChanged', // IPC change event; the bus has no library-change topic
+  'worktreeInfo', // worktree ops shell out to git on the host
+  'worktreeCreate',
   'updatesGetStatus', // in-app updates are a desktop-shell (electron-updater) concern
   'updatesCheck',
   'updatesInstall',

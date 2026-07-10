@@ -152,6 +152,8 @@ interface AgentViewHandlers {
 interface AgentWorkspaceViewProps {
   agent: AgentWorkspace;
   isActiveAgent: boolean;
+  /** The agent's live working tree when it differs from its home cwd. */
+  liveCwd?: string;
   scrollContainerRef: React.Ref<ScrollContainerRef>;
   ptyMapping: Record<string, string>;
   renameSignal: number;
@@ -175,6 +177,7 @@ interface AgentWorkspaceViewProps {
 const AgentWorkspaceView = memo(function AgentWorkspaceView({
   agent,
   isActiveAgent,
+  liveCwd,
   scrollContainerRef,
   ptyMapping,
   renameSignal,
@@ -206,6 +209,7 @@ const AgentWorkspaceView = memo(function AgentWorkspaceView({
           renameSignal={renameSignal}
           workspaceAgents={workspaceAgents}
           appCwd={appCwd}
+          agentLiveCwd={liveCwd}
           allAgents={allAgents}
           spawnSupervisor={handlers.spawnSupervisor}
           onJumpToAgent={handlers.onJumpToAgent}
@@ -905,6 +909,7 @@ function App() {
       skipPermissions?: boolean;
       mcpItemIds?: string[];
       resumeSessionId?: string;
+      worktree?: boolean;
     }) => {
       setShowSpawnDialog(false);
       setSpawnDialogCwd(null);
@@ -1891,6 +1896,7 @@ function App() {
                 key={agent.id}
                 agent={agent}
                 isActiveAgent={agent.id === activeAgentId}
+                liveCwd={agent.sessionId ? snapshotBySession[agent.sessionId]?.liveCwd : undefined}
                 scrollContainerRef={scrollContainerRef}
                 ptyMapping={ptyMapping}
                 renameSignal={renameSignal}
@@ -2084,6 +2090,7 @@ function App() {
             defaultCwd={spawnDialogCwd || config.agents?.defaultCwd?.trim() || appCwdRef.current}
             defaultProvider={config.agents?.defaultProvider}
             defaultTransport={config.claude?.transport}
+            defaultWorktree={config.agents?.spawnInWorktree ?? false}
             onSpawn={handleSpawnAgent}
             onCancel={() => {
               setShowSpawnDialog(false);

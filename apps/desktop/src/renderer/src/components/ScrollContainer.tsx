@@ -91,6 +91,8 @@ interface ScrollContainerProps {
   /** workspacer's own agents (for the Overview pane to scope stats to them,
    *  not every Claude session claudemon tracks machine-wide). */
   workspaceAgents?: { sessionId?: string }[];
+  /** Owning agent's live working tree (worktree entered mid-session), if any. */
+  agentLiveCwd?: string;
   /** Fallback project root for the Library pane (the app's cwd). */
   appCwd?: string;
   /** Full agent list — passed down to the Ask pane so it can display all agents. */
@@ -130,6 +132,10 @@ interface PaneCallbacks {
   ptyMapping?: Record<string, string>;
   workspaceAgents?: { sessionId?: string }[];
   appCwd?: string;
+  /** The owning agent's CURRENT working tree when it differs from its home cwd
+   *  (e.g. a git worktree entered mid-session). Agent-scoped plugin panes
+   *  re-scope to it live. */
+  agentLiveCwd?: string;
   /** Full agent list for the Ask pane. */
   allAgents?: AgentWorkspace[];
   /** Spawn a supervisor — for the Ask pane. */
@@ -266,7 +272,10 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
             url={pane.url || 'about:blank'}
             hibernated={pane.hibernated}
             pluginId={pane.pluginId}
-            cwd={pane.cwd}
+            // Agent-scoped panes follow the agent's LIVE tree (a worktree
+            // entered mid-session) so the pane token re-mints for it; global
+            // panes (no cwd) stay unscoped.
+            cwd={pane.cwd ? callbacks.agentLiveCwd || pane.cwd : undefined}
           />
         </Suspense>
       );
@@ -514,6 +523,7 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
       agentActive = true,
       workspaceAgents,
       appCwd,
+      agentLiveCwd,
       allAgents,
       spawnSupervisor,
       onJumpToAgent,
@@ -665,6 +675,7 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
             ptyMapping,
             workspaceAgents,
             appCwd,
+            agentLiveCwd,
             allAgents,
             spawnSupervisor,
             onJumpToAgent,

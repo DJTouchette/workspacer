@@ -21,6 +21,8 @@ interface SpawnAgentDialogProps {
   defaultProvider?: AgentProvider;
   /** Claude transport pre-selected in the picker (config.claude.transport). */
   defaultTransport?: 'pty' | 'stream';
+  /** Pre-check the git-worktree toggle (config.agents.spawnInWorktree). */
+  defaultWorktree?: boolean;
   onSpawn: (opts: {
     cwd: string;
     name?: string;
@@ -34,6 +36,8 @@ interface SpawnAgentDialogProps {
     skipPermissions?: boolean;
     mcpItemIds?: string[];
     resumeSessionId?: string;
+    /** Spawn into a fresh git worktree of `cwd` instead of `cwd` itself. */
+    worktree?: boolean;
   }) => void;
   onCancel: () => void;
 }
@@ -78,6 +82,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   defaultCwd,
   defaultProvider,
   defaultTransport,
+  defaultWorktree,
   onSpawn,
   onCancel,
 }) => {
@@ -131,6 +136,30 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
     Array<{ sessionId: string; timestamp: string; summary: string }>
   >([]);
   const [resumeSessionId, setResumeSessionId] = useState('');
+  // Git worktree isolation: available when the cwd is a git repo (host only —
+  // the web mirror can't shell out, so the pill hides there).
+  const [useWorktree, setUseWorktree] = useState(!!defaultWorktree);
+  const [repoInfo, setRepoInfo] = useState<{ isRepo: boolean; branch?: string } | null>(null);
+  useEffect(() => {
+    const dir = cwd.trim();
+    if (!dir || !window.electronAPI.worktreeInfo) {
+      setRepoInfo(null);
+      return;
+    }
+    let cancelled = false;
+    window.electronAPI
+      .worktreeInfo(dir)
+      .then((info) => {
+        if (!cancelled) setRepoInfo(info);
+      })
+      .catch(() => {
+        if (!cancelled) setRepoInfo(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [cwd]);
+  const worktreeEligible = !!repoInfo?.isRepo && !resumeSessionId;
 
   useEffect(() => {
     setCwd(defaultCwd);
@@ -368,6 +397,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
             skipPermissions,
             mcpItemIds: mcpSel.length ? mcpSel : undefined,
             resumeSessionId: resumeSessionId || undefined,
+            worktree: useWorktree && worktreeEligible ? true : undefined,
           }
         : {
             cwd: cwd.trim(),
@@ -377,6 +407,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
             effort: effort || undefined,
             permissionMode: resolvedMode,
             skipPermissions,
+            worktree: useWorktree && worktreeEligible ? true : undefined,
           },
     );
   };
@@ -546,6 +577,33 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
               {l.label}
             </option>
           ))}
+        </select>
+      </PillGroup>,
+    );
+  }
+
+  if (window.electronAPI.worktreeCreate) {
+    pills.push(
+      <PillGroup
+        label="worktree"
+        title={
+          !repoInfo?.isRepo
+            ? 'Not a git repository — worktree isolation needs one.'
+            : resumeSessionId
+              ? "Resuming reuses the session's original directory."
+              : `Run this agent in a fresh git worktree (a new branch cut from ${
+                  repoInfo.branch ?? 'HEAD'
+                }, under ~/.workspacer/worktrees) so parallel agents in this repo never collide. Everything scoped to the agent — plugins, watchers, checks — follows the worktree.`
+        }
+      >
+        <select
+          value={useWorktree && worktreeEligible ? 'on' : 'off'}
+          disabled={!worktreeEligible}
+          onChange={(e) => setUseWorktree(e.target.value === 'on')}
+          style={{ ...pillSelect, opacity: worktreeEligible ? 1 : 0.5 }}
+        >
+          <option value="off">repo directory</option>
+          <option value="on">isolated worktree</option>
         </select>
       </PillGroup>,
     );

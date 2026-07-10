@@ -32,6 +32,21 @@ export interface LayoutDoc<T = unknown> {
   data: T | null;
 }
 
+/** Git-repo detection for a directory (worktree spawn support). */
+export interface WorktreeInfo {
+  isRepo: boolean;
+  root?: string;
+  branch?: string;
+}
+
+/** Result of creating an agent worktree. */
+export interface WorktreeCreateResult {
+  ok: boolean;
+  path?: string;
+  branch?: string;
+  error?: string;
+}
+
 /** In-app update status (main pushes transitions; 'unsupported' in dev/web). */
 export interface UpdateStatus {
   state: 'unsupported' | 'disabled' | 'idle' | 'checking' | 'downloading' | 'downloaded' | 'error';
@@ -44,6 +59,14 @@ export interface UpdateStatus {
 export interface ElectronAPI {
   // Host OS — 'win32' | 'darwin' | 'linux' | …
   platform: NodeJS.Platform;
+
+  // Git worktrees (agent isolation); absent on the web mirror
+  worktreeInfo?: (cwd: string) => Promise<WorktreeInfo>;
+  worktreeCreate?: (opts: {
+    repoCwd: string;
+    name?: string;
+    rootOverride?: string;
+  }) => Promise<WorktreeCreateResult>;
 
   // In-app updates (electron-updater)
   updatesGetStatus: () => Promise<UpdateStatus>;

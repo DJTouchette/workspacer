@@ -137,6 +137,12 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     // No native window chrome in the browser mirror.
     setTitleBarOverlay: () => {},
 
+    // Worktree creation shells out on the HOST; the web mirror can't. The
+    // spawn dialog hides the toggle when these report not-a-repo/unavailable.
+    worktreeInfo: () => Promise.resolve({ isRepo: false }),
+    worktreeCreate: () =>
+      Promise.resolve({ ok: false, error: 'not available over the hub bridge' }),
+
     // In-app updates are a desktop-shell concern; the web mirror has no feed.
     updatesGetStatus: () => Promise.resolve({ state: 'unsupported' as const, current: '' }),
     updatesCheck: () => Promise.resolve({ state: 'unsupported' as const, current: '' }),

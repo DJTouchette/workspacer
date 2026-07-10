@@ -223,6 +223,8 @@ export function useAgentManager() {
       initialPrompt?: string;
       /** Resume an existing Claude session (`--resume <id>`) instead of starting fresh. */
       resumeSessionId?: string;
+      /** Spawn into a fresh git worktree of `cwd` (isolated branch) instead of `cwd`. */
+      worktree?: boolean;
       /** When true the spawned session receives the workspacer MCP facade. */
       supervisor?: boolean;
       /** Marks this workspace as a supervisor. */
@@ -230,7 +232,27 @@ export function useAgentManager() {
       /** For supervisors: the id of the agent being supervised. */
       parentId?: string;
     }) => {
-      const cwd = opts.cwd;
+      let cwd = opts.cwd;
+      // Worktree isolation: carve out a fresh git worktree first and make IT
+      // the agent's home, so everything cwd-scoped (plugin pane tokens,
+      // watchers, checks) is confined to the agent's own tree. Falls back to
+      // the repo directory if creation fails (e.g. not a repo after all).
+      if (opts.worktree && window.electronAPI.worktreeCreate) {
+        try {
+          const wt = await window.electronAPI.worktreeCreate({
+            repoCwd: opts.cwd,
+            name: opts.name?.trim() || deriveAgentName(opts.cwd),
+          });
+          if (wt.ok && wt.path) {
+            cwd = wt.path;
+            console.log(`[Agent] spawning in worktree ${wt.path} (${wt.branch})`);
+          } else {
+            console.error('[Agent] worktree creation failed:', wt.error);
+          }
+        } catch (err) {
+          console.error('[Agent] worktree creation failed:', err);
+        }
+      }
       let sessionId: string | undefined;
       try {
         sessionId = await window.electronAPI.spawnClaude({
@@ -262,7 +284,7 @@ export function useAgentManager() {
         // Deterministic id when we have a session, so every client converges on one
         // card for it; fall back to a random id only if the spawn failed.
         id: sessionId ? agentIdForSession(sessionId) : generateId('agent'),
-        name: opts.name?.trim() || deriveAgentName(cwd),
+        name: opts.name?.trim() || deriveAgentName(opts.cwd),
         cwd,
         provider: opts.provider,
         transport: opts.transport,

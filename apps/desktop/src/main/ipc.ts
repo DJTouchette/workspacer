@@ -12,6 +12,7 @@ import {
 import { sessionHistory } from './services/sessionHistory';
 import { layoutService } from './services/layoutService';
 import { updateService } from './services/updateService';
+import { worktreeInfo, createWorktree } from './services/worktreeService';
 import { claudeSessionStore } from './services/claudeSessionStore';
 import { listClaudeModels } from './services/claudeModels';
 import { workflowWatcher } from './services/workflowWatcher';
@@ -288,6 +289,21 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // Connection info for the remote-control client (URL + token for a QR/share).
   ipcMain.handle(IPC.HUB_GET_REMOTE_INFO, () => getRemoteShareInfo());
   ipcMain.handle(IPC.HUB_SET_REMOTE_SHARE, (_event, enabled: boolean) => setRemoteShare(!!enabled));
+  // Git worktrees: repo detection for the spawn dialog + agent-worktree create.
+  ipcMain.handle(IPC.WORKTREE_INFO, (_event, cwd: string) => worktreeInfo(cwd));
+  ipcMain.handle(
+    IPC.WORKTREE_CREATE,
+    (_event, opts: { repoCwd: string; name?: string; rootOverride?: string }) =>
+      createWorktree({
+        ...opts,
+        rootOverride:
+          opts.rootOverride ??
+          ((configService.getConfig() as { agents?: { worktreeRoot?: string } }).agents
+            ?.worktreeRoot ||
+            undefined),
+      }),
+  );
+
   // In-app updates: status pull + manual check + restart-into-update. The
   // service pushes transitions on IPC.UPDATES_STATUS.
   ipcMain.handle(IPC.UPDATES_STATUS_GET, () => updateService.getStatus());

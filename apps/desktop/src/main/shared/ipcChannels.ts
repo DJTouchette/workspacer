@@ -13,6 +13,10 @@ export const IPC = {
   LIBRARY_REMOVE: 'library:remove',
   LIBRARY_CHANGED: 'library:changed', // push (main → renderer)
 
+  // ── Git worktrees (agent isolation) ──
+  WORKTREE_INFO: 'worktree:info', // invoke: is cwd a repo (root/branch)?
+  WORKTREE_CREATE: 'worktree:create', // invoke: create an agent worktree
+
   // ── In-app updates (electron-updater) ──
   UPDATES_STATUS_GET: 'updates:status-get', // invoke (renderer → main): current status
   UPDATES_CHECK: 'updates:check', // invoke (renderer → main): manual check now
