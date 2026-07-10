@@ -271,6 +271,15 @@ export function applyConversationItems(
           if (tc) {
             tc.response = item.content ?? '';
             if (item.is_error) tc.status = 'failed';
+            // The call was created with completedAt == startedAt (the tool_use
+            // row's own timestamp). The result's timestamp is when the tool
+            // actually finished — stamp it so durations render instead of 0s.
+            // Only trust an explicit timestamp: falling back to Date.now()
+            // here would inflate durations on a resync replaying old turns.
+            if (item.timestamp) {
+              const doneMs = Date.parse(item.timestamp);
+              if (!Number.isNaN(doneMs) && doneMs >= tc.startedAt) tc.completedAt = doneMs;
+            }
             break;
           }
         }

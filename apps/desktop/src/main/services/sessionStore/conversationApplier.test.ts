@@ -401,3 +401,77 @@ describe('applyConversationItems — tool_use dedup', () => {
     expect(s.conversation).toHaveLength(2);
   });
 });
+
+describe('applyConversationItems — tool durations', () => {
+  it('stamps completedAt from the tool_result timestamp so durations are not 0s', () => {
+    const s = mkSession();
+    applyConversationItems(
+      s,
+      [
+        {
+          kind: 'tool_use',
+          id: 'toolu_dur',
+          name: 'Bash',
+          input: { command: 'sleep 5' },
+          timestamp: '2026-07-09T10:00:00Z',
+        },
+        {
+          kind: 'tool_result',
+          tool_use_id: 'toolu_dur',
+          content: 'done',
+          timestamp: '2026-07-09T10:00:05Z',
+        },
+      ],
+      noUsage,
+    );
+    const tc = s.conversation.find((t) => t.toolCalls?.length)?.toolCalls?.[0];
+    expect(tc).toBeDefined();
+    expect(tc!.startedAt).toBe(Date.parse('2026-07-09T10:00:00Z'));
+    expect(tc!.completedAt).toBe(Date.parse('2026-07-09T10:00:05Z'));
+  });
+
+  it('leaves completedAt alone when the result carries no timestamp (resync must not inflate)', () => {
+    const s = mkSession();
+    applyConversationItems(
+      s,
+      [
+        {
+          kind: 'tool_use',
+          id: 'toolu_nots',
+          name: 'Bash',
+          input: {},
+          timestamp: '2026-07-09T10:00:00Z',
+        },
+        { kind: 'tool_result', tool_use_id: 'toolu_nots', content: 'done' },
+      ],
+      noUsage,
+    );
+    const tc = s.conversation.find((t) => t.toolCalls?.length)?.toolCalls?.[0];
+    expect(tc!.completedAt).toBe(tc!.startedAt);
+  });
+
+  it('ignores a result timestamp earlier than the call (clock skew reads as 0s, not negative)', () => {
+    const s = mkSession();
+    applyConversationItems(
+      s,
+      [
+        {
+          kind: 'tool_use',
+          id: 'toolu_skew',
+          name: 'Bash',
+          input: {},
+          timestamp: '2026-07-09T10:00:10Z',
+        },
+        {
+          kind: 'tool_result',
+          tool_use_id: 'toolu_skew',
+          content: 'done',
+          timestamp: '2026-07-09T10:00:05Z',
+        },
+      ],
+      noUsage,
+    );
+    const tc = s.conversation.find((t) => t.toolCalls?.length)?.toolCalls?.[0];
+    expect(tc!.completedAt).toBe(tc!.startedAt);
+  });
+});
