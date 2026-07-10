@@ -28,3 +28,6 @@ services/hub/*.exe~
 
 # Per-plugin bus tokens are minted at runtime; never commit them.
 .bus-token
+
+# Workspacer runtime state in a project dir (saved workflows, etc.) — never commit.
+.workspacer/

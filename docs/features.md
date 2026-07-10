@@ -1,7 +1,6 @@
 # Workspacer — Feature Assessment
 
-> Current-state catalog of what the app does, as of 2026-07-09. For the
-> keep/drop triage and dead-code notes, see `docs/production-inventory.md`.
+> Current-state catalog of what the app does, as of 2026-07-09.
 
 **Maturity legend**
 

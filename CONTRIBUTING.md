@@ -120,8 +120,7 @@ the commit hash to that file.
   and your OS + which agent backend (Claude Code / Codex / OpenCode) you were
   running. Logs or a minimal repro help a lot.
 - **Features:** open an issue describing the use case before writing code, so we
-  can talk through the design. `docs/features.md` and `next-features.md` show
-  what's already built and what's on deck.
+  can talk through the design. `docs/features.md` shows what's already built.
 
 ## Contributor terms
 
