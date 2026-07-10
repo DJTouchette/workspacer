@@ -140,20 +140,15 @@
 </ul>
 <p>You can also drive the same fleet from a terminal with <code>wks-tui</code>, or from a phone/laptop over the network (see <a href="#remote">remote and multi-client</a>). Because every client talks to the same hub and the same session daemon underneath, a session started in one place can be watched and driven from anywhere else.</p>
 <h3>getting started</h3>
-<p>Install work{spacer}, wire up the Claude hooks once, and spawn your first agent. The <a href="#getting-started">getting started</a> section walks through it. If you're building from source or writing a plugin, see the <a href="build.html">build &amp; internals</a> page instead.</p>
+<p>Install work{spacer} and spawn your first agent. The <a href="#getting-started">getting started</a> section walks through it. If you're building from source or writing a plugin, see the <a href="build.html">build &amp; internals</a> page instead.</p>
 </section>
 
 <section id="getting-started" class="doc">
 <h2>getting started</h2>
-<p>This walks through a first run: get the app, wire Claude's hooks once, spawn your first agent, and find your way around. Building from source and packaging are covered on the <a href="build.html">build &amp; internals</a> page.</p>
+<p>This walks through a first run: get the app, spawn your first agent, and find your way around. Building from source and packaging are covered on the <a href="build.html">build &amp; internals</a> page.</p>
 <h3>install and launch</h3>
-<p>Install the desktop app and open it. On first launch it starts its background daemons for you and, if there's nothing to restore, shows the <strong>session picker</strong>, your list of saved sessions, with "new session" to start clean.</p>
+<p>Install the desktop app and open it. On first launch it starts its background daemons for you, wires Claude's hooks into <code>~/.claude/settings.json</code> automatically (that's how the live conversation view, state dots, and approval forwarding light up), and, if there's nothing to restore, shows the <strong>session picker</strong>, your list of saved sessions, with "new session" to start clean.</p>
 <p>One concept to keep in mind from the start: <strong>your window is disposable</strong>. Agents run in the background session daemon, not in the window. Close work{spacer}, your agents keep working; reopen it (or the terminal app, or your phone) and you reconnect to the same live sessions. The cockpit is detachable from the planes.</p>
-<h3>wire Claude's hooks (once)</h3>
-<p>So work{spacer} can see what your Claude agents are doing, Claude needs to POST lifecycle events to the session daemon. That's a one-time setup that merges a small hook block into <code>~/.claude/settings.json</code>:</p>
-<pre><code>claudemon init                  # merge the hooks into ~/.claude/settings.json
-claudemon init --dry-run        # preview the merged file, write nothing</code></pre>
-<p>You only do this once per machine (per Claude config dir). Without it, Claude agents still run, but the live conversation view, state dots, and approval forwarding won't light up. Codex, OpenCode, and Pi agents don't need this, they're driven directly.</p>
 <h3>spawn your first agent</h3>
 <p>Hit <code>Ctrl+Shift+N</code> (or the <code>+</code> in the sidebar) to open the spawn dialog. Pick a <strong>working directory</strong> (the project you want the agent to work in), optionally name it, choose an agent backend (<strong>Claude Code</strong>, <strong>Codex</strong>, or <strong>OpenCode</strong>), and spawn. The agent shows up as a card in the sidebar and opens its workspace. Type in the composer at the bottom and you're off.</p>
 <p>Spawn a few more in other directories. Each one is its own workspace with its own tabs and panes. The sidebar shows every agent's live state at a glance, and the "<a href="#attention">N need you / N working</a>" header tells you who's blocked on a decision. See <a href="#agents-and-providers">running agents</a> for every field in the spawn dialog.</p>
@@ -630,7 +625,8 @@ claudemon init --dry-run        # preview the merged file, write nothing</code><
 </ul>
 <p>There's always a <code>Default</code> profile; you can't delete it.</p>
 <h3>claudemon init, hook wiring</h3>
-<p>For work{spacer} to observe Claude sessions, Claude's hooks have to POST lifecycle events to claudemon. <code>claudemon init</code> merges that hook config into <code>~/.claude/settings.json</code>:</p>
+<p>For work{spacer} to observe Claude sessions, Claude's hooks POST lifecycle events to claudemon. <strong>The desktop app wires this for you</strong>: on every launch it runs <code>claudemon init</code>, which merges the hook config into <code>~/.claude/settings.json</code>. There's nothing to do by hand.</p>
+<p>The CLI still exists for headless or custom setups (a machine that only runs the daemon, a nonstandard hook port):</p>
 <pre><code>claudemon init                  # merge hooks into ~/.claude/settings.json
 claudemon init --dry-run        # print the merged document, write nothing
 claudemon init --hook-port 8888 # match a non-default hook port</code></pre>

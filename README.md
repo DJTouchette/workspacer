@@ -84,14 +84,10 @@ Vite renderer, and launches Electron with hot reload; the app spawns and
 supervises the `claudemon` and `hub` daemons as child processes. `./dev` is a
 thin wrapper around the same npm script.
 
-To let Workspacer observe Claude Code agents, wire Claude's hooks once:
-
-```bash
-claudemon init                  # merge hooks into ~/.claude/settings.json
-claudemon init --dry-run        # preview the merged file, write nothing
-```
-
-Codex, OpenCode, and Pi agents are driven directly and need no hook wiring.
+The app wires Claude's hooks into `~/.claude/settings.json` automatically on
+launch (that's how it observes Claude Code agents); Codex, OpenCode, and Pi
+agents are driven directly and need no hook wiring. For headless or custom
+setups the manual CLI still exists: `claudemon init` (`--dry-run` to preview).
 
 Remote sharing is off by default and is a **runtime toggle** in the app (Remote
 control → Start sharing). To force it on at launch for testing, use
