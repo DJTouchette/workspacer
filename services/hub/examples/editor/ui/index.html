@@ -403,7 +403,8 @@
     async function renderLevel(dirPath, depth, container) {
       const entries = await listDir(dirPath);
       for (const e of entries) {
-        if (e.name.startsWith('.')) continue;
+        // Dotfiles stay visible — fs.listEntries already hides .git and
+        // anything gitignored, which covers the actual noise.
         const row = document.createElement('div');
         row.className = 'row';
         row.style.paddingLeft = (8 + depth * 14) + 'px';
