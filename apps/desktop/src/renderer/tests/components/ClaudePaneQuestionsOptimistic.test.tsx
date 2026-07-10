@@ -158,8 +158,11 @@ describe('ClaudePane question-signature dismissal', () => {
     fireEvent.click(screen.getByText('Second'));
     expect(mockWrite).toHaveBeenCalledWith('2\r');
 
-    // Dismissed optimistically while the snapshot still carries the questions.
-    expect(screen.queryByText('Pick a strategy')).not.toBeInTheDocument();
+    // Picker dismissed optimistically while the snapshot still carries the
+    // questions: no clickable options remain. (The question TEXT persists by
+    // design — the AnsweredQuestionCard keeps a durable trace in the chat.)
+    expect(screen.queryByRole('button', { name: /First/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Second/ })).not.toBeInTheDocument();
 
     // The daemon re-delivers the SAME questions with a bumped lastActivity
     // (hooks bump it on everything) — the old timestamp gate re-prompted here.
@@ -168,36 +171,38 @@ describe('ClaudePane question-signature dismissal', () => {
       lastActivity: Date.now() + 60_000,
     });
     rerender(pane());
-    expect(screen.queryByText('Pick a strategy')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /First/ })).not.toBeInTheDocument();
   });
 
   it('resets the dismissal when questions clear, so an identical later set re-opens the picker', () => {
     mockSession = makeSnapshot({ pendingQuestions: questionSet() });
     const { rerender } = render(pane());
     fireEvent.click(screen.getByText('First'));
-    expect(screen.queryByText('Pick a strategy')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Second/ })).not.toBeInTheDocument();
 
     // PostToolUse clears the snapshot's questions — the answered request is over.
     mockSession = makeSnapshot({ pendingQuestions: null });
     rerender(pane());
 
-    // A textually identical LATER question set must prompt again.
+    // A textually identical LATER question set must prompt again — the picker's
+    // option buttons are back (the answered card's text never left).
     mockSession = makeSnapshot({ pendingQuestions: questionSet() });
     rerender(pane());
-    expect(screen.getByText('Pick a strategy')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Second/ })).toBeInTheDocument();
   });
 
   it('a different question set re-opens the picker without needing a clear in between', () => {
     mockSession = makeSnapshot({ pendingQuestions: questionSet() });
     const { rerender } = render(pane());
     fireEvent.click(screen.getByText('First'));
-    expect(screen.queryByText('Pick a strategy')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Second/ })).not.toBeInTheDocument();
 
     mockSession = makeSnapshot({
       pendingQuestions: [{ question: 'Deploy now?', options: [{ label: 'Yes' }, { label: 'No' }] }],
     });
     rerender(pane());
     expect(screen.getByText('Deploy now?')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Yes/ })).toBeInTheDocument();
   });
 });
 
