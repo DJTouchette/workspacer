@@ -59,6 +59,13 @@ func loadProfiles() []profile {
 	if !hasDefault {
 		out = append([]profile{{ID: "default", Name: "Default", IsDefault: true}}, out...)
 	}
+	// Never serve a nil extraArgs: it marshals as JSON null, and clients (the
+	// desktop renderer over the web bridge) index/measure it as an array.
+	for i := range out {
+		if out[i].ExtraArgs == nil {
+			out[i].ExtraArgs = []string{}
+		}
+	}
 	return out
 }
 

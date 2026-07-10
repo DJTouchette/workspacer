@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import { useConfig } from '../hooks/useConfig';
 import { fuzzyScoreAny } from '../lib/fuzzy';
+import { SETTINGS_SECTION_EVENT, consumePendingSettingsSection } from '../lib/settingsBus';
 import { Settings as SettingsIcon } from '../components/icons';
 import { useIsSmallScreen } from '../hooks/useMediaQuery';
 import AppearanceSection from '../components/settings/AppearanceSection';
@@ -320,6 +321,25 @@ const SettingsPane: React.FC<SettingsPaneProps> = () => {
       setActiveKey(visibleSections[0].key);
     }
   }, [q, visibleSections, activeKey]);
+
+  // Deep-link into a section (settingsBus): consume a request that fired while
+  // this pane was mounting, then follow live requests while it's open. Defer
+  // the scroll a frame so the section anchors exist on the mount path.
+  useEffect(() => {
+    const jump = (key: string | null) => {
+      if (!key || !SECTIONS.some((s) => s.key === key)) return;
+      setSearch('');
+      setActiveKey(key);
+      requestAnimationFrame(() => {
+        const el = contentRef.current?.querySelector(`#settings-${key}`);
+        if (el) el.scrollIntoView({ block: 'start' });
+      });
+    };
+    jump(consumePendingSettingsSection());
+    const onSection = (e: Event) => jump((e as CustomEvent<{ key?: string }>).detail?.key ?? null);
+    window.addEventListener(SETTINGS_SECTION_EVENT, onSection);
+    return () => window.removeEventListener(SETTINGS_SECTION_EVENT, onSection);
+  }, []);
 
   // Press / to focus the search box.
   useEffect(() => {

@@ -6,25 +6,25 @@
  * Both are variable fonts; one file covers the whole 400–700 weight range.
  * ──────────────────────────────────────────────────────────────────────── */
 @font-face {
-  font-family: "Hanken Grotesk";
+  font-family: 'Hanken Grotesk';
   font-style: normal;
   font-weight: 400 700;
   font-display: swap;
-  src: url("./assets/fonts/HankenGrotesk-Variable.woff2") format("woff2");
+  src: url('./assets/fonts/HankenGrotesk-Variable.woff2') format('woff2');
 }
 @font-face {
-  font-family: "JetBrains Mono";
+  font-family: 'JetBrains Mono';
   font-style: normal;
   font-weight: 400 700;
   font-display: swap;
-  src: url("./assets/fonts/JetBrainsMono-Variable.woff2") format("woff2");
+  src: url('./assets/fonts/JetBrainsMono-Variable.woff2') format('woff2');
 }
 @font-face {
-  font-family: "JetBrains Mono";
+  font-family: 'JetBrains Mono';
   font-style: italic;
   font-weight: 400 700;
   font-display: swap;
-  src: url("./assets/fonts/JetBrainsMono-Italic.woff2") format("woff2");
+  src: url('./assets/fonts/JetBrainsMono-Italic.woff2') format('woff2');
 }
 
 /* Design-token fallbacks — JS (applyTheme/applyCorners) overrides these at
@@ -33,12 +33,12 @@
   /* UI monospace — used by status bars, labels, and code-ish chrome. The
    * terminal/code font is set separately (--claude-mono-font, from the user's
    * terminal config); this is the chrome default and the global fallback. */
-  --wks-font-mono: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Code",
-    "Roboto Mono", monospace;
+  --wks-font-mono:
+    'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Code', 'Roboto Mono', monospace;
   /* UI sans — the app's primary typeface (matches <body>). Use for chrome that
    * should read as UI rather than code (e.g. the editor file tree). */
-  --wks-font-sans: "Hanken Grotesk", "Inter", -apple-system, BlinkMacSystemFont,
-    "Segoe UI", Roboto, sans-serif;
+  --wks-font-sans:
+    'Hanken Grotesk', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --wks-radius-sm: 5px;
   --wks-radius-md: 8px;
   --wks-radius-lg: 12px;
@@ -46,13 +46,14 @@
   --wks-glass-bg: rgba(30, 30, 33, 0.6);
   --wks-glass-strong: rgba(32, 32, 36, 0.78);
   --wks-glass-border: rgba(255, 255, 255, 0.16);
-  --wks-glass-highlight: rgba(255, 255, 255, 0.10);
+  --wks-glass-highlight: rgba(255, 255, 255, 0.1);
   --wks-glass-blur: 18px;
   --wks-glass-shadow: rgba(0, 0, 0, 0.4);
   --wks-glass-tint: rgba(96, 165, 250, 0.08);
 }
 
-html, body {
+html,
+body {
   margin: 0;
   padding: 0;
   overflow: hidden;
@@ -92,47 +93,89 @@ html, body {
     radial-gradient(120% 100% at 100% 100%, var(--wks-glass-tint), transparent 55%);
   background-attachment: fixed;
   color: var(--wks-text-primary);
-  font-family: "Hanken Grotesk", "Inter", -apple-system, BlinkMacSystemFont,
-    "Segoe UI", "Roboto", "Oxygen", "Ubuntu", "Cantarell", "Fira Sans",
-    "Droid Sans", "Helvetica Neue", sans-serif;
+  font-family:
+    'Hanken Grotesk',
+    'Inter',
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    'Roboto',
+    'Oxygen',
+    'Ubuntu',
+    'Cantarell',
+    'Fira Sans',
+    'Droid Sans',
+    'Helvetica Neue',
+    sans-serif;
 }
 
 /* Soft attention pulse for live status dots (sidebar / HUD). */
 @keyframes wks-pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.45; transform: scale(0.82); }
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.82);
+  }
 }
 
 /* Brand cursor blink — the bar inside the { ▮ } mark. */
 @keyframes wks-cursor-blink {
-  0%, 45% { opacity: 1; }
-  50%, 95% { opacity: 0.15; }
-  100% { opacity: 1; }
+  0%,
+  45% {
+    opacity: 1;
+  }
+  50%,
+  95% {
+    opacity: 0.15;
+  }
+  100% {
+    opacity: 1;
+  }
 }
 
 /* Brand loading shuttle — the cursor bar sliding between the { } braces.
  * Distance is per-instance (element sets --wks-brand-slide-dist in px). */
 @keyframes wks-brand-slide {
-  from { transform: translateX(0); }
-  to { transform: translateX(var(--wks-brand-slide-dist, 10px)); }
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(var(--wks-brand-slide-dist, 10px));
+  }
 }
 
 /* Gentle fade+rise — settings sections, saved chips, and other soft entrances. */
 @keyframes wks-fade-in {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: none; }
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 /* Plain rotation — in-flight icon buttons (browser cookie sync, etc.). */
 @keyframes wks-spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* Indeterminate page-load shuttle pinned under the browser pane's toolbar
  * (overlaid, so appearing/disappearing never shifts the layout). */
 @keyframes wks-browser-progress {
-  from { transform: translateX(-100%); }
-  to { transform: translateX(400%); }
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(400%);
+  }
 }
 .wks-browser-progress {
   position: absolute;
@@ -145,7 +188,7 @@ html, body {
   z-index: 1;
 }
 .wks-browser-progress::after {
-  content: "";
+  content: '';
   display: block;
   width: 30%;
   height: 100%;
@@ -169,7 +212,9 @@ html, body {
 }
 .wks-composer-ctl,
 .wks-composer-icon-btn {
-  transition: background-color 0.12s, color 0.12s;
+  transition:
+    background-color 0.12s,
+    color 0.12s;
 }
 
 /* Streaming cancel — a quiet stop glyph beside the spinner; the label only
@@ -186,7 +231,9 @@ html, body {
   color: var(--wks-text-muted);
   cursor: pointer;
   font-family: inherit;
-  transition: color 0.12s, background-color 0.12s;
+  transition:
+    color 0.12s,
+    background-color 0.12s;
 }
 .wks-stop-btn .wks-stop-square {
   width: 8px;
@@ -200,7 +247,9 @@ html, body {
   letter-spacing: 0.05em;
   opacity: 0;
   transform: translateX(-3px);
-  transition: opacity 0.12s, transform 0.12s;
+  transition:
+    opacity 0.12s,
+    transform 0.12s;
   white-space: nowrap;
 }
 .wks-stop-btn:hover {
@@ -221,6 +270,84 @@ html, body {
   box-shadow:
     0 8px 32px var(--wks-glass-shadow),
     inset 0 1px 0 var(--wks-glass-highlight);
+}
+
+/* ── First-run welcome (Onboarding) ─────────────────────────────────────── */
+
+@keyframes wks-welcome-backdrop-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes wks-welcome-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.wks-welcome-backdrop {
+  animation: wks-welcome-backdrop-in 0.25s ease-out;
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+
+.wks-welcome-card {
+  background-color: var(--wks-glass-strong);
+  -webkit-backdrop-filter: blur(var(--wks-glass-blur)) saturate(170%);
+  backdrop-filter: blur(var(--wks-glass-blur)) saturate(170%);
+  border: 1px solid var(--wks-glass-border);
+  box-shadow:
+    0 24px 80px var(--wks-glass-shadow),
+    inset 0 0 0 1.5px var(--wks-glass-highlight);
+  animation: wks-welcome-in 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Staggered soft entrance for the shortcut rows (delay set inline per row). */
+.wks-welcome-stagger {
+  animation: wks-fade-in 0.45s ease-out both;
+}
+
+.wks-welcome-cta {
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease,
+    filter 0.15s ease;
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--wks-accent) 30%, transparent);
+}
+.wks-welcome-cta:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.07);
+  box-shadow: 0 12px 32px color-mix(in srgb, var(--wks-accent) 42%, transparent);
+}
+.wks-welcome-cta:active {
+  transform: translateY(0);
+  filter: brightness(0.98);
+}
+
+.wks-welcome-row {
+  border-radius: var(--wks-radius-sm, 6px);
+  transition: background-color 0.12s ease;
+}
+.wks-welcome-row:hover {
+  background-color: var(--wks-bg-hover);
+}
+
+.wks-welcome-dismiss {
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+.wks-welcome-dismiss:hover {
+  color: var(--wks-text-primary);
+  border-color: var(--wks-border-strong, var(--wks-border));
 }
 
 .app-content {

@@ -1,5 +1,6 @@
 import React from 'react';
 import { BrandMark, Wordmark } from './Brand';
+import { ClaudeLogo, OpenAILogo, OpenCodeLogo, PiLogo } from './agentLogos';
 import { formatBinding } from '../lib/shortcuts';
 
 /**
@@ -11,9 +12,50 @@ import { formatBinding } from '../lib/shortcuts';
  *   *actual* configured shortcuts; dismissing persists onboardingDismissed.
  * - Replay: the "Show Welcome" palette command re-opens the same card anytime.
  */
+
+/** One shortcut combo as individual keycaps: "Ctrl+Shift+P" → [Ctrl][Shift][P].
+ *  Chord bindings ("Ctrl+Space T W") flow into extra caps in press order. */
+const Keys: React.FC<{ combo: string; onAccent?: boolean }> = ({ combo, onAccent }) => (
+  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+    {combo
+      .split(/[+\s]+/)
+      .filter(Boolean)
+      .map((key, i) => (
+        <kbd
+          key={i}
+          style={{
+            fontFamily: 'var(--wks-font-mono)',
+            fontSize: '0.62rem',
+            fontWeight: 600,
+            lineHeight: 1,
+            padding: '4px 6px',
+            borderRadius: 4,
+            whiteSpace: 'nowrap',
+            ...(onAccent
+              ? {
+                  color: 'var(--wks-text-on-accent, #fff)',
+                  background: 'rgba(255, 255, 255, 0.16)',
+                  border: '1px solid rgba(255, 255, 255, 0.28)',
+                }
+              : {
+                  color: 'var(--wks-text-secondary)',
+                  background: 'var(--wks-bg-elevated)',
+                  border: '1px solid var(--wks-border)',
+                  boxShadow: 'inset 0 -1.5px 0 var(--wks-border-subtle)',
+                }),
+          }}
+        >
+          {key}
+        </kbd>
+      ))}
+  </span>
+);
+
 const Onboarding: React.FC<{
   onSpawn: () => void;
   onDismiss: () => void;
+  /** Open Settings on the Keybindings section ("customize your keybinds"). */
+  onOpenKeybindings?: () => void;
   /** Resolved keybinding combos (config.keybindings.shortcuts). */
   shortcuts: Record<string, string>;
   /** Configured chord prefix, so "prefix i"-style bindings render correctly. */
@@ -22,146 +64,246 @@ const Onboarding: React.FC<{
   overlay?: boolean;
   /** First-run showing (dismiss persists the flag) vs a palette replay. */
   firstRun?: boolean;
-}> = ({ onSpawn, onDismiss, shortcuts, prefix, overlay, firstRun }) => {
+}> = ({ onSpawn, onDismiss, onOpenKeybindings, shortcuts, prefix, overlay, firstRun }) => {
   // Fallbacks mirror configDefaults.ts; the map is normally already merged
   // with defaults, so these only cover a not-yet-loaded config.
   const k = (id: string, fallback: string) => formatBinding(shortcuts[id] || fallback, prefix);
 
-  const rows: Array<{ combo: string; label: string }> = [
+  const rows: Array<{ combo: string; title: string; desc: string }> = [
     {
       combo: k('command-palette', 'ctrl+shift+p'),
-      label: 'Command palette — every action, searchable',
+      title: 'Command palette',
+      desc: 'every action, searchable',
     },
     {
       combo: k('toggle-inbox', 'ctrl+shift+i'),
-      label: 'Triage Inbox — approvals & questions across agents',
+      title: 'Triage Inbox',
+      desc: 'approvals & questions across agents',
     },
-    { combo: k('toggle-fleet', 'ctrl+shift+f'), label: 'Fleet Deck — a live radar of every agent' },
-    { combo: k('settings', 'ctrl+,'), label: 'Settings — themes, keybindings, and more' },
-    { combo: k('toggle-help', 'f1'), label: 'Keyboard shortcuts — the full list, anytime' },
+    {
+      combo: k('toggle-fleet', 'ctrl+shift+f'),
+      title: 'Fleet Deck',
+      desc: 'a live radar of every agent',
+    },
+    { combo: k('settings', 'ctrl+,'), title: 'Settings', desc: 'themes, keybindings, and more' },
+    {
+      combo: k('toggle-help', 'f1'),
+      title: 'Keyboard shortcuts',
+      desc: 'the full list, anytime',
+    },
   ];
 
   const card = (
     <div
+      className="wks-welcome-card"
       onClick={(e) => e.stopPropagation()}
       style={{
-        width: 'min(560px, 100%)',
-        background: 'var(--wks-bg-surface)',
-        border: '1px solid var(--wks-glass-border)',
+        position: 'relative',
+        width: 'min(600px, 100%)',
+        maxHeight: 'min(760px, 92vh)',
+        overflowY: 'auto',
         borderRadius: 'var(--wks-radius-lg)',
-        padding: '26px 26px 22px',
-        boxShadow: '0 12px 40px var(--wks-shadow)',
-        animation: 'claudeFadeIn 0.2s ease-out',
       }}
     >
-      {/* Brand lockup — the { ▮ } mark + work{spacer} wordmark. */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 18 }}>
-        <span
-          style={{
-            width: 44,
-            height: 44,
-            flexShrink: 0,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            background: 'var(--wks-bg-base)',
-            border: '1px solid var(--wks-border-subtle)',
-            borderRadius: 'var(--wks-radius-lg)',
-          }}
-        >
-          <BrandMark size={24} blink />
-        </span>
-        <Wordmark size={24} />
-      </div>
+      {/* Soft accent glow washing down from behind the brand — pure decoration. */}
+      <div
+        aria-hidden
+        style={{
+          position: 'absolute',
+          top: -180,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          width: 520,
+          height: 380,
+          borderRadius: '50%',
+          background:
+            'radial-gradient(circle, color-mix(in srgb, var(--wks-accent) 14%, transparent) 0%, transparent 68%)',
+          pointerEvents: 'none',
+        }}
+      />
 
+      {/* Hero — brand lockup, greeting, spawn CTA. */}
       <div
         style={{
-          fontSize: '1.25rem',
-          fontWeight: 700,
-          letterSpacing: '-0.01em',
-          color: 'var(--wks-text-primary)',
-        }}
-      >
-        Welcome to Workspacer
-      </div>
-      <div
-        style={{
-          fontSize: '0.85rem',
-          color: 'var(--wks-text-secondary)',
-          marginTop: 6,
-          lineHeight: 1.5,
-        }}
-      >
-        A cockpit for running many Claude Code agents side by side. Each agent is a long-lived
-        session with its own tabs &amp; panes — it keeps running until you terminate it.
-      </div>
-
-      <button
-        onClick={onSpawn}
-        style={{
-          marginTop: 18,
-          display: 'inline-flex',
+          position: 'relative',
+          display: 'flex',
+          flexDirection: 'column',
           alignItems: 'center',
-          gap: 10,
-          fontSize: '0.85rem',
-          fontFamily: 'inherit',
-          fontWeight: 700,
-          cursor: 'pointer',
-          background: 'var(--wks-accent)',
-          color: 'var(--wks-text-on-accent, #fff)',
-          border: 'none',
-          borderRadius: 6,
-          padding: '10px 18px',
+          textAlign: 'center',
+          padding: '38px 32px 30px',
         }}
       >
-        + Spawn your first agent
-        <span
+        <BrandMark size={46} blink />
+        <div style={{ marginTop: 18 }}>
+          <span
+            style={{
+              fontSize: '1.35rem',
+              fontWeight: 700,
+              letterSpacing: '-0.015em',
+              color: 'var(--wks-text-primary)',
+            }}
+          >
+            Welcome to{' '}
+          </span>
+          <Wordmark size={21} style={{ verticalAlign: 'baseline' }} />
+        </div>
+        <div
           style={{
-            fontSize: '0.66rem',
-            fontFamily: 'var(--wks-font-mono)',
-            fontWeight: 600,
-            opacity: 0.75,
+            marginTop: 10,
+            maxWidth: 400,
+            fontSize: '0.84rem',
+            color: 'var(--wks-text-secondary)',
+            lineHeight: 1.55,
           }}
         >
-          {k('spawn-agent', 'ctrl+shift+n')}
-        </span>
-      </button>
+          A cockpit for running many coding agents side by side. Each agent is a long-lived session
+          with its own tabs &amp; panes — it keeps working until you terminate it.
+        </div>
 
-      <div style={{ marginTop: 20, display: 'flex', flexDirection: 'column', gap: 9 }}>
-        {rows.map((r) => (
+        <button
+          className="wks-welcome-cta"
+          onClick={onSpawn}
+          style={{
+            marginTop: 24,
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 10,
+            fontSize: '0.86rem',
+            fontFamily: 'inherit',
+            fontWeight: 700,
+            cursor: 'pointer',
+            background: 'var(--wks-accent)',
+            color: 'var(--wks-text-on-accent, #fff)',
+            border: 'none',
+            borderRadius: 'var(--wks-radius-md, 8px)',
+            padding: '11px 22px',
+          }}
+        >
+          + Spawn your first agent
+          <Keys combo={k('spawn-agent', 'ctrl+shift+n')} onAccent />
+        </button>
+      </div>
+
+      {/* Get around — the five doors, with the user's real bindings. */}
+      <div
+        style={{
+          position: 'relative',
+          borderTop: '1px solid var(--wks-border-subtle)',
+          padding: '18px 24px 14px',
+        }}
+      >
+        <div
+          style={{
+            fontSize: '0.62rem',
+            fontWeight: 700,
+            letterSpacing: '0.12em',
+            textTransform: 'uppercase',
+            color: 'var(--wks-text-faint)',
+            padding: '0 8px 8px',
+          }}
+        >
+          Get around
+        </div>
+        {rows.map((r, i) => (
           <div
-            key={r.label}
+            key={r.title}
+            className="wks-welcome-row wks-welcome-stagger"
             style={{
               display: 'flex',
               alignItems: 'center',
-              gap: 10,
-              fontSize: '0.8rem',
-              color: 'var(--wks-text-secondary)',
+              gap: 12,
+              padding: '7px 8px',
+              animationDelay: `${0.12 + i * 0.05}s`,
             }}
           >
-            <kbd
+            <span
               style={{
-                flexShrink: 0,
-                minWidth: 84,
-                textAlign: 'center',
-                fontSize: '0.68rem',
-                fontFamily: 'var(--wks-font-mono)',
+                fontSize: '0.8rem',
+                fontWeight: 600,
                 color: 'var(--wks-text-primary)',
-                border: '1px solid var(--wks-glass-border)',
-                borderRadius: 4,
-                padding: '2px 6px',
-                background: 'var(--wks-bg-base)',
+                whiteSpace: 'nowrap',
               }}
             >
-              {r.combo}
-            </kbd>
-            <span>{r.label}</span>
+              {r.title}
+            </span>
+            <span
+              style={{
+                flex: 1,
+                fontSize: '0.76rem',
+                color: 'var(--wks-text-muted)',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {r.desc}
+            </span>
+            <Keys combo={r.combo} />
           </div>
         ))}
+        <div
+          className="wks-welcome-stagger"
+          style={{
+            padding: '10px 8px 4px',
+            fontSize: '0.72rem',
+            color: 'var(--wks-text-faint)',
+            animationDelay: `${0.12 + rows.length * 0.05}s`,
+          }}
+        >
+          Not your muscle memory?{' '}
+          {onOpenKeybindings ? (
+            <button
+              onClick={onOpenKeybindings}
+              style={{
+                font: 'inherit',
+                fontWeight: 600,
+                color: 'var(--wks-accent-text, var(--wks-accent))',
+                background: 'none',
+                border: 'none',
+                padding: 0,
+                cursor: 'pointer',
+                textDecoration: 'underline',
+                textUnderlineOffset: 3,
+              }}
+            >
+              Rebind everything in Settings → Keybindings
+            </button>
+          ) : (
+            <span>rebind everything in Settings → Keybindings</span>
+          )}
+          .
+        </div>
       </div>
 
-      <div style={{ marginTop: 22, display: 'flex', justifyContent: 'flex-end' }}>
+      {/* Footer — quiet provider strip + dismiss. */}
+      <div
+        style={{
+          position: 'relative',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 12,
+          borderTop: '1px solid var(--wks-border-subtle)',
+          padding: '14px 24px 16px',
+        }}
+      >
+        <div
+          title="claude · codex · opencode · pi"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 14,
+            opacity: 0.4,
+            color: 'var(--wks-text-muted)',
+          }}
+        >
+          <ClaudeLogo size={14} />
+          <OpenAILogo size={14} />
+          <OpenCodeLogo size={14} />
+          <PiLogo size={14} />
+        </div>
         <button
+          className="wks-welcome-dismiss"
           onClick={onDismiss}
           style={{
             fontSize: '0.76rem',
@@ -186,6 +328,7 @@ const Onboarding: React.FC<{
       <div
         role="dialog"
         aria-label="Welcome"
+        className="wks-welcome-backdrop"
         onClick={onDismiss}
         style={{
           position: 'fixed',

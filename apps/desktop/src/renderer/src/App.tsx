@@ -23,6 +23,7 @@ import {
   type InspectorTarget,
   type ContextTarget,
 } from './lib/watchBus';
+import { requestSettingsSection } from './lib/settingsBus';
 import { EDITOR_OPEN_FILE_EVENT } from './lib/editorBus';
 import { MARKDOWN_PREVIEW_EVENT, type MarkdownPreviewTarget } from './lib/previewBus';
 import { useUiCommands } from './hooks/useUiCommands';
@@ -1906,6 +1907,11 @@ function App() {
               setShowSpawnDialog(true);
             }}
             onDismiss={dismissWelcome}
+            onOpenKeybindings={() => {
+              dismissWelcome();
+              openSettings();
+              requestSettingsSection('keybindings');
+            }}
             shortcuts={config.keybindings?.shortcuts ?? {}}
             prefix={kbPrefix}
           />

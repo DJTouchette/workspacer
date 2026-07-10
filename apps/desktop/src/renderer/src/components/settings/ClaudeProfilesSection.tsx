@@ -137,7 +137,15 @@ const ClaudeProfilesSection: React.FC = () => {
   const [mcpItems, setMcpItems] = useState<LibraryItem[]>([]);
 
   const load = useCallback(() => {
-    window.electronAPI.claudeProfilesList().then((p) => setProfiles(p as ClaudeProfile[]));
+    window.electronAPI.claudeProfilesList().then((p) => {
+      // Normalize at the boundary: the headless (Go brain) provider marshals an
+      // empty extraArgs as null, and a hand-edited profiles file may omit it.
+      const list = ((p as ClaudeProfile[]) ?? []).map((prof) => ({
+        ...prof,
+        extraArgs: prof.extraArgs ?? [],
+      }));
+      setProfiles(list);
+    });
   }, []);
 
   useEffect(() => {
