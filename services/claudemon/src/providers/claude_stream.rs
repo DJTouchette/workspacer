@@ -14,7 +14,8 @@
 //! 2.1.201 (see the spike notes in the repo memory).
 //!
 //! This is a **second transport for the same provider** (`provider: "claude"`,
-//! `transport: "stream"`): the PTY path stays the default and untouched. Claude
+//! `transport: "stream"`, the desktop app's shipped default; the PTY path stays
+//! available behind `transport: "pty"` and untouched). Claude
 //! Code still runs the user's hooks for headless sessions, so
 //! `SessionStore::ingest` keeps them enrichment-only for stream sessions —
 //! the driver owns the mode state machine here.

@@ -149,7 +149,7 @@ export interface Config {
     defaultPermissionMode?: string;
     /** How new Claude sessions run: 'pty' (classic Claude Code TUI — Term +
      *  GUI) or 'stream' (headless stream-json via claudemon's managed adapter —
-     *  GUI only). Per-spawn overridable in the spawn dialog. Default 'pty'. */
+     *  GUI only). Per-spawn overridable in the spawn dialog. Default 'stream'. */
     transport?: 'pty' | 'stream';
     /** Experimental: install claudemon's hooks + statusLine into a private
      *  overlay file passed to Claude via --settings, instead of mutating the

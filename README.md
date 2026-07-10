@@ -1,8 +1,8 @@
 # Workspacer
 
 **A control plane and IDE for coding agents.** Run a whole fleet of
-long-lived coding agents — Claude Code, Codex, and OpenCode — side by side in
-one local-first desktop app. Watch every agent's state at a glance, step in
+long-lived coding agents — Claude Code, Codex, OpenCode, and Pi — side by side
+in one local-first desktop app. Watch every agent's state at a glance, step in
 only when one actually needs you, and review and ship the code they write
 without leaving the window.
 
@@ -46,19 +46,23 @@ rest of the fleet; check on a running job from your phone.
 
 - **Multi-agent workspaces** — one agent = one long-lived session = one
   workspace, keyed by working directory, with its own tabs and panes.
-- **Three agent backends** — Claude Code, Codex, and OpenCode, all landing in
-  the same fleet with the same state, telemetry, and approval prompts.
+- **Four agent backends** — Claude Code, Codex, OpenCode, and Pi (beta), all
+  landing in the same fleet with the same state, telemetry, and approval
+  prompts.
 - **A real GUI for each agent** — approve/deny in one key, answer questions
   inline, read diffs as they land, follow a clean work log, attach files by
   drag/paste/picker. (Plus a raw terminal view for Claude.)
 - **Pane types** — terminal, browser, git review/diff, per-agent markdown
   notes, a prompt/skill/agent library, analytics, an overview, and plugin panes.
-- **Layout your way** — tabs, spatial (pan-zoom canvas), or stacked feed;
-  switch without remounting live panes. A Fleet Deck radar sits over all of it.
+- **Layout your way** — flip the chrome between `fleet` (full cockpit) and
+  `focus` (distraction-free chat rail) without remounting live panes. A Fleet
+  Deck radar sits over all of it.
 - **Attention & notifications** — status dots, aggregate counts, jump-to-next,
   and configurable OS notifications.
 - **Remote & multi-client** — drive the same fleet from a terminal client
-  (`wks-tui`) or a phone/laptop over the network; opt-in, token-authed sharing.
+  (`wks-tui`), a browser, or your phone: the `/m` mobile client is an
+  installable PWA with background push when an agent needs you. Opt-in,
+  token-authed sharing with one-tap HTTPS over Tailscale.
 - **Extensible** — a plugin system (drop in a manifest, get a supervised
   sidecar with its own panes) and an MCP facade that exposes the fleet as tools
   a supervisor agent can drive.
@@ -72,13 +76,13 @@ For a full, honest feature-by-feature catalog with maturity levels, see
 
 ```bash
 make install          # install desktop JS deps (root + renderer workspaces)
-make build-claudemon  # build the session daemon (needed before spawning agents)
 make dev              # run the desktop app (Vite renderer + Electron, hot reload)
 ```
 
-`make dev` starts the Vite renderer and launches Electron with hot reload; the
-app spawns and supervises the `claudemon` and `hub` daemons as child processes.
-`./dev` is a thin wrapper around the same npm script.
+`make dev` builds the daemons (`hub`, `brain`, `mcp`, `claudemon`), starts the
+Vite renderer, and launches Electron with hot reload; the app spawns and
+supervises the `claudemon` and `hub` daemons as child processes. `./dev` is a
+thin wrapper around the same npm script.
 
 To let Workspacer observe Claude Code agents, wire Claude's hooks once:
 
@@ -87,7 +91,7 @@ claudemon init                  # merge hooks into ~/.claude/settings.json
 claudemon init --dry-run        # preview the merged file, write nothing
 ```
 
-Codex and OpenCode agents are driven directly and need no hook wiring.
+Codex, OpenCode, and Pi agents are driven directly and need no hook wiring.
 
 Remote sharing is off by default and is a **runtime toggle** in the app (Remote
 control → Start sharing). To force it on at launch for testing, use
@@ -125,7 +129,7 @@ bus, so a session running on one client can be observed and driven from another.
 | `make dev-tui`         | Run wks-tui (debug); builds claudemon first           |
 | `make run-tui`         | Run wks-tui (release); builds claudemon + tui first   |
 | `make build`           | Build all four components                             |
-| `make build-hub`       | Build the Go `hub` + `mcp` binaries                   |
+| `make build-hub`       | Build the Go `hub` + `mcp` + `brain` binaries         |
 | `make build-claudemon` | `cargo build --release` for claudemon                 |
 | `make build-tui`       | `cargo build --release` for wks-tui                   |
 | `make test`            | Desktop + hub + tui test suites                       |

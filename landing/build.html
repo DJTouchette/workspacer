@@ -131,21 +131,22 @@
 <p>From the repo root:</p>
 <pre><code>make install      # cd apps/desktop &amp;&amp; npm install</code></pre>
 <p>That installs the desktop JS deps. A <code>postinstall</code> step runs <code>electron-rebuild</code> against <code>better-sqlite3</code> so the native module matches your Electron version.</p>
-<h3>dev: with or without remote sharing</h3>
-<pre><code>make dev          # desktop app in dev mode, remote sharing ON
-./dev             # same dev loop, remote sharing OFF</code></pre>
-<p><code>make dev</code> runs <code>npm run dev:share</code>, which sets <code>WORKSPACER_REMOTE_SHARE=1</code> and then runs the normal dev loop. The dev loop builds the <code>hub</code> and <code>mcp</code> binaries, builds the main process, ensures the web renderer bundle exists, starts the Vite renderer on <code>http://localhost:5173</code>, waits for it, then launches Electron with <code>ELECTRON_DEV=1</code> and hot reload.</p>
-<p><code>./dev</code> is a thin wrapper that runs <code>npm run dev</code> straight, so no remote sharing.</p>
-<p><strong>remote sharing.</strong> With <code>WORKSPACER_REMOTE_SHARE=1</code> the hub binds beyond loopback so another PC or phone (intended over a Tailscale tailnet) can reach the bus and the <code>/remote</code> web client. The URL and token show up in the app's Hub status.</p>
+<h3>dev</h3>
+<pre><code>make dev          # desktop app in dev mode
+make dev-share    # same dev loop, remote sharing forced ON
+./dev             # thin wrapper around npm run dev</code></pre>
+<p><code>make dev</code> runs <code>npm run dev</code>. The dev loop builds the <code>hub</code>, <code>brain</code>, and <code>mcp</code> binaries, builds a release <code>claudemon</code>, builds the main process, ensures the web renderer bundle exists, starts the Vite renderer on <code>http://localhost:5173</code>, waits for it, then launches Electron with <code>ELECTRON_DEV=1</code> and hot reload.</p>
+<p><code>make dev-share</code> runs <code>npm run dev:share</code>, which sets <code>WORKSPACER_REMOTE_SHARE=1</code> first and is otherwise the same loop. <code>./dev</code> is a thin wrapper that runs <code>npm run dev</code> straight.</p>
+<p><strong>remote sharing.</strong> Sharing is a runtime toggle in the app (Remote control → Start sharing). When on — or forced on with <code>WORKSPACER_REMOTE_SHARE=1</code> — the hub binds beyond loopback so another PC or phone (intended over a Tailscale tailnet) can reach the bus and the web clients (<code>/m</code>, <code>/remote</code>, <code>/app</code>). The URL and token show up in the app's Hub status.</p>
 <ul>
-<li><code>WORKSPACER_REMOTE_SHARE=1</code> turns it on. Default bind is <code>0.0.0.0:7895</code>.</li>
+<li><code>WORKSPACER_REMOTE_SHARE=1</code> forces it on at launch. Default bind is <code>0.0.0.0:7895</code>.</li>
 <li><code>WORKSPACER_REMOTE_ADDR=host:port</code> overrides the bind address. Pin it to your tailnet IP to keep it off the LAN.</li>
 <li>Default (unset): the hub stays on <code>127.0.0.1</code>. A bus token is always created either way; remote mode reuses it as the bearer secret.</li>
 </ul>
-<h3>build claudemon once</h3>
-<p><code>claudemon</code> is built separately from the dev loop. The dev loop builds <code>hub</code> and <code>mcp</code> but not <code>claudemon</code>, so before the app can spawn Claude sessions you need to build it once:</p>
+<h3>building claudemon by itself</h3>
+<p>The dev loop already builds <code>claudemon</code>, so there's nothing extra to do before spawning agents. To rebuild just the daemon (e.g. while iterating on Rust code):</p>
 <pre><code>make build-claudemon     # cargo build --release in services/claudemon</code></pre>
-<p>The binary lands at <code>services/claudemon/target/release/claudemon</code>. <code>make build</code> also covers it. You only need to redo this when claudemon's source changes.</p>
+<p>The binary lands at <code>services/claudemon/target/release/claudemon</code>. <code>make build</code> also covers it.</p>
 <h3>build</h3>
 <pre><code>make build               # build all four components
 make build-hub           # go build the hub + mcp + brain binaries
@@ -232,8 +233,8 @@ hub → caller:   {"op":"result","id":"req-1","result":{...}}</code></pre>
 
     <section id="providers" class="doc">
 <h2>how agents are driven</h2>
-<p>work{spacer} drives three coding agents: Claude Code, Codex, and OpenCode. The provider type lives in <code>apps/desktop/src/renderer/src/types/pane.ts</code>:</p>
-<pre><code>type AgentProvider = 'claude' | 'codex' | 'opencode'</code></pre>
+<p>work{spacer} drives four coding agents: Claude Code, Codex, OpenCode, and Pi (beta). The provider type lives in <code>apps/desktop/src/renderer/src/types/pane.ts</code>:</p>
+<pre><code>type AgentProvider = 'claude' | 'codex' | 'opencode' | 'pi'</code></pre>
 <p><code>undefined</code> is treated as <code>'claude'</code> for back-compat, so any agent or config that predates multi-provider support keeps working.</p>
 <h3>the two tiers</h3>
 <p>There are two integration tiers, decided by provider.</p>
@@ -242,11 +243,13 @@ hub → caller:   {"op":"result","id":"req-1","result":{...}}</code></pre>
 <p>In the desktop main process (<code>apps/desktop/src/main/ipc.ts</code>), the <code>CLAUDE_SPAWN</code> handler routes any provider other than <code>claude</code> to <code>claudemonSessionClient.spawnManaged({ provider, cwd, model, bin })</code> instead of spawning a PTY.</p>
 <p>How each managed provider is driven (claudemon, <code>services/claudemon/src/providers/</code>):</p>
 <ul>
-<li><strong>Claude</strong>: observed indirectly via injected <strong>hooks</strong> (lifecycle events POSTed to claudemon), the <strong>JSONL transcript</strong> tail (<code>~/.claude</code>), and the <strong>statusLine</strong> (context % / cost / rate limits). This is the original behavior.</li>
+<li><strong>Claude (terminal transport)</strong>: observed indirectly via injected <strong>hooks</strong> (lifecycle events POSTed to claudemon), the <strong>JSONL transcript</strong> tail (<code>~/.claude</code>), and the <strong>statusLine</strong> (context % / cost / rate limits). This is the original behavior, kept behind <code>claude.transport: pty</code>.</li>
+<li><strong>Claude (headless transport — the default)</strong>: claudemon spawns <code>claude --print --input-format stream-json --output-format stream-json</code> (<code>claude_stream.rs</code>) and drives the control protocol directly: approvals and <code>AskUserQuestion</code>s arrive as <code>can_use_tool</code> control requests, and model / permission-mode switches go out as <code>set_model</code> / <code>set_permission_mode</code>. No PTY, so the pane is GUI-only. Hooks still run for headless sessions, so the hook-derived state machine agrees across both transports.</li>
 <li><strong>OpenCode</strong>: claudemon spawns <code>opencode serve</code> (headless HTTP, default <code>127.0.0.1:4096</code>, OpenAPI 3.1), creates/drives a session over HTTP, and consumes the <code>GET /event</code> SSE stream. Frames look like <code>{ "type": "&lt;entity&gt;.&lt;action&gt;", "properties": {…} }</code> (e.g. <code>session.idle</code>, <code>message.part.updated</code>, <code>permission.updated</code>). The translator is defensive: unknown event types and missing fields are ignored, not errors.</li>
 <li><strong>Codex</strong>: claudemon spawns <code>codex app-server</code> (JSON-RPC 2.0 over stdio, newline-delimited). It does <code>thread/start</code> (model + cwd), <code>turn/start</code> per prompt, and consumes notifications: <code>turn/started|completed|failed</code>, <code>item/started|completed</code>, <code>item/agentMessage/delta</code> (streamed text), <code>thread/tokenUsage/updated</code>, and approval requests (<code>item/commandExecution/requestApproval</code>, <code>item/fileChange/requestApproval</code>).</li>
+<li><strong>Pi</strong> (beta): claudemon spawns <code>pi --mode rpc</code> (LF-delimited JSONL over stdio), sends <code>{"type":"prompt", …}</code> per turn, and consumes the streamed lifecycle / text-delta / token-usage / tool events. Pi only gates tools when a permission extension is loaded; those prompts arrive over its Extension UI protocol and surface as normal approvals.</li>
 </ul>
-<p>The managed spawn endpoint is <code>POST /sessions/spawn-managed</code> in <code>services/claudemon/src/daemon/spawn.rs</code>. It accepts <code>opencode</code> and <code>codex</code> (other values 400). The session id is registered up front (<code>register_managed</code>) and returned immediately; the adapter boots in the background, so the card shows up while the server/process starts.</p>
+<p>The managed spawn endpoint is <code>POST /sessions/spawn-managed</code> in <code>services/claudemon/src/daemon/spawn.rs</code>. It accepts <code>opencode</code>, <code>codex</code>, <code>pi</code>, and <code>claude</code> (the headless transport; other values 400). The session id is registered up front (<code>register_managed</code>) and returned immediately; the adapter boots in the background, so the card shows up while the server/process starts.</p>
 <p>Internally each adapter is split into a pure per-provider <code>translate()</code> (native event → <code>AgentUpdate</code>s, unit-tested) and a shared <code>apply_updates</code> layer. <code>AgentUpdate</code> is the common vocabulary: <code>Idle</code>, <code>Busy</code>, <code>PermissionPending</code>, <code>AssistantText</code>, <code>UserText</code>, <code>ToolUse</code>, <code>Usage</code>, <code>Error</code>.</p>
 <p><strong>Approvals.</strong> Managed agents forward approval requests to the UI. When the adapter sees a request (<code>requestApproval</code> for Codex, a <code>permission.updated</code> event for OpenCode) it parks the request id and surfaces a pending approval, the same as a Claude one, so the user's decision is sent back to the agent. YOLO mode is the exception: it answers every request <code>accept</code> inline and never parks one.</p>
     </section>
@@ -447,7 +450,7 @@ go run ./cmd/mcp --addr 127.0.0.1:7897 --hub ws://127.0.0.1:7895/bus
     "workspacer": { "type": "http", "url": "http://127.0.0.1:7897/mcp" }
   }
 }</code></pre>
-<p>The 10 tools, each 1:1 with a hub capability:</p>
+<p>The facade registers around 38 tools, each 1:1 with a hub capability. The core driving set:</p>
 <ul>
 <li><code>list_agents</code>, running agents + state/usage/pending asks.</li>
 <li><code>get_transcript</code>, read a session's transcript.</li>
@@ -460,6 +463,7 @@ go run ./cmd/mcp --addr 127.0.0.1:7897 --hub ws://127.0.0.1:7895/bus
 <li><code>terminal_input</code>, write raw bytes into a PTY.</li>
 <li><code>notify</code>, show a desktop notification.</li>
 </ul>
+<p>The rest cover snapshots and conversations (<code>get_snapshot</code>, <code>list_snapshots</code>, <code>get_conversation</code>), models and resumable sessions (<code>list_models</code>, <code>list_resumable_sessions</code>), config and profiles (<code>get_config</code>, <code>reload_config</code>, <code>list/add/remove_profiles</code>), saved sessions and layouts, the library, analytics summaries, the approval gate, terminal resize, and path-scoped file/search access (<code>read_file</code>, <code>write_file</code>, <code>list_dir</code>, <code>search_project</code>). <code>cmd/mcp/main.go</code> is the authoritative list.</p>
 <p><code>spawn_agent</code> / <code>create_terminal</code> need the matching capabilities registered by a provider; the session runs headless in claudemon and a desktop pane can attach later. Authorization for the facade is a stubbed allow-all seam today (per-method capability tokens are the next milestone, not shipped).</p>
 <p>Note: the agent-driving capabilities (<code>agents.*</code>, <code>claude.*</code>, <code>sessions.*</code>) are normally provided by the Electron main process, so they only exist while the desktop app is running. <code>cmd/brain</code> is a standalone provider that fills the gap headlessly (backed by claudemon's HTTP API), and the hub can supervise it with <code>--brain-scope full</code> (headless) or <code>--brain-scope catalog</code> (alongside the app). So the MCP facade works with no GUI open.</p>
     </section>

@@ -229,7 +229,7 @@
 <section id="agents"><div class="wrap">
   <div class="sec-head">
     <div class="h2"># works with <span class="g">your agents</span></div>
-    <p class="sec-sub">Spawn any of three coding agents from the same dialog. Pick a repo, a model, a profile, and go. They all land in the same fleet.</p>
+    <p class="sec-sub">Spawn any of the supported coding agents from the same dialog. Pick a repo, a model, a profile, and go. They all land in the same fleet.</p>
   </div>
   <div class="agents">
     <div class="agent">
@@ -260,7 +260,7 @@
       <p>Driven over <span style="color:var(--cyan)">opencode serve</span>, a headless HTTP server with a typed SSE event stream. Messages, usage, and approvals map cleanly onto the fleet.</p>
     </div>
   </div>
-  <p class="agents-note">Every provider lands in the same Fleet Deck with the same telemetry. <b>Tier-1</b> runs an agent in a plain terminal pane; <b>Tier-2</b> drives the agent's own protocol so the GUI, approvals, and usage all light up.</p>
+  <p class="agents-note">Every provider lands in the same Fleet Deck with the same telemetry. <b>Tier-1</b> runs an agent in a plain terminal pane; <b>Tier-2</b> drives the agent's own protocol so the GUI, approvals, and usage all light up. A fourth adapter, <b>Pi</b>, ships in beta.</p>
 </div></section>
 
 <section id="panes"><div class="wrap">
@@ -278,6 +278,7 @@
     <div class="row"><span class="name">analytics</span><span class="desc">cost and token totals by project and model, plus recent sessions</span></div>
     <div class="row"><span class="name">overview</span><span class="desc">cross-agent stats, a rate-limit card, favourite dirs to spawn from</span></div>
     <div class="row"><span class="name">ask</span><span class="desc">turn a question into a supervisor agent that drives the rest</span></div>
+    <div class="row"><span class="name">agents</span><span class="desc">fleet monitor plus live watch panes for subagents and workflows</span></div>
     <div class="row"><span class="name">plugins</span><span class="desc">install, remove, and health-check sidecars that bring their own panes</span></div>
   </div>
 </div></section>
@@ -287,15 +288,15 @@
     <div class="copy">
       <div class="h2"># your layout, <span class="g">your way</span></div>
       <ul>
-        <li><b>Tabs, spatial, or stacked.</b> Switch layouts without remounting a single live pane, so nothing flickers or resets.</li>
-        <li><b>The Fleet Deck</b> is a radar of every live agent, on top of whatever view you are in.</li>
-        <li><b>Command palette,</b> remappable keybindings with leader chords, and around 18 themes.</li>
+        <li><b>Fleet and focus modes.</b> One key flips the whole chrome between a full cockpit and a distraction-free chat rail, without remounting a single live pane.</li>
+        <li><b>The Fleet Deck</b> is a radar of every live agent, on top of whatever you are doing.</li>
+        <li><b>Command palette,</b> remappable keybindings with leader chords, 18 built-in themes, and a theme maker for your own.</li>
         <li><b>Layout templates</b> you can save and recall, plus auto-resume after a restart or crash.</li>
       </ul>
     </div>
     <div class="term">
-      <div class="term-bar"><i></i><i></i><i></i><span class="title">view modes</span></div>
-      <div class="shot-body"><span class="cam">▤</span><span class="label">[ view modes + fleet deck ]</span></div>
+      <div class="term-bar"><i></i><i></i><i></i><span class="title">ui modes</span></div>
+      <div class="shot-body"><span class="cam">▤</span><span class="label">[ ui modes + fleet deck ]</span></div>
     </div>
   </div>
 </div></section>
@@ -305,10 +306,10 @@
     <div class="copy">
       <div class="h2"># check on it <span class="g">from anywhere</span></div>
       <ul>
-        <li><b>A web client</b> for your phone or another machine: agent list, chat, approvals, and a live terminal mirror.</li>
-        <li><b>The full app over the bus,</b> the real renderer served at <span style="color:var(--cyan)">/app</span> when sharing is on.</li>
+        <li><b>A phone PWA</b> at <span style="color:var(--cyan)">/m</span> you install from a QR code: fleet list, chat, big approve buttons, and background push when an agent needs you.</li>
+        <li><b>The full app over the bus,</b> the real renderer served at <span style="color:var(--cyan)">/app</span>, plus a lightweight terminal-mirror client at <span style="color:var(--cyan)">/remote</span>.</li>
         <li><b>Layout mirroring,</b> tmux style, keeps desktop and web in sync on cards, tabs, and the active tab.</li>
-        <li><b>Opt-in sharing</b> with a bearer token and a QR dialog, off by default.</li>
+        <li><b>Opt-in sharing</b> with a bearer token, a QR dialog, and one-tap HTTPS over Tailscale. Off by default.</li>
       </ul>
     </div>
     <div class="term">
@@ -342,9 +343,8 @@
     <p>Install the deps, run it in dev, and you are watching a fleet in a couple of minutes.</p>
     <div class="codeblock" style="text-align:left; max-width: 560px; margin: 0 auto 28px;">
       <div><span class="pr"></span>make install</div>
-      <div><span class="pr"></span>make build-claudemon</div>
       <div><span class="pr"></span>make dev</div>
-      <div class="out">  ↳ builds hub, starts the renderer, launches the app</div>
+      <div class="out">  ↳ builds the daemons, starts the renderer, launches the app</div>
     </div>
     <a class="btn btn-fill" href="docs.html">read the docs</a>
     <a class="btn btn-line" href="https://github.com/DJTouchette/workspacer">view on github</a>

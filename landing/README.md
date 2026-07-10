@@ -1,10 +1,11 @@
 # work{spacer} landing page
 
-Two self-contained pages with all styles inline, so you can open either one
+Three self-contained pages with all styles inline, so you can open any one
 straight in a browser with no build step.
 
 - `index.html` is the marketing page.
-- `docs.html` is the detailed docs (sidebar nav, one section per topic).
+- `docs.html` is the detailed user docs (sidebar nav, one section per topic).
+- `build.html` is the build & internals page (architecture, providers, plugins, MCP).
 
 ## Look
 
@@ -29,11 +30,11 @@ there are smaller slots in the feature cards and the split sections.
 ## Copy
 
 Written in a relaxed voice with no em dashes. The feature claims map to things
-that ship today: the three agent providers (Claude Code, Codex, OpenCode) with
-their two integration tiers, ambient awareness and the Triage Inbox, the GUI
-agent pane, the review pane, the pane types, view modes, the remote web client
-and the full app at `/app`, plugins, the MCP facade, and the desktop +
-claudemon + hub split.
+that ship today: the agent providers (Claude Code, Codex, OpenCode, and Pi in
+beta) with their two integration tiers, ambient awareness and the Triage Inbox,
+the GUI agent pane, the review pane, the pane types, UI modes (fleet/focus),
+the remote clients (the `/m` mobile PWA with push, `/remote`, and the full app
+at `/app`), plugins, the MCP facade, and the desktop + claudemon + hub split.
 
 ## Docs
 

@@ -129,7 +129,7 @@
 <li><strong>sessions live in the daemon, not the window.</strong> The session runs in <code>claudemon</code>, independent of any UI. Close the desktop window and the agent keeps running. A session spawned from somewhere else (the MCP facade, another agent) gets auto-adopted and shows up as a card on its own.</li>
 <li><strong>one card per session, everywhere.</strong> The same agent shows up exactly once whether you're looking from the desktop app, the terminal client, or a remote device, never doubled, never out of sync.</li>
 </ul>
-<p>You move between agents in the sidebar, or change how the whole fleet is laid out with view modes: <code>tabs</code> (a horizontal strip), <code>spatial</code> (a pan-zoom canvas), or <code>stacked</code> (a vertical feed). Switching modes never remounts your live panes. There's also a Fleet Deck, a cross-agent radar of live agent cards, as a higher-altitude view over the same sessions.</p>
+<p>You move between agents in the sidebar, and flip the whole chrome between two UI modes: <code>fleet</code> (the full cockpit, the default) and <code>focus</code> (a distraction-free chat rail with a compact attention badge). Switching modes never remounts your live panes. There's also a Fleet Deck, a cross-agent radar of live agent cards, as a higher-altitude view over the same sessions.</p>
 <h3>what's running on your machine</h3>
 <p>You launch one thing, the desktop app, but a few processes run behind it. You never start them by hand; the app does, and it restarts them if they crash.</p>
 <ul>
@@ -152,7 +152,7 @@
 <p>So work{spacer} can see what your Claude agents are doing, Claude needs to POST lifecycle events to the session daemon. That's a one-time setup that merges a small hook block into <code>~/.claude/settings.json</code>:</p>
 <pre><code>claudemon init                  # merge the hooks into ~/.claude/settings.json
 claudemon init --dry-run        # preview the merged file, write nothing</code></pre>
-<p>You only do this once per machine (per Claude config dir). Without it, Claude agents still run, but the live conversation view, state dots, and approval forwarding won't light up. Codex and OpenCode agents don't need this, they're driven directly.</p>
+<p>You only do this once per machine (per Claude config dir). Without it, Claude agents still run, but the live conversation view, state dots, and approval forwarding won't light up. Codex, OpenCode, and Pi agents don't need this, they're driven directly.</p>
 <h3>spawn your first agent</h3>
 <p>Hit <code>Ctrl+Shift+N</code> (or the <code>+</code> in the sidebar) to open the spawn dialog. Pick a <strong>working directory</strong> (the project you want the agent to work in), optionally name it, choose an agent backend (<strong>Claude Code</strong>, <strong>Codex</strong>, or <strong>OpenCode</strong>), and spawn. The agent shows up as a card in the sidebar and opens its workspace. Type in the composer at the bottom and you're off.</p>
 <p>Spawn a few more in other directories. Each one is its own workspace with its own tabs and panes. The sidebar shows every agent's live state at a glance, and the "<a href="#attention">N need you / N working</a>" header tells you who's blocked on a decision. See <a href="#agents-and-providers">running agents</a> for every field in the spawn dialog.</p>
@@ -169,31 +169,32 @@ claudemon init --dry-run        # preview the merged file, write nothing</code><
 
 <section id="agents-and-providers" class="doc">
 <h2>running agents</h2>
-<p>work{spacer} drives three coding agents, not one: <strong>Claude Code</strong>, <strong>Codex</strong>, and <strong>OpenCode</strong>. You pick the backend when you spawn an agent, and the rest of the app, the sidebar, the Fleet Deck, the inspector, the conversation view, treats them the same way: same state dots, same live transcript, same token/cost readouts, same approval prompts.</p>
+<p>work{spacer} drives four coding agents, not one: <strong>Claude Code</strong>, <strong>Codex</strong>, <strong>OpenCode</strong>, and <strong>Pi</strong> (beta). You pick the backend when you spawn an agent, and the rest of the app, the sidebar, the Fleet Deck, the inspector, the conversation view, treats them the same way: same state dots, same live transcript, same token/cost readouts, same approval prompts.</p>
 <h3>the spawn dialog</h3>
 <p>Open it with <code>Ctrl+Shift+N</code> or the <code>+</code> in the sidebar. It always asks for:</p>
 <ul>
 <li><strong>Working directory</strong>: type a path or hit <code>Browse…</code>. This is the agent's project folder, and the default folder for every pane it opens (its terminals, its git review, etc.).</li>
 <li><strong>Name (optional)</strong>: defaults to the folder name. You can rename it later.</li>
-<li><strong>Agent</strong>: pick <code>Claude Code</code>, <code>Codex</code>, or <code>OpenCode</code>.</li>
+<li><strong>Agent</strong>: pick <code>Claude Code</code>, <code>Codex</code>, <code>OpenCode</code>, or <code>Pi</code> (beta).</li>
+<li><strong>Permissions</strong>: a permission-mode picker, shared across providers. The shipped default is <strong>Full access</strong> (bypass permissions), so a fresh agent runs without approval prompts; pick a stricter mode and approvals come to you instead. You can also switch the mode live later, from the composer.</li>
 </ul>
 <p>If you pick <strong>Claude Code</strong>, a few more fields appear:</p>
 <ul>
 <li><strong>Resume session (optional)</strong>: if you've run Claude in this folder before, you can pick a previous conversation to continue instead of starting fresh. Each is listed by how long ago it ran plus a short summary. The default is to start fresh.</li>
-<li><strong>Model</strong>: leave it on the default (your Claude Code setting), pick a <code>Latest</code> alias, pick a model you've used before, or type a custom id (e.g. <code>opus</code>).</li>
+<li><strong>Model</strong>: defaults to <code>claude.defaultModel</code> from config (shipped: <code>opus[1m]</code>); pick a <code>Latest</code> alias, pick a model you've used before, or type a custom id (e.g. <code>opus</code>).</li>
 <li><strong>Profile (optional)</strong>: a saved bundle of model + config dir + extra args + a default set of MCP servers (see <a href="#configuration">configuration</a>). <code>Default</code> if you don't pick one.</li>
 <li><strong>MCP servers (optional)</strong>: tick which MCP servers from your Library to expose to this session. Only the ones you check are loaded.</li>
-<li><strong>Skip permissions</strong>: bypass all approval prompts for this agent. Flagged as dangerous, because it lets the agent run anything without asking.</li>
+<li><strong>Transport</strong>: <code>headless</code> (the default) drives Claude over its stream-json protocol via claudemon — a structured GUI-only session with no terminal view. <code>terminal</code> runs the classic interactive CLI in a PTY, giving you both the GUI and a raw terminal view.</li>
 </ul>
-<p>For <strong>Codex</strong> and <strong>OpenCode</strong> the extra Claude fields drop away. You get a free-text <strong>Model (optional)</strong> in that provider's own id format (e.g. <code>gpt-5.4</code> for Codex, <code>anthropic/claude-sonnet-4</code> for OpenCode; blank = the provider's default), and a <strong>YOLO mode</strong> toggle, the same skip-permissions idea: on, the agent accepts every approval itself; off, approvals come to you.</p>
+<p>For <strong>Codex</strong>, <strong>OpenCode</strong>, and <strong>Pi</strong> the extra Claude fields drop away. You get a free-text <strong>Model (optional)</strong> in that provider's own id format (e.g. <code>gpt-5.4</code> for Codex, <code>anthropic/claude-sonnet-4</code> for OpenCode; blank = the provider's default), and the same permission-mode picker, whose bypass option is that provider's <strong>YOLO mode</strong>: on, the agent accepts every approval itself; off, approvals come to you.</p>
 <p><code>Enter</code> in any field spawns; <code>Esc</code> cancels.</p>
 <h3>terminal-style vs managed agents</h3>
 <p>There's one difference worth knowing between the backends, in how their pane behaves:</p>
 <ul>
-<li><strong>Claude</strong> agents have both a rich GUI conversation view and a raw terminal view, and you can flip between them (see <a href="#agent-pane">the agent pane</a>).</li>
-<li><strong>Codex and OpenCode</strong> are <em>managed</em>: the session daemon drives them directly and renders the conversation, so they're GUI-only, there's no terminal to flip to. They still surface the same state, telemetry, and approval prompts as Claude.</li>
+<li><strong>Claude on the terminal transport</strong> has both a rich GUI conversation view and a raw terminal view, and you can flip between them (see <a href="#agent-pane">the agent pane</a>).</li>
+<li><strong>Everything else is <em>managed</em></strong> — Claude on the default headless transport, Codex, OpenCode, and Pi: the session daemon drives the agent's own protocol directly and renders the conversation, so they're GUI-only, there's no terminal to flip to. They still surface the same state, telemetry, and approval prompts.</li>
 </ul>
-<p>Whatever the backend, approvals work the same: when an agent wants to run something it can't on its own, the request comes to you (in the pane, the sidebar card, or the Triage Inbox) unless you turned on skip-permissions / YOLO for that agent.</p>
+<p>Whatever the backend, approvals work the same: when an agent wants to run something it can't on its own, the request comes to you (in the pane, the sidebar card, or the Triage Inbox) unless that agent is in a bypass / YOLO permission mode — which is the shipped default, so tighten the mode at spawn (or live from the composer) if you want to be asked.</p>
 <h3>agents started elsewhere show up automatically</h3>
 <p>You don't have to start every agent from the window. A session spawned by a supervisor, by the MCP facade, by the terminal app, or on another machine, gets <strong>auto-adopted</strong>: it appears as its own card as soon as it's running, deduped so you never see the same session twice across clients. If it was spawned as a child of another agent, it nests under that parent in the sidebar.</p>
 <h3>supervisor agents</h3>
@@ -210,7 +211,7 @@ claudemon init --dry-run        # preview the merged file, write nothing</code><
 <section id="agent-pane" class="doc">
 <h2>the agent pane</h2>
 <p>The agent pane is where you actually talk to a coding agent. Each agent workspace has one, backed by a long-lived <code>claudemon</code> session that lives in the daemon, not in the window. Close the tab, the session keeps running.</p>
-<p>It has two surfaces: a rich <strong>GUI</strong> view and a raw <strong>terminal</strong> view. For a Claude agent you get both and can flip between them. Codex and OpenCode run as managed sessions through <code>claudemon</code>'s adapters, so they are GUI-only (no PTY to show). Plain terminal-only agents lock to the terminal view.</p>
+<p>It has two surfaces: a rich <strong>GUI</strong> view and a raw <strong>terminal</strong> view. A Claude agent on the <strong>terminal transport</strong> gets both and can flip between them. Everything else — Claude on the default <strong>headless</strong> transport, Codex, OpenCode, and Pi — runs as a managed session through <code>claudemon</code>'s adapters, so it is GUI-only (no PTY to show). Plain terminal-only agents lock to the terminal view.</p>
 <p>The toggle lives at the bottom-right of the pane: <code>GUI</code> / <code>Term</code>. It only appears when the provider offers both surfaces. Both views stay mounted at once, so switching never loses your scroll position, your draft, or the PTY.</p>
 <h3>gui mode vs terminal mode</h3>
 <p><strong>Terminal mode</strong> is the real thing: a live <code>xterm</code> view of the agent's PTY, exactly what you'd see in a normal terminal. Standard terminal keys work, plus:</p>
@@ -224,18 +225,20 @@ claudemon init --dry-run        # preview the merged file, write nothing</code><
 <li>Messages as a clean back-and-forth timeline.</li>
 <li>Tool runs collapsed into a <strong>work card</strong> between the things the agent said. A card reads as "N steps", shows files-changed counts and a <code>+added −removed</code> line, and expands to the individual steps. The most recent card stays open; older ones collapse.</li>
 <li>Inline diffs for <code>Edit</code> / <code>MultiEdit</code> / <code>NotebookEdit</code> and inline read previews, rendered right inside the expanded work card.</li>
+<li>A <strong>Changed files</strong> card at the end of each completed turn: a frozen per-turn summary of what that turn touched, expandable to the diffs.</li>
 <li>Approvals and questions docked where you're about to type (see below).</li>
 <li>A composer at the bottom and an optional inspector rail on the right.</li>
 </ul>
-<p>Which view opens first: a pane spawned with a seed prompt always opens in GUI. Otherwise it honours <code>claude.defaultView</code>, which defaults to <code>terminal</code>. Set the default under Settings → Session, or via the config key <code>claude.defaultView</code> (<code>gui</code> | <code>terminal</code>).</p>
+<p>Which view opens first: a pane spawned with a seed prompt always opens in GUI, and a managed (headless / Codex / OpenCode / Pi) session is always GUI. For a terminal-transport Claude pane it honours <code>claude.defaultView</code>, which defaults to <code>terminal</code>. Set the default under Settings → Session, or via the config key <code>claude.defaultView</code> (<code>gui</code> | <code>terminal</code>).</p>
 <h3>the composer</h3>
 <p>The composer is the input box at the bottom of the GUI view. It's a multi-line, auto-growing textarea (grows to about 8 lines, then scrolls).</p>
 <ul>
 <li><code>Enter</code> sends. <code>Shift+Enter</code> inserts a newline. Those two hints sit right under the box.</li>
 <li>The send button (<code>↑</code>) is shown by default; hide it with <code>ui.showComposerSend: false</code> and <code>Enter</code> still sends.</li>
-<li>Sends go through <code>claudemon</code>'s message endpoint, which writes the whole line atomically and <strong>buffers</strong> a message sent while the agent is mid-turn or still starting, flushing it the moment the prompt is ready. So you can fire a follow-up without waiting. If the daemon rejects the send (approval / question / stopped modes), it falls back to a raw PTY write.</li>
+<li>Sends go through <code>claudemon</code>'s message endpoint, which writes the whole line atomically and <strong>buffers</strong> a message sent while the agent is mid-turn or still starting, flushing it the moment the prompt is ready. So you can fire a follow-up without waiting.</li>
 <li>Your message shows up immediately (optimistic), before the transcript catches up.</li>
 </ul>
+<p><strong>Session pills.</strong> Above the box sit three control pills — the <strong>model</strong>, the <strong>reasoning effort</strong>, and the <strong>permission mode</strong> (e.g. "Opus 4.5 ▾ · High ▾ · Full access ▾"). Each is a live switch: change the model or the permission mode mid-session and it takes effect without a respawn, on every provider that supports it.</p>
 <p><strong>Attaching files.</strong> Three ways, all land as chips above the box:</p>
 <ul>
 <li><strong>Drag and drop</strong> anywhere onto the active pane.</li>
@@ -245,13 +248,14 @@ claudemon init --dry-run        # preview the merged file, write nothing</code><
 <p>Attaching a file auto-switches you to GUI mode. Files are prepended to your message as a path prefix when you send.</p>
 <p><strong>Cancel.</strong> While the agent is working, a streaming indicator shows with a <strong>Cancel</strong> button. <code>Esc</code> cancels too (it sends Escape to the session). Cancelling suppresses the streaming UI until the next activity cycle.</p>
 <h3>the inspector rail</h3>
-<p>A 280px rail on the right edge of the pane. Toggle it with the <code>PanelRight</code> button in the status bar or with <code>Ctrl+Shift+E</code> (configurable as the <code>toggle-inspector</code> shortcut). Its open/closed state persists across sessions. The rail is a sibling of the content area, so it stays put whether you're in GUI or terminal mode.</p>
-<p>Four tabs, each with a count badge:</p>
+<p>A 320px rail on the right edge of the pane. Toggle it with the <code>PanelRight</code> button in the status bar or with <code>Ctrl+Shift+E</code> (configurable as the <code>toggle-inspector</code> shortcut). Its open/closed state persists across sessions. The rail is a sibling of the content area, so it stays put whether you're in GUI or terminal mode.</p>
+<p>Five tabs, each with a count badge:</p>
 <ul>
 <li><strong>Files</strong>: every path the agent touched this session, most-recent first, with a <code>+</code>/<code>~</code> marker (write vs edit) and a <code>×N</code> touch count. Click a row to open it in the Review pane.</li>
+<li><strong>Plan</strong>: the agent's live todo list, with a <code>done/total</code> progress badge.</li>
 <li><strong>Flows</strong> ("Workflows"), workflow runs, with a "N running" header when any are live.</li>
 <li><strong>Agents</strong>: subagents spawned this session.</li>
-<li><strong>Usage</strong>: model, a context-window bar, 5-hour and 7-day rate-limit bars (with reset times when known), and totals for input tokens, output tokens, cost, and tool calls.</li>
+<li><strong>Usage</strong>: model, a context-window bar, 5-hour / 7-day / monthly rate-limit bars (with reset times when known, plus any rate-limit warning), and totals for input tokens, output tokens, cost, and tool calls.</li>
 </ul>
 <p>The rail opens on whatever's active: a running workflow wins, then a running subagent, else Files.</p>
 <h3>subagent and workflow telemetry</h3>
@@ -266,10 +270,12 @@ claudemon init --dry-run        # preview the merged file, write nothing</code><
 <p>When the agent needs a permission or asks you something, it surfaces in the <strong>needs-you dock</strong> pinned right above the composer (not buried in scrollback). The approval gate is enabled per session as soon as it connects, so <code>PreToolUse</code> hooks get parked for the UI to resolve.</p>
 <ul>
 <li><strong>Approvals</strong> show the tool name and its input as JSON, with <strong>Allow</strong> and <strong>Deny</strong> buttons. One click resolves it.</li>
-<li><strong>Questions</strong> (the agent's <code>AskUserQuestion</code>) render as a picker: numbered option buttons (press the number, or click), plus an "Or type a custom answer" box for single questions. When several are queued the dock reads "1 of N".</li>
+<li><strong>Questions</strong> (the agent's <code>AskUserQuestion</code>) render as a picker: numbered option buttons (press the number, or click), multi-select where the question allows it, plus an "Or type a custom answer" box for single questions. Multi-part questions get a stepper with dot progress and a back affordance. There's also a <strong>Decline &amp; stop</strong> button that cancels the agent's turn instead of answering, for when the question itself is off the rails.</li>
 </ul>
-<p>A pending question always wins over an approval, since the agent can fire both in the same turn and the approval is stale once the picker is up. Responses dismiss optimistically so the UI feels instant while the answer round-trips.</p>
+<p>A pending question always wins over an approval, since the agent can fire both in the same turn and the approval is stale once the picker is up. Responses dismiss optimistically so the UI feels instant while the answer round-trips. Every resolved question leaves a persistent <strong>answered card</strong> in the scrollback — a durable record of what was asked and what you chose (including a decline).</p>
 <p>You don't have to be in the pane. The same prompts also appear in the sidebar <strong>agent cards</strong> and in the top-level <strong>Triage Inbox</strong> drawer, both reusing the exact same <code>ApprovalPrompt</code> / <code>QuestionPicker</code> so resolution behaves identically wherever you answer. To get to the next agent waiting on you without hunting, press <code>Ctrl+Shift+Space</code> (the <code>next-attention</code> shortcut).</p>
+<h3>handing off to another agent</h3>
+<p>Any agent can hand its work to a fresh one, including across providers (Claude → Codex, Codex → OpenCode, whatever). A handoff asks claudemon to build a <strong>brief</strong> — a structured summary of the task, the state, and the loose ends, written to <code>~/.workspacer/handoffs/</code> — either deterministically from the session or authored by the outgoing agent itself. The successor spawns with its composer pre-filled to read the brief, so it starts with context instead of a cold prompt.</p>
 </section>
 
 <section id="panes" class="doc">
@@ -314,6 +320,10 @@ claudemon init --dry-run        # preview the merged file, write nothing</code><
 <li>Cross-agent stats and plugin status (the same <code>sidecar.*</code> health colors as the Plugins Manager).</li>
 <li><strong>Favourite and recent directories</strong> to spawn into. Star a dir to favourite it; clicking one publishes a <code>command.spawn_agent</code> on the hub bus to start a new agent there. Favourites/recents live in <code>config.directories</code>.</li>
 </ul>
+<h3>agents / agent watch</h3>
+<p>Fleet-monitoring panes. The <strong>Agents</strong> pane is a live timeline of a session's subagents. Clicking a running subagent or workflow in the inspector opens a dedicated <strong>watch pane</strong> that follows just that run — its status, tools, and tokens — while the parent keeps working. There's also a standalone <strong>inspector</strong> pane: the same card as the inspector rail, pinnable as a tab (it's what a Fleet Deck card expands into, too).</p>
+<h3>markdown preview</h3>
+<p>A read-only rendered view of a markdown file (<code>mdpreview</code>), opened from file links in chat and tool cards. File paths in the conversation are clickable: markdown opens here, anything else opens externally or reveals in the file manager.</p>
 <h3>ask ("ask the fleet")</h3>
 <p>Turns a question into a supervisor agent. You type a question (or pick a preset chip: <strong>Standup</strong>, <strong>Triage</strong>, <strong>Audit</strong>, <strong>Cost</strong>), and it spawns a Claude with the workspacer MCP facade attached so it can observe and coordinate the rest of the fleet. The supervisor is rendered nested under its parent. If the pane was opened scoped to one agent (<code>scopeAgentId</code>), it pre-fills "About \&lt;name\&gt;: " and spawns the supervisor as that agent's child; otherwise it's fleet-wide. Existing supervisors are listed so you can jump back to them. The presets reference each session as <code>session:&lt;id&gt;</code>, which the pane resolves into clickable links.</p>
 <h3>plugins manager</h3>
@@ -321,24 +331,23 @@ claudemon init --dry-run        # preview the merged file, write nothing</code><
 <h3>plugin pane</h3>
 <p>A generic webview host for a plugin's own UI, built on the browser pane. This is how any plugin surface appears (agent dashboards, the rules-engine editor, the sandboxed editor, etc.). For an agent-scoped pane (it has both a <code>pluginId</code> and a <code>cwd</code>), the pane mints an <strong>ephemeral bus token confined to that agent's directory</strong> on mount and revokes it on unmount, so the plugin reaches only that project's files instead of the broader static per-plugin token. If there's nothing to scope, or minting isn't available (web build, hub momentarily down), it loads the URL with its baked-in static token, so the webview always loads. Plugins get <code>--wks-*</code> theme tokens and their settings injected.</p>
 <h3>settings</h3>
-<p>A searchable settings pane with these sections: Appearance, Layout, Terminal, Keybindings, Notifications, Session, Browser, Editor, Apps, Claude Profiles, Supervisor, Plugins. All settings persist to config. The search box filters sections by keyword.</p>
+<p>A searchable settings pane with these sections: Appearance, Layout, Terminal, Keybindings, Notifications, Session, Browser, Editor, Apps, Claude Profiles, Supervisor, Updates, Plugins. All settings persist to config. The search box filters sections by keyword.</p>
 <h3>bottom terminal drawer</h3>
 <p>Not a tab pane. A VS Code-style integrated terminal that slides up from the bottom across the full content width (it follows the sidebar's left edge). Toggle it with <code>Ctrl+\</code><code> (also a close button; </code>Esc<code> does not close it, since </code>Esc<code> is a real key inside a terminal). Height is </code>40vh`. It spawns in the current cwd, captured at first open. It's mounted on first open and then kept mounted forever (toggling just slides it off-screen), so the PTY keeps running and scrollback survives.</p>
 </section>
 
 <section id="layout-and-navigation" class="doc">
 <h2>layout and navigation</h2>
-<p>work{spacer} keeps every agent's tabs and panes mounted at all times. The whole navigation layer (view modes, the Fleet Deck, the command palette, keybindings) is about getting you to the pane you want without ever tearing down the live session underneath it.</p>
-<h3>view modes</h3>
-<p>Three ways to arrange one agent's tabs. Set globally with <code>config.panes.viewMode</code>, default <code>tabs</code>. Cycle them with the <code>cycle-view</code> action (default chord <code>Ctrl+Space V</code>).</p>
+<p>work{spacer} keeps every agent's tabs and panes mounted at all times. The whole navigation layer (UI modes, the Fleet Deck, the command palette, keybindings) is about getting you to the pane you want without ever tearing down the live session underneath it.</p>
+<h3>ui modes</h3>
+<p>One agent's tabs render as a horizontal strip of tab cards, the classic editor layout. On top of that sit two <strong>UI modes</strong>, lenses that decide how much chrome you see. Set with <code>config.ui.mode</code> (default <code>fleet</code>), toggled with the <code>toggle-ui-mode</code> action (default <code>Ctrl+Shift+M</code>):</p>
 <ul>
-<li><strong>tabs</strong> (default), a horizontal strip of tab cards. The classic editor layout.</li>
-<li><strong>spatial</strong>: a pan/zoom canvas. Each tab is a draggable, resizable card on an infinite grid. Drag the background to pan, Ctrl/scroll-wheel to zoom (clamped <code>0.25</code>–<code>2.5</code>, the world point under the cursor stays fixed). Cards snap to a 20-unit grid; a never-placed card lands in a default 3-column layout (<code>560x400</code>).</li>
-<li><strong>stacked</strong>: a vertical feed (Instagram-style) of full-width cards in natural tab order. The scroll loops at the top and bottom. Older configs that say <code>timeline</code> are read as <code>stacked</code> for back-compat.</li>
+<li><strong>fleet</strong> (default): the full cockpit — full sidebar, inspector rail, Fleet Deck, the full attention chrome.</li>
+<li><strong>focus</strong>: chat-first — the sidebar collapses to a thin rail, the inspector rail and Fleet Deck hide, and attention shrinks to a compact "N need you" badge you can still click to triage.</li>
 </ul>
-<p>The important guarantee: switching view mode never remounts a pane. The mode is just a different layout over the same mounted tab cards, so a running terminal, a streaming Claude conversation, or a loaded browser keeps going untouched. Inactive agents stay mounted too (hidden with <code>display:none</code>), so switching agents doesn't remount either.</p>
+<p>The important guarantee: switching UI mode never remounts a pane. A mode only changes which chrome is visible around the same mounted tab cards, so a running terminal, a streaming conversation, or a loaded browser keeps going untouched. Inactive agents stay mounted too (hidden with <code>display:none</code>), so switching agents doesn't remount either.</p>
 <h3>the fleet deck</h3>
-<p>The Fleet Deck is a cross-agent radar, a separate altitude that sits <em>orthogonal</em> to view mode. View mode arranges one agent's panes; the deck shows all your agents at once.</p>
+<p>The Fleet Deck is a cross-agent radar, a separate altitude that sits <em>orthogonal</em> to UI mode. Inside an agent you arrange that agent's panes; the deck shows all your agents at once.</p>
 <ul>
 <li>Stored as <code>config.panes.viewLevel</code>: <code>piloting</code> (inside one agent, the default) vs <code>fleet</code> (the deck).</li>
 <li>Toggle with the <code>toggle-fleet</code> action, default <code>Ctrl+Shift+F</code>. <code>Esc</code> exits the deck back to piloting (when the inbox isn't capturing keys).</li>
@@ -369,6 +378,7 @@ claudemon init --dry-run        # preview the merged file, write nothing</code><
 <li><code>command-palette</code> <code>Ctrl+Shift+P</code></li>
 <li><code>next-agent</code> <code>Ctrl+Tab</code>, <code>prev-agent</code> <code>Ctrl+Shift+Tab</code></li>
 <li><code>next-attention</code> <code>Ctrl+Shift+Space</code> (jump to the next agent waiting on you)</li>
+<li><code>toggle-ui-mode</code> <code>Ctrl+Shift+M</code> (flip fleet ⇄ focus)</li>
 <li><code>spawn-agent</code> <code>Ctrl+Shift+N</code></li>
 <li><code>settings</code> <code>Ctrl+,</code></li>
 <li><code>save-session</code> <code>Ctrl+Shift+S</code></li>
@@ -391,12 +401,12 @@ claudemon init --dry-run        # preview the merged file, write nothing</code><
 <li>New ▸ <code>n t</code> terminal, <code>n c</code> Claude, <code>n b</code> browser</li>
 <li>Tab ▸ <code>t [</code> prev, <code>t ]</code> next, <code>t ,</code> move left, <code>t .</code> move right, <code>t r</code> rename, <code>t w</code> close pane</li>
 <li>Pane ▸ <code>p s</code> split, <code>p c</code> quick split, <code>p h/j/k/l</code> focus left/down/up/right</li>
-<li><code>v</code> cycle view mode</li>
 </ul>
 <p><strong>Remap capture.</strong> Settings ▸ Keybindings lets you rebind any action by clicking its field and pressing the keys. Press a combo for a direct binding, or press the prefix first then a key to record a chord. Digit-range actions capture as "modifier + digit". Each row has a <code>↺</code> reset-to-default. The prefix itself is rebindable (it must be a real combo, not a bare modifier).</p>
 <p><strong>Shortcut overlay.</strong> <code>F1</code> (<code>toggle-help</code>) opens a full cheatsheet grouped by section. There's also a <strong>chord hint</strong>: the moment you press the prefix, a which-key style indicator appears bottom-right and follows you into submenus, listing the keys available at the current level. Turn it down to a minimal indicator with Settings ▸ Keybindings ▸ Chord hints (<code>config.keybindings.chordHints</code>, default on).</p>
 <h3>themes</h3>
-<p>About 18 themes, each a set of color tokens injected as <code>--wks-*</code> CSS variables on the document root (and into plugin webviews). Set with <code>config.ui.theme</code>, default <code>dark</code>. The shipped set: <code>dark</code>, <code>light</code>, <code>midnight</code>, <code>solarized-dark</code>, <code>dracula</code>, <code>nord</code>, <code>monokai</code>, <code>github-dark</code>, <code>gruvbox</code>, <code>tokyo-night</code>, <code>one-dark</code>, <code>rose-pine</code>, <code>cyberpunk</code>, <code>catppuccin-mocha</code>, <code>everforest</code>, <code>kanagawa</code>, <code>ayu-dark</code>, <code>synthwave</code>. Corner style and radius are derived from the theme too (rounded / soft / square).</p>
+<p>18 built-in themes, each a set of color tokens injected as <code>--wks-*</code> CSS variables on the document root (and into plugin webviews). Set with <code>config.ui.theme</code>, default <code>dark</code>. The shipped set: <code>dark</code>, <code>light</code>, <code>midnight</code>, <code>solarized-dark</code>, <code>dracula</code>, <code>nord</code>, <code>monokai</code>, <code>github-dark</code>, <code>gruvbox</code>, <code>tokyo-night</code>, <code>one-dark</code>, <code>rose-pine</code>, <code>cyberpunk</code>, <code>catppuccin-mocha</code>, <code>everforest</code>, <code>kanagawa</code>, <code>ayu-dark</code>, <code>synthwave</code>. Corner style and radius are derived from the theme too (rounded / soft / square).</p>
+<p>Beyond the built-ins there's a <strong>theme maker</strong> (Settings ▸ Appearance): start from any built-in, edit the tokens, and save it as a custom theme. Custom themes live in config under <code>ui.customThemes</code>, keyed as <code>custom:&lt;slug&gt;</code>, and are selectable like any built-in.</p>
 <h3>layout templates</h3>
 <p>Save and restore named arrangements of directories plus panes. Open via the command palette ("Layouts…") or the Layouts dialog. "Save current" captures your non-global agents (their cwds and panes) under a name. Restoring a layout spawns fresh agents for its directories, so a template is a reusable starting point, not a live snapshot of running sessions. Backed by <code>layoutsSave</code> / <code>layoutsList</code> / <code>layoutsDelete</code>.</p>
 <h3>session save and restore</h3>
@@ -458,7 +468,7 @@ claudemon init --dry-run        # preview the merged file, write nothing</code><
 <p>The agent label is the basename of its working directory. Clicking a notification restores and focuses the window and jumps the renderer to that agent.</p>
 <p><strong>Suppressed for the watched agent.</strong> With <code>onlyWhenUnwatched</code> on (the default), no notification fires for the exact session you currently have on screen with the window focused. The renderer keeps the main process informed of which session is active as you switch agents.</p>
 <p><strong>Taskbar flash.</strong> On a needs-you event, when the window isn't focused, work{spacer} flashes the taskbar (the Windows "attention" signal). The flash stops as soon as you focus the window.</p>
-<p>There is no tray icon or taskbar overlay badge today.</p>
+<p>There is no tray icon or taskbar overlay badge today. Away from the desk entirely, the <a href="#remote">mobile PWA</a> delivers the same needs-approval / needs-input alerts as background push notifications on your phone.</p>
 <h3>notification config</h3>
 <p>The <code>notifications</code> block in config (Settings ▸ Notifications) has four keys, all booleans:</p>
 <ul>
@@ -474,30 +484,31 @@ claudemon init --dry-run        # preview the merged file, write nothing</code><
 <h2>remote and multi-client</h2>
 <p>Because your sessions live in the background daemon rather than in any one window, you can watch and drive the same fleet from more than one place at once: the desktop app, the terminal app, your phone, a second PC, or a full web app in a browser. They all see the same agents, and a layout change on one mirrors to the others like tmux clients on one session. Most of the time you'll just use the desktop app; this section is about reaching your fleet from somewhere else.</p>
 <h3>remote sharing is opt-in</h3>
-<p>By default nothing about your fleet is reachable from off your machine, everything stays on localhost. To share it to another device you launch with one environment variable set:</p>
+<p>By default nothing about your fleet is reachable from off your machine, everything stays on localhost. Sharing is a <strong>runtime toggle</strong>: open <strong>Remote control</strong> (the phone icon in the Hub status row) and hit <strong>Start sharing</strong>. Two environment variables cover the launch-time cases:</p>
 <ul>
-<li><code>WORKSPACER_REMOTE_SHARE=1</code> turns on remote sharing.</li>
-<li><code>WORKSPACER_REMOTE_ADDR=host:port</code> (optional) pins the address it listens on. Set it to your <strong>tailnet IP</strong> so it's only reachable over your private network, not the whole LAN.</li>
+<li><code>WORKSPACER_REMOTE_SHARE=1</code> forces sharing on from launch (useful for testing, or a machine that should always share).</li>
+<li><code>WORKSPACER_REMOTE_ADDR=host:port</code> (optional) pins the address it listens on (default <code>0.0.0.0:7895</code>). Set it to your <strong>tailnet IP</strong> so it's only reachable over your private network, not the whole LAN.</li>
 </ul>
 <p>When sharing is on, access is gated by a secret token (generated once and stored in your config dir). Anyone with the token-bearing URL gets full control, so treat it like a password.</p>
-<blockquote>The intended transport is a <strong>Tailscale tailnet</strong>, not the open internet. The connection isn't encrypted on its own, so keep both devices on the same trusted private network.</blockquote>
+<blockquote>The intended transport is a <strong>Tailscale tailnet</strong>, not the open internet. The connection isn't encrypted on its own, so keep both devices on the same trusted private network — or use the one-tap <strong>HTTPS via Tailscale</strong> option in the share dialog, which fronts the hub at <code>https://&lt;your-node&gt;.ts.net</code> via <code>tailscale serve</code>.</blockquote>
 <h3>the share dialog (QR)</h3>
 <p>Open <strong>Remote control</strong> from the phone icon in the Hub status row at the bottom of the sidebar.</p>
 <ul>
-<li><strong>Sharing off:</strong> the dialog tells you to relaunch with <code>WORKSPACER_REMOTE_SHARE=1</code> (and offers the optional address pin).</li>
+<li><strong>Sharing off:</strong> a <strong>Start sharing</strong> button binds the hub to your network on the spot, no relaunch needed.</li>
 <li><strong>Sharing on:</strong> it shows a <strong>QR code</strong> of the ready-to-use URL, point your phone camera at it and tap, plus copy buttons for the URL and the token (masked behind a show/hide eye). Pick what the QR points at with the <strong>Full app</strong> / <strong>Mobile</strong> tabs.</li>
+<li><strong>HTTPS via Tailscale:</strong> an Enable button runs <code>tailscale serve</code> for you, so the QR and URLs switch to <code>https://&lt;node&gt;.ts.net/…</code>. This is what gives the mobile PWA a secure context, which installing it and push notifications require.</li>
 </ul>
 <p>The same URL and token also show in the Hub status row, where the dot turns green once the bus is connected.</p>
 <h3>the web clients</h3>
-<p>Three browser clients, no install on the remote device:</p>
+<p>Three browser clients, nothing to install on the remote device (though the mobile one is installable if you want it on your home screen):</p>
 <ul>
-<li><strong>Mobile</strong>: a phone-first, decision-first client, a live fleet list, a "Needs You" queue of approvals and questions with big approve/answer buttons, and per-agent chat. This is what the QR points at by default. Best for clearing approvals from your couch.</li>
-<li><strong>Terminal mirror</strong>: a lightweight client with the agent list, chat, approvals, and a live mirror of the agent's real terminal. Works offline over Tailscale.</li>
-<li><strong>Full app</strong>: the complete work{spacer} interface running in the browser, with full desktop parity. Available when sharing is on and a web build is present.</li>
+<li><strong>Mobile</strong> (<code>/m</code>): a phone-first, decision-first client — a live fleet list, a "Needs You" queue of approvals and questions with big approve/answer buttons, per-agent chat, and spawn. It's an <strong>installable PWA</strong>: add it to your home screen (over the HTTPS/Tailscale option) and it delivers <strong>background push notifications</strong> when an agent needs you, deep-linking straight to that agent — even with the browser closed. This is what the QR points at by default.</li>
+<li><strong>Terminal mirror</strong> (<code>/remote</code>): a lightweight client with the agent list, chat, approvals, and a live mirror of the agent's real terminal. Works offline over Tailscale.</li>
+<li><strong>Full app</strong> (<code>/app</code>): the complete work{spacer} interface running in the browser, with full desktop parity. Available when sharing is on and a web build is present.</li>
 </ul>
 <h3>what mirrors, and what stays put</h3>
 <ul>
-<li><strong>Layout mirrors.</strong> Your agent cards, tabs, active tab, and view mode are shared, so every client shows the same arrangement. With one person driving at a time, that just works; the last change wins.</li>
+<li><strong>Layout mirrors.</strong> Your agent cards, tabs, and active tab are shared, so every client shows the same arrangement. With one person driving at a time, that just works; the last change wins.</li>
 <li><strong>One card per agent.</strong> The same session never doubles up across clients, the desktop, the web app, and your phone all show one card for it.</li>
 <li><strong>Terminals stream on demand.</strong> A live terminal is only mirrored to a client while that client is actually watching it, so you're not streaming build logs to a phone in your pocket.</li>
 <li><strong>No window needed.</strong> Remote clients keep working even with the desktop app closed, the background daemons serve them on their own.</li>
@@ -518,7 +529,7 @@ claudemon init --dry-run        # preview the merged file, write nothing</code><
 <blockquote>Installing a plugin downloads and runs code from the internet, like a VS Code extension. Only install plugins you trust.</blockquote>
 <h3>let an agent drive the fleet (MCP)</h3>
 <p>work{spacer} can expose your whole fleet to a coding agent as MCP tools, so an agent (or any MCP client) can list your agents, read a transcript, spawn new agents, send prompts, approve/answer prompts, and post notifications, on your behalf. This is what powers the <strong>supervisor</strong> agents you spawn from the Ask pane, but you can also attach it to a Claude Code session of your own.</p>
-<p>The tools an MCP client gets:</p>
+<p>The core tools an MCP client gets:</p>
 <ul>
 <li><code>list_agents</code>, the running agents with their state, usage, and any pending asks.</li>
 <li><code>get_transcript</code>, read a session's conversation.</li>
@@ -528,7 +539,7 @@ claudemon init --dry-run        # preview the merged file, write nothing</code><
 <li><code>signal</code> / <code>terminal_input</code>, interrupt/stop an agent or type into a shell.</li>
 <li><code>notify</code>, raise a desktop notification.</li>
 </ul>
-<p>The setup and the exact endpoint to point an MCP client at live on the <a href="build.html#mcp">build &amp; internals</a> page. It keeps working even with the desktop window closed.</p>
+<p>That's the driving set; the facade exposes the hub's whole capability surface — around 38 tools in all, covering session snapshots and conversations, config and profiles, saved sessions and layouts, the library, analytics, and path-scoped file/search access. The setup and the exact endpoint to point an MCP client at live on the <a href="build.html#mcp">build &amp; internals</a> page. It keeps working even with the desktop window closed.</p>
 <h3>the terminal client (wks-tui)</h3>
 <p><code>wks-tui</code> is a full terminal cockpit over the same fleet, for when you'd rather stay on the keyboard or you're on a box with no GUI. It sees and drives every agent the desktop app does. Start it standalone, it brings up whatever background daemons it needs on its own, or point it at a remote machine's bus.</p>
 <ul>
@@ -566,29 +577,32 @@ claudemon init --dry-run        # preview the merged file, write nothing</code><
 <h3>config.yaml, the settings file</h3>
 <p>Edit it directly or use the Settings pane (<code>Ctrl+,</code>). Missing keys fall back to defaults, so a partial file is fine. The notable sections and their defaults:</p>
 <ul>
-<li><strong>ui</strong>: <code>animations: false</code>, <code>theme: dark</code>, <code>fontFamily: "Inter, system-ui, sans-serif"</code>, <code>fontSize: 14</code>, <code>borderRadius: 8</code>, <code>navBarHeight: 34</code>, <code>paneHeaderHeight: 22</code>, <code>showComposerSend: true</code>, <code>guiFontScale: 1.15</code>, <code>diffView: stacked</code> (<code>stacked</code> | <code>inline</code> | <code>split</code>). <code>cornerStyle</code> and <code>borderColor</code> are blank by default (use the theme's own).</li>
+<li><strong>ui</strong>: <code>animations: false</code>, <code>theme: dark</code>, <code>mode: fleet</code> (<code>fleet</code> | <code>focus</code>, the UI-mode lens), <code>customThemes</code> (the theme maker's saved themes, keyed <code>custom:&lt;slug&gt;</code>), <code>fontFamily: "Inter, system-ui, sans-serif"</code>, <code>fontSize: 14</code>, <code>borderRadius: 8</code>, <code>navBarHeight: 34</code>, <code>paneHeaderHeight: 22</code>, <code>showComposerSend: true</code>, <code>guiFontScale: 1.15</code>, <code>diffView: stacked</code> (<code>stacked</code> | <code>inline</code> | <code>split</code>). <code>cornerStyle</code> and <code>borderColor</code> are blank by default (use the theme's own).</li>
 <li><strong>terminal</strong>: <code>shell: ''</code> (use <code>$SHELL</code>), <code>fontSize: 14</code>, <code>scrollback: 1500</code>, <code>cursorBlink: true</code>, <code>cursorStyle: block</code>. <code>shells</code> is the picker list (platform-specific defaults). Default terminal font is JetBrainsMono Nerd Font with Caskaydia/Cascadia fallbacks.</li>
 <li><strong>browser</strong>: <code>homepage: https://google.com</code>, <code>hibernateAfter: 300</code> (seconds), plus a <code>bookmarks</code> list.</li>
-<li><strong>panes</strong>: <code>defaultWidth: 800</code>, <code>gap: 16</code>, <code>peek: 80</code>, <code>insertPosition: after</code>, <code>tabPosition: top</code> (<code>top</code> | <code>left</code>), <code>viewMode: tabs</code> (<code>tabs</code> | <code>spatial</code> | <code>stacked</code>), <code>viewLevel: piloting</code> (<code>piloting</code> | <code>fleet</code>), plus a <code>default</code> pane list (three terminals + a notes pane).</li>
+<li><strong>panes</strong>: <code>defaultWidth: 800</code>, <code>gap: 0</code>, <code>peek: 80</code>, <code>insertPosition: after</code>, <code>tabPosition: top</code> (<code>top</code> | <code>left</code>), <code>viewLevel: piloting</code> (<code>piloting</code> | <code>fleet</code>), plus a <code>default</code> pane list.</li>
 <li><strong>keybindings</strong>: <code>prefix: ctrl+space</code>, <code>chordHints: true</code>, and a <code>shortcuts</code> map (see keybindings below).</li>
 <li><strong>notifications</strong>: <code>enabled: true</code>, <code>notifyDone: true</code>, <code>onlyWhenUnwatched: true</code>, <code>sound: false</code>.</li>
-<li><strong>claude</strong>: <code>defaultModel: ''</code> (Claude's own default), <code>seenModels: []</code> (auto-collected from transcripts to enrich the spawn dropdown), <code>skipPermissionsDefault: false</code>, <code>defaultView: terminal</code> (<code>gui</code> | <code>terminal</code>).</li>
+<li><strong>claude</strong>: <code>transport: stream</code> (<code>stream</code> = headless stream-json, GUI-only | <code>pty</code> = the classic terminal CLI), <code>defaultModel: 'opus[1m]'</code>, <code>seenModels: []</code> (auto-collected from transcripts to enrich the spawn dropdown), <code>defaultPermissionMode: bypassPermissions</code> and <code>skipPermissionsDefault: true</code> (a fresh agent runs with full access — tighten these if you want approval prompts by default), <code>defaultView: terminal</code> (<code>gui</code> | <code>terminal</code>, terminal-transport panes only), <code>workLog: cards</code>, <code>settingsOverlay: false</code> (experimental: pass hooks via a private <code>--settings</code> file instead of editing <code>~/.claude/settings.json</code>), plus per-session <code>budgets</code> (a cost ceiling that fires a one-shot notification when crossed).</li>
+<li><strong>agents</strong>: <code>defaultProvider</code>, <code>defaultCwd</code>, and per-provider <code>binaries</code> overrides for the spawn dialog.</li>
 <li><strong>supervisor</strong>: <code>model: ''</code> (app default), <code>summarizerModel: sonnet</code>, <code>pollSeconds: 45</code>.</li>
 <li><strong>editor</strong>: <code>engine: codemirror</code> (<code>codemirror</code> | <code>terminal</code>), <code>terminalCommand: nvim</code> (the file path is appended as the last arg), optional <code>vim: true</code> for CodeMirror.</li>
 <li><strong>session</strong>: <code>autoResume: false</code> (restore the most recent session on launch, skipping the picker).</li>
+<li><strong>updates</strong>: <code>enabled</code> / <code>channel</code> for the app's update check (Settings ▸ Updates).</li>
 <li><strong>directories</strong>: <code>recent</code> / <code>favourites</code> lists surfaced in the Overview pane.</li>
 <li><strong>scripts</strong>: per-directory script buttons keyed by normalized cwd.</li>
 <li><strong>apps</strong>: your custom external app/site launcher entries (<code>name</code>, <code>url</code>, <code>icon</code>).</li>
 </ul>
 <h3>the Settings pane</h3>
 <p>Open it with <code>Ctrl+,</code>. There's a filter box at the top. The pane renders these sections, each one writing straight into <code>config.yaml</code> (the plugins section is contributed by installed plugins, and Claude profiles write to <code>claude-profiles.json</code>):</p>
-<p>appearance, layout, terminal, keybindings, notifications, session, browser, editor, apps, Claude profiles, supervisor, plugins.</p>
+<p>appearance (including the theme maker), layout, terminal, keybindings, notifications, session, browser, editor, apps, Claude profiles, supervisor, updates, plugins.</p>
 <h3>default keybindings</h3>
 <p>Bindings are either direct combos (terminal-safe keys) or prefix chords. A chord is the workspace prefix (<code>Ctrl+Space</code> by default) followed by one or more keys. Remap them under <code>keybindings.shortcuts</code>. Direct defaults:</p>
 <ul>
 <li><code>command-palette</code>, <code>ctrl+shift+p</code></li>
 <li><code>next-agent</code> / <code>prev-agent</code>, <code>ctrl+tab</code> / <code>ctrl+shift+tab</code></li>
 <li><code>next-attention</code>, <code>ctrl+shift+space</code></li>
+<li><code>toggle-ui-mode</code>, <code>ctrl+shift+m</code></li>
 <li><code>spawn-agent</code>, <code>ctrl+shift+n</code></li>
 <li><code>settings</code>, <code>ctrl+,</code></li>
 <li><code>save-session</code>, <code>ctrl+shift+s</code></li>
@@ -602,7 +616,7 @@ claudemon init --dry-run        # preview the merged file, write nothing</code><
 <li><code>library-picker</code>, <code>ctrl+shift+l</code></li>
 <li><code>open-review</code>, <code>ctrl+shift+g</code></li>
 </ul>
-<p>Prefix chords (press <code>Ctrl+Space</code>, then the keys): <code>new-terminal</code> (<code>n t</code>), <code>new-claude</code> (<code>n c</code>), <code>new-browser</code> (<code>n b</code>); <code>prev-tab</code>/<code>next-tab</code> (<code>t [</code> / <code>t ]</code>), <code>move-tab-left</code>/<code>move-tab-right</code> (<code>t ,</code> / <code>t .</code>), <code>rename-tab</code> (<code>t r</code>), <code>close-pane</code> (<code>t w</code>); <code>split</code> (<code>p s</code>), <code>quick-split</code> (<code>p c</code>), pane nav <code>nav-left/down/up/right</code> (<code>p h/j/k/l</code>); <code>cycle-view</code> (<code>v</code>).</p>
+<p>Prefix chords (press <code>Ctrl+Space</code>, then the keys): <code>new-terminal</code> (<code>n t</code>), <code>new-claude</code> (<code>n c</code>), <code>new-browser</code> (<code>n b</code>); <code>prev-tab</code>/<code>next-tab</code> (<code>t [</code> / <code>t ]</code>), <code>move-tab-left</code>/<code>move-tab-right</code> (<code>t ,</code> / <code>t .</code>), <code>rename-tab</code> (<code>t r</code>), <code>close-pane</code> (<code>t w</code>); <code>split</code> (<code>p s</code>), <code>quick-split</code> (<code>p c</code>), pane nav <code>nav-left/down/up/right</code> (<code>p h/j/k/l</code>).</p>
 <p>On upgrade, an old keybindings schema (the <code>mode</code>/<code>leader</code> style) is migrated once to this prefix scheme. If you had Vim keybinding mode on, it carries over as the editor's <code>vim: true</code>.</p>
 <h3>Claude profiles</h3>
 <p>Profiles live in <code>claude-profiles.json</code> and are managed in the Settings pane's Claude profiles section. Each profile has:</p>
@@ -623,7 +637,7 @@ claudemon init --hook-port 8888 # match a non-default hook port</code></pre>
 <h3>environment variables</h3>
 <ul>
 <li><code>WORKSPACER_DISABLE_GPU=1</code>, disable GPU rendering. Use this if the window renders broken on Wayland.</li>
-<li><code>WORKSPACER_REMOTE_SHARE=1</code>, opt into remote sharing. The hub then binds off loopback and requires the bus token. Off by default, meaning loopback-only with no token enforced for sharing.</li>
+<li><code>WORKSPACER_REMOTE_SHARE=1</code>, force remote sharing on from launch. (Sharing is otherwise a runtime toggle: Remote control → Start sharing.) When on, the hub binds off loopback and requires the bus token; off means loopback-only.</li>
 <li><code>WORKSPACER_REMOTE_ADDR=host:port</code>, bind address when sharing is on (default <code>0.0.0.0:7895</code>). Pin it to your tailnet IP to avoid exposing it to the whole LAN.</li>
 <li><code>CLAUDE_CONFIG_DIR</code>, set per spawn from a profile's <code>configDir</code>, so each profile can point at its own <code>~/.claude</code>-style dir.</li>
 <li><code>XDG_CONFIG_HOME</code>, moves the desktop config dir (Linux).</li>
