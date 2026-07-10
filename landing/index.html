@@ -93,6 +93,15 @@
   .shot-body .cam { font-size: 26px; opacity: 0.5; margin-bottom: 10px; }
   .shot-body .label { font-size: 13.5px; color: var(--ink-dim); }
   .shot-body .sub { font-size: 12px; margin-top: 5px; }
+  /* real screenshots inside the window chrome (click for full size) */
+  .term a.shotlink { display: block; line-height: 0; }
+  .term img.shot { display: block; width: 100%; height: auto; }
+  /* phone + desktop, one frame */
+  .duo { display: flex; align-items: center; gap: 18px; padding: 18px; background: var(--bg-2); }
+  .duo .d { flex: 1; min-width: 0; line-height: 0; }
+  .duo .d img { width: 100%; height: auto; border: 1px solid var(--line); border-radius: 6px; }
+  .duo .m { flex: 0 0 27%; line-height: 0; }
+  .duo .m img { width: 100%; height: auto; border: 1px solid var(--line); border-radius: 14px; }
 
   /* sections */
   section { padding: 64px 0; border-top: 1px solid var(--line); }
@@ -121,6 +130,13 @@
   .box h3 { color: var(--ink); font-size: 18px; margin: 12px 0 10px; letter-spacing: -0.01em; }
   .box p { color: var(--ink-dim); font-size: 14px; }
   .box .mini { margin-top: 18px; height: 120px; border: 1px dashed var(--line); border-radius: 4px; display: grid; place-items: center; color: var(--ink-faint); font-size: 12px; }
+  .box .mini.has-shot { height: auto; border-style: solid; overflow: hidden; display: block; line-height: 0; }
+  .box .mini.has-shot img { width: 100%; height: auto; display: block; }
+
+  /* screens gallery */
+  .gallery { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; align-items: start; }
+  .gallery .term { margin-top: 0; }
+  .gallery .cap { color: var(--ink-dim); font-size: 12.5px; line-height: 1.5; padding: 10px 14px; border-top: 1px solid var(--line); background: var(--panel); }
 
   /* file-tree style feature list */
   .tree { border: 1px solid var(--line); border-radius: 6px; background: var(--bg-2); padding: 22px 26px; }
@@ -163,7 +179,7 @@
 
   @media (max-width: 860px) {
     .navlinks { display: none; }
-    .trio, .arch, .agents { grid-template-columns: 1fr; }
+    .trio, .arch, .agents, .gallery { grid-template-columns: 1fr; }
     .split, .split.flip { grid-template-columns: 1fr; }
     .split.flip .copy { order: 0; }
     .tree .row { grid-template-columns: 1fr; gap: 4px; }
@@ -201,7 +217,8 @@
 
   <div class="term">
     <div class="term-bar"><i></i><i></i><i></i><span class="title">work{spacer} · fleet</span></div>
-    <div class="shot-body"><span class="cam">▦</span><span class="label">[ hero screenshot ]</span><span class="sub">the full workspace with a few agents running</span></div>
+    <a class="shotlink" href="shots/fleet-deck.webp" target="_blank"><img class="shot" src="shots/fleet-deck.webp"
+      alt="The Fleet Deck: three Claude agents as live cards — status, model, context %, cost, and a message box on each" /></a>
   </div>
 </div></header>
 
@@ -215,19 +232,22 @@
       <div class="k">ambient_awareness</div>
       <h3>Know who needs you</h3>
       <p>A status dot per agent and a live "N need you / N working" count. The Triage Inbox collects everything waiting on you, and notifications stay quiet for the agent you are already watching.</p>
-      <div class="mini">[ sidebar + triage inbox ]</div>
+      <a class="mini has-shot" href="shots/triage-inbox.webp" target="_blank"><img src="shots/triage-inbox.webp" loading="lazy"
+        alt="The Triage Inbox docked over the fleet: two finished agents waiting for review with open / respawn / snooze / dismiss actions" /></a>
     </div>
     <div class="box">
       <div class="k">agent_pane.gui</div>
       <h3>A real GUI for your agent</h3>
       <p>Approve or deny in one key, answer questions inline, read diffs as they land, follow a clean work log, and attach files by drag, paste, or picker.</p>
-      <div class="mini">[ agent pane, gui mode ]</div>
+      <a class="mini has-shot" href="shots/agent-gui.webp" target="_blank"><img src="shots/agent-gui.webp" loading="lazy"
+        alt="An agent pane in GUI mode: clean work log with collapsed tool steps, plus the inspector rail showing live usage meters and cost" /></a>
     </div>
     <div class="box">
       <div class="k">review.diff</div>
       <h3>Review and ship</h3>
       <p>Git status and a unified diff with a file tree where the agent finished. Stage, commit, and push without dropping to a shell.</p>
-      <div class="mini">[ review / diff pane ]</div>
+      <a class="mini has-shot" href="shots/review-pane.webp" target="_blank"><img src="shots/review-pane.webp" loading="lazy"
+        alt="The Review pane: staged file tree beside a unified diff, with commit and push controls" /></a>
     </div>
   </div>
 </div></section>
@@ -299,7 +319,8 @@
     </div>
     <div class="term">
       <div class="term-bar"><i></i><i></i><i></i><span class="title">ask the fleet</span></div>
-      <div class="shot-body"><span class="cam">◎</span><span class="label">[ supervisor + ask pane ]</span></div>
+      <a class="shotlink" href="shots/ask-fleet.webp" target="_blank"><img class="shot" src="shots/ask-fleet.webp" loading="lazy"
+        alt="The Ask pane: a question box with Standup / Triage / Audit / Cost presets and a choice of provider to run the supervisor on" /></a>
     </div>
   </div>
 </div></section>
@@ -317,7 +338,12 @@
     </div>
     <div class="term">
       <div class="term-bar"><i></i><i></i><i></i><span class="title">remote /app</span></div>
-      <div class="shot-body"><span class="cam">▢</span><span class="label">[ phone + desktop, same fleet ]</span></div>
+      <div class="duo">
+        <a class="d" href="shots/web-remote.webp" target="_blank"><img src="shots/web-remote.webp" loading="lazy"
+          alt="The full workspacer renderer running in Chrome over Tailscale — same fleet, same panes, served by the hub" /></a>
+        <a class="m" href="shots/mobile-fleet.webp" target="_blank"><img src="shots/mobile-fleet.webp" loading="lazy"
+          alt="The phone PWA fleet list: every agent with status, model, context % and cost" /></a>
+      </div>
     </div>
   </div>
 </div></section>
@@ -337,6 +363,51 @@
     <div><span style="color:var(--green)">plugins</span>   <span class="out">drop in a manifest, get a supervised sidecar + its own panes + your theme</span></div>
     <div><span style="color:var(--green)">mcp</span>       <span class="out">the hub exposes the fleet as MCP tools so a supervisor agent can drive it</span></div>
     <div><span style="color:var(--green)">wks-tui</span>   <span class="out">a rust terminal client over the same bus, with a ctrl-k palette + vim keys</span></div>
+  </div>
+</div></section>
+
+<section id="screens"><div class="wrap">
+  <div class="sec-head">
+    <div class="h2"># a few more <span class="g">screens</span></div>
+    <p class="sec-sub">Straight from a working session — the everforest theme, one agent fleet, real work.</p>
+  </div>
+  <div class="gallery">
+    <div class="term">
+      <div class="term-bar"><i></i><i></i><i></i><span class="title">spawn</span></div>
+      <a class="shotlink" href="shots/spawn-dialog.webp" target="_blank"><img class="shot" src="shots/spawn-dialog.webp" loading="lazy"
+        alt="The spawn dialog: pick Claude Code, Codex, OpenCode, or Pi, a model, terminal or headless transport, and a permission mode" /></a>
+      <div class="cap">one spawn dialog, four providers — model, transport, and permissions up front</div>
+    </div>
+    <div class="term">
+      <div class="term-bar"><i></i><i></i><i></i><span class="title">ready</span></div>
+      <a class="shotlink" href="shots/agent-ready.webp" target="_blank"><img class="shot" src="shots/agent-ready.webp" loading="lazy"
+        alt="A fresh agent's starting page: model, permission mode, branch and dirty-file count, plus git-aware starter prompts" /></a>
+      <div class="cap">a fresh agent lands knowing your repo — branch, changes, and starter prompts</div>
+    </div>
+    <div class="term">
+      <div class="term-bar"><i></i><i></i><i></i><span class="title">needs you</span></div>
+      <a class="shotlink" href="shots/question-card.webp" target="_blank"><img class="shot" src="shots/question-card.webp" loading="lazy"
+        alt="An agent's multiple-choice question surfaced in the Triage Inbox, answerable inline with one keystroke" /></a>
+      <div class="cap">agents ask, you answer — questions land in the inbox with one-key answers</div>
+    </div>
+    <div class="term">
+      <div class="term-bar"><i></i><i></i><i></i><span class="title">editor</span></div>
+      <a class="shotlink" href="shots/editor.webp" target="_blank"><img class="shot" src="shots/editor.webp" loading="lazy"
+        alt="The sandboxed editor plugin: project file tree beside a CodeMirror editor with syntax highlighting" /></a>
+      <div class="cap">the editor plugin — a sandboxed sidecar with your project tree and theme</div>
+    </div>
+    <div class="term">
+      <div class="term-bar"><i></i><i></i><i></i><span class="title">overview</span></div>
+      <a class="shotlink" href="shots/overview.webp" target="_blank"><img class="shot" src="shots/overview.webp" loading="lazy"
+        alt="The Overview space: fleet stats, session cost, account usage, plugin panes, favourites and recent directories" /></a>
+      <div class="cap">the overview space — fleet stats, spend, plugins, and launchpads for recent repos</div>
+    </div>
+    <div class="term">
+      <div class="term-bar"><i></i><i></i><i></i><span class="title">answer inline</span></div>
+      <a class="shotlink" href="shots/ask-question.webp" target="_blank"><img class="shot" src="shots/ask-question.webp" loading="lazy"
+        alt="An agent's question rendered inline in the chat with numbered options, next to per-turn changed-file cards" /></a>
+      <div class="cap">questions render in the chat too — numbered options, diffs a click away</div>
+    </div>
   </div>
 </div></section>
 
