@@ -146,7 +146,15 @@ fn read_transcript_file(path: PathBuf) -> Result<Transcript> {
 
 fn find_session_file(root: &std::path::Path, session_id: &str) -> Result<Option<PathBuf>> {
     let filename = format!("{session_id}.jsonl");
-    for entry in fs::read_dir(root)? {
+    // A machine that has never run Claude Code has no projects dir at all —
+    // that's "no transcript", not an error (the API contract is an empty
+    // transcript for sessions with nothing on disk).
+    let entries = match fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err.into()),
+    };
+    for entry in entries {
         let entry = entry?;
         if !entry.file_type()?.is_dir() {
             continue;
