@@ -9,29 +9,8 @@ import (
 	"github.com/djtouchette/workspacer-hub/internal/event"
 )
 
-// The bundled webview-only example must load and validate — it's the template
-// for sidecar-less plugins (and the editor extraction), so a regression here
-// breaks the canonical shape.
-func TestExampleHelloScopedLoads(t *testing.T) {
-	path := filepath.Join("..", "..", "examples", "hello-scoped", "plugin.json")
-	mf, err := Load(path)
-	if err != nil {
-		t.Fatalf("loading the hello-scoped example: %v", err)
-	}
-	if mf.Server != nil {
-		t.Error("the example should be webview-only (no server)")
-	}
-	if mf.UI == "" {
-		t.Error("the example should declare a ui directory")
-	}
-	// The declared ui dir should actually exist next to the manifest.
-	if _, statErr := os.Stat(filepath.Join(mf.Dir, mf.UI, "index.html")); statErr != nil {
-		t.Errorf("example ui/index.html missing: %v", statErr)
-	}
-}
-
-// The editor plugin is the canonical extraction: a webview-only plugin whose
-// filesystem capabilities are scoped to ${agentCwd}. Pin its shape — a token
+// The editor plugin is the bundled webview-only example — the template for
+// sidecar-less plugins — and the canonical ${agentCwd} extraction: a token
 // minted for it on an agent must confine fs.* to that agent's project, and at
 // static load it must have no filesystem reach at all.
 func TestExampleEditorIsSandboxed(t *testing.T) {
@@ -42,6 +21,10 @@ func TestExampleEditorIsSandboxed(t *testing.T) {
 	}
 	if mf.Server != nil || mf.UI == "" {
 		t.Fatal("the editor must be webview-only (ui, no server)")
+	}
+	// The declared ui dir should actually exist next to the manifest.
+	if _, statErr := os.Stat(filepath.Join(mf.Dir, mf.UI, "index.html")); statErr != nil {
+		t.Errorf("example ui/index.html missing: %v", statErr)
 	}
 	// Every filesystem capability it declares must be scoped to ${agentCwd}.
 	fsCaps := 0

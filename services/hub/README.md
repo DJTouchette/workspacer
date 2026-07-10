@@ -235,7 +235,7 @@ Capabilities registered today:
 | `search.project` | host `rg` (ripgrep), gitignore-aware |
 | `notifications.post` | logged + acked (no desktop to raise an OS notification) |
 
-It reuses the provider pattern from `examples/rivet-bridge`. The endgame is for
+The endgame is for
 every client (app, TUI, web, MCP) to be a thin caller of this one brain, so they
 mirror each other by construction instead of duplicating logic across TS/Rust/Go.
 

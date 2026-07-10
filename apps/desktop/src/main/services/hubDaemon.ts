@@ -227,11 +227,11 @@ function userPluginsDir(): string {
 
 /**
  * Webview-only example plugins with zero runtime dependencies — safe to seed on
- * any machine. The Python/Go sidecar examples are NOT seeded (they'd crash-loop
- * without the runtime); users add those on demand from the examples gallery,
- * which labels each with its requirement.
+ * any machine. Sidecar examples (the clock needs python3) are NOT seeded
+ * (they'd crash-loop without the runtime); users add those on demand from the
+ * examples gallery, which labels each with its requirement.
  */
-const DEFAULT_SEEDED_EXAMPLES = ['editor', 'hello-scoped'];
+const DEFAULT_SEEDED_EXAMPLES = ['editor'];
 
 /** Ensure the user plugins dir exists; seed the safe default examples once. */
 function ensurePluginsDir(): string {

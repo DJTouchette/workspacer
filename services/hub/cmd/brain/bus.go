@@ -1,8 +1,7 @@
 package main
 
-// Provider-side bus client for the hub. Adapted from
-// examples/rivet-bridge/bus.go: a reconnecting WebSocket client that, on
-// connect, `register`s a set of capability methods and then answers inbound
+// Provider-side bus client for the hub: a reconnecting WebSocket client that,
+// on connect, `register`s a set of capability methods and then answers inbound
 // `call` frames via a handler. This is the seam the brain plugs into — the hub
 // routes a caller's `call` to whichever provider registered the method, and we
 // reply with the result. (See services/hub/README.md "Protocol".)

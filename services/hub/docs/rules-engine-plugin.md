@@ -12,7 +12,7 @@
 
 ## 0. TL;DR
 
-- Build a plugin under `hub/examples/rules-engine/` (or its own GitHub repo).
+- Build the plugin as its own GitHub repo (installable via “Install from GitHub…”).
 - **Sidecar** (Go recommended): connects to the hub bus, subscribes to events,
   evaluates a rule list, and fires actions (call capabilities / publish commands /
   hit webhooks). It also serves the webview + a small `/rules` HTTP API, and
@@ -35,9 +35,10 @@ all just clients of it.
 - Plugins live in **`~/.config/workspacer/plugins/<name>/`**, each with a
   `plugin.json`. The Electron app spawns the hub with `--plugins-dir <that dir>`
   and seeds it from `hub/examples/` on first run.
-- Read `hub/README.md` for the protocol summary, and `hub/examples/agent-dashboard/`
-  for a working **bus-native webview** that subscribes to events and calls
-  capabilities directly from the browser.
+- Read `hub/README.md` for the protocol summary. The bundled `hub/examples/editor/`
+  is a working **bus-native webview** (it connects to the bus and calls
+  capabilities directly from the browser); the workspacer-plugins repos
+  (fleet-radar, cost-hud, …) are fuller webview + sidecar references.
 
 **A plugin** = a sidecar process + a manifest declaring what it contributes (panes,
 hotkeys, capabilities, events). The hub supervises the sidecar (spawn / health /
@@ -305,8 +306,8 @@ Notes:
    `call` frame with a fresh id and (optionally) waits for the `result` by id.
 5. Poll loop: every 20s, `call agents.list`, feed `agents.poll` synthetic events.
 
-**Webview (`web/index.html`):** a single page (mirror `agent-dashboard/index.html`'s
-style) that `GET /rules` on load, renders the list with enable toggles + delete, an
+**Webview (`web/index.html`):** a single page (mirror the bundled
+`hub/examples/editor/` webview's style) that `GET /rules` on load, renders the list with enable toggles + delete, an
 "Add rule" form (event dropdown, match key/value rows, action builder), and `PUT
 /rules` on save. It does NOT need a bus connection — it talks to the sidecar's HTTP
 API. (Optionally also subscribe to the bus to show a live "recent firings" log if
@@ -372,8 +373,8 @@ The bus + a fake provider are enough to test the whole engine without the app:
 5. For cost rules, have the fake `agents.list` return an agent with `costUSD > 5`
    and assert one (not repeated) `notify`.
 
-Mirror the existing example smoke tests (`hub/examples/*`, and the dashboard's
-bus-native pattern in `hub/examples/agent-dashboard/index.html`).
+Mirror the bus-native pattern in the bundled examples (`hub/examples/*`) and the
+workspacer-plugins repos.
 
 ---
 
@@ -396,7 +397,7 @@ bus-native pattern in `hub/examples/agent-dashboard/index.html`).
 ## References
 
 - `hub/README.md` — bus protocol + plugin status overview.
-- `hub/examples/agent-dashboard/` — bus-native webview (subscribe + call capabilities + publish commands) to copy.
+- `hub/examples/editor/` — bus-native, capability-scoped webview plugin to copy.
 - `hub/examples/clock-plugin/` — minimal self-contained plugin (manifest + static webview).
 - `hub/internal/bus/` — `bus.go` (frames, `/bus`, `/health`), `rpc.go` (capability router), `bench_test.go` / `rpc_test.go` (test patterns).
 - `hub/internal/claudemon/bridge.go` — source of `agent.state_changed` (shows exact payload mapping).
