@@ -62,6 +62,19 @@
   .navlinks a { color: var(--ink-dim); text-decoration: none; }
   .navlinks a::before { content: "/"; color: var(--ink-faint); margin-right: 2px; }
   .navlinks a:hover { color: var(--green); }
+  /* mobile nav: hamburger + dropdown under the sticky bar (≤860px only) */
+  .nav-toggle { display: none; background: none; border: 1px solid var(--line); border-radius: 4px;
+                color: var(--green); font-size: 17px; line-height: 1; padding: 6px 11px;
+                font-family: inherit; cursor: pointer; }
+  .mobile-menu { display: none; border-top: 1px solid var(--line); background: var(--bg-2); }
+  /* the generic `nav .wrap` flex row must not apply to the menu's gutter wrap */
+  .mobile-menu .wrap { display: block; height: auto; padding-top: 4px; padding-bottom: 8px; }
+  .mobile-menu a { display: block; padding: 13px 0; color: var(--ink-dim); text-decoration: none;
+                   font-size: 14.5px; border-bottom: 1px solid var(--line-soft); }
+  .mobile-menu a::before { content: "/"; color: var(--ink-faint); margin-right: 6px; }
+  .mobile-menu a:last-child { border-bottom: none; }
+  .mobile-menu a:active { color: var(--green); }
+  nav.open .mobile-menu { display: block; }
 
   .btn { display: inline-block; padding: 9px 18px; text-decoration: none; font-size: 13.5px; font-weight: 600; border: 1px solid var(--green-dim); border-radius: 3px; }
   .btn-fill { background: var(--green); color: #1e2326; border-color: var(--green); }
@@ -180,6 +193,7 @@
 
   @media (max-width: 860px) {
     .navlinks { display: none; }
+    .nav-toggle { display: inline-flex; }
     .trio, .arch, .agents, .gallery { grid-template-columns: 1fr; }
     .split, .split.flip { grid-template-columns: 1fr; }
     .split.flip .copy { order: 0; }
@@ -210,7 +224,20 @@
     <a href="docs.html">docs</a>
     <a href="#get">install</a>
   </div>
-</div></nav>
+  <button class="nav-toggle" id="nav-toggle" aria-label="menu" aria-expanded="false">≡</button>
+</div>
+<!-- Same links as .navlinks — keep the two lists in sync. -->
+<div class="mobile-menu" id="mobile-menu"><div class="wrap">
+  <a href="#why">why</a>
+  <a href="#agents">agents</a>
+  <a href="#panes">panes</a>
+  <a href="#supervise">supervise</a>
+  <a href="#remote">remote</a>
+  <a href="#arch">arch</a>
+  <a href="docs.html">docs</a>
+  <a href="#get">install</a>
+</div></div>
+</nav>
 
 <header><div class="wrap">
   <div class="tag pr">workspacer --status <b>[ control plane + IDE for coding agents ]</b></div>
@@ -437,6 +464,24 @@
 </div></footer>
 
 <script>
+// Mobile nav: hamburger toggles the dropdown; any link tap closes it.
+(function () {
+  var nav = document.querySelector('nav');
+  var toggle = document.getElementById('nav-toggle');
+  if (!nav || !toggle) return;
+  var set = function (open) {
+    nav.classList.toggle('open', open);
+    toggle.textContent = open ? '✕' : '≡';
+    toggle.setAttribute('aria-expanded', String(open));
+  };
+  toggle.addEventListener('click', function () {
+    set(!nav.classList.contains('open'));
+  });
+  document.querySelectorAll('.mobile-menu a').forEach(function (a) {
+    a.addEventListener('click', function () { set(false); });
+  });
+})();
+
 // Route the download button to the right asset of the latest GitHub Release
 // for the visitor's OS. Degrades in order: exact asset → releases page (API
 // down, no release published yet, or an OS we don't ship for).
