@@ -350,6 +350,15 @@ func (m *Manager) Add(mf Manifest) {
 		if l.token != "" {
 			env = []string{"HUB_TOKEN=" + l.token}
 		}
+		// Deliver the plugin's merged setting values (manifest defaults + the
+		// user's persisted overlay) as WKS_SETTINGS — the sidecar-side settings
+		// contract. SetSettings re-Adds the plugin so a change restarts the
+		// sidecar with fresh values.
+		if len(mf.Settings) > 0 {
+			if sj := m.settingsEnvJSON(mf); sj != "" {
+				env = append(env, "WKS_SETTINGS="+sj)
+			}
+		}
 		// Launch under OS filesystem confinement (bwrap / sandbox-exec). In
 		// enforce mode on a platform without a mechanism, run is false and the
 		// sidecar is not started.

@@ -77,8 +77,6 @@ func (m *Manager) SetSettings(pluginID string, partial map[string]any) (map[stri
 	}
 
 	m.settingsMu.Lock()
-	defer m.settingsMu.Unlock()
-
 	overlay := readSettingsOverlay(mf.Dir)
 	for k, v := range partial {
 		if v == nil {
@@ -88,15 +86,41 @@ func (m *Manager) SetSettings(pluginID string, partial map[string]any) (map[stri
 		}
 	}
 	if err := writeSettingsOverlay(mf.Dir, overlay); err != nil {
+		m.settingsMu.Unlock()
 		return nil, err
 	}
-
 	merged := mergedSettings(mf)
+	m.settingsMu.Unlock()
+
 	m.pub.Publish(event.New("plugin.settings.changed", "hub", map[string]any{
 		"id":     pluginID,
 		"values": merged,
 	}))
+	// A webview picks the change up live (window.__WKS_SETTINGS__ / the bus
+	// event), but a sidecar reads WKS_SETTINGS from its environment at spawn —
+	// restart it so the new values actually take effect. Add stops the previous
+	// supervisor and starts a fresh one with the updated env.
+	if mf.Server != nil && !mf.Disabled {
+		m.Add(mf)
+	}
 	return merged, nil
+}
+
+// settingsEnvJSON marshals a plugin's merged setting values for the sidecar's
+// WKS_SETTINGS environment variable. Empty string when there is nothing to
+// deliver or marshalling fails (the sidecar then falls back to its defaults).
+func (m *Manager) settingsEnvJSON(mf Manifest) string {
+	m.settingsMu.Lock()
+	merged := mergedSettings(mf)
+	m.settingsMu.Unlock()
+	if len(merged) == 0 {
+		return ""
+	}
+	b, err := json.Marshal(merged)
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 // mergedSettings layers a plugin's persisted overlay over its manifest defaults,

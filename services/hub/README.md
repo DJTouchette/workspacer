@@ -39,7 +39,12 @@ proves the full event spine (claudemon SSE → bridge → broker → bus → cli
   and exposes manifests at `GET /plugins`. Run with `--plugins-dir`. See
   `examples/clock-plugin/` for a working one (a webview pane + a hotkey).
   Plugin panes get the app theme injected as `--wks-*` CSS variables — see
-  [docs/plugin-theming.md](docs/plugin-theming.md).
+  [docs/plugin-theming.md](docs/plugin-theming.md). A sidecar receives its
+  merged setting values (manifest defaults + the user's overlay) as a
+  `WKS_SETTINGS` JSON env var at spawn; writing new values via
+  `/plugins/settings` restarts the sidecar so they take effect (webviews get
+  the same values live via `window.__WKS_SETTINGS__` / the
+  `plugin.settings.changed` event instead).
 
 ### Plugin authorization
 
