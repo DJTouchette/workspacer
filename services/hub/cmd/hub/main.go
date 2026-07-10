@@ -19,6 +19,7 @@ import (
 	"github.com/djtouchette/workspacer-hub/internal/bus"
 	"github.com/djtouchette/workspacer-hub/internal/claudemon"
 	"github.com/djtouchette/workspacer-hub/internal/event"
+	"github.com/djtouchette/workspacer-hub/internal/jobobject"
 	"github.com/djtouchette/workspacer-hub/internal/layout"
 	"github.com/djtouchette/workspacer-hub/internal/parentwatch"
 	"github.com/djtouchette/workspacer-hub/internal/plugin"
@@ -135,6 +136,13 @@ func main() {
 			}
 			h(w, r)
 		}
+	}
+
+	// Windows: confine ourselves (and thus the brain + every plugin sidecar we
+	// spawn) in a kill-on-job-close job object, so the whole tree dies with the
+	// hub no matter how the hub dies. No-op elsewhere.
+	if err := jobobject.Confine(); err != nil {
+		log.Printf("job object confinement unavailable (non-fatal): %v", err)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

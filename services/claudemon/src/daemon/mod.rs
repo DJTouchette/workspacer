@@ -26,6 +26,14 @@ pub struct ServeConfig {
 }
 
 pub async fn run(cfg: ServeConfig) -> Result<()> {
+    // Windows: confine the daemon — and every PTY child it spawns (claude.exe,
+    // conhost, shells) — in a kill-on-job-close job object, so the whole tree
+    // dies with the daemon no matter how the daemon dies (clean exit, crash,
+    // Task-Manager kill). Without this a hard-killed daemon skips
+    // kill_all_ptys and orphans its agents. No-op elsewhere.
+    #[cfg(windows)]
+    confine_to_job();
+
     let store = SessionStore::new();
     let db = Db::open(&cfg.db_path)
         .with_context(|| format!("opening db at {}", cfg.db_path.display()))?;
@@ -170,16 +178,13 @@ async fn wait_for_parent_exit() {
         }
     };
 
-    // Path 2: poll the launcher pid. If it didn't parse, this arm never resolves
-    // and we fall back to the EOF path alone.
+    // Path 2: watch the launcher pid — a pinned process handle on Windows
+    // (immune to PID reuse, fires the instant the launcher exits), a liveness
+    // poll elsewhere. If the pid didn't parse, this arm never resolves and we
+    // fall back to the EOF path alone.
     let poll = async {
         match parent_pid {
-            Some(pid) => loop {
-                tokio::time::sleep(PARENT_POLL_INTERVAL).await;
-                if !parent_alive(pid) {
-                    break; // launcher gone
-                }
-            },
+            Some(pid) => parent_exit_signal(pid).await,
             None => std::future::pending::<()>().await,
         }
     };
@@ -191,7 +196,54 @@ async fn wait_for_parent_exit() {
 }
 
 /// How often the parent-pid safety net checks whether the launcher is still alive.
+#[cfg(unix)]
 const PARENT_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// Resolves once the launcher process has exited (Unix: 1s liveness poll —
+/// PIDs recycle slowly there and `kill -0` is cheap).
+#[cfg(unix)]
+async fn parent_exit_signal(pid: u32) {
+    loop {
+        tokio::time::sleep(PARENT_POLL_INTERVAL).await;
+        if !parent_alive(pid) {
+            break; // launcher gone
+        }
+    }
+}
+
+/// Resolves once the launcher process has exited.
+///
+/// Windows pins a handle to the launcher ONCE and blocks on it. Re-opening the
+/// pid per poll (the old approach) races Windows' aggressive PID reuse: if
+/// another process claimed the launcher's pid between polls, the watcher
+/// believed the launcher was alive forever and the daemon held ports
+/// 7890/7891 until killed by hand. A pinned handle references the original
+/// process object, which becomes signaled on exit no matter who now owns the
+/// pid number.
+#[cfg(windows)]
+async fn parent_exit_signal(pid: u32) {
+    const SYNCHRONIZE: u32 = 0x0010_0000;
+    const INFINITE: u32 = 0xFFFF_FFFF;
+    type Handle = *mut core::ffi::c_void;
+    extern "system" {
+        fn OpenProcess(access: u32, inherit_handle: i32, pid: u32) -> Handle;
+        fn WaitForSingleObject(handle: Handle, millis: u32) -> u32;
+        fn CloseHandle(handle: Handle) -> i32;
+    }
+    let handle = unsafe { OpenProcess(SYNCHRONIZE, 0, pid) };
+    if handle.is_null() {
+        return; // can't open the pid → the launcher is already gone
+    }
+    // Raw pointers aren't Send; carry the handle across the blocking task as a
+    // plain integer.
+    let handle_bits = handle as usize;
+    let _ = tokio::task::spawn_blocking(move || unsafe {
+        let h = handle_bits as Handle;
+        WaitForSingleObject(h, INFINITE); // blocks until the launcher exits
+        CloseHandle(h);
+    })
+    .await;
+}
 
 /// Whether process `pid` is still running. Probes existence without disturbing
 /// the process; on any ambiguity it errs toward "alive" so we never shut down a
@@ -209,28 +261,93 @@ fn parent_alive(pid: u32) -> bool {
     }
 }
 
-/// Windows equivalent via a minimal Win32 FFI — open a handle to the launcher
-/// and check whether it has become signaled (i.e. exited). Kept dependency-free
-/// on purpose (no windows-api crate pulled in for one liveness probe).
+/// Put the daemon (and all future children) in a kill-on-job-close Windows
+/// job object. When the daemon's last handle to the job closes — which its own
+/// death guarantees — the OS terminates every process in the job: all the PTY
+/// children (claude.exe, conhost, shells) die with the daemon instead of
+/// orphaning. Nested jobs are fine on Win8+; failure is logged and non-fatal
+/// (the clean-shutdown path still runs kill_all_ptys).
 #[cfg(windows)]
-fn parent_alive(pid: u32) -> bool {
-    const SYNCHRONIZE: u32 = 0x0010_0000;
-    const WAIT_OBJECT_0: u32 = 0;
+fn confine_to_job() {
+    const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: u32 = 0x2000;
+    // JobObjectExtendedLimitInformation
+    const JOB_OBJECT_INFO_CLASS_EXTENDED: u32 = 9;
     type Handle = *mut core::ffi::c_void;
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct BasicLimits {
+        per_process_user_time_limit: i64,
+        per_job_user_time_limit: i64,
+        limit_flags: u32,
+        minimum_working_set_size: usize,
+        maximum_working_set_size: usize,
+        active_process_limit: u32,
+        affinity: usize,
+        priority_class: u32,
+        scheduling_class: u32,
+    }
+    #[repr(C)]
+    #[derive(Default)]
+    struct IoCounters {
+        read_operation_count: u64,
+        write_operation_count: u64,
+        other_operation_count: u64,
+        read_transfer_count: u64,
+        write_transfer_count: u64,
+        other_transfer_count: u64,
+    }
+    #[repr(C)]
+    #[derive(Default)]
+    struct ExtendedLimits {
+        basic: BasicLimits,
+        io_info: IoCounters,
+        process_memory_limit: usize,
+        job_memory_limit: usize,
+        peak_process_memory_used: usize,
+        peak_job_memory_used: usize,
+    }
+
     extern "system" {
-        fn OpenProcess(access: u32, inherit_handle: i32, pid: u32) -> Handle;
-        fn WaitForSingleObject(handle: Handle, millis: u32) -> u32;
+        fn CreateJobObjectW(attrs: *mut core::ffi::c_void, name: *const u16) -> Handle;
+        fn SetInformationJobObject(
+            job: Handle,
+            class: u32,
+            info: *const core::ffi::c_void,
+            len: u32,
+        ) -> i32;
+        fn AssignProcessToJobObject(job: Handle, process: Handle) -> i32;
+        fn GetCurrentProcess() -> Handle;
         fn CloseHandle(handle: Handle) -> i32;
     }
+
     unsafe {
-        let handle = OpenProcess(SYNCHRONIZE, 0, pid);
-        if handle.is_null() {
-            return false; // can't open the pid → it's gone
+        let job = CreateJobObjectW(std::ptr::null_mut(), std::ptr::null());
+        if job.is_null() {
+            tracing::warn!("job object confinement unavailable (CreateJobObject failed)");
+            return;
         }
-        let waited = WaitForSingleObject(handle, 0);
-        CloseHandle(handle);
-        // WAIT_OBJECT_0 means the process object is signaled == it has exited.
-        waited != WAIT_OBJECT_0
+        let mut info = ExtendedLimits::default();
+        info.basic.limit_flags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if SetInformationJobObject(
+            job,
+            JOB_OBJECT_INFO_CLASS_EXTENDED,
+            &info as *const _ as *const core::ffi::c_void,
+            std::mem::size_of::<ExtendedLimits>() as u32,
+        ) == 0
+        {
+            tracing::warn!("job object confinement unavailable (SetInformationJobObject failed)");
+            CloseHandle(job);
+            return;
+        }
+        if AssignProcessToJobObject(job, GetCurrentProcess()) == 0 {
+            tracing::warn!("job object confinement unavailable (AssignProcessToJobObject failed)");
+            CloseHandle(job);
+            return;
+        }
+        // Intentionally leak `job`: it must stay open for the daemon's whole
+        // life — its close (at process death) is exactly the kill trigger.
+        tracing::info!("confined to kill-on-close job object (child PTYs die with the daemon)");
     }
 }
 

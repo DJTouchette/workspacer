@@ -76,9 +76,20 @@ export function gracefulStop(
     timer = setTimeout(() => {
       console.warn(`[${label}] graceful stop timed out after ${graceMs}ms; forcing kill`);
       try {
-        child.kill();
+        // Windows: kill the whole TREE. TerminateProcess (child.kill) only
+        // stops the direct child — the hub's sidecars/brain and claudemon's
+        // PTY children would orphan with their ports still bound.
+        if (process.platform === 'win32' && child.pid) {
+          execSync(`taskkill /pid ${child.pid} /T /F`, { timeout: 5000 });
+        } else {
+          child.kill();
+        }
       } catch {
-        /* already gone */
+        try {
+          child.kill();
+        } catch {
+          /* already gone */
+        }
       }
       finish();
     }, graceMs);
@@ -109,7 +120,8 @@ export function killStaleListener(port: number, label: string): void {
         const pid = parseInt(match[1], 10);
         if (pid && pid !== process.pid) {
           console.log(`[${label}] killing stale listener on :${port} pid=${pid}`);
-          execSync(`taskkill /F /PID ${pid}`, { timeout: 3000 });
+          // /T sweeps the stale daemon's leftover children too (sidecars, PTYs).
+          execSync(`taskkill /F /T /PID ${pid}`, { timeout: 3000 });
         }
       }
     } else {

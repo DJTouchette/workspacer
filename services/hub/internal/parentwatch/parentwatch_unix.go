@@ -2,7 +2,13 @@
 
 package parentwatch
 
-import "syscall"
+import (
+	"syscall"
+	"time"
+)
+
+// How often the parent-pid safety net checks whether the launcher is still alive.
+const pollInterval = time.Second
 
 // parentAlive reports whether process pid is still running. Signal 0 delivers
 // nothing; it just probes existence. EPERM means the process exists but we may
@@ -14,4 +20,20 @@ func parentAlive(pid int) bool {
 		return true
 	}
 	return err == syscall.EPERM
+}
+
+// watchParent polls the launcher pid once a second until it disappears, then
+// calls fire. (Unix parents that die are re-parented predictably and PIDs
+// recycle slowly, so a poll is sufficient here; Windows pins a handle instead
+// — see parentwatch_windows.go.)
+func watchParent(pid int, fire func(reason string)) {
+	go func() {
+		for {
+			time.Sleep(pollInterval)
+			if !parentAlive(pid) {
+				fire("parent process gone")
+				return
+			}
+		}
+	}()
 }

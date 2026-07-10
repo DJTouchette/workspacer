@@ -8,22 +8,29 @@ import "syscall"
 // Not exported by the std syscall package on Windows, so we define it locally.
 const _SYNCHRONIZE = 0x0010_0000
 
-// parentAlive reports whether process pid is still running. It opens a handle to
-// the pid and checks whether the process object has become signaled — which on
-// Windows means it has exited. Failure to open the pid means it's already gone;
-// any wait error is treated as "alive" so we never shut down while the launcher
-// is up.
-func parentAlive(pid int) bool {
+const _INFINITE = 0xFFFF_FFFF
+
+// watchParent blocks-in-background until the launcher process exits, then
+// calls fire.
+//
+// It opens a handle to the pid ONCE, up front, and waits on that handle. This
+// matters: Windows recycles PIDs aggressively, so re-opening the pid on every
+// poll (the old implementation) races PID reuse — if another process claimed
+// the launcher's pid between polls, the watcher believed the launcher was
+// still alive forever and the daemon held its ports until killed by hand. A
+// pinned handle references the original process object, which stays waitable
+// (signaled once it exits) no matter who inherits the pid number.
+func watchParent(pid int, fire func(reason string)) {
 	h, err := syscall.OpenProcess(_SYNCHRONIZE, false, uint32(pid))
 	if err != nil {
-		return false // can't open the pid → it's gone
+		// Can't open the pid → the launcher is already gone.
+		fire("parent process already gone (open failed)")
+		return
 	}
-	defer syscall.CloseHandle(h)
-	// Zero timeout: return immediately with the current signaled state.
-	event, err := syscall.WaitForSingleObject(h, 0)
-	if err != nil {
-		return true // uncertain — err on the side of staying up
-	}
-	// WAIT_OBJECT_0 (0) means the process object is signaled == it has exited.
-	return event != syscall.WAIT_OBJECT_0
+	go func() {
+		defer syscall.CloseHandle(h)
+		// Blocks until the process object is signaled (= the launcher exited).
+		_, _ = syscall.WaitForSingleObject(h, _INFINITE)
+		fire("parent process exited (handle signaled)")
+	}()
 }

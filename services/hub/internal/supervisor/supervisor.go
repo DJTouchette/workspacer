@@ -12,7 +12,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/djtouchette/workspacer-hub/internal/event"
@@ -220,8 +219,10 @@ func (s *Supervisor) run(ctx context.Context) {
 		if s.parentR != nil {
 			cmd.Stdin = s.parentR
 		}
-		// Graceful stop: SIGTERM on cancel, SIGKILL if it lingers.
-		cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+		// Graceful stop: terminate() on cancel (SIGTERM on Unix; Kill on Windows,
+		// where Signal(SIGTERM) is unsupported and would error — leaving the
+		// sidecar running until WaitDelay), SIGKILL if it lingers.
+		cmd.Cancel = func() error { return terminate(cmd.Process) }
 		cmd.WaitDelay = 5 * time.Second
 
 		if err := cmd.Start(); err != nil {

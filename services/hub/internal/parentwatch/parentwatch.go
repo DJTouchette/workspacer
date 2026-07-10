@@ -23,11 +23,7 @@ import (
 	"os"
 	"strconv"
 	"sync"
-	"time"
 )
-
-// How often the parent-pid safety net checks whether the launcher is still alive.
-const pollInterval = time.Second
 
 // Watch starts background goroutines that call onParentExit once the launcher
 // process dies — detected via stdin EOF and/or a parent-pid poll. It is gated on
@@ -55,17 +51,10 @@ func Watch(onParentExit func()) {
 		fire("parent process exited (stdin closed)")
 	}()
 
-	// Trigger 2: poll the launcher pid. Skipped if the pid didn't parse, in which
-	// case we rely on the EOF trigger alone.
+	// Trigger 2: watch the launcher pid (platform-specific — a pinned process
+	// handle on Windows, a liveness poll elsewhere). Skipped if the pid didn't
+	// parse, in which case we rely on the EOF trigger alone.
 	if pid, err := strconv.Atoi(pidStr); err == nil && pid > 0 {
-		go func() {
-			for {
-				time.Sleep(pollInterval)
-				if !parentAlive(pid) {
-					fire("parent process gone (pid " + pidStr + ")")
-					return
-				}
-			}
-		}()
+		watchParent(pid, fire)
 	}
 }
