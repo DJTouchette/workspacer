@@ -53,6 +53,32 @@ function raiseRateLimitWarning(message: string | undefined): void {
   notifySystem({ level: 'warn', key: 'rate-limit-warning', title: message });
 }
 
+/** Map the wire's snake_case context inventory to the store's camelCase shape. */
+function mapInventory(inv: any): import('./claudeSessionStore').ContextInventoryInfo | undefined {
+  if (!inv) return undefined;
+  const items = (list: any): any[] =>
+    Array.isArray(list)
+      ? list.map((i: any) => ({
+          name: i.name,
+          path: i.path,
+          status: i.status,
+          source: i.source,
+          bytes: i.bytes,
+          estTokens: i.est_tokens,
+        }))
+      : [];
+  return {
+    mcpServers: items(inv.mcp_servers),
+    skills: items(inv.skills),
+    agents: items(inv.agents),
+    plugins: items(inv.plugins),
+    memoryFiles: items(inv.memory_files),
+    tools: Array.isArray(inv.tools) ? inv.tools : [],
+    slashCommands: Array.isArray(inv.slash_commands) ? inv.slash_commands : [],
+    claudeCodeVersion: inv.claude_code_version,
+  };
+}
+
 export async function startClaudemonStatusLineBridge(): Promise<void> {
   // Idempotent: if already running, skip re-starting.
   if (abort) return;
@@ -100,6 +126,7 @@ export async function startClaudemonStatusLineBridge(): Promise<void> {
                 plugins: sl.capabilities.plugins,
                 agents: sl.capabilities.agents,
                 memoryFiles: sl.capabilities.memory_files,
+                inventory: mapInventory(sl.capabilities.inventory),
               }
             : undefined,
           receivedAt: sl.received_at,

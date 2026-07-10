@@ -48,6 +48,7 @@ const defaultTitles: Record<PaneType, string> = {
   agents: 'Agents',
   inspector: 'Inspector',
   mdpreview: 'Preview',
+  context: 'Context',
 };
 
 /** Derive a human label from a working directory (its basename). */
@@ -736,6 +737,68 @@ export function useAgentManager() {
     [mutateAgent],
   );
 
+  // Open (or focus) a Context pane itemizing what occupies one session's
+  // context window — mirrors openInspector, deduping by the target session.
+  // A focus section (from a specific inspector chip) re-targets the existing
+  // pane's deep-link before focusing it.
+  const openContext = useCallback(
+    (opts: { sessionId: string; agentName?: string; focus?: string }): string => {
+      const aid = activeAgentIdRef.current;
+      if (!aid) return '';
+      const agent = agentsRef.current.find((a) => a.id === aid);
+      if (!agent) return '';
+      const existing = agent.tabs.find((t) =>
+        t.panes.some((p) => p.type === 'context' && p.contextSessionId === opts.sessionId),
+      );
+      if (existing) {
+        mutateAgent(aid, (a) => ({
+          ...a,
+          activeTabId: existing.id,
+          tabs: a.tabs.map((t) =>
+            t.id !== existing.id
+              ? t
+              : {
+                  ...t,
+                  panes: t.panes.map((p) =>
+                    p.type === 'context' && p.contextSessionId === opts.sessionId
+                      ? { ...p, contextFocus: opts.focus }
+                      : p,
+                  ),
+                },
+          ),
+        }));
+        return existing.id;
+      }
+      const title = opts.agentName ? `Context: ${opts.agentName}` : 'Context';
+      const paneId = generateId('context');
+      const tabId = generateId('tab');
+      const pane: PaneConfig = {
+        id: paneId,
+        type: 'context',
+        title,
+        contextSessionId: opts.sessionId,
+        contextAgentName: opts.agentName,
+        contextFocus: opts.focus,
+      };
+      mutateAgent(aid, (a) => ({
+        ...a,
+        tabs: [
+          ...a.tabs,
+          {
+            id: tabId,
+            title,
+            panes: [pane],
+            activePaneId: paneId,
+            lastActiveAt: Date.now(),
+          },
+        ],
+        activeTabId: tabId,
+      }));
+      return tabId;
+    },
+    [mutateAgent],
+  );
+
   // Open (or focus) a markdown Preview pane for one file in the active
   // workspace — mirrors openInspector, deduping by the previewed path so a
   // repeat click on the same file focuses the existing pane.
@@ -1084,6 +1147,7 @@ export function useAgentManager() {
     openPaneIn,
     openAgentWatch,
     openInspector,
+    openContext,
     openMarkdownPreview,
     // tabs (active agent)
     tabs,

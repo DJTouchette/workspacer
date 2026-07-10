@@ -61,6 +61,24 @@ export function requestInspector(target: InspectorTarget): void {
   window.dispatchEvent(new CustomEvent(INSPECTOR_OPEN_EVENT, { detail: target }));
 }
 
+export const CONTEXT_OPEN_EVENT = 'context:open';
+
+/** Open a Context pane itemizing what occupies a session's context window. */
+export interface ContextTarget {
+  /** The claudemon session whose inventory the pane renders. */
+  sessionId: string;
+  /** Target agent's display name (header + pane title). */
+  agentName?: string;
+  /** Section to scroll to on open: 'mcp' | 'skills' | 'plugins' | 'agents' | 'memory'. */
+  focus?: string;
+}
+
+/** Open (or focus) a Context pane for a session — from the inspector rail's
+ *  Usage chips or the command palette. */
+export function requestContextPane(target: ContextTarget): void {
+  window.dispatchEvent(new CustomEvent(CONTEXT_OPEN_EVENT, { detail: target }));
+}
+
 export const AGENT_HANDOFF_EVENT = 'agent:handoff';
 
 /** Spawn a successor agent primed with a handoff brief (any → any provider). */

@@ -189,6 +189,34 @@ export interface SessionCapabilities {
   plugins?: number;
   agents?: number;
   memoryFiles?: number;
+  /** Itemized inventory behind the counts (names, paths, size estimates). */
+  inventory?: ContextInventoryInfo;
+}
+
+/** One named thing loaded into the session's context (stream sessions).
+ *  `bytes`/`estTokens` are estimates from the backing file on disk (~4 chars
+ *  per token) — absent when the item has no file we can find. */
+export interface ContextItemInfo {
+  name: string;
+  path?: string;
+  /** MCP server connection status ("connected" / "pending" / "failed"). */
+  status?: string;
+  /** Origin — a plugin's marketplace source, or a memory entry's kind. */
+  source?: string;
+  bytes?: number;
+  estTokens?: number;
+}
+
+/** Itemized context inventory from the stream `init` frame. */
+export interface ContextInventoryInfo {
+  mcpServers: ContextItemInfo[];
+  skills: ContextItemInfo[];
+  agents: ContextItemInfo[];
+  plugins: ContextItemInfo[];
+  memoryFiles: ContextItemInfo[];
+  tools: string[];
+  slashCommands: string[];
+  claudeCodeVersion?: string;
 }
 
 export interface ClaudeSessionState {

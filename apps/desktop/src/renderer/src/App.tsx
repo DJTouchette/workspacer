@@ -16,10 +16,12 @@ import {
   SESSION_WATCH_EVENT,
   AGENT_HANDOFF_EVENT,
   INSPECTOR_OPEN_EVENT,
+  CONTEXT_OPEN_EVENT,
   type AgentWatchTarget,
   type SessionWatchTarget,
   type HandoffTarget,
   type InspectorTarget,
+  type ContextTarget,
 } from './lib/watchBus';
 import { EDITOR_OPEN_FILE_EVENT } from './lib/editorBus';
 import { MARKDOWN_PREVIEW_EVENT, type MarkdownPreviewTarget } from './lib/previewBus';
@@ -246,6 +248,7 @@ function App() {
     openPaneIn,
     openAgentWatch,
     openInspector,
+    openContext,
     openMarkdownPreview,
     setActiveAgentId,
     tabs,
@@ -986,6 +989,16 @@ function App() {
     if (tabId) requestAnimationFrame(() => scrollToTab(tabId));
   }, [openInspector, scrollToTab]);
 
+  /** Open a Context pane for the currently-piloted agent (command-palette
+   *  entry). Itemizes what occupies that session's context window. */
+  const openContextForActive = useCallback(() => {
+    setShowCommandPalette(false);
+    const target = activeAgentRef.current;
+    if (!target || target.global || !target.sessionId) return;
+    const tabId = openContext({ sessionId: target.sessionId, agentName: target.name });
+    if (tabId) requestAnimationFrame(() => scrollToTab(tabId));
+  }, [openContext, scrollToTab]);
+
   /** Open the Ask pane in the global Overview workspace (command-palette entry
    *  "Ask the fleet"). Reuses an existing Ask tab rather than opening a duplicate. */
   const openAskPane = useCallback(() => {
@@ -1349,6 +1362,25 @@ function App() {
     window.addEventListener(INSPECTOR_OPEN_EVENT, handler);
     return () => window.removeEventListener(INSPECTOR_OPEN_EVENT, handler);
   }, [openInspector, scrollToTab, viewLevel, setViewLevel]);
+
+  // Open a Context pane for a session (inspector Usage chips / command
+  // palette). openContext dedupes by session, so a repeat request focuses the
+  // existing pane, re-aimed at the requested section.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const t = (e as CustomEvent).detail as ContextTarget | undefined;
+      if (!t?.sessionId) return;
+      const tabId = openContext({
+        sessionId: t.sessionId,
+        agentName: t.agentName,
+        focus: t.focus,
+      });
+      if (viewLevel === 'fleet') setViewLevel('piloting');
+      if (tabId) requestAnimationFrame(() => scrollToTab(tabId));
+    };
+    window.addEventListener(CONTEXT_OPEN_EVENT, handler);
+    return () => window.removeEventListener(CONTEXT_OPEN_EVENT, handler);
+  }, [openContext, scrollToTab, viewLevel, setViewLevel]);
 
   // Watch a whole session in a GUI viewer pane (Agents pane click-through).
   // Focus an existing viewer for that session in the current workspace, else
@@ -1899,6 +1931,7 @@ function App() {
           onOpenAnalytics={openAnalytics}
           onOpenAgents={openAgentsPane}
           onOpenInspector={openInspectorForActive}
+          onOpenContext={openContextForActive}
           onOpenLayouts={() => {
             setShowCommandPalette(false);
             setShowLayouts(true);

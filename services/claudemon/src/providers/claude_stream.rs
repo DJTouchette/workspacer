@@ -36,7 +36,9 @@ use tokio::sync::mpsc;
 
 use super::{apply_updates, AgentUpdate, Facade, UsageAcc};
 use crate::session::conversation::ConversationItem;
-use crate::session::state::{Capabilities, Pending, PendingQuestion, SessionMode};
+use crate::session::state::{
+    Capabilities, ContextInventory, ContextItem, Pending, PendingQuestion, SessionMode,
+};
 use crate::session::store::{ManagedAnswer, ManagedPermissionSwitch};
 use crate::session::transcript::{blocks, flatten_tool_result, Block};
 use crate::session::{ConversationStore, SessionStore};
@@ -370,7 +372,214 @@ fn capabilities_from_init(v: &Value) -> Capabilities {
         plugins: len("plugins"),
         agents: len("agents"),
         memory_files: len("memory_paths"),
+        inventory: Some(inventory_from_init(v)),
     }
+}
+
+/// Itemize the init frame into a [`ContextInventory`] — names only, no disk
+/// access (that's [`enrich_inventory`]'s job). Tolerant of both wire shapes the
+/// CLI has used: string lists vs `{name, …}` object lists vs name-keyed maps.
+fn inventory_from_init(v: &Value) -> ContextInventory {
+    // A list of items that are either plain strings or objects with a `name`.
+    fn named_items(v: Option<&Value>) -> Vec<ContextItem> {
+        match v {
+            Some(Value::Array(a)) => a
+                .iter()
+                .filter_map(|e| match e {
+                    Value::String(s) => Some(ContextItem {
+                        name: s.clone(),
+                        ..Default::default()
+                    }),
+                    Value::Object(o) => Some(ContextItem {
+                        name: o.get("name").and_then(Value::as_str)?.to_owned(),
+                        path: o.get("path").and_then(Value::as_str).map(str::to_owned),
+                        status: o.get("status").and_then(Value::as_str).map(str::to_owned),
+                        source: o.get("source").and_then(Value::as_str).map(str::to_owned),
+                        ..Default::default()
+                    }),
+                    _ => None,
+                })
+                .collect(),
+            // Name-keyed map (older frames shape mcp_servers/agents this way).
+            Some(Value::Object(o)) => o
+                .keys()
+                .map(|name| ContextItem {
+                    name: name.clone(),
+                    ..Default::default()
+                })
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+    fn names(v: Option<&Value>) -> Vec<String> {
+        match v {
+            Some(Value::Array(a)) => a
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+    // `memory_paths` is a kind→path map ({"auto": "/…/memory/"}) or a plain
+    // list of paths. Either way each entry is one item whose `path` enrichment
+    // later expands into the actual files.
+    let memory_files = match v.get("memory_paths") {
+        Some(Value::Object(o)) => o
+            .iter()
+            .filter_map(|(kind, path)| {
+                Some(ContextItem {
+                    name: kind.clone(),
+                    path: Some(path.as_str()?.to_owned()),
+                    ..Default::default()
+                })
+            })
+            .collect(),
+        Some(Value::Array(a)) => a
+            .iter()
+            .filter_map(Value::as_str)
+            .map(|p| ContextItem {
+                name: p.rsplit('/').next().unwrap_or(p).to_owned(),
+                path: Some(p.to_owned()),
+                ..Default::default()
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+    ContextInventory {
+        mcp_servers: named_items(v.get("mcp_servers")),
+        skills: named_items(v.get("skills")),
+        agents: named_items(v.get("agents")),
+        plugins: named_items(v.get("plugins")),
+        memory_files,
+        tools: names(v.get("tools")),
+        slash_commands: names(v.get("slash_commands")),
+        claude_code_version: v
+            .get("claude_code_version")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+    }
+}
+
+/// Size a context item's backing file: bytes from disk, tokens estimated at
+/// ~4 chars per token (the ballpark Claude Code itself uses for prose).
+fn size_item(item: &mut ContextItem, path: &std::path::Path) {
+    if let Ok(meta) = std::fs::metadata(path) {
+        if meta.is_file() {
+            item.path = Some(path.to_string_lossy().into_owned());
+            item.bytes = Some(meta.len());
+            item.est_tokens = Some(meta.len().div_ceil(4));
+        }
+    }
+}
+
+/// Best-effort disk enrichment of an inventory: resolve skills/agents to their
+/// well-known `.claude` file locations, expand memory directories into the
+/// files inside them, and stamp `bytes`/`est_tokens` on everything file-backed.
+/// Runs once per init frame (std::fs is fine — a handful of small files); items
+/// we can't resolve just keep their name.
+fn enrich_inventory(caps: &mut Capabilities, cwd: Option<&str>) {
+    let Some(inv) = caps.inventory.as_mut() else {
+        return;
+    };
+    let home = directories::BaseDirs::new().map(|b| b.home_dir().to_path_buf());
+    let mut roots: Vec<std::path::PathBuf> = Vec::new();
+    if let Some(cwd) = cwd {
+        roots.push(std::path::Path::new(cwd).join(".claude"));
+    }
+    if let Some(home) = &home {
+        roots.push(home.join(".claude"));
+    }
+
+    // Skills live at <root>/skills/<name>/SKILL.md; agents at <root>/agents/<name>.md.
+    for skill in &mut inv.skills {
+        if skill.path.is_some() {
+            continue;
+        }
+        for root in &roots {
+            let candidate = root.join("skills").join(&skill.name).join("SKILL.md");
+            if candidate.is_file() {
+                size_item(skill, &candidate);
+                break;
+            }
+        }
+    }
+    for agent in &mut inv.agents {
+        if agent.path.is_some() {
+            continue;
+        }
+        for root in &roots {
+            let candidate = root.join("agents").join(format!("{}.md", agent.name));
+            if candidate.is_file() {
+                size_item(agent, &candidate);
+                break;
+            }
+        }
+    }
+
+    // Memory entries are usually directories — expand each into the files
+    // inside (two levels deep, capped) so the pane can show real files.
+    const MAX_MEMORY_FILES: usize = 100;
+    let mut expanded: Vec<ContextItem> = Vec::new();
+    for entry in inv.memory_files.drain(..) {
+        let Some(path) = entry.path.as_deref() else {
+            expanded.push(entry);
+            continue;
+        };
+        let path = std::path::Path::new(path);
+        if path.is_file() {
+            let mut item = entry.clone();
+            size_item(&mut item, path);
+            expanded.push(item);
+            continue;
+        }
+        if !path.is_dir() {
+            expanded.push(entry);
+            continue;
+        }
+        let mut files = list_files(path, 2, MAX_MEMORY_FILES);
+        files.sort();
+        if files.is_empty() {
+            expanded.push(entry.clone()); // keep the bare dir so the count stays honest
+            continue;
+        }
+        for file in files {
+            let name = file
+                .strip_prefix(path)
+                .unwrap_or(&file)
+                .to_string_lossy()
+                .into_owned();
+            let mut item = ContextItem {
+                name,
+                source: Some(entry.name.clone()),
+                ..Default::default()
+            };
+            size_item(&mut item, &file);
+            expanded.push(item);
+        }
+    }
+    inv.memory_files = expanded;
+}
+
+/// Regular files under `dir`, up to `depth` levels deep, capped at `max`.
+fn list_files(dir: &std::path::Path, depth: usize, max: usize) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return out;
+    };
+    for entry in entries.flatten() {
+        if out.len() >= max {
+            break;
+        }
+        let path = entry.path();
+        if path.is_file() {
+            out.push(path);
+        } else if depth > 0 && path.is_dir() {
+            let remaining = max - out.len();
+            out.extend(list_files(&path, depth - 1, remaining));
+        }
+    }
+    out
 }
 
 /// Human warning string for a window that crossed its threshold, mirroring the
@@ -1097,6 +1306,13 @@ fn handle_line(
             if suppress_idle {
                 updates.retain(|u| !matches!(u, AgentUpdate::Idle));
             }
+            // The init frame's inventory is names-only (translate is pure);
+            // stamp file sizes on it here, where disk access is fine.
+            for update in &mut updates {
+                if let AgentUpdate::Capabilities(caps) = update {
+                    enrich_inventory(caps, value.get("cwd").and_then(Value::as_str));
+                }
+            }
             if !updates.is_empty() {
                 apply_updates(store, conv, session_id, updates, cur_mode, acc);
             }
@@ -1433,6 +1649,90 @@ mod tests {
         assert_eq!(caps.plugins, 0);
         assert_eq!(caps.agents, 1);
         assert_eq!(caps.memory_files, 1);
+    }
+
+    #[test]
+    fn init_frame_yields_itemized_inventory() {
+        // Field shapes verified against a real CLI 2.1.204 init frame.
+        let inv = inventory_from_init(&json!({
+            "type": "system", "subtype": "init", "cwd": "/tmp",
+            "tools": ["Task", "Bash", "Read"],
+            "mcp_servers": [
+                { "name": "Neon", "status": "pending" },
+                { "name": "posthog", "status": "connected" }
+            ],
+            "slash_commands": ["verify", "code-review"],
+            "agents": ["claude", "Explore"],
+            "skills": ["verify", "dataviz"],
+            "plugins": [{ "name": "rust-analyzer-lsp",
+                          "path": "/home/u/.claude/plugins/cache/rust-analyzer-lsp/1.0.0",
+                          "source": "rust-analyzer-lsp@claude-plugins-official" }],
+            "memory_paths": { "auto": "/home/u/.claude/projects/-tmp/memory/" },
+            "claude_code_version": "2.1.204"
+        }));
+        assert_eq!(inv.mcp_servers.len(), 2);
+        assert_eq!(inv.mcp_servers[0].name, "Neon");
+        assert_eq!(inv.mcp_servers[0].status.as_deref(), Some("pending"));
+        assert_eq!(inv.tools, vec!["Task", "Bash", "Read"]);
+        assert_eq!(inv.slash_commands.len(), 2);
+        assert_eq!(inv.agents.len(), 2);
+        assert_eq!(inv.skills[1].name, "dataviz");
+        assert_eq!(inv.plugins[0].source.as_deref(),
+            Some("rust-analyzer-lsp@claude-plugins-official"));
+        assert!(inv.plugins[0].path.as_deref().unwrap().ends_with("1.0.0"));
+        assert_eq!(inv.memory_files.len(), 1);
+        assert_eq!(inv.memory_files[0].name, "auto");
+        assert_eq!(inv.memory_files[0].path.as_deref(),
+            Some("/home/u/.claude/projects/-tmp/memory/"));
+        assert_eq!(inv.claude_code_version.as_deref(), Some("2.1.204"));
+    }
+
+    #[test]
+    fn inventory_tolerates_legacy_map_shapes() {
+        // Older frames shaped mcp_servers/agents as name-keyed maps and
+        // memory_paths as a plain list.
+        let inv = inventory_from_init(&json!({
+            "mcp_servers": { "workspacer": {}, "linear": {} },
+            "agents": { "reviewer": {} },
+            "memory_paths": ["/home/u/CLAUDE.md"]
+        }));
+        let mut names: Vec<&str> = inv.mcp_servers.iter().map(|i| i.name.as_str()).collect();
+        names.sort_unstable();
+        assert_eq!(names, vec!["linear", "workspacer"]);
+        assert_eq!(inv.agents[0].name, "reviewer");
+        assert_eq!(inv.memory_files[0].name, "CLAUDE.md");
+        assert_eq!(inv.memory_files[0].path.as_deref(), Some("/home/u/CLAUDE.md"));
+    }
+
+    #[test]
+    fn enrich_expands_memory_dir_and_sizes_files() {
+        let dir = std::env::temp_dir().join(format!("wks-inv-test-{}", std::process::id()));
+        let sub = dir.join("nested");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(dir.join("MEMORY.md"), "x".repeat(400)).unwrap();
+        std::fs::write(sub.join("fact.md"), "y".repeat(41)).unwrap();
+
+        let mut caps = Capabilities {
+            inventory: Some(ContextInventory {
+                memory_files: vec![ContextItem {
+                    name: "auto".into(),
+                    path: Some(dir.to_string_lossy().into_owned()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        enrich_inventory(&mut caps, None);
+        let files = &caps.inventory.as_ref().unwrap().memory_files;
+        assert_eq!(files.len(), 2, "dir should expand to the files inside");
+        let index = files.iter().find(|f| f.name == "MEMORY.md").unwrap();
+        assert_eq!(index.bytes, Some(400));
+        assert_eq!(index.est_tokens, Some(100));
+        assert_eq!(index.source.as_deref(), Some("auto"));
+        let nested = files.iter().find(|f| f.name.contains("fact.md")).unwrap();
+        assert_eq!(nested.est_tokens, Some(11)); // ceil(41/4)
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

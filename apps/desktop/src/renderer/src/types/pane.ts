@@ -15,7 +15,8 @@ export type PaneType =
   | 'agentwatch'
   | 'agents'
   | 'inspector'
-  | 'mdpreview';
+  | 'mdpreview'
+  | 'context';
 
 /** Coding-agent backend an agent workspace / agent pane runs.
  *  `undefined` is treated as `'claude'` for backward compatibility with sessions
@@ -86,6 +87,15 @@ export interface PaneConfig {
   /** Markdown-preview panes only: the repo/working dir the file belongs to
    *  (threaded to "Open in editor" so the editor roots at the project). */
   previewCwd?: string;
+  /** Context panes only: the claudemon session whose context inventory the
+   *  pane itemizes. One pane per session. */
+  contextSessionId?: string;
+  /** Context panes only: the target agent's display name for the header. */
+  contextAgentName?: string;
+  /** Context panes only: section to scroll into view on open (a click on a
+   *  specific inspector chip deep-links here), e.g. 'mcp' | 'skills' |
+   *  'plugins' | 'agents' | 'memory'. */
+  contextFocus?: string;
 }
 
 export interface TabConfig {

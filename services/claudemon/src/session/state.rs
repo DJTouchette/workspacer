@@ -220,6 +220,59 @@ pub struct Capabilities {
     pub agents: u32,
     #[serde(default)]
     pub memory_files: u32,
+    /// Itemized inventory behind the counts (names, paths, size estimates) —
+    /// what the Context pane renders. Absent on PTY sessions and on stream
+    /// frames that predate it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inventory: Option<ContextInventory>,
+}
+
+/// One named thing loaded into the session's context: an MCP server, skill,
+/// agent, plugin, or memory file. `bytes`/`est_tokens` are best-effort
+/// estimates from the backing file on disk (~4 chars per token) — absent when
+/// there is no file we can find (builtin agents, MCP tool schemas).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ContextItem {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// MCP server connection status ("connected" / "pending" / "failed").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    /// Plugin origin, e.g. "rust-analyzer-lsp@claude-plugins-official".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub est_tokens: Option<u64>,
+}
+
+/// Itemized inventory of what the stream `init` frame reports loaded into the
+/// session: names straight off the frame, sizes enriched from disk where the
+/// item is file-backed. Rides [`Capabilities`] so every client that already
+/// sees the counts gets the detail for free.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ContextInventory {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mcp_servers: Vec<ContextItem>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skills: Vec<ContextItem>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub agents: Vec<ContextItem>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub plugins: Vec<ContextItem>,
+    /// Memory *files* — directories from the frame's `memory_paths` are
+    /// expanded to the files inside them during enrichment.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub memory_files: Vec<ContextItem>,
+    /// Builtin tool names available to the session.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub slash_commands: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claude_code_version: Option<String>,
 }
 
 /// Live telemetry from Claude Code's `statusLine` command.

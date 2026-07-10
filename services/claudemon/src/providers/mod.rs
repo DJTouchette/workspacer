@@ -365,20 +365,26 @@ pub fn context_window_for(model: &str) -> Option<u64> {
 
 /// Map an `AgentUpdate` to a conversation item, when it represents one.
 pub fn conversation_item(update: &AgentUpdate) -> Option<ConversationItem> {
+    // Managed adapters have no transcript rows to inherit timestamps from, so
+    // stamp arrival time. Clients derive tool durations from the gap between a
+    // tool_use and its tool_result — without stamps everything reads 0s.
+    let now = OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .ok();
     match update {
         AgentUpdate::AssistantText(text) => Some(ConversationItem::AssistantText {
             text: text.clone(),
-            timestamp: None,
+            timestamp: now,
         }),
         AgentUpdate::UserText(text) => Some(ConversationItem::UserMessage {
             text: text.clone(),
-            timestamp: None,
+            timestamp: now,
         }),
         AgentUpdate::ToolUse { id, name, input } => Some(ConversationItem::ToolUse {
             id: id.clone(),
             name: name.clone(),
             input: input.clone(),
-            timestamp: None,
+            timestamp: now,
         }),
         AgentUpdate::ToolResult {
             tool_use_id,
@@ -388,7 +394,7 @@ pub fn conversation_item(update: &AgentUpdate) -> Option<ConversationItem> {
             tool_use_id: tool_use_id.clone(),
             content: content.clone(),
             is_error: *is_error,
-            timestamp: None,
+            timestamp: now,
         }),
         _ => None,
     }

@@ -167,6 +167,8 @@ interface CommandPaletteProps {
   onOpenAgents?: () => void;
   /** Open an Inspector pane for the currently-piloted agent (plan/flows/agents/files/usage). */
   onOpenInspector?: () => void;
+  /** Open a Context pane itemizing the current agent's context window. */
+  onOpenContext?: () => void;
   /** Open the layout-templates manager. */
   onOpenLayouts?: () => void;
   /** Open the remote-control (phone sharing) panel. */
@@ -218,6 +220,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
   onOpenAnalytics,
   onOpenAgents,
   onOpenInspector,
+  onOpenContext,
   onOpenLayouts,
   onOpenRemote,
   onOpenAskPane,
@@ -355,6 +358,13 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
       onOpenInspector,
     );
     add(
+      'cmd-context',
+      'Context Window',
+      'What occupies the current agent’s context — memories, skills, MCP, tools',
+      <PaneIcon type="context" size={16} />,
+      onOpenContext,
+    );
+    add(
       'cmd-layouts',
       'Layouts…',
       'Apply or save a layout template',
@@ -425,6 +435,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
     onOpenAnalytics,
     onOpenAgents,
     onOpenInspector,
+    onOpenContext,
     onOpenLayouts,
     onSwitchSession,
     onSaveSession,
