@@ -65,7 +65,10 @@ rest of the fleet; check on a running job from your phone.
   sharing with one-tap HTTPS over Tailscale.
 - **Extensible** — a plugin system (drop in a manifest, get a supervised
   sidecar with its own panes) and an MCP facade that exposes the fleet as tools
-  a supervisor agent can drive.
+  a supervisor agent can drive. A dozen official plugins — fleet dashboards,
+  policy auto-approval, budget brakes, Slack/phone bridges, and more — live in
+  the [plugin catalog](https://github.com/DJTouchette/workspacer-plugins),
+  installable from the command palette.
 
 For a full, honest feature-by-feature catalog with maturity levels, see
 [`docs/features.md`](docs/features.md).
