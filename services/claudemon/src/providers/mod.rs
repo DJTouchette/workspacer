@@ -176,6 +176,10 @@ pub enum AgentUpdate {
         model: Option<String>,
         input_tokens: Option<u64>,
         output_tokens: Option<u64>,
+        /// Cache-read subset of `input_tokens` (cumulative, like it). Only
+        /// matters to providers without a native cost figure — cache reads
+        /// bill at a much lower rate, so the estimate needs the split.
+        cached_input_tokens: Option<u64>,
         cost_usd: Option<f64>,
         /// Tokens currently occupying the model's context window (the latest
         /// turn's total, including cache) — NOT cumulative like input/output.
@@ -409,6 +413,7 @@ pub struct UsageAcc {
     model: Option<String>,
     input: Option<u64>,
     output: Option<u64>,
+    cached_input: Option<u64>,
     cost: Option<f64>,
     context_tokens: Option<u64>,
     context_window: Option<u64>,
@@ -421,6 +426,12 @@ pub struct UsageAcc {
     rate_limit_warning: Option<String>,
     overage_out_of_credits: Option<bool>,
     capabilities: Option<Capabilities>,
+    /// Estimate cost from the pricing table when no native cost arrives.
+    /// Opt-in per adapter: only sound where the wire's input/output totals are
+    /// session-cumulative AND never carry dollars (Codex). Claude's stream
+    /// totals are per-request maxes — an estimate there would flash a wrong
+    /// figure before the first `result` event's real `total_cost_usd`.
+    estimate_costs: bool,
 }
 
 impl UsageAcc {
@@ -436,12 +447,18 @@ impl UsageAcc {
             self.model = model.map(str::to_owned);
         }
     }
+
+    /// Turn on pricing-table cost estimation (see the field's caveats).
+    pub fn estimate_costs(&mut self) {
+        self.estimate_costs = true;
+    }
     #[allow(clippy::too_many_arguments)]
     fn merge(
         &mut self,
         model: Option<String>,
         input: Option<u64>,
         output: Option<u64>,
+        cached_input: Option<u64>,
         cost: Option<f64>,
         context_tokens: Option<u64>,
         context_window: Option<u64>,
@@ -454,6 +471,9 @@ impl UsageAcc {
         }
         if let Some(o) = output {
             self.output = Some(self.output.map_or(o, |c| c.max(o)));
+        }
+        if let Some(ci) = cached_input {
+            self.cached_input = Some(self.cached_input.map_or(ci, |c| c.max(ci)));
         }
         if let Some(c) = cost {
             self.cost = Some(self.cost.map_or(c, |p| p.max(c)));
@@ -526,25 +546,63 @@ impl UsageAcc {
             }
             _ => None,
         };
+        // No native cost (Codex — OpenAI's wire carries no dollars): estimate
+        // from the cumulative token totals and the pricing table. Unknown
+        // models stay blank rather than invent a figure.
+        let cost = self.cost.or_else(|| {
+            self.estimate_costs
+                .then(|| {
+                    crate::session::pricing::estimate_cost(
+                        self.model.as_deref(),
+                        self.input,
+                        self.cached_input,
+                        self.output,
+                    )
+                })
+                .flatten()
+        });
+        // Providers that never send an explicit warning (Codex) still get one
+        // synthesized from the utilization windows they do report.
+        let warning = self.rate_limit_warning.clone().or_else(|| {
+            synthesized_rate_limit_warning(&[
+                ("5-hour", self.five_hour_pct),
+                ("7-day", self.seven_day_pct),
+                ("monthly", self.monthly_pct),
+            ])
+        });
         StatusLine {
             model_display: self.model.clone(),
             context_used_pct: pct,
             context_window_size: window,
             total_input_tokens: self.input,
             total_output_tokens: self.output,
-            cost_usd: self.cost,
+            cost_usd: cost,
             five_hour_pct: self.five_hour_pct,
             five_hour_resets_at: self.five_hour_resets_at,
             seven_day_pct: self.seven_day_pct,
             seven_day_resets_at: self.seven_day_resets_at,
             monthly_pct: self.monthly_pct,
             monthly_resets_at: self.monthly_resets_at,
-            rate_limit_warning: self.rate_limit_warning.clone(),
+            rate_limit_warning: warning,
             overage_out_of_credits: self.overage_out_of_credits,
             capabilities: self.capabilities.clone(),
             received_at: Some(OffsetDateTime::now_utc()),
         }
     }
+}
+
+/// "You're close to your … usage limit — NN% used" once a window crosses 80%,
+/// mirroring the phrasing Claude's own `rate_limit_event` warning uses so the
+/// banner reads identically for every provider. Highest window wins. Clears
+/// (returns `None`) once every window is back under the threshold.
+fn synthesized_rate_limit_warning(windows: &[(&str, Option<f64>)]) -> Option<String> {
+    const THRESHOLD: f64 = 80.0;
+    windows
+        .iter()
+        .filter_map(|(label, pct)| pct.map(|p| (*label, p)))
+        .filter(|(_, p)| *p >= THRESHOLD)
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(label, p)| format!("You're close to your {label} usage limit — {p:.0}% used"))
 }
 
 /// Drive the stores from a batch of translated updates. Shared by every
@@ -592,6 +650,7 @@ pub fn apply_updates(
                 model,
                 input_tokens,
                 output_tokens,
+                cached_input_tokens,
                 cost_usd,
                 context_tokens,
                 context_window,
@@ -600,6 +659,7 @@ pub fn apply_updates(
                     model.clone(),
                     *input_tokens,
                     *output_tokens,
+                    *cached_input_tokens,
                     *cost_usd,
                     *context_tokens,
                     *context_window,
@@ -796,7 +856,15 @@ mod tests {
     #[test]
     fn status_line_sets_only_known_fields() {
         let mut acc = UsageAcc::new();
-        acc.merge(Some("m".into()), Some(10), Some(2), Some(0.5), None, None);
+        acc.merge(
+            Some("m".into()),
+            Some(10),
+            Some(2),
+            None,
+            Some(0.5),
+            None,
+            None,
+        );
         let sl = acc.status_line();
         assert_eq!(sl.model_display.as_deref(), Some("m"));
         assert_eq!(sl.total_input_tokens, Some(10));
@@ -805,6 +873,52 @@ mod tests {
         // Unknown model + no reported window → no context meter.
         assert!(sl.context_used_pct.is_none());
         assert!(sl.received_at.is_some());
+    }
+
+    #[test]
+    fn status_line_estimates_cost_only_when_opted_in() {
+        // Codex-shaped: cumulative tokens, no native cost, known model.
+        // 2M input (1M cached) + 1M output on gpt-5-codex = 1.25 + 0.125 + 10.
+        let mut acc = UsageAcc::new();
+        acc.merge(
+            Some("gpt-5-codex".into()),
+            Some(2_000_000),
+            Some(1_000_000),
+            Some(1_000_000),
+            None,
+            None,
+            None,
+        );
+        // Not opted in (Claude-style adapters) → no invented figure.
+        assert!(acc.status_line().cost_usd.is_none());
+        acc.estimate_costs();
+        assert!((acc.status_line().cost_usd.unwrap() - 11.375).abs() < 1e-9);
+        // A native cost, once it exists, always wins over the estimate.
+        acc.merge(None, None, None, None, Some(2.0), None, None);
+        assert_eq!(acc.status_line().cost_usd, Some(2.0));
+    }
+
+    #[test]
+    fn status_line_synthesizes_rate_limit_warning_from_windows() {
+        // Providers that never send an explicit warning (Codex) get one
+        // synthesized once a window crosses 80% — highest window wins — and
+        // it clears when the windows roll back under.
+        let mut acc = UsageAcc::new();
+        acc.merge_rate_limits(Some(45.0), None, Some(60.0), None, None, None);
+        assert!(acc.status_line().rate_limit_warning.is_none());
+        acc.merge_rate_limits(Some(85.0), None, Some(91.0), None, None, None);
+        assert_eq!(
+            acc.status_line().rate_limit_warning.as_deref(),
+            Some("You're close to your 7-day usage limit — 91% used")
+        );
+        acc.merge_rate_limits(Some(3.0), None, Some(12.0), None, None, None);
+        assert!(acc.status_line().rate_limit_warning.is_none());
+        // An explicit provider warning always wins over the synthesized one.
+        acc.merge_rate_limit_status(Some("explicit".into()), None);
+        assert_eq!(
+            acc.status_line().rate_limit_warning.as_deref(),
+            Some("explicit")
+        );
     }
 
     #[test]
@@ -837,7 +951,15 @@ mod tests {
     #[test]
     fn status_line_computes_context_pct_from_reported_window() {
         let mut acc = UsageAcc::new();
-        acc.merge(None, Some(10), Some(2), None, Some(50_000), Some(200_000));
+        acc.merge(
+            None,
+            Some(10),
+            Some(2),
+            None,
+            None,
+            Some(50_000),
+            Some(200_000),
+        );
         let sl = acc.status_line();
         assert_eq!(sl.context_window_size, Some(200_000));
         assert!((sl.context_used_pct.unwrap() - 25.0).abs() < 0.001);
@@ -851,6 +973,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             Some(100_000),
             None,
         );
@@ -858,7 +981,7 @@ mod tests {
         assert_eq!(sl.context_window_size, Some(200_000));
         assert!((sl.context_used_pct.unwrap() - 50.0).abs() < 0.001);
         // Context % is capped at 100 even if occupancy overshoots the window.
-        acc.merge(None, None, None, None, Some(999_999), None);
+        acc.merge(None, None, None, None, None, Some(999_999), None);
         assert!((acc.status_line().context_used_pct.unwrap() - 100.0).abs() < 0.001);
     }
 
@@ -866,8 +989,8 @@ mod tests {
     fn context_tokens_track_latest_not_max() {
         // Compaction shrinks the context — the meter must follow it down.
         let mut acc = UsageAcc::new();
-        acc.merge(None, None, None, None, Some(150_000), Some(200_000));
-        acc.merge(None, None, None, None, Some(30_000), None);
+        acc.merge(None, None, None, None, None, Some(150_000), Some(200_000));
+        acc.merge(None, None, None, None, None, Some(30_000), None);
         let sl = acc.status_line();
         assert!((sl.context_used_pct.unwrap() - 15.0).abs() < 0.001);
     }
@@ -997,8 +1120,24 @@ mod tests {
     #[test]
     fn usage_acc_takes_max_and_latest_model() {
         let mut acc = UsageAcc::new();
-        acc.merge(Some("a".into()), Some(100), Some(10), Some(0.1), None, None);
-        acc.merge(Some("b".into()), Some(80), Some(20), Some(0.2), None, None);
+        acc.merge(
+            Some("a".into()),
+            Some(100),
+            Some(10),
+            None,
+            Some(0.1),
+            None,
+            None,
+        );
+        acc.merge(
+            Some("b".into()),
+            Some(80),
+            Some(20),
+            None,
+            Some(0.2),
+            None,
+            None,
+        );
         // model = latest, tokens/cost = max (never regress mid-turn).
         assert_eq!(acc.model.as_deref(), Some("b"));
         assert_eq!(acc.input, Some(100));

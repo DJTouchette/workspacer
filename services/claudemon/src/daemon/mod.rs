@@ -1,6 +1,7 @@
 pub mod api;
 pub mod hook;
 pub mod init;
+pub mod mcp_ask;
 pub mod spawn;
 pub mod wrapper_ws;
 
@@ -25,7 +26,22 @@ pub struct ServeConfig {
     pub db_path: PathBuf,
 }
 
+/// The daemon's own API base URL (`http://host:api_port`), set once at startup.
+/// Provider adapters need it to hand agents callback endpoints on this daemon —
+/// e.g. registering the `/mcp/ask/:session_id` AskUserQuestion MCP server with
+/// a Codex spawn. `None` until `run` is called (unit tests).
+pub static API_BASE: once_cell::sync::OnceCell<String> = once_cell::sync::OnceCell::new();
+
 pub async fn run(cfg: ServeConfig) -> Result<()> {
+    let _ = API_BASE.set(format!(
+        "http://{}:{}",
+        if cfg.host == "0.0.0.0" {
+            "127.0.0.1"
+        } else {
+            cfg.host.as_str()
+        },
+        cfg.api_port
+    ));
     // Windows: confine the daemon — and every PTY child it spawns (claude.exe,
     // conhost, shells) — in a kill-on-job-close job object, so the whole tree
     // dies with the daemon no matter how the daemon dies (clean exit, crash,

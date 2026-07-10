@@ -215,6 +215,10 @@ pub fn router_with_host(state: ApiState, bind_host: Option<String>) -> Router {
         .route("/hooks/stream", get(hook_stream))
         .route("/statusline/stream", get(status_line_stream))
         .route("/wrapper/:id", get(crate::daemon::wrapper_ws::upgrade))
+        // MCP streamable-HTTP server (POST-only; axum answers GET with 405) —
+        // gives MCP-speaking agents (Codex) an AskUserQuestion tool that
+        // parks a structured question in the GUI. See daemon::mcp_ask.
+        .route("/mcp/ask/:session_id", post(crate::daemon::mcp_ask::handle))
         .route("/health", get(|| async { "ok" }))
         // Bound request bodies (tool inputs, messages) so a hostile or buggy
         // local client can't push an unbounded payload through the fanout + DB.
@@ -978,7 +982,26 @@ async fn get_conversation(
     Path(id): Path<String>,
     Query(q): Query<ConversationQuery>,
 ) -> impl IntoResponse {
-    let (seq, mut items) = conv.snapshot(&id).unwrap_or((0, Vec::new()));
+    let (seq, items) = conv.snapshot(&id).unwrap_or((0, Vec::new()));
+    // Codex restart durability: the ws adapter's conversation lives in daemon
+    // memory, so a restarted daemon serves Stopped codex rows empty — but the
+    // codex-threads sidecar knows which rollout backed the session, and the
+    // rollout is the durable transcript. Replay it once, lazily, on first read.
+    let (seq, mut items) = if items.is_empty() {
+        match crate::providers::codex_rollout::thread_for(&id)
+            .and_then(|tid| crate::providers::codex_rollout::rollout_for_thread(&tid))
+            .map(|path| crate::providers::codex_rollout::replay_conversation(&path))
+            .filter(|replayed| !replayed.is_empty())
+        {
+            Some(replayed) => {
+                conv.push(&id, replayed);
+                conv.snapshot(&id).unwrap_or((0, Vec::new()))
+            }
+            None => (seq, items),
+        }
+    } else {
+        (seq, items)
+    };
     if let Some(since) = q.since {
         let skip = items_skip(seq, items.len(), since);
         items.drain(0..skip);

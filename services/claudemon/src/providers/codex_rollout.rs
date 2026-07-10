@@ -26,6 +26,7 @@ use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 use super::{apply_updates, AgentUpdate, UsageAcc};
+use crate::session::conversation::ConversationItem;
 use crate::session::state::SessionMode;
 use crate::session::{ConversationStore, SessionStore};
 
@@ -62,6 +63,7 @@ pub fn translate(value: &Value) -> Vec<AgentUpdate> {
                     model: Some(m),
                     input_tokens: None,
                     output_tokens: None,
+                    cached_input_tokens: None,
                     cost_usd: None,
                     context_tokens: None,
                     context_window: None,
@@ -300,6 +302,7 @@ fn translate_event_msg(payload: &Value) -> Vec<AgentUpdate> {
                     model: None,
                     input_tokens: input,
                     output_tokens: output,
+                    cached_input_tokens: None,
                     cost_usd: None,
                     context_tokens,
                     context_window,
@@ -357,6 +360,75 @@ async fn rollout_cwd(path: &Path) -> Option<String> {
         .and_then(|p| p.get("cwd"))
         .and_then(Value::as_str)
         .map(str::to_string)
+}
+
+// ── Session ↔ thread persistence (restart durability + resume) ──────────────
+//
+// The ws adapter's conversation lives in daemon memory, but Codex itself
+// writes a durable rollout (`<codex home>/sessions/**/rollout-*-<thread>.jsonl`).
+// Persisting the session→thread mapping in a tiny sidecar lets a restarted
+// daemon find that rollout again — to replay the conversation of a Stopped row,
+// and to `thread/resume` the same thread on a respawn. A sidecar (not the
+// SQLite sessions table) because the schema is columnar with no migration
+// machinery, and this is one provider-scoped string.
+
+/// `~/.workspacer/codex-threads`, created on demand.
+fn threads_dir() -> Option<PathBuf> {
+    let dir = BaseDirs::new()?
+        .home_dir()
+        .join(".workspacer")
+        .join("codex-threads");
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir)
+}
+
+/// Persist which app-server thread backs this session (idempotent).
+pub fn record_thread(session_id: &str, thread_id: &str) {
+    let Some(dir) = threads_dir() else { return };
+    let _ = std::fs::write(
+        dir.join(format!("{session_id}.json")),
+        serde_json::json!({ "thread_id": thread_id }).to_string(),
+    );
+}
+
+/// The thread recorded for a (possibly prior-life) session id.
+pub fn thread_for(session_id: &str) -> Option<String> {
+    let path = threads_dir()?.join(format!("{session_id}.json"));
+    let text = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str::<Value>(&text)
+        .ok()?
+        .get("thread_id")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+}
+
+/// Locate a thread's rollout on disk: the filename ends `-<thread_id>.jsonl`.
+pub fn rollout_for_thread(thread_id: &str) -> Option<PathBuf> {
+    let root = codex_home()?.join("sessions");
+    let suffix = format!("-{thread_id}.jsonl");
+    collect_rollouts(&root)
+        .into_iter()
+        .find(|(p, _)| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.ends_with(&suffix))
+        })
+        .map(|(p, _)| p)
+}
+
+/// Replay a whole rollout file into conversation items — the offline half of
+/// the tailer, for restoring a Stopped codex session's conversation after a
+/// daemon restart and pre-seeding a resume.
+pub fn replay_conversation(path: &Path) -> Vec<ConversationItem> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    text.lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .flat_map(|v| translate(&v))
+        .filter_map(|u| super::conversation_item(&u))
+        .collect()
 }
 
 /// Collect every `rollout-*.jsonl` under `sessions_root` (recurses the
@@ -478,6 +550,9 @@ async fn tail(
 ) -> anyhow::Result<()> {
     let mut cur_mode = SessionMode::Input;
     let mut acc = UsageAcc::new();
+    // OpenAI's wire never carries dollars; the token totals are cumulative,
+    // so the status line prices them via the pricing table.
+    acc.estimate_costs();
     // The session is ready for input until a turn starts (the TUI is idle on
     // launch); reflect that so the GUI composer's /message isn't mode-gated away.
     store.set_managed_mode(session_id, SessionMode::Input, None);
@@ -533,6 +608,31 @@ mod tests {
     }
     fn item(payload: Value) -> Value {
         json!({ "type": "response_item", "payload": payload })
+    }
+
+    #[test]
+    fn replay_conversation_folds_a_whole_rollout_into_items() {
+        use crate::session::conversation::ConversationItem;
+        let dir = std::env::temp_dir().join(format!("wks-replay-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("rollout-2026-07-10-th1.jsonl");
+        let lines = [
+            item(json!({ "type": "message", "role": "user",
+                "content": [{ "type": "input_text", "text": "hi" }] }))
+            .to_string(),
+            // Non-conversational noise must be skipped, not break the replay.
+            json!({ "type": "turn_context", "payload": { "model": "gpt-5-codex" } }).to_string(),
+            item(json!({ "type": "message", "role": "assistant",
+                "content": [{ "type": "output_text", "text": "OK" }] }))
+            .to_string(),
+        ];
+        std::fs::write(&path, lines.join("\n")).unwrap();
+
+        let items = replay_conversation(&path);
+        assert_eq!(items.len(), 2);
+        assert!(matches!(&items[0], ConversationItem::UserMessage { text, .. } if text == "hi"));
+        assert!(matches!(&items[1], ConversationItem::AssistantText { text, .. } if text == "OK"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -844,6 +944,7 @@ mod tests {
                     model: None,
                     input_tokens: Some(4402946),
                     output_tokens: Some(40196),
+                    cached_input_tokens: None,
                     cost_usd: None,
                     context_tokens: Some(132552),
                     context_window: Some(258400),
@@ -873,6 +974,7 @@ mod tests {
                 model: None,
                 input_tokens: Some(1000),
                 output_tokens: Some(200),
+                cached_input_tokens: None,
                 cost_usd: None,
                 context_tokens: Some(1200),
                 context_window: Some(272000),
@@ -889,6 +991,7 @@ mod tests {
                 model: Some("gpt-5.5".into()),
                 input_tokens: None,
                 output_tokens: None,
+                cached_input_tokens: None,
                 cost_usd: None,
                 context_tokens: None,
                 context_window: None,

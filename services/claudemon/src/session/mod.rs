@@ -1,6 +1,7 @@
 pub mod conversation;
 pub mod handoff;
 pub mod permission_mode;
+pub mod pricing;
 pub mod state;
 pub mod store;
 pub mod transcript;

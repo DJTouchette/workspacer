@@ -167,7 +167,8 @@ remote/web/phone clients all view and drive the same fleet.
 | Session/PTY APIs | input/output/stream/message/approve/answer/decide/gate/resize/spawn | 🟢 Solid |
 | Transcript + conversation tailer | Parse JSONL, stream deltas with sequence-join | 🟢 Solid |
 | Git API | status/diff/numstat/stage/unstage/commit/push | 🔵 Working |
-| Signal delivery | SIGINT (Ctrl-C), **and real SIGTERM/SIGKILL** to sessions | 🟢 Solid |
+| Signal delivery | SIGINT (Ctrl-C, structural turn-interrupt on managed drivers), **and real SIGTERM/SIGKILL** to sessions | 🟢 Solid |
+| Model pricing | Built-in per-model rates (Claude + OpenAI) price every session's cost readout; edit/extend via `~/.workspacer/model-rates.json` (`{"<model-prefix>": {"input": $/M, "output": $/M, "cached_input": $/M}}`, longest prefix wins, hot-reloaded) | 🔵 Working |
 | Wrapper protocol | External-process PTY mirroring over WebSocket | 🔵 Working |
 | `claudemon watch` TUI | Built-in dashboard + chat TUI | 🔵 Working |
 | `claudemon init` | Merge hooks into `~/.claude/settings.json` | 🔵 Working |

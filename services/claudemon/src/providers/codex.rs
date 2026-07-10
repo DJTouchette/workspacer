@@ -106,6 +106,11 @@ pub fn translate(method: &str, params: &Value) -> Vec<AgentUpdate> {
             let output = total
                 .and_then(|t| pick(t, ["outputTokens", "output_tokens"]))
                 .or_else(|| pick(tu, ["output_tokens", "outputTokens"]));
+            // Cache-read subset of the cumulative input — the cost estimate
+            // bills it at the (10×-cheaper) cached rate.
+            let cached_input = total
+                .and_then(|t| pick(t, ["cachedInputTokens", "cached_input_tokens"]))
+                .or_else(|| pick(tu, ["cached_input_tokens", "cachedInputTokens"]));
             if input.is_some() || output.is_some() {
                 // Context occupancy: the LAST request's total (never the
                 // cumulative one — that pins the meter at 100% within a few
@@ -128,6 +133,7 @@ pub fn translate(method: &str, params: &Value) -> Vec<AgentUpdate> {
                     model: None,
                     input_tokens: input,
                     output_tokens: output,
+                    cached_input_tokens: cached_input,
                     cost_usd: None,
                     context_tokens,
                     context_window,
@@ -147,6 +153,7 @@ pub fn translate(method: &str, params: &Value) -> Vec<AgentUpdate> {
                     model: Some(m.to_string()),
                     input_tokens: None,
                     output_tokens: None,
+                    cached_input_tokens: None,
                     cost_usd: None,
                     context_tokens: None,
                     context_window: None,
@@ -605,6 +612,8 @@ pub fn spawn_session(
     effort: Option<String>,
     bin: String,
     yolo: bool,
+    headless: bool,
+    resume_thread: Option<String>,
     facade: Facade,
 ) {
     tokio::spawn(async move {
@@ -617,6 +626,8 @@ pub fn spawn_session(
             effort,
             &bin,
             yolo,
+            headless,
+            resume_thread,
             &facade,
         )
         .await
@@ -637,9 +648,14 @@ type CodexWs =
 /// URL (the TUI attaches to it via `--remote`). An error means the ws path is
 /// unavailable for this Codex build — the caller falls back to the rollout hybrid.
 async fn start_appserver(
+    session_id: &str,
     cwd: &str,
     bin: &str,
     facade: &Facade,
+    // Headless only: (model, effort) config overrides. The app-server is the
+    // thread's creator there, so what hybrid mode sets on the TUI process goes
+    // on the server instead. `None` in hybrid mode — the TUI owns the config.
+    overrides: Option<(Option<String>, Option<String>)>,
 ) -> anyhow::Result<(tokio::process::Child, CodexWs, String)> {
     // Each managed session gets its own app-server, so threads/approvals are
     // isolated per pane.
@@ -658,6 +674,26 @@ async fn start_appserver(
     if let Some(mcp_url) = &facade.mcp_url {
         cmd.arg("-c")
             .arg(format!("mcp_servers.workspacer.url=\"{mcp_url}\""));
+    }
+    if let Some((model, effort)) = overrides {
+        if let Some(m) = model {
+            cmd.arg("-c").arg(format!("model={}", Value::String(m)));
+        }
+        if let Some(e) = effort {
+            cmd.arg("-c")
+                .arg(format!("model_reasoning_effort={}", Value::String(e)));
+        }
+    }
+    // AskUserQuestion: the daemon serves a per-session MCP endpoint that parks
+    // a structured question for the GUI and blocks until /answer resolves it —
+    // Codex's stand-in for Claude's native tool. The generous tool timeout is
+    // the point: a question can legitimately wait on the user for hours.
+    if let Some(api_base) = crate::daemon::API_BASE.get() {
+        cmd.arg("-c").arg(format!(
+            "mcp_servers.workspacer_ask.url=\"{api_base}/mcp/ask/{session_id}\""
+        ));
+        cmd.arg("-c")
+            .arg("mcp_servers.workspacer_ask.tool_timeout_sec=21600");
     }
     let child = cmd
         .current_dir(cwd)
@@ -784,14 +820,30 @@ async fn run_session(
     effort: Option<String>,
     bin: &str,
     yolo: bool,
+    headless: bool,
+    // A prior life's app-server thread to `thread/resume` instead of starting
+    // fresh — headless only (the TUI can't rejoin an arbitrary thread).
+    resume_thread: Option<String>,
     facade: &Facade,
 ) -> anyhow::Result<()> {
     // Start the app-server + ws client. If that fails, the ws path is unavailable
     // for this Codex build (e.g. a version that dropped/renamed `app-server
     // --listen`, or won't bind/handshake) — degrade to the rollout hybrid rather
     // than leave the pane dead. The RPC path is preferred; this is the safety net.
-    let (mut child, ws_stream, ws_url) = match start_appserver(cwd, bin, facade).await {
+    // Headless (stream-transport) sessions have no fallback: the rollout hybrid
+    // is built around a TUI PTY, which is exactly what headless promises not to
+    // spawn — so its unavailability is a hard error, like the Claude stream
+    // driver.
+    // For headless the app-server is the thread's creator, so the model/effort
+    // overrides that hybrid mode sets on the TUI go on the server instead.
+    let overrides = headless.then(|| (model.clone(), effort.clone()));
+    let (mut child, ws_stream, ws_url) = match start_appserver(
+        session_id, cwd, bin, facade, overrides,
+    )
+    .await
+    {
         Ok(t) => t,
+        Err(err) if headless => return Err(err),
         Err(err) => {
             tracing::warn!(?err, session = %session_id, "codex app-server ws path unavailable — falling back to the rollout hybrid (Term + transcript-tailed GUI)");
             return run_rollout_fallback(
@@ -838,43 +890,84 @@ async fn run_session(
     // the GUI or the TUI — use the new model. No restart, thread untouched.
     let (mtx, mut mrx) = mpsc::unbounded_channel::<crate::session::ModelSwitch>();
     store.register_managed_model_switch(session_id, mtx);
+    // Structural interrupt (POST /sessions/:id/signal SIGINT): `turn/interrupt`
+    // stops the running turn while keeping the thread alive — same semantics as
+    // the Claude stream driver's `interrupt` control request, and it works for
+    // clients with no PTY to Ctrl-C into (mobile remote, the inbox, wks-tui).
+    let (itx, mut irx) = mpsc::unbounded_channel::<()>();
+    store.register_managed_interrupt(session_id, itx);
     // Approval policy, live-switchable via `/permission-mode`: the adapter
     // mediates every approval request on this ws path, so flipping the flag
     // takes effect on the next request without touching the session. A
     // yolo-spawned TUI bypasses approvals at the source, though — that
-    // direction needs a restart (`spawned_yolo` records it).
+    // direction needs a restart (`spawned_yolo` records it). Headless never
+    // spawns anything in bypass mode — yolo there is pure adapter mediation —
+    // so ask↔yolo stay live-switchable in BOTH directions (spawned_yolo=false).
     let yolo_live = Arc::new(AtomicBool::new(yolo));
-    store.register_managed_yolo(session_id, yolo_live.clone(), yolo);
+    store.register_managed_yolo(session_id, yolo_live.clone(), yolo && !headless);
 
-    // The native TUI OWNS the thread: bare `codex --remote` creates and runs it
-    // (a real, "running", resumable rollout) — then we rejoin it over RPC (below)
-    // to drive the GUI, exactly the validated owner/rejoiner split. The reverse
-    // (RPC `thread/start` here + TUI `resume`) fails because a just-started thread
-    // has no rollout yet: "no rollout found for thread id …". Model / YOLO are set
-    // on the thread's creator (the TUI) as config overrides. Kept so we can kill
-    // it when the session ends.
-    let tui_pty = spawn_codex_tui(
-        store,
-        session_id,
-        cwd,
-        bin,
-        &ws_url,
-        model.as_deref(),
-        effort.as_deref(),
-        yolo,
-    );
+    // Hybrid: the native TUI OWNS the thread — bare `codex --remote` creates and
+    // runs it (a real, "running", resumable rollout) — then we rejoin it over
+    // RPC (below) to drive the GUI, exactly the validated owner/rejoiner split.
+    // The reverse (RPC `thread/start` here + TUI `resume`) fails because a
+    // just-started thread has no rollout yet: "no rollout found for thread id …".
+    // Model / YOLO are set on the thread's creator (the TUI) as config
+    // overrides. Kept so we can kill it when the session ends.
+    // Headless (stream transport): no TUI at all — this client creates the
+    // thread itself via `thread/start` below, the GUI is the only surface.
+    let tui_pty = if headless {
+        None
+    } else {
+        spawn_codex_tui(
+            store,
+            session_id,
+            cwd,
+            bin,
+            &ws_url,
+            model.as_deref(),
+            effort.as_deref(),
+            yolo,
+        )
+    };
 
-    let mut thread_id: Option<String> = None;
+    let mut thread_id: Option<String> = resume_thread;
     // Whether our `thread/resume` has actually taken (we're receiving the thread's
     // live stream). The first resume can land before the TUI's thread is "running"
     // and fail, so we keep retrying until this flips true.
     let mut subscribed = false;
     let mut pending_prompts: Vec<String> = Vec::new();
-    // id 1 = initialize, 2 = thread/resume, 100 = thread/loaded/list poll; the
-    // user's turns take ids from 3 up.
+    // id 1 = initialize, 2 = thread/resume, 100 = thread/loaded/list poll,
+    // 101 = thread/start (headless); the user's turns take ids from 3 up.
     let mut req_id: u64 = 2;
+    // Headless bootstrap: no TUI to discover — this client starts the thread.
+    // Sent right behind `initialize` (the out task serializes them in order);
+    // `handle_message` picks the thread id off the id-101 response (or the
+    // `thread/started` notification) and flushes any early prompts.
+    // Resume: rejoin the prior life's persisted thread instead — the id-2
+    // response handler flips `subscribed`, exactly like a hybrid rejoin. Its
+    // conversation is pre-seeded from the rollout in spawn.rs, so the GUI
+    // shows the history the app-server already has.
+    if headless {
+        match &thread_id {
+            Some(tid) => {
+                let _ = out_tx.send(json!({
+                    "jsonrpc": "2.0", "id": 2, "method": "thread/resume",
+                    "params": { "threadId": tid }
+                }));
+            }
+            None => {
+                let _ = out_tx.send(json!({
+                    "jsonrpc": "2.0", "id": 101, "method": "thread/start",
+                    "params": { "cwd": cwd }
+                }));
+            }
+        }
+    }
     let mut cur_mode = SessionMode::Input;
     let mut acc = UsageAcc::new();
+    // OpenAI's wire never carries dollars; the token totals are cumulative,
+    // so the status line prices them via the pricing table.
+    acc.estimate_costs();
     // Codex's usage events never carry the model id — name it from the spawn
     // setting so the status line isn't blank (and the window-table fallback has
     // something to key on if the event omits `modelContextWindow`).
@@ -921,7 +1014,7 @@ async fn run_session(
                             &value, store, conv, session_id, &out_tx,
                             &mut thread_id, &mut subscribed, &mut pending_prompts, &mut req_id,
                             &mut cur_mode, &mut acc, &yolo_live, &mut pending_approvals,
-                            &mut pending_switch,
+                            &mut pending_switch, headless,
                         );
                     }
                 }
@@ -933,7 +1026,9 @@ async fn run_session(
             // ask which threads are loaded (there's only ever one on this
             // per-session app-server) and (re)send `thread/resume` for it. The
             // first resume can precede the thread becoming "running", so we retry.
-            _ = discover.tick(), if !subscribed && !needs_fallback => {
+            // TUI-thread discovery is hybrid-only; headless started its own
+            // thread and just waits for the id-101 response.
+            _ = discover.tick(), if !subscribed && !needs_fallback && !headless => {
                 if tokio::time::Instant::now() >= discover_deadline {
                     tracing::warn!(session = %session_id, "codex: couldn't rejoin the TUI thread in time; falling back to the rollout hybrid");
                     needs_fallback = true;
@@ -982,6 +1077,22 @@ async fn run_session(
             decision = drx.recv() => match decision {
                 Some(approve) => {
                     resolve_approval(store, session_id, &out_tx, &mut pending_approvals, &mut cur_mode, approve);
+                }
+                None => break,
+            },
+            intr = irx.recv() => match intr {
+                Some(()) => {
+                    // Only meaningful once we're subscribed to the TUI's
+                    // thread; before that there is no turn to interrupt.
+                    if let Some(tid) = &thread_id {
+                        if subscribed {
+                            req_id += 1;
+                            let _ = out_tx.send(json!({
+                                "jsonrpc": "2.0", "id": req_id, "method": "turn/interrupt",
+                                "params": { "threadId": tid }
+                            }));
+                        }
+                    }
                 }
                 None => break,
             },
@@ -1113,6 +1224,7 @@ fn handle_message(
     yolo: &AtomicBool,
     pending_approvals: &mut VecDeque<ParkedApproval>,
     pending_switch: &mut Option<crate::session::ModelSwitch>,
+    headless: bool,
 ) {
     // A response to one of our requests:
     //  - `thread/loaded/list` (id=100): `result.data` lists thread ids loaded in
@@ -1121,6 +1233,10 @@ fn handle_message(
     //    stream so the GUI mirrors the TUI.
     //  - `thread/resume` (id=2): success means we're subscribed; an error (e.g. the
     //    thread wasn't "running" yet) is logged and the discover loop retries.
+    //  - `thread/start` (id=101, headless only): we created the thread, so its
+    //    success is both the thread id AND the subscription (the starter gets the
+    //    live stream). Its failure is fatal for the pane — there is no TUI thread
+    //    to fall back to — so surface it in the conversation.
     if value.get("id").is_some() && (value.get("result").is_some() || value.get("error").is_some())
     {
         let id = value.get("id").and_then(Value::as_u64);
@@ -1135,6 +1251,34 @@ fn handle_message(
                 }
             }
         }
+        if id == Some(101) {
+            if let Some(err) = value.get("error") {
+                tracing::error!(session = %session_id, error = %err, "codex thread/start failed — headless session has no thread");
+                apply_updates(
+                    store,
+                    conv,
+                    session_id,
+                    vec![AgentUpdate::Error(format!(
+                        "codex thread/start failed: {err}"
+                    ))],
+                    cur_mode,
+                    acc,
+                );
+            } else if let Some(tid) = thread_id_of(value.get("result")) {
+                *thread_id = Some(tid.clone());
+                *subscribed = true;
+                super::codex_rollout::record_thread(session_id, &tid);
+                tracing::info!(session = %session_id, thread = %tid, "codex: headless thread started");
+                if let Some(sw) = pending_switch.take() {
+                    send_model_switch(out_tx, req_id, tid.as_str(), &sw);
+                }
+                for text in std::mem::take(pending_prompts) {
+                    *req_id += 1;
+                    send_turn(out_tx, *req_id, &tid, &text);
+                }
+            }
+            return;
+        }
         if thread_id.is_none() {
             if let Some(tid) = value
                 .get("result")
@@ -1144,6 +1288,7 @@ fn handle_message(
                 .and_then(Value::as_str)
             {
                 *thread_id = Some(tid.to_string());
+                super::codex_rollout::record_thread(session_id, tid);
                 tracing::info!(session = %session_id, thread = %tid, "codex: discovered TUI thread, resuming");
                 let _ = out_tx.send(json!({
                     "jsonrpc": "2.0", "id": 2, "method": "thread/resume",
@@ -1163,6 +1308,26 @@ fn handle_message(
         return;
     };
     let params = value.get("params").cloned().unwrap_or(Value::Null);
+
+    // Headless belt-and-braces: if the id-101 response shape didn't carry the
+    // thread id (wire drift), the `thread/started` notification names it.
+    // Hybrid must NOT take this path — there the notification just means the
+    // TUI's thread exists, not that we're subscribed to its stream.
+    if headless && thread_id.is_none() && method == "thread/started" {
+        if let Some(tid) = thread_id_of(Some(&params)) {
+            *thread_id = Some(tid.clone());
+            *subscribed = true;
+            super::codex_rollout::record_thread(session_id, &tid);
+            tracing::info!(session = %session_id, thread = %tid, "codex: headless thread started (via notification)");
+            if let Some(sw) = pending_switch.take() {
+                send_model_switch(out_tx, req_id, tid.as_str(), &sw);
+            }
+            for text in std::mem::take(pending_prompts) {
+                *req_id += 1;
+                send_turn(out_tx, *req_id, &tid, &text);
+            }
+        }
+    }
 
     // Receiving any turn/item stream event proves the resume took, even if we
     // missed its response — stop the discover/retry loop.
@@ -1216,6 +1381,17 @@ fn handle_message(
             }
         }
     }
+}
+
+/// The thread id wherever a `thread/start` result or `thread/started`
+/// notification carries it: `{threadId}`, `{thread_id}`, or `{thread: {id}}`.
+fn thread_id_of(v: Option<&Value>) -> Option<String> {
+    let v = v?;
+    v.get("threadId")
+        .or_else(|| v.get("thread_id"))
+        .or_else(|| v.get("thread").and_then(|t| t.get("id")))
+        .and_then(Value::as_str)
+        .map(str::to_owned)
 }
 
 fn send_turn(out_tx: &mpsc::UnboundedSender<Value>, id: u64, thread_id: &str, text: &str) {
@@ -1458,6 +1634,7 @@ mod tests {
                 model: None,
                 input_tokens: Some(1000),
                 output_tokens: Some(200),
+                cached_input_tokens: Some(50),
                 cost_usd: None,
                 context_tokens: Some(1250),
                 context_window: Some(272000),
@@ -1482,6 +1659,7 @@ mod tests {
                 model: None,
                 input_tokens: Some(4402946),
                 output_tokens: Some(40196),
+                cached_input_tokens: Some(3733376),
                 cost_usd: None,
                 context_tokens: Some(132552),
                 context_window: Some(258400),
@@ -1498,6 +1676,7 @@ mod tests {
                 model: Some("gpt-5.5-codex".into()),
                 input_tokens: None,
                 output_tokens: None,
+                cached_input_tokens: None,
                 cost_usd: None,
                 context_tokens: None,
                 context_window: None,
@@ -1682,6 +1861,66 @@ mod tests {
     }
 
     #[test]
+    fn headless_thread_start_response_bootstraps_and_flushes_prompts() {
+        let store = SessionStore::new();
+        store.register_managed("s", "/w", "codex");
+        let conv = ConversationStore::new();
+        let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Value>();
+        let mut thread_id: Option<String> = None;
+        let mut subscribed = false;
+        // A prompt sent before the thread existed must flush on bootstrap.
+        let mut pending_prompts = vec!["hello".to_string()];
+        let mut req_id = 2u64;
+        let mut cur_mode = SessionMode::Input;
+        let mut acc = UsageAcc::new();
+        let yolo = AtomicBool::new(false);
+        let mut pending_approvals: VecDeque<ParkedApproval> = VecDeque::new();
+        let mut pending_switch = None;
+
+        handle_message(
+            &json!({ "jsonrpc": "2.0", "id": 101, "result": { "thread": { "id": "th-9" } } }),
+            &store,
+            &conv,
+            "s",
+            &out_tx,
+            &mut thread_id,
+            &mut subscribed,
+            &mut pending_prompts,
+            &mut req_id,
+            &mut cur_mode,
+            &mut acc,
+            &yolo,
+            &mut pending_approvals,
+            &mut pending_switch,
+            true,
+        );
+        assert_eq!(thread_id.as_deref(), Some("th-9"));
+        assert!(subscribed);
+        assert!(pending_prompts.is_empty());
+        let sent = out_rx.try_recv().expect("flushed turn/start");
+        assert_eq!(sent["method"], "turn/start");
+        assert_eq!(sent["params"]["threadId"], "th-9");
+        assert_eq!(sent["params"]["input"][0]["text"], "hello");
+    }
+
+    #[test]
+    fn thread_id_of_reads_every_wire_shape() {
+        assert_eq!(
+            thread_id_of(Some(&json!({ "threadId": "a" }))).as_deref(),
+            Some("a")
+        );
+        assert_eq!(
+            thread_id_of(Some(&json!({ "thread_id": "b" }))).as_deref(),
+            Some("b")
+        );
+        assert_eq!(
+            thread_id_of(Some(&json!({ "thread": { "id": "c" } }))).as_deref(),
+            Some("c")
+        );
+        assert!(thread_id_of(Some(&json!({ "other": 1 }))).is_none());
+    }
+
+    #[test]
     fn concurrent_approvals_surface_fifo_head_and_answer_it() {
         let store = SessionStore::new();
         store.register_managed("s", "/w", "codex");
@@ -1723,6 +1962,7 @@ mod tests {
                     &yolo,
                     pending_approvals,
                     &mut pending_switch,
+                    false,
                 );
             };
 
@@ -1825,6 +2065,7 @@ mod tests {
             &yolo,
             &mut pending_approvals,
             &mut pending_switch,
+            false,
         );
         let sent = out_rx.try_recv().expect("yolo auto-accept");
         assert_eq!(sent["id"], json!(9));

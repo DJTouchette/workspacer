@@ -223,6 +223,11 @@ pub struct SpawnManagedPayload {
     /// Caller-pinned session id, so every client converges on one card.
     #[serde(default)]
     pub session_id: Option<String>,
+    /// Codex only: `"stream"` runs headless (GUI-only, no native TUI PTY — the
+    /// daemon starts the thread itself via `thread/start`), mirroring Claude's
+    /// stream transport. Anything else (or absent) is the default hybrid.
+    #[serde(default)]
+    pub transport: Option<String>,
     /// Claude only: initial permission mode, in the CLI's own vocabulary
     /// (`acceptEdits`, `plan`, `bypassPermissions`, …) — `--permission-mode`.
     #[serde(default)]
@@ -307,17 +312,56 @@ pub async fn handle_managed(
             payload.yolo,
             facade,
         ),
-        "codex" => crate::providers::codex::spawn_session(
-            store.clone(),
-            conv.clone(),
-            session_id.clone(),
-            payload.cwd.clone(),
-            payload.model.clone(),
-            payload.effort.clone(),
-            bin,
-            payload.yolo,
-            facade,
-        ),
+        "codex" => {
+            // Resume: rejoin the prior life's app-server thread (persisted in
+            // the codex-threads sidecar) and pre-seed the conversation from its
+            // rollout, so the pane shows the history immediately. Resume is
+            // headless-only — the TUI can't rejoin an arbitrary thread — so it
+            // forces the stream transport.
+            let resume_thread = payload
+                .resume
+                .as_deref()
+                .and_then(crate::providers::codex_rollout::thread_for);
+            if payload.resume.is_some() && resume_thread.is_none() {
+                tracing::warn!(session = %session_id, "codex resume requested but no thread recorded — starting fresh");
+            }
+            let headless =
+                payload.transport.as_deref() == Some("stream") || resume_thread.is_some();
+            if headless {
+                // Stamped before the driver starts (like claude-stream above)
+                // so every snapshot/frame gates the pane GUI-only from the
+                // session's first instant.
+                store.set_transport(&session_id, crate::session::state::Transport::Stream);
+            }
+            if let Some(tid) = &resume_thread {
+                // Seed only when the conversation isn't already resident (a
+                // resume in the same daemon life would otherwise duplicate it).
+                let empty = conv
+                    .snapshot(&session_id)
+                    .is_none_or(|(_, items)| items.is_empty());
+                if empty {
+                    if let Some(path) = crate::providers::codex_rollout::rollout_for_thread(tid) {
+                        let items = crate::providers::codex_rollout::replay_conversation(&path);
+                        if !items.is_empty() {
+                            conv.push(&session_id, items);
+                        }
+                    }
+                }
+            }
+            crate::providers::codex::spawn_session(
+                store.clone(),
+                conv.clone(),
+                session_id.clone(),
+                payload.cwd.clone(),
+                payload.model.clone(),
+                payload.effort.clone(),
+                bin,
+                payload.yolo,
+                headless,
+                resume_thread,
+                facade,
+            )
+        }
         "pi" => crate::providers::pi::spawn_session(
             store.clone(),
             conv.clone(),

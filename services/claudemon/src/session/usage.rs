@@ -24,48 +24,37 @@ pub struct Usage {
 }
 
 struct Rates {
-    /// USD per million input tokens. cache-write = 1.25×, cache-read = 0.1×.
+    /// USD per million input tokens. cache-write = 1.25×, cache-read = the
+    /// table's cached rate (0.1× input when the entry has none).
     input: f64,
     output: f64,
+    cached_input: Option<f64>,
     context_limit: u64,
 }
 
 const DEFAULT_RATES: Rates = Rates {
     input: 3.0,
     output: 15.0,
+    cached_input: None,
     context_limit: 200_000,
 };
 
-/// Longest-prefix match on the transcript `model` id (mirrors modelUsage.ts).
-/// Current list pricing (2026-06): Fable $10/$50, Opus 4.5+ $5/$25,
-/// Sonnet $3/$15, Haiku $1/$5. Opus 4.1 and older kept the $15/$75 rates.
+/// Longest-prefix match on the transcript `model` id, via the shared pricing
+/// table (built-ins + the user's ~/.workspacer/model-rates.json overrides).
+/// Unknown models fall back to Sonnet-tier defaults, as before.
 fn rates_for(model: Option<&str>) -> Rates {
     let Some(model) = model else {
         return DEFAULT_RATES;
     };
-    // (prefix, input, output)
-    const TABLE: [(&str, f64, f64); 7] = [
-        ("claude-fable", 10.0, 50.0),
-        ("claude-mythos", 10.0, 50.0),
-        ("claude-opus", 5.0, 25.0),
-        ("claude-opus-4-1", 15.0, 75.0),
-        ("claude-opus-4-0", 15.0, 75.0),
-        ("claude-sonnet", 3.0, 15.0),
-        ("claude-haiku", 1.0, 5.0),
-    ];
-    let mut best: Option<Rates> = None;
-    let mut best_len = 0usize;
-    for (prefix, input, output) in TABLE {
-        if model.starts_with(prefix) && prefix.len() > best_len {
-            best = Some(Rates {
-                input,
-                output,
-                context_limit: 200_000,
-            });
-            best_len = prefix.len();
-        }
+    match super::pricing::rates_for(model) {
+        Some(r) => Rates {
+            input: r.input,
+            output: r.output,
+            cached_input: r.cached_input,
+            context_limit: r.context_limit.unwrap_or(200_000),
+        },
+        None => DEFAULT_RATES,
     }
-    best.unwrap_or(DEFAULT_RATES)
 }
 
 /// Tokens occupying the window this turn: input + both cache tiers.
@@ -115,7 +104,7 @@ fn turn_cost_usd(model: Option<&str>, usage: &Value) -> f64 {
     };
     let dollars = n("input_tokens") * r.input
         + n("cache_creation_input_tokens") * (r.input * 1.25)
-        + n("cache_read_input_tokens") * (r.input * 0.1)
+        + n("cache_read_input_tokens") * r.cached_input.unwrap_or(r.input * 0.1)
         + n("output_tokens") * r.output;
     dollars / 1_000_000.0
 }

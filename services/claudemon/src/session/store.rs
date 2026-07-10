@@ -836,6 +836,20 @@ impl SessionStore {
         self.managed_answers.insert(session_id.to_string(), tx);
     }
 
+    /// Remove the structural answer channel — but only if it is still the one
+    /// this caller registered (`same_channel`). Short-lived registrants (the
+    /// MCP AskUserQuestion endpoint parks a channel per question) must not
+    /// clobber a newer registration made while they were awaiting: last
+    /// writer wins on register, so only the last writer may unregister.
+    pub fn unregister_managed_answer_if(
+        &self,
+        session_id: &str,
+        tx: &mpsc::UnboundedSender<ManagedAnswer>,
+    ) {
+        self.managed_answers
+            .remove_if(session_id, |_, existing| existing.same_channel(tx));
+    }
+
     /// Forward an AskUserQuestion answer to a managed session's driver.
     /// Returns false (so `/answer` falls through to the PTY keystroke path)
     /// when this session has no structural answer channel.

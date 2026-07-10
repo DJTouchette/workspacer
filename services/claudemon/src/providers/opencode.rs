@@ -221,6 +221,7 @@ fn usage_from(v: &Value) -> Option<AgentUpdate> {
         model,
         input_tokens: input,
         output_tokens: output,
+        cached_input_tokens: None,
         cost_usd: cost,
         context_tokens,
         context_window: None,
@@ -255,26 +256,45 @@ pub fn spawn_session(
     });
 }
 
-/// Merge the workspacer MCP facade into the cwd's `opencode.json` so
-/// `opencode serve` loads it as a remote MCP server. Preserves any existing
-/// config; only sets `mcp.workspacer`.
-fn write_opencode_mcp(cwd: &str, mcp_url: &str) {
+/// Merge workspacer's remote MCP servers into the cwd's `opencode.json` so
+/// `opencode serve` loads them. Preserves any existing config; only sets the
+/// named `mcp.<name>` entries. One read-merge-write for all entries — OpenCode
+/// only reads the file at boot, and a single write keeps a crash between two
+/// writes from leaving a half-registered pair.
+fn write_opencode_mcp(cwd: &str, servers: &[(&str, Value)]) {
     let path = std::path::Path::new(cwd).join("opencode.json");
     let mut root = std::fs::read_to_string(&path)
         .ok()
         .and_then(|s| serde_json::from_str::<Value>(&s).ok())
         .filter(Value::is_object)
         .unwrap_or_else(|| serde_json::json!({}));
-    root["mcp"]["workspacer"] = serde_json::json!({
-        "type": "remote",
-        "url": mcp_url,
-        "enabled": true,
-    });
+    for (name, entry) in servers {
+        root["mcp"][*name] = entry.clone();
+    }
     if let Ok(text) = serde_json::to_string_pretty(&root) {
         if let Err(err) = std::fs::write(&path, text) {
-            tracing::warn!(?err, "writing opencode.json for the facade failed");
+            tracing::warn!(
+                ?err,
+                "writing opencode.json for workspacer MCP servers failed"
+            );
         }
     }
+}
+
+/// The `mcp.workspacer_ask` entry: the daemon's per-session AskUserQuestion
+/// endpoint (see `daemon::mcp_ask`), OpenCode's stand-in for Claude's native
+/// tool. The explicit `timeout` is the point: OpenCode's remote-MCP request
+/// timeout defaults to 5 seconds, which would kill a question the instant it
+/// parks — a real answer can legitimately take hours, so we match the
+/// endpoint's own 6h answer window (codex parity: `tool_timeout_sec=21600`).
+fn ask_mcp_entry(session_id: &str) -> Option<Value> {
+    let api_base = crate::daemon::API_BASE.get()?;
+    Some(serde_json::json!({
+        "type": "remote",
+        "url": format!("{api_base}/mcp/ask/{session_id}"),
+        "enabled": true,
+        "timeout": 21_600_000u64, // ms
+    }))
 }
 
 /// Split a picker model id (`provider/model`) into the object OpenCode's message
@@ -345,9 +365,25 @@ async fn run_session(
     yolo: bool,
     facade: &Facade,
 ) -> anyhow::Result<()> {
-    // Register the workspacer MCP facade (supervisors) before the server boots.
+    // Register workspacer's remote MCP servers before `opencode serve` boots
+    // (it only reads opencode.json at startup): the supervisor facade when this
+    // session has one, and the AskUserQuestion endpoint for every session —
+    // structured questions are baseline parity, not a supervisor feature. Note
+    // the seam persists a per-session URL into the project's opencode.json;
+    // the next session in this cwd overwrites it, but a stale entry outlives
+    // the session (harmless: the daemon 404s an unknown session id).
+    let mut mcp_servers: Vec<(&str, Value)> = Vec::new();
     if let Some(mcp_url) = &facade.mcp_url {
-        write_opencode_mcp(cwd, mcp_url);
+        mcp_servers.push((
+            "workspacer",
+            serde_json::json!({ "type": "remote", "url": mcp_url, "enabled": true }),
+        ));
+    }
+    if let Some(entry) = ask_mcp_entry(session_id) {
+        mcp_servers.push(("workspacer_ask", entry));
+    }
+    if !mcp_servers.is_empty() {
+        write_opencode_mcp(cwd, &mcp_servers);
     }
 
     // Pick a free loopback port for this server instance (each managed session
@@ -403,6 +439,15 @@ async fn run_session(
     let mut model = model;
     let (mtx, mut mrx) = mpsc::unbounded_channel::<ModelSwitch>();
     store.register_managed_model_switch(session_id, mtx);
+    // Structural interrupt (POST /sessions/:id/signal SIGINT): OpenCode's
+    // server has a native turn abort (`POST /session/:id/abort`) that stops the
+    // running turn while keeping the session alive — same semantics as codex's
+    // `turn/interrupt`. Without this channel the signal falls through to a
+    // Ctrl-C byte into the attach-TUI PTY (a mirror, and absent entirely when
+    // the attach failed), so clients with no PTY — mobile remote, the inbox,
+    // wks-tui — couldn't stop a runaway turn at all.
+    let (itx, mut irx) = mpsc::unbounded_channel::<()>();
+    store.register_managed_interrupt(session_id, itx);
     // Approval policy, live-switchable via `/permission-mode`: the adapter
     // mediates every permission event on the `/event` stream, so flipping this
     // flag changes whether the next request auto-approves without touching the
@@ -524,6 +569,21 @@ async fn run_session(
                 }
                 None => break,
             },
+            intr = irx.recv() => match intr {
+                Some(()) => {
+                    // Fire-and-forget like the other posts: the abort's effect
+                    // arrives on the /event stream as `session.idle`, which
+                    // translate() already maps to Idle — no mode change here.
+                    let c = client.clone();
+                    let url = format!("{base}/session/{oc_id}/abort");
+                    tokio::spawn(async move {
+                        if let Err(err) = c.post(url).send().await {
+                            tracing::warn!(?err, "opencode abort POST failed");
+                        }
+                    });
+                }
+                None => break,
+            },
             switch = mrx.recv() => match switch {
                 Some(sw) => {
                     // OpenCode has no reasoning-effort knob (effort is ignored);
@@ -538,6 +598,7 @@ async fn run_session(
                                 model: Some(m.clone()),
                                 input_tokens: None,
                                 output_tokens: None,
+                                cached_input_tokens: None,
                                 cost_usd: None,
                                 context_tokens: None,
                                 context_window: None,
@@ -700,6 +761,7 @@ mod tests {
                     model: Some("claude-sonnet-4".into()),
                     input_tokens: Some(1200),
                     output_tokens: Some(340),
+                    cached_input_tokens: None,
                     cost_usd: Some(0.0123),
                     context_tokens: Some(1540),
                     context_window: None,
@@ -726,6 +788,7 @@ mod tests {
                     model: None,
                     input_tokens: Some(50),
                     output_tokens: Some(9),
+                    cached_input_tokens: None,
                     cost_usd: Some(0.001),
                     context_tokens: Some(59),
                     context_window: None,
@@ -750,6 +813,76 @@ mod tests {
             vec![AgentUpdate::Busy]
         );
         assert!(translate(&Value::Null).is_empty());
+    }
+
+    #[test]
+    fn write_opencode_mcp_creates_and_merges_entries() {
+        let dir = std::env::temp_dir().join(format!("wks-oc-mcp-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cwd = dir.to_str().unwrap();
+
+        // Fresh file: both servers land under `mcp`.
+        write_opencode_mcp(
+            cwd,
+            &[
+                (
+                    "workspacer",
+                    json!({ "type": "remote", "url": "http://sup", "enabled": true }),
+                ),
+                (
+                    "workspacer_ask",
+                    json!({ "type": "remote", "url": "http://ask", "enabled": true, "timeout": 21_600_000u64 }),
+                ),
+            ],
+        );
+        let root: Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("opencode.json")).unwrap())
+                .unwrap();
+        assert_eq!(root["mcp"]["workspacer"]["url"], "http://sup");
+        assert_eq!(root["mcp"]["workspacer_ask"]["url"], "http://ask");
+        assert_eq!(root["mcp"]["workspacer_ask"]["timeout"], 21_600_000u64);
+
+        // Rewrite for a new session: existing config keys and unrelated MCP
+        // servers survive; only the named entries move.
+        std::fs::write(
+            dir.join("opencode.json"),
+            serde_json::to_string_pretty(&json!({
+                "theme": "dark",
+                "mcp": { "other": { "type": "remote", "url": "http://keep" } }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        write_opencode_mcp(
+            cwd,
+            &[(
+                "workspacer_ask",
+                json!({ "type": "remote", "url": "http://ask2", "enabled": true }),
+            )],
+        );
+        let root: Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("opencode.json")).unwrap())
+                .unwrap();
+        assert_eq!(root["theme"], "dark");
+        assert_eq!(root["mcp"]["other"]["url"], "http://keep");
+        assert_eq!(root["mcp"]["workspacer_ask"]["url"], "http://ask2");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn ask_mcp_entry_is_remote_with_generous_timeout() {
+        // API_BASE is a process-global OnceCell shared across the test binary,
+        // so don't assert a specific host — another test may have set it first.
+        let _ = crate::daemon::API_BASE.set("http://127.0.0.1:7777".to_string());
+        let entry = ask_mcp_entry("sess-1").expect("API_BASE is set");
+        assert_eq!(entry["type"], "remote");
+        assert_eq!(entry["enabled"], true);
+        let url = entry["url"].as_str().unwrap();
+        assert!(url.ends_with("/mcp/ask/sess-1"), "url was {url}");
+        // The whole point of the entry: outlive OpenCode's 5s remote-MCP
+        // default while a question waits on a human.
+        assert_eq!(entry["timeout"], 21_600_000u64);
     }
 
     #[test]
