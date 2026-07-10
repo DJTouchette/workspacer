@@ -452,7 +452,7 @@ impl Keymap {
             .into_iter()
             .map(|(chord, action)| Continuation { chord, action })
             .collect();
-        out.sort_by(|a, b| a.chord.display().cmp(&b.chord.display()));
+        out.sort_by_key(|c| c.chord.display());
         out
     }
 
