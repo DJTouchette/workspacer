@@ -273,6 +273,9 @@ function App() {
   const [renameSignal, setRenameSignal] = useState(0);
   const [chordPath, setChordPath] = useState<string[] | null>(null);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
+  // The welcome card replayed from the palette (modal; independent of the
+  // first-run onboardingDismissed flag).
+  const [showWelcome, setShowWelcome] = useState(false);
   const [paletteMode, setPaletteMode] = useState<'tab' | 'split'>('tab');
   const [paletteRestrict, setPaletteRestrict] = useState<'library' | undefined>(undefined);
   const [showSpawnDialog, setShowSpawnDialog] = useState(false);
@@ -378,6 +381,20 @@ function App() {
     reconcileAgents,
     appCwdRef,
   });
+
+  // First-run welcome. The global Overview workspace always exists, so "brand
+  // new user" means no *real* agent workspaces. Wait for the config (the
+  // dismissed flag) and for session restore to settle, so an existing user's
+  // agents never race the card into a flash.
+  const firstRunWelcome =
+    configLoaded &&
+    sessionPhase === 'active' &&
+    !config.onboardingDismissed &&
+    !agents.some((a) => !a.global);
+  const dismissWelcome = useCallback(() => {
+    setShowWelcome(false);
+    if (!config.onboardingDismissed) saveConfig({ onboardingDismissed: true });
+  }, [config.onboardingDismissed, saveConfig]);
 
   // Mirror the workspace layout across clients (desktop ⇄ web). Reads the hub
   // doc on startup (driving hubHydration above), applies remote changes, and
@@ -1865,12 +1882,6 @@ function App() {
                 handlers={agentViewHandlers}
               />
             ))
-          ) : !config.onboardingDismissed ? (
-            <Onboarding
-              onSpawn={() => setShowSpawnDialog(true)}
-              onDismiss={() => saveConfig({ onboardingDismissed: true })}
-              shortcuts={config.keybindings?.shortcuts ?? {}}
-            />
           ) : (
             <HomeSpace
               onSpawn={() => setShowSpawnDialog(true)}
@@ -1885,6 +1896,20 @@ function App() {
           prefix={kbPrefix}
           shortcuts={resolvedShortcuts}
         />
+
+        {(firstRunWelcome || showWelcome) && (
+          <Onboarding
+            overlay
+            firstRun={firstRunWelcome}
+            onSpawn={() => {
+              dismissWelcome();
+              setShowSpawnDialog(true);
+            }}
+            onDismiss={dismissWelcome}
+            shortcuts={config.keybindings?.shortcuts ?? {}}
+            prefix={kbPrefix}
+          />
+        )}
 
         <CommandPalette
           visible={showCommandPalette}
@@ -1951,6 +1976,10 @@ function App() {
           onSpawnAgent={() => {
             setShowCommandPalette(false);
             setShowSpawnDialog(true);
+          }}
+          onShowWelcome={() => {
+            setShowCommandPalette(false);
+            setShowWelcome(true);
           }}
           onToggleSidebar={() => {
             setShowCommandPalette(false);

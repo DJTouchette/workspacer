@@ -19,6 +19,7 @@ import {
   Smartphone,
   Columns3,
   Settings,
+  Sparkles,
   Star,
   IconSearch,
   type LucideIcon,
@@ -198,6 +199,8 @@ interface CommandPaletteProps {
   onOpenSettings?: () => void;
   /** Toggle the keyboard-shortcuts help overlay. */
   onToggleHelp?: () => void;
+  /** Re-open the first-run welcome card. */
+  onShowWelcome?: () => void;
 }
 
 const CommandPalette: React.FC<CommandPaletteProps> = ({
@@ -236,6 +239,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
   onSaveSession,
   onOpenSettings,
   onToggleHelp,
+  onShowWelcome,
 }) => {
   // Current UI mode — the toggle entry's label names the TARGET mode.
   const { mode: uiMode } = useUiMode();
@@ -423,6 +427,13 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
       onToggleHelp,
       'toggle-help',
     );
+    add(
+      'cmd-welcome',
+      'Show Welcome',
+      'Replay the first-run welcome & orientation card',
+      <Sparkles size={16} strokeWidth={1.75} />,
+      onShowWelcome,
+    );
     return out;
   }, [
     onOpenAskPane,
@@ -444,6 +455,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
     onInstallPlugin,
     onOpenSettings,
     onToggleHelp,
+    onShowWelcome,
   ]);
 
   // "Keyboard Shortcuts" is always pinned at the top (regardless of query) so
