@@ -34,7 +34,7 @@ const LayoutSection: React.FC<LayoutSectionProps> = ({ config, save }) => {
             min={0}
             max={200}
             step={10}
-            value={config.panes?.peek ?? 80}
+            value={config.panes?.peek ?? 0}
             onChange={(e) => save({ panes: { ...config.panes, peek: parseInt(e.target.value) } })}
             style={{ width: '120px', accentColor: 'var(--wks-accent)' }}
           />
@@ -46,7 +46,7 @@ const LayoutSection: React.FC<LayoutSectionProps> = ({ config, save }) => {
               minWidth: '32px',
             }}
           >
-            {config.panes?.peek ?? 80}px
+            {config.panes?.peek ?? 0}px
           </span>
         </div>
       </Row>
@@ -57,7 +57,7 @@ const LayoutSection: React.FC<LayoutSectionProps> = ({ config, save }) => {
             min={0}
             max={40}
             step={2}
-            value={config.panes?.gap ?? 16}
+            value={config.panes?.gap ?? 0}
             onChange={(e) => save({ panes: { ...config.panes, gap: parseInt(e.target.value) } })}
             style={{ width: '120px', accentColor: 'var(--wks-accent)' }}
           />
@@ -69,7 +69,7 @@ const LayoutSection: React.FC<LayoutSectionProps> = ({ config, save }) => {
               minWidth: '32px',
             }}
           >
-            {config.panes?.gap ?? 16}px
+            {config.panes?.gap ?? 0}px
           </span>
         </div>
       </Row>

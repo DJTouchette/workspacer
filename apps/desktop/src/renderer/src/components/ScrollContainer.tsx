@@ -533,8 +533,8 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
     const containerRef = useRef<HTMLDivElement>(null);
     const { config } = useConfig();
     const isSmallScreen = useIsSmallScreen();
-    const peek = config.panes?.peek ?? 80;
-    const gap = config.panes?.gap ?? 16;
+    const peek = config.panes?.peek ?? 0;
+    const gap = config.panes?.gap ?? 0;
     const editorEngine = config.editor?.engine ?? 'codemirror';
     const editorTerminalCommand = config.editor?.terminalCommand ?? 'nvim';
 
