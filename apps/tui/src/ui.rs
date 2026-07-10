@@ -678,6 +678,11 @@ fn transcript_lines(app: &App, width: usize) -> Vec<Line<'static>> {
         )));
         return out;
     }
+    // Assistant turn headers name the actual backend (claude / codex / …).
+    let agent_label = app
+        .chat_session_id()
+        .map(|sid| app.provider_for(&sid))
+        .unwrap_or_else(|| "claude".to_string());
     let mut run: Vec<ToolRow> = Vec::new();
     for turn in &app.turns {
         let tool_only = turn.role == Role::Assistant
@@ -704,7 +709,7 @@ fn transcript_lines(app: &App, width: usize) -> Vec<Line<'static>> {
         }
         flush_tool_run(&mut out, &mut run, t, w);
 
-        push_role_label(&mut out, t, turn.role);
+        push_role_label(&mut out, t, turn.role, &agent_label);
         for part in &turn.parts {
             match part {
                 Part::Text(text) => {
@@ -730,7 +735,7 @@ fn transcript_lines(app: &App, width: usize) -> Vec<Line<'static>> {
 
     // Optimistic echo: the just-sent message, until a refold carries it.
     if let Some(echo) = app.pending_echo.as_deref() {
-        push_role_label(&mut out, t, Role::User);
+        push_role_label(&mut out, t, Role::User, &agent_label);
         out.extend(crate::render::markdown_lines(echo, t, w));
         out.push(Line::from(Span::styled(
             "…sending",
@@ -741,11 +746,12 @@ fn transcript_lines(app: &App, width: usize) -> Vec<Line<'static>> {
     out
 }
 
-/// The `▍ you` / `▍ claude` turn header.
-fn push_role_label(out: &mut Vec<Line<'static>>, t: &Theme, role: Role) {
+/// The `▍ you` / `▍ <agent>` turn header, where `<agent>` is the session's
+/// actual provider (claude / codex / opencode / pi).
+fn push_role_label(out: &mut Vec<Line<'static>>, t: &Theme, role: Role, agent: &str) {
     let (label, color) = match role {
-        Role::User => ("▍ you", t.accent),
-        Role::Assistant => ("▍ claude", t.ok),
+        Role::User => ("▍ you".to_string(), t.accent),
+        Role::Assistant => (format!("▍ {agent}"), t.ok),
     };
     out.push(Line::from(Span::styled(
         label,

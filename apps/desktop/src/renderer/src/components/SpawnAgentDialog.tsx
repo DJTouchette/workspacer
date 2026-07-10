@@ -403,6 +403,9 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
             cwd: cwd.trim(),
             name: name.trim() || undefined,
             provider,
+            // Codex only: 'stream' spawns headless (its default is hybrid, so
+            // only the non-default is worth sending).
+            transport: provider === 'codex' && transport === 'stream' ? transport : undefined,
             model: resolvedProviderModel || undefined,
             effort: effort || undefined,
             permissionMode: resolvedMode,
@@ -489,19 +492,23 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
     );
   }
 
-  if (isClaude) {
+  if (isClaude || provider === 'codex') {
     pills.push(
       <PillGroup
         label="transport"
         title={
           transport === 'pty'
-            ? 'The classic Claude Code TUI in a terminal — Term and GUI views.'
-            : 'Headless stream-json via claudemon — structured GUI only, no terminal view.'
+            ? isClaude
+              ? 'The classic Claude Code TUI in a terminal — Term and GUI views.'
+              : 'Hybrid: the native Codex TUI in a terminal plus the structured GUI, one shared thread.'
+            : isClaude
+              ? 'Headless stream-json via claudemon — structured GUI only, no terminal view.'
+              : 'Headless app-server via claudemon — structured GUI only, no terminal view.'
         }
       >
         {(
           [
-            { value: 'pty', label: 'terminal' },
+            { value: 'pty', label: isClaude ? 'terminal' : 'hybrid' },
             { value: 'stream', label: 'headless' },
           ] as const
         ).map((t) => (

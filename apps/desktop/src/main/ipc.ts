@@ -156,8 +156,9 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       opts: {
         cwd?: string;
         provider?: 'claude' | 'codex' | 'opencode' | 'pi';
-        /** Claude only: 'pty' (classic TUI) or 'stream' (headless stream-json,
-         *  managed adapter). Omitted = the config default (claude.transport). */
+        /** Claude: 'pty' (classic TUI) or 'stream' (headless stream-json,
+         *  managed adapter); omitted = the config default (claude.transport).
+         *  Codex: 'stream' runs headless (no native TUI PTY). */
         transport?: 'pty' | 'stream';
         profileId?: string;
         model?: string;
@@ -186,6 +187,9 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
         return spawnManagedAgent({
           provider,
           cwd: opts.cwd,
+          // Codex mirrors Claude's stream transport: 'stream' spawns headless
+          // (GUI-only, daemon-owned thread). Other providers ignore it.
+          ...(provider === 'codex' && opts.transport === 'stream' && { transport: 'stream' as const }),
           model: opts.model,
           effort: opts.effort,
           skipPermissions: opts.skipPermissions || opts.permissionMode === 'yolo',

@@ -142,6 +142,88 @@ describe('cwd backfill for delta-created sessions', () => {
   });
 });
 
+describe('managed pending → approval/question cards', () => {
+  // Managed providers (codex/opencode/pi) fire no hooks — the daemon's
+  // `pending` slot on Managed frames is the only source for the needs-you
+  // dock / inbox / fleet-card approval UI.
+  function managedSession(provider = 'codex'): string {
+    const sid = uniqueId();
+    claudeSessionStore.applyConversationDelta({
+      session_id: sid,
+      seq: 0,
+      items: [],
+      reset: false,
+    } as never);
+    claudeSessionStore.applyManagedMode(sid, 'responding', { provider, pending: null });
+    return sid;
+  }
+
+  it('maps a codex approval into pendingApproval and clears it when resolved', () => {
+    const sid = managedSession();
+    claudeSessionStore.applyManagedMode(sid, 'approval', {
+      provider: 'codex',
+      pending: {
+        kind: 'approval',
+        tool: 'exec_command',
+        summary: 'npm test',
+        raw: { command: ['npm', 'test'], cwd: '/proj' },
+      },
+    });
+    const snap = claudeSessionStore.getSnapshot(sid);
+    expect(snap?.pendingApproval?.toolName).toBe('exec_command');
+    expect(snap?.pendingApproval?.toolInput).toEqual({ command: ['npm', 'test'], cwd: '/proj' });
+    expect(snap?.ambientState).toBe('waiting_approval');
+
+    claudeSessionStore.applyManagedMode(sid, 'responding', { provider: 'codex', pending: null });
+    expect(claudeSessionStore.getSnapshot(sid)?.pendingApproval).toBeNull();
+  });
+
+  it('keeps the timestamp of an unchanged approval across re-broadcast frames', () => {
+    const sid = managedSession();
+    const pending = { kind: 'approval', tool: 'exec_command', raw: { command: 'ls' } } as const;
+    claudeSessionStore.applyManagedMode(sid, 'approval', { provider: 'codex', pending });
+    const first = claudeSessionStore.getSnapshot(sid)?.pendingApproval?.timestamp;
+    vi.advanceTimersByTime(500);
+    // The daemon re-sends Approval frames on unrelated updates; a bumped
+    // timestamp would resurrect a card the user already dismissed.
+    claudeSessionStore.applyManagedMode(sid, 'approval', { provider: 'codex', pending });
+    expect(claudeSessionStore.getSnapshot(sid)?.pendingApproval?.timestamp).toBe(first);
+  });
+
+  it('maps a question payload into pendingQuestions', () => {
+    const sid = managedSession('opencode');
+    claudeSessionStore.applyManagedMode(sid, 'question', {
+      provider: 'opencode',
+      pending: {
+        kind: 'question',
+        questions: [
+          {
+            question: 'Which db?',
+            header: 'DB',
+            multi_select: false,
+            options: [{ label: 'sqlite' }],
+          },
+        ],
+        raw: {},
+      },
+    });
+    const snap = claudeSessionStore.getSnapshot(sid);
+    expect(snap?.pendingQuestions).toHaveLength(1);
+    expect(snap?.pendingQuestions?.[0].question).toBe('Which db?');
+    expect(snap?.pendingApproval).toBeNull();
+  });
+
+  it('never drives the cards for claude sessions (hook-owned)', () => {
+    const sid = uniqueId();
+    hook(sid, 'UserPromptSubmit');
+    claudeSessionStore.applyManagedMode(sid, 'approval', {
+      provider: 'claude',
+      pending: { kind: 'approval', tool: 'Bash', raw: { tool_input: { command: 'ls' } } },
+    });
+    expect(claudeSessionStore.getSnapshot(sid)?.pendingApproval).toBeNull();
+  });
+});
+
 describe('liveCwd follows the agent into and out of a worktree', () => {
   it('tracks a mid-session cwd change without touching the spawn cwd', () => {
     const sid = uniqueId();

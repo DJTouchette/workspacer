@@ -50,6 +50,7 @@ describe('claudemonEventBridge', () => {
     expect(applyManagedMode).toHaveBeenCalledWith('s1', 'working', {
       provider: undefined,
       transport: undefined,
+      pending: null,
     });
   });
 
@@ -65,6 +66,29 @@ describe('claudemonEventBridge', () => {
     expect(applyManagedMode).toHaveBeenCalledWith('s1', 'responding', {
       provider: 'claude',
       transport: 'stream',
+      pending: null,
+    });
+  });
+
+  it('forwards the pending approval payload from the state frame', async () => {
+    await startClaudemonEventBridge();
+    const pending = {
+      kind: 'approval',
+      tool: 'exec_command',
+      summary: 'npm test',
+      raw: { command: ['npm', 'test'] },
+    };
+    capturedOpts.onFrame(
+      JSON.stringify({
+        event: 'Managed',
+        session_id: 's1',
+        state: { mode: 'approval', provider: 'codex', pending },
+      }),
+    );
+    expect(applyManagedMode).toHaveBeenCalledWith('s1', 'approval', {
+      provider: 'codex',
+      transport: undefined,
+      pending,
     });
   });
 

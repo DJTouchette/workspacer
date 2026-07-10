@@ -115,6 +115,8 @@ class ClaudemonSessionClient {
     effort?: string;
     /** Resolved launcher binary (the desktop resolves it on PATH). */
     bin?: string;
+    /** Codex only: 'stream' spawns headless (GUI-only, no native TUI PTY). */
+    transport?: 'stream';
     /** YOLO / skip approvals — auto-approve every command and file change. */
     yolo?: boolean;
     /** Claude (stream) only: the full Claude permission mode

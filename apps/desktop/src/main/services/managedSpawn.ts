@@ -61,7 +61,9 @@ export interface ManagedSpawnOptions {
    *  `transport: 'stream'` (the headless stream-json adapter) — PTY Claude
    *  spawns are dispatched to spawnClaudeAgent by the caller instead. */
   provider: AgentProvider;
-  /** Claude only: must be 'stream' when provider === 'claude'. */
+  /** Claude: must be 'stream' when provider === 'claude'. Codex: 'stream'
+   *  runs headless (GUI-only, daemon-owned thread, no native TUI PTY) —
+   *  omitted/other means the default hybrid. */
   transport?: 'stream';
   cwd?: string;
   model?: string;
@@ -116,13 +118,22 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
   //    claudemon tails the rollout transcript for the GUI. Kept until the ws
   //    app-server path is verified on Windows, at which point this branch (and
   //    the rollout tailer) can go and all platforms share the managed path.
-  if (provider === 'codex' && process.platform === 'win32') return spawnCodexHybrid(opts);
+  if (provider === 'codex' && process.platform === 'win32') {
+    if (opts.transport === 'stream') {
+      console.warn(
+        '[managedSpawn] codex headless (stream) is not available on Windows yet — spawning the rollout hybrid',
+      );
+    }
+    return spawnCodexHybrid(opts);
+  }
   // Supervisors with no explicit cwd open in their dedicated home (~/.workspacer)
   // rather than inheriting some repo; everything else uses the given cwd.
   let cwd = opts.cwd || process.env.HOME || os.homedir();
   if (opts.supervisor && !opts.cwd) cwd = ensureSupervisorHome();
 
   const isClaudeStream = provider === 'claude';
+  // Codex's stream transport mirrors Claude's: headless, GUI-only, no PTY.
+  const isCodexStream = provider === 'codex' && opts.transport === 'stream';
   const bin = resolveAgentBinary(provider, configuredBin(provider));
   const wantsFacade = opts.supervisor || opts.mcpFacade;
   const managedId = opts.resumeSessionId || randomUUID();
@@ -175,7 +186,7 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
     parentSessionId: opts.parentSessionId,
     isSupervisor: opts.supervisor,
     provider,
-    ...(isClaudeStream && { transport: 'stream' as const }),
+    ...((isClaudeStream || isCodexStream) && { transport: 'stream' as const }),
     settings: {
       model: opts.model,
       effort: opts.effort,
@@ -190,6 +201,11 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
     bin,
     yolo,
     sessionId: managedId,
+    ...(isCodexStream && { transport: 'stream' as const }),
+    // Codex resume: claudemon rejoins the prior life's app-server thread and
+    // replays its rollout (headless-only; the daemon forces stream transport).
+    ...(provider === 'codex' &&
+      opts.resumeSessionId && { resumeSessionId: opts.resumeSessionId }),
     // Claude stream adapter extras: the full permission mode and (on a
     // respawn) the prior conversation to `--resume`.
     ...(isClaudeStream && {

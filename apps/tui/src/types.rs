@@ -586,9 +586,11 @@ pub fn turns_from_conversation(v: &Value, transport: &str) -> Vec<Turn> {
     turns
 }
 
-/// The `(old_string, new_string)` pairs of an Edit/MultiEdit input, if any:
-/// a top-level `old_string`/`new_string` pair (Edit), plus every entry of an
-/// `edits` array (MultiEdit). Empty for every other tool shape.
+/// The `(old_string, new_string)` pairs of an edit-tool input, if any:
+/// a top-level `old_string`/`new_string` pair (Claude Edit), plus every entry
+/// of an `edits` array (MultiEdit); or, for managed providers whose edits
+/// arrive as a unified patch (Codex `apply_patch` carries `diff`), the
+/// removed/added line groups of that patch. Empty for every other tool shape.
 fn edit_pairs(input: Option<&Value>) -> Vec<(String, String)> {
     let Some(obj) = input.and_then(|v| v.as_object()) else {
         return Vec::new();
@@ -610,6 +612,52 @@ fn edit_pairs(input: Option<&Value>) -> Vec<(String, String)> {
                 .filter_map(pair_of),
         );
     }
+    if out.is_empty() {
+        if let Some(diff) = obj.get("diff").and_then(|v| v.as_str()) {
+            out = unified_diff_pairs(diff);
+        }
+    }
+    out
+}
+
+/// Fold a unified patch into `(removed, added)` line groups, one pair per
+/// contiguous `-`/`+` run, so it renders through the same colored-diff path as
+/// Claude's Edit pairs. Headers (`diff`/`index`/`---`/`+++`/`@@`) and context
+/// lines act as group separators and are dropped.
+fn unified_diff_pairs(diff: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let (mut old, mut new) = (String::new(), String::new());
+    let flush = |old: &mut String, new: &mut String, out: &mut Vec<(String, String)>| {
+        if !old.is_empty() || !new.is_empty() {
+            out.push((std::mem::take(old), std::mem::take(new)));
+        }
+    };
+    for line in diff.lines() {
+        if line.starts_with("+++")
+            || line.starts_with("---")
+            || line.starts_with("diff ")
+            || line.starts_with("index ")
+            || line.starts_with("@@")
+            || line.starts_with("*** ")
+        {
+            flush(&mut old, &mut new, &mut out);
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix('-') {
+            // A `-` after `+` starts a new change group, keeping hunk order.
+            if !new.is_empty() {
+                flush(&mut old, &mut new, &mut out);
+            }
+            old.push_str(rest);
+            old.push('\n');
+        } else if let Some(rest) = line.strip_prefix('+') {
+            new.push_str(rest);
+            new.push('\n');
+        } else {
+            flush(&mut old, &mut new, &mut out);
+        }
+    }
+    flush(&mut old, &mut new, &mut out);
     out
 }
 
@@ -643,10 +691,21 @@ fn tool_summary(input: Option<&Value>) -> String {
         "description",
     ];
     for k in KEYS {
-        if let Some(s) = obj.get(k).and_then(|v| v.as_str()) {
-            if !s.is_empty() {
-                return truncate(s, 64);
+        match obj.get(k) {
+            Some(Value::String(s)) if !s.is_empty() => return truncate(s, 64),
+            // Codex's `shell`/`exec_command` sends the command as an argv
+            // array rather than a string.
+            Some(Value::Array(parts)) => {
+                let joined = parts
+                    .iter()
+                    .filter_map(|v| v.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                if !joined.is_empty() {
+                    return truncate(&joined, 64);
+                }
             }
+            _ => {}
         }
     }
     String::new()
@@ -664,6 +723,45 @@ pub fn truncate(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn edit_pairs_reads_codex_unified_patch() {
+        // Codex `apply_patch` ToolUse input: no old_string/new_string, the
+        // change arrives as a unified `diff` (concatenated per-file patches).
+        let input = serde_json::json!({
+            "path": "src/a.rs",
+            "diff": "--- a/src/a.rs\n+++ b/src/a.rs\n@@ -1,3 +1,3 @@\n context\n-let x = 1;\n+let x = 2;\n context\n@@ -9,2 +9,3 @@\n+let added = true;\n",
+            "changes": [{ "path": "src/a.rs", "kind": "update" }]
+        });
+        let pairs = edit_pairs(Some(&input));
+        assert_eq!(
+            pairs,
+            vec![
+                ("let x = 1;\n".to_string(), "let x = 2;\n".to_string()),
+                (String::new(), "let added = true;\n".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn edit_pairs_prefers_claude_shape_over_diff() {
+        let input = serde_json::json!({
+            "old_string": "a",
+            "new_string": "b",
+            "diff": "-x\n+y\n"
+        });
+        assert_eq!(
+            edit_pairs(Some(&input)),
+            vec![("a".to_string(), "b".to_string())]
+        );
+    }
+
+    #[test]
+    fn tool_summary_joins_argv_arrays() {
+        // Codex `shell` sends the command as argv, not a string.
+        let input = serde_json::json!({ "command": ["bash", "-c", "ls -la"] });
+        assert_eq!(tool_summary(Some(&input)), "bash -c ls -la");
+    }
 
     #[test]
     fn parses_live_sessions_list_shape() {

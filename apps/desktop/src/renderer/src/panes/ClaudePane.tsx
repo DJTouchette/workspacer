@@ -353,10 +353,16 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
       ? (session.transport ?? 'pty')
       : (transportProp ?? config.claude?.transport ?? 'pty');
   const isStream = isClaude && claudeTransport === 'stream';
+  // Codex has the same split: hybrid (native TUI PTY + GUI) or headless
+  // 'stream' (daemon-owned thread, GUI only). The session snapshot / pane prop
+  // carry the daemon-stamped transport; config.claude is claude-only, so the
+  // non-claude fallback stays 'pty' (hybrid).
+  const managedStream =
+    isHybrid && (session ? session.transport === 'stream' : transportProp === 'stream');
   const hasGui = true; // every provider surfaces a structured GUI conversation
-  // Only PTY claude + hybrid providers have a Term; stream claude is GUI-only
-  // (pi-supervisor-style: there is no PTY to render or write keystrokes to).
-  const hasTerminal = (isClaude && !isStream) || isHybrid;
+  // Only PTY claude + hybrid providers have a Term; stream claude AND headless
+  // codex are GUI-only (there is no PTY to render or write keystrokes to).
+  const hasTerminal = (isClaude && !isStream) || (isHybrid && !managedStream);
   const showViewToggle = hasGui && hasTerminal; // both surfaces → show the toggle
   // Lock to the sole available surface when the provider doesn't offer both;
   // any auto-switch below then becomes a no-op.
@@ -740,8 +746,11 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
       window.electronAPI.claudeApprove(sessionId, response).catch((err) => {
         console.warn('[ClaudePane] /approve failed:', err);
         // The keystroke fallback needs a PTY — no-PTY (stream) sessions have
-        // nothing to type into, so /approve is the only path for them.
-        if (!hasTerminal) return;
+        // nothing to type into, so /approve is the only path for them. And the
+        // keys encode Claude's 3-row permission menu: a hybrid provider's PTY
+        // (codex/opencode/pi) has a different approval UI, so typing them there
+        // would be garbage input.
+        if (!hasTerminal || !isClaude) return;
         if (!hasPendingQuestion) {
           sendApproval('', response === 'yes', write);
         } else {
@@ -750,7 +759,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
       });
       setApprovalDismissedAt(Date.now());
     },
-    [sessionId, write, session?.pendingQuestions, hasTerminal],
+    [sessionId, write, session?.pendingQuestions, hasTerminal, isClaude],
   );
 
   // Optimistic user messages (shown immediately before JSONL catches up).
@@ -933,7 +942,10 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
       // No-PTY sessions (claude 'stream' transport) have no keystroke path at
       // all — the answer must go through POST /sessions/:id/answer, which the
       // daemon delivers structurally over the adapter's control protocol.
-      if (!hasTerminal) {
+      // Non-claude questions are ALWAYS structural, even with a Term attached:
+      // they come from the daemon's parked AskUserQuestion MCP call, which the
+      // provider's own TUI knows nothing about — keystrokes would be garbage.
+      if (!hasTerminal || !isClaude) {
         window.electronAPI.claudeAnswer(sessionId, payload).catch((err) => {
           console.warn('[ClaudePane] /answer failed (no PTY fallback exists):', err);
         });
@@ -954,7 +966,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
         for (const ans of payload.answers) write(`${ans}\r`);
       }
     },
-    [sessionId, write, hasTerminal, questionSig, pendingQuestions, recordResolved],
+    [sessionId, write, hasTerminal, isClaude, questionSig, pendingQuestions, recordResolved],
   );
   const serverStreaming =
     optimisticLoading ||
@@ -1036,11 +1048,14 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
         );
       } else {
         // Carry the current transport so an owner stream session restarts on
-        // stream even if the config default changed since it was spawned.
-        void restartSession({ ...overrides, provider, transport: claudeTransport });
+        // stream even if the config default changed since it was spawned —
+        // claude's from claudeTransport, a hybrid provider's from the
+        // daemon-stamped session transport (headless codex restarts headless).
+        const transport = isClaude ? claudeTransport : managedStream ? 'stream' : 'pty';
+        void restartSession({ ...overrides, provider, transport });
       }
     },
-    [attachSessionId, sessionId, restartSession, provider, claudeTransport],
+    [attachSessionId, sessionId, restartSession, provider, claudeTransport, isClaude, managedStream],
   );
 
   // Escape key cancels in GUI mode (must be after cancelTask/isStreaming declarations)
@@ -1625,7 +1640,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
               inputRef={inputRef}
               showSendButton={config.ui.showComposerSend !== false}
               agentName={agentName}
-              slashItems={isClaude ? slashItems : undefined}
+              slashItems={slashItems}
               onSlashPick={handleSlashPick}
               controls={
                 <ComposerControls

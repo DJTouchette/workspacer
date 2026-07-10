@@ -117,6 +117,16 @@ export interface PendingQuestion {
   options: PendingQuestionOption[];
 }
 
+/**
+ * claudemon's `SessionState.pending` slot as serialized on `session.update`
+ * frames (snake_case-tagged `Pending` enum in services/claudemon
+ * session/state.rs). For managed providers (codex/opencode/pi) this is the
+ * only approval/question payload — they fire no Claude hooks.
+ */
+export type ManagedPendingWire =
+  | { kind: 'approval'; tool?: string | null; summary?: string | null; raw?: any }
+  | { kind: 'question'; questions?: PendingQuestion[]; raw?: any };
+
 /** One step of an agent's plan (Claude TodoWrite checklist, Codex plan). */
 export interface PlanStep {
   content: string;
@@ -502,7 +512,7 @@ class ClaudeSessionStore {
   applyManagedMode(
     sessionId: string,
     mode: string,
-    meta?: { provider?: string; transport?: string },
+    meta?: { provider?: string; transport?: string; pending?: ManagedPendingWire | null },
   ): void {
     const session = this.sessions.get(sessionId);
     if (!session) return;
@@ -513,6 +523,17 @@ class ClaudeSessionStore {
     // spawn metadata already recorded.
     if (meta?.provider && !session.provider) session.provider = meta.provider;
     if (meta?.transport === 'stream' && !session.transport) session.transport = 'stream';
+    // Non-claude providers fire no hooks, so the daemon's `pending` slot is
+    // their only source for the approval/question cards (needs-you dock, triage
+    // inbox, fleet-card buttons). Claude sessions (PTY and stream) keep the
+    // hook-driven path — hookEventRouter owns these fields for them, and
+    // driving them from both sources would race. `undefined` means the caller
+    // carried no pending info (leave state alone); `null` means the daemon says
+    // nothing is pending (clear).
+    const provider = session.provider ?? meta?.provider;
+    if (provider && provider !== 'claude' && meta && meta.pending !== undefined) {
+      this.applyManagedPending(session, meta.pending);
+    }
     let next: SessionAmbientState;
     switch (mode) {
       case 'responding':
@@ -546,6 +567,52 @@ class ClaudeSessionStore {
       }
     }
     this.pushUpdate(session);
+  }
+
+  /**
+   * Fold the daemon's `pending` slot into the approval/question card fields.
+   * The daemon re-broadcasts Approval-mode frames on unrelated state changes,
+   * so an unchanged card keeps its timestamp — bumping it would resurrect a
+   * card the user already dismissed (the dock hides on dismissal timestamps).
+   */
+  private applyManagedPending(
+    session: ClaudeSessionState,
+    pending: ManagedPendingWire | null,
+  ): void {
+    if (pending?.kind === 'approval') {
+      // Codex/OpenCode approval payloads carry the request params in `raw`
+      // (no hook-style `tool_input` envelope); prefer the envelope when a
+      // gateway-shaped payload has one, else show the params themselves.
+      const raw = pending.raw ?? {};
+      const next: PendingApproval = {
+        toolName: pending.tool ?? '',
+        toolInput: raw.tool_input ?? raw,
+        timestamp: Date.now(),
+      };
+      const prev = session.pendingApproval;
+      if (
+        !prev ||
+        prev.toolName !== next.toolName ||
+        JSON.stringify(prev.toolInput) !== JSON.stringify(next.toolInput)
+      ) {
+        session.pendingApproval = next;
+      }
+      session.pendingQuestions = null;
+    } else if (pending?.kind === 'question') {
+      const next = (pending.questions ?? []).map((q) => ({
+        question: q.question,
+        header: q.header ?? undefined,
+        multi_select: q.multi_select ?? false,
+        options: q.options ?? [],
+      }));
+      if (JSON.stringify(session.pendingQuestions) !== JSON.stringify(next)) {
+        session.pendingQuestions = next;
+      }
+      session.pendingApproval = null;
+    } else {
+      session.pendingApproval = null;
+      session.pendingQuestions = null;
+    }
   }
 
   // ── Conversation delta integration ──

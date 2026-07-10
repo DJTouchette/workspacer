@@ -9,7 +9,7 @@
  * stuck on the `'idle'` default no matter what the agent is doing.
  */
 
-import { claudeSessionStore } from './claudeSessionStore';
+import { claudeSessionStore, type ManagedPendingWire } from './claudeSessionStore';
 import { CLAUDEMON_API_URL } from './claudemonDaemon';
 import { consumeSseStream } from '../lib/sseConsumer';
 
@@ -30,7 +30,12 @@ export async function startClaudemonEventBridge(): Promise<void> {
       let update: {
         session_id?: string;
         event?: string;
-        state?: { mode?: string; provider?: string; transport?: string };
+        state?: {
+          mode?: string;
+          provider?: string;
+          transport?: string;
+          pending?: ManagedPendingWire | null;
+        };
       };
       try {
         update = JSON.parse(dataString);
@@ -52,6 +57,9 @@ export async function startClaudemonEventBridge(): Promise<void> {
         claudeSessionStore.applyManagedMode(update.session_id, mode, {
           provider: update.state?.provider,
           transport: update.state?.transport,
+          // Managed adapters fire no PermissionRequest/AskUserQuestion hooks —
+          // the daemon's `pending` slot is their only approval/question payload.
+          pending: update.state?.pending ?? null,
         });
       }
     },

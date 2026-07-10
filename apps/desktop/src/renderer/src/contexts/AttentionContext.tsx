@@ -191,16 +191,21 @@ export const AttentionProvider: React.FC<ProviderProps> = ({
 
   const approve = useCallback(
     (item: AttentionItem, response: 'yes' | 'no' | 'always') => {
-      resolveApproval(item.sessionId, response, hasPendingQuestion(item.sessionId));
+      resolveApproval(
+        item.sessionId,
+        response,
+        hasPendingQuestion(item.sessionId),
+        snapshotBySession[item.sessionId]?.provider,
+      );
     },
-    [hasPendingQuestion],
+    [hasPendingQuestion, snapshotBySession],
   );
 
   const answer = useCallback(
     (item: AttentionItem, payload: { option?: number; text?: string; answers?: string[] }) => {
-      resolveAnswer(item.sessionId, payload);
+      resolveAnswer(item.sessionId, payload, snapshotBySession[item.sessionId]?.provider);
     },
-    [],
+    [snapshotBySession],
   );
 
   const reply = useCallback((item: AttentionItem, text: string) => {

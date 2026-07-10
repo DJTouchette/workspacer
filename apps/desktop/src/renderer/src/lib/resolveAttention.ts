@@ -24,6 +24,7 @@ export function resolveApproval(
   sessionId: string,
   response: 'yes' | 'no' | 'always',
   hasPendingQuestion: boolean,
+  provider?: string,
 ): void {
   window.electronAPI.claudeApprove(sessionId, response).catch((err) => {
     console.warn('[resolveAttention] /approve failed:', err);
@@ -31,6 +32,10 @@ export function resolveApproval(
       console.warn('[resolveAttention] suppressed keystroke fallback — question picker is active');
       return;
     }
+    // The keystrokes encode Claude's 3-row permission menu; a managed
+    // provider's PTY (codex/opencode/pi) has a different approval UI, so the
+    // daemon endpoint is their only path.
+    if (provider && provider !== 'claude') return;
     // sendApproval-equivalent over the by-id PTY write, matching claude's 3-row
     // permission menu: Enter approves (row 1), one down approves-for-session
     // ("allow all", row 2), two downs deny (row 3).
@@ -50,7 +55,17 @@ export function resolveApproval(
 export function resolveAnswer(
   sessionId: string,
   payload: { option?: number; text?: string; answers?: string[] },
+  provider?: string,
 ): void {
+  // Non-claude questions are the daemon's parked AskUserQuestion MCP call —
+  // only POST /answer resolves them; the provider's own TUI (if any) knows
+  // nothing about the picker, so keystrokes would be garbage input.
+  if (provider && provider !== 'claude') {
+    window.electronAPI.claudeAnswer(sessionId, payload).catch((err) => {
+      console.warn('[resolveAttention] /answer failed (no PTY fallback exists):', err);
+    });
+    return;
+  }
   if (payload.option !== undefined) {
     window.electronAPI.claudeWrite(sessionId, `${payload.option}\r`);
   } else if (payload.text !== undefined) {
