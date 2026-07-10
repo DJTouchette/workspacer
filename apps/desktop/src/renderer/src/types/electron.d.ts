@@ -12,6 +12,7 @@ import type {
   ClaudeProfile,
   GitStatus,
   GitNumstatEntry,
+  GitLogEntry,
 } from '../../../main/shared/ipcTypes';
 
 export interface SessionListEntry {
@@ -314,6 +315,8 @@ export interface ElectronAPI {
   // Git (review pane). Shells out to git on the host (main process / hub),
   // keyed off the active agent's cwd. A failed git command rejects the promise.
   gitStatus: (cwd: string) => Promise<GitStatus>;
+  /** Recent commits, newest first (default 5, capped at 20). Empty repo → []. */
+  gitLog: (cwd: string, limit?: number) => Promise<GitLogEntry[]>;
   gitDiff: (cwd: string, path?: string, staged?: boolean, untracked?: boolean) => Promise<string>;
   gitNumstat: (cwd: string, staged?: boolean) => Promise<GitNumstatEntry[]>;
   gitStage: (cwd: string, path?: string) => Promise<string>;

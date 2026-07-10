@@ -9,6 +9,7 @@ import type {
   ProfileUpdate,
   GitStatus,
   GitNumstatEntry,
+  GitLogEntry,
 } from './shared/ipcTypes';
 
 // ── MessagePort storage (preload isolated world) ──
@@ -545,6 +546,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Git (review pane) — shells out to git in the main process.
   gitStatus: (cwd: string): Promise<GitStatus> => ipcRenderer.invoke(IPC.GIT_STATUS, cwd),
+  gitLog: (cwd: string, limit?: number): Promise<GitLogEntry[]> =>
+    ipcRenderer.invoke(IPC.GIT_LOG, cwd, limit),
   gitDiff: (cwd: string, path?: string, staged?: boolean, untracked?: boolean): Promise<string> =>
     ipcRenderer.invoke(IPC.GIT_DIFF, cwd, path, staged, untracked),
   gitNumstat: (cwd: string, staged?: boolean): Promise<GitNumstatEntry[]> =>

@@ -212,6 +212,7 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive }) => {
   const [loadingStatus, setLoadingStatus] = useState(false);
   const [loadingDiff, setLoadingDiff] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [pushing, setPushing] = useState(false);
   const [commitMsg, setCommitMsg] = useState('');
   const [copied, setCopied] = useState(false);
   /** Selection keys the user explicitly asked to render despite their size. */
@@ -439,6 +440,17 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive }) => {
   const isLargeGated =
     diffText.length > LARGE_DIFF_CHARS && selection != null && !forcedLarge.has(selKey(selection));
   const canCommit = staged.length > 0 && commitMsg.trim().length > 0 && !busy;
+  // Grey out Push when we know there's nothing to push: an upstream is
+  // configured and we're not ahead of it. With no upstream (or an old host
+  // that doesn't report ahead/behind) leave it enabled — push may set the
+  // upstream up or fail with a real reason, which surfaces in the banner.
+  const nothingToPush = status?.upstream != null && (status.ahead ?? 0) === 0;
+  const canPush = !busy && !nothingToPush;
+  const pushTitle = nothingToPush
+    ? `Nothing to push — in sync with ${status.upstream}`
+    : status?.ahead
+      ? `git push — ${status.ahead} commit${status.ahead === 1 ? '' : 's'} ahead of ${status.upstream}`
+      : 'git push';
 
   const treeProps = (section: 'staged' | 'unstaged' | 'untracked') => ({
     selectedKey: selection ? selKey(selection) : null,
@@ -554,9 +566,12 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive }) => {
             Refresh
           </button>
           <button
-            onClick={() => void runAction((dir) => git.push(dir))}
-            disabled={busy}
-            title="git push"
+            onClick={() => {
+              setPushing(true);
+              void runAction((dir) => git.push(dir)).finally(() => setPushing(false));
+            }}
+            disabled={!canPush}
+            title={pushTitle}
             style={{
               display: 'inline-flex',
               alignItems: 'center',
@@ -566,13 +581,22 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive }) => {
               border: 'none',
               background: colors.accent,
               color: 'var(--wks-claude-bg)',
-              cursor: 'pointer',
+              cursor: canPush ? 'pointer' : 'default',
+              opacity: canPush || pushing ? 1 : 0.45,
               fontSize: '0.74rem',
               fontFamily: 'inherit',
               fontWeight: 700,
             }}
           >
-            <ArrowUp size={13} /> Push
+            {pushing ? (
+              <>
+                <RefreshCw size={13} className="wks-review-spin" /> Pushing…
+              </>
+            ) : (
+              <>
+                <ArrowUp size={13} /> Push
+              </>
+            )}
           </button>
         </div>
       </div>

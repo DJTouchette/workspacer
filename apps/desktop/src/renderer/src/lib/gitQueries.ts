@@ -22,6 +22,12 @@ export interface FileStatus {
 export interface GitStatus {
   branch: string | null;
   files: FileStatus[];
+  /** Upstream tracking branch ("origin/master"), null when none/gone.
+   *  Optional: an older host over the hub bus may omit it. */
+  upstream?: string | null;
+  /** Commits ahead of / behind the upstream; both 0 when no upstream. */
+  ahead?: number;
+  behind?: number;
 }
 
 /** Per-file added/deleted line counts. Null counts mean a binary file. */

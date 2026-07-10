@@ -6,7 +6,8 @@
  *
  * Reads (keyed off a `cwd` — the renderer passes the active agent's working
  * directory): status (branch + changed files), diff (raw unified text), numstat
- * (per-file line counts). Writes: stage / unstage / commit / push.
+ * (per-file line counts), log (recent commits). Writes: stage / unstage /
+ * commit / push.
  *
  * Everything shells out to the `git` binary. Before running anything we resolve
  * `cwd` to its work-tree root with `rev-parse --show-toplevel`, so an arbitrary
@@ -29,6 +30,12 @@ export interface FileStatus {
 export interface GitStatus {
   branch: string | null;
   files: FileStatus[];
+  /** Upstream tracking branch (e.g. "origin/master"), or null when none is
+   *  configured (or it's gone). */
+  upstream: string | null;
+  /** Commits ahead of / behind the upstream. Both 0 when no upstream. */
+  ahead: number;
+  behind: number;
 }
 
 /** One row of `git diff --numstat`: lines added/deleted per file. `null` counts
@@ -37,6 +44,14 @@ export interface NumstatEntry {
   path: string;
   added: number | null;
   deleted: number | null;
+}
+
+/** One commit from `git log` — enough for a "what was I doing here?" peek. */
+export interface LogEntry {
+  hash: string;
+  subject: string;
+  /** Author time, unix seconds. */
+  authoredAt: number;
 }
 
 /** Cap on a single git command's stdout. Diffs of a whole work tree can be
@@ -147,6 +162,51 @@ export function parseNumstat(stdout: string): NumstatEntry[] {
   return out;
 }
 
+/** Parse the `--branch` header of porcelain status (`## master...origin/master
+ *  [ahead 1, behind 2]`). Variants: no upstream (`## master`), a gone upstream
+ *  (`[gone]` — treated as none, plain `git push` can't reach it), detached
+ *  (`## HEAD (no branch)`), and an unborn branch (`## No commits yet on x`). */
+export function parseBranchHeader(header: string): {
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+} {
+  const none = { upstream: null, ahead: 0, behind: 0 };
+  if (!header.startsWith('## ')) return none;
+  const body = header.slice(3);
+  const sep = body.indexOf('...');
+  if (sep === -1) return none;
+  let rest = body.slice(sep + 3);
+  let ahead = 0;
+  let behind = 0;
+  const bracket = rest.indexOf(' [');
+  if (bracket !== -1) {
+    const inside = rest.slice(bracket + 2).replace(/\]$/, '');
+    rest = rest.slice(0, bracket);
+    if (inside === 'gone') return none;
+    const a = /ahead (\d+)/.exec(inside);
+    const b = /behind (\d+)/.exec(inside);
+    if (a) ahead = parseInt(a[1], 10);
+    if (b) behind = parseInt(b[1], 10);
+  }
+  return { upstream: rest || null, ahead, behind };
+}
+
+/** Parse `git log --pretty=format:%h%x00%s%x00%at` output (one commit per
+ *  line, NUL-separated fields — subjects never contain newlines or NULs). */
+export function parseLog(stdout: string): LogEntry[] {
+  const out: LogEntry[] = [];
+  for (const line of stdout.split('\n')) {
+    if (!line) continue;
+    const [hash, subject, at] = line.split('\0');
+    if (!hash || subject === undefined || at === undefined) continue;
+    const authoredAt = parseInt(at, 10);
+    if (Number.isNaN(authoredAt)) continue;
+    out.push({ hash, subject, authoredAt });
+  }
+  return out;
+}
+
 /** Resolve the work root or throw the same message the daemon used to 400 with. */
 async function rootOrThrow(cwd: string): Promise<string> {
   const root = await workRoot(cwd);
@@ -160,9 +220,17 @@ export async function status(cwd: string): Promise<GitStatus> {
   // `--untracked-files=all` lists every untracked file individually. Without
   // it, git collapses a fully-untracked directory into one `dir/` entry, and
   // the review pane would then ask for an untracked diff of a directory.
-  const res = await runGit(root, ['status', '--porcelain', '-z', '--untracked-files=all']);
+  // `--branch` prepends a `## …` header carrying upstream + ahead/behind,
+  // which the review pane uses to grey out Push when there's nothing to push.
+  const res = await runGit(root, ['status', '--porcelain', '-z', '--branch', '--untracked-files=all']);
   if (!res.ok) throw new Error(res.stderr.trim() || 'git status failed');
-  const files = parsePorcelain(res.stdout);
+
+  // Split the branch header off before the file parser sees it.
+  const nul = res.stdout.indexOf('\0');
+  const header = res.stdout.startsWith('## ') ? res.stdout.slice(0, nul === -1 ? undefined : nul) : '';
+  const body = header ? (nul === -1 ? '' : res.stdout.slice(nul + 1)) : res.stdout;
+  const { upstream, ahead, behind } = parseBranchHeader(header);
+  const files = parsePorcelain(body);
 
   // Branch name is best-effort: a detached HEAD or fresh repo may not have one.
   let branch: string | null = null;
@@ -172,7 +240,17 @@ export async function status(cwd: string): Promise<GitStatus> {
     if (name && name !== 'HEAD') branch = name;
   }
 
-  return { branch, files };
+  return { branch, files, upstream, ahead, behind };
+}
+
+/** Most recent commits, newest first (capped at 20). An empty repo — where
+ *  `git log` exits non-zero because HEAD has no commits — yields []. */
+export async function log(cwd: string, limit = 5): Promise<LogEntry[]> {
+  const root = await rootOrThrow(cwd);
+  const n = Math.max(1, Math.min(20, Math.floor(limit)));
+  const res = await runGit(root, ['log', '-n', String(n), '--pretty=format:%h%x00%s%x00%at']);
+  if (!res.ok) return [];
+  return parseLog(res.stdout);
 }
 
 /** Unified diff text for a single file (or the whole work tree if `path` is

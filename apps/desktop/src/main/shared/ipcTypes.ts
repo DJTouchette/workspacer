@@ -23,6 +23,12 @@ export interface GitFileStatus {
 export interface GitStatus {
   branch: string | null;
   files: GitFileStatus[];
+  /** Upstream tracking branch ("origin/master"), null when none/gone.
+   *  Optional: an older host over the hub bus may omit it. */
+  upstream?: string | null;
+  /** Commits ahead of / behind the upstream; both 0 when no upstream. */
+  ahead?: number;
+  behind?: number;
 }
 
 /** Per-file added/deleted line counts. Null counts mean a binary file. */
@@ -30,6 +36,14 @@ export interface GitNumstatEntry {
   path: string;
   added: number | null;
   deleted: number | null;
+}
+
+/** One commit from `git log`, newest first. */
+export interface GitLogEntry {
+  hash: string;
+  subject: string;
+  /** Author time, unix seconds. */
+  authoredAt: number;
 }
 
 // ── Claude session snapshot (sent over claude-session:get / getAll / update) ──

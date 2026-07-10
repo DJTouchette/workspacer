@@ -62,7 +62,15 @@ export const AgentHero: React.FC<{
 
 /** Starter prompts: short chip label → full prompt dropped into the composer
  *  (not auto-sent — the user can edit before committing). */
-const STARTERS: { label: string; prompt: string }[] = [
+interface Starter {
+  label: string;
+  prompt: string;
+  /** Derived from the repo's current state (dirty tree, recent commits) —
+   *  rendered ahead of the generic chips with an accent tint. */
+  contextual?: boolean;
+}
+
+const STARTERS: Starter[] = [
   {
     label: 'Orient me',
     prompt:
@@ -82,6 +90,55 @@ const STARTERS: { label: string; prompt: string }[] = [
   },
 ];
 
+/** Repo-state-driven starters. A dirty tree offers review/commit; commit
+ *  history offers picking the thread back up. */
+function contextualStarters(git: GitPeek | null): Starter[] {
+  const out: Starter[] = [];
+  if (git && git.dirty > 0) {
+    out.push(
+      {
+        label: 'Review my changes',
+        prompt:
+          'Review my uncommitted changes (git status + diff) and flag anything risky, unfinished, or worth cleaning up before I commit.',
+        contextual: true,
+      },
+      {
+        label: 'Commit my work',
+        prompt:
+          'Look at my staged and unstaged changes, group them into logical commits, and propose commit messages. Show me the plan before committing anything.',
+        contextual: true,
+      },
+    );
+  }
+  if (git?.lastCommit) {
+    out.push({
+      label: 'Pick up where I left off',
+      prompt:
+        'Look at the recent commits and any uncommitted changes, figure out what I was in the middle of, and suggest the next step.',
+      contextual: true,
+    });
+  }
+  return out;
+}
+
+/** Compact relative age for the last-commit peek ("just now", "3h ago"). */
+function formatAgo(unixSeconds: number): string {
+  const diffMin = Math.floor((Date.now() / 1000 - unixSeconds) / 60);
+  if (diffMin < 1) return 'just now';
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHrs = Math.floor(diffMin / 60);
+  if (diffHrs < 24) return `${diffHrs}h ago`;
+  const diffDays = Math.floor(diffHrs / 24);
+  if (diffDays < 30) return `${diffDays}d ago`;
+  return new Date(unixSeconds * 1000).toLocaleDateString();
+}
+
+interface GitPeek {
+  branch: string | null;
+  dirty: number;
+  lastCommit: { subject: string; authoredAt: number } | null;
+}
+
 export const ConversationEmptyState: React.FC<{
   agentName: string;
   provider?: AgentProvider;
@@ -97,8 +154,10 @@ export const ConversationEmptyState: React.FC<{
 }> = ({ agentName, provider, model, permissionMode, transport, cwd, initialPrompt, onPick }) => {
   const dirName = cwd ? (cwd.replace(/\/+$/, '').split('/').pop() ?? cwd) : undefined;
 
-  // Git peek: branch + dirty count, best-effort. Not a repo / no git → omit.
-  const [git, setGit] = useState<{ branch: string | null; dirty: number } | null>(null);
+  // Git peek: branch + dirty count + last commit, best-effort. Not a repo /
+  // no git → omit. Status and log land independently so a slow one doesn't
+  // hold back the other.
+  const [git, setGit] = useState<GitPeek | null>(null);
   useEffect(() => {
     if (!cwd) return;
     let live = true;
@@ -107,7 +166,21 @@ export const ConversationEmptyState: React.FC<{
       window.electronAPI
         .gitStatus?.(cwd)
         ?.then((s) => {
-          if (live) setGit({ branch: s.branch, dirty: s.files.length });
+          if (live)
+            setGit((g) => ({ lastCommit: null, ...g, branch: s.branch, dirty: s.files.length }));
+        })
+        .catch(() => {});
+      window.electronAPI
+        .gitLog?.(cwd, 1)
+        ?.then((commits) => {
+          const last = commits[0];
+          if (live && last)
+            setGit((g) => ({
+              branch: null,
+              dirty: 0,
+              ...g,
+              lastCommit: { subject: last.subject, authoredAt: last.authoredAt },
+            }));
         })
         .catch(() => {});
     } catch {
@@ -121,6 +194,11 @@ export const ConversationEmptyState: React.FC<{
   // Handoff takeover: App.tsx pre-fills the composer with a fixed in-house
   // message pointing at the brief on disk.
   const isHandoff = /handoff brief at /i.test(initialPrompt ?? '');
+
+  // Contextual chips lead; generic ones fill up to 6 total so a dirty repo
+  // doesn't stack three rows of pills.
+  const ctx = contextualStarters(git);
+  const starters = [...ctx, ...STARTERS].slice(0, 6);
 
   const meta = [
     model,
@@ -166,6 +244,37 @@ export const ConversationEmptyState: React.FC<{
         </div>
       )}
 
+      {git?.lastCommit && (
+        <div
+          style={{
+            position: 'relative',
+            fontSize: '0.68rem',
+            marginTop: 6,
+            color: colors.mutedDim,
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'baseline',
+            gap: 5,
+            padding: '0 24px',
+          }}
+        >
+          <span style={{ flexShrink: 0 }}>Last commit</span>
+          <span
+            style={{
+              color: colors.muted,
+              maxWidth: 320,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+            title={git.lastCommit.subject}
+          >
+            “{git.lastCommit.subject}”
+          </span>
+          <span style={{ flexShrink: 0 }}>· {formatAgo(git.lastCommit.authoredAt)}</span>
+        </div>
+      )}
+
       {isHandoff ? (
         <div
           style={{
@@ -203,35 +312,42 @@ export const ConversationEmptyState: React.FC<{
             marginRight: 'auto',
           }}
         >
-          {STARTERS.map((s) => (
-            <button
-              key={s.label}
-              onClick={() => onPick(s.prompt)}
-              title={s.prompt}
-              style={{
-                fontSize: '0.7rem',
-                fontWeight: 500,
-                padding: '5px 12px',
-                borderRadius: 'var(--wks-radius-pill)',
-                border: `1px solid ${colors.borderSubtle}`,
-                backgroundColor: 'rgba(255,255,255,0.03)',
-                color: colors.text,
-                cursor: 'pointer',
-                fontFamily: 'inherit',
-                transition: 'border-color 0.15s, color 0.15s',
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.borderColor = 'var(--wks-border-active)';
-                e.currentTarget.style.color = colors.textBright;
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.borderColor = colors.borderSubtle;
-                e.currentTarget.style.color = colors.text;
-              }}
-            >
-              {s.label}
-            </button>
-          ))}
+          {starters.map((s) => {
+            const restBorder = s.contextual
+              ? 'color-mix(in srgb, var(--wks-accent) 35%, transparent)'
+              : colors.borderSubtle;
+            return (
+              <button
+                key={s.label}
+                onClick={() => onPick(s.prompt)}
+                title={s.prompt}
+                style={{
+                  fontSize: '0.7rem',
+                  fontWeight: 500,
+                  padding: '5px 12px',
+                  borderRadius: 'var(--wks-radius-pill)',
+                  border: `1px solid ${restBorder}`,
+                  backgroundColor: s.contextual
+                    ? 'color-mix(in srgb, var(--wks-accent) 7%, transparent)'
+                    : 'rgba(255,255,255,0.03)',
+                  color: colors.text,
+                  cursor: 'pointer',
+                  fontFamily: 'inherit',
+                  transition: 'border-color 0.15s, color 0.15s',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.borderColor = 'var(--wks-border-active)';
+                  e.currentTarget.style.color = colors.textBright;
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.borderColor = restBorder;
+                  e.currentTarget.style.color = colors.text;
+                }}
+              >
+                {s.label}
+              </button>
+            );
+          })}
         </div>
       )}
 

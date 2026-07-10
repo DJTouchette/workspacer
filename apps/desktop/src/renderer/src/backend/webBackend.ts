@@ -271,6 +271,12 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     // unwrap here so both transports present the same flat shapes to GitClient.
     gitStatus: (cwd) =>
       client.call<import('../../../main/shared/ipcTypes').GitStatus>('git.status', { cwd }),
+    gitLog: (cwd, limit) =>
+      client
+        .call<{
+          commits: import('../../../main/shared/ipcTypes').GitLogEntry[];
+        }>('git.log', { cwd, limit })
+        .then((r) => r.commits),
     gitDiff: (cwd, path, staged, untracked) =>
       client
         .call<{ diff: string }>('git.diff', { cwd, path, staged, untracked })

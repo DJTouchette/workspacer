@@ -800,6 +800,12 @@ export function registerHubCapabilities(): void {
     guardGitCwd('git.status', cwd);
     return git.status(cwd);
   });
+  registerCapability('git.log', (params: unknown) => {
+    const { cwd, limit } = (params ?? {}) as { cwd?: string; limit?: number };
+    if (!cwd) throw new Error('git.log requires { cwd }');
+    guardGitCwd('git.log', cwd);
+    return git.log(cwd, limit).then((commits) => ({ commits }));
+  });
   registerCapability('git.diff', (params: unknown) => {
     const { cwd, path, staged, untracked } = (params ?? {}) as {
       cwd?: string;

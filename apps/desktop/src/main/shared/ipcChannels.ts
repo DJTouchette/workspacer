@@ -132,6 +132,7 @@ export const IPC = {
 
   // ── Git (review pane) ──
   GIT_STATUS: 'git:status',
+  GIT_LOG: 'git:log',
   GIT_DIFF: 'git:diff',
   GIT_NUMSTAT: 'git:numstat',
   GIT_STAGE: 'git:stage',

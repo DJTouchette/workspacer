@@ -796,6 +796,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // ── Git (review pane) ── shells out to `git`; same backend as the git.*
   // hub capabilities, so the desktop reaches it whether it's on IPC or the bus.
   ipcMain.handle(IPC.GIT_STATUS, (_event, cwd: string) => git.status(cwd));
+  ipcMain.handle(IPC.GIT_LOG, (_event, cwd: string, limit?: number) => git.log(cwd, limit));
   ipcMain.handle(
     IPC.GIT_DIFF,
     (_event, cwd: string, path?: string, staged?: boolean, untracked?: boolean) =>
