@@ -18,6 +18,7 @@ import {
   Plus,
   Smartphone,
   Columns3,
+  RefreshCw,
   Settings,
   Sparkles,
   Star,
@@ -201,6 +202,12 @@ interface CommandPaletteProps {
   onToggleHelp?: () => void;
   /** Re-open the first-run welcome card. */
   onShowWelcome?: () => void;
+  /** In-app update status; gates/labels the update command. */
+  updateStatus?: { state: string; version?: string; percent?: number };
+  /** Manually check the release feed now. */
+  onCheckUpdates?: () => void;
+  /** Restart into a downloaded update. */
+  onInstallUpdate?: () => void;
 }
 
 const CommandPalette: React.FC<CommandPaletteProps> = ({
@@ -240,6 +247,9 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
   onOpenSettings,
   onToggleHelp,
   onShowWelcome,
+  updateStatus,
+  onCheckUpdates,
+  onInstallUpdate,
 }) => {
   // Current UI mode — the toggle entry's label names the TARGET mode.
   const { mode: uiMode } = useUiMode();
@@ -434,6 +444,27 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
       <Sparkles size={16} strokeWidth={1.75} />,
       onShowWelcome,
     );
+    // Updates: one entry whose action tracks the updater state. Hidden where
+    // there is no update feed (dev builds, the web mirror).
+    if (updateStatus && updateStatus.state !== 'unsupported') {
+      if (updateStatus.state === 'downloaded') {
+        add(
+          'cmd-update',
+          `Restart to Update${updateStatus.version ? ` (v${updateStatus.version})` : ''}`,
+          'A new version is downloaded — restart to apply it',
+          <RefreshCw size={16} strokeWidth={1.75} />,
+          onInstallUpdate,
+        );
+      } else {
+        add(
+          'cmd-update',
+          'Check for Updates',
+          'Look for a newer Workspacer release now',
+          <RefreshCw size={16} strokeWidth={1.75} />,
+          onCheckUpdates,
+        );
+      }
+    }
     return out;
   }, [
     onOpenAskPane,
@@ -456,6 +487,9 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
     onOpenSettings,
     onToggleHelp,
     onShowWelcome,
+    updateStatus,
+    onCheckUpdates,
+    onInstallUpdate,
   ]);
 
   // "Keyboard Shortcuts" is always pinned at the top (regardless of query) so

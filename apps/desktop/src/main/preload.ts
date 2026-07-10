@@ -385,6 +385,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke(IPC.HUB_PUBLISH, event),
   getHubStatus: (): Promise<{ connected: boolean }> => ipcRenderer.invoke(IPC.HUB_GET_STATUS),
 
+  // ── In-app updates (electron-updater; unsupported in dev/web) ──
+  updatesGetStatus: (): Promise<unknown> => ipcRenderer.invoke(IPC.UPDATES_STATUS_GET),
+  updatesCheck: (): Promise<unknown> => ipcRenderer.invoke(IPC.UPDATES_CHECK),
+  updatesInstall: (): Promise<void> => ipcRenderer.invoke(IPC.UPDATES_INSTALL),
+  onUpdateStatus: (callback: (status: unknown) => void): (() => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, status: unknown) => callback(status);
+    ipcRenderer.on(IPC.UPDATES_STATUS, handler);
+    return () => ipcRenderer.removeListener(IPC.UPDATES_STATUS, handler);
+  },
+
   // ── Shared layout document (hub-owned; tmux-style mirror) ──
   layoutGet: (): Promise<{ version: number; data: unknown }> => ipcRenderer.invoke(IPC.LAYOUT_GET),
   layoutSet: (data: unknown): Promise<{ version: number; data: unknown }> =>

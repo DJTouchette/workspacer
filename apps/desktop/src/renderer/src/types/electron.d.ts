@@ -32,9 +32,24 @@ export interface LayoutDoc<T = unknown> {
   data: T | null;
 }
 
+/** In-app update status (main pushes transitions; 'unsupported' in dev/web). */
+export interface UpdateStatus {
+  state: 'unsupported' | 'disabled' | 'idle' | 'checking' | 'downloading' | 'downloaded' | 'error';
+  version?: string;
+  percent?: number;
+  current: string;
+  error?: string;
+}
+
 export interface ElectronAPI {
   // Host OS — 'win32' | 'darwin' | 'linux' | …
   platform: NodeJS.Platform;
+
+  // In-app updates (electron-updater)
+  updatesGetStatus: () => Promise<UpdateStatus>;
+  updatesCheck: () => Promise<UpdateStatus>;
+  updatesInstall: () => Promise<void>;
+  onUpdateStatus: (callback: (status: UpdateStatus) => void) => () => void;
 
   // Re-color the Windows native caption buttons to match the active theme.
   setTitleBarOverlay: (color: string, symbolColor: string) => void;

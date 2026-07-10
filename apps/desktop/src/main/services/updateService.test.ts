@@ -12,7 +12,7 @@ import { EventEmitter } from 'events';
 
 // ─── electron mock ───────────────────────────────────────────────────────────
 // `app.isPackaged` is mutated per-test to exercise the dev / packaged branches.
-const electronApp = { isPackaged: true };
+const electronApp = { isPackaged: true, getVersion: () => '0.0.0-test' };
 const showMessageBox = vi.fn(async () => ({ response: 1 }));
 vi.mock('electron', () => ({
   app: electronApp,
@@ -130,6 +130,55 @@ describe('updateService – scheduling', () => {
     svc.stop();
     vi.advanceTimersByTime(4 * 60 * 60 * 1000 * 3);
     expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1); // no more
+  });
+});
+
+describe('updateService – renderer status surface', () => {
+  it('tracks the lifecycle: checking → downloading → downloaded, and installs on demand', async () => {
+    const svc = await loadService();
+    svc.start(fakeWindow());
+    expect(svc.getStatus().state).toBe('idle');
+
+    autoUpdater.emit('checking-for-update');
+    expect(svc.getStatus().state).toBe('checking');
+
+    autoUpdater.emit('update-available', { version: '9.9.9' });
+    expect(svc.getStatus()).toMatchObject({ state: 'downloading', version: '9.9.9' });
+
+    autoUpdater.emit('download-progress', { percent: 41.7 });
+    expect(svc.getStatus()).toMatchObject({ state: 'downloading', percent: 42 });
+
+    autoUpdater.emit('update-downloaded', { version: '9.9.9' });
+    expect(svc.getStatus()).toMatchObject({ state: 'downloaded', version: '9.9.9' });
+
+    svc.installNow();
+    expect(autoUpdater.quitAndInstall).toHaveBeenCalledTimes(1);
+    svc.stop();
+  });
+
+  it('installNow is a no-op unless an update is downloaded', async () => {
+    const svc = await loadService();
+    svc.start(fakeWindow());
+    svc.installNow();
+    expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+    svc.stop();
+  });
+
+  it('checkNow reports unsupported in a dev build without touching the updater', async () => {
+    electronApp.isPackaged = false;
+    const svc = await loadService();
+    const status = await svc.checkNow();
+    expect(status.state).toBe('unsupported');
+    expect(autoUpdater.checkForUpdates).not.toHaveBeenCalled();
+  });
+
+  it('checkNow checks even when auto-update is disabled (explicit user ask)', async () => {
+    configValue = { updates: { enabled: false, channel: 'latest' } };
+    const svc = await loadService();
+    svc.start(fakeWindow());
+    expect(svc.getStatus().state).toBe('disabled');
+    await svc.checkNow();
+    expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
   });
 });
 

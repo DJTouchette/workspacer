@@ -20,9 +20,29 @@
 import { app, BrowserWindow, dialog } from 'electron';
 import { autoUpdater, type UpdateInfo } from 'electron-updater';
 import { configService } from './configService';
+import { IPC } from '../shared/ipcChannels';
 
 /** How often to re-check the release feed after the startup check. */
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
+
+/** Renderer-visible update state (pushed on UPDATES_STATUS; see ipcChannels). */
+export interface UpdateStatus {
+  state:
+    | 'unsupported' // dev build / web mirror — no update feed
+    | 'disabled' // updates.enabled=false in config
+    | 'idle' // checked, nothing newer
+    | 'checking'
+    | 'downloading'
+    | 'downloaded' // ready — install restarts into it
+    | 'error';
+  /** The newer version, once known (downloading/downloaded). */
+  version?: string;
+  /** Download progress 0–100 while downloading. */
+  percent?: number;
+  /** The running app's version. */
+  current: string;
+  error?: string;
+}
 
 interface UpdatesConfig {
   /** Master switch for in-app auto-update. Default true. */
@@ -46,6 +66,45 @@ class UpdateService {
   private wired = false;
   /** Guard so overlapping checks (startup + interval) don't stack dialogs. */
   private promptOpen = false;
+  private status: UpdateStatus = {
+    state: app.isPackaged ? 'idle' : 'unsupported',
+    current: app.getVersion(),
+  };
+
+  /** Current status, for the renderer's initial pull. */
+  getStatus(): UpdateStatus {
+    return this.status;
+  }
+
+  /** Transition + push to the renderer so the palette/overview stay live. */
+  private setStatus(patch: Partial<UpdateStatus>): void {
+    this.status = { ...this.status, ...patch };
+    const win = this.win;
+    try {
+      if (win && !win.isDestroyed()) {
+        win.webContents?.send(IPC.UPDATES_STATUS, this.status);
+      }
+    } catch {
+      /* window mid-teardown — the renderer re-pulls on next mount */
+    }
+  }
+
+  /**
+   * Manual "check now" (palette). Works even when auto-update is disabled in
+   * config — an explicit ask is explicit consent. No-op in dev/web.
+   */
+  async checkNow(): Promise<UpdateStatus> {
+    if (!app.isPackaged) return this.status; // unsupported
+    this.wire(readUpdatesConfig().channel);
+    await this.check();
+    return this.status;
+  }
+
+  /** Restart into a downloaded update (palette / overview banner). */
+  installNow(): void {
+    if (this.status.state !== 'downloaded') return;
+    autoUpdater.quitAndInstall();
+  }
 
   /**
    * Wire and start the updater. Safe to call once with the main window. No-ops
@@ -62,6 +121,7 @@ class UpdateService {
     const cfg = readUpdatesConfig();
     if (!cfg.enabled) {
       console.log('[updateService] disabled via config (updates.enabled=false)');
+      this.setStatus({ state: 'disabled' });
       return;
     }
 
@@ -94,21 +154,31 @@ class UpdateService {
     autoUpdater.channel = channel;
     // electron-updater logs to console by default via its own logger; keep our
     // own breadcrumbs so update activity shows up in the app's log file.
-    autoUpdater.on('checking-for-update', () => console.log('[updateService] checking for update'));
-    autoUpdater.on('update-available', (info: UpdateInfo) =>
-      console.log(`[updateService] update available: ${info.version} (downloading)`),
-    );
-    autoUpdater.on('update-not-available', () =>
-      console.log('[updateService] no update available'),
-    );
-    autoUpdater.on('download-progress', (p) =>
-      console.log(`[updateService] downloading ${Math.round(p.percent)}%`),
-    );
-    autoUpdater.on('update-downloaded', (info: UpdateInfo) => this.onDownloaded(info));
+    autoUpdater.on('checking-for-update', () => {
+      console.log('[updateService] checking for update');
+      this.setStatus({ state: 'checking', error: undefined });
+    });
+    autoUpdater.on('update-available', (info: UpdateInfo) => {
+      console.log(`[updateService] update available: ${info.version} (downloading)`);
+      this.setStatus({ state: 'downloading', version: info.version, percent: 0 });
+    });
+    autoUpdater.on('update-not-available', () => {
+      console.log('[updateService] no update available');
+      this.setStatus({ state: 'idle', version: undefined, percent: undefined });
+    });
+    autoUpdater.on('download-progress', (p) => {
+      console.log(`[updateService] downloading ${Math.round(p.percent)}%`);
+      this.setStatus({ state: 'downloading', percent: Math.round(p.percent) });
+    });
+    autoUpdater.on('update-downloaded', (info: UpdateInfo) => {
+      this.setStatus({ state: 'downloaded', version: info.version, percent: 100 });
+      void this.onDownloaded(info);
+    });
     // Errors (offline, unsigned-mac refusal, feed 404 before the first release,
     // …) are non-fatal by design — log at warn, never surface a dialog.
     autoUpdater.on('error', (err: Error) => {
       console.warn(`[updateService] updater error (non-fatal): ${err?.message ?? err}`);
+      this.setStatus({ state: 'error', error: String(err?.message ?? err) });
     });
   }
 

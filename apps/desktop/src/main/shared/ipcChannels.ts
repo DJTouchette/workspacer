@@ -13,6 +13,12 @@ export const IPC = {
   LIBRARY_REMOVE: 'library:remove',
   LIBRARY_CHANGED: 'library:changed', // push (main → renderer)
 
+  // ── In-app updates (electron-updater) ──
+  UPDATES_STATUS_GET: 'updates:status-get', // invoke (renderer → main): current status
+  UPDATES_CHECK: 'updates:check', // invoke (renderer → main): manual check now
+  UPDATES_INSTALL: 'updates:install', // invoke (renderer → main): restart into a downloaded update
+  UPDATES_STATUS: 'updates:status', // push (main → renderer): status transitions
+
   // ── Notifications / ambient awareness ──
   NOTIFY_SET_ACTIVE_SESSION: 'notify:set-active-session', // send (renderer → main)
   NOTIFY_FOCUS_AGENT: 'notify:focus-agent', // push (main → renderer)

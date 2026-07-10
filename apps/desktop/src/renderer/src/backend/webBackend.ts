@@ -137,6 +137,12 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     // No native window chrome in the browser mirror.
     setTitleBarOverlay: () => {},
 
+    // In-app updates are a desktop-shell concern; the web mirror has no feed.
+    updatesGetStatus: () => Promise.resolve({ state: 'unsupported' as const, current: '' }),
+    updatesCheck: () => Promise.resolve({ state: 'unsupported' as const, current: '' }),
+    updatesInstall: () => Promise.resolve(),
+    onUpdateStatus: () => () => {},
+
     // ── Shell terminals ──────────────────────────────────────────────────
     createTerminal: (shell, cwd, cols, rows) =>
       client

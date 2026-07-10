@@ -24,6 +24,7 @@ import {
   type ContextTarget,
 } from './lib/watchBus';
 import { requestSettingsSection } from './lib/settingsBus';
+import type { UpdateStatus } from './types/electron';
 import { EDITOR_OPEN_FILE_EVENT } from './lib/editorBus';
 import { MARKDOWN_PREVIEW_EVENT, type MarkdownPreviewTarget } from './lib/previewBus';
 import { useUiCommands } from './hooks/useUiCommands';
@@ -277,6 +278,22 @@ function App() {
   // The welcome card replayed from the palette (modal; independent of the
   // first-run onboardingDismissed flag).
   const [showWelcome, setShowWelcome] = useState(false);
+  // In-app update status (main pushes transitions; 'unsupported' in dev/web).
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    window.electronAPI
+      .updatesGetStatus?.()
+      .then((s) => {
+        if (!cancelled && s) setUpdateStatus(s);
+      })
+      .catch(() => {});
+    const off = window.electronAPI.onUpdateStatus?.((s) => setUpdateStatus(s));
+    return () => {
+      cancelled = true;
+      off?.();
+    };
+  }, []);
   const [paletteMode, setPaletteMode] = useState<'tab' | 'split'>('tab');
   const [paletteRestrict, setPaletteRestrict] = useState<'library' | undefined>(undefined);
   const [showSpawnDialog, setShowSpawnDialog] = useState(false);
@@ -1986,6 +2003,15 @@ function App() {
           onShowWelcome={() => {
             setShowCommandPalette(false);
             setShowWelcome(true);
+          }}
+          updateStatus={updateStatus ?? undefined}
+          onCheckUpdates={() => {
+            setShowCommandPalette(false);
+            window.electronAPI.updatesCheck?.().catch(() => {});
+          }}
+          onInstallUpdate={() => {
+            setShowCommandPalette(false);
+            window.electronAPI.updatesInstall?.().catch(() => {});
           }}
           onToggleSidebar={() => {
             setShowCommandPalette(false);

@@ -11,6 +11,7 @@ import {
 } from './services/pluginSettingsMigration';
 import { sessionHistory } from './services/sessionHistory';
 import { layoutService } from './services/layoutService';
+import { updateService } from './services/updateService';
 import { claudeSessionStore } from './services/claudeSessionStore';
 import { listClaudeModels } from './services/claudeModels';
 import { workflowWatcher } from './services/workflowWatcher';
@@ -287,6 +288,12 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // Connection info for the remote-control client (URL + token for a QR/share).
   ipcMain.handle(IPC.HUB_GET_REMOTE_INFO, () => getRemoteShareInfo());
   ipcMain.handle(IPC.HUB_SET_REMOTE_SHARE, (_event, enabled: boolean) => setRemoteShare(!!enabled));
+  // In-app updates: status pull + manual check + restart-into-update. The
+  // service pushes transitions on IPC.UPDATES_STATUS.
+  ipcMain.handle(IPC.UPDATES_STATUS_GET, () => updateService.getStatus());
+  ipcMain.handle(IPC.UPDATES_CHECK, () => updateService.checkNow());
+  ipcMain.handle(IPC.UPDATES_INSTALL, () => updateService.installNow());
+
   ipcMain.handle(IPC.TAILSCALE_GET_INFO, () => getTailscaleInfo(HUB_PORT));
   ipcMain.handle(IPC.TAILSCALE_SET_SERVE, (_event, enable: boolean) =>
     setTailscaleServe(HUB_PORT, !!enable),

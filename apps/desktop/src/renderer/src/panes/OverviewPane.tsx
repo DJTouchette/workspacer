@@ -2,7 +2,8 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useConfig } from '../hooks/useConfig';
 import { useAttention } from '../contexts/AttentionContext';
 import { usePlugins } from '../hooks/usePlugins';
-import { Home, Star, Plus } from '../components/icons';
+import { Home, Star, Plus, RefreshCw } from '../components/icons';
+import type { UpdateStatus } from '../types/electron';
 
 /** Latest supervisor state per plugin id, from `sidecar.*` bus events.
  *  (Mirrors PluginsManagerPane so the Overview grid shows the same status.) */
@@ -18,6 +19,26 @@ function usePluginStates(): Record<string, string> {
     return () => off?.();
   }, []);
   return states;
+}
+
+/** Live in-app update status ('unsupported' in dev/web hides the banner). */
+function useUpdateStatus(): UpdateStatus | null {
+  const [status, setStatus] = useState<UpdateStatus | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    window.electronAPI
+      .updatesGetStatus?.()
+      .then((st) => {
+        if (!cancelled && st) setStatus(st);
+      })
+      .catch(() => {});
+    const off = window.electronAPI.onUpdateStatus?.((st) => setStatus(st));
+    return () => {
+      cancelled = true;
+      off?.();
+    };
+  }, []);
+  return status;
 }
 
 function pluginStateColor(s: string | undefined): string {
@@ -354,6 +375,7 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
   const { counts, setViewLevel, openInbox } = useAttention();
   const { plugins } = usePlugins();
   const pluginStates = usePluginStates();
+  const updateStatus = useUpdateStatus();
   const [snaps, setSnaps] = useState<Snap[]>([]);
 
   const pendingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -476,6 +498,70 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
             animation: 'wks-fade-in 0.25s ease-out',
           }}
         >
+          {/* ── Pending update banner ────────────────────────────────────── */}
+          {updateStatus &&
+            (updateStatus.state === 'downloaded' || updateStatus.state === 'downloading') && (
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 12,
+                  marginBottom: 22,
+                  padding: '11px 16px',
+                  borderRadius: 'var(--wks-radius-md, 8px)',
+                  border: '1px solid color-mix(in srgb, var(--wks-accent) 35%, transparent)',
+                  background: 'color-mix(in srgb, var(--wks-accent) 9%, transparent)',
+                  animation: 'wks-fade-in 0.25s ease-out',
+                }}
+              >
+                <RefreshCw
+                  size={16}
+                  strokeWidth={1.75}
+                  style={{
+                    color: 'var(--wks-accent-text, var(--wks-accent))',
+                    flexShrink: 0,
+                    animation:
+                      updateStatus.state === 'downloading'
+                        ? 'wks-spin 1.2s linear infinite'
+                        : 'none',
+                  }}
+                />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: '0.8rem', fontWeight: 650 }}>
+                    {updateStatus.state === 'downloaded'
+                      ? `Update ready — Workspacer v${updateStatus.version ?? ''}`
+                      : `Downloading update${updateStatus.version ? ` v${updateStatus.version}` : ''}…${
+                          updateStatus.percent != null ? ` ${updateStatus.percent}%` : ''
+                        }`}
+                  </div>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--wks-text-muted)', marginTop: 2 }}>
+                    {updateStatus.state === 'downloaded'
+                      ? 'Restart to apply — your session is saved on quit.'
+                      : 'You can keep working; it installs on restart once ready.'}
+                  </div>
+                </div>
+                {updateStatus.state === 'downloaded' && (
+                  <button
+                    onClick={() => window.electronAPI.updatesInstall?.().catch(() => {})}
+                    style={{
+                      flexShrink: 0,
+                      fontSize: '0.74rem',
+                      fontFamily: 'inherit',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      background: 'var(--wks-accent)',
+                      color: 'var(--wks-text-on-accent, #fff)',
+                      border: 'none',
+                      borderRadius: 6,
+                      padding: '7px 14px',
+                    }}
+                  >
+                    Restart now
+                  </button>
+                )}
+              </div>
+            )}
+
           {/* ── Hero: the workspace at a glance ─────────────────────────── */}
           <div style={{ textAlign: 'center', marginBottom: 30 }}>
             <div
