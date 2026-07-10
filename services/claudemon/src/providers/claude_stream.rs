@@ -106,10 +106,8 @@ pub fn translate(value: &Value, totals: &mut StreamTotals) -> Vec<AgentUpdate> {
                 out.push(AgentUpdate::Capabilities(capabilities_from_init(value)));
             }
             // The CLI is calling the API — the turn is running.
-            "status" => {
-                if value.get("status").and_then(Value::as_str) == Some("requesting") {
-                    out.push(AgentUpdate::Busy);
-                }
+            "status" if value.get("status").and_then(Value::as_str) == Some("requesting") => {
+                out.push(AgentUpdate::Busy);
             }
             _ => {}
         },

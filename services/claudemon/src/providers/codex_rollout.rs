@@ -417,7 +417,7 @@ async fn discover_rollout(
                 .filter(|(_, m)| *m >= cutoff)
                 .collect();
         // Newest first, so the first cwd match is the most recent session.
-        candidates.sort_by(|a, b| b.1.cmp(&a.1));
+        candidates.sort_by_key(|c| std::cmp::Reverse(c.1));
         for (path, _) in candidates {
             if rollout_cwd(&path).await.is_some_and(|c| paths_eq(&c, cwd)) {
                 return Some(path);

@@ -168,7 +168,7 @@ In plain terms:
 - **Free to use, including at work**, as long as your organization has **at most
   five (5) total users** of Workspacer.
 - **Six (6)+ users needs a commercial license.** So do hosted/managed-service
-  resale offerings. Reach out at **djtouchette1993@gmail.com**.
+  resale offerings. Reach out via the licensor contact in the [LICENSE](LICENSE).
 - Each version becomes MIT-licensed four years after it's published.
 
 This is not an OSI "open source" license today, but every version converts to
