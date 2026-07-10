@@ -82,7 +82,9 @@ export const AnsweredQuestionCard: React.FC<{ record: ResolvedQuestionRecord }> 
                 {q.question}
               </div>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 7 }}>
-                <span style={{ color: accent, fontSize: '0.72rem', flexShrink: 0, lineHeight: 1.5 }}>
+                <span
+                  style={{ color: accent, fontSize: '0.72rem', flexShrink: 0, lineHeight: 1.5 }}
+                >
                   ↳
                 </span>
                 <span

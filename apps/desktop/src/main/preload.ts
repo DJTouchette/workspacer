@@ -420,9 +420,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     canServe: boolean;
     hint?: string;
   }> => ipcRenderer.invoke(IPC.TAILSCALE_GET_INFO),
-  tailscaleSetServe: (
-    enable: boolean,
-  ): Promise<{ ok: boolean; error?: string; hint?: string }> =>
+  tailscaleSetServe: (enable: boolean): Promise<{ ok: boolean; error?: string; hint?: string }> =>
     ipcRenderer.invoke(IPC.TAILSCALE_SET_SERVE, enable),
   openLogsFolder: (): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke(IPC.LOGS_OPEN_FOLDER),

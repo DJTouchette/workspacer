@@ -119,7 +119,7 @@ func TestNotifiesOnlyOnBlockedEdge(t *testing.T) {
 func TestEndedSessionResetsSoItCanRefire(t *testing.T) {
 	m, fired := newTestManager(t)
 	m.onSnapshot(snap("s2", "/x/y", "waiting_approval", "active"))
-	m.onSnapshot(snap("s2", "/x/y", "waiting_approval", "ended")) // ended clears state
+	m.onSnapshot(snap("s2", "/x/y", "waiting_approval", "ended"))  // ended clears state
 	m.onSnapshot(snap("s2", "/x/y", "waiting_approval", "active")) // fresh edge → fires again
 	if len(*fired) != 2 {
 		t.Fatalf("expected 2 notifications across the ended reset, got %v", *fired)

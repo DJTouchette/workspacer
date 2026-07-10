@@ -370,8 +370,10 @@ export const QuestionPicker: React.FC<{
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.color = colors.error;
-              e.currentTarget.style.borderColor = 'color-mix(in srgb, var(--wks-error) 45%, transparent)';
-              e.currentTarget.style.backgroundColor = 'color-mix(in srgb, var(--wks-error) 8%, transparent)';
+              e.currentTarget.style.borderColor =
+                'color-mix(in srgb, var(--wks-error) 45%, transparent)';
+              e.currentTarget.style.backgroundColor =
+                'color-mix(in srgb, var(--wks-error) 8%, transparent)';
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.color = colors.muted;

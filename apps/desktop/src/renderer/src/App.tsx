@@ -876,9 +876,7 @@ function App() {
       const provider = opts.provider ?? 'claude';
       // Remember the harness/provider used so the next new-agent view reopens on
       // it (this is what makes a favourite launch restore your last choice).
-      window.electronAPI
-        .saveConfig({ agents: { defaultProvider: provider } })
-        .catch(() => {});
+      window.electronAPI.saveConfig({ agents: { defaultProvider: provider } }).catch(() => {});
       // Remember the picked model + permission choices so they stick next time
       // — but only for Claude, so spawning a Codex/OpenCode agent doesn't clobber
       // the saved Claude defaults (those options don't apply to other providers).
@@ -2022,9 +2020,7 @@ function App() {
 
         {showSpawnDialog && (
           <SpawnAgentDialog
-            defaultCwd={
-              spawnDialogCwd || config.agents?.defaultCwd?.trim() || appCwdRef.current
-            }
+            defaultCwd={spawnDialogCwd || config.agents?.defaultCwd?.trim() || appCwdRef.current}
             defaultProvider={config.agents?.defaultProvider}
             defaultTransport={config.claude?.transport}
             onSpawn={handleSpawnAgent}

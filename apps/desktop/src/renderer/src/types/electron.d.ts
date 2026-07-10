@@ -220,9 +220,7 @@ export interface ElectronAPI {
     hint?: string;
   }>;
   /** Enable/disable `tailscale serve` in front of the hub port. */
-  tailscaleSetServe?: (
-    enable: boolean,
-  ) => Promise<{ ok: boolean; error?: string; hint?: string }>;
+  tailscaleSetServe?: (enable: boolean) => Promise<{ ok: boolean; error?: string; hint?: string }>;
   listHubPlugins: () => Promise<PluginManifest[]>;
   hubPublish: (event: { type: string; source?: string; data?: unknown }) => Promise<void>;
   installPlugin: (url: string) => Promise<{ ok: boolean; plugin?: PluginManifest; error?: string }>;

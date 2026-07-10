@@ -377,7 +377,10 @@ function TailscaleHttps({
         <button
           onClick={() => onToggle(!on)}
           disabled={enableDisabled}
-          style={{ flexShrink: 0, ...(on ? secondaryBtnStyle : compactAccentBtnStyle(enableDisabled)) }}
+          style={{
+            flexShrink: 0,
+            ...(on ? secondaryBtnStyle : compactAccentBtnStyle(enableDisabled)),
+          }}
         >
           {busy ? '…' : on ? 'Turn off' : 'Enable'}
         </button>
@@ -451,7 +454,10 @@ function EnabledState({
   const [tsBusy, setTsBusy] = useState(false);
   const [tsMsg, setTsMsg] = useState<string | null>(null);
   const refreshTs = useCallback(() => {
-    window.electronAPI.tailscaleGetInfo?.().then(setTs).catch(() => setTs(null));
+    window.electronAPI
+      .tailscaleGetInfo?.()
+      .then(setTs)
+      .catch(() => setTs(null));
   }, []);
   useEffect(() => {
     refreshTs();
@@ -547,13 +553,7 @@ function EnabledState({
         {mode === 'app' && hasApp ? 'the full app' : 'the mobile client'}.
       </div>
 
-      <TailscaleHttps
-        ts={ts}
-        on={httpsOn}
-        busy={tsBusy}
-        msg={tsMsg}
-        onToggle={toggleServe}
-      />
+      <TailscaleHttps ts={ts} on={httpsOn} busy={tsBusy} msg={tsMsg} onToggle={toggleServe} />
 
       <CopyRow
         label="Connection URL"

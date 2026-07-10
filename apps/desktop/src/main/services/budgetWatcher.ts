@@ -38,8 +38,9 @@ export function checkBudget(session: ClaudeSessionState): void {
   if (alerted.has(session.sessionId)) return;
   alerted.add(session.sessionId);
 
-  const cfg = (configService.getConfig() as { notifications?: { enabled?: boolean; sound?: boolean } })
-    .notifications ?? {};
+  const cfg =
+    (configService.getConfig() as { notifications?: { enabled?: boolean; sound?: boolean } })
+      .notifications ?? {};
   if (cfg.enabled === false || !Notification.isSupported()) return;
 
   const label = session.label || 'Agent';

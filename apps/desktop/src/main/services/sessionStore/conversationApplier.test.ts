@@ -100,8 +100,18 @@ describe('applyConversationItems — interrupt detection', () => {
     applyConversationItems(
       s,
       [
-        { type: 'tool_result', tool_use_id: 'tu_1', content: '[Request interrupted by user for tool use]', is_error: true } as ConversationItemWire,
-        { type: 'usage', model: 'claude-sonnet-4-5', usage: {}, message_id: 'm1' } as ConversationItemWire,
+        {
+          type: 'tool_result',
+          tool_use_id: 'tu_1',
+          content: '[Request interrupted by user for tool use]',
+          is_error: true,
+        } as ConversationItemWire,
+        {
+          type: 'usage',
+          model: 'claude-sonnet-4-5',
+          usage: {},
+          message_id: 'm1',
+        } as ConversationItemWire,
       ],
       noUsage,
     );

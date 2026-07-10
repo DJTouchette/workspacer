@@ -17,7 +17,14 @@ export const ApprovalPrompt: React.FC<{
       animation: 'claudeFadeIn 0.2s ease-out',
     }}
   >
-    <div style={{ fontSize: 'calc(0.8rem * var(--claude-gui-font-scale, 1))', color: colors.error, fontWeight: 600, marginBottom: 6 }}>
+    <div
+      style={{
+        fontSize: 'calc(0.8rem * var(--claude-gui-font-scale, 1))',
+        color: colors.error,
+        fontWeight: 600,
+        marginBottom: 6,
+      }}
+    >
       Permission Required: {approval.toolName}
     </div>
     <pre

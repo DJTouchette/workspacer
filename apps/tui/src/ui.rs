@@ -1097,12 +1097,9 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
         .sum();
     // Rate limits are account-wide (identical across sessions) — show the first
     // session that reports them.
-    let rate = app
-        .status_lines
-        .values()
-        .find(|s| {
-            s.five_hour_pct.is_some() || s.seven_day_pct.is_some() || s.monthly_pct.is_some()
-        });
+    let rate = app.status_lines.values().find(|s| {
+        s.five_hour_pct.is_some() || s.seven_day_pct.is_some() || s.monthly_pct.is_some()
+    });
 
     let mut lines = vec![
         Line::from(Span::styled(

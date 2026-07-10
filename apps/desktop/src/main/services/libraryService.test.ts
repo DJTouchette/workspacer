@@ -52,7 +52,9 @@ describe('libraryService — claude items with slug-colliding on-disk names', ()
     writeSkill('My.Skill', 'Dotted', 'one');
     writeSkill('my-skill', 'Dashed', 'two');
 
-    const skills = libraryService.list(cwd).filter((it) => it.scope === 'claude' && it.kind === 'skill');
+    const skills = libraryService
+      .list(cwd)
+      .filter((it) => it.scope === 'claude' && it.kind === 'skill');
     expect(skills).toHaveLength(2);
     expect(skills.map((s) => s.title).sort()).toEqual(['Dashed', 'Dotted']);
   });
@@ -75,7 +77,10 @@ describe('libraryService — saveClaude/remove target the real on-disk path', ()
       cwd,
     });
 
-    const original = fs.readFileSync(path.join(cwd, '.claude', 'skills', 'MySkill', 'SKILL.md'), 'utf-8');
+    const original = fs.readFileSync(
+      path.join(cwd, '.claude', 'skills', 'MySkill', 'SKILL.md'),
+      'utf-8',
+    );
     expect(original).toContain('updated');
     // No slugified duplicate directory was created.
     expect(fs.existsSync(path.join(cwd, '.claude', 'skills', 'myskill'))).toBe(false);

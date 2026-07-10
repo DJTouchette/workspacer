@@ -1654,7 +1654,10 @@ mod tests {
         // Transport maps AND the auxiliary maps must all be swept so they don't
         // accrue a permanent entry per session across spawn/stop churn.
         assert!(!store.wrappers.contains_key("s1"), "wrappers leaked");
-        assert!(!store.flush_epochs.contains_key("s1"), "flush_epochs leaked");
+        assert!(
+            !store.flush_epochs.contains_key("s1"),
+            "flush_epochs leaked"
+        );
         assert!(!store.input_since.contains_key("s1"), "input_since leaked");
         assert!(
             !store.client_input_at.contains_key("s1"),

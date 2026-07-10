@@ -269,8 +269,7 @@ pub fn translate(value: &Value, totals: &mut StreamTotals) -> Vec<AgentUpdate> {
                 let is_seven_day = kind.is_some_and(|t| t.starts_with("seven_day"));
                 let is_overage = kind == Some("overage");
                 let bucket = |on: bool| if on { (pct, resets) } else { (None, None) };
-                let (five_hour_pct, five_hour_resets_at) =
-                    bucket(!is_seven_day && !is_overage);
+                let (five_hour_pct, five_hour_resets_at) = bucket(!is_seven_day && !is_overage);
                 let (seven_day_pct, seven_day_resets_at) = bucket(is_seven_day);
                 let (monthly_pct, monthly_resets_at) = bucket(is_overage);
                 out.push(AgentUpdate::RateLimits {
@@ -287,7 +286,8 @@ pub fn translate(value: &Value, totals: &mut StreamTotals) -> Vec<AgentUpdate> {
             // signal. Emitted on every event so a warning clears when the account
             // is comfortable again. `out_of_credits` marks a disabled overage.
             let status = info.get("status").and_then(Value::as_str);
-            let warning = (status == Some("allowed_warning")).then(|| rate_limit_warning(kind, pct));
+            let warning =
+                (status == Some("allowed_warning")).then(|| rate_limit_warning(kind, pct));
             let out_of_credits = info
                 .get("overageDisabledReason")
                 .and_then(Value::as_str)
@@ -1483,8 +1483,10 @@ mod tests {
         );
         // background_tasks_changed carries nothing for `translate` — it's handled
         // by the driver, not the pure event mapper.
-        assert!(t(json!({ "type": "system", "subtype": "background_tasks_changed",
-            "tasks": [{ "task_id": "a" }] }))
+        assert!(t(
+            json!({ "type": "system", "subtype": "background_tasks_changed",
+            "tasks": [{ "task_id": "a" }] })
+        )
         .is_empty());
     }
 
@@ -1620,9 +1622,11 @@ mod tests {
         let updates = t(json!({ "type": "rate_limit_event", "rate_limit_info": {
             "status": "allowed_warning", "resetsAt": 1783314600, "rateLimitType": "five_hour",
             "utilization": 92.0 } }));
-        let warned = updates.iter().any(|u| matches!(u,
+        let warned = updates.iter().any(|u| {
+            matches!(u,
             AgentUpdate::RateLimitStatus { warning: Some(w), .. }
-            if w.contains("5-hour") && w.contains("92%")));
+            if w.contains("5-hour") && w.contains("92%"))
+        });
         assert!(warned, "expected a 5-hour warning at 92%");
     }
 
@@ -1677,13 +1681,17 @@ mod tests {
         assert_eq!(inv.slash_commands.len(), 2);
         assert_eq!(inv.agents.len(), 2);
         assert_eq!(inv.skills[1].name, "dataviz");
-        assert_eq!(inv.plugins[0].source.as_deref(),
-            Some("rust-analyzer-lsp@claude-plugins-official"));
+        assert_eq!(
+            inv.plugins[0].source.as_deref(),
+            Some("rust-analyzer-lsp@claude-plugins-official")
+        );
         assert!(inv.plugins[0].path.as_deref().unwrap().ends_with("1.0.0"));
         assert_eq!(inv.memory_files.len(), 1);
         assert_eq!(inv.memory_files[0].name, "auto");
-        assert_eq!(inv.memory_files[0].path.as_deref(),
-            Some("/home/u/.claude/projects/-tmp/memory/"));
+        assert_eq!(
+            inv.memory_files[0].path.as_deref(),
+            Some("/home/u/.claude/projects/-tmp/memory/")
+        );
         assert_eq!(inv.claude_code_version.as_deref(), Some("2.1.204"));
     }
 
@@ -1701,7 +1709,10 @@ mod tests {
         assert_eq!(names, vec!["linear", "workspacer"]);
         assert_eq!(inv.agents[0].name, "reviewer");
         assert_eq!(inv.memory_files[0].name, "CLAUDE.md");
-        assert_eq!(inv.memory_files[0].path.as_deref(), Some("/home/u/CLAUDE.md"));
+        assert_eq!(
+            inv.memory_files[0].path.as_deref(),
+            Some("/home/u/CLAUDE.md")
+        );
     }
 
     #[test]

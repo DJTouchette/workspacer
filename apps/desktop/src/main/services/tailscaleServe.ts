@@ -72,7 +72,8 @@ function run(args: string[], timeoutMs = 8000): Promise<RunResult> {
   });
 }
 
-const OPERATOR_HINT = 'Run once so workspacer can manage Tailscale: sudo tailscale set --operator=$USER';
+const OPERATOR_HINT =
+  'Run once so workspacer can manage Tailscale: sudo tailscale set --operator=$USER';
 
 /** The MagicDNS name of this node, or null if unavailable. Also the availability probe. */
 async function readStatus(): Promise<{ running: boolean; magicName: string | null }> {
@@ -153,7 +154,11 @@ export async function setTailscaleServe(port: number, enable: boolean): Promise<
   // "not enabled on your tailnet" messages embed an https:// URL, so they must be
   // matched before the generic https/cert branch, which would otherwise swallow
   // them and point at the wrong admin page.
-  if (lower.includes('operator') || lower.includes('access denied') || lower.includes('permission')) {
+  if (
+    lower.includes('operator') ||
+    lower.includes('access denied') ||
+    lower.includes('permission')
+  ) {
     return { ok: false, error: err, hint: OPERATOR_HINT };
   }
   if (lower.includes('not enabled')) {

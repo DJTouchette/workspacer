@@ -287,9 +287,7 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
       <CheckRow
         label="Keep hooks out of my global Claude settings (experimental)"
         checked={config.claude?.settingsOverlay === true}
-        onChange={(v) =>
-          save({ claude: { ...config.claude, defaultView, settingsOverlay: v } })
-        }
+        onChange={(v) => save({ claude: { ...config.claude, defaultView, settingsOverlay: v } })}
       />
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
         Installs claudemon's hooks and status-line into a private overlay file passed to Claude via

@@ -177,8 +177,9 @@ pub async fn run_overlay(dry_run: bool, hook_port: u16, overlay_path: &PathBuf) 
     // read-only; we never write their global file's statusLine.
     let global_doc = match fs::read_to_string(&global) {
         Ok(text) if text.trim().is_empty() => Value::Object(Default::default()),
-        Ok(text) => serde_json::from_str(&text)
-            .with_context(|| format!("parsing {}", global.display()))?,
+        Ok(text) => {
+            serde_json::from_str(&text).with_context(|| format!("parsing {}", global.display()))?
+        }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Value::Object(Default::default()),
         Err(err) => return Err(err).with_context(|| format!("reading {}", global.display())),
     };
@@ -225,7 +226,10 @@ pub async fn run_overlay(dry_run: bool, hook_port: u16, overlay_path: &PathBuf) 
         let stripped_formatted = serde_json::to_string_pretty(&stripped_global)? + "\n";
         write_atomic(&global, &stripped_formatted)
             .with_context(|| format!("rewriting {}", global.display()))?;
-        println!("✓ stripped stale claudemon entries from {}", global.display());
+        println!(
+            "✓ stripped stale claudemon entries from {}",
+            global.display()
+        );
     }
     Ok(())
 }
@@ -237,7 +241,8 @@ fn write_atomic(path: &PathBuf, contents: &str) -> Result<()> {
     }
     let tmp = path.with_extension("json.claudemon.tmp");
     {
-        let mut f = fs::File::create(&tmp).with_context(|| format!("creating {}", tmp.display()))?;
+        let mut f =
+            fs::File::create(&tmp).with_context(|| format!("creating {}", tmp.display()))?;
         f.write_all(contents.as_bytes())?;
         f.sync_all()?;
     }

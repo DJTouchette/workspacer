@@ -361,13 +361,21 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = f
         const windows = [
           { label: '5h', name: '5h window', pct: five, reset: fiveReset, at: fiveHourResetsAt },
           { label: '7d', name: '7d window', pct: seven, reset: sevenReset, at: sevenDayResetsAt },
-          { label: 'Mo', name: 'Monthly window', pct: monthly, reset: monthlyReset, at: monthlyResetsAt },
+          {
+            label: 'Mo',
+            name: 'Monthly window',
+            pct: monthly,
+            reset: monthlyReset,
+            at: monthlyResetsAt,
+          },
         ].filter((w) => w.pct !== undefined || w.at !== undefined);
         if (!windows.length) return null;
         return (
           <>
             <Sep />
-            <span style={{ color: 'var(--wks-text-secondary)', fontVariantNumeric: 'tabular-nums' }}>
+            <span
+              style={{ color: 'var(--wks-text-secondary)', fontVariantNumeric: 'tabular-nums' }}
+            >
               {windows.map((w, i) => {
                 const at = fmtResetAt(w.at);
                 return (

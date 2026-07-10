@@ -222,12 +222,20 @@ export async function status(cwd: string): Promise<GitStatus> {
   // the review pane would then ask for an untracked diff of a directory.
   // `--branch` prepends a `## …` header carrying upstream + ahead/behind,
   // which the review pane uses to grey out Push when there's nothing to push.
-  const res = await runGit(root, ['status', '--porcelain', '-z', '--branch', '--untracked-files=all']);
+  const res = await runGit(root, [
+    'status',
+    '--porcelain',
+    '-z',
+    '--branch',
+    '--untracked-files=all',
+  ]);
   if (!res.ok) throw new Error(res.stderr.trim() || 'git status failed');
 
   // Split the branch header off before the file parser sees it.
   const nul = res.stdout.indexOf('\0');
-  const header = res.stdout.startsWith('## ') ? res.stdout.slice(0, nul === -1 ? undefined : nul) : '';
+  const header = res.stdout.startsWith('## ')
+    ? res.stdout.slice(0, nul === -1 ? undefined : nul)
+    : '';
   const body = header ? (nul === -1 ? '' : res.stdout.slice(nul + 1)) : res.stdout;
   const { upstream, ahead, behind } = parseBranchHeader(header);
   const files = parsePorcelain(body);

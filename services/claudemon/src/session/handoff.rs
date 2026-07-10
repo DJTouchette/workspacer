@@ -348,7 +348,10 @@ mod tests {
             tool("Edit", json!({ "file_path": "a.rs" })),
         ];
         let brief = build_brief("s", None, &items);
-        assert!(brief.contains("Files modified"), "should be listed as modified");
+        assert!(
+            brief.contains("Files modified"),
+            "should be listed as modified"
+        );
         assert!(brief.contains("`a.rs`"));
         assert!(
             !brief.contains("not modified"),

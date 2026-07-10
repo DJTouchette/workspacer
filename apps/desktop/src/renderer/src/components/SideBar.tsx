@@ -1159,7 +1159,6 @@ const SideBar: React.FC<SideBarProps> = ({
           />
         </ContextMenu>
       )}
-
     </div>
   );
 };
