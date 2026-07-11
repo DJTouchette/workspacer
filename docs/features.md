@@ -180,6 +180,8 @@ remote/web/phone clients all view and drive the same fleet.
 |---|---|---|
 | Daemon supervision | Electron spawns claudemon + hub; **auto-restart on crash with backoff** | 🟢 Solid |
 | Binary resolution + packaging | Dev/packaged paths; electron-builder bundles daemons | 🔵 Working |
+| Bundled `workspacer` CLI | Headless-server launcher ships in the app; "Install workspacer Command" (palette / Settings → Command Line) puts it on PATH | 🔵 Working |
+| Standalone server bundle | Releases include `workspacer-server-<os>-<arch>.tar.gz` (zip on Windows): the four binaries + README — extract, `./workspacer serve` | 🔵 Working |
 | GPU escape hatch | `WORKSPACER_DISABLE_GPU` for broken Wayland GPU rendering | 🔵 Working |
 | Font discovery | Nerd Font scan + custom protocol serving | 🔵 Working |
 | Chrome UA spoofing | Strips Electron UA for webviews | 🔵 Working |

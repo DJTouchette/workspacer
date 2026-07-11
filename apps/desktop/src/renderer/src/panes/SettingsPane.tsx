@@ -10,6 +10,7 @@ import TerminalSection from '../components/settings/TerminalSection';
 import KeybindingsSection from '../components/settings/KeybindingsSection';
 import NotificationsSection from '../components/settings/NotificationsSection';
 import UpdatesSection from '../components/settings/UpdatesSection';
+import CliSection from '../components/settings/CliSection';
 import SessionSection from '../components/settings/SessionSection';
 import BrowserSection from '../components/settings/BrowserSection';
 import EditorSection from '../components/settings/EditorSection';
@@ -202,6 +203,12 @@ const SECTIONS: SectionDef[] = [
     label: 'Updates',
     group: 'System',
     keywords: ['update', 'auto', 'upgrade', 'version', 'release', 'download', 'install', 'channel'],
+  },
+  {
+    key: 'cli',
+    label: 'Command Line',
+    group: 'System',
+    keywords: ['cli', 'command', 'terminal', 'path', 'install', 'serve', 'headless', 'server'],
   },
   {
     key: 'plugins',
@@ -398,6 +405,8 @@ const SettingsPane: React.FC<SettingsPaneProps> = () => {
         return <NotificationsSection config={config} save={save} />;
       case 'updates':
         return <UpdatesSection config={config} save={save} />;
+      case 'cli':
+        return <CliSection />;
       case 'plugins':
         return <PluginsSection />;
       default:

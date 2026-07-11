@@ -23,6 +23,7 @@ import { resolveAgentBinary, checkAllProviders } from './services/agentProviders
 import { spawnManagedAgent } from './services/managedSpawn';
 import { spawnClaudeAgent } from './services/claudeSpawn';
 import { logsDir } from './services/logFile';
+import { installWorkspacerCli } from './services/cliInstall';
 import { ensureSupervisorHome } from './services/supervisorSkill';
 import { importChromeCookies, importChromeCookiesViaCDP } from './services/chromeCookieImport';
 import { claudeProfiles } from './services/claudeProfiles';
@@ -189,7 +190,8 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
           cwd: opts.cwd,
           // Codex mirrors Claude's stream transport: 'stream' spawns headless
           // (GUI-only, daemon-owned thread). Other providers ignore it.
-          ...(provider === 'codex' && opts.transport === 'stream' && { transport: 'stream' as const }),
+          ...(provider === 'codex' &&
+            opts.transport === 'stream' && { transport: 'stream' as const }),
           model: opts.model,
           effort: opts.effort,
           skipPermissions: opts.skipPermissions || opts.permissionMode === 'yolo',
@@ -328,6 +330,9 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     const err = await shell.openPath(dir);
     return { ok: !err, error: err || undefined };
   });
+  // Put the bundled `workspacer` CLI (headless-server launcher) on PATH by
+  // running its own `install-cli` subcommand — install policy lives in the CLI.
+  ipcMain.handle(IPC.CLI_INSTALL, () => installWorkspacerCli());
   // When remote auth is on, the hub's mutating routes require the token; the
   // local UI presents it via the same Authorization header a remote client uses.
   const hubAuthHeaders = (): Record<string, string> => {

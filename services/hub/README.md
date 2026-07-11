@@ -287,6 +287,12 @@ make build-cli          # builds workspacer + hub + brain + mcp + claudemon as s
 ./workspacer install-cli            # symlink/copy onto PATH (/usr/local/bin → ~/.local/bin; %LOCALAPPDATA%\workspacer\bin on Windows)
 ```
 
+You don't have to build it yourself: the desktop app bundles the CLI (install
+it onto PATH from the command palette — "Install workspacer Command" — or
+Settings → Command Line), and each release ships a standalone
+`workspacer-server-<os>-<arch>.tar.gz` (`.zip` on Windows) with the four
+binaries in one directory — extract, `./workspacer serve`.
+
 Sibling binaries (`claudemon`, `hub`, `brain`) are resolved next to the
 `workspacer` binary first, then PATH; `--claudemon-bin` / `--hub-bin` /
 `--brain-bin` override. Ports default to the desktop's (7890/7891 claudemon,

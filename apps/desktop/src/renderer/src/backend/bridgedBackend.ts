@@ -87,6 +87,7 @@ const HOST_ONLY = [
   'onFocusAgent',
   'onSystemNotice', // main-process daemon/startup notices; IPC-only push
   'openLogsFolder', // opens the host's logs dir in its file manager
+  'installCli', // installs the host's bundled workspacer CLI onto the host PATH
   'onLibraryChanged', // IPC change event; the bus has no library-change topic
   'worktreeInfo', // worktree ops shell out to git on the host
   'worktreeCreate',

@@ -2010,6 +2010,12 @@ function App() {
             setShowCommandPalette(false);
             setShowWelcome(true);
           }}
+          onInstallCli={() => {
+            setShowCommandPalette(false);
+            // Outcome (installed / PATH instructions / failure) arrives as a
+            // system-notice banner pushed by main — no local result UI needed.
+            window.electronAPI.installCli?.().catch(() => {});
+          }}
           updateStatus={updateStatus ?? undefined}
           onCheckUpdates={() => {
             setShowCommandPalette(false);

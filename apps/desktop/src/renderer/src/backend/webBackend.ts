@@ -492,6 +492,10 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
       warnOnce('openLogsFolder');
       return Promise.resolve({ ok: false, error: 'not available on web' });
     },
+    installCli: () => {
+      warnOnce('installCli');
+      return Promise.resolve({ ok: false, message: 'not available on web' });
+    },
   };
 
   return api;

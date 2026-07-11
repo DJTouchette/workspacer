@@ -2,8 +2,10 @@ name: release
 
 # Build the desktop app + bundled daemons (claudemon/Rust, hub/mcp/brain/Go) on
 # all three desktop OSes. On a version tag (v*) the installers are attached to a
-# GitHub Release; on PRs / manual runs it's a build smoke-test that just uploads
-# the artifacts so you can catch per-platform breakage early.
+# GitHub Release — along with a standalone headless-server bundle
+# (workspacer-server-<os>-<arch>) per platform; on PRs / manual runs it's a
+# build smoke-test that just uploads the artifacts so you can catch
+# per-platform breakage early.
 on:
   push:
     tags: ['v*']
@@ -22,9 +24,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # `server` names the standalone headless-server bundle for the leg
+          # (workspacer-server-<server>.tar.gz, .zip on Windows).
           # Windows → NSIS installer + portable .exe (x64).
           - os: windows-latest
             artifact: windows
+            server: windows-x64
           # macOS → .dmg, Apple Silicon only. There is no Intel leg: GitHub is
           # retiring the macos-13 (last Intel) runner pool and its queue never
           # drained for v0.124.0 — and the daemons build natively per arch, so
@@ -32,6 +37,7 @@ jobs:
           # Revisit only if Intel-Mac demand actually shows up.
           - os: macos-14
             artifact: macos-arm64
+            server: darwin-arm64
           # Linux → AppImage. AppImage is distro-agnostic (runs on Arch, Fedora,
           # Debian, …); GitHub only offers Ubuntu runners, and we pin the OLDEST
           # supported Ubuntu so the glibc the AppImage links against stays broadly
@@ -39,6 +45,7 @@ jobs:
           # AppImage doesn't bundle it).
           - os: ubuntu-22.04
             artifact: linux
+            server: linux-x64
     runs-on: ${{ matrix.os }}
     # Enter the `release` environment only for Windows tag-builds (that's the
     # subject our Azure OIDC federated credential trusts). Empty otherwise, so
@@ -117,19 +124,74 @@ jobs:
         if: ${{ !(matrix.os == 'windows-latest' && startsWith(github.ref, 'refs/tags/v') && vars.AZURE_CODESIGN_PROFILE != '') }}
         run: npm run package -- --publish never
 
+      # Standalone headless-server bundle: the four binaries `workspacer serve`
+      # supervises — workspacer + hub + brain + claudemon — in ONE directory
+      # (the CLI resolves its daemons sibling-first, so extract-and-run needs no
+      # flags) plus a short README. Reuses the binaries the package step just
+      # built; tar.gz per Unix convention, zip on Windows. Dropped into
+      # apps/desktop/release/ so the existing upload/attach steps pick it up.
+      - name: Bundle standalone server
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          ext=""
+          tmp="$RUNNER_TEMP"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            ext=".exe"
+            tmp=$(cygpath -u "$tmp") # git-bash coreutils choke on C:\-style paths
+          fi
+          dir="$tmp/workspacer-server"
+          rm -rf "$dir"
+          mkdir -p "$dir"
+          cp "services/hub/workspacer$ext" "services/hub/hub$ext" \
+             "services/hub/brain$ext" \
+             "services/claudemon/target/release/claudemon$ext" "$dir/"
+          cat > "$dir/README.md" <<'EOF'
+          # workspacer headless server
+
+          Run workspacer's agent fleet on a machine with no desktop app:
+
+          1. Extract this directory anywhere (keep the binaries together —
+             `workspacer` finds its daemons next to itself).
+          2. `./workspacer serve`
+
+          That starts and supervises claudemon (sessions) + the hub (bus, with a
+          full-scope brain), and prints the client URLs + pairing token — for the
+          phone client (/m), the browser client (/remote), wks-tui, and MCP.
+
+          Also:
+
+              ./workspacer status                 what's running
+              ./workspacer install-cli            put `workspacer` on your PATH
+              ./workspacer serve --host 0.0.0.0   remote access opt-in (pair with Tailscale)
+
+          Docs: https://github.com/DJTouchette/workspacer
+          EOF
+          out="$PWD/apps/desktop/release"
+          mkdir -p "$out"
+          name="workspacer-server-${{ matrix.server }}"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            (cd "$tmp" && 7z a "$out/$name.zip" workspacer-server)
+          else
+            tar -C "$tmp" -czf "$out/$name.tar.gz" workspacer-server
+          fi
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: workspacer-${{ matrix.artifact }}
           # Installers PLUS the electron-updater metadata (latest*.yml) and the
           # delta .blockmap files — the updater needs the .yml + .blockmap next
-          # to each installer, not just the installer.
+          # to each installer, not just the installer — plus the standalone
+          # headless-server bundle.
           path: |
             apps/desktop/release/*.exe
             apps/desktop/release/*.dmg
             apps/desktop/release/*.AppImage
             apps/desktop/release/*.yml
             apps/desktop/release/*.blockmap
+            apps/desktop/release/workspacer-server-*
           if-no-files-found: error
 
       # Only on a version tag: attach this OS's installers to the GitHub Release
@@ -139,13 +201,15 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           # Attach the update metadata (latest*.yml) + .blockmap alongside the
-          # installers so electron-updater can read the release as an update feed.
+          # installers so electron-updater can read the release as an update
+          # feed, and the standalone headless-server bundle.
           files: |
             apps/desktop/release/*.exe
             apps/desktop/release/*.dmg
             apps/desktop/release/*.AppImage
             apps/desktop/release/*.yml
             apps/desktop/release/*.blockmap
+            apps/desktop/release/workspacer-server-*
           draft: true
           fail_on_unmatched_files: false
 

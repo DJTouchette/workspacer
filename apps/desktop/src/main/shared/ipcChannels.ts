@@ -29,6 +29,9 @@ export const IPC = {
   SYSTEM_NOTICE: 'system:notice', // push (main → renderer): daemon/startup failures etc.
   LOGS_OPEN_FOLDER: 'logs:openFolder', // invoke (renderer → main): reveal the logs dir
 
+  // ── Bundled workspacer CLI ──
+  CLI_INSTALL: 'cli:install', // invoke (renderer → main): put the bundled CLI on PATH
+
   // ── Generic terminal ──
   TERMINAL_CREATE: 'terminal:create',
   TERMINAL_RESIZE: 'terminal:resize',

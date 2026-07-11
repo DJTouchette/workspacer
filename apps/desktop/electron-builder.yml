@@ -36,6 +36,11 @@ electronLanguages:
 
 # Sibling daemons live at <repo>/services/* — built by `npm run build:hub`
 # and `npm run build:claudemon` (both run by `npm run package`).
+#
+# The `workspacer` CLI (headless-server launcher, `npm run build:cli`) resolves
+# its daemons sibling-first, so hub/ carries all four binaries side by side —
+# including a second claudemon copy next to the one the app itself spawns from
+# claudemon/ (a ~12 MB duplication that buys zero-flag `workspacer serve`).
 linux:
   icon: build/icon.png
   target:
@@ -50,6 +55,10 @@ linux:
       to: hub/mcp
     - from: ../../services/hub/brain
       to: hub/brain
+    - from: ../../services/hub/workspacer
+      to: hub/workspacer
+    - from: ../../services/claudemon/target/release/claudemon
+      to: hub/claudemon
     - from: ../../services/hub/examples
       to: hub/examples
     - from: dist/web
@@ -69,6 +78,10 @@ win:
       to: hub/mcp.exe
     - from: ../../services/hub/brain.exe
       to: hub/brain.exe
+    - from: ../../services/hub/workspacer.exe
+      to: hub/workspacer.exe
+    - from: ../../services/claudemon/target/release/claudemon.exe
+      to: hub/claudemon.exe
     - from: ../../services/hub/examples
       to: hub/examples
     - from: dist/web
@@ -88,6 +101,10 @@ mac:
       to: hub/mcp
     - from: ../../services/hub/brain
       to: hub/brain
+    - from: ../../services/hub/workspacer
+      to: hub/workspacer
+    - from: ../../services/claudemon/target/release/claudemon
+      to: hub/claudemon
     - from: ../../services/hub/examples
       to: hub/examples
     - from: dist/web

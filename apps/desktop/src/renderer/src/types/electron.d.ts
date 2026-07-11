@@ -391,6 +391,8 @@ export interface ElectronAPI {
   ) => () => void;
   /** Reveal the logs folder in the OS file manager (for bug reports). */
   openLogsFolder?: () => Promise<{ ok: boolean; error?: string }>;
+  /** Install the bundled `workspacer` CLI onto PATH (headless-server launcher). */
+  installCli?: () => Promise<{ ok: boolean; message: string }>;
 }
 
 declare global {

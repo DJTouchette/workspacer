@@ -17,10 +17,11 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { handlers, spawnManagedAgent, spawnClaudeAgent } = vi.hoisted(() => ({
+const { handlers, spawnManagedAgent, spawnClaudeAgent, installWorkspacerCli } = vi.hoisted(() => ({
   handlers: new Map<string, (event: unknown, ...args: unknown[]) => unknown>(),
   spawnManagedAgent: vi.fn(async () => 'managed-1'),
   spawnClaudeAgent: vi.fn(async () => 'claude-1'),
+  installWorkspacerCli: vi.fn(async () => ({ ok: true, message: 'installed' })),
 }));
 
 vi.mock('electron', () => ({
@@ -42,6 +43,9 @@ vi.mock('./services/managedSpawn', () => ({
 }));
 vi.mock('./services/claudeSpawn', () => ({
   spawnClaudeAgent: (...a: unknown[]) => spawnClaudeAgent(...a),
+}));
+vi.mock('./services/cliInstall', () => ({
+  installWorkspacerCli: (...a: unknown[]) => installWorkspacerCli(...a),
 }));
 
 // Everything else is stubbed just far enough for registerIpcHandlers to run
@@ -179,5 +183,13 @@ describe('claude:spawn — transport rides spawn-managed only for codex+stream',
     await spawn({ provider: 'claude', transport: 'pty', cwd: '/proj' });
     expect(spawnClaudeAgent).toHaveBeenCalledTimes(1);
     expect(spawnManagedAgent).not.toHaveBeenCalled();
+  });
+});
+
+describe('cli:install — delegates to installWorkspacerCli and returns its result', () => {
+  it('is registered and passes the service result through untouched', async () => {
+    const result = await handlers.get('cli:install')!(null);
+    expect(installWorkspacerCli).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ ok: true, message: 'installed' });
   });
 });

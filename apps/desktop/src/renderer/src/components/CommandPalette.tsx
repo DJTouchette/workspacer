@@ -202,6 +202,8 @@ interface CommandPaletteProps {
   onToggleHelp?: () => void;
   /** Re-open the first-run welcome card. */
   onShowWelcome?: () => void;
+  /** Install the bundled `workspacer` CLI onto PATH (headless-server launcher). */
+  onInstallCli?: () => void;
   /** In-app update status; gates/labels the update command. */
   updateStatus?: { state: string; version?: string; percent?: number };
   /** Manually check the release feed now. */
@@ -247,6 +249,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
   onOpenSettings,
   onToggleHelp,
   onShowWelcome,
+  onInstallCli,
   updateStatus,
   onCheckUpdates,
   onInstallUpdate,
@@ -444,6 +447,13 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
       <Sparkles size={16} strokeWidth={1.75} />,
       onShowWelcome,
     );
+    add(
+      'cmd-install-cli',
+      'Install workspacer Command',
+      'Put the workspacer CLI (headless server: workspacer serve) on your PATH',
+      <PaneIcon type="terminal" size={16} />,
+      onInstallCli,
+    );
     // Updates: one entry whose action tracks the updater state. Hidden where
     // there is no update feed (dev builds, the web mirror).
     if (updateStatus && updateStatus.state !== 'unsupported') {
@@ -487,6 +497,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
     onOpenSettings,
     onToggleHelp,
     onShowWelcome,
+    onInstallCli,
     updateStatus,
     onCheckUpdates,
     onInstallUpdate,

@@ -442,6 +442,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke(IPC.TAILSCALE_SET_SERVE, enable),
   openLogsFolder: (): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke(IPC.LOGS_OPEN_FOLDER),
+  // Put the bundled `workspacer` CLI on PATH (runs its own `install-cli`).
+  installCli: (): Promise<{ ok: boolean; message: string }> => ipcRenderer.invoke(IPC.CLI_INSTALL),
   installPlugin: (url: string): Promise<{ ok: boolean; plugin?: unknown; error?: string }> =>
     ipcRenderer.invoke(IPC.HUB_INSTALL_PLUGIN, url),
   inspectPlugin: (url: string): Promise<{ ok: boolean; plugin?: unknown; error?: string }> =>
