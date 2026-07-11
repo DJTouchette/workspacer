@@ -8,10 +8,10 @@ package main
 //
 // Config is kept generic (map[string]any) rather than a typed struct: that
 // mirrors the TS deepMerge's object semantics exactly and means a new config key
-// added on the app side flows through without a matching Go change. The defaults
-// are embedded as JSON below — a 1:1 transcription of configService.defaultConfig().
+// added on the app side flows through without a matching Go change.
 
 import (
+	_ "embed"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -21,80 +21,16 @@ import (
 	yaml "gopkg.in/yaml.v3"
 )
 
-// defaultConfigJSON mirrors configService.defaultConfig() (the non-Windows
-// shell list; Windows host support can come later). Keep in sync with
-// apps/desktop/src/main/services/configService.ts.
-const defaultConfigJSON = `{
-  "ui": {
-    "animations": false, "theme": "dark", "cornerStyle": "", "borderColor": "",
-    "fontFamily": "Inter, system-ui, sans-serif", "fontSize": 14, "borderRadius": 8,
-    "navBarHeight": 34, "paneHeaderHeight": 22, "showComposerSend": true, "guiFontScale": 1.15,
-    "mode": "fleet"
-  },
-  "terminal": {
-    "shell": "",
-    "shells": [
-      { "name": "default", "path": "", "label": "Default ($SHELL)" },
-      { "name": "bash", "path": "/bin/bash", "label": "Bash" },
-      { "name": "zsh", "path": "/bin/zsh", "label": "Zsh" },
-      { "name": "fish", "path": "/usr/bin/fish", "label": "Fish" }
-    ],
-    "fontFamily": "\"JetBrainsMono Nerd Font Mono\", \"JetBrainsMonoNL Nerd Font Mono\", \"JetBrainsMono NFM\", \"JetBrainsMonoNL NFM\", \"JetBrainsMono NF\", \"CaskaydiaMono Nerd Font Mono\", \"CaskaydiaCove Nerd Font Mono\", \"CaskaydiaMono NF\", \"Cascadia Mono\", monospace",
-    "fontSize": 14, "scrollback": 1500, "cursorBlink": true, "cursorStyle": "block"
-  },
-  "browser": {
-    "homepage": "https://google.com",
-    "bookmarks": [
-      { "name": "Go Docs", "url": "https://pkg.go.dev" },
-      { "name": "MDN", "url": "https://developer.mozilla.org" },
-      { "name": "Localhost 3000", "url": "http://localhost:3000" },
-      { "name": "Localhost 8080", "url": "http://localhost:8080" }
-    ],
-    "hibernateAfter": 300
-  },
-  "panes": {
-    "defaultWidth": 800, "gap": 16, "peek": 80, "insertPosition": "after",
-    "tabPosition": "top", "viewLevel": "piloting",
-    "default": [
-      { "id": "terminal-1", "type": "terminal", "title": "Terminal 1", "width": 800, "order": 0 },
-      { "id": "terminal-2", "type": "terminal", "title": "Terminal 2", "width": 800, "order": 1 },
-      { "id": "terminal-3", "type": "terminal", "title": "Terminal 3", "width": 800, "order": 2 },
-      { "id": "notes-1", "type": "notes", "title": "Notes", "width": 800, "order": 3 }
-    ]
-  },
-  "keybindings": {
-    "prefix": "ctrl+space", "chordHints": true,
-    "shortcuts": {
-      "command-palette": "ctrl+shift+p", "next-agent": "ctrl+tab", "prev-agent": "ctrl+shift+tab",
-      "next-attention": "ctrl+shift+space", "spawn-agent": "ctrl+shift+n", "settings": "ctrl+,",
-      "save-session": "ctrl+shift+s", "open-file": "ctrl+shift+o", "toggle-help": "f1",
-      "toggle-terminal": "ctrl+` + "`" + `", "toggle-sidebar": "ctrl+shift+b", "toggle-inbox": "ctrl+shift+i",
-      "toggle-fleet": "ctrl+shift+f", "toggle-ui-mode": "ctrl+shift+m", "toggle-inspector": "ctrl+shift+e",
-      "library-picker": "ctrl+shift+l",
-      "open-review": "ctrl+shift+g", "new-terminal": "prefix n t", "new-claude": "prefix n c",
-      "new-browser": "prefix n b", "prev-tab": "prefix t [", "next-tab": "prefix t ]",
-      "move-tab-left": "prefix t ,", "move-tab-right": "prefix t .", "rename-tab": "prefix t r",
-      "close-pane": "prefix t w", "split": "prefix p s", "quick-split": "prefix p c",
-      "nav-left": "prefix p h", "nav-down": "prefix p j", "nav-up": "prefix p k",
-      "nav-right": "prefix p l"
-    }
-  },
-  "notifications": { "enabled": true, "notifyDone": true, "onlyWhenUnwatched": true, "sound": false },
-  "editor": { "engine": "codemirror", "terminalCommand": "nvim" },
-  "claude": { "defaultModel": "", "seenModels": [], "skipPermissionsDefault": false, "defaultView": "terminal" },
-  "supervisor": { "model": "", "summarizerModel": "sonnet", "pollSeconds": 45 },
-  "directories": { "recent": [], "favourites": [] },
-  "scripts": {},
-  "session": { "autoResume": false },
-  "apps": [
-    { "name": "GitHub", "url": "https://github.com", "icon": "💻" },
-    { "name": "ChatGPT", "url": "https://chat.openai.com", "icon": "🤖" },
-    { "name": "Claude", "url": "https://claude.ai", "icon": "✨" },
-    { "name": "Stack Overflow", "url": "https://stackoverflow.com", "icon": "📚" },
-    { "name": "Localhost 3000", "url": "http://localhost:3000", "icon": "🌐" },
-    { "name": "Localhost 8080", "url": "http://localhost:8080", "icon": "🌐" }
-  ]
-}`
+// defaultConfigJSON is the SINGLE SOURCE OF TRUTH for the default config,
+// embedded from config_defaults.json (the non-Windows shell list; Windows host
+// support can come later). The desktop app consumes the very same file: its
+// configDefaults.generated.ts is generated from it by
+// apps/desktop/scripts/gen-config-defaults.mjs, and a drift test on each side
+// fails the build if they diverge — so the two runtimes can no longer drift the
+// way the old hand-transcribed copy did.
+//
+//go:embed config_defaults.json
+var defaultConfigJSON string
 
 func defaultConfig() map[string]any {
 	var m map[string]any

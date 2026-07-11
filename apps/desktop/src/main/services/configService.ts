@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import * as yaml from 'js-yaml';
+import { CONFIG_DEFAULTS } from './configDefaults.generated';
 
 interface ShellOption {
   name: string;
@@ -194,45 +195,12 @@ function defaultShells(): ShellOption[] {
 /**
  * Default keybindings, prefix-forward. Values are either direct combos
  * (terminal-safe keys only) or prefix chords ('prefix <key>' — press the
- * workspace prefix, then the key). Kept in sync with the renderer's
- * DEFAULT_SHORTCUTS (hooks/useConfig.ts).
+ * workspace prefix, then the key). Derived from the shared default-config seam
+ * (CONFIG_DEFAULTS, ultimately services/hub/cmd/brain/config_defaults.json) so
+ * there's one source of truth. Kept in sync with the renderer's DEFAULT_SHORTCUTS
+ * (hooks/useConfig.ts).
  */
-const DEFAULT_SHORTCUTS: Record<string, string> = {
-  // Direct, terminal-safe
-  'command-palette': 'ctrl+shift+p',
-  'next-agent': 'ctrl+tab',
-  'prev-agent': 'ctrl+shift+tab',
-  'next-attention': 'ctrl+shift+space',
-  'spawn-agent': 'ctrl+shift+n',
-  settings: 'ctrl+,',
-  'save-session': 'ctrl+shift+s',
-  'open-file': 'ctrl+shift+o',
-  'toggle-help': 'f1',
-  'toggle-terminal': 'ctrl+`',
-  'toggle-sidebar': 'ctrl+shift+b',
-  'toggle-inbox': 'ctrl+shift+i',
-  'toggle-fleet': 'ctrl+shift+f',
-  'toggle-ui-mode': 'ctrl+shift+m',
-  'toggle-inspector': 'ctrl+shift+e',
-  'library-picker': 'ctrl+shift+l',
-  'open-review': 'ctrl+shift+g',
-  // Prefix chords (Ctrl+Space then one key) — flat, single-key per action
-  'new-terminal': 'prefix t',
-  'new-claude': 'prefix c',
-  'new-browser': 'prefix b',
-  split: 'prefix s',
-  'quick-split': 'prefix q',
-  'close-pane': 'prefix w',
-  'rename-tab': 'prefix r',
-  'prev-tab': 'prefix [',
-  'next-tab': 'prefix ]',
-  'move-tab-left': 'prefix ,',
-  'move-tab-right': 'prefix .',
-  'nav-left': 'prefix h',
-  'nav-down': 'prefix j',
-  'nav-up': 'prefix k',
-  'nav-right': 'prefix l',
-};
+const DEFAULT_SHORTCUTS: Record<string, string> = { ...CONFIG_DEFAULTS.keybindings.shortcuts };
 
 /**
  * Old nested chord defaults (pre-flattening). A saved shortcut whose value still
@@ -259,118 +227,16 @@ const OLD_CHORD_DEFAULTS: Record<string, string> = {
 };
 
 function defaultConfig(): Config {
-  return {
-    ui: {
-      animations: false,
-      theme: 'dark',
-      cornerStyle: '',
-      borderColor: '',
-      fontFamily: 'Inter, system-ui, sans-serif',
-      fontSize: 14,
-      borderRadius: 8,
-      navBarHeight: 34,
-      paneHeaderHeight: 22,
-      showComposerSend: true,
-      guiFontScale: 1.15,
-      diffView: 'stacked',
-      mode: 'fleet',
-    },
-    terminal: {
-      shell: '',
-      shells: defaultShells(),
-      fontFamily:
-        '"JetBrainsMono Nerd Font Mono", "JetBrainsMonoNL Nerd Font Mono", "JetBrainsMono NFM", "JetBrainsMonoNL NFM", "JetBrainsMono NF", "CaskaydiaMono Nerd Font Mono", "CaskaydiaCove Nerd Font Mono", "CaskaydiaMono NF", "Cascadia Mono", monospace',
-      fontSize: 14,
-      scrollback: 1500,
-      cursorBlink: true,
-      cursorStyle: 'block',
-    },
-    browser: {
-      homepage: 'https://google.com',
-      bookmarks: [
-        { name: 'Go Docs', url: 'https://pkg.go.dev' },
-        { name: 'MDN', url: 'https://developer.mozilla.org' },
-        { name: 'Localhost 3000', url: 'http://localhost:3000' },
-        { name: 'Localhost 8080', url: 'http://localhost:8080' },
-      ],
-      hibernateAfter: 300,
-    },
-    panes: {
-      defaultWidth: 800,
-      gap: 0,
-      peek: 0,
-      insertPosition: 'after',
-      tabPosition: 'top',
-      viewLevel: 'piloting',
-      default: [
-        { id: 'terminal-1', type: 'terminal', title: 'Terminal 1', width: 800, order: 0 },
-        { id: 'terminal-2', type: 'terminal', title: 'Terminal 2', width: 800, order: 1 },
-        { id: 'terminal-3', type: 'terminal', title: 'Terminal 3', width: 800, order: 2 },
-        { id: 'notes-1', type: 'notes', title: 'Notes', width: 800, order: 3 },
-      ],
-    },
-    keybindings: {
-      prefix: 'ctrl+space',
-      chordHints: true,
-      shortcuts: { ...DEFAULT_SHORTCUTS },
-    },
-    notifications: {
-      enabled: true,
-      notifyDone: true,
-      onlyWhenUnwatched: true,
-      sound: false,
-    },
-    editor: {
-      engine: 'codemirror',
-      terminalCommand: 'nvim',
-      vim: true,
-    },
-    claude: {
-      defaultModel: 'opus[1m]',
-      seenModels: [],
-      skipPermissionsDefault: true,
-      defaultPermissionMode: 'bypassPermissions',
-      defaultView: 'terminal',
-      workLog: 'cards',
-      transport: 'stream',
-      settingsOverlay: false,
-    },
-    agents: {
-      defaultProvider: 'claude',
-      defaultCwd: '',
-      binaries: {
-        claude: '',
-        codex: '',
-        opencode: '',
-        pi: '',
-      },
-    },
-    supervisor: {
-      model: '',
-      summarizerModel: 'sonnet',
-      pollSeconds: 45,
-    },
-    directories: {
-      recent: [],
-      favourites: [],
-    },
-    scripts: {},
-    session: {
-      autoResume: false,
-    },
-    updates: {
-      enabled: true,
-      channel: 'latest',
-    },
-    apps: [
-      { name: 'GitHub', url: 'https://github.com', icon: '\u{1F4BB}' },
-      { name: 'ChatGPT', url: 'https://chat.openai.com', icon: '\u{1F916}' },
-      { name: 'Claude', url: 'https://claude.ai', icon: '\u{2728}' },
-      { name: 'Stack Overflow', url: 'https://stackoverflow.com', icon: '\u{1F4DA}' },
-      { name: 'Localhost 3000', url: 'http://localhost:3000', icon: '\u{1F310}' },
-      { name: 'Localhost 8080', url: 'http://localhost:8080', icon: '\u{1F310}' },
-    ],
-  };
+  // Built from the shared default-config seam (CONFIG_DEFAULTS, generated from
+  // services/hub/cmd/brain/config_defaults.json that the brain go:embeds) so the
+  // desktop and headless-brain defaults are one source of truth. A deep clone
+  // keeps callers free to mutate the returned config (deepMerge, migrations).
+  const base = structuredClone(CONFIG_DEFAULTS) as unknown as Config;
+  // The shared JSON carries the non-Windows shell list; overlay the real
+  // platform-aware list here (Git Bash / PowerShell on win32). Everything else —
+  // including keybindings.shortcuts — comes straight from the shared defaults.
+  base.terminal.shells = defaultShells();
+  return base;
 }
 
 export function getConfigDir(): string {
@@ -505,9 +371,40 @@ class ConfigService {
    *  would replace the user's (broken but recoverable) file with defaults.
    *  Cleared on the next successful load (reloadConfig / restart). */
   private persistBlocked = false;
+  /** mtime (ms) of config.yaml when `this.config` was last loaded. The desktop
+   *  app is NO LONGER the only writer: the headless brain (services/hub) serves
+   *  config.get/save over the hub bus for the web (/app), mobile (/m) and
+   *  desktop-bus clients, and writes the *same* config.yaml. Without an mtime
+   *  gate, a main-process save (e.g. usageAccumulator recording seenModels)
+   *  deep-merges onto this startup cache and clobbers whatever the brain
+   *  persisted after launch — user-visible as "settings getting reset". Mirrors
+   *  the brain's own mtime gate (services/hub/cmd/brain/config.go). */
+  private loadedAtMs = 0;
 
   constructor() {
     this.config = this.loadFromDisk();
+    this.loadedAtMs = this.configMtimeMs();
+  }
+
+  /** mtime of config.yaml in ms, or 0 when it's absent/unreadable (so a missing
+   *  file never looks newer than the loaded cache). */
+  private configMtimeMs(): number {
+    try {
+      return fs.statSync(getConfigFilePath()).mtimeMs;
+    } catch {
+      return 0;
+    }
+  }
+
+  /** Reload from disk when config.yaml changed under us — i.e. the brain (its
+   *  own process) wrote it since we last read. mtime-gated, so the steady state
+   *  is a single stat with no re-parse. Mirrors configService (Go) get(). */
+  private refreshIfChangedOnDisk(): void {
+    const m = this.configMtimeMs();
+    if (this.config == null || (m > 0 && m > this.loadedAtMs)) {
+      this.config = this.loadFromDisk();
+      this.loadedAtMs = this.configMtimeMs();
+    }
   }
 
   private loadFromDisk(): Config {
@@ -578,15 +475,24 @@ class ConfigService {
   }
 
   getConfig(): Config {
+    // Fold in an external (brain) write before handing the config out, so
+    // main-process readers (spawn defaults, notifications, …) don't run on a
+    // stale startup cache after the web/mobile client changed a setting.
+    this.refreshIfChangedOnDisk();
     return this.config;
   }
 
   reloadConfig(): Config {
     this.config = this.loadFromDisk();
+    this.loadedAtMs = this.configMtimeMs();
     return this.config;
   }
 
   saveConfig(partial: Partial<Config>): Config {
+    // Fold in any external write (the brain editing config.yaml in its own
+    // process) BEFORE merging our partial, so a stale in-memory cache can't
+    // clobber it — the whole point of the mtime gate (see loadedAtMs).
+    this.refreshIfChangedOnDisk();
     this.config = deepMerge(this.config, partial);
     // ui.customThemes is a map of user-created entries: when the caller sends
     // it, it is the whole truth. Deep-merge would resurrect deleted themes, so
@@ -612,6 +518,9 @@ class ConfigService {
       fs.mkdirSync(dir, { recursive: true });
       const data = yaml.dump(this.config, { lineWidth: -1 });
       fs.writeFileSync(getConfigFilePath(), data, 'utf-8');
+      // Record our own write's mtime so the next gate check doesn't mistake it
+      // for an external change and pointlessly re-read.
+      this.loadedAtMs = this.configMtimeMs();
     } catch (err) {
       console.error('[ConfigService] failed to save config:', err);
     }

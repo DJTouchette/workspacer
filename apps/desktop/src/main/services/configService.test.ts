@@ -95,6 +95,10 @@ vi.mock('fs', () => ({
   writeFileSync: vi.fn(),
   mkdirSync: vi.fn(),
   copyFileSync: vi.fn(),
+  // Default: no file → mtime gate stays inert (configMtimeMs returns 0), so the
+  // existing in-memory-cache tests behave exactly as before. The mtime-gate
+  // suite below drives statSync explicitly.
+  statSync: vi.fn().mockImplementation(() => enoent()),
 }));
 
 // Import after the mock is registered so the ConfigService constructor sees it.
@@ -265,6 +269,107 @@ describe('deepMerge semantics – via configService.saveConfig', () => {
     const before = configService.getConfig().ui.theme;
     configService.saveConfig({});
     expect(configService.getConfig().ui.theme).toBe(before);
+  });
+});
+
+// ─── default-config single-source drift guard ────────────────────────────────
+// The default config has ONE source of truth: services/hub/cmd/brain/
+// config_defaults.json (the brain go:embeds it; the desktop consumes it through
+// the generated configDefaults.generated.ts). If someone edits the JSON without
+// re-running `npm run gen:config-defaults`, the committed generated module falls
+// out of sync — this test catches that so the two runtimes can't drift.
+import { CONFIG_DEFAULTS } from './configDefaults.generated';
+import { CONFIG_DEFAULTS as RENDERER_CONFIG_DEFAULTS } from '../../renderer/src/hooks/configDefaults.generated';
+import brainDefaults from '../../../../../services/hub/cmd/brain/config_defaults.json';
+
+describe('default-config single source — generated TS matches the canonical brain JSON', () => {
+  it('the main-process generated defaults deep-equal config_defaults.json', () => {
+    expect(CONFIG_DEFAULTS).toEqual(brainDefaults);
+  });
+
+  it('the renderer generated defaults deep-equal config_defaults.json (no third drift copy)', () => {
+    // Renderer + main build graphs don't share modules, so each has its own
+    // generated leaf; both come from the one JSON via gen-config-defaults.mjs.
+    expect(RENDERER_CONFIG_DEFAULTS).toEqual(brainDefaults);
+  });
+
+  it('carries the sections that used to be missing on the brain side', () => {
+    // Regression guard for the historical drift: brain lacked agents/updates and
+    // several claude fields entirely, so web/mobile fell back to different values.
+    expect(brainDefaults).toHaveProperty('agents.binaries.claude');
+    expect(brainDefaults).toHaveProperty('updates.channel');
+    expect(brainDefaults).toHaveProperty('claude.transport', 'stream');
+    expect(brainDefaults).toHaveProperty('ui.diffView');
+    expect(brainDefaults).toHaveProperty('editor.vim', true);
+  });
+});
+
+// ─── mtime gate — two writers (desktop + brain) on one config.yaml ───────────
+// The desktop is no longer the only process writing config.yaml: the headless
+// brain serves config.save over the hub bus for the web/mobile clients. Without
+// an mtime gate, a main-process save here would deep-merge onto the startup
+// cache and revert whatever the brain persisted after launch ("settings getting
+// reset"). getConfig/saveConfig must re-read when the file changed underneath.
+
+describe('mtime gate — folds in external (brain) writes instead of clobbering', () => {
+  beforeEach(() => {
+    mockedFs.readFileSync.mockReset();
+    mockedFs.writeFileSync.mockReset();
+    mockedFs.mkdirSync.mockReset();
+    mockedFs.copyFileSync.mockReset();
+    vi.mocked(fsMock.statSync).mockReset();
+  });
+
+  afterEach(() => {
+    // Leave the singleton in the healthy first-run state for other suites.
+    mockedFs.readFileSync.mockReset().mockImplementation(() => enoent());
+    vi.mocked(fsMock.statSync).mockReset().mockImplementation(() => enoent());
+    configService.reloadConfig();
+  });
+
+  it('getConfig re-reads when config.yaml changed under it (brain wrote a newer file)', () => {
+    // Loaded state: theme dark at mtime 100.
+    mockedFs.readFileSync.mockReturnValue('ui:\n  theme: dark\n');
+    vi.mocked(fsMock.statSync).mockReturnValue({ mtimeMs: 100 } as any);
+    configService.reloadConfig();
+    expect(configService.getConfig().ui.theme).toBe('dark');
+
+    // The brain rewrites config.yaml (theme nord) with a strictly newer mtime.
+    mockedFs.readFileSync.mockReturnValue('ui:\n  theme: nord\n');
+    vi.mocked(fsMock.statSync).mockReturnValue({ mtimeMs: 200 } as any);
+    expect(configService.getConfig().ui.theme).toBe('nord');
+  });
+
+  it('does NOT re-read when the mtime is unchanged (steady state keeps the cache)', () => {
+    mockedFs.readFileSync.mockReturnValue('ui:\n  theme: dark\n');
+    vi.mocked(fsMock.statSync).mockReturnValue({ mtimeMs: 100 } as any);
+    configService.reloadConfig();
+
+    // A save applies in memory; the file "didn't change" (same mtime), so a
+    // subsequent read must return the in-memory value, not re-parse stale disk.
+    configService.saveConfig({ ui: { theme: 'light' } as any });
+    mockedFs.readFileSync.mockReturnValue('ui:\n  theme: dark\n'); // disk still "dark"
+    expect(configService.getConfig().ui.theme).toBe('light');
+  });
+
+  it('saveConfig folds in an external change instead of clobbering it', () => {
+    // Desktop loaded theme dark at mtime 100.
+    mockedFs.readFileSync.mockReturnValue('ui:\n  theme: dark\n');
+    vi.mocked(fsMock.statSync).mockReturnValue({ mtimeMs: 100 } as any);
+    configService.reloadConfig();
+
+    // The brain changes the THEME (nord) at a newer mtime. The desktop then
+    // saves an UNRELATED partial (seenModels, as usageAccumulator does) — it
+    // must fold in the brain's theme, not revert it to the cached dark.
+    mockedFs.readFileSync.mockReturnValue('ui:\n  theme: nord\n');
+    vi.mocked(fsMock.statSync).mockReturnValue({ mtimeMs: 200 } as any);
+    mockedFs.writeFileSync.mockClear();
+
+    const cfg = configService.saveConfig({ claude: { seenModels: ['opus'] } as any });
+
+    expect(cfg.ui.theme).toBe('nord'); // folded in the brain's write
+    expect((cfg.claude as any).seenModels).toEqual(['opus']); // our partial applied on top
+    expect(mockedFs.writeFileSync).toHaveBeenCalled(); // and persisted
   });
 });
 

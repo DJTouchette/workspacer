@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
-import { applyHookEvent } from './hookEventRouter';
+import { applyHookEvent, applyStopEvent } from './hookEventRouter';
 import type { ClaudeSessionState } from '../claudeSessionStore';
 
 function mkSession(transport?: 'pty' | 'stream'): ClaudeSessionState {
@@ -155,6 +155,85 @@ describe('applyHookEvent — stream sessions: hooks are enrichment-only', () => 
     s.status = 'starting';
     applyHookEvent(s, { hook_event_name: 'SessionStart' });
     expect(s.status).toBe('active');
+  });
+});
+
+describe('background subagents keep the pane busy past the parent Stop (PTY)', () => {
+  const startSub = (s: ClaudeSessionState, id = 'agent-1') =>
+    applyHookEvent(s, { hook_event_name: 'SubagentStart', agent_id: id, agent_type: 'general-purpose' });
+  const stopSub = (s: ClaudeSessionState, id = 'agent-1') =>
+    applyHookEvent(s, { hook_event_name: 'SubagentStop', agent_id: id });
+
+  it('holds streaming when Stop fires while a subagent is still running', () => {
+    const s = mkSession('pty');
+    startSub(s);
+    applyStopEvent(s);
+    expect(s.ambientState).toBe('streaming');
+    expect(s.parentTurnEnded).toBe(true);
+    // The running subagent survives the Stop's tool-call cleanup.
+    expect(s.subagents.some((sub) => sub.status === 'running')).toBe(true);
+  });
+
+  it('rides the real idle in on the last SubagentStop after the parent ended', () => {
+    const s = mkSession('pty');
+    startSub(s);
+    applyStopEvent(s);
+    stopSub(s);
+    expect(s.ambientState).toBe('idle');
+    expect(s.parentTurnEnded).toBe(false);
+  });
+
+  it('idles immediately at Stop when no subagent is running', () => {
+    const s = mkSession('pty');
+    s.ambientState = 'streaming';
+    applyStopEvent(s);
+    expect(s.ambientState).toBe('idle');
+    expect(s.parentTurnEnded).toBeFalsy();
+  });
+
+  it('a subagent finishing mid-turn (before Stop) does not idle the parent', () => {
+    const s = mkSession('pty');
+    s.ambientState = 'streaming';
+    startSub(s);
+    stopSub(s);
+    // Parent turn never ended, so ambient is untouched by SubagentStop.
+    expect(s.ambientState).toBe('streaming');
+    expect(s.parentTurnEnded).toBeFalsy();
+  });
+
+  it('waits for all parallel subagents to drain before idling', () => {
+    const s = mkSession('pty');
+    startSub(s, 'agent-1');
+    startSub(s, 'agent-2');
+    applyStopEvent(s);
+    expect(s.ambientState).toBe('streaming');
+    stopSub(s, 'agent-1');
+    expect(s.ambientState).toBe('streaming'); // one still running
+    stopSub(s, 'agent-2');
+    expect(s.ambientState).toBe('idle');
+  });
+
+  it('a new UserPromptSubmit clears a stuck parentTurnEnded flag', () => {
+    const s = mkSession('pty');
+    startSub(s);
+    applyStopEvent(s);
+    expect(s.parentTurnEnded).toBe(true);
+    applyHookEvent(s, { hook_event_name: 'UserPromptSubmit' });
+    expect(s.parentTurnEnded).toBe(false);
+    expect(s.ambientState).toBe('streaming');
+  });
+
+  it('stream sessions: Stop never touches ambient (daemon owns it, holds busy mid-subagent)', () => {
+    const s = mkSession('stream');
+    // The daemon's managed mode set this while the background subagent runs.
+    s.ambientState = 'streaming';
+    startSub(s);
+    applyStopEvent(s);
+    // Must NOT clobber the daemon-driven busy state back to idle.
+    expect(s.ambientState).toBe('streaming');
+    expect(s.parentTurnEnded).toBeFalsy();
+    // Non-ambient cleanup still applies.
+    expect(s.pendingApproval).toBeNull();
   });
 });
 

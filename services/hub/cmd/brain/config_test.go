@@ -180,3 +180,31 @@ func TestListModelsReadsConfigDefault(t *testing.T) {
 		t.Errorf("expected 4 aliases, got %d", len(res.Aliases))
 	}
 }
+
+// TestEmbeddedDefaultsAreCompleteAndParse guards the go:embed of
+// config_defaults.json (the single source of truth shared with the desktop):
+// it must parse and carry every top-level section — including agents/updates and
+// the claude fields the old hand-transcribed copy was missing, which is what let
+// web/mobile fall back to different values than the desktop.
+func TestEmbeddedDefaultsAreCompleteAndParse(t *testing.T) {
+	def := defaultConfig()
+	if len(def) == 0 {
+		t.Fatal("embedded defaultConfigJSON parsed to an empty map — go:embed not wired?")
+	}
+	for _, section := range []string{
+		"ui", "terminal", "browser", "panes", "keybindings", "notifications",
+		"editor", "claude", "agents", "supervisor", "directories", "scripts",
+		"session", "updates", "apps",
+	} {
+		if _, ok := def[section]; !ok {
+			t.Errorf("default config missing top-level section %q", section)
+		}
+	}
+	claude, _ := def["claude"].(map[string]any)
+	if claude["transport"] != "stream" {
+		t.Errorf("claude.transport = %v, want stream", claude["transport"])
+	}
+	if _, ok := def["agents"].(map[string]any)["binaries"]; !ok {
+		t.Error("agents.binaries missing from defaults")
+	}
+}

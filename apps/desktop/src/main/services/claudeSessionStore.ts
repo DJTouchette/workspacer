@@ -281,6 +281,12 @@ export interface ClaudeSessionState {
   livePermissionMode?: string;
   /** Guards against double history writes (Stop 1500ms timeout vs SessionEnd). */
   historyWritten?: boolean;
+  /** True once the parent's own turn ended (Stop fired) while a background
+   *  (async Agent/Task) subagent is still running — the pane holds 'streaming'
+   *  instead of flipping idle mid-subagent, and the last SubagentStop rides the
+   *  real idle in. PTY/hook sessions only (stream sessions own ambientState via
+   *  the daemon's managed mode). Mirrors claudemon's `parent_turn_ended`. */
+  parentTurnEnded?: boolean;
   /** Context compaction, from the PreCompact/PostCompact hooks: `compacting` is
    *  true while Claude is rewriting context; `lastCompactAt` (ms) and
    *  `compactionCount` badge a recently-compacted / churning session. */

@@ -5,29 +5,27 @@
 // HMR, could duplicate the ConfigContext module and make lazy-loaded panes
 // throw "useConfig must be used inside <ConfigProvider>".
 //
+// The persisted defaults come from the SINGLE SOURCE OF TRUTH shared with the
+// headless brain (Go): services/hub/cmd/brain/config_defaults.json, surfaced
+// here as CONFIG_DEFAULTS via the generated leaf. So the renderer's fallback
+// values can no longer drift from the desktop main / brain defaults. Only two
+// things stay hand-maintained here, because they are genuinely renderer-only:
+//   1. UI-surface keybindings (Fleet Deck, Inbox drawer, digit jumps) — not part
+//      of the persisted config schema, so they don't belong in the shared JSON.
+//   2. The empty list placeholders (shells / panes / bookmarks / apps) — this
+//      config is only shown for the instant before the backend config loads
+//      (ConfigContext replaces it), and keeping those lists empty avoids a flash
+//      of default apps/terminals before the user's real config arrives.
+//
 // The Config type is pulled in type-only (erased at build), so it adds no
-// runtime edge.
+// runtime edge; the generated leaf imports nothing.
 import type { Config } from './useConfig';
+import { CONFIG_DEFAULTS } from './configDefaults.generated';
 
-export const DEFAULT_SHORTCUTS: Record<string, string> = {
-  // ── Direct, terminal-safe ──
-  'command-palette': 'ctrl+shift+p',
-  'next-agent': 'ctrl+tab',
-  'prev-agent': 'ctrl+shift+tab',
-  'next-attention': 'ctrl+shift+space',
-  'spawn-agent': 'ctrl+shift+n',
-  settings: 'ctrl+,',
-  'save-session': 'ctrl+shift+s',
-  'open-file': 'ctrl+shift+o',
-  'toggle-help': 'f1',
-  'toggle-terminal': 'ctrl+`',
-  'toggle-sidebar': 'ctrl+shift+b',
-  'toggle-inbox': 'ctrl+shift+i',
-  'toggle-fleet': 'ctrl+shift+f',
-  'toggle-ui-mode': 'ctrl+shift+m',
-  'toggle-inspector': 'ctrl+shift+e',
-  'library-picker': 'ctrl+shift+l',
-  'open-review': 'ctrl+shift+g',
+// Renderer-only keybindings: UI surfaces that aren't user-persisted config keys,
+// so they live here rather than in the shared config_defaults.json. FleetDeck /
+// InboxDrawer layer these UNDER the live config (`{ ...DEFAULT_SHORTCUTS, ...live }`).
+const RENDERER_ONLY_SHORTCUTS: Record<string, string> = {
   // ── Digit-range bindings: the modifier + any of 1–9 ──
   'jump-tab': 'ctrl+1-9',
   'move-tab': 'ctrl+shift+1-9',
@@ -54,79 +52,25 @@ export const DEFAULT_SHORTCUTS: Record<string, string> = {
   'inbox-dismiss': 'e',
   'inbox-snooze': 's',
   'inbox-clear-reviewed': 'shift+e',
-  // ── Prefix chords (Ctrl+Space then one key) — flat, single-key per action ──
-  'new-terminal': 'prefix t',
-  'new-claude': 'prefix c',
-  'new-browser': 'prefix b',
-  split: 'prefix s',
-  'quick-split': 'prefix q',
-  'close-pane': 'prefix w',
-  'rename-tab': 'prefix r',
-  'prev-tab': 'prefix [',
-  'next-tab': 'prefix ]',
-  'move-tab-left': 'prefix ,',
-  'move-tab-right': 'prefix .',
-  'nav-left': 'prefix h',
-  'nav-down': 'prefix j',
-  'nav-up': 'prefix k',
-  'nav-right': 'prefix l',
 };
 
+// Persisted keybindings come from the shared single source; the renderer layers
+// its UI-only bindings on top so the settings picker + Fleet/Inbox see them all.
+export const DEFAULT_SHORTCUTS: Record<string, string> = {
+  ...CONFIG_DEFAULTS.keybindings.shortcuts,
+  ...RENDERER_ONLY_SHORTCUTS,
+};
+
+// Pre-load placeholder (ConfigContext's initial state, replaced once the backend
+// config loads). Built from the shared defaults so every scalar can't drift; the
+// big list fields stay empty to avoid a flash of defaults before the real config.
+const shared = structuredClone(CONFIG_DEFAULTS) as unknown as Config;
+
 export const DEFAULT_CONFIG: Config = {
-  ui: {
-    animations: false,
-    theme: 'dark',
-    cornerStyle: '',
-    borderColor: '',
-    fontFamily: 'Inter, system-ui, sans-serif',
-    fontSize: 14,
-    borderRadius: 8,
-    navBarHeight: 34,
-    paneHeaderHeight: 22,
-    showComposerSend: true,
-    guiFontScale: 1.15,
-    diffView: 'stacked',
-    mode: 'fleet',
-  },
-  terminal: {
-    shell: '',
-    shells: [],
-    fontFamily:
-      '"JetBrainsMono Nerd Font Mono", "JetBrainsMono NF", "CaskaydiaMono Nerd Font Mono", "CaskaydiaMono NF", monospace',
-    fontSize: 14,
-    scrollback: 1500,
-    cursorBlink: true,
-    cursorStyle: 'block',
-  },
-  panes: {
-    defaultWidth: 800,
-    gap: 0,
-    peek: 0,
-    insertPosition: 'after',
-    tabPosition: 'top',
-    viewLevel: 'piloting',
-    default: [],
-  },
-  browser: {
-    homepage: 'https://google.com',
-    bookmarks: [],
-    hibernateAfter: 300,
-  },
-  keybindings: {
-    prefix: 'ctrl+space',
-    chordHints: true,
-    shortcuts: { ...DEFAULT_SHORTCUTS },
-  },
-  notifications: {
-    enabled: true,
-    notifyDone: true,
-    onlyWhenUnwatched: true,
-    sound: false,
-  },
-  scripts: {},
+  ...shared,
+  terminal: { ...shared.terminal, shells: [] },
+  panes: { ...shared.panes, default: [] },
+  browser: { ...shared.browser, bookmarks: [] },
   apps: [],
-  session: { autoResume: false },
-  updates: { enabled: true, channel: 'latest' },
-  claude: { defaultView: 'terminal', workLog: 'cards', transport: 'stream' },
-  supervisor: { model: '', summarizerModel: 'sonnet', pollSeconds: 45 },
+  keybindings: { ...shared.keybindings, shortcuts: { ...DEFAULT_SHORTCUTS } },
 };

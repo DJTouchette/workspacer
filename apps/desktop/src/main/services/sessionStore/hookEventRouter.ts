@@ -48,10 +48,13 @@ export function applyHookEvent(session: ClaudeSessionState, event: any): void {
   switch (hookName) {
     case 'SessionStart':
       session.status = 'active';
+      session.parentTurnEnded = false;
       setAmbient('idle');
       break;
 
     case 'UserPromptSubmit':
+      // A fresh user turn supersedes any prior turn's background subagent work.
+      session.parentTurnEnded = false;
       setAmbient('streaming');
       break;
 
@@ -196,6 +199,13 @@ export function applyHookEvent(session: ClaudeSessionState, event: any): void {
         sub.status = 'complete';
         sub.completedAt = Date.now();
       }
+      // If the parent's own turn already ended (its Stop fired while this
+      // subagent kept running in the background) and this was the last running
+      // subagent, the real idle rides in now — see applyStopEvent below.
+      if (session.parentTurnEnded && !session.subagents.some((s) => s.status === 'running')) {
+        session.parentTurnEnded = false;
+        setAmbient('idle');
+      }
       break;
     }
 
@@ -231,7 +241,23 @@ export function applyHookEvent(session: ClaudeSessionState, event: any): void {
 
 /** Apply the Stop event's synchronous state mutations only. */
 export function applyStopEvent(session: ClaudeSessionState): void {
-  session.ambientState = 'idle';
+  // Stream-transport sessions own their working/idle state via the daemon's
+  // managed mode (set_managed_mode → applyManagedMode) — the stream driver
+  // already holds the turn busy while a background subagent runs
+  // (`bg_tasks_active` / `suppress_idle`). The daemon still rebroadcasts the raw
+  // Stop hook to us, so writing ambientState here would clobber that back to
+  // idle mid-subagent. Leave it untouched — hooks are enrichment-only for
+  // stream (same invariant as applyHookEvent's `hooksOwnAmbient`).
+  const hooksOwnAmbient = session.transport !== 'stream';
+  if (hooksOwnAmbient) {
+    // PTY/hook path: a background (async Agent/Task) subagent can still be
+    // running when the parent's own turn ends — its Stop fires while the
+    // subagent works on. Hold 'streaming' and let the last SubagentStop ride
+    // the real idle in (see the SubagentStop case above); otherwise idle now.
+    const bgSubagentRunning = session.subagents.some((s) => s.status === 'running');
+    session.ambientState = bgSubagentRunning ? 'streaming' : 'idle';
+    session.parentTurnEnded = bgSubagentRunning;
+  }
   session.pendingApproval = null;
   session.pendingQuestions = null;
   // Clear tool calls — they're already shown inline in conversation via transcript
@@ -244,4 +270,5 @@ export function applyStopEvent(session: ClaudeSessionState): void {
 export function applySessionEndEvent(session: ClaudeSessionState): void {
   session.status = 'ended';
   session.ambientState = 'idle';
+  session.parentTurnEnded = false;
 }

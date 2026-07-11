@@ -39,7 +39,9 @@ func TestSpawnForwardsArgvAndReturnsSessionID(t *testing.T) {
 	defer srv.Close()
 
 	reg := newSpawnTestRegistry(t, srv.URL)
-	params := []byte(`{"cwd":"/tmp/proj/","skipPermissions":true}`)
+	// transport:pty is explicit now that the config default is 'stream' (this
+	// test exercises the classic PTY argv spawn).
+	params := []byte(`{"cwd":"/tmp/proj/","skipPermissions":true,"transport":"pty"}`)
 	res, err := reg.handle(context.Background(), "agents.spawn", params)
 	if err != nil {
 		t.Fatal(err)
@@ -73,9 +75,14 @@ func TestSpawnForwardsArgvAndReturnsSessionID(t *testing.T) {
 
 // ── agents.spawn provider/transport dispatch (parity with hubCapabilities.ts) ─
 
-// TestSpawnDefaultProviderIsClaudePTY: no provider (and no transport) keeps the
-// classic argv spawn — nothing routes through spawn-managed.
-func TestSpawnDefaultProviderIsClaudePTY(t *testing.T) {
+// TestSpawnDefaultProviderIsClaudeStream: no provider AND no transport resolves
+// to claude on the STREAM transport — matching the desktop default
+// (config_defaults.json claude.transport=stream, the single source of truth both
+// runtimes share). It routes through spawn-managed (claude-stream), not the
+// classic PTY argv spawn. Regression guard for the old drift, where the brain's
+// missing default made a headless/web spawn come up PTY while the desktop's
+// same spawn came up stream.
+func TestSpawnDefaultProviderIsClaudeStream(t *testing.T) {
 	rec := newRecorder()
 	srv := rec.server()
 	defer srv.Close()
@@ -84,16 +91,15 @@ func TestSpawnDefaultProviderIsClaudePTY(t *testing.T) {
 	if _, err := reg.handle(context.Background(), "agents.spawn", []byte(`{"cwd":"/tmp"}`)); err != nil {
 		t.Fatal(err)
 	}
-	if n := len(rec.calls("/sessions/spawn-managed")); n != 0 {
-		t.Fatalf("default spawn must not hit spawn-managed, got %d calls", n)
+	if n := len(rec.calls("/sessions/spawn")); n != 0 {
+		t.Fatalf("stream default must not hit the PTY spawn endpoint, got %d calls", n)
 	}
-	spawn := rec.calls("/sessions/spawn")
-	if len(spawn) != 1 {
-		t.Fatalf("expected one PTY spawn, got %d", len(spawn))
+	managed := rec.calls("/sessions/spawn-managed")
+	if len(managed) != 1 {
+		t.Fatalf("expected one claude-stream spawn-managed call, got %d", len(managed))
 	}
-	argv, _ := spawn[0].body["argv"].([]any)
-	if len(argv) == 0 || argv[0] != "claude" {
-		t.Fatalf("expected a claude argv, got %v", argv)
+	if managed[0].body["provider"] != "claude" {
+		t.Errorf("default provider must be claude, got %v", managed[0].body["provider"])
 	}
 }
 
@@ -294,13 +300,14 @@ func TestSpawnRemoteBypassForcedOff(t *testing.T) {
 	if managed[1].body["yolo"] != false || managed[1].body["permission_mode"] != "default" {
 		t.Errorf("claude stream: remote bypass mode must be clamped, got %+v", managed[1].body)
 	}
-	// Claude PTY: 'yolo' spelling clamps too; a passthrough mode still rides.
+	// Claude PTY (transport:pty explicit now the default is stream): 'yolo'
+	// spelling clamps too; a passthrough mode still rides.
 	if _, err := reg.handle(context.Background(), "agents.spawn",
-		[]byte(`{"cwd":"/tmp","skipPermissions":true,"permissionMode":"yolo"}`)); err != nil {
+		[]byte(`{"cwd":"/tmp","skipPermissions":true,"permissionMode":"yolo","transport":"pty"}`)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := reg.handle(context.Background(), "agents.spawn",
-		[]byte(`{"cwd":"/tmp","permissionMode":"plan"}`)); err != nil {
+		[]byte(`{"cwd":"/tmp","permissionMode":"plan","transport":"pty"}`)); err != nil {
 		t.Fatal(err)
 	}
 	spawn := rec.calls("/sessions/spawn")
@@ -326,7 +333,7 @@ func TestSpawnClaudePTYResumeStillWorks(t *testing.T) {
 	reg := newSpawnTestRegistry(t, srv.URL)
 
 	if _, err := reg.handle(context.Background(), "agents.spawn",
-		[]byte(`{"cwd":"/tmp","resumeSessionId":"abc-123"}`)); err != nil {
+		[]byte(`{"cwd":"/tmp","resumeSessionId":"abc-123","transport":"pty"}`)); err != nil {
 		t.Fatal(err)
 	}
 	spawn := rec.calls("/sessions/spawn")

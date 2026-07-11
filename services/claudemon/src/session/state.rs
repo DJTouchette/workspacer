@@ -470,6 +470,20 @@ pub struct SessionState {
     pub last_compact_at: Option<i64>,
     #[serde(default)]
     pub compaction_count: u64,
+    /// Count of background subagents (async Agent/Task tool) currently running,
+    /// tracked from the `SubagentStart`/`SubagentStop` hooks. While this is
+    /// non-zero, a parent `Stop` does NOT idle the session — the parent's own
+    /// turn can end while a subagent works on, and flipping to `Input` there
+    /// would show idle mid-subagent. The real idle rides the last
+    /// `SubagentStop`. Internal state-machine bookkeeping, not part of the wire
+    /// snapshot (mirrors the stream driver's `bg_tasks_active`).
+    #[serde(skip)]
+    pub live_subagents: u32,
+    /// True once the parent's own turn has ended (a `Stop` fired) while
+    /// `live_subagents > 0`, so the draining `SubagentStop` knows to flip the
+    /// mode to `Input`. Cleared on a new turn / session boundary.
+    #[serde(skip)]
+    pub parent_turn_ended: bool,
 }
 
 /// Serde default for [`SessionState::provider`] — the un-managed PTY path is
@@ -498,6 +512,8 @@ impl SessionState {
             compacting: false,
             last_compact_at: None,
             compaction_count: 0,
+            live_subagents: 0,
+            parent_turn_ended: false,
         }
     }
 
@@ -534,15 +550,22 @@ impl SessionState {
             HookEventKind::SessionStart => {
                 self.mode = SessionMode::Input;
                 self.pending = None;
+                self.live_subagents = 0;
+                self.parent_turn_ended = false;
             }
             HookEventKind::SessionEnd => {
                 self.mode = SessionMode::Stopped;
                 self.pending = None;
+                self.live_subagents = 0;
+                self.parent_turn_ended = false;
             }
 
             HookEventKind::UserPromptSubmit => {
                 self.mode = SessionMode::Responding;
                 self.pending = None;
+                // A fresh user turn supersedes any prior turn's background work.
+                self.live_subagents = 0;
+                self.parent_turn_ended = false;
             }
 
             HookEventKind::PreToolUse => {
@@ -591,15 +614,42 @@ impl SessionState {
                 self.pending = Some(Pending::Approval { tool, summary, raw });
             }
 
-            HookEventKind::SubagentStart | HookEventKind::SubagentStop => {
+            HookEventKind::SubagentStart => {
+                self.live_subagents = self.live_subagents.saturating_add(1);
                 if self.mode != SessionMode::Approval && self.mode != SessionMode::Question {
                     self.mode = SessionMode::Responding;
                 }
             }
 
+            HookEventKind::SubagentStop => {
+                self.live_subagents = self.live_subagents.saturating_sub(1);
+                if self.mode == SessionMode::Approval || self.mode == SessionMode::Question {
+                    // A picker is up — never override it.
+                } else if self.live_subagents == 0 && self.parent_turn_ended {
+                    // The last background subagent drained after the parent's
+                    // own turn had already ended: the real idle rides in now.
+                    self.parent_turn_ended = false;
+                    self.mode = SessionMode::Input;
+                    self.pending = None;
+                } else {
+                    // Parent still working, or more subagents outstanding.
+                    self.mode = SessionMode::Responding;
+                }
+            }
+
             HookEventKind::Stop => {
-                self.mode = SessionMode::Input;
-                self.pending = None;
+                if self.live_subagents > 0 {
+                    // The parent's own turn ended while a background subagent is
+                    // still running — hold `Responding` rather than showing idle
+                    // mid-subagent. The draining `SubagentStop` flips to `Input`.
+                    self.parent_turn_ended = true;
+                    if self.mode != SessionMode::Approval && self.mode != SessionMode::Question {
+                        self.mode = SessionMode::Responding;
+                    }
+                } else {
+                    self.mode = SessionMode::Input;
+                    self.pending = None;
+                }
             }
 
             // Context compaction brackets: PreCompact starts it (Claude is busy
@@ -951,6 +1001,77 @@ mod tests {
         state.mode = SessionMode::Question;
         state.apply(&make_event("SubagentStop"));
         assert_eq!(state.mode, SessionMode::Question);
+    }
+
+    #[test]
+    fn stop_holds_responding_while_a_background_subagent_runs() {
+        // Parent launches a background subagent, then its own turn ends (Stop)
+        // while the subagent is still working — the session must NOT go idle.
+        let mut state = SessionState::new("s".into(), None);
+        state.mode = SessionMode::Responding;
+        state.apply(&make_event("SubagentStart"));
+        assert_eq!(state.live_subagents, 1);
+
+        state.apply(&make_event("Stop"));
+        assert_eq!(state.mode, SessionMode::Responding);
+        assert!(state.parent_turn_ended);
+
+        // The real idle rides in on the trailing SubagentStop.
+        state.apply(&make_event("SubagentStop"));
+        assert_eq!(state.mode, SessionMode::Input);
+        assert_eq!(state.live_subagents, 0);
+        assert!(!state.parent_turn_ended);
+    }
+
+    #[test]
+    fn stop_idles_immediately_with_no_background_subagent() {
+        let mut state = SessionState::new("s".into(), None);
+        state.mode = SessionMode::Responding;
+        state.apply(&make_event("Stop"));
+        assert_eq!(state.mode, SessionMode::Input);
+        assert!(!state.parent_turn_ended);
+    }
+
+    #[test]
+    fn subagent_finishing_mid_turn_keeps_parent_responding() {
+        // A subagent that completes while the parent is still streaming (no Stop
+        // yet) must not idle the parent.
+        let mut state = SessionState::new("s".into(), None);
+        state.mode = SessionMode::Responding;
+        state.apply(&make_event("SubagentStart"));
+        state.apply(&make_event("SubagentStop"));
+        assert_eq!(state.mode, SessionMode::Responding);
+        assert!(!state.parent_turn_ended);
+    }
+
+    #[test]
+    fn stop_waits_for_all_parallel_subagents_to_drain() {
+        let mut state = SessionState::new("s".into(), None);
+        state.mode = SessionMode::Responding;
+        state.apply(&make_event("SubagentStart"));
+        state.apply(&make_event("SubagentStart"));
+        state.apply(&make_event("Stop"));
+        assert_eq!(state.mode, SessionMode::Responding);
+
+        state.apply(&make_event("SubagentStop"));
+        // One still running — stay busy.
+        assert_eq!(state.mode, SessionMode::Responding);
+        state.apply(&make_event("SubagentStop"));
+        // Last one drained — now idle.
+        assert_eq!(state.mode, SessionMode::Input);
+    }
+
+    #[test]
+    fn user_prompt_resets_pending_background_subagent_state() {
+        let mut state = SessionState::new("s".into(), None);
+        state.apply(&make_event("SubagentStart"));
+        state.apply(&make_event("Stop"));
+        assert!(state.parent_turn_ended);
+        // A new turn supersedes any stuck background bookkeeping.
+        state.apply(&make_event("UserPromptSubmit"));
+        assert_eq!(state.live_subagents, 0);
+        assert!(!state.parent_turn_ended);
+        assert_eq!(state.mode, SessionMode::Responding);
     }
 
     #[test]
