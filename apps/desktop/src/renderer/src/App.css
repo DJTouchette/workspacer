@@ -30,6 +30,9 @@
 /* Design-token fallbacks — JS (applyTheme/applyCorners) overrides these at
  * runtime; these keep the first paint sane. */
 :root {
+  /* First-paint scheme for native controls — applyTheme overrides this per
+   * theme (inline style wins); the fallback matches the dark tokens below. */
+  color-scheme: dark;
   /* UI monospace — used by status bars, labels, and code-ish chrome. The
    * terminal/code font is set separately (--claude-mono-font, from the user's
    * terminal config); this is the chrome default and the global fallback. */
@@ -59,6 +62,14 @@ select option,
 select optgroup {
   background: var(--wks-bg-elevated, #1e1e21);
   color: var(--wks-text-primary, #e6e6e9);
+}
+
+/* Checkboxes, radios, and range sliders keep their native shape but tint
+ * with the theme accent instead of the browser-default blue. */
+input[type='checkbox'],
+input[type='radio'],
+input[type='range'] {
+  accent-color: var(--wks-accent, #60a5fa);
 }
 
 html,
