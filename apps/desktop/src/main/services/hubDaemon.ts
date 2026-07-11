@@ -218,7 +218,16 @@ export async function getRemoteShareInfo(): Promise<RemoteShareInfo> {
   const enabled = isRemoteEnabled();
   const host = advertiseHost();
   const q = HUB_TOKEN ? `?token=${encodeURIComponent(HUB_TOKEN)}` : '';
-  const hasWebApp = enabled && fs.existsSync(webappDir());
+  // Whether /app (the full web renderer) is actually served. An owned hub
+  // serves whatever dist/web we passed it, so the on-disk check is the truth;
+  // an ADOPTED hub serves only what ITS --webapp-dir pointed at (often
+  // nothing) — the local build's existence says nothing about it, so ask the
+  // hub itself rather than advertise a 404.
+  const hasWebApp =
+    enabled &&
+    (adopted
+      ? await probeHealth(`http://127.0.0.1:${PORT}/app/${q}`)
+      : fs.existsSync(webappDir()));
   // An owned hub is (re)spawned with the right binding when sharing flips on,
   // so only the adopted case can advertise an address nothing listens on —
   // probe it rather than hand out a QR that scans to a dead endpoint.
