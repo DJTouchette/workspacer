@@ -52,6 +52,15 @@
   --wks-glass-tint: rgba(96, 165, 250, 0.08);
 }
 
+/* Native <select> popup lists ignore the select's own (transparent) styling —
+ * theme the options directly where the engine honors it; color-scheme (set by
+ * applyTheme) covers the rest of the popup chrome. */
+select option,
+select optgroup {
+  background: var(--wks-bg-elevated, #1e1e21);
+  color: var(--wks-text-primary, #e6e6e9);
+}
+
 html,
 body {
   margin: 0;

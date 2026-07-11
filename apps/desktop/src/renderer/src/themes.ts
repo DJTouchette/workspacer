@@ -1546,6 +1546,10 @@ export function applyTheme(theme: Theme): void {
   for (const [prop, value] of Object.entries(cssVarsOf(theme))) {
     s.setProperty(prop, value);
   }
+  // Native controls (select popups, scrollbars) follow the document's
+  // color-scheme, not our tokens — without this a dark theme still gets the
+  // OS-light white dropdown list.
+  s.colorScheme = isLightTheme(theme) ? 'light' : 'dark';
 }
 
 /** Apply the radius scale for the resolved corner style as CSS custom props. */
