@@ -181,7 +181,20 @@ jobs:
 
       - name: Package (unsigned)
         if: ${{ !(matrix.os == 'windows-latest' && startsWith(github.ref, 'refs/tags/v') && vars.AZURE_CODESIGN_PROFILE != '') }}
-        run: npm run package -- --publish never
+        shell: bash
+        run: |
+          extra=()
+          if [ "${{ needs.gate.outputs.nightly }}" = "true" ]; then
+            # Nightlies need SPACE-FREE Windows artifact names: GitHub rewrites
+            # spaces in asset names to dots, but the generic update feed requests
+            # the literal (dash-sanitized) fileName from latest.yml — the default
+            # "Workspacer Setup <v>.exe" naming would 404 the nightly updater.
+            # Stable keeps the default names (the landing page links them, and
+            # the GitHub provider handles the dot-rename itself).
+            extra+=('-c.nsis.artifactName=${productName}-Setup-${version}.${ext}')
+            extra+=('-c.portable.artifactName=${productName}-${version}.${ext}')
+          fi
+          npm run package -- --publish never "${extra[@]}"
 
       # Standalone headless-server bundle: the four binaries `workspacer serve`
       # supervises — workspacer + hub + brain + claudemon — in ONE directory
@@ -270,7 +283,7 @@ jobs:
             apps/desktop/release/*.exe
             apps/desktop/release/*.dmg
             apps/desktop/release/*.AppImage
-            apps/desktop/release/*.yml
+            apps/desktop/release/latest*.yml
             apps/desktop/release/*.blockmap
             apps/desktop/release/workspacer-server-*
           draft: true
@@ -299,7 +312,7 @@ jobs:
             apps/desktop/release/*.exe
             apps/desktop/release/*.dmg
             apps/desktop/release/*.AppImage
-            apps/desktop/release/*.yml
+            apps/desktop/release/latest*.yml
             apps/desktop/release/*.blockmap
             apps/desktop/release/workspacer-server-*
           fail_on_unmatched_files: false
