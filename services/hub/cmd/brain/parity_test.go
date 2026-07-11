@@ -365,3 +365,78 @@ func TestSpawnParamSurfaceMatchesDesktop(t *testing.T) {
 		}
 	}
 }
+
+// ── snapshot field-shape drift guard ─────────────────────────────────────────
+
+// snapshotFieldsRequired lists the desktop-snapshot (camelCase) fields the bus
+// clients read off a session row — mobile.html directly, the web renderer via
+// webBackend — that compatSnapshot must therefore emit (or pass through) on
+// every brain-served row. Adding a snapshot read to mobile.html without
+// teaching the overlay fails here; pruning a field there should prune it here.
+var snapshotFieldsRequired = []string{
+	"sessionId",
+	"status",
+	"ambientState",
+	"lastActivity",
+	"cwd",
+	"transport",
+	"usage",
+	"pendingApproval",
+	"pendingQuestions",
+}
+
+// snapshotFieldsDeclined lists desktop-snapshot fields the clients read that
+// the brain deliberately does NOT provide, with the reason. Entries must still
+// be read by mobile.html (prune when the client stops using them).
+var snapshotFieldsDeclined = map[string]string{
+	"conversation": "turn-by-turn transcript lives in claudemon's /conversation endpoint, not the session row; folding it into every snapshot/publish would ship whole transcripts per state tick",
+	"liveCwd":      "statusline-derived live cwd is a desktop enrichment; clients fall back to cwd (mobile agentName: liveCwd || cwd)",
+}
+
+// TestCompatSnapshotCoversMobileFields cross-checks the field names the mobile
+// client reads against the compat overlay — the wire-shape counterpart of the
+// spawn-param guard above. Skips when mobile.html isn't reachable.
+func TestCompatSnapshotCoversMobileFields(t *testing.T) {
+	src := filepath.Join("..", "hub", "mobile.html")
+	data, err := os.ReadFile(src)
+	if err != nil {
+		t.Skipf("mobile.html not reachable (%v); skipping cross-check", err)
+	}
+	mobile := string(data)
+
+	// A representative claudemon row exercising every mapped branch.
+	row := json.RawMessage(`{
+		"session_id":"s1","mode":"responding","cwd":"/tmp","provider":"claude",
+		"transport":"stream","archived":false,"updated_at":"2026-07-10T12:00:00Z",
+		"usage":{"model":"m","context_tokens":1,"context_limit":2,"cost_usd":0.1},
+		"pending":null}`)
+	var m map[string]any
+	if err := json.Unmarshal(compatSnapshot(row), &m); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, field := range snapshotFieldsRequired {
+		if !strings.Contains(mobile, field) {
+			t.Errorf("snapshotFieldsRequired lists %q but mobile.html no longer references it — prune the entry", field)
+		}
+		if _, ok := m[field]; !ok {
+			t.Errorf("mobile reads snapshot field %q but compatSnapshot doesn't emit it — map it or decline it with a reason", field)
+		}
+	}
+	for field, reason := range snapshotFieldsDeclined {
+		if reason == "" {
+			t.Errorf("snapshotFieldsDeclined[%q] needs a reason", field)
+		}
+		if !strings.Contains(mobile, field) {
+			t.Errorf("snapshotFieldsDeclined lists %q but mobile.html no longer references it — prune the entry", field)
+		}
+	}
+	// usage sub-shape: mobile reads u.contextTokens / contextLimit / costUSD /
+	// model (ctxPct, fleetCard, shortModel).
+	u, _ := m["usage"].(map[string]any)
+	for _, k := range []string{"model", "contextTokens", "contextLimit", "costUSD"} {
+		if _, ok := u[k]; !ok {
+			t.Errorf("usage overlay missing %q (mobile ctxPct/fleetCard read it)", k)
+		}
+	}
+}

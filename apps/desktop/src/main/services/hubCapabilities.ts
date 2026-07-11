@@ -15,7 +15,7 @@ import { spawnManagedAgent } from './managedSpawn';
 import { spawnClaudeAgent } from './claudeSpawn';
 import { resolveAgentBinary, checkAllProviders, type AgentProvider } from './agentProviders';
 import { claudeProfiles } from './claudeProfiles';
-import { registerCapability } from './hubClient';
+import { registerCapability, callHub } from './hubClient';
 import { appIconPath } from '../lib/appIcon';
 import { DELEGATE_CATALOG_TO_BRAIN } from './brainDelegation';
 import { configService, getConfigDir } from './configService';
@@ -547,7 +547,49 @@ export function registerHubCapabilities(): void {
   // detail) that the desktop gets over the `claude-session:update` IPC. These
   // mirror the CLAUDE_SESSION_GET / GET_ALL handlers; live updates arrive as
   // `agent.snapshot` bus events (published from claudeSessionStore.pushUpdate).
-  registerCapability('sessions.snapshots', () => claudeSessionStore.getAllSnapshots());
+  //
+  // Shared fleet-visibility rule (services/hub cmd/brain/visibility.go): the
+  // desktop sidebar also shows a *stopped* agent's card while it's curated in
+  // the shared layout ("Stopped — respawn"), but the store only holds live
+  // sessions (an ended one is evicted ~30s after SessionEnd). So the snapshot
+  // list a bus client renders (/m fleet) appends minimal `sparse` stopped rows
+  // synthesized from the hub's layout document — the same rows the brain
+  // serves when it owns this method, keeping the two providers interchangeable.
+  registerCapability('sessions.snapshots', async () => {
+    const live = claudeSessionStore.getAllSnapshots();
+    const liveIds = new Set(live.map((s) => s.sessionId));
+    type LayoutAgentRef = {
+      global?: boolean;
+      sessionId?: string;
+      lastSessionId?: string;
+      cwd?: string;
+      name?: string;
+    };
+    const stopped: unknown[] = [];
+    try {
+      const doc = await callHub<{ data?: { agents?: LayoutAgentRef[] } }>('layout.get');
+      const seen = new Set<string>();
+      for (const a of doc?.data?.agents ?? []) {
+        if (!a || a.global) continue;
+        const sid = a.sessionId || a.lastSessionId;
+        if (!sid || liveIds.has(sid) || seen.has(sid)) continue;
+        seen.add(sid);
+        stopped.push({
+          sessionId: sid,
+          cwd: a.cwd ?? '',
+          label: a.name,
+          status: 'ended',
+          ambientState: 'idle',
+          pendingApproval: null,
+          pendingQuestions: null,
+          sparse: true,
+        });
+      }
+    } catch {
+      // No hub / no layout document — serve the live sessions only.
+    }
+    return [...live, ...stopped];
+  });
   registerCapability('sessions.snapshot', (params: unknown) => {
     const { sessionId } = (params ?? {}) as { sessionId?: string };
     if (!sessionId) throw new Error('sessions.snapshot requires { sessionId }');

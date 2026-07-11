@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 type spawnMeta struct {
@@ -92,4 +93,90 @@ func enrichSnapshot(snap json.RawMessage, meta *metaStore) json.RawMessage {
 		return snap
 	}
 	return out
+}
+
+// ── Desktop-shape compatibility overlay ─────────────────────────────────────
+//
+// The desktop publishes rich ClaudeSessionSnapshot objects (camelCase, with
+// conversation); the brain's store holds claudemon's raw rows (snake_case).
+// The mobile client and the web renderer key everything off the desktop field
+// names, so overlay the ones they read — sessionId / status / ambientState /
+// lastActivity / usage / pendingApproval / pendingQuestions — onto each row.
+// `sparse: true` marks the row as state-only (no conversation) so a client
+// already holding a rich desktop snapshot for the session merges the state in
+// instead of replacing the whole thing (see mobile.html upsert and
+// webBackend.ts foldSparse). TestCompatSnapshotCoversMobileFields guards the
+// field list against mobile.html drift.
+
+// compatSnapshot overlays the desktop snapshot field names onto a raw
+// claudemon session row. Snake_case originals are kept alongside.
+func compatSnapshot(snap json.RawMessage) json.RawMessage {
+	var m map[string]any
+	if json.Unmarshal(snap, &m) != nil {
+		return snap
+	}
+	id, _ := m["session_id"].(string)
+	if id == "" {
+		return snap // not a claudemon row — leave untouched
+	}
+	mode, _ := m["mode"].(string)
+	m["sessionId"] = id
+	m["sparse"] = true
+	if mode == "stopped" {
+		m["status"] = "ended"
+	} else {
+		m["status"] = "active"
+	}
+	m["ambientState"] = ambientForMode(mode)
+	if ts, ok := m["updated_at"].(string); ok {
+		if t, err := time.Parse(time.RFC3339, ts); err == nil {
+			m["lastActivity"] = t.UnixMilli()
+		}
+	}
+	// usage: claudemon's snake_case counters → the desktop's camelCase shape.
+	if u, ok := m["usage"].(map[string]any); ok {
+		m["usage"] = map[string]any{
+			"model":         u["model"],
+			"contextTokens": u["context_tokens"],
+			"contextLimit":  u["context_limit"],
+			"costUSD":       u["cost_usd"],
+		}
+	}
+	// pending → pendingApproval / pendingQuestions. Set both explicitly (null
+	// when absent) so a sparse merge clears a stale decision on the client.
+	m["pendingApproval"] = nil
+	m["pendingQuestions"] = nil
+	if p, ok := m["pending"].(map[string]any); ok {
+		switch p["kind"] {
+		case "approval":
+			m["pendingApproval"] = map[string]any{
+				"toolName":  p["tool"],
+				"toolInput": p["raw"],
+			}
+		case "question":
+			m["pendingQuestions"] = p["questions"]
+		}
+	}
+	out, err := json.Marshal(m)
+	if err != nil {
+		return snap
+	}
+	return out
+}
+
+// ambientForMode maps claudemon's SessionMode vocabulary onto the desktop's
+// SessionAmbientState one (ipcTypes.ts): the two working states collapse to
+// streaming; approval/question map to the two waiting states; everything else
+// (unknown / input / stopped) reads as idle.
+func ambientForMode(mode string) string {
+	switch mode {
+	case "responding":
+		return "streaming"
+	case "approval":
+		return "waiting_approval"
+	case "question":
+		return "waiting_input"
+	default:
+		return "idle"
+	}
 }

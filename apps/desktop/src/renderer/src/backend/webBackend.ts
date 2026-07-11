@@ -131,6 +131,24 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     for (const h of hubEventHandlers) h(ev);
   });
 
+  // ── Sparse-snapshot merging ────────────────────────────────────────────
+  // Two providers can produce session snapshots on the bus: the desktop app
+  // (rich ClaudeSessionSnapshot rows, with conversation/tool detail) and the
+  // headless brain (claudemon-backed state rows marked `sparse: true`, see
+  // services/hub cmd/brain compatSnapshot). The renderer's consumers replace
+  // their snapshot wholesale, so a sparse row must not clobber a rich one
+  // mid-render — remember the last rich snapshot per session and overlay
+  // sparse updates onto it. Ended sessions are dropped from the cache so it
+  // stays bounded by the live fleet.
+  const richSnaps = new Map<string, ClaudeSessionSnapshot>();
+  const foldSparse = (snap: ClaudeSessionSnapshot & { sparse?: boolean }): ClaudeSessionSnapshot => {
+    const prev = richSnaps.get(snap.sessionId);
+    const merged = snap.sparse && prev ? { ...prev, ...snap } : snap;
+    if (!snap.sparse) richSnaps.set(snap.sessionId, snap);
+    if (merged.status === 'ended') richSnaps.delete(snap.sessionId);
+    return merged;
+  };
+
   const api: ElectronAPI = {
     platform: 'web' as unknown as NodeJS.Platform,
 
@@ -336,13 +354,20 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     claudeProfilesRemove: (id) =>
       client.call<void>('claude.profiles.remove', { id }).then(() => {}),
     getClaudeSession: (sessionId) =>
-      client.call<ClaudeSessionSnapshot | null>('sessions.snapshot', { sessionId }),
+      client
+        .call<ClaudeSessionSnapshot | null>('sessions.snapshot', { sessionId })
+        .then((s) => (s ? foldSparse(s) : s)),
     getAllClaudeSessions: () =>
-      client.call<ClaudeSessionSnapshot[]>('sessions.snapshots', {}).then((list) => list || []),
+      client
+        .call<ClaudeSessionSnapshot[]>('sessions.snapshots', {})
+        .then((list) => (list || []).map(foldSparse)),
     onClaudeSessionUpdate: (callback) =>
       client.subscribe('agent.snapshot', (ev) => {
         const snap = ev.data as ClaudeSessionSnapshot | undefined;
-        if (snap?.sessionId) callback(snap.sessionId, snap);
+        if (snap?.sessionId) {
+          const merged = foldSparse(snap);
+          callback(merged.sessionId, merged);
+        }
       }),
 
     // ── Hub plumbing ─────────────────────────────────────────────────────

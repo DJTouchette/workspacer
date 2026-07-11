@@ -23,6 +23,18 @@ type registry struct {
 	store *sessionStore // live session store (full scope only); nil → proxy claudemon
 	meta  *metaStore    // spawn metadata (label/parent/supervisor) for enrichment
 	term  *terminalHub  // PTY-over-bus forwarders (full scope only)
+	vis   *visibility   // shared desktop fleet-visibility rule; nil → show everything
+}
+
+// visibleSnapshots is the live store filtered by the shared desktop visibility
+// rule (visibility.go) — the one list agents.list and sessions.snapshots serve
+// so every bus client sees the desktop sidebar's fleet.
+func (r *registry) visibleSnapshots(ctx context.Context) []json.RawMessage {
+	snaps := r.store.all()
+	if r.vis == nil {
+		return snaps
+	}
+	return r.vis.filter(ctx, snaps)
 }
 
 func newRegistry(cm *claudemonClient) *registry {
@@ -127,7 +139,7 @@ func (r *registry) handle(ctx context.Context, method string, params json.RawMes
 	switch method {
 	case "agents.list":
 		if r.store != nil {
-			return jsonResult(r.store.all())
+			return jsonResult(r.visibleSnapshots(ctx))
 		}
 		return r.cm.listSessions(ctx)
 	case "agents.spawn":
@@ -150,7 +162,7 @@ func (r *registry) handle(ctx context.Context, method string, params json.RawMes
 		return r.conversation(ctx, params)
 	case "sessions.snapshots":
 		if r.store != nil {
-			return jsonResult(r.store.all())
+			return jsonResult(r.visibleSnapshots(ctx))
 		}
 		return r.cm.listSessions(ctx)
 	case "sessions.snapshot":
@@ -656,7 +668,14 @@ func (r *registry) snapshot(ctx context.Context, raw json.RawMessage) (json.RawM
 			return snap, nil
 		}
 	}
-	return r.cm.getSession(ctx, p.SessionID)
+	// Not in the store (e.g. catalog scope, or a stopped session fetched
+	// explicitly): relay claudemon's row with the same desktop-shape overlay
+	// the store applies, so the caller sees one consistent snapshot shape.
+	snap, err := r.cm.getSession(ctx, p.SessionID)
+	if err != nil {
+		return nil, err
+	}
+	return compatSnapshot(snap), nil
 }
 
 // terminalsCreate opens a shell PTY in claudemon — the headless counterpart of

@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/url"
 	"sync"
@@ -55,10 +56,16 @@ type busClient struct {
 
 	mu   sync.Mutex
 	conn *websocket.Conn
+
+	// Outbound calls we made as a *caller* (e.g. the hub-local layout.get),
+	// keyed by our own frame id, each waiting on its reply frame.
+	callMu sync.Mutex
+	calls  map[string]chan frame
+	seq    int
 }
 
 func newBusClient(rawURL, token string, methods []string, handler callHandler) *busClient {
-	return &busClient{url: rawURL, token: token, methods: methods, handler: handler}
+	return &busClient{url: rawURL, token: token, methods: methods, handler: handler, calls: map[string]chan frame{}}
 }
 
 // dialURL appends the auth token as a query param when set. The hub treats the
@@ -142,8 +149,56 @@ func (b *busClient) dispatch(ctx context.Context, f frame) {
 		// Handle off the read loop: a spawn/message round-trips to claudemon and
 		// could take a moment; blocking here would stall every other inbound call.
 		go b.handleCall(ctx, f)
+	case "result", "error":
+		// The reply to one of our own outbound calls (we never *receive* replies
+		// to frames we answered as a provider — the hub routes those to the
+		// caller). Route it to the waiting call by id; unknown ids are dropped.
+		b.callMu.Lock()
+		ch := b.calls[f.ID]
+		b.callMu.Unlock()
+		if ch != nil {
+			select {
+			case ch <- f:
+			default:
+			}
+		}
 	case "registered", "hello":
 		// ack; nothing to do
+	}
+}
+
+// call invokes a bus method as a CALLER — the inverse of the provider role —
+// used for hub-local state like the shared layout document (layout.get).
+// Errors when disconnected, on an error reply, or when ctx expires.
+func (b *busClient) call(ctx context.Context, method string, params any) (json.RawMessage, error) {
+	raw, err := json.Marshal(params)
+	if err != nil {
+		return nil, err
+	}
+	b.callMu.Lock()
+	b.seq++
+	// Our ids are prefixed so they can never collide with the hub-assigned ids
+	// of the inbound calls we answer (mirrors hubClient.ts's 'm' prefix).
+	id := fmt.Sprintf("brain-%d", b.seq)
+	ch := make(chan frame, 1)
+	b.calls[id] = ch
+	b.callMu.Unlock()
+	defer func() {
+		b.callMu.Lock()
+		delete(b.calls, id)
+		b.callMu.Unlock()
+	}()
+	if err := b.write(ctx, frame{Op: "call", ID: id, Method: method, Params: raw}); err != nil {
+		return nil, err
+	}
+	select {
+	case f := <-ch:
+		if f.Op == "error" {
+			return nil, errors.New(f.Error)
+		}
+		return f.Result, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
 }
 

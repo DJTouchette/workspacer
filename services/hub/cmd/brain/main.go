@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/djtouchette/workspacer-hub/internal/parentwatch"
 )
@@ -52,8 +53,26 @@ func main() {
 		meta := newMetaStore()
 		reg.meta = meta
 		store := newSessionStore()
-		store.enrich = func(snap json.RawMessage) json.RawMessage { return enrichSnapshot(snap, meta) }
-		store.onChange = func(_ string, snap json.RawMessage) { bus.publish("agent.snapshot", snap) }
+		// Enrich (name/parent/supervisor) then overlay the desktop snapshot field
+		// names (sessionId/status/ambientState/…, marked sparse) so /m and the
+		// web renderer can read brain-served rows.
+		store.enrich = func(snap json.RawMessage) json.RawMessage {
+			return compatSnapshot(enrichSnapshot(snap, meta))
+		}
+		// The shared desktop fleet-visibility rule (visibility.go), backed by the
+		// hub-local layout document. It gates both the list/snapshot reads and
+		// every agent.snapshot publish — a hidden stopped session's update must
+		// not resurrect it on a client.
+		vis := newVisibility(func(ctx context.Context) (json.RawMessage, error) {
+			return bus.call(ctx, "layout.get", map[string]any{})
+		}, 5*time.Second)
+		reg.vis = vis
+		store.onChange = func(_ string, snap json.RawMessage) {
+			if !vis.visible(context.Background(), snap) {
+				return
+			}
+			bus.publish("agent.snapshot", snap)
+		}
 		reg.store = store
 		go runSessionStore(ctx, cm, store)
 		// Live cost/context: follow the high-frequency statusline stream and push

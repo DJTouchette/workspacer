@@ -387,17 +387,28 @@
   }
 
   // ── data ───────────────────────────────────────────────────────────────────
+  // Two providers can serve snapshots: the desktop app (rich rows, with
+  // conversation) and the headless brain (state-only rows marked sparse:true).
+  // A sparse row must never clobber a rich one we're rendering, so merge it
+  // over what we hold instead of replacing it.
+  function fold(snap) {
+    const prev = sessions.get(snap.sessionId);
+    sessions.set(snap.sessionId, snap.sparse && prev ? Object.assign({}, prev, snap) : snap);
+  }
   async function seed() {
     try {
       const list = await call('sessions.snapshots', {});
-      sessions.clear();
-      for (const s of (list || [])) if (s && s.sessionId) sessions.set(s.sessionId, s);
+      const seen = new Set();
+      for (const s of (list || [])) if (s && s.sessionId) { seen.add(s.sessionId); fold(s); }
+      // The provider's list IS the visible fleet — drop anything it no longer
+      // shows (ended sessions, stopped rows the layout stopped curating).
+      for (const id of [...sessions.keys()]) if (!seen.has(id)) sessions.delete(id);
       afterData();
     } catch (e) { /* connection dot shows offline */ }
   }
   function upsert(snap) {
     if (!snap || !snap.sessionId) return;
-    sessions.set(snap.sessionId, snap);
+    fold(snap);
     afterData(snap.sessionId);
   }
   function afterData(changedId) {
@@ -419,6 +430,19 @@
     return [...sessions.values()].filter(isLive)
       .sort((a, b) => (isBlocked(b) - isBlocked(a)) || (b.lastActivity || 0) - (a.lastActivity || 0));
   }
+  // Fleet shows every visible session (the provider applies the shared
+  // desktop-sidebar rule: live incl. idle, plus curated/recently-stopped),
+  // attention-first: needs-you, then working, then idle, then stopped.
+  function fleetRank(s) {
+    if (!isLive(s)) return 3;
+    if (isBlocked(s)) return 0;
+    if (isWorking(s)) return 1;
+    return 2;
+  }
+  function fleetList() {
+    return [...sessions.values()]
+      .sort((a, b) => (fleetRank(a) - fleetRank(b)) || (b.lastActivity || 0) - (a.lastActivity || 0));
+  }
 
   // ── tabs / navigation ──────────────────────────────────────────────────────
   function setTab(tab) {
@@ -435,10 +459,10 @@
 
   // ── fleet ──────────────────────────────────────────────────────────────────
   function renderFleet() {
-    const list = liveList();
+    const list = fleetList();
     if (!list.length) {
       main.innerHTML = `<div class="glow"></div>` +
-        emptyHtml('▦', 'No agents running', 'Tap ＋ New to spawn one.');
+        emptyHtml('▦', 'No agents', 'Tap ＋ New to spawn one.');
       return;
     }
     main.innerHTML = list.map(fleetCard).join('');
