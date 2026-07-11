@@ -193,6 +193,12 @@ export interface RemoteShareInfo {
   hubAdopted: boolean;
   /** Same, for claudemon. */
   claudemonAdopted: boolean;
+  /** True when sharing is on but the hub does NOT answer at the advertised
+   *  LAN/Tailscale address — the phone QR would point at a dead endpoint.
+   *  The common case: an ADOPTED `workspacer serve` bound to loopback (its
+   *  deliberate default); we can't rebind a hub we don't own, so the dialog
+   *  must say "restart serve with --host" instead of rendering the QR. */
+  advertisedUnreachable: boolean;
   /** Configured "connect to remote server" target (client mode), or null.
    *  When set, the renderer boots against this REMOTE hub instead of the
    *  local one and main skips spawning local daemons — see remoteServer.ts. */
@@ -208,11 +214,16 @@ function webappDir(): string {
 }
 
 /** Connection info for the remote-control client — for the UI / logs. */
-export function getRemoteShareInfo(): RemoteShareInfo {
+export async function getRemoteShareInfo(): Promise<RemoteShareInfo> {
   const enabled = isRemoteEnabled();
   const host = advertiseHost();
   const q = HUB_TOKEN ? `?token=${encodeURIComponent(HUB_TOKEN)}` : '';
   const hasWebApp = enabled && fs.existsSync(webappDir());
+  // An owned hub is (re)spawned with the right binding when sharing flips on,
+  // so only the adopted case can advertise an address nothing listens on —
+  // probe it rather than hand out a QR that scans to a dead endpoint.
+  const advertisedUnreachable =
+    enabled && adopted && !(await probeHealth(`http://${host}:${PORT}/health`));
   return {
     enabled,
     token: HUB_TOKEN,
@@ -222,6 +233,7 @@ export function getRemoteShareInfo(): RemoteShareInfo {
     desktopBus: DESKTOP_RENDERER_USES_BUS,
     hubAdopted: adopted,
     claudemonAdopted: isClaudemonAdopted(),
+    advertisedUnreachable,
     remoteClient: getRemoteServer(),
   };
 }

@@ -109,7 +109,7 @@ describe('hubDaemon adopt-vs-spawn', () => {
     expect(spawnMock).not.toHaveBeenCalled();
     expect(killStaleListener).not.toHaveBeenCalled();
     expect(mod.isHubAdopted()).toBe(true);
-    expect(mod.getRemoteShareInfo().hubAdopted).toBe(true);
+    expect((await mod.getRemoteShareInfo()).hubAdopted).toBe(true);
   });
 
   it('kills stale + spawns when the probe finds nothing healthy', async () => {
@@ -119,7 +119,7 @@ describe('hubDaemon adopt-vs-spawn', () => {
     expect(killStaleListener).toHaveBeenCalledWith(7895, 'hub');
     expect(spawnMock).toHaveBeenCalledTimes(1);
     expect(mod.isHubAdopted()).toBe(false);
-    expect(mod.getRemoteShareInfo().hubAdopted).toBe(false);
+    expect((await mod.getRemoteShareInfo()).hubAdopted).toBe(false);
   });
 
   it('stopHub never signals an adopted hub', async () => {

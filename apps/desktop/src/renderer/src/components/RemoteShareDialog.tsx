@@ -15,6 +15,9 @@ interface RemoteInfo {
   /** Local daemons adopted from an external `workspacer serve` on this machine. */
   hubAdopted?: boolean;
   claudemonAdopted?: boolean;
+  /** Sharing is on but nothing answers at the advertised address (an adopted
+   *  serve bound to loopback) — the QR would be dead; show the fix instead. */
+  advertisedUnreachable?: boolean;
   /** Configured "connect to remote server" target (client mode), or null. */
   remoteClient?: { httpUrl: string; busUrl: string; token: string } | null;
 }
@@ -146,7 +149,8 @@ const RemoteShareDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           <>
             {info.hubAdopted && <AdoptedNote claudemon={!!info.claudemonAdopted} />}
             {!info.enabled && <DisabledState busy={toggling} onStart={() => toggleShare(true)} />}
-            {info.enabled && (
+            {info.enabled && info.advertisedUnreachable && <UnreachableNote />}
+            {info.enabled && !info.advertisedUnreachable && (
               <EnabledState
                 info={info}
                 copied={copied}
@@ -171,6 +175,32 @@ const RemoteShareDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     </div>
   );
 };
+
+/** The adopted server doesn't answer at the address the QR would advertise —
+ *  almost always a `workspacer serve` on its loopback default. We can't rebind
+ *  a hub we don't own, so a QR here would scan to a dead endpoint; show the
+ *  one-line fix instead. */
+function UnreachableNote() {
+  return (
+    <div
+      style={{
+        margin: '0 0 14px',
+        padding: '10px 12px',
+        borderRadius: 'var(--wks-radius-md)',
+        background: 'color-mix(in srgb, var(--wks-warning, #d97706) 8%, transparent)',
+        border: '1px solid color-mix(in srgb, var(--wks-warning, #d97706) 30%, transparent)',
+        fontSize: '0.7rem',
+        color: 'var(--wks-text-secondary)',
+        lineHeight: 1.6,
+      }}
+    >
+      The adopted server isn&apos;t reachable from the network — it&apos;s bound to loopback, so a
+      phone can&apos;t connect and the QR would point at a dead address. Restart it with{' '}
+      <code style={inlineCode}>workspacer serve --host 0.0.0.0</code> (or your Tailscale IP), then
+      reopen this dialog.
+    </div>
+  );
+}
 
 /** Shown when the local hub/claudemon were ADOPTED from a `workspacer serve`
  *  running on this machine: the app is a guest of those daemons — it didn't
