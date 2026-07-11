@@ -188,11 +188,12 @@ func renderBanner(b bannerInfo) string {
 		{"remote", b.RemoteURL},
 		{"mobile", b.MobileURL},
 		{"claudemon", b.ClaudemonURL},
-		{"token", b.Token + "  (pairing credential — anyone who has it controls this server)"},
+		{"token", b.Token + "  (operator pairing credential — anyone who has it controls this server)"},
 	}
 	for _, r := range rows {
 		fmt.Fprintf(&sb, "  %-10s %s\n", r[0], r[1])
 	}
-	sb.WriteString("\nPress Ctrl-C to stop.\n")
+	sb.WriteString("\nScoped tokens (read-only / triage instead of full control): workspacer token create --scope view|triage\n")
+	sb.WriteString("Press Ctrl-C to stop.\n")
 	return sb.String()
 }

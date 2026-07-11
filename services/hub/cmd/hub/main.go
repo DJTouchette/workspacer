@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/djtouchette/workspacer-hub/internal/authtoken"
 	"github.com/djtouchette/workspacer-hub/internal/broker"
 	"github.com/djtouchette/workspacer-hub/internal/bus"
 	"github.com/djtouchette/workspacer-hub/internal/claudemon"
@@ -83,6 +84,7 @@ func main() {
 	examplesDir := flag.String("examples-dir", "", "directory of bundled example plugins users can add from the UI (read-only catalog)")
 	webappDir := flag.String("webapp-dir", os.Getenv("WORKSPACER_WEBAPP_DIR"), "directory of the built web app (dist/web) to serve at /app/ for full remote parity; empty = disabled")
 	token := flag.String("token", os.Getenv("HUB_TOKEN"), "shared secret required to reach /bus + mutating routes (empty = no auth, localhost-only default)")
+	tokensFile := flag.String("tokens-file", authtoken.DefaultPath(), "capability-scoped tokens file (tokens.json, minted by `workspacer token create`); empty = scoped tokens disabled")
 	layoutFile := flag.String("layout-file", defaultLayoutFile(), "path to persist the shared workspace layout document (empty = memory only)")
 	pushDir := flag.String("push-dir", defaultPushDir(), "directory holding the VAPID keypair + Web Push subscriptions (for the /m PWA's background notifications)")
 	brainScope := flag.String("brain-scope", "off", "supervise the brain capability provider: off | full (whole surface, headless) | catalog (file-backed subset, when the desktop app owns the live caps)")
@@ -98,9 +100,26 @@ func main() {
 	}
 
 	// RPC authorization is per connection: the bus tags each caller at handshake
-	// (host token → trusted, per-plugin token → that plugin's declared caps) and
-	// gates calls accordingly. The plugin manager registers per-plugin tokens
-	// with srv below.
+	// (host token → trusted, per-plugin token → that plugin's declared caps,
+	// scoped user token → its tier's method allowlist) and gates calls
+	// accordingly. The plugin manager registers per-plugin tokens with srv below.
+
+	// Capability-scoped user tokens (view / triage / operator), persisted next to
+	// the host remote-token and minted with `workspacer token create`. The store
+	// re-reads the file when it changes, so minting/revoking takes effect on the
+	// next connection without restarting the hub — no minting endpoint needed.
+	// The host token itself never goes through this path: it stays trusted
+	// (implicit operator), which is what keeps every existing pairing working.
+	if *tokensFile != "" {
+		store := authtoken.NewStore(*tokensFile)
+		srv.SetScopedTokenLookup(func(tok string) (bus.ScopedIdent, bool) {
+			rec, ok := store.Lookup(tok)
+			if !ok {
+				return bus.ScopedIdent{}, false
+			}
+			return bus.ScopedIdent{Scope: string(rec.Scope), Methods: rec.Scope.Methods()}, true
+		})
+	}
 
 	// Shared workspace layout document — the hub owns this so the desktop and
 	// the web remote mirror each other (tmux-style). Registered as in-process

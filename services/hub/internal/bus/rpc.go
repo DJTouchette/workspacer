@@ -144,7 +144,7 @@ func (rt *router) call(caller *conn, f Frame) {
 		return
 	}
 	if !caller.mayCall(f.Method) {
-		_ = caller.send(Frame{Op: "error", ID: f.ID, Error: "plugin not authorized for capability " + f.Method})
+		_ = caller.send(Frame{Op: "error", ID: f.ID, Error: caller.callDenied(f.Method)})
 		return
 	}
 	// Verb is allowed; now enforce argument scoping (e.g. a path-scoped fs.* call

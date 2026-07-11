@@ -66,6 +66,28 @@ type capGrant struct {
 	fsRoots []string
 }
 
+// ScopedIdent is the identity a capability-scoped user token resolves to: a
+// human-readable scope name (surfaced in deny errors) and the method patterns
+// (exact or `prefix.*`/`*`, matched with event.Matches) the token may call.
+// Unlike a plugin ident it carries no filesystem confinement — it is a person's
+// credential, tiered by verb, not a sandboxed program's.
+type ScopedIdent struct {
+	Scope   string
+	Methods []string
+}
+
+// operator reports whether the ident grants everything — such a token is
+// treated exactly like the host token (trusted: may also register providers,
+// publish, and pass Authorized for token-guarded HTTP routes).
+func (si ScopedIdent) operator() bool {
+	for _, m := range si.Methods {
+		if m == "*" {
+			return true
+		}
+	}
+	return false
+}
+
 // Server adapts a broker (events) + router (calls) to HTTP/WebSocket.
 type Server struct {
 	broker *broker.Broker
@@ -73,11 +95,33 @@ type Server struct {
 	extra  map[string]http.HandlerFunc
 	token  string // when non-empty, /bus + protected routes require this bearer token
 
+	// Capability-scoped user tokens (tokens.json, minted by `workspacer token
+	// create`). Resolved via an injected lookup so the hub decides persistence /
+	// live reload and the bus stays a pure policy point. Nil = feature off.
+	scopedLookup func(token string) (ScopedIdent, bool)
+
 	// Per-plugin tokens: a connection presenting one is tagged as that plugin and
 	// may only call the capabilities it declared. The host token (s.token) is
 	// trusted (full access). Registered by the plugin manager.
 	ptMu         sync.RWMutex
 	pluginTokens map[string]pluginIdent
+}
+
+// SetScopedTokenLookup installs the resolver for capability-scoped user tokens.
+// It runs at connection handshake (and on Authorized), so a lookup backed by a
+// reloading store makes newly minted / revoked tokens take effect on the next
+// connection without restarting the hub.
+func (s *Server) SetScopedTokenLookup(fn func(token string) (ScopedIdent, bool)) {
+	s.scopedLookup = fn
+}
+
+// lookupScoped resolves a presented token to a scoped ident, if the feature is
+// wired and the token is known.
+func (s *Server) lookupScoped(token string) (ScopedIdent, bool) {
+	if s.scopedLookup == nil || token == "" {
+		return ScopedIdent{}, false
+	}
+	return s.scopedLookup(token)
 }
 
 // NewServer wraps a broker.
@@ -154,18 +198,26 @@ func (s *Server) SetToken(t string) {
 	s.token = t
 }
 
-// Authorized reports whether a request carries the required token. Always true
-// when no token is configured. Accepts either `Authorization: Bearer <token>`
-// or a `?token=<token>` query param — browsers can't set headers on a
-// WebSocket handshake, so the query form is what the mobile client uses.
+// Authorized reports whether a request carries a token with FULL access: the
+// host token, or a scoped token whose grant is operator (`*`). Guarded HTTP
+// routes (plugin admin, /remote, /app entry) are operator surface, so view /
+// triage tokens do not pass — the /m PWA they pair with is served unguarded
+// and the real boundary stays /bus. Always true when no token is configured.
+// Accepts either `Authorization: Bearer <token>` or a `?token=<token>` query
+// param — browsers can't set headers on a WebSocket handshake, so the query
+// form is what the mobile client uses.
 func (s *Server) Authorized(r *http.Request) bool {
 	if s.token == "" {
 		return true
 	}
-	if h := r.Header.Get("Authorization"); h == "Bearer "+s.token {
+	tok := presentedToken(r)
+	if tok == s.token {
 		return true
 	}
-	return r.URL.Query().Get("token") == s.token
+	if si, ok := s.lookupScoped(tok); ok && si.operator() {
+		return true
+	}
+	return false
 }
 
 // presentedToken extracts the caller's token from an Authorization: Bearer
@@ -280,16 +332,31 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 	// Classify the connection by the token it presents:
 	//   - a registered per-plugin token → that plugin, restricted to its caps
 	//   - the host token (or no host token configured) → trusted, full access
+	//   - a scoped user token (tokens.json) → its tier's method allowlist;
+	//     an operator-tier token is trusted, exactly like the host token
 	//   - anything else → rejected
 	tok := presentedToken(r)
 	var trusted bool
 	var caps map[string]capGrant
 	var pluginID string
 	var events capspec.EventGrants
+	var scope string
+	var scopeMethods []string
 	if pi, ok := s.lookupPluginToken(tok); ok {
 		caps, pluginID, events = pi.caps, pi.id, pi.events
 	} else if s.token == "" || tok == s.token {
 		trusted = true
+	} else if si, ok := s.lookupScoped(tok); ok {
+		if si.operator() {
+			trusted = true
+		} else {
+			scope, scopeMethods = si.Scope, si.Methods
+			if scopeMethods == nil {
+				// A record with no grants must still be a real deny-all identity,
+				// not accidentally mistaken for "unscoped" downstream.
+				scopeMethods = []string{}
+			}
+		}
 	} else {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
@@ -313,6 +380,7 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 	cn := &conn{
 		ws: ws, ctx: ctx, trusted: trusted, caps: caps, pluginID: pluginID,
 		emits: events.Emits, consumes: events.Consumes, provides: events.Provides,
+		scope: scope, scopeMethods: scopeMethods,
 	}
 	s.router.addConn(cn)
 	defer cn.ws.CloseNow()
@@ -369,7 +437,11 @@ func (s *Server) handleBus(w http.ResponseWriter, r *http.Request) {
 			// capability — commands must go through `call`, or be an explicitly
 			// granted emit.
 			if !cn.mayPublish(f.Event.Type) {
-				_ = cn.send(Frame{Op: "error", Error: "plugin not authorized to publish event " + f.Event.Type})
+				if cn.scopeMethods != nil {
+					_ = cn.send(Frame{Op: "error", Error: fmt.Sprintf("not authorized: publishing events is outside this token's %q scope", cn.scope)})
+				} else {
+					_ = cn.send(Frame{Op: "error", Error: "plugin not authorized to publish event " + f.Event.Type})
+				}
 				continue
 			}
 			s.broker.Publish(*f.Event)
@@ -405,6 +477,13 @@ type conn struct {
 	trusted  bool
 	caps     map[string]capGrant
 	pluginID string
+	// Scoped user token (tokens.json): the tier name (for deny errors) and the
+	// method patterns it may call. scopeMethods non-nil marks the conn as
+	// token-scoped: it may subscribe to and receive every event (view includes
+	// streams) but may not publish or register as a provider, and may call only
+	// matching methods. Nil on trusted and plugin conns.
+	scope        string
+	scopeMethods []string
 	// Event-side grants (empty for a trusted conn, which bypasses these): which
 	// event types this plugin may publish / receive, and which capability methods
 	// it may register as a provider of. Patterns are matched with event.Matches.
@@ -421,11 +500,12 @@ func (cn *conn) mayPublish(typ string) bool {
 }
 
 // mayConsume reports whether an event of the given type may be delivered to this
-// connection. Trusted conns receive everything they subscribed to; a plugin
-// additionally only receives types matched by its manifest's `consumes`, so a
-// broad `subscribe` can never widen its reach past what it declared.
+// connection. Trusted conns receive everything they subscribed to; a scoped
+// user token likewise (event/stream subscriptions are part of even the view
+// tier); a plugin only receives types matched by its manifest's `consumes`, so
+// a broad `subscribe` can never widen its reach past what it declared.
 func (cn *conn) mayConsume(typ string) bool {
-	return cn.trusted || event.MatchesAny(cn.consumes, typ)
+	return cn.trusted || cn.scopeMethods != nil || event.MatchesAny(cn.consumes, typ)
 }
 
 // mayProvide reports whether this connection may register as the provider of a
@@ -437,14 +517,27 @@ func (cn *conn) mayProvide(method string) bool {
 
 // mayCall reports whether this connection is allowed to invoke method at all
 // (the verb check). Trusted connections (the host / MCP facade) may call
-// anything; a plugin may call only the capabilities it was granted. Argument
+// anything; a scoped user token may call only methods matching its tier's
+// patterns; a plugin may call only the capabilities it was granted. Argument
 // scoping (which paths) is a separate step — see authorize.
 func (cn *conn) mayCall(method string) bool {
 	if cn.trusted {
 		return true
 	}
+	if cn.scopeMethods != nil {
+		return event.MatchesAny(cn.scopeMethods, method)
+	}
 	_, ok := cn.caps[method]
 	return ok
+}
+
+// callDenied renders the error for a call mayCall refused, naming what the
+// caller is (its scope or plugin identity) so the fix is obvious client-side.
+func (cn *conn) callDenied(method string) string {
+	if cn.scopeMethods != nil {
+		return fmt.Sprintf("not authorized: method %q is outside this token's %q scope (mint a broader token with `workspacer token create`)", method, cn.scope)
+	}
+	return "plugin not authorized for capability " + method
 }
 
 // authorize enforces argument-level scoping for a call mayCall already admitted.
@@ -454,6 +547,11 @@ func (cn *conn) mayCall(method string) bool {
 // Non-path methods pass straight through.
 func (cn *conn) authorize(method string, params json.RawMessage) error {
 	if cn.trusted {
+		return nil
+	}
+	if cn.scopeMethods != nil {
+		// Scoped user tokens are tiered by verb only (mayCall) — they are a
+		// person's credential, not a sandboxed program's, so no path confinement.
 		return nil
 	}
 	g, ok := cn.caps[method]

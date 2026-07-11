@@ -5,27 +5,19 @@ import (
 	"encoding/base64"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
+
+	"github.com/djtouchette/workspacer-hub/internal/authtoken"
 )
 
 // configDir mirrors the desktop app's getConfigDir (configService.ts):
 // %APPDATA%\workspacer on Windows, $XDG_CONFIG_HOME/workspacer or
 // ~/.config/workspacer elsewhere. Sharing the directory is deliberate — the
-// CLI and the desktop app must agree on where the pairing token lives.
+// CLI and the desktop app must agree on where the pairing token lives. The
+// single definition lives in internal/authtoken so the hub's tokens.json
+// default resolves to the very same directory.
 func configDir() string {
-	if runtime.GOOS == "windows" {
-		if appData := os.Getenv("APPDATA"); appData != "" {
-			return filepath.Join(appData, "workspacer")
-		}
-		home, _ := os.UserHomeDir()
-		return filepath.Join(home, "AppData", "Roaming", "workspacer")
-	}
-	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-		return filepath.Join(xdg, "workspacer")
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".config", "workspacer")
+	return authtoken.ConfigDir()
 }
 
 // loadOrCreateToken returns the hub bus token, minting + persisting one on

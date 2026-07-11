@@ -130,8 +130,46 @@ The `spawn_agent` / `create_terminal` tools require the matching capabilities to
 be registered by Electron main (`src/main/services/hubCapabilities.ts`); the
 session runs headless in claudemon and a desktop pane can attach to it later.
 
-Next milestones: per-method capability tokens (the `SetAuthorize` seam) →
-surfacing MCP-spawned sessions as panes in the UI automatically.
+Next milestones: surfacing MCP-spawned sessions as panes in the UI
+automatically.
+
+## Capability tokens (per-method authorization)
+
+Authentication has always been the bus's boundary; **authorization** is now
+per-method too. Besides the host token (full access) and per-plugin tokens
+(manifest-scoped), the hub honors **capability-scoped user tokens** minted with
+the CLI:
+
+```sh
+workspacer token create --scope view|triage|operator [--label "dana's phone"]
+workspacer token list
+workspacer token revoke <token-or-prefix>
+```
+
+Tiers (defined in `internal/authtoken`, derived from what the real clients
+call; enforced at the router's single dispatch point in `internal/bus`):
+
+| Scope | May call | Meant for |
+| --- | --- | --- |
+| `view` | read-only: `agents.list`, `sessions.snapshots`/`snapshot`/`transcript`/`conversation`, `layout.get`, `config.get`, `app.getCwd`, `push.key` — plus event/stream subscriptions | dashboards, fleet monitors |
+| `triage` | view + acting on attention: `claude.approve`/`answer`/`signal`, `agents.sendMessage`, `push.subscribe`/`unsubscribe` | a phone on `/m` that approves and chats but can't spawn, open terminals, touch git, or administer plugins |
+| `operator` | everything (`*`) — trusted like the host token, including provider registration and the token-guarded HTTP routes | full remote control |
+
+The tiers are explicit allowlists, so **any method not listed — including ones
+added later — fails closed** for `view`/`triage`; a denied call gets a JSON-RPC
+error naming the token's scope and the method. Scoped tokens may subscribe to
+events (that's the view tier's stream side) but never publish or register as
+providers. Tokens persist in `<config>/workspacer/tokens.json` (0600), next to
+the `remote-token`; the hub re-reads the file when it changes, so
+minting/revoking takes effect on the next connection without a restart (an
+already-open connection keeps its grants until it drops).
+
+**Backward compatibility:** the persisted `remote-token` (and any token passed
+via `--token`/`$HUB_TOKEN`) has no scope record and stays fully trusted —
+implicit operator — so the desktop app, brain, TUI, MCP facade, and existing
+phone pairings are untouched. Per-plugin tokens keep their manifest-declared
+scoping (a manifest that declares no capabilities can call nothing — that
+stays deny-all, deliberately stricter than operator).
 
 ## Headless brain (`cmd/brain`)
 
