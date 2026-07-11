@@ -258,6 +258,11 @@ export function registerHubCapabilities(): void {
       const sessionId = await spawnManagedAgent({
         provider,
         cwd,
+        // Codex mirrors Claude's stream transport: 'stream' spawns headless
+        // (GUI-only, daemon-owned thread). Must ride through here like on the
+        // IPC branch (ipc.ts) or a remote headless spawn silently downgrades
+        // to the hybrid PTY session.
+        ...(provider === 'codex' && reqTransport === 'stream' && { transport: 'stream' as const }),
         model,
         effort,
         skipPermissions,
