@@ -278,9 +278,11 @@ jobs:
 
       # Nightly runs: attach to the rolling `nightly` prerelease instead (the
       # gate job already removed yesterday's, so the first leg to finish
-      # recreates it at today's commit). The electron-updater metadata
-      # (latest*.yml / .blockmap) is deliberately NOT attached — stable desktop
-      # installs must never auto-update onto a nightly.
+      # recreates it at today's commit). The latest*.yml/.blockmap updater
+      # metadata IS attached — nightly installs read this feed via the generic
+      # provider (updateService switches on the -nightly version). Stable
+      # installs never see it: the GitHub provider resolves /releases/latest,
+      # which excludes prereleases.
       - name: Attach to rolling nightly prerelease
         if: needs.gate.outputs.nightly == 'true'
         uses: softprops/action-gh-release@v2
@@ -291,12 +293,14 @@ jobs:
           draft: false
           target_commitish: ${{ github.sha }}
           body: |
-            Rolling nightly build of master (`${{ github.sha }}`).
-            Unsigned; auto-update metadata intentionally omitted — install manually.
+            Rolling nightly build of master (`${{ github.sha }}`). Unsigned.
+            Nightly installs auto-update onto the next nightly from this feed.
           files: |
             apps/desktop/release/*.exe
             apps/desktop/release/*.dmg
             apps/desktop/release/*.AppImage
+            apps/desktop/release/*.yml
+            apps/desktop/release/*.blockmap
             apps/desktop/release/workspacer-server-*
           fail_on_unmatched_files: false
 

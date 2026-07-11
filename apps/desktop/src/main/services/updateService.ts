@@ -15,6 +15,9 @@
  *    non-fatal and log-only (never a user-facing dialog), so an unsigned mac
  *    build degrades silently and the flow lights up on its own once signing +
  *    a zip target land — no code change required.
+ *  - Nightly builds (version contains `-nightly`) update from the rolling
+ *    `nightly` prerelease via the generic provider (see wire()); stable and
+ *    nightly feeds never cross.
  */
 
 import { app, BrowserWindow, dialog } from 'electron';
@@ -146,6 +149,22 @@ class UpdateService {
   private wire(channel: string): void {
     if (this.wired) return;
     this.wired = true;
+
+    // Nightly builds update from the rolling `nightly` prerelease instead of
+    // the stable feed. The GitHub provider can't serve it — it parses release
+    // tags as semver and the rolling tag is literally "nightly" — so nightlies
+    // switch to the generic provider aimed at the tag's stable download URL
+    // (where the workflow attaches latest*.yml). Stable installs never see
+    // that feed: their provider resolves /releases/latest, which GitHub keeps
+    // free of prereleases.
+    if (app.getVersion().includes('-nightly')) {
+      autoUpdater.setFeedURL({
+        provider: 'generic',
+        // Owner/repo mirror electron-builder.yml's publish block.
+        url: 'https://github.com/DJTouchette/workspacer/releases/download/nightly',
+      });
+      console.log('[updateService] nightly build — updating from the rolling nightly feed');
+    }
 
     // Download in the background as soon as an update is found; we prompt the
     // user only at the install (restart) step, matching the product choice.

@@ -29,6 +29,7 @@ class MockUpdater extends EventEmitter {
   channel = '';
   checkForUpdates = vi.fn(async () => ({}));
   quitAndInstall = vi.fn();
+  setFeedURL = vi.fn();
 }
 let autoUpdater: MockUpdater;
 vi.mock('electron-updater', () => ({
@@ -60,6 +61,7 @@ beforeEach(() => {
   vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   electronApp.isPackaged = true;
+  electronApp.getVersion = () => '0.0.0-test';
   configValue = { updates: { enabled: true, channel: 'latest' } };
 });
 
@@ -94,6 +96,24 @@ describe('updateService – gating', () => {
     const svc = await loadService();
     svc.start(fakeWindow());
     expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
+    svc.stop();
+  });
+
+  it('nightly builds retarget the updater at the rolling nightly feed', async () => {
+    electronApp.getVersion = () => '0.126.2-nightly.20260711.abc1234';
+    const svc = await loadService();
+    svc.start(fakeWindow());
+    expect(autoUpdater.setFeedURL).toHaveBeenCalledWith({
+      provider: 'generic',
+      url: 'https://github.com/DJTouchette/workspacer/releases/download/nightly',
+    });
+    svc.stop();
+  });
+
+  it('stable builds keep the default (GitHub /releases/latest) feed', async () => {
+    const svc = await loadService();
+    svc.start(fakeWindow());
+    expect(autoUpdater.setFeedURL).not.toHaveBeenCalled();
     svc.stop();
   });
 

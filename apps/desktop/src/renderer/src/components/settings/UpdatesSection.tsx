@@ -38,6 +38,7 @@ const UpdatesSection: React.FC<UpdatesSectionProps> = ({ config, save }) => {
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
         Checks the GitHub release feed on launch and every few hours, downloads a newer build in the
         background, and asks before restarting to install. Only active in the packaged app.
+        {isNightly && ' Nightly builds update from the rolling nightly prerelease, never stable.'}
       </div>
     </Section>
   );
