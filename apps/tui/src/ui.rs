@@ -2342,6 +2342,65 @@ mod tests {
     }
 
     #[test]
+    fn role_label_names_provider_for_assistant_only() {
+        // The assistant header names the session's provider; the user header
+        // (also the optimistic-echo path) stays a fixed "▍ you" regardless.
+        let t = Theme::default();
+        let mut out = Vec::new();
+        push_role_label(&mut out, &t, Role::Assistant, "codex");
+        push_role_label(&mut out, &t, Role::User, "codex");
+        let texts = line_texts(&out);
+        assert_eq!(texts, vec!["▍ codex", "▍ you"]);
+        assert_eq!(out[0].spans[0].style.fg, Some(t.ok), "assistant in ok");
+        assert!(out[0].spans[0].style.add_modifier.contains(Modifier::BOLD));
+        assert_eq!(out[1].spans[0].style.fg, Some(t.accent), "user in accent");
+    }
+
+    #[test]
+    fn transcript_agent_label_defaults_to_claude_without_a_session() {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let (ptx, _prx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            crate::claudemon::Claudemon::new("http://127.0.0.1:59999".into()),
+            Vec::new(),
+            Vec::new(),
+            crate::config::Config::default(),
+            tx,
+            ptx,
+        );
+        app.turns = vec![crate::types::Turn {
+            role: Role::Assistant,
+            parts: vec![Part::Text("hi".into())],
+        }];
+
+        // No open chat session → the header falls back to "claude".
+        let texts = line_texts(&transcript_lines(&app, 40));
+        assert!(texts.iter().any(|l| l == "▍ claude"), "{texts:?}");
+
+        // A codex session open (wire provider + workspace tab) → "▍ codex".
+        let codex: Agent = serde_json::from_value(serde_json::json!({
+            "session_id": "s1", "mode": "responding", "provider": "codex"
+        }))
+        .unwrap();
+        app.all_agents = vec![codex];
+        app.view = View::Agent { id: "s1".into() };
+        app.workspaces.insert(
+            "s1".into(),
+            crate::app::Workspace {
+                tabs: vec![crate::app::Tab {
+                    title: "codex".into(),
+                    session_id: "s1".into(),
+                    kind: TabKind::Claude,
+                }],
+                active: 0,
+            },
+        );
+        let texts = line_texts(&transcript_lines(&app, 40));
+        assert!(texts.iter().any(|l| l == "▍ codex"), "{texts:?}");
+        assert!(!texts.iter().any(|l| l == "▍ claude"), "{texts:?}");
+    }
+
+    #[test]
     fn transcript_renders_a_pending_echo_as_a_user_turn() {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let (ptx, _prx) = tokio::sync::mpsc::unbounded_channel();

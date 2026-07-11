@@ -213,6 +213,73 @@ describe('managed pending → approval/question cards', () => {
     expect(snap?.pendingApproval).toBeNull();
   });
 
+  it('a frame with NO pending key leaves a live approval card alone; pending:null clears it', () => {
+    const sid = managedSession();
+    claudeSessionStore.applyManagedMode(sid, 'approval', {
+      provider: 'codex',
+      pending: { kind: 'approval', tool: 'exec_command', raw: { command: 'npm test' } },
+    });
+    expect(claudeSessionStore.getSnapshot(sid)?.pendingApproval?.toolName).toBe('exec_command');
+
+    // Tri-state contract: `undefined` (key absent) = the caller carried no
+    // pending info — a session-list reconciler or hub bridge that omits it must
+    // NOT wipe a live card mid-decision…
+    claudeSessionStore.applyManagedMode(sid, 'working', { provider: 'codex' });
+    expect(claudeSessionStore.getSnapshot(sid)?.pendingApproval?.toolName).toBe('exec_command');
+
+    // …while an explicit `null` means the daemon says nothing is pending: clear.
+    claudeSessionStore.applyManagedMode(sid, 'responding', { provider: 'codex', pending: null });
+    expect(claudeSessionStore.getSnapshot(sid)?.pendingApproval).toBeNull();
+  });
+
+  it('prefers a gateway-shaped tool_input envelope over the whole raw object', () => {
+    const sid = managedSession();
+    claudeSessionStore.applyManagedMode(sid, 'approval', {
+      provider: 'codex',
+      pending: {
+        kind: 'approval',
+        tool: 'Bash',
+        // Gateway-shaped payload: the params live under `tool_input`. Mapping
+        // the whole raw object instead would change both the rendered card and
+        // the JSON.stringify dedup signature (resurrecting dismissed cards on
+        // every re-broadcast frame).
+        raw: { tool_input: { command: 'rm -rf /tmp/x' } },
+      },
+    });
+    expect(claudeSessionStore.getSnapshot(sid)?.pendingApproval?.toolInput).toEqual({
+      command: 'rm -rf /tmp/x',
+    });
+  });
+
+  it('an approval frame clears pendingQuestions and a question frame clears pendingApproval', () => {
+    const sid = managedSession();
+    claudeSessionStore.applyManagedMode(sid, 'approval', {
+      provider: 'codex',
+      pending: { kind: 'approval', tool: 'exec_command', raw: { command: 'ls' } },
+    });
+    claudeSessionStore.applyManagedMode(sid, 'question', {
+      provider: 'codex',
+      pending: {
+        kind: 'question',
+        questions: [
+          { question: 'Proceed?', header: null, multi_select: false, options: [{ label: 'Yes' }] },
+        ],
+        raw: {},
+      },
+    });
+    let snap = claudeSessionStore.getSnapshot(sid);
+    expect(snap?.pendingApproval).toBeNull();
+    expect(snap?.pendingQuestions).toHaveLength(1);
+
+    claudeSessionStore.applyManagedMode(sid, 'approval', {
+      provider: 'codex',
+      pending: { kind: 'approval', tool: 'exec_command', raw: { command: 'ls' } },
+    });
+    snap = claudeSessionStore.getSnapshot(sid);
+    expect(snap?.pendingQuestions).toBeNull();
+    expect(snap?.pendingApproval?.toolName).toBe('exec_command');
+  });
+
   it('never drives the cards for claude sessions (hook-owned)', () => {
     const sid = uniqueId();
     hook(sid, 'UserPromptSubmit');

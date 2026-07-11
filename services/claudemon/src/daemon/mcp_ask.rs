@@ -523,6 +523,66 @@ mod tests {
         assert_eq!(mode(&state), Some(SessionMode::Responding));
     }
 
+    #[tokio::test]
+    async fn aborted_ask_restores_mode_and_channel_via_drop_guard() {
+        // The restore lives ONLY in QuestionGuard::drop: when the HTTP request
+        // is dropped mid-question (agent killed, connection reset) the future
+        // runs no code after its await, so Drop is the one place that can put
+        // the session back. Aborting the in-flight tools/call task simulates
+        // exactly that.
+        let state = test_state();
+        state.store.register_managed("sess-1", "/tmp/proj", "codex");
+
+        let call_state = state.clone();
+        let call = tokio::spawn(async move {
+            rpc(
+                call_state,
+                "sess-1",
+                json!({
+                    "jsonrpc": "2.0", "id": 7, "method": "tools/call",
+                    "params": { "name": "AskUserQuestion", "arguments": {
+                        "questions": [{
+                            "question": "Which db?",
+                            "options": [{ "label": "sqlite" }, { "label": "postgres" }],
+                        }],
+                    }},
+                }),
+            )
+            .await
+        });
+
+        // Wait for the question to park…
+        let mode = |s: &ApiState| s.store.get("sess-1").map(|st| st.mode);
+        for _ in 0..200 {
+            if mode(&state) == Some(SessionMode::Question) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        assert_eq!(mode(&state), Some(SessionMode::Question), "question parked");
+
+        // …then kill the request mid-question.
+        call.abort();
+        let err = call.await.expect_err("the aborted call never completes");
+        assert!(err.is_cancelled());
+
+        // Drop must have restored the session: back to Responding, no pending
+        // question left for the GUI to render.
+        let restored = state.store.get("sess-1").unwrap();
+        assert_eq!(restored.mode, SessionMode::Responding);
+        assert!(restored.pending.is_none(), "no orphaned question card");
+        // And the answer channel was unregistered, not leaked: /answer falls
+        // through (false) instead of feeding a dead question.
+        assert!(!state.store.submit_managed_answer(
+            "sess-1",
+            ManagedAnswer {
+                option: Some(1),
+                text: None,
+                answers: None,
+            },
+        ));
+    }
+
     #[test]
     fn summarize_maps_multi_answers_and_free_text() {
         let questions: Vec<PendingQuestion> = serde_json::from_value(json!([
@@ -538,6 +598,54 @@ mod tests {
         assert_eq!(
             summarize(&questions, &answer),
             "Which db?: sqlite\nName?: call it claudemon"
+        );
+    }
+
+    #[test]
+    fn summarize_answer_index_mapping_edge_cases() {
+        // This string is the ONLY thing the agent reads back from
+        // AskUserQuestion — an off-by-one in the 1-based window or the n-1
+        // index reports the WRONG choice, which is worse than failing.
+        let questions: Vec<PendingQuestion> = serde_json::from_value(json!([
+            { "question": "Which db?", "options": [{ "label": "sqlite" }, { "label": "postgres" }] },
+            { "question": "Region?", "options": [{ "label": "us" }, { "label": "eu" }] },
+        ]))
+        .unwrap();
+        let multi = |answers: Vec<&str>| ManagedAnswer {
+            option: None,
+            text: None,
+            answers: Some(answers.into_iter().map(str::to_owned).collect()),
+        };
+
+        // Out-of-range numbers must pass through verbatim as free text —
+        // never index (or panic). "3" is one past the end; "0" one before.
+        assert_eq!(
+            summarize(&questions, &multi(vec!["3", "0"])),
+            "Which db?: 3\nRegion?: 0"
+        );
+
+        // An in-range number resolves 1-based, tolerant of whitespace.
+        assert_eq!(
+            summarize(&questions, &multi(vec![" 2 ", "1"])),
+            "Which db?: postgres\nRegion?: us"
+        );
+
+        // The single-answer shape addresses only question 0; every other
+        // question reports "(no answer)" rather than repeating the choice.
+        let single = ManagedAnswer {
+            option: Some(1),
+            text: None,
+            answers: None,
+        };
+        assert_eq!(
+            summarize(&questions, &single),
+            "Which db?: sqlite\nRegion?: (no answer)"
+        );
+
+        // Answers shorter than the question list leave the tail unanswered.
+        assert_eq!(
+            summarize(&questions, &multi(vec!["1"])),
+            "Which db?: sqlite\nRegion?: (no answer)"
         );
     }
 }

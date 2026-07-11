@@ -53,8 +53,10 @@ vi.mock('@xterm/addon-web-fonts', () => ({
   },
 }));
 
-// PTY-facing write, exposed so tests can assert the question-answer path.
+// PTY-facing write + restart, exposed so tests can assert the question-answer
+// path and the restart-preserves-transport contract.
 const mockWrite = vi.fn();
+const mockRestartSession = vi.fn().mockResolvedValue(undefined);
 vi.mock('../../src/hooks/useClaudeSpawn', () => ({
   useClaudeSpawn: vi.fn().mockReturnValue({
     sessionId: 'sess-1',
@@ -65,7 +67,7 @@ vi.mock('../../src/hooks/useClaudeSpawn', () => ({
     attachToTerminal: vi.fn(),
     startSession: vi.fn(),
     retry: vi.fn(),
-    restartSession: vi.fn(),
+    restartSession: mockRestartSession,
   }),
 }));
 
@@ -210,5 +212,115 @@ describe('ClaudePane send pipeline', () => {
     render(<ClaudePane paneId="p7" title="Claude" isActive cwd="/repo" />);
     fireEvent.click(await screen.findByText('Second'));
     expect(mockWrite).toHaveBeenCalledWith('2\r');
+  });
+});
+
+/**
+ * Non-claude hybrids (codex) HAVE a terminal, so the old `!hasTerminal`-only
+ * checks would happily type into it — but their questions/approvals are the
+ * daemon's parked AskUserQuestion / approval gateway, which the codex TUI knows
+ * nothing about. Both handlers must stay structural (`!hasTerminal || !isClaude`),
+ * mirroring the claude-side tests above.
+ */
+describe('ClaudePane managed provider (codex hybrid) — structural answer/approve', () => {
+  beforeEach(() => {
+    mockSession = makeSnapshot();
+    mockWrite.mockClear();
+    (window.electronAPI.claudeMessage as any) = vi.fn().mockResolvedValue({ ok: true });
+    (window.electronAPI.claudeApprove as any) = vi.fn().mockResolvedValue(undefined);
+    (window.electronAPI.claudeAnswer as any) = vi.fn().mockResolvedValue(undefined);
+  });
+
+  it('answering a codex question calls claudeAnswer with {option}, never the PTY', async () => {
+    mockSession = makeSnapshot({
+      lastActivity: Date.now(),
+      pendingQuestions: [
+        { question: 'Pick one', options: [{ label: 'First' }, { label: 'Second' }] },
+      ],
+    });
+    render(<ClaudePane paneId="c1" title="Codex" isActive cwd="/repo" provider="codex" />);
+    fireEvent.click(await screen.findByText('Second'));
+    await waitFor(() =>
+      expect(window.electronAPI.claudeAnswer).toHaveBeenCalledWith('sess-1', { option: 2 }),
+    );
+    expect(window.electronAPI.claudeAnswer).toHaveBeenCalledTimes(1);
+    expect(mockWrite).not.toHaveBeenCalled();
+  });
+
+  it('a failed codex /approve never falls back to PTY keystrokes', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    (window.electronAPI.claudeApprove as any) = vi.fn().mockRejectedValue(new Error('409'));
+    mockSession = makeSnapshot({
+      ambientState: 'waiting_approval',
+      pendingApproval: {
+        toolName: 'exec_command',
+        toolInput: { command: 'npm test' },
+        timestamp: Date.now(),
+      },
+    });
+    render(<ClaudePane paneId="c2" title="Codex" isActive cwd="/repo" provider="codex" />);
+    fireEvent.click(await screen.findByText('Allow'));
+    await waitFor(() =>
+      expect(window.electronAPI.claudeApprove).toHaveBeenCalledWith('sess-1', 'yes'),
+    );
+    // Let the rejection's .catch() run — the claude-only sendApproval fallback
+    // would land here as mockWrite keystrokes.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mockWrite).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+});
+
+/**
+ * Headless codex (session.transport === 'stream') is GUI-only: the daemon owns
+ * the thread, there is no PTY. The daemon-stamped session transport is the ONLY
+ * client-side discriminator, and a restart must carry it forward — otherwise a
+ * model/effort restart silently flips headless → hybrid.
+ */
+describe('ClaudePane headless codex — surface gating + restart transport', () => {
+  beforeEach(() => {
+    mockSession = makeSnapshot();
+    mockWrite.mockClear();
+    mockRestartSession.mockClear();
+    (window.electronAPI.claudeApprove as any) = vi.fn().mockResolvedValue(undefined);
+  });
+
+  it('a stream-transport codex session hides the GUI/Term view toggle (GUI-only)', () => {
+    mockSession = makeSnapshot({ transport: 'stream' });
+    render(<ClaudePane paneId="h1" title="Codex" isActive cwd="/repo" provider="codex" />);
+    expect(screen.getByText('Term').parentElement).toHaveStyle({ display: 'none' });
+  });
+
+  it('hybrid codex (no stream transport) keeps both surfaces and the toggle', () => {
+    mockSession = makeSnapshot();
+    render(<ClaudePane paneId="h2" title="Codex" isActive cwd="/repo" provider="codex" />);
+    expect(screen.getByText('Term').parentElement).toHaveStyle({ display: 'flex' });
+  });
+
+  it("restarting a headless codex session preserves transport:'stream'", async () => {
+    mockSession = makeSnapshot({ transport: 'stream', settings: { effort: 'low' } });
+    render(<ClaudePane paneId="h3" title="Codex" isActive cwd="/repo" provider="codex" />);
+    // Drive a restart through the effort pill (restart-only knob for codex).
+    fireEvent.click(screen.getByText('Low'));
+    fireEvent.click(await screen.findByText('High'));
+    fireEvent.click(await screen.findByText(/Restart with High effort/));
+    await waitFor(() =>
+      expect(mockRestartSession).toHaveBeenCalledWith(
+        expect.objectContaining({ effort: 'high', provider: 'codex', transport: 'stream' }),
+      ),
+    );
+  });
+
+  it("restarting a hybrid codex session keeps transport:'pty', independent of config", async () => {
+    mockSession = makeSnapshot({ settings: { effort: 'low' } });
+    render(<ClaudePane paneId="h4" title="Codex" isActive cwd="/repo" provider="codex" />);
+    fireEvent.click(screen.getByText('Low'));
+    fireEvent.click(await screen.findByText('High'));
+    fireEvent.click(await screen.findByText(/Restart with High effort/));
+    await waitFor(() =>
+      expect(mockRestartSession).toHaveBeenCalledWith(
+        expect.objectContaining({ effort: 'high', provider: 'codex', transport: 'pty' }),
+      ),
+    );
   });
 });

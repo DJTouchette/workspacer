@@ -1421,6 +1421,98 @@ mod tests {
         assert_eq!(items[0]["text"], "three");
     }
 
+    // The env lock is deliberately held across the awaits: it serializes the
+    // process-global CODEX_HOME override, and nothing awaited here ever takes
+    // the same lock, so there is no deadlock to guard against.
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn get_conversation_replays_codex_rollout_once_not_per_request() {
+        use crate::providers::codex_rollout;
+        // Restart durability: an empty in-memory conversation whose session
+        // maps (via the codex-threads sidecar) to an on-disk rollout is
+        // replayed into the store — exactly once, even though the GUI polls
+        // this endpoint. Re-appending per request would duplicate the visible
+        // history unboundedly.
+        let _env = codex_rollout::codex_home_test_lock();
+        let codex_home =
+            std::env::temp_dir().join(format!("claudemon-api-codex-home-{}", uuid::Uuid::new_v4()));
+        let day = codex_home
+            .join("sessions")
+            .join("2026")
+            .join("07")
+            .join("10");
+        std::fs::create_dir_all(&day).unwrap();
+        let thread = format!("th-{}", uuid::Uuid::new_v4());
+        let rollout = day.join(format!("rollout-2026-07-10-{thread}.jsonl"));
+        let lines = [
+            json!({ "type": "response_item", "payload": { "type": "message", "role": "user",
+                "content": [{ "type": "input_text", "text": "hi" }] } })
+            .to_string(),
+            json!({ "type": "response_item", "payload": { "type": "message", "role": "assistant",
+                "content": [{ "type": "output_text", "text": "OK" }] } })
+            .to_string(),
+        ];
+        std::fs::write(&rollout, lines.join("\n")).unwrap();
+        let prev = std::env::var_os("CODEX_HOME");
+        std::env::set_var("CODEX_HOME", &codex_home);
+
+        // Throwaway uuid session ids — the sidecar lives in the real
+        // ~/.workspacer/codex-threads (cleaned up via forget_thread).
+        let sid = format!("wks-api-replay-{}", uuid::Uuid::new_v4());
+        codex_rollout::record_thread(&sid, &thread);
+        let state = test_state();
+
+        // First read replays the rollout, advancing seq past the items.
+        let (status, body) =
+            request(state.clone(), get(&format!("/sessions/{sid}/conversation"))).await;
+        assert_eq!(status, StatusCode::OK);
+        let v = serde_json::from_slice::<Value>(&body).unwrap();
+        assert_eq!(v["seq"], 2);
+        let items = v["items"].as_array().unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["text"], "hi");
+        assert_eq!(items[1]["text"], "OK");
+
+        // Second read serves the SAME snapshot — no re-append.
+        let (status, body) =
+            request(state.clone(), get(&format!("/sessions/{sid}/conversation"))).await;
+        assert_eq!(status, StatusCode::OK);
+        let v = serde_json::from_slice::<Value>(&body).unwrap();
+        assert_eq!(v["seq"], 2, "replay pushed exactly once");
+        assert_eq!(v["items"].as_array().unwrap().len(), 2);
+
+        // A session with a live in-memory conversation is never touched by
+        // replay, even though its sidecar points at the same rollout.
+        let sid_live = format!("wks-api-replay-{}", uuid::Uuid::new_v4());
+        codex_rollout::record_thread(&sid_live, &thread);
+        state.conv.push(
+            &sid_live,
+            vec![ConversationItem::AssistantText {
+                text: "in-memory".into(),
+                timestamp: None,
+            }],
+        );
+        let (status, body) = request(
+            state.clone(),
+            get(&format!("/sessions/{sid_live}/conversation")),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let v = serde_json::from_slice::<Value>(&body).unwrap();
+        assert_eq!(v["seq"], 1);
+        let items = v["items"].as_array().unwrap();
+        assert_eq!(items.len(), 1, "non-empty conversation is left alone");
+        assert_eq!(items[0]["text"], "in-memory");
+
+        match prev {
+            Some(val) => std::env::set_var("CODEX_HOME", val),
+            None => std::env::remove_var("CODEX_HOME"),
+        }
+        codex_rollout::forget_thread(&sid);
+        codex_rollout::forget_thread(&sid_live);
+        let _ = std::fs::remove_dir_all(&codex_home);
+    }
+
     // --- /input -------------------------------------------------------------
 
     #[tokio::test]

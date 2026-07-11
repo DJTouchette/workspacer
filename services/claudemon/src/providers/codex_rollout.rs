@@ -598,6 +598,27 @@ async fn tail(
     Ok(())
 }
 
+// ── Test support ─────────────────────────────────────────────────────────────
+
+/// Serializes tests that override `CODEX_HOME` — env vars are process-global,
+/// so two tests pointing it at their own temp dirs in parallel would see each
+/// other's homes mid-test.
+#[cfg(test)]
+pub(crate) fn codex_home_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|p| p.into_inner())
+}
+
+/// Remove a test-recorded session→thread sidecar. `record_thread` has no path
+/// seam (it always writes the real `~/.workspacer/codex-threads`), so tests
+/// use throwaway uuid session ids and clean up after themselves.
+#[cfg(test)]
+pub(crate) fn forget_thread(session_id: &str) {
+    if let Some(dir) = threads_dir() {
+        let _ = std::fs::remove_file(dir.join(format!("{session_id}.json")));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -633,6 +654,57 @@ mod tests {
         assert!(matches!(&items[0], ConversationItem::UserMessage { text, .. } if text == "hi"));
         assert!(matches!(&items[1], ConversationItem::AssistantText { text, .. } if text == "OK"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn codex_thread_sidecar_roundtrip_and_rollout_lookup() {
+        // The whole restart-durability/resume contract hangs on two wire
+        // conventions: the `{"thread_id": …}` sidecar shape and the
+        // `-<thread>.jsonl` rollout filename suffix. Drift on either side is
+        // silent (spawn.rs only warns), so pin both here.
+        let _env = codex_home_test_lock();
+
+        // record_thread → thread_for roundtrip (real ~/.workspacer sidecar dir,
+        // throwaway uuid ids — see `forget_thread`).
+        let sid = format!("wks-rollout-test-{}", uuid::Uuid::new_v4());
+        record_thread(&sid, "th-1");
+        assert_eq!(thread_for(&sid).as_deref(), Some("th-1"));
+        let unknown = format!("wks-rollout-test-{}", uuid::Uuid::new_v4());
+        assert!(
+            thread_for(&unknown).is_none(),
+            "unknown session has no thread"
+        );
+
+        // A malformed sidecar must read as "no thread", not panic.
+        let sid_bad = format!("wks-rollout-test-{}", uuid::Uuid::new_v4());
+        let dir = threads_dir().expect("threads dir");
+        std::fs::write(dir.join(format!("{sid_bad}.json")), "not json {").unwrap();
+        assert!(thread_for(&sid_bad).is_none(), "malformed sidecar is None");
+
+        // rollout_for_thread under a temp CODEX_HOME (the env seam at
+        // `codex_home`): the filename suffix `-<thread>.jsonl` is the lookup key.
+        let home =
+            std::env::temp_dir().join(format!("wks-codex-home-test-{}", uuid::Uuid::new_v4()));
+        let day = home.join("sessions").join("2026").join("07").join("10");
+        std::fs::create_dir_all(&day).unwrap();
+        let rollout = day.join("rollout-2026-07-10-th-1.jsonl");
+        std::fs::write(&rollout, "").unwrap();
+        let prev = std::env::var_os("CODEX_HOME");
+        std::env::set_var("CODEX_HOME", &home);
+
+        assert_eq!(
+            rollout_for_thread("th-1").as_deref(),
+            Some(rollout.as_path())
+        );
+        assert!(rollout_for_thread("th-2").is_none(), "no rollout for th-2");
+
+        match prev {
+            Some(v) => std::env::set_var("CODEX_HOME", v),
+            None => std::env::remove_var("CODEX_HOME"),
+        }
+        forget_thread(&sid);
+        forget_thread(&sid_bad);
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]

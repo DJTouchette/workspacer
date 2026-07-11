@@ -1904,6 +1904,132 @@ mod tests {
     }
 
     #[test]
+    fn thread_started_notification_bootstraps_headless_but_never_hybrid() {
+        // The `headless &&` gate is load-bearing: in hybrid mode this
+        // notification only means the TUI's thread exists — we are NOT
+        // subscribed to its stream until thread/resume succeeds. Dropping the
+        // gate would mark hybrid subscribed with a silent, empty GUI pane.
+        for headless in [true, false] {
+            // Throwaway uuid id: the headless arm records a real sidecar under
+            // ~/.workspacer/codex-threads (cleaned up via forget_thread).
+            let sid = format!("wks-codex-test-{}", uuid::Uuid::new_v4());
+            let store = SessionStore::new();
+            store.register_managed(&sid, "/w", "codex");
+            let conv = ConversationStore::new();
+            let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Value>();
+            let mut thread_id: Option<String> = None;
+            let mut subscribed = false;
+            let mut pending_prompts = vec!["hi".to_string()];
+            let mut req_id = 2u64;
+            let mut cur_mode = SessionMode::Input;
+            let mut acc = UsageAcc::new();
+            let yolo = AtomicBool::new(false);
+            let mut pending_approvals: VecDeque<ParkedApproval> = VecDeque::new();
+            let mut pending_switch = None;
+
+            handle_message(
+                &json!({ "jsonrpc": "2.0", "method": "thread/started",
+                    "params": { "threadId": "th-n" } }),
+                &store,
+                &conv,
+                &sid,
+                &out_tx,
+                &mut thread_id,
+                &mut subscribed,
+                &mut pending_prompts,
+                &mut req_id,
+                &mut cur_mode,
+                &mut acc,
+                &yolo,
+                &mut pending_approvals,
+                &mut pending_switch,
+                headless,
+            );
+
+            if headless {
+                // Wire-drift fallback: the id-101 response didn't carry the
+                // thread id, so the notification bootstraps the session.
+                assert_eq!(thread_id.as_deref(), Some("th-n"));
+                assert!(subscribed);
+                assert!(pending_prompts.is_empty(), "early prompt flushed");
+                let sent = out_rx.try_recv().expect("flushed turn/start");
+                assert_eq!(sent["method"], "turn/start");
+                assert_eq!(sent["params"]["threadId"], "th-n");
+                assert_eq!(sent["params"]["input"][0]["text"], "hi");
+                super::super::codex_rollout::forget_thread(&sid);
+            } else {
+                // Hybrid must go through the id-100 discover → thread/resume
+                // path; the notification alone changes nothing.
+                assert_eq!(thread_id, None, "hybrid must not adopt the thread");
+                assert!(!subscribed, "hybrid is not subscribed by notification");
+                assert_eq!(pending_prompts, vec!["hi".to_string()]);
+                assert!(out_rx.try_recv().is_err(), "nothing sent in hybrid");
+            }
+        }
+    }
+
+    #[test]
+    fn headless_thread_start_error_surfaces_and_does_not_subscribe() {
+        // Headless has no rollout fallback by design, so the id-101 error arm
+        // is the pane's only death rattle: the failure must land in the
+        // conversation, and the early `return` must keep the generic
+        // thread_id-discovery block from misreading the error response.
+        use crate::session::conversation::ConversationItem;
+        let store = SessionStore::new();
+        store.register_managed("s-err", "/w", "codex");
+        let conv = ConversationStore::new();
+        let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Value>();
+        let mut thread_id: Option<String> = None;
+        let mut subscribed = false;
+        let mut pending_prompts = vec!["hi".to_string()];
+        let mut req_id = 2u64;
+        let mut cur_mode = SessionMode::Input;
+        let mut acc = UsageAcc::new();
+        let yolo = AtomicBool::new(false);
+        let mut pending_approvals: VecDeque<ParkedApproval> = VecDeque::new();
+        let mut pending_switch = None;
+
+        handle_message(
+            &json!({ "jsonrpc": "2.0", "id": 101,
+                "error": { "code": -1, "message": "boom" } }),
+            &store,
+            &conv,
+            "s-err",
+            &out_tx,
+            &mut thread_id,
+            &mut subscribed,
+            &mut pending_prompts,
+            &mut req_id,
+            &mut cur_mode,
+            &mut acc,
+            &yolo,
+            &mut pending_approvals,
+            &mut pending_switch,
+            true,
+        );
+
+        // The failure is surfaced in the conversation (rides as marked
+        // assistant text — see apply_updates' Error arm)…
+        let (_seq, items) = conv.snapshot("s-err").expect("error item recorded");
+        assert!(
+            items.iter().any(|i| matches!(
+                i,
+                ConversationItem::AssistantText { text, .. } if text.contains("thread/start failed")
+            )),
+            "conversation carries the thread/start failure: {items:?}"
+        );
+        // …and nothing pretends the session has a thread.
+        assert_eq!(thread_id, None);
+        assert!(!subscribed);
+        assert_eq!(
+            pending_prompts,
+            vec!["hi".to_string()],
+            "prompts are not flushed into a dead thread"
+        );
+        assert!(out_rx.try_recv().is_err(), "nothing emitted on the wire");
+    }
+
+    #[test]
     fn thread_id_of_reads_every_wire_shape() {
         assert_eq!(
             thread_id_of(Some(&json!({ "threadId": "a" }))).as_deref(),

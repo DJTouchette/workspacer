@@ -1682,6 +1682,45 @@ mod tests {
     }
 
     #[test]
+    fn unregister_managed_answer_if_only_removes_its_own_channel() {
+        // The MCP AskUserQuestion endpoint parks one short-lived channel per
+        // question, last-writer-wins. A stale registrant's unregister (its 6h
+        // timeout or drop guard firing while a NEWER question is parked) must
+        // be a no-op, or the newer question's channel is silently deleted and
+        // /answer falls through to the PTY keystroke path.
+        let store = SessionStore::new();
+        store.register_managed("s1", "/w", "codex");
+        let (tx1, _rx1) = mpsc::unbounded_channel::<ManagedAnswer>();
+        let (tx2, mut rx2) = mpsc::unbounded_channel::<ManagedAnswer>();
+        store.register_managed_answer("s1", tx1.clone());
+        store.register_managed_answer("s1", tx2.clone()); // overwrites tx1
+
+        // Stale unregister (tx1 lost the slot) leaves tx2's registration alone.
+        store.unregister_managed_answer_if("s1", &tx1);
+        assert!(store.submit_managed_answer(
+            "s1",
+            ManagedAnswer {
+                option: Some(2),
+                text: None,
+                answers: None,
+            },
+        ));
+        let got = rx2.try_recv().expect("answer reaches the live channel");
+        assert_eq!(got.option, Some(2));
+
+        // The rightful (last) owner may remove its own channel.
+        store.unregister_managed_answer_if("s1", &tx2);
+        assert!(!store.submit_managed_answer(
+            "s1",
+            ManagedAnswer {
+                option: Some(1),
+                text: None,
+                answers: None,
+            },
+        ));
+    }
+
+    #[test]
     fn message_sent_immediately_when_input() {
         let store = SessionStore::new();
         let (h, mut rx) = handle_with_rx();

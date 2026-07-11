@@ -764,6 +764,47 @@ mod tests {
     }
 
     #[test]
+    fn unified_diff_pairs_starts_new_group_when_minus_follows_plus() {
+        // An add-then-remove hunk must stay two ordered pairs — the `-` line
+        // after a `+` run starts a new group instead of merging into one
+        // ("removed", "added") pair, which would invert the diff's hunk order.
+        let input = serde_json::json!({ "diff": "+added\n-removed\n" });
+        assert_eq!(
+            edit_pairs(Some(&input)),
+            vec![
+                (String::new(), "added\n".to_string()),
+                ("removed\n".to_string(), String::new()),
+            ]
+        );
+    }
+
+    #[test]
+    fn unified_diff_pairs_keeps_deletion_only_groups() {
+        // Pure deletions produce pairs with an empty new-side and must not be
+        // dropped; a patch ending in `-` lines relies on the trailing flush.
+        assert_eq!(
+            unified_diff_pairs("@@\n-gone1\n ctx\n-gone2\n"),
+            vec![
+                ("gone1\n".to_string(), String::new()),
+                ("gone2\n".to_string(), String::new()),
+            ]
+        );
+    }
+
+    #[test]
+    fn tool_summary_falls_through_when_argv_join_is_empty() {
+        // An empty argv array yields an empty join — the scan must continue to
+        // a later usable key rather than returning the blank summary.
+        let input = serde_json::json!({ "command": [], "description": "list files" });
+        assert_eq!(tool_summary(Some(&input)), "list files");
+
+        // Same for an argv of non-strings (`query` comes after `command` in
+        // the KEYS scan, so this only passes if the empty join falls through).
+        let input = serde_json::json!({ "command": [1, 2], "query": "/a" });
+        assert_eq!(tool_summary(Some(&input)), "/a");
+    }
+
+    #[test]
     fn parses_live_sessions_list_shape() {
         // Exactly what claudemon's GET /sessions returns (with the new usage block).
         let json = serde_json::json!([{
@@ -890,6 +931,64 @@ mod tests {
                 assert_eq!(result.as_deref(), Some("error: boom"), "errors prefixed");
             }
             other => panic!("expected Edit tool, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn codex_conversation_folds_to_tool_parts_with_edits_and_argv_summary() {
+        // Pins the claudemon→TUI wire contract for codex stream-transport tool
+        // calls: arguments ride under `input`, `apply_patch` carries a string
+        // `diff` (not just per-file `changes[]`), and `shell` sends argv.
+        let v = serde_json::json!({ "items": [
+            { "kind": "tool_use", "id": "c1", "name": "apply_patch",
+              "input": {
+                  "path": "src/a.rs",
+                  "diff": "@@ -1,2 +1,2 @@\n-let x = 1;\n+let x = 2;\n",
+                  "changes": [{ "path": "src/a.rs", "kind": "update" }]
+              } },
+            { "kind": "tool_use", "id": "c2", "name": "shell",
+              "input": { "command": ["bash", "-c", "ls"] } },
+            { "kind": "tool_result", "tool_use_id": "c2", "content": "a.rs", "is_error": false },
+        ]});
+        let turns = turns_from_conversation(&v, "stream");
+        assert_eq!(turns.len(), 1, "one coalesced assistant turn");
+        let parts = &turns[0].parts;
+        assert_eq!(parts.len(), 2);
+        match &parts[0] {
+            Part::Tool {
+                name,
+                summary,
+                result,
+                edits,
+            } => {
+                assert_eq!(name, "apply_patch");
+                assert_eq!(summary, "src/a.rs");
+                assert_eq!(
+                    edits,
+                    &vec![("let x = 1;\n".to_string(), "let x = 2;\n".to_string())],
+                    "the unified `diff` folds into colored-diff pairs"
+                );
+                assert!(result.is_none(), "the result belongs to the shell call");
+            }
+            other => panic!("expected apply_patch tool, got {other:?}"),
+        }
+        match &parts[1] {
+            Part::Tool {
+                name,
+                summary,
+                result,
+                edits,
+            } => {
+                assert_eq!(name, "shell");
+                assert_eq!(summary, "bash -c ls", "argv arrays join into a summary");
+                assert_eq!(
+                    result.as_deref(),
+                    Some("a.rs"),
+                    "result keyed by tool_use_id"
+                );
+                assert!(edits.is_empty());
+            }
+            other => panic!("expected shell tool, got {other:?}"),
         }
     }
 
