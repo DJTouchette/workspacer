@@ -32,7 +32,7 @@ func runServe(args []string) int {
 		"bus auth token / pairing credential (default: $HUB_TOKEN, else the persisted <config>/workspacer/remote-token, minted on first run)")
 	pluginsDir := fs.String("plugins-dir", filepath.Join(configDir(), "plugins"),
 		"plugins directory the hub loads + supervises (the same one the desktop app uses); empty = no plugins")
-	webappDir := fs.String("webapp-dir", "", "built web app (dist/web) for the hub to serve at /app/ (full remote parity); empty = $WORKSPACER_WEBAPP_DIR, else disabled")
+	webappDir := fs.String("webapp-dir", "", "built web app (dist/web) for the hub to serve at /app/ (full remote parity); empty = $WORKSPACER_WEBAPP_DIR, else a web/ dir shipped next to this binary, else disabled")
 	jsonOut := fs.Bool("json", false, "print the ready banner as one JSON object on stdout (logs stay on stderr)")
 	_ = fs.Parse(args)
 
@@ -47,7 +47,7 @@ func runServe(args []string) int {
 		HubBin:        resolveBin("hub", *hubBin, sib),
 		BrainBin:      resolveBin("brain", *brainBin, sib),
 		PluginsDir:    *pluginsDir,
-		WebappDir:     *webappDir,
+		WebappDir:     resolveWebappDir(*webappDir, sib),
 		AdvertiseHost: advertiseHost(*host, localIPv4s()),
 	}
 	if opts.ClaudemonBin == "" {
@@ -180,4 +180,15 @@ func waitForHealth(ctx context.Context, url string, timeout time.Duration) error
 		case <-time.After(200 * time.Millisecond):
 		}
 	}
+}
+
+// resolveWebappDir: explicit flag wins, then the hub's own $WORKSPACER_WEBAPP_DIR
+// fallback (by leaving it empty), then the web build shipped next to the binary
+// — so the packaged app's bundled CLI and the server tarball serve /app with no
+// flags at all.
+func resolveWebappDir(flag, sib string) string {
+	if flag != "" || os.Getenv("WORKSPACER_WEBAPP_DIR") != "" {
+		return flag
+	}
+	return defaultWebappDir(sib)
 }

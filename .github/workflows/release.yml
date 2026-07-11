@@ -147,6 +147,9 @@ jobs:
           cp "services/hub/workspacer$ext" "services/hub/hub$ext" \
              "services/hub/brain$ext" \
              "services/claudemon/target/release/claudemon$ext" "$dir/"
+          # The built web app: `workspacer serve` auto-serves a sibling web/
+          # at /app (the full renderer), no flag needed.
+          cp -r "apps/desktop/dist/web" "$dir/web"
           cat > "$dir/README.md" <<'EOF'
           # workspacer headless server
 
@@ -158,7 +161,8 @@ jobs:
 
           That starts and supervises claudemon (sessions) + the hub (bus, with a
           full-scope brain), and prints the client URLs + pairing token — for the
-          phone client (/m), the browser client (/remote), wks-tui, and MCP.
+          phone client (/m), the browser client (/remote), the full web app
+          (/app, served from the bundled web/ directory), wks-tui, and MCP.
 
           Also:
 

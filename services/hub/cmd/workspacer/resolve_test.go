@@ -68,3 +68,47 @@ func TestExeName(t *testing.T) {
 		t.Errorf("exeName = %q", got)
 	}
 }
+
+func TestDefaultWebappDir(t *testing.T) {
+	dir := t.TempDir()
+	// Nothing shipped → disabled, not a random guess.
+	if got := defaultWebappDir(dir); got != "" {
+		t.Fatalf("empty layout: got %q, want \"\"", got)
+	}
+	// Tarball layout: <dir>/web/index.html.
+	sib := filepath.Join(dir, "web")
+	mustWrite(t, filepath.Join(sib, "index.html"))
+	if got := defaultWebappDir(dir); got != sib {
+		t.Fatalf("tarball layout: got %q, want %q", got, sib)
+	}
+	// Packaged layout: resources/hub/<bin> next to resources/web — ../web wins
+	// when <dir>/web is absent.
+	res := t.TempDir()
+	hubDir := filepath.Join(res, "hub")
+	parent := filepath.Join(res, "web")
+	mustWrite(t, filepath.Join(parent, "index.html"))
+	if err := os.MkdirAll(hubDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := defaultWebappDir(hubDir); got != filepath.Join(hubDir, "..", "web") {
+		t.Fatalf("packaged layout: got %q", got)
+	}
+	// A web/ dir WITHOUT index.html is not a web app.
+	bare := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(bare, "web"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := defaultWebappDir(bare); got != "" {
+		t.Fatalf("bare dir: got %q, want \"\"", got)
+	}
+}
+
+func mustWrite(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}

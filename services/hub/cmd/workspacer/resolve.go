@@ -56,3 +56,24 @@ func selfDir() string {
 	}
 	return filepath.Dir(exe)
 }
+
+// defaultWebappDir finds the built web app (the /app full renderer) shipped
+// alongside this binary: `<dir>/web` (the server tarball layout) or
+// `<dir>/../web` (the packaged desktop app: resources/hub/workspacer next to
+// resources/web). Gated on index.html so a stray directory named "web" never
+// gets served. Empty when neither exists — the hub then serves only the
+// embedded /m and /remote clients, exactly as before.
+func defaultWebappDir(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	for _, cand := range []string{
+		filepath.Join(dir, "web"),
+		filepath.Join(dir, "..", "web"),
+	} {
+		if _, err := os.Stat(filepath.Join(cand, "index.html")); err == nil {
+			return cand
+		}
+	}
+	return ""
+}
