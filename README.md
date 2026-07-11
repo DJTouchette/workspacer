@@ -62,7 +62,15 @@ rest of the fleet; check on a running job from your phone.
 - **Remote & multi-client** — drive the same fleet from a terminal client
   (`wks-tui`), a browser, or your phone: the `/m` mobile client is an
   installable PWA built for clearing approvals on the go. Opt-in, token-authed
-  sharing with one-tap HTTPS over Tailscale.
+  sharing with one-tap HTTPS over Tailscale, plus capability-scoped tokens
+  (`view` / `triage` / `operator`) for devices you trust less.
+- **Headless server** — `workspacer serve` runs the whole control plane on a
+  box with no desktop: one command starts and supervises the daemons and
+  serves the phone (`/m`), browser (`/remote`), and full web app (`/app`)
+  clients. It ships bundled inside the desktop app *and* as a standalone
+  `workspacer-server-<os>-<arch>` archive on releases. The desktop app is
+  itself a client: it adopts a server already running on the same machine,
+  or connects to a remote one ("Connect to Server…" in the palette).
 - **Extensible** — a plugin system (drop in a manifest, get a supervised
   sidecar with its own panes) and an MCP facade that exposes the fleet as tools
   a supervisor agent can drive. A dozen official plugins — fleet dashboards,
@@ -96,6 +104,35 @@ Remote sharing is off by default and is a **runtime toggle** in the app (Remote
 control → Start sharing). To force it on at launch for testing, use
 `make dev-share` (sets `WORKSPACER_REMOTE_SHARE=1`).
 
+### Headless server (no desktop)
+
+Every release also ships a standalone server bundle
+(`workspacer-server-<os>-<arch>.tar.gz`, zip on Windows) — the four binaries
+plus the built web app. Two lines and the fleet is up:
+
+```bash
+tar xzf workspacer-server-linux-x64.tar.gz
+./workspacer-server/workspacer serve
+```
+
+`workspacer serve` starts and supervises `claudemon` (sessions) and the `hub`
+(bus, with a full-scope `brain` provider standing in for the desktop app), and
+prints the client URLs + pairing token: the phone client at `/m`, the browser
+client at `/remote`, and the full web app at `/app` (served from the bundled
+`web/` directory). It binds loopback by default; `--host 0.0.0.0` (or a
+tailnet IP) is the explicit remote opt-in — pair it with Tailscale, never the
+open internet. It runs in the foreground by design (systemd/tmux friendly).
+
+Also in the CLI: `workspacer status` (what's running), `workspacer install-cli`
+(put the binary on PATH — the desktop app exposes the same thing as "Install
+workspacer Command" in the palette), and `workspacer token create/list/revoke`
+for capability-scoped bus tokens (`--scope view|triage|operator`). From source,
+`make build-cli` produces the same four sibling binaries.
+
+If you later open the desktop app on the same machine, it **adopts** the
+running server instead of spawning its own daemons; "Connect to Server…" in
+the command palette points it at a remote one.
+
 ## Architecture at a glance
 
 You launch one thing — the desktop app — but it supervises a small set of
@@ -109,14 +146,17 @@ services/
   claudemon/   Rust session daemon: owns sessions/PTYs, runs per-provider
                adapters, streams conversation, usage, and git
   hub/         Go control plane: event bus, process supervisor, capability
-               router, plugin system, and an MCP facade (cmd/mcp)
+               router, plugin system, an MCP facade (cmd/mcp), a headless
+               provider (cmd/brain), and the workspacer CLI (cmd/workspacer)
 docs/          specs, design notes, and the feature catalog
 landing/       the marketing site + user docs (static HTML)
 ```
 
-The desktop app spawns `claudemon` and `hub` and restarts them if they crash.
-`wks-tui`, the web client, and phone/PC clients all connect to the same `hub`
-bus, so a session running on one client can be observed and driven from another.
+The desktop app spawns `claudemon` and `hub` and restarts them if they crash —
+or, if a `workspacer serve` is already running on the machine, adopts it
+instead of spawning its own. `wks-tui`, the web client, and phone/PC clients
+all connect to the same `hub` bus, so a session running on one client can be
+observed and driven from another.
 
 ## Common tasks (from the repo root)
 
@@ -128,7 +168,8 @@ bus, so a session running on one client can be observed and driven from another.
 | `make dev-tui`         | Run wks-tui (debug); builds claudemon first           |
 | `make run-tui`         | Run wks-tui (release); builds claudemon + tui first   |
 | `make build`           | Build all four components                             |
-| `make build-hub`       | Build the Go `hub` + `mcp` + `brain` binaries         |
+| `make build-hub`       | Build the Go `hub` + `mcp` + `brain` + `workspacer` binaries |
+| `make build-cli`       | The `workspacer` CLI + all its sibling daemon binaries |
 | `make build-claudemon` | `cargo build --release` for claudemon                 |
 | `make build-tui`       | `cargo build --release` for wks-tui                   |
 | `make test`            | Desktop + hub + tui test suites                       |

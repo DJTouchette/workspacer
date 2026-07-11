@@ -151,7 +151,7 @@
 <p>For a machine with no desktop at all, each release also ships a standalone headless server (<code>workspacer-server-&lt;os&gt;-&lt;arch&gt;</code>): extract it and run <code>./workspacer serve</code>, then connect from your phone, another PC, or the terminal app (see <a href="#remote">remote and multi-client</a>). The desktop app bundles the same <code>workspacer</code> CLI — put it on your PATH with "Install workspacer Command" in the command palette, or Settings → Command Line.</p>
 <p>One concept to keep in mind from the start: <strong>your window is disposable</strong>. Agents run in the background session daemon, not in the window. Close work{spacer}, your agents keep working; reopen it (or the terminal app, or your phone) and you reconnect to the same live sessions. The cockpit is detachable from the planes.</p>
 <h3>spawn your first agent</h3>
-<p>Hit <code>Ctrl+Shift+N</code> (or the <code>+</code> in the sidebar) to open the spawn dialog. Pick a <strong>working directory</strong> (the project you want the agent to work in), optionally name it, choose an agent backend (<strong>Claude Code</strong>, <strong>Codex</strong>, or <strong>OpenCode</strong>), and spawn. The agent shows up as a card in the sidebar and opens its workspace. Type in the composer at the bottom and you're off.</p>
+<p>Hit <code>Ctrl+Shift+N</code> (or the <code>+</code> in the sidebar) to open the spawn dialog. Pick a <strong>working directory</strong> (the project you want the agent to work in), optionally name it, choose an agent backend (<strong>Claude Code</strong>, <strong>Codex</strong>, <strong>OpenCode</strong>, or <strong>Pi</strong>, in beta), and spawn. The agent shows up as a card in the sidebar and opens its workspace. Type in the composer at the bottom and you're off.</p>
 <p>Spawn a few more in other directories. Each one is its own workspace with its own tabs and panes. The sidebar shows every agent's live state at a glance, and the "<a href="#attention">N need you / N working</a>" header tells you who's blocked on a decision. See <a href="#agents-and-providers">running agents</a> for every field in the spawn dialog.</p>
 <h3>find your way around</h3>
 <ul>
@@ -183,15 +183,15 @@
 <li><strong>MCP servers (optional)</strong>: tick which MCP servers from your Library to expose to this session. Only the ones you check are loaded.</li>
 <li><strong>Transport</strong>: <code>headless</code> (the default) drives Claude over its stream-json protocol via claudemon — a structured GUI-only session with no terminal view. <code>terminal</code> runs the classic interactive CLI in a PTY, giving you both the GUI and a raw terminal view.</li>
 </ul>
-<p>For <strong>Codex</strong>, <strong>OpenCode</strong>, and <strong>Pi</strong> the extra Claude fields drop away. You get a free-text <strong>Model (optional)</strong> in that provider's own id format (e.g. <code>gpt-5.4</code> for Codex, <code>anthropic/claude-sonnet-4</code> for OpenCode; blank = the provider's default), and the same permission-mode picker, whose bypass option is that provider's <strong>YOLO mode</strong>: on, the agent accepts every approval itself; off, approvals come to you.</p>
+<p>For <strong>Codex</strong>, <strong>OpenCode</strong>, and <strong>Pi</strong> the extra Claude fields drop away. You get a free-text <strong>Model (optional)</strong> in that provider's own id format (e.g. <code>gpt-5.4</code> for Codex, <code>anthropic/claude-sonnet-4</code> for OpenCode; blank = the provider's default), and the same permission-mode picker, whose bypass option is that provider's <strong>YOLO mode</strong>: on, the agent accepts every approval itself; off, approvals come to you. <strong>Codex</strong> also keeps a <strong>Transport</strong> picker: <code>hybrid</code> (the native Codex TUI in a terminal <em>plus</em> the structured GUI, one shared thread) or <code>headless</code> (GUI-only, driven by the daemon — a headless Codex survives a daemon restart with its conversation replayed, and a respawn rejoins its prior thread).</p>
 <p><code>Enter</code> in any field spawns; <code>Esc</code> cancels.</p>
 <h3>terminal-style vs managed agents</h3>
 <p>There's one difference worth knowing between the backends, in how their pane behaves:</p>
 <ul>
-<li><strong>Claude on the terminal transport</strong> has both a rich GUI conversation view and a raw terminal view, and you can flip between them (see <a href="#agent-pane">the agent pane</a>).</li>
-<li><strong>Everything else is <em>managed</em></strong> — Claude on the default headless transport, Codex, OpenCode, and Pi: the session daemon drives the agent's own protocol directly and renders the conversation, so they're GUI-only, there's no terminal to flip to. They still surface the same state, telemetry, and approval prompts.</li>
+<li><strong>Claude on the terminal transport</strong> has both a rich GUI conversation view and a raw terminal view, and you can flip between them (see <a href="#agent-pane">the agent pane</a>). <strong>Codex on the hybrid transport</strong> gets the same pair: its native TUI in the terminal view, the structured GUI on top, one shared thread.</li>
+<li><strong>Everything else is <em>managed</em></strong> — Claude on the default headless transport, headless Codex, OpenCode, and Pi: the session daemon drives the agent's own protocol directly and renders the conversation, so they're GUI-only, there's no terminal to flip to. They still surface the same state, telemetry, and approval prompts.</li>
 </ul>
-<p>Whatever the backend, approvals work the same: when an agent wants to run something it can't on its own, the request comes to you (in the pane, the sidebar card, or the Triage Inbox) unless that agent is in a bypass / YOLO permission mode — which is the shipped default, so tighten the mode at spawn (or live from the composer) if you want to be asked.</p>
+<p>Whatever the backend, approvals work the same: when an agent wants to run something it can't on its own, the request comes to you (in the pane, the sidebar card, or the Triage Inbox) unless that agent is in a bypass / YOLO permission mode — which is the shipped default, so tighten the mode at spawn (or live from the composer) if you want to be asked. Questions work the same too: every backend gets the structured <code>AskUserQuestion</code> picker, not just Claude (work{spacer} hands the managed providers the tool over a per-session shim, so a Codex or OpenCode or Pi agent can ask you a multiple-choice question and wait for the answer). And every backend reports live token usage and cost — Codex's wire carries no dollar figures, so its cost is priced from a built-in rate table you can override (see <a href="#configuration">configuration</a>).</p>
 <h3>agents started elsewhere show up automatically</h3>
 <p>You don't have to start every agent from the window. A session spawned by a supervisor, by the MCP facade, by the terminal app, or on another machine, gets <strong>auto-adopted</strong>: it appears as its own card as soon as it's running, deduped so you never see the same session twice across clients. If it was spawned as a child of another agent, it nests under that parent in the sidebar.</p>
 <h3>supervisor agents</h3>
@@ -208,7 +208,7 @@
 <section id="agent-pane" class="doc">
 <h2>the agent pane</h2>
 <p>The agent pane is where you actually talk to a coding agent. Each agent workspace has one, backed by a long-lived <code>claudemon</code> session that lives in the daemon, not in the window. Close the tab, the session keeps running.</p>
-<p>It has two surfaces: a rich <strong>GUI</strong> view and a raw <strong>terminal</strong> view. A Claude agent on the <strong>terminal transport</strong> gets both and can flip between them. Everything else — Claude on the default <strong>headless</strong> transport, Codex, OpenCode, and Pi — runs as a managed session through <code>claudemon</code>'s adapters, so it is GUI-only (no PTY to show). Plain terminal-only agents lock to the terminal view.</p>
+<p>It has two surfaces: a rich <strong>GUI</strong> view and a raw <strong>terminal</strong> view. A Claude agent on the <strong>terminal transport</strong> gets both and can flip between them, and so does a Codex agent on the <strong>hybrid</strong> transport (the native Codex TUI rides in the terminal view). Everything else — Claude on the default <strong>headless</strong> transport, headless Codex, OpenCode, and Pi — runs as a managed session through <code>claudemon</code>'s adapters, so it is GUI-only (no PTY to show). Plain terminal-only agents lock to the terminal view.</p>
 <p>The toggle lives at the bottom-right of the pane: <code>GUI</code> / <code>Term</code>. It only appears when the provider offers both surfaces. Both views stay mounted at once, so switching never loses your scroll position, your draft, or the PTY.</p>
 <h3>gui mode vs terminal mode</h3>
 <p><strong>Terminal mode</strong> is the real thing: a live <code>xterm</code> view of the agent's PTY, exactly what you'd see in a normal terminal. Standard terminal keys work, plus:</p>
@@ -226,7 +226,7 @@
 <li>Approvals and questions docked where you're about to type (see below).</li>
 <li>A composer at the bottom and an optional inspector rail on the right.</li>
 </ul>
-<p>Which view opens first: a pane spawned with a seed prompt always opens in GUI, and a managed (headless / Codex / OpenCode / Pi) session is always GUI. For a terminal-transport Claude pane it honours <code>claude.defaultView</code>, which defaults to <code>terminal</code>. Set the default under Settings → Session, or via the config key <code>claude.defaultView</code> (<code>gui</code> | <code>terminal</code>).</p>
+<p>Which view opens first: a pane spawned with a seed prompt always opens in GUI, and a managed session with no terminal surface is always GUI. For a terminal-transport Claude pane it honours <code>claude.defaultView</code>, which defaults to <code>terminal</code>. Set the default under Settings → Session, or via the config key <code>claude.defaultView</code> (<code>gui</code> | <code>terminal</code>).</p>
 <h3>the composer</h3>
 <p>The composer is the input box at the bottom of the GUI view. It's a multi-line, auto-growing textarea (grows to about 8 lines, then scrolls).</p>
 <ul>
@@ -243,7 +243,7 @@
 <li>The <strong><code>+</code> button</strong> (in the composer or the status bar) opens a file picker rooted at the agent's cwd.</li>
 </ul>
 <p>Attaching a file auto-switches you to GUI mode. Files are prepended to your message as a path prefix when you send.</p>
-<p><strong>Cancel.</strong> While the agent is working, a streaming indicator shows with a <strong>Cancel</strong> button. <code>Esc</code> cancels too (it sends Escape to the session). Cancelling suppresses the streaming UI until the next activity cycle.</p>
+<p><strong>Cancel.</strong> While the agent is working, a streaming indicator shows with a <strong>Cancel</strong> button. <code>Esc</code> cancels too. On a terminal-transport Claude that sends Escape to the PTY; on a managed session it's a <em>structural</em> interrupt — the daemon tells the provider to stop the turn (Codex <code>turn/interrupt</code>, OpenCode abort, Pi abort), so the turn dies but the session doesn't. Cancelling suppresses the streaming UI until the next activity cycle.</p>
 <h3>the inspector rail</h3>
 <p>A 320px rail on the right edge of the pane. Toggle it with the <code>PanelRight</code> button in the status bar or with <code>Ctrl+Shift+E</code> (configurable as the <code>toggle-inspector</code> shortcut). Its open/closed state persists across sessions. The rail is a sibling of the content area, so it stays put whether you're in GUI or terminal mode.</p>
 <p>Five tabs, each with a count badge:</p>
@@ -328,7 +328,7 @@
 <h3>plugin pane</h3>
 <p>A generic webview host for a plugin's own UI, built on the browser pane. This is how any plugin surface appears (agent dashboards, the rules-engine editor, the sandboxed editor, etc.). For an agent-scoped pane (it has both a <code>pluginId</code> and a <code>cwd</code>), the pane mints an <strong>ephemeral bus token confined to that agent's directory</strong> on mount and revokes it on unmount, so the plugin reaches only that project's files instead of the broader static per-plugin token. If there's nothing to scope, or minting isn't available (web build, hub momentarily down), it loads the URL with its baked-in static token, so the webview always loads. Plugins get <code>--wks-*</code> theme tokens and their settings injected.</p>
 <h3>settings</h3>
-<p>A searchable settings pane with these sections: Appearance, Layout, Terminal, Keybindings, Notifications, Session, Browser, Editor, Apps, Claude Profiles, Supervisor, Updates, Plugins. All settings persist to config. The search box filters sections by keyword.</p>
+<p>A searchable settings pane with these sections: Appearance, Layout, Terminal, Keybindings, Notifications, Session, Browser, Editor, Apps, Claude Profiles, Supervisor, Updates, Command Line, Plugins. All settings persist to config. The search box filters sections by keyword.</p>
 <h3>bottom terminal drawer</h3>
 <p>Not a tab pane. A VS Code-style integrated terminal that slides up from the bottom across the full content width (it follows the sidebar's left edge). Toggle it with <code>Ctrl+\</code><code> (also a close button; </code>Esc<code> does not close it, since </code>Esc<code> is a real key inside a terminal). Height is </code>40vh`. It spawns in the current cwd, captured at first open. It's mounted on first open and then kept mounted forever (toggling just slides it off-screen), so the PTY keeps running and scrollback survives.</p>
 </section>
@@ -465,7 +465,7 @@
 <p>The agent label is the basename of its working directory. Clicking a notification restores and focuses the window and jumps the renderer to that agent.</p>
 <p><strong>Suppressed for the watched agent.</strong> With <code>onlyWhenUnwatched</code> on (the default), no notification fires for the exact session you currently have on screen with the window focused. The renderer keeps the main process informed of which session is active as you switch agents.</p>
 <p><strong>Taskbar flash.</strong> On a needs-you event, when the window isn't focused, work{spacer} flashes the taskbar (the Windows "attention" signal). The flash stops as soon as you focus the window.</p>
-<p>There is no tray icon or taskbar overlay badge today. Away from the desk entirely, the <a href="#remote">mobile PWA</a> has background push wired up for the same needs-approval / needs-input alerts, though it's still being stabilized.</p>
+<p>There is no tray icon or taskbar overlay badge today. Away from the desk entirely, the <a href="#remote">mobile PWA</a> has background push for the same needs-approval / needs-input alerts — it works from the desktop app's sharing and from a headless <code>workspacer serve</code> alike (it needs the HTTPS option), though delivery is still being hardened.</p>
 <h3>notification config</h3>
 <p>The <code>notifications</code> block in config (Settings ▸ Notifications) has four keys, all booleans:</p>
 <ul>
@@ -487,6 +487,16 @@
 <li><code>WORKSPACER_REMOTE_ADDR=host:port</code> (optional) pins the address it listens on (default <code>0.0.0.0:7895</code>). Set it to your <strong>tailnet IP</strong> so it's only reachable over your private network, not the whole LAN.</li>
 </ul>
 <p>When sharing is on, access is gated by a secret token (generated once and stored in your config dir). Anyone with the token-bearing URL gets full control, so treat it like a password.</p>
+<p>You don't have to hand that token to every device. The <code>workspacer</code> CLI mints <strong>capability-scoped tokens</strong> that are enforced on every single call to the bus:</p>
+<pre><code>workspacer token create --scope view|triage|operator [--label "dana's phone"]
+workspacer token list
+workspacer token revoke &lt;token-or-prefix&gt;</code></pre>
+<ul>
+<li><strong><code>view</code></strong>: read-only — fleet lists, session snapshots, transcripts, event streams.</li>
+<li><strong><code>triage</code></strong>: view plus acting on attention — approve/deny, answer, send a message, interrupt, push subscription. What the phone client needs to clear approvals; no spawning, no terminals, no git, no admin.</li>
+<li><strong><code>operator</code></strong>: everything, same as the pairing token.</li>
+</ul>
+<p>Scoped tokens <strong>fail closed</strong>: a method outside the token's grant set is denied (with an error naming the missing scope), and unknown methods are denied too. They take effect on the next connection, no restart needed. The original pairing token keeps working unchanged — it's an implicit <code>operator</code>.</p>
 <blockquote>The intended transport is a <strong>Tailscale tailnet</strong>, not the open internet. The connection isn't encrypted on its own, so keep both devices on the same trusted private network — or use the one-tap <strong>HTTPS via Tailscale</strong> option in the share dialog, which fronts the hub at <code>https://&lt;your-node&gt;.ts.net</code> via <code>tailscale serve</code>.</blockquote>
 <h3>the share dialog (QR)</h3>
 <p>Open <strong>Remote control</strong> from the phone icon in the Hub status row at the bottom of the sidebar.</p>
@@ -499,9 +509,9 @@
 <h3>the web clients</h3>
 <p>Three browser clients, nothing to install on the remote device (though the mobile one is installable if you want it on your home screen):</p>
 <ul>
-<li><strong>Mobile</strong> (<code>/m</code>): a phone-first, decision-first client — a live fleet list, a "Needs You" queue of approvals and questions with big approve/answer buttons, per-agent chat, and spawn. It's an <strong>installable PWA</strong>: add it to your home screen over the HTTPS/Tailscale option. Background push notifications (an alert when an agent needs you, even with the browser closed) are wired up but still being stabilized — don't rely on them yet. This is what the QR points at by default.</li>
+<li><strong>Mobile</strong> (<code>/m</code>): a phone-first, decision-first client — a "Needs You" queue of approvals and questions with big thumb-sized approve/answer buttons, the full fleet (needs-you → working → idle → stopped, the same visibility rule as the desktop sidebar), per-agent chat with history, and spawn. It's an <strong>installable PWA</strong>: add it to your home screen over the HTTPS/Tailscale option. Background push notifications (an alert when an agent needs you, even with the browser closed) work over HTTPS — including against a headless server — but delivery is still being hardened, so don't bet the farm on them. This is what the QR points at by default.</li>
 <li><strong>Terminal mirror</strong> (<code>/remote</code>): a lightweight client with the agent list, chat, approvals, and a live mirror of the agent's real terminal. Works offline over Tailscale.</li>
-<li><strong>Full app</strong> (<code>/app</code>): the complete work{spacer} interface running in the browser, with full desktop parity. Available when sharing is on and a web build is present.</li>
+<li><strong>Full app</strong> (<code>/app</code>): the complete work{spacer} interface running in the browser, with full desktop parity. The desktop app serves it when sharing is on and a web build is present; the standalone server ships its own web build and serves it out of the box.</li>
 </ul>
 <h3>what mirrors, and what stays put</h3>
 <ul>
@@ -509,6 +519,19 @@
 <li><strong>One card per agent.</strong> The same session never doubles up across clients, the desktop, the web app, and your phone all show one card for it.</li>
 <li><strong>Terminals stream on demand.</strong> A live terminal is only mirrored to a client while that client is actually watching it, so you're not streaming build logs to a phone in your pocket.</li>
 <li><strong>No window needed.</strong> Remote clients keep working even with the desktop app closed, the background daemons serve them on their own.</li>
+</ul>
+<h3>a server with no desktop: workspacer serve</h3>
+<p>You can also run the whole fleet on a machine that never opens a window — a home server, a VM, a box you only reach over Tailscale. Each release ships a standalone server bundle (<code>workspacer-server-&lt;os&gt;-&lt;arch&gt;.tar.gz</code>, zip on Windows) with the binaries and the web build. Two lines:</p>
+<pre><code>tar xzf workspacer-server-linux-x64.tar.gz
+./workspacer-server/workspacer serve</code></pre>
+<p><code>workspacer serve</code> starts and supervises the session daemon and the hub (with a headless <strong>brain</strong> provider standing in for the desktop app, so spawning, snapshots, and the rest all work with no window anywhere), then prints the client URLs and the pairing token: the phone client at <code>/m</code>, the browser client at <code>/remote</code>, and the full app at <code>/app</code>, served from the bundled <code>web/</code> directory with no flags. Pass <code>--json</code> for a machine-readable banner. It runs in the foreground by design — put it under systemd or tmux.</p>
+<p>By default it binds <strong>loopback only</strong>. Reaching it from another device is an explicit opt-in: <code>workspacer serve --host 0.0.0.0</code> (or, better, your tailnet IP), always token-gated — the server never runs without auth. The same warnings as desktop sharing apply: keep it on a private network like Tailscale, never the open internet.</p>
+<p>Alongside <code>serve</code>: <code>workspacer status</code> reports what's running on the workspacer ports, <code>workspacer token</code> mints the scoped tokens described above, and <code>workspacer install-cli</code> puts the binary on your PATH. The desktop app bundles the same CLI — "Install workspacer Command" in the palette (or Settings → Command Line) installs it.</p>
+<h3>the desktop app is a client too</h3>
+<p>The desktop app and a headless server are not either/or:</p>
+<ul>
+<li><strong>Same machine: it adopts.</strong> If a <code>workspacer serve</code> is already running when you open the desktop app, the app detects the healthy daemons and <strong>adopts</strong> them instead of spawning its own — no duplicate daemons, and quitting the app never kills a server it didn't start. The Remote Control dialog notes when you're on an adopted server (and, since an adopted server keeps its own binding, tells you the one-line fix if it's loopback-only and your phone can't reach it).</li>
+<li><strong>Another machine: Connect to Server…</strong> From the command palette (or the Remote Control dialog), give it the server's URL and token and the app relaunches as a pure client of that remote fleet — chat, approvals, live terminal bytes included. Disconnecting relaunches back to your local stack.</li>
 </ul>
 </section>
 
@@ -571,6 +594,12 @@
 <li><code>workspacer.db</code>, SQLite analytics history (per-session model, cost, tokens, tools, branch).</li>
 </ul>
 <p>The Claude session daemon <code>claudemon</code> keeps its own SQLite store separately at <code>$XDG_DATA_HOME/claudemon/state.db</code>, falling back to <code>~/.claudemon/state.db</code>. Override it with <code>claudemon serve --db-path &lt;file&gt;</code>.</p>
+<h3>model pricing</h3>
+<p>Every session's live cost readout is priced by the daemon from a built-in per-model rate table (Claude and OpenAI list rates): Claude and Codex costs are computed from it (Codex's wire reports tokens but no dollars), while OpenCode and Pi report dollar figures directly. List prices drift, so the table is editable: to correct a rate or add a model it doesn't know, drop a <code>~/.workspacer/model-rates.json</code>:</p>
+<pre><code>{
+  "gpt-5.4": { "input": 1.25, "output": 10.0, "cached_input": 0.125 }
+}</code></pre>
+<p>Keys are model-id prefixes (longest match wins), values are dollars per million tokens, and the file is hot-reloaded — your overrides beat the built-ins.</p>
 <h3>config.yaml, the settings file</h3>
 <p>Edit it directly or use the Settings pane (<code>Ctrl+,</code>). Missing keys fall back to defaults, so a partial file is fine. The notable sections and their defaults:</p>
 <ul>
@@ -592,7 +621,7 @@
 </ul>
 <h3>the Settings pane</h3>
 <p>Open it with <code>Ctrl+,</code>. There's a filter box at the top. The pane renders these sections, each one writing straight into <code>config.yaml</code> (the plugins section is contributed by installed plugins, and Claude profiles write to <code>claude-profiles.json</code>):</p>
-<p>appearance (including the theme maker), layout, terminal, keybindings, notifications, session, browser, editor, apps, Claude profiles, supervisor, updates, plugins.</p>
+<p>appearance (including the theme maker), layout, terminal, keybindings, notifications, session, browser, editor, apps, Claude profiles, supervisor, updates, command line, plugins.</p>
 <h3>default keybindings</h3>
 <p>Bindings are either direct combos (terminal-safe keys) or prefix chords. A chord is the workspace prefix (<code>Ctrl+Space</code> by default) followed by one or more keys. Remap them under <code>keybindings.shortcuts</code>. Direct defaults:</p>
 <ul>

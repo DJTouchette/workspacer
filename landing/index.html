@@ -319,7 +319,7 @@
       <p>Driven over <span style="color:var(--cyan)">opencode serve</span>, a headless HTTP server with a typed SSE event stream. Messages, usage, and approvals map cleanly onto the fleet.</p>
     </div>
   </div>
-  <p class="agents-note">Every provider lands in the same Fleet Deck with the same telemetry. <b>Tier-1</b> runs an agent in a plain terminal pane; <b>Tier-2</b> drives the agent's own protocol so the GUI, approvals, and usage all light up. A fourth adapter, <b>Pi</b>, ships in beta.</p>
+  <p class="agents-note">Every provider lands in the same Fleet Deck with the same telemetry — the same approval cards, the same multiple-choice question picker, live token/cost, and a one-key interrupt that stops the turn without killing the session. <b>Tier-1</b> runs an agent in a plain terminal pane; <b>Tier-2</b> drives the agent's own protocol so the GUI, approvals, and usage all light up. A fourth adapter, <b>Pi</b>, ships in beta.</p>
 </div></section>
 
 <section id="panes"><div class="wrap">
@@ -366,7 +366,8 @@
         <li><b>A phone PWA</b> at <span style="color:var(--cyan)">/m</span> you install from a QR code: fleet list, chat, and big approve buttons, built for clearing approvals from the couch.</li>
         <li><b>The full app over the bus,</b> the real renderer served at <span style="color:var(--cyan)">/app</span>, plus a lightweight terminal-mirror client at <span style="color:var(--cyan)">/remote</span>.</li>
         <li><b>Layout mirroring,</b> tmux style, keeps desktop and web in sync on cards, tabs, and the active tab.</li>
-        <li><b>Opt-in sharing</b> with a bearer token, a QR dialog, and one-tap HTTPS over Tailscale. Off by default.</li>
+        <li><b>No desktop required.</b> <span style="color:var(--cyan)">workspacer serve</span> runs the same fleet on a headless box — one command supervises everything and serves all three web clients. Each release ships it as a standalone server archive, and the desktop app connects to it as a client.</li>
+        <li><b>Opt-in sharing</b> with a bearer token, a QR dialog, and one-tap HTTPS over Tailscale. Off by default — and you can mint <b>scoped tokens</b> (view-only, or triage-only for a phone) instead of handing out full control.</li>
       </ul>
     </div>
     <div class="term">
@@ -447,11 +448,11 @@
 <section id="get"><div class="wrap">
   <div class="cta">
     <div class="h2">Point it at a repo and spawn your <span class="g">first agent</span>.</div>
-    <p>work{spacer} is in <span style="color:var(--amber)">alpha</span> — expect sharp edges. Grab the installer for your OS below. It's open source (BSL 1.1): <a href="https://github.com/DJTouchette/workspacer" style="color:var(--green)">the entire codebase is on GitHub</a> — read it, build it yourself, or send a patch.</p>
+    <p>work{spacer} is in <span style="color:var(--amber)">alpha</span> — expect sharp edges. Grab the installer for your OS below, or the headless server tarball (<span style="color:var(--cyan)">workspacer-server-&lt;os&gt;-&lt;arch&gt;</span>) for a box with no desktop. It's open source (BSL 1.1): <a href="https://github.com/DJTouchette/workspacer" style="color:var(--green)">the entire codebase is on GitHub</a> — read it, build it yourself, or send a patch.</p>
     <a class="btn btn-fill" id="dl-btn" href="https://github.com/DJTouchette/workspacer/releases/latest">download latest</a>
     <a class="btn btn-line" href="docs.html">read the docs</a>
     <a class="btn btn-line" href="https://github.com/DJTouchette/workspacer">view on github</a>
-    <div class="dl-alts" id="dl-alts">installers for linux, macos, and windows land on <a href="https://github.com/DJTouchette/workspacer/releases">the releases page</a>.</div>
+    <div class="dl-alts" id="dl-alts">installers for linux, macos, and windows — plus the standalone server bundles — land on <a href="https://github.com/DJTouchette/workspacer/releases">the releases page</a>.</div>
   </div>
 </div></section>
 

@@ -1,6 +1,6 @@
 # Workspacer — Feature Assessment
 
-> Current-state catalog of what the app does, as of 2026-07-09.
+> Current-state catalog of what the app does, as of 2026-07-11.
 
 **Maturity legend**
 
@@ -40,11 +40,12 @@ remote/web/phone clients all view and drive the same fleet.
 | Agent pane — terminal mode | Live PTY view of a terminal-transport Claude session | 🔵 Working |
 | Agent pane — GUI mode | Rich conversation view: approve/deny, answer questions, inline diffs, work log, per-turn changed-files cards | 🔵 Working |
 | Claude stream transport | Headless `--print` stream-json adapter (`claude_stream.rs`) behind `claude.transport` (shipped default `stream`); control-protocol approvals/questions/model/mode | 🔵 Working |
-| Managed providers | Codex (`codex app-server`), OpenCode (`opencode serve` + SSE), Pi (`pi --mode rpc`, beta) driven natively by claudemon adapters | 🔵 Working |
+| Managed providers | Codex (`codex app-server`), OpenCode (`opencode serve` + SSE), Pi (`pi --mode rpc`, beta) driven natively by claudemon adapters; all get GUI approval/question cards, structural turn-interrupt, and live token/cost | 🔵 Working |
+| Codex stream transport | Spawn dialog offers `hybrid` (native Codex TUI + GUI, one thread) or `headless` (`transport:"stream"` — daemon-owned `thread/start`, GUI-only); restart preserves the transport | 🔵 Working |
 | Inspector rail | Files / Plan / Workflows / Subagents / Usage (5h / 7d / monthly rate windows) for the active session | 🔵 Working |
 | Composer | Send messages with file attach (drag / paste / picker); streaming + cancel; model / effort / permission-mode pills | 🔵 Working |
 | Live model & mode switching | Switch model and permission mode mid-session without a respawn (PTY-verified or control-protocol per transport) | 🔵 Working |
-| Approvals & questions | One-key approve/deny, AskUserQuestion answering with multi-select and "Decline & stop", persistent answered cards | 🔵 Working |
+| Approvals & questions | One-key approve/deny, AskUserQuestion answering with multi-select and "Decline & stop", persistent answered cards — on every provider (managed providers get `AskUserQuestion` via claudemon's per-session MCP shim) | 🔵 Working |
 | Cross-provider handoff | `POST /sessions/:id/handoff` builds a brief in `~/.workspacer/handoffs/`; successor spawns pre-pointed at it | 🔵 Working |
 | Subagent & workflow telemetry | Live phases, per-agent tokens/tools surfaced from the daemon's workflow watcher; dedicated watch panes | 🔵 Working |
 | Claude profiles | Named profiles (model, config dir, extra args, MCP items) selectable at spawn | 🔵 Working |
@@ -66,7 +67,7 @@ remote/web/phone clients all view and drive the same fleet.
 | Markdown preview | Read-only rendered markdown (`mdpreview`), opened from file links in chat | 🔵 Working |
 | Plugins Manager | List/install/remove plugins with sidecar health | 🔵 Working |
 | Plugin pane | Generic webview host for a plugin's own UI (this is how any tracker/devops/dashboard surface appears) | 🔵 Working |
-| Settings | 13 sections (incl. theme maker, updates), all persisted | 🔵 Working |
+| Settings | 14 sections (incl. theme maker, updates, Command Line install), all persisted | 🔵 Working |
 | Bottom terminal panel | Toggleable drawer terminal | 🔵 Working |
 
 ## 4. Navigation & layout
@@ -91,7 +92,7 @@ remote/web/phone clients all view and drive the same fleet.
 | Jump-to-next-attention | Hotkey to cycle to the next agent waiting on you | 🔵 Working |
 | OS notifications | Fire on needs-approval / needs-input and (optionally) done; suppressed for the watched agent; taskbar flash | 🔵 Working |
 | Notification config | `enabled` / `notifyDone` / `onlyWhenUnwatched` / `sound` | 🔵 Working |
-| Mobile push | Background Web Push to the `/m` PWA on needs-approval / needs-input (hub `internal/push`, VAPID); wired end-to-end but delivery not yet reliable | 🟡 Partial |
+| Mobile push | Background Web Push to the `/m` PWA on needs-approval / needs-input (hub `internal/push`, VAPID, needs HTTPS); now also works under a pure headless `workspacer serve` (brain snapshots carry ambient state), but delivery is not yet reliable | 🟡 Partial |
 | Per-session budgets | Cost ceiling per session with a one-shot notification when crossed | 🔵 Working |
 | Tray / overlay badge | — | ⚪ Not built |
 
@@ -117,9 +118,13 @@ remote/web/phone clients all view and drive the same fleet.
 |---|---|---|
 | Hub event bus | WebSocket pub/sub + RPC capability router; bus token auth | 🟢 Solid |
 | Layout mirroring (tmux-style) | Hub-owned shared layout doc; desktop ⇄ web/phone mirror cards, tabs, active tab | 🔵 Working |
-| Mobile PWA (`/m`) | Phone-first decision client (fleet, Needs You queue, chat, spawn); installable PWA, the default QR target (push: see §5) | 🔵 Working |
+| Mobile PWA (`/m`) | Phone-first decision client, redesigned 2026-07: Needs You queue, full fleet list (needs-you → working → idle → stopped, same visibility rule as the desktop sidebar), per-agent chat with history (fetched over the bus under headless serve), spawn; installable PWA, the default QR target (push: see §5) | 🔵 Working |
 | Terminal-mirror client (`/remote`) | Lightweight client: agent list, chat, approvals, live xterm terminal mirror | 🔵 Working |
-| Full web app (`/app/`) | Serves the real renderer bundle over the bus (when remote sharing + web build present) | 🔵 Working |
+| Full web app (`/app/`) | Serves the real renderer bundle over the bus (desktop: when sharing is on + web build present; `workspacer serve` auto-serves a sibling `web/` — bundled in the server archive) | 🔵 Working |
+| Headless server (`workspacer serve`) | One command starts + supervises claudemon and the hub with a full-scope brain provider (restart backoff, parentwatch); prints the /m + /remote + /app URLs and pairing token (`--json` for machines); loopback by default, `--host` is the remote opt-in; `workspacer status` probes all three | 🔵 Working |
+| Headless spawn parity | The brain's `agents.spawn` dispatches every backend like the desktop does (managed providers via spawn-managed, codex stream transport, resume), with a drift guard against the desktop's param surface | 🔵 Working |
+| Desktop app as a client | Adopt-don't-kill: the app attaches to a healthy already-running `workspacer serve` on the same machine instead of spawning daemons; "Connect to Server…" (palette / Remote Control dialog) points the whole app at a remote server, disconnect relaunches local | 🔵 Working |
+| Capability-scoped tokens | `workspacer token create --scope view` / `triage` / `operator` (+ `list` / `revoke`), enforced at the hub's single dispatch path; scoped tokens fail closed on unknown methods; hot-reloaded from `tokens.json`; the legacy remote-token stays implicit operator | 🟢 Solid |
 | Remote sharing | Runtime toggle (Start sharing) or `WORKSPACER_REMOTE_SHARE`; binds off-loopback with a bearer token; QR share dialog | 🔵 Working |
 | Tailscale HTTPS | One-tap `tailscale serve` fronting the hub at `https://<node>.ts.net` (secure context for the PWA + push) | 🔵 Working |
 | Terminal share / PTY mirror | Lease-gated PTY byte streaming to remote viewers | 🔵 Working |
@@ -145,7 +150,7 @@ remote/web/phone clients all view and drive the same fleet.
 |---|---|---|
 | MCP server | `/mcp` (Streamable HTTP) + `/sse`, exposing the fleet to ephemeral `claude -p` supervisors | 🟢 Solid |
 | MCP tools (~38) | The driving set (list_agents, get_transcript, spawn_agent, create_terminal, send_message, approve, answer, signal, terminal_input, notify) plus snapshots/conversations, config/profiles, saved sessions/layouts, library, analytics, and path-scoped fs/search | 🟢 Solid |
-| Per-method capability tokens | Authorization seam wired allow-all; real policy not implemented | 🟡 Partial |
+| Per-method capability tokens | Enforced: view/triage/operator grant sets at the router's dispatch seam (see §8); the MCP facade itself connects with the host token (operator) | 🟢 Solid |
 
 ## 11. Terminal client — `wks-tui` (Rust)
 
@@ -163,6 +168,8 @@ remote/web/phone clients all view and drive the same fleet.
 |---|---|---|
 | Hook intake | Receives all Claude Code hook events; deferred-hook approval gate | 🟢 Solid |
 | Managed provider adapters | `claude_stream` / `codex` / `opencode` / `pi`: pure per-provider `translate()` + shared `apply_updates`, spawned via `POST /sessions/spawn-managed` | 🟢 Solid |
+| AskUserQuestion shim | `POST /mcp/ask/:session_id` — a minimal MCP endpoint that parks the session in Question until `/answer`; Codex mounts it as an MCP config override, OpenCode as a remote MCP entry, Pi via a generated extension | 🔵 Working |
+| Codex restart durability + resume | Session→thread sidecar under `~/.workspacer/codex-threads`; a restarted daemon lazily replays the thread's rollout into the conversation, and spawn-managed resume rejoins via `thread/resume` | 🔵 Working |
 | Session state machine | In-memory per-session mode/state, broadcast over SSE | 🟢 Solid |
 | Session/PTY APIs | input/output/stream/message/approve/answer/decide/gate/resize/spawn | 🟢 Solid |
 | Transcript + conversation tailer | Parse JSONL, stream deltas with sequence-join | 🟢 Solid |
@@ -181,7 +188,7 @@ remote/web/phone clients all view and drive the same fleet.
 | Daemon supervision | Electron spawns claudemon + hub; **auto-restart on crash with backoff** | 🟢 Solid |
 | Binary resolution + packaging | Dev/packaged paths; electron-builder bundles daemons | 🔵 Working |
 | Bundled `workspacer` CLI | Headless-server launcher ships in the app; "Install workspacer Command" (palette / Settings → Command Line) puts it on PATH | 🔵 Working |
-| Standalone server bundle | Releases include `workspacer-server-<os>-<arch>.tar.gz` (zip on Windows): the four binaries + README — extract, `./workspacer serve` | 🔵 Working |
+| Standalone server bundle | Releases include `workspacer-server-<os>-<arch>.tar.gz` (zip on Windows): the four binaries + the web build (served at `/app`) + README — extract, `./workspacer serve` | 🔵 Working |
 | GPU escape hatch | `WORKSPACER_DISABLE_GPU` for broken Wayland GPU rendering | 🔵 Working |
 | Font discovery | Nerd Font scan + custom protocol serving | 🔵 Working |
 | Chrome UA spoofing | Strips Electron UA for webviews | 🔵 Working |
@@ -204,7 +211,9 @@ remote/web/phone clients all view and drive the same fleet.
 - Tray icon / taskbar overlay badge.
 - Git **merge** and `review_diff`/`merge` next-action UI wiring.
 - macOS/Linux Chrome cookie import.
-- Per-method capability tokens (authorization seam is allow-all).
+- New phone pairings still hand out the operator token by default (a scope
+  picker is needed before defaulting them to `triage` — the /m Spawn tab calls
+  `agents.spawn`); `token revoke` doesn't sever already-open connections.
 - Crash-recovery journal (only a `before-quit` save signal today).
 - Browser-pane hibernation is renderer-only (no main-process enforcement).
 - Stale E2E `claudePane.test.ts`; several main-process services untested.
@@ -218,8 +227,11 @@ supervisor) and the Rust claudemon (hooks, sessions, PTY, transcripts, git) are
 complete and well-tested. The **desktop app is feature-rich and cohesive** —
 ~30 working UI surfaces over a fully-wired main process with solid session-store
 test coverage. Recent hardening closed the biggest production risks: daemon
-auto-restart, real terminate/kill signals, and the cross-client agent-duplication
-fix.
+auto-restart, real terminate/kill signals, the cross-client agent-duplication
+fix, and — with capability-scoped tokens now enforced at the bus — the last
+authorization gap. The app also stands on its own without a desktop: the
+`workspacer serve` CLI runs the whole control plane headless, and the Electron
+app doubles as a client of it (local adopt or remote connect).
 
 The main *product* ambiguity is resolved: the app is a **per-agent workspace**,
 not the abandoned v2 "inbox of decisions" — the leftover classifier/items stack
