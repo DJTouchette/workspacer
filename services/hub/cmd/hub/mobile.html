@@ -475,6 +475,7 @@
     afterData(snap.sessionId);
   }
   function afterData(changedId) {
+    pruneConv();
     updateNeedPill();
     maybeOpenPending();
     if (view.name === 'fleet') renderFleet();
@@ -648,7 +649,7 @@
     // pendingQuestions before the call resolves.
     const s = sessions.get(id);
     const questions = (s && s.pendingQuestions) || [];
-    const anchorLen = ((s && s.conversation) || []).length;
+    const anchorLen = s ? convTurns(s).length : 0;
     call('claude.answer', { sessionId: id, answers })
       .then(() => {
         recordResolved(id, false, describeAnswers(questions, answers), questions, anchorLen);
@@ -664,7 +665,7 @@
   function declineQuestion(id) {
     const s = sessions.get(id);
     const questions = (s && s.pendingQuestions) || [];
-    const anchorLen = ((s && s.conversation) || []).length;
+    const anchorLen = s ? convTurns(s).length : 0;
     recordResolved(id, true, null, questions, anchorLen);
     call('claude.signal', { sessionId: id, signal: 'SIGINT' })
       .then(() => toast('Declined')).catch(e => toast('Failed: ' + (e.message || e)));
@@ -704,7 +705,7 @@
   }
   // Interleave answered-question cards with the conversation turns at their anchor.
   function transcriptHtml(s) {
-    const turns = s.conversation || [];
+    const turns = convTurns(s);
     const cards = resolvedQs.get(s.sessionId) || [];
     const byAnchor = new Map();
     for (const r of cards) {
@@ -718,6 +719,108 @@
       if (i < turns.length) parts.push(turnHtml(turns[i]));
     }
     return parts.join('');
+  }
+
+  // ── fetched conversation (headless serve) ───────────────────────────────────
+  // The brain's snapshots are state-only (sparse:true, no conversation): the
+  // transcript lives behind the sessions.conversation bus method instead, which
+  // both providers proxy to claudemon's GET /sessions/:id/conversation —
+  // { session_id?, seq, items: [{kind: user_message|assistant_text|tool_use|
+  // tool_result|usage|plan, …}] }. When the open chat's snapshot carries no
+  // conversation we fetch the items and fold them into desktop-shaped turns
+  // here; every agent.snapshot event for the open session re-renders the chat,
+  // which schedules a cheap incremental refetch (sinceSeq cursor). Rich desktop
+  // snapshots keep winning: convTurns prefers the embedded conversation.
+  const fetchedConv = new Map(); // sessionId -> {seq, turns, toolIds, at, inflight, timer}
+  const CONV_REFRESH_MS = 1000;  // min gap between refetches per session
+
+  function convTurns(s) {
+    if (s.conversation && s.conversation.length) return s.conversation;
+    const st = fetchedConv.get(s.sessionId);
+    return (st && st.turns) || [];
+  }
+  function needsConvFetch(s) { return !!(s && !(s.conversation && s.conversation.length)); }
+  function convState(id) {
+    let st = fetchedConv.get(id);
+    if (!st) { st = { seq: 0, turns: [], toolIds: new Set(), at: 0, inflight: false, timer: null }; fetchedConv.set(id, st); }
+    return st;
+  }
+  // Drop cached transcripts for sessions the provider no longer shows.
+  function pruneConv() {
+    for (const [id, st] of fetchedConv) if (!sessions.has(id)) { clearTimeout(st.timer); fetchedConv.delete(id); }
+  }
+  function scheduleConvRefresh(id) {
+    const st = convState(id);
+    if (st.inflight || st.timer) return;
+    const wait = Math.max(0, st.at + CONV_REFRESH_MS - Date.now());
+    st.timer = setTimeout(() => { st.timer = null; fetchConv(id); }, wait);
+  }
+  async function fetchConv(id) {
+    if (!sessions.has(id)) { fetchedConv.delete(id); return; }
+    const st = convState(id);
+    if (st.inflight) return;
+    st.inflight = true;
+    let changed = false;
+    try {
+      const params = { sessionId: id };
+      if (st.seq > 0) params.sinceSeq = st.seq;
+      const r = await call('sessions.conversation', params);
+      st.at = Date.now();
+      const seq = (r && typeof r.seq === 'number') ? r.seq : 0;
+      const items = (r && Array.isArray(r.items)) ? r.items : [];
+      if (st.seq > 0 && seq < st.seq) {
+        // The daemon rebuilt its log (seq went backwards) — resync from scratch.
+        st.seq = 0; st.turns = []; st.toolIds = new Set(); st.inflight = false;
+        return fetchConv(id);
+      }
+      changed = items.length > 0 || st.seq === 0;
+      st.seq = seq;
+      if (items.length) applyConvItems(st, items, sessions.get(id));
+    } catch (e) { st.at = Date.now(); /* offline/timeout — next snapshot event retries */ }
+    st.inflight = false;
+    // Render after clearing inflight so renderChat can arm a trailing refetch —
+    // the tailer can flush the turn's last text shortly after the state tick.
+    if (changed && view.name === 'chat' && view.sessionId === id) renderChat();
+  }
+  // Fold daemon conversation items into the turn shape turnHtml renders
+  // ({role, content, toolCalls: [{id, name, input, status}]}) — a client-side
+  // miniature of the desktop's conversationApplier. usage/plan items carry no
+  // transcript content and are skipped.
+  function applyConvItems(st, items, s) {
+    // Managed adapters stream assistant text as growing snapshots or deltas —
+    // coalesce into the open bubble; PTY claude emits whole blocks that can
+    // repeat around compaction — dedup instead (same rule as the desktop).
+    const streaming = !!s && (s.transport === 'stream' || (s.provider && s.provider !== 'claude'));
+    for (const it of items) {
+      const kind = it.kind || it.type;
+      if (kind === 'user_message') {
+        const text = it.text || '';
+        if (text && !isDupTurn(st.turns, 'user', text)) st.turns.push({ role: 'user', content: text });
+      } else if (kind === 'assistant_text') {
+        const text = it.text || '';
+        if (!text) continue;
+        const last = st.turns[st.turns.length - 1];
+        if (streaming && last && last.role === 'assistant' && !(last.toolCalls && last.toolCalls.length)) {
+          if (last.content && text.startsWith(last.content)) last.content = text; // growing snapshot
+          else last.content += text;                                              // incremental delta
+        } else if (!isDupTurn(st.turns, 'assistant', text)) {
+          st.turns.push({ role: 'assistant', content: text });
+        }
+      } else if (kind === 'tool_use') {
+        const tid = it.id || '';
+        if (tid && st.toolIds.has(tid)) continue;   // resync replay — ids are globally unique
+        if (tid) st.toolIds.add(tid);
+        st.turns.push({ role: 'assistant', content: '', toolCalls: [{ id: tid, name: it.name || 'tool', input: it.input, status: 'complete' }] });
+      } else if (kind === 'tool_result' && it.tool_use_id) {
+        for (let i = st.turns.length - 1; i >= 0; i--) {  // results follow their calls closely
+          const tc = (st.turns[i].toolCalls || []).find(t => t.id === it.tool_use_id);
+          if (tc) { if (it.is_error) tc.status = 'failed'; break; }
+        }
+      }
+    }
+  }
+  function isDupTurn(turns, role, content) {
+    return turns.slice(-5).some(t => t.role === role && t.content === content);
   }
 
   // ── chat ───────────────────────────────────────────────────────────────────
@@ -735,6 +838,10 @@
     if (!s) { setTab('fleet'); return; }
     titleEl.textContent = agentName(s);
     subEl.innerHTML = stateChip(s) + (s.transport === 'stream' ? ' <span class="tag">stream</span>' : '');
+    // Snapshot has no embedded conversation (headless brain) — fetch/refresh
+    // the transcript over the bus. renderChat runs on every agent.snapshot for
+    // this session, so this doubles as the live-refetch trigger (throttled).
+    if (needsConvFetch(s)) scheduleConvRefresh(s.sessionId);
 
     const atBottom = scrollBottom || (transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 60);
     const body = transcriptHtml(s);   // turns + answered-question cards, interleaved

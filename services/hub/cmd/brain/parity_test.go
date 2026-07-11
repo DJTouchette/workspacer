@@ -380,6 +380,7 @@ var snapshotFieldsRequired = []string{
 	"lastActivity",
 	"cwd",
 	"transport",
+	"provider",
 	"usage",
 	"pendingApproval",
 	"pendingQuestions",
@@ -389,7 +390,7 @@ var snapshotFieldsRequired = []string{
 // the brain deliberately does NOT provide, with the reason. Entries must still
 // be read by mobile.html (prune when the client stops using them).
 var snapshotFieldsDeclined = map[string]string{
-	"conversation": "turn-by-turn transcript lives in claudemon's /conversation endpoint, not the session row; folding it into every snapshot/publish would ship whole transcripts per state tick",
+	"conversation": "turn-by-turn transcript lives in claudemon's /conversation endpoint, not the session row; folding it into every snapshot/publish would ship whole transcripts per state tick — mobile fetches it on demand via sessions.conversation instead",
 	"liveCwd":      "statusline-derived live cwd is a desktop enrichment; clients fall back to cwd (mobile agentName: liveCwd || cwd)",
 }
 
