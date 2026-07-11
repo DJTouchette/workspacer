@@ -143,6 +143,19 @@ function assertPathAllowed(cap: string, target: string, roots: string[]): void {
 }
 
 export function registerHubCapabilities(): void {
+  // Adopted-hub note (adopt-don't-kill, see hubDaemon.ts): when the app adopts
+  // a `workspacer serve` hub, its full-scope brain already provides most of
+  // this surface. We still register everything below UNCHANGED, on purpose:
+  // the hub router is first-registration-wins (services/hub internal/bus/
+  // rpc.go), so brain-owned methods are simply withheld from us while the
+  // methods the brain doesn't provide headlessly (analytics.*, fs.watch/
+  // unwatch, OS notifications.post, terminal share) register fine — partial
+  // registration is native to the bus, no pre-negotiation needed. Whichever
+  // side owns a method serves it against the same claudemon, so the overlap
+  // is harmless; hubClient logs the withheld set from the `registered` ack.
+  // (Known minor degradation: an adopted brain owns notifications.post and
+  // only logs it — plugin notifications won't raise OS toasts in that mode.)
+
   // `cat` registers a file-backed "catalog" capability — but no-ops when we
   // delegate the catalog to the headless brain provider (the hub spawns it with
   // --brain-scope catalog). The bus router is single-owner per method, so main

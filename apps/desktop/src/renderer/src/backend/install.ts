@@ -2,11 +2,17 @@
  * Transport bootstrap. Awaited in `main.tsx` before any React code runs, so the
  * app sees a fully-installed `window.electronAPI` on first render.
  *
- * Three cases:
+ * Four cases:
  *
  *   • Web (no Electron preload): install the hub-bus-backed backend under the
  *     `window.electronAPI` global. The URL is derived from `location` (the hub
  *     serves the app), and the token comes from `?token=` / sessionStorage.
+ *
+ *   • Desktop, remote-client mode ("Connect to remote server"): main reports a
+ *     configured remote hub (getRemoteInfo().remoteClient) and spawned no local
+ *     daemons. The renderer boots the web backend dialed at the REMOTE hub —
+ *     what a browser gets at that server's /app URL, inside the shell — with
+ *     only host-shell concerns on IPC (see remoteBackend).
  *
  *   • Desktop, bus mode (default): the preload already populated
  *     `window.electronAPI` over IPC. We mirror the TUI and swap in a bridged
@@ -23,6 +29,7 @@
 
 import { createWebBackend } from './webBackend';
 import { createBridgedBackend } from './bridgedBackend';
+import { createRemoteBackend } from './remoteBackend';
 
 const TOKEN_KEY = 'hubToken';
 
@@ -44,6 +51,30 @@ function resolveToken(): string {
   }
 }
 
+/** The slice of getRemoteInfo() the desktop transport decision reads. */
+export interface BackendModeInfo {
+  desktopBus?: boolean;
+  busUrl?: string;
+  token?: string;
+  remoteClient?: { busUrl: string; token: string } | null;
+}
+
+export type BackendMode = 'ipc' | 'bridged' | 'remote';
+
+/**
+ * Pick the desktop transport from main's remote info. Pure — exported for
+ * tests. Remote-client mode wins outright: when a remote server is configured,
+ * main spawned no local daemons, so neither the local bus (bridged) nor local
+ * IPC data paths would have anything to talk to.
+ */
+export function selectBackendMode(info: BackendModeInfo | null | undefined): BackendMode {
+  if (info?.remoteClient?.busUrl) return 'remote';
+  // Kill switch (WORKSPACER_DESKTOP_DIRECT=1) → main reports desktopBus:false.
+  if (!info || info.desktopBus === false) return 'ipc';
+  if (!info.busUrl || !info.token) return 'ipc'; // can't reach the bus — stay on IPC
+  return 'bridged';
+}
+
 export async function installBackend(): Promise<void> {
   // Web build: no contextBridge, so install the bus backend ourselves.
   if (typeof window === 'undefined' || !window.electronAPI) {
@@ -57,14 +88,26 @@ export async function installBackend(): Promise<void> {
   const ipc = window.electronAPI;
   try {
     const info = await ipc.getRemoteInfo();
-    // Kill switch (WORKSPACER_DESKTOP_DIRECT=1) → main reports desktopBus:false.
-    if (!info || info.desktopBus === false) return;
-    if (!info.busUrl || !info.token) return; // can't reach the bus — stay on IPC
-    window.electronAPI = createBridgedBackend(ipc, info.token, info.busUrl);
-    // eslint-disable-next-line no-console
-    console.log(
-      `[backend] desktop running on the hub bus (${info.busUrl}); host-only calls stay on IPC.`,
-    );
+    switch (selectBackendMode(info)) {
+      case 'remote': {
+        const rc = info.remoteClient!;
+        window.electronAPI = createRemoteBackend(ipc, rc.token ?? '', rc.busUrl);
+        // eslint-disable-next-line no-console
+        console.log(
+          `[backend] remote-client mode: running against ${rc.busUrl}; host-shell calls stay on IPC.`,
+        );
+        return;
+      }
+      case 'bridged':
+        window.electronAPI = createBridgedBackend(ipc, info.token, info.busUrl);
+        // eslint-disable-next-line no-console
+        console.log(
+          `[backend] desktop running on the hub bus (${info.busUrl}); host-only calls stay on IPC.`,
+        );
+        return;
+      case 'ipc':
+        return;
+    }
   } catch (err) {
     // getRemoteInfo failed (hub not up yet, etc.) — keep the IPC backend as-is.
     // eslint-disable-next-line no-console

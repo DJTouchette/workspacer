@@ -22,6 +22,7 @@ import {
   stopClaudemonEventBridge,
 } from './services/claudemonEventBridge';
 import { startHub, stopHub } from './services/hubDaemon';
+import { getRemoteServer } from './services/remoteServer';
 import { startMcpFacade, stopMcpFacade } from './services/mcpFacadeDaemon';
 import { setHubMainWindow, startHubClient, stopHubClient } from './services/hubClient';
 import { setNoticeWindow, notifySystem } from './services/systemNotice';
@@ -319,67 +320,82 @@ function createWindow(): void {
   setHubMainWindow(mainWindow);
   setNoticeWindow(mainWindow);
 
-  // claudemon daemon owns hook ingestion + transcript parsing. We spawn it,
-  // run `claudemon init` to merge our hooks into ~/.claude/settings.json,
-  // then subscribe to its /hooks/stream SSE feed.
-  startClaudemon()
-    .then(async () => {
-      try {
-        await runClaudemonInit();
-      } catch (err) {
-        console.error('[main] claudemon init failed:', err);
-      }
-      startClaudemonHookBridge().catch((err) => console.error('[main] hook bridge crashed:', err));
-      startClaudemonStatusLineBridge().catch((err) =>
-        console.error('[main] statusline bridge crashed:', err),
-      );
-      startClaudemonConversationBridge().catch((err) =>
-        console.error('[main] conversation bridge crashed:', err),
-      );
-      // Managed (Codex/OpenCode/Pi) sessions fire no hooks; this feeds their
-      // mode → ambientState so their status isn't stuck on "Idle".
-      startClaudemonEventBridge().catch((err) =>
-        console.error('[main] event bridge crashed:', err),
-      );
-      // Hub (control-plane / event bus) bridges claudemon onto its bus; the
-      // main process connects as a client, forwards events to the renderer, and
-      // registers the capabilities plugins/MCP can call. Started after claudemon
-      // so the bridge has a live /events source.
-      registerHubCapabilities();
-      startHub()
-        .then(() => {
-          startHubClient();
-          // The MCP facade bridges hub capabilities to MCP tools for supervisor
-          // sessions. Started after the hub so its bus connection has a target.
-          // Optional: a failure only costs the supervisor its action tools.
-          startMcpFacade().catch((err) =>
-            console.error(
-              '[main] failed to start mcp facade — supervisors will lack action tools:',
-              err,
-            ),
-          );
-        })
-        .catch((err) => {
-          notifySystem({
-            level: 'warn',
-            key: 'hub-start',
-            title: 'Control plane (hub) failed to start',
-            detail:
-              'Plugins and remote sharing are unavailable. Agents still work locally. ' +
-              (err?.message ?? String(err)),
+  // "Connect to remote server" (client mode): the renderer boots against the
+  // REMOTE hub over the web backend (see renderer backend/install.ts), so the
+  // whole local stack — claudemon, hub, brain, facade, bridges, capability
+  // registration — is skipped. There is nothing local to drive or observe;
+  // spawning it anyway would just burn ports and confuse `workspacer serve`
+  // running on this machine. Disconnecting relaunches the app into local mode.
+  const remoteServer = getRemoteServer();
+  if (remoteServer) {
+    console.log(
+      `[main] remote-client mode: renderer connects to ${remoteServer.httpUrl} — local daemons not spawned`,
+    );
+  } else {
+    // claudemon daemon owns hook ingestion + transcript parsing. We spawn it,
+    // run `claudemon init` to merge our hooks into ~/.claude/settings.json,
+    // then subscribe to its /hooks/stream SSE feed.
+    startClaudemon()
+      .then(async () => {
+        try {
+          await runClaudemonInit();
+        } catch (err) {
+          console.error('[main] claudemon init failed:', err);
+        }
+        startClaudemonHookBridge().catch((err) =>
+          console.error('[main] hook bridge crashed:', err),
+        );
+        startClaudemonStatusLineBridge().catch((err) =>
+          console.error('[main] statusline bridge crashed:', err),
+        );
+        startClaudemonConversationBridge().catch((err) =>
+          console.error('[main] conversation bridge crashed:', err),
+        );
+        // Managed (Codex/OpenCode/Pi) sessions fire no hooks; this feeds their
+        // mode → ambientState so their status isn't stuck on "Idle".
+        startClaudemonEventBridge().catch((err) =>
+          console.error('[main] event bridge crashed:', err),
+        );
+        // Hub (control-plane / event bus) bridges claudemon onto its bus; the
+        // main process connects as a client, forwards events to the renderer, and
+        // registers the capabilities plugins/MCP can call. Started after claudemon
+        // so the bridge has a live /events source.
+        registerHubCapabilities();
+        startHub()
+          .then(() => {
+            startHubClient();
+            // The MCP facade bridges hub capabilities to MCP tools for supervisor
+            // sessions. Started after the hub so its bus connection has a target.
+            // Optional: a failure only costs the supervisor its action tools.
+            startMcpFacade().catch((err) =>
+              console.error(
+                '[main] failed to start mcp facade — supervisors will lack action tools:',
+                err,
+              ),
+            );
+          })
+          .catch((err) => {
+            notifySystem({
+              level: 'warn',
+              key: 'hub-start',
+              title: 'Control plane (hub) failed to start',
+              detail:
+                'Plugins and remote sharing are unavailable. Agents still work locally. ' +
+                (err?.message ?? String(err)),
+            });
           });
+      })
+      .catch((err) => {
+        notifySystem({
+          level: 'error',
+          key: 'claudemon-start',
+          title: 'Agent daemon (claudemon) failed to start',
+          detail:
+            'Claude sessions won’t receive hook events or appear correctly. ' +
+            (err?.message ?? String(err)),
         });
-    })
-    .catch((err) => {
-      notifySystem({
-        level: 'error',
-        key: 'claudemon-start',
-        title: 'Agent daemon (claudemon) failed to start',
-        detail:
-          'Claude sessions won’t receive hook events or appear correctly. ' +
-          (err?.message ?? String(err)),
       });
-    });
+  }
 
   // Prevent Electron from navigating to dropped files
   mainWindow.webContents.on('will-navigate', (event) => {

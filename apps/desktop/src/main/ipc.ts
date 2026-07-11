@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow, dialog, shell } from 'electron';
+import { app, ipcMain, BrowserWindow, dialog, shell } from 'electron';
 import * as os from 'os';
 import * as fs from 'fs';
 import { pathToFileURL } from 'url';
@@ -40,6 +40,7 @@ import {
   setRemoteShare,
 } from './services/hubDaemon';
 import { getTailscaleInfo, setTailscaleServe } from './services/tailscaleServe';
+import { setRemoteServer } from './services/remoteServer';
 import { publishToHub, isHubConnected, callHub } from './services/hubClient';
 import { IPC } from './shared/ipcChannels';
 import type {
@@ -295,6 +296,28 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // Connection info for the remote-control client (URL + token for a QR/share).
   ipcMain.handle(IPC.HUB_GET_REMOTE_INFO, () => getRemoteShareInfo());
   ipcMain.handle(IPC.HUB_SET_REMOTE_SHARE, (_event, enabled: boolean) => setRemoteShare(!!enabled));
+  // "Connect to remote server" (client mode): persist/clear the target. Takes
+  // effect on relaunch — the local-vs-remote decision is made once at startup
+  // (index.ts), so the UI calls APP_RELAUNCH after a successful set/clear.
+  ipcMain.handle(
+    IPC.HUB_SET_REMOTE_SERVER,
+    (_event, setting: { url: string; token: string } | null) => {
+      try {
+        setRemoteServer(
+          setting && setting.url ? { url: setting.url, token: setting.token ?? '' } : null,
+        );
+        return { ok: true as const };
+      } catch (err) {
+        return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
+      }
+    },
+  );
+  ipcMain.handle(IPC.APP_RELAUNCH, () => {
+    // relaunch() queues a fresh instance for after this one exits; quit() runs
+    // the normal before-quit path (graceful shutdown of any owned daemons).
+    app.relaunch();
+    app.quit();
+  });
   // Git worktrees: repo detection for the spawn dialog + agent-worktree create.
   ipcMain.handle(IPC.WORKTREE_INFO, (_event, cwd: string) => worktreeInfo(cwd));
   ipcMain.handle(

@@ -12,6 +12,11 @@ interface RemoteInfo {
   appUrl: string;
   /** Bare bus URL (no token) for diagnostics. */
   busUrl: string;
+  /** Local daemons adopted from an external `workspacer serve` on this machine. */
+  hubAdopted?: boolean;
+  claudemonAdopted?: boolean;
+  /** Configured "connect to remote server" target (client mode), or null. */
+  remoteClient?: { httpUrl: string; busUrl: string; token: string } | null;
 }
 
 interface TailscaleInfoUI {
@@ -135,21 +140,27 @@ const RemoteShareDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           </div>
         )}
 
-        {!loading && info && !info.enabled && (
-          <DisabledState busy={toggling} onStart={() => toggleShare(true)} />
+        {/* Client mode: this app IS the remote — the local sharing controls are
+            moot (no local hub is running), so show only the connection state. */}
+        {!loading && info && !info.remoteClient && (
+          <>
+            {info.hubAdopted && <AdoptedNote claudemon={!!info.claudemonAdopted} />}
+            {!info.enabled && <DisabledState busy={toggling} onStart={() => toggleShare(true)} />}
+            {info.enabled && (
+              <EnabledState
+                info={info}
+                copied={copied}
+                showToken={showToken}
+                busy={toggling}
+                onCopy={copy}
+                onToggleToken={() => setShowToken((s) => !s)}
+                onStop={() => toggleShare(false)}
+              />
+            )}
+          </>
         )}
 
-        {!loading && info && info.enabled && (
-          <EnabledState
-            info={info}
-            copied={copied}
-            showToken={showToken}
-            busy={toggling}
-            onCopy={copy}
-            onToggleToken={() => setShowToken((s) => !s)}
-            onStop={() => toggleShare(false)}
-          />
-        )}
+        {!loading && info && <RemoteClientSection info={info} />}
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 20 }}>
           <button onClick={onClose} style={secondaryBtnStyle}>
@@ -160,6 +171,145 @@ const RemoteShareDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     </div>
   );
 };
+
+/** Shown when the local hub/claudemon were ADOPTED from a `workspacer serve`
+ *  running on this machine: the app is a guest of those daemons — it didn't
+ *  spawn them and quitting won't stop them. Purely informational. */
+function AdoptedNote({ claudemon }: { claudemon: boolean }) {
+  return (
+    <div
+      style={{
+        margin: '0 0 14px',
+        padding: '8px 12px',
+        borderRadius: 'var(--wks-radius-md)',
+        background: 'var(--wks-bg-input)',
+        border: '1px solid var(--wks-border-subtle, var(--wks-border-input))',
+        fontSize: '0.66rem',
+        color: 'var(--wks-text-tertiary)',
+        lineHeight: 1.5,
+      }}
+    >
+      Using the daemons of a <code style={inlineCode}>workspacer serve</code> already running on
+      this machine (hub{claudemon ? ' + claudemon' : ''} adopted). Quitting the app leaves the
+      server running.
+    </div>
+  );
+}
+
+/**
+ * "Connect to remote server" — run this app as a client of an external
+ * `workspacer serve` (typically over a Tailscale tailnet). Connecting persists
+ * the target and relaunches: main skips the local daemons and the renderer
+ * boots against the remote hub bus (see backend/install.ts). Disconnecting
+ * clears the setting and relaunches back into local mode. Rendered only where
+ * the setting can be persisted (the desktop preload exposes setRemoteServer).
+ */
+function RemoteClientSection({ info }: { info: RemoteInfo }) {
+  const [url, setUrl] = useState('');
+  const [token, setToken] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (!window.electronAPI.setRemoteServer) return null;
+
+  const apply = async (setting: { url: string; token: string } | null) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await window.electronAPI.setRemoteServer!(setting);
+      if (!r.ok) {
+        setError(r.error || 'Could not save the server setting.');
+        return;
+      }
+      // Applying needs a fresh boot (daemon-vs-remote is decided at startup).
+      await window.electronAPI.appRelaunch?.();
+    } catch {
+      setError('Could not save the server setting.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const connected = info.remoteClient;
+  return (
+    <div
+      style={{
+        marginTop: 18,
+        paddingTop: 14,
+        borderTop: '1px solid var(--wks-border-subtle)',
+      }}
+    >
+      <div
+        style={{
+          fontSize: '0.78rem',
+          fontWeight: 600,
+          color: 'var(--wks-text-primary)',
+          marginBottom: 4,
+        }}
+      >
+        Connect to a remote server
+      </div>
+      {connected ? (
+        <>
+          <div
+            style={{
+              fontSize: '0.68rem',
+              color: 'var(--wks-text-tertiary)',
+              lineHeight: 1.6,
+              marginBottom: 10,
+            }}
+          >
+            This app is a client of <code style={inlineCode}>{connected.httpUrl}</code> — agents run
+            there, and no local daemons were started. Disconnect to go back to running agents on
+            this machine.
+          </div>
+          <button onClick={() => apply(null)} disabled={busy} style={dangerBtnStyle(busy)}>
+            {busy ? 'Disconnecting…' : 'Disconnect (restarts the app)'}
+          </button>
+        </>
+      ) : (
+        <>
+          <div
+            style={{
+              fontSize: '0.66rem',
+              color: 'var(--wks-text-faint)',
+              lineHeight: 1.6,
+              marginBottom: 10,
+            }}
+          >
+            Point this app at a <code style={inlineCode}>workspacer serve</code> on another machine
+            (host or URL + its pairing token). The app restarts as a pure client — like the server's
+            web app, but in this window.
+          </div>
+          <input
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder="server address, e.g. 100.64.1.2:7895"
+            style={textInputStyle}
+          />
+          <input
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            placeholder="pairing token (from `workspacer serve`)"
+            type="password"
+            style={{ ...textInputStyle, marginTop: 6 }}
+          />
+          {error && (
+            <div style={{ fontSize: '0.64rem', color: 'var(--wks-danger, #e05555)', marginTop: 6 }}>
+              {error}
+            </div>
+          )}
+          <button
+            onClick={() => apply({ url, token })}
+            disabled={busy || !url.trim()}
+            style={{ ...primaryBtnStyle(busy || !url.trim()), marginTop: 8 }}
+          >
+            {busy ? 'Connecting…' : 'Connect (restarts the app)'}
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
 
 function DisabledState({ busy, onStart }: { busy: boolean; onStart: () => void }) {
   return (
@@ -729,6 +879,19 @@ const dangerBtnStyle = (disabled: boolean): React.CSSProperties => ({
   borderRadius: 6,
   padding: '9px 14px',
 });
+
+const textInputStyle: React.CSSProperties = {
+  width: '100%',
+  boxSizing: 'border-box',
+  fontSize: '0.72rem',
+  fontFamily: 'var(--wks-font-mono, monospace)',
+  color: 'var(--wks-text-primary)',
+  background: 'var(--wks-bg-base)',
+  border: '1px solid var(--wks-border-input)',
+  borderRadius: 4,
+  padding: '7px 9px',
+  outline: 'none',
+};
 
 const inlineCode: React.CSSProperties = {
   fontFamily: 'var(--wks-font-mono, monospace)',

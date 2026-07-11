@@ -410,6 +410,16 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
       <Smartphone size={16} strokeWidth={1.75} />,
       onOpenRemote,
     );
+    // Alias into the same dialog: the "run this app as a client of a remote
+    // `workspacer serve`" flow lives in Remote Control, but users hunting for
+    // it will type "connect"/"server", not "remote control".
+    add(
+      'cmd-connect-server',
+      'Connect to Server…',
+      'Use this app as a client of a remote workspacer server',
+      <Smartphone size={16} strokeWidth={1.75} />,
+      onOpenRemote,
+    );
     add(
       'cmd-manage-plugins',
       'Manage Plugins…',

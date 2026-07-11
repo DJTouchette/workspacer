@@ -239,6 +239,14 @@ export interface ElectronAPI {
     appUrl: string;
     busUrl: string;
     desktopBus?: boolean;
+    /** True when the local hub was ADOPTED from an external `workspacer serve`
+     *  (the app didn't spawn it and won't stop it on quit). Optional: absent on
+     *  the web backend, which has no local daemons at all. */
+    hubAdopted?: boolean;
+    /** Same, for claudemon. */
+    claudemonAdopted?: boolean;
+    /** Configured "connect to remote server" target (client mode), or null. */
+    remoteClient?: { httpUrl: string; busUrl: string; token: string } | null;
   }>;
   /** Toggle remote sharing at runtime (persists + restarts the hub). Returns fresh share info. */
   setRemoteShare?: (enabled: boolean) => Promise<{
@@ -248,7 +256,17 @@ export interface ElectronAPI {
     appUrl: string;
     busUrl: string;
     desktopBus?: boolean;
+    hubAdopted?: boolean;
+    claudemonAdopted?: boolean;
+    remoteClient?: { httpUrl: string; busUrl: string; token: string } | null;
   }>;
+  /** Persist/clear the "connect to remote server" target (client mode). Takes
+   *  effect on relaunch — pair with appRelaunch(). Desktop-only. */
+  setRemoteServer?: (
+    setting: { url: string; token: string } | null,
+  ) => Promise<{ ok: boolean; error?: string }>;
+  /** Relaunch the app (used to apply remote-client connect/disconnect). */
+  appRelaunch?: () => Promise<void>;
   /** Tailscale HTTPS status for the /m PWA (CLI present, node name, serve state). */
   tailscaleGetInfo?: () => Promise<{
     available: boolean;

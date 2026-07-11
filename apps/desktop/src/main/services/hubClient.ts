@@ -137,6 +137,7 @@ function connect(): void {
       event?: HubEvent;
       id?: string;
       method?: string;
+      methods?: string[];
       params?: unknown;
       result?: unknown;
       error?: string;
@@ -192,7 +193,30 @@ function connect(): void {
         }
         break;
       }
-      // hello / subscribed / registered acks: nothing to do.
+      case 'registered': {
+        // The hub's router is first-registration-wins (a capability-hijack
+        // guard — services/hub internal/bus/rpc.go): a method already owned by
+        // another LIVE connection is withheld from us, and the ack lists only
+        // what actually registered. That's exactly what makes registering our
+        // full surface against an ADOPTED `workspacer serve` hub safe: its
+        // full-scope brain registered first and keeps agents.*/sessions.*/…,
+        // while desktop-only extras (analytics.*, fs.watch/unwatch, real OS
+        // notifications.post, terminal share) land in the free slots. Both
+        // sides proxy the same claudemon, so whichever one owns a method
+        // serves it correctly — overlap is harmless by construction. We just
+        // log the split so an adopted-hub session shows who provides what.
+        const requested = Array.from(handlers.keys());
+        const accepted = new Set(frame.methods ?? []);
+        const withheld = requested.filter((m) => !accepted.has(m));
+        if (withheld.length > 0) {
+          console.log(
+            `[hub-client] ${withheld.length}/${requested.length} capability method(s) withheld — ` +
+              `already provided by another connection (adopted full-scope brain?): ${withheld.join(', ')}`,
+          );
+        }
+        break;
+      }
+      // hello / subscribed acks: nothing to do.
     }
   });
 

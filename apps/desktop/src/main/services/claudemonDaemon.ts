@@ -16,6 +16,7 @@ import { app } from 'electron';
 import {
   killStaleListener,
   waitForHealth as waitForHealthShared,
+  probeHealth,
   PORTS,
   RestartBackoff,
   daemonSpawnOptions,
@@ -45,7 +46,19 @@ let child: ChildProcess | null = null;
 let readyPromise: Promise<void> | null = null;
 /** Set by stopClaudemon() / app shutdown so an intentional kill isn't respawned. */
 let intentionalStop = false;
+/**
+ * True when we ADOPTED an already-running external claudemon (e.g. one spawned
+ * by `workspacer serve`) instead of spawning our own. Adopted daemons are not
+ * ours to manage: we never supervise/restart them and never signal them on
+ * quit — only an owned child (spawned by us, tracked in `child`) is stopped.
+ */
+let adopted = false;
 const backoff = new RestartBackoff();
+
+/** Whether the running claudemon was adopted from an external server. */
+export function isClaudemonAdopted(): boolean {
+  return adopted;
+}
 
 function exeName(): string {
   return process.platform === 'win32' ? 'claudemon.exe' : 'claudemon';
@@ -70,21 +83,48 @@ export function claudemonBinaryPath(): string {
   return path.join(process.resourcesPath, 'claudemon', exeName());
 }
 
-/** Spawn the daemon. Idempotent — repeat calls return the existing ready promise. */
+/**
+ * Start the daemon: adopt a healthy external one, else spawn our own.
+ * Idempotent — repeat calls return the existing ready promise.
+ *
+ * Adopt-don't-kill: `workspacer serve` runs claudemon on the same default
+ * ports. If something HEALTHY already answers /health we adopt it — resolve
+ * ready without spawning, without killing, and without supervising it (its
+ * lifetime belongs to whoever started it). We only fall through to the
+ * kill-stale + spawn path when the port is dead or answering garbage — the
+ * stale-orphan case killStaleListener exists for. The probe runs before the
+ * binary check on purpose: adopting an external daemon needs no local binary.
+ */
 export function startClaudemon(): Promise<void> {
   if (readyPromise) return readyPromise;
 
-  const bin = claudemonBinaryPath();
-  if (!fs.existsSync(bin)) {
-    return Promise.reject(new Error(`claudemon binary not found at ${bin}`));
-  }
-
   intentionalStop = false;
-  return launch(bin);
+  const starting = (async () => {
+    if (await probeHealth(`http://127.0.0.1:${API_PORT}/health`)) {
+      adopted = true;
+      console.log(
+        `[claudemon] adopted external daemon on :${API_PORT} (workspacer serve?) — not spawning, not supervising`,
+      );
+      return;
+    }
+    adopted = false;
+    const bin = claudemonBinaryPath();
+    if (!fs.existsSync(bin)) {
+      throw new Error(`claudemon binary not found at ${bin}`);
+    }
+    return launch(bin);
+  })();
+  // launch() re-assigns readyPromise to its health promise (needed by the
+  // crash-restart path); until then this placeholder keeps repeat callers off
+  // a second probe/spawn.
+  readyPromise = starting;
+  return starting;
 }
 
 /** Spawn the process and wire up exit-driven restart. Returns the health promise. */
 function launch(bin: string): Promise<void> {
+  // Only reached when the health probe failed: whatever holds the port (if
+  // anything) is a stale orphan, not an adoptable daemon — clear it.
   killStaleListener(HOOK_PORT, 'claudemon');
   killStaleListener(API_PORT, 'claudemon');
 
@@ -186,6 +226,14 @@ export function runClaudemonInit(): Promise<void> {
 export function stopClaudemon(): Promise<void> {
   intentionalStop = true;
   backoff.reset(); // clear failure counter so the next startClaudemon() begins fresh
+  // Adopted daemon: it isn't ours — leave it running (quitting the app must not
+  // take down `workspacer serve`). Only an owned child gets the graceful stop.
+  if (adopted) {
+    console.log('[claudemon] adopted daemon left running (owned by the external server)');
+    adopted = false;
+    readyPromise = null;
+    return Promise.resolve();
+  }
   const c = child;
   child = null;
   readyPromise = null;

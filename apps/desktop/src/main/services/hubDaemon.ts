@@ -18,11 +18,13 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import { spawn, ChildProcess } from 'child_process';
 import { app } from 'electron';
-import { CLAUDEMON_API_URL } from './claudemonDaemon';
+import { CLAUDEMON_API_URL, isClaudemonAdopted } from './claudemonDaemon';
 import { DELEGATE_CATALOG_TO_BRAIN, DESKTOP_RENDERER_USES_BUS } from './brainDelegation';
+import { getRemoteServer } from './remoteServer';
 import {
   killStaleListener,
   waitForHealth as waitForHealthShared,
+  probeHealth,
   PORTS,
   RestartBackoff,
   daemonSpawnOptions,
@@ -38,7 +40,23 @@ let child: ChildProcess | null = null;
 let readyPromise: Promise<void> | null = null;
 /** Set by stopHub() / app shutdown so an intentional kill isn't respawned. */
 let intentionalStop = false;
+/**
+ * True when we ADOPTED an already-running external hub (e.g. `workspacer
+ * serve`, which runs the hub with --brain-scope full). Adopted hubs are not
+ * ours to manage: no supervision/restart, no signal on quit — only an owned
+ * child (spawned by us, tracked in `child`) is stopped. Capability overlap
+ * with the external hub's full-scope brain is resolved by the hub itself:
+ * its router is first-registration-wins (see services/hub internal/bus/rpc.go
+ * and the `registered` ack handling in hubClient.ts), so our registrations
+ * for brain-owned methods are simply withheld while desktop-only extras land.
+ */
+let adopted = false;
 const backoff = new RestartBackoff();
+
+/** Whether the running hub was adopted from an external server. */
+export function isHubAdopted(): boolean {
+  return adopted;
+}
 
 /**
  * Remote sharing (opt-in, toggleable at runtime). When enabled the hub binds
@@ -170,6 +188,15 @@ export interface RemoteShareInfo {
   /** Whether the desktop renderer should run on the hub bus (mirroring the TUI)
    *  rather than pure IPC. The renderer reads this to pick its transport. */
   desktopBus: boolean;
+  /** True when the local hub was ADOPTED from an external `workspacer serve`
+   *  (we didn't spawn it and won't stop it on quit). */
+  hubAdopted: boolean;
+  /** Same, for claudemon. */
+  claudemonAdopted: boolean;
+  /** Configured "connect to remote server" target (client mode), or null.
+   *  When set, the renderer boots against this REMOTE hub instead of the
+   *  local one and main skips spawning local daemons — see remoteServer.ts. */
+  remoteClient: { httpUrl: string; busUrl: string; token: string } | null;
 }
 
 /** Location of the built web app (dist/web) the hub serves at /app/. */
@@ -193,6 +220,9 @@ export function getRemoteShareInfo(): RemoteShareInfo {
     appUrl: hasWebApp ? `http://${host}:${PORT}/app/${q}` : '',
     busUrl: `ws://${host}:${PORT}/bus`,
     desktopBus: DESKTOP_RENDERER_USES_BUS,
+    hubAdopted: adopted,
+    claudemonAdopted: isClaudemonAdopted(),
+    remoteClient: getRemoteServer(),
   };
 }
 
@@ -259,25 +289,52 @@ function ensurePluginsDir(): string {
   return dir;
 }
 
-/** Spawn the hub. Idempotent — repeat calls return the existing ready promise. */
+/**
+ * Start the hub: adopt a healthy external one, else spawn our own.
+ * Idempotent — repeat calls return the existing ready promise.
+ *
+ * Adopt-don't-kill: `workspacer serve` runs the hub (with a full-scope brain)
+ * on the same default port. If something HEALTHY already answers /health we
+ * adopt it — no spawn, no kill, no supervision. Kill-stale only runs when the
+ * port is occupied but unhealthy (the orphan case it exists for). The probe
+ * precedes the binary check on purpose: adoption needs no local binary.
+ * Auth just works because both sides read/mint the same
+ * `<config>/workspacer/remote-token` (see loadOrCreateToken + the CLI's
+ * token.go), so getHubToken() matches the adopted hub's expected bearer.
+ */
 export function startHub(): Promise<void> {
   if (readyPromise) return readyPromise;
 
-  const bin = hubBinaryPath();
-  if (!fs.existsSync(bin)) {
-    return Promise.reject(
-      new Error(
-        `hub binary not found at ${bin} (run: cd services/hub && go build -o hub ./cmd/hub)`,
-      ),
-    );
-  }
-
   intentionalStop = false;
-  return launch(bin);
+  const starting = (async () => {
+    if (await probeHealth(`http://127.0.0.1:${PORT}/health`)) {
+      adopted = true;
+      console.log(
+        `[hub] adopted external hub on :${PORT} (workspacer serve?) — not spawning, not supervising; ` +
+          'its full-scope brain keeps the capabilities it already provides',
+      );
+      return;
+    }
+    adopted = false;
+    const bin = hubBinaryPath();
+    if (!fs.existsSync(bin)) {
+      throw new Error(
+        `hub binary not found at ${bin} (run: cd services/hub && go build -o hub ./cmd/hub)`,
+      );
+    }
+    return launch(bin);
+  })();
+  // launch() re-assigns readyPromise to its health promise (needed by the
+  // crash-restart path); until then this placeholder keeps repeat callers off
+  // a second probe/spawn.
+  readyPromise = starting;
+  return starting;
 }
 
 /** Spawn the process and wire up exit-driven restart. Returns the health promise. */
 function launch(bin: string): Promise<void> {
+  // Only reached when the health probe failed: whatever holds the port (if
+  // anything) is a stale orphan, not an adoptable hub — clear it.
   killStaleListener(PORT, 'hub');
 
   const pluginsDir = ensurePluginsDir();
@@ -375,6 +432,16 @@ function scheduleRestart(bin: string): void {
  */
 export async function setRemoteShare(enabled: boolean): Promise<RemoteShareInfo> {
   writeRemoteShareFlag(enabled);
+  // An adopted hub isn't ours to restart — its binding was chosen by whoever
+  // started `workspacer serve` (--host is its remote opt-in). Persist the flag
+  // so an app-owned hub honors it next time, but don't touch the external one.
+  if (adopted) {
+    console.warn(
+      '[hub] remote-share toggle noted, but the hub is an adopted external server — ' +
+        're-bind it there (workspacer serve --host …); the toggle applies when the app owns the hub',
+    );
+    return getRemoteShareInfo();
+  }
   await stopHub();
   // stopHub cleared readyPromise + set intentionalStop; startHub re-launches
   // bound for the new state. Await health so the UI's refreshed info is live.
@@ -389,6 +456,14 @@ export async function setRemoteShare(enabled: boolean): Promise<RemoteShareInfo>
 export function stopHub(): Promise<void> {
   intentionalStop = true;
   backoff.reset(); // clear failure counter so the next startHub() begins fresh
+  // Adopted hub: it isn't ours — leave it (and its plugin sidecars/brain)
+  // running. Quitting the app must not take down `workspacer serve`.
+  if (adopted) {
+    console.log('[hub] adopted hub left running (owned by the external server)');
+    adopted = false;
+    readyPromise = null;
+    return Promise.resolve();
+  }
   const c = child;
   child = null;
   readyPromise = null;

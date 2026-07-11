@@ -420,6 +420,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     appUrl: string;
     busUrl: string;
     desktopBus: boolean;
+    hubAdopted: boolean;
+    claudemonAdopted: boolean;
+    remoteClient: { httpUrl: string; busUrl: string; token: string } | null;
   }> => ipcRenderer.invoke(IPC.HUB_GET_REMOTE_INFO),
   setRemoteShare: (
     enabled: boolean,
@@ -430,7 +433,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     appUrl: string;
     busUrl: string;
     desktopBus: boolean;
+    hubAdopted: boolean;
+    claudemonAdopted: boolean;
+    remoteClient: { httpUrl: string; busUrl: string; token: string } | null;
   }> => ipcRenderer.invoke(IPC.HUB_SET_REMOTE_SHARE, enabled),
+  // "Connect to remote server" (client mode): persist/clear the target hub.
+  // Applied on relaunch — pair with appRelaunch() after a successful set.
+  setRemoteServer: (
+    setting: { url: string; token: string } | null,
+  ): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke(IPC.HUB_SET_REMOTE_SERVER, setting),
+  appRelaunch: (): Promise<void> => ipcRenderer.invoke(IPC.APP_RELAUNCH),
   tailscaleGetInfo: (): Promise<{
     available: boolean;
     magicName: string | null;

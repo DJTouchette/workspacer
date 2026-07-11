@@ -81,6 +81,7 @@ export const IPC = {
   HUB_GET_STATUS: 'hub:getStatus',
   HUB_GET_REMOTE_INFO: 'hub:getRemoteInfo',
   HUB_SET_REMOTE_SHARE: 'hub:setRemoteShare',
+  HUB_SET_REMOTE_SERVER: 'hub:setRemoteServer', // invoke: persist/clear the "connect to remote server" target
   TAILSCALE_GET_INFO: 'tailscale:getInfo',
   TAILSCALE_SET_SERVE: 'tailscale:setServe',
   HUB_INSTALL_PLUGIN: 'hub:installPlugin',
@@ -159,6 +160,7 @@ export const IPC = {
   // ── App lifecycle ──
   APP_BEFORE_QUIT: 'app:before-quit', // push (main → renderer)
   APP_QUIT_SAVED: 'app:quit-saved', // ack (renderer → main): the quit-save landed
+  APP_RELAUNCH: 'app:relaunch', // invoke: relaunch the app (applies remote-client connect/disconnect)
 
   // ── Window chrome (Windows native caption-button overlay) ──
   WINDOW_SET_OVERLAY: 'window:setOverlay', // send (renderer → main)

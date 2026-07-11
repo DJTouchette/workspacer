@@ -102,6 +102,31 @@ export function gracefulStop(
   });
 }
 
+// ── probeHealth ──────────────────────────────────────────────────────────────
+
+/**
+ * One-shot health probe: does something HEALTHY already answer on this URL?
+ * Used for adopt-don't-kill: an external `workspacer serve` runs the same
+ * daemons on the same default ports, and the desktop must ADOPT those instead
+ * of killing them (killStaleListener is only for the port-squatting orphan
+ * case, where nothing answers /health). Unlike waitForHealth this does not
+ * poll — a healthy daemon answers immediately; anything else (refused,
+ * timeout, non-200) means "not adoptable" and the caller proceeds to
+ * kill-stale + spawn.
+ */
+export async function probeHealth(url: string, timeoutMs = 1200): Promise<boolean> {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { signal: ctl.signal });
+    return res.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ── killStaleListener ────────────────────────────────────────────────────────
 
 /**
