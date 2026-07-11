@@ -3,6 +3,7 @@ import { PaneType, TabConfig } from '../types/pane';
 import { useConfig, ScriptEntry, Config } from '../hooks/useConfig';
 import { themes, resolveTheme, themeDisplayName } from '../themes';
 import { useIsSmallScreen } from '../hooks/useMediaQuery';
+import { useAppVersion } from '../hooks/useAppVersion';
 import { PaneIcon, Play, Settings, Plus, Columns3 } from './icons';
 import { AgentLogo } from './agentLogos';
 import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from './ContextMenu';
@@ -59,6 +60,7 @@ const NavBar: React.FC<NavBarProps> = ({
   onSaveScripts,
 }) => {
   const { config, save } = useConfig();
+  const { version, isNightly } = useAppVersion();
   const isSmallScreen = useIsSmallScreen();
   const navHeight = resolveNavHeight(config.ui.navBarHeight, isSmallScreen);
   // On Windows the native caption buttons (min/max/close) are drawn by the
@@ -373,6 +375,33 @@ const NavBar: React.FC<NavBarProps> = ({
           </div>
         )}
       </div>
+
+      {/* Nightly builds wear a badge so a rolling build is never mistaken for
+          a release; the tooltip carries the full stamped version. */}
+      {isNightly && (
+        <span
+          title={`Workspacer ${version} — nightly build`}
+          style={{
+            flexShrink: 0,
+            padding: '2px 7px',
+            marginRight: '6px',
+            border: '1px solid var(--wks-warning)',
+            borderRadius: 'var(--wks-radius-pill)',
+            fontSize: '0.58rem',
+            fontWeight: 700,
+            letterSpacing: '0.08em',
+            fontFamily: 'var(--wks-font-mono)',
+            color: 'var(--wks-warning)',
+            userSelect: 'none',
+            whiteSpace: 'nowrap',
+            // @ts-ignore
+            WebkitAppRegion: 'no-drag',
+            appRegion: 'no-drag',
+          }}
+        >
+          NIGHTLY
+        </span>
+      )}
 
       {/* Theme switcher — current theme's accent/purple/blue swatch + name,
           with a dropdown to pick any theme. Mirrors the mockup's right cluster. */}

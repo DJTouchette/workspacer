@@ -11,6 +11,15 @@ on:
     tags: ['v*']
   pull_request:
   workflow_dispatch:
+    inputs:
+      nightly:
+        description: 'Publish to the rolling nightly prerelease'
+        type: boolean
+        default: false
+  # Rolling nightly: rebuild master and republish the `nightly` prerelease
+  # (skipped by the gate job when nothing changed since the last one).
+  schedule:
+    - cron: '0 8 * * *' # 08:00 UTC, overnight for NA
 
 # A newer push to the same ref cancels the older in-progress run (saves minutes
 # on PRs). Tag builds use the tag as the group, so they never cancel each other.
@@ -19,7 +28,45 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Decides whether this run is a nightly (schedule, or dispatch with the
+  # nightly input) and whether to build at all — a scheduled run with no new
+  # commits since the last nightly is skipped, saving ~3 runner-hours/night.
+  # When a nightly WILL build, the previous nightly release + tag are removed
+  # here so the build legs recreate them at today's commit (the `nightly` tag
+  # is deliberately outside the v* pattern the landing page watches).
+  gate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      nightly: ${{ steps.decide.outputs.nightly }}
+      build: ${{ steps.decide.outputs.build }}
+    steps:
+      - id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          nightly=false
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ inputs.nightly }}" = "true" ]; then
+            nightly=true
+          fi
+          build=true
+          if [ "$nightly" = "true" ]; then
+            last=$(gh api "repos/${{ github.repository }}/git/ref/tags/nightly" -q .object.sha 2>/dev/null || echo none)
+            if [ "$last" = "${{ github.sha }}" ]; then
+              echo "nightly already built for ${{ github.sha }} — skipping"
+              build=false
+            else
+              gh release delete nightly --repo "${{ github.repository }}" --yes --cleanup-tag || true
+            fi
+          fi
+          echo "nightly=$nightly" >> "$GITHUB_OUTPUT"
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: gate
+    if: needs.gate.outputs.build == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -94,6 +141,18 @@ jobs:
       - name: Install renderer deps
         working-directory: apps/desktop/src/renderer
         run: npm ci
+
+      # Nightlies get a distinguishable semver prerelease version so installers
+      # don't collide with the last stable and the app can show a NIGHTLY badge
+      # (app.getVersion() picks this up at package time).
+      - name: Stamp nightly version
+        if: needs.gate.outputs.nightly == 'true'
+        shell: bash
+        run: |
+          base=$(node -p "require('./package.json').version")
+          v="$base-nightly.$(date -u +%Y%m%d).$(echo '${{ github.sha }}' | cut -c1-7)"
+          npm version --no-git-tag-version "$v"
+          echo "nightly version: $v"
 
       # Windows release builds sign via Azure Trusted Signing (OIDC — no stored
       # secret). Only when this is a tag build AND the cert-profile var is set,
@@ -215,6 +274,30 @@ jobs:
             apps/desktop/release/*.blockmap
             apps/desktop/release/workspacer-server-*
           draft: true
+          fail_on_unmatched_files: false
+
+      # Nightly runs: attach to the rolling `nightly` prerelease instead (the
+      # gate job already removed yesterday's, so the first leg to finish
+      # recreates it at today's commit). The electron-updater metadata
+      # (latest*.yml / .blockmap) is deliberately NOT attached — stable desktop
+      # installs must never auto-update onto a nightly.
+      - name: Attach to rolling nightly prerelease
+        if: needs.gate.outputs.nightly == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly
+          name: Nightly
+          prerelease: true
+          draft: false
+          target_commitish: ${{ github.sha }}
+          body: |
+            Rolling nightly build of master (`${{ github.sha }}`).
+            Unsigned; auto-update metadata intentionally omitted — install manually.
+          files: |
+            apps/desktop/release/*.exe
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.AppImage
+            apps/desktop/release/workspacer-server-*
           fail_on_unmatched_files: false
 
     permissions:
