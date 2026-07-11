@@ -152,6 +152,17 @@ go run ./cmd/brain --hub ws://127.0.0.1:7895/bus --claudemon http://127.0.0.1:78
 # (pass --token / $HUB_TOKEN when the hub requires auth)
 ```
 
+**Spawning every backend.** `agents.spawn` mirrors the desktop capability's full
+dispatch: `provider` (`claude` default | `codex` | `opencode` | `pi`) routes
+non-Claude backends — and Claude on `transport: "stream"` — through claudemon's
+`POST /sessions/spawn-managed` (model/effort/resume/permissionMode ride; codex
+`transport: "stream"` spawns headless), while PTY Claude keeps the classic argv
+spawn with profiles, `--resume`, and cols/rows. Same security rule as the
+desktop: a bus caller can **never** auto-bypass approvals —
+`skipPermissions`/`bypassPermissions`/`yolo` are forced off with a warning;
+other permission modes pass through. (Per-spawn Library MCP servers and the MCP
+facade wiring remain desktop-only for now.)
+
 ### Letting the hub supervise it (one source of truth)
 
 You don't have to run the brain by hand — the hub can spawn and supervise it, so

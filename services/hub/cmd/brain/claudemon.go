@@ -120,6 +120,51 @@ func (c *claudemonClient) spawn(ctx context.Context, req spawnReq) (string, erro
 	return resp.SessionID, nil
 }
 
+// spawnManagedReq is the /sessions/spawn-managed payload (SpawnManagedPayload
+// in services/claudemon/src/daemon/spawn.rs) — snake_case multi-word fields;
+// the resume id rides the `resume` field. Note there is no `transport` key for
+// claude: spawn-managed claude IS the stream adapter, so only codex's headless
+// 'stream' transport is spelled out on the wire.
+type spawnManagedReq struct {
+	Provider string `json:"provider"`
+	Cwd      string `json:"cwd"`
+	Model    string `json:"model,omitempty"`
+	// Reasoning-effort level (codex `model_reasoning_effort`); others ignore it.
+	Effort string `json:"effort,omitempty"`
+	// Resolved launcher binary (falls back to the provider name daemon-side).
+	Bin string `json:"bin,omitempty"`
+	// YOLO / skip approvals. Always false from the brain: bus callers never
+	// auto-bypass (see the security clamp in the spawn handler).
+	Yolo bool `json:"yolo"`
+	// Codex only: "stream" runs headless (GUI-only, no native TUI PTY).
+	Transport string `json:"transport,omitempty"`
+	// Claude only: full permission mode (`--permission-mode`).
+	PermissionMode string `json:"permission_mode,omitempty"`
+	// Claude/codex: resume this prior session instead of starting fresh.
+	Resume string `json:"resume,omitempty"`
+	// Claude only: extra argv appended verbatim (profile extras).
+	ExtraArgs []string `json:"extra_args,omitempty"`
+	// Claude only: env merged over the daemon's (a profile's CLAUDE_CONFIG_DIR).
+	Env map[string]string `json:"env,omitempty"`
+	// Caller-pinned session id, so every client converges on one card.
+	SessionID string `json:"session_id,omitempty"`
+}
+
+// spawnManaged launches an adapter-driven (Tier-2) session — Codex/OpenCode/Pi,
+// or Claude on the headless stream-json transport — and returns the session id.
+func (c *claudemonClient) spawnManaged(ctx context.Context, req spawnManagedReq) (string, error) {
+	var resp struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := c.postJSON(ctx, "/sessions/spawn-managed", req, &resp); err != nil {
+		return "", err
+	}
+	if resp.SessionID == "" {
+		return "", fmt.Errorf("spawn-managed response missing session_id")
+	}
+	return resp.SessionID, nil
+}
+
 func (c *claudemonClient) getSession(ctx context.Context, id string) (json.RawMessage, error) {
 	return c.getRaw(ctx, "/sessions/"+id)
 }

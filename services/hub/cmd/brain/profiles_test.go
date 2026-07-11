@@ -19,7 +19,7 @@ func hasPair(argv []string, a, b string) bool {
 }
 
 func TestResumeUsesResumeFlagNotSessionID(t *testing.T) {
-	argv := buildArgv(&profile{}, "", false, "abc-123", true)
+	argv := buildArgv(&profile{}, "", false, "", "abc-123", true)
 	if !hasPair(argv, "--resume", "abc-123") {
 		t.Fatalf("expected --resume abc-123, got %v", argv)
 	}
@@ -29,7 +29,7 @@ func TestResumeUsesResumeFlagNotSessionID(t *testing.T) {
 }
 
 func TestFreshSpawnUsesSessionIDNotResume(t *testing.T) {
-	argv := buildArgv(&profile{}, "", false, "abc-123", false)
+	argv := buildArgv(&profile{}, "", false, "", "abc-123", false)
 	if !hasPair(argv, "--session-id", "abc-123") {
 		t.Fatalf("expected --session-id abc-123, got %v", argv)
 	}
@@ -40,7 +40,7 @@ func TestFreshSpawnUsesSessionIDNotResume(t *testing.T) {
 
 func TestProfilePinnedModelNotDuplicated(t *testing.T) {
 	p := &profile{ExtraArgs: []string{"--model", "opus"}}
-	argv := buildArgv(p, "sonnet", false, "", false)
+	argv := buildArgv(p, "sonnet", false, "", "", false)
 	n := 0
 	for _, a := range argv {
 		if a == "--model" {
@@ -56,13 +56,13 @@ func TestProfilePinnedModelNotDuplicated(t *testing.T) {
 }
 
 func TestSkipPermissionsAddedOnce(t *testing.T) {
-	argv := buildArgv(&profile{}, "", true, "", false)
+	argv := buildArgv(&profile{}, "", true, "", "", false)
 	if !slices.Contains(argv, "--dangerously-skip-permissions") {
 		t.Fatalf("expected skip-permissions flag, got %v", argv)
 	}
 	// Not added when the profile already pins it.
 	p := &profile{ExtraArgs: []string{"--dangerously-skip-permissions"}}
-	argv = buildArgv(p, "", true, "", false)
+	argv = buildArgv(p, "", true, "", "", false)
 	n := 0
 	for _, a := range argv {
 		if a == "--dangerously-skip-permissions" {
@@ -74,9 +74,39 @@ func TestSkipPermissionsAddedOnce(t *testing.T) {
 	}
 }
 
+func TestPermissionModeFlag(t *testing.T) {
+	// Non-default modes map to --permission-mode (mirrors buildClaudeArgv).
+	argv := buildArgv(&profile{}, "", false, "plan", "", false)
+	if !hasPair(argv, "--permission-mode", "plan") {
+		t.Fatalf("expected --permission-mode plan, got %v", argv)
+	}
+	// 'default' adds no flag.
+	argv = buildArgv(&profile{}, "", false, "default", "", false)
+	if slices.Contains(argv, "--permission-mode") {
+		t.Fatalf("'default' must not add --permission-mode, got %v", argv)
+	}
+	// 'bypassPermissions' rides the skip flag, never --permission-mode.
+	argv = buildArgv(&profile{}, "", false, "bypassPermissions", "", false)
+	if !slices.Contains(argv, "--dangerously-skip-permissions") || slices.Contains(argv, "--permission-mode") {
+		t.Fatalf("bypass must map to the skip flag only, got %v", argv)
+	}
+	// A profile-pinned mode wins over the requested one.
+	p := &profile{ExtraArgs: []string{"--permission-mode", "acceptEdits"}}
+	argv = buildArgv(p, "", false, "plan", "", false)
+	n := 0
+	for _, a := range argv {
+		if a == "--permission-mode" {
+			n++
+		}
+	}
+	if n != 1 || slices.Contains(argv, "plan") {
+		t.Fatalf("profile-pinned mode must win, got %v", argv)
+	}
+}
+
 func TestBaseBinaryAndExtraArgsOrder(t *testing.T) {
 	p := &profile{ExtraArgs: []string{"--foo", "bar"}}
-	argv := buildArgv(p, "", false, "", false)
+	argv := buildArgv(p, "", false, "", "", false)
 	if len(argv) < 3 || argv[0] != "claude" || argv[1] != "--foo" || argv[2] != "bar" {
 		t.Fatalf("expected [claude --foo bar ...], got %v", argv)
 	}

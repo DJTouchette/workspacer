@@ -219,11 +219,14 @@ func pinsFlag(extraArgs []string, flag string) bool {
 // buildArgv builds the argv claudemon should execute for a fresh Claude session,
 // mirroring the app's buildClaudeArgv and the TUI's build_argv: base binary,
 // then the profile's extra args, then --model / skip-permissions unless the
-// profile already pins them. session_id pins --session-id <uuid> so claude names
-// its transcript <uuid>.jsonl (the same id we hand claudemon). When resume is
-// set, the same id is passed as --resume <uuid> instead; the two are mutually
-// exclusive so resume wins. Pass "" for sessionID to skip both (non-claude spawns).
-func buildArgv(p *profile, model string, skipPermissions bool, sessionID string, resume bool) []string {
+// profile already pins them. permissionMode maps to --permission-mode for the
+// non-default modes ('bypassPermissions' rides the skip flag instead, and a
+// profile that pins a mode wins — same rules as buildClaudeArgv). session_id
+// pins --session-id <uuid> so claude names its transcript <uuid>.jsonl (the same
+// id we hand claudemon). When resume is set, the same id is passed as
+// --resume <uuid> instead; the two are mutually exclusive so resume wins. Pass
+// "" for sessionID to skip both (non-claude spawns).
+func buildArgv(p *profile, model string, skipPermissions bool, permissionMode string, sessionID string, resume bool) []string {
 	claude := os.Getenv("WKS_CLAUDE_BIN")
 	if claude == "" {
 		claude = "claude"
@@ -240,8 +243,14 @@ func buildArgv(p *profile, model string, skipPermissions bool, sessionID string,
 		argv = append(argv, "--model", model)
 	}
 
-	if skipPermissions && !pinsFlag(extra, "--dangerously-skip-permissions") {
+	wantsBypass := skipPermissions || permissionMode == "bypassPermissions"
+	if wantsBypass && !pinsFlag(extra, "--dangerously-skip-permissions") {
 		argv = append(argv, "--dangerously-skip-permissions")
+	}
+
+	if permissionMode != "" && permissionMode != "bypassPermissions" && permissionMode != "default" &&
+		!wantsBypass && !pinsFlag(extra, "--permission-mode") {
+		argv = append(argv, "--permission-mode", permissionMode)
 	}
 
 	if resume {

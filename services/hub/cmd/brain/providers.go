@@ -120,6 +120,18 @@ func (r *registry) providerBinaries() map[string]string {
 	return out
 }
 
+// resolveSpawnBin picks the launcher for a spawn: the user's config override
+// (agents.binaries) wins, then — for claude, keeping parity with the PTY path's
+// buildArgv — the WKS_CLAUDE_BIN escape hatch, then a PATH probe, then the bare
+// provider name.
+func (r *registry) resolveSpawnBin(provider string) string {
+	custom := r.providerBinaries()[provider]
+	if provider == "claude" && strings.TrimSpace(custom) == "" {
+		custom = os.Getenv("WKS_CLAUDE_BIN")
+	}
+	return resolveAgentBinary(provider, custom)
+}
+
 // providersListModels relays to claudemon's live model query, resolving the
 // launcher the same way spawning does. It soft-fails to an empty array (matching
 // claudemonSessionClient.listProviderModels) so the Spawn dialog falls back to

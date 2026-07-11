@@ -304,9 +304,21 @@ func analyticsRecentStub() (json.RawMessage, error) {
 // ── param shapes (match the MCP facade / app capability inputs) ─────────────
 
 type spawnParams struct {
-	Cwd             string `json:"cwd"`
-	Model           string `json:"model"`
-	ProfileID       string `json:"profileId"`
+	// Provider backend: claude (default) | codex | opencode | pi. Non-claude
+	// providers — and claude on the 'stream' transport — go through claudemon's
+	// /sessions/spawn-managed; PTY claude keeps the classic argv spawn.
+	Provider string `json:"provider"`
+	// Claude: 'pty' | 'stream' (omitted = the config's claude.transport, then
+	// pty). Codex: 'stream' spawns headless (GUI-only, daemon-owned thread).
+	Transport string `json:"transport"`
+	Cwd       string `json:"cwd"`
+	Model     string `json:"model"`
+	// Reasoning-effort level (codex `model_reasoning_effort`); others ignore it.
+	Effort    string `json:"effort"`
+	ProfileID string `json:"profileId"`
+	// Claude permission mode (default/acceptEdits/plan/…). Bypass modes are
+	// clamped off for bus callers — see the security rule in spawn().
+	PermissionMode  string `json:"permissionMode"`
 	SkipPermissions bool   `json:"skipPermissions"`
 	ResumeSessionID string `json:"resumeSessionId"`
 	Cols            int    `json:"cols"`
@@ -326,10 +338,47 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 		return nil, err
 	}
 
+	// SECURITY (mirrors hubCapabilities.ts agents.spawn): this capability is the
+	// REMOTE/web/MCP spawn path. Driving an agent is already code execution on
+	// the host, but we refuse to let a bus caller silently auto-bypass every
+	// approval (`--dangerously-skip-permissions` / bypass-sandbox). Approvals
+	// still surface and can be answered remotely; a YOLO agent must be started
+	// locally. So skipPermissions is forced off, and a bypass permissionMode is
+	// dropped (other modes pass through).
+	if p.SkipPermissions || p.PermissionMode == "bypassPermissions" || p.PermissionMode == "yolo" {
+		log.Printf("brain: agents.spawn: ignoring permission bypass from a bus client — remote spawns never auto-bypass approvals.")
+	}
+	p.SkipPermissions = false
+	if p.PermissionMode == "bypassPermissions" || p.PermissionMode == "yolo" {
+		p.PermissionMode = ""
+	}
+
 	cwd := normalizeCwd(p.Cwd)
 	if cwd == "" {
 		home, _ := os.UserHomeDir()
 		cwd = home
+	}
+
+	// Managed (Tier-2) backend — Codex / OpenCode / Pi run through claudemon's
+	// adapter, not a Claude PTY. Same dispatch split as the desktop's
+	// agents.spawn so this path can't silently fall back to spawning Claude.
+	provider := p.Provider
+	if provider == "" {
+		provider = "claude"
+	}
+	if provider != "claude" {
+		return r.spawnManagedSession(ctx, provider, cwd, p)
+	}
+
+	// Claude on the 'stream' transport is managed too (claudemon's headless
+	// stream-json adapter, no PTY). Mirror the desktop's default resolution: an
+	// explicit transport wins, else the config's claude.transport, else pty.
+	transport := p.Transport
+	if transport == "" {
+		transport = r.claudeTransportDefault()
+	}
+	if transport == "stream" {
+		return r.spawnManagedSession(ctx, "claude", cwd, p)
 	}
 
 	prof := getProfile(p.ProfileID)
@@ -360,7 +409,7 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 	}
 
 	id, err := r.cm.spawn(ctx, spawnReq{
-		Argv:      buildArgv(prof, p.Model, p.SkipPermissions, sessionID, resume),
+		Argv:      buildArgv(prof, p.Model, p.SkipPermissions, p.PermissionMode, sessionID, resume),
 		Cwd:       cwd,
 		Cols:      cols,
 		Rows:      rows,
@@ -371,6 +420,87 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 		return nil, err
 	}
 	return jsonResult(map[string]string{"sessionId": id})
+}
+
+// spawnManagedSession launches an adapter-driven session via claudemon's
+// POST /sessions/spawn-managed — Codex/OpenCode/Pi, plus Claude on the headless
+// stream-json transport. Mirrors the desktop's spawnManagedAgent
+// (managedSpawn.ts): a resume rides the prior id (managed ids are not
+// re-pinnable), a fresh spawn pins a new one; codex's 'stream' transport is
+// forwarded on the wire; claude-stream carries permission_mode + resume + the
+// profile's env/extra argv and — deliberately — no wire `transport` key
+// (spawn-managed claude IS the stream adapter). The caller has already clamped
+// off every bypass, so `yolo` is always false on this path.
+func (r *registry) spawnManagedSession(ctx context.Context, provider, cwd string, p spawnParams) (json.RawMessage, error) {
+	isClaudeStream := provider == "claude"
+	isCodexStream := provider == "codex" && p.Transport == "stream"
+
+	sessionID := p.ResumeSessionID
+	if sessionID == "" {
+		var err error
+		if sessionID, err = newSessionID(); err != nil {
+			return nil, err
+		}
+	}
+	if r.meta != nil && (p.Label != "" || p.ParentSessionID != "" || p.Supervisor) {
+		r.meta.set(sessionID, spawnMeta{Label: p.Label, ParentSessionID: p.ParentSessionID, IsSupervisor: p.Supervisor})
+	}
+
+	req := spawnManagedReq{
+		Provider:  provider,
+		Cwd:       cwd,
+		Model:     p.Model,
+		Effort:    p.Effort,
+		Bin:       r.resolveSpawnBin(provider),
+		SessionID: sessionID,
+	}
+	if isCodexStream {
+		// Codex mirrors Claude's stream transport: 'stream' spawns headless
+		// (GUI-only, daemon-owned thread). Must ride on the wire or a remote
+		// headless spawn silently downgrades to the hybrid PTY session.
+		req.Transport = "stream"
+	}
+	// Resume: codex rejoins the prior life's app-server thread; claude-stream
+	// passes `--resume`. opencode/pi carry no resume on the wire — matching the
+	// desktop dispatch.
+	if (provider == "codex" || isClaudeStream) && p.ResumeSessionID != "" {
+		req.Resume = p.ResumeSessionID
+	}
+	if isClaudeStream {
+		// Claude keeps its full permission-mode vocabulary; an absent mode
+		// resolves to 'default', same as the desktop (bypass never survives the
+		// clamp above). Profile parity with the PTY path: CLAUDE_CONFIG_DIR +
+		// extra argv ride the payload's claude-only env/extra_args fields.
+		mode := p.PermissionMode
+		if mode == "" {
+			mode = "default"
+		}
+		req.PermissionMode = mode
+		if prof := getProfile(p.ProfileID); prof != nil {
+			if env := buildEnv(prof); len(env) > 0 {
+				req.Env = env
+			}
+			if len(prof.ExtraArgs) > 0 {
+				req.ExtraArgs = prof.ExtraArgs
+			}
+		}
+	}
+	id, err := r.cm.spawnManaged(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return jsonResult(map[string]string{"sessionId": id})
+}
+
+// claudeTransportDefault reads config.claude.transport — the same default the
+// desktop applies when a spawn names no transport (hubCapabilities.ts:
+// reqTransport ?? config.claude.transport ?? 'pty').
+func (r *registry) claudeTransportDefault() string {
+	claude, _ := r.cfg.get()["claude"].(map[string]any)
+	if t := str(claude["transport"]); t != "" {
+		return t
+	}
+	return "pty"
 }
 
 func (r *registry) sendMessage(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {

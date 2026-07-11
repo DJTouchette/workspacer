@@ -7,6 +7,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
+	"regexp"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -38,7 +41,7 @@ func (rec *recorder) server() *httptest.Server {
 			w.WriteHeader(code)
 		}
 		// A spawn echoes back a session id; everything else is fine with {ok}.
-		if r.URL.Path == "/sessions/spawn" {
+		if r.URL.Path == "/sessions/spawn" || r.URL.Path == "/sessions/spawn-managed" {
 			id, _ := body["session_id"].(string)
 			if id == "" {
 				id = "generated-id"
@@ -282,4 +285,83 @@ func TestFsListDirReturnsDirsOnly(t *testing.T) {
 func jsonStr(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
+}
+
+// ── agents.spawn param-surface drift guard ──────────────────────────────────
+
+// spawnParamsDeclined lists desktop agents.spawn params the brain deliberately
+// does NOT mirror, with the reason. A param here must still exist on the
+// desktop side (prune the entry when it's removed there); a desktop param that
+// is neither in spawnParams' JSON tags nor here fails the drift guard below —
+// mirror it or decline it explicitly.
+var spawnParamsDeclined = map[string]string{
+	"mcpFacade":  "the workspacer MCP facade server runs inside the desktop app; headless there is no facade URL to wire",
+	"mcpItemIds": "per-spawn Library MCP servers need buildSessionMcpConfig (a desktop-owned session-scoped --mcp-config writer)",
+}
+
+// desktopSpawnParamRe pulls the field names out of the agents.spawn params type
+// literal in hubCapabilities.ts (`provider?: AgentProvider;` → provider).
+var desktopSpawnParamRe = regexp.MustCompile(`(?m)^\s*(\w+)\?:`)
+
+// TestSpawnParamSurfaceMatchesDesktop cross-checks the desktop's agents.spawn
+// param list (parsed from hubCapabilities.ts) against the brain's spawnParams
+// JSON tags, so a param added on the desktop side fails here until the brain
+// mirrors it (or documents why not in spawnParamsDeclined). The behavioural
+// counterpart of capspec_guard_test's method-name cross-check. Skips (not
+// fails) when the TS source isn't reachable (e.g. a hub-only checkout).
+func TestSpawnParamSurfaceMatchesDesktop(t *testing.T) {
+	// cmd/brain → repo root is four levels up (services/hub/cmd/brain).
+	src := filepath.Join("..", "..", "..", "..", "apps", "desktop", "src", "main", "services", "hubCapabilities.ts")
+	data, err := os.ReadFile(src)
+	if err != nil {
+		t.Skipf("hubCapabilities.ts not reachable (%v); skipping cross-repo cross-check", err)
+	}
+	text := string(data)
+	// Isolate the agents.spawn registration's destructure type literal.
+	start := strings.Index(text, "registerCapability('agents.spawn'")
+	if start < 0 {
+		t.Fatal("hubCapabilities.ts no longer registers 'agents.spawn' — update this guard")
+	}
+	text = text[start:]
+	open := strings.Index(text, "} = (params ?? {}) as {")
+	end := strings.Index(text[open+1:], "};")
+	if open < 0 || end < 0 {
+		t.Fatal("could not find the agents.spawn params type literal — the destructuring syntax changed; update this guard")
+	}
+	block := text[open : open+1+end]
+
+	desktop := map[string]bool{}
+	for _, m := range desktopSpawnParamRe.FindAllStringSubmatch(block, -1) {
+		desktop[m[1]] = true
+	}
+	if len(desktop) < 5 {
+		t.Fatalf("parsed implausibly few desktop spawn params (%v) — the regex stopped matching", desktop)
+	}
+
+	brain := map[string]bool{}
+	tp := reflect.TypeOf(spawnParams{})
+	for i := 0; i < tp.NumField(); i++ {
+		if tag := strings.Split(tp.Field(i).Tag.Get("json"), ",")[0]; tag != "" {
+			brain[tag] = true
+		}
+	}
+
+	for param := range desktop {
+		if !brain[param] && spawnParamsDeclined[param] == "" {
+			t.Errorf("desktop agents.spawn takes %q but the brain's spawnParams doesn't — mirror it or add it to spawnParamsDeclined with a reason", param)
+		}
+	}
+	for param := range brain {
+		if !desktop[param] {
+			t.Errorf("brain spawnParams has %q but the desktop's agents.spawn doesn't — the surfaces must stay identical", param)
+		}
+	}
+	for param := range spawnParamsDeclined {
+		if !desktop[param] {
+			t.Errorf("spawnParamsDeclined lists %q but the desktop no longer takes it — prune the entry", param)
+		}
+		if brain[param] {
+			t.Errorf("%q is both mirrored in spawnParams and declined in spawnParamsDeclined — drop one", param)
+		}
+	}
 }
