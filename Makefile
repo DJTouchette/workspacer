@@ -14,7 +14,7 @@ CLAUDEMON := services/claudemon
 HUB       := services/hub
 
 .PHONY: dev dev-share dev-tui run-tui install build build-desktop build-hub build-claudemon build-tui \
-        test test-desktop test-hub test-tui test-claudemon package clean
+        build-cli test test-desktop test-hub test-tui test-claudemon package clean
 
 ## dev: run the desktop app in dev mode (Vite + Electron). Remote sharing is now
 ##      a runtime toggle (Remote control → Start sharing); use `make dev-share`
@@ -50,7 +50,13 @@ build-desktop:
 	cd $(DESKTOP) && npm run build
 
 build-hub:
-	cd $(HUB) && go build -o . ./cmd/hub && go build -o . ./cmd/mcp && go build -o . ./cmd/brain
+	cd $(HUB) && go build -o . ./cmd/hub && go build -o . ./cmd/mcp && go build -o . ./cmd/brain && go build -o . ./cmd/workspacer
+
+## build-cli: build the headless-server launcher (`workspacer serve`) plus the
+##            daemons it supervises, all as siblings in services/hub/ so the
+##            launcher's sibling-first binary resolution finds them.
+build-cli: build-hub build-claudemon
+	cp $(CLAUDEMON)/target/release/claudemon $(HUB)/claudemon
 
 build-claudemon:
 	cd $(CLAUDEMON) && cargo build --release
@@ -80,6 +86,7 @@ package:
 ## clean: remove build artifacts across components
 clean:
 	rm -rf $(DESKTOP)/dist $(DESKTOP)/release
-	rm -f $(HUB)/hub $(HUB)/hub.exe $(HUB)/mcp $(HUB)/mcp.exe $(HUB)/brain $(HUB)/brain.exe
+	rm -f $(HUB)/hub $(HUB)/hub.exe $(HUB)/mcp $(HUB)/mcp.exe $(HUB)/brain $(HUB)/brain.exe \
+	      $(HUB)/workspacer $(HUB)/workspacer.exe $(HUB)/claudemon $(HUB)/claudemon.exe
 	cd $(CLAUDEMON) && cargo clean
 	cd $(TUI) && cargo clean

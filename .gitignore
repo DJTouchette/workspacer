@@ -12,6 +12,8 @@ target/
 services/hub/hub
 services/hub/mcp
 services/hub/brain
+services/hub/workspacer
+services/hub/claudemon
 services/hub/*.exe
 # Go renames a locked (running) binary to <name>.exe~ when it can't overwrite it.
 services/hub/*.exe~

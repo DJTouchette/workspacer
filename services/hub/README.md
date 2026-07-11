@@ -268,6 +268,35 @@ process, not just unported:
 Also: saved-session `save` persists the blob as given — it skips the desktop's
 terminal-cwd enrichment, which needs the GUI's in-process pty→cwd map.
 
+## Headless server (`cmd/workspacer`)
+
+`workspacer` is the product face of headless mode: one thin launcher that
+starts **claudemon + hub** (the hub run with `--brain-scope full`, so it in
+turn supervises a brain providing the whole capability surface) and wires the
+ports and the shared auth token between them. A full-scope brain + claudemon
+*is* the headless server — this binary only launches, supervises (restart with
+backoff on crash, give-up after repeated failures, SIGTERM cascade on
+Ctrl-C/SIGTERM), and prints how to connect.
+
+```sh
+make build-cli          # builds workspacer + hub + brain + mcp + claudemon as siblings in services/hub/
+./workspacer serve      # loopback-only by default; prints bus//remote//m URLs + the pairing token
+./workspacer serve --host 0.0.0.0   # your explicit remote opt-in — pair with Tailscale, not the open internet
+./workspacer serve --json           # machine-readable ready banner on stdout (logs on stderr)
+./workspacer status     # probes claudemon (/sessions), the hub (/health), and whether a brain answers on the bus
+./workspacer install-cli            # symlink/copy onto PATH (/usr/local/bin → ~/.local/bin; %LOCALAPPDATA%\workspacer\bin on Windows)
+```
+
+Sibling binaries (`claudemon`, `hub`, `brain`) are resolved next to the
+`workspacer` binary first, then PATH; `--claudemon-bin` / `--hub-bin` /
+`--brain-bin` override. Ports default to the desktop's (7890/7891 claudemon,
+7895 hub) with `--claudemon-hook-port` / `--claudemon-api-port` / `--hub-port`
+to move them. The hub always runs with auth: the token comes from `--token` /
+`$HUB_TOKEN`, else the same persisted `<config>/workspacer/remote-token` the
+desktop app mints — so clients paired against one keep working against the
+other. claudemon stays loopback-only regardless of `--host`; remote clients go
+through the bus, exactly like the desktop.
+
 ## Protocol
 
 Clients open one WebSocket to `ws://<addr>/bus` and exchange JSON frames.
