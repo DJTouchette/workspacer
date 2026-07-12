@@ -24,6 +24,16 @@ use super::{SessionMode, SessionStore};
 
 const CONV_BROADCAST_CAPACITY: usize = 1024;
 const TAIL_INTERVAL: Duration = Duration::from_millis(400);
+/// Cap on the conversation items retained in memory per session. A live
+/// session's `items` vec is its biggest allocation; without a bound a single
+/// pathologically long session (thousands of tool calls) grows it without limit
+/// for the daemon's life — a slow memory leak. 5000 comfortably covers a very
+/// long session (even a heavy day rarely exceeds a few hundred tool calls +
+/// messages) while capping the worst case. Oldest items drain first (front-drop,
+/// like `OutputBuffer`'s byte ring in `session/store.rs`); `seq` keeps counting
+/// the true total so gap detection / resync stay correct — a late joiner
+/// adopting the snapshot simply gets the most-recent window.
+const MAX_CONVERSATION_ITEMS: usize = 5000;
 /// Keep draining a stopped session's transcript briefly — the final
 /// assistant message can flush to disk after the Stop/SessionEnd hook fires.
 const STOPPED_DRAIN_SECS: i64 = 30;
@@ -108,6 +118,20 @@ struct TailLog {
     seq: u64,
 }
 
+impl TailLog {
+    /// Append items to the in-memory log, enforcing [`MAX_CONVERSATION_ITEMS`]
+    /// by draining the oldest. Preserves ordering and the newest items. Note it
+    /// does NOT touch `seq`: the caller bumps that by the number of items pushed
+    /// so it stays a true running count even as older items are dropped.
+    fn extend_bounded(&mut self, new: impl IntoIterator<Item = ConversationItem>) {
+        self.items.extend(new);
+        if self.items.len() > MAX_CONVERSATION_ITEMS {
+            let overflow = self.items.len() - MAX_CONVERSATION_ITEMS;
+            self.items.drain(0..overflow);
+        }
+    }
+}
+
 #[derive(Default, Clone)]
 struct SideCursor {
     offset: u64,
@@ -153,8 +177,8 @@ impl ConversationStore {
         let delta = {
             let mut log = self.logs.entry(session_id.to_string()).or_default();
             let reset = log.seq == 0;
-            log.items.extend(items.iter().cloned());
             log.seq += items.len() as u64;
+            log.extend_bounded(items.iter().cloned());
             ConversationDelta {
                 session_id: session_id.to_string(),
                 seq: log.seq,
@@ -298,7 +322,7 @@ async fn tail_one(
             return Ok(());
         }
         entry.seq += items.len() as u64;
-        entry.items.extend(items.iter().cloned());
+        entry.extend_bounded(items.iter().cloned());
         ConversationDelta {
             session_id: session_id.to_string(),
             seq: entry.seq,
@@ -406,7 +430,7 @@ async fn tail_subagents(
     let delta = {
         let mut entry = conv.logs.entry(session_id.to_string()).or_default();
         entry.seq += items.len() as u64;
-        entry.items.extend(items.iter().cloned());
+        entry.extend_bounded(items.iter().cloned());
         ConversationDelta {
             session_id: session_id.to_string(),
             seq: entry.seq,
@@ -679,6 +703,46 @@ mod tests {
             }],
         );
         assert_eq!(conv.snapshot("s1").map(|(seq, _)| seq), Some(1));
+    }
+
+    #[test]
+    fn push_bounds_the_in_memory_log() {
+        // Push well past the cap in one go; the log must retain exactly
+        // MAX_CONVERSATION_ITEMS (newest), while seq still counts the true total.
+        let conv = ConversationStore::new();
+        let over = MAX_CONVERSATION_ITEMS + 250;
+        let items: Vec<_> = (0..over)
+            .map(|i| ConversationItem::AssistantText {
+                text: format!("m{i}"),
+                timestamp: None,
+            })
+            .collect();
+        conv.push("s", items);
+
+        let (seq, kept) = conv.snapshot("s").unwrap();
+        assert_eq!(seq, over as u64, "seq counts every item ever pushed");
+        assert_eq!(
+            kept.len(),
+            MAX_CONVERSATION_ITEMS,
+            "in-memory log is bounded"
+        );
+        // The newest item is retained; the oldest were front-dropped.
+        match kept.last().unwrap() {
+            ConversationItem::AssistantText { text, .. } => {
+                assert_eq!(text, &format!("m{}", over - 1), "newest kept");
+            }
+            other => panic!("expected AssistantText, got {other:?}"),
+        }
+        match kept.first().unwrap() {
+            ConversationItem::AssistantText { text, .. } => {
+                assert_eq!(
+                    text,
+                    &format!("m{}", over - MAX_CONVERSATION_ITEMS),
+                    "oldest surviving item is exactly cap back from the newest"
+                );
+            }
+            other => panic!("expected AssistantText, got {other:?}"),
+        }
     }
 
     #[test]

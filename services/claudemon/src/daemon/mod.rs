@@ -19,6 +19,11 @@ use crate::store::Db;
 /// of open agents without flooding the UI with stale history.
 const SESSION_HYDRATE_LIMIT: usize = 100;
 
+/// How often the maintenance sweep runs: evict archived sessions from the
+/// in-memory map and GC old rows from SQLite. These bound slow growth over days
+/// of uptime, not a hot path, so hourly is ample.
+const MAINTENANCE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+
 pub struct ServeConfig {
     pub host: String,
     pub hook_port: u16,
@@ -71,9 +76,23 @@ pub async fn run(cfg: ServeConfig) -> Result<()> {
         Err(err) => tracing::warn!(?err, "hydrating sessions from db failed"),
     }
 
+    // Retention GC on startup, so a long-lived DB is trimmed even on a daemon
+    // that rarely stays up long enough for the periodic sweep to fire. Keeps the
+    // newest window (exactly what hydration would restore); older rows are only
+    // ever resurfaced archived, so dropping them loses nothing reachable.
+    match db.prune_archived(SESSION_HYDRATE_LIMIT) {
+        Ok(n) if n > 0 => tracing::info!(pruned = n, "pruned archived sessions from db on startup"),
+        Ok(_) => {}
+        Err(err) => tracing::warn!(?err, "startup db retention prune failed"),
+    }
+
     // Persistence runs out-of-band: subscribe to the raw-hook broadcast and
     // write each event to SQLite without blocking the hook handler's response.
     spawn_persistence_task(db.clone(), store.subscribe_hooks());
+
+    // Periodic durability sweep: bound the in-memory session map and GC old
+    // SQLite rows so neither grows without limit over long uptime.
+    spawn_maintenance_task(store.clone(), db.clone());
 
     // Transcript tailer: daemon-owned conversation parsing. Streams structured
     // deltas to clients so they never re-read the JSONL themselves.
@@ -365,6 +384,40 @@ fn confine_to_job() {
         // life — its close (at process death) is exactly the kill trigger.
         tracing::info!("confined to kill-on-close job object (child PTYs die with the daemon)");
     }
+}
+
+/// Periodic durability sweep. Evicts archived (Stopped + stale) sessions from
+/// the in-memory map and prunes the matching SQLite rows, on a slow interval.
+/// Both operations are conservative and resume-safe (see
+/// `SessionStore::evict_stale_stopped` and `Db::prune_archived`).
+fn spawn_maintenance_task(store: SessionStore, db: Db) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(MAINTENANCE_INTERVAL);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // The first tick fires immediately — skip it (boot just hydrated +
+        // pruned) so the first real sweep is one interval out.
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            let evicted = store.evict_stale_stopped();
+            if evicted > 0 {
+                tracing::info!(evicted, "evicted archived sessions from memory");
+            }
+            let db_inner = db.clone();
+            match tokio::task::spawn_blocking(move || {
+                db_inner.prune_archived(SESSION_HYDRATE_LIMIT)
+            })
+            .await
+            {
+                Ok(Ok(n)) if n > 0 => {
+                    tracing::info!(pruned = n, "pruned archived sessions from db")
+                }
+                Ok(Ok(_)) => {}
+                Ok(Err(err)) => tracing::warn!(?err, "db retention prune failed"),
+                Err(err) => tracing::warn!(?err, "db retention prune task panicked"),
+            }
+        }
+    });
 }
 
 fn spawn_persistence_task(db: Db, mut rx: tokio::sync::broadcast::Receiver<HookEvent>) {

@@ -425,6 +425,36 @@ impl SessionStore {
         }
     }
 
+    /// Drop archived (Stopped + past [`ARCHIVE_AFTER_SECONDS`]) sessions from the
+    /// in-memory `states` map so it doesn't grow without bound across long daemon
+    /// uptime with many spawn/stop cycles. Returns the number evicted.
+    ///
+    /// Safe against resume: an archived session is already hidden from the
+    /// default list (`SessionState::is_archived`), and the resume paths
+    /// (`register_spawn` / `register_managed`, both `states.entry().or_insert`)
+    /// re-create the state row from the session id regardless of whether it's
+    /// resident — the conversation is re-derived from Claude's on-disk transcript
+    /// (`--resume <id>`) or the codex rollout sidecar. Its SQLite row is
+    /// untouched here, so a daemon restart also rehydrates it via
+    /// `load_recent_sessions`. Only live and recently-stopped sessions are kept.
+    pub fn evict_stale_stopped(&self) -> usize {
+        self.evict_stale_stopped_at(OffsetDateTime::now_utc().unix_timestamp())
+    }
+
+    /// [`evict_stale_stopped`](Self::evict_stale_stopped) with an injected clock,
+    /// so tests can force the archive threshold without waiting a real week.
+    fn evict_stale_stopped_at(&self, now_unix: i64) -> usize {
+        let mut removed = 0usize;
+        self.states.retain(|_, st| {
+            let archived = st.is_archived(now_unix);
+            if archived {
+                removed += 1;
+            }
+            !archived
+        });
+        removed
+    }
+
     // --- deferred-hook gateway ----------------------------------------------
 
     pub fn set_gate(&self, session_id: &str, on: bool) {
@@ -2122,6 +2152,70 @@ mod tests {
             store.submit_message("ghost", "hi".into()),
             MessageOutcome::NoSession
         );
+    }
+
+    #[test]
+    fn evict_stale_stopped_drops_archived_but_keeps_live_and_fresh() {
+        use super::super::state::ARCHIVE_AFTER_SECONDS;
+        let store = SessionStore::new();
+
+        // Three stopped sessions, aged well past the archive window, plus one
+        // recently-stopped and one live — via hydrate so we control the clock.
+        store.hydrate(vec![
+            crate::store::RestoredSession {
+                id: "old1".into(),
+                cwd: Some("/w".into()),
+                tool_calls: 0,
+                created_at: 1000,
+                last_event_at: 1000,
+            },
+            crate::store::RestoredSession {
+                id: "old2".into(),
+                cwd: Some("/w".into()),
+                tool_calls: 0,
+                created_at: 1000,
+                last_event_at: 1000,
+            },
+            crate::store::RestoredSession {
+                id: "old3".into(),
+                cwd: Some("/w".into()),
+                tool_calls: 0,
+                created_at: 1000,
+                last_event_at: 1000,
+            },
+            crate::store::RestoredSession {
+                id: "fresh".into(),
+                cwd: Some("/w".into()),
+                tool_calls: 0,
+                created_at: 1000,
+                last_event_at: 1000,
+            },
+        ]);
+        // A live session must always survive, however old the clock says it is.
+        store.ingest(hook("SessionStart", "live", "/w"));
+
+        // Force the archive clock: `now` is far past the stale sessions'
+        // last_event_at (1000) but the `fresh` row we bump to just-now first.
+        let now = 1000 + ARCHIVE_AFTER_SECONDS + 10;
+        if let Some(mut e) = store.states.get_mut("fresh") {
+            e.updated_at = OffsetDateTime::from_unix_timestamp(now).unwrap();
+        }
+
+        assert_eq!(store.states.len(), 5);
+        let evicted = store.evict_stale_stopped_at(now);
+        assert_eq!(
+            evicted, 3,
+            "only the three archived stopped rows are dropped"
+        );
+        assert_eq!(store.states.len(), 2);
+        assert!(store.get("old1").is_none());
+        assert!(store.get("old2").is_none());
+        assert!(store.get("old3").is_none());
+        assert!(
+            store.get("fresh").is_some(),
+            "recently-stopped row survives"
+        );
+        assert!(store.get("live").is_some(), "live row survives");
     }
 
     #[test]

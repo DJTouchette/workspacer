@@ -84,6 +84,52 @@ impl Db {
         rows.collect::<rusqlite::Result<Vec<_>>>()
             .map_err(Into::into)
     }
+
+    /// Retention GC: delete sessions whose last event predates the 7-day archive
+    /// window, cascading to their `events` rows in the same transaction. Always
+    /// keeps the newest `keep` sessions regardless of age. Returns the count
+    /// pruned.
+    ///
+    /// Conservative by construction. Sizing `keep` at `SESSION_HYDRATE_LIMIT`
+    /// (100) matches exactly the window `load_recent_sessions` restores on the
+    /// next boot, so nothing that would ever be hydrated is deleted — and a row
+    /// older than the window would only come back *archived* (hidden) anyway.
+    /// With fewer than `keep` rows, nothing is pruned.
+    ///
+    /// "Archived" is judged purely by age here: the daemon tracks live/Stopped
+    /// mode only in the in-memory store and never stamps `state = 'stopped'` in
+    /// SQLite, so a row idle past the window is by definition not a live
+    /// session's recent activity.
+    pub fn prune_archived(&self, keep: usize) -> Result<usize> {
+        let cutoff = OffsetDateTime::now_utc().unix_timestamp()
+            - crate::session::state::ARCHIVE_AFTER_SECONDS;
+        self.prune_archived_before(keep, cutoff)
+    }
+
+    /// [`prune_archived`](Self::prune_archived) with an injected cutoff so tests
+    /// can exercise retention without back-dating rows a real week.
+    fn prune_archived_before(&self, keep: usize, cutoff: i64) -> Result<usize> {
+        let mut guard = self.conn.lock().expect("db mutex poisoned");
+        let tx = guard.transaction()?;
+        // Prune candidates: older than the window AND not among the newest `keep`
+        // rows. Delete their events first (explicit cascade — the schema's FK has
+        // no ON DELETE CASCADE) then the sessions, both inside one transaction.
+        let eligible = "last_event_at < ?1 AND id NOT IN \
+             (SELECT id FROM sessions ORDER BY last_event_at DESC LIMIT ?2)";
+        tx.execute(
+            &format!(
+                "DELETE FROM events WHERE session_id IN \
+                 (SELECT id FROM sessions WHERE {eligible})"
+            ),
+            params![cutoff, keep as i64],
+        )?;
+        let pruned = tx.execute(
+            &format!("DELETE FROM sessions WHERE {eligible}"),
+            params![cutoff, keep as i64],
+        )?;
+        tx.commit()?;
+        Ok(pruned)
+    }
 }
 
 /// A persisted session row, restored into the in-memory store on daemon boot.
@@ -279,5 +325,91 @@ mod tests {
         let capped = db.load_recent_sessions(2).unwrap();
         assert_eq!(capped.len(), 2);
         assert_eq!(capped[0].id, "new");
+    }
+
+    #[test]
+    fn prune_archived_deletes_old_sessions_and_their_events() {
+        let tmp = tempfile_path();
+        let db = Db::open(&tmp).unwrap();
+        // Five old sessions (t≈1000) and three recent (t≈9000), each with an
+        // event carrying its own timestamp.
+        for i in 0..5 {
+            let mut e = ev("SessionStart", &format!("old{i}"));
+            e.timestamp = OffsetDateTime::from_unix_timestamp(1000 + i as i64).ok();
+            db.record_event(&e).unwrap();
+        }
+        for i in 0..3 {
+            let mut e = ev("SessionStart", &format!("new{i}"));
+            e.timestamp = OffsetDateTime::from_unix_timestamp(9000 + i as i64).ok();
+            db.record_event(&e).unwrap();
+        }
+
+        // cutoff = 5000: all old rows predate it; keep the newest 2 overall
+        // (new2, new1). The old rows are older than cutoff AND outside the
+        // newest-2, so all five prune. Recent rows all survive (newer than cutoff).
+        let pruned = db.prune_archived_before(2, 5000).unwrap();
+        assert_eq!(pruned, 5, "all five old sessions pruned");
+
+        let conn = db.conn.lock().unwrap();
+        let sessions: i64 = conn
+            .query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(sessions, 3, "the three recent sessions survive");
+        let old_events: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM events WHERE session_id LIKE 'old%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(old_events, 0, "pruned sessions' events cascaded away");
+        let new_events: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM events WHERE session_id LIKE 'new%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(new_events, 3, "surviving sessions keep their events");
+    }
+
+    #[test]
+    fn prune_archived_keep_floor_protects_old_rows_and_nothing_recent() {
+        let tmp = tempfile_path();
+        let db = Db::open(&tmp).unwrap();
+        for i in 0..5 {
+            let mut e = ev("SessionStart", &format!("old{i}"));
+            e.timestamp = OffsetDateTime::from_unix_timestamp(1000 + i as i64).ok();
+            db.record_event(&e).unwrap();
+        }
+        for i in 0..3 {
+            let mut e = ev("SessionStart", &format!("new{i}"));
+            e.timestamp = OffsetDateTime::from_unix_timestamp(9000 + i as i64).ok();
+            db.record_event(&e).unwrap();
+        }
+
+        // keep = 6, cutoff = 5000. Newest 6 by last_event_at = new2,new1,new0,
+        // old4,old3,old2 → those are protected even though old4/3/2 predate the
+        // cutoff. Only old1 and old0 are both old AND outside the newest-6.
+        let pruned = db.prune_archived_before(6, 5000).unwrap();
+        assert_eq!(
+            pruned, 2,
+            "only the two oldest rows outside the keep floor go"
+        );
+        let conn = db.conn.lock().unwrap();
+        for still in ["old2", "old3", "old4", "new0", "new1", "new2"] {
+            let n: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sessions WHERE id = ?1",
+                    [still],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(n, 1, "{still} must be protected by the keep floor");
+        }
+        drop(conn);
+
+        // A keep larger than the row count prunes nothing.
+        assert_eq!(db.prune_archived_before(1000, 5000).unwrap(), 0);
     }
 }
