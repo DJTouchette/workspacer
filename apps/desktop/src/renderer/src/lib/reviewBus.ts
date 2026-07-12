@@ -19,6 +19,8 @@ export interface ReviewFileTarget {
   /** Working directory of the repo the file belongs to, so the right Review
    *  pane (and only it) responds. */
   cwd?: string;
+  /** Agent workspace that produced the review request, when known. */
+  agentId?: string;
 }
 
 /** Called by a file list to ask the app to reveal a file in the Review pane. */

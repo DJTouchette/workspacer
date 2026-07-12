@@ -55,7 +55,7 @@ interface AttentionContextValue {
   /** Re-spawn a stopped agent (wires App's respawnAgent). */
   respawn: (agentId: string) => void;
   /** Reveal a changed file in the Review pane (wires reviewBus.requestReviewFile). */
-  reviewFile: (cwd: string | undefined, path?: string) => void;
+  reviewFile: (cwd: string | undefined, path?: string, agentId?: string) => void;
   /** Open the spawn-agent flow (wires App's spawn dialog). */
   spawnAgent: () => void;
 }
@@ -239,10 +239,10 @@ export const AttentionProvider: React.FC<ProviderProps> = ({
     [onRespawnAgent],
   );
 
-  const reviewFile = useCallback((cwd: string | undefined, path?: string) => {
+  const reviewFile = useCallback((cwd: string | undefined, path?: string, agentId?: string) => {
     // No specific file → point the Review pane at the repo (cwd) so it loads the
     // working-tree diff; ReviewPane selects the file when a concrete path is given.
-    requestReviewFile({ cwd, path: path ?? cwd ?? '' });
+    requestReviewFile({ cwd, path: path ?? cwd ?? '', agentId });
   }, []);
 
   const spawnAgent = useCallback(() => {

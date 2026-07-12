@@ -191,6 +191,7 @@ const AgentWorkspaceView = memo(function AgentWorkspaceView({
       <ErrorBoundary label="Workspace" variant="region" resetKeys={[agent.id]}>
         <ScrollContainer
           ref={isActiveAgent ? scrollContainerRef : undefined}
+          ownerAgentId={agent.id}
           agentActive={isActiveAgent}
           tabs={agent.tabs}
           activeTabId={agent.activeTabId}
@@ -1336,6 +1337,19 @@ function App() {
       const target = (e as CustomEvent).detail as ReviewFileTarget | undefined;
       if (!target?.path) return;
       const cwd = target.cwd || activeAgent?.cwd;
+      const targetAgent = target.agentId ? agents.find((a) => a.id === target.agentId) : null;
+
+      if (targetAgent && !targetAgent.global) {
+        const tabId = openPaneIn(targetAgent.id, 'review', 'Review', undefined, cwd);
+        requestAnimationFrame(() => scrollToTab(tabId));
+        requestAnimationFrame(() =>
+          requestAnimationFrame(() =>
+            openReviewFile({ path: target.path, cwd, agentId: target.agentId }),
+          ),
+        );
+        return;
+      }
+
       // Only reuse a Review pane diffing the SAME tree. A worktree request
       // must not land on the home repo's pane — ReviewPane ignores open-file
       // events whose cwd differs from its own, so the click would do nothing.
@@ -1363,7 +1377,16 @@ function App() {
     };
     window.addEventListener(REVIEW_REQUEST_FILE_EVENT, handler);
     return () => window.removeEventListener(REVIEW_REQUEST_FILE_EVENT, handler);
-  }, [tabs, activeAgent, setActiveTabId, setActivePane, scrollToTab, handleAddTab]);
+  }, [
+    tabs,
+    activeAgent,
+    agents,
+    openPaneIn,
+    setActiveTabId,
+    setActivePane,
+    scrollToTab,
+    handleAddTab,
+  ]);
 
   // Watch one subagent / workflow run in a dedicated pane (inspector rail
   // click-through). openAgentWatch dedupes by target, so a repeat click

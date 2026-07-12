@@ -168,7 +168,7 @@ export const AttentionCard: React.FC<Props> = ({ item, selected }) => {
           <CardBtn
             label="Review"
             onClick={() => {
-              reviewFile(item.cwd);
+              reviewFile(item.cwd, undefined, item.agentId);
               dismiss(item.signature);
             }}
           />

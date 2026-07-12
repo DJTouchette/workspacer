@@ -69,7 +69,7 @@ Acceptance criteria:
 
 ### Finish Review/Merge Action Wiring
 
-Status: in progress.
+Status: implemented.
 
 Problem:
 
@@ -82,15 +82,15 @@ Tasks:
 - [x] Add a merge/conflict flow if the classifier or backend emits a merge action.
 - [x] Surface git errors in actionable language, especially conflicts, no upstream,
   nothing staged, and push rejection.
-- [ ] After commit/push, clearly return the user to the agent or mark the attention
+- [x] After commit/push, clearly return the user to the agent or mark the attention
   item resolved.
 - [x] Add focused tests for review action routing and git error states.
 
 Acceptance criteria:
 
-- [ ] A finished agent can be taken from "done" to reviewed, committed, and pushed
+- [x] A finished agent can be taken from "done" to reviewed, committed, and pushed
   without dropping to a shell.
-- [ ] Merge/review next-actions do not point at dead UI.
+- [x] Merge/review next-actions do not point at dead UI.
 
 ### Safer First-Run Agent Defaults
 

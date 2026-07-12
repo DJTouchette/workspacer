@@ -220,7 +220,7 @@ describe('Mission Control surfaces', () => {
         lastActivity: 1000,
       },
     };
-    const events: Array<{ cwd?: string; path?: string }> = [];
+    const events: Array<{ cwd?: string; path?: string; agentId?: string }> = [];
     const handler = (e: Event) => {
       events.push((e as CustomEvent).detail);
     };
@@ -231,7 +231,9 @@ describe('Mission Control surfaces', () => {
 
       fireEvent.click(screen.getAllByRole('button', { name: 'Review' }).at(-1)!);
 
-      expect(events).toEqual([{ cwd: '/repo/review', path: '/repo/review' }]);
+      expect(events).toEqual([
+        { cwd: '/repo/review', path: '/repo/review', agentId: 'review-agent' },
+      ]);
       expect(screen.queryByText(/1 file, ±\d+ lines/)).not.toBeInTheDocument();
     } finally {
       window.removeEventListener(REVIEW_REQUEST_FILE_EVENT, handler);

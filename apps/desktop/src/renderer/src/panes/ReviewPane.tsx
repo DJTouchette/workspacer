@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { RefreshCw, ArrowUp, CheckCircle2, Copy, Check, FileX2 } from 'lucide-react';
+import { RefreshCw, ArrowUp, ArrowLeft, CheckCircle2, Copy, Check, FileX2 } from 'lucide-react';
 import { IconBranch, IconCommit } from '../components/wksIcons';
 import { claudeColors as colors } from '../components/claude-shared';
 import { GitClient, isUnmergedStatus, type GitStatus, type NumstatEntry } from '../lib/gitQueries';
@@ -16,6 +16,8 @@ interface ReviewPaneProps {
   isActive: boolean;
   /** Working directory to inspect — inherited from the active agent. */
   cwd?: string;
+  /** Return to the agent workspace that opened this review, when known. */
+  onReturnToAgent?: () => void;
 }
 
 const git = new GitClient();
@@ -33,9 +35,23 @@ interface Selection {
   conflict?: boolean;
 }
 
+interface ReviewNotice {
+  kind: 'commit' | 'push';
+  title: string;
+  message: string;
+}
+
 function selKey(s: Selection): string {
   if (s.conflict) return `c:${s.path}`;
   return `${s.untracked ? 'u' : s.staged ? 's' : 'w'}:${s.path}`;
+}
+
+function reviewableFileCount(status: GitStatus | null): number {
+  return status?.files.length ?? 0;
+}
+
+function pluralizeCommit(count: number): string {
+  return `${count} commit${count === 1 ? '' : 's'}`;
 }
 
 // ── Small presentational pieces ──
@@ -201,7 +217,7 @@ const PathBreadcrumb: React.FC<{ path: string }> = ({ path }) => {
 
 // ── Pane ──
 
-const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive }) => {
+const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive, onReturnToAgent }) => {
   ensureReviewStyles();
   const [status, setStatus] = useState<GitStatus | null>(null);
   const [stats, setStats] = useState<{
@@ -217,6 +233,7 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive }) => {
   const [busy, setBusy] = useState(false);
   const [pushing, setPushing] = useState(false);
   const [commitMsg, setCommitMsg] = useState('');
+  const [notice, setNotice] = useState<ReviewNotice | null>(null);
   const [copied, setCopied] = useState(false);
   /** Selection keys the user explicitly asked to render despite their size. */
   const [forcedLarge, setForcedLarge] = useState<ReadonlySet<string>>(new Set());
@@ -225,8 +242,8 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive }) => {
   // shift line numbers in unrelated hunks).
   const diffCache = useRef<Map<string, string>>(new Map());
 
-  const refresh = useCallback(async () => {
-    if (!cwd) return;
+  const refresh = useCallback(async (): Promise<GitStatus | null> => {
+    if (!cwd) return null;
     setLoadingStatus(true);
     setError('');
     diffCache.current.clear();
@@ -242,9 +259,11 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive }) => {
         staged: new Map(stagedStats.map((e) => [e.path, e])),
         unstaged: new Map(unstagedStats.map((e) => [e.path, e])),
       });
+      return s;
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setStatus(null);
+      return null;
     } finally {
       setLoadingStatus(false);
     }
@@ -398,13 +417,18 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive }) => {
   // Run a mutating git action, then refresh status. Errors surface in the
   // banner; the action button stays disabled (busy) until it settles.
   const runAction = useCallback(
-    async (fn: (dir: string) => Promise<unknown>) => {
+    async (
+      fn: (dir: string) => Promise<unknown>,
+      onSuccess?: (nextStatus: GitStatus | null) => void,
+    ) => {
       if (!cwd) return;
       setBusy(true);
       setError('');
+      setNotice(null);
       try {
         await fn(cwd);
-        await refresh();
+        const nextStatus = await refresh();
+        onSuccess?.(nextStatus);
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       } finally {
@@ -415,9 +439,24 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive }) => {
   );
 
   const commit = useCallback(() => {
+    const message = commitMsg.trim();
     void runAction(async (dir) => {
-      await git.commit(dir, commitMsg);
+      await git.commit(dir, message);
       setCommitMsg('');
+    }, (nextStatus) => {
+      const remaining = reviewableFileCount(nextStatus);
+      const ahead = nextStatus?.ahead ?? 0;
+      const upstream = nextStatus?.upstream ?? null;
+      setNotice({
+        kind: 'commit',
+        title: 'Committed staged changes',
+        message:
+          remaining > 0
+            ? 'Review the remaining local changes before pushing.'
+            : ahead > 0 && upstream
+              ? `Push ${pluralizeCommit(ahead)} to ${upstream}.`
+              : 'Working tree clean. Push when ready.',
+      });
     });
   }, [runAction, commitMsg]);
 
@@ -439,6 +478,14 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive }) => {
   }
 
   const totalChanges = conflicts.length + staged.length + unstaged.length + untracked.length;
+  const workingTreeClean = status != null && totalChanges === 0 && !loadingStatus;
+  const branchSynced =
+    status?.upstream != null ? (status.ahead ?? 0) === 0 : notice?.kind === 'push';
+  const reviewComplete = workingTreeClean && branchSynced;
+  const bannerTitle = reviewComplete ? 'Review complete' : notice?.title;
+  const bannerMessage = reviewComplete
+    ? (notice?.message ?? 'Working tree clean and branch is up to date.')
+    : notice?.message;
   const selectionStats = selection
     ? selection.untracked
       ? parsed
@@ -578,7 +625,21 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive }) => {
           <button
             onClick={() => {
               setPushing(true);
-              void runAction((dir) => git.push(dir)).finally(() => setPushing(false));
+              void runAction((dir) => git.push(dir), (nextStatus) => {
+                const remaining = reviewableFileCount(nextStatus);
+                const ahead = nextStatus?.ahead ?? 0;
+                const upstream = nextStatus?.upstream ?? null;
+                setNotice({
+                  kind: 'push',
+                  title: remaining === 0 ? 'Review complete' : 'Push completed',
+                  message:
+                    remaining === 0 && (!upstream || ahead === 0)
+                      ? 'Changes are committed and pushed.'
+                      : remaining > 0
+                        ? 'Review the remaining local changes.'
+                        : `Branch still reports ${pluralizeCommit(ahead)} ahead of ${upstream}.`,
+                });
+              }).finally(() => setPushing(false));
             }}
             disabled={!canPush}
             title={pushTitle}
@@ -610,6 +671,55 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive }) => {
           </button>
         </div>
       </div>
+
+      {bannerTitle && bannerMessage && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            flexShrink: 0,
+            padding: '9px 11px',
+            border: `1px solid color-mix(in srgb, ${colors.success} 35%, transparent)`,
+            borderRadius: 9,
+            background: `color-mix(in srgb, ${colors.success} 9%, transparent)`,
+            color: colors.text,
+          }}
+        >
+          <CheckCircle2 size={18} style={{ color: colors.success, flexShrink: 0 }} />
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{ fontSize: '0.76rem', fontWeight: 700, color: colors.textBright }}>
+              {bannerTitle}
+            </div>
+            <div style={{ fontSize: '0.68rem', color: colors.muted, marginTop: 2 }}>
+              {bannerMessage}
+            </div>
+          </div>
+          {onReturnToAgent && (
+            <button
+              onClick={onReturnToAgent}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '6px 10px',
+                borderRadius: 7,
+                border: `1px solid ${colors.borderSubtle}`,
+                background: 'var(--wks-bg-elevated)',
+                color: colors.text,
+                cursor: 'pointer',
+                fontSize: '0.7rem',
+                fontFamily: 'inherit',
+                fontWeight: 700,
+                flexShrink: 0,
+              }}
+            >
+              <ArrowLeft size={13} />
+              Back to agent
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Panel — file tree + diff in one rounded bordered surface (mockup). */}
       <div

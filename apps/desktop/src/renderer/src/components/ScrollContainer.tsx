@@ -56,6 +56,8 @@ const PaneFallback = () => (
 );
 
 interface ScrollContainerProps {
+  /** Agent workspace that owns this container. */
+  ownerAgentId?: string;
   tabs: TabConfig[];
   activeTabId: string;
   onTabFocus: (tabId: string) => void;
@@ -146,6 +148,8 @@ interface PaneCallbacks {
   }) => Promise<string>;
   /** Jump to agent by id — for the Ask pane. */
   onJumpToAgent?: (agentId: string) => void;
+  /** Agent workspace that owns this pane tree. */
+  ownerAgentId?: string;
 }
 
 function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneCallbacks) {
@@ -257,7 +261,19 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
     case 'review':
       return (
         <Suspense fallback={<PaneFallback />}>
-          <ReviewPane paneId={pane.id} title={pane.title} isActive={isActive} cwd={pane.cwd} />
+          <ReviewPane
+            paneId={pane.id}
+            title={pane.title}
+            isActive={isActive}
+            cwd={pane.cwd}
+            onReturnToAgent={
+              callbacks.ownerAgentId && callbacks.onJumpToAgent
+                ? () => {
+                    if (callbacks.ownerAgentId) callbacks.onJumpToAgent?.(callbacks.ownerAgentId);
+                  }
+                : undefined
+            }
+          />
         </Suspense>
       );
     case 'plugin':
@@ -508,6 +524,7 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
       tabs,
       activeTabId,
       onTabFocus,
+      ownerAgentId,
       onPaneClose,
       onPaneFocus,
       onTabRename,
@@ -679,6 +696,7 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
             allAgents,
             spawnSupervisor,
             onJumpToAgent,
+            ownerAgentId,
           };
 
           const cardStyle: React.CSSProperties = {
