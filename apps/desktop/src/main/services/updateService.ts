@@ -157,12 +157,20 @@ class UpdateService {
     // (where the workflow attaches latest*.yml). Stable installs never see
     // that feed: their provider resolves /releases/latest, which GitHub keeps
     // free of prereleases.
-    if (app.getVersion().includes('-nightly')) {
+    const isNightly = app.getVersion().includes('-nightly');
+    if (isNightly) {
       autoUpdater.setFeedURL({
         provider: 'generic',
         // Owner/repo mirror electron-builder.yml's publish block.
         url: 'https://github.com/DJTouchette/workspacer/releases/download/nightly',
+        // GitHub's release CDN 501s multipart Range requests; single-range
+        // gets a 206, which keeps blockmap differential downloads working
+        // (electron-updater's own GitHub provider forces this too).
+        useMultipleRangeRequest: false,
       });
+      // Rolling-nightly stamps aren't guaranteed monotonic across stamp-format
+      // changes; nightlies trust the feed rather than semver ordering.
+      autoUpdater.allowDowngrade = true;
       console.log('[updateService] nightly build — updating from the rolling nightly feed');
     }
 
@@ -170,7 +178,10 @@ class UpdateService {
     // user only at the install (restart) step, matching the product choice.
     autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = false;
-    autoUpdater.channel = channel;
+    // The nightly feed only publishes latest*.yml — a configured channel like
+    // 'beta' would make the generic provider request beta.yml, 404, and
+    // silently kill nightly updates. Channels are a stable-feed concept.
+    autoUpdater.channel = isNightly ? 'latest' : channel;
     // electron-updater logs to console by default via its own logger; keep our
     // own breadcrumbs so update activity shows up in the app's log file.
     autoUpdater.on('checking-for-update', () => {

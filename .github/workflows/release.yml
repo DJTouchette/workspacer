@@ -31,16 +31,23 @@ jobs:
   # Decides whether this run is a nightly (schedule, or dispatch with the
   # nightly input) and whether to build at all — a scheduled run with no new
   # commits since the last nightly is skipped, saving ~3 runner-hours/night.
-  # When a nightly WILL build, the previous nightly release + tag are removed
-  # here so the build legs recreate them at today's commit (the `nightly` tag
-  # is deliberately outside the v* pattern the landing page watches).
+  # Also stamps the nightly version ONCE so all three legs agree (legs stamping
+  # their own dates could straddle midnight UTC) and the stamp stays semver-
+  # monotonic across same-day rebuilds (a trailing sha compares lexically and
+  # can go backwards; a datetime cannot). The stamp is ONE joined numeric
+  # identifier — a dotted .HHMM piece would have leading zeros at the 08:00
+  # cron, which strict semver forbids and npm silently rewrites (.0800 → .800),
+  # leaving the stamp disagreeing with the shipped version. The old release is
+  # NOT deleted here — publish-nightly rolls it after every leg has built, so
+  # a failed build leaves yesterday's nightly in place instead of nothing.
   gate:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     outputs:
       nightly: ${{ steps.decide.outputs.nightly }}
       build: ${{ steps.decide.outputs.build }}
+      stamp: ${{ steps.decide.outputs.stamp }}
     steps:
       - id: decide
         env:
@@ -57,12 +64,11 @@ jobs:
             if [ "$last" = "${{ github.sha }}" ]; then
               echo "nightly already built for ${{ github.sha }} — skipping"
               build=false
-            else
-              gh release delete nightly --repo "${{ github.repository }}" --yes --cleanup-tag || true
             fi
           fi
           echo "nightly=$nightly" >> "$GITHUB_OUTPUT"
           echo "build=$build" >> "$GITHUB_OUTPUT"
+          echo "stamp=$(date -u +%Y%m%d%H%M)" >> "$GITHUB_OUTPUT"
 
   build:
     needs: gate
@@ -144,21 +150,26 @@ jobs:
 
       # Nightlies get a distinguishable semver prerelease version so installers
       # don't collide with the last stable and the app can show a NIGHTLY badge
-      # (app.getVersion() picks this up at package time).
+      # (app.getVersion() picks this up at package time). The date.time stamp
+      # comes from the gate job so all legs agree; the source sha lives in the
+      # release notes, not the version.
       - name: Stamp nightly version
         if: needs.gate.outputs.nightly == 'true'
         shell: bash
         run: |
           base=$(node -p "require('./package.json').version")
-          v="$base-nightly.$(date -u +%Y%m%d).$(echo '${{ github.sha }}' | cut -c1-7)"
+          v="$base-nightly.${{ needs.gate.outputs.stamp }}"
           npm version --no-git-tag-version "$v"
           echo "nightly version: $v"
 
       # Windows release builds sign via Azure Trusted Signing (OIDC — no stored
       # secret). Only when this is a tag build AND the cert-profile var is set,
       # so PRs and the pre-signing-setup period stay unsigned (and don't fail).
+      # Nightlies are excluded even when dispatched from a v* tag ref — they
+      # must take the unsigned path so the dashed artifactName override applies
+      # (and the release notes' "Unsigned." stays true).
       - name: Azure login (Windows signing)
-        if: matrix.os == 'windows-latest' && startsWith(github.ref, 'refs/tags/v') && vars.AZURE_CODESIGN_PROFILE != ''
+        if: matrix.os == 'windows-latest' && startsWith(github.ref, 'refs/tags/v') && vars.AZURE_CODESIGN_PROFILE != '' && needs.gate.outputs.nightly != 'true'
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -170,7 +181,7 @@ jobs:
       # never` keeps electron-builder from uploading (we attach to the Release
       # ourselves, below).
       - name: Package (Windows, signed via Azure Trusted Signing)
-        if: matrix.os == 'windows-latest' && startsWith(github.ref, 'refs/tags/v') && vars.AZURE_CODESIGN_PROFILE != ''
+        if: matrix.os == 'windows-latest' && startsWith(github.ref, 'refs/tags/v') && vars.AZURE_CODESIGN_PROFILE != '' && needs.gate.outputs.nightly != 'true'
         shell: pwsh
         run: >
           npm run package -- --publish never
@@ -180,7 +191,7 @@ jobs:
           "-c.win.azureSignOptions.publisherName=${{ vars.AZURE_CODESIGN_PUBLISHER }}"
 
       - name: Package (unsigned)
-        if: ${{ !(matrix.os == 'windows-latest' && startsWith(github.ref, 'refs/tags/v') && vars.AZURE_CODESIGN_PROFILE != '') }}
+        if: ${{ !(matrix.os == 'windows-latest' && startsWith(github.ref, 'refs/tags/v') && vars.AZURE_CODESIGN_PROFILE != '' && needs.gate.outputs.nightly != 'true') }}
         shell: bash
         run: |
           extra=()
@@ -289,34 +300,102 @@ jobs:
           draft: true
           fail_on_unmatched_files: false
 
-      # Nightly runs: attach to the rolling `nightly` prerelease instead (the
-      # gate job already removed yesterday's, so the first leg to finish
-      # recreates it at today's commit). The latest*.yml/.blockmap updater
-      # metadata IS attached — nightly installs read this feed via the generic
-      # provider (updateService switches on the -nightly version). Stable
-      # installs never see it: the GitHub provider resolves /releases/latest,
-      # which excludes prereleases.
-      - name: Attach to rolling nightly prerelease
-        if: needs.gate.outputs.nightly == 'true'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: nightly
-          name: Nightly
-          prerelease: true
-          draft: false
-          target_commitish: ${{ github.sha }}
-          body: |
-            Rolling nightly build of master (`${{ github.sha }}`). Unsigned.
-            Nightly installs auto-update onto the next nightly from this feed.
-          files: |
-            apps/desktop/release/*.exe
-            apps/desktop/release/*.dmg
-            apps/desktop/release/*.AppImage
-            apps/desktop/release/latest*.yml
-            apps/desktop/release/*.blockmap
-            apps/desktop/release/workspacer-server-*
-          fail_on_unmatched_files: false
-
     permissions:
       contents: write
       id-token: write # Azure OIDC federated login for Windows Trusted Signing
+
+  # Rolls the `nightly` prerelease ATOMICALLY, and only after ALL THREE legs
+  # built (a failed leg skips this job and yesterday's nightly stays live).
+  # Every updater-critical asset is verified present BEFORE the old release is
+  # touched, so a leg that "succeeded" but produced no installer can't ship a
+  # release the updater can't read. The latest*.yml/.blockmap metadata IS
+  # attached — nightly installs read this feed via the generic provider
+  # (updateService switches on the -nightly version); stable installs never
+  # see it (their GitHub provider resolves /releases/latest, which excludes
+  # prereleases — and the `nightly` tag sits outside the v* pattern the
+  # landing page watches).
+  publish-nightly:
+    needs: [gate, build]
+    if: needs.gate.outputs.nightly == 'true'
+    runs-on: ubuntu-latest
+    # One lock across ALL refs: a dispatch-nightly from another branch would
+    # otherwise land in a different release-${ref} group and interleave its
+    # delete/create with the cron's on the single shared `nightly` tag.
+    concurrency:
+      group: publish-nightly
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: workspacer-*
+          merge-multiple: true
+          path: dist
+
+      - name: Verify assets and roll the nightly release
+        working-directory: dist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Updater-critical assets, per platform — every glob the create below
+          # uses must match BEFORE we touch the live release. (No mac zip yet:
+          # MacUpdater needs one, but mac auto-update is dead until signing
+          # lands anyway — add '*-mac.zip' here when the zip target ships.)
+          for pat in 'Workspacer-Setup-*.exe' '*.AppImage' '*-arm64.dmg' \
+                     'latest.yml' 'latest-linux.yml' 'latest-mac.yml' \
+                     '*.blockmap' \
+                     'workspacer-server-windows-x64.zip' \
+                     'workspacer-server-linux-x64.tar.gz' \
+                     'workspacer-server-darwin-arm64.tar.gz'; do
+            compgen -G "$pat" > /dev/null || { echo "missing expected asset: $pat"; exit 1; }
+          done
+
+          # Roll the release PUBLISH-LAST so a failure at any point leaves
+          # yesterday's nightly live instead of nothing:
+          #   1. drop stray drafts from earlier failed rolls
+          #   2. upload today's build as a DRAFT (drafts create no tag, so it
+          #      coexists with the live release)
+          #   3. retire the old live release + tag — by id, since gh's
+          #      name-based lookup could resolve to our fresh draft
+          #   4. publish the draft (GitHub creates the tag at --target now)
+
+          for id in $(gh api "repos/$REPO/releases" --paginate \
+                        -q '.[] | select(.draft and .tag_name=="nightly") | .id'); do
+            gh api -X DELETE "repos/$REPO/releases/$id"
+          done
+
+          notes="Rolling nightly build of master (${{ github.sha }}). Unsigned.
+
+          Nightly installs auto-update onto the next nightly from this feed and never onto stable — to return to stable, install a release build from the releases page."
+          shopt -s nullglob
+          assets=( *.exe *.AppImage *.dmg latest*.yml *.blockmap workspacer-server-* )
+          shopt -u nullglob
+          gh release create nightly \
+            --repo "$REPO" \
+            --title Nightly \
+            --prerelease \
+            --draft \
+            --target "${{ github.sha }}" \
+            --notes "$notes" \
+            "${assets[@]}"
+          draft_id=$(gh api "repos/$REPO/releases" --paginate \
+                       -q '[.[] | select(.draft and .tag_name=="nightly")][0].id')
+
+          live_id=$(gh api "repos/$REPO/releases" --paginate \
+                      -q '[.[] | select((.draft | not) and .tag_name=="nightly")][0].id')
+          if [ -n "$live_id" ] && [ "$live_id" != "null" ]; then
+            gh api -X DELETE "repos/$REPO/releases/$live_id"
+          fi
+          # The tag can outlive the release (UI deletion, partial cleanup);
+          # publishing over a stale tag would pin the release to the wrong
+          # commit, so assert it's really gone.
+          gh api -X DELETE "repos/$REPO/git/refs/tags/nightly" 2>/dev/null || true
+          if gh api "repos/$REPO/git/ref/tags/nightly" >/dev/null 2>&1; then
+            echo "nightly tag still exists — aborting before publishing a mistargeted release"
+            exit 1
+          fi
+
+          gh api -X PATCH "repos/$REPO/releases/$draft_id" -F draft=false

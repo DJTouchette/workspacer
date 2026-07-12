@@ -106,7 +106,17 @@ describe('updateService – gating', () => {
     expect(autoUpdater.setFeedURL).toHaveBeenCalledWith({
       provider: 'generic',
       url: 'https://github.com/DJTouchette/workspacer/releases/download/nightly',
+      useMultipleRangeRequest: false,
     });
+    svc.stop();
+  });
+
+  it('nightly builds force the latest channel (the nightly feed has no channel ymls)', async () => {
+    electronApp.getVersion = () => '0.126.2-nightly.20260711.2258';
+    configValue = { updates: { enabled: true, channel: 'beta' } };
+    const svc = await loadService();
+    svc.start(fakeWindow());
+    expect(autoUpdater.channel).toBe('latest');
     svc.stop();
   });
 
