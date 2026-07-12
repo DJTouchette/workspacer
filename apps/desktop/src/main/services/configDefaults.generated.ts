@@ -164,8 +164,8 @@ export const CONFIG_DEFAULTS = {
   "claude": {
     "defaultModel": "opus[1m]",
     "seenModels": [],
-    "skipPermissionsDefault": true,
-    "defaultPermissionMode": "bypassPermissions",
+    "skipPermissionsDefault": false,
+    "defaultPermissionMode": "",
     "defaultView": "terminal",
     "workLog": "cards",
     "transport": "stream",

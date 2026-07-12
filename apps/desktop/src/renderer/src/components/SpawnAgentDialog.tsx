@@ -9,6 +9,18 @@ import { capsFor } from '../lib/providerCaps';
 const bypassModeFor = (provider: AgentProvider): string =>
   provider === 'claude' ? 'bypassPermissions' : 'yolo';
 
+/** Provider defaults are rendered as the empty select value in the spawn UI. */
+const defaultModeFor = (provider: AgentProvider): string =>
+  provider === 'claude' ? 'default' : 'ask';
+
+function normalizePermissionModeForProvider(provider: AgentProvider, mode: string): string {
+  const cur = mode.trim();
+  if (!cur || cur === defaultModeFor(provider)) return '';
+  if (capsFor(provider).permissionModes.some((m) => m.id === cur)) return cur;
+  if (cur === 'bypassPermissions' || cur === 'yolo') return bypassModeFor(provider);
+  return '';
+}
+
 interface SpawnProfile {
   id: string;
   name: string;
@@ -184,10 +196,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   // doesn't offer resets to its default. Effort only exists on some providers.
   useEffect(() => {
     setPermissionMode((cur) => {
-      if (!cur) return cur;
-      if (capsFor(provider).permissionModes.some((m) => m.id === cur)) return cur;
-      if (cur === 'bypassPermissions' || cur === 'yolo') return bypassModeFor(provider);
-      return '';
+      return normalizePermissionModeForProvider(provider, cur);
     });
     if (!capsFor(provider).effort) setEffort('');
   }, [provider]);
@@ -258,7 +267,9 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
           res.defaultPermissionMode &&
           capsFor(provider).permissionModes.some((m) => m.id === res.defaultPermissionMode)
         )
-          setPermissionMode(res.defaultPermissionMode);
+          setPermissionMode(
+            normalizePermissionModeForProvider(provider, res.defaultPermissionMode),
+          );
         if (res.skipPermissionsDefault === true) setPermissionMode(bypassModeFor(provider));
         // Pre-select the saved default. If it's a concrete id we don't have in
         // a list, keep it as a custom entry so the saved value isn't dropped.
@@ -381,7 +392,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
     if (!cwd.trim()) return;
     // '' means the provider's own default mode; the legacy boolean tracks the
     // bypass-family modes for back-compat consumers (saved defaults, respawn).
-    const resolvedMode = permissionMode || (isClaude ? 'default' : 'ask');
+    const resolvedMode = permissionMode || defaultModeFor(provider);
     const skipPermissions = resolvedMode === 'bypassPermissions' || resolvedMode === 'yolo';
     // Claude-only options are dropped for other providers (they run their own
     // TUI in Tier-1 and don't take Claude's profile/model/MCP/resume flags).

@@ -921,14 +921,20 @@ function App() {
       // — but only for Claude, so spawning a Codex/OpenCode agent doesn't clobber
       // the saved Claude defaults (those options don't apply to other providers).
       if (provider === 'claude') {
+        const defaultPermissionMode =
+          opts.skipPermissions === true
+            ? (opts.permissionMode ?? 'bypassPermissions')
+            : opts.permissionMode === 'default'
+              ? ''
+              : (opts.permissionMode ?? '');
         window.electronAPI
           .saveConfig({
             claude: {
               defaultModel: opts.model ?? '',
-              skipPermissionsDefault: opts.skipPermissions ?? false,
+              skipPermissionsDefault: opts.skipPermissions === true,
               // Remember the chosen permission mode too, so the next new agent
               // reopens on it instead of snapping back to the default.
-              defaultPermissionMode: opts.permissionMode ?? '',
+              defaultPermissionMode,
               // Remember the transport (PTY vs headless stream) too, so the next
               // new-agent view reopens on the last harness used.
               ...(opts.transport ? { transport: opts.transport } : {}),

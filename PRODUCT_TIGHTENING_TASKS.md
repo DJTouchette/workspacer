@@ -92,6 +92,8 @@ Acceptance criteria:
 
 ### Safer First-Run Agent Defaults
 
+Status: implemented.
+
 Problem:
 
 - New Claude sessions currently default to full/bypass permissions. That is
@@ -99,17 +101,17 @@ Problem:
 
 Tasks:
 
-- Change first-run defaults to ask/approve before tool access, or add an explicit
+- [x] Change first-run defaults to ask/approve before tool access, or add an explicit
   first-run choice.
-- Keep a clear opt-in for "full access" with a warning.
-- Persist the user's choice after they opt in.
-- Re-check managed providers so the permission labels map cleanly across Claude,
+- [x] Keep a clear opt-in for "full access" with a warning.
+- [x] Persist the user's choice after they opt in.
+- [x] Re-check managed providers so the permission labels map cleanly across Claude,
   Codex, OpenCode, and Pi.
 
 Acceptance criteria:
 
-- A first-time user does not accidentally spawn a full-access agent.
-- Power users can still make full access their default.
+- [x] A first-time user does not accidentally spawn a full-access agent.
+- [x] Power users can still make full access their default.
 
 ## P2 - Reduce Surface Area Pressure
 
