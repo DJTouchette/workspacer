@@ -1148,4 +1148,18 @@ mod tests {
         assert_eq!(path, "/sessions/s1/answer");
         assert_eq!(body["answers"], json!(["2", "free text"]));
     }
+
+    #[tokio::test]
+    async fn approve_posts_decision_and_reason() {
+        let (base, srv) = mock_server(200, "OK", r#"{"ok":true}"#).await;
+        Claudemon::new(base)
+            .approve("s1", "always", Some("trusted command".into()))
+            .await
+            .expect("ok");
+        let (method, path, body) = srv.await.unwrap();
+        assert_eq!(method, "POST");
+        assert_eq!(path, "/sessions/s1/approve");
+        assert_eq!(body["decision"], json!("always"));
+        assert_eq!(body["reason"], json!("trusted command"));
+    }
 }

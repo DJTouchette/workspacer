@@ -597,6 +597,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn driver_routes_approval_and_answers_to_capabilities() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut rx = recording_hub(listener, json!({ "ok": true }));
+        let driver = bus_driver(addr);
+
+        driver
+            .approve("s1", "yes", Some("reviewed".into()))
+            .await
+            .expect("approve ok");
+        let (method, params) = tokio::time::timeout(Duration::from_secs(3), rx.recv())
+            .await
+            .expect("call within 3s")
+            .expect("recorder open");
+        assert_eq!(method, "claude.approve");
+        assert_eq!(params["sessionId"], json!("s1"));
+        assert_eq!(params["decision"], json!("yes"));
+        assert_eq!(params["reason"], json!("reviewed"));
+
+        driver.answer_option("s1", 2).await.expect("answer ok");
+        let (method, params) = tokio::time::timeout(Duration::from_secs(3), rx.recv())
+            .await
+            .expect("call within 3s")
+            .expect("recorder open");
+        assert_eq!(method, "claude.answer");
+        assert_eq!(params["sessionId"], json!("s1"));
+        assert_eq!(params["option"], json!(2));
+
+        driver
+            .answer_all("s1", vec!["2".into(), "free text".into()])
+            .await
+            .expect("multi-answer ok");
+        let (method, params) = tokio::time::timeout(Duration::from_secs(3), rx.recv())
+            .await
+            .expect("call within 3s")
+            .expect("recorder open");
+        assert_eq!(method, "claude.answer");
+        assert_eq!(params["sessionId"], json!("s1"));
+        assert_eq!(params["answers"], json!(["2", "free text"]));
+    }
+
+    #[tokio::test]
     async fn driver_spawn_sends_profile_id_and_returns_session() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -739,5 +781,55 @@ mod tests {
         assert_eq!(method, "sessions.terminalInput");
         assert_eq!(params["sessionId"], json!("s1"));
         assert_eq!(params["bytesB64"], json!("AQID")); // base64([1,2,3])
+    }
+
+    async fn reconnecting_subscribe_hub(
+        listener: TcpListener,
+        tx: mpsc::UnboundedSender<Vec<String>>,
+    ) {
+        for _ in 0..2 {
+            let (stream, _) = listener.accept().await.unwrap();
+            let ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let (_write, mut read) = ws.split();
+            while let Some(Ok(Message::Text(txt))) = read.next().await {
+                let v: Value = serde_json::from_str(&txt).unwrap();
+                if v.get("op").and_then(|o| o.as_str()) == Some("subscribe") {
+                    let topics = v
+                        .get("topics")
+                        .and_then(|t| t.as_array())
+                        .unwrap()
+                        .iter()
+                        .map(|t| t.as_str().unwrap().to_string())
+                        .collect::<Vec<_>>();
+                    let _ = tx.send(topics);
+                    break;
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn subscriptions_are_reasserted_after_reconnect() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        tokio::spawn(reconnecting_subscribe_hub(listener, tx));
+
+        let (client, _events) = BusClient::connect(format!("ws://{addr}/bus"), None);
+        client
+            .subscribe(vec!["agent.snapshot".into(), "pty.bytes.s1".into()])
+            .expect("subscribe ok");
+
+        let first = tokio::time::timeout(Duration::from_secs(3), rx.recv())
+            .await
+            .expect("first subscribe within 3s")
+            .expect("recorder open");
+        assert_eq!(first, vec!["agent.snapshot", "pty.bytes.s1"]);
+
+        let second = tokio::time::timeout(Duration::from_secs(3), rx.recv())
+            .await
+            .expect("re-subscribe within 3s")
+            .expect("recorder open");
+        assert_eq!(second, vec!["agent.snapshot", "pty.bytes.s1"]);
     }
 }

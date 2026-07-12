@@ -258,13 +258,13 @@ Acceptance criteria:
 
 Tasks:
 
-- Add tests beyond key encoding: navigation, approval/question handling, review
+- [x] Add tests beyond key encoding: navigation, approval/question handling, review
   pane basics, reconnect behavior.
-- Cover direct mode and bus mode separately if feasible.
+- [x] Cover direct mode and bus mode separately if feasible.
 
 Acceptance criteria:
 
-- TUI maturity is no longer blocked on "only key-encoding units".
+- [x] TUI maturity is no longer blocked on "only key-encoding units".
 
 ### Main-Process Service Tests
 

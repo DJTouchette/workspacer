@@ -1759,6 +1759,50 @@ mod tests {
         assert!(app.review.as_ref().unwrap().error.is_none());
     }
 
+    #[tokio::test]
+    async fn review_selection_toggle_and_scroll_reset_view_state() {
+        let mut app = test_app();
+        app.review = Some(ReviewState::new("/repo".into()));
+        {
+            let r = app.review.as_mut().unwrap();
+            r.files = vec![
+                FileStatus {
+                    path: "a.rs".into(),
+                    orig_path: None,
+                    staged: String::new(),
+                    unstaged: "M".into(),
+                },
+                FileStatus {
+                    path: "b.rs".into(),
+                    orig_path: None,
+                    staged: "M".into(),
+                    unstaged: String::new(),
+                },
+            ];
+            r.diff = "old diff".into();
+            r.diff_scroll = 7;
+        }
+
+        app.review_select(1);
+        {
+            let r = app.review.as_ref().unwrap();
+            assert_eq!(r.selected, 1);
+            assert!(r.diff.is_empty());
+            assert_eq!(r.diff_scroll, 0);
+        }
+
+        app.review_scroll(5);
+        assert_eq!(app.review.as_ref().unwrap().diff_scroll, 5);
+        app.review_scroll(-3);
+        assert_eq!(app.review.as_ref().unwrap().diff_scroll, 2);
+
+        app.review_toggle_staged();
+        let r = app.review.as_ref().unwrap();
+        assert!(r.staged_view);
+        assert!(r.diff.is_empty());
+        assert_eq!(r.diff_scroll, 0);
+    }
+
     #[test]
     fn status_line_applied_and_pruned_with_session() {
         let mut app = test_app();
