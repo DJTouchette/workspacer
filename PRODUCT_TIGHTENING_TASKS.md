@@ -244,14 +244,14 @@ Acceptance criteria:
 
 Tasks:
 
-- Add an E2E scenario with desktop/web or headless/web sharing the same layout.
-- Verify one agent appears once across clients.
-- Verify approval/question resolution from one client updates the other.
-- Verify terminal attach/replay after reconnect.
+- [x] Add an E2E scenario with desktop/web or headless/web sharing the same layout.
+- [x] Verify one agent appears once across clients.
+- [x] Verify approval/question resolution from one client updates the other.
+- [x] Verify terminal attach/replay after reconnect.
 
 Acceptance criteria:
 
-- Cross-client de-duplication and attention resolution are covered by a real
+- [x] Cross-client de-duplication and attention resolution are covered by a real
   integration-style test.
 
 ### TUI Test Expansion

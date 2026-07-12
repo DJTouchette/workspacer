@@ -85,4 +85,25 @@ describe('useLayoutSync — adopting a remote layout (#5)', () => {
     expect(layoutSet).not.toHaveBeenCalled();
     vi.useRealTimers();
   });
+
+  it('dedupes same-session agents while adopting a shared layout', async () => {
+    const { result } = renderHook(() => useCombined());
+    const duplicate = {
+      ...remoteAgent,
+      id: 'r1-duplicate',
+      name: 'Remote duplicate',
+    };
+
+    await act(async () => {
+      resolveGet!({
+        version: 5,
+        data: { agents: [remoteAgent, duplicate], activeAgentId: 'r1-duplicate' },
+      });
+      await Promise.resolve();
+    });
+
+    const realAgents = result.current.mgr.agents.filter((a) => !a.global);
+    expect(realAgents.filter((a) => a.sessionId === 'sess-r1')).toHaveLength(1);
+    expect(result.current.mgr.activeAgentId).toBe('r1');
+  });
 });
