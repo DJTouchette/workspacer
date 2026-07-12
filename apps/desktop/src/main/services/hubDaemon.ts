@@ -225,9 +225,7 @@ export async function getRemoteShareInfo(): Promise<RemoteShareInfo> {
   // hub itself rather than advertise a 404.
   const hasWebApp =
     enabled &&
-    (adopted
-      ? await probeHealth(`http://127.0.0.1:${PORT}/app/${q}`)
-      : fs.existsSync(webappDir()));
+    (adopted ? await probeHealth(`http://127.0.0.1:${PORT}/app/${q}`) : fs.existsSync(webappDir()));
   // An owned hub is (re)spawned with the right binding when sharing flips on,
   // so only the adopted case can advertise an address nothing listens on —
   // probe it rather than hand out a QR that scans to a dead endpoint.

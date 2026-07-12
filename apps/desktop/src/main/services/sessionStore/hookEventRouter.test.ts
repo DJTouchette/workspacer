@@ -160,7 +160,11 @@ describe('applyHookEvent — stream sessions: hooks are enrichment-only', () => 
 
 describe('background subagents keep the pane busy past the parent Stop (PTY)', () => {
   const startSub = (s: ClaudeSessionState, id = 'agent-1') =>
-    applyHookEvent(s, { hook_event_name: 'SubagentStart', agent_id: id, agent_type: 'general-purpose' });
+    applyHookEvent(s, {
+      hook_event_name: 'SubagentStart',
+      agent_id: id,
+      agent_type: 'general-purpose',
+    });
   const stopSub = (s: ClaudeSessionState, id = 'agent-1') =>
     applyHookEvent(s, { hook_event_name: 'SubagentStop', agent_id: id });
 

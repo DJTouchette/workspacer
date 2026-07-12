@@ -141,7 +141,9 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
   // sparse updates onto it. Ended sessions are dropped from the cache so it
   // stays bounded by the live fleet.
   const richSnaps = new Map<string, ClaudeSessionSnapshot>();
-  const foldSparse = (snap: ClaudeSessionSnapshot & { sparse?: boolean }): ClaudeSessionSnapshot => {
+  const foldSparse = (
+    snap: ClaudeSessionSnapshot & { sparse?: boolean },
+  ): ClaudeSessionSnapshot => {
     const prev = richSnaps.get(snap.sessionId);
     const merged = snap.sparse && prev ? { ...prev, ...snap } : snap;
     if (!snap.sparse) richSnaps.set(snap.sessionId, snap);

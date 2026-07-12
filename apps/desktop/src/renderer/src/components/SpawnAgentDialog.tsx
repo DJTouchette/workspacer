@@ -1097,9 +1097,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                   textOverflow: 'ellipsis',
                   whiteSpace: 'nowrap',
                   fontSize: '0.68rem',
-                  color: bypassSelected
-                    ? 'var(--wks-danger, #e05555)'
-                    : 'var(--wks-text-faint)',
+                  color: bypassSelected ? 'var(--wks-danger, #e05555)' : 'var(--wks-text-faint)',
                 }}
               >
                 {advancedSummary}

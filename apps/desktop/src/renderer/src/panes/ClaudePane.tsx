@@ -1055,7 +1055,15 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
         void restartSession({ ...overrides, provider, transport });
       }
     },
-    [attachSessionId, sessionId, restartSession, provider, claudeTransport, isClaude, managedStream],
+    [
+      attachSessionId,
+      sessionId,
+      restartSession,
+      provider,
+      claudeTransport,
+      isClaude,
+      managedStream,
+    ],
   );
 
   // Escape key cancels in GUI mode (must be after cancelTask/isStreaming declarations)

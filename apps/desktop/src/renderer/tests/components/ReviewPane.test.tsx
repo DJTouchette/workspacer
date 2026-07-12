@@ -45,14 +45,18 @@ beforeEach(() => {
     .mockResolvedValueOnce(committedStatus)
     .mockResolvedValueOnce(pushedStatus);
   api.gitNumstat = vi.fn().mockResolvedValue([{ path: 'app.ts', added: 3, deleted: 1 }]);
-  api.gitDiff = vi.fn().mockResolvedValue([
-    'diff --git a/app.ts b/app.ts',
-    '--- a/app.ts',
-    '+++ b/app.ts',
-    '@@ -1 +1 @@',
-    '-old',
-    '+new',
-  ].join('\n'));
+  api.gitDiff = vi
+    .fn()
+    .mockResolvedValue(
+      [
+        'diff --git a/app.ts b/app.ts',
+        '--- a/app.ts',
+        '+++ b/app.ts',
+        '@@ -1 +1 @@',
+        '-old',
+        '+new',
+      ].join('\n'),
+    );
   api.gitStage = vi.fn().mockResolvedValue('');
   api.gitUnstage = vi.fn().mockResolvedValue('');
   api.gitCommit = vi.fn().mockResolvedValue('[main abc123] Close review loop');

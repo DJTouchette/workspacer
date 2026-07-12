@@ -323,7 +323,9 @@ describe('mtime gate — folds in external (brain) writes instead of clobbering'
   afterEach(() => {
     // Leave the singleton in the healthy first-run state for other suites.
     mockedFs.readFileSync.mockReset().mockImplementation(() => enoent());
-    vi.mocked(fsMock.statSync).mockReset().mockImplementation(() => enoent());
+    vi.mocked(fsMock.statSync)
+      .mockReset()
+      .mockImplementation(() => enoent());
     configService.reloadConfig();
   });
 

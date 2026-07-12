@@ -440,24 +440,27 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive, onReturnToAgent 
 
   const commit = useCallback(() => {
     const message = commitMsg.trim();
-    void runAction(async (dir) => {
-      await git.commit(dir, message);
-      setCommitMsg('');
-    }, (nextStatus) => {
-      const remaining = reviewableFileCount(nextStatus);
-      const ahead = nextStatus?.ahead ?? 0;
-      const upstream = nextStatus?.upstream ?? null;
-      setNotice({
-        kind: 'commit',
-        title: 'Committed staged changes',
-        message:
-          remaining > 0
-            ? 'Review the remaining local changes before pushing.'
-            : ahead > 0 && upstream
-              ? `Push ${pluralizeCommit(ahead)} to ${upstream}.`
-              : 'Working tree clean. Push when ready.',
-      });
-    });
+    void runAction(
+      async (dir) => {
+        await git.commit(dir, message);
+        setCommitMsg('');
+      },
+      (nextStatus) => {
+        const remaining = reviewableFileCount(nextStatus);
+        const ahead = nextStatus?.ahead ?? 0;
+        const upstream = nextStatus?.upstream ?? null;
+        setNotice({
+          kind: 'commit',
+          title: 'Committed staged changes',
+          message:
+            remaining > 0
+              ? 'Review the remaining local changes before pushing.'
+              : ahead > 0 && upstream
+                ? `Push ${pluralizeCommit(ahead)} to ${upstream}.`
+                : 'Working tree clean. Push when ready.',
+        });
+      },
+    );
   }, [runAction, commitMsg]);
 
   const parsed = useMemo(() => {
@@ -625,21 +628,24 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive, onReturnToAgent 
           <button
             onClick={() => {
               setPushing(true);
-              void runAction((dir) => git.push(dir), (nextStatus) => {
-                const remaining = reviewableFileCount(nextStatus);
-                const ahead = nextStatus?.ahead ?? 0;
-                const upstream = nextStatus?.upstream ?? null;
-                setNotice({
-                  kind: 'push',
-                  title: remaining === 0 ? 'Review complete' : 'Push completed',
-                  message:
-                    remaining === 0 && (!upstream || ahead === 0)
-                      ? 'Changes are committed and pushed.'
-                      : remaining > 0
-                        ? 'Review the remaining local changes.'
-                        : `Branch still reports ${pluralizeCommit(ahead)} ahead of ${upstream}.`,
-                });
-              }).finally(() => setPushing(false));
+              void runAction(
+                (dir) => git.push(dir),
+                (nextStatus) => {
+                  const remaining = reviewableFileCount(nextStatus);
+                  const ahead = nextStatus?.ahead ?? 0;
+                  const upstream = nextStatus?.upstream ?? null;
+                  setNotice({
+                    kind: 'push',
+                    title: remaining === 0 ? 'Review complete' : 'Push completed',
+                    message:
+                      remaining === 0 && (!upstream || ahead === 0)
+                        ? 'Changes are committed and pushed.'
+                        : remaining > 0
+                          ? 'Review the remaining local changes.'
+                          : `Branch still reports ${pluralizeCommit(ahead)} ahead of ${upstream}.`,
+                  });
+                },
+              ).finally(() => setPushing(false));
             }}
             disabled={!canPush}
             title={pushTitle}

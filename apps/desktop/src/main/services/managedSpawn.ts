@@ -204,8 +204,7 @@ export async function spawnManagedAgent(opts: ManagedSpawnOptions): Promise<stri
     ...(isCodexStream && { transport: 'stream' as const }),
     // Codex resume: claudemon rejoins the prior life's app-server thread and
     // replays its rollout (headless-only; the daemon forces stream transport).
-    ...(provider === 'codex' &&
-      opts.resumeSessionId && { resumeSessionId: opts.resumeSessionId }),
+    ...(provider === 'codex' && opts.resumeSessionId && { resumeSessionId: opts.resumeSessionId }),
     // Claude stream adapter extras: the full permission mode and (on a
     // respawn) the prior conversation to `--resume`.
     ...(isClaudeStream && {
