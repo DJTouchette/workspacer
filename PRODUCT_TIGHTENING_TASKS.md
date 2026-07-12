@@ -79,7 +79,7 @@ Problem:
 Tasks:
 
 - [x] Wire `review_diff` next-actions into the Review pane or Inbox.
-- [ ] Add a merge/conflict flow if the classifier or backend emits a merge action.
+- [x] Add a merge/conflict flow if the classifier or backend emits a merge action.
 - [x] Surface git errors in actionable language, especially conflicts, no upstream,
   nothing staged, and push rejection.
 - [ ] After commit/push, clearly return the user to the agent or mark the attention

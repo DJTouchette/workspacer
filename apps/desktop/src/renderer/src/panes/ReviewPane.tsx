@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { RefreshCw, ArrowUp, CheckCircle2, Copy, Check, FileX2 } from 'lucide-react';
 import { IconBranch, IconCommit } from '../components/wksIcons';
 import { claudeColors as colors } from '../components/claude-shared';
-import { GitClient, type GitStatus, type NumstatEntry } from '../lib/gitQueries';
+import { GitClient, isUnmergedStatus, type GitStatus, type NumstatEntry } from '../lib/gitQueries';
 import FileTree, { StatusChip, type TreeEntry } from '../components/review/FileTree';
 import DiffViewer from '../components/review/DiffViewer';
 import { ensureReviewStyles } from '../components/review/reviewStyles';
@@ -29,9 +29,12 @@ interface Selection {
   staged: boolean;
   /** Untracked files render as an all-added diff via --no-index. */
   untracked: boolean;
+  /** Unmerged/conflicted files get their own Review section and status chip. */
+  conflict?: boolean;
 }
 
 function selKey(s: Selection): string {
+  if (s.conflict) return `c:${s.path}`;
   return `${s.untracked ? 'u' : s.staged ? 's' : 'w'}:${s.path}`;
 }
 
@@ -262,12 +265,17 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive }) => {
     if (isActive) void refresh();
   }, [isActive, refresh]);
 
-  // Group files into staged / unstaged / untracked tree entries.
-  const { staged, unstaged, untracked } = useMemo(() => {
+  // Group files into conflict / staged / unstaged / untracked tree entries.
+  const { conflicts, staged, unstaged, untracked } = useMemo(() => {
+    const conflicts: TreeEntry[] = [];
     const staged: TreeEntry[] = [];
     const unstaged: TreeEntry[] = [];
     const untracked: TreeEntry[] = [];
     for (const f of status?.files ?? []) {
+      if (isUnmergedStatus(f)) {
+        conflicts.push({ file: f, code: 'U', key: `c:${f.path}` });
+        continue;
+      }
       if (f.staged === '?') {
         untracked.push({ file: f, code: 'A', key: `u:${f.path}` });
         continue;
@@ -275,7 +283,7 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive }) => {
       if (f.staged !== ' ') staged.push({ file: f, code: f.staged, key: `s:${f.path}` });
       if (f.unstaged !== ' ') unstaged.push({ file: f, code: f.unstaged, key: `w:${f.path}` });
     }
-    return { staged, unstaged, untracked };
+    return { conflicts, staged, unstaged, untracked };
   }, [status]);
 
   const totals = useMemo(() => {
@@ -365,7 +373,7 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive }) => {
     if (!status) return;
     // Don't steal the selection from a pending open-file request.
     if (pendingPathRef.current) return;
-    const all = [...unstaged, ...staged, ...untracked];
+    const all = [...conflicts, ...unstaged, ...staged, ...untracked];
     const currentKey = selection ? selKey(selection) : null;
     if (currentKey && all.some((e) => e.key === currentKey)) {
       // Same file may have new content after a git action — reload it.
@@ -378,6 +386,7 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive }) => {
         path: first.file.path,
         staged: first.key.startsWith('s:'),
         untracked: first.key.startsWith('u:'),
+        conflict: first.key.startsWith('c:'),
       });
     } else {
       setSelection(null);
@@ -429,7 +438,7 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive }) => {
     );
   }
 
-  const totalChanges = staged.length + unstaged.length + untracked.length;
+  const totalChanges = conflicts.length + staged.length + unstaged.length + untracked.length;
   const selectionStats = selection
     ? selection.untracked
       ? parsed
@@ -452,7 +461,7 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive }) => {
       ? `git push — ${status.ahead} commit${status.ahead === 1 ? '' : 's'} ahead of ${status.upstream}`
       : 'git push';
 
-  const treeProps = (section: 'staged' | 'unstaged' | 'untracked') => ({
+  const treeProps = (section: 'conflicts' | 'staged' | 'unstaged' | 'untracked') => ({
     selectedKey: selection ? selKey(selection) : null,
     busy,
     stats: section === 'staged' ? stats.staged : stats.unstaged,
@@ -461,6 +470,7 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive }) => {
         path: e.file.path,
         staged: section === 'staged',
         untracked: section === 'untracked',
+        conflict: section === 'conflicts',
       }),
     actionLabel: section === 'staged' ? 'Unstage' : 'Stage',
     onAction: (e: TreeEntry) =>
@@ -688,6 +698,27 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive }) => {
               </Centered>
             )}
 
+            {conflicts.length > 0 && (
+              <>
+                <div
+                  style={{
+                    margin: '8px 10px 2px',
+                    padding: '8px 9px',
+                    border: `1px solid color-mix(in srgb, ${colors.error} 45%, transparent)`,
+                    borderRadius: 7,
+                    background: `color-mix(in srgb, ${colors.error} 9%, transparent)`,
+                    color: colors.error,
+                    fontSize: '0.66rem',
+                    lineHeight: 1.45,
+                  }}
+                >
+                  Resolve merge conflicts in the files below, then stage each resolved file.
+                </div>
+                <SectionHeader label="Conflicts" count={conflicts.length} />
+                <FileTree entries={conflicts} {...treeProps('conflicts')} />
+              </>
+            )}
+
             {staged.length > 0 && (
               <>
                 <SectionHeader
@@ -825,9 +856,11 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive }) => {
                   code={
                     selection.untracked
                       ? 'A'
-                      : ((selection.staged ? staged : unstaged).find(
-                          (e) => e.file.path === selection.path,
-                        )?.code ?? 'M')
+                      : selection.conflict
+                        ? 'U'
+                        : ((selection.staged ? staged : unstaged).find(
+                            (e) => e.file.path === selection.path,
+                          )?.code ?? 'M')
                   }
                 />
                 <PathBreadcrumb path={selection.path} />
@@ -863,7 +896,13 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive }) => {
                   textTransform: 'uppercase',
                 }}
               >
-                {selection.untracked ? 'untracked' : selection.staged ? 'staged' : 'unstaged'}
+                {selection.untracked
+                  ? 'untracked'
+                  : selection.conflict
+                    ? 'conflict'
+                    : selection.staged
+                      ? 'staged'
+                      : 'unstaged'}
               </span>
               <button
                 className="wks-icon-btn"

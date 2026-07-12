@@ -19,6 +19,13 @@ export interface FileStatus {
   unstaged: string;
 }
 
+const UNMERGED_CODES = new Set(['DD', 'AU', 'UD', 'UA', 'DU', 'AA', 'UU']);
+
+export function isUnmergedStatus(file: Pick<FileStatus, 'staged' | 'unstaged'>): boolean {
+  const xy = `${file.staged}${file.unstaged}`;
+  return UNMERGED_CODES.has(xy) || file.staged === 'U' || file.unstaged === 'U';
+}
+
 export interface GitStatus {
   branch: string | null;
   files: FileStatus[];
