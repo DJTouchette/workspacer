@@ -137,6 +137,8 @@ Acceptance criteria:
 
 ### Collapse Ask The Fleet Duplication
 
+Status: implemented.
+
 Problem:
 
 - There are multiple ways to ask/spawn a supervisor: `Ask the Fleet`,
@@ -144,16 +146,16 @@ Problem:
 
 Tasks:
 
-- Keep one primary command: `Ask the Fleet`.
-- Move "spawn supervisor without a question" into an advanced/secondary affordance.
-- Consider hiding non-Claude supervisor providers until they are no longer marked
-  experimental.
-- Make supervisor agents read as an implementation of Ask, not a separate product
+- [x] Keep one primary command: `Ask the Fleet`.
+- [x] Move "spawn supervisor without a question" into an advanced/secondary affordance.
+- [x] Consider hiding non-Claude supervisor providers until they are no longer marked
+  experimental. Decision: keep them in the Ask pane only, still marked experimental.
+- [x] Make supervisor agents read as an implementation of Ask, not a separate product
   mode the user must understand.
 
 Acceptance criteria:
 
-- The command palette does not show two equally prominent supervisor entry
+- [x] The command palette does not show two equally prominent supervisor entry
   points.
 
 ### Tame The Spawn Dialog

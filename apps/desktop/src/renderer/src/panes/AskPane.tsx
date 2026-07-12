@@ -386,38 +386,43 @@ const AskPane: React.FC<AskPaneProps> = ({
           </div>
         )}
 
-        {/* Actions: spawn a fleet agent directly, or ask the question */}
+        {/* Actions: ask is primary; no-question watcher lives under Advanced. */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10 }}>
-          <button
-            onClick={() => void spawnDirect()}
-            disabled={spawning}
-            title="Spawn a supervisor with no question — it just starts watching the fleet"
+          <details
             style={{
-              padding: '8px 14px',
-              borderRadius: 'var(--wks-radius-md)',
-              border: '1px solid var(--wks-border-subtle, rgba(255,255,255,0.12))',
-              background: 'transparent',
-              color: spawning ? 'var(--wks-text-faint, #666)' : 'var(--wks-text-secondary, #aaa)',
-              fontSize: '0.74rem',
-              fontWeight: 600,
+              position: 'relative',
+              color: 'var(--wks-text-faint, #666)',
+              fontSize: '0.68rem',
               fontFamily: 'inherit',
-              cursor: spawning ? 'default' : 'pointer',
-              transition: 'border-color 0.15s ease, color 0.15s ease',
-            }}
-            onMouseEnter={(e) => {
-              if (spawning) return;
-              const el = e.currentTarget as HTMLButtonElement;
-              el.style.borderColor = 'var(--wks-accent, #4a9eff)';
-              el.style.color = 'var(--wks-accent, #4a9eff)';
-            }}
-            onMouseLeave={(e) => {
-              const el = e.currentTarget as HTMLButtonElement;
-              el.style.borderColor = 'var(--wks-border-subtle, rgba(255,255,255,0.12))';
-              el.style.color = 'var(--wks-text-secondary, #aaa)';
             }}
           >
-            Just spawn a fleet agent
-          </button>
+            <summary style={{ cursor: spawning ? 'default' : 'pointer', userSelect: 'none' }}>
+              Advanced
+            </summary>
+            <button
+              onClick={() => void spawnDirect()}
+              disabled={spawning}
+              title="Start a supervisor with no question"
+              style={{
+                position: 'absolute',
+                right: 0,
+                top: 22,
+                zIndex: 3,
+                whiteSpace: 'nowrap',
+                padding: '7px 12px',
+                borderRadius: 'var(--wks-radius-md)',
+                border: '1px solid var(--wks-border-subtle, rgba(255,255,255,0.12))',
+                background: 'var(--wks-bg-elevated, var(--wks-bg-base))',
+                color: spawning ? 'var(--wks-text-faint, #666)' : 'var(--wks-text-secondary, #aaa)',
+                fontSize: '0.7rem',
+                fontWeight: 600,
+                fontFamily: 'inherit',
+                cursor: spawning ? 'default' : 'pointer',
+              }}
+            >
+              Start watcher only
+            </button>
+          </details>
           <button
             onClick={() => void submit(question)}
             disabled={!canSubmit}

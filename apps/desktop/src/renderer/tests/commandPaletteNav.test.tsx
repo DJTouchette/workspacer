@@ -8,7 +8,7 @@
  * the highlight bounced instead of advancing one visual row at a time.
  */
 import { describe, it, expect, vi } from 'vitest';
-import { render, fireEvent } from '@testing-library/react';
+import { render, fireEvent, screen } from '@testing-library/react';
 import CommandPalette from '../src/components/CommandPalette';
 import { ConfigProvider } from '../src/contexts/ConfigContext';
 
@@ -53,5 +53,23 @@ describe('CommandPalette — keyboard nav order matches visual order', () => {
       expect(highlightedIndex(rows)).toBe(k);
       fireEvent.keyDown(input, { key: 'ArrowDown' });
     }
+  });
+
+  it('surfaces Ask the Fleet as the only primary supervisor command', () => {
+    render(
+      <ConfigProvider>
+        <CommandPalette
+          visible
+          apps={[]}
+          onClose={vi.fn()}
+          onLaunchApp={vi.fn()}
+          onAddTab={vi.fn()}
+          onOpenAskPane={vi.fn()}
+        />
+      </ConfigProvider>,
+    );
+
+    expect(screen.getByText('Ask the Fleet')).toBeInTheDocument();
+    expect(screen.queryByText('Spawn Fleet Agent')).not.toBeInTheDocument();
   });
 });

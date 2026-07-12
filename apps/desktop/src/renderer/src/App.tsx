@@ -1059,15 +1059,6 @@ function App() {
     [handleSelectAgent],
   );
 
-  /** Spawn a fleet supervisor directly (no question) and focus it — the
-   *  command-palette shortcut past the Ask pane. Uses the configured
-   *  supervisor provider, same as the Ask pane's default. */
-  const spawnFleetAgent = useCallback(async () => {
-    setShowCommandPalette(false);
-    const id = await spawnSupervisor({ provider: config.supervisor?.provider });
-    handleSelectAgent(id);
-  }, [spawnSupervisor, handleSelectAgent, config.supervisor?.provider]);
-
   const goToAgent = useCallback(
     (delta: number) => {
       if (agents.length === 0) return;
@@ -1999,9 +1990,6 @@ function App() {
             setShowRemote(true);
           }}
           onOpenAskPane={openAskPane}
-          onSpawnFleetAgent={() => {
-            void spawnFleetAgent();
-          }}
           onOpenFile={() => {
             setShowCommandPalette(false);
             openFileInEditor();

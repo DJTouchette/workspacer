@@ -177,7 +177,6 @@ interface CommandPaletteProps {
   onOpenRemote?: () => void;
   /** Open the Ask pane (fleet supervisor question interface). */
   onOpenAskPane?: () => void;
-  onSpawnFleetAgent?: () => void;
   /** Open a file in an Editor pane (prompts for a file first). */
   onOpenFile?: () => void;
   /** Resolved keybindings (config merged with defaults) — drives shortcut badges. */
@@ -236,7 +235,6 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
   onOpenLayouts,
   onOpenRemote,
   onOpenAskPane,
-  onSpawnFleetAgent,
   onOpenFile,
   shortcuts = {},
   prefix = 'ctrl+space',
@@ -311,13 +309,6 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
       'Pose a question to a supervisor agent',
       <Brain size={16} strokeWidth={1.75} />,
       onOpenAskPane,
-    );
-    add(
-      'cmd-spawn-fleet',
-      'Spawn Fleet Agent',
-      'Start a fleet supervisor watching all agents — no question needed',
-      <Brain size={16} strokeWidth={1.75} />,
-      onSpawnFleetAgent,
     );
     add(
       'cmd-toggle-sidebar',
@@ -488,7 +479,6 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
     return out;
   }, [
     onOpenAskPane,
-    onSpawnFleetAgent,
     onToggleSidebar,
     onToggleInbox,
     onToggleFleet,
