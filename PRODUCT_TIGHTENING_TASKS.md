@@ -270,14 +270,14 @@ Acceptance criteria:
 
 Tasks:
 
-- Prioritize tests around remote sharing, token scope handling, hub adoption,
+- [x] Prioritize tests around remote sharing, token scope handling, hub adoption,
   daemon restart, plugin install/remove, and review/git operations.
-- Remove or refresh stale E2E tests that no longer reflect the current Claude
+- [x] Remove or refresh stale E2E tests that no longer reflect the current Claude
   pane.
 
 Acceptance criteria:
 
-- The highest-risk app services have behavioral tests, not only renderer tests.
+- [x] The highest-risk app services have behavioral tests, not only renderer tests.
 
 ## P5 - Park Or Remove Old Substrate
 
