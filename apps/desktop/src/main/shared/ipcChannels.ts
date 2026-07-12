@@ -81,6 +81,9 @@ export const IPC = {
   HUB_GET_STATUS: 'hub:getStatus',
   HUB_GET_REMOTE_INFO: 'hub:getRemoteInfo',
   HUB_SET_REMOTE_SHARE: 'hub:setRemoteShare',
+  HUB_REMOTE_TOKENS_LIST: 'hub:remoteTokensList',
+  HUB_REMOTE_TOKEN_GET_OR_CREATE: 'hub:remoteTokenGetOrCreate',
+  HUB_REMOTE_TOKEN_REVOKE: 'hub:remoteTokenRevoke',
   HUB_SET_REMOTE_SERVER: 'hub:setRemoteServer', // invoke: persist/clear the "connect to remote server" target
   TAILSCALE_GET_INFO: 'tailscale:getInfo',
   TAILSCALE_SET_SERVE: 'tailscale:setServe',

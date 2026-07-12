@@ -108,6 +108,11 @@ vi.mock('./services/hubDaemon', () => ({
   getRemoteShareInfo: vi.fn(),
   setRemoteShare: vi.fn(),
 }));
+vi.mock('./services/remoteTokens', () => ({
+  listRemoteTokens: vi.fn(),
+  getOrCreateRemoteToken: vi.fn(),
+  revokeRemoteToken: vi.fn(),
+}));
 vi.mock('./services/tailscaleServe', () => ({
   getTailscaleInfo: vi.fn(),
   setTailscaleServe: vi.fn(),

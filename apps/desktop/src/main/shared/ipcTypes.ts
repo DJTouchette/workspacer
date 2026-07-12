@@ -46,6 +46,17 @@ export interface GitLogEntry {
   authoredAt: number;
 }
 
+// ── Remote pairing tokens (capability-scoped hub tokens) ──
+
+export type RemoteTokenScope = 'view' | 'triage' | 'operator';
+
+export interface RemoteTokenRecord {
+  token: string;
+  scope: RemoteTokenScope;
+  label?: string;
+  created: string;
+}
+
 // ── Claude session snapshot (sent over claude-session:get / getAll / update) ──
 
 export type SessionAmbientState =

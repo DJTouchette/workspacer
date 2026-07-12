@@ -13,6 +13,8 @@ import type {
   GitStatus,
   GitNumstatEntry,
   GitLogEntry,
+  RemoteTokenRecord,
+  RemoteTokenScope,
 } from '../../../main/shared/ipcTypes';
 
 export interface SessionListEntry {
@@ -260,6 +262,10 @@ export interface ElectronAPI {
     claudemonAdopted?: boolean;
     remoteClient?: { httpUrl: string; busUrl: string; token: string } | null;
   }>;
+  /** Capability-scoped remote pairing tokens. Desktop-only; web mirrors may omit these. */
+  remoteTokensList?: () => Promise<RemoteTokenRecord[]>;
+  remoteTokenGetOrCreate?: (scope: RemoteTokenScope, label?: string) => Promise<RemoteTokenRecord>;
+  remoteTokenRevoke?: (token: string) => Promise<RemoteTokenRecord>;
   /** Persist/clear the "connect to remote server" target (client mode). Takes
    *  effect on relaunch — pair with appRelaunch(). Desktop-only. */
   setRemoteServer?: (

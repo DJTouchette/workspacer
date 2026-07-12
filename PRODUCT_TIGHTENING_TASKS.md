@@ -1,0 +1,296 @@
+# Workspacer Product Tightening Tasks
+
+This backlog turns the current product review into concrete cleanup work. The
+goal is not to add more breadth. The goal is to make the core loop feel obvious,
+safe, and finished:
+
+> spawn agent -> monitor attention -> approve/answer -> review changes -> commit/push
+
+## Product Principles
+
+- Make Sidebar + Triage Inbox the default mental model.
+- Treat Fleet Deck, Agents Monitor, supervisors, plugins, remote server mode, and
+  headless operation as power-user surfaces.
+- Close existing loops before adding new panes or agent features.
+- Prefer safer defaults for first-run users, with explicit opt-in for powerful
+  modes.
+- Keep `docs/features.md` as the source of truth and remove stale maturity claims
+  elsewhere.
+
+## P0 - Lock The Core Story
+
+### Define The First 10 Minutes
+
+Tasks:
+
+- Write a short first-run scenario: open app, spawn first agent, answer/approve,
+  review changed files, commit/push.
+- Audit the UI against that scenario and mark every non-essential surface as
+  primary, secondary, or advanced.
+- Make sure the welcome/onboarding copy teaches only the core loop plus how to
+  find the command palette.
+
+Acceptance criteria:
+
+- A new user can understand the app without learning Fleet Deck, supervisors,
+  plugins, remote server mode, or the TUI.
+- The first-run path has one obvious CTA: spawn an agent.
+
+## P1 - Close The Important Loops
+
+### Remote Pairing Should Use Scoped Tokens
+
+Status: implemented.
+
+Problem:
+
+- The token system supports `view`, `triage`, and `operator`, but the sharing UI
+  still hands out the operator token by default.
+- Phone pairing should not grant full host control unless the user explicitly
+  chooses that.
+
+Tasks:
+
+- [x] Add a scope selector to the Remote Control dialog: `Triage phone`
+  (recommended), `Read-only`, `Full control`.
+- [x] Default QR/mobile pairings to `triage`.
+- [x] Generate or select a scoped token for the chosen scope instead of reusing the
+  implicit operator remote token.
+- [x] Make the warning text scope-aware.
+- [x] Add a visible token/device list with revoke actions, or link clearly to the CLI
+  until the UI exists.
+- [x] Decide whether revoke should actively close existing connections; if not,
+  state that clearly in the UI.
+
+Acceptance criteria:
+
+- [x] A phone QR code does not grant spawn/git/plugin/admin access by default.
+- [x] The full-control path is still available but clearly marked as powerful.
+
+### Finish Review/Merge Action Wiring
+
+Problem:
+
+- Review can stage, commit, and push, but merge and `review_diff` next-actions
+  are called out as not built.
+
+Tasks:
+
+- Wire `review_diff` next-actions into the Review pane or Inbox.
+- Add a merge/conflict flow if the classifier or backend emits a merge action.
+- Surface git errors in actionable language, especially conflicts, no upstream,
+  nothing staged, and push rejection.
+- After commit/push, clearly return the user to the agent or mark the attention
+  item resolved.
+- Add focused tests for review action routing and git error states.
+
+Acceptance criteria:
+
+- A finished agent can be taken from "done" to reviewed, committed, and pushed
+  without dropping to a shell.
+- Merge/review next-actions do not point at dead UI.
+
+### Safer First-Run Agent Defaults
+
+Problem:
+
+- New Claude sessions currently default to full/bypass permissions. That is
+  convenient for the author but risky for new users.
+
+Tasks:
+
+- Change first-run defaults to ask/approve before tool access, or add an explicit
+  first-run choice.
+- Keep a clear opt-in for "full access" with a warning.
+- Persist the user's choice after they opt in.
+- Re-check managed providers so the permission labels map cleanly across Claude,
+  Codex, OpenCode, and Pi.
+
+Acceptance criteria:
+
+- A first-time user does not accidentally spawn a full-access agent.
+- Power users can still make full access their default.
+
+## P2 - Reduce Surface Area Pressure
+
+### Make Fleet Surfaces Hierarchical
+
+Problem:
+
+- Sidebar, Triage Inbox, Fleet Deck, Agents Monitor, Ask the Fleet, and
+  supervisor agents all compete as "fleet" concepts.
+
+Tasks:
+
+- Declare Sidebar + Inbox as primary.
+- Move Fleet Deck copy/commands toward "overview/power view" language.
+- De-emphasize Agents Monitor unless subagent/workflow monitoring is active.
+- Avoid presenting Fleet Deck and Agents Monitor as separate must-learn concepts
+  during onboarding.
+
+Acceptance criteria:
+
+- Users can ignore Fleet Deck and Agents Monitor without feeling like they missed
+  the main product.
+
+### Collapse Ask The Fleet Duplication
+
+Problem:
+
+- There are multiple ways to ask/spawn a supervisor: `Ask the Fleet`,
+  `Spawn Fleet Agent`, and "Just spawn a fleet agent".
+
+Tasks:
+
+- Keep one primary command: `Ask the Fleet`.
+- Move "spawn supervisor without a question" into an advanced/secondary affordance.
+- Consider hiding non-Claude supervisor providers until they are no longer marked
+  experimental.
+- Make supervisor agents read as an implementation of Ask, not a separate product
+  mode the user must understand.
+
+Acceptance criteria:
+
+- The command palette does not show two equally prominent supervisor entry
+  points.
+
+### Tame The Spawn Dialog
+
+Problem:
+
+- The spawn dialog is well organized, but it exposes many expert controls at
+  once: model, transport, resume, profile, MCP, effort, worktree, permissions.
+
+Tasks:
+
+- Keep working directory + provider as the primary path.
+- Hide or collapse advanced pills by default for first-run users.
+- Keep dangerous/powerful settings visible when active, especially full access.
+- Consider a "remember my advanced settings" behavior for power users.
+
+Acceptance criteria:
+
+- A new user can spawn an agent by choosing only a directory.
+- Expert controls remain reachable without bloating the first-run experience.
+
+### Simplify Remote Product Language
+
+Problem:
+
+- The repo supports desktop, phone PWA, `/remote`, full web app, TUI, headless
+  server, and desktop-as-client. That is technically strong but hard to explain.
+
+Tasks:
+
+- Product copy should lead with "desktop plus phone".
+- Move `/remote`, `/app`, TUI, and headless server into advanced docs.
+- In the Remote Control dialog, distinguish "share this machine" from "connect
+  this app to another server".
+
+Acceptance criteria:
+
+- A normal user understands the remote story as phone access first.
+
+## P3 - Fix Documentation Drift
+
+### Refresh Component READMEs
+
+Tasks:
+
+- Update `services/claudemon/README.md` so `init`, `watch`, PTY, transcript, and
+  managed-provider claims match the current code.
+- Update `services/hub/README.md` so MCP/adopt/headless capabilities match
+  `docs/features.md`.
+- Update `apps/desktop/README.md` so it reflects the current pane set and remote
+  model.
+- Update `apps/tui/README.md` maturity/test language after adding tests.
+
+Acceptance criteria:
+
+- No README calls a working feature a stub.
+- `docs/features.md` remains the most detailed maturity catalog, and other docs
+  point to it instead of contradicting it.
+
+### Add A Lightweight Docs Drift Check
+
+Tasks:
+
+- Add a simple grep/script check for stale phrases like "still stubs",
+  "planned", "next milestone", and "not implemented" in component READMEs.
+- Make the script informational at first, then decide whether to wire it into CI.
+
+Acceptance criteria:
+
+- Stale maturity language is easy to catch before release.
+
+## P4 - Raise Test Confidence Where It Matters
+
+### Multi-Client End-To-End Check
+
+Tasks:
+
+- Add an E2E scenario with desktop/web or headless/web sharing the same layout.
+- Verify one agent appears once across clients.
+- Verify approval/question resolution from one client updates the other.
+- Verify terminal attach/replay after reconnect.
+
+Acceptance criteria:
+
+- Cross-client de-duplication and attention resolution are covered by a real
+  integration-style test.
+
+### TUI Test Expansion
+
+Tasks:
+
+- Add tests beyond key encoding: navigation, approval/question handling, review
+  pane basics, reconnect behavior.
+- Cover direct mode and bus mode separately if feasible.
+
+Acceptance criteria:
+
+- TUI maturity is no longer blocked on "only key-encoding units".
+
+### Main-Process Service Tests
+
+Tasks:
+
+- Prioritize tests around remote sharing, token scope handling, hub adoption,
+  daemon restart, plugin install/remove, and review/git operations.
+- Remove or refresh stale E2E tests that no longer reflect the current Claude
+  pane.
+
+Acceptance criteria:
+
+- The highest-risk app services have behavioral tests, not only renderer tests.
+
+## P5 - Park Or Remove Old Substrate
+
+### Decide The Fate Of The Parked Inbox/Classifier Stack
+
+Problem:
+
+- The product has chosen per-agent workspaces, while classifier/items tables and
+  APIs remain parked.
+
+Tasks:
+
+- Keep only the pieces that actively feed the current Triage Inbox or future
+  review actions.
+- Mark the rest as internal experimental code, or remove it.
+- If kept, document the intended trigger for reviving it.
+
+Acceptance criteria:
+
+- There is no ambiguity between "per-agent workspace" and the older "inbox of
+  decisions" product direction.
+
+## Suggested Order
+
+1. Remote scoped pairing.
+2. Safer first-run permissions.
+3. Collapse Ask/Fleet duplication.
+4. Finish review/merge next-action wiring.
+5. Refresh stale docs.
+6. Add multi-client and TUI confidence tests.
+7. Reassess parked substrate.

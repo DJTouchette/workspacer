@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Smartphone, Copy, Check, Eye, EyeOff } from 'lucide-react';
+import type { RemoteTokenRecord, RemoteTokenScope } from '../../../main/shared/ipcTypes';
 
 interface RemoteInfo {
   enabled: boolean;
@@ -28,6 +29,53 @@ interface TailscaleInfoUI {
   serveActive: boolean;
   canServe: boolean;
   hint?: string;
+}
+
+const SCOPE_OPTIONS: Array<{
+  scope: RemoteTokenScope;
+  label: string;
+  badge?: string;
+  description: string;
+}> = [
+  {
+    scope: 'triage',
+    label: 'Triage phone',
+    badge: 'Recommended',
+    description: 'Approve, answer, chat, and interrupt. No spawn, git, terminal, or plugin admin.',
+  },
+  {
+    scope: 'view',
+    label: 'Read-only',
+    description: 'Watch the fleet and transcripts without controlling agents.',
+  },
+  {
+    scope: 'operator',
+    label: 'Full control',
+    description: 'Everything, including spawn, git, plugins, settings, and the full web app.',
+  },
+];
+
+function scopeCopy(scope: RemoteTokenScope): string {
+  switch (scope) {
+    case 'view':
+      return 'This QR is read-only. It can view fleet state and transcripts, but cannot control agents.';
+    case 'triage':
+      return 'This QR can approve, answer, chat, and interrupt. It cannot spawn agents, open terminals, mutate git, or administer plugins.';
+    case 'operator':
+      return 'This QR gets full control. Anyone who can open it can control this server.';
+  }
+}
+
+function withToken(url: string, token: string): string {
+  if (!url) return '';
+  try {
+    const u = new URL(url);
+    u.searchParams.set('token', token);
+    return u.toString();
+  } catch {
+    const base = url.split('?')[0];
+    return `${base}?token=${encodeURIComponent(token)}`;
+  }
 }
 
 /**
@@ -624,8 +672,19 @@ function EnabledState({
   onStop: () => void;
 }) {
   const hasApp = !!info.appUrl;
-  // Prefer the full app when it's available; fall back to the lite client.
-  const [mode, setMode] = useState<'app' | 'lite'>(hasApp ? 'app' : 'lite');
+  // Pair phones with a constrained token by default. Full-control is an
+  // explicit scope choice and uses a revocable operator token from tokens.json.
+  const [scope, setScope] = useState<RemoteTokenScope>('triage');
+  const [pairingToken, setPairingToken] = useState<RemoteTokenRecord | null>(null);
+  const [pairingTokens, setPairingTokens] = useState<RemoteTokenRecord[]>([]);
+  const [tokenBusy, setTokenBusy] = useState(false);
+  const [tokenError, setTokenError] = useState<string | null>(null);
+  const [tokenNonce, setTokenNonce] = useState(0);
+  const canManageTokens = !!window.electronAPI.remoteTokenGetOrCreate;
+
+  // Prefer the full app only for full-control pairings; triage/view tokens are
+  // for the mobile client, whose HTML is public and whose bus calls are scoped.
+  const [mode, setMode] = useState<'app' | 'lite'>('lite');
 
   // Tailscale HTTPS: when `tailscale serve` fronts the hub, we can hand out a
   // real https://<node>.ts.net URL — a secure origin, so the /m PWA can install
@@ -643,11 +702,71 @@ function EnabledState({
     refreshTs();
   }, [refreshTs]);
 
+  const refreshPairingTokens = useCallback(() => {
+    window.electronAPI
+      .remoteTokensList?.()
+      .then(setPairingTokens)
+      .catch(() => {});
+  }, []);
+  useEffect(() => {
+    refreshPairingTokens();
+  }, [refreshPairingTokens]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setTokenError(null);
+    if (!window.electronAPI.remoteTokenGetOrCreate) {
+      setPairingToken({
+        token: info.token,
+        scope: 'operator',
+        label: 'Current pairing token',
+        created: '',
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
+    setTokenBusy(true);
+    window.electronAPI
+      .remoteTokenGetOrCreate(scope, `Remote Control: ${scope}`)
+      .then((rec) => {
+        if (cancelled) return;
+        setPairingToken(rec);
+        refreshPairingTokens();
+      })
+      .catch((err) => {
+        if (!cancelled) setTokenError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        if (!cancelled) setTokenBusy(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [scope, info.token, tokenNonce, refreshPairingTokens]);
+
   const httpsOn = !!(ts && ts.serveActive && ts.magicName);
-  const tokenQ = info.token ? `?token=${encodeURIComponent(info.token)}` : '';
-  const remoteUrl = httpsOn ? `https://${ts!.magicName}/m${tokenQ}` : info.remoteUrl;
-  const appUrl = httpsOn && hasApp ? `https://${ts!.magicName}/app/${tokenQ}` : info.appUrl;
-  const activeUrl = mode === 'app' && hasApp ? appUrl : remoteUrl;
+  const activeToken = pairingToken?.token || (canManageTokens ? '' : info.token);
+  const activeScope = pairingToken?.scope || (canManageTokens ? scope : 'operator');
+  const hasPairingToken = !!activeToken;
+  const fullAppAvailable = hasApp && activeScope === 'operator';
+  const tokenQ = activeToken ? `?token=${encodeURIComponent(activeToken)}` : '';
+  const remoteUrl = hasPairingToken
+    ? httpsOn
+      ? `https://${ts!.magicName}/m${tokenQ}`
+      : withToken(info.remoteUrl, activeToken)
+    : '';
+  const appUrl =
+    hasPairingToken && httpsOn && fullAppAvailable
+      ? `https://${ts!.magicName}/app/${tokenQ}`
+      : hasPairingToken && fullAppAvailable
+        ? withToken(info.appUrl, activeToken)
+        : '';
+  const activeUrl = mode === 'app' && fullAppAvailable ? appUrl : remoteUrl;
+
+  useEffect(() => {
+    if (!fullAppAvailable && mode === 'app') setMode('lite');
+  }, [fullAppAvailable, mode]);
 
   const toggleServe = async (enable: boolean) => {
     setTsBusy(true);
@@ -663,13 +782,49 @@ function EnabledState({
     }
   };
 
+  const revokePairingToken = async (token: string) => {
+    if (!window.electronAPI.remoteTokenRevoke) return;
+    setTokenBusy(true);
+    setTokenError(null);
+    try {
+      await window.electronAPI.remoteTokenRevoke(token);
+      refreshPairingTokens();
+      if (pairingToken?.token === token) {
+        setPairingToken(null);
+        setTokenNonce((n) => n + 1);
+      }
+    } catch (err) {
+      setTokenError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTokenBusy(false);
+    }
+  };
+
   return (
     <div>
       <StatusPill on={true} />
 
+      {canManageTokens && (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: '0.62rem', color: 'var(--wks-text-muted)', marginBottom: 6 }}>
+            Pairing scope
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {SCOPE_OPTIONS.map((opt) => (
+              <ScopeButton
+                key={opt.scope}
+                active={scope === opt.scope}
+                option={opt}
+                onClick={() => setScope(opt.scope)}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Full app vs mobile client. The full app is the real renderer served at
           /app; mobile is the mobile-first single-page client served at /m. */}
-      {hasApp ? (
+      {fullAppAvailable ? (
         <div style={{ display: 'flex', gap: 4, marginBottom: 14 }}>
           <ModeTab
             active={mode === 'app'}
@@ -685,6 +840,18 @@ function EnabledState({
           >
             Mobile
           </ModeTab>
+        </div>
+      ) : hasApp ? (
+        <div
+          style={{
+            fontSize: '0.66rem',
+            color: 'var(--wks-text-faint)',
+            marginBottom: 12,
+            lineHeight: 1.5,
+          }}
+        >
+          Showing the mobile client. The full web app is a full-control surface; switch the pairing
+          scope to Full control to share it.
         </div>
       ) : (
         <div
@@ -702,25 +869,43 @@ function EnabledState({
       )}
 
       {/* QR — the fast path. White quiet-zone box so it scans on any theme. */}
-      <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 14 }}>
+      {activeUrl ? (
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 14 }}>
+          <div
+            style={{
+              background: '#fff',
+              padding: 12,
+              borderRadius: 'var(--wks-radius-md)',
+              lineHeight: 0,
+            }}
+          >
+            <QRCodeSVG
+              value={activeUrl}
+              size={188}
+              level="M"
+              marginSize={0}
+              bgColor="#ffffff"
+              fgColor="#000000"
+            />
+          </div>
+        </div>
+      ) : (
         <div
           style={{
-            background: '#fff',
-            padding: 12,
+            height: 212,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            marginBottom: 14,
+            border: '1px dashed var(--wks-border-input)',
             borderRadius: 'var(--wks-radius-md)',
-            lineHeight: 0,
+            color: 'var(--wks-text-faint)',
+            fontSize: '0.68rem',
           }}
         >
-          <QRCodeSVG
-            value={activeUrl}
-            size={188}
-            level="M"
-            marginSize={0}
-            bgColor="#ffffff"
-            fgColor="#000000"
-          />
+          Preparing pairing token...
         </div>
-      </div>
+      )}
       <div
         style={{
           textAlign: 'center',
@@ -729,36 +914,43 @@ function EnabledState({
           marginBottom: 16,
         }}
       >
-        Scan with your phone's camera to open{' '}
-        {mode === 'app' && hasApp ? 'the full app' : 'the mobile client'}.
+        {activeUrl
+          ? `Scan with your phone's camera to open ${
+              mode === 'app' && fullAppAvailable ? 'the full app' : 'the mobile client'
+            }.`
+          : 'Waiting for a scoped pairing token.'}
       </div>
 
       <TailscaleHttps ts={ts} on={httpsOn} busy={tsBusy} msg={tsMsg} onToggle={toggleServe} />
 
-      <CopyRow
-        label="Connection URL"
-        value={activeUrl}
-        display={activeUrl}
-        copied={copied === 'url'}
-        onCopy={() => onCopy('url', activeUrl)}
-      />
+      {activeUrl && (
+        <>
+          <CopyRow
+            label="Connection URL"
+            value={activeUrl}
+            display={activeUrl}
+            copied={copied === 'url'}
+            onCopy={() => onCopy('url', activeUrl)}
+          />
 
-      <CopyRow
-        label="Token"
-        value={info.token}
-        display={showToken ? info.token : '•'.repeat(Math.min(24, info.token.length || 8))}
-        copied={copied === 'token'}
-        onCopy={() => onCopy('token', info.token)}
-        extra={
-          <button
-            onClick={onToggleToken}
-            title={showToken ? 'Hide token' : 'Show token'}
-            style={iconBtnStyle}
-          >
-            {showToken ? <EyeOff size={13} /> : <Eye size={13} />}
-          </button>
-        }
-      />
+          <CopyRow
+            label="Token"
+            value={activeToken}
+            display={showToken ? activeToken : '•'.repeat(Math.min(24, activeToken.length || 8))}
+            copied={copied === 'token'}
+            onCopy={() => onCopy('token', activeToken)}
+            extra={
+              <button
+                onClick={onToggleToken}
+                title={showToken ? 'Hide token' : 'Show token'}
+                style={iconBtnStyle}
+              >
+                {showToken ? <EyeOff size={13} /> : <Eye size={13} />}
+              </button>
+            }
+          />
+        </>
+      )}
 
       <div
         style={{
@@ -771,9 +963,23 @@ function EnabledState({
           marginBottom: 14,
         }}
       >
-        The URL already includes the token, so anyone who can open it gets full control. Only share
-        it over your trusted tailnet — see below.
+        {scopeCopy(activeScope)} Only share pairing links over your trusted tailnet — see below.
       </div>
+
+      {tokenError && (
+        <div style={{ fontSize: '0.64rem', color: 'var(--wks-danger, #e05555)', marginBottom: 12 }}>
+          {tokenError}
+        </div>
+      )}
+
+      {canManageTokens && pairingTokens.length > 0 && (
+        <PairingTokenList
+          tokens={pairingTokens}
+          activeToken={activeToken}
+          busy={tokenBusy}
+          onRevoke={revokePairingToken}
+        />
+      )}
 
       <TailscaleNote />
 
@@ -831,6 +1037,185 @@ function CopyRow({
       </div>
     </div>
   );
+}
+
+function ScopeButton({
+  active,
+  option,
+  onClick,
+}: {
+  active: boolean;
+  option: (typeof SCOPE_OPTIONS)[number];
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        width: '100%',
+        textAlign: 'left',
+        cursor: 'pointer',
+        borderRadius: 'var(--wks-radius-md)',
+        border: `1px solid ${active ? 'var(--wks-accent, #4a9eff)' : 'var(--wks-border-input)'}`,
+        background: active ? 'var(--wks-accent-bg)' : 'var(--wks-bg-base)',
+        color: 'var(--wks-text-primary)',
+        padding: '8px 10px',
+        fontFamily: 'inherit',
+      }}
+    >
+      <span style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
+        <span style={{ fontSize: '0.72rem', fontWeight: 700 }}>{option.label}</span>
+        {option.badge && (
+          <span
+            style={{
+              fontSize: '0.54rem',
+              fontWeight: 800,
+              textTransform: 'uppercase',
+              letterSpacing: '0.04em',
+              color: 'var(--wks-accent-text, var(--wks-accent))',
+              background: 'color-mix(in srgb, var(--wks-accent) 14%, transparent)',
+              borderRadius: 5,
+              padding: '1px 5px',
+            }}
+          >
+            {option.badge}
+          </span>
+        )}
+      </span>
+      <span style={{ display: 'block', fontSize: '0.62rem', color: 'var(--wks-text-faint)' }}>
+        {option.description}
+      </span>
+    </button>
+  );
+}
+
+function PairingTokenList({
+  tokens,
+  activeToken,
+  busy,
+  onRevoke,
+}: {
+  tokens: RemoteTokenRecord[];
+  activeToken: string;
+  busy: boolean;
+  onRevoke: (token: string) => void;
+}) {
+  return (
+    <div
+      style={{
+        marginBottom: 14,
+        borderTop: '1px solid var(--wks-border-subtle)',
+        paddingTop: 12,
+      }}
+    >
+      <div style={{ fontSize: '0.62rem', color: 'var(--wks-text-muted)', marginBottom: 6 }}>
+        Pairing tokens
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+        {tokens.map((t) => (
+          <div
+            key={t.token}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              border: '1px solid var(--wks-border-input)',
+              borderRadius: 6,
+              background: 'var(--wks-bg-base)',
+              padding: '6px 8px',
+            }}
+          >
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  fontSize: '0.66rem',
+                  color: 'var(--wks-text-secondary)',
+                  minWidth: 0,
+                }}
+              >
+                <span
+                  style={{
+                    fontWeight: 700,
+                    color:
+                      t.scope === 'operator'
+                        ? 'var(--wks-danger, #e05555)'
+                        : t.scope === 'triage'
+                          ? 'var(--wks-accent, #4a9eff)'
+                          : 'var(--wks-text-muted)',
+                  }}
+                >
+                  {t.scope}
+                </span>
+                {t.token === activeToken && (
+                  <span style={{ color: 'var(--wks-success, #3fb950)', fontWeight: 700 }}>
+                    active
+                  </span>
+                )}
+                <span
+                  style={{
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                  title={t.label}
+                >
+                  {t.label || 'Unlabeled token'}
+                </span>
+              </div>
+              <div
+                style={{
+                  fontSize: '0.58rem',
+                  color: 'var(--wks-text-faint)',
+                  fontFamily: 'var(--wks-font-mono)',
+                }}
+              >
+                {t.token.slice(0, 8)}... · {formatTokenDate(t.created)}
+              </div>
+            </div>
+            <button
+              onClick={() => onRevoke(t.token)}
+              disabled={busy}
+              style={{
+                flexShrink: 0,
+                fontSize: '0.62rem',
+                fontWeight: 700,
+                fontFamily: 'inherit',
+                cursor: busy ? 'default' : 'pointer',
+                color: busy ? 'var(--wks-text-faint)' : 'var(--wks-danger, #e05555)',
+                background: 'transparent',
+                border: '1px solid var(--wks-border-input)',
+                borderRadius: 4,
+                padding: '3px 7px',
+              }}
+            >
+              Revoke
+            </button>
+          </div>
+        ))}
+      </div>
+      <div
+        style={{
+          marginTop: 7,
+          fontSize: '0.6rem',
+          color: 'var(--wks-text-faint)',
+          lineHeight: 1.5,
+        }}
+      >
+        Revocation blocks new connections. Already-open clients keep their scope until they
+        disconnect.
+      </div>
+    </div>
+  );
+}
+
+function formatTokenDate(raw: string): string {
+  if (!raw) return 'unknown';
+  const t = Date.parse(raw);
+  if (!Number.isFinite(t)) return raw;
+  return new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
 function ModeTab({

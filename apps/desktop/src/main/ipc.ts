@@ -39,6 +39,11 @@ import {
   getRemoteShareInfo,
   setRemoteShare,
 } from './services/hubDaemon';
+import {
+  getOrCreateRemoteToken,
+  listRemoteTokens,
+  revokeRemoteToken,
+} from './services/remoteTokens';
 import { getTailscaleInfo, setTailscaleServe } from './services/tailscaleServe';
 import { setRemoteServer } from './services/remoteServer';
 import { publishToHub, isHubConnected, callHub } from './services/hubClient';
@@ -50,6 +55,7 @@ import type {
   SessionData,
   LayoutInput,
   ProfileUpdate,
+  RemoteTokenScope,
 } from './shared/ipcTypes';
 
 function detectDefaultShell(): string {
@@ -298,6 +304,12 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // Connection info for the remote-control client (URL + token for a QR/share).
   ipcMain.handle(IPC.HUB_GET_REMOTE_INFO, () => getRemoteShareInfo());
   ipcMain.handle(IPC.HUB_SET_REMOTE_SHARE, (_event, enabled: boolean) => setRemoteShare(!!enabled));
+  ipcMain.handle(IPC.HUB_REMOTE_TOKENS_LIST, () => listRemoteTokens());
+  ipcMain.handle(
+    IPC.HUB_REMOTE_TOKEN_GET_OR_CREATE,
+    (_event, scope: RemoteTokenScope, label?: string) => getOrCreateRemoteToken(scope, label),
+  );
+  ipcMain.handle(IPC.HUB_REMOTE_TOKEN_REVOKE, (_event, token: string) => revokeRemoteToken(token));
   // "Connect to remote server" (client mode): persist/clear the target. Takes
   // effect on relaunch — the local-vs-remote decision is made once at startup
   // (index.ts), so the UI calls APP_RELAUNCH after a successful set/clear.

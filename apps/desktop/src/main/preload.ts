@@ -10,6 +10,8 @@ import type {
   GitStatus,
   GitNumstatEntry,
   GitLogEntry,
+  RemoteTokenRecord,
+  RemoteTokenScope,
 } from './shared/ipcTypes';
 
 // ── MessagePort storage (preload isolated world) ──
@@ -437,6 +439,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     claudemonAdopted: boolean;
     remoteClient: { httpUrl: string; busUrl: string; token: string } | null;
   }> => ipcRenderer.invoke(IPC.HUB_SET_REMOTE_SHARE, enabled),
+  remoteTokensList: (): Promise<RemoteTokenRecord[]> =>
+    ipcRenderer.invoke(IPC.HUB_REMOTE_TOKENS_LIST),
+  remoteTokenGetOrCreate: (scope: RemoteTokenScope, label?: string): Promise<RemoteTokenRecord> =>
+    ipcRenderer.invoke(IPC.HUB_REMOTE_TOKEN_GET_OR_CREATE, scope, label),
+  remoteTokenRevoke: (token: string): Promise<RemoteTokenRecord> =>
+    ipcRenderer.invoke(IPC.HUB_REMOTE_TOKEN_REVOKE, token),
   // "Connect to remote server" (client mode): persist/clear the target hub.
   // Applied on relaunch — pair with appRelaunch() after a successful set.
   setRemoteServer: (
