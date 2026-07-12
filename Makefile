@@ -14,7 +14,7 @@ CLAUDEMON := services/claudemon
 HUB       := services/hub
 
 .PHONY: dev dev-share dev-tui run-tui install build build-desktop build-hub build-claudemon build-tui \
-        build-cli test test-desktop test-hub test-tui test-claudemon package clean
+        build-cli test test-desktop test-hub test-tui test-claudemon docs-drift package clean
 
 ## dev: run the desktop app in dev mode (Vite + Electron). Remote sharing is now
 ##      a runtime toggle (Remote control → Start sharing); use `make dev-share`
@@ -78,6 +78,10 @@ test-claudemon:
 
 test-tui:
 	cd $(TUI) && cargo test
+
+## docs-drift: informational scan for stale maturity wording in component READMEs
+docs-drift:
+	bash scripts/check-doc-drift.sh
 
 ## package: build daemons + produce desktop installers (electron-builder)
 package:

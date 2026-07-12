@@ -228,13 +228,15 @@ Acceptance criteria:
 
 Tasks:
 
-- Add a simple grep/script check for stale phrases like "still stubs",
+- [x] Add a simple grep/script check for stale phrases like "still stubs",
   "planned", "next milestone", and "not implemented" in component READMEs.
-- Make the script informational at first, then decide whether to wire it into CI.
+- [x] Make the script informational at first, then decide whether to wire it into CI.
+  Decision: keep it out of CI for now; run `make docs-drift` before release, or
+  set `WKS_DOC_DRIFT_STRICT=1` if we want it to fail a future CI job.
 
 Acceptance criteria:
 
-- Stale maturity language is easy to catch before release.
+- [x] Stale maturity language is easy to catch before release.
 
 ## P4 - Raise Test Confidence Where It Matters
 
