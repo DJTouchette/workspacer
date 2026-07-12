@@ -207,6 +207,41 @@ export function parseLog(stdout: string): LogEntry[] {
   return out;
 }
 
+export function formatGitActionError(raw: string, fallback = 'git command failed'): string {
+  const msg = raw.trim() || fallback;
+  const lower = msg.toLowerCase();
+  const withDetail = (summary: string) => `${summary}\n\n${msg}`;
+  if (
+    lower.includes('you have unmerged paths') ||
+    lower.includes('fix conflicts') ||
+    lower.includes('conflict (') ||
+    lower.includes('merge conflict')
+  ) {
+    return withDetail(
+      'Merge conflicts need resolution before this git action can continue. Resolve the conflicted files, stage them, then retry.',
+    );
+  }
+  if (lower.includes('no changes added to commit') || lower.includes('nothing to commit')) {
+    return withDetail('Nothing is staged to commit. Stage files in Review, then commit again.');
+  }
+  if (lower.includes('has no upstream branch') || lower.includes('no upstream branch')) {
+    return withDetail(
+      'No upstream branch is configured. Set an upstream with git push --set-upstream, then retry.',
+    );
+  }
+  if (
+    lower.includes('non-fast-forward') ||
+    lower.includes('fetch first') ||
+    lower.includes('updates were rejected') ||
+    lower.includes('rejected')
+  ) {
+    return withDetail(
+      'Push was rejected because the remote has changes this branch does not have. Pull or rebase, resolve anything needed, then retry.',
+    );
+  }
+  return msg;
+}
+
 /** Resolve the work root or throw the same message the daemon used to 400 with. */
 async function rootOrThrow(cwd: string): Promise<string> {
   const root = await workRoot(cwd);
@@ -317,7 +352,13 @@ export async function numstat(cwd: string, staged = false): Promise<NumstatEntry
 async function action(cwd: string, args: string[]): Promise<string> {
   const root = await rootOrThrow(cwd);
   const res = await runGit(root, args);
-  if (!res.ok) throw new Error(res.stderr.trim() || 'git command failed');
+  if (!res.ok) {
+    const raw = [res.stderr, res.stdout]
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .join('\n');
+    throw new Error(formatGitActionError(raw, `git ${args[0] ?? 'command'} failed`));
+  }
   return res.stdout;
 }
 

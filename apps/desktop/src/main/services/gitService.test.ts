@@ -5,6 +5,7 @@ import {
   parseNumstatPath,
   parseLog,
   parseBranchHeader,
+  formatGitActionError,
 } from './gitService';
 
 // These mirror the unit tests that lived in the old Rust git surface
@@ -115,5 +116,39 @@ describe('parseLog', () => {
     expect(parseLog('')).toEqual([]);
     expect(parseLog('\n\n')).toEqual([]);
     expect(parseLog('onlyhash\nabc\x00subject\x00notanumber')).toEqual([]);
+  });
+});
+
+describe('formatGitActionError', () => {
+  it('adds a staging hint when commit has nothing staged', () => {
+    const msg = formatGitActionError('no changes added to commit');
+    expect(msg).toContain('Nothing is staged to commit');
+    expect(msg).toContain('no changes added to commit');
+  });
+
+  it('adds an upstream hint for first push', () => {
+    const msg = formatGitActionError('fatal: The current branch feature/x has no upstream branch.');
+    expect(msg).toContain('No upstream branch is configured');
+    expect(msg).toContain('git push --set-upstream');
+  });
+
+  it('adds a conflict hint for unmerged paths', () => {
+    const msg = formatGitActionError(
+      'error: Committing is not possible because you have unmerged paths.',
+    );
+    expect(msg).toContain('Merge conflicts need resolution');
+    expect(msg).toContain('unmerged paths');
+  });
+
+  it('adds a remote-update hint for rejected pushes', () => {
+    const msg = formatGitActionError('! [rejected] main -> main (fetch first)');
+    expect(msg).toContain('Push was rejected');
+    expect(msg).toContain('Pull or rebase');
+  });
+
+  it('preserves unknown git errors without inventing advice', () => {
+    expect(formatGitActionError('fatal: strange repository state')).toBe(
+      'fatal: strange repository state',
+    );
   });
 });
