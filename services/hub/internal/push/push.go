@@ -16,6 +16,7 @@ package push
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"log"
@@ -153,17 +154,39 @@ func (m *Manager) RPCSubscribe(params json.RawMessage) (any, error) {
 	return map[string]any{"ok": true}, nil
 }
 
-// RPCUnsubscribe drops a subscription by endpoint.
+// RPCUnsubscribe drops a subscription by endpoint, gated by proof-of-possession.
+// The bus RPC layer carries no per-caller identity, so ownership is proven by
+// presenting the subscription's `keys.auth` secret — a value the browser that
+// created the subscription holds in its own PushSubscription (`toJSON().keys.auth`)
+// but a caller with only the opaque endpoint cannot forge. If a subscription
+// exists for the endpoint and has a non-empty stored auth, the request's auth
+// must match it (constant-time). Unsubscribing an unknown endpoint is a no-op
+// success so the call stays idempotent. Server-initiated pruning of dead
+// subscriptions goes through removeEndpoint (from sendOne) and needs no auth.
 func (m *Manager) RPCUnsubscribe(params json.RawMessage) (any, error) {
 	var in struct {
 		Endpoint string `json:"endpoint"`
+		Auth     string `json:"auth"`
 	}
 	if err := json.Unmarshal(params, &in); err != nil {
 		return nil, err
 	}
-	if in.Endpoint != "" {
-		m.removeEndpoint(in.Endpoint)
+	if in.Endpoint == "" {
+		return map[string]any{"ok": true}, nil
 	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sub, ok := m.subs[in.Endpoint]
+	if !ok {
+		return map[string]any{"ok": true}, nil // idempotent: nothing to drop
+	}
+	// Require proof-of-possession when the stored subscription carries an auth
+	// secret (subscribe always stores one; the check is defensive if it doesn't).
+	if sub.Keys.Auth != "" && subtle.ConstantTimeCompare([]byte(in.Auth), []byte(sub.Keys.Auth)) != 1 {
+		return nil, errors.New("push.unsubscribe: auth does not match subscription")
+	}
+	delete(m.subs, in.Endpoint)
+	m.persistSubs()
 	return map[string]any{"ok": true}, nil
 }
 
@@ -244,6 +267,13 @@ func dirName(p string) string {
 
 // sendAll pushes to every subscription concurrently. Payload is the JSON the
 // service worker's `push` handler reads (title/body/sessionId).
+//
+// NOTE: this broadcasts every "needs you" push to ALL stored subscriptions with
+// no per-user filtering. That is intentional for the single-operator personal-tool
+// model — one person, every device they've installed the /m PWA on should ring.
+// A multi-user deployment would leak one operator's agent activity to another's
+// devices; supporting that would require tagging each subscription with an owner
+// (or session scope) at subscribe time and filtering the recipient set here.
 func (m *Manager) sendAll(title, body, sessionID string) {
 	payload, _ := json.Marshal(map[string]string{"title": title, "body": body, "sessionId": sessionID})
 	m.mu.Lock()

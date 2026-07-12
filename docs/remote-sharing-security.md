@@ -80,8 +80,12 @@ WebSocket handshakes can't set headers, so the query form is what clients use).
 | `/app/` hashed assets, `/xterm.js`, `/xterm.css`, `/addon-fit.js` | No | Public library/bundle code; `<script>`/`<link>` tags can't carry the token. Same rationale: `/bus` is where authorization actually happens. |
 
 The model is deliberate: the **token gate on `/bus`** is the security boundary.
-Anyone who reaches `/bus` with the token is treated as the **trusted host** and
-may call any capability — there is no per-remote-client privilege separation.
+Anyone who reaches `/bus` with the **host token** is treated as the **trusted
+host** and may call any capability. This is no longer the *only* option, though:
+scoped **capability tokens** (see §6) let you hand out a narrower credential.
+The default share link still embeds the host (operator) token, so the caveat
+below still holds for the scan-and-go path unless you deliberately mint a scoped
+token instead.
 
 ---
 
@@ -138,8 +142,11 @@ These are real limitations, stated plainly:
   on the tailnet (WireGuard). Outside a tailnet the connection is cleartext.
 - **Token-in-URL.** Convenient, but it leaks more readily than a header-only
   secret (history, logs, referrers). See §4.
-- **No per-client privilege separation.** Any client that presents the token is
-  the *trusted host* on the bus and can call every capability.
+- **The default share link is full operator.** Capability tokens (§6) exist and
+  can scope a client to read-only or triage, but the QR/scan-and-go link still
+  embeds the host token, which is operator-equivalent. A client that presents the
+  host token is the *trusted host* on the bus and can call every capability;
+  narrowing that requires deliberately minting and handing out a scoped token.
 - **Driving an agent is code execution on the host.** The remote surface can
   spawn agents and terminals, send input, approve permission prompts, set the
   approval gate, read and write files (`fs.read` / `fs.write`), and run searches
@@ -163,6 +170,36 @@ These are real limitations, stated plainly:
 
 ---
 
+## 6. Capability tokens (scoped credentials)
+
+Beyond the single host token, the hub can mint **scoped capability tokens** so a
+remote client need not be full operator. This is enforced at the same seam as
+everything else — `internal/bus/rpc.go` `router.call()` gates every `call` frame
+through `mayCall` (verb allowlist) then `authorize` — so a scoped token cannot
+reach a method outside its tier.
+
+- **Three fixed tiers** (`internal/authtoken/authtoken.go`):
+  - `view` — read-only (snapshots, listings, `push.key`).
+  - `triage` — view + acknowledge/answer/approve and `push.subscribe` — enough to
+    clear "needs you" prompts from a phone, but **not** to spawn or mutate.
+  - `operator` — everything (`*`); equivalent to the host token.
+  - `agents.spawn`, `terminals.create`, `git.push`, and `config.save` are
+    deliberately **absent** from `view`/`triage` and reserved to operator;
+    `cmd/brain/capspec_guard_test.go::TestSpawnStaysDeliberatelyUnscoped` locks
+    that in so a future edit can't quietly leak spawn into a lower tier.
+- **Minting / revoking.** `workspacer token create --scope view|triage|operator`,
+  `workspacer token list`, `workspacer token revoke` (`cmd/workspacer/tokencmd.go`);
+  tokens persist in `tokens.json` under the hub state dir (`0o600`) and are
+  reloaded live on file change.
+- **Known limits (see §5 and the exposure section).** Scoped user tokens are
+  tiered **by verb only** — no per-path/per-argument confinement (that finer model
+  exists only for *plugin* capabilities), and there is **no TTL/expiry** (a token
+  lives until revoked). The default remote-share QR/link still embeds the host
+  (operator) token, so scoping is something you opt into by minting and handing
+  out a scoped token instead of the default link.
+
+---
+
 ## If you ever want to expose this beyond a tailnet
 
 The current feature is **not** built for direct exposure to the public internet
@@ -174,9 +211,12 @@ required first — it is future work, not a supported configuration today:
 - **Header-based, short-lived tokens.** Move off the `?token=` URL form to
   `Authorization` headers, and issue short-lived / rotatable credentials instead
   of one long-lived shared secret embedded in a link.
-- **Per-client identity and least privilege.** Replace the single "present the
-  token → you are the trusted host" model with distinct client identities and
-  scoped capabilities, so a remote client need not have full host control.
+- **Per-client identity and least privilege.** _Partially delivered_ — scoped
+  capability tokens (§6) already replace "any token → trusted host" for clients
+  you deliberately mint a scoped credential for. What remains: the default share
+  link still hands out the operator token (so scoping is opt-in, not the default
+  onboarding path); scoped user tokens are tiered by verb only, with no
+  per-argument/path confinement and no expiry.
 - **Rate limiting & abuse protection.** Add connection/request rate limiting and
   lockout on the auth path; none exists today.
 - **Route authorization review.** Re-examine every currently-unguarded route

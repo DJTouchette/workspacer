@@ -74,13 +74,58 @@ func TestSubscribePersistsAndReloads(t *testing.T) {
 	if len(m2.subs) != 1 {
 		t.Fatalf("expected 1 persisted subscription, got %d", len(m2.subs))
 	}
-	// Unsubscribe removes it and persists the removal.
-	if _, err := m.RPCUnsubscribe(json.RawMessage(`{"endpoint":"https://push.example/abc"}`)); err != nil {
+	// Unsubscribe (with the matching auth) removes it and persists the removal.
+	if _, err := m.RPCUnsubscribe(json.RawMessage(`{"endpoint":"https://push.example/abc","auth":"au"}`)); err != nil {
 		t.Fatalf("RPCUnsubscribe: %v", err)
 	}
 	m3, _ := New(dir)
 	if len(m3.subs) != 0 {
 		t.Fatalf("expected 0 subscriptions after unsubscribe, got %d", len(m3.subs))
+	}
+}
+
+// TestUnsubscribeRequiresProofOfPossession covers the ownership gate on
+// RPCUnsubscribe: the bus RPC layer has no per-caller identity, so a legitimate
+// owner proves possession by presenting the subscription's `keys.auth` secret
+// (which its own browser holds). A caller with only the opaque endpoint cannot.
+func TestUnsubscribeRequiresProofOfPossession(t *testing.T) {
+	dir := t.TempDir()
+	m, err := New(dir)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	sub := json.RawMessage(`{"endpoint":"https://push.example/abc","keys":{"p256dh":"pk","auth":"secret-auth"}}`)
+	if _, err := m.RPCSubscribe(sub); err != nil {
+		t.Fatalf("RPCSubscribe: %v", err)
+	}
+
+	// (b) Wrong auth is rejected and the subscription SURVIVES.
+	if _, err := m.RPCUnsubscribe(json.RawMessage(`{"endpoint":"https://push.example/abc","auth":"wrong"}`)); err == nil {
+		t.Fatal("expected unsubscribe with wrong auth to be rejected")
+	}
+	// Missing auth is likewise rejected.
+	if _, err := m.RPCUnsubscribe(json.RawMessage(`{"endpoint":"https://push.example/abc"}`)); err == nil {
+		t.Fatal("expected unsubscribe with missing auth to be rejected")
+	}
+	m.mu.Lock()
+	survived := len(m.subs)
+	m.mu.Unlock()
+	if survived != 1 {
+		t.Fatalf("subscription should survive a bad-auth unsubscribe, got %d subs", survived)
+	}
+
+	// (c) Unknown endpoint is a no-op success (idempotent), even without auth.
+	if _, err := m.RPCUnsubscribe(json.RawMessage(`{"endpoint":"https://push.example/unknown"}`)); err != nil {
+		t.Fatalf("unsubscribe of an unknown endpoint should be a no-op success, got %v", err)
+	}
+
+	// (a) Correct auth removes the subscription and persists the removal.
+	if _, err := m.RPCUnsubscribe(json.RawMessage(`{"endpoint":"https://push.example/abc","auth":"secret-auth"}`)); err != nil {
+		t.Fatalf("unsubscribe with correct auth: %v", err)
+	}
+	reopened, _ := New(dir)
+	if len(reopened.subs) != 0 {
+		t.Fatalf("expected 0 subscriptions after authorized unsubscribe, got %d", len(reopened.subs))
 	}
 }
 
