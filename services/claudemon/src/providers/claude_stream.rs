@@ -52,6 +52,10 @@ pub struct SpawnConfig {
     /// Resolved `claude` binary (falls back to `"claude"` upstream).
     pub bin: String,
     pub model: Option<String>,
+    /// Reasoning-effort level (`--effort <level>`: `low`/`medium`/`high`/
+    /// `xhigh`/`max`). Applied at spawn; there's no live control, so a change
+    /// respawns (the composer pill drives that through the restart flow).
+    pub effort: Option<String>,
     /// Claude's own `--permission-mode` vocabulary (`acceptEdits`, `plan`, …).
     pub permission_mode: Option<String>,
     /// Resume this prior session id (`--resume <id>`) instead of pinning a
@@ -819,6 +823,9 @@ fn build_argv(cfg: &SpawnConfig) -> Vec<String> {
     if let Some(model) = &cfg.model {
         argv.extend(["--model".into(), model.clone()]);
     }
+    if let Some(effort) = &cfg.effort {
+        argv.extend(["--effort".into(), effort.clone()]);
+    }
     if let Some(mode) = &cfg.permission_mode {
         argv.extend(["--permission-mode".into(), mode.clone()]);
     }
@@ -1023,10 +1030,12 @@ async fn run_session(
             switch = mrx.recv() => match switch {
                 Some(sw) => {
                     // `set_model` is real on this transport (verified: the next
-                    // turn runs the new model). Claude has no effort knob —
-                    // note and drop it rather than failing the whole switch.
+                    // turn runs the new model). `--effort` is spawn-time only —
+                    // there's no live control, so the composer drives an effort
+                    // change through the restart flow, never this endpoint. If
+                    // one still arrives, note and drop it rather than failing.
                     if sw.effort.is_some() {
-                        tracing::debug!(session = %session_id, "claude stream: `effort` has no equivalent — ignored");
+                        tracing::debug!(session = %session_id, "claude stream: `effort` is spawn-time only (respawn to change) — ignored live");
                     }
                     match sw.model {
                         Some(model) => send_control(
@@ -1819,6 +1828,7 @@ mod tests {
             cwd: "/w".into(),
             bin: "claude".into(),
             model: Some("haiku".into()),
+            effort: Some("xhigh".into()),
             permission_mode: Some("plan".into()),
             resume: None,
             extra_args: vec!["--fallback-model".into(), "sonnet".into()],
@@ -1832,6 +1842,7 @@ mod tests {
         assert!(joined.contains("--permission-prompt-tool stdio"));
         assert!(joined.contains("--session-id sid-1"));
         assert!(joined.contains("--model haiku"));
+        assert!(joined.contains("--effort xhigh"));
         assert!(joined.contains("--permission-mode plan"));
         assert!(joined.contains("--dangerously-skip-permissions"));
         assert!(joined.ends_with("--fallback-model sonnet"));

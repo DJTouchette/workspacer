@@ -293,6 +293,7 @@ pub async fn handle_managed(
                     cwd: payload.cwd.clone(),
                     bin,
                     model: payload.model.clone(),
+                    effort: payload.effort.clone(),
                     permission_mode: payload.permission_mode.clone(),
                     resume: payload.resume.clone(),
                     extra_args: payload.extra_args.clone(),

@@ -154,6 +154,12 @@ export interface ClaudeArgvOptions {
    */
   allowedTools?: string[];
   /**
+   * Reasoning-effort level for the session (`--effort <level>`:
+   * `low`/`medium`/`high`/`xhigh`/`max`). Applied at spawn; a change respawns.
+   * '' / undefined = the user's `effortLevel` setting (CLI default).
+   */
+  effort?: string;
+  /**
    * Text appended to claude's system prompt via `--append-system-prompt`.
    * Useful for injecting role instructions into a supervisor session without
    * overwriting whatever the profile or user already configured.
@@ -182,6 +188,13 @@ export function buildClaudeArgv(opts: ClaudeArgvOptions = {}): string[] {
   );
   if (opts.model && opts.model.trim() && !profilePinsModel) {
     argv.push('--model', opts.model.trim());
+  }
+  // Reasoning effort, unless the profile's extraArgs already pin one.
+  const profilePinsEffort = (opts.extraArgs ?? []).some(
+    (a) => a === '--effort' || a.startsWith('--effort='),
+  );
+  if (opts.effort && opts.effort.trim() && !profilePinsEffort) {
+    argv.push('--effort', opts.effort.trim());
   }
   // Inject --dangerously-skip-permissions unless a profile already set it.
   // 'bypassPermissions' mode rides the same flag.

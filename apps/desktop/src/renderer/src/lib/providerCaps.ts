@@ -53,13 +53,26 @@ const MANAGED_PERMISSION_MODES: PermissionModeOption[] = [
   { id: 'yolo', label: 'Full access' },
 ];
 
+// Claude Code reasoning-effort ladder (`claude --effort <level>`). Distinct from
+// codex's `minimal/low/medium/high` — Claude adds `xhigh` and `max` and has no
+// `minimal`. Default is `high`; the CLI's own default is `xhigh`. Restart-only:
+// there's a `--effort` flag but no `/effort` slash command to change it live.
+const CLAUDE_EFFORT_LEVELS: EffortLevel[] = [
+  { id: 'low', label: 'Low' },
+  { id: 'medium', label: 'Medium' },
+  { id: 'high', label: 'High' },
+  { id: 'xhigh', label: 'Extra high' },
+  { id: 'max', label: 'Max' },
+];
+
 export const PROVIDER_CAPS: Record<AgentProvider, ProviderCaps> = {
   claude: {
     modelSwitch: 'live',
     modelSource: 'claude',
-    // Claude Code has thinking budgets but no stable CLI/slash control for
-    // them today — hidden until one exists.
-    effort: null,
+    // Reasoning effort via `claude --effort <level>`, applied at spawn. There's
+    // no `/effort` slash command, so a change respawns (--resume keeps the
+    // conversation) — same restart flow as codex.
+    effort: { levels: CLAUDE_EFFORT_LEVELS, switch: 'restart' },
     permissionModes: [
       { id: 'default', label: 'Ask to approve' },
       { id: 'acceptEdits', label: 'Accept edits' },
@@ -136,7 +149,8 @@ export const PROVIDER_CAPS: Record<AgentProvider, ProviderCaps> = {
 const CLAUDE_STREAM_CAPS: ProviderCaps = {
   modelSwitch: 'live',
   modelSource: 'claude',
-  effort: null,
+  // Same `--effort` flag on the headless argv; restart-to-apply as on PTY.
+  effort: { levels: CLAUDE_EFFORT_LEVELS, switch: 'restart' },
   permissionModes: PROVIDER_CAPS.claude.permissionModes,
   permissionSwitch: 'live',
   // Restart resumes the same pinned session id (`--resume`), like PTY Claude.

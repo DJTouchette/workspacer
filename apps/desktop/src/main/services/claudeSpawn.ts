@@ -36,6 +36,8 @@ export interface ClaudeSpawnOptions {
   /** Claude profile (CLAUDE_CONFIG_DIR + extraArgs). */
   profileId?: string;
   model?: string;
+  /** Reasoning-effort level (`--effort <level>`). Re-passed on respawn. */
+  effort?: string;
   /**
    * Explicit Claude permission mode. When omitted, `skipPermissions` maps to
    * 'bypassPermissions' and everything else to 'default' — same resolution the
@@ -88,7 +90,7 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
     parentSessionId: opts.parentSessionId,
     isSupervisor: opts.supervisor,
     provider: 'claude',
-    settings: { model: opts.model, permissionMode },
+    settings: { model: opts.model, effort: opts.effort, permissionMode },
   });
 
   // Per-spawn MCP servers selected from the Library (kind 'mcp'). Resolve the
@@ -121,6 +123,7 @@ export async function spawnClaudeAgent(opts: ClaudeSpawnOptions): Promise<string
     extraArgs: profile?.extraArgs,
     resumeSessionId: opts.resumeSessionId,
     model,
+    effort: opts.effort,
     settingsFile: claudeSettingsOverlayEnabled() ? claudemonOverlayPath() : undefined,
     skipPermissions: opts.skipPermissions,
     permissionMode: permissionMode as 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions',

@@ -107,7 +107,7 @@ describe('ComposerControls — pill labels reflect session state', () => {
     expect(screen.queryByText('Ask to approve')).not.toBeInTheDocument();
   });
 
-  it('renders an effort pill for codex and none for claude', () => {
+  it('renders an effort pill for both codex and claude', () => {
     const { unmount } = render(
       <ComposerControls
         provider="codex"
@@ -123,13 +123,13 @@ describe('ComposerControls — pill labels reflect session state', () => {
       <ComposerControls
         provider="claude"
         sessionId="s"
-        snapshot={snapshot()}
+        // Claude's `--effort` ladder adds xhigh/max; the pill shows its label.
+        snapshot={snapshot({ settings: { effort: 'xhigh' } })}
         cwd="/r"
         onRestartWith={vi.fn()}
       />,
     );
-    // Claude has no effort knob, so no effort levels are shown.
-    expect(screen.queryByText('High')).not.toBeInTheDocument();
+    expect(screen.getByText('Extra high')).toBeInTheDocument();
   });
 
   it('disables the pills when there is no session yet', () => {

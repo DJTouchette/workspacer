@@ -9,7 +9,8 @@
  *    `thread/settings/update` to the running thread — falls back to the
  *    restart confirm when the daemon says it can't, e.g. rollout fallback);
  *    opencode/pi restart with the new model.
- *  - Effort: codex only, restart (`-c model_reasoning_effort=<level>`).
+ *  - Effort: codex (`-c model_reasoning_effort=<level>`) and claude
+ *    (`--effort <level>`), both restart-to-apply (no live control).
  *  - Permission mode: live where the daemon can drive it (claude via the
  *    verified shift+tab cycle, codex via the adapter's approval flag); when
  *    the daemon reports the switch can't be done live, the pick falls back to
