@@ -18,8 +18,8 @@ function ensureFleetKeyframes() {
 }
 
 /**
- * The Agents pane — the Fleet Deck's live cards as a regular PANE, so a
- * whole-fleet monitor can sit in a tab or split beside your work. Every agent
+ * The Agent Monitor pane — live cards as a regular pane, so a
+ * subagent/workflow monitor can sit in a tab or split beside your work. Every agent
  * renders as its rich telemetry card (last message, tool activity, approvals,
  * compose box); clicking a card opens a GUI viewer pane attached to that
  * agent's session in the CURRENT workspace, so you can watch several agents
@@ -95,7 +95,9 @@ const AgentsPane: React.FC<{ isActive?: boolean }> = () => {
           flexShrink: 0,
         }}
       >
-        <div style={{ fontSize: '0.95rem', fontWeight: 700, letterSpacing: '-0.01em' }}>Agents</div>
+        <div style={{ fontSize: '0.95rem', fontWeight: 700, letterSpacing: '-0.01em' }}>
+          Agent Monitor
+        </div>
         <div
           style={{
             fontSize: '0.7rem',
@@ -109,7 +111,7 @@ const AgentsPane: React.FC<{ isActive?: boolean }> = () => {
         </div>
         <div style={{ flex: 1 }} />
         <span style={{ fontSize: '0.62rem', color: 'var(--wks-text-faint)', whiteSpace: 'nowrap' }}>
-          Click a card to watch it in a GUI pane
+          For subagents and workflow runs
         </span>
         <input
           value={query}
@@ -140,7 +142,7 @@ const AgentsPane: React.FC<{ isActive?: boolean }> = () => {
             </div>
             {realAgents.length === 0 && (
               <div style={{ fontSize: '0.74rem', marginTop: 6 }}>
-                Spawn an agent and it'll appear here as a live card.
+                Agents with subagents or workflow runs appear here as live cards.
               </div>
             )}
           </div>

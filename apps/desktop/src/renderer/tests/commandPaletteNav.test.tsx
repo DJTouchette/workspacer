@@ -72,4 +72,28 @@ describe('CommandPalette — keyboard nav order matches visual order', () => {
     expect(screen.getByText('Ask the Fleet')).toBeInTheDocument();
     expect(screen.queryByText('Spawn Fleet Agent')).not.toBeInTheDocument();
   });
+
+  it('only shows the agent monitor command when supplied by the app', () => {
+    const { rerender } = render(
+      <ConfigProvider>
+        <CommandPalette visible apps={[]} onClose={vi.fn()} onLaunchApp={vi.fn()} />
+      </ConfigProvider>,
+    );
+
+    expect(screen.queryByText('Open Agent Monitor')).not.toBeInTheDocument();
+
+    rerender(
+      <ConfigProvider>
+        <CommandPalette
+          visible
+          apps={[]}
+          onClose={vi.fn()}
+          onLaunchApp={vi.fn()}
+          onOpenAgents={vi.fn()}
+        />
+      </ConfigProvider>,
+    );
+
+    expect(screen.getByText('Open Agent Monitor')).toBeInTheDocument();
+  });
 });

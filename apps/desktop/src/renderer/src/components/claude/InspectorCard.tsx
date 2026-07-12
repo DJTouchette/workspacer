@@ -467,11 +467,11 @@ export const InspectorCard: React.FC<{
     if (!sessionId) return;
     requestAgentWatch({ sessionId, kind: 'workflow', id: runId, title: `Flow: ${name ?? runId}` });
   };
-  // Fleet view for plain (non-workflow) subagents: the same timeline surface a
+  // Monitor view for plain (non-workflow) subagents: the same timeline surface a
   // workflow run gets, fed all of this session's Agent-tool subagents.
-  const watchFleet = () => {
+  const watchAgents = () => {
     if (!sessionId) return;
-    requestAgentWatch({ sessionId, kind: 'agents', id: sessionId, title: 'Agents: fleet' });
+    requestAgentWatch({ sessionId, kind: 'agents', id: sessionId, title: 'Agent monitor' });
   };
 
   const sl = session?.statusLine;
@@ -877,7 +877,7 @@ export const InspectorCard: React.FC<{
                 {liveSubagents > 0 && <RunningMarker count={liveSubagents} />}
                 <div style={{ flex: 1 }} />
                 <button
-                  onClick={watchFleet}
+                  onClick={watchAgents}
                   title="Open all this session’s agents on one timeline"
                   style={{
                     display: 'inline-flex',
@@ -905,7 +905,7 @@ export const InspectorCard: React.FC<{
                     e.currentTarget.style.color = colors.muted;
                   }}
                 >
-                  Fleet view
+                  Monitor
                   <ArrowUpRight size={11} strokeWidth={2.2} aria-hidden />
                 </button>
               </div>

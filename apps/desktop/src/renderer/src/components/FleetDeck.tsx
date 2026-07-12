@@ -185,7 +185,7 @@ const expandBtn: React.CSSProperties = {
 };
 
 /**
- * The Fleet Deck — a NORAD-style cross-agent radar. Every agent is a live
+ * The Agent Overview — an advanced cross-agent radar. Every agent is a live
  * telemetry-face card, arranged by the Attention Router so the ones that need
  * you float to the front and pulse. Rendered as an overlay OVER the still-
  * mounted per-agent workspaces, so entering/leaving the deck never remounts a
@@ -216,7 +216,7 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
     [config.keybindings?.shortcuts],
   );
 
-  // Cards (default) vs a dense List table — mirrors the mockup's Fleet toggle.
+  // Cards (default) vs a dense List table — mirrors the overview toggle.
   // Persisted so the deck reopens in the layout you last used.
   const [fleetView, setFleetView] = useState<'cards' | 'list'>(() => {
     try {
@@ -581,7 +581,7 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
             }}
           >
             <Radar size={17} strokeWidth={2.2} style={{ color: 'var(--wks-accent)' }} />
-            Fleet
+            Agent Overview
           </div>
           {/* Scannable status chips — dot + count, colour-keyed by state. */}
           <div

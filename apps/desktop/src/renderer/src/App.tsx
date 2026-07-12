@@ -581,14 +581,13 @@ function App() {
     }
   }, [snapshotBySession, agents, adoptAgent, sessionPhase]);
 
-  // Mission Control surfaces: the Triage Inbox (a top-level drawer) and the
-  // Fleet Deck (a cross-agent radar, a global altitude over the workspaces).
+  // Primary attention surface plus the advanced cross-agent overview.
   const [inboxOpen, setInboxOpen] = useState(false);
   const openInbox = useCallback(() => setInboxOpen(true), []);
   const closeInbox = useCallback(() => setInboxOpen(false), []);
   const toggleInbox = useCallback(() => setInboxOpen((v) => !v), []);
 
-  // Altitude: 'piloting' (inside one agent) vs 'fleet' (the cross-agent deck).
+  // Altitude: 'piloting' (inside one agent) vs 'fleet' (the cross-agent overview).
   const viewLevel: ViewLevel = config.panes?.viewLevel === 'fleet' ? 'fleet' : 'piloting';
   // Focus mode unmounts the deck but leaves the persisted viewLevel alone — so
   // altitude consumers (attention auto-dismiss, the sidebar's deck state) must
@@ -602,9 +601,8 @@ function App() {
     [config.panes, saveConfig],
   );
   const toggleFleet = useCallback(() => {
-    // In focus mode the deck never mounts — instead of a dead key, the fleet
-    // toggle is an escape hatch: switch the UI mode to 'fleet' AND open the
-    // deck in one config write.
+    // In focus mode the overview never mounts — instead of a dead key, the
+    // toggle is an escape hatch: switch the UI mode to 'fleet' and open it.
     if (!uiManifest.fleetDeck) {
       saveConfig({
         ui: { ...config.ui, mode: 'fleet' },
@@ -1016,10 +1014,10 @@ function App() {
     requestAnimationFrame(() => scrollToTab(tabId));
   }, [openPaneIn, scrollToTab]);
 
-  /** Open the Agents pane (fleet cards as a pane) in the global workspace. */
+  /** Open the Agent Monitor pane in the global workspace. */
   const openAgentsPane = useCallback(() => {
     setShowCommandPalette(false);
-    const tabId = openPaneIn(GLOBAL_WORKSPACE_ID, 'agents', 'Agents');
+    const tabId = openPaneIn(GLOBAL_WORKSPACE_ID, 'agents', 'Agent Monitor');
     requestAnimationFrame(() => scrollToTab(tabId));
   }, [openPaneIn, scrollToTab]);
 
@@ -1714,6 +1712,13 @@ function App() {
         .join(','),
     ],
   );
+  const hasAgentMonitorActivity = useMemo(
+    () =>
+      Object.values(snapshotBySession).some(
+        (snapshot) => (snapshot.subagents?.length ?? 0) > 0 || (snapshot.workflows?.length ?? 0) > 0,
+      ),
+    [snapshotBySession],
+  );
 
   // Bundle the stable per-agent callbacks/props once so the memoized wrapper
   // sees a single stable object instead of ~14 individually-threaded props.
@@ -2001,7 +2006,7 @@ function App() {
             switchSession();
           }}
           onOpenAnalytics={openAnalytics}
-          onOpenAgents={openAgentsPane}
+          onOpenAgents={hasAgentMonitorActivity ? openAgentsPane : undefined}
           onOpenInspector={openInspectorForActive}
           onOpenContext={openContextForActive}
           onOpenLayouts={() => {

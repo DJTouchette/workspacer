@@ -16,7 +16,7 @@ const LayoutSection: React.FC<LayoutSectionProps> = ({ config, save }) => {
       <Row label="UI mode">
         <div style={{ display: 'flex', gap: '6px' }}>
           <ModeButton
-            label="Fleet"
+            label="Full"
             active={uiMode === 'fleet'}
             onClick={() => setUiMode('fleet')}
           />

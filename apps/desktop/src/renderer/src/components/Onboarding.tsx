@@ -81,9 +81,9 @@ const Onboarding: React.FC<{
       desc: 'approvals & questions across agents',
     },
     {
-      combo: k('toggle-fleet', 'ctrl+shift+f'),
-      title: 'Fleet Deck',
-      desc: 'a live radar of every agent',
+      combo: k('toggle-sidebar', 'ctrl+b'),
+      title: 'Agent sidebar',
+      desc: 'switch agents and spot attention',
     },
     { combo: k('settings', 'ctrl+,'), title: 'Settings', desc: 'themes, keybindings, and more' },
     {

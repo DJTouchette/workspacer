@@ -1,6 +1,6 @@
 import React, { useState, useRef, useMemo } from 'react';
 import { Plus, ChevronLeft, ChevronRight, HelpCircle } from 'lucide-react';
-import { IconInbox, IconFleet, IconWorking } from './wksIcons';
+import { IconInbox, IconOverview, IconWorking } from './wksIcons';
 import { BrandMark, Wordmark } from './Brand';
 import { AgentWorkspace } from '../types/pane';
 import type { SessionAmbientState, ClaudeSessionSnapshot } from '../types/claudeSession';
@@ -81,9 +81,9 @@ interface SideBarProps {
   onJumpToAttention?: () => void;
   /** Open the Triage Inbox drawer. */
   onOpenInbox?: () => void;
-  /** Toggle the Fleet Deck (cross-agent radar). */
+  /** Toggle the advanced cross-agent overview. */
   onToggleFleet?: () => void;
-  /** Current altitude — highlights the Fleet button when active. */
+  /** Current altitude — highlights the overview button when active. */
   viewLevel?: 'fleet' | 'piloting';
   /** Open the remote-control (phone sharing) panel. */
   onOpenRemote?: () => void;
@@ -118,7 +118,7 @@ const SideBar: React.FC<SideBarProps> = ({
 }) => {
   // Counts come from the single attention feed (the spine), not a parallel
   // reduction over statusBySession — so the header can never disagree with the
-  // Inbox / Fleet. needsYou counts approval/question/stuck/error items.
+  // Inbox / Overview. needsYou counts approval/question/stuck/error items.
   const { counts, topByAgent } = useAttention();
   const needYouCount = counts.needsYou;
   // Focus mode reduces attention to one compact badge pinned in the rail —
@@ -567,8 +567,7 @@ const SideBar: React.FC<SideBarProps> = ({
         )}
       </div>
 
-      {/* Mission Control: the cross-agent surfaces — always reachable. A single
-          segmented control (one bordered track, two flush buttons) per design. */}
+      {/* Primary attention surface plus the advanced cross-agent overview. */}
       <div
         style={{
           display: 'flex',
@@ -615,11 +614,11 @@ const SideBar: React.FC<SideBarProps> = ({
         </button>
         <button
           onClick={onToggleFleet}
-          title="Fleet Deck (Ctrl+Shift+F)"
+          title="Agent Overview (Ctrl+Shift+F)"
           style={segBtnStyle(viewLevel === 'fleet')}
         >
-          <IconFleet size={15} strokeWidth={2} />
-          Fleet
+          <IconOverview size={15} strokeWidth={2} />
+          Overview
         </button>
       </div>
 

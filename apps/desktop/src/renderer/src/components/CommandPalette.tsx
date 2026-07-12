@@ -328,8 +328,8 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
     );
     add(
       'cmd-toggle-fleet',
-      'Toggle Fleet Deck',
-      'Cross-agent radar overlay',
+      'Toggle Agent Overview',
+      'Advanced cross-agent overview',
       <LayoutGrid size={16} strokeWidth={1.75} />,
       onToggleFleet,
       'toggle-fleet',
@@ -339,7 +339,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
       uiMode === 'focus' ? 'Switch to fleet mode' : 'Switch to focus mode',
       uiMode === 'focus'
         ? 'Bring back the full mission-control chrome'
-        : 'Minimal chrome — rail sidebar, no inspector rail or Fleet Deck',
+        : 'Minimal chrome — rail sidebar, no inspector rail or Agent Overview',
       <Columns3 size={16} strokeWidth={1.75} />,
       onToggleUiMode,
       'toggle-ui-mode',
@@ -353,8 +353,8 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
     );
     add(
       'cmd-agents',
-      'Agents Monitor',
-      'All agents as live cards — click one to watch it in a pane',
+      'Open Agent Monitor',
+      'Watch active subagents and workflow runs in a pane',
       <LayoutGrid size={16} strokeWidth={1.75} />,
       onOpenAgents,
     );

@@ -119,6 +119,8 @@ Acceptance criteria:
 
 ### Make Fleet Surfaces Hierarchical
 
+Status: implemented.
+
 Problem:
 
 - Sidebar, Triage Inbox, Fleet Deck, Agents Monitor, Ask the Fleet, and
@@ -126,15 +128,15 @@ Problem:
 
 Tasks:
 
-- Declare Sidebar + Inbox as primary.
-- Move Fleet Deck copy/commands toward "overview/power view" language.
-- De-emphasize Agents Monitor unless subagent/workflow monitoring is active.
-- Avoid presenting Fleet Deck and Agents Monitor as separate must-learn concepts
+- [x] Declare Sidebar + Inbox as primary.
+- [x] Move Fleet Deck copy/commands toward "overview/power view" language.
+- [x] De-emphasize Agents Monitor unless subagent/workflow monitoring is active.
+- [x] Avoid presenting Fleet Deck and Agents Monitor as separate must-learn concepts
   during onboarding.
 
 Acceptance criteria:
 
-- Users can ignore Fleet Deck and Agents Monitor without feeling like they missed
+- [x] Users can ignore Fleet Deck and Agents Monitor without feeling like they missed
   the main product.
 
 ### Collapse Ask The Fleet Duplication

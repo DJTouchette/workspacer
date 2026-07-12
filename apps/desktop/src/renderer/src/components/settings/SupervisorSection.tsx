@@ -48,9 +48,9 @@ const SupervisorSection: React.FC<SupervisorSectionProps> = ({ config, save }) =
   return (
     <Section title="Supervisor">
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)', marginBottom: 8 }}>
-        Optional. The fleet supervisor is an agent you start from “Ask the Fleet” that watches your
-        other agents, summarizes what they’re doing (using cheap summarizer workers), and notifies
-        you when a decision is needed. Nothing here runs unless you spawn one.
+        Optional. The supervisor is the agent started by “Ask the Fleet”. It watches your other
+        agents, summarizes what they’re doing, and notifies you when a decision is needed. Nothing
+        here runs unless you spawn one.
       </div>
 
       <Row label="Supervisor agent">
@@ -68,7 +68,7 @@ const SupervisorSection: React.FC<SupervisorSectionProps> = ({ config, save }) =
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
         Which CLI the supervisor runs on (also pickable when you launch one from “Ask the Fleet”).
         Codex, OpenCode, and Pi supervisors are wired to the workspacer MCP facade — the
-        supervisor’s tools to observe and coordinate the fleet — via their own MCP config.
+        supervisor’s tools to observe and coordinate agents — via their own MCP config.
         Experimental: it needs a CLI build with remote-MCP support; Claude remains the most
         battle-tested.
       </div>
