@@ -162,6 +162,8 @@ Acceptance criteria:
 
 ### Tame The Spawn Dialog
 
+Status: implemented.
+
 Problem:
 
 - The spawn dialog is well organized, but it exposes many expert controls at
@@ -169,15 +171,16 @@ Problem:
 
 Tasks:
 
-- Keep working directory + provider as the primary path.
-- Hide or collapse advanced pills by default for first-run users.
-- Keep dangerous/powerful settings visible when active, especially full access.
-- Consider a "remember my advanced settings" behavior for power users.
+- [x] Keep working directory + provider as the primary path.
+- [x] Hide or collapse advanced pills by default for first-run users.
+- [x] Keep dangerous/powerful settings visible when active, especially full access.
+- [x] Consider a "remember my advanced settings" behavior for power users.
+  Decision: remember whether the Advanced section was last left open.
 
 Acceptance criteria:
 
-- A new user can spawn an agent by choosing only a directory.
-- Expert controls remain reachable without bloating the first-run experience.
+- [x] A new user can spawn an agent by choosing only a directory.
+- [x] Expert controls remain reachable without bloating the first-run experience.
 
 ### Simplify Remote Product Language
 

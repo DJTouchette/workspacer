@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { ChevronDown } from 'lucide-react';
 import { deriveAgentName } from '../hooks/useAgentManager';
 import { AgentLogo } from './agentLogos';
 import type { LibraryItem } from '../types/library';
@@ -55,6 +56,7 @@ interface SpawnAgentDialogProps {
 }
 
 const CUSTOM = '__custom__';
+const ADVANCED_OPEN_KEY = 'workspacer.spawn.advancedOpen';
 
 const PROVIDERS: { value: AgentProvider; label: string; beta?: boolean }[] = [
   { value: 'claude', label: 'Claude Code' },
@@ -139,6 +141,13 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   // and reasoning effort ('' = provider default; codex only). See providerCaps.
   const [permissionMode, setPermissionMode] = useState('');
   const [effort, setEffort] = useState('');
+  const [advancedOpen, setAdvancedOpen] = useState(() => {
+    try {
+      return window.localStorage?.getItem(ADVANCED_OPEN_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  });
 
   // Hero input focus — drives the underline accent (no :focus-within inline).
   const [cwdFocus, setCwdFocus] = useState(false);
@@ -429,6 +438,42 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   const placeholderName = cwd.trim() ? deriveAgentName(cwd.trim()) : 'agent';
   const providerLabel = PROVIDERS.find((p) => p.value === provider)?.label ?? provider;
   const bypassSelected = permissionMode === 'bypassPermissions' || permissionMode === 'yolo';
+  const permissionSummary = bypassSelected ? 'full access' : 'approval prompts';
+  const modelSummary = isClaude
+    ? resolvedModel || 'default model'
+    : resolvedProviderModel || 'default model';
+  const transportSummary =
+    isClaude || provider === 'codex'
+      ? transport === 'pty'
+        ? isClaude
+          ? 'terminal'
+          : 'hybrid'
+        : 'headless'
+      : null;
+  const advancedSummary = [
+    modelSummary,
+    transportSummary,
+    permissionSummary,
+    useWorktree && worktreeEligible ? 'isolated worktree' : null,
+    resumeSessionId ? 'resume' : null,
+    profileId ? 'profile' : null,
+    mcpSel.length ? `${mcpSel.length} MCP` : null,
+    effort ? `${effort} effort` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
+  const toggleAdvanced = () => {
+    setAdvancedOpen((open) => {
+      const next = !open;
+      try {
+        window.localStorage?.setItem(ADVANCED_OPEN_KEY, String(next));
+      } catch {
+        // Ignore private-mode storage failures; the in-memory state still works.
+      }
+      return next;
+    });
+  };
 
   // Enter/Escape on the text inputs — same behavior as the old modal.
   const keySubmit = (e: React.KeyboardEvent) => {
@@ -1018,109 +1063,179 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
             </div>
           )}
 
-          {/* ── The rest: composer-style pills ──────────────────────────── */}
-          <div
-            style={{
-              display: 'flex',
-              flexWrap: 'wrap',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 6,
-              rowGap: 12,
-              marginTop: 30,
-              maxWidth: 620,
-            }}
-          >
-            {pills.map((pill, i) => (
-              <React.Fragment key={i}>
-                {i > 0 && <PillSep />}
-                {pill}
-              </React.Fragment>
-            ))}
-          </div>
-
-          {/* Custom model id — free text, shown when Custom… is picked */}
-          {isClaude && modelSel === CUSTOM && (
-            <input
-              value={customModel}
-              onChange={(e) => setCustomModel(e.target.value)}
-              onKeyDown={keySubmit}
-              placeholder="claude-opus-4-8  or  opus"
-              spellCheck={false}
-              style={{ ...inlineInput, marginTop: 12, width: 280, textAlign: 'center' }}
-            />
-          )}
-          {!isClaude && providerModels.length > 0 && providerSel === CUSTOM && (
-            <input
-              value={providerCustom}
-              onChange={(e) => setProviderCustom(e.target.value)}
-              onKeyDown={keySubmit}
-              placeholder={modelPlaceholder(provider)}
-              spellCheck={false}
-              style={{ ...inlineInput, marginTop: 12, width: 300, textAlign: 'center' }}
-            />
-          )}
-
-          {/* MCP chip strip — expanded from the pill */}
-          {isClaude && mcpItems.length > 0 && mcpOpen && (
-            <div style={{ marginTop: 14, maxWidth: 560, textAlign: 'center' }}>
-              <div
+          {/* ── Advanced options ───────────────────────────────────────── */}
+          <div style={{ width: '100%', maxWidth: 620, marginTop: 28 }}>
+            <button
+              type="button"
+              aria-expanded={advancedOpen}
+              onClick={toggleAdvanced}
+              style={{
+                width: '100%',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                padding: '9px 12px',
+                borderRadius: 'var(--wks-radius-md, 8px)',
+                border: bypassSelected
+                  ? '1px solid color-mix(in srgb, var(--wks-danger, #e05555) 55%, var(--wks-border-input))'
+                  : '1px solid var(--wks-border-input)',
+                background: bypassSelected
+                  ? 'color-mix(in srgb, var(--wks-danger, #e05555) 6%, transparent)'
+                  : 'transparent',
+                color: 'var(--wks-text-primary)',
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                textAlign: 'left',
+              }}
+            >
+              <span style={{ ...quietLabel, color: 'var(--wks-text-muted)' }}>advanced</span>
+              <span
                 style={{
-                  display: 'flex',
-                  flexWrap: 'wrap',
-                  justifyContent: 'center',
-                  gap: 6,
+                  flex: 1,
+                  minWidth: 0,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  fontSize: '0.68rem',
+                  color: bypassSelected
+                    ? 'var(--wks-danger, #e05555)'
+                    : 'var(--wks-text-faint)',
                 }}
               >
-                {mcpItems.map((it) => {
-                  const on = mcpSel.includes(it.id);
-                  return (
-                    <button
-                      key={it.id}
-                      onClick={() => toggleMcp(it.id)}
-                      title={it.description || it.id}
+                {advancedSummary}
+              </span>
+              <ChevronDown
+                size={14}
+                aria-hidden
+                style={{
+                  flexShrink: 0,
+                  color: 'var(--wks-text-faint)',
+                  transform: advancedOpen ? 'rotate(180deg)' : 'none',
+                  transition: 'transform 0.15s',
+                }}
+              />
+            </button>
+
+            {advancedOpen && (
+              <>
+                <div
+                  style={{
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 6,
+                    rowGap: 12,
+                    marginTop: 14,
+                  }}
+                >
+                  {pills.map((pill, i) => (
+                    <React.Fragment key={i}>
+                      {i > 0 && <PillSep />}
+                      {pill}
+                    </React.Fragment>
+                  ))}
+                </div>
+
+                {/* Custom model id — free text, shown when Custom… is picked */}
+                {isClaude && modelSel === CUSTOM && (
+                  <input
+                    value={customModel}
+                    onChange={(e) => setCustomModel(e.target.value)}
+                    onKeyDown={keySubmit}
+                    placeholder="claude-opus-4-8  or  opus"
+                    spellCheck={false}
+                    style={{
+                      ...inlineInput,
+                      display: 'block',
+                      margin: '12px auto 0',
+                      width: 280,
+                      textAlign: 'center',
+                    }}
+                  />
+                )}
+                {!isClaude && providerModels.length > 0 && providerSel === CUSTOM && (
+                  <input
+                    value={providerCustom}
+                    onChange={(e) => setProviderCustom(e.target.value)}
+                    onKeyDown={keySubmit}
+                    placeholder={modelPlaceholder(provider)}
+                    spellCheck={false}
+                    style={{
+                      ...inlineInput,
+                      display: 'block',
+                      margin: '12px auto 0',
+                      width: 300,
+                      textAlign: 'center',
+                    }}
+                  />
+                )}
+
+                {/* MCP chip strip — expanded from the pill */}
+                {isClaude && mcpItems.length > 0 && mcpOpen && (
+                  <div style={{ marginTop: 14, textAlign: 'center' }}>
+                    <div
                       style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        justifyContent: 'center',
                         gap: 6,
-                        fontSize: '0.68rem',
-                        fontWeight: 500,
-                        fontFamily: 'inherit',
-                        padding: '4px 11px',
-                        borderRadius: 'var(--wks-radius-pill, 999px)',
-                        cursor: 'pointer',
-                        maxWidth: 220,
-                        border: on
-                          ? '1px solid var(--wks-accent)'
-                          : '1px solid var(--wks-border-input)',
-                        background: on ? 'var(--wks-accent-bg)' : 'transparent',
-                        color: on
-                          ? 'var(--wks-accent-text, var(--wks-text-primary))'
-                          : 'var(--wks-text-tertiary)',
-                        transition: 'border-color 0.15s, color 0.15s',
                       }}
                     >
-                      <span
-                        style={{
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {it.title}
-                      </span>
-                      <span style={{ fontSize: '0.58rem', color: 'var(--wks-text-faint)' }}>
-                        {it.mcp?.url ? (it.mcp.type === 'sse' ? 'sse' : 'http') : 'stdio'}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-              <div style={{ color: 'var(--wks-text-faint)', fontSize: '0.6rem', marginTop: 7 }}>
-                Only the checked servers are exposed to this session (--strict-mcp-config).
-              </div>
-            </div>
-          )}
+                      {mcpItems.map((it) => {
+                        const on = mcpSel.includes(it.id);
+                        return (
+                          <button
+                            key={it.id}
+                            onClick={() => toggleMcp(it.id)}
+                            title={it.description || it.id}
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 6,
+                              fontSize: '0.68rem',
+                              fontWeight: 500,
+                              fontFamily: 'inherit',
+                              padding: '4px 11px',
+                              borderRadius: 'var(--wks-radius-pill, 999px)',
+                              cursor: 'pointer',
+                              maxWidth: 220,
+                              border: on
+                                ? '1px solid var(--wks-accent)'
+                                : '1px solid var(--wks-border-input)',
+                              background: on ? 'var(--wks-accent-bg)' : 'transparent',
+                              color: on
+                                ? 'var(--wks-accent-text, var(--wks-text-primary))'
+                                : 'var(--wks-text-tertiary)',
+                              transition: 'border-color 0.15s, color 0.15s',
+                            }}
+                          >
+                            <span
+                              style={{
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                              }}
+                            >
+                              {it.title}
+                            </span>
+                            <span style={{ fontSize: '0.58rem', color: 'var(--wks-text-faint)' }}>
+                              {it.mcp?.url ? (it.mcp.type === 'sse' ? 'sse' : 'http') : 'stdio'}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div
+                      style={{ color: 'var(--wks-text-faint)', fontSize: '0.6rem', marginTop: 7 }}
+                    >
+                      Only the checked servers are exposed to this session (--strict-mcp-config).
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
 
           {/* Bypass danger note — always visible when a bypass mode is picked */}
           {bypassSelected && (

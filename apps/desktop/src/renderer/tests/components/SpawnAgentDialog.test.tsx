@@ -4,6 +4,7 @@ import React from 'react';
 import SpawnAgentDialog from '../../src/components/SpawnAgentDialog';
 
 const api = window.electronAPI as unknown as Record<string, ReturnType<typeof vi.fn>>;
+let localStore: Record<string, string>;
 
 function renderDialog(onSpawn = vi.fn()) {
   render(<SpawnAgentDialog defaultCwd="/repo" onSpawn={onSpawn} onCancel={vi.fn()} />);
@@ -22,7 +23,24 @@ function permissionSelect(): HTMLSelectElement {
   return found as HTMLSelectElement;
 }
 
+function advancedButton(): HTMLButtonElement {
+  return screen.getByRole('button', { name: /advanced/i }) as HTMLButtonElement;
+}
+
 beforeEach(() => {
+  localStore = {};
+  Object.defineProperty(window, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: vi.fn((key: string) => localStore[key] ?? null),
+      setItem: vi.fn((key: string, value: string) => {
+        localStore[key] = value;
+      }),
+      removeItem: vi.fn((key: string) => {
+        delete localStore[key];
+      }),
+    },
+  });
   api.claudeListModels = vi.fn().mockResolvedValue({
     defaultModel: '',
     skipPermissionsDefault: false,
@@ -34,10 +52,12 @@ beforeEach(() => {
 });
 
 describe('SpawnAgentDialog permissions', () => {
-  it('defaults new Claude spawns to ask/approve permissions', () => {
+  it('keeps advanced controls collapsed while allowing directory-only spawn', () => {
     const { onSpawn } = renderDialog();
 
-    expect(permissionSelect().value).toBe('');
+    expect(advancedButton()).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryAllByRole('combobox')).toHaveLength(0);
+
     fireEvent.click(screen.getByRole('button', { name: /spawn agent/i }));
 
     expect(onSpawn).toHaveBeenCalledWith(
@@ -47,6 +67,14 @@ describe('SpawnAgentDialog permissions', () => {
         skipPermissions: false,
       }),
     );
+  });
+
+  it('shows safe approval defaults when Advanced is opened', () => {
+    renderDialog();
+
+    fireEvent.click(advancedButton());
+
+    expect(permissionSelect().value).toBe('');
   });
 
   it('keeps an explicit saved full-access opt-in sticky', async () => {
@@ -59,8 +87,11 @@ describe('SpawnAgentDialog permissions', () => {
     });
     const { onSpawn } = renderDialog();
 
+    expect(await screen.findByText(/bypasses all approval prompts/i)).toBeInTheDocument();
+    expect(advancedButton()).toHaveTextContent(/full access/i);
+
+    fireEvent.click(advancedButton());
     await waitFor(() => expect(permissionSelect().value).toBe('bypassPermissions'));
-    expect(screen.getByText(/bypasses all approval prompts/i)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /spawn agent/i }));
 
@@ -71,5 +102,14 @@ describe('SpawnAgentDialog permissions', () => {
         skipPermissions: true,
       }),
     );
+  });
+
+  it('remembers when a power user leaves Advanced open', () => {
+    window.localStorage.setItem('workspacer.spawn.advancedOpen', 'true');
+
+    renderDialog();
+
+    expect(advancedButton()).toHaveAttribute('aria-expanded', 'true');
+    expect(permissionSelect().value).toBe('');
   });
 });
