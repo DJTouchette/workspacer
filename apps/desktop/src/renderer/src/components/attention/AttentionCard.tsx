@@ -164,7 +164,15 @@ export const AttentionCard: React.FC<Props> = ({ item, selected }) => {
         }}
       >
         <CardBtn label="Open" hint="o" onClick={() => openAgent(item.agentId)} />
-        {canReview && <CardBtn label="Review" onClick={() => reviewFile(item.cwd)} />}
+        {canReview && (
+          <CardBtn
+            label="Review"
+            onClick={() => {
+              reviewFile(item.cwd);
+              dismiss(item.signature);
+            }}
+          />
+        )}
         {canRespawn && (
           <CardBtn
             label="Respawn"

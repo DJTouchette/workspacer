@@ -69,6 +69,8 @@ Acceptance criteria:
 
 ### Finish Review/Merge Action Wiring
 
+Status: in progress.
+
 Problem:
 
 - Review can stage, commit, and push, but merge and `review_diff` next-actions
@@ -76,19 +78,19 @@ Problem:
 
 Tasks:
 
-- Wire `review_diff` next-actions into the Review pane or Inbox.
-- Add a merge/conflict flow if the classifier or backend emits a merge action.
-- Surface git errors in actionable language, especially conflicts, no upstream,
+- [x] Wire `review_diff` next-actions into the Review pane or Inbox.
+- [ ] Add a merge/conflict flow if the classifier or backend emits a merge action.
+- [ ] Surface git errors in actionable language, especially conflicts, no upstream,
   nothing staged, and push rejection.
-- After commit/push, clearly return the user to the agent or mark the attention
+- [ ] After commit/push, clearly return the user to the agent or mark the attention
   item resolved.
-- Add focused tests for review action routing and git error states.
+- [ ] Add focused tests for review action routing and git error states.
 
 Acceptance criteria:
 
-- A finished agent can be taken from "done" to reviewed, committed, and pushed
+- [ ] A finished agent can be taken from "done" to reviewed, committed, and pushed
   without dropping to a shell.
-- Merge/review next-actions do not point at dead UI.
+- [ ] Merge/review next-actions do not point at dead UI.
 
 ### Safer First-Run Agent Defaults
 

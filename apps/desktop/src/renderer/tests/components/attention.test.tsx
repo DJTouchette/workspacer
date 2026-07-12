@@ -7,6 +7,7 @@ import { useAttentionFeed } from '../../src/hooks/useAttentionFeed';
 import InboxDrawer from '../../src/components/InboxDrawer';
 import FleetDeck from '../../src/components/FleetDeck';
 import type { AgentWorkspace } from '../../src/types/pane';
+import { REVIEW_REQUEST_FILE_EVENT } from '../../src/lib/reviewBus';
 
 const agents: AgentWorkspace[] = [
   {
@@ -78,17 +79,21 @@ const snapshotBySession: Record<string, any> = {
 function Harness({
   viewLevel,
   onOpenAgent,
+  agentList = agents,
+  snapshots = snapshotBySession,
 }: {
   viewLevel: 'fleet' | 'piloting';
   onOpenAgent: (id: string) => void;
+  agentList?: AgentWorkspace[];
+  snapshots?: Record<string, any>;
 }) {
-  const attention = useAttentionFeed(snapshotBySession, agents);
+  const attention = useAttentionFeed(snapshots, agentList);
   return (
     <ConfigProvider>
       <AttentionProvider
-        agents={agents}
-        activeAgentId="a1"
-        snapshotBySession={snapshotBySession}
+        agents={agentList}
+        activeAgentId={agentList.find((a) => !a.global)?.id ?? ''}
+        snapshotBySession={snapshots}
         inboxOpen
         openInbox={vi.fn()}
         closeInbox={vi.fn()}
@@ -107,6 +112,19 @@ function Harness({
 function renderSurfaces(viewLevel: 'fleet' | 'piloting' = 'fleet') {
   const onOpenAgent = vi.fn();
   render(<Harness viewLevel={viewLevel} onOpenAgent={onOpenAgent} />);
+  return { onOpenAgent };
+}
+
+function renderCustomSurfaces(agentList: AgentWorkspace[], snapshots: Record<string, any>) {
+  const onOpenAgent = vi.fn();
+  render(
+    <Harness
+      viewLevel="fleet"
+      onOpenAgent={onOpenAgent}
+      agentList={agentList}
+      snapshots={snapshots}
+    />,
+  );
   return { onOpenAgent };
 }
 
@@ -164,6 +182,60 @@ describe('Mission Control surfaces', () => {
     // looking at the agent, and its pane shows the live prompt).
     renderSurfaces('piloting');
     expect(screen.queryByText('Permission Required: Bash')).not.toBeInTheDocument();
+  });
+
+  it('reviewing a large-diff card opens Review and clears the card', () => {
+    const reviewAgents: AgentWorkspace[] = [
+      {
+        id: 'review-agent',
+        name: 'Review agent',
+        cwd: '/repo/review',
+        sessionId: 'sess-review',
+        tabs: [],
+        activeTabId: '',
+      },
+      { id: 'global', name: 'Overview', global: true, cwd: '', tabs: [], activeTabId: '' },
+    ];
+    const reviewSnapshots = {
+      'sess-review': {
+        sessionId: 'sess-review',
+        ambientState: 'idle',
+        conversation: [],
+        activeToolCalls: [],
+        completedToolCalls: [],
+        fileChanges: [
+          {
+            path: 'src/App.tsx',
+            input: {
+              old_string: `${'old\n'.repeat(90)}`,
+              new_string: `${'new\n'.repeat(90)}`,
+            },
+          },
+        ],
+        subagents: [],
+        workflows: [],
+        pendingApproval: null,
+        pendingQuestions: null,
+        usage: null,
+        lastActivity: 1000,
+      },
+    };
+    const events: Array<{ cwd?: string; path?: string }> = [];
+    const handler = (e: Event) => {
+      events.push((e as CustomEvent).detail);
+    };
+    window.addEventListener(REVIEW_REQUEST_FILE_EVENT, handler);
+    try {
+      renderCustomSurfaces(reviewAgents, reviewSnapshots);
+      expect(screen.getByText(/1 file, ±\d+ lines/)).toBeInTheDocument();
+
+      fireEvent.click(screen.getAllByRole('button', { name: 'Review' }).at(-1)!);
+
+      expect(events).toEqual([{ cwd: '/repo/review', path: '/repo/review' }]);
+      expect(screen.queryByText(/1 file, ±\d+ lines/)).not.toBeInTheDocument();
+    } finally {
+      window.removeEventListener(REVIEW_REQUEST_FILE_EVENT, handler);
+    }
   });
 
   it('flips a Fleet Deck card in place into the live InspectorCard, then collapses', () => {
