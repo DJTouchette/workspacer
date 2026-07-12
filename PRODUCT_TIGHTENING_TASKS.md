@@ -186,6 +186,8 @@ Acceptance criteria:
 
 ### Simplify Remote Product Language
 
+Status: implemented.
+
 Problem:
 
 - The repo supports desktop, phone PWA, `/remote`, full web app, TUI, headless
@@ -193,14 +195,14 @@ Problem:
 
 Tasks:
 
-- Product copy should lead with "desktop plus phone".
-- Move `/remote`, `/app`, TUI, and headless server into advanced docs.
-- In the Remote Control dialog, distinguish "share this machine" from "connect
+- [x] Product copy should lead with "desktop plus phone".
+- [x] Move `/remote`, `/app`, TUI, and headless server into advanced docs.
+- [x] In the Remote Control dialog, distinguish "share this machine" from "connect
   this app to another server".
 
 Acceptance criteria:
 
-- A normal user understands the remote story as phone access first.
+- [x] A normal user understands the remote story as phone access first.
 
 ## P3 - Fix Documentation Drift
 

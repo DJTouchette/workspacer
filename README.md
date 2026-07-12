@@ -10,7 +10,7 @@ It's not a chat box bolted onto an editor. Workspacer treats agents as
 first-class, long-running processes: each one gets its own workspace (tabs,
 terminals, a browser, a git review pane, notes), lives in a background daemon
 so closing the window never kills it, and reports up into a single control
-plane you can also drive from a terminal or your phone.
+plane you can also check from your phone.
 
 > Website & docs: open `landing/index.html` for the overview and
 > `landing/docs.html` for the full user guide (both are static, no build step).
@@ -40,7 +40,7 @@ something:
 
 Typical uses: run several agents across different repos at once; babysit a long
 refactor while doing other work; spawn a supervisor agent that coordinates the
-rest of the fleet; check on a running job from your phone.
+rest of the fleet; clear approvals and questions from your phone.
 
 ## What you get
 
@@ -54,23 +54,15 @@ rest of the fleet; check on a running job from your phone.
   drag/paste/picker. (Plus a raw terminal view for Claude.)
 - **Pane types** — terminal, browser, git review/diff, per-agent markdown
   notes, a prompt/skill/agent library, analytics, an overview, and plugin panes.
-- **Layout your way** — flip the chrome between `fleet` (full cockpit) and
-  `focus` (distraction-free chat rail) without remounting live panes. A Fleet
-  Deck radar sits over all of it.
+- **Layout your way** — flip the chrome between full workspace mode and
+  `focus` (distraction-free chat rail) without remounting live panes. An
+  advanced Agent Overview is there when you want the whole board.
 - **Attention & notifications** — status dots, aggregate counts, jump-to-next,
   and configurable OS notifications.
-- **Remote & multi-client** — drive the same fleet from a terminal client
-  (`wks-tui`), a browser, or your phone: the `/m` mobile client is an
-  installable PWA built for clearing approvals on the go. Opt-in, token-authed
-  sharing with one-tap HTTPS over Tailscale, plus capability-scoped tokens
-  (`view` / `triage` / `operator`) for devices you trust less.
-- **Headless server** — `workspacer serve` runs the whole control plane on a
-  box with no desktop: one command starts and supervises the daemons and
-  serves the phone (`/m`), browser (`/remote`), and full web app (`/app`)
-  clients. It ships bundled inside the desktop app *and* as a standalone
-  `workspacer-server-<os>-<arch>` archive on releases. The desktop app is
-  itself a client: it adopts a server already running on the same machine,
-  or connects to a remote one ("Connect to Server…" in the palette).
+- **Phone access** — share this desktop with your phone when you need to step
+  away: scan a QR code, clear approvals/questions, send quick messages, and
+  keep the agents running on the desktop. Sharing is opt-in, token-authenticated,
+  Tailscale-friendly, and capability-scoped (`view` / `triage` / `operator`).
 - **Extensible** — a plugin system (drop in a manifest, get a supervised
   sidecar with its own panes) and an MCP facade that exposes the fleet as tools
   a supervisor agent can drive. A dozen official plugins — fleet dashboards,
@@ -100,11 +92,21 @@ launch (that's how it observes Claude Code agents); Codex, OpenCode, and Pi
 agents are driven directly and need no hook wiring. For headless or custom
 setups the manual CLI still exists: `claudemon init` (`--dry-run` to preview).
 
-Remote sharing is off by default and is a **runtime toggle** in the app (Remote
-control → Start sharing). To force it on at launch for testing, use
+Phone sharing is off by default and is a **runtime toggle** in the app (Phone
+access → Share this desktop with phone). To force it on at launch for testing, use
 `make dev-share` (sets `WORKSPACER_REMOTE_SHARE=1`).
 
-### Headless server (no desktop)
+### Advanced clients and server mode
+
+The normal product is the desktop app plus phone access. Power-user surfaces
+still exist when you need them:
+
+- `wks-tui` is a terminal client for the same hub bus.
+- `/remote` is the lightweight browser client.
+- `/app/` is the full web renderer served by a built web bundle.
+- `workspacer serve` runs the control plane without the desktop app.
+
+#### Headless server
 
 Every release also ships a standalone server bundle
 (`workspacer-server-<os>-<arch>.tar.gz`, zip on Windows) — the four binaries
@@ -117,9 +119,9 @@ tar xzf workspacer-server-linux-x64.tar.gz
 
 `workspacer serve` starts and supervises `claudemon` (sessions) and the `hub`
 (bus, with a full-scope `brain` provider standing in for the desktop app), and
-prints the client URLs + pairing token: the phone client at `/m`, the browser
-client at `/remote`, and the full web app at `/app` (served from the bundled
-`web/` directory). It binds loopback by default; `--host 0.0.0.0` (or a
+prints the client URLs + pairing token: the phone client at `/m`, the
+lightweight browser client at `/remote`, and the full web app at `/app`
+(served from the bundled `web/` directory). It binds loopback by default; `--host 0.0.0.0` (or a
 tailnet IP) is the explicit remote opt-in — pair it with Tailscale, never the
 open internet. It runs in the foreground by design (systemd/tmux friendly).
 
@@ -154,9 +156,9 @@ landing/       the marketing site + user docs (static HTML)
 
 The desktop app spawns `claudemon` and `hub` and restarts them if they crash —
 or, if a `workspacer serve` is already running on the machine, adopts it
-instead of spawning its own. `wks-tui`, the web client, and phone/PC clients
-all connect to the same `hub` bus, so a session running on one client can be
-observed and driven from another.
+instead of spawning its own. The advanced clients (`wks-tui`, `/remote`,
+`/app/`) and the phone client all connect to the same `hub` bus, so a session
+running on one client can be observed and driven from another.
 
 ## Common tasks (from the repo root)
 

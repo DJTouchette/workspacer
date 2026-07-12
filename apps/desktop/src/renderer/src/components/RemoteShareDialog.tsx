@@ -166,7 +166,7 @@ const RemoteShareDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
           <Smartphone size={16} color="var(--wks-text-primary)" />
           <div style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--wks-text-primary)' }}>
-            Remote control
+            Phone access
           </div>
         </div>
         <div
@@ -177,8 +177,8 @@ const RemoteShareDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             marginBottom: 16,
           }}
         >
-          Drive your agents — approve prompts, answer questions, send messages — from a phone or
-          another computer on the same Tailscale tailnet.
+          Share this desktop with your phone so you can approve prompts, answer questions, and send
+          quick messages while agents keep running here.
         </div>
 
         {loading && (
@@ -309,22 +309,35 @@ function RemoteClientSection({ info }: { info: RemoteInfo }) {
 
   const connected = info.remoteClient;
   return (
-    <div
+    <details
       style={{
         marginTop: 18,
         paddingTop: 14,
         borderTop: '1px solid var(--wks-border-subtle)',
       }}
+      open={!!connected}
     >
+      <summary
+        style={{
+          cursor: 'pointer',
+          fontSize: '0.7rem',
+          fontWeight: 700,
+          color: connected ? 'var(--wks-accent, #4a9eff)' : 'var(--wks-text-muted)',
+          listStylePosition: 'inside',
+        }}
+      >
+        Advanced: connect this desktop to another Workspacer server
+      </summary>
       <div
         style={{
           fontSize: '0.78rem',
           fontWeight: 600,
           color: 'var(--wks-text-primary)',
+          marginTop: 12,
           marginBottom: 4,
         }}
       >
-        Connect to a remote server
+        {connected ? 'Connected as a client' : 'Use another machine as the host'}
       </div>
       {connected ? (
         <>
@@ -336,9 +349,9 @@ function RemoteClientSection({ info }: { info: RemoteInfo }) {
               marginBottom: 10,
             }}
           >
-            This app is a client of <code style={inlineCode}>{connected.httpUrl}</code> — agents run
-            there, and no local daemons were started. Disconnect to go back to running agents on
-            this machine.
+            This desktop app is connected to <code style={inlineCode}>{connected.httpUrl}</code>.
+            Agents run on that server, not this machine. Disconnect to go back to running agents
+            locally.
           </div>
           <button onClick={() => apply(null)} disabled={busy} style={dangerBtnStyle(busy)}>
             {busy ? 'Disconnecting…' : 'Disconnect (restarts the app)'}
@@ -354,9 +367,9 @@ function RemoteClientSection({ info }: { info: RemoteInfo }) {
               marginBottom: 10,
             }}
           >
-            Point this app at a <code style={inlineCode}>workspacer serve</code> on another machine
-            (host or URL + its pairing token). The app restarts as a pure client — like the server's
-            web app, but in this window.
+            Point this desktop app at <code style={inlineCode}>workspacer serve</code> on another
+            machine. This is different from phone sharing above: after restart, this window becomes
+            a client and agents run on the server you enter here.
           </div>
           <input
             value={url}
@@ -385,7 +398,7 @@ function RemoteClientSection({ info }: { info: RemoteInfo }) {
           </button>
         </>
       )}
-    </div>
+    </details>
   );
 }
 
@@ -394,19 +407,18 @@ function DisabledState({ busy, onStart }: { busy: boolean; onStart: () => void }
     <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-tertiary)', lineHeight: 1.6 }}>
       <StatusPill on={false} />
       <div style={{ marginBottom: 14 }}>
-        Right now the hub listens on <code style={inlineCode}>localhost</code> only — nothing off
-        this machine can reach it. Start sharing to bind it to your network so a phone or another
-        computer can connect.
+        Right now the hub listens on <code style={inlineCode}>localhost</code> only. Share this
+        desktop to create a phone link on your trusted network.
       </div>
 
       <TailscaleNote />
 
       <button onClick={onStart} disabled={busy} style={primaryBtnStyle(busy)}>
-        {busy ? 'Starting…' : 'Start sharing'}
+        {busy ? 'Starting…' : 'Share this desktop with phone'}
       </button>
       <div style={{ marginTop: 8, color: 'var(--wks-text-faint)', fontSize: '0.66rem' }}>
-        This restarts the hub bound to <code style={inlineCode}>0.0.0.0</code> (all interfaces) and
-        generates a one-time URL with an access token. You can stop sharing again anytime.
+        This restarts the hub bound to <code style={inlineCode}>0.0.0.0</code> and generates a
+        scoped phone URL. You can stop sharing again anytime.
       </div>
     </div>
   );
@@ -440,7 +452,7 @@ function StatusPill({ on }: { on: boolean }) {
           boxShadow: on ? `0 0 5px ${color}` : 'none',
         }}
       />
-      Remote sharing is {on ? 'ON' : 'OFF'}
+      Phone sharing is {on ? 'ON' : 'OFF'}
     </div>
   );
 }
@@ -822,8 +834,8 @@ function EnabledState({
         </div>
       )}
 
-      {/* Full app vs mobile client. The full app is the real renderer served at
-          /app; mobile is the mobile-first single-page client served at /m. */}
+      {/* Full app vs phone client. The full app is the real renderer served at
+          /app; phone is the mobile-first single-page client served at /m. */}
       {fullAppAvailable ? (
         <div style={{ display: 'flex', gap: 4, marginBottom: 14 }}>
           <ModeTab
@@ -836,9 +848,9 @@ function EnabledState({
           <ModeTab
             active={mode === 'lite'}
             onClick={() => setMode('lite')}
-            title="Mobile-first client: fleet, decisions, and chat"
+            title="Phone client: approvals, questions, and quick chat"
           >
-            Mobile
+            Phone
           </ModeTab>
         </div>
       ) : hasApp ? (
@@ -850,8 +862,8 @@ function EnabledState({
             lineHeight: 1.5,
           }}
         >
-          Showing the mobile client. The full web app is a full-control surface; switch the pairing
-          scope to Full control to share it.
+          Showing the phone client. The full desktop web UI is a full-control surface; switch the
+          pairing scope to Full control to share it.
         </div>
       ) : (
         <div
@@ -862,9 +874,8 @@ function EnabledState({
             lineHeight: 1.5,
           }}
         >
-          Showing the mobile client. Build the full app with{' '}
-          <code style={inlineCode}>npm run build:renderer:web</code> and restart to share the full
-          UI.
+          Showing the phone client. The full desktop web UI is available when the web bundle is
+          built and the pairing scope is Full control.
         </div>
       )}
 
@@ -916,7 +927,7 @@ function EnabledState({
       >
         {activeUrl
           ? `Scan with your phone's camera to open ${
-              mode === 'app' && fullAppAvailable ? 'the full app' : 'the mobile client'
+              mode === 'app' && fullAppAvailable ? 'the full app' : 'the phone client'
             }.`
           : 'Waiting for a scoped pairing token.'}
       </div>
@@ -926,7 +937,7 @@ function EnabledState({
       {activeUrl && (
         <>
           <CopyRow
-            label="Connection URL"
+            label="Phone URL"
             value={activeUrl}
             display={activeUrl}
             copied={copied === 'url'}
