@@ -1,0 +1,16 @@
+{
+  "_comment": "Cross-language pricing contract. input/output are USD per million tokens. Both modelUsage.ts (MODEL_RATES) and pricing.rs (BUILTIN) must price every id here identically via longest-prefix match. Regression cases below caught a real Rust drift bug (dated Opus 4.0 + Claude 3 Opus mispriced).",
+  "cases": [
+    { "model": "claude-opus-4-8-20260101", "input": 5, "output": 25, "note": "current Opus 4.x -> generic claude-opus 5/25" },
+    { "model": "claude-opus-4-5-20251101", "input": 5, "output": 25, "note": "current Opus 4.5 -> generic 5/25" },
+    { "model": "claude-opus-4-10-20260601", "input": 5, "output": 25, "note": "GUARD: 4.10 must NOT be swallowed by the 4.1 legacy key (trailing-dash pin)" },
+    { "model": "claude-opus-4-1-20250805", "input": 15, "output": 75, "note": "Opus 4.1 legacy -> claude-opus-4-1-" },
+    { "model": "claude-opus-4-0", "input": 15, "output": 75, "note": "Opus 4.0 alias" },
+    { "model": "claude-opus-4-20250514", "input": 15, "output": 75, "note": "REGRESSION: dated Opus 4.0 id -> claude-opus-4-20 (Rust was pricing this 5/25)" },
+    { "model": "claude-3-opus-20240229", "input": 15, "output": 75, "note": "REGRESSION: Claude 3 Opus -> claude-3-opus (Rust had no entry, fell to default)" },
+    { "model": "claude-sonnet-4-5-20260101", "input": 3, "output": 15, "note": "Sonnet" },
+    { "model": "claude-haiku-4-5-20251001", "input": 1, "output": 5, "note": "Haiku" },
+    { "model": "claude-fable-5", "input": 10, "output": 50, "note": "Fable" },
+    { "model": "claude-mythos-1", "input": 10, "output": 50, "note": "Mythos" }
+  ]
+}
