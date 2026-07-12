@@ -189,9 +189,9 @@ interface CommandPaletteProps {
   onToggleSidebar?: () => void;
   /** Toggle the Triage Inbox drawer. */
   onToggleInbox?: () => void;
-  /** Toggle the Fleet Deck overlay. */
+  /** Toggle the Fleet overlay. */
   onToggleFleet?: () => void;
-  /** Switch between the fleet / focus UI modes. */
+  /** Switch between the full / focus UI modes. */
   onToggleUiMode?: () => void;
   /** Save the current workspace session. */
   onSaveSession?: () => void;
@@ -328,18 +328,18 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
     );
     add(
       'cmd-toggle-fleet',
-      'Toggle Agent Overview',
-      'Advanced cross-agent overview',
+      'Toggle Fleet',
+      'Cross-agent fleet surface',
       <LayoutGrid size={16} strokeWidth={1.75} />,
       onToggleFleet,
       'toggle-fleet',
     );
     add(
       'cmd-toggle-ui-mode',
-      uiMode === 'focus' ? 'Switch to fleet mode' : 'Switch to focus mode',
+      uiMode === 'focus' ? 'Switch to full mode' : 'Switch to focus mode',
       uiMode === 'focus'
         ? 'Bring back the full mission-control chrome'
-        : 'Minimal chrome — rail sidebar, no inspector rail or Agent Overview',
+        : 'Minimal chrome — rail sidebar, no inspector rail or Fleet',
       <Columns3 size={16} strokeWidth={1.75} />,
       onToggleUiMode,
       'toggle-ui-mode',

@@ -639,14 +639,14 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
               value={String(agents)}
               sub={working ? `${working} working` : 'all idle'}
               onClick={() => setViewLevel('fleet')}
-              clickTitle="Open the Fleet deck"
+              clickTitle="Open the Fleet"
             />
             <Stat
               label="Working"
               value={String(working)}
               color={working ? 'var(--wks-busy, var(--wks-accent, #4a9eff))' : undefined}
               onClick={() => setViewLevel('fleet')}
-              clickTitle="Open the Fleet deck"
+              clickTitle="Open the Fleet"
             />
             <Stat
               label="Need you"

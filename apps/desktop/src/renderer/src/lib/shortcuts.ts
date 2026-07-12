@@ -119,8 +119,8 @@ export const ACTION_REGISTRY: ActionMeta[] = [
   { action: 'toggle-sidebar', label: 'Toggle sidebar', section: 'Panels & Overlays' },
   { action: 'toggle-terminal', label: 'Toggle terminal', section: 'Panels & Overlays' },
   { action: 'toggle-inbox', label: 'Toggle inbox', section: 'Panels & Overlays' },
-  { action: 'toggle-fleet', label: 'Toggle fleet deck', section: 'Panels & Overlays' },
-  { action: 'toggle-ui-mode', label: 'Toggle focus / fleet mode', section: 'Panels & Overlays' },
+  { action: 'toggle-fleet', label: 'Toggle fleet', section: 'Panels & Overlays' },
+  { action: 'toggle-ui-mode', label: 'Toggle focus / full mode', section: 'Panels & Overlays' },
   { action: 'toggle-inspector', label: 'Toggle inspector', section: 'Panels & Overlays' },
   { action: 'library-picker', label: 'Library picker', section: 'Panels & Overlays' },
   // Tools
@@ -128,53 +128,53 @@ export const ACTION_REGISTRY: ActionMeta[] = [
   { action: 'save-session', label: 'Save session', section: 'Tools' },
   { action: 'settings', label: 'Settings', section: 'Tools' },
   { action: 'toggle-help', label: 'Toggle help', section: 'Tools' },
-  // Fleet Deck (active only while the deck is open). Movement is bound per
+  // Fleet (active only while the deck is open). Movement is bound per
   // fleet view — the Cards grid navigates spatially, the List linearly — so
   // each has its own remappable set; actions on the selected agent are shared.
-  { action: 'fleet-open', label: 'Open selected agent', section: 'Fleet Deck', scope: 'fleet' },
-  { action: 'fleet-approve-yes', label: 'Approve', section: 'Fleet Deck', scope: 'fleet' },
-  { action: 'fleet-approve-no', label: 'Deny', section: 'Fleet Deck', scope: 'fleet' },
+  { action: 'fleet-open', label: 'Open selected agent', section: 'Fleet', scope: 'fleet' },
+  { action: 'fleet-approve-yes', label: 'Approve', section: 'Fleet', scope: 'fleet' },
+  { action: 'fleet-approve-no', label: 'Deny', section: 'Fleet', scope: 'fleet' },
   {
     action: 'fleet-answer',
     label: 'Answer question (option)',
-    section: 'Fleet Deck',
+    section: 'Fleet',
     scope: 'fleet',
     digitRange: true,
   },
   {
     action: 'fleet-cards-left',
     label: 'Select card left',
-    section: 'Fleet Deck · Cards view',
+    section: 'Fleet · Cards view',
     scope: 'fleet',
   },
   {
     action: 'fleet-cards-down',
     label: 'Select card below',
-    section: 'Fleet Deck · Cards view',
+    section: 'Fleet · Cards view',
     scope: 'fleet',
   },
   {
     action: 'fleet-cards-up',
     label: 'Select card above',
-    section: 'Fleet Deck · Cards view',
+    section: 'Fleet · Cards view',
     scope: 'fleet',
   },
   {
     action: 'fleet-cards-right',
     label: 'Select card right',
-    section: 'Fleet Deck · Cards view',
+    section: 'Fleet · Cards view',
     scope: 'fleet',
   },
   {
     action: 'fleet-list-down',
     label: 'Select next row',
-    section: 'Fleet Deck · List view',
+    section: 'Fleet · List view',
     scope: 'fleet',
   },
   {
     action: 'fleet-list-up',
     label: 'Select previous row',
-    section: 'Fleet Deck · List view',
+    section: 'Fleet · List view',
     scope: 'fleet',
   },
   // Inbox (active only while the drawer is open)

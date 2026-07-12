@@ -81,9 +81,9 @@ interface SideBarProps {
   onJumpToAttention?: () => void;
   /** Open the Triage Inbox drawer. */
   onOpenInbox?: () => void;
-  /** Toggle the advanced cross-agent overview. */
+  /** Toggle the cross-agent fleet surface. */
   onToggleFleet?: () => void;
-  /** Current altitude — highlights the overview button when active. */
+  /** Current altitude — highlights the Fleet button when active. */
   viewLevel?: 'fleet' | 'piloting';
   /** Open the remote-control (phone sharing) panel. */
   onOpenRemote?: () => void;
@@ -118,7 +118,7 @@ const SideBar: React.FC<SideBarProps> = ({
 }) => {
   // Counts come from the single attention feed (the spine), not a parallel
   // reduction over statusBySession — so the header can never disagree with the
-  // Inbox / Overview. needsYou counts approval/question/stuck/error items.
+  // Inbox / Fleet. needsYou counts approval/question/stuck/error items.
   const { counts, topByAgent } = useAttention();
   const needYouCount = counts.needsYou;
   // Focus mode reduces attention to one compact badge pinned in the rail —
@@ -567,7 +567,7 @@ const SideBar: React.FC<SideBarProps> = ({
         )}
       </div>
 
-      {/* Primary attention surface plus the advanced cross-agent overview. */}
+      {/* Primary attention surface plus the cross-agent Fleet surface. */}
       <div
         style={{
           display: 'flex',
@@ -614,11 +614,11 @@ const SideBar: React.FC<SideBarProps> = ({
         </button>
         <button
           onClick={onToggleFleet}
-          title="Agent Overview (Ctrl+Shift+F)"
+          title="Fleet (Ctrl+Shift+F)"
           style={segBtnStyle(viewLevel === 'fleet')}
         >
           <IconOverview size={15} strokeWidth={2} />
-          Overview
+          Fleet
         </button>
       </div>
 

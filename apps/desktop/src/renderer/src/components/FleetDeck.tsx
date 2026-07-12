@@ -185,7 +185,7 @@ const expandBtn: React.CSSProperties = {
 };
 
 /**
- * The Agent Overview — an advanced cross-agent radar. Every agent is a live
+ * The Fleet — an advanced cross-agent radar. Every agent is a live
  * telemetry-face card, arranged by the Attention Router so the ones that need
  * you float to the front and pulse. Rendered as an overlay OVER the still-
  * mounted per-agent workspaces, so entering/leaving the deck never remounts a
@@ -581,7 +581,7 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
             }}
           >
             <Radar size={17} strokeWidth={2.2} style={{ color: 'var(--wks-accent)' }} />
-            Agent Overview
+            Fleet
           </div>
           {/* Scannable status chips — dot + count, colour-keyed by state. */}
           <div

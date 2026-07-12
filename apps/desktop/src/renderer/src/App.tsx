@@ -585,13 +585,13 @@ function App() {
     }
   }, [snapshotBySession, agents, adoptAgent, sessionPhase]);
 
-  // Primary attention surface plus the advanced cross-agent overview.
+  // Primary attention surface plus the cross-agent fleet surface.
   const [inboxOpen, setInboxOpen] = useState(false);
   const openInbox = useCallback(() => setInboxOpen(true), []);
   const closeInbox = useCallback(() => setInboxOpen(false), []);
   const toggleInbox = useCallback(() => setInboxOpen((v) => !v), []);
 
-  // Altitude: 'piloting' (inside one agent) vs 'fleet' (the cross-agent overview).
+  // Altitude: 'piloting' (inside one agent) vs 'fleet' (the cross-agent surface).
   const viewLevel: ViewLevel = config.panes?.viewLevel === 'fleet' ? 'fleet' : 'piloting';
   // Focus mode unmounts the deck but leaves the persisted viewLevel alone — so
   // altitude consumers (attention auto-dismiss, the sidebar's deck state) must

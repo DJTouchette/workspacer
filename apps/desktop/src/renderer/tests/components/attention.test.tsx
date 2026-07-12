@@ -149,9 +149,9 @@ describe('Mission Control surfaces', () => {
     expect(window.electronAPI.claudeApprove).toHaveBeenCalledWith('sess-1', 'yes');
   });
 
-  it('renders an Agent Overview card per real agent, excluding the global workspace', () => {
+  it('renders a Fleet card per real agent, excluding the global workspace', () => {
     renderSurfaces();
-    expect(screen.getByText('Agent Overview')).toBeInTheDocument();
+    expect(screen.getByText('Fleet')).toBeInTheDocument();
     // "Refactor agent" appears in both the inbox card and its fleet card.
     expect(screen.getAllByText('Refactor agent').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText('Builder agent')).toBeInTheDocument();
@@ -240,7 +240,7 @@ describe('Mission Control surfaces', () => {
     }
   });
 
-  it('flips an Agent Overview card in place into the live InspectorCard, then collapses', () => {
+  it('flips a Fleet card in place into the live InspectorCard, then collapses', () => {
     renderSurfaces();
     // No inspector chrome until a card is expanded.
     expect(screen.queryByRole('button', { name: /Usage/ })).not.toBeInTheDocument();
