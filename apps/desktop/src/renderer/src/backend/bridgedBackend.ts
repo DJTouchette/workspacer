@@ -43,7 +43,7 @@ import { createWebBackend } from './webBackend';
  * port. Driving (message/approve/answer/signal/gate) and observation
  * (snapshots) are NOT here — they carry no bytes and stay on the bus mirror.
  */
-const LOCAL_TERMINAL = [
+export const LOCAL_TERMINAL = [
   'createTerminal', // shell PTY spawn → main delivers its MessagePort
   'writeTerminal',
   'resizeTerminal',
@@ -62,7 +62,7 @@ const LOCAL_TERMINAL = [
  * Host-only desktop concerns that must keep using the Electron preload (IPC) —
  * they reach native/OS/main-process facilities the bus doesn't expose.
  */
-const HOST_ONLY = [
+export const HOST_ONLY = [
   'setTitleBarOverlay', // Windows native caption-button theming
   'onTerminalExit', // MessagePort exit signal; no bus event for it
   'pickFolder', // native OS folder dialog
