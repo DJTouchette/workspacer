@@ -1,13 +1,12 @@
 # claudemon
 
-Standalone observability daemon for Claude Code sessions. Ingests hook events,
-keeps live session state in memory, and exposes it over HTTP + Server-Sent
-Events so any UI (TUI, web, mobile, tray app) can be a thin client.
+Standalone agent daemon. It ingests Claude Code hook events, owns daemon-spawned
+PTYs, tails transcripts/conversations, runs managed-provider adapters, and
+exposes the session surface over HTTP + Server-Sent Events so Workspacer clients
+can stay thin.
 
-v0.2: hook ingestion, session state, REST/SSE API, and the **PTY wrapper
-with bidirectional input + transcript reading** are all real. Settings.json
-auto-merge (`claudemon init`) and the TUI client (`claudemon watch`) are
-still stubs.
+[`docs/features.md`](../../docs/features.md) is the detailed maturity catalog.
+This README focuses on the daemon contract and the commands it owns.
 
 ## Why
 
@@ -20,9 +19,10 @@ That breaks down the moment you have:
 - An approval prompt you want routed somewhere other than the terminal
 
 `claudemon` runs as a background service. Claude Code's hooks POST to it; any
-client subscribes and gets a live view. Optional PTY-wrapper mode (planned)
-lets clients send input back — approve/deny prompts, inject new prompts,
-Ctrl-C — from anywhere.
+client subscribes and gets a live view. PTY-wrapper and daemon-spawned sessions
+also let clients send input back — approve/deny prompts, inject new prompts,
+resize the terminal, or signal the process — from anywhere that can reach the
+API.
 
 ## Architecture
 
@@ -35,12 +35,13 @@ Ctrl-C — from anywhere.
                   ▼
        ┌─────────────────────┐
        │  claudemon daemon   │ ── reads ~/.claude/projects/*/*.jsonl
-       │  - hook listener    │    (planned)
+       │  - hook listener    │
        │  - session store    │
-       │  - REST + SSE API   │ ◄──── any client
+       │  - REST + SSE API   │ ◄──── Workspacer, TUI, web, phone
+       │  - provider adapters│
        └─────────────────────┘
                   ▲
-                  │  POST /sessions/:id/input  (planned, needs `wrap`)
+                  │  POST /sessions/:id/input
                   │
        Clients: TUI, web UI, tmux statusline, menu-bar, Workspacer, ...
 ```
@@ -123,6 +124,27 @@ curl http://127.0.0.1:7891/sessions/$SID/transcript
 curl -X POST http://127.0.0.1:7891/sessions/$SID/signal \
   -H 'content-type: application/json' -d '{"signal":"SIGINT"}'
 ```
+
+### Managed-provider mode
+
+Workspacer can also ask the daemon to own a provider directly:
+
+```
+POST /sessions/spawn-managed
+{
+  "provider": "codex",      // "claude", "codex", "opencode", or "pi"
+  "cwd": "/repo",
+  "model": "gpt-5.5-codex",
+  "permissionMode": "default"
+}
+```
+
+Managed sessions do not rely on a visible PTY for control. The provider adapter
+translates native events into the same session state, pending approval/question
+cards, token/cost usage, conversation items, signals, and model or permission
+updates that the GUI and hub consume. Codex, OpenCode, Pi, and Claude stream
+transport all enter through this path; classic Claude PTY sessions continue to
+use `/sessions/spawn` or `claudemon wrap`.
 
 ## Session modes
 
@@ -276,11 +298,13 @@ src/
     hook.rs               POST /hook
     api.rs                Session REST + SSE endpoints
     wrapper_ws.rs         WebSocket endpoint for wrappers
-    init.rs               `claudemon init` (stub)
+    init.rs               `claudemon init`
   session/
     state.rs              SessionState, HookEvent, status machine
     store.rs              In-memory store + wrapper handles + byte buffers
     transcript.rs         JSONL transcript reader
+    conversation.rs       Structured conversation tailer
+  providers/              Managed-provider adapters
   wrapper/
     mod.rs                PTY wrapper orchestration
     pty.rs                PTY spawn + blocking I/O bridges

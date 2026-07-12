@@ -2,18 +2,26 @@
 
 The Electron + React GUI client. Part of the [Workspacer monorepo](../../README.md);
 sibling daemons (`claudemon`, `hub`) live in `../../services/` and are spawned by
-this app at runtime.
+this app at runtime unless it adopts or connects to an already-running
+`workspacer serve`.
+
+For the detailed feature/maturity matrix, see
+[docs/features.md](../../docs/features.md). This README covers the desktop
+client surface and local development.
 
 ## Features
 
-- **Horizontal pane layout** - Navigate between panes with keyboard shortcuts or scroll
-- **Multiple pane types** - Terminal, browser, notes, Claude Code, and settings
-- **Claude Code integration** - Built-in Claude CLI panes with headless terminal mirroring and hook support
+- **Horizontal pane layout** - Work across terminals, agents, browser/webview panes, notes, editor, review, settings, inspector, and agent-watch panes
+- **Agent sidebar and Inbox** - Keep the current agent visible while approval/question items collect in the Triage Inbox
+- **Claude and managed-agent integration** - Claude PTY/stream sessions plus managed Codex, OpenCode, and Pi sessions through claudemon
+- **Review workflow** - Inspect git status/diffs, stage or unstage files, commit, push, and return to the agent
 - **Session persistence** - Auto-save and resume workspaces across restarts
 - **Browser hibernation** - Inactive browser panes hibernate to save resources
 - **Nerd Font support** - Auto-discovers and injects local Nerd Fonts
 - **Configurable keybindings** - Default and Vim-style modes with leader key support
-- **Command palette** - Quick access to apps and actions
+- **Command palette** - Quick access to apps, panes, Ask the Fleet, phone access, and server connection actions
+- **Phone and web access** - Share this desktop with `/m` phone access, `/remote` terminal mirror, or `/app/`; connect the desktop shell to another Workspacer server when needed
+- **Advanced overview** - Agent Overview and Agent Monitor remain available for larger multi-agent runs without being required for the main workflow
 
 ## Getting Started
 
@@ -42,6 +50,18 @@ make dev                # or ./dev   (== cd apps/desktop && npm run dev)
 
 This builds the `hub` binary, starts the Vite dev server, and launches Electron
 with hot reload.
+
+### Remote / phone access
+
+The normal sharing flow is phone-first: open **Phone access** from the command
+palette to show the QR/link for `/m`. The same dialog exposes the lightweight
+terminal mirror at `/remote`, the full web renderer at `/app/`, scoped pairing
+tokens, and the advanced "connect this desktop to another server" client mode.
+
+When `workspacer serve` is already healthy on the same machine, the desktop
+adopts it instead of starting another claudemon/hub pair. When "Connect to
+Server..." is configured, the renderer uses that remote server's bus while
+host-shell actions stay local to the Electron process.
 
 ### Build / Package
 

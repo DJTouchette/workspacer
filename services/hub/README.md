@@ -2,10 +2,15 @@
 
 The control-plane daemon for workspacer. It runs **independently of the UI** so
 it can broker events between sidecars/plugins, supervise those processes, and
-(later) host an MCP facade that lets Claude Code drive workspacer headlessly.
+host the MCP, web, phone, TUI, and headless-server paths that drive Workspacer
+without coupling every client to Electron.
 
 Deliberately separate from `claudemon` (which stays focused on Claude sessions)
 — claudemon becomes the *first producer* on this bus, not the bus itself.
+
+[`docs/features.md`](../../docs/features.md) is the detailed product maturity
+catalog. This README covers the hub/bus contracts and the headless provider
+model.
 
 ## Status
 
@@ -126,12 +131,11 @@ Tools (each maps 1:1 to a hub capability provided by Electron main):
 | `terminal_input` | `sessions.terminalInput` | Write raw bytes into a PTY |
 | `notify` | `notifications.post` | Show a desktop notification |
 
-The `spawn_agent` / `create_terminal` tools require the matching capabilities to
-be registered by Electron main (`src/main/services/hubCapabilities.ts`); the
-session runs headless in claudemon and a desktop pane can attach to it later.
-
-Next milestones: surfacing MCP-spawned sessions as panes in the UI
-automatically.
+The `spawn_agent` / `create_terminal` tools require a provider for the matching
+capabilities. In the desktop app that provider is Electron main; under
+`workspacer serve` or `cmd/hub --brain-scope full`, it is the headless brain.
+Either way the session runs in claudemon and every client sees the same agent
+snapshot through the bus.
 
 ## Capability tokens (per-method authorization)
 
@@ -173,16 +177,15 @@ stays deny-all, deliberately stricter than operator).
 
 ## Headless brain (`cmd/brain`)
 
-The capabilities above (`agents.*`, `claude.*`, `sessions.*`) are normally
-*provided* by the Electron main process — so they only exist while the desktop
-app is running. That's why the TUI bypasses the hub and re-implements a slice of
-that logic itself.
+The capabilities above (`agents.*`, `claude.*`, `sessions.*`) can be provided by
+Electron main when the desktop app is the host, or by the standalone brain when
+the hub is running headlessly.
 
 `cmd/brain` is a standalone **provider** that fills the gap: it connects to the
 hub bus and registers the core agent capabilities headlessly, backing each by
 claudemon's HTTP API plus the same profile/argv logic the app and TUI use. Run
 it (instead of, or alongside, the desktop app) and any caller — the MCP facade,
-the web client, a future thin TUI — gets the surface **without a GUI open**.
+the web client, and the TUI — gets the surface **without a GUI open**.
 
 ```sh
 # hub + claudemon already running, then:
@@ -236,8 +239,9 @@ lease-gated forwarder: one SSE consumer of claudemon's `/sessions/:id/stream`
 clients). `terminalKeepalive` refreshes the 20s lease; `detachTerminal` (or a
 lapsed lease, swept every 5s) stops it, so the brain never streams a session
 nobody is watching. Input/resize flow back through `sessions.terminalInput` /
-`terminalResize`. A port of the desktop's `terminalShare`. With this the TUI can
-drop its claudemon-direct path and become a thin bus client — the next step.
+`terminalResize`. This is the bus-native equivalent of the desktop's
+`terminalShare`, and it is the default path for the TUI, `/remote`, `/app`, and
+phone clients.
 
 **`--scope` / `--brain-scope`** controls *which* capabilities the brain registers,
 because the bus router is single-owner per method: two providers for the same
@@ -247,9 +251,10 @@ profiles, library, layouts, saved sessions, models, session discovery, host file
 reads) — and the app keeps owning the live/enriched agent + streaming caps. Run
 **headless**, the brain takes `full` and provides everything.
 
-To make the desktop app a pure *consumer* of the brain for the catalog (one
-source of truth, nothing registered twice), three things are needed on the
-Electron side — left as a follow-up because they need a desktop build to verify:
+The desktop app can also act as a client of an already-running local
+`workspacer serve`: it adopts that server instead of starting duplicate daemons.
+For the narrower "desktop hosts the hub but brain owns only catalog data" shape,
+the remaining Electron follow-up is:
 
 1. spawn the hub with `--brain-scope catalog` (and `--claudemon <url>`) in
    `hubDaemon.ts`;
@@ -288,14 +293,10 @@ The endgame is for
 every client (app, TUI, web, MCP) to be a thin caller of this one brain, so they
 mirror each other by construction instead of duplicating logic across TS/Rust/Go.
 
-**Not yet provided headlessly** — what's left is genuinely coupled to the GUI
-process, not just unported:
+**GUI-coupled capabilities.** The full-scope brain covers the live agent,
+streaming terminal, catalog, file/search, layout, and saved-session surface. The
+remaining GUI-owned areas are:
 
-- **Live PTY/event streams** — `sessions.attachTerminal` / `keepalive` /
-  `detachTerminal` and `fs.watch` / `fs.unwatch`. The byte/event stream needs a
-  hub proxy (the web client's terminal share is the template). This is the
-  separate "streaming" phase and the real unlock for moving the TUI fully onto
-  the bus.
 - **`analytics.*`** — backed by the app's SQLite history DB, which is populated
   by the desktop session store's capture at turn boundaries. Without that
   capture pipeline there's nothing to serve, so the brain can't fake it.
@@ -303,8 +304,8 @@ process, not just unported:
   `/supervise` skill and injecting the MCP-facade argv (mcpConfig/supervisorSkill)
   is app-specific orchestration; the core spawn (profile→argv) is provided.
 
-Also: saved-session `save` persists the blob as given — it skips the desktop's
-terminal-cwd enrichment, which needs the GUI's in-process pty→cwd map.
+Also: saved-session `save` persists the blob as given. It skips the desktop's
+terminal-cwd enrichment, which needs the GUI's in-process PTY-to-cwd map.
 
 ## Headless server (`cmd/workspacer`)
 

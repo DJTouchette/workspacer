@@ -210,18 +210,18 @@ Acceptance criteria:
 
 Tasks:
 
-- Update `services/claudemon/README.md` so `init`, `watch`, PTY, transcript, and
+- [x] Update `services/claudemon/README.md` so `init`, `watch`, PTY, transcript, and
   managed-provider claims match the current code.
-- Update `services/hub/README.md` so MCP/adopt/headless capabilities match
+- [x] Update `services/hub/README.md` so MCP/adopt/headless capabilities match
   `docs/features.md`.
-- Update `apps/desktop/README.md` so it reflects the current pane set and remote
+- [x] Update `apps/desktop/README.md` so it reflects the current pane set and remote
   model.
-- Update `apps/tui/README.md` maturity/test language after adding tests.
+- [x] Update `apps/tui/README.md` maturity/test language after adding tests.
 
 Acceptance criteria:
 
-- No README calls a working feature a stub.
-- `docs/features.md` remains the most detailed maturity catalog, and other docs
+- [x] No README calls a working feature a stub.
+- [x] `docs/features.md` remains the most detailed maturity catalog, and other docs
   point to it instead of contradicting it.
 
 ### Add A Lightweight Docs Drift Check

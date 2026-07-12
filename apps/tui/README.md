@@ -15,9 +15,11 @@ directly (the original standalone path) — useful when the hub binary isn't bui
 or you want one fewer process. The TUI also falls back to this automatically if a
 loopback bus isn't reachable.
 
-This is the early TUI: agent monitoring, control, and spawning. Raw-PTY terminal
-panes, the workspace/tab model, library, analytics and the command palette are
-planned in later phases (see the repo's TUI plan).
+The TUI is a working bus client for monitoring, control, spawning, raw PTY
+terminal views, tabs/splits, library insertion, review, notes, and attention
+handling. It is still intentionally narrower than the desktop app around
+analytics and rich browser/editor workflows. See
+[`docs/features.md`](../../docs/features.md) for the repo-wide maturity catalog.
 
 ## What it does today
 
@@ -275,3 +277,16 @@ wks-tui --claudemon-url http://my-host:7891
 If you see a persistent **"reconnecting…"** in the header, claudemon isn't
 reachable — either its binary is missing (check the startup diagnostics) or you
 passed `--no-spawn` with nothing running.
+
+## Testing
+
+The TUI has unit coverage across key parsing/dispatch, app state transitions,
+bus calls, claudemon response parsing, terminal attachment state, review flow
+state, themes, config, and rendering helpers. Run it from this package with:
+
+```sh
+cargo test
+```
+
+Ignored live tests in `src/claudemon.rs` exercise a real daemon when you need to
+check PTY/list behavior against a running claudemon.
