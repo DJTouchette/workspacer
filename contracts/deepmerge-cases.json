@@ -1,0 +1,59 @@
+{
+  "_comment": "Cross-language deepMerge contract for config.yaml overlay. Semantics: null/undefined source value = 'unset' (keep target); two plain objects recurse; arrays and scalars REPLACE wholesale; object-vs-scalar mismatch replaces. deepMerge(target, source) => expected. Both configService.ts (TS) and config.go (Go) must produce expected for every case.",
+  "cases": [
+    {
+      "name": "scalar override",
+      "target": { "a": 1, "b": 2 },
+      "source": { "b": 3 },
+      "expected": { "a": 1, "b": 3 }
+    },
+    {
+      "name": "null source is unset (keeps target default)",
+      "target": { "a": 1, "b": 2 },
+      "source": { "a": null },
+      "expected": { "a": 1, "b": 2 }
+    },
+    {
+      "name": "new key is added",
+      "target": { "a": 1 },
+      "source": { "b": 2 },
+      "expected": { "a": 1, "b": 2 }
+    },
+    {
+      "name": "nested objects recurse, siblings survive",
+      "target": { "ui": { "theme": "dark", "size": 14 } },
+      "source": { "ui": { "theme": "light" } },
+      "expected": { "ui": { "theme": "light", "size": 14 } }
+    },
+    {
+      "name": "nested null unset alongside a nested override",
+      "target": { "ui": { "theme": "dark", "size": 14 } },
+      "source": { "ui": { "size": null, "theme": "light" } },
+      "expected": { "ui": { "theme": "light", "size": 14 } }
+    },
+    {
+      "name": "arrays replace wholesale (no element merge)",
+      "target": { "list": [1, 2, 3] },
+      "source": { "list": [9] },
+      "expected": { "list": [9] }
+    },
+    {
+      "name": "object replaces scalar",
+      "target": { "a": 1 },
+      "source": { "a": { "x": 1 } },
+      "expected": { "a": { "x": 1 } }
+    },
+    {
+      "name": "scalar replaces object",
+      "target": { "a": { "x": 1 } },
+      "source": { "a": 5 },
+      "expected": { "a": 5 }
+    },
+    {
+      "name": "deep nesting merges three levels",
+      "target": { "a": { "b": { "c": 1, "d": 2 } } },
+      "source": { "a": { "b": { "c": 9 } } },
+      "expected": { "a": { "b": { "c": 9, "d": 2 } } }
+    }
+  ]
+}

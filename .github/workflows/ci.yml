@@ -48,6 +48,21 @@ jobs:
         working-directory: apps/desktop/src/renderer
         run: npm ci
 
+      # Codegen freshness. The two configDefaults.generated.ts files are
+      # generated from the Go-side source of truth
+      # (services/hub/cmd/brain/config_defaults.json) by `gen:config-defaults`.
+      # Regenerate and fail if the tree moved — this catches both "edited a
+      # default / the JSON but forgot to regenerate" (value drift) and any
+      # formatting divergence, in one deterministic check. The generic
+      # format:check below only catches the latter, and only by accident.
+      - name: Config defaults are freshly generated
+        run: |
+          npm run gen:config-defaults
+          git diff --exit-code -- \
+            src/main/services/configDefaults.generated.ts \
+            src/renderer/src/hooks/configDefaults.generated.ts \
+          || { echo "::error::configDefaults.generated.ts is stale — run 'npm run gen:config-defaults' and commit the result"; exit 1; }
+
       # Prettier gate. `.prettierrc` pins the codebase style (singleQuote, semi,
       # printWidth 100); --check fails if any tracked TS/TSX is unformatted.
       - name: Format check

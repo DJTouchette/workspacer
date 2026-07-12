@@ -2,11 +2,60 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 )
+
+// TestDeepMergeContractCases runs the shared cross-language deepMerge fixture
+// (contracts/deepmerge-cases.json) through the Go deepMerge. The SAME fixture is
+// consumed by a configService.ts test, so this is the drift guard keeping the
+// two config.yaml deepMerge implementations (TS + Go) in agreement. JSON numbers
+// unmarshal to float64 on both the actual and expected sides, so reflect.DeepEqual
+// is clean.
+func TestDeepMergeContractCases(t *testing.T) {
+	// Resolve repo root from this test's package dir (services/hub/cmd/brain).
+	path := filepath.Join("..", "..", "..", "..", "contracts", "deepmerge-cases.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read contract fixture %s: %v", path, err)
+	}
+	var fixture struct {
+		Cases []struct {
+			Name     string          `json:"name"`
+			Target   json.RawMessage `json:"target"`
+			Source   json.RawMessage `json:"source"`
+			Expected json.RawMessage `json:"expected"`
+		} `json:"cases"`
+	}
+	if err := json.Unmarshal(data, &fixture); err != nil {
+		t.Fatalf("parse contract fixture: %v", err)
+	}
+	if len(fixture.Cases) == 0 {
+		t.Fatal("contract fixture has no cases")
+	}
+	for _, c := range fixture.Cases {
+		t.Run(c.Name, func(t *testing.T) {
+			var target, source, expected map[string]any
+			if err := json.Unmarshal(c.Target, &target); err != nil {
+				t.Fatalf("unmarshal target: %v", err)
+			}
+			if err := json.Unmarshal(c.Source, &source); err != nil {
+				t.Fatalf("unmarshal source: %v", err)
+			}
+			if err := json.Unmarshal(c.Expected, &expected); err != nil {
+				t.Fatalf("unmarshal expected: %v", err)
+			}
+			got := deepMerge(target, source)
+			if !reflect.DeepEqual(got, expected) {
+				t.Errorf("deepMerge mismatch\n got: %#v\nwant: %#v", got, expected)
+			}
+		})
+	}
+}
 
 func TestConfigGetReloadsOnExternalChange(t *testing.T) {
 	dir := t.TempDir()

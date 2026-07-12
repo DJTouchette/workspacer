@@ -14,6 +14,7 @@
 import { readFileSync, writeFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import prettier from 'prettier';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..', '..', '..');
@@ -43,7 +44,15 @@ const banner =
 
 const body = `export const CONFIG_DEFAULTS = ${JSON.stringify(defaults, null, 2)} as const;\n`;
 
+// Format our own output so the generator is self-contained and deterministic:
+// the committed files are Prettier-formatted (single quotes, unquoted keys,
+// trailing commas per apps/desktop/.prettierrc), but a raw JSON.stringify emits
+// double-quoted keys and no trailing commas. Without this step, running the
+// generator dirties the tree until a separate `prettier --write` pass runs.
+// Resolve Prettier's config from the output path so the repo's .prettierrc wins.
 for (const outPath of outPaths) {
-  writeFileSync(outPath, banner + body, 'utf-8');
+  const options = (await prettier.resolveConfig(outPath)) ?? {};
+  const formatted = await prettier.format(banner + body, { ...options, parser: 'typescript' });
+  writeFileSync(outPath, formatted, 'utf-8');
   console.log(`[gen-config-defaults] wrote ${outPath}`);
 }
