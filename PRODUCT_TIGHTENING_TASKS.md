@@ -21,20 +21,30 @@ safe, and finished:
 
 ### Define The First 10 Minutes
 
+Status: implemented.
+
+First-run scenario:
+
+1. Open Workspacer.
+2. Click `Spawn your first agent`.
+3. Answer questions and approve tools from the agent pane or Triage Inbox.
+4. Open Review from the finished/diff attention item.
+5. Stage, commit, and push from Review, then return to the agent.
+
 Tasks:
 
-- Write a short first-run scenario: open app, spawn first agent, answer/approve,
+- [x] Write a short first-run scenario: open app, spawn first agent, answer/approve,
   review changed files, commit/push.
-- Audit the UI against that scenario and mark every non-essential surface as
+- [x] Audit the UI against that scenario and mark every non-essential surface as
   primary, secondary, or advanced.
-- Make sure the welcome/onboarding copy teaches only the core loop plus how to
+- [x] Make sure the welcome/onboarding copy teaches only the core loop plus how to
   find the command palette.
 
 Acceptance criteria:
 
-- A new user can understand the app without learning Fleet Deck, supervisors,
+- [x] A new user can understand the app without learning Fleet Deck, supervisors,
   plugins, remote server mode, or the TUI.
-- The first-run path has one obvious CTA: spawn an agent.
+- [x] The first-run path has one obvious CTA: spawn an agent.
 
 ## P1 - Close The Important Loops
 
@@ -283,6 +293,18 @@ Acceptance criteria:
 
 ### Decide The Fate Of The Parked Inbox/Classifier Stack
 
+Status: implemented.
+
+Decision:
+
+- The active product path is per-agent workspaces plus a renderer-local Triage
+  Inbox derived from live session snapshots.
+- The old persisted `/items` inbox, classifier store, and v2 decision tables are
+  internal experimental substrate only.
+- Revive the parked stack only if snapshot-derived attention cannot support a
+  real requirement such as durable cross-device inbox history or
+  supervisor-authored review actions.
+
 Problem:
 
 - The product has chosen per-agent workspaces, while classifier/items tables and
@@ -290,14 +312,14 @@ Problem:
 
 Tasks:
 
-- Keep only the pieces that actively feed the current Triage Inbox or future
+- [x] Keep only the pieces that actively feed the current Triage Inbox or future
   review actions.
-- Mark the rest as internal experimental code, or remove it.
-- If kept, document the intended trigger for reviving it.
+- [x] Mark the rest as internal experimental code, or remove it.
+- [x] If kept, document the intended trigger for reviving it.
 
 Acceptance criteria:
 
-- There is no ambiguity between "per-agent workspace" and the older "inbox of
+- [x] There is no ambiguity between "per-agent workspace" and the older "inbox of
   decisions" product direction.
 
 ## Suggested Order

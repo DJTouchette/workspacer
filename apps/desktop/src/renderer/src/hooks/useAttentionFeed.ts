@@ -82,10 +82,14 @@ export interface AttentionFeedOptions {
 /**
  * Derive the cross-agent attention feed from the promoted snapshot store.
  *
- * Items live entirely in the renderer (MVP): approval ← pendingApproval,
+ * Items live entirely in the renderer: approval ← pendingApproval,
  * question ← pendingQuestions, done ← a working→idle transition. Re-arriving
  * snapshots update items in place (dedup by signature), never duplicate. When
  * an agent resolves a request, its next snapshot simply drops the item.
+ *
+ * This is the active inbox model. Do not reintroduce the parked `/items` store
+ * unless we need durable cross-device queues or agent-authored review actions
+ * that cannot be reconstructed from snapshots.
  */
 export function useAttentionFeed(
   snapshotBySession: Record<string, ClaudeSessionSnapshot>,

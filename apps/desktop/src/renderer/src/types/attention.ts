@@ -3,16 +3,17 @@ import type { PendingApproval, PendingQuestion } from './claudeSession';
 /**
  * A single thing an agent wants a human to do. The Triage Inbox and the Fleet
  * Deck are both pure projections of a list of these — derived from the live
- * ClaudeSessionSnapshot stream, never stored in the daemon (MVP). See
+ * ClaudeSessionSnapshot stream, never stored in the daemon. This is the active
+ * product path; it is separate from the parked v2 `/items` inbox store. See
  * {@link ../hooks/useAttentionFeed}.
  */
 export type AttentionKind =
   | 'approval' // pendingApproval — a tool wants permission
   | 'question' // pendingQuestions — AskUserQuestion picker is up
-  | 'stuck' // classifier loop/idle detection (daemon items stream, future)
-  | 'error' // classifier error detection (daemon items stream, future)
+  | 'stuck' // renderer snapshot heuristic; not backed by parked /items API
+  | 'error' // renderer snapshot heuristic; not backed by parked /items API
   | 'done' // working → idle transition: the agent finished a task
-  | 'bigdiff'; // a large unreviewed change landed (future)
+  | 'bigdiff'; // renderer snapshot heuristic for a large unreviewed change
 
 export type AttentionStatus = 'open' | 'resolved' | 'snoozed' | 'dismissed';
 

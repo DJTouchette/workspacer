@@ -1,6 +1,6 @@
 # Workspacer — Feature Assessment
 
-> Current-state catalog of what the app does, as of 2026-07-11.
+> Current-state catalog of what the app does, as of 2026-07-12.
 
 **Maturity legend**
 
@@ -102,7 +102,7 @@ remote/web/phone clients all view and drive the same fleet.
 |---|---|---|
 | Git status / diff / numstat | Read paths, served by claudemon, rendered in the Review pane | 🔵 Working |
 | Stage / unstage / commit / push | Mutating git ops from the Review pane | 🔵 Working |
-| Merge / `review_diff` next-action wiring | Classifier emits these as next-actions; no UI behind them | ⚪ Not built |
+| Merge / `review_diff` next-action wiring | Review next-actions route into the Review pane; merge/conflict/no-upstream/push-rejection states surface as actionable Review errors | 🔵 Working |
 
 ## 7. Library, analytics & profiles
 
@@ -160,7 +160,7 @@ remote/web/phone clients all view and drive the same fleet.
 | Spawn / approve / answer / signal | Full agent control from the terminal | 🔵 Working |
 | Command palette, vim nav | Ctrl-K fuzzy palette; leader + which-key, Ctrl-w splits, harpoon pins, `/` filter, `:` cmdline, vim counts | 🔵 Working |
 | Daemon bootstrap | Auto-spawns claudemon if not running | 🔵 Working |
-| Tests | Only terminal key-encoding units; no suite | 🟡 Partial |
+| Tests | Behavioral unit coverage for navigation, approval/question handling, review pane basics, direct mode, bus mode, and reconnect behavior | 🟢 Solid |
 
 ## 12. Substrate — `claudemon` daemon (Rust)
 
@@ -199,24 +199,25 @@ remote/web/phone clients all view and drive the same fleet.
 
 ## Parked / experimental (built, not surfaced)
 
+Decision: the active product is **per-agent workspaces plus the
+snapshot-derived Triage Inbox**. The older persisted `/items` inbox is not a
+user-facing direction and has no live UI/API consumer. Revive this stack only if
+snapshots cannot satisfy a concrete requirement such as durable cross-device
+inbox history or supervisor-authored review actions.
+
 | Feature | Notes | Maturity |
 |---|---|---|
-| Classifier (Stuck/Error/Done + idle) | Detects per-session states; fully tested | 🟣 Parked |
-| `/items` inbox API + SQLite items store | Priority-ranked inbox; no live consumer (the shipped UI uses the snapshot-based Triage Inbox instead) | 🟣 Parked |
-| SQLite `pending_decisions` / `asks` / `events_fts` | v2-spec tables created but unused | 🟣 Parked |
+| Classifier (Stuck/Error/Done + idle) | Internal experimental reference; the shipped Triage Inbox uses renderer snapshot heuristics instead | 🟣 Parked |
+| `/items` inbox API + SQLite items store | Internal experimental v2 inbox store; no live consumer | 🟣 Parked |
+| SQLite `pending_decisions` / `asks` / `events_fts` | Internal migration/schema leftovers from the v2 inbox direction | 🟣 Parked |
 | Terminal emulator (`emulator.rs`) | vt100 emulator with device-query replies; not wired into the output path | 🟣 Parked |
 
 ## Known gaps / not built
 
 - Tray icon / taskbar overlay badge.
-- Git **merge** and `review_diff`/`merge` next-action UI wiring.
 - macOS/Linux Chrome cookie import.
-- New phone pairings still hand out the operator token by default (a scope
-  picker is needed before defaulting them to `triage` — the /m Spawn tab calls
-  `agents.spawn`); `token revoke` doesn't sever already-open connections.
 - Crash-recovery journal (only a `before-quit` save signal today).
 - Browser-pane hibernation is renderer-only (no main-process enforcement).
-- Stale E2E `claudePane.test.ts`; several main-process services untested.
 
 ---
 
@@ -235,6 +236,5 @@ app doubles as a client of it (local adopt or remote connect).
 
 The main *product* ambiguity is resolved: the app is a **per-agent workspace**,
 not the abandoned v2 "inbox of decisions" — the leftover classifier/items stack
-is now clearly parked. Remaining work is breadth (platform parity, a few
-unfinished loops like git merge) and test depth (main-process services, an
-end-to-end multi-client check), not core soundness.
+is now clearly parked as internal experimental substrate with a specific revival
+trigger. Remaining work is breadth and platform polish, not core soundness.
