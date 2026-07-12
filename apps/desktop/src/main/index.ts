@@ -158,8 +158,14 @@ protocol.registerSchemesAsPrivileged([
 
 // ── Chromium performance flags (must be set before app.whenReady) ──
 
-// Cap renderer heap to avoid runaway memory (512 MB per renderer)
-app.commandLine.appendSwitch('js-flags', '--max-old-space-size=512');
+// Keep a renderer heap ceiling so a real leak cannot consume the machine, but
+// do not force Electron's old ~512 MB limit. Long-lived agent transcripts,
+// CodeMirror, xterm scrollback, and webviews can legitimately exceed that.
+const rendererOldSpaceMb = Number.parseInt(
+  process.env.WORKSPACER_RENDERER_OLD_SPACE_MB ?? '1536',
+  10,
+);
+app.commandLine.appendSwitch('js-flags', `--max-old-space-size=${rendererOldSpaceMb}`);
 // Background timer throttling is intentionally left ENABLED (the default).
 // Main-process daemons and SSE bridges are unaffected (they run in the Node.js
 // event loop, not in Chromium renderer timers). The renderer self-throttles via

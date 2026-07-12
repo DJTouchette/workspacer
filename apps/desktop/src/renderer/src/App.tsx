@@ -63,6 +63,7 @@ import { useUiMode } from './hooks/useUiMode';
 import { useTheme } from './hooks/useTheme';
 import { useSessionLifecycle } from './hooks/useSessionLifecycle';
 import { usePluginHotkeys } from './hooks/usePluginHotkeys';
+import { compactClaudeSnapshotForBackground } from './lib/compactClaudeSnapshot';
 
 /** Normalize a workspace dir into a stable config key (slashes + no trailing /). */
 function scriptKey(cwd: string): string {
@@ -474,7 +475,7 @@ function App() {
         const snaps: Record<string, ClaudeSessionSnapshot> = {};
         for (const s of sessions) {
           map[s.sessionId] = s.ambientState;
-          snaps[s.sessionId] = s;
+          snaps[s.sessionId] = compactClaudeSnapshotForBackground(s);
         }
         if (preexistingSessionIdsRef.current === null) {
           preexistingSessionIdsRef.current = new Set(sessions.map((s) => s.sessionId));
@@ -513,7 +514,10 @@ function App() {
         return;
       }
       setStatusBySession((prev) => ({ ...prev, [sessionId]: snapshot.ambientState }));
-      setSnapshotBySession((prev) => ({ ...prev, [sessionId]: snapshot }));
+      setSnapshotBySession((prev) => ({
+        ...prev,
+        [sessionId]: compactClaudeSnapshotForBackground(snapshot),
+      }));
     });
     return () => {
       unsub();
@@ -1715,7 +1719,8 @@ function App() {
   const hasAgentMonitorActivity = useMemo(
     () =>
       Object.values(snapshotBySession).some(
-        (snapshot) => (snapshot.subagents?.length ?? 0) > 0 || (snapshot.workflows?.length ?? 0) > 0,
+        (snapshot) =>
+          (snapshot.subagents?.length ?? 0) > 0 || (snapshot.workflows?.length ?? 0) > 0,
       ),
     [snapshotBySession],
   );

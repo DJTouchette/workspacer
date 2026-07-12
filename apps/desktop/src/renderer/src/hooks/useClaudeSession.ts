@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { ClaudeSessionSnapshot } from '../types/claudeSession';
+import { compactClaudeSnapshotForBackground } from '../lib/compactClaudeSnapshot';
 
 interface UseClaudeSessionOptions {
   /** The claudemon session_id this hook tracks (formerly the PTY id) */
@@ -34,23 +35,39 @@ export function useClaudeSession({
   idRef.current = ptySessionId;
 
   // Coalescing state for the inactive case: hold the newest snapshot and flush
-  // it on a slow timer so status stays roughly live without per-token renders.
+  // a compact copy on a slow timer so status stays roughly live without
+  // retaining full transcripts for hidden panes.
   const activeRef = useRef(active);
   const pendingRef = useRef<ClaudeSessionSnapshot | null>(null);
   const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Incremented each time ptySessionId changes so a stale async response
+  // (from an earlier id) is silently dropped instead of overwriting newer state.
+  const generationRef = useRef(0);
 
   // When the pane becomes active again, flush the latest snapshot immediately
   // so the user never sees stale state on the pane they just navigated to.
   useEffect(() => {
     activeRef.current = active;
-    if (active && pendingRef.current) {
+    if (!active) {
+      pendingRef.current = null;
+      setSession((prev) => (prev ? compactClaudeSnapshotForBackground(prev) : prev));
+      return;
+    }
+    if (pendingRef.current) {
       setSession(pendingRef.current);
       pendingRef.current = null;
-      if (flushTimerRef.current) {
-        clearTimeout(flushTimerRef.current);
-        flushTimerRef.current = null;
-      }
     }
+    if (flushTimerRef.current) {
+      clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = null;
+    }
+    const id = idRef.current;
+    if (!id) return;
+    const gen = ++generationRef.current;
+    window.electronAPI.getClaudeSession(id).then((snap) => {
+      if (gen !== generationRef.current) return;
+      if (snap) setSession(snap as ClaudeSessionSnapshot);
+    });
   }, [active]);
 
   useEffect(() => {
@@ -61,8 +78,8 @@ export function useClaudeSession({
           setSession(snap);
           return;
         }
-        // Off-screen: keep only the newest snapshot, flushed on a slow cadence.
-        pendingRef.current = snap;
+        // Off-screen: keep only a bounded background snapshot, flushed on a slow cadence.
+        pendingRef.current = compactClaudeSnapshotForBackground(snap);
         if (!flushTimerRef.current) {
           flushTimerRef.current = setTimeout(() => {
             flushTimerRef.current = null;
@@ -83,10 +100,6 @@ export function useClaudeSession({
     };
   }, []);
 
-  // Incremented each time ptySessionId changes so a stale async response
-  // (from an earlier id) is silently dropped instead of overwriting newer state.
-  const generationRef = useRef(0);
-
   useEffect(() => {
     // The tracked id changed (or cleared). Drop the previous session's snapshot
     // immediately — otherwise a pane re-pointed at a session that has no
@@ -99,7 +112,10 @@ export function useClaudeSession({
     const gen = ++generationRef.current;
     window.electronAPI.getClaudeSession(ptySessionId).then((snap) => {
       if (gen !== generationRef.current) return; // stale or unmounted
-      if (snap) setSession(snap as ClaudeSessionSnapshot);
+      if (snap) {
+        const next = snap as ClaudeSessionSnapshot;
+        setSession(activeRef.current ? next : compactClaudeSnapshotForBackground(next));
+      }
     });
     return () => {
       // Increment so any in-flight promise from this ptySessionId is ignored
@@ -112,7 +128,10 @@ export function useClaudeSession({
     const gen = ++generationRef.current;
     window.electronAPI.getClaudeSession(idRef.current).then((snap) => {
       if (gen !== generationRef.current) return; // stale or unmounted
-      if (snap) setSession(snap as ClaudeSessionSnapshot);
+      if (snap) {
+        const next = snap as ClaudeSessionSnapshot;
+        setSession(activeRef.current ? next : compactClaudeSnapshotForBackground(next));
+      }
     });
   }, []);
 
