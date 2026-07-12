@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as os from 'os';
 import * as yaml from 'js-yaml';
 import { CONFIG_DEFAULTS } from './configDefaults.generated';
+import { atomicWriteFileSync } from '../lib/atomicWriteFile';
 
 interface ShellOption {
   name: string;
@@ -254,8 +255,11 @@ function getConfigFilePath(): string {
   return path.join(getConfigDir(), 'config.yaml');
 }
 
-// Deep merge source into target, preserving target defaults for missing keys
-function deepMerge(target: any, source: any): any {
+// Deep merge source into target, preserving target defaults for missing keys.
+// Exported so the cross-language deepMerge contract test (contracts/
+// deepmerge-cases.json, also consumed by the Go config.go test) can exercise it
+// directly — it's pure, so exporting carries no risk.
+export function deepMerge(target: any, source: any): any {
   if (!source || typeof source !== 'object') return target;
   const result = { ...target };
   for (const key of Object.keys(source)) {
@@ -296,8 +300,7 @@ function migrateKeybindings(cfg: Config): Config {
   if (hadVim) cfg.editor = { ...cfg.editor, vim: true };
 
   try {
-    fs.mkdirSync(getConfigDir(), { recursive: true });
-    fs.writeFileSync(getConfigFilePath(), yaml.dump(cfg, { lineWidth: -1 }), 'utf-8');
+    atomicWriteFileSync(getConfigFilePath(), yaml.dump(cfg, { lineWidth: -1 }));
   } catch (err) {
     console.error('[ConfigService] keybindings migration write failed:', err);
   }
@@ -325,8 +328,7 @@ function migrateFlatChords(cfg: Config): Config {
   if (!changed) return cfg;
 
   try {
-    fs.mkdirSync(getConfigDir(), { recursive: true });
-    fs.writeFileSync(getConfigFilePath(), yaml.dump(cfg, { lineWidth: -1 }), 'utf-8');
+    atomicWriteFileSync(getConfigFilePath(), yaml.dump(cfg, { lineWidth: -1 }));
   } catch (err) {
     console.error('[ConfigService] flat-chord migration write failed:', err);
   }
@@ -356,8 +358,7 @@ function pruneRemovedShortcuts(cfg: Config): Config {
   if (!changed) return cfg;
 
   try {
-    fs.mkdirSync(getConfigDir(), { recursive: true });
-    fs.writeFileSync(getConfigFilePath(), yaml.dump(cfg, { lineWidth: -1 }), 'utf-8');
+    atomicWriteFileSync(getConfigFilePath(), yaml.dump(cfg, { lineWidth: -1 }));
   } catch (err) {
     console.error('[ConfigService] removed-shortcut prune write failed:', err);
   }
@@ -465,10 +466,8 @@ class ConfigService {
 
   private writeDefaults(): void {
     try {
-      const dir = getConfigDir();
-      fs.mkdirSync(dir, { recursive: true });
       const data = yaml.dump(defaultConfig(), { lineWidth: -1 });
-      fs.writeFileSync(getConfigFilePath(), data, 'utf-8');
+      atomicWriteFileSync(getConfigFilePath(), data);
     } catch (err) {
       console.error('[ConfigService] failed to write default config:', err);
     }
@@ -514,10 +513,8 @@ class ConfigService {
       return this.config;
     }
     try {
-      const dir = getConfigDir();
-      fs.mkdirSync(dir, { recursive: true });
       const data = yaml.dump(this.config, { lineWidth: -1 });
-      fs.writeFileSync(getConfigFilePath(), data, 'utf-8');
+      atomicWriteFileSync(getConfigFilePath(), data);
       // Record our own write's mtime so the next gate check doesn't mistake it
       // for an external change and pointlessly re-read.
       this.loadedAtMs = this.configMtimeMs();

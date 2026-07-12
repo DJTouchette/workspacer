@@ -2,6 +2,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { getConfigDir } from './configService';
+import { atomicWriteFileSync } from '../lib/atomicWriteFile';
 import type { RemoteTokenRecord, RemoteTokenScope } from '../shared/ipcTypes';
 
 const VALID_SCOPES = new Set<RemoteTokenScope>(['view', 'triage', 'operator']);
@@ -44,25 +45,10 @@ function readTokens(): RemoteTokenRecord[] {
 }
 
 function writeTokens(records: RemoteTokenRecord[]): void {
-  const file = tokensPath();
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = path.join(path.dirname(file), `.tokens-${process.pid}-${Date.now()}.json`);
-  try {
-    fs.writeFileSync(tmp, `${JSON.stringify(records, null, 2)}\n`, { mode: 0o600 });
-    try {
-      fs.chmodSync(tmp, 0o600);
-    } catch {
-      /* best effort on filesystems that ignore POSIX modes */
-    }
-    fs.renameSync(tmp, file);
-  } catch (err) {
-    try {
-      fs.rmSync(tmp, { force: true });
-    } catch {
-      /* best effort cleanup */
-    }
-    throw err;
-  }
+  // Secrets file: atomic write (temp + rename) with a restrictive 0o600 mode so
+  // a crash can't leave a truncated token store and the file is never
+  // world-readable. Shared impl in atomicWriteFile.ts.
+  atomicWriteFileSync(tokensPath(), `${JSON.stringify(records, null, 2)}\n`, { mode: 0o600 });
 }
 
 function mint(scope: RemoteTokenScope, label: string): RemoteTokenRecord {

@@ -95,6 +95,11 @@ vi.mock('fs', () => ({
   writeFileSync: vi.fn(),
   mkdirSync: vi.fn(),
   copyFileSync: vi.fn(),
+  // atomicWriteFileSync (temp-file + rename) backs every config write now, so the
+  // rename/chmod/rm primitives must exist on the mock or the write path throws.
+  renameSync: vi.fn(),
+  chmodSync: vi.fn(),
+  rmSync: vi.fn(),
   // Default: no file → mtime gate stays inert (configMtimeMs returns 0), so the
   // existing in-memory-cache tests behave exactly as before. The mtime-gate
   // suite below drives statSync explicitly.

@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as yaml from 'js-yaml';
 import { claudemonSessionClient } from './claudemonSessionClient';
 import { getConfigDir } from './configService';
+import { atomicWriteFileSync } from '../lib/atomicWriteFile';
 import { slugSession } from '../lib/fileUtils';
 
 interface SessionPaneData {
@@ -154,7 +155,7 @@ class SessionService {
     const filename = sanitizeFilename(data.name) + '.yaml';
     const filePath = path.join(getSessionsDir(), filename);
     const yamlStr = yaml.dump(data, { lineWidth: -1 });
-    fs.writeFileSync(filePath, yamlStr, 'utf-8');
+    atomicWriteFileSync(filePath, yamlStr);
     return filename;
   }
 

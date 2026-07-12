@@ -10,6 +10,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as yaml from 'js-yaml';
 import { getConfigDir } from './configService';
+import { atomicWriteFileSync } from '../lib/atomicWriteFile';
 import { slugLayout } from '../lib/fileUtils';
 
 export interface LayoutPane {
@@ -82,10 +83,9 @@ class LayoutService {
       createdAt: new Date().toISOString(),
       agents: input.agents ?? [],
     };
-    fs.writeFileSync(
+    atomicWriteFileSync(
       path.join(layoutsDir(), `${id}.yaml`),
       yaml.dump(layout, { lineWidth: -1 }),
-      'utf-8',
     );
     return layout;
   }
