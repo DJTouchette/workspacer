@@ -391,10 +391,25 @@ jobs:
           fi
           # The tag can outlive the release (UI deletion, partial cleanup);
           # publishing over a stale tag would pin the release to the wrong
-          # commit, so assert it's really gone.
-          gh api -X DELETE "repos/$REPO/git/refs/tags/nightly" 2>/dev/null || true
-          if gh api "repos/$REPO/git/ref/tags/nightly" >/dev/null 2>&1; then
-            echo "nightly tag still exists — aborting before publishing a mistargeted release"
+          # commit, so assert it's really gone. Ref deletion is eventually
+          # consistent, though — an immediate re-read can still see the ref we
+          # just deleted. A single-shot check therefore false-aborts on a
+          # propagation lag, and by this point the old release is ALREADY
+          # retired, so aborting leaves NO live nightly. Poll instead: re-issue
+          # the delete (harmless once gone) and wait for the ref to actually
+          # disappear before giving up.
+          gone=false
+          for attempt in 1 2 3 4 5 6; do
+            gh api -X DELETE "repos/$REPO/git/refs/tags/nightly" 2>/dev/null || true
+            if ! gh api "repos/$REPO/git/ref/tags/nightly" >/dev/null 2>&1; then
+              gone=true
+              break
+            fi
+            echo "nightly tag still present (attempt $attempt/6) — waiting for deletion to propagate…"
+            sleep 5
+          done
+          if [ "$gone" != "true" ]; then
+            echo "nightly tag still exists after retries — aborting before publishing a mistargeted release"
             exit 1
           fi
 
