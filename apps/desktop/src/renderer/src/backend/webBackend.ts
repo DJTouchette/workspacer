@@ -523,6 +523,15 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
       warnOnce('installCli');
       return Promise.resolve({ ok: false, message: 'not available on web' });
     },
+    // Model-rate overrides live in a host file; the web client can't read/write it.
+    pricingGetRates: () => {
+      warnOnce('pricingGetRates');
+      return Promise.resolve({ defaults: {}, overrides: {} });
+    },
+    pricingSaveOverrides: () => {
+      warnOnce('pricingSaveOverrides');
+      return Promise.resolve({ ok: false });
+    },
   };
 
   return api;

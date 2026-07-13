@@ -32,6 +32,10 @@ export const IPC = {
   // ── Bundled workspacer CLI ──
   CLI_INSTALL: 'cli:install', // invoke (renderer → main): put the bundled CLI on PATH
 
+  // ── Model pricing overrides (~/.workspacer/model-rates.json) ──
+  PRICING_GET: 'pricing:get', // invoke: { defaults, overrides } for the Settings editor
+  PRICING_SAVE: 'pricing:save', // invoke: persist the overrides map
+
   // ── Generic terminal ──
   TERMINAL_CREATE: 'terminal:create',
   TERMINAL_RESIZE: 'terminal:resize',

@@ -417,6 +417,21 @@ export interface ElectronAPI {
   openLogsFolder?: () => Promise<{ ok: boolean; error?: string }>;
   /** Install the bundled `workspacer` CLI onto PATH (headless-server launcher). */
   installCli?: () => Promise<{ ok: boolean; message: string }>;
+  /** Built-in model rate table + current user overrides, for the Settings editor. */
+  pricingGetRates?: () => Promise<{
+    defaults: Record<string, { input: number; output: number; contextLimit: number }>;
+    overrides: Record<
+      string,
+      { input: number; output: number; cached_input?: number; context_limit?: number }
+    >;
+  }>;
+  /** Persist model-rate overrides to ~/.workspacer/model-rates.json (empty map reverts). */
+  pricingSaveOverrides?: (
+    overrides: Record<
+      string,
+      { input: number; output: number; cached_input?: number; context_limit?: number }
+    >,
+  ) => Promise<{ ok: boolean }>;
 }
 
 declare global {

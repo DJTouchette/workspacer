@@ -465,6 +465,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke(IPC.LOGS_OPEN_FOLDER),
   // Put the bundled `workspacer` CLI on PATH (runs its own `install-cli`).
   installCli: (): Promise<{ ok: boolean; message: string }> => ipcRenderer.invoke(IPC.CLI_INSTALL),
+  // Model pricing overrides (~/.workspacer/model-rates.json).
+  pricingGetRates: () => ipcRenderer.invoke(IPC.PRICING_GET),
+  pricingSaveOverrides: (overrides: unknown) => ipcRenderer.invoke(IPC.PRICING_SAVE, overrides),
   installPlugin: (url: string): Promise<{ ok: boolean; plugin?: unknown; error?: string }> =>
     ipcRenderer.invoke(IPC.HUB_INSTALL_PLUGIN, url),
   inspectPlugin: (url: string): Promise<{ ok: boolean; plugin?: unknown; error?: string }> =>

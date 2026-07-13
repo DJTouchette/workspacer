@@ -88,6 +88,8 @@ export const HOST_ONLY = [
   'onSystemNotice', // main-process daemon/startup notices; IPC-only push
   'openLogsFolder', // opens the host's logs dir in its file manager
   'installCli', // installs the host's bundled workspacer CLI onto the host PATH
+  'pricingGetRates', // model-rate table + overrides read from the host rates file
+  'pricingSaveOverrides', // writes the host's ~/.workspacer/model-rates.json
   'onLibraryChanged', // IPC change event; the bus has no library-change topic
   'worktreeInfo', // worktree ops shell out to git on the host
   'worktreeCreate',

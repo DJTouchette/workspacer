@@ -17,6 +17,7 @@ import EditorSection from '../components/settings/EditorSection';
 import AppsSection from '../components/settings/AppsSection';
 import ClaudeProfilesSection from '../components/settings/ClaudeProfilesSection';
 import SupervisorSection from '../components/settings/SupervisorSection';
+import ModelPricingSection from '../components/settings/ModelPricingSection';
 import PluginsSection from '../components/settings/PluginsSection';
 
 interface SettingsPaneProps {
@@ -91,6 +92,28 @@ const SECTIONS: SectionDef[] = [
       'poll',
       'notify',
       'background',
+    ],
+  },
+  {
+    key: 'pricing',
+    label: 'Model pricing',
+    group: 'Agents & AI',
+    keywords: [
+      'pricing',
+      'price',
+      'rate',
+      'cost',
+      'token',
+      'model',
+      'context',
+      'window',
+      'override',
+      'usage',
+      'claude',
+      'codex',
+      'fable',
+      'opus',
+      'sonnet',
     ],
   },
   // Workspace
@@ -387,6 +410,8 @@ const SettingsPane: React.FC<SettingsPaneProps> = () => {
         return <ClaudeProfilesSection />;
       case 'supervisor':
         return <SupervisorSection config={config} save={save} />;
+      case 'pricing':
+        return <ModelPricingSection />;
       case 'appearance':
         return <AppearanceSection config={config} save={save} />;
       case 'layout':

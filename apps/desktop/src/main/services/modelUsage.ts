@@ -7,7 +7,14 @@
 //   • cumulative cost — summed per turn over the session's life
 //
 // Prices are USD per million tokens. They're estimates and easy to tweak in
-// one place if rates change.
+// one place if rates change — or overridden per-machine via the user rates
+// file (see MODEL_RATE_OVERRIDES_PATH), which the claudemon Rust engine also
+// reads, so one file feeds both costing paths.
+
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { atomicWriteFileSync } from '../lib/atomicWriteFile';
 
 export interface RawUsage {
   input_tokens?: number;
@@ -43,7 +50,7 @@ interface ModelRates {
   contextLimit: number;
 }
 
-const DEFAULT_RATES: ModelRates = { input: 3, output: 15, contextLimit: 200_000 };
+export const DEFAULT_RATES: ModelRates = { input: 3, output: 15, contextLimit: 200_000 };
 
 // Keyed by a prefix of the transcript `model` id (e.g. "claude-opus-4-8").
 // Matched longest-prefix-first so "claude-opus-4-1-" wins over "claude-opus".
@@ -60,7 +67,7 @@ const DEFAULT_RATES: ModelRates = { input: 3, output: 15, contextLimit: 200_000 
 // which are current generations and should price at the generic 5/25.
 // Claude 3 Opus ids ('claude-3-opus-20240229') don't start with 'claude-opus'
 // at all, hence the separate 'claude-3-opus' entry.
-const MODEL_RATES: Record<string, ModelRates> = {
+export const MODEL_RATES: Record<string, ModelRates> = {
   'claude-fable': { input: 10, output: 50, contextLimit: 200_000 },
   'claude-mythos': { input: 10, output: 50, contextLimit: 200_000 },
   'claude-opus': { input: 5, output: 25, contextLimit: 200_000 },
@@ -72,6 +79,45 @@ const MODEL_RATES: Record<string, ModelRates> = {
   'claude-haiku': { input: 1, output: 5, contextLimit: 200_000 },
 };
 
+// ── User rate overrides ──────────────────────────────────────────────────────
+// The same file the claudemon Rust engine (session/pricing.rs) reads, so a rate
+// edited in Settings applies to both costing paths. Keys are model-id prefixes;
+// snake_case fields (`cached_input`, `context_limit`) match the Rust reader.
+export const MODEL_RATE_OVERRIDES_PATH = path.join(os.homedir(), '.workspacer', 'model-rates.json');
+
+export interface ModelRateOverride {
+  input: number;
+  output: number;
+  cached_input?: number;
+  context_limit?: number;
+}
+export type ModelRateOverrides = Record<string, ModelRateOverride>;
+
+// mtime-keyed cache so the hot paths (per-turn costing) cost one stat, not a
+// parse — mirrors pricing.rs's OVERRIDES cache.
+let overridesCache: { mtimeMs: number | null; table: ModelRateOverrides } | null = null;
+
+function loadOverrides(): ModelRateOverrides {
+  let mtimeMs: number | null = null;
+  try {
+    mtimeMs = fs.statSync(MODEL_RATE_OVERRIDES_PATH).mtimeMs;
+  } catch {
+    mtimeMs = null; // no file (or unreadable) — built-ins only
+  }
+  if (overridesCache && overridesCache.mtimeMs === mtimeMs) return overridesCache.table;
+  let table: ModelRateOverrides = {};
+  if (mtimeMs !== null) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(MODEL_RATE_OVERRIDES_PATH, 'utf-8'));
+      if (parsed && typeof parsed === 'object') table = parsed as ModelRateOverrides;
+    } catch {
+      table = {}; // invalid JSON — ignore, built-ins only
+    }
+  }
+  overridesCache = { mtimeMs, table };
+  return table;
+}
+
 function ratesFor(model: string | null | undefined): ModelRates {
   if (!model) return DEFAULT_RATES;
   let best: ModelRates | null = null;
@@ -82,7 +128,48 @@ function ratesFor(model: string | null | undefined): ModelRates {
       bestLen = prefix.length;
     }
   }
+  // User overrides win on the longest prefix (`>=` so a same-length override
+  // beats the built-in). A valid override carries input + output; context_limit
+  // is optional and falls back to the built-in/default window.
+  for (const [prefix, ov] of Object.entries(loadOverrides())) {
+    if (
+      model.startsWith(prefix) &&
+      prefix.length >= bestLen &&
+      typeof ov?.input === 'number' &&
+      typeof ov?.output === 'number'
+    ) {
+      best = {
+        input: ov.input,
+        output: ov.output,
+        contextLimit:
+          typeof ov.context_limit === 'number'
+            ? ov.context_limit
+            : (best?.contextLimit ?? DEFAULT_RATES.contextLimit),
+      };
+      bestLen = prefix.length;
+    }
+  }
   return best ?? DEFAULT_RATES;
+}
+
+/** Current overrides on disk (for the Settings editor). */
+export function readModelRateOverrides(): ModelRateOverrides {
+  return loadOverrides();
+}
+
+/** Persist overrides. An empty map deletes the file (revert to built-ins). */
+export function writeModelRateOverrides(overrides: ModelRateOverrides): void {
+  if (!overrides || Object.keys(overrides).length === 0) {
+    try {
+      fs.rmSync(MODEL_RATE_OVERRIDES_PATH);
+    } catch {
+      /* already absent */
+    }
+  } else {
+    fs.mkdirSync(path.dirname(MODEL_RATE_OVERRIDES_PATH), { recursive: true });
+    atomicWriteFileSync(MODEL_RATE_OVERRIDES_PATH, JSON.stringify(overrides, null, 2));
+  }
+  overridesCache = null; // force a re-read on next costing call
 }
 
 /** Tokens occupying the context window on this turn (input + both cache tiers). */

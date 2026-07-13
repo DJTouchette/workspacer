@@ -15,6 +15,12 @@ import { updateService } from './services/updateService';
 import { worktreeInfo, createWorktree } from './services/worktreeService';
 import { claudeSessionStore } from './services/claudeSessionStore';
 import { listClaudeModels } from './services/claudeModels';
+import {
+  MODEL_RATES,
+  readModelRateOverrides,
+  writeModelRateOverrides,
+  type ModelRateOverrides,
+} from './services/modelUsage';
 import { workflowWatcher } from './services/workflowWatcher';
 import { agentNotifier } from './services/agentNotifier';
 import { claudemonSessionClient } from './services/claudemonSessionClient';
@@ -370,6 +376,18 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // Put the bundled `workspacer` CLI (headless-server launcher) on PATH by
   // running its own `install-cli` subcommand — install policy lives in the CLI.
   ipcMain.handle(IPC.CLI_INSTALL, () => installWorkspacerCli());
+
+  // Model pricing: expose the built-in rate table + current user overrides, and
+  // persist edits to ~/.workspacer/model-rates.json (claudemon reads the same
+  // file, so an edit applies to both costing engines with no restart).
+  ipcMain.handle(IPC.PRICING_GET, () => ({
+    defaults: MODEL_RATES,
+    overrides: readModelRateOverrides(),
+  }));
+  ipcMain.handle(IPC.PRICING_SAVE, (_event, overrides: ModelRateOverrides) => {
+    writeModelRateOverrides(overrides ?? {});
+    return { ok: true };
+  });
   // When remote auth is on, the hub's mutating routes require the token; the
   // local UI presents it via the same Authorization header a remote client uses.
   const hubAuthHeaders = (): Record<string, string> => {
