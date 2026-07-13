@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ContextMenu, ContextMenuItem } from '../ContextMenu';
 import { requestOpenInEditor } from '../../lib/editorBus';
 import { requestMarkdownPreview } from '../../lib/previewBus';
+import { requestOpenInBrowser, fileUrlFromPath } from '../../lib/browserBus';
 
 /**
  * FileLink — the one clickable-file-path affordance for the chat's tool-call
@@ -66,7 +67,12 @@ export const FileActionMenuItems: React.FC<{
       {isHtmlPath(abs) && (
         <ContextMenuItem
           label="Open in browser"
-          onClick={run(() => void window.electronAPI.fileOpenExternal(abs))}
+          onClick={run(() =>
+            requestOpenInBrowser({
+              url: fileUrlFromPath(abs),
+              title: abs.replace(/\\/g, '/').split('/').pop() || 'Browser',
+            }),
+          )}
         />
       )}
       <ContextMenuItem

@@ -28,6 +28,7 @@ import { requestSettingsSection } from './lib/settingsBus';
 import type { UpdateStatus } from './types/electron';
 import { EDITOR_OPEN_FILE_EVENT } from './lib/editorBus';
 import { MARKDOWN_PREVIEW_EVENT, type MarkdownPreviewTarget } from './lib/previewBus';
+import { BROWSER_OPEN_EVENT, type BrowserOpenTarget } from './lib/browserBus';
 import { useUiCommands } from './hooks/useUiCommands';
 import type { PluginPane } from './types/plugin';
 import SpawnAgentDialog from './components/SpawnAgentDialog';
@@ -814,6 +815,20 @@ function App() {
     window.addEventListener(MARKDOWN_PREVIEW_EVENT, handler);
     return () => window.removeEventListener(MARKDOWN_PREVIEW_EVENT, handler);
   }, [openMarkdownPreview, scrollToTab]);
+
+  // Open-in-browser requests (e.g. FileLink's "Open in browser" on an .html
+  // file). Opens a normal in-app browser tab — toolbar and all — pointed at the
+  // target, rather than handing the file to the OS default handler.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const t = (e as CustomEvent).detail as BrowserOpenTarget | undefined;
+      if (!t?.url) return;
+      const newId = addTab('browser', t.title || 'Browser', insertPosition, undefined, t.url, false);
+      requestAnimationFrame(() => scrollToTab(newId));
+    };
+    window.addEventListener(BROWSER_OPEN_EVENT, handler);
+    return () => window.removeEventListener(BROWSER_OPEN_EVENT, handler);
+  }, [addTab, insertPosition, scrollToTab]);
 
   const openSettings = useCallback(() => {
     const existing = tabs.find((t) => t.panes.length === 1 && t.panes[0].type === 'settings');
