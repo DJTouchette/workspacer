@@ -85,7 +85,10 @@ export function listClaudeModels(): ListModelsResult {
     // maintenance as Claude Code updates. `sonnet[1m]` is Claude Code's own
     // alias for the million-token-context Sonnet.
     aliases: [
-      { value: 'fable', label: label('fable', 'Fable'), context: '200K' },
+      // Fable's 1M window is both its maximum AND its default — there is no 200K
+      // mode to select, so (unlike Opus/Sonnet) it has no separate `[1m]` row and
+      // always shows 1M.
+      { value: 'fable', label: label('fable', 'Fable'), context: '1M' },
       { value: 'opus', label: label('opus', 'Opus'), context: '200K' },
       { value: 'opus[1m]', label: label('opus', 'Opus'), context: '1M' },
       { value: 'sonnet', label: label('sonnet', 'Sonnet'), context: '200K' },

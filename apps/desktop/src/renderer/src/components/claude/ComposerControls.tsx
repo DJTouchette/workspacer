@@ -187,7 +187,10 @@ export const ComposerControls: React.FC<{
           if (res.aliases.some((a) => a.value === id)) continue;
           const label = shortModelLabel(id) || id;
           if (seen.some((s) => s.label === label)) continue;
-          seen.push({ id, label, context: id.includes('[1m]') ? '1M' : '200K', seen: true });
+          // Fable / Mythos are 1M-native (the max is also the default), so they
+          // read 1M without the `[1m]` marker that gates 1M on Opus/Sonnet.
+          const is1m = id.includes('[1m]') || /fable|mythos/i.test(id);
+          seen.push({ id, label, context: is1m ? '1M' : '200K', seen: true });
         }
         setModels([
           ...res.aliases.map((a) => ({ id: a.value, label: a.label, context: a.context })),
