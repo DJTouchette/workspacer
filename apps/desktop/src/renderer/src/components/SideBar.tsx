@@ -192,9 +192,10 @@ const SideBar: React.FC<SideBarProps> = ({
     boxSizing: 'border-box',
   };
 
-  // ── Collapsed monogram rail ───────────────────────────────────────────────
+  // ── Collapsed rail ────────────────────────────────────────────────────────
   // A 74px rail that keeps every agent reachable with one click. Tiles mirror
-  // the full panel's monogram + status-dot vocabulary so the two read as one UI.
+  // the full panel's provider-logo + status-dot vocabulary so an agent reads as
+  // the same mark whether the sidebar is expanded or collapsed.
   if (collapsed) {
     const railTile = (agent: AgentWorkspace) => {
       const isActive = agent.id === activeAgentId;
@@ -207,11 +208,6 @@ const SideBar: React.FC<SideBarProps> = ({
       const label = top ? KIND_VISUAL_LABEL[top.kind] : base.label;
       const glyph = top ? KIND_GLYPH[top.kind] : '';
       const working = state === 'thinking' || state === 'streaming';
-      const tileLetter = (
-        agent.name.match(/[a-z0-9]/i)?.[0] ||
-        agent.name.charAt(0) ||
-        '?'
-      ).toUpperCase();
       return (
         <button
           key={agent.id}
@@ -249,17 +245,13 @@ const SideBar: React.FC<SideBarProps> = ({
           ) : isSupervisor ? (
             <span style={{ fontSize: '0.9rem', lineHeight: 1 }}>🧭</span>
           ) : (
-            <span
-              style={{
-                fontFamily: 'var(--wks-font-mono)',
-                fontSize: '0.9rem',
-                fontWeight: 700,
-                color: 'var(--wks-text-primary)',
-                lineHeight: 1,
-              }}
-            >
-              {tileLetter}
-            </span>
+            // Provider logo — same vocabulary as the expanded panel, so an agent
+            // reads as the same Claude / Codex / OpenCode mark in either state.
+            <AgentLogo
+              provider={agent.provider ?? 'claude'}
+              size={19}
+              style={{ color: 'var(--wks-text-primary)', lineHeight: 1 }}
+            />
           )}
           {!isGlobal &&
             (glyph ? (
@@ -477,13 +469,14 @@ const SideBar: React.FC<SideBarProps> = ({
         boxSizing: 'border-box',
       }}
     >
-      {/* Brand header — the { ▮ } mark + work{spacer} wordmark. */}
+      {/* Brand header — the { ▮ } mark + work{spacer} wordmark, with the
+          sidebar collapse toggle pinned top-right (where users reach for it). */}
       <div
         style={{
           display: 'flex',
           alignItems: 'center',
           gap: 10,
-          padding: '4px 14px 10px 16px',
+          padding: '4px 12px 10px 16px',
         }}
       >
         <span
@@ -502,6 +495,38 @@ const SideBar: React.FC<SideBarProps> = ({
           <BrandMark size={17} blink />
         </span>
         <Wordmark size={17} />
+        {onToggleCollapse && (
+          <button
+            onClick={onToggleCollapse}
+            title="Collapse sidebar (Ctrl+B)"
+            style={{
+              marginLeft: 'auto',
+              width: 26,
+              height: 26,
+              padding: 0,
+              flexShrink: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              border: '1px solid transparent',
+              borderRadius: 'var(--wks-radius-md)',
+              cursor: 'pointer',
+              background: 'transparent',
+              color: 'var(--wks-text-faint)',
+              transition: 'color 0.12s, border-color 0.12s, background 0.12s',
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-primary)';
+              (e.currentTarget as HTMLElement).style.background = 'var(--wks-bg-elevated)';
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-faint)';
+              (e.currentTarget as HTMLElement).style.background = 'transparent';
+            }}
+          >
+            <ChevronLeft size={16} strokeWidth={2} />
+          </button>
+        )}
       </div>
 
       <div
@@ -539,31 +564,6 @@ const SideBar: React.FC<SideBarProps> = ({
             <IconWorking size={12} strokeWidth={2.2} accent="currentColor" />
             {workingCount} working
           </span>
-        )}
-        <div style={{ flex: 1 }} />
-        {onToggleCollapse && (
-          <button
-            onClick={onToggleCollapse}
-            title="Collapse sidebar (Ctrl+B)"
-            style={{
-              width: 20,
-              height: 20,
-              padding: 0,
-              flexShrink: 0,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              border: 'none',
-              borderRadius: 'var(--wks-radius-sm)',
-              cursor: 'pointer',
-              background: 'transparent',
-              color: 'var(--wks-text-faint)',
-              fontSize: '0.9rem',
-              lineHeight: 1,
-            }}
-          >
-            <ChevronLeft size={15} strokeWidth={2} />
-          </button>
         )}
       </div>
 
