@@ -111,22 +111,31 @@ impl Db {
     fn prune_archived_before(&self, keep: usize, cutoff: i64) -> Result<usize> {
         let mut guard = self.conn.lock().expect("db mutex poisoned");
         let tx = guard.transaction()?;
-        // Prune candidates: older than the window AND not among the newest `keep`
-        // rows. Delete their events first (explicit cascade — the schema's FK has
-        // no ON DELETE CASCADE) then the sessions, both inside one transaction.
-        let eligible = "last_event_at < ?1 AND id NOT IN \
-             (SELECT id FROM sessions ORDER BY last_event_at DESC LIMIT ?2)";
+        // Freeze the prune set ONCE into a temp table, then delete its events
+        // (child) and sessions (parent) from that frozen set. Re-evaluating the
+        // `ORDER BY last_event_at DESC LIMIT keep` cut once per DELETE (as this
+        // used to) can return a DIFFERENT arbitrary row among `last_event_at`
+        // ties — the events-delete and sessions-delete then disagree, a session
+        // is deleted while its events survive, and the FK (no ON DELETE CASCADE)
+        // trips with "FOREIGN KEY constraint failed". The `id` tiebreak also
+        // makes the "newest keep" cut deterministic across runs.
+        tx.execute("DROP TABLE IF EXISTS _prune_ids", [])?;
         tx.execute(
-            &format!(
-                "DELETE FROM events WHERE session_id IN \
-                 (SELECT id FROM sessions WHERE {eligible})"
-            ),
+            "CREATE TEMP TABLE _prune_ids AS \
+             SELECT id FROM sessions \
+             WHERE last_event_at < ?1 AND id NOT IN \
+               (SELECT id FROM sessions ORDER BY last_event_at DESC, id DESC LIMIT ?2)",
             params![cutoff, keep as i64],
+        )?;
+        tx.execute(
+            "DELETE FROM events WHERE session_id IN (SELECT id FROM _prune_ids)",
+            [],
         )?;
         let pruned = tx.execute(
-            &format!("DELETE FROM sessions WHERE {eligible}"),
-            params![cutoff, keep as i64],
+            "DELETE FROM sessions WHERE id IN (SELECT id FROM _prune_ids)",
+            [],
         )?;
+        tx.execute("DROP TABLE _prune_ids", [])?;
         tx.commit()?;
         Ok(pruned)
     }
@@ -411,5 +420,47 @@ mod tests {
 
         // A keep larger than the row count prunes nothing.
         assert_eq!(db.prune_archived_before(1000, 5000).unwrap(), 0);
+    }
+
+    #[test]
+    fn prune_archived_survives_last_event_at_ties() {
+        // Regression for the Windows "FOREIGN KEY constraint failed" (SQLite
+        // 787): when many sessions share one last_event_at, the keep-boundary
+        // falls inside a tie group. The old code re-evaluated the newest-`keep`
+        // cut once per DELETE, so the events-delete and sessions-delete could
+        // pick different tied rows — deleting a session while keeping its events
+        // and tripping the FK. Freezing the prune set once must make this safe.
+        let tmp = tempfile_path();
+        let db = Db::open(&tmp).unwrap();
+        // Ten sessions ALL stamped at the same time, each with its own event.
+        for i in 0..10 {
+            let mut e = ev("SessionStart", &format!("tie{i}"));
+            e.timestamp = OffsetDateTime::from_unix_timestamp(1000).ok();
+            db.record_event(&e).unwrap();
+        }
+
+        // keep = 3 lands inside the tie group; cutoff = 5000 ages every row in.
+        // Must not error, and must leave no event orphaned.
+        let pruned = db.prune_archived_before(3, 5000).unwrap();
+        assert_eq!(pruned, 7, "ten tied rows minus the keep-3 floor");
+
+        let conn = db.conn.lock().unwrap();
+        let sessions: i64 = conn
+            .query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(sessions, 3, "exactly the keep floor survives");
+        let orphans: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM events \
+                 WHERE session_id NOT IN (SELECT id FROM sessions)",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(orphans, 0, "no event left pointing at a deleted session");
+        let events: i64 = conn
+            .query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(events, 3, "surviving sessions keep their event");
     }
 }

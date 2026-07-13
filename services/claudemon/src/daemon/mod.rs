@@ -76,22 +76,16 @@ pub async fn run(cfg: ServeConfig) -> Result<()> {
         Err(err) => tracing::warn!(?err, "hydrating sessions from db failed"),
     }
 
-    // Retention GC on startup, so a long-lived DB is trimmed even on a daemon
-    // that rarely stays up long enough for the periodic sweep to fire. Keeps the
-    // newest window (exactly what hydration would restore); older rows are only
-    // ever resurfaced archived, so dropping them loses nothing reachable.
-    match db.prune_archived(SESSION_HYDRATE_LIMIT) {
-        Ok(n) if n > 0 => tracing::info!(pruned = n, "pruned archived sessions from db on startup"),
-        Ok(_) => {}
-        Err(err) => tracing::warn!(?err, "startup db retention prune failed"),
-    }
-
     // Persistence runs out-of-band: subscribe to the raw-hook broadcast and
     // write each event to SQLite without blocking the hook handler's response.
     spawn_persistence_task(db.clone(), store.subscribe_hooks());
 
     // Periodic durability sweep: bound the in-memory session map and GC old
-    // SQLite rows so neither grows without limit over long uptime.
+    // SQLite rows so neither grows without limit over long uptime. The FIRST
+    // sweep runs immediately inside this task (off the boot path, on a blocking
+    // thread) so a long-lived DB is still trimmed on a daemon that rarely stays
+    // up — WITHOUT the synchronous startup prune that used to run here and could
+    // delay the api-server bind past the client's health-check window.
     spawn_maintenance_task(store.clone(), db.clone());
 
     // Transcript tailer: daemon-owned conversation parsing. Streams structured
@@ -394,9 +388,9 @@ fn spawn_maintenance_task(store: SessionStore, db: Db) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(MAINTENANCE_INTERVAL);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        // The first tick fires immediately — skip it (boot just hydrated +
-        // pruned) so the first real sweep is one interval out.
-        interval.tick().await;
+        // The first tick fires immediately, so the startup GC pass happens here
+        // in the background (not synchronously before the servers bind), then
+        // every MAINTENANCE_INTERVAL after.
         loop {
             interval.tick().await;
             let evicted = store.evict_stale_stopped();
