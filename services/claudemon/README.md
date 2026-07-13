@@ -394,6 +394,5 @@ terminals fall back to Alt+Enter or Ctrl+J.
 
 ## License
 
-Source-available under the Business Source License 1.1 (BSL 1.1). See the
-[LICENSE](../../LICENSE) at the repo root for the full terms and the plain-language
-summary. Each version converts to the MIT License on its Change Date.
+Open source under the MIT License. See the [LICENSE](../../LICENSE) at the repo
+root for the full terms.

@@ -201,18 +201,8 @@ don't file those as public issues.
 
 ## License
 
-Workspacer is **source-available** under the
-[Business Source License 1.1](LICENSE).
-
-In plain terms:
-
-- The full source is public — read it, build it, modify it, share your changes.
-- **Free to use, including at work**, as long as your organization has **at most
-  five (5) total users** of Workspacer.
-- **Six (6)+ users needs a commercial license.** So do hosted/managed-service
-  resale offerings. Reach out via the licensor contact in the [LICENSE](LICENSE).
-- Each version becomes MIT-licensed four years after it's published.
-
-This is not an OSI "open source" license today, but every version converts to
-the fully-open MIT License on its Change Date. The summary above is for
-convenience only and is not legal advice — the [LICENSE](LICENSE) file controls.
+Workspacer is **open source** under the [MIT License](LICENSE) — read it, build
+it, modify it, redistribute it, use it commercially, no strings attached. The
+only requirement is that the copyright notice and license text travel with
+copies or substantial portions of the software. See the [LICENSE](LICENSE) file
+for the full terms.

@@ -124,20 +124,15 @@ the commit hash to that file.
 
 ## Contributor terms
 
-Workspacer is distributed under the [Business Source License 1.1](LICENSE),
-which converts to the MIT License over time. Because the project is offered under
-both this source-available license and commercial licenses, we need to keep the
-rights to your contributions clear.
+Workspacer is distributed under the [MIT License](LICENSE).
 
 By submitting a contribution (a pull request, patch, or any other work) you agree
 that:
 
 1. You are legally able to make the contribution, and it is your original work
    (or you have the right to submit it).
-2. You license your contribution to the project and its maintainer under the same
-   terms as the project (BSL 1.1, converting to MIT), **and** you grant the
-   maintainer the right to relicense your contribution — including under
-   commercial license terms — as part of the project as a whole.
+2. You license your contribution to the project under the MIT License, the same
+   terms as the project as a whole.
 
 If your employer has rights to work you create, make sure you have permission to
 contribute before you do. If we ever adopt a formal Contributor License Agreement
