@@ -114,7 +114,7 @@ export const CONFIG_DEFAULTS = {
     ],
   },
   keybindings: {
-    prefix: 'mod+space',
+    prefix: 'ctrl+space',
     chordHints: true,
     presetId: 'vscode',
     shortcuts: {

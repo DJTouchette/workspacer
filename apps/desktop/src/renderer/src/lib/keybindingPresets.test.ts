@@ -64,7 +64,7 @@ describe('applyPresetKeybindings', () => {
     };
     const next = applyPresetKeybindings('vim', base);
     expect(next.presetId).toBe('vim');
-    expect(next.prefix).toBe('space');
+    expect(next.prefix).toBe('ctrl+space');
     // Diverged binding survives; untouched one takes the new preset's value.
     expect(next.shortcuts?.settings).toBe('mod+9');
     expect(next.shortcuts?.['nav-left']).toBe(KEYBINDING_PRESETS.vim.shortcuts['nav-left']);

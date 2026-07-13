@@ -13,6 +13,14 @@
  * a focused terminal keeps Ctrl+C / Ctrl+L / etc. — the whole app is
  * deliberately terminal-safe, and presets honour that (no raw Ctrl+letter for
  * structural work).
+ *
+ * The leader is a literal `ctrl+space` on EVERY preset — it's the one modifier
+ * combo that's safe on all platforms (Cmd+Space is Spotlight on macOS, and a
+ * bare key like `space` would eat the spacebar in this non-modal GUI). That's
+ * also why terminal-safety pushes structural/nav onto the leader, so presets
+ * differ mainly in their direct OVERLAY combos, their chord grouping (flat vs
+ * which-key submenus), and whether they enable editor Vim mode — not in the
+ * leader or the nav keys.
  */
 import type { Config, KeybindingsConfig } from '../hooks/useConfig';
 
@@ -39,7 +47,7 @@ const VSCODE: KeybindingPreset = {
   id: 'vscode',
   label: 'VS Code',
   description: 'Familiar Ctrl/Cmd+Shift combos, quick-open on ⌘P.',
-  prefix: 'mod+space',
+  prefix: 'ctrl+space',
   chordHints: true,
   shortcuts: {
     'command-palette': 'mod+shift+p',
@@ -81,14 +89,17 @@ const VSCODE: KeybindingPreset = {
 };
 
 // ── Vim ──────────────────────────────────────────────────────────────────────
-// A which-key / LazyVim-flavoured layer: bare `space` leader, everything on
-// chords, with Window (`w`) and Agent (`a`) submenus that exercise the chord
-// tree. Also flips the CodeMirror editor into Vim mode.
+// A which-key / LazyVim-flavoured layer: overlays AND structural live on leader
+// chords (nothing on mod-combos), with Window (`w`) and Agent (`a`) submenus
+// that exercise the chord tree, plus the CodeMirror editor flipped into Vim
+// mode. Shares the ctrl+space leader (a bare `space` leader would eat the
+// spacebar in this non-modal GUI). This is the standout preset — pressing the
+// leader opens a which-key menu instead of a modifier reflex.
 const VIM: KeybindingPreset = {
   id: 'vim',
   label: 'Vim',
-  description: 'Space leader, which-key chords, Vim editor mode on.',
-  prefix: 'space',
+  description: 'Which-key leader chords + editor Vim mode.',
+  prefix: 'ctrl+space',
   chordHints: true,
   editorVim: true,
   shortcuts: {
@@ -138,7 +149,7 @@ const JETBRAINS: KeybindingPreset = {
   id: 'jetbrains',
   label: 'JetBrains',
   description: 'IntelliJ-style combos (approximate — no double-tap).',
-  prefix: 'mod+space',
+  prefix: 'ctrl+space',
   chordHints: true,
   shortcuts: {
     'command-palette': 'mod+shift+a', // Find Action (Search Everywhere needs double-Shift)

@@ -188,7 +188,7 @@ describe('deepMerge semantics – via configService.saveConfig', () => {
     // Other shortcuts survive (flat prefix chord default)
     expect(cfg.keybindings.shortcuts['close-pane']).toBe('prefix w');
     // Sibling keys of shortcuts survive (default prefix from the VS Code preset)
-    expect(cfg.keybindings.prefix).toBe('mod+space');
+    expect(cfg.keybindings.prefix).toBe('ctrl+space');
   });
 
   it('replaces a key with a falsy value (false) rather than keeping the default', () => {

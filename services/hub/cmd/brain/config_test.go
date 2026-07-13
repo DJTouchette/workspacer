@@ -196,7 +196,7 @@ func TestMigrateKeybindingsLegacyVim(t *testing.T) {
 	migrated := migrateKeybindings(cfg)
 
 	kb := migrated["keybindings"].(map[string]any)
-	if kb["prefix"] != "mod+space" {
+	if kb["prefix"] != "ctrl+space" {
 		t.Errorf("legacy keybindings should reset to prefix scheme, got %v", kb["prefix"])
 	}
 	if _, hasMode := kb["mode"]; hasMode {
