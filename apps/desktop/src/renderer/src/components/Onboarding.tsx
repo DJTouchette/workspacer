@@ -2,6 +2,12 @@ import React from 'react';
 import { BrandMark, Wordmark } from './Brand';
 import { ClaudeLogo, OpenAILogo, OpenCodeLogo, PiLogo } from './agentLogos';
 import { formatBinding } from '../lib/shortcuts';
+import {
+  KEYBINDING_PRESETS,
+  PRESET_ORDER,
+  isPresetId,
+  type PresetId,
+} from '../lib/keybindingPresets';
 
 /**
  * The welcome card. Two showings, both as a modal overlay:
@@ -60,11 +66,25 @@ const Onboarding: React.FC<{
   shortcuts: Record<string, string>;
   /** Configured chord prefix, so "prefix i"-style bindings render correctly. */
   prefix?: string;
+  /** Active keybinding preset id, so the keymap picker shows the current choice. */
+  presetId?: string;
+  /** Apply a keybinding preset (first-run "pick your keymap" + replay). */
+  onChoosePreset?: (id: PresetId) => void;
   /** Render as a modal overlay instead of filling the content area. */
   overlay?: boolean;
   /** First-run showing (dismiss persists the flag) vs a palette replay. */
   firstRun?: boolean;
-}> = ({ onSpawn, onDismiss, onOpenKeybindings, shortcuts, prefix, overlay, firstRun }) => {
+}> = ({
+  onSpawn,
+  onDismiss,
+  onOpenKeybindings,
+  shortcuts,
+  prefix,
+  presetId,
+  onChoosePreset,
+  overlay,
+  firstRun,
+}) => {
   // Fallbacks mirror configDefaults.ts; the map is normally already merged
   // with defaults, so these only cover a not-yet-loaded config.
   const k = (id: string, fallback: string) => formatBinding(shortcuts[id] || fallback, prefix);
@@ -183,6 +203,69 @@ const Onboarding: React.FC<{
           <Keys combo={k('spawn-agent', 'ctrl+shift+n')} onAccent />
         </button>
       </div>
+
+      {/* Keymap — pick a preset up front; the "Get around" bindings below
+          re-render to match immediately. */}
+      {onChoosePreset && (
+        <div
+          style={{
+            position: 'relative',
+            borderTop: '1px solid var(--wks-border-subtle)',
+            padding: '18px 24px 4px',
+          }}
+        >
+          <div
+            style={{
+              fontSize: '0.62rem',
+              fontWeight: 700,
+              letterSpacing: '0.12em',
+              textTransform: 'uppercase',
+              color: 'var(--wks-text-faint)',
+              padding: '0 8px 10px',
+            }}
+          >
+            Keymap
+          </div>
+          <div style={{ display: 'flex', gap: 8, padding: '0 8px' }}>
+            {PRESET_ORDER.map((id) => {
+              const active = isPresetId(presetId) && presetId === id;
+              const p = KEYBINDING_PRESETS[id];
+              return (
+                <button
+                  key={id}
+                  onClick={() => onChoosePreset(id)}
+                  title={p.description}
+                  style={{
+                    flex: 1,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 3,
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                    padding: '9px 11px',
+                    borderRadius: 'var(--wks-radius-md, 8px)',
+                    fontFamily: 'inherit',
+                    background: active ? 'var(--wks-accent-bg)' : 'var(--wks-bg-elevated)',
+                    border: `1px solid ${active ? 'var(--wks-accent-glow)' : 'var(--wks-border-subtle)'}`,
+                    color: 'var(--wks-text-primary)',
+                  }}
+                >
+                  <span style={{ fontSize: '0.8rem', fontWeight: 700 }}>{p.label}</span>
+                  <span
+                    style={{
+                      fontSize: '0.62rem',
+                      color: 'var(--wks-text-faint)',
+                      lineHeight: 1.35,
+                    }}
+                  >
+                    {p.description}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Get around — the five doors, with the user's real bindings. */}
       <div

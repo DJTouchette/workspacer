@@ -83,6 +83,10 @@ export interface KeybindingsConfig {
   /** Expand the chord indicator into a which-key cheatsheet of the available
    *  prefix chords. Default true. */
   chordHints?: boolean;
+  /** The keybinding preset last applied ('vscode' | 'vim' | 'jetbrains'). Used
+   *  by the Settings picker to show the active preset and to preserve user
+   *  rebinds when switching presets. Absent on legacy configs. */
+  presetId?: string;
 }
 
 export interface NotificationsConfig {

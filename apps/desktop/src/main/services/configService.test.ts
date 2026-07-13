@@ -187,8 +187,8 @@ describe('deepMerge semantics – via configService.saveConfig', () => {
     expect(cfg.keybindings.shortcuts['new-terminal']).toBe('ctrl+shift+t');
     // Other shortcuts survive (flat prefix chord default)
     expect(cfg.keybindings.shortcuts['close-pane']).toBe('prefix w');
-    // Sibling keys of shortcuts survive
-    expect(cfg.keybindings.prefix).toBe('ctrl+space');
+    // Sibling keys of shortcuts survive (default prefix from the VS Code preset)
+    expect(cfg.keybindings.prefix).toBe('mod+space');
   });
 
   it('replaces a key with a falsy value (false) rather than keeping the default', () => {

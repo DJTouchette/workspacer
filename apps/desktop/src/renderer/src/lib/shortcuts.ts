@@ -12,12 +12,34 @@ const PART_DISPLAY: Record<string, string> = {
   '`': '`',
 };
 
+/** True on macOS, where the `mod` token means Cmd (⌘) rather than Ctrl. Guards
+ *  for non-browser contexts (tests) where `navigator` may be absent. */
+export function isMacPlatform(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const p = (navigator.platform || navigator.userAgent || '').toUpperCase();
+  return p.includes('MAC');
+}
+
+/** Expand the platform-neutral `mod` token to the concrete primary modifier —
+ *  `meta` (Cmd) on macOS, `ctrl` everywhere else — so a preset can ship one
+ *  binding that feels native on every OS. Pure: pass `isMac` explicitly in
+ *  tests. Combos without `mod` (incl. `prefix …` chords) pass through unchanged. */
+export function resolveMod(combo: string, isMac: boolean = isMacPlatform()): string {
+  if (!combo.includes('mod')) return combo;
+  return combo
+    .split('+')
+    .map((p) => (p.toLowerCase() === 'mod' ? (isMac ? 'meta' : 'ctrl') : p))
+    .join('+');
+}
+
 /** True if the combo carries any modifier (ctrl/alt/shift/meta). A modifier-less
  *  combo (e.g. a bare "`" or "space") is only safe as a global binding when it's
  *  guarded against editable contexts — see isEditableTarget. */
 export function comboHasModifiers(combo: string): boolean {
   const parts = (combo ?? '').toLowerCase().trim().split('+');
-  return parts.some((p) => p === 'ctrl' || p === 'alt' || p === 'shift' || p === 'meta');
+  return parts.some(
+    (p) => p === 'ctrl' || p === 'alt' || p === 'shift' || p === 'meta' || p === 'mod',
+  );
 }
 
 /** True when the event target is a place the user is actively typing: a form
@@ -37,10 +59,13 @@ export function isEditableTarget(target: EventTarget | null): boolean {
 export function formatCombo(combo: string): string {
   return combo
     .split('+')
-    .map(
-      (p) =>
-        PART_DISPLAY[p] ??
-        (p.length === 1 ? p.toUpperCase() : p.charAt(0).toUpperCase() + p.slice(1)),
+    .map((p) =>
+      p === 'mod'
+        ? isMacPlatform()
+          ? 'Cmd'
+          : 'Ctrl'
+        : (PART_DISPLAY[p] ??
+          (p.length === 1 ? p.toUpperCase() : p.charAt(0).toUpperCase() + p.slice(1))),
     )
     .join('+');
 }
@@ -237,7 +262,7 @@ export interface DigitRangeCombo {
 /** Parse "ctrl+shift+1-9" into its modifier flags; null if it isn't a
  *  digit-range combo. The pressed digit (1–9) is supplied at match time. */
 export function parseDigitRangeCombo(combo: string | undefined): DigitRangeCombo | null {
-  const parts = (combo ?? '').toLowerCase().trim().split('+');
+  const parts = resolveMod((combo ?? '').toLowerCase().trim()).split('+');
   if (parts[parts.length - 1] !== DIGIT_RANGE_TOKEN) return null;
   return {
     ctrl: parts.includes('ctrl'),
@@ -253,6 +278,9 @@ export const CHORD_GROUP_LABELS: Record<string, string> = {
   n: 'New',
   t: 'Tab',
   p: 'Pane',
+  // Groups used by the Vim preset's which-key submenus.
+  w: 'Window',
+  a: 'Agent',
 };
 
 export interface ChordTreeNode {
@@ -346,7 +374,7 @@ export function chordBreadcrumb(
  *  bare "j". Modifiers must match exactly (so "j" doesn't fire on Ctrl+J).
  *  Prefix chords and digit-range combos never match here. */
 export function eventMatchesCombo(e: KeyboardEvent, combo: string | undefined): boolean {
-  const trimmed = (combo ?? '').toLowerCase().trim();
+  const trimmed = resolveMod((combo ?? '').toLowerCase().trim());
   if (!trimmed || /^prefix\s/.test(trimmed)) return false;
   const parts = trimmed.split('+');
   const key = parts[parts.length - 1];

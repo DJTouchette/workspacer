@@ -132,8 +132,8 @@ func TestDefaultConfigParses(t *testing.T) {
 	kb, _ := cfg["keybindings"].(map[string]any)
 	sc, _ := kb["shortcuts"].(map[string]any)
 	// The backtick-bearing binding is the one most likely to break the literal.
-	if sc["toggle-terminal"] != "ctrl+`" {
-		t.Fatalf("toggle-terminal = %v, want ctrl+`", sc["toggle-terminal"])
+	if sc["toggle-terminal"] != "mod+`" {
+		t.Fatalf("toggle-terminal = %v, want mod+`", sc["toggle-terminal"])
 	}
 	if ui, _ := cfg["ui"].(map[string]any); ui["theme"] != "dark" {
 		t.Fatalf("ui.theme = %v, want dark", ui["theme"])
@@ -196,7 +196,7 @@ func TestMigrateKeybindingsLegacyVim(t *testing.T) {
 	migrated := migrateKeybindings(cfg)
 
 	kb := migrated["keybindings"].(map[string]any)
-	if kb["prefix"] != "ctrl+space" {
+	if kb["prefix"] != "mod+space" {
 		t.Errorf("legacy keybindings should reset to prefix scheme, got %v", kb["prefix"])
 	}
 	if _, hasMode := kb["mode"]; hasMode {

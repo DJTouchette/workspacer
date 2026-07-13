@@ -76,10 +76,12 @@ interface Config {
     default: Array<{ id: string; type: string; title: string; width: number; order: number }>;
   };
   keybindings: {
-    /** Workspace prefix combo (default 'ctrl+space'). */
+    /** Workspace prefix combo (default 'mod+space'). */
     prefix: string;
     /** Expand the chord indicator into a which-key cheatsheet. Default true. */
     chordHints?: boolean;
+    /** Keybinding preset last applied ('vscode' | 'vim' | 'jetbrains'). */
+    presetId?: string;
     shortcuts: Record<string, string>;
   };
   notifications: {
@@ -296,7 +298,15 @@ function migrateKeybindings(cfg: Config): Config {
   if (!isLegacy) return cfg;
 
   const hadVim = kb?.mode === 'vim';
-  cfg.keybindings = { prefix: 'ctrl+space', chordHints: true, shortcuts: { ...DEFAULT_SHORTCUTS } };
+  // Reset to the shared default keybindings (prefix + preset), not a hardcoded
+  // literal, so this stays in lockstep with the Go brain's migrateKeybindings
+  // (which resets to defaultConfig()) and the current default preset.
+  cfg.keybindings = {
+    prefix: CONFIG_DEFAULTS.keybindings.prefix,
+    chordHints: true,
+    presetId: CONFIG_DEFAULTS.keybindings.presetId,
+    shortcuts: { ...DEFAULT_SHORTCUTS },
+  };
   if (hadVim) cfg.editor = { ...cfg.editor, vim: true };
 
   try {

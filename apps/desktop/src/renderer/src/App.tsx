@@ -6,6 +6,7 @@ import SideBar, { SIDEBAR_WIDTH, SIDEBAR_RAIL_WIDTH } from './components/SideBar
 import ErrorBoundary from './components/ErrorBoundary';
 import { HomeSpace } from './components/HomeSpace';
 import Onboarding from './components/Onboarding';
+import { presetConfigPatch } from './lib/keybindingPresets';
 import { resolveNavHeight } from './lib/layoutUtils';
 import PluginInstallDialog from './components/PluginInstallDialog';
 import { usePlugins } from './hooks/usePlugins';
@@ -1967,6 +1968,8 @@ function App() {
             }}
             shortcuts={config.keybindings?.shortcuts ?? {}}
             prefix={kbPrefix}
+            presetId={config.keybindings?.presetId}
+            onChoosePreset={(id) => saveConfig(presetConfigPatch(id, config))}
           />
         )}
 

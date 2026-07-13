@@ -6,6 +6,12 @@ import {
   DIGIT_RANGE_ACTIONS,
   DIGIT_RANGE_TOKEN,
 } from '../../lib/shortcuts';
+import {
+  KEYBINDING_PRESETS,
+  PRESET_ORDER,
+  presetConfigPatch,
+  isPresetId,
+} from '../../lib/keybindingPresets';
 import { Section, Row, ModeButton } from './primitives';
 
 // ── Shortcut Editor ──
@@ -279,8 +285,49 @@ const KeybindingsSection: React.FC<KeybindingsSectionProps> = ({ config, save })
       : 'Press key combo…'
     : formatBinding(prefix);
 
+  const activePreset = isPresetId(config.keybindings?.presetId)
+    ? config.keybindings.presetId
+    : undefined;
+
   return (
     <Section title="Keybindings">
+      <Row label="Preset">
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+          {PRESET_ORDER.map((id) => (
+            <ModeButton
+              key={id}
+              label={KEYBINDING_PRESETS[id].label}
+              active={activePreset === id}
+              onClick={() => save(presetConfigPatch(id, config))}
+            />
+          ))}
+        </div>
+      </Row>
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
+        {activePreset ? KEYBINDING_PRESETS[activePreset].description : 'Custom bindings.'} Switching
+        a preset keeps any keys you&rsquo;ve personally rebound.
+        {activePreset && (
+          <>
+            {' '}
+            <button
+              onClick={() => save(presetConfigPatch(activePreset, config, true))}
+              style={{
+                fontSize: '0.68rem',
+                padding: '1px 6px',
+                borderRadius: '3px',
+                border: '1px solid var(--wks-border)',
+                background: 'transparent',
+                color: 'var(--wks-text-faint)',
+                cursor: 'pointer',
+              }}
+              title={`Discard every override and restore the ${KEYBINDING_PRESETS[activePreset].label} defaults`}
+            >
+              Reset all to {KEYBINDING_PRESETS[activePreset].label}
+            </button>
+          </>
+        )}
+      </div>
+
       <Row label="Prefix">
         <input
           ref={prefixInputRef}

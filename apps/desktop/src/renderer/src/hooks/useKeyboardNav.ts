@@ -146,7 +146,7 @@ export function useKeyboardNav({
   setActivePane,
   onToggleHelp,
   onRenameTab,
-  prefix = 'ctrl+space',
+  prefix = 'mod+space',
   onChordPathChange,
   onOpenSettings,
   onSaveSession,
