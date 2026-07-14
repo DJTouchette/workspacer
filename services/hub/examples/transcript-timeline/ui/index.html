@@ -42,6 +42,19 @@
       white-space: nowrap; overflow: hidden;
     }
     #stats b { color: var(--wks-text-primary, #d4d4d4); font-weight: 600; }
+    #worktree.on { background: var(--wks-accent-bg, #0e639c); color: var(--wks-accent-text, #fff); }
+
+    /* ── worktree replay bar ── */
+    #replaybar {
+      display: none; gap: 10px; align-items: center; padding: 4px 10px; font-size: 11px;
+      background: var(--wks-bg-raised, #23301f); color: var(--wks-success, #9fce8c);
+      border-bottom: 1px solid var(--wks-border-subtle, #2a2a2a);
+      white-space: nowrap; overflow: hidden;
+    }
+    #replaybar.show { display: flex; }
+    #replaybar.bad { color: var(--wks-error, #cf6f6f); }
+    #replaybar .path { overflow: hidden; text-overflow: ellipsis; cursor: pointer; text-decoration: underline dotted; }
+    #replaybar .meta { margin-left: auto; color: var(--wks-text-muted, #888); flex: none; }
 
     /* ── main: chat + files ── */
     .main { flex: 1; display: flex; min-height: 0; }
@@ -138,9 +151,11 @@
     <select id="picker"><option value="">Loading sessions…</option></select>
     <button id="reload" title="Refresh session list">↻</button>
     <button id="toggleFiles" title="Show/hide file changes">Files</button>
+    <button id="worktree" title="Materialize the replay into a real git worktree that follows the scrubber">⎇ Worktree</button>
   </header>
 
   <div id="stats"></div>
+  <div id="replaybar"></div>
 
   <div class="main">
     <div id="chat"><div class="empty">Pick a session to replay.</div></div>
@@ -224,6 +239,9 @@
     let pollTimer = null;
     let playTimer = null;
     let selectedFile = null;
+    let replay = null;        // { dir, baseCommit } when worktree replay is on
+    let replaySeekTimer = null;
+    let replaySeq = 0;        // discards out-of-order seek responses
 
     const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     const setStatus = (msg, bad) => { statusEl.textContent = msg || ''; statusEl.className = bad ? 'bad' : ''; };
@@ -342,6 +360,7 @@
 
     // ── loading a session's timeline ─────────────────────────────────────────
     async function selectSession(sessionId) {
+      await stopReplay(); // a worktree tracks one session; close before switching
       selected = sessions.find((s) => s.sessionId === sessionId) || null;
       stopPoll(); stopPlay();
       items = []; lastSeq = 0; cursor = 0; usingConversation = false; selectedFile = null;
@@ -408,8 +427,90 @@
     }
     function stopPlay() { if (playTimer) { clearInterval(playTimer); playTimer = null; } playEl.textContent = '▶'; }
 
+    // ── worktree replay ──────────────────────────────────────────────────────
+    // With the toggle on, a disposable git worktree (replay.open) physically
+    // follows the scrubber: every cursor move re-seeks it to "the repo as the
+    // session had it at this point" (replay.seek resets to the base commit and
+    // re-applies the edit ops up to the cursor). The agent's checkout is never
+    // touched; replay.close removes the worktree.
+    const replayBar = $('replaybar'), worktreeBtn = $('worktree');
+    const editOpsUpTo = (n) =>
+      items.slice(0, n).filter(isEditTool).map((it) => ({ name: it.name, input: it.input }));
+
+    function setReplayBar(text, bad) {
+      replayBar.className = replay || bad ? 'show' + (bad ? ' bad' : '') : '';
+      replayBar.innerHTML = text;
+    }
+
+    async function startReplay() {
+      if (!selected) return;
+      const firstTs = (items.find((i) => i.ts) || {}).ts;
+      worktreeBtn.disabled = true;
+      try {
+        replay = await call('replay.open', {
+          cwd: selected.cwd, sessionId: selected.sessionId, beforeTs: firstTs,
+        });
+        worktreeBtn.classList.add('on');
+        setReplayBar(
+          `⎇ replaying into <span class="path" id="wtpath" title="Click to copy">${esc(replay.dir)}</span>` +
+          `<span class="meta">base ${esc(replay.baseCommit.slice(0, 7))} · seeking…</span>`
+        );
+        scheduleReplaySeek(0);
+      } catch (e) {
+        replay = null;
+        setReplayBar(`⎇ ${esc(e.message)}`, true);
+        setTimeout(() => { if (!replay) setReplayBar(''); }, 6000);
+      } finally {
+        worktreeBtn.disabled = false;
+      }
+    }
+
+    async function stopReplay() {
+      if (replaySeekTimer) { clearTimeout(replaySeekTimer); replaySeekTimer = null; }
+      if (!replay) return;
+      const sid = selected && selected.sessionId;
+      replay = null;
+      worktreeBtn.classList.remove('on');
+      setReplayBar('');
+      if (sid) { try { await call('replay.close', { sessionId: sid }); } catch { /* already gone */ } }
+    }
+
+    function scheduleReplaySeek(delay = 300) {
+      if (!replay) return;
+      if (replaySeekTimer) clearTimeout(replaySeekTimer);
+      replaySeekTimer = setTimeout(async () => {
+        replaySeekTimer = null;
+        if (!replay || !selected) return;
+        const seq = ++replaySeq;
+        try {
+          const r = await call('replay.seek', { sessionId: selected.sessionId, ops: editOpsUpTo(cursor) });
+          if (seq !== replaySeq || !replay) return; // superseded by a newer scrub
+          const warn = r.skipped && r.skipped.length
+            ? ` · <span title="${esc(r.skipped.map((s) => `${s.op} ${s.path}: ${s.reason}`).join('\n'))}">${r.skipped.length} skipped</span>`
+            : '';
+          setReplayBar(
+            `⎇ replaying into <span class="path" id="wtpath" title="Click to copy">${esc(replay.dir)}</span>` +
+            `<span class="meta">base ${esc(replay.baseCommit.slice(0, 7))} · ${r.applied} ops · ${r.changedFiles} files changed${warn}</span>`
+          );
+        } catch (e) {
+          if (seq === replaySeq && replay) setReplayBar(`⎇ seek failed: ${esc(e.message)}`, true);
+        }
+      }, delay);
+    }
+
+    worktreeBtn.addEventListener('click', () => (replay ? stopReplay() : startReplay()));
+    replayBar.addEventListener('click', (e) => {
+      if (e.target.id === 'wtpath' && replay) navigator.clipboard && navigator.clipboard.writeText(replay.dir);
+    });
+    window.addEventListener('beforeunload', () => {
+      // Best-effort: the pane is closing; ask the host to drop the worktree.
+      if (replay && selected && ws.readyState === 1) {
+        ws.send(JSON.stringify({ op: 'call', id: 'bye', method: 'replay.close', params: { sessionId: selected.sessionId } }));
+      }
+    });
+
     // ── rendering ────────────────────────────────────────────────────────────
-    function renderAll() { renderScrubber(); renderStats(); renderChat(); renderFiles(); }
+    function renderAll() { renderScrubber(); renderStats(); renderChat(); renderFiles(); scheduleReplaySeek(); }
 
     function renderScrubber() {
       sliderEl.max = items.length;

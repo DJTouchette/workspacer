@@ -25,6 +25,7 @@ import { sessionService } from './sessionService';
 import { sessionHistory } from './sessionHistory';
 import { layoutService } from './layoutService';
 import { listClaudeSessionsForDir } from './claudeSessionList';
+import { timelineReplay, type ReplayOp } from './timelineReplayService';
 import { readTextFile, writeTextFile, listDir } from './fileService';
 import { startWatch, stopWatch } from './fileWatchService';
 import { searchProject } from './searchService';
@@ -477,6 +478,31 @@ export function registerHubCapabilities(): void {
     const { sessionId, cwd } = (params ?? {}) as { sessionId?: string; cwd?: string };
     if (!sessionId) throw new Error('sessions.transcript requires { sessionId }');
     return claudemonSessionClient.getTranscript(sessionId, cwd);
+  });
+
+  // ── Timeline worktree replay ─────────────────────────────────────────
+  // Materializes a session's file edits into a disposable git worktree so a
+  // replay UI can scrub real files through time without touching the agent's
+  // checkout. All writes are confined to worktrees the service itself creates
+  // under the OS temp dir (see timelineReplayService).
+  registerCapability('replay.open', async (params: unknown) => {
+    const { cwd, sessionId, beforeTs } = (params ?? {}) as {
+      cwd?: string;
+      sessionId?: string;
+      beforeTs?: string;
+    };
+    if (!cwd || !sessionId) throw new Error('replay.open requires { cwd, sessionId }');
+    return timelineReplay.open(cwd, sessionId, beforeTs);
+  });
+  registerCapability('replay.seek', async (params: unknown) => {
+    const { sessionId, ops } = (params ?? {}) as { sessionId?: string; ops?: ReplayOp[] };
+    if (!sessionId) throw new Error('replay.seek requires { sessionId, ops }');
+    return timelineReplay.seek(sessionId, Array.isArray(ops) ? ops : []);
+  });
+  registerCapability('replay.close', async (params: unknown) => {
+    const { sessionId } = (params ?? {}) as { sessionId?: string };
+    if (!sessionId) throw new Error('replay.close requires { sessionId }');
+    return timelineReplay.close(sessionId);
   });
 
   // Read-only: parsed conversation items + latest sequence number. With

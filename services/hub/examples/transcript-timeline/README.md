@@ -18,6 +18,18 @@ tool calls, and file edits replay in order.
 - **Live tail** — running sessions keep growing at the right edge via
   incremental `sessions.conversation { sinceSeq }` polling; "follow live"
   keeps the scrubber pinned to now.
+- **Worktree replay** — the `⎇ Worktree` toggle materializes the replay
+  into a real, disposable git worktree that physically follows the
+  scrubber. `replay.open` resolves the repo's last commit before the
+  session started and checks it out detached under the OS temp dir;
+  every scrub re-seeks it (`replay.seek` resets to that base and
+  re-applies the session's Write/Edit ops up to the cursor); toggling
+  off (or closing the pane) removes it via `replay.close`. The agent's
+  real checkout is never touched, and ops that no longer apply cleanly
+  (path outside the repo, file diverged) are skipped and reported in
+  the replay bar rather than half-applied. Best-effort by nature:
+  changes made outside tracked tools (shell commands, manual edits)
+  aren't in the transcript, so they don't materialize.
 
 Data comes from two capabilities, normalized into one item shape:
 `sessions.conversation` (claudemon's structured log, used for sessions the

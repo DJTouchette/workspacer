@@ -13,7 +13,10 @@
     "agents.list",
     "claude.sessionsForDir",
     "sessions.conversation",
-    "sessions.transcript"
+    "sessions.transcript",
+    "replay.open",
+    "replay.seek",
+    "replay.close"
   ],
   "consumes": ["agent.state_changed"]
 }
