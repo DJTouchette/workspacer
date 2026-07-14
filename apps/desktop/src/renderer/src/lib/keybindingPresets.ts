@@ -14,13 +14,15 @@
  * deliberately terminal-safe, and presets honour that (no raw Ctrl+letter for
  * structural work).
  *
- * The leader is a literal `ctrl+space` on EVERY preset — it's the one modifier
- * combo that's safe on all platforms (Cmd+Space is Spotlight on macOS, and a
- * bare key like `space` would eat the spacebar in this non-modal GUI). That's
- * also why terminal-safety pushes structural/nav onto the leader, so presets
- * differ mainly in their direct OVERLAY combos, their chord grouping (flat vs
- * which-key submenus), and whether they enable editor Vim mode — not in the
- * leader or the nav keys.
+ * The leader is a literal `ctrl+space` on EVERY preset (Cmd+Space is Spotlight
+ * on macOS, and a bare key like `space` would eat the spacebar in this non-modal
+ * GUI). On Linux it can't stay ctrl+space — fcitx/ibus grab that as their
+ * input-method toggle — so it's substituted at use-time with a single Alt tap;
+ * see resolveLeader (shortcuts.ts). The stored value is untouched, so nothing
+ * migrates. That terminal-safety is also why structural/nav commands live on the
+ * leader, so presets differ mainly in their direct OVERLAY combos, their chord
+ * grouping (flat vs which-key submenus), and whether they enable editor Vim
+ * mode — not in the leader or the nav keys.
  */
 import type { Config, KeybindingsConfig } from '../hooks/useConfig';
 

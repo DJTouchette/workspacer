@@ -5,6 +5,7 @@ import {
   chordNodeAt,
   chordMenu,
   chordBreadcrumb,
+  resolveLeader,
 } from '../src/lib/shortcuts';
 
 describe('formatBinding', () => {
@@ -17,6 +18,26 @@ describe('formatBinding', () => {
   it('formats a multi-step chord', () => {
     expect(formatBinding('prefix t w', 'ctrl+space')).toBe('Ctrl+Space T W');
     expect(formatBinding('prefix t [', 'ctrl+space')).toBe('Ctrl+Space T [');
+  });
+});
+
+describe('resolveLeader', () => {
+  it('substitutes the IME-grabbed ctrl+space with a lone Alt tap on Linux', () => {
+    expect(resolveLeader('ctrl+space', true)).toBe('alt');
+    // Case/whitespace-insensitive on the stored default.
+    expect(resolveLeader(' Ctrl+Space ', true)).toBe('alt');
+  });
+  it('leaves ctrl+space alone off Linux', () => {
+    expect(resolveLeader('ctrl+space', false)).toBe('ctrl+space');
+  });
+  it('never touches a leader other than ctrl+space, even on Linux', () => {
+    // A user's own rebind survives on every platform.
+    expect(resolveLeader('ctrl+shift+j', true)).toBe('ctrl+shift+j');
+    expect(resolveLeader('alt', true)).toBe('alt');
+    expect(resolveLeader('meta+space', true)).toBe('meta+space');
+  });
+  it('renders the substituted leader as a lone Alt in chord displays', () => {
+    expect(formatBinding('prefix t', resolveLeader('ctrl+space', true))).toBe('Alt T');
   });
 });
 

@@ -5,6 +5,7 @@ import {
   ACTION_SECTIONS,
   DIGIT_RANGE_ACTIONS,
   DIGIT_RANGE_TOKEN,
+  resolveLeader,
 } from '../../lib/shortcuts';
 import {
   KEYBINDING_PRESETS,
@@ -38,7 +39,7 @@ const ShortcutEditor: React.FC<{
     ...(DEFAULT_CONFIG.keybindings.shortcuts ?? {}),
     ...(config.keybindings?.shortcuts ?? {}),
   };
-  const prefix = config.keybindings?.prefix ?? 'ctrl+space';
+  const prefix = resolveLeader(config.keybindings?.prefix ?? 'ctrl+space');
   const [capturing, setCapturing] = useState<string | null>(null);
   // True once the prefix has been pressed mid-capture: the next key becomes the
   // chord (stored as "prefix <combo>").
@@ -227,7 +228,7 @@ function pendingModifiers(e: KeyboardEvent): string {
 }
 
 const KeybindingsSection: React.FC<KeybindingsSectionProps> = ({ config, save }) => {
-  const prefix = config.keybindings?.prefix ?? 'ctrl+space';
+  const prefix = resolveLeader(config.keybindings?.prefix ?? 'ctrl+space');
   const chordHints = config.keybindings?.chordHints ?? true;
   const [capturingPrefix, setCapturingPrefix] = useState(false);
   // While held-down modifiers are being typed, show them so the combo forming is

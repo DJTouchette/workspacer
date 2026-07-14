@@ -8,6 +8,7 @@ import {
   DigitRangeCombo,
   comboHasModifiers,
   isEditableTarget,
+  resolveMod,
   SCOPED_ACTIONS,
 } from '../lib/shortcuts';
 
@@ -16,9 +17,36 @@ const CHORD_TIMEOUT = 1500;
 const MODIFIER_KEY_NAMES = new Set(['Control', 'Alt', 'Shift', 'Meta']);
 const KEY_TO_CODE: Record<string, string> = { space: 'Space', '`': 'Backquote' };
 
-/** Build a predicate matching a single keydown against a combo like "ctrl+shift+p". */
-function comboMatcher(combo: string): (e: KeyboardEvent) => boolean {
-  const parts = combo.toLowerCase().trim().split('+');
+/** A lone-modifier leader (e.g. Linux's single Alt tap, substituted for the
+ *  IME-grabbed ctrl+space — see resolveLeader) → the KeyboardEvent.key it fires
+ *  on. A lone modifier can't be matched on key-down (that would fire on the Alt
+ *  of every Alt+Tab); it arms on key-UP after a clean press/release with no other
+ *  key in between, leaving Alt+<key> combos untouched. */
+const LONE_MODIFIER_LEADERS: Record<string, string> = {
+  alt: 'Alt',
+  ctrl: 'Control',
+  shift: 'Shift',
+  meta: 'Meta',
+};
+
+/** True when a modifier other than `selfKey` is held — used to reject Ctrl+Alt
+ *  etc. as a lone-Alt tap. */
+function otherModifierHeld(e: KeyboardEvent, selfKey: string): boolean {
+  return (
+    (selfKey !== 'Control' && e.ctrlKey) ||
+    (selfKey !== 'Alt' && e.altKey) ||
+    (selfKey !== 'Shift' && e.shiftKey) ||
+    (selfKey !== 'Meta' && e.metaKey)
+  );
+}
+
+/** Build a predicate matching a single keydown against a combo like "ctrl+shift+p".
+ *  Resolves the `mod` token (Cmd on macOS / Ctrl elsewhere) FIRST — without this a
+ *  stored `mod+shift+n` parses with needsCtrl=false and silently listens for the
+ *  bare Shift+N instead of Ctrl+Shift+N (the display layer resolves `mod`, so the
+ *  UI would advertise Ctrl+Shift+N while nothing fired). Mirrors eventMatchesCombo. */
+export function comboMatcher(combo: string): (e: KeyboardEvent) => boolean {
+  const parts = resolveMod(combo.toLowerCase().trim()).split('+');
   const key = parts[parts.length - 1];
   const needsCtrl = parts.includes('ctrl');
   const needsAlt = parts.includes('alt');
@@ -187,6 +215,9 @@ export function useKeyboardNav({
     path: null,
     timeoutId: null,
   });
+  // For a lone-modifier leader: true once the modifier is pressed alone and still
+  // a candidate for a "tap" (no other key has joined it). Fires on its key-up.
+  const tapArmedRef = useRef(false);
 
   // Tab navigation
   const goToTab = useCallback(
@@ -240,6 +271,9 @@ export function useKeyboardNav({
     // user is typing — it would swallow the keystroke. Modifier leaders (Ctrl+Space)
     // stay live everywhere. See isEditableTarget for what counts as "typing".
     const prefixNeedsEditableGuard = !comboHasModifiers(prefix);
+    // A lone-modifier leader (Linux's Alt tap) is matched by tap detection on
+    // key-up, not by comboMatcher on key-down; null for ordinary combo leaders.
+    const loneModLeaderKey = LONE_MODIFIER_LEADERS[prefix.toLowerCase().trim()] ?? null;
 
     const cancelChord = () => {
       if (chordRef.current.timeoutId) clearTimeout(chordRef.current.timeoutId);
@@ -427,9 +461,20 @@ export function useKeyboardNav({
         return;
       }
 
-      // 2. Prefix pressed → arm the chord at the root. A bare (modifier-less)
+      // 2. Lone-modifier leader (Alt tap): the modifier alone arms a pending tap;
+      //    any OTHER key means it's a combo (Alt+Tab), so cancel and fall through.
+      //    The tap itself fires on key-up (see the keyup handler below).
+      if (loneModLeaderKey) {
+        if (e.key === loneModLeaderKey) {
+          tapArmedRef.current = !otherModifierHeld(e, loneModLeaderKey);
+          return;
+        }
+        tapArmedRef.current = false;
+      }
+
+      // 3. Combo leader pressed → arm the chord at the root. A bare (modifier-less)
       //    leader is suppressed inside editable contexts so it doesn't eat typing.
-      if (prefixMatch(e)) {
+      if (!loneModLeaderKey && prefixMatch(e)) {
         if (prefixNeedsEditableGuard && isEditableTarget(e.target)) return;
         e.preventDefault();
         e.stopPropagation();
@@ -437,7 +482,7 @@ export function useKeyboardNav({
         return;
       }
 
-      // 3. Direct bindings. Only consume the event for actions we own; let the
+      // 4. Direct bindings. Only consume the event for actions we own; let the
       //    rest (e.g. toggle-inspector, library-picker) reach their listeners.
       for (const [action, matcher] of Object.entries(directRef.current)) {
         if (matcher(e)) {
@@ -449,7 +494,7 @@ export function useKeyboardNav({
         }
       }
 
-      // 4. Digit-range bindings (jump to tab / move tab to slot). Config-driven
+      // 5. Digit-range bindings (jump to tab / move tab to slot). Config-driven
       //    via shortcuts['jump-tab'] / ['move-tab'] (defaults Ctrl+1-9 /
       //    Ctrl+Shift+1-9). Exact-modifier match, so the two never collide.
       const { jump, move } = numberKeysRef.current;
@@ -469,9 +514,25 @@ export function useKeyboardNav({
       }
     };
 
+    // Lone-modifier leader fires on key-up: a clean tap (armed, nothing else
+    // pressed, no chord already open, no other modifier still held) arms the
+    // chord root. Inert for ordinary combo leaders (loneModLeaderKey === null).
+    const upHandler = (e: KeyboardEvent) => {
+      if (!loneModLeaderKey || e.key !== loneModLeaderKey) return;
+      const armed = tapArmedRef.current;
+      tapArmedRef.current = false;
+      if (!armed || chordRef.current.path !== null || otherModifierHeld(e, loneModLeaderKey))
+        return;
+      e.preventDefault();
+      e.stopPropagation();
+      setChordPath([]);
+    };
+
     window.addEventListener('keydown', handler, true);
+    window.addEventListener('keyup', upHandler, true);
     return () => {
       window.removeEventListener('keydown', handler, true);
+      window.removeEventListener('keyup', upHandler, true);
       cancelChord();
     };
   }, [

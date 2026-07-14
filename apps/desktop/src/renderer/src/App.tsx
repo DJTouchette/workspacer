@@ -7,6 +7,7 @@ import ErrorBoundary from './components/ErrorBoundary';
 import { HomeSpace } from './components/HomeSpace';
 import Onboarding from './components/Onboarding';
 import { presetConfigPatch } from './lib/keybindingPresets';
+import { resolveLeader } from './lib/shortcuts';
 import { resolveNavHeight } from './lib/layoutUtils';
 import PluginInstallDialog from './components/PluginInstallDialog';
 import { usePlugins } from './hooks/usePlugins';
@@ -863,7 +864,12 @@ function App() {
     requestAnimationFrame(() => scrollToTab(newId));
   }, [tabs, activeAgent, addTabWithConfig, setActiveTabId, setActivePane, scrollToTab]);
 
-  const kbPrefix = config.keybindings?.prefix ?? 'ctrl+space';
+  // Resolve the leader to what actually works on this platform: on Linux the
+  // stored ctrl+space is grabbed by fcitx/ibus, so it becomes a single Alt tap
+  // (see resolveLeader). This feeds both the keyboard handler and every shortcut
+  // display, so chords render as "Alt T" and fire correctly, with nothing
+  // rewritten on disk.
+  const kbPrefix = resolveLeader(config.keybindings?.prefix ?? 'ctrl+space');
   const kbChordHints = config.keybindings?.chordHints ?? true;
   // Defaults merged under any user overrides, so shortcut badges/labels always
   // render even when the saved config only carries a partial map.

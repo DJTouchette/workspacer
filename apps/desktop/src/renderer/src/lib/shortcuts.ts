@@ -20,6 +20,28 @@ export function isMacPlatform(): boolean {
   return p.includes('MAC');
 }
 
+/** True on Linux. Matters for the chord leader: the historical `ctrl+space`
+ *  default is the fcitx/ibus input-method toggle (their built-in trigger key),
+ *  so it's swallowed by the IME before it ever reaches the app. navigator-guarded
+ *  for non-browser contexts (tests). */
+export function isLinuxPlatform(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const p = (navigator.platform || navigator.userAgent || '').toUpperCase();
+  return p.includes('LINUX') && !p.includes('MAC');
+}
+
+/** Resolve the workspace leader to what actually works on this platform — the
+ *  same use-time substitution `resolveMod` does for the `mod` token, so nothing
+ *  needs migrating on disk. On Linux, `ctrl+space` can never reach the app
+ *  (fcitx/ibus grab it as their input-method toggle), so it's substituted with a
+ *  single Alt tap — a lone modifier the chord handler arms on key-up (see
+ *  useKeyboardNav). Every other leader, including a user's own rebind, passes
+ *  through untouched. Pure: pass `isLinux` explicitly in tests. */
+export function resolveLeader(prefix: string, isLinux: boolean = isLinuxPlatform()): string {
+  if (isLinux && (prefix ?? '').trim().toLowerCase() === 'ctrl+space') return 'alt';
+  return prefix;
+}
+
 /** Expand the platform-neutral `mod` token to the concrete primary modifier —
  *  `meta` (Cmd) on macOS, `ctrl` everywhere else — so a preset can ship one
  *  binding that feels native on every OS. Pure: pass `isMac` explicitly in
