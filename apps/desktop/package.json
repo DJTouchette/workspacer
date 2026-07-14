@@ -1,6 +1,6 @@
 {
   "name": "workspacer",
-  "version": "0.128.1",
+  "version": "0.129.0",
   "description": "A control plane and IDE for coding agents",
   "homepage": "https://github.com/DJTouchette/workspacer",
   "author": "Damien Touchette <damien.touchette@businessinfusions.com>",
