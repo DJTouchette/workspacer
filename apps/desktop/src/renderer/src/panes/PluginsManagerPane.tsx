@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { usePlugins } from '../hooks/usePlugins';
 import PluginInstallDialog from '../components/PluginInstallDialog';
 import ExamplesGalleryDialog from '../components/ExamplesGalleryDialog';
+import PluginCatalogDialog from '../components/PluginCatalogDialog';
 import { pluginRequirement } from '../types/plugin';
 import { hasSensitivePermission } from '../lib/pluginPermissions';
 import { PluginPermissions } from '../components/plugin/PluginPermissions';
@@ -70,6 +71,7 @@ const PluginsManagerPane: React.FC<{ title?: string }> = () => {
   const sidecar = useSidecarStates();
   const [showInstall, setShowInstall] = useState(false);
   const [showExamples, setShowExamples] = useState(false);
+  const [showCatalog, setShowCatalog] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [permsOpen, setPermsOpen] = useState<Set<string>>(new Set());
   const togglePerms = (id: string) =>
@@ -164,6 +166,22 @@ const PluginsManagerPane: React.FC<{ title?: string }> = () => {
           }}
         >
           Browse examples…
+        </button>
+        <button
+          onClick={() => setShowCatalog(true)}
+          style={{
+            fontSize: '0.72rem',
+            fontFamily: 'inherit',
+            cursor: 'pointer',
+            background: 'transparent',
+            color: 'var(--wks-text-secondary, var(--wks-text-primary))',
+            border: '1px solid var(--wks-border-input)',
+            borderRadius: 'var(--wks-radius-sm)',
+            padding: '5px 12px',
+            fontWeight: 600,
+          }}
+        >
+          Browse catalog…
         </button>
         <button
           onClick={() => setShowInstall(true)}
@@ -356,6 +374,12 @@ const PluginsManagerPane: React.FC<{ title?: string }> = () => {
       </div>
 
       {showInstall && <PluginInstallDialog onClose={() => setShowInstall(false)} />}
+      {showCatalog && (
+        <PluginCatalogDialog
+          installedIds={plugins.map((p) => p.id)}
+          onClose={() => setShowCatalog(false)}
+        />
+      )}
       {showExamples && (
         <ExamplesGalleryDialog
           installedIds={plugins.map((p) => p.id)}

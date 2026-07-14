@@ -7,6 +7,8 @@ interface PluginInstallDialogProps {
   onClose: () => void;
   /** Called after a successful install so the host can refresh / surface it. */
   onInstalled?: (pluginId: string) => void;
+  /** Prefill the URL and inspect it immediately (catalog one-click install). */
+  initialUrl?: string;
 }
 
 /**
@@ -18,8 +20,12 @@ interface PluginInstallDialogProps {
  *      sidecar that needs a missing runtime — is flagged before committing.
  *   2. Install — download again, run any build step, supervise the sidecar.
  */
-const PluginInstallDialog: React.FC<PluginInstallDialogProps> = ({ onClose, onInstalled }) => {
-  const [url, setUrl] = useState('');
+const PluginInstallDialog: React.FC<PluginInstallDialogProps> = ({
+  onClose,
+  onInstalled,
+  initialUrl,
+}) => {
+  const [url, setUrl] = useState(initialUrl ?? '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Live install stage (downloading / extracting / building) from the hub bus.
@@ -49,8 +55,8 @@ const PluginInstallDialog: React.FC<PluginInstallDialogProps> = ({ onClose, onIn
   }, []);
 
   // Step 1: download + read the manifest without installing.
-  const inspect = async () => {
-    const trimmed = url.trim();
+  const inspect = async (raw?: string) => {
+    const trimmed = (raw ?? url).trim();
     if (!trimmed || busy) return;
     setBusy(true);
     setError(null);
@@ -89,6 +95,12 @@ const PluginInstallDialog: React.FC<PluginInstallDialogProps> = ({ onClose, onIn
       setBusy(false);
     }
   };
+
+  // Catalog entry point: jump straight to the inspect/consent step.
+  useEffect(() => {
+    if (initialUrl) inspect(initialUrl);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const req = preview ? pluginRequirement(preview) : null;
 
@@ -328,7 +340,7 @@ const PluginInstallDialog: React.FC<PluginInstallDialogProps> = ({ onClose, onIn
             {preview ? 'Back' : 'Cancel'}
           </button>
           <button
-            onClick={preview ? install : inspect}
+            onClick={preview ? install : () => inspect()}
             disabled={!url.trim() || busy}
             style={{
               fontSize: '0.78rem',
