@@ -116,6 +116,10 @@ struct TailLog {
     side: std::collections::HashMap<String, SideCursor>,
     items: Vec<ConversationItem>,
     seq: u64,
+    /// Folded TaskCreate/TaskUpdate state — the task-tool counterpart of the
+    /// TodoWrite plan, carried across batches because task edits are
+    /// incremental (unlike TodoWrite's full rewrites).
+    tasks: TaskFold,
 }
 
 impl TailLog {
@@ -250,10 +254,10 @@ async fn tail_one(
     session_id: &str,
     path: &str,
 ) -> std::io::Result<()> {
-    let (mut offset, mut partial, mut reset) = match conv.logs.get(session_id) {
-        Some(l) if l.path == path => (l.offset, l.partial.clone(), false),
+    let (mut offset, mut partial, mut reset, mut task_fold) = match conv.logs.get(session_id) {
+        Some(l) if l.path == path => (l.offset, l.partial.clone(), false, l.tasks.clone()),
         // New session, or claude switched transcript files (e.g. resume).
-        _ => (0, Vec::new(), true),
+        _ => (0, Vec::new(), true, TaskFold::default()),
     };
 
     let len = tokio::fs::metadata(path).await?.len();
@@ -262,6 +266,7 @@ async fn tail_one(
         offset = 0;
         partial.clear();
         reset = true;
+        task_fold = TaskFold::default();
     }
     if len == offset && !reset {
         return Ok(());
@@ -300,6 +305,15 @@ async fn tail_one(
         }
         if let Ok(value) = serde_json::from_str::<Value>(line) {
             items.extend(items_from_row(&value));
+            // Task tools and TodoWrite feed the same last-write-wins plan, in
+            // row order — whichever the agent used most recently wins.
+            if task_fold.fold_row(&value) {
+                let ts = value
+                    .get("timestamp")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                latest_plan = Some(task_fold.to_plan(ts));
+            }
             if let Some(plan) = plan_from_row(&value) {
                 latest_plan = Some(plan);
             }
@@ -318,7 +332,14 @@ async fn tail_one(
         entry.path = path.to_string();
         entry.offset = offset;
         entry.partial = new_partial;
+        entry.tasks = task_fold;
         if items.is_empty() && !reset {
+            // No conversation items, but a plan change must still surface
+            // (e.g. a row that only confirmed a TaskCreate).
+            if let Some(plan) = latest_plan {
+                drop(entry);
+                store.set_plan(conv, session_id, plan);
+            }
             return Ok(());
         }
         entry.seq += items.len() as u64;
@@ -674,6 +695,205 @@ fn plan_from_todos(input: &Value, updated_at: Option<String>) -> Plan {
         })
         .unwrap_or_default();
     Plan { steps, updated_at }
+}
+
+// ── Task-tool plan folding ──────────────────────────────────────────────────
+
+/// Folds Claude Code's incremental task tools into the same [`Plan`] that
+/// `TodoWrite` rows produce, so task-tool sessions light up every plan surface
+/// (status bar, fleet cards, chat) instead of leaving a stale checklist.
+///
+/// Creation is two-phase in the transcript: the assistant's `TaskCreate`
+/// tool_use carries the subject, and the paired tool_result assigns the id
+/// ("Task #3 created successfully: …") — so creates wait in `pending` until
+/// their result lands (an `is_error` result drops them). `TaskUpdate` mutates
+/// by `taskId`: `status` (with `"deleted"` removing the task), `subject`, and
+/// `activeForm`; ownership/dependency edits don't change the visible list and
+/// are ignored. Skips meta/sidechain rows like [`plan_from_row`].
+#[derive(Debug, Clone, Default)]
+pub struct TaskFold {
+    /// Confirmed tasks, in creation order.
+    tasks: Vec<TaskEntry>,
+    /// `TaskCreate`s awaiting their tool_result, keyed by tool_use id.
+    pending: std::collections::HashMap<String, TaskEntry>,
+}
+
+#[derive(Debug, Clone)]
+struct TaskEntry {
+    id: String,
+    subject: String,
+    active_form: Option<String>,
+    status: PlanStatus,
+}
+
+impl TaskFold {
+    pub fn to_plan(&self, updated_at: Option<String>) -> Plan {
+        Plan {
+            steps: self
+                .tasks
+                .iter()
+                .map(|t| PlanStep {
+                    content: t.subject.clone(),
+                    status: t.status,
+                    active_form: t.active_form.clone(),
+                })
+                .collect(),
+            updated_at,
+        }
+    }
+
+    /// Fold one transcript row. Returns true when the visible task list
+    /// changed — i.e. when a fresh [`Plan`] should be emitted.
+    pub fn fold_row(&mut self, value: &Value) -> bool {
+        if value
+            .get("isMeta")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+            || value
+                .get("isSidechain")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        {
+            return false;
+        }
+        let Some(content) = value
+            .get("message")
+            .and_then(|m| m.get("content"))
+            .and_then(Value::as_array)
+        else {
+            return false;
+        };
+        match value.get("type").and_then(Value::as_str) {
+            Some("assistant") => self.fold_tool_uses(content),
+            Some("user") => self.fold_tool_results(content),
+            _ => false,
+        }
+    }
+
+    fn fold_tool_uses(&mut self, content: &[Value]) -> bool {
+        let mut changed = false;
+        for b in content {
+            if b.get("type").and_then(Value::as_str) != Some("tool_use") {
+                continue;
+            }
+            let input = b.get("input").unwrap_or(&Value::Null);
+            match b.get("name").and_then(Value::as_str) {
+                Some("TaskCreate") => {
+                    let Some(tool_id) = b.get("id").and_then(Value::as_str) else {
+                        continue;
+                    };
+                    let subject = input
+                        .get("subject")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                        .or_else(|| {
+                            input
+                                .get("description")
+                                .and_then(Value::as_str)
+                                .and_then(|d| d.lines().next())
+                                .map(str::to_owned)
+                        })
+                        .unwrap_or_default();
+                    if subject.is_empty() {
+                        continue;
+                    }
+                    self.pending.insert(
+                        tool_id.to_owned(),
+                        TaskEntry {
+                            id: String::new(),
+                            subject,
+                            active_form: input
+                                .get("activeForm")
+                                .and_then(Value::as_str)
+                                .map(str::to_owned),
+                            status: PlanStatus::Pending,
+                        },
+                    );
+                }
+                Some("TaskUpdate") => {
+                    let id = match input.get("taskId") {
+                        Some(Value::String(s)) => s.clone(),
+                        Some(Value::Number(n)) => n.to_string(),
+                        _ => continue,
+                    };
+                    let Some(pos) = self.tasks.iter().position(|t| t.id == id) else {
+                        continue;
+                    };
+                    let status = input.get("status").and_then(Value::as_str);
+                    if matches!(status, Some("deleted") | Some("cancelled")) {
+                        self.tasks.remove(pos);
+                        changed = true;
+                        continue;
+                    }
+                    let t = &mut self.tasks[pos];
+                    if let Some(s) = status {
+                        let next = PlanStatus::from_wire(s);
+                        if t.status != next {
+                            t.status = next;
+                            changed = true;
+                        }
+                    }
+                    if let Some(s) = input.get("subject").and_then(Value::as_str) {
+                        if t.subject != s {
+                            t.subject = s.to_owned();
+                            changed = true;
+                        }
+                    }
+                    if let Some(s) = input.get("activeForm").and_then(Value::as_str) {
+                        if t.active_form.as_deref() != Some(s) {
+                            t.active_form = Some(s.to_owned());
+                            changed = true;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        changed
+    }
+
+    fn fold_tool_results(&mut self, content: &[Value]) -> bool {
+        let mut changed = false;
+        for b in content {
+            if b.get("type").and_then(Value::as_str) != Some("tool_result") {
+                continue;
+            }
+            let Some(tid) = b.get("tool_use_id").and_then(Value::as_str) else {
+                continue;
+            };
+            let Some(mut entry) = self.pending.remove(tid) else {
+                continue;
+            };
+            if b.get("is_error").and_then(Value::as_bool).unwrap_or(false) {
+                continue; // rejected/failed create — never became a task
+            }
+            let text = b
+                .get("content")
+                .map(flatten_tool_result)
+                .unwrap_or_default();
+            // Fall back to the tool_use id when the result text doesn't carry
+            // the assigned id — the task still shows, later TaskUpdates by
+            // numeric id just won't match it.
+            entry.id = parse_created_task_id(&text).unwrap_or_else(|| tid.to_owned());
+            if self.tasks.iter().any(|t| t.id == entry.id) {
+                continue; // replayed result — don't duplicate
+            }
+            self.tasks.push(entry);
+            changed = true;
+        }
+        changed
+    }
+}
+
+/// Pull the assigned id out of a `TaskCreate` result
+/// ("Task #3 created successfully: …").
+fn parse_created_task_id(text: &str) -> Option<String> {
+    let rest = &text[text.find("Task #")? + "Task #".len()..];
+    let id: String = rest
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric())
+        .collect();
+    (!id.is_empty()).then_some(id)
 }
 
 #[cfg(test)]
@@ -1067,6 +1287,150 @@ mod tests {
         tail_one(&store, &conv, "s-plan", &path_str).await.unwrap();
         let plan = store.get("s-plan").unwrap().plan.expect("plan replaced");
         assert_eq!(plan.steps.len(), 2, "plan fully replaced, not merged");
+        assert_eq!(plan.steps[0].status, PlanStatus::Completed);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // --- Task-tool folding (TaskCreate / TaskUpdate) ---
+
+    fn create_row(tool_id: &str, subject: &str) -> Value {
+        json!({"type":"assistant","message":{"role":"assistant","content":[
+            {"type":"tool_use","id":tool_id,"name":"TaskCreate",
+             "input":{"subject":subject,"description":"details","activeForm":"Working"}}]}})
+    }
+
+    fn create_result_row(tool_id: &str, text: &str, is_error: bool) -> Value {
+        json!({"type":"user","message":{"role":"user","content":[
+            {"type":"tool_result","tool_use_id":tool_id,"is_error":is_error,"content":text}]}})
+    }
+
+    fn update_row(task_id: &str, patch: Value) -> Value {
+        let mut input = patch;
+        input["taskId"] = json!(task_id);
+        json!({"type":"assistant","message":{"role":"assistant","content":[
+            {"type":"tool_use","id":"u1","name":"TaskUpdate","input":input}]}})
+    }
+
+    #[test]
+    fn task_create_confirms_only_on_result() {
+        let mut fold = TaskFold::default();
+        assert!(
+            !fold.fold_row(&create_row("t1", "Ship it")),
+            "create alone is not a visible change"
+        );
+        assert!(fold.fold_row(&create_result_row(
+            "t1",
+            "Task #1 created successfully: Ship it",
+            false
+        )));
+        let plan = fold.to_plan(None);
+        assert_eq!(plan.steps.len(), 1);
+        assert_eq!(plan.steps[0].content, "Ship it");
+        assert_eq!(plan.steps[0].status, PlanStatus::Pending);
+        assert_eq!(plan.steps[0].active_form.as_deref(), Some("Working"));
+    }
+
+    #[test]
+    fn task_create_error_result_never_becomes_a_task() {
+        let mut fold = TaskFold::default();
+        fold.fold_row(&create_row("t1", "Nope"));
+        assert!(!fold.fold_row(&create_result_row("t1", "denied", true)));
+        assert!(fold.to_plan(None).steps.is_empty());
+    }
+
+    #[test]
+    fn task_update_status_subject_and_delete() {
+        let mut fold = TaskFold::default();
+        fold.fold_row(&create_row("t1", "One"));
+        fold.fold_row(&create_result_row(
+            "t1",
+            "Task #1 created successfully: One",
+            false,
+        ));
+        fold.fold_row(&create_row("t2", "Two"));
+        fold.fold_row(&create_result_row(
+            "t2",
+            "Task #2 created successfully: Two",
+            false,
+        ));
+
+        assert!(fold.fold_row(&update_row("1", json!({"status":"in_progress"}))));
+        assert_eq!(fold.to_plan(None).steps[0].status, PlanStatus::InProgress);
+        assert!(
+            !fold.fold_row(&update_row("1", json!({"status":"in_progress"}))),
+            "no-op update emits no plan"
+        );
+        assert!(fold.fold_row(&update_row("2", json!({"subject":"Two renamed"}))));
+        assert_eq!(fold.to_plan(None).steps[1].content, "Two renamed");
+        assert!(fold.fold_row(&update_row("1", json!({"status":"deleted"}))));
+        let plan = fold.to_plan(None);
+        assert_eq!(plan.steps.len(), 1);
+        assert_eq!(plan.steps[0].content, "Two renamed");
+    }
+
+    #[test]
+    fn task_update_unknown_id_and_sidechain_rows_are_ignored() {
+        let mut fold = TaskFold::default();
+        assert!(!fold.fold_row(&update_row("9", json!({"status":"completed"}))));
+        let mut side = create_row("t1", "Private");
+        side["isSidechain"] = json!(true);
+        assert!(!fold.fold_row(&side));
+        assert!(!fold.fold_row(&create_result_row(
+            "t1",
+            "Task #1 created successfully: Private",
+            false
+        )));
+        assert!(fold.to_plan(None).steps.is_empty());
+    }
+
+    #[test]
+    fn parse_created_task_id_shapes() {
+        assert_eq!(
+            parse_created_task_id("Task #12 created successfully: X"),
+            Some("12".to_string())
+        );
+        assert_eq!(parse_created_task_id("created"), None);
+    }
+
+    #[tokio::test]
+    async fn tail_folds_task_tools_into_plan() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("claudemon-tasks-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("t.jsonl");
+        let path_str = path.to_string_lossy().to_string();
+
+        let store = SessionStore::new();
+        store.register_managed("s-tasks", &dir.to_string_lossy(), "claude");
+        let conv = ConversationStore::new();
+
+        {
+            let mut f = std::fs::File::create(&path).unwrap();
+            writeln!(f, "{}", create_row("t1", "Build the thing")).unwrap();
+            writeln!(
+                f,
+                "{}",
+                create_result_row("t1", "Task #1 created successfully: Build the thing", false)
+            )
+            .unwrap();
+        }
+        tail_one(&store, &conv, "s-tasks", &path_str).await.unwrap();
+        let plan = store.get("s-tasks").unwrap().plan.expect("plan from tasks");
+        assert_eq!(plan.steps.len(), 1);
+        assert_eq!(plan.steps[0].status, PlanStatus::Pending);
+
+        // The fold state carries across batches: a later status update mutates
+        // the task created in the previous read.
+        {
+            let mut f = std::fs::OpenOptions::new()
+                .append(true)
+                .open(&path)
+                .unwrap();
+            writeln!(f, "{}", update_row("1", json!({"status":"completed"}))).unwrap();
+        }
+        tail_one(&store, &conv, "s-tasks", &path_str).await.unwrap();
+        let plan = store.get("s-tasks").unwrap().plan.expect("plan updated");
         assert_eq!(plan.steps[0].status, PlanStatus::Completed);
 
         std::fs::remove_dir_all(&dir).ok();

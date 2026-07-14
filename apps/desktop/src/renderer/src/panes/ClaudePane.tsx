@@ -29,6 +29,7 @@ import { clearMdCache } from '../components/markdown';
 
 // ── Sub-components ──
 import { InlineWorkLog } from '../components/claude/InlineWorkLog';
+import { TasksCard, planSignature } from '../components/claude/TasksCard';
 import { ConversationMessage } from '../components/claude/ConversationMessage';
 import { ConversationEmptyState, AgentHero } from '../components/claude/ConversationEmptyState';
 import { permissionModeLabel } from '../lib/providerCaps';
@@ -288,6 +289,14 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   }, [sessionId, spawnError]);
 
   const { session } = useClaudeSession({ ptySessionId: sessionId, active: isActive });
+
+  // Tasks/plan card (view-only, pinned above the composer). Dismissal is keyed
+  // by the plan's signature so a stale/stuck list can be put away for good,
+  // while any real change to the tasks brings the card back.
+  const plan = session?.plan;
+  const planSig = planSignature(plan);
+  const [dismissedPlanSig, setDismissedPlanSig] = useState<string | null>(null);
+  const showTasksCard = planSig !== '' && dismissedPlanSig !== planSig;
 
   // Where the agent is actually working right now. `cwd` (the spawn dir)
   // stays authoritative for spawn/restart; `effectiveCwd` follows the agent
@@ -1625,6 +1634,12 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
 
             {/* Scroll to bottom button */}
             {showScrollBtn && <ScrollToBottomButton onClick={scrollToBottom} />}
+
+            {/* Task list — the agent's plan/tasks pinned above the composer,
+                view-only and dismissible (reappears when the tasks change). */}
+            {showTasksCard && plan && (
+              <TasksCard plan={plan} onDismiss={() => setDismissedPlanSig(planSig)} />
+            )}
 
             {/* Needs-you dock — approvals and questions pinned above the composer */}
             <NeedsYouDock

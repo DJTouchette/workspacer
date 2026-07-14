@@ -262,6 +262,8 @@
 <li><strong>Workflow run cards</strong> show a <code>finished/total agents</code> count, total tokens, and elapsed time. Expand to see the agents, grouped by phase once phase titles land. Each agent row shows a status icon (queued / running / failed / done), model, tokens, and duration, plus its current tool while running. A run auto-collapses when it finishes cleanly; a failed run stays open so you can see which agent failed.</li>
 </ul>
 <p>Inline in the timeline, the work card that spawned a run surfaces that run's rich card instead of a flood of raw tool calls. Anything a hook reports before the transcript catches up shows in a live work-log section at the bottom.</p>
+<h3>the tasks card</h3>
+<p>When the agent keeps a task list (Claude Code's task tools or <code>TodoWrite</code>, Codex's plan tool), a <strong>Tasks card</strong> pins above the composer: a <code>done/total</code> count, a progress bar, and the step list — the in-progress step shows its live "doing now" line, completed steps get struck through. It's view-only and collapsible, and because an abandoned list can go stale, the <code>×</code> dismisses it; it comes back only when the tasks actually change again. The same list feeds the inspector's Plan tab and the fleet cards.</p>
 <p>The pane's bottom status bar also shows running counts: total tool calls, live subagent count, and attached-file count.</p>
 <h3>approvals and questions</h3>
 <p>When the agent needs a permission or asks you something, it surfaces in the <strong>needs-you dock</strong> pinned right above the composer (not buried in scrollback). The approval gate is enabled per session as soon as it connects, so <code>PreToolUse</code> hooks get parked for the UI to resolve.</p>
