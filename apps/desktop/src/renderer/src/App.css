@@ -474,3 +474,42 @@ body {
     opacity: 0.55;
   }
 }
+
+/* ── Tab close affordance (hover-revealed ×) ─────────────────────────────────
+ * Mirrors the .wks-stop-btn hover-reveal: hidden by default, shown when the tab
+ * is hovered or is the active tab. Space is reserved (opacity-only, never
+ * display/width) so revealing it can't reflow the tab row. */
+.wks-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-left: -1px;
+  margin-right: -6px;
+  border-radius: var(--wks-radius-sm, 4px);
+  color: inherit;
+  opacity: 0;
+  cursor: pointer;
+  flex: none;
+  transition:
+    opacity 0.12s,
+    background-color 0.1s,
+    color 0.1s;
+}
+.wks-tab:hover .wks-tab-close,
+.wks-tab.is-active .wks-tab-close {
+  opacity: 0.55;
+}
+.wks-tab-close:hover {
+  opacity: 1;
+  background-color: color-mix(in srgb, var(--wks-text-primary) 14%, transparent);
+  color: var(--wks-text-primary);
+}
+
+/* Touch devices have no hover — keep the × reachable, like .pane-split-floating. */
+@media (hover: none) {
+  .wks-tab-close {
+    opacity: 0.55;
+  }
+}

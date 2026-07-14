@@ -4,7 +4,7 @@ import { useConfig, ScriptEntry, Config } from '../hooks/useConfig';
 import { themes, resolveTheme, themeDisplayName } from '../themes';
 import { useIsSmallScreen } from '../hooks/useMediaQuery';
 import { useAppVersion } from '../hooks/useAppVersion';
-import { PaneIcon, Play, Settings, Plus, Columns3 } from './icons';
+import { PaneIcon, Play, Settings, Plus, Columns3, X } from './icons';
 import { AgentLogo } from './agentLogos';
 import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from './ContextMenu';
 import { resolveNavHeight } from '../lib/layoutUtils';
@@ -154,7 +154,15 @@ const NavBar: React.FC<NavBarProps> = ({
           return (
             <button
               key={tab.id}
+              className={`wks-tab${isActive ? ' is-active' : ''}`}
               onClick={() => onTabClick(tab.id)}
+              onAuxClick={(e) => {
+                // Middle-click closes the tab, matching browser tab behaviour.
+                if (e.button === 1 && onCloseTab) {
+                  e.preventDefault();
+                  onCloseTab(tab.id);
+                }
+              }}
               onContextMenu={(e) => {
                 e.preventDefault();
                 setTabContextMenu({ tabId: tab.id, tabIdx: idx, x: e.clientX, y: e.clientY });
@@ -211,6 +219,24 @@ const NavBar: React.FC<NavBarProps> = ({
               <span>{tab.title}</span>
               {!singlePane && (
                 <span style={{ fontSize: '0.5rem', opacity: 0.6 }}>{tab.panes.length}</span>
+              )}
+              {onCloseTab && (
+                // Nested inside the tab <button>, so this is a span (not a button)
+                // to keep the markup valid; stopPropagation keeps the click off the
+                // tab-select handler. Revealed on tab hover / active via App.css.
+                <span
+                  className="wks-tab-close"
+                  role="button"
+                  aria-label={`Close ${tab.title}`}
+                  title="Close tab"
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onCloseTab(tab.id);
+                  }}
+                >
+                  <X size={12} strokeWidth={2} />
+                </span>
               )}
             </button>
           );
