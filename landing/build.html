@@ -274,19 +274,19 @@ hub → caller:   {"op":"result","id":"req-1","result":{...}}</code></pre>
 <ul>
 <li>Reach for it when your plugin <em>is</em> a UI: a dashboard, a panel, an editor, a rule editor.</li>
 <li>Any language that compiles to static HTML/JS/CSS. No build step needed if you ship plain files.</li>
-<li>Examples: <code>hello-scoped</code> (the minimal one), <code>agent-dashboard</code>, the sandboxed <code>editor</code>.</li>
+<li>Bundled examples (in <code>services/hub/examples/</code>): the sandboxed <code>editor</code> and the <code>transcript-timeline</code> replay pane.</li>
 </ul>
 <h4>2. sidecar plugin (<code>server</code>)</h4>
 <p>Set <code>server.command</code> to a long-lived process the hub spawns and supervises (spawn → health-poll → restart-on-crash, SIGTERM then SIGKILL on stop). It's a polyglot sidecar: <strong>any language</strong>. It connects to the bus itself, so it can run <em>always-on with no pane at all</em> (an automation), <code>provide</code> capabilities other clients call, and/or serve its own webview panes from its port (the hub proxies <code>http://127.0.0.1:&lt;port&gt;&lt;path&gt;</code>).</p>
 <ul>
 <li>Reach for it when your plugin <em>does</em> something in the background: reacts to events, calls out to another service, answers capabilities for the rest of the fleet.</li>
 <li>Give it a <code>port</code> + <code>health</code> path so the supervisor can health-check it and surface <code>sidecar.*</code> status colors.</li>
-<li>Examples: <code>rules-engine</code> (event→action interpreter + rule-editor pane), <code>rivet-bridge</code> (re-exposes an external MCP server as hub capabilities).</li>
+<li>Examples: the bundled <code>clock-plugin</code> (the minimal sidecar demo) and the catalog's automations — <code>policy-approver</code>, <code>fleet-guardian</code>, <code>test-on-save</code>, <code>slack-bridge</code>.</li>
 </ul>
 <p>The two aren't mutually exclusive in spirit — a sidecar can also serve panes — but a single manifest sets <em>either</em> <code>server</code> <em>or</em> <code>ui</code> as the way its panes are served. If it declares panes with neither, the loader rejects it (the webview would have no URL to load).</p>
 
 <h3>write your first plugin</h3>
-<p>The fastest path is a <strong>webview-only</strong> plugin that lists the running agents. Three files, no build step. (This is the shipped <code>hello-scoped</code> example, trimmed.)</p>
+<p>The fastest path is a <strong>webview-only</strong> plugin that lists the running agents. Three files, no build step.</p>
 <h4>1. the folder</h4>
 <pre><code>my-hello/
   plugin.json
@@ -346,10 +346,10 @@ ws.onmessage = (ev) =&gt; {
 <li><code>panes</code>, pane types injected into the UI. Each: <code>type</code> (unique id), <code>title</code>, <code>icon</code>, <code>path</code>, and <code>scope</code> (<code>global</code> = Overview only, <code>agent</code> = inside an agent workspace and gets its sessionId/cwd, <code>both</code> = wherever you are, the default).</li>
 <li><code>hotkeys</code>, <code>id</code>, <code>default</code> (e.g. <code>ctrl+shift+a</code>), and <code>command</code>, which is either <code>open-pane:&lt;paneType&gt;</code> or <code>emit:&lt;eventType&gt;</code>.</li>
 <li><code>capabilities</code>, bus methods the plugin may <strong>call</strong>. A bare string (<code>"agents.list"</code>) for an unscoped verb, or the object form <code>{ "method": "fs.read", "paths": ["${pluginDir}"] }</code> for a filesystem-scoped one. Filesystem methods (<code>fs.*</code>, <code>search.project</code>) must declare <code>paths</code> or the loader rejects them, so a plugin can never get unrestricted host fs access. Path tokens: <code>${pluginDir}</code>, <code>${agentCwd}</code> (bound per open pane), or absolute paths. Anything unresolved grants nothing (fail closed).</li>
-<li><code>provides</code>, capabilities the plugin <strong>answers</strong> on the bus (it becomes a provider, like rivet-bridge).</li>
+<li><code>provides</code>, capabilities the plugin <strong>answers</strong> on the bus (it becomes a provider other clients can call).</li>
 <li><code>emits</code> / <code>consumes</code>, event types it publishes / subscribes to.</li>
 <li><code>settings</code>, typed settings (<code>boolean</code>/<code>number</code>/<code>string</code>/<code>select</code>) the host renders in Settings and delivers into the webview as <code>window.__WKS_SETTINGS__</code> + a <code>wks-settings</code> event.</li>
-<li><code>install</code>, a one-time setup argv run in the plugin dir after a GitHub install (e.g. <code>["go","build","-o","rules-engine","."]</code>).</li>
+<li><code>install</code>, a one-time setup argv run in the plugin dir after a GitHub install (e.g. <code>["go","build","-o","server","."]</code>).</li>
 </ul>
 
 <h3>talking to the bus</h3>
@@ -388,7 +388,7 @@ ws.send(JSON.stringify({ op: 'call', id: 'c1', method: 'agents.list', params: {}
 <h4>emit — events you publish</h4>
 <ul>
 <li><strong>Your own namespaced events</strong>, anything under your plugin's namespace, e.g. <code>example.hello.tick</code> or <code>rules.fired</code>. Declare each type (or a <code>myplugin.*</code> wildcard) in <code>emits</code>. Other plugins can <code>consume</code> them.</li>
-<li><code>command.focus_agent</code>, ask the app to focus an agent, <code>data: { sessionId }</code>. The renderer acts on it (the agent-dashboard uses this to jump the desktop to a card).</li>
+<li><code>command.focus_agent</code>, ask the app to focus an agent, <code>data: { sessionId }</code>. The renderer acts on it (the Fleet Radar and Cost HUD catalog plugins use this to jump the desktop to an agent when you click its card).</li>
 <li><code>command.spawn_agent</code>, ask the app to spawn an agent.</li>
 </ul>
 <p>The <code>command.*</code> namespace is the "ask the host to do something" channel: you publish, the desktop renderer picks it up and acts. A hotkey can fire one directly with <code>"command": "emit:&lt;eventType&gt;"</code> instead of opening a pane.</p>
@@ -421,7 +421,7 @@ ws.send(JSON.stringify({ op: 'call', id: 'c1', method: 'agents.list', params: {}
 <li><code>search.project</code> (ripgrep-backed, scoped to a <code>cwd</code>), and the broader <code>search.files</code> / <code>search.everything</code>.</li>
 </ul>
 <h4>provide your own</h4>
-<p>List method names in <code>provides</code> and answer them on the bus, and you become a first-class capability provider the rest of the fleet (dashboards, rules, supervisors, the MCP facade) can call — that's how <code>rivet-bridge</code> exposes <code>recon.*</code> / <code>witness.*</code> / <code>schema.*</code>. The router is single-owner per method, so pick a namespace nobody else claims.</p>
+<p>List method names in <code>provides</code> and answer them on the bus, and you become a first-class capability provider the rest of the fleet (dashboards, rules, supervisors, the MCP facade) can call — e.g. a bridge sidecar can consume an external MCP server and re-expose its tools as hub capabilities. The router is single-owner per method, so pick a namespace nobody else claims.</p>
 <blockquote>The exact params/return shape of each host capability isn't a frozen public API yet — treat <code>services/hub/examples/</code> and <code>apps/desktop/src/main/services/hubCapabilities.ts</code> as the source of truth for field names, and the MCP tool list (below) for the stable subset.</blockquote>
 
 <h3>the plugin manager</h3>
@@ -432,14 +432,14 @@ ws.send(JSON.stringify({ op: 'call', id: 'c1', method: 'agents.list', params: {}
 <p>The process supervisor (<code>internal/supervisor/supervisor.go</code>) runs each sidecar: spawn, health-poll, restart-on-crash. If the manifest gives a <code>port</code> + <code>health</code>, the supervisor GETs <code>http://127.0.0.1:&lt;port&gt;&lt;health&gt;</code> every 2s (200 == healthy) and emits <code>sidecar.healthy</code> / <code>sidecar.unhealthy</code> as it flips. Graceful stop sends <strong>SIGTERM, then SIGKILL</strong> after a 5s <code>WaitDelay</code>. An unexpected exit is reported as <code>sidecar.crashed</code> and restarted after a backoff (default 1s). States: <code>stopped</code>, <code>running</code>, <code>healthy</code>, <code>unhealthy</code>, <code>crashed</code>.</p>
 <h3>theming</h3>
 <p>Plugin panes render as webviews and the host injects its active theme as <code>--wks-*</code> CSS custom properties on <code>:root</code> (re-injected on every live theme switch and every in-plugin navigation). It also sets zero-specificity <code>:where(html, body)</code> defaults so a plugin with no styling still looks native, and exposes a JS hook for canvas UIs: <code>window.__WKS_THEME__</code> and a <code>wks-theme</code> event. Reference tokens with a fallback so the page still works in a plain browser: <code>background: var(--wks-bg-base, #1a1a1a)</code>. Tokens: <code>--wks-bg-base/-raised/-surface/-elevated</code>, <code>--wks-text-primary/-secondary</code>, <code>--wks-accent</code>, <code>--wks-success/-error/-warning</code>, and more (see <code>services/hub/docs/plugin-theming.md</code>). Injection is for plugin panes only, never the regular browser pane.</p>
-<h3>shipped examples</h3>
-<p>In <code>services/hub/examples/</code>:</p>
+<h3>bundled examples &amp; the plugin catalog</h3>
+<p>Bundled in <code>services/hub/examples/</code>:</p>
 <ul>
-<li><strong>rules-engine</strong>: an always-on event→action interpreter. A Go sidecar on the bus plus a webview rule editor. Rules match events and fire actions: <code>notify</code>, <code>sendMessage</code>, <code>command</code>, <code>emit</code>, <code>webhook</code>. Persists rules to JSON; emits <code>rules.fired</code>. Example: <code>on agent.state_changed → notify</code>.</li>
-<li><strong>rivet-bridge</strong>: the inverse of the MCP facade: it consumes the external <code>rivet</code> MCP server and re-exposes its tools as hub capabilities (<code>recon.*</code>, <code>witness.*</code>, <code>schema.*</code>) so the fleet (rules-engine, dashboards, supervisors) can call them. Needs the external <code>rivet</code> binary; <code>install</code> builds it with <code>go build</code>.</li>
-<li><strong>agent-dashboard</strong>: a bus-native agent grid webview. Consumes <code>agent.state_changed</code> / <code>agent.snapshot</code>; uses <code>agents.list</code> / <code>agents.sendMessage</code> / <code>notifications.post</code>.</li>
-<li><strong>clock-plugin</strong>: the minimal demo: one webview pane and one hotkey (<code>ctrl+shift+k</code> → <code>open-pane:example.clock</code>). Start here if you're writing your first plugin.</li>
+<li><strong>clock-plugin</strong>: the minimal sidecar demo: one webview pane and one hotkey (<code>ctrl+shift+k</code> → <code>open-pane:example.clock</code>). Start here if you're writing your first plugin.</li>
+<li><strong>editor</strong>: the sandboxed CodeMirror editor described above — a webview-only plugin whose filesystem reach is exactly the agent-cwd-scoped <code>fs.*</code> capabilities its manifest declares.</li>
+<li><strong>transcript-timeline</strong>: a scrubbable session replay pane. Pick any live or historical session and drag through its prompts, tool calls, and file edits; it can even materialize the replay into a disposable git worktree that physically follows the scrubber.</li>
 </ul>
+<p>Beyond the bundled examples there's a public catalog of install-ready plugins at <a href="https://github.com/DJTouchette/workspacer-plugins">workspacer-plugins</a>: dashboards (Fleet Radar, Cost HUD, Focus Tracker), fleet automations (Policy Approver, Fleet Guardian, Escalation Chains, Typecheck Gate, Test on Save, CI Watcher), and remote reach (Slack Bridge, Phone Push, Standup Digest). Each is a zero-dependency repo you can install straight from the Plugins Manager (paste <code>DJTouchette/workspacer-plugin-&lt;name&gt;</code>), and together they double as reference implementations for every plugin shape above.</p>
     </section>
 
     <section id="mcp" class="doc">
