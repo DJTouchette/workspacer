@@ -280,7 +280,7 @@ function userPluginsDir(): string {
  * (they'd crash-loop without the runtime); users add those on demand from the
  * examples gallery, which labels each with its requirement.
  */
-const DEFAULT_SEEDED_EXAMPLES = ['editor'];
+const DEFAULT_SEEDED_EXAMPLES = ['editor', 'transcript-timeline'];
 
 /** Ensure the user plugins dir exists; seed the safe default examples once. */
 function ensurePluginsDir(): string {

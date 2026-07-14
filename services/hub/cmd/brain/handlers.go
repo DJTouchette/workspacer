@@ -617,14 +617,19 @@ func (r *registry) signal(ctx context.Context, raw json.RawMessage) (json.RawMes
 }
 
 func (r *registry) transcript(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
-	var p sessionParam
+	var p struct {
+		SessionID string `json:"sessionId"`
+		// Optional: resolve historical sessions (unknown to claudemon) from
+		// the on-disk JSONL for this working directory.
+		Cwd string `json:"cwd"`
+	}
 	if err := unmarshal(raw, &p); err != nil {
 		return nil, err
 	}
 	if p.SessionID == "" {
 		return nil, fmt.Errorf("sessions.transcript requires { sessionId }")
 	}
-	return r.cm.transcript(ctx, p.SessionID)
+	return r.cm.transcript(ctx, p.SessionID, p.Cwd)
 }
 
 func (r *registry) conversation(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {

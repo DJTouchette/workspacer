@@ -1,0 +1,19 @@
+{
+  "id": "workspacer.transcript-timeline",
+  "name": "Timeline",
+  "apiVersion": "1",
+  "ui": "ui",
+  "panes": [
+    { "type": "workspacer.transcript-timeline", "title": "Timeline", "icon": "⏱", "scope": "both" }
+  ],
+  "hotkeys": [
+    { "id": "open-timeline", "default": "ctrl+shift+h", "command": "open-pane:workspacer.transcript-timeline" }
+  ],
+  "capabilities": [
+    "agents.list",
+    "claude.sessionsForDir",
+    "sessions.conversation",
+    "sessions.transcript"
+  ],
+  "consumes": ["agent.state_changed"]
+}

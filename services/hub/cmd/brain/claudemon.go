@@ -83,8 +83,15 @@ func (c *claudemonClient) listSessions(ctx context.Context) (json.RawMessage, er
 	return c.getRaw(ctx, "/sessions")
 }
 
-func (c *claudemonClient) transcript(ctx context.Context, id string) (json.RawMessage, error) {
-	return c.getRaw(ctx, "/sessions/"+id+"/transcript")
+// transcript fetches a session's parsed transcript. A non-empty cwd lets
+// claudemon resolve sessions it isn't tracking from the on-disk JSONL under
+// ~/.claude/projects (historical transcripts).
+func (c *claudemonClient) transcript(ctx context.Context, id, cwd string) (json.RawMessage, error) {
+	path := "/sessions/" + id + "/transcript"
+	if cwd != "" {
+		path += "?cwd=" + url.QueryEscape(cwd)
+	}
+	return c.getRaw(ctx, path)
 }
 
 func (c *claudemonClient) conversation(ctx context.Context, id string, sinceSeq *int) (json.RawMessage, error) {

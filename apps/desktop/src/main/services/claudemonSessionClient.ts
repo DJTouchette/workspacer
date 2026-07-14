@@ -473,8 +473,12 @@ class ClaudemonSessionClient {
     await this.postJSON(`/sessions/${sessionId}/gate`, { on });
   }
 
-  async getTranscript(sessionId: string): Promise<any> {
-    const res = await fetch(`${CLAUDEMON_API_URL}/sessions/${sessionId}/transcript`);
+  /** Pass `cwd` to also resolve sessions the daemon isn't tracking: it falls
+   *  back to the on-disk JSONL under ~/.claude/projects for that directory,
+   *  so historical transcripts stay fetchable after the session is gone. */
+  async getTranscript(sessionId: string, cwd?: string): Promise<any> {
+    const qs = cwd ? `?cwd=${encodeURIComponent(cwd)}` : '';
+    const res = await fetch(`${CLAUDEMON_API_URL}/sessions/${sessionId}/transcript${qs}`);
     if (!res.ok) return { messages: [] };
     return res.json();
   }

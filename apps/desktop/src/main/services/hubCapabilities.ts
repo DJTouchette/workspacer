@@ -470,11 +470,13 @@ export function registerHubCapabilities(): void {
   });
 
   // Read-only: fetch a session's transcript so a remote client can show the
-  // context behind a pending approval/question before answering.
+  // context behind a pending approval/question before answering. An optional
+  // cwd lets callers reach historical sessions the daemon isn't tracking
+  // (resolved from the on-disk JSONL under ~/.claude/projects).
   registerCapability('sessions.transcript', async (params: unknown) => {
-    const { sessionId } = (params ?? {}) as { sessionId?: string };
+    const { sessionId, cwd } = (params ?? {}) as { sessionId?: string; cwd?: string };
     if (!sessionId) throw new Error('sessions.transcript requires { sessionId }');
-    return claudemonSessionClient.getTranscript(sessionId);
+    return claudemonSessionClient.getTranscript(sessionId, cwd);
   });
 
   // Read-only: parsed conversation items + latest sequence number. With

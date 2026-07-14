@@ -1,0 +1,653 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Timeline</title>
+  <style>
+    /* Colors are workspacer theme tokens (--wks-*), injected into plugin webviews
+       by the host's theme bridge. Fallbacks are a dark default so the page still
+       looks right served standalone. */
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      display: flex; flex-direction: column;
+      font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+      background: var(--wks-bg-base, #1e1e1e); color: var(--wks-text-primary, #d4d4d4);
+    }
+
+    /* ── header: session picker ── */
+    header {
+      display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+      border-bottom: 1px solid var(--wks-border, #333); background: var(--wks-bg-header, #252526);
+    }
+    header select {
+      flex: 1; min-width: 0; font: inherit; padding: 3px 6px;
+      background: var(--wks-bg-input, #3c3c3c); color: var(--wks-text-primary, #fff);
+      border: 1px solid var(--wks-border-input, #555); border-radius: var(--wks-radius-sm, 4px);
+    }
+    button {
+      font: inherit; font-size: 12px; padding: 2px 10px; border-radius: var(--wks-radius-sm, 4px);
+      border: 1px solid var(--wks-border, #3c3c3c); background: var(--wks-bg-raised, #2d2d2d);
+      color: var(--wks-text-primary, #d4d4d4); cursor: pointer;
+    }
+    button:hover { background: var(--wks-bg-hover, #383838); }
+    button:disabled { opacity: 0.5; cursor: default; }
+    button.primary { background: var(--wks-accent-bg, #0e639c); color: var(--wks-accent-text, #fff); }
+
+    /* ── stats strip ── */
+    #stats {
+      display: flex; gap: 14px; padding: 4px 10px; font-size: 11px;
+      color: var(--wks-text-muted, #888); border-bottom: 1px solid var(--wks-border-subtle, #2a2a2a);
+      white-space: nowrap; overflow: hidden;
+    }
+    #stats b { color: var(--wks-text-primary, #d4d4d4); font-weight: 600; }
+
+    /* ── main: chat + files ── */
+    .main { flex: 1; display: flex; min-height: 0; }
+    #chat { flex: 3; min-width: 0; overflow-y: auto; padding: 10px 12px; }
+    .fresizer { flex: none; width: 4px; cursor: col-resize; background: var(--wks-border, #333); }
+    .fresizer:hover, .fresizer.dragging { background: var(--wks-accent, #0e639c); }
+    #files { flex: 2; min-width: 0; display: flex; flex-direction: column; background: var(--wks-bg-surface, #1b1b1b); }
+    #files.hidden, #files.hidden + .fresizer { display: none; }
+
+    /* chat items */
+    .item { margin: 0 0 8px; max-width: 100%; }
+    .bubble { padding: 6px 10px; border-radius: 6px; white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere; }
+    .item.user .bubble { background: var(--wks-bg-selected, #094771); border-left: 2px solid var(--wks-accent, #3b9cd9); }
+    .item.assistant .bubble { background: var(--wks-bg-raised, #2a2a2a); }
+    .item.current { outline: 1px solid var(--wks-accent, #0e639c); border-radius: 6px; }
+    .who { font-size: 10px; color: var(--wks-text-faint, #666); margin-bottom: 1px; display: flex; gap: 8px; }
+    .who .ts { margin-left: auto; }
+    .tool {
+      display: block; font-size: 12px; border: 1px solid var(--wks-border-subtle, #2f2f2f);
+      border-radius: 6px; background: var(--wks-bg-surface, #232323); padding: 0;
+    }
+    .tool summary {
+      display: flex; gap: 6px; align-items: center; padding: 3px 8px; cursor: pointer;
+      list-style: none; color: var(--wks-text-secondary, #bbb); overflow: hidden; white-space: nowrap;
+    }
+    .tool summary::-webkit-details-marker { display: none; }
+    .tool .arg { color: var(--wks-text-muted, #888); overflow: hidden; text-overflow: ellipsis; }
+    .tool .body { border-top: 1px solid var(--wks-border-subtle, #2a2a2a); padding: 6px 8px; max-height: 240px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+    .tool.error summary { color: var(--wks-error, #cf6f6f); }
+    .badge {
+      flex: none; font-size: 10px; padding: 0 6px; border-radius: 8px;
+      background: var(--wks-bg-raised, #333); color: var(--wks-text-secondary, #bbb);
+    }
+    .badge.edit { background: #1e3a24; color: #7fce8c; }
+    .badge.bash { background: #3a2e1e; color: #e2b07d; }
+    .badge.err  { background: #3a1e1e; color: #cf6f6f; }
+    .plan { border: 1px dashed var(--wks-border, #3c3c3c); border-radius: 6px; padding: 6px 10px; font-size: 12px; }
+    .plan .step { display: flex; gap: 6px; }
+    .plan .done { color: var(--wks-success, #6fcf7f); }
+    .plan .doing { color: var(--wks-warning, #e2c08d); }
+    .plan .todo { color: var(--wks-text-muted, #888); }
+    .thinking { color: var(--wks-text-faint, #777); font-style: italic; }
+    .empty { margin: 24px; color: var(--wks-text-muted, #777); text-align: center; }
+
+    /* files panel */
+    #files .fhead { padding: 5px 10px; font-size: 11px; color: var(--wks-text-muted, #888); border-bottom: 1px solid var(--wks-border-subtle, #2a2a2a); display: flex; align-items: center; }
+    #fileList { max-height: 32%; overflow-y: auto; border-bottom: 1px solid var(--wks-border-subtle, #2a2a2a); flex: none; }
+    .frow { display: flex; gap: 6px; padding: 2px 10px; cursor: pointer; white-space: nowrap; overflow: hidden; align-items: center; }
+    .frow:hover { background: var(--wks-bg-hover, #2a2d2e); }
+    .frow.active { background: var(--wks-bg-selected, #094771); }
+    .frow .n { overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; flex: 1; }
+    .frow .c { flex: none; font-size: 10px; color: var(--wks-text-muted, #888); }
+    #fileView { flex: 1; overflow: auto; padding: 8px 10px; font-size: 12px; }
+    #fileView pre { margin: 0 0 10px; white-space: pre-wrap; word-break: break-word; }
+    .diff-old { background: rgba(207, 111, 111, 0.13); color: var(--wks-error, #e0a1a1); display: block; padding: 4px 6px; border-left: 2px solid var(--wks-error, #cf6f6f); }
+    .diff-new { background: rgba(111, 207, 127, 0.10); color: var(--wks-success, #a1e0ab); display: block; padding: 4px 6px; border-left: 2px solid var(--wks-success, #6fcf7f); }
+    .ophead { color: var(--wks-text-muted, #888); font-size: 11px; margin: 8px 0 3px; }
+    .fullfile { border: 1px solid var(--wks-border-subtle, #2a2a2a); border-radius: 6px; padding: 6px 8px; }
+    .fullfile .hl { background: rgba(111, 207, 127, 0.16); }
+
+    /* ── scrubber ── */
+    #scrub {
+      flex: none; padding: 8px 12px 10px; border-top: 1px solid var(--wks-border, #333);
+      background: var(--wks-bg-header, #252526);
+    }
+    #track { position: relative; height: 26px; }
+    #ticks { position: absolute; inset: 8px 0; pointer-events: none; }
+    #ticks .tick { position: absolute; top: 0; bottom: 0; width: 2px; border-radius: 1px; opacity: 0.85; }
+    #slider {
+      position: absolute; inset: 0; width: 100%; margin: 0; -webkit-appearance: none; appearance: none;
+      background: transparent; cursor: pointer;
+    }
+    #slider::-webkit-slider-runnable-track { height: 4px; margin-top: 11px; background: var(--wks-border, #3c3c3c); border-radius: 2px; }
+    #slider::-webkit-slider-thumb {
+      -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; margin-top: -5px;
+      background: var(--wks-accent, #0e639c); border: 2px solid var(--wks-accent-text, #fff); cursor: grab;
+    }
+    .scrubrow { display: flex; align-items: center; gap: 10px; margin-top: 2px; font-size: 11px; color: var(--wks-text-muted, #888); }
+    .scrubrow .pos { min-width: 90px; }
+    .scrubrow .when { flex: 1; text-align: center; }
+    .scrubrow label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+    footer {
+      display: flex; align-items: center; gap: 8px; padding: 3px 10px; font-size: 11px;
+      color: var(--wks-text-muted, #888); border-top: 1px solid var(--wks-border-subtle, #2a2a2a);
+    }
+    footer .spacer { flex: 1; }
+    #status.bad { color: var(--wks-error, #cf6f6f); }
+    /* legend dots */
+    .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 3px; vertical-align: baseline; }
+  </style>
+</head>
+<body>
+  <header>
+    <select id="picker"><option value="">Loading sessions…</option></select>
+    <button id="reload" title="Refresh session list">↻</button>
+    <button id="toggleFiles" title="Show/hide file changes">Files</button>
+  </header>
+
+  <div id="stats"></div>
+
+  <div class="main">
+    <div id="chat"><div class="empty">Pick a session to replay.</div></div>
+    <div class="fresizer" id="fresizer" title="Drag to resize"></div>
+    <div id="files">
+      <div class="fhead">FILE CHANGES UP TO THIS POINT</div>
+      <div id="fileList"></div>
+      <div id="fileView"><div class="empty">No file changes yet.</div></div>
+    </div>
+  </div>
+
+  <div id="scrub">
+    <div id="track">
+      <div id="ticks"></div>
+      <input id="slider" type="range" min="0" max="0" value="0" step="1" />
+    </div>
+    <div class="scrubrow">
+      <span class="pos" id="pos">0 / 0</span>
+      <button id="stepBack" title="Step back (←)">‹</button>
+      <button id="play" class="primary" title="Replay from here (space)">▶</button>
+      <button id="stepFwd" title="Step forward (→)">›</button>
+      <span class="when" id="when"></span>
+      <label title="Keep pinned to the newest event while the agent works"><input type="checkbox" id="follow" checked />follow live</label>
+    </div>
+  </div>
+
+  <footer>
+    <span><span class="dot" style="background:#3b9cd9"></span>you</span>
+    <span><span class="dot" style="background:#7fce8c"></span>file edits</span>
+    <span><span class="dot" style="background:#e2b07d"></span>commands</span>
+    <span><span class="dot" style="background:#cf6f6f"></span>errors</span>
+    <span class="spacer"></span>
+    <span id="status"></span>
+    <span id="conn">connecting…</span>
+  </footer>
+
+  <script>
+    'use strict';
+    // ── bus client (same shape as the bundled editor example) ────────────────
+    const params = new URLSearchParams(location.search);
+    const token = params.get('busToken') || '';
+    const paramSessionId = params.get('sessionId') || '';
+    const paramCwd = params.get('cwd') || '';
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${proto}//${location.host}/bus?token=${encodeURIComponent(token)}`);
+
+    let seqNo = 1;
+    const pending = new Map();
+    const eventHandlers = new Set();
+    function call(method, p = {}) {
+      return new Promise((resolve, reject) => {
+        const id = 'c' + seqNo++;
+        pending.set(id, { resolve, reject });
+        ws.send(JSON.stringify({ op: 'call', id, method, params: p }));
+      });
+    }
+    function subscribe(topic) { ws.send(JSON.stringify({ op: 'subscribe', topics: [topic] })); }
+    ws.onmessage = (ev) => {
+      let f; try { f = JSON.parse(ev.data); } catch { return; }
+      if (f.op === 'event' && f.event) { for (const h of eventHandlers) h(f.event); return; }
+      const c = f.id && pending.get(f.id);
+      if (!c) return;
+      pending.delete(f.id);
+      if (f.op === 'result') c.resolve(f.result);
+      else if (f.op === 'error') c.reject(new Error(f.error || 'error'));
+    };
+
+    // ── elements / state ──────────────────────────────────────────────────────
+    const $ = (id) => document.getElementById(id);
+    const pickerEl = $('picker'), chatEl = $('chat'), sliderEl = $('slider'), ticksEl = $('ticks');
+    const posEl = $('pos'), whenEl = $('when'), statsEl = $('stats'), statusEl = $('status'), connEl = $('conn');
+    const filesEl = $('files'), fileListEl = $('fileList'), fileViewEl = $('fileView');
+    const followEl = $('follow'), playEl = $('play');
+
+    let sessions = [];        // [{sessionId, cwd, live, label}]
+    let selected = null;      // the chosen session entry
+    let items = [];           // normalized timeline items
+    let lastSeq = 0;          // conversation cursor (live sessions)
+    let usingConversation = false;
+    let cursor = 0;           // scrubber position (0..items.length)
+    let pollTimer = null;
+    let playTimer = null;
+    let selectedFile = null;
+
+    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const setStatus = (msg, bad) => { statusEl.textContent = msg || ''; statusEl.className = bad ? 'bad' : ''; };
+    const fmtTime = (ts) => {
+      if (!ts) return '';
+      const d = new Date(ts);
+      return isNaN(d) ? '' : d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    };
+    const clip = (s, n) => { s = String(s ?? ''); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
+
+    // ── normalization ────────────────────────────────────────────────────────
+    // Everything renders from one item shape, whichever source produced it:
+    //  { kind: user_message|assistant_text|thinking|tool_use|tool_result|plan|usage,
+    //    ts?, text?, id?, name?, input?, tool_use_id?, content?, is_error?, steps? }
+
+    // sessions.conversation items are already in this shape (claudemon's
+    // ConversationItem serialization).
+    const fromConversation = (arr) => arr.map((it) => ({ ...it, ts: it.timestamp }));
+
+    // sessions.transcript messages: [{ role, content: string|blocks[], raw }]
+    function fromTranscript(messages) {
+      const out = [];
+      for (const m of messages || []) {
+        const ts = m.raw && m.raw.timestamp;
+        const textKind = m.role === 'user' ? 'user_message' : 'assistant_text';
+        const content = m.content;
+        if (typeof content === 'string') {
+          if (content.trim()) out.push({ kind: textKind, text: content, ts });
+          continue;
+        }
+        if (!Array.isArray(content)) continue;
+        for (const b of content) {
+          if (!b || typeof b !== 'object') continue;
+          if (b.type === 'text' && b.text && b.text.trim()) {
+            out.push({ kind: textKind, text: b.text, ts });
+          } else if (b.type === 'thinking' && b.thinking) {
+            out.push({ kind: 'thinking', text: b.thinking, ts });
+          } else if (b.type === 'tool_use') {
+            out.push({ kind: 'tool_use', id: b.id, name: b.name || 'tool', input: b.input || {}, ts });
+          } else if (b.type === 'tool_result') {
+            let text = b.content;
+            if (Array.isArray(text)) text = text.map((p) => (p && p.type === 'text' ? p.text : '')).join('\n');
+            if (typeof text !== 'string') text = JSON.stringify(text ?? '');
+            out.push({ kind: 'tool_result', tool_use_id: b.tool_use_id, content: text, is_error: !!b.is_error, ts });
+          }
+        }
+      }
+      return out;
+    }
+
+    const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
+    const isEditTool = (it) => it.kind === 'tool_use' && EDIT_TOOLS.has(it.name);
+    const isBash = (it) => it.kind === 'tool_use' && it.name === 'Bash';
+
+    // ── session picker ────────────────────────────────────────────────────────
+    async function loadSessions() {
+      setStatus('');
+      let live = [];
+      try { live = (await call('agents.list')) || []; }
+      catch (e) { setStatus(`agents.list: ${e.message}`, true); }
+      const liveIds = new Set(live.map((a) => a.sessionId));
+      const cwds = [...new Set([paramCwd, ...live.map((a) => a.cwd)].filter(Boolean))];
+      const history = [];
+      for (const cwd of cwds) {
+        try {
+          const list = (await call('claude.sessionsForDir', { cwd })) || [];
+          for (const s of list) {
+            if (!liveIds.has(s.sessionId)) history.push({ ...s, cwd });
+          }
+        } catch { /* per-cwd history is best-effort */ }
+      }
+      history.sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)));
+
+      sessions = [
+        ...live.map((a) => ({
+          sessionId: a.sessionId, cwd: a.cwd, live: true,
+          label: `${shortDir(a.cwd)} — ${a.state || 'live'}${a.model ? ' · ' + a.model : ''}`,
+        })),
+        ...history.map((h) => ({
+          sessionId: h.sessionId, cwd: h.cwd, live: false,
+          label: `${shortDir(h.cwd)} — ${clip(h.summary || h.sessionId, 60)}${h.timestamp ? ' · ' + fmtTime(h.timestamp) : ''}`,
+        })),
+      ];
+      renderPicker();
+    }
+    const shortDir = (d) => (d ? d.split(/[/\\]/).filter(Boolean).pop() || d : '?');
+
+    function renderPicker() {
+      const cur = selected && selected.sessionId;
+      pickerEl.innerHTML = '';
+      const mk = (label, entries) => {
+        if (!entries.length) return;
+        const g = document.createElement('optgroup');
+        g.label = label;
+        for (const s of entries) {
+          const o = document.createElement('option');
+          o.value = s.sessionId;
+          o.textContent = s.label;
+          g.appendChild(o);
+        }
+        pickerEl.appendChild(g);
+      };
+      if (!sessions.length) {
+        pickerEl.innerHTML = '<option value="">No sessions found</option>';
+        return;
+      }
+      pickerEl.insertAdjacentHTML('afterbegin', '<option value="">— pick a session —</option>');
+      mk('Live', sessions.filter((s) => s.live));
+      mk('History', sessions.filter((s) => !s.live));
+      const want = cur || paramSessionId;
+      if (want && sessions.some((s) => s.sessionId === want)) {
+        pickerEl.value = want;
+        if (!selected) selectSession(want);
+      }
+    }
+
+    // ── loading a session's timeline ─────────────────────────────────────────
+    async function selectSession(sessionId) {
+      selected = sessions.find((s) => s.sessionId === sessionId) || null;
+      stopPoll(); stopPlay();
+      items = []; lastSeq = 0; cursor = 0; usingConversation = false; selectedFile = null;
+      if (!selected) { renderAll(); return; }
+      setStatus('loading…');
+      try {
+        // Prefer the daemon's structured conversation log (live sessions).
+        const conv = await call('sessions.conversation', { sessionId });
+        if (conv && Array.isArray(conv.items) && conv.items.length) {
+          items = fromConversation(conv.items);
+          lastSeq = conv.seq || 0;
+          usingConversation = true;
+        }
+      } catch { /* fall through to transcript */ }
+      if (!items.length) {
+        try {
+          const t = await call('sessions.transcript', { sessionId, cwd: selected.cwd });
+          items = fromTranscript(t && t.messages);
+        } catch (e) { setStatus(`transcript: ${e.message}`, true); }
+      }
+      cursor = items.length; // start at "now"; scrub left to rewind
+      setStatus(items.length ? '' : 'no timeline data for this session', !items.length);
+      renderAll();
+      if (selected.live && usingConversation) startPoll();
+    }
+
+    // Live tail: cheap incremental polling off the conversation cursor.
+    function startPoll() {
+      stopPoll();
+      pollTimer = setInterval(async () => {
+        if (!selected || !selected.live) return stopPoll();
+        try {
+          const d = await call('sessions.conversation', { sessionId: selected.sessionId, sinceSeq: lastSeq });
+          if (!d) return;
+          if (typeof d.seq === 'number' && d.seq < lastSeq) {
+            // The daemon rebuilt the log (transcript replaced) — resync whole.
+            const full = await call('sessions.conversation', { sessionId: selected.sessionId });
+            items = fromConversation(full.items || []); lastSeq = full.seq || 0;
+            cursor = Math.min(cursor, items.length);
+            renderAll();
+            return;
+          }
+          if (Array.isArray(d.items) && d.items.length) {
+            const pinned = followEl.checked && cursor === items.length;
+            items.push(...fromConversation(d.items));
+            lastSeq = d.seq || lastSeq + d.items.length;
+            if (pinned) cursor = items.length;
+            renderAll();
+          }
+        } catch { /* transient while the app reconnects */ }
+      }, 1500);
+    }
+    function stopPoll() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
+
+    // ── replay (auto-advance) ────────────────────────────────────────────────
+    function startPlay() {
+      if (cursor >= items.length) cursor = 0;
+      playEl.textContent = '❚❚';
+      playTimer = setInterval(() => {
+        if (cursor >= items.length) return stopPlay();
+        cursor++;
+        renderAll();
+      }, 350);
+    }
+    function stopPlay() { if (playTimer) { clearInterval(playTimer); playTimer = null; } playEl.textContent = '▶'; }
+
+    // ── rendering ────────────────────────────────────────────────────────────
+    function renderAll() { renderScrubber(); renderStats(); renderChat(); renderFiles(); }
+
+    function renderScrubber() {
+      sliderEl.max = items.length;
+      sliderEl.value = cursor;
+      posEl.textContent = `${cursor} / ${items.length}`;
+      const it = cursor > 0 ? items[cursor - 1] : null;
+      whenEl.textContent = it && it.ts ? fmtTime(it.ts) : '';
+      // ticks: one per notable item, positioned along the track
+      const marks = [];
+      for (let i = 0; i < items.length; i++) {
+        const it2 = items[i];
+        let color = null;
+        if (it2.kind === 'user_message') color = '#3b9cd9';
+        else if (isEditTool(it2)) color = '#7fce8c';
+        else if (isBash(it2)) color = '#e2b07d';
+        else if (it2.kind === 'tool_result' && it2.is_error) color = '#cf6f6f';
+        if (color) marks.push({ i, color });
+      }
+      ticksEl.innerHTML = marks.map((m) =>
+        `<div class="tick" style="left:${items.length > 1 ? (m.i / (items.length - 1)) * 100 : 0}%;background:${m.color}"></div>`
+      ).join('');
+    }
+
+    function renderStats() {
+      const upto = items.slice(0, cursor);
+      const msgs = upto.filter((i) => i.kind === 'user_message').length;
+      const tools = upto.filter((i) => i.kind === 'tool_use').length;
+      const cmds = upto.filter(isBash).length;
+      const edits = upto.filter(isEditTool);
+      const filesTouched = new Set(edits.map((e) => e.input && e.input.file_path).filter(Boolean)).size;
+      const errs = upto.filter((i) => i.kind === 'tool_result' && i.is_error).length;
+      statsEl.innerHTML =
+        `<span>prompts <b>${msgs}</b></span><span>tool calls <b>${tools}</b></span>` +
+        `<span>commands <b>${cmds}</b></span><span>files touched <b>${filesTouched}</b></span>` +
+        `<span>errors <b>${errs}</b></span>` +
+        (selected ? `<span style="margin-left:auto">${esc(shortDir(selected.cwd))}${selected.live ? ' · live' : ''}</span>` : '');
+    }
+
+    function toolSummary(it) {
+      const inp = it.input || {};
+      if (it.name === 'Bash') return inp.command || '';
+      if (inp.file_path) return inp.file_path;
+      if (inp.path) return inp.path;
+      if (inp.pattern) return inp.pattern;
+      if (inp.url) return inp.url;
+      if (inp.prompt || inp.description) return clip(inp.description || inp.prompt, 80);
+      const first = Object.values(inp).find((v) => typeof v === 'string');
+      return typeof first === 'string' ? clip(first, 80) : '';
+    }
+
+    function renderChat() {
+      const upto = items.slice(0, cursor);
+      if (!upto.length) {
+        chatEl.innerHTML = `<div class="empty">${selected ? 'At the very beginning — scrub right to replay.' : 'Pick a session to replay.'}</div>`;
+        return;
+      }
+      const html = [];
+      for (let i = 0; i < upto.length; i++) {
+        const it = upto[i];
+        const cur = i === cursor - 1 ? ' current' : '';
+        const ts = it.ts ? `<span class="ts">${esc(fmtTime(it.ts))}</span>` : '';
+        switch (it.kind) {
+          case 'user_message':
+            html.push(`<div class="item user${cur}"><div class="who"><span>you</span>${ts}</div><div class="bubble">${esc(it.text)}</div></div>`);
+            break;
+          case 'assistant_text':
+            html.push(`<div class="item assistant${cur}"><div class="who"><span>agent</span>${ts}</div><div class="bubble">${esc(it.text)}</div></div>`);
+            break;
+          case 'thinking':
+            html.push(`<div class="item${cur}"><details class="tool"><summary><span class="badge">thinking</span><span class="arg">${esc(clip(it.text, 90))}</span></summary><div class="body thinking">${esc(it.text)}</div></details></div>`);
+            break;
+          case 'tool_use': {
+            const cls = isEditTool(it) ? 'edit' : isBash(it) ? 'bash' : '';
+            html.push(`<div class="item${cur}"><details class="tool"><summary><span class="badge ${cls}">${esc(it.name)}</span><span class="arg">${esc(toolSummary(it))}</span></summary><div class="body">${esc(JSON.stringify(it.input ?? {}, null, 2))}</div></details></div>`);
+            break;
+          }
+          case 'tool_result': {
+            const text = String(it.content ?? '');
+            if (!text.trim() && !it.is_error) break; // silent empty results
+            html.push(`<div class="item${cur}"><details class="tool${it.is_error ? ' error' : ''}"><summary><span class="badge${it.is_error ? ' err' : ''}">${it.is_error ? 'error' : 'result'}</span><span class="arg">${esc(clip(text.trim(), 90))}</span></summary><div class="body">${esc(clip(text, 20000))}</div></details></div>`);
+            break;
+          }
+          case 'plan': {
+            const steps = (it.steps || []).map((s) => {
+              const st = s.status === 'completed' ? 'done' : s.status === 'in_progress' ? 'doing' : 'todo';
+              const mark = st === 'done' ? '✓' : st === 'doing' ? '›' : '○';
+              return `<div class="step ${st}"><span>${mark}</span><span>${esc(s.text || s.step || '')}</span></div>`;
+            }).join('');
+            html.push(`<div class="item${cur}"><div class="plan"><div class="who">plan</div>${steps}</div></div>`);
+            break;
+          }
+          // usage items carry token telemetry; not rendered as chat
+        }
+      }
+      chatEl.innerHTML = html.join('');
+      const curEl = chatEl.querySelector('.current');
+      if (curEl) curEl.scrollIntoView({ block: 'nearest' });
+      else chatEl.scrollTop = chatEl.scrollHeight;
+    }
+
+    // ── file reconstruction ──────────────────────────────────────────────────
+    // Fold Write/Edit tool calls up to the cursor into per-file change stacks.
+    // A file whose first op is a full Write can be reconstructed exactly at any
+    // point; edit-only files show their diff stack (the base was never in the
+    // transcript).
+    function fileOpsUpTo(n) {
+      const ops = new Map(); // path -> [{name, input, i}]
+      for (let i = 0; i < n; i++) {
+        const it = items[i];
+        if (!isEditTool(it)) continue;
+        const p = it.input && (it.input.file_path || it.input.notebook_path);
+        if (!p) continue;
+        if (!ops.has(p)) ops.set(p, []);
+        ops.get(p).push({ name: it.name, input: it.input, i });
+      }
+      return ops;
+    }
+
+    function reconstruct(opList) {
+      // Returns { content, lastChange } if the file can be rebuilt (first op is
+      // a Write), else null. lastChange is the most recent new_string/content,
+      // used to highlight what the latest scrub step added.
+      if (!opList.length || opList[0].name !== 'Write') return null;
+      let content = String(opList[0].input.content ?? '');
+      let lastChange = content;
+      for (let k = 1; k < opList.length; k++) {
+        const op = opList[k];
+        if (op.name === 'Write') {
+          content = String(op.input.content ?? '');
+          lastChange = content;
+        } else if (op.name === 'Edit') {
+          const oldS = String(op.input.old_string ?? '');
+          const newS = String(op.input.new_string ?? '');
+          if (!oldS) continue;
+          content = op.input.replace_all ? content.split(oldS).join(newS) : content.replace(oldS, newS);
+          lastChange = newS;
+        } else if (op.name === 'MultiEdit' && Array.isArray(op.input.edits)) {
+          for (const e of op.input.edits) {
+            const oldS = String(e.old_string ?? ''), newS = String(e.new_string ?? '');
+            if (!oldS) continue;
+            content = e.replace_all ? content.split(oldS).join(newS) : content.replace(oldS, newS);
+            lastChange = newS;
+          }
+        }
+      }
+      return { content, lastChange };
+    }
+
+    function renderFiles() {
+      const ops = fileOpsUpTo(cursor);
+      if (selectedFile && !ops.has(selectedFile)) selectedFile = null;
+      if (!selectedFile && ops.size) selectedFile = [...ops.keys()][ops.size - 1];
+
+      if (!ops.size) {
+        fileListEl.innerHTML = '';
+        fileViewEl.innerHTML = '<div class="empty">No file changes yet.</div>';
+        return;
+      }
+      fileListEl.innerHTML = [...ops.entries()].map(([p, list]) =>
+        `<div class="frow${p === selectedFile ? ' active' : ''}" data-path="${esc(p)}"><span class="n">&#x200E;${esc(p)}</span><span class="c">${list.length} op${list.length > 1 ? 's' : ''}</span></div>`
+      ).join('');
+
+      const opList = ops.get(selectedFile) || [];
+      const built = reconstruct(opList);
+      const parts = [`<div class="ophead">${esc(selectedFile)} — ${opList.length} change${opList.length > 1 ? 's' : ''} so far</div>`];
+      if (built) {
+        // Exact state at this point in time, latest change highlighted.
+        const hl = built.lastChange && built.lastChange.trim() ? built.lastChange : null;
+        let body = esc(built.content);
+        if (hl && built.content.includes(hl)) body = body.replace(esc(hl), `<span class="hl">${esc(hl)}</span>`);
+        parts.push(`<pre class="fullfile">${body}</pre>`);
+      } else {
+        // No full base in the transcript — show the diff stack instead.
+        for (const op of opList) {
+          parts.push(`<div class="ophead">${esc(op.name)} · event ${op.i + 1}</div>`);
+          if (op.name === 'Write') {
+            parts.push(`<pre><span class="diff-new">${esc(op.input.content ?? '')}</span></pre>`);
+          } else if (op.name === 'MultiEdit' && Array.isArray(op.input.edits)) {
+            for (const e of op.input.edits) {
+              parts.push(`<pre><span class="diff-old">${esc(e.old_string ?? '')}</span><span class="diff-new">${esc(e.new_string ?? '')}</span></pre>`);
+            }
+          } else {
+            parts.push(`<pre><span class="diff-old">${esc(op.input.old_string ?? '')}</span><span class="diff-new">${esc(op.input.new_string ?? '')}</span></pre>`);
+          }
+        }
+      }
+      fileViewEl.innerHTML = parts.join('');
+    }
+
+    // ── wiring ───────────────────────────────────────────────────────────────
+    pickerEl.addEventListener('change', () => selectSession(pickerEl.value));
+    $('reload').addEventListener('click', loadSessions);
+    $('toggleFiles').addEventListener('click', () => filesEl.classList.toggle('hidden'));
+    sliderEl.addEventListener('input', () => { stopPlay(); cursor = Number(sliderEl.value); renderAll(); });
+    $('stepBack').addEventListener('click', () => { stopPlay(); if (cursor > 0) { cursor--; renderAll(); } });
+    $('stepFwd').addEventListener('click', () => { stopPlay(); if (cursor < items.length) { cursor++; renderAll(); } });
+    playEl.addEventListener('click', () => (playTimer ? stopPlay() : startPlay()));
+    fileListEl.addEventListener('click', (e) => {
+      const row = e.target.closest('.frow');
+      if (row) { selectedFile = row.dataset.path; renderFiles(); }
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.target.tagName === 'INPUT' && e.target.type !== 'range') return;
+      if (e.key === 'ArrowLeft') { stopPlay(); if (cursor > 0) { cursor--; renderAll(); } e.preventDefault(); }
+      else if (e.key === 'ArrowRight') { stopPlay(); if (cursor < items.length) { cursor++; renderAll(); } e.preventDefault(); }
+      else if (e.key === ' ') { playTimer ? stopPlay() : startPlay(); e.preventDefault(); }
+    });
+
+    // files panel resizer
+    (() => {
+      const rz = $('fresizer');
+      let dragging = false;
+      rz.addEventListener('mousedown', (e) => { dragging = true; rz.classList.add('dragging'); e.preventDefault(); });
+      window.addEventListener('mousemove', (e) => {
+        if (!dragging) return;
+        const rect = document.querySelector('.main').getBoundingClientRect();
+        const w = Math.min(Math.max(rect.right - e.clientX, 160), rect.width - 240);
+        filesEl.style.flex = 'none';
+        filesEl.style.width = w + 'px';
+      });
+      window.addEventListener('mouseup', () => { dragging = false; rz.classList.remove('dragging'); });
+    })();
+
+    // refresh the Live group when agents come and go
+    eventHandlers.add((ev) => {
+      if (ev.type === 'agent.state_changed') {
+        const d = ev.data || {};
+        if (d.mode === 'stopped' || !sessions.some((s) => s.sessionId === d.sessionId)) loadSessions();
+      }
+    });
+
+    ws.onopen = () => {
+      connEl.textContent = 'connected';
+      subscribe('agent.state_changed');
+      loadSessions();
+    };
+    ws.onclose = () => { connEl.textContent = 'disconnected'; stopPoll(); };
+    ws.onerror = () => { connEl.textContent = 'bus error'; };
+  </script>
+</body>
+</html>

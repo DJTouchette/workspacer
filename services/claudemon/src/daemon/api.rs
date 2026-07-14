@@ -920,9 +920,20 @@ async fn stream_bytes(
         .into_response()
 }
 
+#[derive(Debug, Deserialize)]
+struct TranscriptQuery {
+    /// Fallback working directory for sessions this daemon isn't tracking:
+    /// with `?cwd=`, an unknown id is resolved against the on-disk JSONL at
+    /// `~/.claude/projects/<encoded-cwd>/<id>.jsonl` instead of 404ing, so
+    /// clients can fetch historical transcripts recorded before the daemon
+    /// started (e.g. a timeline replaying an old session).
+    cwd: Option<String>,
+}
+
 async fn get_transcript(
     State(store): State<SessionStore>,
     Path(id): Path<String>,
+    Query(q): Query<TranscriptQuery>,
 ) -> impl IntoResponse {
     // The id is interpolated into a `<projects>/<cwd>/<id>.jsonl` path below —
     // refuse traversal-shaped ids before any filesystem work.
@@ -930,7 +941,25 @@ async fn get_transcript(
         return (StatusCode::BAD_REQUEST, "invalid session id").into_response();
     }
     let Some(state) = store.get(&id) else {
-        return (StatusCode::NOT_FOUND, "session not found").into_response();
+        // Not a live session. With a cwd hint, serve the historical transcript
+        // straight from disk (read_for_session confines the read to the
+        // projects root); without one, unknown stays 404.
+        let Some(cwd) = q.cwd.filter(|c| !c.is_empty()) else {
+            return (StatusCode::NOT_FOUND, "session not found").into_response();
+        };
+        let result =
+            tokio::task::spawn_blocking(move || transcript::read_for_session(&cwd, &id)).await;
+        return match result {
+            Ok(Ok(t)) => Json(t).into_response(),
+            Ok(Err(err)) => {
+                tracing::warn!(?err, "historical transcript read failed");
+                (StatusCode::INTERNAL_SERVER_ERROR, "transcript read failed").into_response()
+            }
+            Err(err) => {
+                tracing::warn!(?err, "historical transcript read task panicked");
+                (StatusCode::INTERNAL_SERVER_ERROR, "transcript read failed").into_response()
+            }
+        };
     };
     // Authoritative path captured from the hook — read the exact file. Falls
     // through to cwd-based resolution only if it isn't known yet or is missing.
@@ -1360,6 +1389,32 @@ mod tests {
         let (status, body) = request(test_state(), get("/sessions/nope/transcript")).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
         assert_eq!(body, b"session not found");
+    }
+
+    #[tokio::test]
+    async fn get_transcript_unknown_session_with_cwd_reads_disk_not_404() {
+        // An untracked id + a cwd hint is the historical-transcript path: the
+        // handler goes to the on-disk projects dir instead of 404ing. Nothing
+        // exists there for this cwd, so it serves an empty transcript.
+        let (status, body) = request(
+            test_state(),
+            get("/sessions/nope/transcript?cwd=/definitely/not/a/project"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let v = serde_json::from_slice::<Value>(&body).unwrap();
+        assert_eq!(v["messages"], json!([]));
+    }
+
+    #[tokio::test]
+    async fn get_transcript_traversal_id_with_cwd_is_rejected() {
+        // valid_session_id must gate the disk-fallback path too.
+        let (status, _) = request(
+            test_state(),
+            get("/sessions/..%2F..%2Fetc/transcript?cwd=/tmp"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

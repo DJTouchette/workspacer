@@ -1,0 +1,29 @@
+# Timeline — transcript replay plugin
+
+A webview-only plugin that turns any agent session's transcript into a
+scrubbable timeline: start at 0 and drag right to watch the conversation,
+tool calls, and file edits replay in order.
+
+- **Session picker** — live agents (from `agents.list`) plus historical
+  sessions recorded on disk (from `claude.sessionsForDir`), grouped in one
+  dropdown. Opening the pane inside an agent workspace preselects that agent.
+- **Scrubber** — the slider position N renders the first N timeline events.
+  Colored ticks mark prompts (blue), file edits (green), commands (amber),
+  and errors (red). `←`/`→` step one event; `space` replays automatically.
+- **File changes panel** — folds `Write`/`Edit`/`MultiEdit` calls up to the
+  scrub position into per-file change stacks. Files first created by a full
+  `Write` are reconstructed exactly as they stood at that moment (latest
+  change highlighted); edit-only files show their diff stack, since the
+  transcript never carried the original base content.
+- **Live tail** — running sessions keep growing at the right edge via
+  incremental `sessions.conversation { sinceSeq }` polling; "follow live"
+  keeps the scrubber pinned to now.
+
+Data comes from two capabilities, normalized into one item shape:
+`sessions.conversation` (claudemon's structured log, used for sessions the
+daemon tracks) and `sessions.transcript { sessionId, cwd }` (raw parsed
+JSONL — the `cwd` lets claudemon resolve historical sessions from
+`~/.claude/projects` after the daemon has forgotten them).
+
+No sidecar and no build step: the hub serves `ui/` statically and the page
+connects straight to the bus with its pane token.
