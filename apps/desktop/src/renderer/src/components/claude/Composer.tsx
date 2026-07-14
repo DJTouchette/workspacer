@@ -94,6 +94,15 @@ export const Composer: React.FC<ComposerProps> = ({
     const ta = taRef.current;
     if (!ta) return;
     ta.style.height = 'auto';
+    // An empty box is always the natural one-line height — never measure it.
+    // A measurement taken while the surrounding layout is still settling (e.g.
+    // on session resume, with siblings like the tasks card mounting above)
+    // can read a stretched scrollHeight and pin an empty composer tall until
+    // the next keystroke re-measures.
+    if (value === '') {
+      ta.style.overflowY = 'hidden';
+      return;
+    }
     // While the pane is hidden (display:none ancestor — e.g. before the first
     // GUI switch) scrollHeight reads 0; collapsing the box to 0px there is what
     // left the first message half-clipped. Leave it at the natural one-line
