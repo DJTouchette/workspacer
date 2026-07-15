@@ -25,7 +25,12 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { ClaudeSessionSnapshot } from '../../types/claudeSession';
 import type { AgentProvider } from '../../types/pane';
-import { capsFor, permissionModeLabel } from '../../lib/providerCaps';
+import {
+  capsFor,
+  effortLevelLabel,
+  permissionModeLabel,
+  type EffortLevel,
+} from '../../lib/providerCaps';
 import { deriveSessionStats } from '../../lib/sessionStats';
 import { shortModelLabel } from '../../lib/modelLabel';
 import { claudeColors as colors } from '../claude-shared';
@@ -50,6 +55,10 @@ interface ModelOption {
   context?: string;
   /** True for concrete ids observed in sessions (grouped after the aliases). */
   seen?: boolean;
+  /** Provider-reported default model. */
+  default?: boolean;
+  /** Exact effort ids supported by this model, when the provider reports them. */
+  effortLevels?: string[];
 }
 
 /** Context-window chip; the 1M window gets the accent treatment. */
@@ -201,7 +210,14 @@ export const ComposerControls: React.FC<{
           provider as 'codex' | 'opencode' | 'pi',
           cwd,
         );
-        setModels(res.map((m) => ({ id: m.id, label: m.label || m.id })));
+        setModels(
+          res.map((m) => ({
+            id: m.id,
+            label: m.label || m.id,
+            default: m.default,
+            effortLevels: m.effortLevels,
+          })),
+        );
       }
     } catch {
       setModels([]);
@@ -213,7 +229,11 @@ export const ComposerControls: React.FC<{
     // Anchor at the pill's top edge; the menu flips above it (viewport clamp)
     // since the bar sits at the bottom of the pane.
     setMenu({ kind, x: rect.left, y: rect.top - 4 });
-    if (kind === 'model' && models === null) void loadModels();
+    if (
+      models === null &&
+      (kind === 'model' || (kind === 'effort' && (provider ?? 'claude') === 'codex'))
+    )
+      void loadModels();
   };
 
   // Live model switch. Claude: the `/model` slash command through the normal
@@ -302,8 +322,20 @@ export const ComposerControls: React.FC<{
 
   // ── Pill labels ──
   const modelLabel = switching ? `${switching}…` : (stats.model ?? settings?.model ?? 'Model');
-  const effortLevel = caps.effort?.levels.find((l) => l.id === settings?.effort);
-  const effortLabel = effortLevel?.label ?? settings?.effort ?? 'Effort';
+  // An omitted/empty effort means "use this harness's configured default".
+  // Make that a visible selected state instead of leaving the pill as the bare
+  // placeholder "Effort" with no checked menu row.
+  const currentEffort = settings?.effort?.trim() || undefined;
+  const reportedModel = stats.model ?? settings?.model;
+  const currentModel = models?.find((model) =>
+    reportedModel ? model.id === reportedModel : model.default,
+  );
+  const effortLevels: EffortLevel[] =
+    (provider ?? 'claude') === 'codex' && currentModel?.effortLevels?.length
+      ? currentModel.effortLevels.map((id) => ({ id, label: effortLevelLabel(id) }))
+      : (caps.effort?.levels ?? []);
+  const effortLevel = effortLevels.find((l) => l.id === currentEffort);
+  const effortLabel = effortLevel?.label ?? currentEffort ?? 'Default';
   // Live mode (hook telemetry — follows shift+tab in the TUI) wins over the
   // requested-at-spawn setting, same precedence as the model pill.
   const currentPermMode = snapshot?.livePermissionMode ?? settings?.permissionMode;
@@ -426,10 +458,15 @@ export const ComposerControls: React.FC<{
           {menu.kind === 'effort' && caps.effort && (
             <>
               <ContextMenuLabel>Reasoning effort · restarts session</ContextMenuLabel>
-              {caps.effort.levels.map((l) => (
+              <ContextMenuItem
+                label={!currentEffort ? 'Default ✓' : 'Default'}
+                onClick={() => pickRestart({ effort: '' }, 'Default effort')}
+              />
+              <ContextMenuSeparator />
+              {effortLevels.map((l) => (
                 <ContextMenuItem
                   key={l.id}
-                  label={l.id === settings?.effort ? `${l.label} ✓` : l.label}
+                  label={l.id === currentEffort ? `${l.label} ✓` : l.label}
                   onClick={() => pickRestart({ effort: l.id }, `${l.label} effort`)}
                 />
               ))}

@@ -67,7 +67,7 @@ export interface ManagedSpawnOptions {
   transport?: 'stream';
   cwd?: string;
   model?: string;
-  /** Reasoning-effort level (codex `model_reasoning_effort`); others ignore it. */
+  /** Reasoning-effort level (Claude `--effort`, Codex config); others ignore it. */
   effort?: string;
   /** YOLO / auto-approve every command and file change. */
   skipPermissions?: boolean;

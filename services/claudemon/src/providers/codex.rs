@@ -521,8 +521,10 @@ pub async fn list_models(bin: &str, cwd: &str) -> anyhow::Result<Vec<ModelInfo>>
 
 /// Live query: boot a throwaway `codex app-server`, `initialize`, ask for the
 /// catalog via `model/list`, then drop the process. Hidden models are skipped;
-/// the rest map to the picker with their `displayName` as label and the
-/// server-flagged default marked.
+/// the rest map to the picker with their `displayName` as label, the
+/// server-flagged default marked, and that model's supported reasoning-effort
+/// ids preserved. The latter is intentionally live metadata: Codex effort
+/// ladders vary by model and evolve with the installed CLI.
 async fn fetch_models(bin: &str, cwd: &str) -> anyhow::Result<Vec<ModelInfo>> {
     let mut child = Command::new(bin)
         .arg("app-server")
@@ -571,20 +573,7 @@ async fn fetch_models(bin: &str, cwd: &str) -> anyhow::Result<Vec<ModelInfo>> {
             let models = data
                 .iter()
                 .filter(|m| !m.get("hidden").and_then(Value::as_bool).unwrap_or(false))
-                .filter_map(|m| {
-                    let id = m
-                        .get("model")
-                        .or_else(|| m.get("id"))
-                        .and_then(Value::as_str)?
-                        .to_string();
-                    let label = m
-                        .get("displayName")
-                        .and_then(Value::as_str)
-                        .unwrap_or(&id)
-                        .to_string();
-                    let default = m.get("isDefault").and_then(Value::as_bool).unwrap_or(false);
-                    Some(ModelInfo { id, label, default })
-                })
+                .filter_map(model_info_from_value)
                 .collect::<Vec<_>>();
             return Ok(models);
         }
@@ -596,6 +585,44 @@ async fn fetch_models(bin: &str, cwd: &str) -> anyhow::Result<Vec<ModelInfo>> {
         .context("timed out listing codex models")?;
     let _ = child.start_kill();
     result
+}
+
+/// Parse one Codex app-server `model/list` row. Kept separate from the process
+/// handshake so the model-specific effort contract is easy to regression-test.
+fn model_info_from_value(model: &Value) -> Option<ModelInfo> {
+    let id = model
+        .get("model")
+        .or_else(|| model.get("id"))
+        .and_then(Value::as_str)?
+        .to_string();
+    let label = model
+        .get("displayName")
+        .and_then(Value::as_str)
+        .unwrap_or(&id)
+        .to_string();
+    let default = model
+        .get("isDefault")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let effort_levels = model
+        .get("supportedReasoningEfforts")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|effort| {
+            effort
+                .get("reasoningEffort")
+                .or_else(|| effort.get("reasoning_effort"))
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .collect();
+    Some(ModelInfo {
+        id,
+        label,
+        default,
+        effort_levels,
+    })
 }
 
 // ── Live client ─────────────────────────────────────────────────────────────
@@ -1461,6 +1488,31 @@ async fn write_msg(stdin: &mut ChildStdin, value: &Value) -> anyhow::Result<()> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn model_info_preserves_model_specific_effort_ids() {
+        let row = json!({
+            "model": "gpt-5.5",
+            "displayName": "GPT-5.5",
+            "isDefault": true,
+            "supportedReasoningEfforts": [
+                { "reasoningEffort": "low", "description": "Fast" },
+                { "reasoningEffort": "medium", "description": "Balanced" },
+                { "reasoningEffort": "high", "description": "Deep" },
+                { "reasoningEffort": "xhigh", "description": "Extra deep" }
+            ]
+        });
+
+        assert_eq!(
+            model_info_from_value(&row),
+            Some(ModelInfo {
+                id: "gpt-5.5".into(),
+                label: "GPT-5.5".into(),
+                default: true,
+                effort_levels: vec!["low".into(), "medium".into(), "high".into(), "xhigh".into()],
+            })
+        );
+    }
 
     #[test]
     fn turn_started_is_busy() {

@@ -49,14 +49,20 @@ use crate::wrapper::pty;
 /// One selectable model for a managed provider, as surfaced by the spawn
 /// dialog's model picker. `id` is the value passed back as the model override
 /// (the provider's own id format); `label` is the human display name; `default`
-/// marks the provider's out-of-the-box choice. Populated by each provider's
-/// `list_models` (live-queried from the CLI/server at pick time).
+/// marks the provider's out-of-the-box choice. `effort_levels` carries the
+/// model-specific reasoning-effort ids when the provider reports them (Codex's
+/// `model/list` does); an empty list means the provider supplied no metadata.
+/// Populated by each provider's `list_models` (live-queried from the CLI/server
+/// at pick time).
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ModelInfo {
     pub id: String,
     pub label: String,
     #[serde(default)]
     pub default: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effort_levels: Vec<String>,
 }
 
 // ── Model-list cache ─────────────────────────────────────────────────────────
@@ -822,6 +828,7 @@ mod tests {
             id: "m1".into(),
             label: "M1".into(),
             default: true,
+            effort_levels: vec![],
         }];
 
         // Fresh entry is served both as a fresh hit and as last-known-good.

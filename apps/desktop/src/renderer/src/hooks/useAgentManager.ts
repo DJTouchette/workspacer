@@ -213,7 +213,7 @@ export function useAgentManager() {
       transport?: 'pty' | 'stream';
       profileId?: string;
       model?: string;
-      /** Reasoning-effort level (codex only today). */
+      /** Harness-specific reasoning-effort level (Claude or Codex). */
       effort?: string;
       /** Permission mode (claude default/acceptEdits/plan/bypassPermissions, managed ask/yolo). */
       permissionMode?: string;

@@ -95,6 +95,7 @@ async fn fetch_models(bin: &str, cwd: &str) -> anyhow::Result<Vec<ModelInfo>> {
                         id: full.clone(),
                         label: full,
                         default: false,
+                        effort_levels: vec![],
                     })
                 })
                 .collect::<Vec<_>>();

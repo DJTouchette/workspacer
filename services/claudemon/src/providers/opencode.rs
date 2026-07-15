@@ -60,6 +60,7 @@ async fn fetch_models(bin: &str, cwd: &str) -> anyhow::Result<Vec<ModelInfo>> {
             id: id.to_string(),
             label: id.to_string(),
             default: false,
+            effort_levels: vec![],
         })
         .collect();
     Ok(models)

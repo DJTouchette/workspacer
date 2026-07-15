@@ -4,7 +4,7 @@ import { deriveAgentName } from '../hooks/useAgentManager';
 import { AgentLogo } from './agentLogos';
 import type { LibraryItem } from '../types/library';
 import type { AgentProvider } from '../types/pane';
-import { capsFor } from '../lib/providerCaps';
+import { capsFor, effortLevelLabel, type EffortLevel } from '../lib/providerCaps';
 
 /** Bypass-everything mode id per provider family (claude vs managed). */
 const bypassModeFor = (provider: AgentProvider): string =>
@@ -86,6 +86,14 @@ interface ProviderDetection {
   customBin: string;
 }
 
+interface ProviderModel {
+  id: string;
+  label: string;
+  default: boolean;
+  /** Exact effort ids reported for this model by the provider catalog. */
+  effortLevels?: string[];
+}
+
 /**
  * The "new agent" screen. Despite the (legacy) name it renders as a full-bleed
  * workspace page — a blank agent about to be born — not a floating modal:
@@ -113,9 +121,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   // value (''=provider default, a model id, or CUSTOM), and `providerCustom`
   // holds the free-text id when CUSTOM — or whenever the live list is empty
   // (e.g. Pi with no authed providers), in which case the field is shown bare.
-  const [providerModels, setProviderModels] = useState<
-    Array<{ id: string; label: string; default: boolean }>
-  >([]);
+  const [providerModels, setProviderModels] = useState<ProviderModel[]>([]);
   const [providerModelsLoading, setProviderModelsLoading] = useState(false);
   const [providerSel, setProviderSel] = useState('');
   const [providerCustom, setProviderCustom] = useState('');
@@ -137,10 +143,17 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   const [seen, setSeen] = useState<string[]>([]);
   const [modelSel, setModelSel] = useState<string>('');
   const [customModel, setCustomModel] = useState('');
-  // Permission mode ('' = provider default: claude 'default', managed 'ask')
-  // and reasoning effort ('' = provider default; codex only). See providerCaps.
+  // Permission mode ('' = provider default: claude 'default', managed 'ask').
+  // Effort is kept per provider: Claude and Codex have different ladders and a
+  // choice made for one harness must not leak into the other. An empty entry
+  // means that harness's own configured default. See providerCaps.
   const [permissionMode, setPermissionMode] = useState('');
-  const [effort, setEffort] = useState('');
+  const [effortByProvider, setEffortByProvider] = useState<Partial<Record<AgentProvider, string>>>(
+    {},
+  );
+  const effort = effortByProvider[provider] ?? '';
+  const setEffort = (value: string) =>
+    setEffortByProvider((current) => ({ ...current, [provider]: value }));
   const [advancedOpen, setAdvancedOpen] = useState(() => {
     try {
       return window.localStorage?.getItem(ADVANCED_OPEN_KEY) === 'true';
@@ -202,12 +215,12 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
 
   // Keep the permission mode valid across provider switches: bypass-family ids
   // translate (bypassPermissions ↔ yolo); anything else the new provider
-  // doesn't offer resets to its default. Effort only exists on some providers.
+  // doesn't offer resets to its default. Effort needs no switch-time cleanup:
+  // effortByProvider isolates each harness and effort-less providers hide it.
   useEffect(() => {
     setPermissionMode((cur) => {
       return normalizePermissionModeForProvider(provider, cur);
     });
-    if (!capsFor(provider).effort) setEffort('');
   }, [provider]);
 
   // Close on Escape regardless of which inner element has focus.
@@ -368,6 +381,29 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   // live list is empty or Custom… is chosen; otherwise it's the dropdown value.
   const resolvedProviderModel =
     providerModels.length === 0 || providerSel === CUSTOM ? providerCustom.trim() : providerSel;
+  const selectedProviderModel = providerModels.find((model) =>
+    resolvedProviderModel ? model.id === resolvedProviderModel : model.default,
+  );
+  // Codex reports supported reasoning efforts per model. Prefer that live
+  // catalog over the provider fallback so, for example, xhigh appears only
+  // when the selected model accepts it. Claude currently reports one
+  // harness-wide ladder through its CLI, so it keeps providerCaps' list.
+  const effortLevels: EffortLevel[] =
+    selectedProviderModel?.effortLevels?.length && provider === 'codex'
+      ? selectedProviderModel.effortLevels.map((id) => ({ id, label: effortLevelLabel(id) }))
+      : (capsFor(provider).effort?.levels ?? []);
+  const effortLevelKey = effortLevels.map((level) => level.id).join('\0');
+
+  // If changing models makes the current effort invalid, return this harness
+  // to its default instead of sending a value the selected model rejects.
+  useEffect(() => {
+    const supported = effortLevelKey ? effortLevelKey.split('\0') : [];
+    setEffortByProvider((current) => {
+      const selected = current[provider];
+      if (!selected || supported.includes(selected)) return current;
+      return { ...current, [provider]: '' };
+    });
+  }, [provider, effortLevelKey]);
 
   const browse = async () => {
     const picked = await window.electronAPI.pickFolder?.(cwd || undefined);
@@ -413,6 +449,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
             transport,
             profileId: profileId || undefined,
             model: resolvedModel || undefined,
+            effort: effort || undefined,
             permissionMode: resolvedMode,
             skipPermissions,
             mcpItemIds: mcpSel.length ? mcpSel : undefined,
@@ -634,8 +671,8 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
     pills.push(
       <PillGroup label="effort">
         <select value={effort} onChange={(e) => setEffort(e.target.value)} style={pillSelect}>
-          <option value="">Default</option>
-          {capsFor(provider).effort!.levels.map((l) => (
+          <option value="">Default ({providerLabel} setting)</option>
+          {effortLevels.map((l) => (
             <option key={l.id} value={l.id}>
               {l.label}
             </option>

@@ -134,7 +134,7 @@ export interface ElectronAPI {
   providerListModels: (
     provider: 'codex' | 'opencode' | 'pi',
     cwd?: string,
-  ) => Promise<Array<{ id: string; label: string; default: boolean }>>;
+  ) => Promise<Array<{ id: string; label: string; default: boolean; effortLevels?: string[] }>>;
   providerCheckAll: () => Promise<
     Array<{ provider: string; found: boolean; resolvedPath: string | null; customBin: string }>
   >;

@@ -111,7 +111,7 @@ class ClaudemonSessionClient {
     provider: 'opencode' | 'codex' | 'pi' | 'claude';
     cwd: string;
     model?: string;
-    /** Reasoning-effort level (codex `model_reasoning_effort`); others ignore it. */
+    /** Reasoning-effort level (Claude/Codex); other providers ignore it. */
     effort?: string;
     /** Resolved launcher binary (the desktop resolves it on PATH). */
     bin?: string;
@@ -167,7 +167,7 @@ class ClaudemonSessionClient {
     provider: 'opencode' | 'codex' | 'pi',
     cwd?: string,
     bin?: string,
-  ): Promise<Array<{ id: string; label: string; default: boolean }>> {
+  ): Promise<Array<{ id: string; label: string; default: boolean; effortLevels?: string[] }>> {
     const params = new URLSearchParams();
     if (cwd) params.set('cwd', cwd);
     if (bin) params.set('bin', bin);
@@ -178,12 +178,22 @@ class ClaudemonSessionClient {
       );
       if (!res.ok) return [];
       const body = (await res.json()) as {
-        models?: Array<{ id: string; label: string; default?: boolean }>;
+        models?: Array<{
+          id: string;
+          label: string;
+          default?: boolean;
+          effortLevels?: unknown;
+        }>;
       };
       return (body.models ?? []).map((m) => ({
         id: m.id,
         label: m.label,
         default: m.default === true,
+        ...(Array.isArray(m.effortLevels) && {
+          effortLevels: m.effortLevels.filter(
+            (level): level is string => typeof level === 'string',
+          ),
+        }),
       }));
     } catch {
       return [];

@@ -25,6 +25,21 @@ export interface EffortLevel {
   label: string;
 }
 
+const EFFORT_LABELS: Record<string, string> = {
+  none: 'None',
+  minimal: 'Minimal',
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  xhigh: 'Extra high',
+  max: 'Max',
+};
+
+/** Display label for an effort id reported by a harness/model catalog. */
+export function effortLevelLabel(id: string): string {
+  return EFFORT_LABELS[id] ?? id;
+}
+
 export interface PermissionModeOption {
   id: string;
   label: string;
@@ -53,10 +68,11 @@ const MANAGED_PERMISSION_MODES: PermissionModeOption[] = [
   { id: 'yolo', label: 'Full access' },
 ];
 
-// Claude Code reasoning-effort ladder (`claude --effort <level>`). Distinct from
-// codex's `minimal/low/medium/high` — Claude adds `xhigh` and `max` and has no
-// `minimal`. Default is `high`; the CLI's own default is `xhigh`. Restart-only:
-// there's a `--effort` flag but no `/effort` slash command to change it live.
+// Claude Code reasoning-effort ladder (`claude --effort <level>`). Claude owns
+// this harness-wide vocabulary, including `max`. Codex is different: its exact
+// ladder comes from each `model/list` row at runtime (the list below is only a
+// fallback while that catalog loads). Restart-only: there's an `--effort` flag
+// but no `/effort` slash command to change it live.
 const CLAUDE_EFFORT_LEVELS: EffortLevel[] = [
   { id: 'low', label: 'Low' },
   { id: 'medium', label: 'Medium' },
@@ -91,10 +107,10 @@ export const PROVIDER_CAPS: Record<AgentProvider, ProviderCaps> = {
     modelSource: 'managed',
     effort: {
       levels: [
-        { id: 'minimal', label: 'Minimal' },
         { id: 'low', label: 'Low' },
         { id: 'medium', label: 'Medium' },
         { id: 'high', label: 'High' },
+        { id: 'xhigh', label: 'Extra high' },
       ],
       switch: 'restart',
     },

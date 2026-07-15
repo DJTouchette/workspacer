@@ -23,6 +23,28 @@ function permissionSelect(): HTMLSelectElement {
   return found as HTMLSelectElement;
 }
 
+function effortSelect(): HTMLSelectElement {
+  const found = screen
+    .getAllByRole('combobox')
+    .find((el) =>
+      Array.from((el as HTMLSelectElement).options).some(
+        (opt) => opt.value === 'xhigh' || opt.value === 'minimal',
+      ),
+    );
+  if (!found) throw new Error('effort select not found');
+  return found as HTMLSelectElement;
+}
+
+function providerModelSelect(): HTMLSelectElement {
+  const found = screen
+    .getAllByRole('combobox')
+    .find((el) =>
+      Array.from((el as HTMLSelectElement).options).some((opt) => opt.value === 'gpt-5.5'),
+    );
+  if (!found) throw new Error('provider model select not found');
+  return found as HTMLSelectElement;
+}
+
 function advancedButton(): HTMLButtonElement {
   return screen.getByRole('button', { name: /advanced/i }) as HTMLButtonElement;
 }
@@ -49,6 +71,20 @@ beforeEach(() => {
     seen: [],
   });
   api.providerCheckAll = vi.fn().mockResolvedValue([]);
+  api.providerListModels = vi.fn().mockResolvedValue([
+    {
+      id: 'gpt-5.5',
+      label: 'GPT-5.5',
+      default: true,
+      effortLevels: ['low', 'medium', 'high', 'xhigh'],
+    },
+    {
+      id: 'legacy-codex',
+      label: 'Legacy Codex',
+      default: false,
+      effortLevels: ['minimal', 'low', 'medium', 'high'],
+    },
+  ]);
 });
 
 describe('SpawnAgentDialog permissions', () => {
@@ -111,5 +147,34 @@ describe('SpawnAgentDialog permissions', () => {
 
     expect(advancedButton()).toHaveAttribute('aria-expanded', 'true');
     expect(permissionSelect().value).toBe('');
+  });
+
+  it('keeps effort selections harness-specific and sends the Claude selection', async () => {
+    const { onSpawn } = renderDialog();
+    fireEvent.click(advancedButton());
+
+    // Claude has its own ladder and remembers its own selection.
+    expect(Array.from(effortSelect().options).map((o) => o.value)).toContain('max');
+    fireEvent.change(effortSelect(), { target: { value: 'xhigh' } });
+
+    fireEvent.click(screen.getByText('Codex').closest('button')!);
+    await waitFor(() => expect(providerModelSelect()).toBeInTheDocument());
+    expect(effortSelect().value).toBe('');
+    expect(Array.from(effortSelect().options).map((o) => o.value)).toContain('xhigh');
+    expect(Array.from(effortSelect().options).map((o) => o.value)).not.toContain('max');
+
+    // A different Codex model can expose a different exact ladder.
+    fireEvent.change(providerModelSelect(), { target: { value: 'legacy-codex' } });
+    await waitFor(() =>
+      expect(Array.from(effortSelect().options).map((o) => o.value)).toContain('minimal'),
+    );
+    expect(Array.from(effortSelect().options).map((o) => o.value)).not.toContain('xhigh');
+    fireEvent.change(effortSelect(), { target: { value: 'high' } });
+
+    fireEvent.click(screen.getByText('Claude Code').closest('button')!);
+    await waitFor(() => expect(effortSelect().value).toBe('xhigh'));
+
+    fireEvent.click(screen.getByRole('button', { name: /spawn agent/i }));
+    expect(onSpawn).toHaveBeenCalledWith(expect.objectContaining({ effort: 'xhigh' }));
   });
 });

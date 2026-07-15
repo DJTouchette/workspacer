@@ -227,7 +227,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   providerListModels: (
     provider: 'codex' | 'opencode' | 'pi',
     cwd?: string,
-  ): Promise<Array<{ id: string; label: string; default: boolean }>> =>
+  ): Promise<Array<{ id: string; label: string; default: boolean; effortLevels?: string[] }>> =>
     ipcRenderer.invoke(IPC.PROVIDER_LIST_MODELS, provider, cwd),
   providerCheckAll: (): Promise<
     Array<{ provider: string; found: boolean; resolvedPath: string | null; customBin: string }>

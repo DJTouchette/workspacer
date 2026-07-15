@@ -67,8 +67,13 @@ beforeEach(() => {
     seen: [],
   });
   api.providerListModels = vi.fn().mockResolvedValue([
-    { id: 'gpt-5-codex', label: 'GPT-5 Codex', default: true },
-    { id: 'o3', label: 'o3', default: false },
+    {
+      id: 'gpt-5-codex',
+      label: 'GPT-5 Codex',
+      default: true,
+      effortLevels: ['low', 'medium', 'high', 'xhigh'],
+    },
+    { id: 'o3', label: 'o3', default: false, effortLevels: ['low', 'high'] },
   ]);
   api.claudeSetModel = vi.fn().mockResolvedValue({ ok: true });
   api.claudeSetPermissionMode = vi.fn().mockResolvedValue({ ok: true });
@@ -132,6 +137,13 @@ describe('ComposerControls — pill labels reflect session state', () => {
     expect(screen.getByText('Extra high')).toBeInTheDocument();
   });
 
+  it('shows the harness default as the selected effort when none was overridden', async () => {
+    renderControls({ provider: 'codex', snapshot: snapshot({ settings: {} }) });
+
+    fireEvent.click(screen.getByText('Default'));
+    expect(await screen.findByText('Default ✓')).toBeInTheDocument();
+  });
+
   it('disables the pills when there is no session yet', () => {
     renderControls({ sessionId: null });
     // Every pill is a disabled button in the no-session state.
@@ -190,6 +202,30 @@ describe('ComposerControls — managed provider (codex)', () => {
     const confirm = await screen.findByText(/Restart with High effort/);
     fireEvent.click(confirm);
     expect(onRestartWith).toHaveBeenCalledWith({ effort: 'high' });
+  });
+
+  it('can restart back onto the harness default effort', async () => {
+    const { onRestartWith } = renderControls({
+      provider: 'codex',
+      snapshot: snapshot({ settings: { effort: 'low' } }),
+    });
+    fireEvent.click(screen.getByText('Low'));
+    fireEvent.click(await screen.findByText('Default'));
+    fireEvent.click(await screen.findByText(/Restart with Default effort/));
+    expect(onRestartWith).toHaveBeenCalledWith({ effort: '' });
+  });
+
+  it("uses the current Codex model's reported effort names", async () => {
+    renderControls({
+      provider: 'codex',
+      snapshot: snapshot({ settings: { model: 'o3', effort: 'low' } }),
+    });
+    fireEvent.click(screen.getByText('Low'));
+
+    await waitFor(() => expect(api.providerListModels).toHaveBeenCalled());
+    expect(await screen.findByText('High')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText('Medium')).not.toBeInTheDocument());
+    expect(screen.queryByText('Extra high')).not.toBeInTheDocument();
   });
 
   it('a failed live model switch falls back to the restart confirm carrying the daemon reason', async () => {
