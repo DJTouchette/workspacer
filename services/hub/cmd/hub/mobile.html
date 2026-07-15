@@ -418,7 +418,7 @@
   function toast(m) { toastEl.textContent = m; toastEl.classList.add('show'); clearTimeout(toast._t); toast._t = setTimeout(() => toastEl.classList.remove('show'), 2200); }
   function fmtUSD(n) { n = n || 0; return n >= 0.01 ? '$' + n.toFixed(2) : n > 0 ? '<$0.01' : '$0.00'; }
   function isBlocked(s) { return !!(s && (s.pendingApproval || (s.pendingQuestions && s.pendingQuestions.length))); }
-  function isWorking(s) { const a = s && s.ambientState; return isLive(s) && !isBlocked(s) && (a === 'streaming' || a === 'thinking'); }
+  function isWorking(s) { const a = s && s.ambientState; return isLive(s) && !isBlocked(s) && (a === 'streaming' || a === 'thinking' || a === 'background'); }
   function isLive(s) { return s && s.status !== 'ended'; }
   function agentName(s) { return basename(s.liveCwd || s.cwd) || (s.sessionId || '').slice(0, 8) || 'agent'; }
 
@@ -428,6 +428,7 @@
     if (s.pendingQuestions && s.pendingQuestions.length) return '<span class="chip question"><span class="cdot"></span>Needs answer</span>';
     const a = s.ambientState;
     if (a === 'streaming' || a === 'thinking') return '<span class="chip work"><span class="cdot"></span>Working</span>';
+    if (a === 'background') return '<span class="chip work"><span class="cdot"></span>Background work</span>';
     return '<span class="chip idle"><span class="cdot"></span>Idle</span>';
   }
   function ctxPct(s) {

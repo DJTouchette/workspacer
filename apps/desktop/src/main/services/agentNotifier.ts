@@ -18,7 +18,10 @@ import { appIconPath } from '../lib/appIcon';
 import type { ClaudeSessionState, SessionAmbientState } from './claudeSessionStore';
 
 const NEEDS_YOU: SessionAmbientState[] = ['waiting_approval', 'waiting_input'];
-const WORKING: SessionAmbientState[] = ['streaming', 'thinking'];
+// 'background' counts as working so "finished" fires when the spawned work
+// (workflow / background subagent) completes — background → idle — instead of
+// when the parent turn ends mid-workflow.
+const WORKING: SessionAmbientState[] = ['streaming', 'thinking', 'background'];
 
 interface NotificationsConfig {
   enabled: boolean;

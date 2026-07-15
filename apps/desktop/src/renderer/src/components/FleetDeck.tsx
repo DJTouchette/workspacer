@@ -333,7 +333,7 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
 
   const working = realAgents.filter((a) => {
     const s = a.sessionId ? snapshotBySession[a.sessionId]?.ambientState : undefined;
-    return s === 'thinking' || s === 'streaming';
+    return s === 'thinking' || s === 'streaming' || s === 'background';
   }).length;
 
   // Windowed grid measurement (also feeds keyboard grid-nav): track the content
@@ -1166,6 +1166,12 @@ function listStateVisual(s: string | undefined): { color: string; label: string;
       };
     case 'streaming':
       return { color: 'var(--wks-busy, var(--wks-accent, #4a9eff))', label: 'Working', glow: true };
+    case 'background':
+      return {
+        color: 'var(--wks-busy, var(--wks-accent, #4a9eff))',
+        label: 'Background work',
+        glow: false,
+      };
     case 'idle':
       return { color: 'var(--wks-success, #3fb950)', label: 'Idle', glow: false };
     default:

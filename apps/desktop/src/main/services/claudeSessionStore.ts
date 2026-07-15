@@ -17,6 +17,8 @@ import {
   applyHookEvent,
   applyStopEvent,
   applySessionEndEvent,
+  normalizeBackgroundAmbient,
+  sessionHasBackgroundWork,
 } from './sessionStore/hookEventRouter';
 import {
   applyConversationItems,
@@ -52,7 +54,16 @@ const STATUSLINE_DEBOUNCE_MS = 250;
  * (`src/renderer/src/types/claudeSession.ts`).
  */
 export type SessionAmbientState =
-  'idle' | 'thinking' | 'streaming' | 'waiting_input' | 'waiting_approval';
+  | 'idle'
+  | 'thinking'
+  | 'streaming'
+  | 'waiting_input'
+  | 'waiting_approval'
+  // The agent's own turn ended but work it spawned is still running (a
+  // Workflow run or an async background subagent) — never shown as 'idle'
+  // so the fleet doesn't read "done" mid-workflow. Derived, not hook-driven:
+  // see normalizeBackgroundAmbient in hookEventRouter.
+  | 'background';
 
 /** Launch settings requested at spawn/restart time (composer pill truth
  *  fallback — live statusLine/usage wins for the model when present). */
@@ -493,6 +504,11 @@ class ClaudeSessionStore {
       applyHookEvent(session, event);
     }
 
+    // A turn-end with a workflow / background subagent still running must
+    // read 'background', not 'idle' — and the notifier has to see the
+    // normalized state so "finished" only fires on a true idle.
+    normalizeBackgroundAmbient(session);
+
     agentNotifier.notifyOnTransition(session, prevAmbient);
 
     // Event-driven supervisor wake: when this agent just entered a real decision
@@ -556,7 +572,9 @@ class ClaudeSessionStore {
         next = 'waiting_input';
         break;
       case 'input':
-        next = 'idle';
+        // The daemon says ready-for-input, but spawned work (workflow /
+        // background subagent) may still be running — don't read "idle" yet.
+        next = sessionHasBackgroundWork(session) ? 'background' : 'idle';
         break;
       default:
         return; // 'unknown' / 'stopped' — leave the current state as-is
@@ -756,6 +774,14 @@ class ClaudeSessionStore {
     if (!session) return;
     this.watcherUpdates.set(sessionId, update);
     this.mergeWatcherData(session);
+    // The watcher is what sees a workflow finish (no hook fires for that):
+    // drop 'background' back to 'idle' here — or raise it if a run appeared —
+    // and let the notifier fire "finished" on the true idle transition.
+    const prevAmbient = session.ambientState;
+    normalizeBackgroundAmbient(session);
+    if (session.ambientState !== prevAmbient) {
+      agentNotifier.notifyOnTransition(session, prevAmbient);
+    }
     this.pushUpdate(session);
   }
 

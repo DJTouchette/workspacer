@@ -29,6 +29,8 @@ function statusVisual(state: SessionAmbientState | undefined): { color: string; 
       return { color: 'var(--wks-busy, var(--wks-accent, #4a9eff))', label: 'Thinking' };
     case 'streaming':
       return { color: 'var(--wks-busy, var(--wks-accent, #4a9eff))', label: 'Working' };
+    case 'background':
+      return { color: 'var(--wks-busy, var(--wks-accent, #4a9eff))', label: 'Background work' };
     case 'idle':
       return { color: 'var(--wks-success, #3fb950)', label: 'Idle' };
     default:
@@ -127,7 +129,7 @@ const SideBar: React.FC<SideBarProps> = ({
   // "working" still reflects live ambient state (not an attention kind).
   const workingCount = agents.reduce((n, a) => {
     const s = a.sessionId ? statusBySession[a.sessionId] : undefined;
-    return n + (s === 'thinking' || s === 'streaming' ? 1 : 0);
+    return n + (s === 'thinking' || s === 'streaming' || s === 'background' ? 1 : 0);
   }, 0);
   const [contextMenu, setContextMenu] = useState<{ agentId: string; x: number; y: number } | null>(
     null,
@@ -207,7 +209,7 @@ const SideBar: React.FC<SideBarProps> = ({
       const color = top ? KIND_COLOR[top.kind] : base.color;
       const label = top ? KIND_VISUAL_LABEL[top.kind] : base.label;
       const glyph = top ? KIND_GLYPH[top.kind] : '';
-      const working = state === 'thinking' || state === 'streaming';
+      const working = state === 'thinking' || state === 'streaming' || state === 'background';
       return (
         <button
           key={agent.id}
@@ -720,7 +722,7 @@ const SideBar: React.FC<SideBarProps> = ({
             const usageTip = hasCtx
               ? `\n${Math.round(stats.ctxPct!)}% context${stats.tokens !== undefined ? ` · ${fmtTokens(stats.tokens)} tok` : ''}${stats.costUSD !== undefined ? ` · ${fmtUSD(stats.costUSD)}` : ''}${stats.model ? ` · ${stats.model}` : ''}`
               : '';
-            const working = state === 'thinking' || state === 'streaming';
+            const working = state === 'thinking' || state === 'streaming' || state === 'background';
             const statusText = isGlobal
               ? 'Dashboards & plugins'
               : agent.sessionId

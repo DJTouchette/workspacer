@@ -555,7 +555,7 @@ export const InspectorCard: React.FC<{
                 flexShrink: 0,
                 background: badgeColors[ambient] ?? colors.mutedDim,
                 animation:
-                  ambient === 'thinking' || ambient === 'streaming'
+                  ambient === 'thinking' || ambient === 'streaming' || ambient === 'background'
                     ? 'claudePulseDot 1.4s ease-in-out infinite'
                     : undefined,
               }}

@@ -60,7 +60,13 @@ export interface RemoteTokenRecord {
 // ── Claude session snapshot (sent over claude-session:get / getAll / update) ──
 
 export type SessionAmbientState =
-  'idle' | 'thinking' | 'streaming' | 'waiting_input' | 'waiting_approval';
+  | 'idle'
+  | 'thinking'
+  | 'streaming'
+  | 'waiting_input'
+  | 'waiting_approval'
+  /** Turn ended but spawned work (workflow / background subagent) still runs. */
+  | 'background';
 
 export interface ToolCall {
   id: string;

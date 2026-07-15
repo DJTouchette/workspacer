@@ -58,6 +58,12 @@ function stateVisual(s: SessionAmbientState | undefined): StateVisual {
         label: 'Working',
         pulse: false,
       };
+    case 'background':
+      return {
+        color: 'var(--wks-busy, var(--wks-accent, #4a9eff))',
+        label: 'Background work',
+        pulse: false,
+      };
     case 'idle':
       return { color: 'var(--wks-success, #3fb950)', label: 'Idle', pulse: false };
     default:

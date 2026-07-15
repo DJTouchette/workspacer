@@ -428,7 +428,10 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
 
   const agents = workspaceAgents.length;
   const working = own.filter(
-    (s) => s.ambientState === 'thinking' || s.ambientState === 'streaming',
+    (s) =>
+      s.ambientState === 'thinking' ||
+      s.ambientState === 'streaming' ||
+      s.ambientState === 'background',
   ).length;
   const needsYou = counts.needsYou;
   const totalCost = own.reduce((n, s) => n + (s.usage?.costUSD ?? 0), 0);

@@ -115,13 +115,14 @@ export function useAttentionFeed(
       if (!cur) continue;
       const prev = prevStateRef.current.get(sid);
       if (prev === cur) continue;
-      const wasWorking = prev === 'thinking' || prev === 'streaming';
+      const wasWorking = prev === 'thinking' || prev === 'streaming' || prev === 'background';
       if (cur === 'idle' && wasWorking) {
         doneAtRef.current.set(sid, snapshotBySession[sid].lastActivity || Date.now());
         changed = true;
       } else if (
         cur === 'thinking' ||
         cur === 'streaming' ||
+        cur === 'background' ||
         cur === 'waiting_input' ||
         cur === 'waiting_approval'
       ) {

@@ -46,6 +46,10 @@ export function agentAttentionScore(
       return 500;
     case 'streaming':
       return 480;
+    // Own turn done, spawned work (workflow/subagents) still running — less
+    // urgent than live streaming, but not "done" like idle.
+    case 'background':
+      return 400;
     case 'idle':
       return 200;
     default:

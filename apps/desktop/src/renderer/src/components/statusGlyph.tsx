@@ -13,6 +13,7 @@ export const StatusGlyph: React.FC<{ state: SessionAmbientState | undefined } & 
   switch (state) {
     case 'thinking':
     case 'streaming':
+    case 'background':
       return <IconWorking {...rest} />;
     case 'waiting_approval':
       return <IconReviewing {...rest} />;

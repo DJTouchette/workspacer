@@ -1005,7 +1005,10 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     session?.ambientState === 'streaming';
   // If user cancelled, suppress streaming UI until a new activity cycle begins
   const isStreaming = serverStreaming && (session?.lastActivity ?? 0) > cancelledAt;
-  const ambientIdle = session?.ambientState === 'idle';
+  // 'background' counts as idle here: the parent turn ENDED (workflow /
+  // subagents run detached), so turn-scoped UI — changed-files snapshot
+  // freezing, work-card collapse — must behave exactly as on a real idle.
+  const ambientIdle = session?.ambientState === 'idle' || session?.ambientState === 'background';
 
   // ── Changed-files snapshots ──
   //

@@ -239,6 +239,33 @@ export function applyHookEvent(session: ClaudeSessionState, event: any): void {
   }
 }
 
+/** True when work the agent spawned is still running after its own turn:
+ *  an async background subagent, or a Workflow run (which detaches from the
+ *  turn immediately — its parent Stop fires while the workflow grinds on). */
+export function sessionHasBackgroundWork(session: ClaudeSessionState): boolean {
+  return (
+    session.subagents.some((s) => s.status === 'running') ||
+    session.workflows.some((w) => w.status === 'running')
+  );
+}
+
+/**
+ * Keep 'idle' honest: a session whose own turn ended but whose spawned work
+ * (workflow / background subagent) is still running shows 'background', and
+ * drops back to 'idle' only when that work finishes. Call after anything that
+ * can change ambientState or the workflow/subagent sets — and BEFORE the
+ * notifier reads the transition, so "finished" fires on true idle only.
+ * Ended sessions are left alone.
+ */
+export function normalizeBackgroundAmbient(session: ClaudeSessionState): void {
+  if (session.status === 'ended') return;
+  if (session.ambientState === 'idle' && sessionHasBackgroundWork(session)) {
+    session.ambientState = 'background';
+  } else if (session.ambientState === 'background' && !sessionHasBackgroundWork(session)) {
+    session.ambientState = 'idle';
+  }
+}
+
 /** Apply the Stop event's synchronous state mutations only. */
 export function applyStopEvent(session: ClaudeSessionState): void {
   // Stream-transport sessions own their working/idle state via the daemon's
@@ -252,10 +279,11 @@ export function applyStopEvent(session: ClaudeSessionState): void {
   if (hooksOwnAmbient) {
     // PTY/hook path: a background (async Agent/Task) subagent can still be
     // running when the parent's own turn ends — its Stop fires while the
-    // subagent works on. Hold 'streaming' and let the last SubagentStop ride
-    // the real idle in (see the SubagentStop case above); otherwise idle now.
+    // subagent works on. Hold 'background' and let the last SubagentStop ride
+    // the real idle in (see the SubagentStop case above); otherwise idle now
+    // (normalizeBackgroundAmbient re-raises it if a workflow is still going).
     const bgSubagentRunning = session.subagents.some((s) => s.status === 'running');
-    session.ambientState = bgSubagentRunning ? 'streaming' : 'idle';
+    session.ambientState = bgSubagentRunning ? 'background' : 'idle';
     session.parentTurnEnded = bgSubagentRunning;
   }
   session.pendingApproval = null;

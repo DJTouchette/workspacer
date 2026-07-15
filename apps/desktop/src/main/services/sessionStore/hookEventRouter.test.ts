@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
 
-import { applyHookEvent, applyStopEvent } from './hookEventRouter';
+import {
+  applyHookEvent,
+  applyStopEvent,
+  normalizeBackgroundAmbient,
+  sessionHasBackgroundWork,
+} from './hookEventRouter';
 import type { ClaudeSessionState } from '../claudeSessionStore';
 
 function mkSession(transport?: 'pty' | 'stream'): ClaudeSessionState {
@@ -13,6 +18,7 @@ function mkSession(transport?: 'pty' | 'stream'): ClaudeSessionState {
     completedToolCalls: [],
     fileChanges: [],
     subagents: [],
+    workflows: [],
     pendingApproval: null,
     pendingQuestions: null,
     ambientState: 'idle',
@@ -168,11 +174,11 @@ describe('background subagents keep the pane busy past the parent Stop (PTY)', (
   const stopSub = (s: ClaudeSessionState, id = 'agent-1') =>
     applyHookEvent(s, { hook_event_name: 'SubagentStop', agent_id: id });
 
-  it('holds streaming when Stop fires while a subagent is still running', () => {
+  it('holds the background state when Stop fires while a subagent is still running', () => {
     const s = mkSession('pty');
     startSub(s);
     applyStopEvent(s);
-    expect(s.ambientState).toBe('streaming');
+    expect(s.ambientState).toBe('background');
     expect(s.parentTurnEnded).toBe(true);
     // The running subagent survives the Stop's tool-call cleanup.
     expect(s.subagents.some((sub) => sub.status === 'running')).toBe(true);
@@ -210,9 +216,9 @@ describe('background subagents keep the pane busy past the parent Stop (PTY)', (
     startSub(s, 'agent-1');
     startSub(s, 'agent-2');
     applyStopEvent(s);
-    expect(s.ambientState).toBe('streaming');
+    expect(s.ambientState).toBe('background');
     stopSub(s, 'agent-1');
-    expect(s.ambientState).toBe('streaming'); // one still running
+    expect(s.ambientState).toBe('background'); // one still running
     stopSub(s, 'agent-2');
     expect(s.ambientState).toBe('idle');
   });
@@ -264,5 +270,64 @@ describe('applyHookEvent — PostToolUse completion + failure', () => {
       tool_response: { is_error: true, stderr: 'boom' },
     });
     expect(s.completedToolCalls[0]?.status).toBe('failed');
+  });
+});
+
+describe('normalizeBackgroundAmbient — workflows keep idle honest', () => {
+  const runningWf = { runId: 'wf1', status: 'running', startedAt: 1, phases: [] };
+  const doneWf = { runId: 'wf1', status: 'completed', startedAt: 1, phases: [] };
+
+  it('an idle session with a running workflow reads background', () => {
+    const s = mkSession('pty');
+    s.workflows = [runningWf] as ClaudeSessionState['workflows'];
+    normalizeBackgroundAmbient(s);
+    expect(s.ambientState).toBe('background');
+  });
+
+  it('drops back to idle when the workflow finishes', () => {
+    const s = mkSession('pty');
+    s.ambientState = 'background';
+    s.workflows = [doneWf] as ClaudeSessionState['workflows'];
+    normalizeBackgroundAmbient(s);
+    expect(s.ambientState).toBe('idle');
+  });
+
+  it('never rewrites active states (streaming / waiting) or ended sessions', () => {
+    const s = mkSession('pty');
+    s.workflows = [runningWf] as ClaudeSessionState['workflows'];
+    for (const state of ['streaming', 'thinking', 'waiting_approval', 'waiting_input'] as const) {
+      s.ambientState = state;
+      normalizeBackgroundAmbient(s);
+      expect(s.ambientState).toBe(state);
+    }
+    const ended = mkSession('pty');
+    ended.status = 'ended';
+    ended.workflows = [runningWf] as ClaudeSessionState['workflows'];
+    normalizeBackgroundAmbient(ended);
+    expect(ended.ambientState).toBe('idle');
+  });
+
+  it('Stop with a running workflow lands on background via normalize (the PTY workflow case)', () => {
+    const s = mkSession('pty');
+    s.ambientState = 'streaming';
+    s.workflows = [runningWf] as ClaudeSessionState['workflows'];
+    applyStopEvent(s); // no subagents → Stop itself writes idle
+    expect(s.ambientState).toBe('idle');
+    normalizeBackgroundAmbient(s); // …but the store normalizes before notifying
+    expect(s.ambientState).toBe('background');
+  });
+
+  it('sessionHasBackgroundWork sees running workflows and running subagents only', () => {
+    const s = mkSession('pty');
+    expect(sessionHasBackgroundWork(s)).toBe(false);
+    s.workflows = [doneWf] as ClaudeSessionState['workflows'];
+    expect(sessionHasBackgroundWork(s)).toBe(false);
+    s.workflows = [runningWf] as ClaudeSessionState['workflows'];
+    expect(sessionHasBackgroundWork(s)).toBe(true);
+    s.workflows = [];
+    s.subagents = [{ id: 'a1', type: 't', status: 'running', startedAt: 1 }];
+    expect(sessionHasBackgroundWork(s)).toBe(true);
+    s.subagents[0].status = 'complete';
+    expect(sessionHasBackgroundWork(s)).toBe(false);
   });
 });

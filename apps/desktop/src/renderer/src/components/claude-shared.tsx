@@ -36,6 +36,7 @@ export const badgeColors: Record<string, string> = {
   streaming: claudeColors.accent,
   waiting_input: 'var(--wks-purple, #c084fc)',
   waiting_approval: claudeColors.error,
+  background: claudeColors.accent,
 };
 
 export const badgeLabels: Record<string, string> = {
@@ -44,7 +45,19 @@ export const badgeLabels: Record<string, string> = {
   streaming: 'Streaming',
   waiting_input: 'Waiting for input',
   waiting_approval: 'Needs approval',
+  background: 'Working in background',
 };
+
+/** Specific 'background' wording when the session is in hand: what exactly is
+ *  still running — a workflow, or async subagents. */
+export function backgroundLabel(session: {
+  workflows?: { status: string }[];
+  subagents?: { status: string }[];
+}): string {
+  if (session.workflows?.some((w) => w.status === 'running')) return 'Running workflow';
+  if (session.subagents?.some((s) => s.status === 'running')) return 'Waiting on subagents';
+  return badgeLabels.background;
+}
 
 // ── CSS Keyframes (injected once) ──
 
@@ -106,7 +119,7 @@ export const StatusBadge: React.FC<{
       : session.ambientState;
 
   const color = badgeColors[state] ?? '#555';
-  const label = badgeLabels[state] ?? state;
+  const label = state === 'background' ? backgroundLabel(session) : (badgeLabels[state] ?? state);
 
   return (
     <span style={statusBadgeStyle(color)}>

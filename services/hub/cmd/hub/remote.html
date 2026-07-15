@@ -276,7 +276,7 @@
   function badgeClass(state) {
     const s = (state || '').toLowerCase();
     if (s === 'waiting_approval' || s === 'waiting_input' || s === 'input' || s === 'waiting') return 'waiting';
-    if (s === 'thinking' || s === 'streaming' || s === 'running') return 'thinking';
+    if (s === 'thinking' || s === 'streaming' || s === 'running' || s === 'background') return 'thinking';
     if (s === 'error') return 'error';
     return 'done';
   }
@@ -285,6 +285,7 @@
     if (s === 'waiting_approval') return 'needs approval';
     if (s === 'waiting_input' || s === 'input' || s === 'waiting') return 'needs you';
     if (s === 'streaming') return 'working';
+    if (s === 'background') return 'background work';
     if (s === 'thinking') return 'thinking';
     if (s === 'idle' || s === 'done' || !s) return 'idle';
     return state;
@@ -295,7 +296,7 @@
   }
   function isBusy(state) {
     const s = (state || '').toLowerCase();
-    return s === 'thinking' || s === 'streaming' || s === 'running';
+    return s === 'thinking' || s === 'streaming' || s === 'running' || s === 'background';
   }
 
   // ── rendering ──────────────────────────────────────────────────────────
