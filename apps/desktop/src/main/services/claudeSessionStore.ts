@@ -89,6 +89,10 @@ export interface ConversationTurn {
   content: string;
   timestamp: number;
   toolCalls?: ToolCall[];
+  /** Set when this turn is a slash-command run (claudemon `slash_command`
+   *  item), rendered as a command card instead of a user bubble. `output`
+   *  arrives separately (`command_output`) and is folded in by the applier. */
+  command?: { name: string; args?: string; output?: string; outputIsError?: boolean };
 }
 
 export interface FileChange {

@@ -575,6 +575,66 @@ pub fn turns_from_conversation(v: &Value, transport: &str) -> Vec<Turn> {
                 // every PTY assistant row's text, so treating it as a boundary
                 // would defeat the blank-line block coalescing above.
             }
+            "slash_command" => {
+                // A slash-command run. On stream sessions it arrives twice
+                // (driver send echo + transcript tailer parse of the CLI's
+                // echo row) — the daemon doesn't dedup, so drop an identical
+                // repeat here, mirroring the desktop applier.
+                flush_text(&mut turns, &mut text_buf, stream);
+                let name = item.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                if name.is_empty() {
+                    continue;
+                }
+                let args = item.get("args").and_then(|a| a.as_str()).unwrap_or("");
+                let line = if args.is_empty() {
+                    format!("/{name}")
+                } else {
+                    format!("/{name} {args}")
+                };
+                let dup = turns
+                    .last()
+                    .filter(|t| t.role == Role::User)
+                    .is_some_and(|t| {
+                        t.parts
+                            .iter()
+                            .any(|p| matches!(p, Part::Text(s) if *s == line))
+                    });
+                if !dup {
+                    push(&mut turns, Role::User, Part::Text(line));
+                }
+            }
+            "command_output" => {
+                // The command's local output — render like a tool row so the
+                // snippet/expansion affordances come for free.
+                flush_text(&mut turns, &mut text_buf, stream);
+                let output = item
+                    .get("output")
+                    .and_then(|o| o.as_str())
+                    .unwrap_or("")
+                    .trim();
+                if output.is_empty() {
+                    continue;
+                }
+                let is_error = item
+                    .get("is_error")
+                    .and_then(|e| e.as_bool())
+                    .unwrap_or(false);
+                let snippet = truncate(output, 200);
+                push(
+                    &mut turns,
+                    Role::Assistant,
+                    Part::Tool {
+                        name: "command output".to_string(),
+                        summary: String::new(),
+                        result: Some(if is_error {
+                            format!("error: {snippet}")
+                        } else {
+                            snippet
+                        }),
+                        edits: Vec::new(),
+                    },
+                );
+            }
             _ => {
                 // Any future kinds — still a boundary between assistant
                 // messages, so close any open text run.
@@ -932,6 +992,40 @@ mod tests {
             }
             other => panic!("expected Edit tool, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn slash_command_items_render_as_user_command_line_plus_output_row() {
+        let v = serde_json::json!({ "items": [
+            // Stream driver echo + tailer parse of the same run — deduped.
+            { "kind": "slash_command", "name": "context" },
+            { "kind": "slash_command", "name": "context",
+              "timestamp": "2026-07-14T10:00:01Z" },
+            { "kind": "command_output", "output": "## Context Usage\n24.5k", "is_error": false },
+        ]});
+        let turns = turns_from_conversation(&v, "stream");
+        assert_eq!(turns.len(), 2, "one user turn, one output row");
+        assert_eq!(turns[0].role, Role::User);
+        assert_eq!(turns[0].parts.len(), 1, "echo pair deduped");
+        assert!(matches!(&turns[0].parts[0], Part::Text(t) if t == "/context"));
+        match &turns[1].parts[0] {
+            Part::Tool { name, result, .. } => {
+                assert_eq!(name, "command output");
+                assert_eq!(result.as_deref(), Some("## Context Usage\n24.5k"));
+            }
+            other => panic!("expected command output row, got {other:?}"),
+        }
+        // Args make it a distinct run, and stderr gets the error prefix.
+        let v = serde_json::json!({ "items": [
+            { "kind": "slash_command", "name": "btw", "args": "ready?" },
+            { "kind": "command_output", "output": "nope", "is_error": true },
+        ]});
+        let turns = turns_from_conversation(&v, "pty");
+        assert!(matches!(&turns[0].parts[0], Part::Text(t) if t == "/btw ready?"));
+        assert!(matches!(
+            &turns[1].parts[0],
+            Part::Tool { result: Some(r), .. } if r == "error: nope"
+        ));
     }
 
     #[test]

@@ -223,6 +223,12 @@ pub fn build_brief(
                 }
             }
             ConversationItem::Usage { .. } => continue,
+            ConversationItem::SlashCommand { name, args, .. } => match args {
+                Some(args) => format!("**User ran:** /{name} {}\n", clip(args, RECENT_TEXT_CAP)),
+                None => format!("**User ran:** /{name}\n"),
+            },
+            // Local command output is console noise to a successor agent.
+            ConversationItem::CommandOutput { .. } => continue,
             ConversationItem::Plan { steps, .. } => {
                 // Reverse iteration → the first plan we hit is the latest; skip
                 // the superseded earlier ones.

@@ -16,6 +16,9 @@ export interface ConversationTurn {
   content: string;
   timestamp: number;
   toolCalls?: ToolCall[];
+  /** Set when this turn is a slash-command run — rendered as a command card
+   *  (CommandCard) instead of a user bubble. */
+  command?: { name: string; args?: string; output?: string; outputIsError?: boolean };
 }
 
 export interface FileChange {

@@ -485,3 +485,113 @@ describe('applyConversationItems — tool durations', () => {
     expect(tc!.completedAt).toBe(tc!.startedAt);
   });
 });
+
+describe('applyConversationItems — slash commands', () => {
+  it('a slash_command item becomes a command turn, not a text bubble', () => {
+    const s = mkSession();
+    applyConversationItems(
+      s,
+      [{ kind: 'slash_command', name: 'btw', args: 'is this ready?' }],
+      noUsage,
+    );
+    expect(s.conversation).toHaveLength(1);
+    const turn = s.conversation[0];
+    expect(turn.role).toBe('user');
+    expect(turn.command).toEqual({ name: 'btw', args: 'is this ready?' });
+    expect(turn.content).toBe('/btw is this ready?');
+  });
+
+  it('dedupes the stream driver echo + transcript tailer pair (same name+args)', () => {
+    const s = mkSession();
+    applyConversationItems(s, [{ kind: 'slash_command', name: 'context' }], noUsage);
+    applyConversationItems(
+      s,
+      [{ kind: 'slash_command', name: 'context', timestamp: '2026-07-14T10:00:01Z' }],
+      noUsage,
+    );
+    expect(s.conversation).toHaveLength(1);
+    // Different args = a genuine new run, not the echo pair.
+    applyConversationItems(
+      s,
+      [{ kind: 'slash_command', name: 'context', args: 'verbose' }],
+      noUsage,
+    );
+    expect(s.conversation).toHaveLength(2);
+  });
+
+  it('command_output folds into the nearest preceding command turn', () => {
+    const s = mkSession();
+    applyConversationItems(
+      s,
+      [
+        { kind: 'slash_command', name: 'context' },
+        { kind: 'command_output', output: '## Context Usage\n24.5k tokens' },
+      ],
+      noUsage,
+    );
+    expect(s.conversation).toHaveLength(1);
+    expect(s.conversation[0].command).toEqual({
+      name: 'context',
+      output: '## Context Usage\n24.5k tokens',
+    });
+  });
+
+  it('a replayed identical output does not double-attach or spawn a new turn', () => {
+    const s = mkSession();
+    applyConversationItems(
+      s,
+      [
+        { kind: 'slash_command', name: 'model' },
+        { kind: 'command_output', output: 'Set model to Opus' },
+      ],
+      noUsage,
+    );
+    applyConversationItems(s, [{ kind: 'command_output', output: 'Set model to Opus' }], noUsage);
+    expect(s.conversation).toHaveLength(1);
+    expect(s.conversation[0].command!.output).toBe('Set model to Opus');
+  });
+
+  it('orphan output (no visible invocation) surfaces as a name-less command turn', () => {
+    const s = mkSession();
+    applyConversationItems(
+      s,
+      [{ kind: 'command_output', output: 'cleared', is_error: false }],
+      noUsage,
+    );
+    expect(s.conversation).toHaveLength(1);
+    expect(s.conversation[0].command).toEqual({ name: '', output: 'cleared' });
+  });
+
+  it('stderr output marks the command turn as errored', () => {
+    const s = mkSession();
+    applyConversationItems(
+      s,
+      [
+        { kind: 'slash_command', name: 'doctor' },
+        { kind: 'command_output', output: 'something broke', is_error: true },
+      ],
+      noUsage,
+    );
+    expect(s.conversation[0].command).toEqual({
+      name: 'doctor',
+      output: 'something broke',
+      outputIsError: true,
+    });
+  });
+
+  it('assistant text after a command turn starts its own bubble (stream coalescing untouched)', () => {
+    const s = mkSession();
+    (s as any).transport = 'stream';
+    applyConversationItems(
+      s,
+      [
+        { kind: 'slash_command', name: 'pingtest' },
+        { kind: 'assistant_text', text: 'P' },
+        { kind: 'assistant_text', text: 'ONG' },
+      ],
+      noUsage,
+    );
+    expect(s.conversation).toHaveLength(2);
+    expect(s.conversation[1]).toMatchObject({ role: 'assistant', content: 'PONG' });
+  });
+});

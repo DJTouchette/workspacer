@@ -31,6 +31,7 @@ import { clearMdCache } from '../components/markdown';
 import { InlineWorkLog } from '../components/claude/InlineWorkLog';
 import { TasksCard, planSignature } from '../components/claude/TasksCard';
 import { ConversationMessage } from '../components/claude/ConversationMessage';
+import { CommandCard } from '../components/claude/CommandCard';
 import { ConversationEmptyState, AgentHero } from '../components/claude/ConversationEmptyState';
 import { permissionModeLabel } from '../lib/providerCaps';
 import { TurnDivider } from '../components/claude/TurnDivider';
@@ -305,38 +306,56 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   // the agent is editing.
   const effectiveCwd = session?.liveCwd || cwd;
 
-  // "/" command picker data: skills and reusable prompts from the merged library
-  // (project + global) for this cwd. Both are insertable message content, so a
-  // pick runs the item's library action — the same templating + insert path the
-  // command palette uses — dropping the result into this composer. This gives
-  // the GUI composer a slash menu it otherwise lacks, which matters most on the
-  // stream transport (no TUI to type "/foo" into).
+  // "/" command picker data, from two sources:
+  //  - the session's own slash commands (stream init capabilities): picking
+  //    one keeps "/name " in the composer and the message is sent verbatim —
+  //    the CLI expands it (verified live: custom commands and headless-safe
+  //    built-ins both run over stream-json input);
+  //  - skills and reusable prompts from the merged library (project + global)
+  //    for this cwd: picking one inserts the item's *content* into the
+  //    composer (the same templating path the command palette uses).
+  // When a library skill/command shares a name with a real session command,
+  // the run entry wins — invoking the real command beats pasting its text.
   const { items: libraryItems } = useLibrary(effectiveCwd);
+  const sessionCommands = session?.statusLine?.capabilities?.inventory?.slashCommands;
   // Key by scope:kind:id, not the bare LibraryItem.id — that id is only a
   // filename slug, so a skill and a command (or a global and a claude item) can
   // share one, which would collide React keys and the pick lookup. The composite
   // is unique and the picker resolves back through this map.
   const slashLookup = useMemo(() => {
     const m = new Map<string, LibraryItem>();
+    const cli = new Set((sessionCommands ?? []).map((c) => c.toLowerCase()));
     for (const it of libraryItems) {
       if (it.kind === 'skill' || it.kind === 'prompt' || it.kind === 'command') {
+        if (it.kind !== 'prompt' && cli.has(it.title.toLowerCase())) continue;
         m.set(`${it.scope}:${it.kind}:${it.id}`, it);
       }
     }
     return m;
-  }, [libraryItems]);
-  const slashItems: SlashItem[] = useMemo(
-    () =>
-      Array.from(slashLookup, ([key, it]) => ({
-        id: key,
-        label: it.title,
-        hint: it.description,
-        kind: it.kind,
-      })),
-    [slashLookup],
-  );
+  }, [libraryItems, sessionCommands]);
+  const slashItems: SlashItem[] = useMemo(() => {
+    const run: SlashItem[] = (sessionCommands ?? []).map((name) => ({
+      id: `run:${name}`,
+      label: name,
+      hint: 'Run in this session',
+      kind: 'run',
+    }));
+    const insert: SlashItem[] = Array.from(slashLookup, ([key, it]) => ({
+      id: key,
+      label: it.title,
+      hint: it.description,
+      kind: it.kind,
+    }));
+    return [...run, ...insert];
+  }, [slashLookup, sessionCommands]);
   const handleSlashPick = useCallback(
     (key: string) => {
+      // A session command: leave "/name " in the composer — the user appends
+      // args if any and Enter sends it verbatim for the CLI to expand.
+      if (key.startsWith('run:')) {
+        setInputValue(`/${key.slice(4)} `);
+        return;
+      }
       const item = slashLookup.get(key);
       if (!item) return;
       // Clear the "/query" first so the inserted content replaces it: the
@@ -1320,7 +1339,10 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
         flushWork();
         closeGroup(true);
         if (gi > 0) items.push(<TurnDivider key={`div-${gi}`} label={null} />);
-        items.push(<ConversationMessage key={`msg-${gi}`} turn={turn} />);
+        // Slash-command runs get their command card (invocation chip +
+        // collapsible local output) instead of a plain text bubble.
+        if (turn.command) items.push(<CommandCard key={`msg-${gi}`} turn={turn} />);
+        else items.push(<ConversationMessage key={`msg-${gi}`} turn={turn} />);
         prevRole = 'user';
         return;
       }

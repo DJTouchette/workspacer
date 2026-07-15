@@ -740,6 +740,36 @@ fn approval_raw(request: &Value) -> Value {
     })
 }
 
+/// If the user's sent text invokes a slash command the CLI reported at init
+/// (`/name [args…]`), build the `SlashCommand` conversation item — the same
+/// one the transcript tailer emits for the CLI's echo row (clients dedup the
+/// pair). Text naming no known command is literal prose to the CLI, so it
+/// stays a plain user message. Before init reports capabilities we can't
+/// tell, and conservatively treat everything as prose.
+fn slash_command_send_item(text: &str, acc: &UsageAcc) -> Option<ConversationItem> {
+    let rest = text.trim().strip_prefix('/')?;
+    let (name, args) = match rest.split_once(char::is_whitespace) {
+        Some((n, a)) => (n, a.trim()),
+        None => (rest, ""),
+    };
+    if name.is_empty() {
+        return None;
+    }
+    let known = acc
+        .capabilities
+        .as_ref()?
+        .inventory
+        .as_ref()?
+        .slash_commands
+        .iter()
+        .any(|c| c.trim_start_matches('/') == name);
+    known.then(|| ConversationItem::SlashCommand {
+        name: name.to_string(),
+        args: (!args.is_empty()).then(|| args.to_string()),
+        timestamp: None,
+    })
+}
+
 /// Short human summary for an approval card (command text for Bash, the
 /// tool's own description otherwise).
 fn approval_summary(request: &Value) -> Option<String> {
@@ -963,9 +993,16 @@ async fn run_session(
             },
             msg = rx.recv() => match msg {
                 Some(text) => {
-                    // Echo the user's message verbatim, but prepend the role
+                    // Echo the user's message, but prepend the role
                     // instructions (once) to what's actually sent to the agent.
-                    conv.push(&session_id, vec![ConversationItem::UserMessage { text: text.clone(), timestamp: None }]);
+                    // A message invoking a known slash command echoes as the
+                    // same SlashCommand item the transcript tailer emits for
+                    // the CLI's echo row (clients dedup the pair), so the GUI
+                    // shows a command card immediately instead of a raw
+                    // "/foo" bubble.
+                    let echo = slash_command_send_item(&text, &acc)
+                        .unwrap_or(ConversationItem::UserMessage { text: text.clone(), timestamp: None });
+                    conv.push(&session_id, vec![echo]);
                     let sent = match pending_instructions.take() {
                         Some(instr) => format!("{instr}\n\n{text}"),
                         None => text,
@@ -1666,6 +1703,39 @@ mod tests {
         assert_eq!(caps.plugins, 0);
         assert_eq!(caps.agents, 1);
         assert_eq!(caps.memory_files, 1);
+    }
+
+    #[test]
+    fn sent_slash_text_becomes_command_item_only_for_known_commands() {
+        let mut acc = UsageAcc::default();
+        // Before init reports capabilities: everything is prose.
+        assert!(slash_command_send_item("/context", &acc).is_none());
+
+        let mut caps = Capabilities::default();
+        caps.inventory = Some(ContextInventory {
+            slash_commands: vec!["context".into(), "btw".into()],
+            ..Default::default()
+        });
+        acc.capabilities = Some(caps);
+
+        match slash_command_send_item("/btw is this ready?", &acc) {
+            Some(ConversationItem::SlashCommand { name, args, .. }) => {
+                assert_eq!(name, "btw");
+                assert_eq!(args.as_deref(), Some("is this ready?"));
+            }
+            other => panic!("expected SlashCommand, got {other:?}"),
+        }
+        match slash_command_send_item("/context", &acc) {
+            Some(ConversationItem::SlashCommand { name, args, .. }) => {
+                assert_eq!(name, "context");
+                assert!(args.is_none());
+            }
+            other => panic!("expected SlashCommand, got {other:?}"),
+        }
+        // Unknown command / plain prose / bare slash stay user messages.
+        assert!(slash_command_send_item("/notacommand hi", &acc).is_none());
+        assert!(slash_command_send_item("deploy /context please", &acc).is_none());
+        assert!(slash_command_send_item("/", &acc).is_none());
     }
 
     #[test]

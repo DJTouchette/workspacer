@@ -18,16 +18,27 @@ interface PlanStepWire {
 
 /** Wire shape of one item from claudemon's ConversationItem enum. */
 export interface ConversationItemWire {
-  kind: 'user_message' | 'assistant_text' | 'tool_use' | 'tool_result' | 'usage' | 'plan';
+  kind:
+    | 'user_message'
+    | 'assistant_text'
+    | 'tool_use'
+    | 'tool_result'
+    | 'usage'
+    | 'plan'
+    | 'slash_command'
+    | 'command_output';
   /** Some daemons/items tag the discriminant as `type` rather than `kind`. */
   type?: string;
   // user_message / assistant_text
   text?: string;
-  // tool_use
+  // tool_use / slash_command (command name, without the leading slash)
   id?: string;
   name?: string;
   input?: any;
-  // tool_result
+  // slash_command / command_output
+  args?: string;
+  output?: string;
+  // tool_result (is_error is shared by command_output)
   tool_use_id?: string;
   content?: string;
   is_error?: boolean;
@@ -209,6 +220,64 @@ export function applyConversationItems(
           }
         } else if (!isDuplicateMessage(session, 'assistant', text)) {
           session.conversation.push({ role: 'assistant', content: text, timestamp: tsOf(item) });
+        }
+        break;
+      }
+
+      case 'slash_command': {
+        const name = item.name ?? '';
+        if (!name) break;
+        const args = item.args ?? '';
+        // On the stream transport the same run arrives twice: the driver
+        // echoes it at send time, then the transcript tailer parses the CLI's
+        // echo row. Same name+args among the recent turns → it's that pair,
+        // not a re-run (mirrors isDuplicateMessage for plain text).
+        const recent = session.conversation.slice(-5);
+        if (
+          recent.some(
+            (t) => t.command && t.command.name === name && (t.command.args ?? '') === args,
+          )
+        )
+          break;
+        session.conversation.push({
+          role: 'user',
+          content: `/${name}${args ? ` ${args}` : ''}`,
+          timestamp: tsOf(item),
+          command: args ? { name, args } : { name },
+        });
+        break;
+      }
+
+      case 'command_output': {
+        const output = item.output ?? '';
+        if (!output) break;
+        // Attach to the nearest preceding command turn that has no output yet
+        // (results follow their runs closely — same scan as tool_result).
+        let attached = false;
+        const floor = Math.max(0, session.conversation.length - 10);
+        for (let i = session.conversation.length - 1; i >= floor; i--) {
+          const turn = session.conversation[i];
+          if (!turn.command) continue;
+          if (turn.command.output == null) {
+            turn.command.output = output;
+            if (item.is_error) turn.command.outputIsError = true;
+            attached = true;
+          } else if (turn.command.output === output) {
+            attached = true; // resync replay of the same output
+          }
+          break;
+        }
+        if (!attached) {
+          // Output with no visible invocation (e.g. the echo scrolled out of
+          // the window) — surface it as a name-less command card.
+          session.conversation.push({
+            role: 'user',
+            content: output,
+            timestamp: tsOf(item),
+            command: item.is_error
+              ? { name: '', output, outputIsError: true }
+              : { name: '', output },
+          });
         }
         break;
       }

@@ -89,6 +89,29 @@ pub enum ConversationItem {
         #[serde(rename = "updatedAt", skip_serializing_if = "Option::is_none")]
         updated_at: Option<String>,
     },
+    /// A slash-command run. Claude Code echoes the invocation into the
+    /// transcript as `<command-name>/foo</command-name>` (+ optional
+    /// `<command-args>`); the stream driver also emits one directly when the
+    /// user's sent text names a known command. `name` is stored without the
+    /// leading slash. Clients render this as a command card, not a user bubble.
+    SlashCommand {
+        name: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        args: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        timestamp: Option<String>,
+    },
+    /// Local output of a slash command (`<local-command-stdout>` /
+    /// `-stderr>` rows), ANSI-stripped. Arrives separately from the
+    /// invocation; clients attach it to the nearest preceding SlashCommand
+    /// (mirroring how ToolResult joins ToolUse).
+    CommandOutput {
+        output: String,
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        is_error: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        timestamp: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -469,9 +492,14 @@ async fn tail_subagents(
 /// per content block, tool_use starts, tool_results joined by id, and usage.
 /// Thinking blocks and meta rows are skipped.
 /// Injected, non-conversational user blocks Claude Code writes into the
-/// transcript: slash-command echoes, system reminders, and the background-task
-/// notifications workflows emit. They're UI noise — never what the user typed —
-/// so they're filtered out of the conversation surfaced to clients.
+/// transcript: system reminders, the caveat wrapper around local-command
+/// output, and the background-task notifications workflows emit. They're UI
+/// noise — never what the user typed — so they're filtered out of the
+/// conversation surfaced to clients. Slash-command echoes and local-command
+/// output are NOT dropped here anymore: [`command_items_from_text`] parses
+/// them into `SlashCommand` / `CommandOutput` items first; this filter only
+/// catches the command-shaped tags it didn't recognize (e.g. a stray
+/// `<command-message>`-only row, `<local-command-caveat>`).
 fn is_injected_meta(text: &str) -> bool {
     const TAGS: [&str; 5] = [
         "<task-notification",
@@ -482,6 +510,85 @@ fn is_injected_meta(text: &str) -> bool {
     ];
     let t = text.trim_start();
     TAGS.iter().any(|tag| t.starts_with(tag))
+}
+
+/// Extract the inner text of the first `<tag>…</tag>` pair, if present.
+fn tag_content<'a>(text: &'a str, tag: &str) -> Option<&'a str> {
+    let open = format!("<{tag}>");
+    let close = format!("</{tag}>");
+    let start = text.find(&open)? + open.len();
+    let end = text[start..].find(&close)? + start;
+    Some(&text[start..end])
+}
+
+/// Drop ANSI escape sequences (CSI + two-byte ESC forms). Local-command
+/// stdout is captured from a terminal-oriented code path and can carry bold/
+/// color codes (e.g. `/model`'s "Set model to \x1b[1mOpus\x1b[22m").
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\u{1b}' {
+            out.push(c);
+            continue;
+        }
+        if chars.peek() == Some(&'[') {
+            chars.next();
+            // CSI: parameter/intermediate bytes end at a final byte in @..=~.
+            while let Some(n) = chars.next() {
+                if ('\u{40}'..='\u{7e}').contains(&n) {
+                    break;
+                }
+            }
+        } else {
+            chars.next(); // two-byte ESC sequence — drop the follower too
+        }
+    }
+    out
+}
+
+/// Parse a transcript text blob carrying slash-command markers into items.
+///
+/// Two shapes, verified live (CLI 2.1.x, both PTY and stream transports):
+/// - invocation echo: `<command-name>/foo</command-name>` with optional
+///   `<command-message>` and `<command-args>` siblings, in either order —
+///   written as a `user` row or (newer CLIs) a `system`/`local_command` row;
+/// - local output: `<local-command-stdout>…</local-command-stdout>` (or
+///   `-stderr`), same two row homes.
+///
+/// Returns an empty vec when the text has no command markers.
+fn command_items_from_text(text: &str, ts: &Option<String>) -> Vec<ConversationItem> {
+    let mut out = Vec::new();
+    if let Some(name) = tag_content(text, "command-name") {
+        let name = name.trim().trim_start_matches('/').to_string();
+        if !name.is_empty() {
+            let args = tag_content(text, "command-args")
+                .map(str::trim)
+                .filter(|a| !a.is_empty())
+                .map(str::to_owned);
+            out.push(ConversationItem::SlashCommand {
+                name,
+                args,
+                timestamp: ts.clone(),
+            });
+        }
+    }
+    for (tag, is_error) in [
+        ("local-command-stdout", false),
+        ("local-command-stderr", true),
+    ] {
+        if let Some(body) = tag_content(text, tag) {
+            let output = strip_ansi(body).trim().to_string();
+            if !output.is_empty() {
+                out.push(ConversationItem::CommandOutput {
+                    output,
+                    is_error,
+                    timestamp: ts.clone(),
+                });
+            }
+        }
+    }
+    out
 }
 
 /// Extract the `Usage` item off an assistant transcript row, if it carries a
@@ -544,6 +651,17 @@ pub fn items_from_row(value: &Value) -> Vec<ConversationItem> {
         .get("timestamp")
         .and_then(Value::as_str)
         .map(str::to_owned);
+    // Newer CLIs write slash-command traffic as `system` rows (subtype
+    // `local_command`) with the text in a top-level `content` string — no
+    // `message` envelope, so this must run before the message requirement.
+    if row_type == "system" {
+        if value.get("subtype").and_then(Value::as_str) == Some("local_command") {
+            if let Some(text) = value.get("content").and_then(Value::as_str) {
+                out.extend(command_items_from_text(text, &ts));
+            }
+        }
+        return out;
+    }
     let Some(msg) = value.get("message") else {
         return out;
     };
@@ -572,18 +690,25 @@ pub fn items_from_row(value: &Value) -> Vec<ConversationItem> {
                     }
                 }
             } else {
-                let text = bs
-                    .iter()
-                    .filter_map(|b| match b {
-                        // Drop injected, non-conversational blocks (slash-command
-                        // echoes, system reminders, our background-task
-                        // notifications) — they're transcript plumbing, not
-                        // something the user typed.
-                        Block::Text { text } if !is_injected_meta(text) => Some(*text),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n");
+                let mut texts: Vec<&str> = Vec::new();
+                for b in &bs {
+                    let Block::Text { text } = b else { continue };
+                    // Slash-command traffic first (invocation echoes, local
+                    // output) — surfaced as typed items, in timeline order.
+                    let cmd = command_items_from_text(text, &ts);
+                    if !cmd.is_empty() {
+                        out.extend(cmd);
+                        continue;
+                    }
+                    // Then drop the remaining injected, non-conversational
+                    // blocks (system reminders, command caveats, our
+                    // background-task notifications) — transcript plumbing,
+                    // not something the user typed.
+                    if !is_injected_meta(text) {
+                        texts.push(*text);
+                    }
+                }
+                let text = texts.join("\n");
                 if !text.trim().is_empty() {
                     out.push(ConversationItem::UserMessage {
                         text,
@@ -990,7 +1115,7 @@ mod tests {
         for content in [
             "<task-notification>\n<status>completed</status>\n</task-notification>",
             "<system-reminder>be nice</system-reminder>",
-            "<command-name>/clear</command-name>",
+            "<local-command-caveat>Caveat: generated while running local commands</local-command-caveat>",
         ] {
             let row = json!({
                 "type": "user",
@@ -1001,6 +1126,107 @@ mod tests {
                 "expected {content:?} to be filtered out"
             );
         }
+    }
+
+    #[test]
+    fn slash_command_echo_becomes_command_item() {
+        // The classic PTY shape: name/message/args triple, args populated.
+        let row = json!({
+            "type": "user",
+            "timestamp": "2026-07-14T10:00:00Z",
+            "message": { "role": "user", "content":
+                "<command-name>/btw</command-name>\n            <command-message>btw</command-message>\n            <command-args>is this ready?</command-args>" }
+        });
+        let items = items_from_row(&row);
+        assert_eq!(items.len(), 1);
+        match &items[0] {
+            ConversationItem::SlashCommand {
+                name,
+                args,
+                timestamp,
+            } => {
+                assert_eq!(name, "btw");
+                assert_eq!(args.as_deref(), Some("is this ready?"));
+                assert_eq!(timestamp.as_deref(), Some("2026-07-14T10:00:00Z"));
+            }
+            other => panic!("expected SlashCommand, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn slash_command_echo_reversed_order_no_args() {
+        // The stream-transport custom-command shape: message before name, no
+        // args tag at all.
+        let row = json!({
+            "type": "user",
+            "message": { "role": "user", "content":
+                "<command-message>pingtest</command-message>\n<command-name>/pingtest</command-name>" }
+        });
+        let items = items_from_row(&row);
+        assert_eq!(items.len(), 1);
+        match &items[0] {
+            ConversationItem::SlashCommand { name, args, .. } => {
+                assert_eq!(name, "pingtest");
+                assert!(args.is_none());
+            }
+            other => panic!("expected SlashCommand, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn local_command_stdout_user_row_becomes_output_item_ansi_stripped() {
+        let row = json!({
+            "type": "user",
+            "message": { "role": "user", "content":
+                "<local-command-stdout>Set model to \u{1b}[1mOpus 4.8\u{1b}[22m and saved</local-command-stdout>" }
+        });
+        let items = items_from_row(&row);
+        assert_eq!(items.len(), 1);
+        match &items[0] {
+            ConversationItem::CommandOutput {
+                output, is_error, ..
+            } => {
+                assert_eq!(output, "Set model to Opus 4.8 and saved");
+                assert!(!is_error);
+            }
+            other => panic!("expected CommandOutput, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn system_local_command_rows_parse_without_message_envelope() {
+        // Newer CLIs write both the invocation echo and the output as
+        // `system` rows with a top-level `content` string.
+        let echo = json!({
+            "type": "system",
+            "subtype": "local_command",
+            "content": "<command-name>/context</command-name>\n            <command-message>context</command-message>\n            <command-args></command-args>",
+            "timestamp": "2026-07-14T10:00:01Z"
+        });
+        let items = items_from_row(&echo);
+        assert_eq!(items.len(), 1);
+        assert!(matches!(
+            &items[0],
+            ConversationItem::SlashCommand { name, args, .. }
+                if name == "context" && args.is_none()
+        ));
+
+        let stdout = json!({
+            "type": "system",
+            "subtype": "local_command",
+            "content": "<local-command-stdout>## Context Usage\n\n**Tokens:** 24.5k</local-command-stdout>"
+        });
+        let items = items_from_row(&stdout);
+        assert_eq!(items.len(), 1);
+        assert!(matches!(
+            &items[0],
+            ConversationItem::CommandOutput { output, is_error: false, .. }
+                if output.starts_with("## Context Usage")
+        ));
+
+        // Other system subtypes stay ignored.
+        let other = json!({ "type": "system", "subtype": "stop_hook_summary" });
+        assert!(items_from_row(&other).is_empty());
     }
 
     #[test]
