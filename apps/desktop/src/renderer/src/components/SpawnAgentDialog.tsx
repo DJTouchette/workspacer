@@ -98,7 +98,7 @@ interface ProviderModel {
  * The "new agent" screen. Despite the (legacy) name it renders as a full-bleed
  * workspace page — a blank agent about to be born — not a floating modal:
  * provider mark up top, a hero working-directory input, provider logo cards,
- * then the remaining knobs as a quiet row of composer-style pills.
+ * then the remaining knobs in a collapsible "advanced" card of labeled rows.
  */
 const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   defaultCwd,
@@ -132,8 +132,6 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   // from the chosen profile's default loadout; overridable here.
   const [mcpItems, setMcpItems] = useState<LibraryItem[]>([]);
   const [mcpSel, setMcpSel] = useState<string[]>([]);
-  // Whether the MCP chip strip is expanded (the pill just shows the count).
-  const [mcpOpen, setMcpOpen] = useState(false);
 
   // Model selection. `modelSel` is the dropdown value (''=Default, an alias/id,
   // or the CUSTOM sentinel); `customModel` holds the free-text id when CUSTOM.
@@ -475,6 +473,11 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
   const placeholderName = cwd.trim() ? deriveAgentName(cwd.trim()) : 'agent';
   const providerLabel = PROVIDERS.find((p) => p.value === provider)?.label ?? provider;
   const bypassSelected = permissionMode === 'bypassPermissions' || permissionMode === 'yolo';
+  // Shared by the advanced header button and its attached panel so the two
+  // read as one card even when the bypass tint is on.
+  const advBorderColor = bypassSelected
+    ? 'color-mix(in srgb, var(--wks-danger, #e05555) 55%, var(--wks-border-input))'
+    : 'var(--wks-border-input)';
   const permissionSummary = bypassSelected ? 'full access' : 'approval prompts';
   const modelSummary = isClaude
     ? resolvedModel || 'default model'
@@ -518,159 +521,115 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
     if (e.key === 'Escape') onCancel();
   };
 
-  // ── Options as composer-style pills — only the relevant knobs appear ──────
-  const pills: React.ReactNode[] = [];
+  // ── Advanced options as labeled rows — only the relevant knobs appear ─────
+  interface AdvRow {
+    key: string;
+    label: string;
+    title?: string;
+    control: React.ReactNode;
+  }
+  const rows: AdvRow[] = [];
 
   if (isClaude) {
-    pills.push(
-      <PillGroup label="model">
-        <select value={modelSel} onChange={(e) => setModelSel(e.target.value)} style={pillSelect}>
-          <option value="">Default (Claude Code setting)</option>
-          {aliases.length > 0 && (
-            <optgroup label="Latest">
-              {aliases.map((a) => (
-                <option key={a.value} value={a.value}>
-                  {a.label}
-                  {a.context ? ` · ${a.context}` : ''}
-                </option>
-              ))}
-            </optgroup>
+    rows.push({
+      key: 'model',
+      label: 'model',
+      control: (
+        <>
+          <select value={modelSel} onChange={(e) => setModelSel(e.target.value)} style={rowSelect}>
+            <option value="">Default (Claude Code setting)</option>
+            {aliases.length > 0 && (
+              <optgroup label="Latest">
+                {aliases.map((a) => (
+                  <option key={a.value} value={a.value}>
+                    {a.label}
+                    {a.context ? ` · ${a.context}` : ''}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+            {seen.length > 0 && (
+              <optgroup label="Seen in sessions">
+                {seen.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+            <option value={CUSTOM}>Custom…</option>
+          </select>
+          {modelSel === CUSTOM && (
+            <input
+              value={customModel}
+              onChange={(e) => setCustomModel(e.target.value)}
+              onKeyDown={keySubmit}
+              placeholder="claude-opus-4-8  or  opus"
+              spellCheck={false}
+              style={{ ...inlineInput, display: 'block', marginTop: 8, width: 260 }}
+            />
           )}
-          {seen.length > 0 && (
-            <optgroup label="Seen in sessions">
-              {seen.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
-            </optgroup>
-          )}
-          <option value={CUSTOM}>Custom…</option>
-        </select>
-      </PillGroup>,
-    );
+        </>
+      ),
+    });
   } else if (providerModels.length > 0) {
-    pills.push(
-      <PillGroup label="model">
-        <select
-          value={providerSel}
-          onChange={(e) => setProviderSel(e.target.value)}
-          style={pillSelect}
-        >
-          <option value="">Default ({providerLabel} setting)</option>
-          <optgroup label="Available">
-            {providerModels.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.label}
-                {m.default ? '  — default' : ''}
-              </option>
-            ))}
-          </optgroup>
-          <option value={CUSTOM}>Custom…</option>
-        </select>
-      </PillGroup>,
-    );
+    rows.push({
+      key: 'model',
+      label: 'model',
+      control: (
+        <>
+          <select
+            value={providerSel}
+            onChange={(e) => setProviderSel(e.target.value)}
+            style={rowSelect}
+          >
+            <option value="">Default ({providerLabel} setting)</option>
+            <optgroup label="Available">
+              {providerModels.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label}
+                  {m.default ? '  — default' : ''}
+                </option>
+              ))}
+            </optgroup>
+            <option value={CUSTOM}>Custom…</option>
+          </select>
+          {providerSel === CUSTOM && (
+            <input
+              value={providerCustom}
+              onChange={(e) => setProviderCustom(e.target.value)}
+              onKeyDown={keySubmit}
+              placeholder={modelPlaceholder(provider)}
+              spellCheck={false}
+              style={{ ...inlineInput, display: 'block', marginTop: 8, width: 300 }}
+            />
+          )}
+        </>
+      ),
+    });
   } else {
-    pills.push(
-      <PillGroup label="model">
+    rows.push({
+      key: 'model',
+      label: 'model',
+      control: (
         <input
           value={providerCustom}
           onChange={(e) => setProviderCustom(e.target.value)}
           onKeyDown={keySubmit}
           placeholder={providerModelsLoading ? 'Loading models…' : modelPlaceholder(provider)}
           spellCheck={false}
-          style={{ ...inlineInput, width: 250 }}
+          style={{ ...inlineInput, width: '100%', maxWidth: 300 }}
         />
-      </PillGroup>,
-    );
-  }
-
-  if (isClaude || provider === 'codex') {
-    pills.push(
-      <PillGroup
-        label="transport"
-        title={
-          transport === 'pty'
-            ? isClaude
-              ? 'The classic Claude Code TUI in a terminal — Term and GUI views.'
-              : 'Hybrid: the native Codex TUI in a terminal plus the structured GUI, one shared thread.'
-            : isClaude
-              ? 'Headless stream-json via claudemon — structured GUI only, no terminal view.'
-              : 'Headless app-server via claudemon — structured GUI only, no terminal view.'
-        }
-      >
-        {(
-          [
-            { value: 'pty', label: isClaude ? 'terminal' : 'hybrid' },
-            { value: 'stream', label: 'headless' },
-          ] as const
-        ).map((t) => (
-          <button
-            key={t.value}
-            onClick={() => setTransport(t.value)}
-            style={segBtn(transport === t.value)}
-          >
-            {t.label}
-          </button>
-        ))}
-      </PillGroup>,
-    );
-  }
-
-  if (isClaude && sessions.length > 0) {
-    pills.push(
-      <PillGroup label="resume">
-        <select
-          value={resumeSessionId}
-          onChange={(e) => setResumeSessionId(e.target.value)}
-          style={pillSelect}
-        >
-          <option value="">Start fresh</option>
-          {sessions.map((s) => (
-            <option key={s.sessionId} value={s.sessionId}>
-              {relTime(s.timestamp)} — {s.summary}
-            </option>
-          ))}
-        </select>
-      </PillGroup>,
-    );
-  }
-
-  if (isClaude && profiles.length > 0) {
-    pills.push(
-      <PillGroup label="profile">
-        <select value={profileId} onChange={(e) => setProfileId(e.target.value)} style={pillSelect}>
-          <option value="">Default</option>
-          {profiles.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
-      </PillGroup>,
-    );
-  }
-
-  if (isClaude && mcpItems.length > 0) {
-    pills.push(
-      <PillGroup label="mcp">
-        <button
-          className="wks-composer-ctl"
-          onClick={() => setMcpOpen((o) => !o)}
-          title="Only the checked servers are exposed to this session (--strict-mcp-config)."
-          style={{ ...pillBtn, color: mcpSel.length ? 'var(--wks-text-primary)' : pillBtn.color }}
-        >
-          {mcpSel.length}/{mcpItems.length} server{mcpItems.length === 1 ? '' : 's'}
-          <span style={{ fontSize: '0.55rem', opacity: 0.8 }}>{mcpOpen ? '▲' : '▼'}</span>
-        </button>
-      </PillGroup>,
-    );
+      ),
+    });
   }
 
   if (capsFor(provider).effort) {
-    pills.push(
-      <PillGroup label="effort">
-        <select value={effort} onChange={(e) => setEffort(e.target.value)} style={pillSelect}>
+    rows.push({
+      key: 'effort',
+      label: 'effort',
+      control: (
+        <select value={effort} onChange={(e) => setEffort(e.target.value)} style={rowSelect}>
           <option value="">Default ({providerLabel} setting)</option>
           {effortLevels.map((l) => (
             <option key={l.id} value={l.id}>
@@ -678,45 +637,53 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
             </option>
           ))}
         </select>
-      </PillGroup>,
-    );
+      ),
+    });
   }
 
-  if (window.electronAPI.worktreeCreate) {
-    pills.push(
-      <PillGroup
-        label="worktree"
-        title={
-          !repoInfo?.isRepo
-            ? 'Not a git repository — worktree isolation needs one.'
-            : resumeSessionId
-              ? "Resuming reuses the session's original directory."
-              : `Run this agent in a fresh git worktree (a new branch cut from ${
-                  repoInfo.branch ?? 'HEAD'
-                }, under ~/.workspacer/worktrees) so parallel agents in this repo never collide. Everything scoped to the agent — plugins, watchers, checks — follows the worktree.`
-        }
-      >
-        <select
-          value={useWorktree && worktreeEligible ? 'on' : 'off'}
-          disabled={!worktreeEligible}
-          onChange={(e) => setUseWorktree(e.target.value === 'on')}
-          style={{ ...pillSelect, opacity: worktreeEligible ? 1 : 0.5 }}
-        >
-          <option value="off">repo directory</option>
-          <option value="on">isolated worktree</option>
-        </select>
-      </PillGroup>,
-    );
+  if (isClaude || provider === 'codex') {
+    rows.push({
+      key: 'transport',
+      label: 'transport',
+      title:
+        transport === 'pty'
+          ? isClaude
+            ? 'The classic Claude Code TUI in a terminal — Term and GUI views.'
+            : 'Hybrid: the native Codex TUI in a terminal plus the structured GUI, one shared thread.'
+          : isClaude
+            ? 'Headless stream-json via claudemon — structured GUI only, no terminal view.'
+            : 'Headless app-server via claudemon — structured GUI only, no terminal view.',
+      control: (
+        <div style={segGroup}>
+          {(
+            [
+              { value: 'pty', label: isClaude ? 'terminal' : 'hybrid' },
+              { value: 'stream', label: 'headless' },
+            ] as const
+          ).map((t) => (
+            <button
+              key={t.value}
+              onClick={() => setTransport(t.value)}
+              style={segBtn(transport === t.value)}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+      ),
+    });
   }
 
-  pills.push(
-    <PillGroup label="permissions">
+  rows.push({
+    key: 'permissions',
+    label: 'permissions',
+    control: (
       <select
         value={permissionMode}
         onChange={(e) => setPermissionMode(e.target.value)}
         style={{
-          ...pillSelect,
-          color: bypassSelected ? 'var(--wks-danger, #e05555)' : pillSelect.color,
+          ...rowSelect,
+          color: bypassSelected ? 'var(--wks-danger, #e05555)' : rowSelect.color,
         }}
       >
         {capsFor(provider).permissionModes.map((m, i) => (
@@ -725,8 +692,141 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
           </option>
         ))}
       </select>
-    </PillGroup>,
-  );
+    ),
+  });
+
+  if (window.electronAPI.worktreeCreate) {
+    rows.push({
+      key: 'worktree',
+      label: 'worktree',
+      title: !repoInfo?.isRepo
+        ? 'Not a git repository — worktree isolation needs one.'
+        : resumeSessionId
+          ? "Resuming reuses the session's original directory."
+          : `Run this agent in a fresh git worktree (a new branch cut from ${
+              repoInfo.branch ?? 'HEAD'
+            }, under ~/.workspacer/worktrees) so parallel agents in this repo never collide. Everything scoped to the agent — plugins, watchers, checks — follows the worktree.`,
+      control: (
+        <div style={{ ...segGroup, opacity: worktreeEligible ? 1 : 0.5 }}>
+          {(
+            [
+              { value: false, label: 'repo directory' },
+              { value: true, label: 'isolated worktree' },
+            ] as const
+          ).map((w) => (
+            <button
+              key={String(w.value)}
+              disabled={!worktreeEligible}
+              onClick={() => setUseWorktree(w.value)}
+              style={{
+                ...segBtn((useWorktree && worktreeEligible) === w.value),
+                cursor: worktreeEligible ? 'pointer' : 'default',
+              }}
+            >
+              {w.label}
+            </button>
+          ))}
+        </div>
+      ),
+    });
+  }
+
+  if (isClaude && sessions.length > 0) {
+    rows.push({
+      key: 'resume',
+      label: 'resume',
+      control: (
+        <select
+          value={resumeSessionId}
+          onChange={(e) => setResumeSessionId(e.target.value)}
+          style={rowSelect}
+        >
+          <option value="">Start fresh</option>
+          {sessions.map((s) => (
+            <option key={s.sessionId} value={s.sessionId}>
+              {relTime(s.timestamp)} — {s.summary}
+            </option>
+          ))}
+        </select>
+      ),
+    });
+  }
+
+  if (isClaude && profiles.length > 0) {
+    rows.push({
+      key: 'profile',
+      label: 'profile',
+      control: (
+        <select value={profileId} onChange={(e) => setProfileId(e.target.value)} style={rowSelect}>
+          <option value="">Default</option>
+          {profiles.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+      ),
+    });
+  }
+
+  if (isClaude && mcpItems.length > 0) {
+    rows.push({
+      key: 'mcp',
+      label: 'mcp',
+      control: (
+        <div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {mcpItems.map((it) => {
+              const on = mcpSel.includes(it.id);
+              return (
+                <button
+                  key={it.id}
+                  onClick={() => toggleMcp(it.id)}
+                  title={it.description || it.id}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    fontSize: '0.68rem',
+                    fontWeight: 500,
+                    fontFamily: 'inherit',
+                    padding: '4px 11px',
+                    borderRadius: 'var(--wks-radius-pill, 999px)',
+                    cursor: 'pointer',
+                    maxWidth: 220,
+                    border: on
+                      ? '1px solid var(--wks-accent)'
+                      : '1px solid var(--wks-border-input)',
+                    background: on ? 'var(--wks-accent-bg)' : 'transparent',
+                    color: on
+                      ? 'var(--wks-accent-text, var(--wks-text-primary))'
+                      : 'var(--wks-text-tertiary)',
+                    transition: 'border-color 0.15s, color 0.15s',
+                  }}
+                >
+                  <span
+                    style={{
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {it.title}
+                  </span>
+                  <span style={{ fontSize: '0.58rem', color: 'var(--wks-text-faint)' }}>
+                    {it.mcp?.url ? (it.mcp.type === 'sse' ? 'sse' : 'http') : 'stdio'}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <div style={{ color: 'var(--wks-text-faint)', fontSize: '0.6rem', marginTop: 6 }}>
+            Only the checked servers are exposed to this session (--strict-mcp-config).
+          </div>
+        </div>
+      ),
+    });
+  }
 
   return (
     <div
@@ -1100,7 +1200,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
             </div>
           )}
 
-          {/* ── Advanced options ───────────────────────────────────────── */}
+          {/* ── Advanced options — header button + attached row card ────── */}
           <div style={{ width: '100%', maxWidth: 620, marginTop: 28 }}>
             <button
               type="button"
@@ -1112,10 +1212,10 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                 alignItems: 'center',
                 gap: 10,
                 padding: '9px 12px',
-                borderRadius: 'var(--wks-radius-md, 8px)',
-                border: bypassSelected
-                  ? '1px solid color-mix(in srgb, var(--wks-danger, #e05555) 55%, var(--wks-border-input))'
-                  : '1px solid var(--wks-border-input)',
+                borderRadius: advancedOpen
+                  ? 'var(--wks-radius-md, 8px) var(--wks-radius-md, 8px) 0 0'
+                  : 'var(--wks-radius-md, 8px)',
+                border: `1px solid ${advBorderColor}`,
                 background: bypassSelected
                   ? 'color-mix(in srgb, var(--wks-danger, #e05555) 6%, transparent)'
                   : 'transparent',
@@ -1152,123 +1252,35 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
             </button>
 
             {advancedOpen && (
-              <>
-                <div
-                  style={{
-                    display: 'flex',
-                    flexWrap: 'wrap',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: 6,
-                    rowGap: 12,
-                    marginTop: 14,
-                  }}
-                >
-                  {pills.map((pill, i) => (
-                    <React.Fragment key={i}>
-                      {i > 0 && <PillSep />}
-                      {pill}
-                    </React.Fragment>
-                  ))}
-                </div>
-
-                {/* Custom model id — free text, shown when Custom… is picked */}
-                {isClaude && modelSel === CUSTOM && (
-                  <input
-                    value={customModel}
-                    onChange={(e) => setCustomModel(e.target.value)}
-                    onKeyDown={keySubmit}
-                    placeholder="claude-opus-4-8  or  opus"
-                    spellCheck={false}
+              <div
+                style={{
+                  border: `1px solid ${advBorderColor}`,
+                  borderTop: 'none',
+                  borderRadius: '0 0 var(--wks-radius-md, 8px) var(--wks-radius-md, 8px)',
+                  padding: '2px 14px 4px',
+                }}
+              >
+                {rows.map((row, i) => (
+                  <div
+                    key={row.key}
+                    title={row.title}
                     style={{
-                      ...inlineInput,
-                      display: 'block',
-                      margin: '12px auto 0',
-                      width: 280,
-                      textAlign: 'center',
+                      display: 'grid',
+                      gridTemplateColumns: '96px minmax(0, 1fr)',
+                      alignItems: 'center',
+                      gap: 12,
+                      padding: '10px 0',
+                      borderTop:
+                        i > 0
+                          ? '1px solid color-mix(in srgb, var(--wks-border-input) 55%, transparent)'
+                          : 'none',
                     }}
-                  />
-                )}
-                {!isClaude && providerModels.length > 0 && providerSel === CUSTOM && (
-                  <input
-                    value={providerCustom}
-                    onChange={(e) => setProviderCustom(e.target.value)}
-                    onKeyDown={keySubmit}
-                    placeholder={modelPlaceholder(provider)}
-                    spellCheck={false}
-                    style={{
-                      ...inlineInput,
-                      display: 'block',
-                      margin: '12px auto 0',
-                      width: 300,
-                      textAlign: 'center',
-                    }}
-                  />
-                )}
-
-                {/* MCP chip strip — expanded from the pill */}
-                {isClaude && mcpItems.length > 0 && mcpOpen && (
-                  <div style={{ marginTop: 14, textAlign: 'center' }}>
-                    <div
-                      style={{
-                        display: 'flex',
-                        flexWrap: 'wrap',
-                        justifyContent: 'center',
-                        gap: 6,
-                      }}
-                    >
-                      {mcpItems.map((it) => {
-                        const on = mcpSel.includes(it.id);
-                        return (
-                          <button
-                            key={it.id}
-                            onClick={() => toggleMcp(it.id)}
-                            title={it.description || it.id}
-                            style={{
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: 6,
-                              fontSize: '0.68rem',
-                              fontWeight: 500,
-                              fontFamily: 'inherit',
-                              padding: '4px 11px',
-                              borderRadius: 'var(--wks-radius-pill, 999px)',
-                              cursor: 'pointer',
-                              maxWidth: 220,
-                              border: on
-                                ? '1px solid var(--wks-accent)'
-                                : '1px solid var(--wks-border-input)',
-                              background: on ? 'var(--wks-accent-bg)' : 'transparent',
-                              color: on
-                                ? 'var(--wks-accent-text, var(--wks-text-primary))'
-                                : 'var(--wks-text-tertiary)',
-                              transition: 'border-color 0.15s, color 0.15s',
-                            }}
-                          >
-                            <span
-                              style={{
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                                whiteSpace: 'nowrap',
-                              }}
-                            >
-                              {it.title}
-                            </span>
-                            <span style={{ fontSize: '0.58rem', color: 'var(--wks-text-faint)' }}>
-                              {it.mcp?.url ? (it.mcp.type === 'sse' ? 'sse' : 'http') : 'stdio'}
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                    <div
-                      style={{ color: 'var(--wks-text-faint)', fontSize: '0.6rem', marginTop: 7 }}
-                    >
-                      Only the checked servers are exposed to this session (--strict-mcp-config).
-                    </div>
+                  >
+                    <span style={quietLabel}>{row.label}</span>
+                    <div style={{ minWidth: 0 }}>{row.control}</div>
                   </div>
-                )}
-              </>
+                ))}
+              </div>
             )}
           </div>
 
@@ -1347,35 +1359,6 @@ function relTime(iso: string): string {
   return `${Math.floor(h / 24)}d ago`;
 }
 
-/** A quiet label + control pair — the composer-pill idiom, no boxy fieldsets. */
-function PillGroup({
-  label,
-  title,
-  children,
-}: {
-  label: string;
-  title?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <span
-      title={title}
-      style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '0 2px' }}
-    >
-      <span style={quietLabel}>{label}</span>
-      {children}
-    </span>
-  );
-}
-
-/** Thin vertical rule between pill groups (same idiom as ComposerControls). */
-const PillSep: React.FC = () => (
-  <span
-    aria-hidden
-    style={{ width: 1, height: 14, flexShrink: 0, background: 'var(--wks-border-input)' }}
-  />
-);
-
 const quietLabel: React.CSSProperties = {
   fontSize: '0.58rem',
   fontWeight: 600,
@@ -1386,39 +1369,31 @@ const quietLabel: React.CSSProperties = {
   whiteSpace: 'nowrap',
 };
 
-/** Flat, borderless select styled like a composer pill. */
-const pillSelect: React.CSSProperties = {
+/** Flat, borderless select inside an advanced row — the value IS the control. */
+const rowSelect: React.CSSProperties = {
   background: 'transparent',
   border: 'none',
   borderRadius: 'var(--wks-radius-sm, 4px)',
-  padding: '3px 4px',
+  padding: '3px 2px',
   fontSize: '0.72rem',
   fontWeight: 600,
   fontFamily: 'inherit',
-  color: 'var(--wks-text-tertiary)',
+  color: 'var(--wks-text-primary)',
   cursor: 'pointer',
-  maxWidth: 230,
+  maxWidth: '100%',
   textOverflow: 'ellipsis',
 };
 
-/** Flat pill button (MCP count toggle). */
-const pillBtn: React.CSSProperties = {
+/** Container for a two-option segmented toggle (transport, worktree). */
+const segGroup: React.CSSProperties = {
   display: 'inline-flex',
-  alignItems: 'center',
-  gap: 5,
-  background: 'transparent',
-  border: 'none',
-  borderRadius: 'var(--wks-radius-sm, 4px)',
-  padding: '3px 8px',
-  fontSize: '0.72rem',
-  fontWeight: 600,
-  fontFamily: 'inherit',
-  color: 'var(--wks-text-tertiary)',
-  cursor: 'pointer',
-  whiteSpace: 'nowrap',
+  gap: 2,
+  padding: 2,
+  border: '1px solid var(--wks-border-input)',
+  borderRadius: 999,
 };
 
-/** Segmented toggle inside a pill group (claude transport). */
+/** Segmented toggle button (transport, worktree). */
 const segBtn = (active: boolean): React.CSSProperties => ({
   fontSize: '0.7rem',
   fontWeight: 600,
