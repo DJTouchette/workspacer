@@ -110,6 +110,8 @@ interface Config {
     /** How runs of tool calls render in the GUI: prose summary 'cards', or the
      *  'trace' waterfall monitor (per-call duration bars + dig-in rows). */
     workLog: 'cards' | 'trace';
+    /** Show a small HH:MM stamp on chat turns in the GUI conversation. */
+    showTimestamps: boolean;
     /** How new Claude sessions run: 'pty' (the classic Claude Code TUI in a
      *  PTY — Term + GUI) or 'stream' (headless `--print --output-format
      *  stream-json` via claudemon's managed adapter — GUI only). Per-spawn

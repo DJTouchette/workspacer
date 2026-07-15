@@ -170,6 +170,7 @@ export const CONFIG_DEFAULTS = {
     defaultPermissionMode: '',
     defaultView: 'terminal',
     workLog: 'cards',
+    showTimestamps: false,
     transport: 'stream',
     settingsOverlay: false,
   },

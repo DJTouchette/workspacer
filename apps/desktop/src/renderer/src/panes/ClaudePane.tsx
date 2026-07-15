@@ -20,7 +20,7 @@ import {
 } from '../components/claude-shared';
 import { BrandSpinner } from '../components/Brand';
 import { RefreshCw } from '../components/icons';
-import { PanelRight, ArrowRightLeft } from 'lucide-react';
+import { PanelRight, ArrowRightLeft, Clock } from 'lucide-react';
 import { ContextMenu, ContextMenuItem, ContextMenuLabel } from '../components/ContextMenu';
 import { requestHandoff } from '../lib/watchBus';
 import { quoteFontFamily, isTermVisible, refitAndRepaint } from '../lib/terminalUtils';
@@ -135,7 +135,10 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   transport: transportProp,
   onPtyReady,
 }) => {
-  const { config } = useConfig();
+  const { config, save } = useConfig();
+  // HH:MM stamps on chat turns — a global display preference (config-backed),
+  // toggled from the pane header's clock button or Settings.
+  const showTimestamps = config.claude?.showTimestamps ?? false;
   // Which surfaces this provider has:
   //   claude            — GUI (hooks/transcript telemetry) + terminal (its PTY)
   //   codex (hybrid)    — GUI (app-server JSON-RPC adapter) + terminal (the codex
@@ -1341,8 +1344,12 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
         if (gi > 0) items.push(<TurnDivider key={`div-${gi}`} label={null} />);
         // Slash-command runs get their command card (invocation chip +
         // collapsible local output) instead of a plain text bubble.
-        if (turn.command) items.push(<CommandCard key={`msg-${gi}`} turn={turn} />);
-        else items.push(<ConversationMessage key={`msg-${gi}`} turn={turn} />);
+        if (turn.command)
+          items.push(<CommandCard key={`msg-${gi}`} turn={turn} showTimestamp={showTimestamps} />);
+        else
+          items.push(
+            <ConversationMessage key={`msg-${gi}`} turn={turn} showTimestamp={showTimestamps} />,
+          );
         prevRole = 'user';
         return;
       }
@@ -1365,7 +1372,9 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
       if (turn.content) {
         flushWork();
         if (prevRole === 'user' && gi > 0) items.push(<TurnDivider key={`div-${gi}`} />);
-        items.push(<ConversationMessage key={`msg-${gi}`} turn={turn} />);
+        items.push(
+          <ConversationMessage key={`msg-${gi}`} turn={turn} showTimestamp={showTimestamps} />,
+        );
         if (calls.length > 0) pendingWork = { calls: [...calls], keyStart: gi, endIdx: gi };
       } else if (calls.length > 0) {
         if (!pendingWork) {
@@ -1406,6 +1415,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     effectiveCwd,
     changesVersion,
     WorkView,
+    showTimestamps,
   ]);
 
   return (
@@ -1894,6 +1904,27 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
               }}
             />
           </ContextMenu>
+        )}
+
+        {/* Timestamps toggle — GUI conversation only. Saved to config so it
+            persists and applies to every chat pane at once. */}
+        {viewMode === 'gui' && (
+          <button
+            onClick={() =>
+              save({ claude: { ...config.claude, showTimestamps: !showTimestamps } } as any)
+            }
+            title={showTimestamps ? 'Hide message timestamps' : 'Show message timestamps'}
+            className={showTimestamps ? undefined : 'wks-composer-icon-btn'}
+            style={{
+              ...toggleBtnStyle,
+              display: 'flex',
+              alignItems: 'center',
+              backgroundColor: showTimestamps ? 'var(--wks-accent-bg)' : 'transparent',
+              color: showTimestamps ? colors.accent : 'var(--wks-text-muted)',
+            }}
+          >
+            <Clock size={13} strokeWidth={1.9} />
+          </button>
         )}
 
         {/* Inspector rail toggle — available in both GUI and Terminal mode,

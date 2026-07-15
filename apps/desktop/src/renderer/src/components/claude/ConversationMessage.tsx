@@ -3,7 +3,35 @@ import type { ConversationTurn } from '../../types/claudeSession';
 import { claudeColors as colors } from '../claude-shared';
 import { parseMarkdownBlocks } from '../markdown';
 
-const ConversationMessageInner: React.FC<{ turn: ConversationTurn }> = ({ turn }) => {
+/** "14:32" (locale 24h/12h per system) for a turn's ms timestamp; '' if unset. */
+export function turnTime(ms: number | undefined): string {
+  if (!ms || !Number.isFinite(ms)) return '';
+  return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+/** The small muted HH:MM stamp shown next to a turn when timestamps are on. */
+export const TurnStamp: React.FC<{ ms: number | undefined }> = ({ ms }) => {
+  const time = turnTime(ms);
+  if (!time) return null;
+  return (
+    <span
+      style={{
+        fontSize: '0.62rem',
+        fontVariantNumeric: 'tabular-nums',
+        color: colors.mutedDim,
+        whiteSpace: 'nowrap',
+        userSelect: 'none',
+      }}
+    >
+      {time}
+    </span>
+  );
+};
+
+const ConversationMessageInner: React.FC<{ turn: ConversationTurn; showTimestamp?: boolean }> = ({
+  turn,
+  showTimestamp,
+}) => {
   const isUser = turn.role === 'user';
   // Memoize per content string; module-level LRU cache in markdown.tsx also
   // deduplicates across instances, so this just avoids the map lookup overhead
@@ -19,10 +47,13 @@ const ConversationMessageInner: React.FC<{ turn: ConversationTurn }> = ({ turn }
         style={{
           display: 'flex',
           justifyContent: 'flex-end',
+          alignItems: 'flex-end',
+          gap: 8,
           marginBottom: 12,
           animation: 'claudeFadeIn 0.2s ease-out',
         }}
       >
+        {showTimestamp && <TurnStamp ms={turn.timestamp} />}
         <div
           style={{
             maxWidth: '80%',
@@ -63,15 +94,20 @@ const ConversationMessageInner: React.FC<{ turn: ConversationTurn }> = ({ turn }
       }}
     >
       {parsedContent ? (
-        <div
-          style={{
-            paddingLeft: 4,
-            fontSize: 'calc(0.8rem * var(--claude-gui-font-scale, 1))',
-            lineHeight: 1.6,
-            color: colors.text,
-          }}
-        >
-          {parsedContent}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+          <div
+            style={{
+              flex: 1,
+              minWidth: 0,
+              paddingLeft: 4,
+              fontSize: 'calc(0.8rem * var(--claude-gui-font-scale, 1))',
+              lineHeight: 1.6,
+              color: colors.text,
+            }}
+          >
+            {parsedContent}
+          </div>
+          {showTimestamp && <TurnStamp ms={turn.timestamp} />}
         </div>
       ) : null}
     </div>

@@ -386,6 +386,16 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
         color-coded by kind, click a row to dig into its full input and output.
       </div>
 
+      <CheckRow
+        label="Show message timestamps"
+        checked={config.claude?.showTimestamps === true}
+        onChange={(v) => save({ claude: { ...config.claude, defaultView, showTimestamps: v } })}
+      />
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
+        Adds a small HH:MM stamp beside each chat turn in the GUI conversation. Also togglable from
+        the clock button in a chat pane's top bar.
+      </div>
+
       <Row label="Chat text size">
         <div style={{ display: 'flex', gap: 4 }}>
           {FONT_SCALES.map((s) => (

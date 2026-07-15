@@ -3,6 +3,7 @@ import { ChevronRight } from 'lucide-react';
 import type { ConversationTurn } from '../../types/claudeSession';
 import { claudeColors as colors } from '../claude-shared';
 import { parseMarkdownBlocks } from '../markdown';
+import { TurnStamp } from './ConversationMessage';
 
 /** Output taller than this starts collapsed behind a "show output" toggle. */
 const AUTO_EXPAND_MAX_LINES = 12;
@@ -14,7 +15,10 @@ const AUTO_EXPAND_MAX_LINES = 12;
  * left-aligned block underneath. Output is markdown-rendered (built-ins like
  * /context emit tables) and pre-stripped of ANSI by the daemon.
  */
-const CommandCardInner: React.FC<{ turn: ConversationTurn }> = ({ turn }) => {
+const CommandCardInner: React.FC<{ turn: ConversationTurn; showTimestamp?: boolean }> = ({
+  turn,
+  showTimestamp,
+}) => {
   const cmd = turn.command;
   const output = cmd?.output ?? '';
   const outputLines = useMemo(() => (output ? output.split('\n').length : 0), [output]);
@@ -27,7 +31,8 @@ const CommandCardInner: React.FC<{ turn: ConversationTurn }> = ({ turn }) => {
     <div style={{ marginBottom: 12, animation: 'claudeFadeIn 0.2s ease-out' }}>
       {/* Invocation chip — user-side, so right-aligned like a user bubble */}
       {cmd.name && (
-        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8 }}>
+          {showTimestamp && <TurnStamp ms={turn.timestamp} />}
           <div
             style={{
               display: 'inline-flex',
