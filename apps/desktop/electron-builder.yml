@@ -2,6 +2,14 @@ appId: com.workspacer.app
 productName: Workspacer
 asar: true
 
+# Windows Task Manager (and Explorer) label processes with the exe's
+# FileDescription, which electron-builder fills from package.json
+# "description" — so every Electron subprocess repeated the full marketing
+# sentence. Override the packaged metadata so processes read simply
+# "Workspacer"; package.json keeps the long description for npm/docs.
+extraMetadata:
+  description: Workspacer
+
 # electron-updater reads the latest PUBLISHED GitHub Release for this repo. This
 # provider block is what makes electron-builder generate the update metadata
 # (latest.yml / latest-linux.yml / latest-mac.yml + .blockmap files) alongside
