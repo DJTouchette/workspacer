@@ -94,8 +94,18 @@ describe('claudemonDaemon adopt-vs-spawn', () => {
     probeHealth.mockResolvedValue(false);
     const mod = await loadModule();
     await mod.startClaudemon();
-    expect(killStaleListener).toHaveBeenCalledWith(7890, 'claudemon');
-    expect(killStaleListener).toHaveBeenCalledWith(7891, 'claudemon');
+    // Third arg is the daemon's own binary path — the zombie-owner escalation
+    // (kill orphaned instances of our exe by path) needs it.
+    expect(killStaleListener).toHaveBeenCalledWith(
+      7890,
+      'claudemon',
+      expect.stringContaining('claudemon'),
+    );
+    expect(killStaleListener).toHaveBeenCalledWith(
+      7891,
+      'claudemon',
+      expect.stringContaining('claudemon'),
+    );
     expect(spawnMock).toHaveBeenCalledTimes(1);
     expect(waitForHealth).toHaveBeenCalled();
     expect(mod.isClaudemonAdopted()).toBe(false);

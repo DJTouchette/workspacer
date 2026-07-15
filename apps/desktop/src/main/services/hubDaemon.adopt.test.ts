@@ -116,7 +116,8 @@ describe('hubDaemon adopt-vs-spawn', () => {
     probeHealth.mockResolvedValue(false);
     const mod = await loadModule();
     await mod.startHub();
-    expect(killStaleListener).toHaveBeenCalledWith(7895, 'hub');
+    // Third arg is the hub's own binary path (zombie-owner kill escalation).
+    expect(killStaleListener).toHaveBeenCalledWith(7895, 'hub', expect.stringContaining('hub'));
     expect(spawnMock).toHaveBeenCalledTimes(1);
     expect(mod.isHubAdopted()).toBe(false);
     expect((await mod.getRemoteShareInfo()).hubAdopted).toBe(false);

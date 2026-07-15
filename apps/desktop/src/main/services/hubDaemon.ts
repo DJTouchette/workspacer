@@ -354,7 +354,7 @@ export function startHub(): Promise<void> {
 function launch(bin: string): Promise<void> {
   // Only reached when the health probe failed: whatever holds the port (if
   // anything) is a stale orphan, not an adoptable hub — clear it.
-  killStaleListener(PORT, 'hub');
+  killStaleListener(PORT, 'hub', bin);
 
   const pluginsDir = ensurePluginsDir();
   const addr = bindAddr();

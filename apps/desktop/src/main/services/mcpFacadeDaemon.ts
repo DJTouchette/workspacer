@@ -74,7 +74,7 @@ export function startMcpFacade(): Promise<void> {
 
 /** Spawn the process and wire up exit-driven restart. Returns the health promise. */
 function launch(bin: string): Promise<void> {
-  killStaleListener(PORT, 'mcp');
+  killStaleListener(PORT, 'mcp', bin);
 
   const args = ['--addr', ADDR, '--hub', HUB_BUS_URL];
   const token = getHubToken();

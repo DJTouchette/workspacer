@@ -130,23 +130,105 @@ export async function probeHealth(url: string, timeoutMs = 1200): Promise<boolea
 // ── killStaleListener ────────────────────────────────────────────────────────
 
 /**
+ * PIDs listening on `port`, parsed from `netstat -ano` output (win32).
+ *
+ * Column-exact on purpose — the old substring `findstr "127.0.0.1:<port>"`
+ * approach had two real-world traps that produced WRONG pids on Windows:
+ *   - `:7890` is a prefix of `:78901`–`:78909`, so a listener on an unrelated
+ *     5-digit port matched;
+ *   - every connection *to* the port (hook-event curls) matches on the
+ *     foreign-address column, in whatever state it's lingering in.
+ * Only rows whose LOCAL address ends in `:<port>` and whose state is
+ * LISTENING count. Exported for tests.
+ */
+export function parseWindowsListenerPids(netstatOut: string, port: number): number[] {
+  const pids = new Set<number>();
+  for (const line of netstatOut.split(/\r?\n/)) {
+    // [proto, local, foreign, state, pid] — state is absent for UDP rows.
+    const cols = line.trim().split(/\s+/);
+    if (cols.length < 5 || cols[3] !== 'LISTENING') continue;
+    if (!cols[1].endsWith(`:${port}`)) continue;
+    const pid = parseInt(cols[4], 10);
+    if (pid > 0) pids.add(pid);
+  }
+  return [...pids];
+}
+
+/** Live listener pids for `port` right now (win32). */
+function winListenerPids(port: number): number[] {
+  try {
+    const out = execSync('netstat -ano -p tcp', { encoding: 'utf-8', timeout: 5000 });
+    return parseWindowsListenerPids(out, port);
+  } catch {
+    return [];
+  }
+}
+
+/** Pids of live processes whose executable is exactly `binPath` (win32). */
+function winPidsRunningBinary(binPath: string): number[] {
+  // PowerShell (not wmic — removed on current Windows 11) so the match is on
+  // the full path, never just the image name.
+  const quoted = binPath.replace(/'/g, "''");
+  try {
+    const out = execSync(
+      `powershell -NoProfile -Command "(Get-Process | Where-Object { $_.Path -eq '${quoted}' }).Id"`,
+      { encoding: 'utf-8', timeout: 8000, windowsHide: true },
+    );
+    return out
+      .split(/\r?\n/)
+      .map((s) => parseInt(s.trim(), 10))
+      .filter((pid) => pid > 0);
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Kill any process currently listening on `port` that isn't this process.
  * `label` is used only for the log line, e.g. "[claudemon]" or "[hub]".
+ *
+ * `binPath` (win32 only) is the absolute path of the daemon's own executable.
+ * It's the escalation for the zombie-owner case: netstat can attribute a
+ * still-bound socket to a pid that no longer exists (the creator died; an
+ * orphan keeps the handle), so `taskkill /PID` reports "not found" while the
+ * bind keeps failing with 10048. When that happens, every live process running
+ * *our exact binary* is killed instead — path-matched, so an unrelated program
+ * that happens to share the exe name is never touched.
  */
-export function killStaleListener(port: number, label: string): void {
+export function killStaleListener(port: number, label: string, binPath?: string): void {
   try {
     if (process.platform === 'win32') {
-      const out = execSync(`netstat -ano | findstr "127.0.0.1:${port}"`, {
-        encoding: 'utf-8',
-        timeout: 3000,
-      });
-      const match = out.match(/LISTENING\s+(\d+)/);
-      if (match) {
-        const pid = parseInt(match[1], 10);
-        if (pid && pid !== process.pid) {
-          console.log(`[${label}] killing stale listener on :${port} pid=${pid}`);
+      const pids = winListenerPids(port).filter((pid) => pid !== process.pid);
+      let pidKillFailed = false;
+      for (const pid of pids) {
+        console.log(`[${label}] killing stale listener on :${port} pid=${pid}`);
+        try {
           // /T sweeps the stale daemon's leftover children too (sidecars, PTYs).
           execSync(`taskkill /F /T /PID ${pid}`, { timeout: 3000 });
+        } catch (err) {
+          pidKillFailed = true;
+          console.warn(`[${label}] taskkill pid=${pid} failed: ${String(err)}`);
+        }
+      }
+      if (pids.length > 0 && pidKillFailed && binPath) {
+        console.warn(
+          `[${label}] :${port} owner unkillable by pid (zombie owner?) — killing orphaned instances of ${binPath}`,
+        );
+        for (const pid of winPidsRunningBinary(binPath)) {
+          if (pid === process.pid) continue;
+          console.log(`[${label}] killing orphaned daemon pid=${pid}`);
+          try {
+            execSync(`taskkill /F /T /PID ${pid}`, { timeout: 3000 });
+          } catch (err) {
+            console.warn(`[${label}] taskkill pid=${pid} failed: ${String(err)}`);
+          }
+        }
+        const still = winListenerPids(port);
+        if (still.length > 0) {
+          console.warn(
+            `[${label}] :${port} still held after cleanup (pids: ${still.join(', ')}) — ` +
+              'another program owns this port',
+          );
         }
       }
     } else {

@@ -125,8 +125,8 @@ export function startClaudemon(): Promise<void> {
 function launch(bin: string): Promise<void> {
   // Only reached when the health probe failed: whatever holds the port (if
   // anything) is a stale orphan, not an adoptable daemon — clear it.
-  killStaleListener(HOOK_PORT, 'claudemon');
-  killStaleListener(API_PORT, 'claudemon');
+  killStaleListener(HOOK_PORT, 'claudemon', bin);
+  killStaleListener(API_PORT, 'claudemon', bin);
 
   console.log(`[claudemon] spawning ${bin}`);
   backoff.markStarted();
