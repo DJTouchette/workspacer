@@ -3,6 +3,8 @@ import { useConfig } from '../hooks/useConfig';
 import { useAttention } from '../contexts/AttentionContext';
 import { usePlugins } from '../hooks/usePlugins';
 import { Home, Star, Plus, RefreshCw } from '../components/icons';
+import { AgentLogo } from '../components/agentLogos';
+import type { AgentProvider } from '../types/pane';
 import type { UpdateStatus } from '../types/electron';
 
 /** Latest supervisor state per plugin id, from `sidecar.*` bus events.
@@ -57,6 +59,7 @@ function pluginStateColor(s: string | undefined): string {
 
 interface Snap {
   sessionId: string;
+  provider?: string;
   ambientState?: string;
   cwd?: string;
   usage?: { costUSD?: number; contextTokens?: number } | null;
@@ -97,24 +100,40 @@ function fmtReset(epochSecs: number | undefined): string {
   return `resets in ${Math.round(h / 24)}d`;
 }
 
-/** Freshest rate-limit statusLine seen this app run. The windows are
- *  account-global but ride on per-session statusLines, and the store evicts a
- *  session ~30s after it ends — so a refetch with no live Claude session would
- *  blank the card even though the account data is still valid. Module-level so
- *  it also survives pane remounts. */
-let lastRateLimit: { sl: NonNullable<Snap['statusLine']>; ts: number } | null = null;
+/** Freshest rate-limit statusLine seen this app run, per provider. The
+ *  windows are account-global but ride on per-session statusLines, and the
+ *  store evicts a session ~30s after it ends — so a refetch with no live
+ *  session for that provider would blank the card even though the account
+ *  data is still valid. Module-level so it also survives pane remounts. */
+const lastRateLimit: Record<string, { sl: NonNullable<Snap['statusLine']>; ts: number }> = {};
+
+/** Providers whose sessions report account rate-limit windows, in display
+ *  order. Each gets its own card — the windows are per-account, so a Claude
+ *  reading and a Codex reading are different accounts and must never be
+ *  collapsed into one "freshest wins" card. */
+const RATE_LIMIT_PROVIDERS: Array<{ id: string; title: string }> = [
+  { id: 'claude', title: 'Claude usage' },
+  { id: 'codex', title: 'Codex usage' },
+];
 
 /**
  * The 5h/7d rate-limit windows are account-global (identical across every
- * session), so we surface them once. Pick the freshest statusLine that carries
- * them — newest `receivedAt` wins — and fall back to the last reading seen
- * when the current snapshots carry none (the reset countdowns stay honest:
- * they render from absolute epochs).
+ * session of one provider), so we surface them once per provider. Pick the
+ * freshest statusLine that carries them — newest `receivedAt` wins — and fall
+ * back to the last reading seen when the current snapshots carry none (the
+ * reset countdowns stay honest: they render from absolute epochs). Renders
+ * nothing until the provider has ever reported a window.
  */
-const RateLimitCard: React.FC<{ snaps: Snap[] }> = ({ snaps }) => {
+const RateLimitCard: React.FC<{ snaps: Snap[]; provider: string; title: string }> = ({
+  snaps,
+  provider,
+  title,
+}) => {
   let best: NonNullable<Snap['statusLine']> | null = null;
   let bestTs = -1;
   for (const s of snaps) {
+    // Old snapshots may omit provider — those are Claude hook sessions.
+    if ((s.provider ?? 'claude') !== provider) continue;
     const sl = s.statusLine;
     if (
       !sl ||
@@ -132,8 +151,9 @@ const RateLimitCard: React.FC<{ snaps: Snap[] }> = ({ snaps }) => {
       best = sl;
     }
   }
-  if (best && bestTs >= (lastRateLimit?.ts ?? -1)) lastRateLimit = { sl: best, ts: bestTs };
-  else if (!best && lastRateLimit) best = lastRateLimit.sl;
+  const cached = lastRateLimit[provider];
+  if (best && bestTs >= (cached?.ts ?? -1)) lastRateLimit[provider] = { sl: best, ts: bestTs };
+  else if (!best && cached) best = cached.sl;
   if (!best) return null;
 
   // Render a window when Claude gives us a utilization % OR just a reset time.
@@ -202,13 +222,22 @@ const RateLimitCard: React.FC<{ snaps: Snap[] }> = ({ snaps }) => {
     >
       <div
         style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
           fontSize: '0.58rem',
           color: 'var(--wks-text-faint)',
           textTransform: 'uppercase',
           letterSpacing: '0.08em',
         }}
       >
-        Account usage
+        {/* Same provider mark vocabulary as the sidebar / nav / spawn dialog. */}
+        <AgentLogo
+          provider={provider as AgentProvider}
+          size={13}
+          style={{ color: 'var(--wks-text-secondary)', flexShrink: 0 }}
+        />
+        {title}
       </div>
       <Row label="5h" pct={best.fiveHourPct} reset={best.fiveHourResetsAt} />
       <Row label="7d" pct={best.sevenDayPct} reset={best.sevenDayResetsAt} />
@@ -659,9 +688,12 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
               clickTitle="Open the Inbox"
             />
             <Stat label="Total cost" value={fmtUSD(totalCost)} sub="this session" />
-            {/* Account-wide 5h/7d rate-limit windows (scanned across all sessions,
-                not just workspacer's — they're global to the account). */}
-            <RateLimitCard snaps={snaps} />
+            {/* Account-wide 5h/7d rate-limit windows, one card per provider
+                account (scanned across all sessions, not just workspacer's —
+                they're global to each account). */}
+            {RATE_LIMIT_PROVIDERS.map((p) => (
+              <RateLimitCard key={p.id} snaps={snaps} provider={p.id} title={p.title} />
+            ))}
           </div>
 
           {plugins.length > 0 && (
