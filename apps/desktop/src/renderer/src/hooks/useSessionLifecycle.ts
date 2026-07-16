@@ -35,11 +35,28 @@ export interface SessionLifecycleResult {
   sessionName: string;
   ptyMapping: Record<string, string>;
   handlePtyReady: (paneId: string, ptySessionId: string) => void;
-  handleNewSession: () => void;
+  handleNewSession: (name?: string) => void;
   handleResumeSession: (filename: string) => void;
   handleDeleteSession: (filename: string) => void;
+  handleRenameSession: (filename: string, newName: string) => Promise<void>;
   saveCurrentSession: (force?: boolean) => void;
   switchSession: () => void;
+}
+
+/** "Session Jul 16" — the fallback name when the user starts a new session
+ *  without typing one. Distinct per day, which is usually enough; collisions
+ *  get a numeric suffix via uniqueSessionName. */
+function defaultSessionName(): string {
+  return `Session ${new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`;
+}
+
+/** Sessions are stored one-file-per-name, so a duplicate name would silently
+ *  overwrite the other session's file. Suffix until unique. */
+function uniqueSessionName(base: string, taken: string[]): string {
+  let name = base;
+  let i = 2;
+  while (taken.includes(name)) name = `${base} ${i++}`;
+  return name;
 }
 
 export function useSessionLifecycle({
@@ -86,13 +103,26 @@ export function useSessionLifecycle({
   }, [reconcileAgents]);
 
   // --- Session lifecycle ---
-  const handleNewSession = useCallback(() => {
-    loadAgentsFromSession([], '');
-    setSessionName('Default');
-    setPtyMapping({});
-    setPickerCancellable(false);
-    setSessionPhase('active');
-  }, [loadAgentsFromSession]);
+  // A new session gets its own name (user-typed or "Session Jul 16"), unique
+  // against the saved list — every save writes <name>.yaml, so reusing a name
+  // (the old hardcoded 'Default') silently overwrote the previous session's
+  // file and made the picker a list of one.
+  const handleNewSession = useCallback(
+    (name?: string) => {
+      const base = name?.trim() || defaultSessionName();
+      loadAgentsFromSession([], '');
+      setSessionName(
+        uniqueSessionName(
+          base,
+          sessionList.map((s) => s.name),
+        ),
+      );
+      setPtyMapping({});
+      setPickerCancellable(false);
+      setSessionPhase('active');
+    },
+    [loadAgentsFromSession, sessionList],
+  );
 
   const handleResumeSession = useCallback(
     (filename: string) => {
@@ -124,6 +154,40 @@ export function useSessionLifecycle({
       setSessionList((prev) => prev.filter((s) => s.filename !== filename));
     });
   }, []);
+
+  /** Rename a saved session file: re-save its data under the new name, then
+   *  delete the old file (unless sanitization collapsed both names to the same
+   *  file). If it's the session we're currently in, follow the rename so the
+   *  autosave keeps writing the new file instead of resurrecting the old name. */
+  const handleRenameSession = useCallback(
+    async (filename: string, newName: string): Promise<void> => {
+      const clean = newName.trim();
+      if (!clean) return;
+      try {
+        const data: any = await window.electronAPI.loadSession(filename);
+        if (!data) return;
+        const sessions: any[] = await window.electronAPI.listSessions().catch(() => []);
+        const name = uniqueSessionName(
+          clean,
+          sessions.filter((s) => s.filename !== filename).map((s) => s.name),
+        );
+        if (name === data.name) return;
+        const newFile = await window.electronAPI.saveSession({ ...data, name });
+        if (newFile !== filename) {
+          await window.electronAPI.deleteSession(filename).catch(() => {});
+        }
+        setSessionList((prev) =>
+          prev.map((s) =>
+            s.filename === filename ? { ...s, name, filename: newFile ?? s.filename } : s,
+          ),
+        );
+        if (data.name === sessionName) setSessionName(name);
+      } catch (err) {
+        console.error('[Session] rename failed:', err);
+      }
+    },
+    [sessionName],
+  );
 
   const saveCurrentSession = useCallback(
     (force?: boolean): Promise<void> => {
@@ -257,6 +321,7 @@ export function useSessionLifecycle({
     handleNewSession,
     handleResumeSession,
     handleDeleteSession,
+    handleRenameSession,
     saveCurrentSession,
     switchSession,
   };

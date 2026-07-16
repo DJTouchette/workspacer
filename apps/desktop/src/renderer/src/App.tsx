@@ -395,6 +395,7 @@ function App() {
     handleNewSession,
     handleResumeSession,
     handleDeleteSession,
+    handleRenameSession,
     saveCurrentSession,
     switchSession,
   } = useSessionLifecycle({
@@ -2189,6 +2190,8 @@ function App() {
             onNewSession={handleNewSession}
             onResumeSession={handleResumeSession}
             onDeleteSession={handleDeleteSession}
+            onRenameSession={handleRenameSession}
+            currentName={pickerCancellable ? sessionName : undefined}
             onCancel={
               pickerCancellable
                 ? () => {

@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 
 interface SessionEntry {
   name: string;
@@ -10,9 +10,16 @@ interface SessionEntry {
 
 interface SessionPickerProps {
   sessions: SessionEntry[];
-  onNewSession: () => void;
+  /** Start a fresh session. `name` is the user-typed name; undefined lets the
+   *  lifecycle hook pick a dated default ("Session Jul 16"). */
+  onNewSession: (name?: string) => void;
   onResumeSession: (filename: string) => void;
   onDeleteSession: (filename: string) => void;
+  /** Rename a saved session file (re-save under the new name + delete old). */
+  onRenameSession?: (filename: string, newName: string) => void;
+  /** Name of the session currently loaded (mid-session switch) — its row gets
+   *  a "current" chip so you know which one you'd be leaving. */
+  currentName?: string;
   /** When provided, the picker is dismissable (mid-session switch) — Escape and
    *  a Cancel button return to the running app instead of starting fresh. */
   onCancel?: () => void;
@@ -42,12 +49,21 @@ const SessionPicker: React.FC<SessionPickerProps> = ({
   onNewSession,
   onResumeSession,
   onDeleteSession,
+  onRenameSession,
+  currentName,
   onCancel,
 }) => {
-  // Escape → dismiss (mid-session switch) if cancellable, else start a new session.
+  const [newName, setNewName] = useState('');
+  /** Filename of the row being renamed inline, and its draft text. */
+  const [renaming, setRenaming] = useState<{ filename: string; draft: string } | null>(null);
+
+  // Escape → dismiss (mid-session switch) if cancellable, else start a new
+  // session. Capture-phase, so skip it while an input has focus — the name
+  // field and inline rename handle their own Escape.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        if (e.target instanceof HTMLInputElement) return;
         e.preventDefault();
         if (onCancel) onCancel();
         else onNewSession();
@@ -58,6 +74,11 @@ const SessionPicker: React.FC<SessionPickerProps> = ({
   }, [onNewSession, onCancel]);
 
   const lastSession = sessions[0];
+  const startNew = () => onNewSession(newName.trim() || undefined);
+  const commitRename = () => {
+    if (renaming && renaming.draft.trim()) onRenameSession?.(renaming.filename, renaming.draft);
+    setRenaming(null);
+  };
 
   return (
     <div
@@ -104,9 +125,34 @@ const SessionPicker: React.FC<SessionPickerProps> = ({
           Workspacer
         </div>
 
-        {/* Action buttons */}
+        {/* New session: optional name + start. Sessions are one-file-per-name,
+            so naming here is what keeps the previous session's file intact. */}
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+          <input
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') startNew();
+              if (e.key === 'Escape') setNewName('');
+            }}
+            placeholder="New session name (optional)…"
+            style={{
+              flex: 1,
+              minWidth: 0,
+              padding: '7px 10px',
+              fontSize: '0.75rem',
+              fontFamily: 'inherit',
+              backgroundColor: 'var(--wks-bg-elevated)',
+              color: 'var(--wks-text-primary)',
+              border: '1px solid var(--wks-border-input)',
+              borderRadius: 'var(--wks-radius-sm)',
+              outline: 'none',
+              boxSizing: 'border-box',
+            }}
+          />
+          <ActionButton label="New Session" onClick={startNew} primary={!lastSession} />
+        </div>
         <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
-          <ActionButton label="New Session" onClick={onNewSession} primary={!lastSession} />
           {lastSession && (
             <ActionButton
               label="Resume Last"
@@ -153,15 +199,72 @@ const SessionPicker: React.FC<SessionPickerProps> = ({
                   }}
                 >
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div
-                      style={{
-                        fontSize: '0.75rem',
-                        color: 'var(--wks-text-secondary)',
-                        fontWeight: 500,
-                      }}
-                    >
-                      {session.name}
-                    </div>
+                    {renaming?.filename === session.filename ? (
+                      <input
+                        autoFocus
+                        value={renaming.draft}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) =>
+                          setRenaming((r) => (r ? { ...r, draft: e.target.value } : r))
+                        }
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') commitRename();
+                          if (e.key === 'Escape') setRenaming(null);
+                        }}
+                        onBlur={commitRename}
+                        style={{
+                          width: '100%',
+                          padding: '2px 6px',
+                          fontSize: '0.75rem',
+                          fontFamily: 'inherit',
+                          backgroundColor: 'var(--wks-bg-elevated)',
+                          color: 'var(--wks-text-primary)',
+                          border: '1px solid var(--wks-accent)',
+                          borderRadius: '3px',
+                          outline: 'none',
+                          boxSizing: 'border-box',
+                        }}
+                      />
+                    ) : (
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          fontSize: '0.75rem',
+                          color: 'var(--wks-text-secondary)',
+                          fontWeight: 500,
+                        }}
+                      >
+                        <span
+                          style={{
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {session.name}
+                        </span>
+                        {currentName === session.name && (
+                          <span
+                            style={{
+                              fontSize: '0.55rem',
+                              fontWeight: 700,
+                              padding: '0px 5px',
+                              borderRadius: 'var(--wks-radius-pill, 999px)',
+                              letterSpacing: '0.04em',
+                              flexShrink: 0,
+                              color: 'var(--wks-accent-text, var(--wks-accent))',
+                              border:
+                                '1px solid color-mix(in srgb, var(--wks-accent) 45%, transparent)',
+                              background: 'color-mix(in srgb, var(--wks-accent) 12%, transparent)',
+                            }}
+                          >
+                            current
+                          </span>
+                        )}
+                      </div>
+                    )}
                     <div
                       style={{
                         fontSize: '0.6rem',
@@ -173,6 +276,37 @@ const SessionPicker: React.FC<SessionPickerProps> = ({
                       {session.paneCount} panes &middot; {formatTimestamp(session.timestamp)}
                     </div>
                   </div>
+                  {onRenameSession && renaming?.filename !== session.filename && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setRenaming({ filename: session.filename, draft: session.name });
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        color: 'var(--wks-text-faint)',
+                        cursor: 'pointer',
+                        fontSize: '0.7rem',
+                        padding: '2px 4px',
+                        margin: 0,
+                        width: 'auto',
+                        height: 'auto',
+                        borderRadius: '3px',
+                        lineHeight: 1,
+                        flexShrink: 0,
+                      }}
+                      onMouseEnter={(e) => {
+                        (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-primary)';
+                      }}
+                      onMouseLeave={(e) => {
+                        (e.currentTarget as HTMLElement).style.color = 'var(--wks-text-faint)';
+                      }}
+                      title="Rename session"
+                    >
+                      ✎
+                    </button>
+                  )}
                   <button
                     onClick={(e) => {
                       e.stopPropagation();

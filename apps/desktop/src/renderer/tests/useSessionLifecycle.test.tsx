@@ -186,3 +186,65 @@ describe('useSessionLifecycle — hardening', () => {
     expect(liveSet.has('dead-1')).toBe(false);
   });
 });
+
+describe('useSessionLifecycle — named sessions', () => {
+  it('new sessions get a unique name instead of overwriting an existing file', async () => {
+    (window as any).electronAPI.listSessions = vi
+      .fn()
+      .mockResolvedValue([{ name: 'Focus', filename: 'focus.yaml', timestamp: '', paneCount: 0 }]);
+    const { result } = render(mkAgents('p1'));
+    // switchSession populates sessionList (the uniqueness reference).
+    await act(async () => {
+      result.current.switchSession();
+    });
+    act(() => result.current.handleNewSession('Focus'));
+    expect(result.current.sessionName).toBe('Focus 2');
+    // No typed name → dated default, not the old hardcoded 'Default'.
+    act(() => result.current.handleNewSession());
+    expect(result.current.sessionName).toMatch(/^Session /);
+  });
+
+  it('rename re-saves under the new name, deletes the old file, and follows the current session', async () => {
+    saveSession.mockResolvedValue('research.yaml');
+    const loadSession = vi
+      .fn()
+      .mockResolvedValue({ name: 'Default', agents: [], activeAgentId: '' });
+    const deleteSession = vi.fn().mockResolvedValue(undefined);
+    (window as any).electronAPI.loadSession = loadSession;
+    (window as any).electronAPI.deleteSession = deleteSession;
+    (window as any).electronAPI.listSessions = vi
+      .fn()
+      .mockResolvedValue([
+        { name: 'Default', filename: 'default.yaml', timestamp: '', paneCount: 0 },
+      ]);
+
+    const { result } = render(mkAgents('p1'));
+    // sessionName starts as 'Default', matching the file being renamed.
+    await act(async () => {
+      await result.current.handleRenameSession('default.yaml', 'Research');
+    });
+    expect(saveSession).toHaveBeenCalledWith(expect.objectContaining({ name: 'Research' }));
+    expect(deleteSession).toHaveBeenCalledWith('default.yaml');
+    expect(result.current.sessionName).toBe('Research');
+  });
+
+  it('rename never deletes the file it just wrote (name sanitizes to the same file)', async () => {
+    saveSession.mockResolvedValue('default.yaml');
+    (window as any).electronAPI.loadSession = vi
+      .fn()
+      .mockResolvedValue({ name: 'Default', agents: [], activeAgentId: '' });
+    const deleteSession = vi.fn().mockResolvedValue(undefined);
+    (window as any).electronAPI.deleteSession = deleteSession;
+    (window as any).electronAPI.listSessions = vi
+      .fn()
+      .mockResolvedValue([
+        { name: 'Default', filename: 'default.yaml', timestamp: '', paneCount: 0 },
+      ]);
+
+    const { result } = render(mkAgents('p1'));
+    await act(async () => {
+      await result.current.handleRenameSession('default.yaml', 'DEFAULT');
+    });
+    expect(deleteSession).not.toHaveBeenCalled();
+  });
+});
