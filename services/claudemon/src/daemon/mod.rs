@@ -93,6 +93,12 @@ pub async fn run(cfg: ServeConfig) -> Result<()> {
     let conv = ConversationStore::new();
     conversation::spawn_tailer(store.clone(), conv.clone());
 
+    // Account-usage poller: fills the 5h/7d/monthly gauges for stream-transport
+    // Claude sessions, whose wire events carry reset times but (in practice) no
+    // utilization %. Polls the OAuth usage endpoint only while a live Claude
+    // session exists; costs zero tokens. See session::account_usage.
+    crate::session::account_usage::spawn_poller(store.clone());
+
     let hook_addr: SocketAddr = format!("{}:{}", cfg.host, cfg.hook_port).parse()?;
     let api_addr: SocketAddr = format!("{}:{}", cfg.host, cfg.api_port).parse()?;
 

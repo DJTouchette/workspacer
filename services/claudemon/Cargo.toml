@@ -35,7 +35,9 @@ base64 = "0.22"
 bytes = "1"
 async-stream = "0.3"
 ratatui = "0.29"
-reqwest = { version = "0.12", default-features = false, features = ["json", "stream"] }
+# rustls-tls: the account-usage poller is the one HTTPS caller (everything
+# else is loopback HTTP); rustls keeps us off the system OpenSSL.
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 syntect = { version = "5", default-features = false, features = ["default-fancy"] }
 two-face = { version = "0.4", default-features = false, features = ["syntect-fancy"] }
 once_cell = "1"

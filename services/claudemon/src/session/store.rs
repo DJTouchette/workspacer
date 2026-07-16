@@ -8,6 +8,7 @@ use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 
 use time::OffsetDateTime;
 
+use super::account_usage::AccountUsage;
 use super::conversation::{ConversationItem, ConversationStore};
 use super::permission_mode::{classify_screen, PermissionMode, PermissionSwitchError};
 use super::state::{HookEvent, Pending, Plan, SessionMode, SessionState, StatusLine, Transport};
@@ -258,6 +259,12 @@ pub struct SessionStore {
     /// SIGINT-equivalent (the stream driver's `interrupt` control request).
     /// `/signal {sigint}` routes here when present.
     managed_interrupts: Arc<DashMap<String, mpsc::UnboundedSender<()>>>,
+    /// Latest account-level rate-limit reading from the OAuth usage endpoint
+    /// (see `session::account_usage`). Account-scoped, so one global copy;
+    /// patched into every Claude session's status line at ingest time — the
+    /// stream transport's `rate_limit_event` rarely carries `utilization`, so
+    /// without this a stream session never shows a usage percentage.
+    account_usage: Arc<std::sync::RwLock<Option<AccountUsage>>>,
 }
 
 /// A live model/effort switch request for a managed adapter's driver loop.
@@ -358,6 +365,7 @@ impl SessionStore {
             managed_answers: Arc::new(DashMap::new()),
             managed_permission_modes: Arc::new(DashMap::new()),
             managed_interrupts: Arc::new(DashMap::new()),
+            account_usage: Arc::new(std::sync::RwLock::new(None)),
         }
     }
 
@@ -627,10 +635,13 @@ impl SessionStore {
             .map(|e| e.clone())
             .unwrap_or_else(|| sid.to_string());
 
-        let status = StatusLine::from_claude_json(raw);
+        let mut status = StatusLine::from_claude_json(raw);
         let state = {
             let mut entry = self.states.get_mut(&canonical)?;
             let session = entry.value_mut();
+            if session.provider == "claude" {
+                self.patch_rate_limits(&mut status);
+            }
             session.status_line = Some(status.clone());
             session.updated_at = OffsetDateTime::now_utc();
             session.clone()
@@ -641,6 +652,86 @@ impl SessionStore {
             status_line: status,
         });
         Some(state)
+    }
+
+    /// Overlay the account-level rate-limit reading onto a status line. A
+    /// fresh account reading wins field-wise over whatever the session's own
+    /// wire delivered: the windows are account-scoped so it can't disagree
+    /// except by being newer, and the stream wire's rare `utilization` (it only
+    /// rides warning events) would otherwise go stale and stick. Absent /
+    /// stale readings leave the line untouched.
+    fn patch_rate_limits(&self, status: &mut StatusLine) {
+        let guard = self.account_usage.read().unwrap();
+        let Some(u) = guard.as_ref() else { return };
+        if !u.is_fresh(OffsetDateTime::now_utc()) {
+            return;
+        }
+        let mut injected = false;
+        let mut fill = |dst: &mut Option<f64>, src: Option<f64>| {
+            if src.is_some() {
+                *dst = src;
+                injected = true;
+            }
+        };
+        fill(&mut status.five_hour_pct, u.five_hour_pct);
+        fill(&mut status.seven_day_pct, u.seven_day_pct);
+        fill(&mut status.monthly_pct, u.monthly_pct);
+        // Resets: the wire reliably carries these even when it omits the
+        // percent, so only fill gaps — never replace a present value.
+        if status.five_hour_resets_at.is_none() {
+            status.five_hour_resets_at = u.five_hour_resets_at;
+        }
+        if status.seven_day_resets_at.is_none() {
+            status.seven_day_resets_at = u.seven_day_resets_at;
+        }
+        if status.monthly_resets_at.is_none() {
+            status.monthly_resets_at = u.monthly_resets_at;
+        }
+        if status.overage_out_of_credits.is_none() {
+            status.overage_out_of_credits = u.out_of_credits;
+        }
+        if injected && status.received_at.is_none() {
+            status.received_at = Some(OffsetDateTime::now_utc());
+        }
+    }
+
+    /// Store a new account-level usage reading and push the patched status
+    /// line to every live Claude session, so clients see the gauges move
+    /// without waiting for the session's next wire event. Deliberately does
+    /// NOT bump `updated_at` — a background poll is not session activity.
+    pub fn set_account_usage(&self, usage: AccountUsage) {
+        *self.account_usage.write().unwrap() = Some(usage);
+        let targets: Vec<(String, Option<String>, StatusLine)> = self
+            .states
+            .iter()
+            .filter(|e| e.provider == "claude" && e.mode != SessionMode::Stopped)
+            .map(|e| {
+                (
+                    e.key().clone(),
+                    e.cwd.clone(),
+                    e.status_line.clone().unwrap_or_default(),
+                )
+            })
+            .collect();
+        for (session_id, cwd, mut status_line) in targets {
+            self.patch_rate_limits(&mut status_line);
+            if let Some(mut entry) = self.states.get_mut(&session_id) {
+                entry.status_line = Some(status_line.clone());
+            }
+            let _ = self.status_tx.send(StatusLineUpdate {
+                session_id,
+                cwd,
+                status_line,
+            });
+        }
+    }
+
+    /// Whether any non-stopped Claude session exists — the account-usage
+    /// poller's gate, so the daemon never polls the endpoint while idle.
+    pub fn has_live_claude_session(&self) -> bool {
+        self.states
+            .iter()
+            .any(|e| e.provider == "claude" && e.mode != SessionMode::Stopped)
     }
 
     pub fn list(&self) -> Vec<SessionState> {
@@ -1043,9 +1134,16 @@ impl SessionStore {
 
     /// Attach model/usage/cost telemetry to a managed session (the adapter's
     /// equivalent of Claude's statusLine). Broadcasts on the status channel.
-    pub fn apply_status_line(&self, session_id: &str, status: StatusLine) -> Option<SessionState> {
+    pub fn apply_status_line(
+        &self,
+        session_id: &str,
+        mut status: StatusLine,
+    ) -> Option<SessionState> {
         let state = {
             let mut entry = self.states.get_mut(session_id)?;
+            if entry.provider == "claude" {
+                self.patch_rate_limits(&mut status);
+            }
             entry.status_line = Some(status.clone());
             entry.updated_at = OffsetDateTime::now_utc();
             entry.clone()
@@ -2342,6 +2440,76 @@ mod tests {
             store.get("nobody").is_none(),
             "must not create a phantom session"
         );
+    }
+
+    fn account_reading(five_pct: f64) -> AccountUsage {
+        AccountUsage {
+            five_hour_pct: Some(five_pct),
+            five_hour_resets_at: Some(1_800_000_000),
+            seven_day_pct: Some(61.0),
+            seven_day_resets_at: None,
+            monthly_pct: None,
+            monthly_resets_at: None,
+            out_of_credits: Some(false),
+            fetched_at: OffsetDateTime::now_utc(),
+        }
+    }
+
+    // The account-level reading must fill the utilization gaps a stream
+    // session's own wire leaves (rate_limit_event carries resetsAt but rarely
+    // utilization), while the wire's own resets keep priority over the
+    // account's.
+    #[test]
+    fn account_usage_patches_claude_status_lines() {
+        let store = SessionStore::new();
+        store.register_managed("s1", "/tmp", "claude");
+        store.set_account_usage(account_reading(42.0));
+
+        // set_account_usage alone already pushes a patched line, so a session
+        // that never produced telemetry still gets gauges.
+        let sl = store.get("s1").unwrap().status_line.expect("pushed line");
+        assert_eq!(sl.five_hour_pct, Some(42.0));
+        assert_eq!(sl.five_hour_resets_at, Some(1_800_000_000));
+        assert!(sl.received_at.is_some(), "injected line must carry a timestamp");
+
+        // A wire status line (stream shape: reset without utilization) gets the
+        // account pct injected, but its own fresher reset wins.
+        let wire = StatusLine {
+            five_hour_resets_at: Some(1_900_000_000),
+            ..Default::default()
+        };
+        let state = store.apply_status_line("s1", wire).unwrap();
+        let sl = state.status_line.unwrap();
+        assert_eq!(sl.five_hour_pct, Some(42.0));
+        assert_eq!(sl.five_hour_resets_at, Some(1_900_000_000));
+        assert_eq!(sl.seven_day_pct, Some(61.0));
+    }
+
+    // The reading is for the *Claude* account — codex/opencode/pi sessions
+    // must never inherit it.
+    #[test]
+    fn account_usage_never_touches_other_providers() {
+        let store = SessionStore::new();
+        store.register_managed("c1", "/tmp", "codex");
+        store.set_account_usage(account_reading(42.0));
+        assert!(store.get("c1").unwrap().status_line.is_none());
+
+        let state = store.apply_status_line("c1", StatusLine::default()).unwrap();
+        assert_eq!(state.status_line.unwrap().five_hour_pct, None);
+    }
+
+    // A reading past its freshness window (poller stopped or failing) must not
+    // keep overwriting live wire data.
+    #[test]
+    fn stale_account_usage_is_ignored() {
+        let store = SessionStore::new();
+        store.register_managed("s1", "/tmp", "claude");
+        let mut old = account_reading(42.0);
+        old.fetched_at = OffsetDateTime::now_utc() - time::Duration::minutes(10);
+        *store.account_usage.write().unwrap() = Some(old);
+
+        let state = store.apply_status_line("s1", StatusLine::default()).unwrap();
+        assert_eq!(state.status_line.unwrap().five_hour_pct, None);
     }
 
     // terminate_managed drops the managed prompt channel so the adapter's driver
