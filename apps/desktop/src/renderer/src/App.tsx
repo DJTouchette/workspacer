@@ -67,6 +67,7 @@ import { useTheme } from './hooks/useTheme';
 import { useSessionLifecycle } from './hooks/useSessionLifecycle';
 import { usePluginHotkeys } from './hooks/usePluginHotkeys';
 import { compactClaudeSnapshotForBackground } from './lib/compactClaudeSnapshot';
+import { wasSessionTerminated } from './lib/terminatedSessions';
 
 /** Normalize a workspace dir into a stable config key (slashes + no trailing /). */
 function scriptKey(cwd: string): string {
@@ -477,6 +478,9 @@ function App() {
         const map: Record<string, SessionAmbientState> = {};
         const snaps: Record<string, ClaudeSessionSnapshot> = {};
         for (const s of sessions) {
+          // A just-terminated session can still be in the daemon's list while
+          // it tears down; re-promoting it would let auto-adopt resurrect it.
+          if (wasSessionTerminated(s.sessionId)) continue;
           map[s.sessionId] = s.ambientState;
           snaps[s.sessionId] = compactClaudeSnapshotForBackground(s);
         }
@@ -499,7 +503,11 @@ function App() {
     const unsub = window.electronAPI.onClaudeSessionUpdate((sessionId: string, snapshot: any) => {
       // An ended session will never tick again, so drop its (full-transcript)
       // snapshot + status rather than leaving it pinned in memory forever.
-      if (snapshot.status === 'ended') {
+      // Explicitly-terminated sessions get the same treatment even before the
+      // daemon reports ended: their teardown ticks (final hooks / statusline)
+      // would otherwise re-promote the snapshot and auto-adopt would resurrect
+      // the card the user just closed.
+      if (snapshot.status === 'ended' || wasSessionTerminated(sessionId)) {
         setStatusBySession((prev) => {
           if (!(sessionId in prev)) return prev;
           const { [sessionId]: _drop, ...rest } = prev;
@@ -571,6 +579,9 @@ function App() {
       // Skip ended sessions and already-adopted ones.
       if (snapshot.status === 'ended') continue;
       if (adoptedRef.current.has(sessionId)) continue;
+      // Never re-adopt a session the user explicitly terminated — its dying
+      // ticks can race the terminate and make it look live for a moment.
+      if (wasSessionTerminated(sessionId)) continue;
       // Skip leftovers from a previous run — reachable only via explicit resume.
       if (preexisting.has(sessionId)) continue;
       // Skip if some agent already owns this session.
@@ -824,7 +835,14 @@ function App() {
     const handler = (e: Event) => {
       const t = (e as CustomEvent).detail as BrowserOpenTarget | undefined;
       if (!t?.url) return;
-      const newId = addTab('browser', t.title || 'Browser', insertPosition, undefined, t.url, false);
+      const newId = addTab(
+        'browser',
+        t.title || 'Browser',
+        insertPosition,
+        undefined,
+        t.url,
+        false,
+      );
       requestAnimationFrame(() => scrollToTab(newId));
     };
     window.addEventListener(BROWSER_OPEN_EVENT, handler);

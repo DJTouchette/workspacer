@@ -22,6 +22,7 @@ export function providerLabel(provider: AgentProvider | undefined): string {
   }
 }
 import { agentIdForSession, dedupeBySessionId } from '../lib/agentIdentity';
+import { markSessionTerminated } from '../lib/terminatedSessions';
 
 let nextId = 1;
 
@@ -536,6 +537,10 @@ export function useAgentManager() {
   const terminateAgent = useCallback(async (agentId: string) => {
     const agent = agentsRef.current.find((a) => a.id === agentId);
     if (agent?.global) return; // the Overview workspace is permanent
+    // Tombstone first: the dying session keeps ticking until the daemon marks
+    // it ended, and an un-tombstoned tick would let App's auto-adopt resurrect
+    // the card the user just closed (see lib/terminatedSessions.ts).
+    markSessionTerminated(agent?.sessionId);
     // Compute the post-removal list synchronously from `prev` so we never
     // read the stale agentsRef (which is updated asynchronously in an effect).
     let fallbackId: string | undefined;
