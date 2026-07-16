@@ -262,10 +262,15 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   );
 
   // ── Hub (control-plane / event bus) ──
+  // Returns null (not []) when the hub is unreachable, so the renderer can
+  // tell "hub still booting — retry" from "no plugins installed". After an
+  // app update the old hub is killed (binary mismatch) and the fresh one
+  // races the renderer's first fetch; an [] here read as a legitimate empty
+  // list and plugins vanished from the palette until a reinstall.
   ipcMain.handle(IPC.HUB_LIST_PLUGINS, async () => {
     try {
       const res = await fetch(`${HUB_HTTP_URL}/plugins`);
-      if (!res.ok) return [];
+      if (!res.ok) return null;
       const plugins = (await res.json()) as Array<{ id: string; [k: string]: unknown }>;
       // Merge each plugin's per-plugin bus token (served only on the token-guarded
       // /plugins/tokens, never on public /plugins) so the renderer can inject it
@@ -289,7 +294,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
       }
       return plugins;
     } catch {
-      return [];
+      return null;
     }
   });
   ipcMain.handle(

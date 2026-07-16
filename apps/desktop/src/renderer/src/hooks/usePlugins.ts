@@ -6,6 +6,14 @@ import { pluginPaneURL } from '../types/plugin';
  * Loads the hub's plugin list and keeps it fresh: refetches whenever a
  * `plugin.*` event crosses the bus (loaded / unloaded). Exposes the panes and
  * hotkeys plugins contribute, ready to inject into the UI.
+ *
+ * Boot race, hardened: on a cold hub start (first launch after an app update —
+ * a normal relaunch adopts the still-running hub) the mount-time fetch can land
+ * before the hub is up, and the boot-time `plugin.loaded` events fire before
+ * our bus subscription attaches. That combination left the palette permanently
+ * plugin-less until a reinstall emitted a fresh event. So an unreachable hub
+ * (list === null) is retried with backoff, and every hub `connected` status —
+ * including the first — triggers a refetch.
  */
 export function usePlugins(): {
   plugins: PluginManifest[];
@@ -18,16 +26,33 @@ export function usePlugins(): {
   const fetchSeqRef = useRef(0);
   // Debounce timer for bursts of plugin.* events.
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Retry state for an unreachable hub (null result / rejected fetch).
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const retryDelayRef = useRef(1000);
 
-  const refresh = useCallback(() => {
+  const refresh = useCallback(function refresh() {
     const seq = ++fetchSeqRef.current;
+    const scheduleRetry = () => {
+      if (retryTimerRef.current) return; // one pending retry at a time
+      const delay = retryDelayRef.current;
+      retryDelayRef.current = Math.min(delay * 2, 15_000);
+      retryTimerRef.current = setTimeout(() => {
+        retryTimerRef.current = null;
+        refresh();
+      }, delay);
+    };
     window.electronAPI
       .listHubPlugins?.()
       .then((list) => {
         if (seq !== fetchSeqRef.current) return; // superseded by a later fetch
+        if (list === null) {
+          scheduleRetry(); // hub unreachable (booting) — not an empty registry
+          return;
+        }
+        retryDelayRef.current = 1000;
         setPlugins(Array.isArray(list) ? list : []);
       })
-      .catch(() => {});
+      .catch(scheduleRetry);
   }, []);
 
   useEffect(() => {
@@ -41,11 +66,22 @@ export function usePlugins(): {
         refresh();
       }, 150);
     });
+    // Refetch whenever the hub reports connected — the mount fetch may have
+    // raced a cold hub start, and boot-time plugin.loaded events predate our
+    // subscription. Deliberately fires on the FIRST connect too.
+    const offStatus = window.electronAPI.onHubStatus?.(({ connected }) => {
+      if (connected) refresh();
+    });
     return () => {
       off?.();
+      offStatus?.();
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
         debounceTimerRef.current = null;
+      }
+      if (retryTimerRef.current) {
+        clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = null;
       }
     };
   }, [refresh]);

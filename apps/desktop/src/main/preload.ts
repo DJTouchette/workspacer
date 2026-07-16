@@ -382,7 +382,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on(IPC.HUB_STATUS, handler);
     return () => ipcRenderer.removeListener(IPC.HUB_STATUS, handler);
   },
-  listHubPlugins: (): Promise<unknown[]> => ipcRenderer.invoke(IPC.HUB_LIST_PLUGINS),
+  /** null = hub unreachable (still booting) — retry; [] = genuinely no plugins. */
+  listHubPlugins: (): Promise<unknown[] | null> => ipcRenderer.invoke(IPC.HUB_LIST_PLUGINS),
   hubPublish: (event: { type: string; source?: string; data?: unknown }): Promise<void> =>
     ipcRenderer.invoke(IPC.HUB_PUBLISH, event),
   getHubStatus: (): Promise<{ connected: boolean }> => ipcRenderer.invoke(IPC.HUB_GET_STATUS),

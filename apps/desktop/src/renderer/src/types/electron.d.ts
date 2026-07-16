@@ -283,7 +283,8 @@ export interface ElectronAPI {
   }>;
   /** Enable/disable `tailscale serve` in front of the hub port. */
   tailscaleSetServe?: (enable: boolean) => Promise<{ ok: boolean; error?: string; hint?: string }>;
-  listHubPlugins: () => Promise<PluginManifest[]>;
+  /** null = hub unreachable (still booting) — retry; [] = genuinely no plugins. */
+  listHubPlugins: () => Promise<PluginManifest[] | null>;
   hubPublish: (event: { type: string; source?: string; data?: unknown }) => Promise<void>;
   installPlugin: (url: string) => Promise<{ ok: boolean; plugin?: PluginManifest; error?: string }>;
   /** Download + read a plugin's manifest without installing (pre-install preview). */
