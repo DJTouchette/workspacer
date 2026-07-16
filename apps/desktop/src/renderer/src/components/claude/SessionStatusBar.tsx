@@ -13,8 +13,13 @@ import { IconModel } from '../wksIcons';
 
 /**
  * A compact, single-line status readout — Workspacer's in-app equivalent of
- * Claude Code's terminal status line. Rendered inline in the agent pane's top
- * toolbar (next to the status badge).
+ * Claude Code's terminal status line. Rendered in the agent pane's bottom
+ * status bar (next to the status badge).
+ *
+ * Division of labor with ComposerControls (which always sits beside/above this
+ * bar): the pills own the *controls* — model, effort, permission mode — and
+ * this bar owns the *telemetry* — dir/branch, plan, context, tokens/cost and
+ * the account rate-limit windows. Nothing appears in both.
  *
  * Data comes from `snapshot.statusLine` (fed by claudemon's /statusline/stream,
  * the only channel carrying Claude's authoritative context-%, cost, and the
@@ -41,70 +46,47 @@ const Sep: React.FC = () => (
   <span
     style={{
       width: 1,
-      height: 17,
+      height: 14,
       flexShrink: 0,
       background: 'var(--wks-border, #555)',
-      opacity: 0.7,
+      opacity: 0.5,
     }}
   />
 );
 
-/** Segmented 10-tick context gauge — filled ticks take the threshold color. */
-const CtxBar: React.FC<{ pct: number }> = ({ pct }) => {
-  const filled = Math.max(0, Math.min(10, Math.round((pct / 100) * 10)));
-  const color = ctxColor(pct);
+/** Thin rounded meter — the exact track treatment the sidebar and agent cards
+ *  use for their context bars (subtle-border track, smooth threshold-colored
+ *  fill), so every gauge in the app reads as one family. The 2% floor keeps a
+ *  sliver of fill visible for tiny non-zero values. */
+const Track: React.FC<{ pct: number; color: string; width?: number }> = ({
+  pct,
+  color,
+  width = 40,
+}) => {
+  const clamped = Math.max(0, Math.min(100, pct));
   return (
-    <span style={{ display: 'inline-flex', gap: 2, alignItems: 'center' }}>
-      {Array.from({ length: 10 }, (_, i) => (
-        <span
-          key={i}
-          style={{
-            width: 5,
-            height: 13,
-            borderRadius: 1,
-            background: i < filled ? color : 'var(--wks-bg-elevated, #444)',
-          }}
-        />
-      ))}
+    <span
+      style={{
+        width,
+        height: 4,
+        borderRadius: 999,
+        flexShrink: 0,
+        background: 'var(--wks-border-subtle, #2a2a2a)',
+        overflow: 'hidden',
+        display: 'inline-block',
+      }}
+    >
+      <span
+        style={{
+          display: 'block',
+          height: '100%',
+          width: `${clamped > 0 ? Math.max(2, clamped) : 0}%`,
+          borderRadius: 999,
+          background: color,
+        }}
+      />
     </span>
   );
-};
-
-/** Compact plan gauge — one tick per step (capped), filled by completion. All
- *  done tints green, otherwise accent. Mirrors CtxBar's segmented-ticks look. */
-const PlanTicks: React.FC<{ done: number; total: number }> = ({ done, total }) => {
-  const ticks = Math.min(total, 10);
-  const filled = Math.round((done / total) * ticks);
-  const color = done >= total ? 'var(--wks-success, #3fb950)' : 'var(--wks-accent-text)';
-  return (
-    <span style={{ display: 'inline-flex', gap: 2, alignItems: 'center' }}>
-      {Array.from({ length: ticks }, (_, i) => (
-        <span
-          key={i}
-          style={{
-            width: 4,
-            height: 13,
-            borderRadius: 1,
-            background: i < filled ? color : 'var(--wks-bg-elevated, #444)',
-          }}
-        />
-      ))}
-    </span>
-  );
-};
-
-/** Compact label + color per permission-mode id. Claude ids come from hook
- *  `permission_mode`; 'ask'/'yolo' are the managed-provider (codex/opencode/pi)
- *  spawn settings. Unknown ids fall back to the raw id in the default color. */
-const MODE_DISPLAY: Record<string, { label: string; color: string }> = {
-  default: { label: 'ask', color: 'var(--wks-text-secondary)' },
-  plan: { label: 'plan', color: '#38bdf8' },
-  acceptEdits: { label: 'accept edits', color: 'var(--wks-warning)' },
-  auto: { label: 'auto', color: 'var(--wks-success)' },
-  dontAsk: { label: "don't ask", color: 'var(--wks-warning)' },
-  bypassPermissions: { label: 'bypass', color: 'var(--wks-error)' },
-  ask: { label: 'ask', color: 'var(--wks-text-secondary)' },
-  yolo: { label: 'full access', color: 'var(--wks-error)' },
 };
 
 interface Props {
@@ -184,13 +166,9 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = f
   const sevenReset = fmtResetIn(sevenDayResetsAt);
   const monthlyReset = fmtResetIn(monthlyResetsAt);
 
-  // Permission mode: live hook telemetry (follows shift+tab cycling in the
-  // TUI) wins over the requested-at-spawn setting. Managed providers never
-  // send the live value, so they show their spawn setting.
-  const modeId = snapshot?.livePermissionMode ?? snapshot?.settings?.permissionMode;
-  const mode = modeId
-    ? (MODE_DISPLAY[modeId] ?? { label: modeId, color: 'var(--wks-text-secondary)' })
-    : undefined;
+  // (Permission mode is deliberately NOT shown here — the ComposerControls
+  // pills beside/above this bar own model + effort + permission mode, and
+  // repeating the mode made the two rows read as duplicates.)
 
   // Plan progress: `plan 3/7`, ticks + the current step's activeForm as tooltip.
   // Hidden when there's no plan (simplest rule — a finished plan still reads as
@@ -203,7 +181,6 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = f
   // Until the first reading arrives, render nothing so the toolbar stays clean.
   const hasAny =
     (showModel && model) ||
-    mode ||
     plan ||
     snapshot?.compacting ||
     ctxPct !== undefined ||
@@ -271,17 +248,6 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = f
           </span>
         </>
       )}
-      {mode && (
-        <>
-          <Sep />
-          <span
-            title="Permission mode — cycles live with shift+tab in the terminal view"
-            style={{ color: mode.color, fontWeight: 600 }}
-          >
-            {mode.label}
-          </span>
-        </>
-      )}
       {plan && (
         <>
           <Sep />
@@ -297,7 +263,13 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = f
             }}
           >
             <span style={{ color: 'var(--wks-text-muted)' }}>plan</span>
-            <PlanTicks done={plan.done} total={plan.total} />
+            <Track
+              pct={(plan.done / plan.total) * 100}
+              color={
+                plan.done >= plan.total ? 'var(--wks-success, #3fb950)' : 'var(--wks-accent-text)'
+              }
+              width={32}
+            />
             {plan.done}/{plan.total}
           </span>
         </>
@@ -326,7 +298,7 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = f
             }}
           >
             <span style={{ color: 'var(--wks-text-muted)' }}>ctx</span>
-            <CtxBar pct={ctxPct} />
+            <Track pct={ctxPct} color={ctxColor(ctxPct)} />
             {Math.round(ctxPct)}%
           </span>
         </>
@@ -342,14 +314,19 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = f
               fontVariantNumeric: 'tabular-nums',
             }}
           >
+            {/* Value-first, unit muted — the same "142k tok · $0.42" phrasing
+                the sidebar tooltip and agent cards use. */}
             {tokens !== undefined && (
               <span>
-                <span style={{ color: 'var(--wks-text-muted)' }}>tok </span>
                 <span style={{ color: 'var(--wks-text-secondary)' }}>{fmtTokens(tokens)}</span>
+                <span style={{ color: 'var(--wks-text-muted)' }}> tok</span>
               </span>
             )}
+            {tokens !== undefined && cost !== undefined && (
+              <span style={{ color: 'var(--wks-text-faint)' }}>·</span>
+            )}
             {cost !== undefined && (
-              <span style={{ color: 'var(--wks-accent-text)' }}>{fmtUSD(cost)}</span>
+              <span style={{ color: 'var(--wks-text-secondary)' }}>{fmtUSD(cost)}</span>
             )}
           </span>
         </>
@@ -374,20 +351,34 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = f
           <>
             <Sep />
             <span
-              style={{ color: 'var(--wks-text-secondary)', fontVariantNumeric: 'tabular-nums' }}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 9,
+                color: 'var(--wks-text-secondary)',
+                fontVariantNumeric: 'tabular-nums',
+              }}
             >
-              {windows.map((w, i) => {
+              {windows.map((w) => {
                 const at = fmtResetAt(w.at);
+                const tip = [
+                  w.name,
+                  w.pct !== undefined ? `${Math.round(w.pct)}% used` : undefined,
+                  at ? `resets ${at}` : undefined,
+                ]
+                  .filter(Boolean)
+                  .join(' · ');
                 return (
-                  <span key={w.label} title={at ? `${w.name} resets ${at}` : undefined}>
-                    {i > 0 ? ' ' : ''}
-                    <span style={{ color: 'var(--wks-text-muted)' }}>{w.label} </span>
+                  <span
+                    key={w.label}
+                    title={tip}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                  >
+                    <span style={{ color: 'var(--wks-text-muted)' }}>{w.label}</span>
                     {w.pct !== undefined ? (
                       <>
+                        <Track pct={w.pct} color={ctxColor(w.pct)} width={26} />
                         {Math.round(w.pct)}%
-                        {w.reset && (
-                          <span style={{ color: 'var(--wks-text-muted)' }}>·{w.reset}</span>
-                        )}
                       </>
                     ) : (
                       <span style={{ color: 'var(--wks-text-muted)' }}>

@@ -1729,9 +1729,6 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
           so it reads as an edge against the xterm surface. */}
       <div
         style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 10,
           padding: viewMode === 'gui' ? '2px 18px 8px' : '4px 12px',
           backgroundColor: viewMode === 'gui' ? 'transparent' : colors.bgToolbar,
           borderTop: viewMode === 'gui' ? 'none' : `1px solid ${colors.border}`,
@@ -1739,242 +1736,267 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
           flexShrink: 0,
         }}
       >
-        <StatusBadge
-          session={session}
-          approvalDismissed={
-            !!(pendingApproval && pendingApproval.timestamp <= approvalDismissedAt)
-          }
-        />
+        {/* In GUI mode the row aligns to the composer's centered 1040px column
+            so the footer line sits flush under it; terminal mode stays
+            edge-to-edge like a toolbar. */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            minWidth: 0,
+            minHeight: 24,
+            ...(viewMode === 'gui' ? { maxWidth: 1040, margin: '0 auto' } : {}),
+          }}
+        >
+          <StatusBadge
+            session={session}
+            approvalDismissed={
+              !!(pendingApproval && pendingApproval.timestamp <= approvalDismissedAt)
+            }
+          />
 
-        {/* Session controls — model / effort / permission-mode pills. In GUI
+          {/* Session controls — model / effort / permission-mode pills. In GUI
             mode these live inside the composer's bottom row (T3-style); keep
             them here for terminal mode, which has no composer. */}
-        {viewMode === 'terminal' && (
-          <ComposerControls
-            provider={provider ?? 'claude'}
-            sessionId={sessionId}
-            snapshot={session}
-            cwd={cwd}
-            onRestartWith={handleRestartWith}
-          />
-        )}
+          {viewMode === 'terminal' && (
+            <ComposerControls
+              provider={provider ?? 'claude'}
+              sessionId={sessionId}
+              snapshot={session}
+              cwd={cwd}
+              onRestartWith={handleRestartWith}
+            />
+          )}
 
-        {/* In-app status line — model · ctx · tok/cost · 5h/7d (replaces the
-            old working-timer + directory readouts). */}
-        <SessionStatusBar snapshot={session} cwd={cwd} />
+          {/* In-app status line — telemetry only (dir/branch · plan · ctx ·
+            tok/cost · quota meters). Controls (model/effort/permissions) live
+            in the ComposerControls pills, never here. */}
+          <SessionStatusBar snapshot={session} cwd={cwd} />
 
-        {(() => {
-          const liveAgents =
-            subagents.filter((s) => s?.status === 'running').length +
-            // `w.agents` is typed as a required array, but a snapshot arriving
-            // over the hub bus (web/remote) can omit it — flatMap would then
-            // fold in `undefined` and the `.filter` below would throw, blanking
-            // the whole pane. Default to [] so a lean bus payload can't crash it.
-            workflows.flatMap((w) => w.agents ?? []).filter((a) => a?.status === 'running').length;
-          return liveAgents > 0 ? (
+          {(() => {
+            const liveAgents =
+              subagents.filter((s) => s?.status === 'running').length +
+              // `w.agents` is typed as a required array, but a snapshot arriving
+              // over the hub bus (web/remote) can omit it — flatMap would then
+              // fold in `undefined` and the `.filter` below would throw, blanking
+              // the whole pane. Default to [] so a lean bus payload can't crash it.
+              workflows.flatMap((w) => w.agents ?? []).filter((a) => a?.status === 'running')
+                .length;
+            return liveAgents > 0 ? (
+              <span
+                style={{
+                  fontSize: '0.62rem',
+                  fontWeight: 700,
+                  fontFamily: 'var(--wks-font-mono, monospace)',
+                  padding: '1px 7px',
+                  borderRadius: 'var(--wks-radius-pill, 999px)',
+                  letterSpacing: '0.03em',
+                  color: 'var(--wks-purple, #c084fc)',
+                  border:
+                    '1px solid color-mix(in srgb, var(--wks-purple, #c084fc) 40%, transparent)',
+                  background: 'color-mix(in srgb, var(--wks-purple, #c084fc) 10%, transparent)',
+                  whiteSpace: 'nowrap',
+                  flexShrink: 0,
+                }}
+              >
+                {liveAgents} subagent{liveAgents !== 1 ? 's' : ''}
+              </span>
+            ) : null;
+          })()}
+
+          {/* Attached-files readout — terminal mode only; in GUI the composer
+            already shows the attachments as chips, so this would duplicate. */}
+          {viewMode === 'terminal' && attachedFiles.length > 0 && (
             <span
               style={{
                 fontSize: '0.68rem',
                 fontFamily: 'var(--wks-font-mono, monospace)',
-                color: 'var(--wks-purple, #c084fc)',
+                color: colors.accent,
                 whiteSpace: 'nowrap',
               }}
             >
-              {liveAgents} subagent{liveAgents !== 1 ? 's' : ''}
+              {attachedFiles.length} file{attachedFiles.length !== 1 ? 's' : ''} attached
             </span>
-          ) : null;
-        })()}
+          )}
 
-        {attachedFiles.length > 0 && (
-          <span
-            style={{
-              fontSize: '0.68rem',
-              fontFamily: 'var(--wks-font-mono, monospace)',
-              color: colors.accent,
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {attachedFiles.length} file{attachedFiles.length !== 1 ? 's' : ''} attached
-          </span>
-        )}
+          <div style={{ flex: 1 }} />
 
-        <div style={{ flex: 1 }} />
-
-        {/* Redraw — clears the rare backdrop-filter compositing garble */}
-        <button
-          onClick={forceRepaint}
-          title="Redraw pane (fixes occasional rendering glitches)"
-          className="wks-composer-icon-btn"
-          style={{
-            ...toggleBtnStyle,
-            display: 'flex',
-            alignItems: 'center',
-            backgroundColor: 'transparent',
-            color: 'var(--wks-text-muted)',
-          }}
-        >
-          <RefreshCw size={13} strokeWidth={1.9} />
-        </button>
-
-        {/* Attach files — terminal mode only; the composer has its own + in GUI */}
-        {viewMode === 'terminal' && (
+          {/* Redraw — clears the rare backdrop-filter compositing garble */}
           <button
-            onClick={openFilePicker}
-            title="Attach files"
+            onClick={forceRepaint}
+            title="Redraw pane (fixes occasional rendering glitches)"
             className="wks-composer-icon-btn"
             style={{
               ...toggleBtnStyle,
+              display: 'flex',
+              alignItems: 'center',
               backgroundColor: 'transparent',
               color: 'var(--wks-text-muted)',
-              fontSize: '0.8rem',
             }}
           >
-            +
+            <RefreshCw size={13} strokeWidth={1.9} />
           </button>
-        )}
 
-        {/* Hand off to another provider — brief goes to ~/.workspacer/handoffs */}
-        <button
-          onClick={(e) => {
-            const rect = e.currentTarget.getBoundingClientRect();
-            setHandoffMenu({ x: rect.left, y: rect.top - 4 });
-          }}
-          title={
-            handoffBusy === 'agent'
-              ? 'Waiting for the agent to write its handoff brief…'
-              : 'Hand off this session to another agent (summarized brief, new session)'
-          }
-          className="wks-composer-icon-btn"
-          disabled={!!handoffBusy || !(sessionId ?? attachSessionId)}
-          style={{
-            ...toggleBtnStyle,
-            display: 'flex',
-            alignItems: 'center',
-            backgroundColor: 'transparent',
-            color: handoffBusy ? colors.accent : 'var(--wks-text-muted)',
-          }}
-        >
-          <ArrowRightLeft size={13} strokeWidth={1.9} />
-        </button>
-        {handoffMenu && !handoffMenu.target && (
-          <ContextMenu
-            x={handoffMenu.x}
-            y={handoffMenu.y}
-            onClose={() => setHandoffMenu(null)}
-            minWidth={170}
+          {/* Attach files — terminal mode only; the composer has its own + in GUI */}
+          {viewMode === 'terminal' && (
+            <button
+              onClick={openFilePicker}
+              title="Attach files"
+              className="wks-composer-icon-btn"
+              style={{
+                ...toggleBtnStyle,
+                backgroundColor: 'transparent',
+                color: 'var(--wks-text-muted)',
+                fontSize: '0.8rem',
+              }}
+            >
+              +
+            </button>
+          )}
+
+          {/* Hand off to any provider (including the same one — fresh context,
+            same harness) — brief goes to ~/.workspacer/handoffs */}
+          <button
+            onClick={(e) => {
+              const rect = e.currentTarget.getBoundingClientRect();
+              setHandoffMenu({ x: rect.left, y: rect.top - 4 });
+            }}
+            title={
+              handoffBusy === 'agent'
+                ? 'Waiting for the agent to write its handoff brief…'
+                : 'Hand off this session to a new agent — any provider, including this one (summarized brief, new session)'
+            }
+            className="wks-composer-icon-btn"
+            disabled={!!handoffBusy || !(sessionId ?? attachSessionId)}
+            style={{
+              ...toggleBtnStyle,
+              display: 'flex',
+              alignItems: 'center',
+              backgroundColor: 'transparent',
+              color: handoffBusy ? colors.accent : 'var(--wks-text-muted)',
+            }}
           >
-            <ContextMenuLabel>Hand off to…</ContextMenuLabel>
-            {(
-              [
-                ['claude', 'Claude'],
-                ['codex', 'Codex'],
-                ['opencode', 'OpenCode'],
-                ['pi', 'Pi'],
-              ] as Array<[AgentProvider, string]>
-            )
-              .filter(([id]) => id !== (provider ?? 'claude'))
-              .map(([id, label]) => (
+            <ArrowRightLeft size={13} strokeWidth={1.9} />
+          </button>
+          {handoffMenu && !handoffMenu.target && (
+            <ContextMenu
+              x={handoffMenu.x}
+              y={handoffMenu.y}
+              onClose={() => setHandoffMenu(null)}
+              minWidth={170}
+            >
+              <ContextMenuLabel>Hand off to…</ContextMenuLabel>
+              {(
+                [
+                  ['claude', 'Claude'],
+                  ['codex', 'Codex'],
+                  ['opencode', 'OpenCode'],
+                  ['pi', 'Pi'],
+                ] as Array<[AgentProvider, string]>
+              ).map(([id, label]) => (
                 <ContextMenuItem
                   key={id}
                   label={label}
                   onClick={() => setHandoffMenu((m) => (m ? { ...m, target: id } : m))}
                 />
               ))}
-          </ContextMenu>
-        )}
-        {handoffMenu?.target && (
-          <ContextMenu
-            x={handoffMenu.x}
-            y={handoffMenu.y}
-            onClose={() => setHandoffMenu(null)}
-            minWidth={230}
-          >
-            <ContextMenuLabel>Brief for {handoffMenu.target} — written by…</ContextMenuLabel>
-            <ContextMenuItem
-              label="This agent (best, takes a turn)"
-              onClick={() => {
-                const target = handoffMenu.target!;
-                setHandoffMenu(null);
-                void handleHandoff(target, 'agent');
-              }}
-            />
-            <ContextMenuItem
-              label="Mechanical digest (instant)"
-              onClick={() => {
-                const target = handoffMenu.target!;
-                setHandoffMenu(null);
-                void handleHandoff(target, 'mechanical');
-              }}
-            />
-          </ContextMenu>
-        )}
+            </ContextMenu>
+          )}
+          {handoffMenu?.target && (
+            <ContextMenu
+              x={handoffMenu.x}
+              y={handoffMenu.y}
+              onClose={() => setHandoffMenu(null)}
+              minWidth={230}
+            >
+              <ContextMenuLabel>Brief for {handoffMenu.target} — written by…</ContextMenuLabel>
+              <ContextMenuItem
+                label="This agent (best, takes a turn)"
+                onClick={() => {
+                  const target = handoffMenu.target!;
+                  setHandoffMenu(null);
+                  void handleHandoff(target, 'agent');
+                }}
+              />
+              <ContextMenuItem
+                label="Mechanical digest (instant)"
+                onClick={() => {
+                  const target = handoffMenu.target!;
+                  setHandoffMenu(null);
+                  void handleHandoff(target, 'mechanical');
+                }}
+              />
+            </ContextMenu>
+          )}
 
-        {/* Timestamps toggle — GUI conversation only. Saved to config so it
+          {/* Timestamps toggle — GUI conversation only. Saved to config so it
             persists and applies to every chat pane at once. */}
-        {viewMode === 'gui' && (
-          <button
-            onClick={() =>
-              save({ claude: { ...config.claude, showTimestamps: !showTimestamps } } as any)
-            }
-            title={showTimestamps ? 'Hide message timestamps' : 'Show message timestamps'}
-            className={showTimestamps ? undefined : 'wks-composer-icon-btn'}
-            style={{
-              ...toggleBtnStyle,
-              display: 'flex',
-              alignItems: 'center',
-              backgroundColor: showTimestamps ? 'var(--wks-accent-bg)' : 'transparent',
-              color: showTimestamps ? colors.accent : 'var(--wks-text-muted)',
-            }}
-          >
-            <Clock size={13} strokeWidth={1.9} />
-          </button>
-        )}
+          {viewMode === 'gui' && (
+            <button
+              onClick={() =>
+                save({ claude: { ...config.claude, showTimestamps: !showTimestamps } } as any)
+              }
+              title={showTimestamps ? 'Hide message timestamps' : 'Show message timestamps'}
+              className={showTimestamps ? undefined : 'wks-composer-icon-btn'}
+              style={{
+                ...toggleBtnStyle,
+                display: 'flex',
+                alignItems: 'center',
+                backgroundColor: showTimestamps ? 'var(--wks-accent-bg)' : 'transparent',
+                color: showTimestamps ? colors.accent : 'var(--wks-text-muted)',
+              }}
+            >
+              <Clock size={13} strokeWidth={1.9} />
+            </button>
+          )}
 
-        {/* Inspector rail toggle — available in both GUI and Terminal mode,
+          {/* Inspector rail toggle — available in both GUI and Terminal mode,
             hidden in focus mode along with the rail itself. */}
-        {inspectorRailAvailable && (
-          <button
-            onClick={toggleRail}
-            title={
-              railOpen ? 'Hide inspector' : 'Show inspector (files / workflows / agents / usage)'
-            }
-            className={railOpen ? undefined : 'wks-composer-icon-btn'}
-            style={{
-              ...toggleBtnStyle,
-              display: 'flex',
-              alignItems: 'center',
-              backgroundColor: railOpen ? 'var(--wks-accent-bg)' : 'transparent',
-              color: railOpen ? colors.accent : 'var(--wks-text-muted)',
-            }}
-          >
-            <PanelRight size={13} strokeWidth={1.9} />
-          </button>
-        )}
+          {inspectorRailAvailable && (
+            <button
+              onClick={toggleRail}
+              title={
+                railOpen ? 'Hide inspector' : 'Show inspector (files / workflows / agents / usage)'
+              }
+              className={railOpen ? undefined : 'wks-composer-icon-btn'}
+              style={{
+                ...toggleBtnStyle,
+                display: 'flex',
+                alignItems: 'center',
+                backgroundColor: railOpen ? 'var(--wks-accent-bg)' : 'transparent',
+                color: railOpen ? colors.accent : 'var(--wks-text-muted)',
+              }}
+            >
+              <PanelRight size={13} strokeWidth={1.9} />
+            </button>
+          )}
 
-        {/* View mode toggle — only when the provider offers both surfaces (Claude). */}
-        <div style={{ display: showViewToggle ? 'flex' : 'none', gap: 2 }}>
-          <button
-            onClick={() => setViewMode('gui')}
-            className={viewMode === 'gui' ? undefined : 'wks-composer-icon-btn'}
-            style={{
-              ...toggleBtnStyle,
-              backgroundColor: viewMode === 'gui' ? 'var(--wks-accent-bg)' : 'transparent',
-              color: viewMode === 'gui' ? colors.accent : 'var(--wks-text-muted)',
-            }}
-          >
-            GUI
-          </button>
-          <button
-            onClick={() => setViewMode('terminal')}
-            className={viewMode === 'terminal' ? undefined : 'wks-composer-icon-btn'}
-            style={{
-              ...toggleBtnStyle,
-              backgroundColor: viewMode === 'terminal' ? 'var(--wks-accent-bg)' : 'transparent',
-              color: viewMode === 'terminal' ? colors.accent : 'var(--wks-text-muted)',
-            }}
-          >
-            Term
-          </button>
+          {/* View mode toggle — only when the provider offers both surfaces (Claude). */}
+          <div style={{ display: showViewToggle ? 'flex' : 'none', gap: 2 }}>
+            <button
+              onClick={() => setViewMode('gui')}
+              className={viewMode === 'gui' ? undefined : 'wks-composer-icon-btn'}
+              style={{
+                ...toggleBtnStyle,
+                backgroundColor: viewMode === 'gui' ? 'var(--wks-accent-bg)' : 'transparent',
+                color: viewMode === 'gui' ? colors.accent : 'var(--wks-text-muted)',
+              }}
+            >
+              GUI
+            </button>
+            <button
+              onClick={() => setViewMode('terminal')}
+              className={viewMode === 'terminal' ? undefined : 'wks-composer-icon-btn'}
+              style={{
+                ...toggleBtnStyle,
+                backgroundColor: viewMode === 'terminal' ? 'var(--wks-accent-bg)' : 'transparent',
+                color: viewMode === 'terminal' ? colors.accent : 'var(--wks-text-muted)',
+              }}
+            >
+              Term
+            </button>
+          </div>
         </div>
       </div>
     </div>
