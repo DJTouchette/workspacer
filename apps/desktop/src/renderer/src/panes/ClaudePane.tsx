@@ -919,6 +919,21 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     return [...base, ...optimisticMessages];
   }, [session?.conversation, optimisticMessages]);
   const hasOlderMessages = conversation.length > visibleCount;
+
+  // Restoring a prior session (resume spawn or attach): the daemon replays the
+  // transcript a beat after the session appears, so an empty conversation here
+  // means "history is on its way", not "fresh agent" — show a fetching loader
+  // instead of the new-agent hero (which used to flash and then get replaced
+  // by the transcript popping into existence). Falls back to the hero after a
+  // wait cap: a resumed session that truly has no turns would spin forever.
+  const expectHistory = !!(resumeSessionId || attachSessionId);
+  const [historyWaitExpired, setHistoryWaitExpired] = useState(false);
+  const historyPending = expectHistory && conversation.length === 0 && !historyWaitExpired;
+  useEffect(() => {
+    if (!historyPending) return;
+    const t = setTimeout(() => setHistoryWaitExpired(true), 15_000);
+    return () => clearTimeout(t);
+  }, [historyPending]);
   const subagents = session?.subagents ?? [];
   const workflows = session?.workflows ?? [];
   const pendingApproval = session?.pendingApproval ?? null;
@@ -1580,7 +1595,46 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
                   </div>
                 )}
 
-                {conversation.length === 0 && session && (
+                {/* Session restore in flight — the transcript replay is coming.
+                    Same hero treatment as the "Connecting…" state above, so a
+                    restore reads as one continuous sequence (connecting →
+                    fetching → transcript) instead of the new-agent screen
+                    flashing and the history popping into existence. */}
+                {conversation.length === 0 && session && historyPending && (
+                  <div
+                    style={{
+                      position: 'relative',
+                      textAlign: 'center',
+                      marginTop: 48,
+                      color: colors.mutedDim,
+                      animation: 'claudeFadeIn 0.2s ease-out',
+                    }}
+                  >
+                    <AgentHero provider={provider ?? 'claude'} title={<>Fetching session…</>} />
+                    <div
+                      style={{
+                        position: 'relative',
+                        display: 'flex',
+                        justifyContent: 'center',
+                        marginTop: 18,
+                      }}
+                    >
+                      <BrandSpinner size={20} />
+                    </div>
+                    <div
+                      style={{
+                        position: 'relative',
+                        fontSize: '0.7rem',
+                        marginTop: 14,
+                        color: colors.mutedDim,
+                      }}
+                    >
+                      Restoring your conversation history
+                    </div>
+                  </div>
+                )}
+
+                {conversation.length === 0 && session && !historyPending && (
                   <ConversationEmptyState
                     agentName={agentName}
                     provider={provider ?? 'claude'}
