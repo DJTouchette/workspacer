@@ -103,6 +103,7 @@ function defaultAgentTabs(
   initialPrompt?: string,
   provider?: AgentProvider,
   transport?: 'pty' | 'stream',
+  expectHistory?: boolean,
 ): { tabs: TabConfig[]; activeTabId: string } {
   const paneId = generateId('claude');
   const tabId = generateId('tab');
@@ -115,6 +116,7 @@ function defaultAgentTabs(
     provider,
     transport,
     attachSessionId: sessionId,
+    expectHistory: expectHistory || undefined,
     initialPrompt,
   };
   return {
@@ -280,6 +282,9 @@ export function useAgentManager() {
         opts.initialPrompt,
         opts.provider,
         opts.transport,
+        // A resumed spawn replays its transcript — the pane should show the
+        // fetching state, not the new-agent hero, until it lands.
+        !!opts.resumeSessionId,
       );
       const agent: AgentWorkspace = {
         // Deterministic id when we have a session, so every client converges on one
@@ -356,7 +361,14 @@ export function useAgentManager() {
           ...t,
           panes: t.panes.map((p) => {
             if (p.type === 'claude' && (p.attachSessionId === oldSession || !p.attachSessionId)) {
-              return { ...p, attachSessionId: sessionId, resumeSessionId: undefined };
+              // The resumed session replays its transcript — mark the pane so it
+              // shows the fetching state instead of the new-agent hero.
+              return {
+                ...p,
+                attachSessionId: sessionId,
+                resumeSessionId: undefined,
+                expectHistory: true,
+              };
             }
             // Agent-scope plugin panes carry the session in their webview URL —
             // re-resolve it to the fresh session so restored panes aren't stale.
@@ -397,6 +409,10 @@ export function useAgentManager() {
         ? permissionMode === 'bypassPermissions' || permissionMode === 'yolo'
         : agent.skipPermissions;
       if (agent.sessionId) {
+        // Tombstone before closing — the dying session keeps ticking and an
+        // un-tombstoned tick would let auto-adopt resurrect the old card
+        // (same race as terminateAgent; see lib/terminatedSessions.ts).
+        markSessionTerminated(agent.sessionId);
         try {
           await window.electronAPI.claudeClose(agent.sessionId);
         } catch {
@@ -600,7 +616,18 @@ export function useAgentManager() {
     // Dedupe by sessionId on the way in: this is the merge point for every
     // cross-client layout update, so collapsing same-session cards here is what
     // stops the multi-client "spawn one, get seven" accumulation.
-    const list = withGlobalWorkspace(dedupeBySessionId(sessionAgents));
+    const list = withGlobalWorkspace(dedupeBySessionId(sessionAgents)).map((a) => ({
+      ...a,
+      tabs: a.tabs.map((t) => ({
+        ...t,
+        panes: t.panes.map((p) =>
+          // Restored-from-disk claude panes attach to sessions that already
+          // have a conversation — expect the replay so the pane shows the
+          // fetching state, not a flash of the new-agent hero.
+          p.type === 'claude' && p.attachSessionId ? { ...p, expectHistory: true } : p,
+        ),
+      })),
+    }));
     setAgents(list);
     // Choose an active id that actually survived dedupe. Both the caller's
     // activeId and the raw sessionAgents[0] can point at a same-session

@@ -50,6 +50,11 @@ export interface PaneConfig {
    *  running in claudemon and we just want to subscribe to its byte stream
    *  without spawning a second process. Mutually exclusive with resumeSessionId. */
   attachSessionId?: string;
+  /** Claude panes: this pane attaches to a session with prior history (a
+   *  resume, respawn, or boot-time restore), so an empty conversation means
+   *  "transcript replay incoming" and the pane shows the fetching state
+   *  instead of the new-agent hero. Never set on fresh spawns. */
+  expectHistory?: boolean;
   /** Terminal panes only: a command typed into the PTY once it's ready (used by
    *  the per-directory script buttons). */
   initialCommand?: string;

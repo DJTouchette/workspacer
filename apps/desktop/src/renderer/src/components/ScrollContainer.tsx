@@ -181,6 +181,7 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
             transport={pane.transport}
             resumeSessionId={pane.resumeSessionId}
             attachSessionId={pane.attachSessionId}
+            expectHistory={pane.expectHistory}
             initialPrompt={pane.initialPrompt}
             onPtyReady={callbacks.onPtyReady}
           />

@@ -102,6 +102,9 @@ interface ClaudePaneProps {
   resumeSessionId?: string;
   /** If set, this pane is a viewer for an already-running daemon session. */
   attachSessionId?: string;
+  /** This pane attaches to a session with prior history (resume / respawn /
+   *  boot restore) — an empty conversation means the replay is coming. */
+  expectHistory?: boolean;
   /** Text to seed the message input with on first mount (library spawn). */
   initialPrompt?: string;
   /** Coding-agent backend. Only 'claude' (undefined) has GUI telemetry today;
@@ -130,6 +133,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   profileId,
   resumeSessionId,
   attachSessionId,
+  expectHistory,
   initialPrompt,
   provider,
   transport: transportProp,
@@ -926,9 +930,13 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   // instead of the new-agent hero (which used to flash and then get replaced
   // by the transcript popping into existence). Falls back to the hero after a
   // wait cap: a resumed session that truly has no turns would spin forever.
-  const expectHistory = !!(resumeSessionId || attachSessionId);
+  // NOTE: attachSessionId alone does NOT imply history — every fresh spawn's
+  // pane attaches as a viewer, and gating on it showed "Fetching session…"
+  // on brand-new agents. Only an explicit restore marker (or a live resume)
+  // means a replay is coming.
+  const expectsReplay = !!(resumeSessionId || expectHistory);
   const [historyWaitExpired, setHistoryWaitExpired] = useState(false);
-  const historyPending = expectHistory && conversation.length === 0 && !historyWaitExpired;
+  const historyPending = expectsReplay && conversation.length === 0 && !historyWaitExpired;
   useEffect(() => {
     if (!historyPending) return;
     const t = setTimeout(() => setHistoryWaitExpired(true), 15_000);

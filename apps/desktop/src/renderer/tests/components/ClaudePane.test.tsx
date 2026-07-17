@@ -324,3 +324,49 @@ describe('ClaudePane headless codex — surface gating + restart transport', () 
     );
   });
 });
+
+describe('ClaudePane restore loader vs fresh spawn', () => {
+  beforeEach(() => {
+    mockSession = makeSnapshot();
+  });
+
+  it('a fresh spawn (attach viewer, no history expected) shows the hero, not the loader', () => {
+    // Every spawned pane attaches as a viewer — attachSessionId alone must NOT
+    // arm the "Fetching session…" state (the regression: fresh agents showed
+    // it for 15s instead of the new-agent hero and prompt suggestions).
+    render(<ClaudePane paneId="f1" title="Claude" isActive cwd="/repo" attachSessionId="sess-1" />);
+    expect(screen.queryByText(/Fetching session/)).toBeNull();
+  });
+
+  it('a restore (expectHistory) shows the fetching state while the replay is pending', () => {
+    render(
+      <ClaudePane
+        paneId="f2"
+        title="Claude"
+        isActive
+        cwd="/repo"
+        attachSessionId="sess-1"
+        expectHistory
+      />,
+    );
+    expect(screen.getByText(/Fetching session/)).toBeTruthy();
+  });
+
+  it('the fetching state yields to the conversation once history lands', () => {
+    mockSession = makeSnapshot({
+      conversation: [{ role: 'assistant', content: 'restored turn', timestamp: 1 }] as any,
+    });
+    render(
+      <ClaudePane
+        paneId="f3"
+        title="Claude"
+        isActive
+        cwd="/repo"
+        attachSessionId="sess-1"
+        expectHistory
+      />,
+    );
+    expect(screen.queryByText(/Fetching session/)).toBeNull();
+    expect(screen.getByText('restored turn')).toBeTruthy();
+  });
+});
