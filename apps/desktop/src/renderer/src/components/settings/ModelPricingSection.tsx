@@ -111,7 +111,7 @@ const ModelPricingSection: React.FC = () => {
 
   const cell: React.CSSProperties = { ...inputStyle, width: 92, textAlign: 'right' };
   const head: React.CSSProperties = {
-    fontSize: '0.6rem',
+    fontSize: '0.64rem',
     fontWeight: 700,
     textTransform: 'uppercase',
     letterSpacing: '0.04em',
@@ -155,7 +155,7 @@ const ModelPricingSection: React.FC = () => {
         {overrideCount > 0 && (
           <span
             style={{
-              fontSize: '0.62rem',
+              fontSize: '0.66rem',
               fontWeight: 700,
               padding: '1px 7px',
               borderRadius: 'var(--wks-radius-pill, 999px)',

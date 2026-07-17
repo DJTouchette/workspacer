@@ -280,13 +280,13 @@ const LibraryPane: React.FC<Props> = ({ cwd }) => {
             </Field>
           )}
           {draft.scope === 'project' && (
-            <div style={{ fontSize: '0.62rem', color: 'var(--wks-text-faint)', marginTop: 4 }}>
+            <div style={{ fontSize: '0.66rem', color: 'var(--wks-text-faint)', marginTop: 4 }}>
               Project items save to{' '}
               <code>{cwd ? `${cwd}/.workspacer/library/` : '.workspacer/library/'}</code>
             </div>
           )}
           {draft.scope === 'claude' && (
-            <div style={{ fontSize: '0.62rem', color: 'var(--wks-text-faint)', marginTop: 4 }}>
+            <div style={{ fontSize: '0.66rem', color: 'var(--wks-text-faint)', marginTop: 4 }}>
               Saves to{' '}
               <code>{`${cwd ?? '.'}/${
                 draft.kind === 'agent'
@@ -415,15 +415,13 @@ const LibraryPane: React.FC<Props> = ({ cwd }) => {
               </button>
             </div>
             {it.description && (
-              <div
-                style={{ fontSize: '0.68rem', color: 'var(--wks-text-secondary)', marginTop: 3 }}
-              >
+              <div style={{ fontSize: '0.7rem', color: 'var(--wks-text-secondary)', marginTop: 3 }}>
                 {it.description}
               </div>
             )}
             <div
               style={{
-                fontSize: '0.62rem',
+                fontSize: '0.66rem',
                 color: 'var(--wks-text-faint)',
                 marginTop: 4,
                 whiteSpace: 'nowrap',
@@ -474,7 +472,7 @@ const Field: React.FC<{ label: string; children: React.ReactNode }> = ({ label, 
   <div style={{ marginBottom: 12 }}>
     <div
       style={{
-        fontSize: '0.62rem',
+        fontSize: '0.66rem',
         textTransform: 'uppercase',
         letterSpacing: '0.04em',
         color: 'var(--wks-text-disabled)',
@@ -584,12 +582,12 @@ const FormFieldLegend: React.FC = () => {
         border: '1px solid var(--wks-border-subtle)',
       }}
     >
-      <div style={{ fontSize: '0.6rem', color: 'var(--wks-text-faint)', marginBottom: 5 }}>
+      <div style={{ fontSize: '0.64rem', color: 'var(--wks-text-faint)', marginBottom: 5 }}>
         Form fields — a form pops up to collect these when the item runs. Add a default with a
         colon, e.g. <code style={codeStyle}>{'{{?Service:payments-api|text}}'}</code>.
       </div>
       {rows.map(([tok, desc]) => (
-        <div key={tok} style={{ display: 'flex', gap: 8, fontSize: '0.6rem', lineHeight: 1.7 }}>
+        <div key={tok} style={{ display: 'flex', gap: 8, fontSize: '0.64rem', lineHeight: 1.7 }}>
           <code style={{ ...codeStyle, flexShrink: 0 }}>{tok}</code>
           <span style={{ color: 'var(--wks-text-faint)' }}>{desc}</span>
         </div>
@@ -600,7 +598,7 @@ const FormFieldLegend: React.FC = () => {
 
 const codeStyle: React.CSSProperties = {
   fontFamily: 'var(--wks-mono, ui-monospace, monospace)',
-  fontSize: '0.58rem',
+  fontSize: '0.62rem',
   color: 'var(--wks-text-secondary)',
   background: 'var(--wks-bg-selected)',
   padding: '1px 5px',
@@ -649,14 +647,14 @@ const cardStyle: React.CSSProperties = {
   background: 'var(--wks-bg-raised)',
 };
 const tagStyle: React.CSSProperties = {
-  fontSize: '0.58rem',
+  fontSize: '0.62rem',
   padding: '1px 6px',
   borderRadius: 'var(--wks-radius-pill)',
   background: 'var(--wks-bg-selected)',
   color: 'var(--wks-text-secondary)',
 };
 const miniBtn: React.CSSProperties = {
-  fontSize: '0.66rem',
+  fontSize: '0.69rem',
   fontFamily: 'inherit',
   cursor: 'pointer',
   padding: '3px 8px',
@@ -680,7 +678,7 @@ function btn(primary = false): React.CSSProperties {
 }
 function chip(active: boolean): React.CSSProperties {
   return {
-    fontSize: '0.62rem',
+    fontSize: '0.66rem',
     fontFamily: 'inherit',
     cursor: 'pointer',
     padding: '3px 8px',
@@ -700,7 +698,7 @@ function kindBadge(kind: LibraryKind): React.CSSProperties {
   };
   const { bg, fg } = palette[kind] ?? palette.prompt;
   return {
-    fontSize: '0.55rem',
+    fontSize: '0.6rem',
     padding: '1px 6px',
     borderRadius: 'var(--wks-radius-pill)',
     fontWeight: 700,
@@ -713,7 +711,7 @@ function scopeBadge(scope: LibraryScope): React.CSSProperties {
   // claude-scoped items get a distinct tint — they live in .claude/, not the library dirs
   if (scope === 'claude') {
     return {
-      fontSize: '0.55rem',
+      fontSize: '0.6rem',
       padding: '1px 6px',
       borderRadius: 'var(--wks-radius-pill)',
       fontWeight: 600,
@@ -722,7 +720,7 @@ function scopeBadge(scope: LibraryScope): React.CSSProperties {
     };
   }
   return {
-    fontSize: '0.55rem',
+    fontSize: '0.6rem',
     padding: '1px 6px',
     borderRadius: 'var(--wks-radius-pill)',
     fontWeight: 600,

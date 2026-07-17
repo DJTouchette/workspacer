@@ -1659,7 +1659,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
                     <button
                       onClick={loadOlderMessages}
                       style={{
-                        fontSize: '0.65rem',
+                        fontSize: '0.68rem',
                         fontWeight: 500,
                         padding: '4px 16px',
                         borderRadius: 'var(--wks-radius-lg)',
@@ -1840,7 +1840,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
             return liveAgents > 0 ? (
               <span
                 style={{
-                  fontSize: '0.62rem',
+                  fontSize: '0.66rem',
                   fontWeight: 700,
                   fontFamily: 'var(--wks-font-mono, monospace)',
                   padding: '1px 7px',
@@ -1864,7 +1864,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
           {viewMode === 'terminal' && attachedFiles.length > 0 && (
             <span
               style={{
-                fontSize: '0.68rem',
+                fontSize: '0.7rem',
                 fontFamily: 'var(--wks-font-mono, monospace)',
                 color: colors.accent,
                 whiteSpace: 'nowrap',
@@ -2058,7 +2058,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
 };
 
 const toggleBtnStyle: React.CSSProperties = {
-  fontSize: '0.62rem',
+  fontSize: '0.66rem',
   fontWeight: 600,
   padding: '3px 9px',
   borderRadius: 6,

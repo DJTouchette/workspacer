@@ -77,7 +77,7 @@ const PromptVarsDialog: React.FC<Props> = ({ title, vars, onSubmit, onCancel }) 
         >
           {title}
         </div>
-        <div style={{ fontSize: '0.65rem', color: 'var(--wks-text-faint)', marginBottom: 12 }}>
+        <div style={{ fontSize: '0.68rem', color: 'var(--wks-text-faint)', marginBottom: 12 }}>
           Fill in the fields — ⌘/Ctrl+Enter to apply.
         </div>
         {vars.map((v, i) => (
@@ -137,7 +137,7 @@ const Field: React.FC<{
 
   return (
     <div style={{ marginBottom: 10 }}>
-      <div style={{ fontSize: '0.68rem', color: 'var(--wks-text-secondary)', marginBottom: 4 }}>
+      <div style={{ fontSize: '0.7rem', color: 'var(--wks-text-secondary)', marginBottom: 4 }}>
         {v.label}
       </div>
       {v.type === 'select' ? (

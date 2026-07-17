@@ -121,7 +121,7 @@ const detailPre: React.CSSProperties = {
   background: 'rgba(0,0,0,0.25)',
   border: `1px solid ${colors.borderSubtle}`,
   fontFamily: 'var(--claude-mono-font, monospace)',
-  fontSize: '0.66rem',
+  fontSize: '0.69rem',
   lineHeight: 1.45,
   color: colors.text,
   whiteSpace: 'pre-wrap',
@@ -178,7 +178,7 @@ const TraceRow: React.FC<{
           style={{
             flexShrink: 0,
             width: 64,
-            fontSize: '0.62rem',
+            fontSize: '0.66rem',
             fontWeight: 600,
             fontFamily: 'var(--claude-mono-font, monospace)',
             color,
@@ -199,7 +199,7 @@ const TraceRow: React.FC<{
               flexShrink: 1,
               minWidth: 60,
               maxWidth: '34%',
-              fontSize: '0.66rem',
+              fontSize: '0.69rem',
               color: colors.text,
               overflow: 'hidden',
               textOverflow: 'ellipsis',
@@ -214,7 +214,7 @@ const TraceRow: React.FC<{
               flexShrink: 1,
               minWidth: 60,
               maxWidth: '34%',
-              fontSize: '0.66rem',
+              fontSize: '0.69rem',
               fontFamily: 'var(--claude-mono-font, monospace)',
               color: colors.text,
               overflow: 'hidden',
@@ -257,7 +257,7 @@ const TraceRow: React.FC<{
             flexShrink: 0,
             width: 42,
             textAlign: 'right',
-            fontSize: '0.62rem',
+            fontSize: '0.66rem',
             fontVariantNumeric: 'tabular-nums',
             fontFamily: 'var(--claude-mono-font, monospace)',
             color: colors.muted,
@@ -266,7 +266,7 @@ const TraceRow: React.FC<{
           {fmtDuration(dur)}
         </span>
         {/* Status */}
-        <span style={{ flexShrink: 0, width: 14, textAlign: 'center', fontSize: '0.68rem' }}>
+        <span style={{ flexShrink: 0, width: 14, textAlign: 'center', fontSize: '0.7rem' }}>
           {running ? (
             <AgentSpinner />
           ) : (
@@ -440,7 +440,7 @@ const ToolTraceCardInner: React.FC<{
           <span
             style={{
               fontFamily: 'var(--claude-mono-font, monospace)',
-              fontSize: '0.62rem',
+              fontSize: '0.66rem',
               flexShrink: 0,
             }}
           >
@@ -449,7 +449,7 @@ const ToolTraceCardInner: React.FC<{
             {summary.removed > 0 && <span style={{ color: colors.error }}>−{summary.removed}</span>}
           </span>
         )}
-        <span style={{ color: colors.mutedDim, fontSize: '0.6rem', flexShrink: 0 }}>
+        <span style={{ color: colors.mutedDim, fontSize: '0.64rem', flexShrink: 0 }}>
           {expanded ? '▾' : '▸'}
         </span>
       </div>

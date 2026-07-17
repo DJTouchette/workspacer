@@ -295,7 +295,7 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
           gap: 8,
           flexWrap: 'wrap',
           padding: '0 14px 8px',
-          fontSize: '0.66rem',
+          fontSize: '0.69rem',
           color: 'var(--wks-text-faint)',
         }}
       >
@@ -365,7 +365,7 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
             padding: '0 14px 8px',
             display: 'flex',
             gap: 10,
-            fontSize: '0.68rem',
+            fontSize: '0.7rem',
             color: 'var(--wks-accent)',
             fontWeight: 600,
           }}
@@ -403,7 +403,7 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
             </span>
             <span
               style={{
-                fontSize: '0.64rem',
+                fontSize: '0.67rem',
                 color: ctxColor(ctxPct),
                 fontVariantNumeric: 'tabular-nums',
                 flexShrink: 0,
@@ -414,13 +414,13 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
             </span>
             {/* Cost only when known — codex has no pricing, so no fake $0.00. */}
             {stats.costUSD !== undefined && (
-              <span style={{ fontSize: '0.64rem', color: 'var(--wks-text-faint)', flexShrink: 0 }}>
+              <span style={{ fontSize: '0.67rem', color: 'var(--wks-text-faint)', flexShrink: 0 }}>
                 {fmtUSD(stats.costUSD)}
               </span>
             )}
           </>
         ) : (
-          <span style={{ fontSize: '0.64rem', color: 'var(--wks-text-faint)' }}>
+          <span style={{ fontSize: '0.67rem', color: 'var(--wks-text-faint)' }}>
             {agent.sessionId ? 'No usage yet' : ''}
           </span>
         )}
@@ -444,7 +444,7 @@ export const AgentCard: React.FC<Props> = ({ agent, snapshot, onOpen, onInspect 
             <div>
               <div
                 style={{
-                  fontSize: '0.66rem',
+                  fontSize: '0.69rem',
                   fontWeight: 600,
                   color: 'var(--wks-warning, #e0a000)',
                   marginBottom: 6,

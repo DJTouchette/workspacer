@@ -114,7 +114,7 @@ export const StatusChip: React.FC<{ code: string }> = ({ code }) => {
         alignItems: 'center',
         justifyContent: 'center',
         flexShrink: 0,
-        fontSize: '0.58rem',
+        fontSize: '0.62rem',
         fontWeight: 700,
         fontFamily: 'var(--wks-font-mono, monospace)',
         color,
@@ -129,14 +129,14 @@ export const StatusChip: React.FC<{ code: string }> = ({ code }) => {
 const Counts: React.FC<{ stat?: NumstatEntry }> = ({ stat }) => {
   if (!stat) return null;
   if (stat.added == null || stat.deleted == null) {
-    return <span style={{ color: colors.muted, fontSize: '0.6rem', flexShrink: 0 }}>BIN</span>;
+    return <span style={{ color: colors.muted, fontSize: '0.64rem', flexShrink: 0 }}>BIN</span>;
   }
   return (
     <span
       style={{
         display: 'flex',
         gap: 5,
-        fontSize: '0.62rem',
+        fontSize: '0.66rem',
         fontFamily: 'var(--wks-font-mono, monospace)',
         fontVariantNumeric: 'tabular-nums',
         flexShrink: 0,
@@ -336,7 +336,7 @@ const FileTree: React.FC<FileTreeProps> = ({
                   background: colors.bg,
                   color: colors.text,
                   cursor: busy ? 'default' : 'pointer',
-                  fontSize: '0.6rem',
+                  fontSize: '0.64rem',
                   fontFamily: 'inherit',
                   fontWeight: 600,
                   lineHeight: '16px',

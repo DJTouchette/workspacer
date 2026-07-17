@@ -16,7 +16,7 @@ interface HomeSpaceProps {
 
 const kbd: React.CSSProperties = {
   fontFamily: 'var(--wks-font-mono)',
-  fontSize: '0.65rem',
+  fontSize: '0.68rem',
   padding: '2px 6px',
   borderRadius: 4,
   border: '1px solid var(--wks-border)',
@@ -95,7 +95,7 @@ export const HomeSpace: React.FC<HomeSpaceProps> = ({ onSpawn, spawnShortcut }) 
           display: 'flex',
           alignItems: 'center',
           gap: 6,
-          fontSize: '0.68rem',
+          fontSize: '0.7rem',
           color: 'var(--wks-text-faint)',
         }}
       >

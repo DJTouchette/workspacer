@@ -270,7 +270,7 @@ const InboxDrawer: React.FC = () => {
                   padding: '4px 6px',
                   borderRadius: 6,
                   cursor: 'pointer',
-                  fontSize: '0.68rem',
+                  fontSize: '0.7rem',
                   fontWeight: 600,
                   fontFamily: 'inherit',
                   display: 'flex',
@@ -288,7 +288,7 @@ const InboxDrawer: React.FC = () => {
               >
                 {t.label}
                 {t.count > 0 && (
-                  <span style={{ fontSize: '0.6rem', fontWeight: 700, opacity: 0.8 }}>
+                  <span style={{ fontSize: '0.64rem', fontWeight: 700, opacity: 0.8 }}>
                     {t.count}
                   </span>
                 )}
@@ -301,7 +301,7 @@ const InboxDrawer: React.FC = () => {
         <div
           style={{
             padding: '0 16px 10px',
-            fontSize: '0.62rem',
+            fontSize: '0.66rem',
             color: 'var(--wks-text-faint)',
             display: 'flex',
             alignItems: 'center',
@@ -327,7 +327,7 @@ const InboxDrawer: React.FC = () => {
               title={`Dismiss every reviewed (non-blocking) item shown (${formatBinding(sc['inbox-clear-reviewed'] ?? '')})`}
               style={{
                 marginLeft: 'auto',
-                fontSize: '0.62rem',
+                fontSize: '0.66rem',
                 fontWeight: 600,
                 fontFamily: 'inherit',
                 cursor: 'pointer',
@@ -427,7 +427,7 @@ const Hint: React.FC<{ k: string; t: string }> = ({ k, t }) => (
   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
     <kbd
       style={{
-        fontSize: '0.58rem',
+        fontSize: '0.62rem',
         color: 'var(--wks-text-secondary)',
         border: '1px solid var(--wks-glass-border)',
         borderRadius: 3,

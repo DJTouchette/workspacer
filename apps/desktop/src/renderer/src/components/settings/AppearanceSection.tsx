@@ -83,7 +83,7 @@ const AppearanceSection: React.FC<AppearanceSectionProps> = ({ config, save }) =
             display: 'inline-flex',
             alignItems: 'center',
             gap: '4px',
-            fontSize: '0.6rem',
+            fontSize: '0.64rem',
             color: 'var(--wks-accent)',
             background: 'var(--wks-bg-selected)',
             border: '1px solid var(--wks-accent)',

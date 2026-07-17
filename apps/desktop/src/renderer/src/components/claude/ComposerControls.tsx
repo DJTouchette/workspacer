@@ -67,7 +67,7 @@ const CtxBadge: React.FC<{ ctx: string }> = ({ ctx }) => {
   return (
     <span
       style={{
-        fontSize: '0.55rem',
+        fontSize: '0.6rem',
         fontWeight: 700,
         padding: '1px 5px',
         borderRadius: 'var(--wks-radius-pill)',
@@ -96,7 +96,7 @@ const modelItemLabel = (m: ModelOption, current: boolean): React.ReactNode => (
     <span style={{ fontWeight: 600 }}>{m.label}</span>
     {m.context && <CtxBadge ctx={m.context} />}
     {current && (
-      <span style={{ color: 'var(--wks-success)', fontSize: '0.65rem', flexShrink: 0 }}>✓</span>
+      <span style={{ color: 'var(--wks-success)', fontSize: '0.68rem', flexShrink: 0 }}>✓</span>
     )}
   </span>
 );
@@ -123,7 +123,7 @@ const pillStyle: React.CSSProperties = {
   background: 'transparent',
   color: colors.muted,
   cursor: 'pointer',
-  fontSize: '0.68rem',
+  fontSize: '0.7rem',
   fontFamily: 'inherit',
   fontWeight: 600,
   lineHeight: '16px',

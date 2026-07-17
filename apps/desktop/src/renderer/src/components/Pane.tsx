@@ -135,7 +135,7 @@ const Pane: React.FC<PaneProps> = ({
         >
           <div
             style={{
-              fontSize: '0.55rem',
+              fontSize: '0.6rem',
               textTransform: 'uppercase',
               letterSpacing: '0.05em',
               color: 'var(--wks-text-faint)',
@@ -340,7 +340,7 @@ const Pane: React.FC<PaneProps> = ({
                 onBlur={handleFinishRename}
                 onKeyDown={handleRenameKeyDown}
                 style={{
-                  fontSize: '0.6rem',
+                  fontSize: '0.64rem',
                   color: 'var(--wks-text-primary)',
                   fontWeight: 500,
                   backgroundColor: 'var(--wks-bg-input)',
@@ -357,7 +357,7 @@ const Pane: React.FC<PaneProps> = ({
               <span
                 onDoubleClick={handleStartRename}
                 style={{
-                  fontSize: '0.6rem',
+                  fontSize: '0.64rem',
                   color: 'var(--wks-text-secondary)',
                   fontWeight: 500,
                   cursor: onRename ? 'text' : 'default',

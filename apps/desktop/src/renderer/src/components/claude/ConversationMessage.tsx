@@ -16,7 +16,7 @@ export const TurnStamp: React.FC<{ ms: number | undefined }> = ({ ms }) => {
   return (
     <span
       style={{
-        fontSize: '0.62rem',
+        fontSize: '0.66rem',
         fontVariantNumeric: 'tabular-nums',
         color: colors.mutedDim,
         whiteSpace: 'nowrap',

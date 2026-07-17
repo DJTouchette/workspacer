@@ -107,12 +107,12 @@ const ItemRow: React.FC<{ item: ContextItemInfo; cwd?: string; maxTokens: number
       )}
     </span>
     {item.status && (
-      <span style={{ fontSize: '0.64rem', color: colors.muted, flexShrink: 0 }}>{item.status}</span>
+      <span style={{ fontSize: '0.67rem', color: colors.muted, flexShrink: 0 }}>{item.status}</span>
     )}
     {item.source && (
       <span
         style={{
-          fontSize: '0.62rem',
+          fontSize: '0.66rem',
           color: colors.mutedDim,
           flexShrink: 0,
           border: `1px solid ${colors.borderSubtle}`,
@@ -193,7 +193,7 @@ const Section: React.FC<{
         </span>
         <span
           style={{
-            fontSize: '0.62rem',
+            fontSize: '0.66rem',
             color: colors.muted,
             background: 'rgba(255,255,255,0.06)',
             borderRadius: 'var(--wks-radius-pill, 99px)',
@@ -217,7 +217,7 @@ const Section: React.FC<{
         )}
       </div>
       {note && (
-        <div style={{ fontSize: '0.66rem', color: colors.mutedDim, margin: '0 0 6px 32px' }}>
+        <div style={{ fontSize: '0.69rem', color: colors.mutedDim, margin: '0 0 6px 32px' }}>
           {note}
         </div>
       )}
@@ -361,7 +361,7 @@ const ContextPane: React.FC<ContextPaneProps> = ({
           {sl?.modelDisplay && (
             <span
               style={{
-                fontSize: '0.68rem',
+                fontSize: '0.7rem',
                 color: colors.muted,
                 border: `1px solid ${colors.borderSubtle}`,
                 borderRadius: 'var(--wks-radius-pill, 99px)',
@@ -373,7 +373,7 @@ const ContextPane: React.FC<ContextPaneProps> = ({
           )}
         </div>
         {inv?.claudeCodeVersion && (
-          <div style={{ fontSize: '0.66rem', color: colors.mutedDim, margin: '4px 0 0 40px' }}>
+          <div style={{ fontSize: '0.69rem', color: colors.mutedDim, margin: '4px 0 0 40px' }}>
             Claude Code v{inv.claudeCodeVersion}
           </div>
         )}
@@ -434,7 +434,7 @@ const ContextPane: React.FC<ContextPaneProps> = ({
           </div>
         )}
 
-        <div style={{ fontSize: '0.66rem', color: colors.mutedDim, margin: '10px 0 20px' }}>
+        <div style={{ fontSize: '0.69rem', color: colors.mutedDim, margin: '10px 0 20px' }}>
           Per-item sizes are estimates from the files on disk (~4 chars per token). Claude does not
           report its exact per-item accounting; the bar above is the authoritative total.
           {estimatedTotal !== undefined &&
@@ -532,7 +532,7 @@ const NameCloud: React.FC<{ names: string[] }> = ({ names }) => (
       <span
         key={n}
         style={{
-          fontSize: '0.66rem',
+          fontSize: '0.69rem',
           color: colors.muted,
           background: 'rgba(255,255,255,0.04)',
           border: `1px solid ${colors.borderSubtle}`,

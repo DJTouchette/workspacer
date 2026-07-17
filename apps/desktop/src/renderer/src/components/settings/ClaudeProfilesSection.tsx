@@ -99,7 +99,7 @@ const ProfileEditForm: React.FC<{
                 display: 'flex',
                 alignItems: 'center',
                 gap: 6,
-                fontSize: '0.65rem',
+                fontSize: '0.68rem',
                 color: 'var(--wks-text-secondary)',
                 cursor: 'pointer',
                 padding: '1px 0',
@@ -114,7 +114,9 @@ const ProfileEditForm: React.FC<{
               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {it.title}
               </span>
-              <span style={{ fontSize: '0.5rem', color: 'var(--wks-text-faint)' }}>{it.scope}</span>
+              <span style={{ fontSize: '0.55rem', color: 'var(--wks-text-faint)' }}>
+                {it.scope}
+              </span>
             </label>
           ))}
         </div>
@@ -266,7 +268,7 @@ const ClaudeProfilesSection: React.FC = () => {
                     {p.name}
                     {p.isDefault && (
                       <span
-                        style={{ fontSize: '0.55rem', color: 'var(--wks-accent)', marginLeft: 6 }}
+                        style={{ fontSize: '0.6rem', color: 'var(--wks-accent)', marginLeft: 6 }}
                       >
                         default
                       </span>
@@ -275,7 +277,7 @@ const ClaudeProfilesSection: React.FC = () => {
                   {p.configDir && (
                     <div
                       style={{
-                        fontSize: '0.58rem',
+                        fontSize: '0.62rem',
                         color: 'var(--wks-text-faint)',
                         fontFamily: 'var(--wks-font-mono)',
                         overflow: 'hidden',
@@ -327,7 +329,7 @@ const ClaudeProfilesSection: React.FC = () => {
             onClick={() => startEdit()}
             style={{
               padding: '6px 12px',
-              fontSize: '0.65rem',
+              fontSize: '0.68rem',
               fontFamily: 'inherit',
               fontWeight: 500,
               backgroundColor: 'transparent',

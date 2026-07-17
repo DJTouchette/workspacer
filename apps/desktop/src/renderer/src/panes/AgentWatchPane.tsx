@@ -298,7 +298,7 @@ const AgentWatchPane: React.FC<AgentWatchPaneProps> = ({
                     : 'Raw transcript text'
                 }
                 style={{
-                  fontSize: '0.62rem',
+                  fontSize: '0.66rem',
                   fontWeight: 600,
                   padding: '2px 8px',
                   border: 'none',
@@ -315,7 +315,7 @@ const AgentWatchPane: React.FC<AgentWatchPaneProps> = ({
           </span>
           <span
             style={{
-              fontSize: '0.66rem',
+              fontSize: '0.69rem',
               color: running ? AGENT_PURPLE : colors.mutedDim,
               fontWeight: 600,
             }}
@@ -333,7 +333,7 @@ const AgentWatchPane: React.FC<AgentWatchPaneProps> = ({
             display: 'flex',
             flexWrap: 'wrap',
             gap: '2px 12px',
-            fontSize: '0.66rem',
+            fontSize: '0.69rem',
             color: colors.mutedDim,
             marginTop: 6,
             fontVariantNumeric: 'tabular-nums',
@@ -348,7 +348,7 @@ const AgentWatchPane: React.FC<AgentWatchPaneProps> = ({
         {running && sub?.lastToolName && (
           <div
             style={{
-              fontSize: '0.68rem',
+              fontSize: '0.7rem',
               color: colors.muted,
               marginTop: 6,
               fontFamily: 'var(--claude-mono-font, monospace)',
@@ -404,7 +404,7 @@ const AgentWatchPane: React.FC<AgentWatchPaneProps> = ({
             >
               <div
                 style={{
-                  fontSize: '0.58rem',
+                  fontSize: '0.62rem',
                   fontWeight: 700,
                   textTransform: 'uppercase',
                   letterSpacing: 0.4,

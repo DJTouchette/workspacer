@@ -16,7 +16,7 @@ export const FileChips: React.FC<{ files: AttachedFile[]; onRemove: (idx: number
             display: 'inline-flex',
             alignItems: 'center',
             gap: 4,
-            fontSize: '0.65rem',
+            fontSize: '0.68rem',
             padding: '2px 8px',
             borderRadius: 'var(--wks-radius-pill)',
             backgroundColor: 'rgba(255,255,255,0.06)',

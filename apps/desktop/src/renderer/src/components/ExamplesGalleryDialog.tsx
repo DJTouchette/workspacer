@@ -127,7 +127,7 @@ const ExamplesGalleryDialog: React.FC<ExamplesGalleryDialogProps> = ({
         >
           Example plugins
         </div>
-        <div style={{ fontSize: '0.68rem', color: 'var(--wks-text-muted)', marginBottom: 14 }}>
+        <div style={{ fontSize: '0.7rem', color: 'var(--wks-text-muted)', marginBottom: 14 }}>
           Bundled with the app — adding one copies it locally, no download. Sidecar examples need
           the runtime noted on each.
         </div>
@@ -136,7 +136,7 @@ const ExamplesGalleryDialog: React.FC<ExamplesGalleryDialogProps> = ({
           <div
             style={{
               marginBottom: 10,
-              fontSize: '0.68rem',
+              fontSize: '0.7rem',
               color: 'var(--wks-danger, #e05555)',
               wordBreak: 'break-word',
             }}
@@ -198,7 +198,7 @@ const ExamplesGalleryDialog: React.FC<ExamplesGalleryDialogProps> = ({
                       <span style={{ fontSize: '0.82rem', fontWeight: 600 }}>{m.name || m.id}</span>
                       <span
                         style={{
-                          fontSize: '0.6rem',
+                          fontSize: '0.64rem',
                           color: 'var(--wks-text-faint)',
                           border: '1px solid var(--wks-border-subtle)',
                           borderRadius: 3,
@@ -209,7 +209,7 @@ const ExamplesGalleryDialog: React.FC<ExamplesGalleryDialogProps> = ({
                       </span>
                     </div>
                     <div
-                      style={{ fontSize: '0.62rem', color: 'var(--wks-text-faint)', marginTop: 2 }}
+                      style={{ fontSize: '0.66rem', color: 'var(--wks-text-faint)', marginTop: 2 }}
                     >
                       {m.id}
                     </div>
@@ -224,7 +224,7 @@ const ExamplesGalleryDialog: React.FC<ExamplesGalleryDialogProps> = ({
                     >
                       <span
                         style={{
-                          fontSize: '0.62rem',
+                          fontSize: '0.66rem',
                           color: req.warn ? 'var(--wks-warning, #e0a000)' : 'var(--wks-text-muted)',
                           display: 'inline-flex',
                           alignItems: 'center',
@@ -241,7 +241,7 @@ const ExamplesGalleryDialog: React.FC<ExamplesGalleryDialogProps> = ({
                           border: 'none',
                           padding: 0,
                           cursor: 'pointer',
-                          fontSize: '0.62rem',
+                          fontSize: '0.66rem',
                           fontFamily: 'inherit',
                           color: 'var(--wks-accent)',
                           display: 'inline-flex',

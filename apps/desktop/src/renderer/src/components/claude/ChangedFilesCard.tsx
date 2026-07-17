@@ -63,7 +63,7 @@ const headerBtnStyle: React.CSSProperties = {
   background: 'transparent',
   color: colors.text,
   cursor: 'pointer',
-  fontSize: '0.62rem',
+  fontSize: '0.66rem',
   fontFamily: 'inherit',
   fontWeight: 600,
   flexShrink: 0,
@@ -151,7 +151,7 @@ export const ChangedFilesCard: React.FC<{
       >
         <span
           style={{
-            fontSize: '0.6rem',
+            fontSize: '0.64rem',
             fontWeight: 700,
             letterSpacing: '0.08em',
             textTransform: 'uppercase',
@@ -170,7 +170,7 @@ export const ChangedFilesCard: React.FC<{
           style={{
             display: 'flex',
             gap: 6,
-            fontSize: '0.64rem',
+            fontSize: '0.67rem',
             fontFamily: 'var(--claude-mono-font, monospace)',
             fontVariantNumeric: 'tabular-nums',
             flexShrink: 0,

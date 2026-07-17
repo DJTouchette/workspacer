@@ -44,13 +44,13 @@ const PhaseGroup: React.FC<{
           padding: '1px 0',
         }}
       >
-        <span style={{ color: colors.mutedDim, fontSize: '0.6rem', flexShrink: 0, width: 8 }}>
+        <span style={{ color: colors.mutedDim, fontSize: '0.64rem', flexShrink: 0, width: 8 }}>
           {expanded ? '▾' : '▸'}
         </span>
         <span
           style={{
             color: colors.muted,
-            fontSize: '0.62rem',
+            fontSize: '0.66rem',
             fontWeight: 600,
             textTransform: 'uppercase',
             letterSpacing: 0.5,
@@ -79,7 +79,7 @@ const PhaseGroup: React.FC<{
             <div
               style={{
                 color: colors.mutedDim,
-                fontSize: '0.62rem',
+                fontSize: '0.66rem',
                 lineHeight: 1.3,
                 paddingBottom: 1,
               }}
@@ -244,7 +244,7 @@ export const WorkflowRunCard: React.FC<{
         >
           ⤢
         </button>
-        <span style={{ color: colors.mutedDim, fontSize: '0.6rem', flexShrink: 0 }}>
+        <span style={{ color: colors.mutedDim, fontSize: '0.64rem', flexShrink: 0 }}>
           {expanded ? '▾' : '▸'}
         </span>
       </div>
@@ -253,7 +253,7 @@ export const WorkflowRunCard: React.FC<{
       {expanded && (
         <div style={{ padding: '2px 8px 6px 8px', borderTop: `1px solid ${colors.borderSubtle}` }}>
           {run.agents.length === 0 && (
-            <div style={{ color: colors.mutedDim, fontSize: '0.68rem', padding: '2px 0' }}>
+            <div style={{ color: colors.mutedDim, fontSize: '0.7rem', padding: '2px 0' }}>
               starting agents...
             </div>
           )}

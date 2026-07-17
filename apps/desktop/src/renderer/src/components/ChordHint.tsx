@@ -100,7 +100,7 @@ const ChordHint: React.FC<ChordHintProps> = ({ path, prefix, shortcuts, showOpti
                   border: '1px solid var(--wks-border-input)',
                   backgroundColor: 'var(--wks-bg-input)',
                   color: 'var(--wks-text-secondary)',
-                  fontSize: '0.62rem',
+                  fontSize: '0.66rem',
                   fontWeight: 600,
                 }}
               >
@@ -110,7 +110,7 @@ const ChordHint: React.FC<ChordHintProps> = ({ path, prefix, shortcuts, showOpti
                 style={{
                   color: it.isGroup ? 'var(--wks-text-secondary)' : 'var(--wks-text-muted)',
                   fontWeight: it.isGroup ? 600 : 400,
-                  fontSize: '0.65rem',
+                  fontSize: '0.68rem',
                   whiteSpace: 'nowrap',
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
@@ -131,7 +131,7 @@ const ChordHint: React.FC<ChordHintProps> = ({ path, prefix, shortcuts, showOpti
             marginTop: '7px',
             paddingTop: '6px',
             borderTop: '1px solid var(--wks-border)',
-            fontSize: '0.58rem',
+            fontSize: '0.62rem',
             color: 'var(--wks-text-faint)',
             display: 'flex',
             gap: '12px',

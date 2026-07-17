@@ -793,7 +793,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
                   {p.extraArgs?.length > 0 && (
                     <div
                       style={{
-                        fontSize: '0.55rem',
+                        fontSize: '0.6rem',
                         color: 'var(--wks-text-faint)',
                         fontFamily: 'var(--wks-font-mono)',
                       }}
@@ -962,7 +962,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
             <div
               style={{
                 padding: '4px 12px 2px',
-                fontSize: '0.55rem',
+                fontSize: '0.6rem',
                 color: 'var(--wks-text-disabled)',
                 fontWeight: 600,
                 textTransform: 'uppercase',
@@ -991,7 +991,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
             <div
               style={{
                 padding: '6px 12px 2px',
-                fontSize: '0.55rem',
+                fontSize: '0.6rem',
                 color: 'var(--wks-text-disabled)',
                 fontWeight: 600,
                 textTransform: 'uppercase',
@@ -1019,7 +1019,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
             <div
               style={{
                 padding: '6px 12px 2px',
-                fontSize: '0.55rem',
+                fontSize: '0.6rem',
                 color: 'var(--wks-text-disabled)',
                 fontWeight: 600,
                 textTransform: 'uppercase',
@@ -1048,7 +1048,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
             <div
               style={{
                 padding: '6px 12px 2px',
-                fontSize: '0.55rem',
+                fontSize: '0.6rem',
                 color: 'var(--wks-text-disabled)',
                 fontWeight: 600,
                 textTransform: 'uppercase',
@@ -1076,7 +1076,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
             <div
               style={{
                 padding: '6px 12px 2px',
-                fontSize: '0.55rem',
+                fontSize: '0.6rem',
                 color: 'var(--wks-text-disabled)',
                 fontWeight: 600,
                 textTransform: 'uppercase',
@@ -1106,7 +1106,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
             style={{
               padding: '6px 14px',
               borderTop: '1px solid var(--wks-border)',
-              fontSize: '0.58rem',
+              fontSize: '0.62rem',
               color: 'var(--wks-text-faint)',
               display: 'flex',
               gap: 12,
@@ -1170,7 +1170,7 @@ const PaletteRow: React.FC<{
       {item.description && (
         <div
           style={{
-            fontSize: '0.6rem',
+            fontSize: '0.64rem',
             color: 'var(--wks-text-faint)',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
@@ -1190,7 +1190,7 @@ const Kbd: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <span
     style={{
       flexShrink: 0,
-      fontSize: '0.6rem',
+      fontSize: '0.64rem',
       fontFamily: 'var(--claude-mono-font, monospace)',
       color: 'var(--wks-text-tertiary)',
       background: 'var(--wks-bg-input)',

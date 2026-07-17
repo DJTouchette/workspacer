@@ -216,7 +216,7 @@ export const WorkflowTimeline: React.FC<{
               <div
                 style={{
                   color: colors.muted,
-                  fontSize: '0.66rem',
+                  fontSize: '0.69rem',
                   fontWeight: 700,
                   textTransform: 'uppercase',
                   letterSpacing: 0.6,
@@ -226,7 +226,7 @@ export const WorkflowTimeline: React.FC<{
                 {lane.title ?? 'Agents'}
               </div>
               {lane.title && phaseDetail.get(lane.title) && (
-                <div style={{ color: colors.mutedDim, fontSize: '0.66rem', marginBottom: 4 }}>
+                <div style={{ color: colors.mutedDim, fontSize: '0.69rem', marginBottom: 4 }}>
                   {phaseDetail.get(lane.title)}
                 </div>
               )}
@@ -339,7 +339,7 @@ export const WorkflowTimeline: React.FC<{
                 flexWrap: 'wrap',
                 gap: '2px 10px',
                 color: colors.muted,
-                fontSize: '0.66rem',
+                fontSize: '0.69rem',
                 marginBottom: 10,
               }}
             >
@@ -438,7 +438,7 @@ export const WorkflowTimeline: React.FC<{
 
 const metaStyle: React.CSSProperties = {
   color: colors.mutedDim,
-  fontSize: '0.68rem',
+  fontSize: '0.7rem',
   fontVariantNumeric: 'tabular-nums',
   whiteSpace: 'nowrap',
   flexShrink: 0,
@@ -454,7 +454,7 @@ const closeBtn: React.CSSProperties = {
 };
 const detailLabel: React.CSSProperties = {
   color: colors.mutedDim,
-  fontSize: '0.58rem',
+  fontSize: '0.62rem',
   fontWeight: 700,
   textTransform: 'uppercase',
   letterSpacing: 0.4,

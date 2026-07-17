@@ -467,7 +467,7 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
                   whiteSpace: 'nowrap',
-                  fontSize: '0.62rem',
+                  fontSize: '0.66rem',
                   fontWeight: 600,
                   color: syncMsg.isError ? 'var(--wks-error)' : 'var(--wks-text-muted)',
                   animation: 'wks-fade-in 0.2s ease',
@@ -511,7 +511,7 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({
                   title={bm.url}
                   style={{
                     padding: '2px 8px',
-                    fontSize: '0.65rem',
+                    fontSize: '0.68rem',
                     fontWeight: 600,
                     fontFamily: 'inherit',
                     backgroundColor: 'transparent',
@@ -562,7 +562,7 @@ const BrowserPane: React.FC<BrowserPaneProps> = ({
           <span style={{ fontSize: '0.7rem' }}>Hibernated</span>
           <span
             style={{
-              fontSize: '0.6rem',
+              fontSize: '0.64rem',
               fontFamily: 'var(--wks-font-mono)',
               color: 'var(--wks-text-faint)',
             }}

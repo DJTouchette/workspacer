@@ -174,7 +174,7 @@ const TokenGroup: React.FC<{
           border: 'none',
           cursor: 'pointer',
           fontFamily: 'inherit',
-          fontSize: '0.68rem',
+          fontSize: '0.7rem',
           fontWeight: 700,
           letterSpacing: '0.08em',
           textTransform: 'uppercase',
@@ -182,7 +182,7 @@ const TokenGroup: React.FC<{
           textAlign: 'left',
         }}
       >
-        <span style={{ fontSize: '0.6rem', width: 10 }}>{open ? '▾' : '▸'}</span>
+        <span style={{ fontSize: '0.64rem', width: 10 }}>{open ? '▾' : '▸'}</span>
         {title}
       </button>
       {open && <div style={{ paddingBottom: 8 }}>{children}</div>}

@@ -111,7 +111,7 @@ export const MissingToolNotice: React.FC<{
         {checking ? 'Checking…' : 'Check again'}
       </button>
       {stillMissing && (
-        <div style={{ fontSize: '0.66rem', color: 'var(--wks-text-faint)' }}>
+        <div style={{ fontSize: '0.69rem', color: 'var(--wks-text-faint)' }}>
           Still not found — new PATH entries may need an app restart to be seen.
         </div>
       )}

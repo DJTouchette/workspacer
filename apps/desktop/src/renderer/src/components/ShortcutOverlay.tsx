@@ -80,7 +80,7 @@ const ShortcutOverlay: React.FC<ShortcutOverlayProps> = ({
 
           <div
             style={{
-              fontSize: '0.62rem',
+              fontSize: '0.66rem',
               color: 'var(--wks-text-faint)',
               marginBottom: '4px',
             }}
@@ -111,7 +111,7 @@ const ShortcutOverlay: React.FC<ShortcutOverlayProps> = ({
             <div key={section.section} style={{ marginBottom: '8px', minWidth: 0 }}>
               <div
                 style={{
-                  fontSize: '0.6rem',
+                  fontSize: '0.64rem',
                   fontWeight: 600,
                   color: 'var(--wks-text-faint)',
                   padding: '4px 0 2px',
@@ -140,7 +140,7 @@ const ShortcutOverlay: React.FC<ShortcutOverlayProps> = ({
                             padding: '2px 12px 2px 0',
                             color: 'var(--wks-text-tertiary)',
                             fontFamily: 'var(--wks-font-mono)',
-                            fontSize: '0.65rem',
+                            fontSize: '0.68rem',
                             whiteSpace: 'nowrap',
                             width: '45%',
                             overflow: 'hidden',
@@ -164,7 +164,7 @@ const ShortcutOverlay: React.FC<ShortcutOverlayProps> = ({
         {/* Footer — pinned. */}
         <div
           style={{
-            fontSize: '0.6rem',
+            fontSize: '0.64rem',
             color: 'var(--wks-text-faint)',
             textAlign: 'center',
             margin: '0 16px',

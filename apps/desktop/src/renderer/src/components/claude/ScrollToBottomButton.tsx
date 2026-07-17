@@ -15,7 +15,7 @@ export const ScrollToBottomButton: React.FC<{ onClick: () => void }> = ({ onClic
     <button
       onClick={onClick}
       style={{
-        fontSize: '0.65rem',
+        fontSize: '0.68rem',
         fontWeight: 500,
         padding: '4px 14px',
         borderRadius: 'var(--wks-radius-pill)',

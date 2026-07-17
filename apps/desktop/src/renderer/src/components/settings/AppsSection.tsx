@@ -145,7 +145,7 @@ const AppsSection: React.FC<AppsSectionProps> = ({ config, save }) => {
                   </div>
                   <div
                     style={{
-                      fontSize: '0.6rem',
+                      fontSize: '0.64rem',
                       color: 'var(--wks-text-faint)',
                       overflow: 'hidden',
                       textOverflow: 'ellipsis',
@@ -166,7 +166,7 @@ const AppsSection: React.FC<AppsSectionProps> = ({ config, save }) => {
           onClick={handleAddApp}
           style={{
             padding: '6px 12px',
-            fontSize: '0.65rem',
+            fontSize: '0.68rem',
             fontFamily: 'inherit',
             fontWeight: 500,
             backgroundColor: 'var(--wks-bg-elevated)',

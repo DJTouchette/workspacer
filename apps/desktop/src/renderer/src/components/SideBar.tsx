@@ -271,7 +271,7 @@ const SideBar: React.FC<SideBarProps> = ({
                   alignItems: 'center',
                   justifyContent: 'center',
                   color,
-                  fontSize: '0.55rem',
+                  fontSize: '0.6rem',
                   fontWeight: 700,
                   lineHeight: 1,
                   textShadow: `0 0 3px ${color}`,
@@ -534,7 +534,7 @@ const SideBar: React.FC<SideBarProps> = ({
       <div
         style={{
           padding: '6px 14px 10px 16px',
-          fontSize: '0.6rem',
+          fontSize: '0.64rem',
           fontWeight: 700,
           letterSpacing: '0.08em',
           textTransform: 'uppercase',
@@ -605,7 +605,7 @@ const SideBar: React.FC<SideBarProps> = ({
                   needYouCount > 0 ? 'var(--wks-warning, #e0a000)' : 'var(--wks-success, #3fb950)',
                 color: 'var(--wks-bg-base, #1a1a1a)',
                 fontFamily: 'var(--wks-font-mono)',
-                fontSize: '0.6rem',
+                fontSize: '0.64rem',
                 fontWeight: 700,
                 opacity: needYouCount > 0 ? 1 : 0.85,
               }}
@@ -856,7 +856,7 @@ const SideBar: React.FC<SideBarProps> = ({
                               alignItems: 'center',
                               justifyContent: 'center',
                               color,
-                              fontSize: '0.5rem',
+                              fontSize: '0.55rem',
                               fontWeight: 700,
                               lineHeight: 1,
                               textShadow: `0 0 3px ${color}`,
@@ -949,7 +949,7 @@ const SideBar: React.FC<SideBarProps> = ({
                           display: 'block',
                           marginTop: 3,
                           fontFamily: 'var(--wks-font-mono)',
-                          fontSize: '0.68rem',
+                          fontSize: '0.7rem',
                           color: isGlobal ? 'var(--wks-text-faint)' : color,
                           overflow: 'hidden',
                           textOverflow: 'ellipsis',
@@ -1078,7 +1078,7 @@ const SideBar: React.FC<SideBarProps> = ({
           <span
             style={{
               fontFamily: 'var(--wks-font-mono)',
-              fontSize: '0.62rem',
+              fontSize: '0.66rem',
               fontWeight: 500,
               color: 'var(--wks-text-faint)',
               whiteSpace: 'nowrap',
@@ -1198,7 +1198,7 @@ function pillStyle(color: string): React.CSSProperties {
     background: `color-mix(in srgb, ${color} 16%, transparent)`,
     color,
     fontFamily: 'var(--wks-font-mono)',
-    fontSize: '0.62rem',
+    fontSize: '0.66rem',
     fontWeight: 600,
     letterSpacing: 0,
     textTransform: 'none',

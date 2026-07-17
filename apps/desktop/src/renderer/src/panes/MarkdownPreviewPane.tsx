@@ -22,7 +22,7 @@ const headerBtnStyle: React.CSSProperties = {
   background: 'transparent',
   color: 'var(--wks-text-primary)',
   cursor: 'pointer',
-  fontSize: '0.68rem',
+  fontSize: '0.7rem',
   fontFamily: 'inherit',
   fontWeight: 600,
   flexShrink: 0,
@@ -85,7 +85,7 @@ const MarkdownPreviewPane: React.FC<{
           <span
             title={previewPath}
             style={{
-              fontSize: '0.65rem',
+              fontSize: '0.68rem',
               fontFamily: 'var(--wks-font-mono, monospace)',
               color: 'var(--wks-text-faint)',
               overflow: 'hidden',

@@ -203,7 +203,7 @@ const DiffViewer: React.FC<DiffViewerProps> = ({ diff, path }) => {
             flexShrink: 0,
             background: gutterBg,
             color: colors.muted,
-            fontSize: '0.64rem',
+            fontSize: '0.67rem',
             fontVariantNumeric: 'tabular-nums',
             userSelect: 'none',
             borderRight: `1px solid ${colors.borderSubtle}`,
@@ -294,7 +294,7 @@ const DiffViewer: React.FC<DiffViewerProps> = ({ diff, path }) => {
                     whiteSpace: 'pre',
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
-                    fontSize: '0.66rem',
+                    fontSize: '0.69rem',
                     userSelect: 'none',
                   }}
                 >

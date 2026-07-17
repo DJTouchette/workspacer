@@ -110,7 +110,7 @@ const AgentsPane: React.FC<{ isActive?: boolean }> = () => {
           {counts.needsYou} need{counts.needsYou === 1 ? 's' : ''} you
         </div>
         <div style={{ flex: 1 }} />
-        <span style={{ fontSize: '0.62rem', color: 'var(--wks-text-faint)', whiteSpace: 'nowrap' }}>
+        <span style={{ fontSize: '0.66rem', color: 'var(--wks-text-faint)', whiteSpace: 'nowrap' }}>
           For subagents and workflow runs
         </span>
         <input

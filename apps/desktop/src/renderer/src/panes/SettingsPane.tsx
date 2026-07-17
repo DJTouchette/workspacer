@@ -275,7 +275,7 @@ interface NavProps {
 }
 
 const NAV_GROUP_LABEL: React.CSSProperties = {
-  fontSize: '0.58rem',
+  fontSize: '0.62rem',
   fontWeight: 600,
   textTransform: 'uppercase',
   letterSpacing: '0.08em',
@@ -605,7 +605,7 @@ const SettingsPane: React.FC<SettingsPaneProps> = () => {
           {!search && (
             <kbd
               style={{
-                fontSize: '0.65rem',
+                fontSize: '0.68rem',
                 padding: '1px 5px',
                 background: 'var(--wks-bg-elevated)',
                 border: '1px solid var(--wks-border)',

@@ -78,7 +78,7 @@ const ToolsSection: React.FC = () => {
               {t.label}
               <span
                 style={{
-                  fontSize: '0.68rem',
+                  fontSize: '0.7rem',
                   fontFamily: 'var(--wks-font-mono, monospace)',
                   color: 'var(--wks-text-faint)',
                 }}
@@ -86,12 +86,12 @@ const ToolsSection: React.FC = () => {
                 {t.bin}
               </span>
             </div>
-            <div style={{ fontSize: '0.68rem', color: 'var(--wks-text-muted)', marginTop: 3 }}>
+            <div style={{ fontSize: '0.7rem', color: 'var(--wks-text-muted)', marginTop: 3 }}>
               {t.features.join(' · ')}
             </div>
             <div
               style={{
-                fontSize: '0.68rem',
+                fontSize: '0.7rem',
                 fontFamily: 'var(--wks-font-mono, monospace)',
                 color: t.available ? 'var(--wks-text-faint)' : 'var(--wks-warning)',
                 marginTop: 3,

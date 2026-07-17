@@ -68,7 +68,7 @@ function ChromeCookieSyncRow() {
           style={{
             height: '24px',
             padding: '0 8px',
-            fontSize: '0.65rem',
+            fontSize: '0.68rem',
             backgroundColor: 'var(--wks-bg-input)',
             color: 'var(--wks-text-secondary)',
             border: '1px solid var(--wks-border)',
@@ -88,7 +88,7 @@ function ChromeCookieSyncRow() {
           style={{
             height: '24px',
             padding: '0 12px',
-            fontSize: '0.65rem',
+            fontSize: '0.68rem',
             fontWeight: 600,
             backgroundColor: syncing ? 'var(--wks-bg-input)' : 'var(--wks-accent-bg)',
             color: syncing ? 'var(--wks-text-disabled)' : 'var(--wks-accent-text)',
@@ -144,7 +144,7 @@ const BrowserSection: React.FC<BrowserSectionProps> = ({ config, save }) => {
             width: '80px',
             height: '24px',
             padding: '0 8px',
-            fontSize: '0.65rem',
+            fontSize: '0.68rem',
             backgroundColor: 'var(--wks-bg-input)',
             color: 'var(--wks-text-secondary)',
             border: '1px solid var(--wks-border)',

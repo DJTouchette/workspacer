@@ -218,7 +218,7 @@ export const SessionStatusBar: React.FC<Props> = ({ snapshot, cwd, showModel = f
         <span
           title={`Agent is working in a git worktree: ${activeCwd}`}
           style={{
-            fontSize: '0.6rem',
+            fontSize: '0.64rem',
             fontWeight: 700,
             padding: '1px 6px',
             borderRadius: 'var(--wks-radius-pill, 999px)',

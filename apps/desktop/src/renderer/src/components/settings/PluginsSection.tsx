@@ -85,7 +85,7 @@ const PluginSettings: React.FC<{ plugin: PluginManifest }> = ({ plugin }) => {
 
   return (
     <div style={{ marginBottom: 10 }}>
-      <div style={{ fontSize: '0.62rem', color: 'var(--wks-text-secondary)', margin: '8px 0 2px' }}>
+      <div style={{ fontSize: '0.66rem', color: 'var(--wks-text-secondary)', margin: '8px 0 2px' }}>
         {plugin.name}
       </div>
       {(plugin.settings ?? []).map((s) => (

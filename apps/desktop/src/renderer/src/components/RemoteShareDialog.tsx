@@ -262,7 +262,7 @@ function AdoptedNote({ claudemon }: { claudemon: boolean }) {
         borderRadius: 'var(--wks-radius-md)',
         background: 'var(--wks-bg-input)',
         border: '1px solid var(--wks-border-subtle, var(--wks-border-input))',
-        fontSize: '0.66rem',
+        fontSize: '0.69rem',
         color: 'var(--wks-text-tertiary)',
         lineHeight: 1.5,
       }}
@@ -343,7 +343,7 @@ function RemoteClientSection({ info }: { info: RemoteInfo }) {
         <>
           <div
             style={{
-              fontSize: '0.68rem',
+              fontSize: '0.7rem',
               color: 'var(--wks-text-tertiary)',
               lineHeight: 1.6,
               marginBottom: 10,
@@ -361,7 +361,7 @@ function RemoteClientSection({ info }: { info: RemoteInfo }) {
         <>
           <div
             style={{
-              fontSize: '0.66rem',
+              fontSize: '0.69rem',
               color: 'var(--wks-text-faint)',
               lineHeight: 1.6,
               marginBottom: 10,
@@ -385,7 +385,7 @@ function RemoteClientSection({ info }: { info: RemoteInfo }) {
             style={{ ...textInputStyle, marginTop: 6 }}
           />
           {error && (
-            <div style={{ fontSize: '0.64rem', color: 'var(--wks-danger, #e05555)', marginTop: 6 }}>
+            <div style={{ fontSize: '0.67rem', color: 'var(--wks-danger, #e05555)', marginTop: 6 }}>
               {error}
             </div>
           )}
@@ -416,7 +416,7 @@ function DisabledState({ busy, onStart }: { busy: boolean; onStart: () => void }
       <button onClick={onStart} disabled={busy} style={primaryBtnStyle(busy)}>
         {busy ? 'Starting…' : 'Share this desktop with phone'}
       </button>
-      <div style={{ marginTop: 8, color: 'var(--wks-text-faint)', fontSize: '0.66rem' }}>
+      <div style={{ marginTop: 8, color: 'var(--wks-text-faint)', fontSize: '0.69rem' }}>
         This restarts the hub bound to <code style={inlineCode}>0.0.0.0</code> and generates a
         scoped phone URL. You can stop sharing again anytime.
       </div>
@@ -439,7 +439,7 @@ function StatusPill({ on }: { on: boolean }) {
         background: 'var(--wks-bg-input)',
         border: '1px solid var(--wks-border-input)',
         color: on ? 'var(--wks-success, #3fb950)' : 'var(--wks-text-muted)',
-        fontSize: '0.65rem',
+        fontSize: '0.68rem',
         fontWeight: 600,
       }}
     >
@@ -467,7 +467,7 @@ function TailscaleNote() {
         borderRadius: 'var(--wks-radius-md)',
         background: 'var(--wks-bg-input)',
         border: '1px solid var(--wks-border-subtle, var(--wks-border-input))',
-        fontSize: '0.68rem',
+        fontSize: '0.7rem',
         color: 'var(--wks-text-tertiary)',
         lineHeight: 1.6,
       }}
@@ -582,7 +582,7 @@ function TailscaleHttps({
             {recommend && (
               <span
                 style={{
-                  fontSize: '0.56rem',
+                  fontSize: '0.6rem',
                   fontWeight: 700,
                   textTransform: 'uppercase',
                   letterSpacing: '0.04em',
@@ -598,7 +598,7 @@ function TailscaleHttps({
           </div>
           <div
             style={{
-              fontSize: '0.64rem',
+              fontSize: '0.67rem',
               color: 'var(--wks-text-faint)',
               marginTop: 2,
               lineHeight: 1.5,
@@ -628,7 +628,7 @@ function TailscaleHttps({
       {!on && !ts.canServe && ts.hint && (
         <div
           style={{
-            fontSize: '0.62rem',
+            fontSize: '0.66rem',
             color: 'var(--wks-warning, #e0a000)',
             marginTop: 8,
             lineHeight: 1.5,
@@ -641,7 +641,7 @@ function TailscaleHttps({
       {msg && (
         <div
           style={{
-            fontSize: '0.62rem',
+            fontSize: '0.66rem',
             color: 'var(--wks-danger, #e05555)',
             marginTop: 8,
             lineHeight: 1.5,
@@ -653,7 +653,7 @@ function TailscaleHttps({
       {on && (
         <div
           style={{
-            fontSize: '0.6rem',
+            fontSize: '0.64rem',
             color: 'var(--wks-text-faint)',
             marginTop: 8,
             lineHeight: 1.5,
@@ -818,7 +818,7 @@ function EnabledState({
 
       {canManageTokens && (
         <div style={{ marginBottom: 14 }}>
-          <div style={{ fontSize: '0.62rem', color: 'var(--wks-text-muted)', marginBottom: 6 }}>
+          <div style={{ fontSize: '0.66rem', color: 'var(--wks-text-muted)', marginBottom: 6 }}>
             Pairing scope
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -856,7 +856,7 @@ function EnabledState({
       ) : hasApp ? (
         <div
           style={{
-            fontSize: '0.66rem',
+            fontSize: '0.69rem',
             color: 'var(--wks-text-faint)',
             marginBottom: 12,
             lineHeight: 1.5,
@@ -868,7 +868,7 @@ function EnabledState({
       ) : (
         <div
           style={{
-            fontSize: '0.66rem',
+            fontSize: '0.69rem',
             color: 'var(--wks-text-faint)',
             marginBottom: 12,
             lineHeight: 1.5,
@@ -911,7 +911,7 @@ function EnabledState({
             border: '1px dashed var(--wks-border-input)',
             borderRadius: 'var(--wks-radius-md)',
             color: 'var(--wks-text-faint)',
-            fontSize: '0.68rem',
+            fontSize: '0.7rem',
           }}
         >
           Preparing pairing token...
@@ -920,7 +920,7 @@ function EnabledState({
       <div
         style={{
           textAlign: 'center',
-          fontSize: '0.68rem',
+          fontSize: '0.7rem',
           color: 'var(--wks-text-muted)',
           marginBottom: 16,
         }}
@@ -968,7 +968,7 @@ function EnabledState({
           marginTop: 14,
           paddingTop: 12,
           borderTop: '1px solid var(--wks-border-subtle)',
-          fontSize: '0.68rem',
+          fontSize: '0.7rem',
           color: 'var(--wks-text-faint)',
           lineHeight: 1.6,
           marginBottom: 14,
@@ -978,7 +978,7 @@ function EnabledState({
       </div>
 
       {tokenError && (
-        <div style={{ fontSize: '0.64rem', color: 'var(--wks-danger, #e05555)', marginBottom: 12 }}>
+        <div style={{ fontSize: '0.67rem', color: 'var(--wks-danger, #e05555)', marginBottom: 12 }}>
           {tokenError}
         </div>
       )}
@@ -1017,7 +1017,7 @@ function CopyRow({
 }) {
   return (
     <div style={{ marginBottom: 10 }}>
-      <div style={{ fontSize: '0.62rem', color: 'var(--wks-text-muted)', marginBottom: 4 }}>
+      <div style={{ fontSize: '0.66rem', color: 'var(--wks-text-muted)', marginBottom: 4 }}>
         {label}
       </div>
       <div style={{ display: 'flex', gap: 6, alignItems: 'stretch' }}>
@@ -1079,7 +1079,7 @@ function ScopeButton({
         {option.badge && (
           <span
             style={{
-              fontSize: '0.54rem',
+              fontSize: '0.58rem',
               fontWeight: 800,
               textTransform: 'uppercase',
               letterSpacing: '0.04em',
@@ -1093,7 +1093,7 @@ function ScopeButton({
           </span>
         )}
       </span>
-      <span style={{ display: 'block', fontSize: '0.62rem', color: 'var(--wks-text-faint)' }}>
+      <span style={{ display: 'block', fontSize: '0.66rem', color: 'var(--wks-text-faint)' }}>
         {option.description}
       </span>
     </button>
@@ -1119,7 +1119,7 @@ function PairingTokenList({
         paddingTop: 12,
       }}
     >
-      <div style={{ fontSize: '0.62rem', color: 'var(--wks-text-muted)', marginBottom: 6 }}>
+      <div style={{ fontSize: '0.66rem', color: 'var(--wks-text-muted)', marginBottom: 6 }}>
         Pairing tokens
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
@@ -1142,7 +1142,7 @@ function PairingTokenList({
                   display: 'flex',
                   alignItems: 'center',
                   gap: 6,
-                  fontSize: '0.66rem',
+                  fontSize: '0.69rem',
                   color: 'var(--wks-text-secondary)',
                   minWidth: 0,
                 }}
@@ -1178,7 +1178,7 @@ function PairingTokenList({
               </div>
               <div
                 style={{
-                  fontSize: '0.58rem',
+                  fontSize: '0.62rem',
                   color: 'var(--wks-text-faint)',
                   fontFamily: 'var(--wks-font-mono)',
                 }}
@@ -1191,7 +1191,7 @@ function PairingTokenList({
               disabled={busy}
               style={{
                 flexShrink: 0,
-                fontSize: '0.62rem',
+                fontSize: '0.66rem',
                 fontWeight: 700,
                 fontFamily: 'inherit',
                 cursor: busy ? 'default' : 'pointer',
@@ -1210,7 +1210,7 @@ function PairingTokenList({
       <div
         style={{
           marginTop: 7,
-          fontSize: '0.6rem',
+          fontSize: '0.64rem',
           color: 'var(--wks-text-faint)',
           lineHeight: 1.5,
         }}

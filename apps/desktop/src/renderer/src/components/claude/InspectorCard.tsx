@@ -106,7 +106,7 @@ const BudgetRow: React.FC<{ sessionId: string; cost?: number }> = ({ sessionId, 
           <span
             style={{
               color: colors.error,
-              fontSize: '0.62rem',
+              fontSize: '0.66rem',
               fontWeight: 600,
               textTransform: 'uppercase',
               letterSpacing: '0.04em',
@@ -272,7 +272,7 @@ const RunningMarker: React.FC<{ count: number }> = ({ count }) => (
       display: 'inline-flex',
       alignItems: 'center',
       gap: 5,
-      fontSize: '0.66rem',
+      fontSize: '0.69rem',
       color: colors.purple,
       fontWeight: 600,
       textTransform: 'uppercase',
@@ -575,7 +575,7 @@ export const InspectorCard: React.FC<{
             {agentName}
           </span>
           {ambient && badgeLabels[ambient] && (
-            <span style={{ fontSize: '0.62rem', color: colors.mutedDim, flexShrink: 0 }}>
+            <span style={{ fontSize: '0.66rem', color: colors.mutedDim, flexShrink: 0 }}>
               {badgeLabels[ambient]}
             </span>
           )}
@@ -635,7 +635,7 @@ export const InspectorCard: React.FC<{
               {t.badge !== undefined && (
                 <span
                   style={{
-                    fontSize: '0.62rem',
+                    fontSize: '0.66rem',
                     padding: '0 5px',
                     borderRadius: 'var(--wks-radius-pill, 99px)',
                     backgroundColor: 'rgba(255,255,255,0.08)',
@@ -683,7 +683,7 @@ export const InspectorCard: React.FC<{
             <>
               <div
                 style={{
-                  fontSize: '0.64rem',
+                  fontSize: '0.67rem',
                   color: colors.mutedDim,
                   margin: '0 0 6px 2px',
                   textTransform: 'uppercase',
@@ -756,7 +756,7 @@ export const InspectorCard: React.FC<{
                   <span
                     style={{
                       color: colors.mutedDim,
-                      fontSize: '0.66rem',
+                      fontSize: '0.69rem',
                       overflow: 'hidden',
                       textOverflow: 'ellipsis',
                       whiteSpace: 'nowrap',
@@ -770,7 +770,7 @@ export const InspectorCard: React.FC<{
                       title={`Touched ${f.count} times`}
                       style={{
                         color: colors.muted,
-                        fontSize: '0.62rem',
+                        fontSize: '0.66rem',
                         flexShrink: 0,
                         background: 'rgba(255,255,255,0.06)',
                         borderRadius: 'var(--wks-radius-pill, 99px)',
@@ -802,7 +802,7 @@ export const InspectorCard: React.FC<{
               >
                 <span
                   style={{
-                    fontSize: '0.66rem',
+                    fontSize: '0.69rem',
                     color: planStats.done === planStats.total ? colors.success : colors.accent,
                     fontWeight: 600,
                     textTransform: 'uppercase',
@@ -883,7 +883,7 @@ export const InspectorCard: React.FC<{
                     display: 'inline-flex',
                     alignItems: 'center',
                     gap: 4,
-                    fontSize: '0.64rem',
+                    fontSize: '0.67rem',
                     fontWeight: 600,
                     padding: '2px 9px',
                     borderRadius: 'var(--wks-radius-pill, 99px)',
@@ -958,7 +958,7 @@ export const InspectorCard: React.FC<{
                       focus,
                     });
                   const chipStyle: React.CSSProperties = {
-                    fontSize: '0.64rem',
+                    fontSize: '0.67rem',
                     color: colors.muted,
                     background: 'rgba(255,255,255,0.04)',
                     border: `1px solid ${colors.borderSubtle}`,
@@ -1108,7 +1108,7 @@ const StatTile: React.FC<{ label: string; value: string }> = ({ label, value }) 
   >
     <div
       style={{
-        fontSize: '0.6rem',
+        fontSize: '0.64rem',
         color: colors.mutedDim,
         textTransform: 'uppercase',
         letterSpacing: '0.05em',

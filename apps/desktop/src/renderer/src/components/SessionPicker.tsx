@@ -168,7 +168,7 @@ const SessionPicker: React.FC<SessionPickerProps> = ({
           <>
             <div
               style={{
-                fontSize: '0.6rem',
+                fontSize: '0.64rem',
                 color: 'var(--wks-text-faint)',
                 textTransform: 'uppercase',
                 letterSpacing: '0.05em',
@@ -248,7 +248,7 @@ const SessionPicker: React.FC<SessionPickerProps> = ({
                         {currentName === session.name && (
                           <span
                             style={{
-                              fontSize: '0.55rem',
+                              fontSize: '0.6rem',
                               fontWeight: 700,
                               padding: '0px 5px',
                               borderRadius: 'var(--wks-radius-pill, 999px)',
@@ -267,7 +267,7 @@ const SessionPicker: React.FC<SessionPickerProps> = ({
                     )}
                     <div
                       style={{
-                        fontSize: '0.6rem',
+                        fontSize: '0.64rem',
                         color: 'var(--wks-text-faint)',
                         marginTop: '1px',
                       }}
@@ -343,7 +343,7 @@ const SessionPicker: React.FC<SessionPickerProps> = ({
 
         <div
           style={{
-            fontSize: '0.55rem',
+            fontSize: '0.6rem',
             color: 'var(--wks-text-disabled)',
             marginTop: '12px',
             textAlign: 'center',

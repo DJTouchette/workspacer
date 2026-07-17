@@ -258,7 +258,7 @@ const WorkCardInner: React.FC<{
           <span
             style={{
               fontFamily: 'var(--claude-mono-font, monospace)',
-              fontSize: '0.62rem',
+              fontSize: '0.66rem',
               flexShrink: 0,
             }}
           >
@@ -267,7 +267,7 @@ const WorkCardInner: React.FC<{
             {summary.removed > 0 && <span style={{ color: colors.error }}>−{summary.removed}</span>}
           </span>
         )}
-        <span style={{ color: colors.mutedDim, fontSize: '0.6rem', flexShrink: 0 }}>
+        <span style={{ color: colors.mutedDim, fontSize: '0.64rem', flexShrink: 0 }}>
           {expanded ? '▾' : '▸'}
         </span>
       </div>
@@ -298,7 +298,7 @@ const WorkCardInner: React.FC<{
                   borderRadius: 'var(--wks-radius-sm)',
                   width: '100%',
                   color: colors.accent,
-                  fontSize: '0.68rem',
+                  fontSize: '0.7rem',
                 }}
               >
                 <span style={{ flexShrink: 0 }}>{basename}</span>
@@ -306,7 +306,7 @@ const WorkCardInner: React.FC<{
                   <span
                     style={{
                       color: colors.mutedDim,
-                      fontSize: '0.6rem',
+                      fontSize: '0.64rem',
                       overflow: 'hidden',
                       textOverflow: 'ellipsis',
                       whiteSpace: 'nowrap',

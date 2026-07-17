@@ -49,7 +49,7 @@ export const TasksCard: React.FC<{
               fontSize: '0.72rem',
             }}
           >
-            <span style={{ color: colors.mutedDim, fontSize: '0.6rem', flexShrink: 0, width: 8 }}>
+            <span style={{ color: colors.mutedDim, fontSize: '0.64rem', flexShrink: 0, width: 8 }}>
               {expanded ? '▾' : '▸'}
             </span>
             {active ? (
@@ -167,7 +167,7 @@ export const TasksCard: React.FC<{
                         <span
                           style={{
                             color: completed ? colors.success : colors.mutedDim,
-                            fontSize: '0.66rem',
+                            fontSize: '0.69rem',
                           }}
                         >
                           {completed ? '✓' : '○'}

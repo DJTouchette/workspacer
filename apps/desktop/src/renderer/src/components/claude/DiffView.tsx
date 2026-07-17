@@ -22,7 +22,7 @@ const gutterStyle = (color: string): React.CSSProperties => ({
   minWidth: 36,
   textAlign: 'right',
   padding: '1px 6px 1px 0',
-  fontSize: '0.65rem',
+  fontSize: '0.68rem',
 });
 const markerStyle = (color: string): React.CSSProperties => ({
   color,
@@ -96,12 +96,12 @@ export const DiffView: React.FC<{
             {fileName}
           </FileLink>
           {removedCount > 0 && (
-            <span style={{ color: colors.error, fontSize: '0.65rem', fontWeight: 400 }}>
+            <span style={{ color: colors.error, fontSize: '0.68rem', fontWeight: 400 }}>
               -{removedCount}
             </span>
           )}
           {addedCount > 0 && (
-            <span style={{ color: colors.success, fontSize: '0.65rem', fontWeight: 400 }}>
+            <span style={{ color: colors.success, fontSize: '0.68rem', fontWeight: 400 }}>
               +{addedCount}
             </span>
           )}
@@ -335,12 +335,12 @@ export const PatchDiffView: React.FC<{
             {fileName}
           </FileLink>
           {removedCount > 0 && (
-            <span style={{ color: colors.error, fontSize: '0.65rem', fontWeight: 400 }}>
+            <span style={{ color: colors.error, fontSize: '0.68rem', fontWeight: 400 }}>
               -{removedCount}
             </span>
           )}
           {addedCount > 0 && (
-            <span style={{ color: colors.success, fontSize: '0.65rem', fontWeight: 400 }}>
+            <span style={{ color: colors.success, fontSize: '0.68rem', fontWeight: 400 }}>
               +{addedCount}
             </span>
           )}
@@ -434,7 +434,7 @@ export const ReadView: React.FC<{
           <FileLink path={filePath!} cwd={cwd}>
             {fileName}
           </FileLink>
-          <span style={{ color: colors.muted, fontSize: '0.65rem', fontWeight: 400 }}>
+          <span style={{ color: colors.muted, fontSize: '0.68rem', fontWeight: 400 }}>
             {lines.length} lines
           </span>
         </div>
@@ -450,7 +450,7 @@ export const ReadView: React.FC<{
                 minWidth: 44,
                 textAlign: 'right',
                 padding: '1px 8px 1px 0',
-                fontSize: '0.65rem',
+                fontSize: '0.68rem',
                 borderRight: `1px solid ${colors.borderSubtle}`,
               }}
             >
@@ -470,7 +470,7 @@ export const ReadView: React.FC<{
           </div>
         ))}
         {hidden > 0 && (
-          <div style={{ padding: '2px 8px 2px 52px', color: colors.muted, fontSize: '0.65rem' }}>
+          <div style={{ padding: '2px 8px 2px 52px', color: colors.muted, fontSize: '0.68rem' }}>
             +{hidden} more line{hidden !== 1 ? 's' : ''}
           </div>
         )}

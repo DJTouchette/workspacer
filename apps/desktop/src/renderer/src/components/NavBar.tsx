@@ -218,7 +218,7 @@ const NavBar: React.FC<NavBarProps> = ({
               </span>
               <span>{tab.title}</span>
               {!singlePane && (
-                <span style={{ fontSize: '0.5rem', opacity: 0.6 }}>{tab.panes.length}</span>
+                <span style={{ fontSize: '0.55rem', opacity: 0.6 }}>{tab.panes.length}</span>
               )}
               {onCloseTab && (
                 // Nested inside the tab <button>, so this is a span (not a button)
@@ -295,7 +295,7 @@ const NavBar: React.FC<NavBarProps> = ({
               title="New terminal (Ctrl+T) | Right-click for more"
             >
               <Plus size={15} strokeWidth={2} />
-              <span style={{ fontSize: '0.5rem', lineHeight: 1, opacity: 0.6 }}>▾</span>
+              <span style={{ fontSize: '0.55rem', lineHeight: 1, opacity: 0.6 }}>▾</span>
             </button>
 
             {showMenu && (
@@ -316,7 +316,7 @@ const NavBar: React.FC<NavBarProps> = ({
                 <div
                   style={{
                     padding: '2px 8px',
-                    fontSize: '0.55rem',
+                    fontSize: '0.6rem',
                     color: 'var(--wks-text-disabled)',
                     textTransform: 'uppercase',
                     letterSpacing: '0.05em',
@@ -377,7 +377,7 @@ const NavBar: React.FC<NavBarProps> = ({
                 <div
                   style={{
                     padding: '2px 8px',
-                    fontSize: '0.55rem',
+                    fontSize: '0.6rem',
                     color: 'var(--wks-text-disabled)',
                     textTransform: 'uppercase',
                     letterSpacing: '0.05em',
@@ -413,7 +413,7 @@ const NavBar: React.FC<NavBarProps> = ({
             marginRight: '6px',
             border: '1px solid var(--wks-warning)',
             borderRadius: 'var(--wks-radius-pill)',
-            fontSize: '0.58rem',
+            fontSize: '0.62rem',
             fontWeight: 700,
             letterSpacing: '0.08em',
             fontFamily: 'var(--wks-font-mono)',
@@ -464,7 +464,7 @@ const NavBar: React.FC<NavBarProps> = ({
                 border: '1px solid var(--wks-border)',
                 borderRadius: 'var(--wks-radius-pill)',
                 cursor: 'pointer',
-                fontSize: '0.68rem',
+                fontSize: '0.7rem',
                 fontFamily: 'inherit',
                 backgroundColor: 'transparent',
                 color: 'var(--wks-text-muted)',
@@ -621,7 +621,7 @@ const NavBar: React.FC<NavBarProps> = ({
                   {p.extraArgs?.length > 0 && (
                     <div
                       style={{
-                        fontSize: '0.58rem',
+                        fontSize: '0.62rem',
                         color: 'var(--wks-text-faint)',
                         fontFamily: 'var(--wks-font-mono)',
                       }}
@@ -704,7 +704,7 @@ const NavBar: React.FC<NavBarProps> = ({
                   <div style={{ color: 'var(--wks-text-primary)', fontWeight: 600 }}>
                     New Session
                   </div>
-                  <div style={{ fontSize: '0.58rem', color: 'var(--wks-text-faint)' }}>
+                  <div style={{ fontSize: '0.62rem', color: 'var(--wks-text-faint)' }}>
                     Start a fresh conversation
                   </div>
                 </div>
@@ -714,7 +714,7 @@ const NavBar: React.FC<NavBarProps> = ({
               <div
                 style={{
                   padding: '6px 16px 2px',
-                  fontSize: '0.55rem',
+                  fontSize: '0.6rem',
                   color: 'var(--wks-text-disabled)',
                   textTransform: 'uppercase',
                   letterSpacing: '0.05em',
@@ -763,7 +763,7 @@ const NavBar: React.FC<NavBarProps> = ({
                     </div>
                     <div
                       style={{
-                        fontSize: '0.58rem',
+                        fontSize: '0.62rem',
                         color: 'var(--wks-text-faint)',
                         fontFamily: 'var(--wks-font-mono)',
                       }}
@@ -981,7 +981,7 @@ const ThemeSwitcher: React.FC<{
                   <div
                     style={{
                       padding: '5px 12px 2px',
-                      fontSize: '0.6rem',
+                      fontSize: '0.64rem',
                       fontWeight: 700,
                       letterSpacing: '0.06em',
                       textTransform: 'uppercase',
@@ -1078,7 +1078,7 @@ const ScriptManager: React.FC<{
   const inputStyle: React.CSSProperties = {
     height: '24px',
     padding: '0 6px',
-    fontSize: '0.68rem',
+    fontSize: '0.7rem',
     backgroundColor: 'var(--wks-bg-input)',
     color: 'var(--wks-text-secondary)',
     border: '1px solid var(--wks-border)',
@@ -1111,7 +1111,7 @@ const ScriptManager: React.FC<{
     >
       <div
         style={{
-          fontSize: '0.6rem',
+          fontSize: '0.64rem',
           color: 'var(--wks-text-disabled)',
           textTransform: 'uppercase',
           letterSpacing: '0.05em',
@@ -1121,7 +1121,7 @@ const ScriptManager: React.FC<{
       </div>
 
       {draft.length === 0 && (
-        <div style={{ fontSize: '0.65rem', color: 'var(--wks-text-faint)', padding: '4px 0' }}>
+        <div style={{ fontSize: '0.68rem', color: 'var(--wks-text-faint)', padding: '4px 0' }}>
           No scripts yet. Add one below, e.g. “Test” →{' '}
           <code style={{ fontFamily: 'var(--wks-font-mono)' }}>npm test</code>.
         </div>
@@ -1168,7 +1168,7 @@ const ScriptManager: React.FC<{
         onClick={add}
         style={{
           padding: '4px',
-          fontSize: '0.65rem',
+          fontSize: '0.68rem',
           fontFamily: 'inherit',
           fontWeight: 500,
           backgroundColor: 'transparent',
@@ -1186,7 +1186,7 @@ const ScriptManager: React.FC<{
           onClick={onCancel}
           style={{
             padding: '3px 10px',
-            fontSize: '0.65rem',
+            fontSize: '0.68rem',
             fontFamily: 'inherit',
             border: '1px solid var(--wks-border)',
             borderRadius: '3px',
@@ -1201,7 +1201,7 @@ const ScriptManager: React.FC<{
           onClick={() => onSave(draft.filter((d) => d.name.trim() && d.command.trim()))}
           style={{
             padding: '3px 10px',
-            fontSize: '0.65rem',
+            fontSize: '0.68rem',
             fontFamily: 'inherit',
             fontWeight: 600,
             border: '1px solid var(--wks-accent)',
@@ -1240,7 +1240,7 @@ function MenuButton({
         border: 'none',
         borderRadius: 0,
         cursor: 'pointer',
-        fontSize: '0.65rem',
+        fontSize: '0.68rem',
         fontFamily: 'inherit',
         fontWeight: 400,
         backgroundColor: 'transparent',

@@ -860,7 +860,7 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
                           display: 'inline-flex',
                           alignItems: 'center',
                           gap: 4,
-                          fontSize: '0.62rem',
+                          fontSize: '0.66rem',
                           fontWeight: 600,
                           color: vis.color,
                           border: `1px solid ${vis.color}`,
@@ -1006,7 +1006,7 @@ const FleetDeck: React.FC<Props> = ({ top, left }) => {
           padding: '7px 22px',
           borderTop: '1px solid var(--wks-border-subtle)',
           background: 'var(--wks-bg-surface)',
-          fontSize: '0.62rem',
+          fontSize: '0.66rem',
           color: 'var(--wks-text-faint)',
           whiteSpace: 'nowrap',
           overflow: 'hidden',
@@ -1107,7 +1107,7 @@ const kbdStyle: React.CSSProperties = {
   justifyContent: 'center',
   minWidth: 15,
   height: 15,
-  fontSize: '0.6rem',
+  fontSize: '0.64rem',
   lineHeight: 1,
   color: 'var(--wks-text-secondary)',
   border: '1px solid var(--wks-glass-border)',
@@ -1189,7 +1189,7 @@ const lth: React.CSSProperties = {
   fontWeight: 700,
   textTransform: 'uppercase',
   letterSpacing: '0.06em',
-  fontSize: '0.6rem',
+  fontSize: '0.64rem',
 };
 const lthNum: React.CSSProperties = { ...lth, textAlign: 'right' };
 const ltd: React.CSSProperties = {

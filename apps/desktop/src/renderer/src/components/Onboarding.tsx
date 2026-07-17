@@ -31,7 +31,7 @@ const Keys: React.FC<{ combo: string; onAccent?: boolean }> = ({ combo, onAccent
           key={i}
           style={{
             fontFamily: 'var(--wks-font-mono)',
-            fontSize: '0.62rem',
+            fontSize: '0.66rem',
             fontWeight: 600,
             lineHeight: 1,
             padding: '4px 6px',
@@ -216,7 +216,7 @@ const Onboarding: React.FC<{
         >
           <div
             style={{
-              fontSize: '0.62rem',
+              fontSize: '0.66rem',
               fontWeight: 700,
               letterSpacing: '0.12em',
               textTransform: 'uppercase',
@@ -253,7 +253,7 @@ const Onboarding: React.FC<{
                   <span style={{ fontSize: '0.8rem', fontWeight: 700 }}>{p.label}</span>
                   <span
                     style={{
-                      fontSize: '0.62rem',
+                      fontSize: '0.66rem',
                       color: 'var(--wks-text-faint)',
                       lineHeight: 1.35,
                     }}
@@ -277,7 +277,7 @@ const Onboarding: React.FC<{
       >
         <div
           style={{
-            fontSize: '0.62rem',
+            fontSize: '0.66rem',
             fontWeight: 700,
             letterSpacing: '0.12em',
             textTransform: 'uppercase',

@@ -263,7 +263,7 @@ body {
   flex: none;
 }
 .wks-stop-btn .wks-stop-hint {
-  font-size: 0.6rem;
+  font-size: 0.64rem;
   letter-spacing: 0.05em;
   opacity: 0;
   transform: translateX(-3px);

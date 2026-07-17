@@ -83,7 +83,7 @@ const SupervisorRow: React.FC<{
     </span>
     <span
       style={{
-        fontSize: '0.62rem',
+        fontSize: '0.66rem',
         color: 'var(--wks-accent, #4a9eff)',
         fontWeight: 600,
         flexShrink: 0,
@@ -259,7 +259,7 @@ const AskPane: React.FC<AskPaneProps> = ({
                 border: '1px solid var(--wks-accent, #4a9eff)',
                 background: 'transparent',
                 color: 'var(--wks-accent, #4a9eff)',
-                fontSize: '0.68rem',
+                fontSize: '0.7rem',
                 fontWeight: 600,
                 fontFamily: 'inherit',
                 cursor: spawning ? 'default' : 'pointer',
@@ -364,7 +364,7 @@ const AskPane: React.FC<AskPaneProps> = ({
             })}
           </div>
           {provider !== 'claude' && (
-            <span style={{ fontSize: '0.6rem', color: 'var(--wks-text-faint)' }}>
+            <span style={{ fontSize: '0.64rem', color: 'var(--wks-text-faint)' }}>
               fleet tools via MCP facade · experimental
             </span>
           )}
@@ -392,7 +392,7 @@ const AskPane: React.FC<AskPaneProps> = ({
             style={{
               position: 'relative',
               color: 'var(--wks-text-faint, #666)',
-              fontSize: '0.68rem',
+              fontSize: '0.7rem',
               fontFamily: 'inherit',
             }}
           >
@@ -461,7 +461,7 @@ const AskPane: React.FC<AskPaneProps> = ({
       >
         <div
           style={{
-            fontSize: '0.58rem',
+            fontSize: '0.62rem',
             color: 'var(--wks-text-disabled, #555)',
             fontWeight: 600,
             textTransform: 'uppercase',

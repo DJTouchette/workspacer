@@ -74,7 +74,7 @@ const LayoutsDialog: React.FC<Props> = ({ agentCount, onSaveCurrent, onRestore, 
         >
           Layouts
         </div>
-        <div style={{ fontSize: '0.62rem', color: 'var(--wks-text-faint)', marginBottom: 14 }}>
+        <div style={{ fontSize: '0.66rem', color: 'var(--wks-text-faint)', marginBottom: 14 }}>
           Reusable directory + pane templates. Restoring spawns fresh agents.
         </div>
 
@@ -103,7 +103,7 @@ const LayoutsDialog: React.FC<Props> = ({ agentCount, onSaveCurrent, onRestore, 
         {/* Saved layouts */}
         <div
           style={{
-            fontSize: '0.6rem',
+            fontSize: '0.64rem',
             color: 'var(--wks-text-faint)',
             textTransform: 'uppercase',
             letterSpacing: '0.05em',
@@ -147,7 +147,7 @@ const LayoutsDialog: React.FC<Props> = ({ agentCount, onSaveCurrent, onRestore, 
                   </div>
                   <div
                     style={{
-                      fontSize: '0.6rem',
+                      fontSize: '0.64rem',
                       color: 'var(--wks-text-faint)',
                       marginTop: 1,
                       overflow: 'hidden',
@@ -243,7 +243,7 @@ const row: React.CSSProperties = {
 };
 const miniBtn: React.CSSProperties = {
   padding: '3px 9px',
-  fontSize: '0.66rem',
+  fontSize: '0.69rem',
   fontFamily: 'inherit',
   background: 'transparent',
   color: 'var(--wks-text-muted)',

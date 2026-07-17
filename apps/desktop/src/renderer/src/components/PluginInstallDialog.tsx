@@ -146,7 +146,7 @@ const PluginInstallDialog: React.FC<PluginInstallDialogProps> = ({
 
         {!preview ? (
           <>
-            <div style={{ fontSize: '0.68rem', color: 'var(--wks-text-muted)', marginBottom: 14 }}>
+            <div style={{ fontSize: '0.7rem', color: 'var(--wks-text-muted)', marginBottom: 14 }}>
               Paste a repo URL or <code>owner/repo</code>. It must contain a{' '}
               <code>plugin.json</code>.
             </div>
@@ -171,13 +171,13 @@ const PluginInstallDialog: React.FC<PluginInstallDialogProps> = ({
                 padding: '7px 9px',
               }}
             />
-            <div style={{ marginTop: 12, fontSize: '0.62rem', color: 'var(--wks-text-faint)' }}>
+            <div style={{ marginTop: 12, fontSize: '0.66rem', color: 'var(--wks-text-faint)' }}>
               We'll read its manifest first and show what it does before anything runs.
             </div>
           </>
         ) : (
           <>
-            <div style={{ fontSize: '0.68rem', color: 'var(--wks-text-muted)', marginBottom: 12 }}>
+            <div style={{ fontSize: '0.7rem', color: 'var(--wks-text-muted)', marginBottom: 12 }}>
               Review before installing — this will run the plugin's code on your machine.
             </div>
             <div
@@ -194,7 +194,7 @@ const PluginInstallDialog: React.FC<PluginInstallDialogProps> = ({
                 </span>
                 <span
                   style={{
-                    fontSize: '0.6rem',
+                    fontSize: '0.64rem',
                     color: 'var(--wks-text-faint)',
                     border: '1px solid var(--wks-border-subtle)',
                     borderRadius: 3,
@@ -204,7 +204,7 @@ const PluginInstallDialog: React.FC<PluginInstallDialogProps> = ({
                   {preview.server ? 'sidecar' : preview.ui ? 'webview' : 'plugin'}
                 </span>
               </div>
-              <div style={{ fontSize: '0.62rem', color: 'var(--wks-text-faint)', marginTop: 2 }}>
+              <div style={{ fontSize: '0.66rem', color: 'var(--wks-text-faint)', marginTop: 2 }}>
                 {preview.id}
               </div>
               <div
@@ -213,7 +213,7 @@ const PluginInstallDialog: React.FC<PluginInstallDialogProps> = ({
                   display: 'flex',
                   gap: 14,
                   flexWrap: 'wrap',
-                  fontSize: '0.62rem',
+                  fontSize: '0.66rem',
                   color: 'var(--wks-text-muted)',
                 }}
               >
@@ -235,7 +235,7 @@ const PluginInstallDialog: React.FC<PluginInstallDialogProps> = ({
               >
                 <div
                   style={{
-                    fontSize: '0.6rem',
+                    fontSize: '0.64rem',
                     fontWeight: 700,
                     textTransform: 'uppercase',
                     letterSpacing: '0.05em',
@@ -252,7 +252,7 @@ const PluginInstallDialog: React.FC<PluginInstallDialogProps> = ({
                 <div
                   style={{
                     marginTop: 8,
-                    fontSize: '0.64rem',
+                    fontSize: '0.67rem',
                     fontWeight: 600,
                     color: req.warn ? 'var(--wks-warning, #e0a000)' : 'var(--wks-success, #3fb950)',
                     display: 'inline-flex',
@@ -281,7 +281,7 @@ const PluginInstallDialog: React.FC<PluginInstallDialogProps> = ({
             borderRadius: 'var(--wks-radius-sm)',
             background: 'var(--wks-bg-input)',
             border: '1px solid var(--wks-border-subtle)',
-            fontSize: '0.65rem',
+            fontSize: '0.68rem',
             lineHeight: 1.5,
             color: 'var(--wks-text-muted)',
           }}
@@ -306,7 +306,7 @@ const PluginInstallDialog: React.FC<PluginInstallDialogProps> = ({
           <div
             style={{
               marginTop: 10,
-              fontSize: '0.68rem',
+              fontSize: '0.7rem',
               color: 'var(--wks-danger, #e05555)',
               wordBreak: 'break-word',
             }}

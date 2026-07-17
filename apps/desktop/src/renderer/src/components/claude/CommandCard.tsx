@@ -78,7 +78,7 @@ const CommandCardInner: React.FC<{ turn: ConversationTurn; showTimestamp?: boole
               background: 'transparent',
               cursor: 'pointer',
               fontFamily: 'inherit',
-              fontSize: '0.66rem',
+              fontSize: '0.69rem',
               fontWeight: 600,
               color: cmd.outputIsError ? colors.error : colors.muted,
             }}

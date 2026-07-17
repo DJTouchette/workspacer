@@ -259,7 +259,7 @@ export function ContextMenuLabel({ children }: { children: React.ReactNode }) {
       style={{
         padding: '3px 11px 4px',
         fontFamily: 'var(--wks-font-mono, monospace)',
-        fontSize: '0.55rem',
+        fontSize: '0.6rem',
         color: 'var(--wks-text-faint)',
         textTransform: 'uppercase',
         letterSpacing: '0.08em',

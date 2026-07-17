@@ -17,7 +17,7 @@ export const TurnDivider: React.FC<{ label?: string | null }> = ({ label = 'Resp
       <>
         <span
           style={{
-            fontSize: '0.6rem',
+            fontSize: '0.64rem',
             color: colors.mutedDim,
             fontWeight: 500,
             textTransform: 'uppercase',

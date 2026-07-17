@@ -110,7 +110,7 @@ const ShortcutEditor: React.FC<{
     <div style={{ marginTop: '12px' }}>
       <div
         style={{
-          fontSize: '0.65rem',
+          fontSize: '0.68rem',
           color: 'var(--wks-text-faint)',
           textTransform: 'uppercase',
           letterSpacing: '0.05em',
@@ -127,7 +127,7 @@ const ShortcutEditor: React.FC<{
           <div
             key={`hdr-${section.section}`}
             style={{
-              fontSize: '0.58rem',
+              fontSize: '0.62rem',
               fontWeight: 600,
               color: 'var(--wks-text-faint)',
               textTransform: 'uppercase',
@@ -174,7 +174,7 @@ const ShortcutEditor: React.FC<{
                       width: '150px',
                       height: '22px',
                       padding: '0 6px',
-                      fontSize: '0.65rem',
+                      fontSize: '0.68rem',
                       fontFamily: 'var(--wks-font-mono)',
                       textAlign: 'center',
                       backgroundColor: isCapturing ? 'var(--wks-bg-input)' : 'transparent',
@@ -190,7 +190,7 @@ const ShortcutEditor: React.FC<{
                   <button
                     onClick={() => handleReset(action)}
                     style={{
-                      fontSize: '0.6rem',
+                      fontSize: '0.64rem',
                       padding: '2px 6px',
                       borderRadius: '3px',
                       border: '1px solid var(--wks-border)',
@@ -313,7 +313,7 @@ const KeybindingsSection: React.FC<KeybindingsSectionProps> = ({ config, save })
             <button
               onClick={() => save(presetConfigPatch(activePreset, config, true))}
               style={{
-                fontSize: '0.68rem',
+                fontSize: '0.7rem',
                 padding: '1px 6px',
                 borderRadius: '3px',
                 border: '1px solid var(--wks-border)',
@@ -343,7 +343,7 @@ const KeybindingsSection: React.FC<KeybindingsSectionProps> = ({ config, save })
             width: '160px',
             height: '24px',
             padding: '0 8px',
-            fontSize: '0.68rem',
+            fontSize: '0.7rem',
             fontFamily: 'var(--wks-font-mono)',
             backgroundColor: capturingPrefix ? 'var(--wks-bg-selected)' : 'var(--wks-bg-input)',
             color: capturingPrefix ? 'var(--wks-accent-text)' : 'var(--wks-text-secondary)',

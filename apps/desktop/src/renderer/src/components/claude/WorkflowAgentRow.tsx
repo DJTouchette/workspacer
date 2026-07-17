@@ -8,7 +8,7 @@ import { fmtUSD } from '../../lib/sessionStats';
 export const agentDetailStyle: React.CSSProperties = {
   paddingLeft: 18,
   paddingTop: 2,
-  fontSize: '0.66rem',
+  fontSize: '0.69rem',
   lineHeight: 1.4,
   whiteSpace: 'pre-wrap',
   wordBreak: 'break-word',
@@ -16,7 +16,7 @@ export const agentDetailStyle: React.CSSProperties = {
 };
 export const agentDetailLabel: React.CSSProperties = {
   color: colors.mutedDim,
-  fontSize: '0.58rem',
+  fontSize: '0.62rem',
   fontWeight: 700,
   textTransform: 'uppercase',
   letterSpacing: 0.4,
@@ -27,7 +27,7 @@ import { IconQueued, IconError, IconDone } from '../wksIcons';
 
 export const agentMetaStyle: React.CSSProperties = {
   color: colors.mutedDim,
-  fontSize: '0.65rem',
+  fontSize: '0.68rem',
   fontVariantNumeric: 'tabular-nums',
   whiteSpace: 'nowrap',
   flexShrink: 0,
@@ -35,7 +35,7 @@ export const agentMetaStyle: React.CSSProperties = {
 
 export const lastToolLineStyle: React.CSSProperties = {
   paddingLeft: 18,
-  fontSize: '0.68rem',
+  fontSize: '0.7rem',
   color: colors.muted,
   lineHeight: 1.3,
   overflow: 'hidden',
@@ -144,7 +144,7 @@ const WorkflowAgentRowInner: React.FC<{ agent: WorkflowAgentInfo; now: number }>
         {agent.toolCalls > 0 && <span style={agentMetaStyle}>{agent.toolCalls} tools</span>}
         {duration !== undefined && <span style={agentMetaStyle}>{fmtDuration(duration)}</span>}
         {canExpand && (
-          <span style={{ color: colors.mutedDim, fontSize: '0.6rem', flexShrink: 0 }}>
+          <span style={{ color: colors.mutedDim, fontSize: '0.64rem', flexShrink: 0 }}>
             {expanded ? '▾' : '▸'}
           </span>
         )}

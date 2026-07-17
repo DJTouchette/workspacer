@@ -137,16 +137,16 @@ const PluginCatalogDialog: React.FC<PluginCatalogDialogProps> = ({
         >
           Plugin catalog
         </div>
-        <div style={{ fontSize: '0.68rem', color: 'var(--wks-text-muted)', marginBottom: 14 }}>
-          Install-ready plugins from the public catalog. Installing shows the plugin's manifest
-          and permissions before anything runs.
+        <div style={{ fontSize: '0.7rem', color: 'var(--wks-text-muted)', marginBottom: 14 }}>
+          Install-ready plugins from the public catalog. Installing shows the plugin's manifest and
+          permissions before anything runs.
         </div>
 
         {error && (
           <div
             style={{
               marginBottom: 10,
-              fontSize: '0.68rem',
+              fontSize: '0.7rem',
               color: 'var(--wks-danger, #e05555)',
               wordBreak: 'break-word',
             }}
@@ -193,7 +193,7 @@ const PluginCatalogDialog: React.FC<PluginCatalogDialogProps> = ({
               <div
                 style={{
                   marginTop: 6,
-                  fontSize: '0.62rem',
+                  fontSize: '0.66rem',
                   fontWeight: 700,
                   textTransform: 'uppercase',
                   letterSpacing: '0.05em',
@@ -224,7 +224,7 @@ const PluginCatalogDialog: React.FC<PluginCatalogDialogProps> = ({
                             <span style={{ fontSize: '0.82rem', fontWeight: 600 }}>{e.name}</span>
                             <span
                               style={{
-                                fontSize: '0.6rem',
+                                fontSize: '0.64rem',
                                 color: 'var(--wks-text-faint)',
                                 border: '1px solid var(--wks-border-subtle)',
                                 borderRadius: 3,
@@ -237,7 +237,7 @@ const PluginCatalogDialog: React.FC<PluginCatalogDialogProps> = ({
                           {e.description && (
                             <div
                               style={{
-                                fontSize: '0.68rem',
+                                fontSize: '0.7rem',
                                 color: 'var(--wks-text-muted)',
                                 marginTop: 3,
                                 lineHeight: 1.45,
@@ -248,7 +248,7 @@ const PluginCatalogDialog: React.FC<PluginCatalogDialogProps> = ({
                           )}
                           <div
                             style={{
-                              fontSize: '0.6rem',
+                              fontSize: '0.64rem',
                               color: 'var(--wks-text-faint)',
                               marginTop: 4,
                               display: 'flex',
@@ -306,7 +306,7 @@ const PluginCatalogDialog: React.FC<PluginCatalogDialogProps> = ({
             href="https://github.com/DJTouchette/workspacer-plugins"
             target="_blank"
             rel="noreferrer"
-            style={{ fontSize: '0.62rem', color: 'var(--wks-text-faint)' }}
+            style={{ fontSize: '0.66rem', color: 'var(--wks-text-faint)' }}
           >
             github.com/DJTouchette/workspacer-plugins
           </a>
@@ -333,13 +333,13 @@ const PluginCatalogDialog: React.FC<PluginCatalogDialogProps> = ({
         // overlay's onMouseDown (which would close the catalog too).
         <div onMouseDown={(e) => e.stopPropagation()}>
           <PluginInstallDialog
-          initialUrl={installing.install}
-          onClose={() => setInstalling(null)}
-          onInstalled={(pluginId) => {
-            setInstalled((prev) => new Set(prev).add(pluginId || installing.id));
-            onInstalled?.(pluginId || installing.id);
-            setInstalling(null);
-          }}
+            initialUrl={installing.install}
+            onClose={() => setInstalling(null)}
+            onInstalled={(pluginId) => {
+              setInstalled((prev) => new Set(prev).add(pluginId || installing.id));
+              onInstalled?.(pluginId || installing.id);
+              setInstalling(null);
+            }}
           />
         </div>
       )}

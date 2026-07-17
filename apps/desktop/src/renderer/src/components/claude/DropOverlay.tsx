@@ -22,7 +22,7 @@ export const DropOverlay: React.FC = () => (
       <div style={{ fontSize: '0.8rem', color: colors.accent, fontWeight: 600 }}>
         Drop files here
       </div>
-      <div style={{ fontSize: '0.65rem', color: colors.muted, marginTop: 4 }}>
+      <div style={{ fontSize: '0.68rem', color: colors.muted, marginTop: 4 }}>
         Images, code, PDFs — any file Claude can read
       </div>
     </div>

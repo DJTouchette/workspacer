@@ -163,7 +163,7 @@ const RateLimitCard: React.FC<{ snaps: Snap[]; provider: string; title: string }
     pct === undefined && reset === undefined ? null : (
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <span
-          style={{ fontSize: '0.62rem', color: 'var(--wks-text-faint)', width: 22, flexShrink: 0 }}
+          style={{ fontSize: '0.66rem', color: 'var(--wks-text-faint)', width: 22, flexShrink: 0 }}
         >
           {label}
         </span>
@@ -189,7 +189,7 @@ const RateLimitCard: React.FC<{ snaps: Snap[]; provider: string; title: string }
         </span>
         <span
           style={{
-            fontSize: '0.66rem',
+            fontSize: '0.69rem',
             fontWeight: 700,
             color: pct !== undefined ? limitColor(pct) : 'var(--wks-text-faint)',
             fontVariantNumeric: 'tabular-nums',
@@ -199,7 +199,7 @@ const RateLimitCard: React.FC<{ snaps: Snap[]; provider: string; title: string }
           {pct !== undefined ? `${Math.round(pct)}%` : reset ? `resets ${fmtReset(reset)}` : 'ok'}
         </span>
         {pct !== undefined && reset ? (
-          <span style={{ fontSize: '0.55rem', color: 'var(--wks-text-faint)', flexShrink: 0 }}>
+          <span style={{ fontSize: '0.6rem', color: 'var(--wks-text-faint)', flexShrink: 0 }}>
             {fmtReset(reset)}
           </span>
         ) : null}
@@ -225,7 +225,7 @@ const RateLimitCard: React.FC<{ snaps: Snap[]; provider: string; title: string }
           display: 'flex',
           alignItems: 'center',
           gap: 6,
-          fontSize: '0.58rem',
+          fontSize: '0.62rem',
           color: 'var(--wks-text-faint)',
           textTransform: 'uppercase',
           letterSpacing: '0.08em',
@@ -280,7 +280,7 @@ const Stat: React.FC<{
   >
     <div
       style={{
-        fontSize: '0.58rem',
+        fontSize: '0.62rem',
         color: 'var(--wks-text-faint)',
         textTransform: 'uppercase',
         letterSpacing: '0.08em',
@@ -302,7 +302,7 @@ const Stat: React.FC<{
     {sub && (
       <div
         style={{
-          fontSize: '0.62rem',
+          fontSize: '0.66rem',
           color: 'var(--wks-text-secondary)',
           marginTop: 3,
           fontVariantNumeric: 'tabular-nums',
@@ -370,7 +370,7 @@ const DirRow: React.FC<{
     </span>
     <span
       style={{
-        fontSize: '0.62rem',
+        fontSize: '0.66rem',
         color: 'var(--wks-text-faint)',
         overflow: 'hidden',
         textOverflow: 'ellipsis',
@@ -386,7 +386,7 @@ const DirRow: React.FC<{
         gap: 3,
         marginLeft: 'auto',
         flexShrink: 0,
-        fontSize: '0.62rem',
+        fontSize: '0.66rem',
         color: 'var(--wks-accent)',
       }}
     >
@@ -757,7 +757,7 @@ const OverviewPane: React.FC<{ title?: string; agents?: { sessionId?: string }[]
                         </div>
                         <div
                           style={{
-                            fontSize: '0.62rem',
+                            fontSize: '0.66rem',
                             color: 'var(--wks-text-faint)',
                             marginTop: 1,
                             overflow: 'hidden',
@@ -829,7 +829,7 @@ const Section: React.FC<{ title: string; children: React.ReactNode }> = ({ title
   <div style={{ marginBottom: 24 }}>
     <div
       style={{
-        fontSize: '0.58rem',
+        fontSize: '0.62rem',
         color: 'var(--wks-text-faint)',
         fontWeight: 600,
         textTransform: 'uppercase',

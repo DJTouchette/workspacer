@@ -214,7 +214,7 @@ export const Composer: React.FC<ComposerProps> = ({
                     {it.kind && (
                       <span
                         style={{
-                          fontSize: '0.55rem',
+                          fontSize: '0.6rem',
                           fontWeight: 700,
                           letterSpacing: '0.04em',
                           textTransform: 'uppercase',
@@ -232,7 +232,7 @@ export const Composer: React.FC<ComposerProps> = ({
                   {it.hint && (
                     <span
                       style={{
-                        fontSize: '0.68rem',
+                        fontSize: '0.7rem',
                         color: colors.muted,
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
@@ -248,7 +248,7 @@ export const Composer: React.FC<ComposerProps> = ({
               <div
                 style={{
                   padding: '4px 10px 2px',
-                  fontSize: '0.58rem',
+                  fontSize: '0.62rem',
                   color: 'var(--wks-text-faint)',
                   fontFamily: 'var(--wks-font-mono, monospace)',
                 }}

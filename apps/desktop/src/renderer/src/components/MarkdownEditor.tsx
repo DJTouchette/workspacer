@@ -79,7 +79,7 @@ const MarkdownEditor: React.FC<{
             type="button"
             onClick={() => setView(v)}
             style={{
-              fontSize: '0.62rem',
+              fontSize: '0.66rem',
               fontFamily: 'inherit',
               cursor: 'pointer',
               padding: '2px 8px',
@@ -95,7 +95,7 @@ const MarkdownEditor: React.FC<{
         ))}
         <div style={{ flex: 1 }} />
         <span
-          style={{ fontSize: '0.58rem', color: 'var(--wks-text-disabled)', userSelect: 'none' }}
+          style={{ fontSize: '0.62rem', color: 'var(--wks-text-disabled)', userSelect: 'none' }}
         >
           **bold** *italic* `code` # heading - list
         </span>

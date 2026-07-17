@@ -87,7 +87,7 @@ export const AttentionCard: React.FC<Props> = ({ item, selected }) => {
             background: `color-mix(in srgb, ${v.color} 18%, transparent)`,
             border: `1px solid color-mix(in srgb, ${v.color} 45%, transparent)`,
             color: v.color,
-            fontSize: '0.62rem',
+            fontSize: '0.66rem',
             fontWeight: 700,
             lineHeight: 1,
           }}
@@ -120,7 +120,7 @@ export const AttentionCard: React.FC<Props> = ({ item, selected }) => {
         <span
           style={{
             marginLeft: 'auto',
-            fontSize: '0.66rem',
+            fontSize: '0.69rem',
             color: 'var(--wks-text-faint)',
             fontVariantNumeric: 'tabular-nums',
             flexShrink: 0,
@@ -187,7 +187,7 @@ export const AttentionCard: React.FC<Props> = ({ item, selected }) => {
         <span
           style={{
             marginLeft: 'auto',
-            fontSize: '0.62rem',
+            fontSize: '0.66rem',
             color: 'var(--wks-text-faint)',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
@@ -217,7 +217,7 @@ const CardBtn: React.FC<{ label: string; hint?: string; onClick: () => void }> =
       display: 'inline-flex',
       alignItems: 'center',
       gap: 5,
-      fontSize: '0.68rem',
+      fontSize: '0.7rem',
       fontFamily: 'inherit',
       fontWeight: 600,
       padding: '3px 9px',
@@ -232,7 +232,7 @@ const CardBtn: React.FC<{ label: string; hint?: string; onClick: () => void }> =
     {hint && (
       <kbd
         style={{
-          fontSize: '0.58rem',
+          fontSize: '0.62rem',
           color: 'var(--wks-text-faint)',
           border: '1px solid var(--wks-glass-border)',
           borderRadius: 3,

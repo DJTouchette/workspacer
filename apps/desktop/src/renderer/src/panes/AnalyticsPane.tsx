@@ -76,7 +76,7 @@ const Stat: React.FC<{ label: string; value: string; sub?: string; color?: strin
   >
     <div
       style={{
-        fontSize: '0.58rem',
+        fontSize: '0.62rem',
         color: 'var(--wks-text-faint)',
         textTransform: 'uppercase',
         letterSpacing: '0.08em',
@@ -98,7 +98,7 @@ const Stat: React.FC<{ label: string; value: string; sub?: string; color?: strin
     {sub && (
       <div
         style={{
-          fontSize: '0.62rem',
+          fontSize: '0.66rem',
           color: 'var(--wks-text-secondary)',
           marginTop: 3,
           fontVariantNumeric: 'tabular-nums',
@@ -113,7 +113,7 @@ const Stat: React.FC<{ label: string; value: string; sub?: string; color?: strin
 const SectionTitle: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <div
     style={{
-      fontSize: '0.58rem',
+      fontSize: '0.62rem',
       color: 'var(--wks-text-faint)',
       textTransform: 'uppercase',
       letterSpacing: '0.08em',
@@ -156,7 +156,7 @@ const ChartCard: React.FC<{
       {caption && (
         <span
           style={{
-            fontSize: '0.62rem',
+            fontSize: '0.66rem',
             color: 'var(--wks-text-faint)',
             fontVariantNumeric: 'tabular-nums',
           }}
@@ -215,7 +215,7 @@ const CostBars: React.FC<{ data: AnalyticsBucket[] }> = ({ data }) => {
               flex: 1,
               minWidth: 3,
               textAlign: 'center',
-              fontSize: '0.58rem',
+              fontSize: '0.62rem',
               color: 'var(--wks-text-faint)',
               fontVariantNumeric: 'tabular-nums',
               whiteSpace: 'nowrap',
@@ -437,7 +437,7 @@ const ProviderShare: React.FC<{
             </span>
             <span
               style={{
-                fontSize: '0.66rem',
+                fontSize: '0.69rem',
                 color: 'var(--wks-text-faint)',
                 fontVariantNumeric: 'tabular-nums',
               }}
@@ -840,7 +840,7 @@ const AnalyticsPane: React.FC<{ title?: string }> = () => {
                         <span
                           style={{
                             marginLeft: 6,
-                            fontSize: '0.55rem',
+                            fontSize: '0.6rem',
                             color: 'var(--wks-success, #4ade80)',
                           }}
                         >
@@ -874,7 +874,7 @@ const th: React.CSSProperties = {
   fontWeight: 600,
   textTransform: 'uppercase',
   letterSpacing: '0.04em',
-  fontSize: '0.55rem',
+  fontSize: '0.6rem',
 };
 const thNum: React.CSSProperties = { ...th, textAlign: 'right' };
 const td: React.CSSProperties = {

@@ -189,14 +189,14 @@ const LibrarySidePanel: React.FC<Props> = ({ visible, onClose, cwd }) => {
             </div>
             {it.description && (
               <div
-                style={{ fontSize: '0.66rem', color: 'var(--wks-text-secondary)', marginTop: 3 }}
+                style={{ fontSize: '0.69rem', color: 'var(--wks-text-secondary)', marginTop: 3 }}
               >
                 {it.description}
               </div>
             )}
             <div
               style={{
-                fontSize: '0.62rem',
+                fontSize: '0.66rem',
                 color: 'var(--wks-text-faint)',
                 marginTop: 4,
                 maxHeight: 30,
@@ -248,7 +248,7 @@ const closeBtn: React.CSSProperties = {
 const chip = (active: boolean): React.CSSProperties => ({
   flex: 1,
   padding: '4px 0',
-  fontSize: '0.62rem',
+  fontSize: '0.66rem',
   fontWeight: 600,
   textTransform: 'capitalize',
   color: active ? 'var(--wks-text-primary)' : 'var(--wks-text-faint)',
@@ -268,7 +268,7 @@ const card = (flash: boolean): React.CSSProperties => ({
 });
 
 const kindBadge = (kind: LibraryKind): React.CSSProperties => ({
-  fontSize: '0.55rem',
+  fontSize: '0.6rem',
   fontWeight: 700,
   textTransform: 'uppercase',
   letterSpacing: '0.04em',

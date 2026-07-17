@@ -99,7 +99,7 @@ export function statusBadgeStyle(color: string): React.CSSProperties {
     display: 'inline-flex',
     alignItems: 'center',
     gap: 5,
-    fontSize: '0.66rem',
+    fontSize: '0.69rem',
     fontWeight: 600,
     letterSpacing: '0.02em',
     color: color,
@@ -282,7 +282,7 @@ export const WorkLogEntry: React.FC<{ tc: ToolCall }> = ({ tc }) => {
         <div
           style={{
             paddingLeft: 18,
-            fontSize: '0.68rem',
+            fontSize: '0.7rem',
             color: claudeColors.muted,
             lineHeight: 1.3,
           }}

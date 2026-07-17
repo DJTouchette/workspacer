@@ -91,7 +91,7 @@ const SectionHeader: React.FC<{
       justifyContent: 'space-between',
       gap: 8,
       padding: '10px 12px 4px',
-      fontSize: '0.6rem',
+      fontSize: '0.64rem',
       fontWeight: 700,
       letterSpacing: '0.08em',
       textTransform: 'uppercase',
@@ -106,7 +106,7 @@ const SectionHeader: React.FC<{
             background: 'var(--wks-bg-hover)',
             borderRadius: 'var(--wks-radius-md)',
             padding: '0 6px',
-            fontSize: '0.58rem',
+            fontSize: '0.62rem',
             lineHeight: '14px',
             letterSpacing: 0,
           }}
@@ -126,7 +126,7 @@ const SectionHeader: React.FC<{
           background: 'transparent',
           color: colors.text,
           cursor: action.busy ? 'default' : 'pointer',
-          fontSize: '0.6rem',
+          fontSize: '0.64rem',
           fontFamily: 'inherit',
           fontWeight: 600,
           letterSpacing: 0,
@@ -727,7 +727,7 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive, onReturnToAgent 
             <div style={{ fontSize: '0.76rem', fontWeight: 700, color: colors.textBright }}>
               {bannerTitle}
             </div>
-            <div style={{ fontSize: '0.68rem', color: colors.muted, marginTop: 2 }}>
+            <div style={{ fontSize: '0.7rem', color: colors.muted, marginTop: 2 }}>
               {bannerMessage}
             </div>
           </div>
@@ -790,7 +790,7 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive, onReturnToAgent 
               padding: '9px 12px',
               borderBottom: `1px solid ${colors.borderSubtle}`,
               fontFamily: 'var(--wks-font-mono, monospace)',
-              fontSize: '0.58rem',
+              fontSize: '0.62rem',
               textTransform: 'uppercase',
               letterSpacing: '0.08em',
               color: colors.muted,
@@ -854,7 +854,7 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive, onReturnToAgent 
                     borderRadius: 7,
                     background: `color-mix(in srgb, ${colors.error} 9%, transparent)`,
                     color: colors.error,
-                    fontSize: '0.66rem',
+                    fontSize: '0.69rem',
                     lineHeight: 1.45,
                   }}
                 >
@@ -1017,7 +1017,7 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive, onReturnToAgent 
                     style={{
                       display: 'flex',
                       gap: 6,
-                      fontSize: '0.68rem',
+                      fontSize: '0.7rem',
                       fontFamily: 'var(--wks-font-mono, monospace)',
                       fontVariantNumeric: 'tabular-nums',
                       flexShrink: 0,
@@ -1031,7 +1031,7 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive, onReturnToAgent 
               )}
               <span
                 style={{
-                  fontSize: '0.6rem',
+                  fontSize: '0.64rem',
                   fontWeight: 600,
                   letterSpacing: '0.04em',
                   color: colors.muted,

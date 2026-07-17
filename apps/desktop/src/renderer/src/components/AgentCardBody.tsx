@@ -47,7 +47,7 @@ const chipBase: React.CSSProperties = {
   gap: 5,
   padding: '1px 8px',
   borderRadius: 9,
-  fontSize: '0.62rem',
+  fontSize: '0.66rem',
   fontFamily: 'var(--claude-mono-font, monospace)',
   whiteSpace: 'nowrap',
   overflow: 'hidden',
@@ -186,7 +186,7 @@ const AgentCardBodyInner: React.FC<AgentCardBodyProps> = ({
         <div
           style={{
             padding: '6px 14px 0',
-            fontSize: '0.64rem',
+            fontSize: '0.67rem',
             fontFamily: 'var(--claude-mono-font, monospace)',
             fontVariantNumeric: 'tabular-nums',
             color: 'var(--wks-text-faint)',

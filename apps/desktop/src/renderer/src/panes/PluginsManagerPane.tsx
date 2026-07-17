@@ -52,7 +52,7 @@ function stateColor(s: string | undefined): string {
 /** Shared style for the small per-plugin action buttons (Update / Enable / Remove). */
 function actionBtn(busy: boolean, danger?: boolean): React.CSSProperties {
   return {
-    fontSize: '0.68rem',
+    fontSize: '0.7rem',
     fontFamily: 'inherit',
     cursor: busy ? 'default' : 'pointer',
     background: 'transparent',
@@ -147,7 +147,7 @@ const PluginsManagerPane: React.FC<{ title?: string }> = () => {
         >
           <Blocks size={17} strokeWidth={1.75} /> Plugins
         </div>
-        <div style={{ fontSize: '0.65rem', color: 'var(--wks-text-faint)' }}>
+        <div style={{ fontSize: '0.68rem', color: 'var(--wks-text-faint)' }}>
           {plugins.length} installed
         </div>
         <button
@@ -251,9 +251,9 @@ const PluginsManagerPane: React.FC<{ title?: string }> = () => {
                   />
                 )}
                 <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>{p.name || p.id}</span>
-                <span style={{ fontSize: '0.62rem', color: 'var(--wks-text-faint)' }}>{p.id}</span>
+                <span style={{ fontSize: '0.66rem', color: 'var(--wks-text-faint)' }}>{p.id}</span>
                 <span
-                  style={{ fontSize: '0.62rem', color: 'var(--wks-text-muted)', marginLeft: 6 }}
+                  style={{ fontSize: '0.66rem', color: 'var(--wks-text-muted)', marginLeft: 6 }}
                 >
                   {state}
                 </span>
@@ -290,7 +290,7 @@ const PluginsManagerPane: React.FC<{ title?: string }> = () => {
                   display: 'flex',
                   gap: 16,
                   flexWrap: 'wrap',
-                  fontSize: '0.62rem',
+                  fontSize: '0.66rem',
                   color: 'var(--wks-text-muted)',
                 }}
               >
@@ -312,7 +312,7 @@ const PluginsManagerPane: React.FC<{ title?: string }> = () => {
                     border: 'none',
                     padding: 0,
                     cursor: 'pointer',
-                    fontSize: '0.62rem',
+                    fontSize: '0.66rem',
                     fontFamily: 'inherit',
                     color: 'var(--wks-accent)',
                     display: 'inline-flex',
@@ -351,7 +351,7 @@ const PluginsManagerPane: React.FC<{ title?: string }> = () => {
                     borderRadius: 'var(--wks-radius-sm)',
                     background: 'var(--wks-bg-input)',
                     border: '1px solid var(--wks-border-subtle)',
-                    fontSize: '0.6rem',
+                    fontSize: '0.64rem',
                     lineHeight: 1.5,
                     color: 'var(--wks-danger, #e05555)',
                     display: 'flex',

@@ -70,7 +70,7 @@ const HubStatus: React.FC<{ onOpenRemote?: () => void; compact?: boolean }> = ({
         alignItems: 'center',
         gap: 6,
         padding: '8px 12px 10px',
-        fontSize: '0.6rem',
+        fontSize: '0.64rem',
         color: 'var(--wks-text-faint)',
         borderTop: '1px solid var(--wks-border-subtle)',
         background: 'var(--wks-bg-input)',

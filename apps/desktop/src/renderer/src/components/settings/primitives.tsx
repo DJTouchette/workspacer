@@ -70,7 +70,7 @@ export function Section({
     <div id={id} style={{ marginBottom: '32px', animation: 'wks-fade-in 0.18s ease' }}>
       <div
         style={{
-          fontSize: '0.58rem',
+          fontSize: '0.62rem',
           fontWeight: 600,
           color: 'var(--wks-text-faint)',
           textTransform: 'uppercase',
@@ -365,7 +365,7 @@ export function SearchableSelect({
         >
           {selected ? selected.label : placeholder || 'Select…'}
         </span>
-        <span style={{ color: 'var(--wks-text-faint)', fontSize: '0.65rem', flexShrink: 0 }}>
+        <span style={{ color: 'var(--wks-text-faint)', fontSize: '0.68rem', flexShrink: 0 }}>
           ▾
         </span>
       </button>
@@ -422,7 +422,7 @@ export function SearchableSelect({
                       <div
                         style={{
                           padding: '6px 10px 2px',
-                          fontSize: '0.62rem',
+                          fontSize: '0.66rem',
                           fontWeight: 700,
                           letterSpacing: '0.06em',
                           textTransform: 'uppercase',

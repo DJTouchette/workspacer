@@ -248,7 +248,7 @@ export const ConversationEmptyState: React.FC<{
         <div
           style={{
             position: 'relative',
-            fontSize: '0.68rem',
+            fontSize: '0.7rem',
             marginTop: 6,
             color: colors.mutedDim,
             display: 'flex',
@@ -351,7 +351,7 @@ export const ConversationEmptyState: React.FC<{
         </div>
       )}
 
-      <div style={{ fontSize: '0.62rem', marginTop: 18, color: colors.mutedDim }}>
+      <div style={{ fontSize: '0.66rem', marginTop: 18, color: colors.mutedDim }}>
         Enter to send · Shift+Enter for a newline · + to attach files
       </div>
     </div>

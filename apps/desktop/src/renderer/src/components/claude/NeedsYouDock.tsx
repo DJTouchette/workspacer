@@ -47,7 +47,7 @@ export const NeedsYouDock: React.FC<{
             display: 'flex',
             alignItems: 'center',
             gap: 6,
-            fontSize: '0.6rem',
+            fontSize: '0.64rem',
             fontWeight: 700,
             textTransform: 'uppercase',
             letterSpacing: '0.06em',

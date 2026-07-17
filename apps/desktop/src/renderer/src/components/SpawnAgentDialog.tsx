@@ -787,7 +787,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                     display: 'inline-flex',
                     alignItems: 'center',
                     gap: 6,
-                    fontSize: '0.68rem',
+                    fontSize: '0.7rem',
                     fontWeight: 500,
                     fontFamily: 'inherit',
                     padding: '4px 11px',
@@ -813,14 +813,14 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                   >
                     {it.title}
                   </span>
-                  <span style={{ fontSize: '0.58rem', color: 'var(--wks-text-faint)' }}>
+                  <span style={{ fontSize: '0.62rem', color: 'var(--wks-text-faint)' }}>
                     {it.mcp?.url ? (it.mcp.type === 'sse' ? 'sse' : 'http') : 'stdio'}
                   </span>
                 </button>
               );
             })}
           </div>
-          <div style={{ color: 'var(--wks-text-faint)', fontSize: '0.6rem', marginTop: 6 }}>
+          <div style={{ color: 'var(--wks-text-faint)', fontSize: '0.64rem', marginTop: 6 }}>
             Only the checked servers are exposed to this session (--strict-mcp-config).
           </div>
         </div>
@@ -1051,7 +1051,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                       display: 'inline-flex',
                       alignItems: 'center',
                       gap: 5,
-                      fontSize: '0.68rem',
+                      fontSize: '0.7rem',
                       fontWeight: 600,
                       color: active
                         ? 'var(--wks-accent-text, var(--wks-text-primary))'
@@ -1063,7 +1063,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                       <span
                         title="Beta — not yet thoroughly tested"
                         style={{
-                          fontSize: '0.5rem',
+                          fontSize: '0.55rem',
                           fontWeight: 700,
                           letterSpacing: '0.04em',
                           lineHeight: 1,
@@ -1091,7 +1091,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                   <div
                     style={{
                       color: 'var(--wks-text-faint)',
-                      fontSize: '0.62rem',
+                      fontSize: '0.66rem',
                       fontFamily: 'var(--wks-font-mono)',
                     }}
                   >
@@ -1101,7 +1101,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                   <details style={{ marginTop: 4 }}>
                     <summary
                       style={{
-                        fontSize: '0.6rem',
+                        fontSize: '0.64rem',
                         color: 'var(--wks-text-faint)',
                         cursor: 'pointer',
                         listStylePosition: 'inside',
@@ -1145,7 +1145,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                   <div
                     style={{
                       color: 'var(--wks-danger, #e05555)',
-                      fontSize: '0.62rem',
+                      fontSize: '0.66rem',
                       marginBottom: 6,
                     }}
                   >
@@ -1191,7 +1191,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                 maxWidth: 460,
                 textAlign: 'center',
                 color: 'var(--wks-text-faint)',
-                fontSize: '0.62rem',
+                fontSize: '0.66rem',
                 lineHeight: 1.5,
               }}
             >
@@ -1233,7 +1233,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
                   whiteSpace: 'nowrap',
-                  fontSize: '0.68rem',
+                  fontSize: '0.7rem',
                   color: bypassSelected ? 'var(--wks-danger, #e05555)' : 'var(--wks-text-faint)',
                 }}
               >
@@ -1289,7 +1289,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
             <div
               style={{
                 marginTop: 12,
-                fontSize: '0.68rem',
+                fontSize: '0.7rem',
                 color: 'var(--wks-danger, #e05555)',
                 textAlign: 'center',
               }}
@@ -1337,7 +1337,7 @@ const SpawnAgentDialog: React.FC<SpawnAgentDialogProps> = ({
               Spawn agent
             </button>
           </div>
-          <div style={{ marginTop: 14, fontSize: '0.62rem', color: 'var(--wks-text-faint)' }}>
+          <div style={{ marginTop: 14, fontSize: '0.66rem', color: 'var(--wks-text-faint)' }}>
             enter to spawn · esc to cancel
           </div>
         </div>
@@ -1360,7 +1360,7 @@ function relTime(iso: string): string {
 }
 
 const quietLabel: React.CSSProperties = {
-  fontSize: '0.58rem',
+  fontSize: '0.62rem',
   fontWeight: 600,
   letterSpacing: '0.08em',
   textTransform: 'uppercase',
@@ -1422,7 +1422,7 @@ const inlineInput: React.CSSProperties = {
 
 /** Small ghost button (Browse…) — flat, rounds via the composer hover class. */
 const ghostBtnSmall: React.CSSProperties = {
-  fontSize: '0.68rem',
+  fontSize: '0.7rem',
   fontFamily: 'inherit',
   fontWeight: 600,
   cursor: 'pointer',

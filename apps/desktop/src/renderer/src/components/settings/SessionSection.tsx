@@ -131,7 +131,7 @@ const BinaryRow: React.FC<{
             Browse…
           </button>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.6rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.64rem' }}>
           <span
             style={{
               width: 7,
@@ -442,7 +442,7 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
 
       <div
         style={{
-          fontSize: '0.65rem',
+          fontSize: '0.68rem',
           fontWeight: 600,
           color: 'var(--wks-text-muted)',
           marginTop: 16,

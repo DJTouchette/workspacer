@@ -105,7 +105,7 @@ export const SystemNotices: React.FC = () => {
                 style={{
                   marginTop: 6,
                   cursor: 'pointer',
-                  fontSize: '0.66rem',
+                  fontSize: '0.69rem',
                   fontWeight: 600,
                   fontFamily: 'inherit',
                   background: 'transparent',
