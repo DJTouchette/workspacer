@@ -19,6 +19,7 @@ import ClaudeProfilesSection from '../components/settings/ClaudeProfilesSection'
 import SupervisorSection from '../components/settings/SupervisorSection';
 import ModelPricingSection from '../components/settings/ModelPricingSection';
 import PluginsSection from '../components/settings/PluginsSection';
+import ToolsSection from '../components/settings/ToolsSection';
 
 interface SettingsPaneProps {
   title: string;
@@ -228,6 +229,23 @@ const SECTIONS: SectionDef[] = [
     keywords: ['update', 'auto', 'upgrade', 'version', 'release', 'download', 'install', 'channel'],
   },
   {
+    key: 'tools',
+    label: 'System Tools',
+    group: 'System',
+    keywords: [
+      'tools',
+      'dependencies',
+      'git',
+      'tailscale',
+      'binary',
+      'path',
+      'missing',
+      'install',
+      'external',
+      'requirements',
+    ],
+  },
+  {
     key: 'cli',
     label: 'Command Line',
     group: 'System',
@@ -430,6 +448,8 @@ const SettingsPane: React.FC<SettingsPaneProps> = () => {
         return <NotificationsSection config={config} save={save} />;
       case 'updates':
         return <UpdatesSection config={config} save={save} />;
+      case 'tools':
+        return <ToolsSection />;
       case 'cli':
         return <CliSection />;
       case 'plugins':
