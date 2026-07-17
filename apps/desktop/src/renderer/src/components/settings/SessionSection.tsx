@@ -409,8 +409,8 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
         </div>
       </Row>
       <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
-        Size of the conversation text in the GUI view (messages, markdown, code blocks). Doesn't
-        affect the terminal view.
+        Size of the conversation text in the GUI view (messages, markdown, code blocks), on top of
+        the app-wide text size (Appearance). Doesn't affect the terminal view.
       </div>
 
       <Row label="Diff layout">

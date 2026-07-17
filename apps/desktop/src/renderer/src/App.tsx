@@ -1211,6 +1211,25 @@ function App() {
     return () => cancelAnimationFrame(raf);
   }, [activeAgentId, tabs, activeTabId]);
 
+  // ── App-wide text scale ──
+  // Applied as the document root font-size: every text size in the app is
+  // rem-based, so scaling the root scales all text (chrome + chat alike;
+  // the chat's own guiFontScale still multiplies on top). Clamped to sane
+  // bounds; mod+= / mod+- nudge by one step, mod+0 resets.
+  const uiFontScale = config.ui.uiFontScale ?? 1.0;
+  useEffect(() => {
+    document.documentElement.style.fontSize =
+      uiFontScale === 1 ? '' : `${(uiFontScale * 100).toFixed(1)}%`;
+  }, [uiFontScale]);
+  const setTextScale = useCallback(
+    (value: number) => {
+      const cur = config.ui.uiFontScale ?? 1.0;
+      const next = Math.round(Math.min(1.5, Math.max(0.8, value)) * 100) / 100;
+      if (next !== cur) void saveConfig({ ui: { ...config.ui, uiFontScale: next } });
+    },
+    [config.ui, saveConfig],
+  );
+
   useKeyboardNav({
     tabs,
     activeTabId,
@@ -1250,6 +1269,12 @@ function App() {
     onToggleInbox: toggleInbox,
     onToggleFleet: toggleFleet,
     onToggleUiMode: toggleUiMode,
+    onTextSizeUp: useCallback(() => setTextScale(uiFontScale + 0.05), [setTextScale, uiFontScale]),
+    onTextSizeDown: useCallback(
+      () => setTextScale(uiFontScale - 0.05),
+      [setTextScale, uiFontScale],
+    ),
+    onTextSizeReset: useCallback(() => setTextScale(1.0), [setTextScale]),
     onOpenReview: openReview,
     shortcuts: resolvedShortcuts,
   });

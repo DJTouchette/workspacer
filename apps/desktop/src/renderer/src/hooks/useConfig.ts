@@ -30,6 +30,10 @@ export interface UIConfig {
   /** Font scale for the GUI conversation view (1 = original size). Optional;
    *  absent = the default scale. */
   guiFontScale?: number;
+  /** App-wide text scale (1 = default). Applied as the document root
+   *  font-size, so every rem-sized text in the app follows. Adjustable from
+   *  Settings → Appearance and mod+= / mod+- / mod+0. */
+  uiFontScale?: number;
   /** How GUI diffs are laid out: 'stacked' (removed block then added block),
    *  'inline' (interleaved unified), or 'split' (side-by-side). Absent = stacked. */
   diffView?: 'stacked' | 'inline' | 'split';

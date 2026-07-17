@@ -18,6 +18,15 @@ interface AppearanceSectionProps {
   save: (partial: Partial<Config>) => Promise<Config>;
 }
 
+/** Snap presets on the text-size slider — the same ladder the chat presets
+ *  use, anchored at 100% (the app's designed size). */
+const TEXT_SCALE_PRESETS: { label: string; value: number }[] = [
+  { label: 'Default', value: 1.0 },
+  { label: 'Medium', value: 1.15 },
+  { label: 'Large', value: 1.3 },
+  { label: 'XL', value: 1.5 },
+];
+
 const AppearanceSection: React.FC<AppearanceSectionProps> = ({ config, save }) => {
   const customThemes = config.ui.customThemes ?? {};
   const activeTheme = resolveTheme(config.ui.theme, customThemes);
@@ -146,6 +155,52 @@ const AppearanceSection: React.FC<AppearanceSectionProps> = ({ config, save }) =
       {isCustomThemeId(config.ui.theme) && customThemes[config.ui.theme] && (
         <ThemeMaker config={config} save={save} themeId={config.ui.theme} />
       )}
+      <Row label="Text size">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <input
+            type="range"
+            min={0.8}
+            max={1.5}
+            step={0.05}
+            value={config.ui.uiFontScale ?? 1.0}
+            onChange={(e) => save({ ui: { ...config.ui, uiFontScale: Number(e.target.value) } })}
+            list="wks-text-scale-presets"
+            style={{ width: 180, accentColor: 'var(--wks-accent)' }}
+          />
+          {/* Snap points at the preset scales. */}
+          <datalist id="wks-text-scale-presets">
+            {TEXT_SCALE_PRESETS.map((p) => (
+              <option key={p.value} value={p.value} label={p.label} />
+            ))}
+          </datalist>
+          <span
+            style={{
+              fontSize: '0.72rem',
+              fontVariantNumeric: 'tabular-nums',
+              color: 'var(--wks-text-secondary)',
+              width: 42,
+              textAlign: 'right',
+            }}
+          >
+            {Math.round((config.ui.uiFontScale ?? 1.0) * 100)}%
+          </span>
+          <div style={{ display: 'flex', gap: 4 }}>
+            {TEXT_SCALE_PRESETS.map((p) => (
+              <ModeButton
+                key={p.value}
+                label={p.label}
+                active={(config.ui.uiFontScale ?? 1.0) === p.value}
+                onClick={() => save({ ui: { ...config.ui, uiFontScale: p.value } })}
+              />
+            ))}
+          </div>
+        </div>
+      </Row>
+      <div style={{ fontSize: '0.72rem', color: 'var(--wks-text-disabled)' }}>
+        Scales all text in the app (the terminal view and chat keep their own additional size
+        settings). Also on Ctrl/Cmd + = , - and 0 to reset.
+      </div>
+
       <Row label="Corners">
         <div style={{ display: 'flex', gap: '4px' }}>
           <ModeButton

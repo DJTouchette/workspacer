@@ -155,6 +155,10 @@ interface UseKeyboardNavOptions {
   onToggleInbox?: () => void;
   onToggleFleet?: () => void;
   onToggleUiMode?: () => void;
+  /** App-wide text scale nudges (mod+= / mod+- / mod+0). */
+  onTextSizeUp?: () => void;
+  onTextSizeDown?: () => void;
+  onTextSizeReset?: () => void;
   onOpenReview?: () => void;
   shortcuts?: Record<string, string>;
 }
@@ -189,6 +193,9 @@ export function useKeyboardNav({
   onToggleInbox,
   onToggleFleet,
   onToggleUiMode,
+  onTextSizeUp,
+  onTextSizeDown,
+  onTextSizeReset,
   onOpenReview,
   onSpawnAgent,
   shortcuts = {},
@@ -414,6 +421,15 @@ export function useKeyboardNav({
         case 'toggle-ui-mode':
           onToggleUiMode?.();
           return true;
+        case 'text-size-up':
+          onTextSizeUp?.();
+          return true;
+        case 'text-size-down':
+          onTextSizeDown?.();
+          return true;
+        case 'text-size-reset':
+          onTextSizeReset?.();
+          return true;
         default:
           return false; // not owned here
       }
@@ -567,6 +583,9 @@ export function useKeyboardNav({
     onToggleInbox,
     onToggleFleet,
     onToggleUiMode,
+    onTextSizeUp,
+    onTextSizeDown,
+    onTextSizeReset,
     onOpenReview,
   ]);
 }

@@ -175,6 +175,9 @@ export const ACTION_REGISTRY: ActionMeta[] = [
   { action: 'save-session', label: 'Save session', section: 'Tools' },
   { action: 'settings', label: 'Settings', section: 'Tools' },
   { action: 'toggle-help', label: 'Toggle help', section: 'Tools' },
+  { action: 'text-size-up', label: 'Text size up', section: 'Tools' },
+  { action: 'text-size-down', label: 'Text size down', section: 'Tools' },
+  { action: 'text-size-reset', label: 'Reset text size', section: 'Tools' },
   // Fleet (active only while the deck is open). Movement is bound per
   // fleet view — the Cards grid navigates spatially, the List linearly — so
   // each has its own remappable set; actions on the selected agent are shared.
