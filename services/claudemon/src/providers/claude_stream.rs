@@ -612,15 +612,18 @@ fn usage_model(model: &str) -> AgentUpdate {
     }
 }
 
-/// Context occupancy from an assistant message's `usage`: everything the last
-/// API request put in the window (fresh + cached input + output).
+/// Context occupancy from an assistant message's `usage`: the request's INPUT
+/// side only (fresh + cached input) — the same definition Claude Code's own
+/// /context uses and the transcript-derived calc in session/usage.rs applies.
+/// Output tokens are deliberately excluded: they only join the window as next
+/// turn's input, and counting them here made the stream gauge read higher than
+/// the PTY statusline for the same session.
 fn context_tokens_from(usage: Option<&Value>) -> Option<u64> {
     let u = usage?;
     let get = |k: &str| u.get(k).and_then(Value::as_u64).unwrap_or(0);
     let total = get("input_tokens")
         + get("cache_read_input_tokens")
-        + get("cache_creation_input_tokens")
-        + get("output_tokens");
+        + get("cache_creation_input_tokens");
     (total > 0).then_some(total)
 }
 
@@ -1472,7 +1475,8 @@ mod tests {
                 output_tokens: None,
                 cached_input_tokens: None,
                 cost_usd: None,
-                context_tokens: Some(10 + 22474 + 4427 + 41),
+                // Input side only — output joins the window next turn.
+                context_tokens: Some(10 + 22474 + 4427),
                 context_window: None,
             }]
         );

@@ -289,11 +289,17 @@ fn translate_event_msg(payload: &Value) -> Vec<AgentUpdate> {
                 // Context occupancy comes from `last_token_usage` — the most
                 // recent request, i.e. what's actually in the window.
                 // `total_token_usage` is CUMULATIVE across the session and
-                // pins the context meter at 100% within a few turns.
+                // pins the context meter at 100% within a few turns. Within
+                // the last request, prefer the INPUT side: `total_tokens`
+                // also counts output + reasoning, which don't carry forward
+                // into the window (same convention as codex.rs / Claude).
                 let context_tokens = info
                     .and_then(|i| i.get("last_token_usage"))
-                    .and_then(|l| l.get("total_tokens"))
-                    .and_then(Value::as_u64)
+                    .and_then(|l| {
+                        l.get("input_tokens")
+                            .or_else(|| l.get("total_tokens"))
+                            .and_then(Value::as_u64)
+                    })
                     .or_else(|| Some(input.unwrap_or(0) + output.unwrap_or(0)));
                 let context_window = info
                     .and_then(|i| i.get("model_context_window"))
@@ -1018,7 +1024,8 @@ mod tests {
                     output_tokens: Some(40196),
                     cached_input_tokens: None,
                     cost_usd: None,
-                    context_tokens: Some(132552),
+                    // last's input side — output/reasoning don't carry forward.
+                    context_tokens: Some(132153),
                     context_window: Some(258400),
                 },
                 AgentUpdate::RateLimits {

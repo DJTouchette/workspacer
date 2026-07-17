@@ -120,7 +120,8 @@ describe('SessionUsageAccumulator.applyUsage — subagent (sidechain) turns', ()
     expect(s.usage!.model).toBe('claude-fable-5');
     expect(s.usage!.contextTokens).toBe(1_000);
     expect(s.peakContext).toBe(1_000);
-    expect(s.usage!.contextLimit).toBe(200_000);
+    // Fable is 1M-native.
+    expect(s.usage!.contextLimit).toBe(1_000_000);
   });
 
   it('splits tokens/cost per model across main and sidechain turns', () => {

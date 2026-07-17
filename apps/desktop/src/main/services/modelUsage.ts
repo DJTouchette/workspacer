@@ -68,8 +68,10 @@ export const DEFAULT_RATES: ModelRates = { input: 3, output: 15, contextLimit: 2
 // Claude 3 Opus ids ('claude-3-opus-20240229') don't start with 'claude-opus'
 // at all, hence the separate 'claude-3-opus' entry.
 export const MODEL_RATES: Record<string, ModelRates> = {
-  'claude-fable': { input: 10, output: 50, contextLimit: 200_000 },
-  'claude-mythos': { input: 10, output: 50, contextLimit: 200_000 },
+  // Fable / Mythos are 1M-native (no [1m] id marker to detect at runtime) —
+  // the 200K default made their context gauges read 5× too high.
+  'claude-fable': { input: 10, output: 50, contextLimit: 1_000_000 },
+  'claude-mythos': { input: 10, output: 50, contextLimit: 1_000_000 },
   'claude-opus': { input: 5, output: 25, contextLimit: 200_000 },
   'claude-opus-4-1-': { input: 15, output: 75, contextLimit: 200_000 },
   'claude-opus-4-0': { input: 15, output: 75, contextLimit: 200_000 },

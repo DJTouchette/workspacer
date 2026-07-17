@@ -466,6 +466,15 @@ mod tests {
         assert_eq!(u.context_limit, 1_000_000, "should promote to 1M");
     }
 
+    /// Fable/Mythos are 1M-native — the limit must be 1M from the first turn,
+    /// not only after the observed context crosses the 200K promotion gate.
+    #[test]
+    fn context_window_fable_is_1m_native() {
+        let t = tx(vec![assistant_msg("m1", "claude-fable-5", 1_000, 0, 0, 10)]);
+        let u = from_transcript(&t).unwrap();
+        assert_eq!(u.context_limit, 1_000_000);
+    }
+
     /// At exactly 200_000 tokens the limit stays 200_000.
     #[test]
     fn context_window_at_200k_stays_200k() {

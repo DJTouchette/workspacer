@@ -344,6 +344,12 @@ pub fn context_window_for(model: &str) -> Option<u64> {
     if m.contains("gpt-4.1") {
         return Some(1_047_576);
     }
+    // Fable / Mythos are 1M-native — the max window is also the default, so
+    // their ids never carry the `[1m]` marker. Checked before the generic
+    // claude branch: reading them as 200K made the context gauge 5× too high.
+    if m.contains("fable") || m.contains("mythos") {
+        return Some(1_000_000);
+    }
     if m.contains("claude") {
         // 1M-context variants advertise it in the id (e.g. `[1m]`).
         return Some(if m.contains("[1m]") || m.contains("-1m") {
@@ -1009,6 +1015,9 @@ mod tests {
             Some(200_000)
         );
         assert_eq!(context_window_for("claude-opus-4-8[1m]"), Some(1_000_000));
+        // Fable/Mythos are 1M-native with no [1m] marker on the id.
+        assert_eq!(context_window_for("claude-fable-5"), Some(1_000_000));
+        assert_eq!(context_window_for("claude-mythos-1"), Some(1_000_000));
         assert_eq!(context_window_for("gpt-5-codex"), Some(272_000));
         assert_eq!(context_window_for("google/gemini-2.5-pro"), Some(1_048_576));
         assert_eq!(context_window_for("totally-unknown-model"), None);

@@ -49,6 +49,11 @@ describe('contextLimitFor', () => {
     expect(contextLimitFor('claude-opus-4', 100_000)).toBe(200_000);
   });
 
+  it('fable/mythos: 1M-native from the first turn (no promotion gate)', () => {
+    expect(contextLimitFor('claude-fable-5', 1_000)).toBe(1_000_000);
+    expect(contextLimitFor('claude-mythos-1', 1_000)).toBe(1_000_000);
+  });
+
   it('claude-opus: promotes to 1_000_000 when observed > 200k', () => {
     expect(contextLimitFor('claude-opus-4', 200_001)).toBe(1_000_000);
   });

@@ -44,7 +44,7 @@ describe('model rate overrides', () => {
 
   it('falls back to built-in rates when there is no override', () => {
     expect(turnCostUSD('claude-fable-5', { input_tokens: 1_000_000 })).toBe(10);
-    expect(contextLimitFor('claude-fable-5', 0)).toBe(200_000);
+    expect(contextLimitFor('claude-fable-5', 0)).toBe(1_000_000); // 1M-native
   });
 
   it('an override re-rates both cost and context window', () => {

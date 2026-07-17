@@ -46,6 +46,17 @@ const fn rates(input: f64, output: f64, cached_input: Option<f64>) -> ModelRates
     }
 }
 
+/// Like [`rates`], for 1M-native models (Fable / Mythos) whose ids carry no
+/// `[1m]` marker for the window to be inferred from.
+const fn rates_1m(input: f64, output: f64, cached_input: Option<f64>) -> ModelRates {
+    ModelRates {
+        input,
+        output,
+        cached_input,
+        context_limit: Some(1_000_000),
+    }
+}
+
 /// List pricing as of 2026-07. Longest matching prefix wins; overrides from
 /// `~/.workspacer/model-rates.json` win length ties.
 const BUILTIN: &[(&str, ModelRates)] = &[
@@ -63,8 +74,10 @@ const BUILTIN: &[(&str, ModelRates)] = &[
     // ('claude-opus-4-10…'), which are current generations and should price at
     // the generic 5/25. Claude 3 Opus ids ('claude-3-opus-20240229') don't
     // start with 'claude-opus' at all, hence the separate 'claude-3-opus' entry.
-    ("claude-fable", rates(10.0, 50.0, None)),
-    ("claude-mythos", rates(10.0, 50.0, None)),
+    // 1M-native — without the explicit limit the 200K default made
+    // transcript-derived context % read 5× high on Fable/Mythos sessions.
+    ("claude-fable", rates_1m(10.0, 50.0, None)),
+    ("claude-mythos", rates_1m(10.0, 50.0, None)),
     ("claude-opus", rates(5.0, 25.0, None)),
     ("claude-opus-4-1-", rates(15.0, 75.0, None)),
     ("claude-opus-4-0", rates(15.0, 75.0, None)),

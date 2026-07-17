@@ -112,16 +112,25 @@ pub fn translate(method: &str, params: &Value) -> Vec<AgentUpdate> {
                 .and_then(|t| pick(t, ["cachedInputTokens", "cached_input_tokens"]))
                 .or_else(|| pick(tu, ["cached_input_tokens", "cachedInputTokens"]));
             if input.is_some() || output.is_some() {
-                // Context occupancy: the LAST request's total (never the
-                // cumulative one — that pins the meter at 100% within a few
-                // turns). Only the legacy flat shape falls back to its own
-                // total, which was per-turn there.
+                // Context occupancy: the LAST request's INPUT side (never the
+                // cumulative total — that pins the meter at 100% within a few
+                // turns). Input-side (which already includes the cached subset)
+                // rather than the request's totalTokens: the total also counts
+                // output AND reasoning tokens, and reasoning doesn't carry
+                // forward into the window — a high-effort turn inflated the
+                // gauge by thousands of phantom tokens. Same convention as the
+                // Claude paths (input + cache). Legacy flat shape falls back
+                // through its own fields.
                 let context_tokens = last
-                    .and_then(|l| pick(l, ["totalTokens", "total_tokens"]))
+                    .and_then(|l| {
+                        pick(l, ["inputTokens", "input_tokens"])
+                            .or_else(|| pick(l, ["totalTokens", "total_tokens"]))
+                    })
                     .or_else(|| {
                         total.is_none().then(|| {
-                            pick(tu, ["total_tokens", "totalTokens"])
-                                .unwrap_or_else(|| input.unwrap_or(0) + output.unwrap_or(0))
+                            input
+                                .or_else(|| pick(tu, ["total_tokens", "totalTokens"]))
+                                .unwrap_or_else(|| output.unwrap_or(0))
                         })
                     });
                 let context_window = [tu, params].iter().find_map(|v| {
@@ -1688,7 +1697,8 @@ mod tests {
                 output_tokens: Some(200),
                 cached_input_tokens: Some(50),
                 cost_usd: None,
-                context_tokens: Some(1250),
+                // Input side only — output/reasoning don't occupy the window.
+                context_tokens: Some(1000),
                 context_window: Some(272000),
             }]
         );
@@ -1697,8 +1707,9 @@ mod tests {
     #[test]
     fn token_usage_thread_shape_uses_last_for_context() {
         // Modern `ThreadTokenUsage` wire: cumulative `total`, per-request
-        // `last`. Tokens readout = total; context occupancy = last (using the
-        // cumulative total here is the bug that pinned the meter at 100%).
+        // `last`. Tokens readout = total; context occupancy = last's INPUT
+        // side (the cumulative total pinned the meter at 100%; last's
+        // totalTokens counted output + reasoning, which don't carry forward).
         let p = json!({ "threadId": "t1", "tokenUsage": {
             "total": { "totalTokens": 4443142, "inputTokens": 4402946, "cachedInputTokens": 3733376,
                        "outputTokens": 40196, "reasoningOutputTokens": 17792 },
@@ -1713,7 +1724,7 @@ mod tests {
                 output_tokens: Some(40196),
                 cached_input_tokens: Some(3733376),
                 cost_usd: None,
-                context_tokens: Some(132552),
+                context_tokens: Some(132153),
                 context_window: Some(258400),
             }]
         );
