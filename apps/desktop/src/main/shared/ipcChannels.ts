@@ -151,6 +151,9 @@ export const IPC = {
   // ── Project search (editor search sidebar) ──
   SEARCH_PROJECT: 'search:project',
 
+  // ── External tool availability (git / provider CLIs / tailscale) ──
+  TOOLS_STATUS: 'tools:status',
+
   // ── Git (review pane) ──
   GIT_STATUS: 'git:status',
   GIT_LOG: 'git:log',

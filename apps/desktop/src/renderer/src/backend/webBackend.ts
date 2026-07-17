@@ -412,6 +412,9 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
         desktopBus: false,
       });
     },
+    // No host PATH to scan from a browser — report nothing so tool gates
+    // never show a false "missing" notice on the web mirror.
+    toolsStatus: () => Promise.resolve([]),
     listHubPlugins: () => {
       warnOnce('listHubPlugins');
       return Promise.resolve([]);

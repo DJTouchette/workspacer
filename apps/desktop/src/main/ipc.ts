@@ -13,6 +13,7 @@ import { sessionHistory } from './services/sessionHistory';
 import { layoutService } from './services/layoutService';
 import { updateService } from './services/updateService';
 import { worktreeInfo, createWorktree } from './services/worktreeService';
+import { toolsStatus } from './services/toolCheck';
 import { claudeSessionStore } from './services/claudeSessionStore';
 import { listClaudeModels } from './services/claudeModels';
 import {
@@ -887,6 +888,11 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   // ── Git (review pane) ── shells out to `git`; same backend as the git.*
   // hub capabilities, so the desktop reaches it whether it's on IPC or the bus.
+  // External tool availability — the registry of system binaries features
+  // depend on (git, provider CLIs, tailscale). `force` re-scans PATH after
+  // the user installs something ("Check again").
+  ipcMain.handle(IPC.TOOLS_STATUS, (_event, force?: boolean) => toolsStatus(!!force));
+
   ipcMain.handle(IPC.GIT_STATUS, (_event, cwd: string) => git.status(cwd));
   ipcMain.handle(IPC.GIT_LOG, (_event, cwd: string, limit?: number) => git.log(cwd, limit));
   ipcMain.handle(

@@ -9,6 +9,8 @@ import { ensureReviewStyles } from '../components/review/reviewStyles';
 import { parseUnifiedDiff } from '../lib/diff/parseDiff';
 import { REVIEW_OPEN_FILE_EVENT } from '../lib/reviewBus';
 import { requestOpenInEditor } from '../lib/editorBus';
+import MissingToolNotice from '../components/MissingToolNotice';
+import type { ExternalToolStatus } from '../types/electron';
 
 interface ReviewPaneProps {
   paneId: string;
@@ -241,6 +243,19 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive, onReturnToAgent 
   // Diff cache, invalidated wholesale on every refresh (any git action can
   // shift line numbers in unrelated hunks).
   const diffCache = useRef<Map<string, string>>(new Map());
+
+  // Everything here shells out to git — if it's not installed, show the
+  // guided missing-tool notice instead of raw ENOENT errors from git.status.
+  const [missingGit, setMissingGit] = useState<ExternalToolStatus | null>(null);
+  useEffect(() => {
+    window.electronAPI
+      .toolsStatus?.()
+      .then((tools) => {
+        const gitTool = tools.find((t) => t.id === 'git');
+        if (gitTool && !gitTool.available) setMissingGit(gitTool);
+      })
+      .catch(() => {});
+  }, []);
 
   const refresh = useCallback(async (): Promise<GitStatus | null> => {
     if (!cwd) return null;
@@ -533,6 +548,21 @@ const ReviewPane: React.FC<ReviewPaneProps> = ({ cwd, isActive, onReturnToAgent 
         cwd,
       }),
   });
+
+  if (missingGit) {
+    return (
+      <div style={{ height: '100%', backgroundColor: colors.bg, color: colors.text }}>
+        <MissingToolNotice
+          tool={missingGit}
+          feature="Review changes"
+          onAvailable={() => {
+            setMissingGit(null);
+            void refresh();
+          }}
+        />
+      </div>
+    );
+  }
 
   return (
     <div

@@ -588,6 +588,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   }> => ipcRenderer.invoke(IPC.SEARCH_PROJECT, opts),
 
   // Git (review pane) — shells out to git in the main process.
+  /** Availability of external tools features shell out to (git, provider CLIs,
+   *  tailscale). `force` re-scans PATH — the "Check again" button. */
+  toolsStatus: (force?: boolean): Promise<unknown[]> => ipcRenderer.invoke(IPC.TOOLS_STATUS, force),
+
   gitStatus: (cwd: string): Promise<GitStatus> => ipcRenderer.invoke(IPC.GIT_STATUS, cwd),
   gitLog: (cwd: string, limit?: number): Promise<GitLogEntry[]> =>
     ipcRenderer.invoke(IPC.GIT_LOG, cwd, limit),

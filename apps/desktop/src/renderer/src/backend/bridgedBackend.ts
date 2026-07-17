@@ -68,6 +68,7 @@ export const HOST_ONLY = [
   'pickFolder', // native OS folder dialog
   'pickFiles', // native OS file dialog
   'importChromeCookies', // reads the host browser profile
+  'toolsStatus', // external-tool PATH scan runs on the host
   'listHubPlugins', // plugin registry lives in main
   'installPlugin',
   'inspectPlugin', // pre-install manifest preview via the hub's guarded route

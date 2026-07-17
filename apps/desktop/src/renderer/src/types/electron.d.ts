@@ -17,6 +17,17 @@ import type {
   RemoteTokenScope,
 } from '../../../main/shared/ipcTypes';
 
+/** One entry of the external-tool registry (main/services/toolCheck.ts). */
+export interface ExternalToolStatus {
+  id: 'git' | 'claude' | 'codex' | 'opencode' | 'pi' | 'tailscale';
+  label: string;
+  bin: string;
+  features: string[];
+  install: string;
+  available: boolean;
+  path?: string;
+}
+
 export interface SessionListEntry {
   name: string;
   filename: string;
@@ -375,6 +386,9 @@ export interface ElectronAPI {
 
   // Git (review pane). Shells out to git on the host (main process / hub),
   // keyed off the active agent's cwd. A failed git command rejects the promise.
+  /** Availability of external tools features shell out to (git, provider
+   *  CLIs, tailscale). `force` re-scans PATH — the "Check again" button. */
+  toolsStatus?: (force?: boolean) => Promise<ExternalToolStatus[]>;
   gitStatus: (cwd: string) => Promise<GitStatus>;
   /** Recent commits, newest first (default 5, capped at 20). Empty repo → []. */
   gitLog: (cwd: string, limit?: number) => Promise<GitLogEntry[]>;
