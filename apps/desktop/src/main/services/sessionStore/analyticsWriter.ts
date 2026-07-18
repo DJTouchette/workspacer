@@ -30,14 +30,17 @@ export function writeHistory(session: ClaudeSessionState, status: 'active' | 'en
       ? path.basename(session.cwd.replace(/[/\\]+$/, ''))
       : session.sessionId.slice(0, 8),
     provider: session.provider ?? '',
-    model: session.usage?.model ?? '',
+    // Managed providers (codex/opencode/pi) never populate `session.usage` —
+    // their cost/tokens/model live only on statusLine. Fall back to it so their
+    // analytics rows carry the daemon's estimate instead of $0 / 0 tokens.
+    model: session.usage?.model ?? session.statusLine?.modelDisplay ?? '',
     gitBranch: gitBranchOf(session.cwd),
     startedAt: new Date(session.startedAt).toISOString(),
     endedAt: status === 'ended' ? new Date(now).toISOString() : '',
     durationMs: now - session.startedAt,
-    inputTokens: session.usage?.totalInputTokens ?? 0,
-    outputTokens: session.usage?.totalOutputTokens ?? 0,
-    costUSD: session.usage?.costUSD ?? 0,
+    inputTokens: session.usage?.totalInputTokens ?? session.statusLine?.totalInputTokens ?? 0,
+    outputTokens: session.usage?.totalOutputTokens ?? session.statusLine?.totalOutputTokens ?? 0,
+    costUSD: session.usage?.costUSD ?? session.statusLine?.costUSD ?? 0,
     peakContext: session.peakContext,
     toolCalls: session.totalToolCalls,
     messageCount: session.conversation.length,

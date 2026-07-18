@@ -94,10 +94,24 @@ export function isDuplicateMessage(
   session: ClaudeSessionState,
   role: string,
   content: string,
+  timestamp?: number,
 ): boolean {
   if (!content) return false;
   const recent = session.conversation.slice(-5);
-  return recent.some((t) => t.role === role && t.content && t.content === content);
+  // Key on timestamp when the wire item carried one: a JSONL replay-duplicate
+  // re-reads the same transcript line and keeps its *original* timestamp,
+  // whereas a genuinely repeated send ('yes', 'continue', …) gets a fresh one.
+  // Matching content alone would drop the real repeat — losing a user turn the
+  // daemon actually delivered and stranding a phantom optimistic bubble in the
+  // renderer (its FIFO expects the user-turn count to grow per delivery). When
+  // no timestamp is available we fall back to content-only dedup (unchanged).
+  return recent.some(
+    (t) =>
+      t.role === role &&
+      !!t.content &&
+      t.content === content &&
+      (timestamp === undefined || t.timestamp === timestamp),
+  );
 }
 
 /**
@@ -189,7 +203,11 @@ export function applyConversationItems(
     switch (kind) {
       case 'user_message': {
         const text = item.text ?? '';
-        if (text && !isDuplicateMessage(session, 'user', text)) {
+        // Only discriminate on timestamp when the wire item actually carried
+        // one — otherwise tsOf() falls back to Date.now(), which differs per
+        // call and would defeat content dedup for timestamp-less replays.
+        const ts = item.timestamp ? tsOf(item) : undefined;
+        if (text && !isDuplicateMessage(session, 'user', text, ts)) {
           session.conversation.push({ role: 'user', content: text, timestamp: tsOf(item) });
         }
         break;

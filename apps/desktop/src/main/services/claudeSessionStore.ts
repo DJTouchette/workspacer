@@ -495,10 +495,35 @@ class ClaudeSessionStore {
       // Flush any coalesced update synchronously so the final state is sent
       // before the session is forgotten by the renderer.
       this.flushPending(sessionId);
-      // Evict the session entry after a grace period so the map doesn't grow unboundedly.
+      // Evict the session entry after a grace period so the maps don't grow
+      // unboundedly. Every per-session Map/Set must be cleared, not just
+      // `sessions` — convSeq and watcherUpdates otherwise retain one entry per
+      // ended session for the whole process lifetime. Clearing the stale
+      // convSeq also lets a resumed (reused-id) session start fresh instead of
+      // forcing a spurious resync on its first delta (a reused id would inherit
+      // the prior life's seq and read the first delta as a gap).
       setTimeout(() => {
         this.sessions.delete(sessionId);
         this.usageAccumulator.forget(sessionId);
+        this.convSeq.delete(sessionId);
+        this.watcherUpdates.delete(sessionId);
+        this.resyncing.delete(sessionId);
+        this.spawnMeta.delete(sessionId);
+        const sl = this.statusLineTimers.get(sessionId);
+        if (sl) {
+          clearTimeout(sl);
+          this.statusLineTimers.delete(sessionId);
+        }
+        const mh = this.managedHistoryTimers.get(sessionId);
+        if (mh) {
+          clearTimeout(mh);
+          this.managedHistoryTimers.delete(sessionId);
+        }
+        const pf = this.pendingFlush.get(sessionId);
+        if (pf) {
+          clearTimeout(pf);
+          this.pendingFlush.delete(sessionId);
+        }
       }, 30_000).unref();
     } else {
       applyHookEvent(session, event);

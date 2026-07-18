@@ -129,6 +129,39 @@ describe('applyConversationItems — interrupt detection', () => {
   });
 });
 
+describe('applyConversationItems — repeated user message', () => {
+  it('a genuinely repeated user send lands as its own turn (not dropped as a replay-dup)', () => {
+    const s = mkSession();
+    // Same short text sent twice within 5 turns ('yes'/'continue'/'go on' …)
+    // but with distinct timestamps — a genuine repeat, not a JSONL replay.
+    applyConversationItems(
+      s,
+      [{ kind: 'user_message', text: 'yes', timestamp: '2026-07-17T10:00:00Z' }],
+      noUsage,
+    );
+    applyConversationItems(
+      s,
+      [{ kind: 'user_message', text: 'yes', timestamp: '2026-07-17T10:00:30Z' }],
+      noUsage,
+    );
+    expect(s.conversation.filter((t) => t.role === 'user')).toHaveLength(2);
+  });
+
+  it('a true JSONL replay-duplicate (same timestamp) is still deduped', () => {
+    const s = mkSession();
+    const item: ConversationItemWire = {
+      kind: 'user_message',
+      text: 'continue',
+      timestamp: '2026-07-17T10:00:00Z',
+    };
+    applyConversationItems(s, [item], noUsage);
+    // Re-delivery of the identical transcript line (compaction/resume replay)
+    // carries the same timestamp → must collapse to one turn.
+    applyConversationItems(s, [{ ...item }], noUsage);
+    expect(s.conversation.filter((t) => t.role === 'user')).toHaveLength(1);
+  });
+});
+
 describe('applyConversationItems — plan', () => {
   it('a plan item sets session.plan (full replacement)', () => {
     const s = mkSession();

@@ -114,6 +114,52 @@ describe('Stop → analytics snapshot re-arms each turn', () => {
   });
 });
 
+describe('SessionEnd eviction cleans per-session Maps (convSeq)', () => {
+  // The SessionEnd eviction timer used to remove only `this.sessions` and the
+  // usage accumulator entry. `convSeq` survived, so when a session id is reused
+  // on resume, the resumed life inherited the prior life's stale seq. With no
+  // `reset` frame, the first delta of the new life then looked like a gap and
+  // forced an unnecessary snapshot resync (an HTTP fetch) instead of applying
+  // the delta directly.
+  it('a resumed (reused-id) session applies its first delta instead of resyncing', () => {
+    const sid = uniqueId();
+
+    // ── First life ── empty heartbeat creates the session and advances convSeq to 3.
+    claudeSessionStore.applyConversationDelta({
+      session_id: sid,
+      seq: 3,
+      items: [],
+      reset: false,
+    } as never);
+
+    // End the session and let the 30 s eviction grace period elapse.
+    hook(sid, 'Stop');
+    hook(sid, 'SessionEnd');
+    vi.advanceTimersByTime(31_000); // fire the eviction timer
+
+    // ── Second life (same id, e.g. resume) ── first delta is seq 1 with one
+    // item and no `reset`. A stale convSeq=3 would make 1 !== 3+1 → resync.
+    const originalFetch = (global as { fetch?: typeof fetch }).fetch;
+    const fetchSpy = vi.fn(async () => ({ ok: false }) as Response);
+    (global as { fetch?: typeof fetch }).fetch = fetchSpy as unknown as typeof fetch;
+    try {
+      claudeSessionStore.applyConversationDelta({
+        session_id: sid,
+        seq: 1,
+        items: [{ kind: 'user_message', text: 'resumed hello' }],
+        reset: false,
+      } as never);
+
+      // No gap → no snapshot resync fetch, and the delta is applied in place.
+      expect(fetchSpy).not.toHaveBeenCalled();
+      const conv = claudeSessionStore.getSnapshot(sid)?.conversation ?? [];
+      expect(conv.some((t) => t.content === 'resumed hello')).toBe(true);
+    } finally {
+      (global as { fetch?: typeof fetch }).fetch = originalFetch;
+    }
+  });
+});
+
 describe('cwd backfill for delta-created sessions', () => {
   it("backfills cwd from the first hook when the session was created by a conversation delta with cwd ''", () => {
     const sid = uniqueId();

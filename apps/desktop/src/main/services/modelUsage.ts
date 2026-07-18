@@ -46,6 +46,9 @@ interface ModelRates {
   /** USD per million input tokens. cache-write = 1.25×, cache-read = 0.1×. */
   input: number;
   output: number;
+  /** USD per million cache-read tokens. Undefined ⇒ 0.1× input (the built-in
+   *  default). Mirrors the Rust engine's `cached_input.unwrap_or(input*0.1)`. */
+  cachedInput?: number;
   /** Standard context window in tokens. 1M variants are detected at runtime. */
   contextLimit: number;
 }
@@ -143,6 +146,10 @@ function ratesFor(model: string | null | undefined): ModelRates {
       best = {
         input: ov.input,
         output: ov.output,
+        // Honor an optional cache-read override — the Rust engine (usage.rs
+        // turn_cost_usd) reads the same field, so dropping it here diverges the
+        // two costing paths for the same model-rates.json.
+        cachedInput: typeof ov.cached_input === 'number' ? ov.cached_input : undefined,
         contextLimit:
           typeof ov.context_limit === 'number'
             ? ov.context_limit
@@ -197,7 +204,9 @@ export function contextLimitFor(model: string | null | undefined, observed: numb
 export function turnCostUSD(model: string | null | undefined, usage: RawUsage): number {
   const r = ratesFor(model);
   const cacheWrite = r.input * 1.25;
-  const cacheRead = r.input * 0.1;
+  // Cache reads default to 0.1× input, but a user override (cached_input) wins —
+  // matching the Rust engine's `cached_input.unwrap_or(input * 0.1)`.
+  const cacheRead = typeof r.cachedInput === 'number' ? r.cachedInput : r.input * 0.1;
   const dollars =
     (usage.input_tokens ?? 0) * r.input +
     (usage.cache_creation_input_tokens ?? 0) * cacheWrite +

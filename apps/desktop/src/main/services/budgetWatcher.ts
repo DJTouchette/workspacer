@@ -36,12 +36,18 @@ export function checkBudget(session: ClaudeSessionState): void {
     return;
   }
   if (alerted.has(session.sessionId)) return;
-  alerted.add(session.sessionId);
 
   const cfg =
     (configService.getConfig() as { notifications?: { enabled?: boolean; sound?: boolean } })
       .notifications ?? {};
   if (cfg.enabled === false || !Notification.isSupported()) return;
+
+  // Latch only once a notification will actually be delivered. Latching before
+  // the enabled/support check would permanently suppress the alert: a crossing
+  // while notifications are off would mark the session alerted with nothing
+  // shown, and since cumulative cost never drops back under budget the latch
+  // (cleared only at `cost < budget`) would never re-arm.
+  alerted.add(session.sessionId);
 
   const label = session.label || 'Agent';
   new Notification({
