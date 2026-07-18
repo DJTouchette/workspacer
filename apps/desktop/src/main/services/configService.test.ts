@@ -244,7 +244,7 @@ describe('deepMerge semantics – via configService.saveConfig', () => {
     const cfg = configService.getConfig();
     expect(cfg.ui.customThemes).toEqual(one);
     // Sibling ui keys survive the partial save.
-    expect(cfg.ui.theme).toBe('dark');
+    expect(cfg.ui.theme).toBe('everforest');
   });
 
   it('replaces claude.budgets wholesale — clearing a per-session budget persists', () => {
@@ -268,7 +268,7 @@ describe('deepMerge semantics – via configService.saveConfig', () => {
     // default value survives.
     configService.saveConfig({ ui: { theme: null } as any });
     const cfg = configService.getConfig();
-    expect(cfg.ui.theme).toBe('dark');
+    expect(cfg.ui.theme).toBe('everforest');
   });
 
   it("an empty/null config section does not wipe that section's defaults", () => {
@@ -277,7 +277,7 @@ describe('deepMerge semantics – via configService.saveConfig', () => {
     configService.saveConfig({ ui: null } as any);
     const cfg = configService.getConfig();
     expect(cfg.ui).not.toBeNull();
-    expect(cfg.ui.theme).toBe('dark');
+    expect(cfg.ui.theme).toBe('everforest');
     expect(cfg.ui.animations).toBe(false);
     expect(cfg.ui.fontSize).toBe(14);
   });
@@ -417,7 +417,7 @@ describe('loadFromDisk fail-safe — broken or unreadable config.yaml', () => {
 
   it('ENOENT (first run) still seeds the file with defaults', () => {
     const cfg = configService.reloadConfig();
-    expect(cfg.ui.theme).toBe('dark');
+    expect(cfg.ui.theme).toBe('everforest');
     // writeDefaults ran: defaults were persisted for the first run.
     expect(mockedFs.writeFileSync).toHaveBeenCalledTimes(1);
   });
@@ -427,7 +427,7 @@ describe('loadFromDisk fail-safe — broken or unreadable config.yaml', () => {
     const cfg = configService.reloadConfig();
 
     // Defaults in memory…
-    expect(cfg.ui.theme).toBe('dark');
+    expect(cfg.ui.theme).toBe('everforest');
     // …but the broken file is never overwritten (no writeDefaults, no save).
     expect(mockedFs.writeFileSync).not.toHaveBeenCalled();
     // The unparseable file is backed up next to the original.
@@ -457,7 +457,7 @@ describe('loadFromDisk fail-safe — broken or unreadable config.yaml', () => {
     });
     const cfg = configService.reloadConfig();
 
-    expect(cfg.ui.theme).toBe('dark');
+    expect(cfg.ui.theme).toBe('everforest');
     // No writeDefaults (that's only for ENOENT), no backup (nothing readable).
     expect(mockedFs.writeFileSync).not.toHaveBeenCalled();
     expect(mockedFs.copyFileSync).not.toHaveBeenCalled();

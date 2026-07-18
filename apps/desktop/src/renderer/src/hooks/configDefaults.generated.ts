@@ -9,7 +9,7 @@
 export const CONFIG_DEFAULTS = {
   ui: {
     animations: false,
-    theme: 'dark',
+    theme: 'everforest',
     cornerStyle: '',
     borderColor: '',
     fontFamily: 'Inter, system-ui, sans-serif',

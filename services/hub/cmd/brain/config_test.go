@@ -63,8 +63,8 @@ func TestConfigGetReloadsOnExternalChange(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", dir)
 
 	c := newConfigService()
-	if ui := c.get()["ui"].(map[string]any); ui["theme"] != "dark" {
-		t.Fatalf("initial theme should be the default dark, got %v", ui["theme"])
+	if ui := c.get()["ui"].(map[string]any); ui["theme"] != "everforest" {
+		t.Fatalf("initial theme should be the default everforest, got %v", ui["theme"])
 	}
 
 	// Simulate the desktop app rewriting config.yaml in its own process.
@@ -95,9 +95,9 @@ func TestConfigSaveFoldsInExternalChange(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", dir)
 
 	c := newConfigService()
-	// Prime the in-memory cache — theme defaults to dark.
-	if ui := c.get()["ui"].(map[string]any); ui["theme"] != "dark" {
-		t.Fatalf("precondition: default theme should be dark, got %v", ui["theme"])
+	// Prime the in-memory cache — theme defaults to everforest.
+	if ui := c.get()["ui"].(map[string]any); ui["theme"] != "everforest" {
+		t.Fatalf("precondition: default theme should be everforest, got %v", ui["theme"])
 	}
 
 	// The desktop app rewrites config.yaml in its own process, changing the theme.
@@ -136,8 +136,8 @@ func TestDefaultConfigParses(t *testing.T) {
 	if sc["toggle-terminal"] != "mod+`" {
 		t.Fatalf("toggle-terminal = %v, want mod+`", sc["toggle-terminal"])
 	}
-	if ui, _ := cfg["ui"].(map[string]any); ui["theme"] != "dark" {
-		t.Fatalf("ui.theme = %v, want dark", ui["theme"])
+	if ui, _ := cfg["ui"].(map[string]any); ui["theme"] != "everforest" {
+		t.Fatalf("ui.theme = %v, want everforest", ui["theme"])
 	}
 }
 
