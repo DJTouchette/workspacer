@@ -9,6 +9,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useAttentionFeed } from '../src/hooks/useAttentionFeed';
+import { compactClaudeSnapshotForBackground } from '../src/lib/compactClaudeSnapshot';
 
 const T0 = 1_700_000_000_000;
 const STUCK_MS = 5 * 60_000;
@@ -95,5 +96,39 @@ describe('useAttentionFeed — snooze pruning (#12)', () => {
     expect(vi.getTimerCount()).toBe(0);
     // And the item re-surfaces now that the snooze is over.
     expect(result.current.items.some((it) => it.signature === sig)).toBe(true);
+  });
+});
+
+describe('useAttentionFeed — bigdiff after background compaction', () => {
+  it('surfaces a bigdiff card for one large rewrite even once its input has been compacted', () => {
+    // A single ~200-line Edit: old_string + new_string whose JSON far exceeds
+    // the 1000-char file-change compaction budget.
+    const bigOld = Array.from({ length: 200 }, (_, i) => `old line ${i} ${'x'.repeat(20)}`).join(
+      '\n',
+    );
+    const bigNew = Array.from({ length: 200 }, (_, i) => `new line ${i} ${'y'.repeat(20)}`).join(
+      '\n',
+    );
+    const raw = {
+      ambientState: 'idle',
+      lastActivity: T0 - 1000,
+      fileChanges: [
+        {
+          path: '/repo/src/big.ts',
+          toolName: 'Edit',
+          timestamp: T0 - 1000,
+          input: { file_path: '/repo/src/big.ts', old_string: bigOld, new_string: bigNew },
+        },
+      ],
+    } as any;
+
+    // App.tsx stores the *background-compacted* snapshot into snapshotBySession,
+    // which is exactly what reaches useAttentionFeed.
+    const compacted = compactClaudeSnapshotForBackground(raw);
+    const snapshots = { s1: compacted };
+
+    const { result } = renderHook(() => useAttentionFeed(snapshots, [agent('a1', 's1')]));
+
+    expect(result.current.items.some((it) => it.kind === 'bigdiff')).toBe(true);
   });
 });

@@ -42,6 +42,19 @@ function lineCount(s: unknown): number {
   return s.split('\n').length;
 }
 
+// Background compaction (compactClaudeSnapshotForBackground) replaces a file
+// change's `input` with `{ __workspacerTruncated, originalChars, preview }`
+// once its JSON exceeds the budget — discarding new_string/old_string/content.
+// Since the snapshots reaching this hook are ALWAYS background-compacted, a
+// single large rewrite would otherwise estimate as 0 lines. Recover a size
+// estimate from what the wrapper preserves so `bigdiff` still fires.
+const AVG_CHARS_PER_LINE = 40;
+function truncatedLineEstimate(inp: any): number | null {
+  if (!inp || typeof inp !== 'object' || inp.__workspacerTruncated !== true) return null;
+  const chars = typeof inp.originalChars === 'number' ? inp.originalChars : 0;
+  return Math.max(0, Math.round(chars / AVG_CHARS_PER_LINE));
+}
+
 /** Rough added+removed line estimate across an agent's file changes. */
 function diffSize(snap: ClaudeSessionSnapshot): { lines: number; files: number } {
   const changes = snap.fileChanges ?? [];
@@ -50,6 +63,13 @@ function diffSize(snap: ClaudeSessionSnapshot): { lines: number; files: number }
   for (const ch of changes) {
     files.add(ch.path);
     const inp = ch.input ?? {};
+    // Compacted inputs no longer carry the diff strings — estimate from the
+    // preserved original size instead of undercounting to zero.
+    const truncated = truncatedLineEstimate(inp);
+    if (truncated != null) {
+      lines += truncated;
+      continue;
+    }
     // Edit: new_string + old_string; Write: content. Multi-edit: edits[].
     lines += lineCount(inp.new_string) + lineCount(inp.old_string) + lineCount(inp.content);
     if (Array.isArray(inp.edits)) {

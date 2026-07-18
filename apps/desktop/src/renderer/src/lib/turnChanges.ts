@@ -42,8 +42,19 @@ export interface EditEstimate {
 export function patchLineCounts(diff: string): EditEstimate {
   let added = 0;
   let removed = 0;
-  for (const line of diff.split('\n')) {
-    if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('***')) continue;
+  const lines = diff.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    // Unified-diff file-header pair: `--- <old>` immediately followed by
+    // `+++ <new>`. Skip both. A removed/added *content* line that merely
+    // begins with `--`/`++` (markdown `---` rules, `-- comments`, `++counter`)
+    // is not part of such a pair, so it still counts.
+    if (line.startsWith('--- ') && lines[i + 1]?.startsWith('+++ ')) {
+      i++; // consume the `+++` counterpart too
+      continue;
+    }
+    // apply_patch envelope / context-diff separators, and hunk headers.
+    if (line.startsWith('***') || line.startsWith('@@')) continue;
     if (line.startsWith('+')) added++;
     else if (line.startsWith('-')) removed++;
   }
@@ -141,10 +152,14 @@ function stripCwd(toolPath: string, cwd?: string): string {
 function matchStatusFile(toolPath: string, files: FileStatus[]): FileStatus | undefined {
   const t = norm(toolPath);
   const base = t.split('/').pop();
-  return files.find((f) => {
-    const fp = norm(f.path);
-    return t === fp || t.endsWith('/' + fp) || fp.split('/').pop() === base;
-  });
+  // Precedence across the whole list: an exact match, else a suffix match,
+  // else a basename match — so an earlier same-basename file can't steal the
+  // match from the file that is the true exact/suffix hit.
+  return (
+    files.find((f) => t === norm(f.path)) ??
+    files.find((f) => t.endsWith('/' + norm(f.path))) ??
+    files.find((f) => norm(f.path).split('/').pop() === base)
+  );
 }
 
 /** Estimate-only snapshot from tool inputs — the non-git fallback. */

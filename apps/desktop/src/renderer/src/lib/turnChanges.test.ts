@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { collectEditedFiles, estimateSnapshot, captureTurnSnapshot } from './turnChanges';
+import {
+  collectEditedFiles,
+  estimateSnapshot,
+  captureTurnSnapshot,
+  patchLineCounts,
+} from './turnChanges';
 import type { ToolCall } from '../types/claudeSession';
 
 const tc = (name: string, input: any): ToolCall => ({
@@ -145,6 +150,35 @@ describe('captureTurnSnapshot', () => {
     expect(snap.files[0].relPath).toBe('a.ts');
   });
 
+  it('matches the exact/suffix path, not an earlier same-basename file', async () => {
+    (window as any).electronAPI = {
+      gitStatus: vi.fn().mockResolvedValue({
+        branch: 'main',
+        files: [
+          { path: 'packages/a/index.ts', staged: ' ', unstaged: 'M' },
+          { path: 'packages/b/index.ts', staged: ' ', unstaged: 'M' },
+        ],
+      }),
+      gitNumstat: vi
+        .fn()
+        .mockResolvedValueOnce([
+          { path: 'packages/a/index.ts', added: 100, deleted: 100 },
+          { path: 'packages/b/index.ts', added: 5, deleted: 2 },
+        ])
+        .mockResolvedValueOnce([]),
+    };
+    const snap = await captureTurnSnapshot(
+      '/repo',
+      new Map([['/repo/packages/b/index.ts', { added: 1, removed: 1 }]]),
+    );
+    expect(snap.files).toHaveLength(1);
+    expect(snap.files[0]).toMatchObject({
+      relPath: 'packages/b/index.ts',
+      added: 5,
+      removed: 2,
+    });
+  });
+
   it('treats binary numstat entries as binary (null counts)', async () => {
     (window as any).electronAPI = {
       gitStatus: vi.fn().mockResolvedValue({
@@ -161,5 +195,26 @@ describe('captureTurnSnapshot', () => {
       new Map([['/repo/img.png', { added: 0, removed: 0 }]]),
     );
     expect(snap.files[0]).toMatchObject({ added: null, removed: null });
+  });
+});
+
+describe('patchLineCounts', () => {
+  it('counts content lines that begin with --/++ (not diff headers)', () => {
+    const diff = [
+      '--- a/notes.md',
+      '+++ b/notes.md',
+      '@@ -1,4 +1,4 @@',
+      ' keep',
+      '----', // removed a markdown '---' horizontal rule
+      '--- old comment', // removed a '-- old comment' line
+      '+++added', // added a '++added' line
+      '+kept',
+    ].join('\n');
+    expect(patchLineCounts(diff)).toEqual({ added: 2, removed: 2 });
+  });
+
+  it('still ignores genuine unified-diff headers', () => {
+    const diff = ['--- a/f', '+++ b/f', '@@ -1 +1,2 @@', '-old', '+new1', '+new2'].join('\n');
+    expect(patchLineCounts(diff)).toEqual({ added: 2, removed: 1 });
   });
 });

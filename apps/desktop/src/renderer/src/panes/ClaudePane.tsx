@@ -806,6 +806,10 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   const [optimisticLoading, setOptimisticLoading] = useState(false);
   // Count of user-messages we've seen consumed by session.conversation.
   const consumedUserCountRef = useRef(0);
+  // Whether the session has actually left idle (→ thinking/streaming) since the
+  // last optimistic send. Guards the idle-clear below so the *pre-send* idle
+  // snapshot can't cancel the optimistic bridge before the turn even starts.
+  const sawServerActivitySinceSendRef = useRef(false);
 
   // Handle send — detect issue keys, resolve context, then write to Claude's TUI
   const handleSend = useCallback(async () => {
@@ -830,6 +834,9 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     };
     setOptimisticMessages((prev) => [...prev, optimisticTurn]);
     setOptimisticLoading(true);
+    // Re-arm the idle-clear guard: it may only fire once we've observed the
+    // session leave idle for THIS send (see the optimistic-dequeue effect).
+    sawServerActivitySinceSendRef.current = false;
     // Sending re-sticks the view: your own message (and the reply) should be
     // in sight even if you'd scrolled up — the ResizeObserver does the rest.
     stickToBottomRef.current = true;
@@ -910,10 +917,17 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
         newlyConsumed >= prev.length ? [] : prev.slice(newlyConsumed),
       );
     }
-    // Clear optimistic loading when server reports idle or we get a response
+    // Clear optimistic loading once the server has actually engaged. A chat
+    // message is normally sent from an *idle* prompt, so the pre-send idle
+    // snapshot must NOT clear the optimistic bridge — only a *post-turn* idle
+    // (one we reach after having seen thinking/streaming) counts as completion.
+    if (session?.ambientState === 'thinking' || session?.ambientState === 'streaming') {
+      sawServerActivitySinceSendRef.current = true;
+    }
     if (
       optimisticLoading &&
-      (session?.ambientState === 'idle' || session?.ambientState === 'streaming')
+      (session?.ambientState === 'streaming' ||
+        (session?.ambientState === 'idle' && sawServerActivitySinceSendRef.current))
     ) {
       setOptimisticLoading(false);
     }
