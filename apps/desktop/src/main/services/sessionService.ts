@@ -151,8 +151,26 @@ class SessionService {
 
   saveSession(data: SessionData): string {
     this.ensureDir();
-    const filename = sanitizeFilename(data.name) + '.yaml';
-    const filePath = path.join(getSessionsDir(), filename);
+    const dir = getSessionsDir();
+    const base = sanitizeFilename(data.name);
+    // Two distinct session names can slug to the same file (e.g. 'Feature: Auth'
+    // and 'Feature Auth' both -> feature-auth.yaml). Writing blindly would let the
+    // second session clobber the first (silent data loss). Reuse the file only
+    // when it already holds THIS session (same name) — which keeps autosaves
+    // stable — otherwise pick the next free numeric suffix.
+    let filename = base + '.yaml';
+    let filePath = path.join(dir, filename);
+    for (let i = 2; fs.existsSync(filePath); i++) {
+      let existingName: string | undefined;
+      try {
+        existingName = (yaml.load(fs.readFileSync(filePath, 'utf-8')) as SessionData)?.name;
+      } catch {
+        // Malformed file — don't overwrite data we can't identify.
+      }
+      if (existingName === data.name) break;
+      filename = `${base}-${i}.yaml`;
+      filePath = path.join(dir, filename);
+    }
     const yamlStr = yaml.dump(data, { lineWidth: -1 });
     atomicWriteFileSync(filePath, yamlStr);
     return filename;

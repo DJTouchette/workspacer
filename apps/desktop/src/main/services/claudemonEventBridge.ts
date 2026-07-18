@@ -43,8 +43,22 @@ export async function startClaudemonEventBridge(): Promise<void> {
         console.warn('[claudemon-events] malformed JSON frame, skipping:', err);
         return;
       }
+      // A managed session's process exiting comes through as a SessionEnd frame
+      // (claudemon's `deregister_managed` sets mode=Stopped and broadcasts event
+      // "SessionEnd"). Managed backends fire no Claude hooks, so this is the ONLY
+      // signal that ends them — route it into the store's ended pipeline
+      // (status -> 'ended', history write, per-session eviction) via a synthetic
+      // SessionEnd hook. Without this the card stays 'live/idle' forever and the
+      // session's maps leak for the process lifetime.
+      if (update?.event === 'SessionEnd' && update.session_id) {
+        claudeSessionStore.handleHookEvent({
+          hook_event_name: 'SessionEnd',
+          session_id: update.session_id,
+        });
+        return;
+      }
       // Only managed sessions emit mode changes via `set_managed_mode` (event
-      // "Managed"). Ignore Spawn / SessionEnd and any Claude-PTY updates — their
+      // "Managed"). Ignore Spawn and any Claude-PTY updates — their
       // ambientState is hook-driven and must not be clobbered here.
       if (update?.event !== 'Managed') return;
       const mode = update.state?.mode;

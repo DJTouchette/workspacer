@@ -304,10 +304,18 @@ export function applyConversationItems(
             turn.command.output = output;
             if (item.is_error) turn.command.outputIsError = true;
             attached = true;
-          } else if (turn.command.output === output) {
-            attached = true; // resync replay of the same output
+            break;
           }
-          break;
+          if (turn.command.output === output) {
+            attached = true; // resync replay of the same output
+            break;
+          }
+          // This command turn already holds a different result — keep scanning
+          // for an older command turn still awaiting its output. Breaking here
+          // mis-attaches when two commands are pending output at once (the first
+          // output would land on the newest turn and the second would orphan as
+          // a name-less card). Mirrors the tool_result id scan below, which
+          // likewise keeps scanning until it finds the turn it belongs to.
         }
         if (!attached) {
           // Output with no visible invocation (e.g. the echo scrolled out of

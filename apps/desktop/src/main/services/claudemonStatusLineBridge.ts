@@ -15,11 +15,13 @@ import { notifySystem } from './systemNotice';
 
 let abort: AbortController | null = null;
 
-// Rate-limit warnings are account-global but arrive on every session's tick, so
-// we dedup globally by which window is warning — a climbing % on the same window
-// must not re-fire. Cleared when the account is comfortable again so the next
-// episode re-alerts.
-let lastWarnedWindow: string | null = null;
+// Rate-limit warnings are per-ACCOUNT but arrive on every session's tick, and
+// Claude vs Codex are DISTINCT accounts sharing this one feed. So we dedup by
+// provider (the account proxy) × window — a climbing % on the same window must
+// not re-fire, but a Claude 5h warning must NOT swallow a Codex 5h warning.
+// Each provider's entry is cleared when that account is comfortable again so the
+// next episode re-alerts.
+const lastWarnedWindow = new Map<string, string>();
 
 /** The daemon raises/clears the window warning at this utilization %. */
 const RATE_LIMIT_WARN_THRESHOLD = 80;
@@ -35,31 +37,29 @@ function windowKeyOf(msg: string): string {
  *  notification (respecting the master switch + sound) plus an in-app banner.
  *  `pcts` carries the window gauges so a warning-less frame can be judged. */
 function raiseRateLimitWarning(
+  provider: string,
   message: string | undefined,
   pcts?: { fiveHour?: number; sevenDay?: number; monthly?: number },
 ): void {
+  const warned = lastWarnedWindow.get(provider) ?? null;
   if (!message) {
     // A warning-less frame does NOT prove the account is comfortable:
     // interactive (PTY) sessions never carry a warning even at high
     // utilization, and the periodic account-usage re-push is warning-less too.
     // Only re-arm the alert once the *warned* window's own gauge is back under
     // the daemon's threshold — mirroring how the daemon clears the warning.
-    if (lastWarnedWindow) {
+    if (warned) {
       const pct =
-        lastWarnedWindow === '7d'
-          ? pcts?.sevenDay
-          : lastWarnedWindow === 'monthly'
-            ? pcts?.monthly
-            : pcts?.fiveHour;
+        warned === '7d' ? pcts?.sevenDay : warned === 'monthly' ? pcts?.monthly : pcts?.fiveHour;
       if (typeof pct === 'number' && pct < RATE_LIMIT_WARN_THRESHOLD) {
-        lastWarnedWindow = null; // comfortable again → allow the next episode to alert
+        lastWarnedWindow.delete(provider); // comfortable again → allow the next episode to alert
       }
     }
     return;
   }
   const key = windowKeyOf(message);
-  if (key === lastWarnedWindow) return; // same window still warning — no re-fire
-  lastWarnedWindow = key;
+  if (key === warned) return; // same window still warning for this account — no re-fire
+  lastWarnedWindow.set(provider, key);
 
   const cfg = (configService.getConfig() as any).notifications ?? {};
   const enabled = cfg.enabled !== false;
@@ -153,7 +153,10 @@ export async function startClaudemonStatusLineBridge(): Promise<void> {
             : undefined,
           receivedAt: sl.received_at,
         });
-        raiseRateLimitWarning(sl.rate_limit_warning, {
+        // Windows are per-account; key the dedup latch on the session's provider
+        // (Claude and Codex are distinct accounts sharing this one feed).
+        const provider = claudeSessionStore.providerOf?.(update.session_id) ?? 'claude';
+        raiseRateLimitWarning(provider, sl.rate_limit_warning, {
           fiveHour: sl.five_hour_pct,
           sevenDay: sl.seven_day_pct,
           monthly: sl.monthly_pct,

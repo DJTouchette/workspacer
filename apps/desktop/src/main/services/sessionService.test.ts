@@ -62,6 +62,41 @@ describe('loadSession — containment', () => {
   });
 });
 
+describe('saveSession — filename slug collisions', () => {
+  it('does not clobber a different session whose name slugs to the same file', () => {
+    // 'Feature: Auth' and 'Feature Auth' both slug to feature-auth.yaml.
+    const a = { name: 'Feature: Auth', timestamp: '2026-01-01T00:00:00Z' } as any;
+    const b = { name: 'Feature Auth', timestamp: '2026-01-02T00:00:00Z' } as any;
+
+    const fileA = sessionService.saveSession(a);
+    const fileB = sessionService.saveSession(b);
+
+    // Distinct names must land in distinct files — otherwise B overwrites A.
+    expect(fileB).not.toBe(fileA);
+
+    // Both sessions survive and are individually loadable with their own data.
+    expect(sessionService.loadSession(fileA)).toMatchObject({ name: 'Feature: Auth' });
+    expect(sessionService.loadSession(fileB)).toMatchObject({ name: 'Feature Auth' });
+
+    // The picker lists both (plus the beforeEach 'real' fixture) — no silent loss.
+    const names = sessionService
+      .listSessions()
+      .map((s) => s.name)
+      .sort();
+    expect(names).toEqual(['Feature Auth', 'Feature: Auth', 'real']);
+  });
+
+  it('re-saving the SAME session overwrites in place (stable filename across autosaves)', () => {
+    const s1 = { name: 'Feature: Auth', timestamp: '2026-01-01T00:00:00Z' } as any;
+    const first = sessionService.saveSession(s1);
+    const second = sessionService.saveSession({ ...s1, timestamp: '2026-01-03T00:00:00Z' });
+
+    // An autosave of the same session must reuse its file, not spawn a suffix.
+    expect(second).toBe(first);
+    expect(sessionService.listSessions().filter((s) => s.name === 'Feature: Auth')).toHaveLength(1);
+  });
+});
+
 describe('deleteSession — containment', () => {
   it('deletes a legitimate session file', () => {
     sessionService.deleteSession('real.yaml');

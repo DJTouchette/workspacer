@@ -19,8 +19,12 @@ vi.mock('../lib/sseConsumer', () => ({
 }));
 
 const applyManagedMode = vi.fn();
+const handleHookEvent = vi.fn();
 vi.mock('./claudeSessionStore', () => ({
-  claudeSessionStore: { applyManagedMode: (...a: unknown[]) => applyManagedMode(...a) },
+  claudeSessionStore: {
+    applyManagedMode: (...a: unknown[]) => applyManagedMode(...a),
+    handleHookEvent: (...a: unknown[]) => handleHookEvent(...a),
+  },
 }));
 
 vi.mock('./claudemonDaemon', () => ({ CLAUDEMON_API_URL: 'http://daemon' }));
@@ -92,12 +96,30 @@ describe('claudemonEventBridge', () => {
     });
   });
 
-  it('ignores non-Managed events (Spawn / SessionEnd / Claude-PTY updates)', async () => {
+  it('ignores non-Managed mode-change events (Spawn / Claude-PTY updates)', async () => {
     await startClaudemonEventBridge();
     capturedOpts.onFrame(
       JSON.stringify({ event: 'Spawn', session_id: 's1', state: { mode: 'working' } }),
     );
-    capturedOpts.onFrame(JSON.stringify({ event: 'SessionEnd', session_id: 's1' }));
+    expect(applyManagedMode).not.toHaveBeenCalled();
+  });
+
+  it('routes a managed SessionEnd frame into the store so the session ends', async () => {
+    await startClaudemonEventBridge();
+    // claudemon's deregister_managed broadcasts this when a managed (Codex /
+    // OpenCode / Pi / Claude-stream) session's process exits. Managed backends
+    // fire no Claude hooks, so this is the ONLY signal that ends them.
+    capturedOpts.onFrame(
+      JSON.stringify({ event: 'SessionEnd', session_id: 's1', state: { mode: 'stopped' } }),
+    );
+    // It must be forwarded to the store's ended pipeline (status -> 'ended',
+    // history write, per-session eviction). Before the fix the frame was
+    // dropped, so handleHookEvent was never called and this expectation fails.
+    expect(handleHookEvent).toHaveBeenCalledWith({
+      hook_event_name: 'SessionEnd',
+      session_id: 's1',
+    });
+    // And it must NOT be misrouted as an ambient-mode change.
     expect(applyManagedMode).not.toHaveBeenCalled();
   });
 

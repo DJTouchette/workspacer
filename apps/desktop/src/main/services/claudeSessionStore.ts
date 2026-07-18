@@ -763,6 +763,13 @@ class ClaudeSessionStore {
 
   // ── StatusLine integration ──
   //
+  /** The provider label ('claude' | 'codex' | 'opencode' | …) for a known
+   *  session, if any. Used to key per-account rate-limit dedup — distinct
+   *  providers are distinct accounts with independent usage windows. */
+  providerOf(sessionId: string): string | undefined {
+    return this.sessions.get(sessionId)?.provider;
+  }
+
   // Fed by claudemonStatusLineBridge from claudemon's `/statusline/stream`.
   // The id is already canonical (claudemon resolved the alias). We only attach
   // to a session we already know — the statusLine fires repeatedly, so if the

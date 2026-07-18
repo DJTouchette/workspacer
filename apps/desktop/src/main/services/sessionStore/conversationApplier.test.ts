@@ -654,4 +654,30 @@ describe('applyConversationItems — slash commands', () => {
     expect(s.conversation).toHaveLength(2);
     expect(s.conversation[1]).toMatchObject({ role: 'assistant', content: 'PONG' });
   });
+
+  it('routes each output to a distinct command turn when two commands are pending output', () => {
+    const s = mkSession();
+    // Two slash commands run back-to-back; neither has produced output yet
+    // (e.g. async command output). Then their outputs arrive oldest-first.
+    applyConversationItems(
+      s,
+      [
+        { kind: 'slash_command', name: 'alpha' },
+        { kind: 'slash_command', name: 'beta' },
+      ],
+      noUsage,
+    );
+    expect(s.conversation).toHaveLength(2);
+    applyConversationItems(s, [{ kind: 'command_output', output: 'OUT-A' }], noUsage);
+    applyConversationItems(s, [{ kind: 'command_output', output: 'OUT-B' }], noUsage);
+
+    // No spurious name-less card, and no extra turns.
+    expect(s.conversation).toHaveLength(2);
+    expect(s.conversation.some((t) => t.command && t.command.name === '')).toBe(false);
+    // Both real command turns got a result; neither was left orphaned.
+    expect(s.conversation[0].command!.output).toBeDefined();
+    expect(s.conversation[1].command!.output).toBeDefined();
+    const outputs = s.conversation.map((t) => t.command!.output).sort();
+    expect(outputs).toEqual(['OUT-A', 'OUT-B']);
+  });
 });
