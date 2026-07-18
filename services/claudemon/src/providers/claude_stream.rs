@@ -1306,7 +1306,11 @@ fn handle_line(
             // slot, so a request arriving while another is awaiting the user
             // stays parked and re-surfaces when the head is answered (the drx
             // branch) — the displayed card always matches the FIFO answer.
-            if pending_approvals.len() == 1 {
+            // A live AskUserQuestion also owns that single slot; don't overwrite
+            // it — the approval re-surfaces via the arx branch once the question
+            // is answered (otherwise the question is never answered and the CLI
+            // turn wedges forever).
+            if pending_approvals.len() == 1 && pending_question.is_none() {
                 surface_approval(store, session_id, cur_mode, &pending_approvals[0]);
             }
         }
@@ -1933,5 +1937,71 @@ mod tests {
         assert!(joined.contains("--resume old-id"));
         assert!(!joined.contains("--session-id"));
         assert!(!joined.contains("--dangerously-skip-permissions"));
+    }
+
+    #[test]
+    fn parallel_approval_does_not_clobber_a_live_question() {
+        // Regression: the assistant emits AskUserQuestion + Bash in one turn.
+        // The CLI sends the AskUserQuestion can_use_tool first (session parks a
+        // Question), then the Bash can_use_tool. The Bash approval must NOT
+        // overwrite the still-open question — otherwise the picker vanishes, the
+        // question is never answered, and the CLI turn (hence the session) wedges.
+        let store = SessionStore::new();
+        let conv = ConversationStore::new();
+        let sid = "sid-parallel-q";
+        store.register_managed(sid, "/w", "claude");
+
+        let (out_tx, _out_rx) = mpsc::unbounded_channel::<Value>();
+        let mut cur_mode = SessionMode::Responding;
+        let mut acc = UsageAcc::default();
+        let mut totals = StreamTotals::default();
+        let yolo = AtomicBool::new(false);
+        let mut pending_approvals: VecDeque<ParkedCanUse> = VecDeque::new();
+        let mut pending_question: Option<ParkedCanUse> = None;
+        let mut pending_controls: HashMap<String, PendingControl> = HashMap::new();
+        let mut bg_tasks_active = false;
+
+        // 1) AskUserQuestion arrives → session shows the picker.
+        handle_line(
+            &json!({ "type": "control_request", "request_id": "cli-q1", "request": {
+                "subtype": "can_use_tool", "tool_name": "AskUserQuestion",
+                "input": { "questions": [
+                    { "question": "Pick a color", "options": [ { "label": "Red" }, { "label": "Blue" } ] }
+                ]}
+            }}),
+            &store, &conv, sid, &out_tx, &mut cur_mode, &mut acc, &mut totals,
+            &yolo, &mut pending_approvals, &mut pending_question,
+            &mut pending_controls, &mut bg_tasks_active,
+        );
+        assert_eq!(cur_mode, SessionMode::Question, "question should be displayed");
+        assert!(pending_question.is_some(), "question should be parked");
+
+        // 2) A parallel Bash approval arrives while the question is still open.
+        handle_line(
+            &json!({ "type": "control_request", "request_id": "cli-b1", "request": {
+                "subtype": "can_use_tool", "tool_name": "Bash",
+                "input": { "command": "ls" }, "tool_use_id": "tu-b"
+            }}),
+            &store, &conv, sid, &out_tx, &mut cur_mode, &mut acc, &mut totals,
+            &yolo, &mut pending_approvals, &mut pending_question,
+            &mut pending_controls, &mut bg_tasks_active,
+        );
+
+        // The question must survive: the approval parks silently behind it and
+        // re-surfaces only once the question is answered (the arx branch).
+        assert!(pending_question.is_some(), "question must stay parked");
+        assert_eq!(pending_approvals.len(), 1, "the Bash approval should be parked, not dropped");
+        assert_eq!(
+            cur_mode,
+            SessionMode::Question,
+            "a parallel approval must not overwrite the live question"
+        );
+        let state = store.get(sid).expect("session state");
+        assert_eq!(state.mode, SessionMode::Question, "store's displayed mode must stay Question");
+        assert!(
+            matches!(state.pending, Some(Pending::Question { .. })),
+            "store's pending slot must still hold the Question, got {:?}",
+            state.pending
+        );
     }
 }

@@ -285,6 +285,13 @@ fn translate_event_msg(payload: &Value) -> Vec<AgentUpdate> {
             let output = usage
                 .and_then(|u| u.get("output_tokens"))
                 .and_then(Value::as_u64);
+            // Cache-read subset of the cumulative input. The cost estimate bills
+            // it at the (10x-cheaper) cached rate; dropping it over-bills the
+            // whole cumulative input at the full input rate. Same field the live
+            // app-server path (codex.rs) forwards.
+            let cached_input = usage
+                .and_then(|u| u.get("cached_input_tokens"))
+                .and_then(Value::as_u64);
             if input.is_some() || output.is_some() {
                 // Context occupancy comes from `last_token_usage` — the most
                 // recent request, i.e. what's actually in the window.
@@ -308,7 +315,7 @@ fn translate_event_msg(payload: &Value) -> Vec<AgentUpdate> {
                     model: None,
                     input_tokens: input,
                     output_tokens: output,
-                    cached_input_tokens: None,
+                    cached_input_tokens: cached_input,
                     cost_usd: None,
                     context_tokens,
                     context_window,
@@ -1057,6 +1064,38 @@ mod tests {
                 cost_usd: None,
                 context_tokens: Some(1200),
                 context_window: Some(272000),
+            }]
+        );
+    }
+
+    #[test]
+    fn token_count_carries_cached_input_subset() {
+        // The rollout's `total_token_usage` reports a cached-read subset of the
+        // cumulative input (snake_case `cached_input_tokens`). The cost estimate
+        // bills that subset at the ~10x-cheaper cached rate, so the tailer MUST
+        // surface it — dropping it (cached_input_tokens: None) over-bills the
+        // whole cumulative input at the full rate. This is the same field the
+        // live app-server path (codex.rs) already forwards.
+        let e = ev(json!({
+            "type": "token_count",
+            "info": { "total_token_usage": {
+                          "input_tokens": 1_000_000,
+                          "cached_input_tokens": 900_000,
+                          "output_tokens": 0,
+                          "total_tokens": 1_000_000 },
+                      "last_token_usage": { "input_tokens": 132153, "output_tokens": 399, "total_tokens": 132552 },
+                      "model_context_window": 258400 }
+        }));
+        assert_eq!(
+            translate(&e),
+            vec![AgentUpdate::Usage {
+                model: None,
+                input_tokens: Some(1_000_000),
+                output_tokens: Some(0),
+                cached_input_tokens: Some(900_000),
+                cost_usd: None,
+                context_tokens: Some(132153),
+                context_window: Some(258400),
             }]
         );
     }

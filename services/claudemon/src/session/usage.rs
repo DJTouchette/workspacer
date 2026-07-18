@@ -219,8 +219,15 @@ pub fn from_transcript(tx: &Transcript) -> Option<Usage> {
         }
 
         // Cumulative cost — once per distinct message id, at the row's own
-        // model rates (sub-agents often run a different model).
-        let id = msg.get("id").and_then(|i| i.as_str()).unwrap_or("");
+        // model rates (sub-agents often run a different model). Streamed/replayed
+        // blocks without a message.id fall back to the row-level uuid so they are
+        // deduped rather than counted repeatedly (parity with the TS backfill).
+        let id = msg
+            .get("id")
+            .and_then(|i| i.as_str())
+            .filter(|s| !s.is_empty())
+            .or_else(|| m.raw.get("uuid").and_then(|u| u.as_str()))
+            .unwrap_or("");
         if !id.is_empty() && !seen.insert(id.to_string()) {
             continue;
         }
@@ -573,6 +580,52 @@ mod tests {
             "cost={} expected={}",
             u.cost_usd,
             expected
+        );
+    }
+
+    /// Streamed blocks of one logical message that carry a row-level `uuid`
+    /// but NO `message.id` must be deduped by the row uuid — matching the TS
+    /// backfill (`msg.id || row.uuid`). Otherwise the daemon counts the cost
+    /// on every occurrence and diverges from the desktop path.
+    #[test]
+    fn dedup_falls_back_to_row_uuid_when_message_id_absent() {
+        fn assistant_no_id(
+            uuid: &str,
+            model: &str,
+            input: u64,
+            output: u64,
+        ) -> TranscriptMessage {
+            TranscriptMessage {
+                role: "assistant".into(),
+                content: Value::Null,
+                raw: serde_json::json!({
+                    "type": "assistant",
+                    "uuid": uuid,
+                    "message": {
+                        // no "id" field
+                        "model": model,
+                        "usage": {
+                            "input_tokens": input,
+                            "cache_creation_input_tokens": 0,
+                            "cache_read_input_tokens": 0,
+                            "output_tokens": output
+                        }
+                    }
+                }),
+            }
+        }
+
+        // Two streamed blocks of the SAME message (same row uuid, no message.id).
+        let t = tx(vec![
+            assistant_no_id("row-uuid-1", "claude-opus-4-8", 1_000_000, 1_000_000),
+            assistant_no_id("row-uuid-1", "claude-opus-4-8", 1_000_000, 1_000_000),
+        ]);
+        let u = from_transcript(&t).unwrap();
+        // Counted ONCE: 1M in * $5 + 1M out * $25 = $30 (not $60).
+        assert!(
+            (u.cost_usd - 30.0).abs() < 1e-9,
+            "expected row-uuid dedup => $30, got {}",
+            u.cost_usd
         );
     }
 
