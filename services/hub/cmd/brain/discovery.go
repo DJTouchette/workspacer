@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 type claudeSessionSummary struct {
@@ -131,8 +132,9 @@ func userMessageText(msg any) string {
 }
 
 func clip(s string, n int) string {
-	if len(s) > n {
-		return s[:n]
+	if utf8.RuneCountInString(s) > n {
+		runes := []rune(s)
+		return string(runes[:n])
 	}
 	return s
 }

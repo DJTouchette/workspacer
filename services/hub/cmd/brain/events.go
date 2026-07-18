@@ -15,6 +15,17 @@ import (
 	"time"
 )
 
+// backoffAfterConn returns the reconnect delay to wait after a stream
+// connection that lasted `lived`. A connection that stayed up a while is a
+// fresh failure, not a tight loop, so it resets to the base delay; otherwise
+// the caller's escalating backoff is preserved. Mirrors busclient.Run.
+func backoffAfterConn(backoff, lived time.Duration) time.Duration {
+	if lived > 5*time.Second {
+		return time.Second
+	}
+	return backoff
+}
+
 // runSessionStore blocks until ctx is cancelled, keeping `store` current.
 func runSessionStore(ctx context.Context, cm *claudemonClient, store *sessionStore) {
 	seedStore(ctx, cm, store)
@@ -24,6 +35,7 @@ func runSessionStore(ctx context.Context, cm *claudemonClient, store *sessionSto
 		if ctx.Err() != nil {
 			return
 		}
+		start := time.Now()
 		_ = cm.streamEvents(ctx, func(name string, data []byte) {
 			// claudemon names its frames "session.update" (some emit no name).
 			if name != "session.update" && name != "" {
@@ -44,6 +56,7 @@ func runSessionStore(ctx context.Context, cm *claudemonClient, store *sessionSto
 		if ctx.Err() != nil {
 			return
 		}
+		backoff = backoffAfterConn(backoff, time.Since(start))
 		select {
 		case <-ctx.Done():
 			return
@@ -64,6 +77,7 @@ func runStatusLines(ctx context.Context, cm *claudemonClient, store *sessionStor
 		if ctx.Err() != nil {
 			return
 		}
+		start := time.Now()
 		_ = cm.streamStatusLines(ctx, func(name string, data []byte) {
 			if name != "statusline" && name != "" {
 				return
@@ -83,6 +97,7 @@ func runStatusLines(ctx context.Context, cm *claudemonClient, store *sessionStor
 		if ctx.Err() != nil {
 			return
 		}
+		backoff = backoffAfterConn(backoff, time.Since(start))
 		select {
 		case <-ctx.Done():
 			return

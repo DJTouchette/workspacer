@@ -224,6 +224,45 @@ func getProfile(id string) *profile {
 	return nil
 }
 
+// scrubBypassProfile returns a copy of the profile with any auto-approve/bypass
+// flags removed from ExtraArgs. Used by the remote (bus/web/MCP) spawn path so a
+// profile can't smuggle --dangerously-skip-permissions / --permission-mode
+// bypassPermissions past the request-field clamp in spawn().
+func scrubBypassProfile(p *profile) *profile {
+	if p == nil {
+		return nil
+	}
+	cp := *p
+	cp.ExtraArgs = scrubBypassArgs(p.ExtraArgs)
+	return &cp
+}
+
+// scrubBypassArgs drops --dangerously-skip-permissions and a bypass-mode
+// --permission-mode (bypassPermissions/yolo, both `--flag value` and `--flag=value`
+// forms). Any other permission mode passes through unchanged.
+func scrubBypassArgs(args []string) []string {
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--dangerously-skip-permissions" {
+			continue
+		}
+		if a == "--permission-mode" && i+1 < len(args) &&
+			(args[i+1] == "bypassPermissions" || args[i+1] == "yolo") {
+			i++ // skip the value too
+			continue
+		}
+		if strings.HasPrefix(a, "--permission-mode=") {
+			v := strings.TrimPrefix(a, "--permission-mode=")
+			if v == "bypassPermissions" || v == "yolo" {
+				continue
+			}
+		}
+		out = append(out, a)
+	}
+	return out
+}
+
 func pinsFlag(extraArgs []string, flag string) bool {
 	for _, a := range extraArgs {
 		if a == flag || strings.HasPrefix(a, flag+"=") {

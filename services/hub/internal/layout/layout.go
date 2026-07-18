@@ -117,9 +117,12 @@ func (s *Service) Set(params json.RawMessage) (any, error) {
 	s.doc.Version++
 	s.doc.Data = append(json.RawMessage(nil), in.Data...)
 	d := s.doc
+	// Persist while still holding the lock so writes are serialized: a higher
+	// version can never be overwritten on disk by a slower, older-version
+	// persist, and two goroutines can't clobber each other's shared .tmp file.
+	s.persist(d)
 	s.mu.Unlock()
 
-	s.persist(d)
 	s.b.Publish(event.New(ChangedTopic, "hub", d))
 	return d, nil
 }

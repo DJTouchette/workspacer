@@ -393,7 +393,12 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 		return r.spawnManagedSession(ctx, "claude", cwd, p)
 	}
 
-	prof := getProfile(p.ProfileID)
+	// SECURITY: the clamp above only sanitizes the request fields. A caller can
+	// still point at a local profile whose extraArgs pin a bypass flag
+	// (--dangerously-skip-permissions / --permission-mode bypassPermissions),
+	// which buildArgv would append verbatim — defeating the clamp. Scrub the
+	// profile's bypass flags on this remote path too.
+	prof := scrubBypassProfile(getProfile(p.ProfileID))
 
 	// Resume reopens an existing transcript; a fresh spawn pins a new id so our
 	// id, claude's id, and the transcript filename all agree.
@@ -488,7 +493,9 @@ func (r *registry) spawnManagedSession(ctx context.Context, provider, cwd string
 			mode = "default"
 		}
 		req.PermissionMode = mode
-		if prof := getProfile(p.ProfileID); prof != nil {
+		// SECURITY: same clamp as the PTY path — a profile's extraArgs must not
+		// smuggle a bypass flag onto the managed claude-stream argv.
+		if prof := scrubBypassProfile(getProfile(p.ProfileID)); prof != nil {
 			if env := buildEnv(prof); len(env) > 0 {
 				req.Env = env
 			}
