@@ -184,6 +184,10 @@ impl App {
                 // answer keys (1–9), which live outside the remappable keymap.
                 let was_single = self.pending_keys.len() == 1;
                 self.pending_keys.clear();
+                // Abandon any pending vim count too, so it can't leak into the
+                // next motion (mirrors dispatch_action's `self.count.take()`
+                // and the harpoon-jump reset above).
+                self.count = None;
                 if was_single {
                     if let KeyCode::Char(c @ '1'..='9') = key.code {
                         if !key.modifiers.contains(KeyModifiers::CONTROL) {
@@ -226,12 +230,17 @@ impl App {
             Help => self.help = true,
             Palette => self.open_palette(),
             SelectNext => {
-                for _ in 0..n {
+                // `select_next` saturates at `agents.len()`, so cap the repeat
+                // count to the number of rows — a huge typed count must not
+                // spin a billions-of-iterations busy loop on the UI thread.
+                for _ in 0..n.min(self.agents.len()) {
                     self.select_next();
                 }
             }
             SelectPrev => {
-                for _ in 0..n {
+                // `select_prev` saturates at 0, so at most `selected` steps do
+                // any work; clamp the loop to that.
+                for _ in 0..n.min(self.selected) {
                     self.select_prev();
                 }
             }
@@ -2195,6 +2204,27 @@ mod tests {
         assert!(!app.should_quit, "and doesn't also fire Esc's own binding");
     }
 
+    #[test]
+    fn huge_count_motion_is_bounded_not_a_busy_loop() {
+        use std::time::Instant;
+        let mut app = app_with_agents(3);
+        app.selected = 0;
+        // A pathologically large vim count — as if the user held the digit
+        // prefix on auto-repeat before a `j` motion. `select_next` already
+        // saturates at `agents.len()`, so the repeat loop must clamp its
+        // iteration count to the number of rows instead of literally spinning
+        // billions of times on the UI thread.
+        app.count = Some(5_000_000_000);
+        let start = Instant::now();
+        app.handle_key(ch('j'));
+        let elapsed = start.elapsed();
+        assert_eq!(app.selected, 3, "selection still clamps to the last row");
+        assert!(
+            elapsed.as_secs() < 1,
+            "a huge count must not spin a busy loop (took {elapsed:?})"
+        );
+    }
+
     // ── leader / which-key chords ───────────────────────────────────────────
 
     #[test]
@@ -2265,6 +2295,33 @@ mod tests {
         assert_eq!(
             app.selected, 1,
             "j after the jump moves one row, not the stale count of 3"
+        );
+    }
+
+    #[test]
+    fn count_before_a_dead_end_key_does_not_leak_into_the_next_motion() {
+        let mut app = app_with_agents(3);
+        app.selected = 0;
+        // Type a count, then an unbound / dead-end key (`z` is not a default
+        // binding in Global or List), which resolves to KeyMatch::None.
+        app.handle_key(ch('3'));
+        assert_eq!(app.count, Some(3), "the leading digit accumulates a count");
+        app.handle_key(ch('z')); // dead end — clears pending_keys
+        assert!(
+            app.pending_keys.is_empty(),
+            "the dead-end key clears the pending sequence"
+        );
+        assert_eq!(
+            app.count, None,
+            "an interrupting dead-end key must abandon the pending count, \
+             not leak it into the next motion"
+        );
+        // Prove the leak concretely: a following `j` must move exactly one row,
+        // not the stale count of 3.
+        app.handle_key(ch('j'));
+        assert_eq!(
+            app.selected, 1,
+            "j after the dead-end key moves one row, not the stale count of 3"
         );
     }
 
