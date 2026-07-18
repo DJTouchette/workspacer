@@ -74,6 +74,11 @@ type configService struct {
 	mu       sync.Mutex
 	current  map[string]any
 	loadedAt time.Time // mtime of config.yaml when `current` was loaded
+	// persistBlocked is set when config.yaml exists but couldn't be loaded
+	// (unreadable or unparseable). While set, save() keeps changes in memory
+	// only and refuses to write, so one save never overwrites a recoverable
+	// user file with defaults+partial. Mirrors configService.persistBlocked.
+	persistBlocked bool
 }
 
 func newConfigService() *configService {
@@ -95,17 +100,33 @@ func configMtime() time.Time {
 }
 
 func (c *configService) loadFromDisk() map[string]any {
+	c.persistBlocked = false
 	defaults := defaultConfig()
 	data, err := os.ReadFile(configPath())
 	if err != nil {
-		c.writeDefaults(defaults)
+		if os.IsNotExist(err) {
+			// First run — no config file yet: seed it with defaults.
+			c.writeDefaults(defaults)
+			return defaults
+		}
+		// Transient read failure (EACCES, EBUSY, …): the file exists but we
+		// couldn't read it. Run on defaults in memory and NEVER write over a
+		// file we couldn't read. Mirrors configService.loadFromDisk.
+		c.persistBlocked = true
 		return defaults
 	}
 	var parsed map[string]any
 	if err := yaml.Unmarshal(data, &parsed); err != nil {
+		// Malformed YAML (e.g. a hand-edit left a syntax error). This must NOT
+		// wipe the user's config: back the broken file up, block saves so
+		// nothing overwrites it, and run on defaults in memory. Mirrors the
+		// desktop configService.loadFromDisk.
+		c.persistBlocked = true
+		backupPath := configPath() + ".broken-" + time.Now().UTC().Format("2006-01-02T15-04-05.000")
+		_ = os.WriteFile(backupPath, data, 0o644)
 		return defaults
 	}
-	return pruneRemovedShortcuts(migrateKeybindings(deepMerge(defaults, parsed)))
+	return pruneRemovedShortcuts(migrateFlatChords(migrateKeybindings(deepMerge(defaults, parsed))))
 }
 
 func (c *configService) writeDefaults(defaults map[string]any) {
@@ -143,6 +164,31 @@ func (c *configService) save(partial map[string]any) map[string]any {
 		c.loadedAt = configMtime()
 	}
 	merged := deepMerge(c.current, partial)
+	// ui.customThemes is a map of user-created entries: when the caller sends it,
+	// it is the whole truth. Deep-merge would resurrect deleted themes (it never
+	// removes keys), so replace it wholesale instead. Mirrors
+	// configService.saveConfig.
+	if uiPartial, ok := partial["ui"].(map[string]any); ok {
+		if ct, present := uiPartial["customThemes"]; present {
+			mergedUI, _ := merged["ui"].(map[string]any)
+			if mergedUI == nil {
+				mergedUI = map[string]any{}
+				merged["ui"] = mergedUI
+			}
+			if ctMap, ok := ct.(map[string]any); ok {
+				mergedUI["customThemes"] = ctMap
+			} else {
+				mergedUI["customThemes"] = map[string]any{}
+			}
+		}
+	}
+	if c.persistBlocked {
+		// The on-disk config failed to load (unreadable or unparseable): keep
+		// the change in memory only. Writing here would replace the user's file
+		// with defaults + this partial — permanent loss of everything else.
+		c.current = merged
+		return merged
+	}
 	writeConfigYAML(merged)
 	c.current = merged
 	c.loadedAt = configMtime()
@@ -152,14 +198,38 @@ func (c *configService) save(partial map[string]any) map[string]any {
 func (c *configService) path() string { return configPath() }
 
 func writeConfigYAML(cfg map[string]any) {
-	if err := os.MkdirAll(configDir(), 0o755); err != nil {
+	dir := configDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return
 	}
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
 		return
 	}
-	_ = os.WriteFile(configPath(), data, 0o644)
+	// Atomic write: a unique temp file in the SAME dir + rename over the target.
+	// A rename within one filesystem is atomic, so a crash/power-loss mid-write or
+	// a concurrent reader sees either the old, complete file or the new one —
+	// never a half-written config.yaml that loadFromDisk would treat as a parse
+	// error and back up as .broken-*. Mirrors the desktop's atomicWriteFileSync;
+	// a plain truncating os.WriteFile leaves the file corrupt if interrupted.
+	tmp, err := os.CreateTemp(dir, ".config.yaml.tmp-*")
+	if err != nil {
+		return
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return
+	}
+	_ = os.Chmod(tmpName, 0o644)
+	if err := os.Rename(tmpName, configPath()); err != nil {
+		_ = os.Remove(tmpName)
+	}
 }
 
 // removedShortcuts are action ids deleted from the app whose bindings were
@@ -222,5 +292,61 @@ func migrateKeybindings(cfg map[string]any) map[string]any {
 		cfg["editor"] = ed
 	}
 	writeConfigYAML(cfg)
+	return cfg
+}
+
+// oldChordDefaults are the pre-flattening nested chord defaults. A saved
+// shortcut still holding one of these exact values was never customized by the
+// user — it's a stale default — so migrateFlatChords rewrites it to the current
+// flat default. Mirrors configService.OLD_CHORD_DEFAULTS.
+var oldChordDefaults = map[string]string{
+	"new-terminal":   "prefix n t",
+	"new-claude":     "prefix n c",
+	"new-browser":    "prefix n b",
+	"prev-tab":       "prefix t [",
+	"next-tab":       "prefix t ]",
+	"move-tab-left":  "prefix t ,",
+	"move-tab-right": "prefix t .",
+	"rename-tab":     "prefix t r",
+	"close-pane":     "prefix t w",
+	"split":          "prefix p s",
+	"quick-split":    "prefix p c",
+	"nav-left":       "prefix p h",
+	"nav-down":       "prefix p j",
+	"nav-up":         "prefix p k",
+	"nav-right":      "prefix p l",
+}
+
+// migrateFlatChords ports configService.migrateFlatChords: a second-pass
+// migration for configs that postdate the schema rewrite (so migrateKeybindings
+// leaves them alone) but predate the chord flattening. Any shortcut still equal
+// to its old nested default is rewritten to the current flat default; a value
+// that differs is a real user choice and is kept. Idempotent.
+func migrateFlatChords(cfg map[string]any) map[string]any {
+	kb, _ := cfg["keybindings"].(map[string]any)
+	if kb == nil {
+		return cfg
+	}
+	shortcuts, _ := kb["shortcuts"].(map[string]any)
+	if shortcuts == nil {
+		return cfg
+	}
+	def := defaultConfig()
+	defKb, _ := def["keybindings"].(map[string]any)
+	defShortcuts, _ := defKb["shortcuts"].(map[string]any)
+	changed := false
+	for action, oldDefault := range oldChordDefaults {
+		cur, ok := shortcuts[action].(string)
+		if !ok || cur != oldDefault {
+			continue
+		}
+		if newDefault, ok := defShortcuts[action].(string); ok {
+			shortcuts[action] = newDefault
+			changed = true
+		}
+	}
+	if changed {
+		writeConfigYAML(cfg)
+	}
 	return cfg
 }

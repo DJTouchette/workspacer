@@ -59,7 +59,14 @@ func within(root, target string) bool {
 	if target == root {
 		return true
 	}
-	return strings.HasPrefix(target, root+string(os.PathSeparator))
+	sep := string(os.PathSeparator)
+	// A root that already ends in the separator (notably the filesystem root
+	// "/") contains everything below it directly; concatenating another
+	// separator would produce "//" and match nothing.
+	if strings.HasSuffix(root, sep) {
+		return strings.HasPrefix(target, root)
+	}
+	return strings.HasPrefix(target, root+sep)
 }
 
 // pathWithinRoots reports whether target resolves to a location inside one of the

@@ -421,7 +421,7 @@ func (r *registry) spawn(ctx context.Context, raw json.RawMessage) (json.RawMess
 	}
 
 	id, err := r.cm.spawn(ctx, spawnReq{
-		Argv:      buildArgv(prof, p.Model, p.SkipPermissions, p.PermissionMode, sessionID, resume),
+		Argv:      buildArgv(prof, p.Model, p.Effort, p.SkipPermissions, p.PermissionMode, sessionID, resume),
 		Cwd:       cwd,
 		Cols:      cols,
 		Rows:      rows,

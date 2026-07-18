@@ -157,3 +157,18 @@ func TestParamString(t *testing.T) {
 		})
 	}
 }
+
+// TestWithin_FilesystemRootContainsEverything covers a grant whose canonical
+// root is the filesystem root ("/"): it declares the whole tree, so within()
+// must treat every absolute path as contained. Concatenating an extra separator
+// ("//") would match nothing, silently denying the grant. Covers idx 20.
+func TestWithin_FilesystemRootContainsEverything(t *testing.T) {
+	root := string(os.PathSeparator) // "/" on Unix, "\" on Windows
+	target := filepath.Join(root, "home", "u", "f")
+	if !within(root, target) {
+		t.Errorf("root %q (whole filesystem) should contain %q", root, target)
+	}
+	if !within(root, filepath.Join(root, "etc", "x")) {
+		t.Errorf("root %q should contain %q", root, filepath.Join(root, "etc", "x"))
+	}
+}

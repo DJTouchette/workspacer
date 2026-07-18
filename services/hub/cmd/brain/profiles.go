@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -30,9 +31,25 @@ type profilesFile struct {
 	Profiles []profile `json:"profiles"`
 }
 
-// configDir is ~/.config/workspacer — the shared config dir the app, the TUI,
-// and Claude profiles all use. We honour XDG_CONFIG_HOME like the app does.
+// configDir is the shared config dir the app, the TUI, and Claude profiles all
+// use: %APPDATA%\workspacer on Windows, else $XDG_CONFIG_HOME/workspacer or
+// ~/.config/workspacer. This must stay in lockstep with authtoken.ConfigDir()
+// and the desktop's getConfigDir — otherwise a headless `workspacer serve`
+// reads config/profiles from a different directory than the token store and app.
 func configDir() string {
+	return configDirFor(runtime.GOOS)
+}
+
+// configDirFor resolves the config dir for a given GOOS. Parameterized so the
+// Windows branch is unit-testable on any host.
+func configDirFor(goos string) string {
+	if goos == "windows" {
+		if appData := os.Getenv("APPDATA"); appData != "" {
+			return filepath.Join(appData, "workspacer")
+		}
+		home, _ := os.UserHomeDir()
+		return filepath.Join(home, "AppData", "Roaming", "workspacer")
+	}
 	if x := os.Getenv("XDG_CONFIG_HOME"); x != "" {
 		return filepath.Join(x, "workspacer")
 	}
@@ -226,7 +243,7 @@ func pinsFlag(extraArgs []string, flag string) bool {
 // id we hand claudemon). When resume is set, the same id is passed as
 // --resume <uuid> instead; the two are mutually exclusive so resume wins. Pass
 // "" for sessionID to skip both (non-claude spawns).
-func buildArgv(p *profile, model string, skipPermissions bool, permissionMode string, sessionID string, resume bool) []string {
+func buildArgv(p *profile, model string, effort string, skipPermissions bool, permissionMode string, sessionID string, resume bool) []string {
 	claude := os.Getenv("WKS_CLAUDE_BIN")
 	if claude == "" {
 		claude = "claude"
@@ -241,6 +258,14 @@ func buildArgv(p *profile, model string, skipPermissions bool, permissionMode st
 	model = strings.TrimSpace(model)
 	if model != "" && !pinsFlag(extra, "--model") {
 		argv = append(argv, "--model", model)
+	}
+
+	// Reasoning-effort maps to --effort, mirroring the desktop's buildClaudeArgv
+	// and the brain's own claude-stream path (which forwards p.Effort). A
+	// profile that pins --effort wins.
+	effort = strings.TrimSpace(effort)
+	if effort != "" && !pinsFlag(extra, "--effort") {
+		argv = append(argv, "--effort", effort)
 	}
 
 	wantsBypass := skipPermissions || permissionMode == "bypassPermissions"

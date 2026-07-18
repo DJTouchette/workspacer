@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -205,6 +206,142 @@ func TestMigrateKeybindingsLegacyVim(t *testing.T) {
 	ed := migrated["editor"].(map[string]any)
 	if ed["vim"] != true {
 		t.Error("vim mode should be preserved as editor.vim")
+	}
+}
+
+// TestConfigSaveReplacesCustomThemesWholesale proves the Go brain's save()
+// matches configService.ts: ui.customThemes is the whole truth when the caller
+// sends it, so deleting a theme (sending the full map minus one entry) must
+// actually remove it. A plain deep-merge would resurrect the omitted key from
+// the cached/on-disk map. Covers the customThemes-resurrection bug (idx 7/23).
+func TestConfigSaveReplacesCustomThemesWholesale(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	c := newConfigService()
+	// Seed two user-created custom themes.
+	c.save(map[string]any{"ui": map[string]any{"customThemes": map[string]any{
+		"custom:one": map[string]any{"name": "One"},
+		"custom:two": map[string]any{"name": "Two"},
+	}}})
+
+	// The theme maker deletes custom:one by sending the full map minus that entry.
+	merged := c.save(map[string]any{"ui": map[string]any{"customThemes": map[string]any{
+		"custom:two": map[string]any{"name": "Two"},
+	}}})
+
+	ct := merged["ui"].(map[string]any)["customThemes"].(map[string]any)
+	if _, ok := ct["custom:one"]; ok {
+		t.Errorf("deleted theme custom:one should be gone from merged result, got %v", ct)
+	}
+	if _, ok := ct["custom:two"]; !ok {
+		t.Errorf("custom:two should survive, got %v", ct)
+	}
+
+	// And it must be gone from disk too (a fresh service reading it back).
+	fresh := newConfigService().get()
+	fct := fresh["ui"].(map[string]any)["customThemes"].(map[string]any)
+	if _, ok := fct["custom:one"]; ok {
+		t.Errorf("deleted theme resurrected after reload from disk: %v", fct)
+	}
+	if _, ok := fct["custom:two"]; !ok {
+		t.Errorf("custom:two should persist to disk, got %v", fct)
+	}
+}
+
+// TestLoadFromDiskMigratesStaleNestedChords proves the Go brain's read-time
+// migration upgrades stale nested-default chords the way the desktop's
+// migrateFlatChords does. A config that postdates the schema rewrite (has a
+// prefix, no mode/leader, so migrateKeybindings leaves it alone) but predates
+// chord flattening keeps 'prefix t w' for close-pane; the brain must rewrite it
+// to the current flat 'prefix w'. Covers idx 8.
+func TestLoadFromDiskMigratesStaleNestedChords(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	p := filepath.Join(dir, "workspacer", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	yamlDoc := "keybindings:\n  prefix: ctrl+a\n  shortcuts:\n    close-pane: prefix t w\n"
+	if err := os.WriteFile(p, []byte(yamlDoc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := newConfigService()
+	kb, ok := c.get()["keybindings"].(map[string]any)
+	if !ok {
+		t.Fatal("keybindings missing from loaded config")
+	}
+	shortcuts, ok := kb["shortcuts"].(map[string]any)
+	if !ok {
+		t.Fatal("keybindings.shortcuts missing from loaded config")
+	}
+	if got := shortcuts["close-pane"]; got != "prefix w" {
+		t.Fatalf("stale nested chord not migrated: close-pane = %v, want \"prefix w\"", got)
+	}
+}
+
+// TestConfigDoesNotClobberUnreadableFile proves loadFromDisk must NOT overwrite
+// an existing config.yaml with defaults when the file is present but unreadable
+// (EACCES). Only ENOENT may seed defaults. Covers idx 21 (data loss).
+func TestConfigDoesNotClobberUnreadableFile(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	p := filepath.Join(dir, "workspacer", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const userYAML = "ui:\n  theme: mytheme\n"
+	if err := os.WriteFile(p, []byte(userYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(p, 0o200); err != nil { // write-only: read error is NOT ENOENT
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(p, 0o644) })
+	if _, err := os.ReadFile(p); err == nil {
+		t.Skip("running as root: cannot make file unreadable, skipping")
+	}
+
+	newConfigService() // loadFromDisk on an existing-but-unreadable config
+
+	_ = os.Chmod(p, 0o644)
+	after, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(after), "mytheme") {
+		t.Fatalf("unreadable config was clobbered with defaults (data loss); on-disk now:\n%s", string(after))
+	}
+}
+
+// TestConfigSaveDoesNotClobberUnparseableFile proves a save() issued while
+// config.yaml is unparseable does NOT overwrite the user's file with
+// defaults+partial. Mirrors the desktop persistBlocked guard. Covers idx 22.
+func TestConfigSaveDoesNotClobberUnparseableFile(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	p := filepath.Join(dir, "workspacer", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	broken := "ui:\n  theme: solarized\nkeybindings: [1, 2\n"
+	if err := os.WriteFile(p, []byte(broken), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := newConfigService()
+	c.save(map[string]any{"editor": map[string]any{"vim": true}})
+
+	after, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatalf("config.yaml disappeared: %v", err)
+	}
+	if string(after) != broken {
+		t.Fatalf("save() overwrote the unparseable config.yaml, discarding the user's settings.\n got: %q\nwant: %q", string(after), broken)
 	}
 }
 

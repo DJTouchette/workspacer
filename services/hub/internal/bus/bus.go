@@ -304,6 +304,23 @@ func originAllowed(r *http.Request) bool {
 	// dialed. Browsers set Origin to scheme://host[:port]; r.Host is host[:port].
 	// Equal ⇒ the page was served from this very endpoint (hub-served remote UI).
 	if strings.EqualFold(u.Host, r.Host) {
+		// r.Host is the browser-supplied Host header, so same-origin alone does not
+		// prove where the socket landed. A loopback Host is always safe (the
+		// attacker's page is never served from the victim's own loopback).
+		if isLoopbackHost(u.Hostname()) {
+			return true
+		}
+		// Non-loopback same-origin: reject if the connection actually terminated at
+		// loopback. That mismatch — public Host header, loopback socket — is the DNS
+		// rebinding vector: the browser still reports the name it was served from
+		// while the rebound A record points the socket at 127.0.0.1.
+		if la, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr); ok {
+			if host, _, err := net.SplitHostPort(la.String()); err == nil {
+				if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+					return false
+				}
+			}
+		}
 		return true
 	}
 	// Loopback origins are always local to the user's machine, so a dev renderer on
