@@ -1287,7 +1287,12 @@ fn handle_message(
                 }
             }
         }
-        if id == Some(101) {
+        // Only the ONE bootstrap `thread/start` uses id 101, and it completes
+        // before any thread exists. Once a thread is established, an id-101
+        // response can only be a user turn / live switch whose ever-incrementing
+        // counter reached 101 — do NOT misroute it through the thread/start
+        // handler (it would surface a spurious failure or re-capture a thread id).
+        if id == Some(101) && thread_id.is_none() {
             if let Some(err) = value.get("error") {
                 tracing::error!(session = %session_id, error = %err, "codex thread/start failed — headless session has no thread");
                 apply_updates(
@@ -2089,6 +2094,66 @@ mod tests {
             vec!["hi".to_string()],
             "prompts are not flushed into a dead thread"
         );
+        assert!(out_rx.try_recv().is_err(), "nothing emitted on the wire");
+    }
+
+    #[test]
+    fn id_101_after_thread_started_is_not_treated_as_thread_start() {
+        // `req_id` (user turns + live model/effort switches) only ever increments,
+        // so a long-lived headless session eventually hands a turn the id 101 — the
+        // very id used ONCE at bootstrap for `thread/start`. That turn's JSON-RPC
+        // response must NOT be misrouted through the id-101 thread/start handler,
+        // which would surface a spurious "thread/start failed" into the conversation.
+        use crate::session::conversation::ConversationItem;
+        let store = SessionStore::new();
+        store.register_managed("s-101", "/w", "codex");
+        let conv = ConversationStore::new();
+        let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Value>();
+        // Thread already established and subscribed — bootstrap is long done.
+        let mut thread_id = Some("t-live".to_string());
+        let mut subscribed = true;
+        let mut pending_prompts: Vec<String> = Vec::new();
+        // The counter has climbed to 101 across ~98 prior turns/switches.
+        let mut req_id = 101u64;
+        let mut cur_mode = SessionMode::Responding;
+        let mut acc = UsageAcc::new();
+        let yolo = AtomicBool::new(false);
+        let mut pending_approvals: VecDeque<ParkedApproval> = VecDeque::new();
+        let mut pending_switch = None;
+
+        // A turn sent with id 101 fails; Codex replies with an error at id 101.
+        handle_message(
+            &json!({ "jsonrpc": "2.0", "id": 101,
+                "error": { "code": -1, "message": "turn boom" } }),
+            &store,
+            &conv,
+            "s-101",
+            &out_tx,
+            &mut thread_id,
+            &mut subscribed,
+            &mut pending_prompts,
+            &mut req_id,
+            &mut cur_mode,
+            &mut acc,
+            &yolo,
+            &mut pending_approvals,
+            &mut pending_switch,
+            true,
+        );
+
+        // The live thread must be left intact…
+        assert_eq!(thread_id.as_deref(), Some("t-live"));
+        assert!(subscribed);
+        // …and NO spurious "thread/start failed" may land in the conversation.
+        if let Some((_seq, items)) = conv.snapshot("s-101") {
+            assert!(
+                !items.iter().any(|i| matches!(
+                    i,
+                    ConversationItem::AssistantText { text, .. } if text.contains("thread/start failed")
+                )),
+                "id-101 turn response must not surface a thread/start failure: {items:?}"
+            );
+        }
         assert!(out_rx.try_recv().is_err(), "nothing emitted on the wire");
     }
 

@@ -87,7 +87,11 @@ pub fn translate(event: &Value) -> Vec<AgentUpdate> {
             out.push(AgentUpdate::Error(msg.to_string()));
         }
 
-        "permission.updated" | "permission.replied" => {
+        // Only `permission.updated` surfaces a pending Approval. `permission.replied`
+        // signals an already-*resolved* permission (answered in the Term, or our own
+        // reply echoed back on the /event stream); mapping it to PermissionPending
+        // would re-open an answered permission and wedge the session in Approval mode.
+        "permission.updated" => {
             let p = props.get("permission").unwrap_or(&props);
             let id = p
                 .get("id")
@@ -522,7 +526,13 @@ async fn run_session(
                                     }
                                     updates.remove(idx); // don't surface Approval
                                 } else if let Some(pid) = perm_id {
-                                    pending_perm_ids.push_back(pid);
+                                    // Dedup: a `permission.updated` frame can fire
+                                    // more than once for the same id as its metadata
+                                    // streams in; don't queue duplicates or the same
+                                    // permission would demand multiple approvals.
+                                    if !pending_perm_ids.contains(&pid) {
+                                        pending_perm_ids.push_back(pid);
+                                    }
                                 }
                             }
                         }
@@ -677,6 +687,26 @@ mod tests {
                 raw: props,
             }]
         );
+    }
+
+    #[test]
+    fn permission_replied_does_not_resurface_pending() {
+        // OpenCode emits `permission.replied` once a permission has been
+        // *resolved* (answered in the Term, or our own reply echoed back on the
+        // /event stream). It must NOT translate to a fresh PermissionPending, or
+        // an already-answered permission re-opens as a new Approval card and
+        // wedges the session in Approval mode.
+        let props = json!({
+            "id": "perm_1",
+            "type": "bash",
+            "title": "Bash",
+            "metadata": { "command": "rm -rf build" }
+        });
+        let ev = json!({
+            "type": "permission.replied",
+            "properties": props,
+        });
+        assert_eq!(translate(&ev), vec![]);
     }
 
     #[test]

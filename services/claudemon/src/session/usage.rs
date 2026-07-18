@@ -120,6 +120,7 @@ fn from_transcript_value(tx: &Value) -> Option<Usage> {
     let mut usage = Usage::default();
     let mut seen: HashSet<String> = HashSet::new();
     let mut any = false;
+    let mut peak_context: u64 = 0;
 
     for m in messages {
         if m.get("role").and_then(|r| r.as_str()) != Some("assistant") {
@@ -136,7 +137,11 @@ fn from_transcript_value(tx: &Value) -> Option<Usage> {
             .get("isSidechain")
             .and_then(Value::as_bool)
             .unwrap_or(false);
-        let row_model = msg.get("model").and_then(|m| m.as_str());
+        // Neutralize Claude's `<synthetic>` placeholder (see from_transcript).
+        let row_model = msg
+            .get("model")
+            .and_then(|m| m.as_str())
+            .filter(|m| !m.starts_with('<'));
 
         // Point-in-time context/model: main thread only (see from_transcript).
         if !sidechain {
@@ -144,7 +149,8 @@ fn from_transcript_value(tx: &Value) -> Option<Usage> {
             if let Some(model) = row_model {
                 usage.model = Some(model.to_string());
             }
-            usage.context_limit = context_limit_for(usage.model.as_deref(), usage.context_tokens);
+            peak_context = peak_context.max(usage.context_tokens);
+            usage.context_limit = context_limit_for(usage.model.as_deref(), peak_context);
         }
 
         // Cumulative cost — once per distinct message id.
@@ -171,6 +177,11 @@ pub fn from_transcript(tx: &Transcript) -> Option<Usage> {
     let mut usage = Usage::default();
     let mut seen: HashSet<String> = HashSet::new();
     let mut any = false;
+    // 1M mode is a session-level property: once any main-thread turn exceeds the
+    // 200k window the limit must stay promoted even when a later turn's context
+    // is smaller (e.g. after auto-compaction). Track the high-water mark, matching
+    // the TS reference's `session.peakContext`.
+    let mut peak_context: u64 = 0;
 
     for m in &tx.messages {
         if m.role != "assistant" {
@@ -188,7 +199,13 @@ pub fn from_transcript(tx: &Transcript) -> Option<Usage> {
             .get("isSidechain")
             .and_then(Value::as_bool)
             .unwrap_or(false);
-        let row_model = msg.get("model").and_then(|m| m.as_str());
+        // Neutralize Claude's `<synthetic>` placeholder (and any `<...>` marker):
+        // it is not a real model, so it must not clobber the reported model nor
+        // force default pricing — synthetic turns inherit the thread model.
+        let row_model = msg
+            .get("model")
+            .and_then(|m| m.as_str())
+            .filter(|m| !m.starts_with('<'));
 
         // Point-in-time context/model: main thread only — a sub-agent's turn
         // must not clobber the session's context gauge or reported model.
@@ -197,7 +214,8 @@ pub fn from_transcript(tx: &Transcript) -> Option<Usage> {
             if let Some(model) = row_model {
                 usage.model = Some(model.to_string());
             }
-            usage.context_limit = context_limit_for(usage.model.as_deref(), usage.context_tokens);
+            peak_context = peak_context.max(usage.context_tokens);
+            usage.context_limit = context_limit_for(usage.model.as_deref(), peak_context);
         }
 
         // Cumulative cost — once per distinct message id, at the row's own
@@ -488,6 +506,48 @@ mod tests {
         )]);
         let u = from_transcript(&t).unwrap();
         assert_eq!(u.context_limit, 200_000);
+    }
+
+    /// Claude's `<synthetic>` placeholder model must be neutralized (parity with
+    /// analyticsBackfill.ts `if (rowModel?.startsWith('<')) rowModel = null`).
+    #[test]
+    fn synthetic_placeholder_model_is_neutralized() {
+        let t = tx(vec![
+            assistant_msg("m1", "claude-opus-4-8", 1_000, 0, 0, 500),
+            assistant_msg("m2", "<synthetic>", 0, 0, 0, 2_000),
+        ]);
+        let u = from_transcript(&t).unwrap();
+        assert_eq!(
+            u.model.as_deref(),
+            Some("claude-opus-4-8"),
+            "synthetic row must not clobber the reported model"
+        );
+        // opus: $5/M in, $25/M out. m1 = 1000*5 + 500*25; synthetic m2 = 2000 out at opus $25/M.
+        let expected = (1_000.0 * 5.0 + 500.0 * 25.0 + 2_000.0 * 25.0) / 1_000_000.0;
+        assert!(
+            (u.cost_usd - expected).abs() < 1e-12,
+            "cost={} expected={} (synthetic turn should bill at opus $25/M, not sonnet $15/M)",
+            u.cost_usd,
+            expected
+        );
+    }
+
+    /// 1M-mode is a session-level property: once any main-thread turn exceeds the
+    /// 200k window the limit must stay promoted even when a later turn's context
+    /// (e.g. after auto-compaction) falls back under 200k.
+    #[test]
+    fn context_window_1m_promotion_survives_compaction() {
+        let t = tx(vec![
+            assistant_msg("m1", "claude-opus-4-8", 250_000, 0, 0, 10),
+            user_msg(),
+            assistant_msg("m2", "claude-opus-4-8", 180_000, 0, 0, 10),
+        ]);
+        let u = from_transcript(&t).unwrap();
+        assert_eq!(u.context_tokens, 180_000, "gauge reflects latest turn");
+        assert_eq!(
+            u.context_limit, 1_000_000,
+            "1M promotion must persist past compaction (session peak), not revert to 200k"
+        );
     }
 
     /// per-message-id dedup: duplicate id must be counted only once
