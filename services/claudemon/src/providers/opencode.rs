@@ -563,7 +563,10 @@ async fn run_session(
 
     let mut buf: Vec<u8> = Vec::new();
     let mut cur_mode = SessionMode::Input;
+    // OpenCode's usage events are per-message/per-step, so fold them additively
+    // (summing across the session) rather than by max, which would under-report.
     let mut acc = UsageAcc::new();
+    acc.additive();
     // The id of the permission currently awaiting the user's decision (non-YOLO).
     // Permission ids awaiting a decision, FIFO — a queue (not one slot) so
     // concurrent permission requests don't drop each other and stall the agent.

@@ -417,9 +417,18 @@ pub fn conversation_item(update: &AgentUpdate) -> Option<ConversationItem> {
 }
 
 /// Running tally of model/usage/cost across a managed session, for the status
-/// line. Tokens/cost arrive as per-message or per-step partials, so we take the
-/// max — the displayed totals never regress mid-turn. Context occupancy is the
-/// LATEST reading (not max: compaction legitimately shrinks it).
+/// line. How input/output/cached_input/cost fold depends on what the provider's
+/// wire figures mean, selected per-adapter via [`UsageAcc::additive`]:
+///   - Default (max): the figures are session-CUMULATIVE running totals
+///     (Claude, Codex), so the max is the latest total and the displayed
+///     numbers never regress mid-turn.
+///   - Additive (sum): the figures are PER-MESSAGE / per-step (OpenCode, Pi),
+///     so summing them across the session gives the true totals — a max would
+///     keep only the single biggest message and under-report.
+///
+/// Context occupancy (`context_tokens` / `context_window`) is the LATEST reading
+/// in BOTH modes — never summed — because compaction legitimately shrinks it and
+/// it feeds the context meter's occupancy, not a running total.
 #[derive(Default)]
 pub struct UsageAcc {
     model: Option<String>,
@@ -444,6 +453,11 @@ pub struct UsageAcc {
     /// totals are per-request maxes — an estimate there would flash a wrong
     /// figure before the first `result` event's real `total_cost_usd`.
     estimate_costs: bool,
+    /// Sum input/output/cached_input/cost across `merge` calls instead of taking
+    /// the max. Opt-in per adapter: only for providers whose wire figures are
+    /// per-message / per-step (OpenCode, Pi) rather than session-cumulative.
+    /// Never affects context occupancy, which stays latest-wins in both modes.
+    additive: bool,
 }
 
 impl UsageAcc {
@@ -464,6 +478,12 @@ impl UsageAcc {
     pub fn estimate_costs(&mut self) {
         self.estimate_costs = true;
     }
+
+    /// Fold token/cost figures additively instead of by max (see the field's
+    /// caveats). Use only for adapters whose wire figures are per-message.
+    pub fn additive(&mut self) {
+        self.additive = true;
+    }
     #[allow(clippy::too_many_arguments)]
     fn merge(
         &mut self,
@@ -478,18 +498,38 @@ impl UsageAcc {
         if model.is_some() {
             self.model = model;
         }
+        // Per-message adapters (additive) SUM these across the session; cumulative
+        // adapters MAX so the latest running total wins and never regresses.
         if let Some(i) = input {
-            self.input = Some(self.input.map_or(i, |c| c.max(i)));
+            self.input = Some(match self.input {
+                Some(c) if self.additive => c + i,
+                Some(c) => c.max(i),
+                None => i,
+            });
         }
         if let Some(o) = output {
-            self.output = Some(self.output.map_or(o, |c| c.max(o)));
+            self.output = Some(match self.output {
+                Some(c) if self.additive => c + o,
+                Some(c) => c.max(o),
+                None => o,
+            });
         }
         if let Some(ci) = cached_input {
-            self.cached_input = Some(self.cached_input.map_or(ci, |c| c.max(ci)));
+            self.cached_input = Some(match self.cached_input {
+                Some(c) if self.additive => c + ci,
+                Some(c) => c.max(ci),
+                None => ci,
+            });
         }
         if let Some(c) = cost {
-            self.cost = Some(self.cost.map_or(c, |p| p.max(c)));
+            self.cost = Some(match self.cost {
+                Some(p) if self.additive => p + c,
+                Some(p) => p.max(c),
+                None => c,
+            });
         }
+        // context_tokens / context_window stay latest-wins in BOTH modes — never
+        // summed (see the type doc): they feed occupancy, and compaction shrinks it.
         if context_tokens.is_some() {
             self.context_tokens = context_tokens; // latest, not max — compaction shrinks it
         }
@@ -1006,6 +1046,57 @@ mod tests {
         acc.merge(None, None, None, None, None, Some(30_000), None);
         let sl = acc.status_line();
         assert!((sl.context_used_pct.unwrap() - 15.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn additive_mode_sums_per_message_figures_while_default_maxes() {
+        // OpenCode / Pi emit PER-MESSAGE figures. In additive mode the session
+        // totals must be the SUM of the messages, not the single biggest one.
+        let mut add = UsageAcc::new();
+        add.additive();
+        add.merge(
+            None,
+            Some(100),
+            Some(10),
+            None,
+            Some(0.10),
+            Some(1_000),
+            None,
+        );
+        add.merge(
+            None,
+            Some(150),
+            Some(20),
+            None,
+            Some(0.20),
+            Some(1_200),
+            None,
+        );
+        assert_eq!(add.input, Some(250), "additive input should sum 100+150");
+        assert_eq!(add.output, Some(30), "additive output should sum 10+20");
+        assert!(
+            add.cost.map(|c| (c - 0.30).abs() < 1e-9).unwrap_or(false),
+            "additive cost should sum 0.10+0.20, got {:?}",
+            add.cost
+        );
+        // Context stays LATEST even in additive mode — never summed.
+        assert_eq!(
+            add.context_tokens,
+            Some(1_200),
+            "context_tokens must track latest, not sum, in additive mode"
+        );
+
+        // Default (Claude/Codex) adapters still MAX cumulative figures.
+        let mut def = UsageAcc::new();
+        def.merge(None, Some(100), Some(10), None, Some(0.10), None, None);
+        def.merge(None, Some(150), Some(20), None, Some(0.20), None, None);
+        assert_eq!(def.input, Some(150), "default input should max");
+        assert_eq!(def.output, Some(20), "default output should max");
+        assert!(
+            def.cost.map(|c| (c - 0.20).abs() < 1e-9).unwrap_or(false),
+            "default cost should max, got {:?}",
+            def.cost
+        );
     }
 
     #[test]

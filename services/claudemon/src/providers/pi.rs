@@ -664,7 +664,10 @@ async fn tail_session_file(
 ) -> anyhow::Result<()> {
     use tokio::io::{AsyncBufReadExt, AsyncSeekExt};
     let mut cur_mode = SessionMode::Input;
+    // Pi reports usage per assistant message, so fold additively (sum across the
+    // session) rather than by max, which would under-report multi-message totals.
     let mut acc = UsageAcc::new();
+    acc.additive();
     let mut offset: u64 = 0;
     let mut leftover = String::new();
     loop {
@@ -904,7 +907,10 @@ async fn run_session(
     store.register_managed_yolo(session_id, yolo_live.clone(), false);
 
     let mut cur_mode = SessionMode::Input;
+    // Pi reports usage per assistant message, so fold additively (sum across the
+    // session) rather than by max, which would under-report multi-message totals.
     let mut acc = UsageAcc::new();
+    acc.additive();
     // Extension UI requests awaiting the user's decision (non-YOLO), FIFO. We park
     // each whole request so we can echo its `id` + `method` in the reply; a queue
     // (not one slot) so concurrent requests don't drop each other and stall.
