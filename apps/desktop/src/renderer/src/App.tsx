@@ -1862,69 +1862,24 @@ function App() {
 
   return (
     <PaneMenuProvider value={paneMenuValue}>
-    <AttentionProvider
-      agents={agents}
-      activeAgentId={activeAgentId}
-      snapshotBySession={snapshotBySession}
-      inboxOpen={inboxOpen}
-      openInbox={openInbox}
-      closeInbox={closeInbox}
-      viewLevel={effectiveViewLevel}
-      setViewLevel={setViewLevel}
-      onOpenAgent={handleSelectAgent}
-      onRespawnAgent={respawnAgent}
-      onSpawnAgent={() => setShowSpawnDialog(true)}
-      attention={attention}
-    >
-      <div className="app-root">
-        {sidebarOverlay && !sidebarCollapsed && (
-          <div
-            onClick={() => setSidebarCollapsed(true)}
-            style={{
-              position: 'fixed',
-              inset: 0,
-              zIndex: 90,
-              background: 'rgba(0,0,0,0.45)',
-              // @ts-ignore — stay clickable over the draggable navbar region
-              WebkitAppRegion: 'no-drag',
-            }}
-          />
-        )}
-        {/* Desktop always shows the sidebar (a rail when collapsed); mobile shows
-          the full panel as an overlay only while expanded. */}
-        {(!sidebarOverlay || !sidebarCollapsed) && (
-          <ErrorBoundary label="Sidebar" variant="region">
-            <SideBar
-              agents={agents}
-              activeAgentId={activeAgentId}
-              statusBySession={statusBySession}
-              snapshotBySession={snapshotBySession}
-              onSelectAgent={(id) => {
-                handleSelectAgent(id);
-                if (sidebarOverlay) setSidebarCollapsed(true);
-              }}
-              onSpawnAgent={() => setShowSpawnDialog(true)}
-              onTerminateAgent={handleTerminateAgent}
-              onRenameAgent={renameAgent}
-              onJumpToAttention={goToNextAttention}
-              onOpenInbox={openInbox}
-              onToggleFleet={toggleFleet}
-              viewLevel={effectiveViewLevel}
-              onOpenRemote={() => setShowRemote(true)}
-              onToggleCollapse={toggleSidebar}
-              onToggleHelp={toggleHelp}
-              noAttentionFlash={noAttentionFlash}
-              collapsed={!sidebarOverlay && railShown}
-            />
-          </ErrorBoundary>
-        )}
-        {/* Focus mode: the rail's expand affordance shows the FULL sidebar as a
-          temporary overlay (scrim + floating panel) — the content column stays
-          at rail width. Dismissed by scrim click or agent selection. */}
-        {sidebarRailForced && focusSidebarOverlay && (
-          <>
+      <AttentionProvider
+        agents={agents}
+        activeAgentId={activeAgentId}
+        snapshotBySession={snapshotBySession}
+        inboxOpen={inboxOpen}
+        openInbox={openInbox}
+        closeInbox={closeInbox}
+        viewLevel={effectiveViewLevel}
+        setViewLevel={setViewLevel}
+        onOpenAgent={handleSelectAgent}
+        onRespawnAgent={respawnAgent}
+        onSpawnAgent={() => setShowSpawnDialog(true)}
+        attention={attention}
+      >
+        <div className="app-root">
+          {sidebarOverlay && !sidebarCollapsed && (
             <div
-              onClick={() => setFocusSidebarOverlay(false)}
+              onClick={() => setSidebarCollapsed(true)}
               style={{
                 position: 'fixed',
                 inset: 0,
@@ -1934,6 +1889,10 @@ function App() {
                 WebkitAppRegion: 'no-drag',
               }}
             />
+          )}
+          {/* Desktop always shows the sidebar (a rail when collapsed); mobile shows
+          the full panel as an overlay only while expanded. */}
+          {(!sidebarOverlay || !sidebarCollapsed) && (
             <ErrorBoundary label="Sidebar" variant="region">
               <SideBar
                 agents={agents}
@@ -1942,7 +1901,7 @@ function App() {
                 snapshotBySession={snapshotBySession}
                 onSelectAgent={(id) => {
                   handleSelectAgent(id);
-                  setFocusSidebarOverlay(false);
+                  if (sidebarOverlay) setSidebarCollapsed(true);
                 }}
                 onSpawnAgent={() => setShowSpawnDialog(true)}
                 onTerminateAgent={handleTerminateAgent}
@@ -1952,338 +1911,381 @@ function App() {
                 onToggleFleet={toggleFleet}
                 viewLevel={effectiveViewLevel}
                 onOpenRemote={() => setShowRemote(true)}
-                onToggleCollapse={() => setFocusSidebarOverlay(false)}
+                onToggleCollapse={toggleSidebar}
                 onToggleHelp={toggleHelp}
                 noAttentionFlash={noAttentionFlash}
-                collapsed={false}
+                collapsed={!sidebarOverlay && railShown}
               />
             </ErrorBoundary>
-          </>
-        )}
-        {sidebarOverlay && sidebarCollapsed && (
-          <button
-            onClick={() => setSidebarCollapsed(false)}
-            title="Show sidebar (Ctrl+B)"
+          )}
+          {/* Focus mode: the rail's expand affordance shows the FULL sidebar as a
+          temporary overlay (scrim + floating panel) — the content column stays
+          at rail width. Dismissed by scrim click or agent selection. */}
+          {sidebarRailForced && focusSidebarOverlay && (
+            <>
+              <div
+                onClick={() => setFocusSidebarOverlay(false)}
+                style={{
+                  position: 'fixed',
+                  inset: 0,
+                  zIndex: 90,
+                  background: 'rgba(0,0,0,0.45)',
+                  // @ts-ignore — stay clickable over the draggable navbar region
+                  WebkitAppRegion: 'no-drag',
+                }}
+              />
+              <ErrorBoundary label="Sidebar" variant="region">
+                <SideBar
+                  agents={agents}
+                  activeAgentId={activeAgentId}
+                  statusBySession={statusBySession}
+                  snapshotBySession={snapshotBySession}
+                  onSelectAgent={(id) => {
+                    handleSelectAgent(id);
+                    setFocusSidebarOverlay(false);
+                  }}
+                  onSpawnAgent={() => setShowSpawnDialog(true)}
+                  onTerminateAgent={handleTerminateAgent}
+                  onRenameAgent={renameAgent}
+                  onJumpToAttention={goToNextAttention}
+                  onOpenInbox={openInbox}
+                  onToggleFleet={toggleFleet}
+                  viewLevel={effectiveViewLevel}
+                  onOpenRemote={() => setShowRemote(true)}
+                  onToggleCollapse={() => setFocusSidebarOverlay(false)}
+                  onToggleHelp={toggleHelp}
+                  noAttentionFlash={noAttentionFlash}
+                  collapsed={false}
+                />
+              </ErrorBoundary>
+            </>
+          )}
+          {sidebarOverlay && sidebarCollapsed && (
+            <button
+              onClick={() => setSidebarCollapsed(false)}
+              title="Show sidebar (Ctrl+B)"
+              style={{
+                position: 'fixed',
+                zIndex: 200,
+                // Clear the notch/status bar on phones; keep it tight on desktop.
+                top: isSmallScreen ? 'calc(env(safe-area-inset-top) + 6px)' : 6,
+                left: isSmallScreen ? 'calc(env(safe-area-inset-left) + 6px)' : 6,
+                // Larger fingertip target on phones (Apple HIG floor is ~44px).
+                width: isSmallScreen ? 38 : 26,
+                height: isSmallScreen ? 38 : 26,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                border: '1px solid var(--wks-glass-border)',
+                borderRadius: 'var(--wks-radius-md)',
+                background: 'var(--wks-bg-surface)',
+                color: 'var(--wks-text-secondary)',
+                cursor: 'pointer',
+                fontSize: isSmallScreen ? '1.1rem' : '0.95rem',
+                lineHeight: 1,
+                // @ts-ignore — keep it clickable over the draggable navbar region
+                WebkitAppRegion: 'no-drag',
+              }}
+            >
+              <ChevronRight size={16} strokeWidth={2} />
+            </button>
+          )}
+
+          <ErrorBoundary label="Tab bar" variant="region">
+            <NavBar
+              tabs={tabs}
+              activeTabId={activeTabId}
+              onTabClick={handleTabClick}
+              onAddTab={handleAddTab}
+              onCloseTab={removeTab}
+              onRenameTab={handleNavBarRename}
+              onSplitTab={handleNavBarSplit}
+              onMoveTab={moveTab}
+              leftOffset={navLeft}
+              cwd={agentCwd || undefined}
+              scripts={dirScripts}
+              onRunScript={handleRunScript}
+              onSaveScripts={handleSaveScripts}
+            />
+          </ErrorBoundary>
+
+          <div
+            className="app-content"
             style={{
-              position: 'fixed',
-              zIndex: 200,
-              // Clear the notch/status bar on phones; keep it tight on desktop.
-              top: isSmallScreen ? 'calc(env(safe-area-inset-top) + 6px)' : 6,
-              left: isSmallScreen ? 'calc(env(safe-area-inset-left) + 6px)' : 6,
-              // Larger fingertip target on phones (Apple HIG floor is ~44px).
-              width: isSmallScreen ? 38 : 26,
-              height: isSmallScreen ? 38 : 26,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              border: '1px solid var(--wks-glass-border)',
-              borderRadius: 'var(--wks-radius-md)',
-              background: 'var(--wks-bg-surface)',
-              color: 'var(--wks-text-secondary)',
-              cursor: 'pointer',
-              fontSize: isSmallScreen ? '1.1rem' : '0.95rem',
-              lineHeight: 1,
-              // @ts-ignore — keep it clickable over the draggable navbar region
-              WebkitAppRegion: 'no-drag',
+              // Panes sit flush under the tab bar's divider (mockup layout).
+              marginTop: `${navHeight}px`,
+              marginLeft: `${contentLeft}px`,
             }}
           >
-            <ChevronRight size={16} strokeWidth={2} />
-          </button>
-        )}
-
-        <ErrorBoundary label="Tab bar" variant="region">
-          <NavBar
-            tabs={tabs}
-            activeTabId={activeTabId}
-            onTabClick={handleTabClick}
-            onAddTab={handleAddTab}
-            onCloseTab={removeTab}
-            onRenameTab={handleNavBarRename}
-            onSplitTab={handleNavBarSplit}
-            onMoveTab={moveTab}
-            leftOffset={navLeft}
-            cwd={agentCwd || undefined}
-            scripts={dirScripts}
-            onRunScript={handleRunScript}
-            onSaveScripts={handleSaveScripts}
-          />
-        </ErrorBoundary>
-
-        <div
-          className="app-content"
-          style={{
-            // Panes sit flush under the tab bar's divider (mockup layout).
-            marginTop: `${navHeight}px`,
-            marginLeft: `${contentLeft}px`,
-          }}
-        >
-          {agents.length > 0 ? (
-            // Keep every agent's workspace mounted and just toggle visibility, so
-            // switching agents never unmounts a Claude pane (which would detach
-            // its viewer and clear the terminal). Only the active agent's
-            // container is shown and wired to the scroll ref.
-            agents.map((agent) => (
-              <AgentWorkspaceView
-                key={agent.id}
-                agent={agent}
-                isActiveAgent={agent.id === activeAgentId}
-                liveCwd={agent.sessionId ? snapshotBySession[agent.sessionId]?.liveCwd : undefined}
-                scrollContainerRef={scrollContainerRef}
-                ptyMapping={ptyMapping}
-                renameSignal={renameSignal}
-                workspaceAgents={workspaceAgents}
-                appCwd={appCwd}
-                allAgents={agents}
-                handlers={agentViewHandlers}
+            {agents.length > 0 ? (
+              // Keep every agent's workspace mounted and just toggle visibility, so
+              // switching agents never unmounts a Claude pane (which would detach
+              // its viewer and clear the terminal). Only the active agent's
+              // container is shown and wired to the scroll ref.
+              agents.map((agent) => (
+                <AgentWorkspaceView
+                  key={agent.id}
+                  agent={agent}
+                  isActiveAgent={agent.id === activeAgentId}
+                  liveCwd={
+                    agent.sessionId ? snapshotBySession[agent.sessionId]?.liveCwd : undefined
+                  }
+                  scrollContainerRef={scrollContainerRef}
+                  ptyMapping={ptyMapping}
+                  renameSignal={renameSignal}
+                  workspaceAgents={workspaceAgents}
+                  appCwd={appCwd}
+                  allAgents={agents}
+                  handlers={agentViewHandlers}
+                />
+              ))
+            ) : (
+              <HomeSpace
+                onSpawn={() => setShowSpawnDialog(true)}
+                spawnShortcut={config.keybindings?.shortcuts?.['spawn-agent'] ?? 'ctrl+shift+n'}
               />
-            ))
-          ) : (
-            <HomeSpace
-              onSpawn={() => setShowSpawnDialog(true)}
-              spawnShortcut={config.keybindings?.shortcuts?.['spawn-agent'] ?? 'ctrl+shift+n'}
+            )}
+          </div>
+
+          <ShortcutOverlay
+            visible={showHelp}
+            onClose={closeHelp}
+            prefix={kbPrefix}
+            shortcuts={resolvedShortcuts}
+          />
+
+          {(firstRunWelcome || showWelcome) && (
+            <Onboarding
+              overlay
+              firstRun={firstRunWelcome}
+              onSpawn={() => {
+                dismissWelcome();
+                setShowSpawnDialog(true);
+              }}
+              onDismiss={dismissWelcome}
+              onOpenKeybindings={() => {
+                dismissWelcome();
+                openSettings();
+                requestSettingsSection('keybindings');
+              }}
+              shortcuts={config.keybindings?.shortcuts ?? {}}
+              prefix={kbPrefix}
+              presetId={config.keybindings?.presetId}
+              onChoosePreset={(id) => saveConfig(presetConfigPatch(id, config))}
             />
           )}
-        </div>
 
-        <ShortcutOverlay
-          visible={showHelp}
-          onClose={closeHelp}
-          prefix={kbPrefix}
-          shortcuts={resolvedShortcuts}
-        />
-
-        {(firstRunWelcome || showWelcome) && (
-          <Onboarding
-            overlay
-            firstRun={firstRunWelcome}
-            onSpawn={() => {
-              dismissWelcome();
+          <CommandPalette
+            visible={showCommandPalette}
+            apps={config.apps ?? []}
+            agentCwd={agentCwd || undefined}
+            mode={paletteMode}
+            restrictTo={paletteRestrict}
+            libraryItems={libraryItems}
+            onClose={useCallback(() => {
+              setShowCommandPalette(false);
+              setPaletteRestrict(undefined);
+            }, [])}
+            onLaunchApp={handleLaunchApp}
+            onAddTab={handleAddTab}
+            onSplitPane={handleSplitPane}
+            pluginPanes={pluginPanes}
+            onOpenPlugin={handleOpenPlugin}
+            onInstallPlugin={() => {
+              setShowCommandPalette(false);
+              setShowInstallPlugin(true);
+            }}
+            onManagePlugins={() => {
+              setShowCommandPalette(false);
+              const tabId = openPaneIn(GLOBAL_WORKSPACE_ID, 'plugins', 'Plugins');
+              requestAnimationFrame(() => scrollToTab(tabId));
+            }}
+            onOpenLibrary={() => {
+              setShowCommandPalette(false);
+              // Open in the active agent's workspace (with its project cwd) so the
+              // pane shows that project's library + .claude skills; fall back to
+              // the global Overview when no agent is focused.
+              const tabId =
+                activeAgent && !activeAgent.global
+                  ? openPaneIn(activeAgent.id, 'library', 'Library', undefined, activeAgent.cwd)
+                  : openPaneIn(GLOBAL_WORKSPACE_ID, 'library', 'Library');
+              requestAnimationFrame(() => scrollToTab(tabId));
+            }}
+            onSwitchSession={() => {
+              setShowCommandPalette(false);
+              switchSession();
+            }}
+            onOpenAnalytics={openAnalytics}
+            onOpenAgents={hasAgentMonitorActivity ? openAgentsPane : undefined}
+            onOpenInspector={openInspectorForActive}
+            onOpenContext={openContextForActive}
+            onOpenLayouts={() => {
+              setShowCommandPalette(false);
+              setShowLayouts(true);
+            }}
+            onOpenRemote={() => {
+              setShowCommandPalette(false);
+              setShowRemote(true);
+            }}
+            onOpenAskPane={openAskPane}
+            onOpenFile={() => {
+              setShowCommandPalette(false);
+              openFileInEditor();
+            }}
+            shortcuts={resolvedShortcuts}
+            prefix={kbPrefix}
+            onSpawnAgent={() => {
+              setShowCommandPalette(false);
               setShowSpawnDialog(true);
             }}
-            onDismiss={dismissWelcome}
-            onOpenKeybindings={() => {
-              dismissWelcome();
+            onShowWelcome={() => {
+              setShowCommandPalette(false);
+              setShowWelcome(true);
+            }}
+            onInstallCli={() => {
+              setShowCommandPalette(false);
+              // Outcome (installed / PATH instructions / failure) arrives as a
+              // system-notice banner pushed by main — no local result UI needed.
+              window.electronAPI.installCli?.().catch(() => {});
+            }}
+            updateStatus={updateStatus ?? undefined}
+            onCheckUpdates={() => {
+              setShowCommandPalette(false);
+              window.electronAPI.updatesCheck?.().catch(() => {});
+            }}
+            onInstallUpdate={() => {
+              setShowCommandPalette(false);
+              window.electronAPI.updatesInstall?.().catch(() => {});
+            }}
+            onToggleSidebar={() => {
+              setShowCommandPalette(false);
+              toggleSidebar();
+            }}
+            onToggleInbox={() => {
+              setShowCommandPalette(false);
+              setInboxOpen((v) => !v);
+            }}
+            onToggleFleet={() => {
+              setShowCommandPalette(false);
+              toggleFleet();
+            }}
+            onToggleUiMode={() => {
+              setShowCommandPalette(false);
+              toggleUiMode();
+            }}
+            onSaveSession={() => {
+              setShowCommandPalette(false);
+              saveCurrentSession();
+            }}
+            onOpenSettings={() => {
+              setShowCommandPalette(false);
               openSettings();
-              requestSettingsSection('keybindings');
             }}
-            shortcuts={config.keybindings?.shortcuts ?? {}}
+            onToggleHelp={() => {
+              setShowCommandPalette(false);
+              toggleHelp();
+            }}
+          />
+
+          <LibraryHost
+            activeAgent={activeAgent}
+            appCwd={appCwd}
+            spawnAgent={(opts) => {
+              void spawnAgent(opts);
+            }}
+            recordRecentDir={recordRecentDir}
+          />
+
+          {showInstallPlugin && <PluginInstallDialog onClose={() => setShowInstallPlugin(false)} />}
+
+          {showRemote && (
+            <Suspense fallback={null}>
+              <RemoteShareDialog onClose={() => setShowRemote(false)} />
+            </Suspense>
+          )}
+
+          {/* Host filesystem browser for the web build's pickFolder (inert on desktop). */}
+          <WebFolderPicker />
+
+          {/* Main-process system notices (daemon/startup failures) as in-app banners. */}
+          <SystemNotices />
+
+          <LibrarySidePanel
+            visible={showLibraryPanel}
+            onClose={() => setShowLibraryPanel(false)}
+            cwd={libraryCwd}
+          />
+
+          <BottomTerminalPanel
+            visible={showBottomTerminal}
+            onClose={() => setShowBottomTerminal(false)}
+            cwd={agentCwd || appCwd || undefined}
+            left={contentLeft}
+          />
+
+          {showSpawnDialog && (
+            <SpawnAgentDialog
+              defaultCwd={spawnDialogCwd || config.agents?.defaultCwd?.trim() || appCwdRef.current}
+              defaultProvider={config.agents?.defaultProvider}
+              defaultTransport={config.claude?.transport}
+              defaultWorktree={config.agents?.spawnInWorktree ?? false}
+              onSpawn={handleSpawnAgent}
+              onCancel={() => {
+                setShowSpawnDialog(false);
+                setSpawnDialogCwd(null);
+              }}
+            />
+          )}
+
+          {showLayouts && (
+            <LayoutsDialog
+              agentCount={agents.filter((a) => !a.global).length}
+              onSaveCurrent={handleSaveLayout}
+              onRestore={handleRestoreLayout}
+              onClose={() => setShowLayouts(false)}
+            />
+          )}
+
+          {sessionPhase === 'picker' && (
+            <SessionPicker
+              sessions={sessionList}
+              onNewSession={handleNewSession}
+              onResumeSession={handleResumeSession}
+              onDeleteSession={handleDeleteSession}
+              onRenameSession={handleRenameSession}
+              currentName={pickerCancellable ? sessionName : undefined}
+              onCancel={
+                pickerCancellable
+                  ? () => {
+                      setPickerCancellable(false);
+                      setSessionPhase('active');
+                    }
+                  : undefined
+              }
+            />
+          )}
+
+          <ChordHint
+            path={chordPath}
             prefix={kbPrefix}
-            presetId={config.keybindings?.presetId}
-            onChoosePreset={(id) => saveConfig(presetConfigPatch(id, config))}
+            shortcuts={resolvedShortcuts}
+            showOptions={kbChordHints}
           />
-        )}
 
-        <CommandPalette
-          visible={showCommandPalette}
-          apps={config.apps ?? []}
-          agentCwd={agentCwd || undefined}
-          mode={paletteMode}
-          restrictTo={paletteRestrict}
-          libraryItems={libraryItems}
-          onClose={useCallback(() => {
-            setShowCommandPalette(false);
-            setPaletteRestrict(undefined);
-          }, [])}
-          onLaunchApp={handleLaunchApp}
-          onAddTab={handleAddTab}
-          onSplitPane={handleSplitPane}
-          pluginPanes={pluginPanes}
-          onOpenPlugin={handleOpenPlugin}
-          onInstallPlugin={() => {
-            setShowCommandPalette(false);
-            setShowInstallPlugin(true);
-          }}
-          onManagePlugins={() => {
-            setShowCommandPalette(false);
-            const tabId = openPaneIn(GLOBAL_WORKSPACE_ID, 'plugins', 'Plugins');
-            requestAnimationFrame(() => scrollToTab(tabId));
-          }}
-          onOpenLibrary={() => {
-            setShowCommandPalette(false);
-            // Open in the active agent's workspace (with its project cwd) so the
-            // pane shows that project's library + .claude skills; fall back to
-            // the global Overview when no agent is focused.
-            const tabId =
-              activeAgent && !activeAgent.global
-                ? openPaneIn(activeAgent.id, 'library', 'Library', undefined, activeAgent.cwd)
-                : openPaneIn(GLOBAL_WORKSPACE_ID, 'library', 'Library');
-            requestAnimationFrame(() => scrollToTab(tabId));
-          }}
-          onSwitchSession={() => {
-            setShowCommandPalette(false);
-            switchSession();
-          }}
-          onOpenAnalytics={openAnalytics}
-          onOpenAgents={hasAgentMonitorActivity ? openAgentsPane : undefined}
-          onOpenInspector={openInspectorForActive}
-          onOpenContext={openContextForActive}
-          onOpenLayouts={() => {
-            setShowCommandPalette(false);
-            setShowLayouts(true);
-          }}
-          onOpenRemote={() => {
-            setShowCommandPalette(false);
-            setShowRemote(true);
-          }}
-          onOpenAskPane={openAskPane}
-          onOpenFile={() => {
-            setShowCommandPalette(false);
-            openFileInEditor();
-          }}
-          shortcuts={resolvedShortcuts}
-          prefix={kbPrefix}
-          onSpawnAgent={() => {
-            setShowCommandPalette(false);
-            setShowSpawnDialog(true);
-          }}
-          onShowWelcome={() => {
-            setShowCommandPalette(false);
-            setShowWelcome(true);
-          }}
-          onInstallCli={() => {
-            setShowCommandPalette(false);
-            // Outcome (installed / PATH instructions / failure) arrives as a
-            // system-notice banner pushed by main — no local result UI needed.
-            window.electronAPI.installCli?.().catch(() => {});
-          }}
-          updateStatus={updateStatus ?? undefined}
-          onCheckUpdates={() => {
-            setShowCommandPalette(false);
-            window.electronAPI.updatesCheck?.().catch(() => {});
-          }}
-          onInstallUpdate={() => {
-            setShowCommandPalette(false);
-            window.electronAPI.updatesInstall?.().catch(() => {});
-          }}
-          onToggleSidebar={() => {
-            setShowCommandPalette(false);
-            toggleSidebar();
-          }}
-          onToggleInbox={() => {
-            setShowCommandPalette(false);
-            setInboxOpen((v) => !v);
-          }}
-          onToggleFleet={() => {
-            setShowCommandPalette(false);
-            toggleFleet();
-          }}
-          onToggleUiMode={() => {
-            setShowCommandPalette(false);
-            toggleUiMode();
-          }}
-          onSaveSession={() => {
-            setShowCommandPalette(false);
-            saveCurrentSession();
-          }}
-          onOpenSettings={() => {
-            setShowCommandPalette(false);
-            openSettings();
-          }}
-          onToggleHelp={() => {
-            setShowCommandPalette(false);
-            toggleHelp();
-          }}
-        />
-
-        <LibraryHost
-          activeAgent={activeAgent}
-          appCwd={appCwd}
-          spawnAgent={(opts) => {
-            void spawnAgent(opts);
-          }}
-          recordRecentDir={recordRecentDir}
-        />
-
-        {showInstallPlugin && <PluginInstallDialog onClose={() => setShowInstallPlugin(false)} />}
-
-        {showRemote && (
-          <Suspense fallback={null}>
-            <RemoteShareDialog onClose={() => setShowRemote(false)} />
-          </Suspense>
-        )}
-
-        {/* Host filesystem browser for the web build's pickFolder (inert on desktop). */}
-        <WebFolderPicker />
-
-        {/* Main-process system notices (daemon/startup failures) as in-app banners. */}
-        <SystemNotices />
-
-        <LibrarySidePanel
-          visible={showLibraryPanel}
-          onClose={() => setShowLibraryPanel(false)}
-          cwd={libraryCwd}
-        />
-
-        <BottomTerminalPanel
-          visible={showBottomTerminal}
-          onClose={() => setShowBottomTerminal(false)}
-          cwd={agentCwd || appCwd || undefined}
-          left={contentLeft}
-        />
-
-        {showSpawnDialog && (
-          <SpawnAgentDialog
-            defaultCwd={spawnDialogCwd || config.agents?.defaultCwd?.trim() || appCwdRef.current}
-            defaultProvider={config.agents?.defaultProvider}
-            defaultTransport={config.claude?.transport}
-            defaultWorktree={config.agents?.spawnInWorktree ?? false}
-            onSpawn={handleSpawnAgent}
-            onCancel={() => {
-              setShowSpawnDialog(false);
-              setSpawnDialogCwd(null);
-            }}
-          />
-        )}
-
-        {showLayouts && (
-          <LayoutsDialog
-            agentCount={agents.filter((a) => !a.global).length}
-            onSaveCurrent={handleSaveLayout}
-            onRestore={handleRestoreLayout}
-            onClose={() => setShowLayouts(false)}
-          />
-        )}
-
-        {sessionPhase === 'picker' && (
-          <SessionPicker
-            sessions={sessionList}
-            onNewSession={handleNewSession}
-            onResumeSession={handleResumeSession}
-            onDeleteSession={handleDeleteSession}
-            onRenameSession={handleRenameSession}
-            currentName={pickerCancellable ? sessionName : undefined}
-            onCancel={
-              pickerCancellable
-                ? () => {
-                    setPickerCancellable(false);
-                    setSessionPhase('active');
-                  }
-                : undefined
-            }
-          />
-        )}
-
-        <ChordHint
-          path={chordPath}
-          prefix={kbPrefix}
-          shortcuts={resolvedShortcuts}
-          showOptions={kbChordHints}
-        />
-
-        {/* Fleet Deck — cross-agent radar overlay. Sits OVER the still-mounted
+          {/* Fleet Deck — cross-agent radar overlay. Sits OVER the still-mounted
           per-agent workspaces, so entering/leaving never remounts a pane.
           Never mounts in focus mode (manifest.fleetDeck). */}
-        {uiManifest.fleetDeck && viewLevel === 'fleet' && agents.some((a) => !a.global) && (
-          <FleetDeck top={navHeight} left={contentLeft} />
-        )}
+          {uiManifest.fleetDeck && viewLevel === 'fleet' && agents.some((a) => !a.global) && (
+            <FleetDeck top={navHeight} left={contentLeft} />
+          )}
 
-        {/* Triage Inbox — top-level drawer, reachable from any agent. */}
-        <InboxDrawer />
+          {/* Triage Inbox — top-level drawer, reachable from any agent. */}
+          <InboxDrawer />
 
-        {/* Full-height workflow timeline, opened from a WorkflowRunCard. */}
-        <WorkflowOverlay />
-      </div>
-    </AttentionProvider>
+          {/* Full-height workflow timeline, opened from a WorkflowRunCard. */}
+          <WorkflowOverlay />
+        </div>
+      </AttentionProvider>
     </PaneMenuProvider>
   );
 }

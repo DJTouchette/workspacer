@@ -127,13 +127,18 @@ fn read_access_token() -> Result<String> {
             #[cfg(target_os = "macos")]
             {
                 if let Ok(out) = std::process::Command::new("security")
-                    .args(["find-generic-password", "-s", "Claude Code-credentials", "-w"])
+                    .args([
+                        "find-generic-password",
+                        "-s",
+                        "Claude Code-credentials",
+                        "-w",
+                    ])
                     .output()
                 {
                     if out.status.success() {
-                        if let Ok(creds) =
-                            serde_json::from_slice::<Value>(String::from_utf8_lossy(&out.stdout).trim().as_bytes())
-                        {
+                        if let Ok(creds) = serde_json::from_slice::<Value>(
+                            String::from_utf8_lossy(&out.stdout).trim().as_bytes(),
+                        ) {
                             return token_from_credentials(&creds);
                         }
                     }
@@ -149,8 +154,8 @@ fn read_credentials_json() -> Result<Value> {
         .context("no home directory")?
         .join(".claude")
         .join(".credentials.json");
-    let raw = std::fs::read_to_string(&path)
-        .with_context(|| format!("reading {}", path.display()))?;
+    let raw =
+        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
     serde_json::from_str(&raw).context("parsing credentials json")
 }
 

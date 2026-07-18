@@ -80,9 +80,7 @@ function runGit(
 /** Same shape claudemon enforces for session ids — the id becomes a directory
  *  name, so refuse anything traversal-shaped before it touches a path. */
 function validSessionId(id: string): boolean {
-  return (
-    id.length > 0 && id.length <= 128 && !id.includes('..') && /^[A-Za-z0-9._-]+$/.test(id)
-  );
+  return id.length > 0 && id.length <= 128 && !id.includes('..') && /^[A-Za-z0-9._-]+$/.test(id);
 }
 
 class TimelineReplayService {
@@ -192,7 +190,13 @@ class TimelineReplayService {
         const edits =
           op.name === 'MultiEdit'
             ? (input.edits ?? [])
-            : [{ old_string: input.old_string, new_string: input.new_string, replace_all: input.replace_all }];
+            : [
+                {
+                  old_string: input.old_string,
+                  new_string: input.new_string,
+                  replace_all: input.replace_all,
+                },
+              ];
         let ok = true;
         for (const e of edits) {
           const oldS = String(e.old_string ?? '');
@@ -213,9 +217,7 @@ class TimelineReplayService {
     }
 
     const status = await runGit(dir, ['status', '--porcelain']);
-    const changedFiles = status.ok
-      ? status.stdout.split('\n').filter((l) => l.trim()).length
-      : 0;
+    const changedFiles = status.ok ? status.stdout.split('\n').filter((l) => l.trim()).length : 0;
     return { applied, skipped, changedFiles };
   }
 

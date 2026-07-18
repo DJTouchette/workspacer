@@ -2470,7 +2470,10 @@ mod tests {
         let sl = store.get("s1").unwrap().status_line.expect("pushed line");
         assert_eq!(sl.five_hour_pct, Some(42.0));
         assert_eq!(sl.five_hour_resets_at, Some(1_800_000_000));
-        assert!(sl.received_at.is_some(), "injected line must carry a timestamp");
+        assert!(
+            sl.received_at.is_some(),
+            "injected line must carry a timestamp"
+        );
 
         // A wire status line (stream shape: reset without utilization) gets the
         // account pct injected, but its own fresher reset wins.
@@ -2494,7 +2497,9 @@ mod tests {
         store.set_account_usage(account_reading(42.0));
         assert!(store.get("c1").unwrap().status_line.is_none());
 
-        let state = store.apply_status_line("c1", StatusLine::default()).unwrap();
+        let state = store
+            .apply_status_line("c1", StatusLine::default())
+            .unwrap();
         assert_eq!(state.status_line.unwrap().five_hour_pct, None);
     }
 
@@ -2508,7 +2513,9 @@ mod tests {
         old.fetched_at = OffsetDateTime::now_utc() - time::Duration::minutes(10);
         *store.account_usage.write().unwrap() = Some(old);
 
-        let state = store.apply_status_line("s1", StatusLine::default()).unwrap();
+        let state = store
+            .apply_status_line("s1", StatusLine::default())
+            .unwrap();
         assert_eq!(state.status_line.unwrap().five_hour_pct, None);
     }
 
