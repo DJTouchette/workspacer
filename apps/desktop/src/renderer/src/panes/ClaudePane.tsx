@@ -841,6 +841,15 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
     // in sight even if you'd scrolled up — the ResizeObserver does the rest.
     stickToBottomRef.current = true;
 
+    // Restore the composer (text + attachments) verbatim when a send is
+    // rejected, so a failed send loses nothing and can be retried as-is. The
+    // guards avoid clobbering anything the user re-entered during the await;
+    // the prefix is regenerated from the restored chips on the next send.
+    const restoreComposer = () => {
+      setInputValue((prev) => (prev.trim().length > 0 ? prev : userText));
+      if (hasFiles) setAttachedFiles((prev) => (prev.length > 0 ? prev : attachedFiles));
+    };
+
     const rawFallback = () => {
       // Keystrokes need a PTY. No-PTY (stream) sessions can't fall back — the
       // POST /message path is their only transport, so a failure there means
@@ -848,7 +857,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
       if (!hasTerminal) {
         setOptimisticMessages((prev) => prev.filter((t) => t !== optimisticTurn));
         setOptimisticLoading(false);
-        setInputValue((prev) => (prev.trim().length > 0 ? prev : userText));
+        restoreComposer();
         return;
       }
       // Bracketed paste + a separate Enter, in one frame. Writing raw `text\r`
@@ -882,7 +891,7 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
       );
       setOptimisticMessages((prev) => prev.filter((t) => t !== optimisticTurn));
       setOptimisticLoading(false);
-      setInputValue((prev) => (prev.trim().length > 0 ? prev : userText));
+      restoreComposer();
       return;
     } catch (err) {
       console.warn('[ClaudePane] /message failed:', err);
@@ -916,6 +925,14 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
       setOptimisticMessages((prev) =>
         newlyConsumed >= prev.length ? [] : prev.slice(newlyConsumed),
       );
+      // A real user turn landing for THIS send is itself proof the daemon
+      // engaged — even if the turn never drove a visible thinking/streaming
+      // state (an instant no-op command like /model, or a thinking snapshot
+      // coalesced away by store batching). Count it as server activity so the
+      // idle-clear below can retire the optimistic spinner instead of spinning
+      // forever. (The pre-send idle snapshot never grows userCount, so this
+      // still cannot fire before the turn is acknowledged.)
+      sawServerActivitySinceSendRef.current = true;
     }
     // Clear optimistic loading once the server has actually engaged. A chat
     // message is normally sent from an *idle* prompt, so the pre-send idle

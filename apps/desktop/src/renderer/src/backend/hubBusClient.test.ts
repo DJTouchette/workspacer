@@ -111,6 +111,29 @@ describe('HubBusClient reconnect handling', () => {
     client.stop();
   });
 
+  it('does not reopen after an auth rejection on subsequent wake events', () => {
+    const client = new HubBusClient('bad-tok');
+    client.start();
+    FakeWS.instances[0].open();
+
+    // Server rejects the token and closes the socket with an auth-rejection code.
+    // No reconnect should be scheduled (bad token won't get better on retry).
+    FakeWS.instances[0].die(1008);
+    vi.advanceTimersByTime(600);
+    expect(FakeWS.instances.length).toBe(1);
+
+    // User tabs away and back: the socket is CLOSED (not live), but the rejection
+    // must be remembered so wake() does NOT spawn another doomed bad-token connection.
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(FakeWS.instances.length).toBe(1);
+
+    // Same for a network-restore event.
+    window.dispatchEvent(new Event('online'));
+    expect(FakeWS.instances.length).toBe(1);
+
+    client.stop();
+  });
+
   it('does not reconnect on wake when the socket is healthy', () => {
     const client = new HubBusClient('tok');
     client.start();

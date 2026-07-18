@@ -70,6 +70,7 @@ import { buildPaneMenu } from './lib/paneMenu';
 import { PaneMenuProvider, type PaneMenuContextValue } from './contexts/PaneMenuContext';
 import { compactClaudeSnapshotForBackground } from './lib/compactClaudeSnapshot';
 import { wasSessionTerminated } from './lib/terminatedSessions';
+import { promoteSessionSnapshots } from './lib/promoteSessionSnapshots';
 
 /** Normalize a workspace dir into a stable config key (slashes + no trailing /). */
 function scriptKey(cwd: string): string {
@@ -486,15 +487,11 @@ function App() {
     window.electronAPI
       .getAllClaudeSessions()
       .then((sessions: any[]) => {
-        const map: Record<string, SessionAmbientState> = {};
-        const snaps: Record<string, ClaudeSessionSnapshot> = {};
-        for (const s of sessions) {
-          // A just-terminated session can still be in the daemon's list while
-          // it tears down; re-promoting it would let auto-adopt resurrect it.
-          if (wasSessionTerminated(s.sessionId)) continue;
-          map[s.sessionId] = s.ambientState;
-          snaps[s.sessionId] = compactClaudeSnapshotForBackground(s);
-        }
+        // Skip terminated sessions AND daemon-reported `ended` ones: ended
+        // sessions never tick again, so promoting one here would pin a dead
+        // snapshot the live-update cleanup can never evict.
+        const { statusBySession: map, snapshotBySession: snaps } =
+          promoteSessionSnapshots(sessions);
         if (preexistingSessionIdsRef.current === null) {
           preexistingSessionIdsRef.current = new Set(sessions.map((s) => s.sessionId));
         }

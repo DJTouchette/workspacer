@@ -64,7 +64,7 @@ export function buildPaneMenu(
       // Built-in first, then a plugin pane by type — matching the documented
       // precedence. Otherwise a plugin whose pane type collides with a built-in
       // id (e.g. 'review') would shadow the built-in the user configured.
-      if (id in MENU_BUILTIN_LABELS) {
+      if (Object.prototype.hasOwnProperty.call(MENU_BUILTIN_LABELS, id)) {
         out.push(builtinEntry(id as PaneType));
         continue;
       }

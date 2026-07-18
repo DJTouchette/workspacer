@@ -57,6 +57,26 @@ describe('buildPaneMenu', () => {
     expect(buildPaneMenu([], [mkPlugin('acme.tracker')])).toEqual([]);
   });
 
+  it('drops Object.prototype key names as unknown ids (no inherited-property leak)', () => {
+    // These are inherited names on the MENU_BUILTIN_LABELS object via
+    // Object.prototype — they are NOT real built-in pane types. An `id in obj`
+    // test walks the prototype chain and would wrongly treat them as built-ins,
+    // emitting entries whose label is the inherited *function* and which open an
+    // "Unknown pane type" pane when clicked.
+    const protoIds = ['toString', 'constructor', 'valueOf', 'hasOwnProperty'];
+    const entries = buildPaneMenu(protoIds, []);
+    expect(entries).toEqual([]);
+
+    // A real plugin named after a prototype key still resolves as a plugin,
+    // and every emitted label must be a string (never a function).
+    const plugins = [mkPlugin('toString', 'Real Plugin')];
+    const withPlugin = buildPaneMenu(['toString'], plugins);
+    expect(withPlugin).toEqual([{ kind: 'plugin', pane: plugins[0], label: 'Real Plugin' }]);
+    for (const e of withPlugin) {
+      expect(typeof e.label).toBe('string');
+    }
+  });
+
   it('built-in takes precedence over a plugin whose type collides with a built-in id', () => {
     // A plugin declares a pane whose `type` collides with the built-in 'review' id.
     const plugins = [mkPlugin('review', 'Impostor Review')];

@@ -45,6 +45,9 @@ export class HubBusClient {
   private backoff = 500;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private closedByUser = false;
+  /** Set once the server closed us with an auth-rejection code (1008/4401).
+   *  A bad/expired token won't succeed on retry, so wake() must not reopen. */
+  private authRejected = false;
   /** True once any connection has succeeded — distinguishes the first connect
    *  from a reconnect so reconnect handlers don't fire on initial mount. */
   private hasConnectedOnce = false;
@@ -75,6 +78,7 @@ export class HubBusClient {
 
   start(): void {
     this.closedByUser = false;
+    this.authRejected = false;
     if (typeof document !== 'undefined') document.addEventListener('visibilitychange', this.onWake);
     if (typeof window !== 'undefined') window.addEventListener('online', this.onWake);
     this.open();
@@ -87,7 +91,7 @@ export class HubBusClient {
    * UI — until the user manually refreshes.
    */
   private wake(): void {
-    if (this.closedByUser) return;
+    if (this.closedByUser || this.authRejected) return;
     // Only act when the page is actually visible (visibilitychange also fires on hide).
     if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
     const live =
@@ -170,7 +174,10 @@ export class HubBusClient {
     this.ws.onclose = (ev) => {
       this.setConnected(false);
       // 1008 / 4401 = auth rejected — no point reconnecting with a bad token.
-      if (ev.code === 1008 || ev.code === 4401) return;
+      if (ev.code === 1008 || ev.code === 4401) {
+        this.authRejected = true;
+        return;
+      }
       if (!this.closedByUser) this.scheduleReconnect();
     };
 
