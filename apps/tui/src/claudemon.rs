@@ -599,7 +599,12 @@ pub fn spawn_status_lines(base: String) -> mpsc::UnboundedReceiver<StatusLineMsg
     tokio::spawn(async move {
         let mut backoff = std::time::Duration::from_millis(500);
         loop {
-            let _ = status_line_connect(&base, &tx).await;
+            if status_line_connect(&base, &tx).await.is_ok() {
+                // Clean EOF / healthy stream drop — retry quickly and reset the
+                // backoff, just like spawn_events. Without this the delay
+                // ratchets 500ms → 1s → … → 8s and stays pegged at the cap.
+                backoff = std::time::Duration::from_millis(500);
+            }
             tokio::time::sleep(backoff).await;
             backoff = (backoff * 2).min(std::time::Duration::from_secs(8));
         }
@@ -863,6 +868,61 @@ mod tests {
 
         let err = b"HTTP/1.1 409 Conflict\r\n\r\nsession is not accepting input";
         assert!(parse_http_json(err).is_err());
+    }
+
+    /// Regression: the statusline reconnect loop must reset its backoff after a
+    /// clean reconnect, exactly like `spawn_events`. The buggy version discarded
+    /// `status_line_connect`'s result and ratcheted the sleep 500ms → 1s → 2s →
+    /// … up to the 8s cap, so a healthy daemon that merely cycled its stream a
+    /// few times ended up pinned at an 8s reconnect delay forever.
+    #[tokio::test]
+    async fn statusline_backoff_resets_after_clean_reconnect() {
+        use std::time::{Duration, Instant};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let base = format!("http://{addr}");
+
+        // Record the instant of each reconnect, then hand the client a clean EOF.
+        let (acc_tx, mut acc_rx) = mpsc::unbounded_channel::<Instant>();
+        let server = tokio::spawn(async move {
+            let mut tmp = [0u8; 1024];
+            loop {
+                match listener.accept().await {
+                    Ok((mut sock, _)) => {
+                        let _ = acc_tx.send(Instant::now());
+                        // Drain the request so the client's write completes, then
+                        // close: n == 0 on the client side => Ok(()) => reconnect.
+                        let _ = sock.read(&mut tmp).await;
+                        drop(sock);
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+
+        // Start the loop under test; keep the receiver alive.
+        let _rx = spawn_status_lines(base);
+
+        // Collect the first four reconnect timestamps. Each must arrive inside a
+        // generous per-accept window; the buggy ratchet stalls the fourth.
+        let mut stamps = Vec::new();
+        for _ in 0..4 {
+            let t = tokio::time::timeout(Duration::from_millis(1200), acc_rx.recv())
+                .await
+                .expect("reconnect stalled — statusline backoff never reset")
+                .expect("accept channel closed unexpectedly");
+            stamps.push(t);
+        }
+        server.abort();
+
+        // With the reset in place every gap sits near the 500ms floor.
+        let gap = stamps[3].duration_since(stamps[2]);
+        assert!(
+            gap < Duration::from_millis(900),
+            "statusline reconnect backoff did not reset: 3rd gap was {gap:?}"
+        );
     }
 
     #[test]

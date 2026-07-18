@@ -264,6 +264,14 @@ impl Chord {
             code = KeyCode::BackTab;
             mods.remove(KeyModifiers::SHIFT);
         }
+        // A shifted letter reaches us from the terminal as its uppercase char,
+        // so fold shift into the character; normalized() then drops the now
+        // redundant SHIFT bit and `shift+g` matches a real Shift+G (`G`).
+        if mods.contains(KeyModifiers::SHIFT) {
+            if let KeyCode::Char(c) = code {
+                code = KeyCode::Char(c.to_ascii_uppercase());
+            }
+        }
         Some(Chord::new(code, mods))
     }
 
@@ -730,6 +738,29 @@ mod tests {
         assert_eq!(
             km.action(Context::List, with_shift),
             Some(Action::OpenAgentTerminal)
+        );
+    }
+
+    #[test]
+    fn shift_letter_parses_to_uppercase_chord() {
+        // The module doc and normalized() both claim `"shift+g"` and `"G"` are
+        // the same chord. A real Shift+G press arrives from crossterm as
+        // Char('G'), which parse("G") represents; parse("shift+g") must agree.
+        assert_eq!(
+            Chord::parse("shift+g").unwrap(),
+            Chord::parse("G").unwrap(),
+            "shift+g must fold into the uppercase-letter chord"
+        );
+
+        // And a config override written as `shift+g` must actually fire on a
+        // real Shift+G keypress (delivered as Char('G')).
+        let mut km = Keymap::default();
+        assert!(km.set(Context::List, "shift+g", "quit"));
+        let real_press = Chord::from_event(&ev('G', KeyModifiers::SHIFT));
+        assert_eq!(
+            km.action(Context::List, real_press),
+            Some(Action::Quit),
+            "an actual Shift+G press should hit the shift+g override"
         );
     }
 

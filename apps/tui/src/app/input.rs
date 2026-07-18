@@ -163,6 +163,9 @@ impl App {
             if let KeyCode::Char(d @ '1'..='9') = key.code {
                 if !key.modifiers.contains(KeyModifiers::CONTROL) {
                     self.pending_keys.clear();
+                    // Consume any pending vim count so it can't leak into the
+                    // next motion (mirrors dispatch_action's `self.count.take()`).
+                    self.count = None;
                     self.harpoon_jump((d as u8 - b'0') as usize);
                     return;
                 }
@@ -2238,6 +2241,31 @@ mod tests {
         );
         assert_eq!(app.count, None);
         assert!(!app.should_quit);
+    }
+
+    #[test]
+    fn count_before_harpoon_jump_does_not_leak_into_the_next_motion() {
+        let mut app = app_with_agents(3);
+        app.selected = 0;
+        // Type a count, then a <leader><digit> harpoon teleport.
+        app.handle_key(ch('3'));
+        assert_eq!(app.count, Some(3), "the leading digit accumulates a count");
+        feed(&mut app, " 2"); // <leader>2 — jump to harpoon slot 2 (no pins: toasts)
+        assert!(
+            app.pending_keys.is_empty(),
+            "the leader+digit chord is consumed"
+        );
+        assert_eq!(
+            app.count, None,
+            "the harpoon jump must consume the pending count, not leak it \
+             into the next motion"
+        );
+        // Prove the leak concretely: a following `j` must move exactly one row.
+        app.handle_key(ch('j'));
+        assert_eq!(
+            app.selected, 1,
+            "j after the jump moves one row, not the stale count of 3"
+        );
     }
 
     #[test]
