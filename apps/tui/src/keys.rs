@@ -232,7 +232,11 @@ impl Chord {
     /// `G` and `shift+g` are the same chord — matching the old inline matches).
     fn normalized(mut self) -> Chord {
         self.mods &= KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT;
-        if matches!(self.code, KeyCode::Char(_)) {
+        // A shifted char already encodes shift in its uppercase form, and BackTab
+        // is its own keycode for Shift+Tab (crossterm still sets SHIFT on it) —
+        // drop the redundant SHIFT bit for both so they match the chords parse()
+        // produces (parse folds shift+tab into BackTab+NONE).
+        if matches!(self.code, KeyCode::Char(_) | KeyCode::BackTab) {
             self.mods.remove(KeyModifiers::SHIFT);
         }
         self
@@ -451,8 +455,14 @@ impl Keymap {
                         None
                     };
                     // A concrete leaf shouldn't be shadowed by a deeper group on
-                    // the same chord; first writer wins and we only fill leaves.
-                    by_chord.entry(next).or_insert(leaf);
+                    // the same chord: fill an empty slot, and upgrade a group-only
+                    // (`None`) slot the moment we see a leaf — regardless of the
+                    // HashMap's iteration order. Among multiple leaves the first
+                    // writer (earliest context) wins.
+                    let slot = by_chord.entry(next).or_insert(None);
+                    if slot.is_none() {
+                        *slot = leaf;
+                    }
                 }
             }
         }
@@ -762,6 +772,56 @@ mod tests {
             Some(Action::Quit),
             "an actual Shift+G press should hit the shift+g override"
         );
+    }
+
+    #[test]
+    fn shift_tab_backtab_normalizes_to_backtab_chord() {
+        // crossterm 0.28 delivers a real Shift+Tab press as
+        // KeyEvent { code: BackTab, modifiers: SHIFT }. parse("shift+tab")
+        // stores it as BackTab + NONE (SHIFT folded away), so from_event must
+        // agree or the default `shift+tab` binding can never fire.
+        let real_press = Chord::from_event(&KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT));
+        assert_eq!(
+            real_press,
+            Chord::parse("shift+tab").unwrap(),
+            "a real Shift+Tab (BackTab+SHIFT) must fold into the shift+tab chord"
+        );
+
+        // And the default TabPrev binding must actually fire on that press.
+        let km = Keymap::default();
+        assert_eq!(
+            km.action(Context::AgentTerminal, real_press),
+            Some(Action::TabPrev),
+            "an actual Shift+Tab press should hit the shift+tab -> TabPrev binding"
+        );
+    }
+
+    #[test]
+    fn leaf_continuation_not_shadowed_by_deeper_group() {
+        // A user binds BOTH a leaf `<leader> g` and a deeper group `<leader> g d`
+        // that share the `g` chord. The which-key popup for `<leader>` must show
+        // `g` as an actionable leaf, per the documented "a concrete leaf shouldn't
+        // be shadowed by a deeper group" intent — regardless of HashMap iteration
+        // order. On the buggy `or_insert` (first-writer-wins over a randomized
+        // HashMap), the `g` entry loses its action roughly half the time, so we
+        // rebuild a fresh keymap many times to make the failure reliable.
+        let g = Chord::parse("g").unwrap();
+        for _ in 0..256 {
+            let mut km = Keymap::default();
+            let leader = km.leader();
+            assert!(km.set(Context::Global, "<leader> g", "palette"));
+            assert!(km.set(Context::Global, "<leader> g d", "select_first"));
+            let conts = km.continuations(&[Context::Global], &[leader]);
+            let g_cont = conts
+                .iter()
+                .find(|c| c.chord == g)
+                .expect("`g` continuation must be present under <leader>");
+            assert_eq!(
+                g_cont.action,
+                Some(Action::Palette),
+                "leaf `<leader> g` must keep its action and not be shadowed by the `<leader> g d` group",
+            );
+        }
     }
 
     #[test]

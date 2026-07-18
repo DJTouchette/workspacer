@@ -157,9 +157,18 @@ impl App {
         }
 
         self.pending_keys.push(chord);
+        let ctxs = [Context::Global, self.key_context()];
         // Leader + a digit teleports to a harpoon slot — positional, like the
-        // answer keys, so it isn't nine separate keymap entries.
-        if self.pending_keys.len() == 2 && self.pending_keys[0] == self.keymap.leader() {
+        // answer keys, so it isn't nine separate keymap entries. A user-defined
+        // `<leader> <digit>` override still wins, though: only intercept when no
+        // explicit keymap binding claims the sequence.
+        if self.pending_keys.len() == 2
+            && self.pending_keys[0] == self.keymap.leader()
+            && matches!(
+                self.keymap.resolve(&ctxs, &self.pending_keys),
+                KeyMatch::None
+            )
+        {
             if let KeyCode::Char(d @ '1'..='9') = key.code {
                 if !key.modifiers.contains(KeyModifiers::CONTROL) {
                     self.pending_keys.clear();
@@ -171,7 +180,6 @@ impl App {
                 }
             }
         }
-        let ctxs = [Context::Global, self.key_context()];
         match self.keymap.resolve(&ctxs, &self.pending_keys) {
             KeyMatch::Action(action) => {
                 self.pending_keys.clear();
@@ -2271,6 +2279,22 @@ mod tests {
         );
         assert_eq!(app.count, None);
         assert!(!app.should_quit);
+    }
+
+    #[test]
+    fn user_leader_digit_override_beats_the_harpoon_jump() {
+        let mut app = app_with_agents(1);
+        // A user override: `<leader> 5` -> quit, stored in the Global table.
+        assert!(app.keymap.set(Context::Global, "<leader> 5", "quit"));
+        feed(&mut app, " 5");
+        assert!(
+            app.should_quit,
+            "a configured <leader> 5 binding must fire, not the positional harpoon jump"
+        );
+        assert!(
+            app.pending_keys.is_empty(),
+            "the chord resolved and cleared"
+        );
     }
 
     #[test]
