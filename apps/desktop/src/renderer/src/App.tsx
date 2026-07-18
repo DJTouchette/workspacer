@@ -372,6 +372,17 @@ function App() {
   const activeAgentRef = useRef(activeAgent);
   activeAgentRef.current = activeAgent;
   const [appCwd, setAppCwd] = useState('');
+  // Neutral home for panes opened with no agent scope (~/.workspacer, created
+  // on demand) — see handleAddTab's fallback chain.
+  const scratchHomeRef = useRef<string>('');
+  useEffect(() => {
+    window.electronAPI
+      .getSupervisorHome?.()
+      .then((dir) => {
+        scratchHomeRef.current = dir;
+      })
+      .catch(() => {});
+  }, []);
   useEffect(() => {
     window.electronAPI
       .getCwd()
@@ -1360,9 +1371,16 @@ function App() {
       }
       // New panes inherit the active agent's working directory. Read it from the
       // ref so a stale caller closure (e.g. the command palette) still resolves the
-      // currently-selected agent's cwd; fall back to the app's project root so a
-      // terminal opened with no agent (e.g. from the Overview) doesn't land in $HOME.
-      const resolvedCwd = cwd || activeAgentRef.current?.cwd || appCwdRef.current || undefined;
+      // currently-selected agent's cwd. With no agent scope (the Overview
+      // workspace), fall back to the neutral ~/.workspacer home rather than the
+      // app's own launch directory — an Overview terminal/notes pane shouldn't
+      // land inside whatever repo happened to launch workspacer.
+      const resolvedCwd =
+        cwd ||
+        activeAgentRef.current?.cwd ||
+        scratchHomeRef.current ||
+        appCwdRef.current ||
+        undefined;
       const newId = addTabWithConfig(
         type,
         label,
