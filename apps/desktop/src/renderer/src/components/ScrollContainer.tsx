@@ -206,6 +206,7 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
         <Suspense fallback={<PaneFallback />}>
           <NotesPane
             title={pane.title}
+            cwd={pane.cwd || callbacks.appCwd}
             notes={pane.notes}
             onNotesChange={(notes) => callbacks.onNotesChange?.(pane.id, notes)}
           />
