@@ -382,11 +382,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on(IPC.HUB_STATUS, handler);
     return () => ipcRenderer.removeListener(IPC.HUB_STATUS, handler);
   },
-  // Per-directory notes (tags + markdown, stored in main)
-  notesList: (): Promise<unknown[]> => ipcRenderer.invoke(IPC.NOTES_LIST),
-  notesSave: (input: unknown): Promise<unknown> => ipcRenderer.invoke(IPC.NOTES_SAVE, input),
-  notesDelete: (id: string): Promise<void> => ipcRenderer.invoke(IPC.NOTES_DELETE, id),
-
   /** null = hub unreachable (still booting) — retry; [] = genuinely no plugins. */
   listHubPlugins: (): Promise<unknown[] | null> => ipcRenderer.invoke(IPC.HUB_LIST_PLUGINS),
   hubPublish: (event: { type: string; source?: string; data?: unknown }): Promise<void> =>

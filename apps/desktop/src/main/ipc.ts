@@ -14,7 +14,6 @@ import { layoutService } from './services/layoutService';
 import { updateService } from './services/updateService';
 import { worktreeInfo, createWorktree } from './services/worktreeService';
 import { toolsStatus } from './services/toolCheck';
-import { notesService, type NoteInput } from './services/notesService';
 import { claudeSessionStore } from './services/claudeSessionStore';
 import { listClaudeModels } from './services/claudeModels';
 import {
@@ -893,11 +892,6 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // depend on (git, provider CLIs, tailscale). `force` re-scans PATH after
   // the user installs something ("Check again").
   ipcMain.handle(IPC.TOOLS_STATUS, (_event, force?: boolean) => toolsStatus(!!force));
-
-  // Per-directory notes (tags + markdown) — see services/notesService.
-  ipcMain.handle(IPC.NOTES_LIST, () => notesService.listNotes());
-  ipcMain.handle(IPC.NOTES_SAVE, (_event, input: NoteInput) => notesService.saveNote(input));
-  ipcMain.handle(IPC.NOTES_DELETE, (_event, id: string) => notesService.deleteNote(id));
 
   ipcMain.handle(IPC.GIT_STATUS, (_event, cwd: string) => git.status(cwd));
   ipcMain.handle(IPC.GIT_LOG, (_event, cwd: string, limit?: number) => git.log(cwd, limit));

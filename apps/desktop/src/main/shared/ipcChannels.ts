@@ -154,11 +154,6 @@ export const IPC = {
   // ── External tool availability (git / provider CLIs / tailscale) ──
   TOOLS_STATUS: 'tools:status',
 
-  // ── Per-directory notes (tags + markdown, stored in main) ──
-  NOTES_LIST: 'notes:list',
-  NOTES_SAVE: 'notes:save',
-  NOTES_DELETE: 'notes:delete',
-
   // ── Git (review pane) ──
   GIT_STATUS: 'git:status',
   GIT_LOG: 'git:log',

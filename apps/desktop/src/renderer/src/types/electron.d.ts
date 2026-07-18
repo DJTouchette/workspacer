@@ -17,18 +17,6 @@ import type {
   RemoteTokenScope,
 } from '../../../main/shared/ipcTypes';
 
-/** A per-directory note (main/services/notesService.ts). */
-export interface NoteRecord {
-  id: string;
-  /** Project directory the note belongs to ('' = global). */
-  cwd: string;
-  title: string;
-  content: string;
-  tags: string[];
-  createdAt: string;
-  updatedAt: string;
-}
-
 /** One entry of the external-tool registry (main/services/toolCheck.ts). */
 export interface ExternalToolStatus {
   id: 'git' | 'claude' | 'codex' | 'opencode' | 'pi' | 'tailscale';
@@ -306,11 +294,6 @@ export interface ElectronAPI {
   }>;
   /** Enable/disable `tailscale serve` in front of the hub port. */
   tailscaleSetServe?: (enable: boolean) => Promise<{ ok: boolean; error?: string; hint?: string }>;
-  // Per-directory notes (tags + markdown, stored in main)
-  notesList?: () => Promise<NoteRecord[]>;
-  notesSave?: (input: Partial<NoteRecord>) => Promise<NoteRecord>;
-  notesDelete?: (id: string) => Promise<void>;
-
   /** null = hub unreachable (still booting) — retry; [] = genuinely no plugins. */
   listHubPlugins: () => Promise<PluginManifest[] | null>;
   hubPublish: (event: { type: string; source?: string; data?: unknown }) => Promise<void>;

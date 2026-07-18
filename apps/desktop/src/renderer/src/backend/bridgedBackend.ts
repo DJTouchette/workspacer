@@ -69,9 +69,6 @@ export const HOST_ONLY = [
   'pickFiles', // native OS file dialog
   'importChromeCookies', // reads the host browser profile
   'toolsStatus', // external-tool PATH scan runs on the host
-  'notesList', // notes live in the host config dir
-  'notesSave',
-  'notesDelete',
   'listHubPlugins', // plugin registry lives in main
   'installPlugin',
   'inspectPlugin', // pre-install manifest preview via the hub's guarded route

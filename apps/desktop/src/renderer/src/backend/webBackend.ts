@@ -415,10 +415,6 @@ export function createWebBackend(token: string, busUrl?: string): ElectronAPI {
     // No host PATH to scan from a browser — report nothing so tool gates
     // never show a false "missing" notice on the web mirror.
     toolsStatus: () => Promise.resolve([]),
-    // Notes live in the host config dir; read-only absence on the web mirror.
-    notesList: () => Promise.resolve([]),
-    notesSave: () => Promise.reject(new Error('notes are not available over the web mirror')),
-    notesDelete: () => Promise.resolve(),
     listHubPlugins: () => {
       warnOnce('listHubPlugins');
       return Promise.resolve([]);
