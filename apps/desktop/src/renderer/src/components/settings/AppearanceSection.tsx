@@ -8,6 +8,7 @@ import {
   themeColorsOf,
   isCustomThemeId,
   newCustomThemeId,
+  DEFAULT_THEME,
 } from '../../themes';
 import type { CustomTheme } from '../../themes';
 import { Section, Row, ModeButton, SmallButton, SearchableSelect, inputStyle } from './primitives';
@@ -73,8 +74,8 @@ const AppearanceSection: React.FC<AppearanceSectionProps> = ({ config, save }) =
     const id = newCustomThemeId(name, customThemes);
     // Fork of a fork keeps pointing at the original built-in base.
     const base = isCustomThemeId(config.ui.theme)
-      ? (customThemes[config.ui.theme]?.base ?? 'dark')
-      : config.ui.theme || 'dark';
+      ? (customThemes[config.ui.theme]?.base ?? DEFAULT_THEME)
+      : config.ui.theme || DEFAULT_THEME;
     const spec: CustomTheme = { name, base, colors: themeColorsOf(activeTheme) };
     setNaming(false);
     setNewName('');
@@ -148,7 +149,7 @@ const AppearanceSection: React.FC<AppearanceSectionProps> = ({ config, save }) =
             }}
           />
           <span style={{ fontSize: '0.7rem', color: 'var(--wks-text-disabled)', flexShrink: 0 }}>
-            copies {themeDisplayName(config.ui.theme || 'dark', customThemes)}
+            copies {themeDisplayName(config.ui.theme || DEFAULT_THEME, customThemes)}
           </span>
         </div>
       )}

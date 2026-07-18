@@ -1,5 +1,12 @@
 // Theme system — CSS custom properties + xterm.js theme objects
 
+import { CONFIG_DEFAULTS } from './hooks/configDefaults.generated';
+
+/** The theme id a config falls back to when `ui.theme` is unset — single-sourced
+ *  from config_defaults.json (what new users get), so runtime fallbacks can never
+ *  drift from the seeded default. */
+export const DEFAULT_THEME: string = CONFIG_DEFAULTS.ui.theme;
+
 export interface TerminalTheme {
   background: string;
   foreground: string;
@@ -1335,7 +1342,7 @@ export function newCustomThemeId(name: string, existing?: CustomThemes): string 
 export function resolveTheme(id: string | undefined, customThemes?: CustomThemes): Theme {
   const custom = id ? customThemes?.[id] : undefined;
   if (custom) {
-    const base = themes[custom.base ?? ''] ?? darkTheme;
+    const base = themes[custom.base ?? ''] ?? themes[DEFAULT_THEME] ?? darkTheme;
     // Saved themes are stored fully resolved, but spread over the base anyway
     // so a theme saved before a token existed still gets every value.
     return {
@@ -1345,7 +1352,7 @@ export function resolveTheme(id: string | undefined, customThemes?: CustomThemes
       name: id as string,
     };
   }
-  return themes[id ?? ''] ?? darkTheme;
+  return themes[id ?? ''] ?? themes[DEFAULT_THEME] ?? darkTheme;
 }
 
 /** Every color token of a resolved theme as a plain serializable map — the
@@ -1360,7 +1367,7 @@ export function themeColorsOf(theme: Theme): ThemeColors {
 export function themeDisplayName(id: string, customThemes?: CustomThemes): string {
   const custom = customThemes?.[id];
   if (custom) return custom.name;
-  return (id || 'dark')
+  return (id || DEFAULT_THEME)
     .split('-')
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
     .join(' ');

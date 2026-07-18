@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Config } from '../../hooks/useConfig';
 import type { CustomTheme, TerminalTheme, Theme, ThemeColors } from '../../themes';
-import { newCustomThemeId, themes, toHex } from '../../themes';
+import { newCustomThemeId, themes, toHex, DEFAULT_THEME } from '../../themes';
 import { SmallButton, inputStyle } from './primitives';
 
 interface ThemeMakerProps {
@@ -291,7 +291,7 @@ const ThemeMaker: React.FC<ThemeMakerProps> = ({ config, save, themeId }) => {
     const cfg = configRef.current;
     const rest = { ...cfg.ui.customThemes };
     delete rest[themeId];
-    const fallback = draft.base && themes[draft.base] ? draft.base : 'dark';
+    const fallback = draft.base && themes[draft.base] ? draft.base : DEFAULT_THEME;
     void save({
       ui: { ...cfg.ui, theme: fallback, customThemes: rest, cornerStyle: '', borderColor: '' },
     });
@@ -322,7 +322,7 @@ const ThemeMaker: React.FC<ThemeMakerProps> = ({ config, save, themeId }) => {
       </div>
       <div style={{ fontSize: '0.7rem', color: 'var(--wks-text-disabled)', marginBottom: 6 }}>
         Edits apply live — the app is the preview. Text fields take any CSS color (hex, rgba(),
-        color-mix()). Based on {draft.base || 'dark'}.
+        color-mix()). Based on {draft.base || DEFAULT_THEME}.
       </div>
 
       {TOKEN_GROUPS.map((group) => (

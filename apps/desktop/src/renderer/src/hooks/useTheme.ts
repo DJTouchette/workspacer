@@ -1,11 +1,18 @@
 import { useEffect, useMemo } from 'react';
 import { useConfig } from './useConfig';
-import { resolveTheme, applyTheme, applyCorners, cornersOf, titleBarOverlayOf } from '../themes';
+import {
+  resolveTheme,
+  applyTheme,
+  applyCorners,
+  cornersOf,
+  titleBarOverlayOf,
+  DEFAULT_THEME,
+} from '../themes';
 import type { Theme, TerminalTheme } from '../themes';
 
 export function useTheme(): { theme: Theme; terminalTheme: TerminalTheme } {
   const { config } = useConfig();
-  const themeName = config.ui.theme || 'dark';
+  const themeName = config.ui.theme || DEFAULT_THEME;
   const cornerOverride = config.ui.cornerStyle || '';
   const customThemes = config.ui.customThemes;
 

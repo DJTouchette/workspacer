@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { PaneType, TabConfig } from '../types/pane';
 import { useConfig, ScriptEntry, Config } from '../hooks/useConfig';
-import { themes, resolveTheme, themeDisplayName } from '../themes';
+import { themes, resolveTheme, themeDisplayName, DEFAULT_THEME } from '../themes';
 import { useIsSmallScreen } from '../hooks/useMediaQuery';
 import { useAppVersion } from '../hooks/useAppVersion';
 import { PaneIcon, Play, Settings, Plus, Columns3, X } from './icons';
@@ -707,7 +707,7 @@ const ThemeSwitcher: React.FC<{
           ))}
         </span>
         <span style={{ whiteSpace: 'nowrap' }}>
-          {themeDisplayName(config.ui.theme || 'dark', customThemes)}
+          {themeDisplayName(config.ui.theme || DEFAULT_THEME, customThemes)}
         </span>
       </button>
       {open && (
