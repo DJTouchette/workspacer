@@ -682,6 +682,9 @@ fn answered_input(input: &Value, ans: &ManagedAnswer) -> Value {
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
+    // Numeric-guess resolution: a 1-indexed option number maps to its label;
+    // anything else passes through as free text. This is the legacy behavior
+    // the TUI and older clients depend on (they only send bare `answers`).
     let resolve = |q: &Value, raw: &str| -> String {
         if let Ok(n) = raw.trim().parse::<usize>() {
             if let Some(label) = q
@@ -697,20 +700,35 @@ fn answered_input(input: &Value, ans: &ManagedAnswer) -> Value {
         raw.to_string()
     };
     let mut answers = serde_json::Map::new();
-    let mut record = |q: &Value, raw: &str| {
+    let mut record = |q: &Value, value: String| {
         if let Some(question) = q.get("question").and_then(Value::as_str) {
-            answers.insert(question.to_string(), Value::String(resolve(q, raw)));
+            answers.insert(question.to_string(), Value::String(value));
         }
     };
     if let Some(list) = &ans.answers {
-        for (q, raw) in questions.iter().zip(list) {
-            record(q, raw);
+        // When the client tags each answer's kind (index-aligned with
+        // `answers`), honor it exactly: `"text"` is a literal free-text answer
+        // that must NOT be numerically remapped even if it parses as an option
+        // index (e.g. a user literally typing "3"); `"option"` keeps the
+        // digit→label mapping. A missing/short/empty kinds array falls back to
+        // the numeric-guess heuristic per entry, so bare `answers` from the TUI
+        // behave exactly as before.
+        let kinds = ans.answer_kinds.as_ref();
+        for (i, (q, raw)) in questions.iter().zip(list).enumerate() {
+            let value = match kinds.and_then(|k| k.get(i)).map(String::as_str) {
+                Some("text") => raw.clone(),
+                _ => resolve(q, raw),
+            };
+            record(q, value);
         }
     } else if let Some(first) = questions.first() {
+        // Single-question fast-path keeps distinct `option`/`text` fields, so
+        // it never needs kind tags.
         if let Some(opt) = ans.option {
-            record(first, &opt.to_string());
+            let s = opt.to_string();
+            record(first, resolve(first, &s));
         } else if let Some(text) = &ans.text {
-            record(first, text);
+            record(first, resolve(first, text));
         }
     }
     let mut out = input.clone();
@@ -1858,6 +1876,7 @@ mod tests {
                 option: None,
                 text: None,
                 answers: Some(vec!["2".into(), "sparkles".into()]),
+                answer_kinds: None,
             },
         );
         assert_eq!(out["answers"]["Pick a color"], "Blue");
@@ -1873,6 +1892,7 @@ mod tests {
                 option: Some(1),
                 text: None,
                 answers: None,
+                answer_kinds: None,
             },
         );
         assert_eq!(out["answers"]["Pick a color"], "Red");
@@ -1884,9 +1904,37 @@ mod tests {
                 option: None,
                 text: Some("Chartreuse".into()),
                 answers: None,
+                answer_kinds: None,
             },
         );
         assert_eq!(out["answers"]["Pick a color"], "Chartreuse");
+    }
+
+    #[test]
+    fn answered_input_honors_answer_kinds_for_numeric_free_text() {
+        // A multi-question set where q1 has ≥3 options, so the free-text answer
+        // "3" is ALSO a valid option index. With `answer_kinds = [text, option]`
+        // the literal "3" must stay "3" (kind=text, no remap) while q2's "2"
+        // still resolves to its label (kind=option).
+        let input = json!({ "questions": [
+            { "question": "Lucky number?",
+              "options": [ { "label": "One" }, { "label": "Two" }, { "label": "Three" } ] },
+            { "question": "Pick a color",
+              "options": [ { "label": "Red" }, { "label": "Blue" } ] }
+        ]});
+        let out = answered_input(
+            &input,
+            &ManagedAnswer {
+                option: None,
+                text: None,
+                answers: Some(vec!["3".into(), "2".into()]),
+                answer_kinds: Some(vec!["text".into(), "option".into()]),
+            },
+        );
+        // kind=text → literal, NOT options[2].label ("Three").
+        assert_eq!(out["answers"]["Lucky number?"], "3");
+        // kind=option → digit→label mapping still applies.
+        assert_eq!(out["answers"]["Pick a color"], "Blue");
     }
 
     #[test]

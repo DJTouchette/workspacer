@@ -668,7 +668,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     async (
       _event,
       sessionId: string,
-      payload: { option?: number; text?: string; answers?: string[] },
+      payload: { option?: number; text?: string; answers?: string[]; answerKinds?: string[] },
     ) => {
       const res = await claudemonSessionClient.answer(sessionId, payload);
       claudeSessionStore.clearPendingQuestions(sessionId);

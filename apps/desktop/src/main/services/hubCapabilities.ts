@@ -433,11 +433,12 @@ export function registerHubCapabilities(): void {
   // text) followed by Enter exactly like any other keystroke, so this lands
   // reliably whether the picker arrived via PreToolUse or mid-stream.
   registerCapability('claude.answer', async (params: unknown) => {
-    const { sessionId, option, text, answers } = (params ?? {}) as {
+    const { sessionId, option, text, answers, answerKinds } = (params ?? {}) as {
       sessionId?: string;
       option?: number;
       text?: string;
       answers?: string[];
+      answerKinds?: string[];
     };
     if (!sessionId) throw new Error('claude.answer requires { sessionId, ... }');
     if (option === undefined && text === undefined && answers === undefined) {
@@ -449,12 +450,15 @@ export function registerHubCapabilities(): void {
     // the keystroke path — /answer requires mode=Question, which races hook
     // mode flips (same reasoning as ClaudePane's handleAnswer).
     if (claudeSessionStore.getSnapshot(sessionId)?.transport === 'stream') {
-      await claudemonSessionClient.answer(sessionId, { option, text, answers });
+      await claudemonSessionClient.answer(sessionId, { option, text, answers, answerKinds });
     } else if (option !== undefined) {
       await claudemonSessionClient.input(sessionId, `${option}\r`);
     } else if (text !== undefined) {
       await claudemonSessionClient.input(sessionId, `${text}\r`);
     } else if (answers) {
+      // PTY sessions answer by typing each answer as keystrokes — the picker
+      // can't disambiguate a literal numeric free-text answer from an option
+      // index at the keystroke level, so `answerKinds` doesn't apply here.
       for (const a of answers) await claudemonSessionClient.input(sessionId, `${a}\r`);
     }
     claudeSessionStore.clearPendingQuestions(sessionId);

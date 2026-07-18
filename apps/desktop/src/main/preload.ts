@@ -260,7 +260,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ): Promise<void> => ipcRenderer.invoke(IPC.CLAUDE_APPROVE, sessionId, decision, reason),
   claudeAnswer: (
     sessionId: string,
-    payload: { option?: number; text?: string; answers?: string[] },
+    payload: { option?: number; text?: string; answers?: string[]; answerKinds?: string[] },
   ): Promise<void> => ipcRenderer.invoke(IPC.CLAUDE_ANSWER, sessionId, payload),
   claudeResize: (sessionId: string, cols: number, rows: number): Promise<void> =>
     ipcRenderer.invoke(IPC.CLAUDE_RESIZE, sessionId, cols, rows),

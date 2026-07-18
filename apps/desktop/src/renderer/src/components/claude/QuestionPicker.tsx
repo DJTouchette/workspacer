@@ -19,12 +19,23 @@ import { claudeColors as colors } from '../claude-shared';
  */
 export const QuestionPicker: React.FC<{
   questions: PendingQuestion[];
-  onAnswer: (payload: { option?: number; text?: string; answers?: string[] }) => void;
+  onAnswer: (payload: {
+    option?: number;
+    text?: string;
+    answers?: string[];
+    answerKinds?: string[];
+  }) => void;
   onDecline?: () => void;
 }> = ({ questions, onAnswer, onDecline }) => {
   const [idx, setIdx] = useState(0);
   const [drafts, setDrafts] = useState<string[]>(() => questions.map(() => ''));
   const [picked, setPicked] = useState<(string | null)[]>(() => questions.map(() => null));
+  // Per-question answer kind, index-aligned with `drafts`/`answers`: 'option'
+  // when the raw string is a 1-indexed option number, 'text' for free-text
+  // (incl. multi-select labels and the empty default). Sent alongside
+  // `answers` so the daemon never numerically remaps a free-text answer that
+  // happens to be a number (e.g. typing "3") — see answered_input.
+  const [kinds, setKinds] = useState<('option' | 'text')[]>(() => questions.map(() => 'text'));
   const [customText, setCustomText] = useState('');
   const [multiPicks, setMultiPicks] = useState<Set<number>>(new Set());
   const [done, setDone] = useState(false);
@@ -52,10 +63,19 @@ export const QuestionPicker: React.FC<{
     const nextPicked = [...picked];
     nextPicked[idx] = displayLabel;
     setPicked(nextPicked);
+    const nextKinds = [...kinds];
+    nextKinds[idx] = isOption ? 'option' : 'text';
+    setKinds(nextKinds);
     setCustomText('');
     setMultiPicks(new Set());
     if (isLast) {
-      onAnswer({ answers: nextDrafts.map((d, i) => d || nextPicked[i] || '') });
+      // `answers` stays a bare string[] (option pick → "n", free-text → text)
+      // for backward compat; `answerKinds` runs parallel so the daemon can
+      // tell a literal numeric free-text answer from an option index. Any
+      // untouched question defaults to 'text' with an empty answer.
+      const answers = nextDrafts.map((d, i) => d || nextPicked[i] || '');
+      const answerKinds = answers.map((_, i) => nextKinds[i] ?? 'text');
+      onAnswer({ answers, answerKinds });
       setDone(true);
     } else {
       setIdx(idx + 1);

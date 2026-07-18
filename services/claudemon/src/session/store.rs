@@ -288,6 +288,13 @@ pub struct ManagedAnswer {
     /// For multi-question prompts: one answer per question in order — an
     /// option number rendered as a string (`"2"`) or free-form text.
     pub answers: Option<Vec<String>>,
+    /// Optional per-answer kind tags, index-aligned with `answers`: each entry
+    /// is `"option"` (the string is a 1-indexed option number to map to its
+    /// label) or `"text"` (the string is a literal free-text answer, never
+    /// numerically remapped). Absent/empty → fall back to the numeric-guess
+    /// heuristic (`answered_input`), which is what the TUI and older clients
+    /// rely on since they only send bare `answers`.
+    pub answer_kinds: Option<Vec<String>>,
 }
 
 /// A live permission-mode switch bound for a managed driver that applies
@@ -1831,6 +1838,7 @@ mod tests {
                 option: Some(2),
                 text: None,
                 answers: None,
+                answer_kinds: None,
             },
         ));
         let got = rx2.try_recv().expect("answer reaches the live channel");
@@ -1844,6 +1852,7 @@ mod tests {
                 option: Some(1),
                 text: None,
                 answers: None,
+                answer_kinds: None,
             },
         ));
     }

@@ -214,7 +214,10 @@ export const AttentionProvider: React.FC<ProviderProps> = ({
   );
 
   const answer = useCallback(
-    (item: AttentionItem, payload: { option?: number; text?: string; answers?: string[] }) => {
+    (
+      item: AttentionItem,
+      payload: { option?: number; text?: string; answers?: string[]; answerKinds?: string[] },
+    ) => {
       resolveAnswer(item.sessionId, payload, snapshotBySession[item.sessionId]?.provider);
     },
     [snapshotBySession],

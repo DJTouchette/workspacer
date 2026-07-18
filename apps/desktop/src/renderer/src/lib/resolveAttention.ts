@@ -54,7 +54,7 @@ export function resolveApproval(
  */
 export function resolveAnswer(
   sessionId: string,
-  payload: { option?: number; text?: string; answers?: string[] },
+  payload: { option?: number; text?: string; answers?: string[]; answerKinds?: string[] },
   provider?: string,
 ): void {
   // Non-claude questions are the daemon's parked AskUserQuestion MCP call —

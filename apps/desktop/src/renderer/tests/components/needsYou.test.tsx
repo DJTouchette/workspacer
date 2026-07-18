@@ -114,7 +114,10 @@ describe('QuestionPicker', () => {
     expect(screen.getByText('Second?')).toBeInTheDocument();
     // … answering the last submits the whole set as raw per-question answers.
     fireEvent.click(screen.getByText('aye'));
-    expect(onAnswer).toHaveBeenCalledWith({ answers: ['2', '1'] });
+    expect(onAnswer).toHaveBeenCalledWith({
+      answers: ['2', '1'],
+      answerKinds: ['option', 'option'],
+    });
   });
 
   it('the back chevron revisits an answered question with its pick highlighted', () => {
@@ -127,7 +130,10 @@ describe('QuestionPicker', () => {
     // Changing the pick and re-answering both questions submits the new set.
     fireEvent.click(screen.getByText('npm'));
     fireEvent.click(screen.getByText('aye'));
-    expect(onAnswer).toHaveBeenCalledWith({ answers: ['1', '1'] });
+    expect(onAnswer).toHaveBeenCalledWith({
+      answers: ['1', '1'],
+      answerKinds: ['option', 'option'],
+    });
   });
 
   it('a custom answer mid-set advances like an option pick', () => {
@@ -139,7 +145,10 @@ describe('QuestionPicker', () => {
     fireEvent.click(screen.getByText('Next'));
     expect(onAnswer).not.toHaveBeenCalled();
     fireEvent.click(screen.getByText('aye'));
-    expect(onAnswer).toHaveBeenCalledWith({ answers: ['yarn', '1'] });
+    expect(onAnswer).toHaveBeenCalledWith({
+      answers: ['yarn', '1'],
+      answerKinds: ['text', 'option'],
+    });
   });
 });
 

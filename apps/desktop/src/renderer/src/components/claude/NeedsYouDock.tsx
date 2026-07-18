@@ -17,7 +17,12 @@ export const NeedsYouDock: React.FC<{
   approval: PendingApproval | null;
   questions: PendingQuestion[] | null;
   onApprove: (response: 'yes' | 'no') => void;
-  onAnswer: (payload: { option?: number; text?: string; answers?: string[] }) => void;
+  onAnswer: (payload: {
+    option?: number;
+    text?: string;
+    answers?: string[];
+    answerKinds?: string[];
+  }) => void;
   onDecline?: () => void;
 }> = ({ approval, questions, onApprove, onAnswer, onDecline }) => {
   const hasQuestion = !!(questions && questions.length > 0);

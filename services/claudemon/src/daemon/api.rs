@@ -516,6 +516,14 @@ struct AnswerPayload {
     /// entry is either an option number (as a string like `"2"`) or
     /// free-form text. Sent back-to-back with `\r` between.
     answers: Option<Vec<String>>,
+    /// Optional per-answer kind tags, index-aligned with `answers`: `"option"`
+    /// (map the digit string to its label) or `"text"` (literal free-text,
+    /// never numerically remapped). Lets the GUI disambiguate a free-text
+    /// answer that happens to be a number (e.g. typing "3") from an option
+    /// pick. Omitted by the TUI and older clients, which rely on the
+    /// numeric-guess fallback in `answered_input`.
+    #[serde(default, rename = "answerKinds")]
+    answer_kinds: Option<Vec<String>>,
 }
 
 async fn post_answer(
@@ -553,6 +561,7 @@ async fn post_answer(
             option: payload.option,
             text: payload.text.clone(),
             answers: payload.answers.clone(),
+            answer_kinds: payload.answer_kinds.clone(),
         },
     ) {
         return Json(json!({ "ok": true, "managed": true })).into_response();

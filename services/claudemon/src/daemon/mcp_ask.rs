@@ -510,6 +510,7 @@ mod tests {
                 option: Some(2),
                 text: None,
                 answers: None,
+                answer_kinds: None,
             },
         ));
 
@@ -579,6 +580,7 @@ mod tests {
                 option: Some(1),
                 text: None,
                 answers: None,
+                answer_kinds: None,
             },
         ));
     }
@@ -594,6 +596,7 @@ mod tests {
             option: None,
             text: None,
             answers: Some(vec!["1".into(), "call it claudemon".into()]),
+            answer_kinds: None,
         };
         assert_eq!(
             summarize(&questions, &answer),
@@ -615,6 +618,7 @@ mod tests {
             option: None,
             text: None,
             answers: Some(answers.into_iter().map(str::to_owned).collect()),
+            answer_kinds: None,
         };
 
         // Out-of-range numbers must pass through verbatim as free text —
@@ -636,6 +640,7 @@ mod tests {
             option: Some(1),
             text: None,
             answers: None,
+            answer_kinds: None,
         };
         assert_eq!(
             summarize(&questions, &single),

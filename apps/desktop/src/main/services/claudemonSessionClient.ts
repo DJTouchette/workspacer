@@ -463,7 +463,7 @@ class ClaudemonSessionClient {
   /** Answer an AskUserQuestion picker. */
   async answer(
     sessionId: string,
-    payload: { option?: number; text?: string; answers?: string[] },
+    payload: { option?: number; text?: string; answers?: string[]; answerKinds?: string[] },
   ): Promise<void> {
     await this.postJSON(`/sessions/${sessionId}/answer`, payload);
   }
