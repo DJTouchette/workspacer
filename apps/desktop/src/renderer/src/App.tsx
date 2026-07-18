@@ -1066,7 +1066,13 @@ function App() {
 
   const openAnalytics = useCallback(() => {
     setShowCommandPalette(false);
-    const tabId = openPaneIn(GLOBAL_WORKSPACE_ID, 'analytics', 'Analytics');
+    // Analytics lives in the catalog plugin now (djtouchette.analytics); the
+    // legacy 'analytics' pane type renders an install pointer for the
+    // not-installed case, so this action always lands somewhere useful.
+    const plug = pluginPanesRef.current.find((p) => p.pluginId === 'djtouchette.analytics');
+    const tabId = plug
+      ? openPaneIn(GLOBAL_WORKSPACE_ID, 'plugin', 'Analytics', plug.url, undefined, plug.pluginId)
+      : openPaneIn(GLOBAL_WORKSPACE_ID, 'analytics', 'Analytics');
     requestAnimationFrame(() => scrollToTab(tabId));
   }, [openPaneIn, scrollToTab]);
 

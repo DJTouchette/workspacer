@@ -8,6 +8,7 @@ import React, {
   Suspense,
 } from 'react';
 import Pane from './Pane';
+import { EmptyState } from './PaneMessage';
 import ErrorBoundary from './ErrorBoundary';
 import { PaneConfig, PaneType, TabConfig, AgentWorkspace, AgentProvider } from '../types/pane';
 import { useConfig } from '../hooks/useConfig';
@@ -25,7 +26,6 @@ const ReviewPane = React.lazy(() => import('../panes/ReviewPane'));
 const PluginsManagerPane = React.lazy(() => import('../panes/PluginsManagerPane'));
 const OverviewPane = React.lazy(() => import('../panes/OverviewPane'));
 const LibraryPane = React.lazy(() => import('../panes/LibraryPane'));
-const AnalyticsPane = React.lazy(() => import('../panes/AnalyticsPane'));
 const AskPane = React.lazy(() => import('../panes/AskPane'));
 const AgentWatchPane = React.lazy(() => import('../panes/AgentWatchPane'));
 const AgentsPane = React.lazy(() => import('../panes/AgentsPane'));
@@ -315,10 +315,19 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
         </Suspense>
       );
     case 'analytics':
+      // The built-in Analytics pane moved to the catalog's Analytics plugin
+      // (djtouchette.analytics). Legacy panes from saved sessions land here.
       return (
-        <Suspense fallback={<PaneFallback />}>
-          <AnalyticsPane title={pane.title} />
-        </Suspense>
+        <EmptyState
+          title="Analytics moved to a plugin"
+          hint={
+            <>
+              Install it from the command palette: <b>Install Plugin…</b> →{' '}
+              <code>DJTouchette/workspacer-plugin-analytics</code>. Once installed, “Analytics”
+              opens the plugin pane automatically.
+            </>
+          }
+        />
       );
     case 'ask':
       return (
