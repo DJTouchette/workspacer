@@ -216,7 +216,7 @@ export function useSessionLifecycle({
                   t.id +
                   t.title +
                   (t.activePaneId || '') +
-                  t.panes.map((p) => p.id + p.type + (p.url || '') + (p.notes || '')).join(),
+                  t.panes.map((p) => p.id + p.type + (p.url || '')).join(),
               )
               .join(),
         ),

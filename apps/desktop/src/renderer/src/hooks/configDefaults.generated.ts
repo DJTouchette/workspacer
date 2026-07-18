@@ -105,13 +105,6 @@ export const CONFIG_DEFAULTS = {
         width: 800,
         order: 2,
       },
-      {
-        id: 'notes-1',
-        type: 'notes',
-        title: 'Notes',
-        width: 800,
-        order: 3,
-      },
     ],
   },
   keybindings: {

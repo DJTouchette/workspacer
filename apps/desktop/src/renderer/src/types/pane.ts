@@ -1,7 +1,6 @@
 export type PaneType =
   | 'terminal'
   | 'browser'
-  | 'notes'
   | 'claude'
   | 'settings'
   | 'review'
@@ -64,8 +63,6 @@ export interface PaneConfig {
   /** Ask panes only: the AgentWorkspace.id this pane is scoped to (limits the
    *  supervisor question to that agent's context). Undefined = fleet-wide. */
   scopeAgentId?: string;
-  /** Notes panes only: the markdown scratchpad content, persisted with the session. */
-  notes?: string;
   /** Editor panes only: absolute path of the file being edited. */
   filePath?: string;
   /** Plugin panes only: the contributing plugin's id. Lets the pane mint an

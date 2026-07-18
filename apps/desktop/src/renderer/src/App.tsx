@@ -66,6 +66,8 @@ import { useUiMode } from './hooks/useUiMode';
 import { useTheme } from './hooks/useTheme';
 import { useSessionLifecycle } from './hooks/useSessionLifecycle';
 import { usePluginHotkeys } from './hooks/usePluginHotkeys';
+import { buildPaneMenu } from './lib/paneMenu';
+import { PaneMenuProvider, type PaneMenuContextValue } from './contexts/PaneMenuContext';
 import { compactClaudeSnapshotForBackground } from './lib/compactClaudeSnapshot';
 import { wasSessionTerminated } from './lib/terminatedSessions';
 
@@ -134,7 +136,6 @@ interface AgentViewHandlers {
   onTabMove: (tabId: string, toIndex: number) => void;
   onPtyReady: (paneId: string, ptySessionId: string) => void;
   onUrlChange: (tabId: string, paneId: string, url: string) => void;
-  onNotesChange: (tabId: string, paneId: string, notes: string) => void;
   onNavigateToTab: (tabId: string) => void;
   onAddTab: (
     type: PaneType,
@@ -207,7 +208,6 @@ const AgentWorkspaceView = memo(function AgentWorkspaceView({
           onTabMove={handlers.onTabMove}
           onPtyReady={handlers.onPtyReady}
           onUrlChange={handlers.onUrlChange}
-          onNotesChange={handlers.onNotesChange}
           onNavigateToTab={handlers.onNavigateToTab}
           onAddTab={handlers.onAddTab}
           onSplit={handlers.onSplit}
@@ -276,7 +276,6 @@ function App() {
     hibernatePane,
     wakePane,
     updatePaneUrl,
-    updatePaneNotes,
     getActiveTab,
   } = useAgentManager();
 
@@ -648,13 +647,6 @@ function App() {
       updatePaneUrl(tabId, paneId, url);
     },
     [updatePaneUrl],
-  );
-
-  const handleNotesChange = useCallback(
-    (tabId: string, paneId: string, notes: string) => {
-      updatePaneNotes(tabId, paneId, notes);
-    },
-    [updatePaneNotes],
   );
 
   // Hibernation tracking
@@ -1070,9 +1062,19 @@ function App() {
     // legacy 'analytics' pane type renders an install pointer for the
     // not-installed case, so this action always lands somewhere useful.
     const plug = pluginPanesRef.current.find((p) => p.pluginId === 'djtouchette.analytics');
-    const tabId = plug
-      ? openPaneIn(GLOBAL_WORKSPACE_ID, 'plugin', 'Analytics', plug.url, undefined, plug.pluginId)
-      : openPaneIn(GLOBAL_WORKSPACE_ID, 'analytics', 'Analytics');
+    let tabId: string;
+    if (plug) {
+      // Bake in the static per-plugin bus token: this is a global-scope pane
+      // (no cwd), so PluginPane won't mint an ephemeral one — without the token
+      // the webview connects to /bus unauthenticated and shows "Bus disconnected".
+      const params = new URLSearchParams();
+      if (plug.busToken) params.set('busToken', plug.busToken);
+      const sep = plug.url.includes('?') ? '&' : '?';
+      const url = params.toString() ? `${plug.url}${sep}${params.toString()}` : plug.url;
+      tabId = openPaneIn(GLOBAL_WORKSPACE_ID, 'plugin', 'Analytics', url, undefined, plug.pluginId);
+    } else {
+      tabId = openPaneIn(GLOBAL_WORKSPACE_ID, 'analytics', 'Analytics');
+    }
     requestAnimationFrame(() => scrollToTab(tabId));
   }, [openPaneIn, scrollToTab]);
 
@@ -1379,7 +1381,7 @@ function App() {
       // ref so a stale caller closure (e.g. the command palette) still resolves the
       // currently-selected agent's cwd. With no agent scope (the Overview
       // workspace), fall back to the neutral ~/.workspacer home rather than the
-      // app's own launch directory — an Overview terminal/notes pane shouldn't
+      // app's own launch directory — an Overview terminal pane shouldn't
       // land inside whatever repo happened to launch workspacer.
       const resolvedCwd =
         cwd ||
@@ -1672,6 +1674,16 @@ function App() {
     [openPaneIn, activeAgent, agents, scrollToTab],
   );
 
+  // Resolved pane-creation menu (built-ins + plugins, per ui.paneMenu), shared
+  // with the "Split into…" button and the "+" new-tab dropdown via context.
+  const paneMenuValue = useMemo<PaneMenuContextValue>(
+    () => ({
+      entries: buildPaneMenu(config.ui.paneMenu, pluginPanes),
+      onOpenPlugin: handleOpenPlugin,
+    }),
+    [config.ui.paneMenu, pluginPanes, handleOpenPlugin],
+  );
+
   // Bind plugin-contributed hotkeys + library-picker shortcut.
   usePluginHotkeys({
     pluginHotkeys,
@@ -1826,7 +1838,6 @@ function App() {
       onTabMove: moveTab,
       onPtyReady: handlePtyReady,
       onUrlChange: handleUrlChange,
-      onNotesChange: handleNotesChange,
       onNavigateToTab: handleTabClick,
       onAddTab: handleAddTab,
       onSplit: handlePaneSplit,
@@ -1841,7 +1852,6 @@ function App() {
       moveTab,
       handlePtyReady,
       handleUrlChange,
-      handleNotesChange,
       handleTabClick,
       handleAddTab,
       handlePaneSplit,
@@ -1851,6 +1861,7 @@ function App() {
   );
 
   return (
+    <PaneMenuProvider value={paneMenuValue}>
     <AttentionProvider
       agents={agents}
       activeAgentId={activeAgentId}
@@ -2273,6 +2284,7 @@ function App() {
         <WorkflowOverlay />
       </div>
     </AttentionProvider>
+    </PaneMenuProvider>
   );
 }
 

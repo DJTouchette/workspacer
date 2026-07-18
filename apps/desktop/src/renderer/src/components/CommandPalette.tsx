@@ -111,14 +111,6 @@ export const builtInActions: PaletteItem[] = [
     paneType: 'review',
     shortcut: 'open-review',
   },
-  {
-    id: 'new-notes',
-    name: 'Notes',
-    description: 'Markdown scratchpad',
-    icon: <PaneIcon type="notes" size={16} />,
-    category: 'action',
-    paneType: 'notes',
-  },
   // The editor is provided by the workspacer.editor plugin, which contributes its
   // own "Editor" entry to the palette — no separate built-in action.
   {
@@ -560,7 +552,30 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
       setQuery('');
       setSelectedIndex(0);
       setProfilePicker(null);
-      setTimeout(() => inputRef.current?.focus(), 0);
+      // Reliably claim keyboard focus. A single setTimeout(…, 0) focus is
+      // fragile: after the plugin manager's native window.confirm (Remove flow),
+      // and generally on Wayland/Hyprland, the window can regain focus a frame
+      // late or land it on <body> — the palette then renders but its controlled
+      // input holds no focus, so typing / arrows / Enter are all swallowed and it
+      // looks "stuck". Blur whatever currently holds focus, then re-assert focus
+      // on the input across a few frames until it actually takes.
+      const active = document.activeElement as HTMLElement | null;
+      if (active && active !== inputRef.current && typeof active.blur === 'function') {
+        active.blur();
+      }
+      let cancelled = false;
+      let tries = 0;
+      const claim = () => {
+        if (cancelled) return;
+        const el = inputRef.current;
+        if (!el || document.activeElement === el) return;
+        el.focus({ preventScroll: true });
+        if (++tries < 10) requestAnimationFrame(claim);
+      };
+      requestAnimationFrame(claim);
+      return () => {
+        cancelled = true;
+      };
     } else {
       const prev = prevFocusRef.current;
       const wasDismissed = dismissedRef.current;
@@ -583,7 +598,8 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
   const q = query.toLowerCase();
   const filtered = items.filter(
     (item) =>
-      item.name.toLowerCase().includes(q) || (item.description ?? '').toLowerCase().includes(q),
+      (item.name ?? '').toLowerCase().includes(q) ||
+      (item.description ?? '').toLowerCase().includes(q),
   );
 
   // Clamp selected index when results change

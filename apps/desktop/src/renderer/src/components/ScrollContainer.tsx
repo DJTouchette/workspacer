@@ -20,7 +20,6 @@ const TerminalPane = React.lazy(() => import('../panes/TerminalPane'));
 const ClaudePane = React.lazy(() => import('../panes/ClaudePane'));
 const BrowserPane = React.lazy(() => import('../panes/BrowserPane'));
 const PluginPane = React.lazy(() => import('../panes/PluginPane'));
-const NotesPane = React.lazy(() => import('../panes/NotesPane'));
 const SettingsPane = React.lazy(() => import('../panes/SettingsPane'));
 const ReviewPane = React.lazy(() => import('../panes/ReviewPane'));
 const PluginsManagerPane = React.lazy(() => import('../panes/PluginsManagerPane'));
@@ -67,7 +66,6 @@ interface ScrollContainerProps {
   onTabMove?: (tabId: string, toIndex: number) => void;
   onPtyReady?: (paneId: string, ptySessionId: string) => void;
   onUrlChange?: (tabId: string, paneId: string, url: string) => void;
-  onNotesChange?: (tabId: string, paneId: string, notes: string) => void;
   onNavigateToTab?: (tabId: string) => void;
   onAddTab?: (
     type: PaneType,
@@ -116,7 +114,6 @@ export interface ScrollContainerRef {
 interface PaneCallbacks {
   onPtyReady?: (paneId: string, ptySessionId: string) => void;
   onUrlChange?: (paneId: string, url: string) => void;
-  onNotesChange?: (paneId: string, notes: string) => void;
   /** Editor-pane engine + terminal command, from config.editor. */
   editorEngine?: 'codemirror' | 'terminal';
   editorTerminalCommand?: string;
@@ -198,16 +195,6 @@ function renderPaneContent(pane: PaneConfig, isActive: boolean, callbacks: PaneC
             appMode={pane.appMode}
             hibernated={pane.hibernated}
             onUrlChange={(url) => callbacks.onUrlChange?.(pane.id, url)}
-          />
-        </Suspense>
-      );
-    case 'notes':
-      return (
-        <Suspense fallback={<PaneFallback />}>
-          <NotesPane
-            title={pane.title}
-            notes={pane.notes}
-            onNotesChange={(notes) => callbacks.onNotesChange?.(pane.id, notes)}
           />
         </Suspense>
       );
@@ -541,7 +528,6 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
       onTabMove,
       onPtyReady,
       onUrlChange,
-      onNotesChange,
       onNavigateToTab,
       onAddTab,
       onSplit,
@@ -690,9 +676,6 @@ const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerProps>(
             onPtyReady,
             onUrlChange: onUrlChange
               ? (paneId: string, url: string) => onUrlChange(tab.id, paneId, url)
-              : undefined,
-            onNotesChange: onNotesChange
-              ? (paneId: string, notes: string) => onNotesChange(tab.id, paneId, notes)
               : undefined,
             editorEngine,
             editorTerminalCommand,

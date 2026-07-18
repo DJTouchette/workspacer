@@ -5,7 +5,6 @@ import {
   SquareTerminal,
   FileCode2,
   Globe,
-  NotebookPen,
   Bot,
   Sparkles,
   Settings,
@@ -59,10 +58,9 @@ type IconComponent = (props: {
 
 const PANE_ICONS: Record<PaneType, IconComponent> = {
   // Pack glyphs where there's a clean equivalent; lucide for the rest
-  // (browser/notes/library/ask/plugins have no pack counterpart).
+  // (browser/library/ask/plugins have no pack counterpart).
   terminal: IconTerminal,
   browser: Globe,
-  notes: NotebookPen,
   claude: IconAgent,
   settings: IconSettings,
   review: IconDiff,
@@ -103,7 +101,6 @@ export const PaneIcon: React.FC<{ type: PaneType } & IconProps> = ({
 export {
   SquareTerminal,
   Globe,
-  NotebookPen,
   Bot,
   Sparkles,
   Settings,

@@ -34,7 +34,6 @@ function generateId(prefix: string): string {
 const defaultTitles: Record<PaneType, string> = {
   terminal: 'Terminal',
   browser: 'Browser',
-  notes: 'Notes',
   claude: 'Claude',
   settings: 'Settings',
   review: 'Review',
@@ -616,18 +615,35 @@ export function useAgentManager() {
     // Dedupe by sessionId on the way in: this is the merge point for every
     // cross-client layout update, so collapsing same-session cards here is what
     // stops the multi-client "spawn one, get seven" accumulation.
-    const list = withGlobalWorkspace(dedupeBySessionId(sessionAgents)).map((a) => ({
-      ...a,
-      tabs: a.tabs.map((t) => ({
-        ...t,
-        panes: t.panes.map((p) =>
-          // Restored-from-disk claude panes attach to sessions that already
-          // have a conversation — expect the replay so the pane shows the
-          // fetching state, not a flash of the new-agent hero.
-          p.type === 'claude' && p.attachSessionId ? { ...p, expectHistory: true } : p,
-        ),
-      })),
-    }));
+    const list = withGlobalWorkspace(dedupeBySessionId(sessionAgents)).map((a) => {
+      const tabs = a.tabs
+        .map((t) => {
+          // Drop retired 'notes' panes — that type moved out into the Notes
+          // plugin, so an old saved layout may still carry panes that would
+          // now render as "Unknown pane type". Removing them here also fixes a
+          // tab's active pane / the agent's active tab if either pointed at one.
+          const panes = t.panes
+            // Cast: 'notes' is no longer a PaneType, but a layout persisted
+            // before its removal can still carry one at runtime.
+            .filter((p) => (p.type as string) !== 'notes')
+            .map((p) =>
+              // Restored-from-disk claude panes attach to sessions that already
+              // have a conversation — expect the replay so the pane shows the
+              // fetching state, not a flash of the new-agent hero.
+              p.type === 'claude' && p.attachSessionId ? { ...p, expectHistory: true } : p,
+            );
+          if (panes.length === 0) return null; // a notes-only tab → drop it
+          const activePaneId = panes.some((p) => p.id === t.activePaneId)
+            ? t.activePaneId
+            : panes[0].id;
+          return { ...t, panes, activePaneId };
+        })
+        .filter((t): t is TabConfig => t !== null);
+      const activeTabId = tabs.some((t) => t.id === a.activeTabId)
+        ? a.activeTabId
+        : (tabs[0]?.id ?? a.activeTabId);
+      return { ...a, tabs, activeTabId };
+    });
     setAgents(list);
     // Choose an active id that actually survived dedupe. Both the caller's
     // activeId and the raw sessionAgents[0] can point at a same-session
@@ -1163,20 +1179,6 @@ export function useAgentManager() {
     [mutateActiveAgent],
   );
 
-  const updatePaneNotes = useCallback(
-    (tabId: string, paneId: string, notes: string) => {
-      mutateActiveAgent((a) => ({
-        ...a,
-        tabs: a.tabs.map((t) =>
-          t.id === tabId
-            ? { ...t, panes: t.panes.map((p) => (p.id === paneId ? { ...p, notes } : p)) }
-            : t,
-        ),
-      }));
-    },
-    [mutateActiveAgent],
-  );
-
   const getActiveTab = useCallback((): TabConfig | undefined => {
     const agent = agentsRef.current.find((a) => a.id === activeAgentIdRef.current);
     return agent?.tabs.find((t) => t.id === agent.activeTabId);
@@ -1217,7 +1219,6 @@ export function useAgentManager() {
     hibernatePane,
     wakePane,
     updatePaneUrl,
-    updatePaneNotes,
     getActiveTab,
   };
 }

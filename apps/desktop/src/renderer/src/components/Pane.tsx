@@ -2,18 +2,9 @@ import React, { useCallback, useRef, useState, useEffect } from 'react';
 import { Columns2 } from 'lucide-react';
 import { PaneType } from '../types/pane';
 import { useConfig } from '../hooks/useConfig';
+import { usePaneMenu } from '../contexts/PaneMenuContext';
+import { PluginPaneIcon } from '../lib/pluginPaneIcon';
 import { PaneIcon } from './icons';
-
-// Pane types offered by the in-pane split button. Mirrors the palette's
-// built-in actions (minus the special Library/Editor entries) so "split into…"
-// covers the same core set everywhere.
-const SPLIT_TYPES: { type: PaneType; label: string }[] = [
-  { type: 'claude', label: 'Claude Code' },
-  { type: 'terminal', label: 'Terminal' },
-  { type: 'browser', label: 'Browser' },
-  { type: 'notes', label: 'Notes' },
-  { type: 'review', label: 'Review' },
-];
 
 interface PaneProps {
   id: string;
@@ -58,6 +49,7 @@ const Pane: React.FC<PaneProps> = ({
   children,
 }) => {
   const { config } = useConfig();
+  const { entries: paneMenuEntries, onOpenPlugin } = usePaneMenu();
   const headerHeight = config.ui.paneHeaderHeight || 22;
   const onMoveRef = useRef(onMove);
   onMoveRef.current = onMove;
@@ -144,39 +136,47 @@ const Pane: React.FC<PaneProps> = ({
           >
             Split into
           </div>
-          {SPLIT_TYPES.map(({ type, label }) => (
-            <button
-              key={type}
-              onClick={(e) => {
-                e.stopPropagation();
-                setSplitMenuOpen(false);
-                onSplit(type);
-              }}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                width: '100%',
-                padding: '5px 8px',
-                background: 'none',
-                border: 'none',
-                borderRadius: '4px',
-                color: 'var(--wks-text-secondary)',
-                fontSize: '0.7rem',
-                cursor: 'pointer',
-                textAlign: 'left',
-              }}
-              onMouseEnter={(e) => {
-                (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--wks-bg-hover)';
-              }}
-              onMouseLeave={(e) => {
-                (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent';
-              }}
-            >
-              <PaneIcon type={type} size={13} />
-              {label}
-            </button>
-          ))}
+          {paneMenuEntries.map((entry) => {
+            const key = entry.kind === 'builtin' ? entry.type : `plugin:${entry.pane.type}`;
+            return (
+              <button
+                key={key}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSplitMenuOpen(false);
+                  if (entry.kind === 'builtin') onSplit(entry.type);
+                  else onOpenPlugin(entry.pane);
+                }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  width: '100%',
+                  padding: '5px 8px',
+                  background: 'none',
+                  border: 'none',
+                  borderRadius: '4px',
+                  color: 'var(--wks-text-secondary)',
+                  fontSize: '0.7rem',
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--wks-bg-hover)';
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent';
+                }}
+              >
+                {entry.kind === 'builtin' ? (
+                  <PaneIcon type={entry.type} size={13} />
+                ) : (
+                  <PluginPaneIcon icon={entry.pane.icon} size={13} />
+                )}
+                {entry.label}
+              </button>
+            );
+          })}
         </div>
       )}
     </div>

@@ -8,6 +8,23 @@ import { PaneIcon, Play, Settings, Plus, Columns3, X } from './icons';
 import { AgentLogo } from './agentLogos';
 import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from './ContextMenu';
 import { resolveNavHeight } from '../lib/layoutUtils';
+import { usePaneMenu } from '../contexts/PaneMenuContext';
+import type { PaneMenuEntry } from '../lib/paneMenu';
+import { PluginPaneIcon } from '../lib/pluginPaneIcon';
+
+// Shared styling for the "+" new-tab dropdown's section labels and dividers.
+const MENU_SECTION_LABEL: React.CSSProperties = {
+  padding: '2px 8px',
+  fontSize: '0.6rem',
+  color: 'var(--wks-text-disabled)',
+  textTransform: 'uppercase',
+  letterSpacing: '0.05em',
+};
+const MENU_DIVIDER: React.CSSProperties = {
+  height: '1px',
+  backgroundColor: 'var(--wks-border)',
+  margin: '4px 0',
+};
 
 interface NavBarProps {
   tabs: TabConfig[];
@@ -38,12 +55,6 @@ interface NavBarProps {
   onSaveScripts?: (entries: ScriptEntry[]) => void;
 }
 
-interface SessionPickerState {
-  folder: string;
-  profileId?: string;
-  sessions: { sessionId: string; timestamp: string; summary: string }[];
-}
-
 const NavBar: React.FC<NavBarProps> = ({
   tabs,
   activeTabId,
@@ -60,6 +71,7 @@ const NavBar: React.FC<NavBarProps> = ({
   onSaveScripts,
 }) => {
   const { config, save } = useConfig();
+  const { entries: paneMenuEntries, onOpenPlugin } = usePaneMenu();
   const { version, isNightly } = useAppVersion();
   const isSmallScreen = useIsSmallScreen();
   const navHeight = resolveNavHeight(config.ui.navBarHeight, isSmallScreen);
@@ -68,6 +80,20 @@ const NavBar: React.FC<NavBarProps> = ({
   // right-aligned controls (theme switcher, scripts) don't slide under them.
   const winControlsWidth = window.electronAPI?.platform === 'win32' ? 138 : 0;
   const shells = config.terminal.shells || [];
+  // The "+" new-tab dropdown groups the shared pane menu (lib/paneMenu.ts) into
+  // a "Built-in" section and a "Plugins" section. The agent (claude) pane is
+  // intentionally omitted — agents are spawned from the sidebar spawn dialog,
+  // not the tab menu. Terminal keeps its own labeled sub-group so it can fan
+  // out to the configured shells.
+  const menuBuiltins = paneMenuEntries.filter(
+    (e): e is Extract<PaneMenuEntry, { kind: 'builtin' }> =>
+      e.kind === 'builtin' && e.type !== 'claude',
+  );
+  const menuSimpleBuiltins = menuBuiltins.filter((e) => e.type !== 'terminal');
+  const menuHasTerminal = menuBuiltins.some((e) => e.type === 'terminal');
+  const menuPlugins = paneMenuEntries.filter(
+    (e): e is Extract<PaneMenuEntry, { kind: 'plugin' }> => e.kind === 'plugin',
+  );
   const [showMenu, setShowMenu] = useState(false);
   const [tabContextMenu, setTabContextMenu] = useState<{
     tabId: string;
@@ -75,11 +101,6 @@ const NavBar: React.FC<NavBarProps> = ({
     x: number;
     y: number;
   } | null>(null);
-  const [profilePickerState, setProfilePickerState] = useState<{
-    folder: string;
-    profiles: any[];
-  } | null>(null);
-  const [sessionPickerState, setSessionPickerState] = useState<SessionPickerState | null>(null);
   const [managingScripts, setManagingScripts] = useState(false);
   const [scriptDraft, setScriptDraft] = useState<ScriptEntry[]>([]);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -313,89 +334,62 @@ const NavBar: React.FC<NavBarProps> = ({
                   boxShadow: '0 4px 12px var(--wks-shadow)',
                 }}
               >
-                <div
-                  style={{
-                    padding: '2px 8px',
-                    fontSize: '0.6rem',
-                    color: 'var(--wks-text-disabled)',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.05em',
-                  }}
-                >
-                  New Tab
-                </div>
-                <MenuButton
-                  label="Claude"
-                  icon={<PaneIcon type="claude" size={13} />}
-                  onClick={async () => {
-                    setShowMenu(false);
-                    const folder = await window.electronAPI.pickFolder(
-                      config.agents?.defaultCwd?.trim() || undefined,
-                    );
-                    if (!folder) return;
-                    // Check for profiles — show picker if more than 1
-                    let profileId: string | undefined;
-                    try {
-                      const profiles = await window.electronAPI.claudeProfilesList();
-                      if (profiles.length > 1) {
-                        setProfilePickerState({ folder, profiles });
-                        return;
-                      }
-                    } catch {}
-                    // Check for existing sessions
-                    try {
-                      const sessions = await window.electronAPI.claudeListSessionsForDir(folder);
-                      if (sessions.length > 0) {
-                        setSessionPickerState({ folder, profileId, sessions });
-                        return;
-                      }
-                    } catch {}
-                    onAddTab('claude', undefined, undefined, folder);
-                  }}
-                />
-                <MenuButton
-                  label="Browser"
-                  icon={<PaneIcon type="browser" size={13} />}
-                  onClick={() => {
-                    setShowMenu(false);
-                    onAddTab('browser');
-                  }}
-                />
-                <MenuButton
-                  label="Notes"
-                  icon={<PaneIcon type="notes" size={13} />}
-                  onClick={() => {
-                    setShowMenu(false);
-                    onAddTab('notes');
-                  }}
-                />
-
-                <div
-                  style={{ height: '1px', backgroundColor: 'var(--wks-border)', margin: '4px 0' }}
-                />
-
-                <div
-                  style={{
-                    padding: '2px 8px',
-                    fontSize: '0.6rem',
-                    color: 'var(--wks-text-disabled)',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.05em',
-                  }}
-                >
-                  Terminal
-                </div>
-                {shells.map((shell) => (
-                  <MenuButton
-                    key={shell.name}
-                    label={shell.label}
-                    icon={<PaneIcon type="terminal" size={13} />}
-                    onClick={() => {
-                      setShowMenu(false);
-                      onAddTab('terminal', shell.path, shell.label);
-                    }}
-                  />
-                ))}
+                {/* Built-in section: the simple built-in panes (browser,
+                    review, …). Terminal is a separate labeled sub-group below so
+                    it can fan out to shells; agents aren't offered here. */}
+                {menuSimpleBuiltins.length > 0 && (
+                  <>
+                    <div style={MENU_SECTION_LABEL}>Built-in</div>
+                    {menuSimpleBuiltins.map((entry) => (
+                      <MenuButton
+                        key={entry.type}
+                        label={entry.label}
+                        icon={<PaneIcon type={entry.type} size={13} />}
+                        onClick={() => {
+                          setShowMenu(false);
+                          onAddTab(entry.type);
+                        }}
+                      />
+                    ))}
+                  </>
+                )}
+                {menuHasTerminal && (
+                  <>
+                    {menuSimpleBuiltins.length > 0 && <div style={MENU_DIVIDER} />}
+                    <div style={MENU_SECTION_LABEL}>Terminal</div>
+                    {shells.map((shell) => (
+                      <MenuButton
+                        key={shell.name}
+                        label={shell.label}
+                        icon={<PaneIcon type="terminal" size={13} />}
+                        onClick={() => {
+                          setShowMenu(false);
+                          onAddTab('terminal', shell.path, shell.label);
+                        }}
+                      />
+                    ))}
+                  </>
+                )}
+                {/* Plugins section: every contributed plugin pane, per ui.paneMenu. */}
+                {menuPlugins.length > 0 && (
+                  <>
+                    {(menuSimpleBuiltins.length > 0 || menuHasTerminal) && (
+                      <div style={MENU_DIVIDER} />
+                    )}
+                    <div style={MENU_SECTION_LABEL}>Plugins</div>
+                    {menuPlugins.map((entry) => (
+                      <MenuButton
+                        key={`plugin:${entry.pane.type}`}
+                        label={entry.pane.title}
+                        icon={<PluginPaneIcon icon={entry.pane.icon} size={13} />}
+                        onClick={() => {
+                          setShowMenu(false);
+                          onOpenPlugin(entry.pane);
+                        }}
+                      />
+                    ))}
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -536,245 +530,6 @@ const NavBar: React.FC<NavBarProps> = ({
               onCancel={() => setManagingScripts(false)}
             />
           )}
-        </div>
-      )}
-
-      {/* Profile Picker Modal */}
-      {profilePickerState && (
-        <div
-          onClick={() => setProfilePickerState(null)}
-          style={{
-            position: 'fixed',
-            inset: 0,
-            zIndex: 3000,
-            display: 'flex',
-            justifyContent: 'center',
-            paddingTop: '20vh',
-            backgroundColor: 'rgba(0,0,0,0.4)',
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              backgroundColor: 'var(--wks-bg-raised)',
-              border: '1px solid var(--wks-border-input)',
-              borderRadius: 'var(--wks-radius-md)',
-              width: 'min(320px, 92vw)',
-              boxSizing: 'border-box',
-              padding: '12px 0',
-              maxHeight: 300,
-              boxShadow: '0 8px 32px var(--wks-shadow)',
-            }}
-          >
-            <div
-              style={{
-                padding: '0 16px 8px',
-                fontSize: '0.75rem',
-                fontWeight: 600,
-                color: 'var(--wks-text-secondary)',
-                borderBottom: '1px solid var(--wks-border)',
-              }}
-            >
-              Select Claude Profile
-            </div>
-            {profilePickerState.profiles.map((p: any) => (
-              <div
-                key={p.id}
-                onClick={async () => {
-                  const { folder } = profilePickerState;
-                  setProfilePickerState(null);
-                  // Check for existing sessions before launching
-                  try {
-                    const sessions = await window.electronAPI.claudeListSessionsForDir(folder);
-                    if (sessions.length > 0) {
-                      setSessionPickerState({ folder, profileId: p.id, sessions });
-                      return;
-                    }
-                  } catch {}
-                  onAddTab?.('claude', undefined, undefined, folder, p.id);
-                }}
-                style={{
-                  padding: '8px 16px',
-                  cursor: 'pointer',
-                  fontSize: '0.72rem',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                }}
-                onMouseEnter={(e) => {
-                  (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--wks-bg-selected)';
-                }}
-                onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent';
-                }}
-              >
-                <span
-                  style={{
-                    color: p.isDefault ? 'var(--wks-accent)' : 'var(--wks-text-disabled)',
-                    fontSize: '0.7rem',
-                  }}
-                >
-                  {p.isDefault ? '\u2666' : '\u25CB'}
-                </span>
-                <div style={{ flex: 1 }}>
-                  <div style={{ color: 'var(--wks-text-primary)', fontWeight: 500 }}>{p.name}</div>
-                  {p.extraArgs?.length > 0 && (
-                    <div
-                      style={{
-                        fontSize: '0.62rem',
-                        color: 'var(--wks-text-faint)',
-                        fontFamily: 'var(--wks-font-mono)',
-                      }}
-                    >
-                      {p.extraArgs.join(' ')}
-                    </div>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-      {/* Session Picker Modal */}
-      {sessionPickerState && (
-        <div
-          onClick={() => setSessionPickerState(null)}
-          style={{
-            position: 'fixed',
-            inset: 0,
-            zIndex: 3000,
-            display: 'flex',
-            justifyContent: 'center',
-            paddingTop: '15vh',
-            backgroundColor: 'rgba(0,0,0,0.4)',
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              backgroundColor: 'var(--wks-bg-raised)',
-              border: '1px solid var(--wks-border-input)',
-              borderRadius: 'var(--wks-radius-md)',
-              width: 'min(400px, 92vw)',
-              boxSizing: 'border-box',
-              padding: '12px 0',
-              maxHeight: 420,
-              boxShadow: '0 8px 32px var(--wks-shadow)',
-              display: 'flex',
-              flexDirection: 'column',
-            }}
-          >
-            <div
-              style={{
-                padding: '0 16px 8px',
-                fontSize: '0.75rem',
-                fontWeight: 600,
-                color: 'var(--wks-text-secondary)',
-                borderBottom: '1px solid var(--wks-border)',
-              }}
-            >
-              Claude Session
-            </div>
-            <div style={{ overflowY: 'auto', flex: 1 }}>
-              {/* New session option */}
-              <div
-                onClick={() => {
-                  const { folder, profileId } = sessionPickerState;
-                  setSessionPickerState(null);
-                  onAddTab?.('claude', undefined, undefined, folder, profileId);
-                }}
-                style={{
-                  padding: '10px 16px',
-                  cursor: 'pointer',
-                  fontSize: '0.72rem',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  borderBottom: '1px solid var(--wks-border)',
-                }}
-                onMouseEnter={(e) => {
-                  (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--wks-bg-selected)';
-                }}
-                onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent';
-                }}
-              >
-                <span style={{ color: 'var(--wks-accent)', fontSize: '0.8rem' }}>+</span>
-                <div>
-                  <div style={{ color: 'var(--wks-text-primary)', fontWeight: 600 }}>
-                    New Session
-                  </div>
-                  <div style={{ fontSize: '0.62rem', color: 'var(--wks-text-faint)' }}>
-                    Start a fresh conversation
-                  </div>
-                </div>
-              </div>
-
-              {/* Existing sessions */}
-              <div
-                style={{
-                  padding: '6px 16px 2px',
-                  fontSize: '0.6rem',
-                  color: 'var(--wks-text-disabled)',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.05em',
-                }}
-              >
-                Resume Session
-              </div>
-              {sessionPickerState.sessions.map((s) => (
-                <div
-                  key={s.sessionId}
-                  onClick={() => {
-                    const { folder, profileId } = sessionPickerState;
-                    setSessionPickerState(null);
-                    onAddTab?.('claude', undefined, undefined, folder, profileId, s.sessionId);
-                  }}
-                  style={{
-                    padding: '8px 16px',
-                    cursor: 'pointer',
-                    fontSize: '0.72rem',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                  }}
-                  onMouseEnter={(e) => {
-                    (e.currentTarget as HTMLElement).style.backgroundColor =
-                      'var(--wks-bg-selected)';
-                  }}
-                  onMouseLeave={(e) => {
-                    (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent';
-                  }}
-                >
-                  <span style={{ color: 'var(--wks-text-disabled)', fontSize: '0.7rem' }}>
-                    {'\u25B6'}
-                  </span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div
-                      style={{
-                        color: 'var(--wks-text-primary)',
-                        fontWeight: 500,
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {s.summary}
-                    </div>
-                    <div
-                      style={{
-                        fontSize: '0.62rem',
-                        color: 'var(--wks-text-faint)',
-                        fontFamily: 'var(--wks-font-mono)',
-                      }}
-                    >
-                      {formatSessionDate(s.timestamp)}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
         </div>
       )}
       {/* Tab context menu */}
@@ -1044,24 +799,6 @@ const ThemeSwitcher: React.FC<{
     </div>
   );
 };
-
-function formatSessionDate(iso: string): string {
-  try {
-    const d = new Date(iso);
-    const now = new Date();
-    const diff = now.getTime() - d.getTime();
-    const mins = Math.floor(diff / 60000);
-    if (mins < 1) return 'just now';
-    if (mins < 60) return `${mins}m ago`;
-    const hours = Math.floor(mins / 60);
-    if (hours < 24) return `${hours}h ago`;
-    const days = Math.floor(hours / 24);
-    if (days < 7) return `${days}d ago`;
-    return d.toLocaleDateString();
-  } catch {
-    return iso;
-  }
-}
 
 const ScriptManager: React.FC<{
   navHeight: number;
