@@ -270,8 +270,18 @@ func LoadDir(dir string) ([]Manifest, []error) {
 	var manifests []Manifest
 	var errs []error
 	for _, e := range entries {
+		// Follow a directory symlink as well as a real subdirectory: `workspacer
+		// plugin dev` isolates a single plugin by symlinking the developer's dir
+		// into a throwaway plugins dir, and os.ReadDir reports a symlink's own type
+		// (IsDir() == false) rather than its target's. Only one level is scanned
+		// here (no recursion), so following the link can't loop.
 		if !e.IsDir() {
-			continue
+			if e.Type()&os.ModeSymlink == 0 {
+				continue
+			}
+			if info, err := os.Stat(filepath.Join(dir, e.Name())); err != nil || !info.IsDir() {
+				continue
+			}
 		}
 		path := filepath.Join(dir, e.Name(), "plugin.json")
 		if _, statErr := os.Stat(path); statErr != nil {

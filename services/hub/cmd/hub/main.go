@@ -56,6 +56,41 @@ func pluginUIHandler(res uiDirResolver) http.HandlerFunc {
 	}
 }
 
+// pluginAdder registers/reloads a plugin by manifest. *plugin.Manager
+// implements it (Add is idempotent: stop → reload → restart → re-token → emit
+// plugin.loaded); the indirection keeps pluginReloadHandler testable without a
+// live manager + sidecar.
+type pluginAdder interface {
+	Add(plugin.Manifest)
+}
+
+// pluginReloadHandler hot-reloads one plugin from its on-disk directory: it
+// re-reads <dir>/plugin.json and re-Adds it. This backs `workspacer plugin
+// dev`'s file-watch loop. It performs no auth of its own — the caller wraps it
+// with the same token guard as the sibling /plugins/* routes.
+func pluginReloadHandler(add pluginAdder) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		var body struct {
+			Dir string `json:"dir"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Dir == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "missing dir"})
+			return
+		}
+		m, err := plugin.Load(filepath.Join(body.Dir, "plugin.json"))
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		add.Add(m)
+		log.Printf("reloaded plugin %s from %s", m.ID, body.Dir)
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "id": m.ID})
+	}
+}
+
 // defaultLayoutFile returns the path where the shared layout document is
 // persisted across hub restarts: <user-config-dir>/workspacer-hub/layout.json,
 // falling back to the working directory if the config dir is unavailable.
@@ -403,6 +438,18 @@ func main() {
 		log.Printf("installed plugin %s from %s", m.ID, body.URL)
 		_ = json.NewEncoder(w).Encode(m)
 	}))
+	// Hot-reload a single plugin from its on-disk directory: re-read plugin.json
+	// and re-Add it, which idempotently stops the old sidecar, restarts it with
+	// fresh manifest/token, and emits plugin.loaded. This backs `workspacer plugin
+	// dev`'s file-watch loop — the dev command POSTs the plugin's real directory
+	// here after each change (and after its build step, if any). Token-guarded
+	// like its /plugins/* siblings.
+	//
+	// The dir must contain plugin.json. mgr.Add reloads paths (sidecar cwd, ui
+	// assets, per-plugin token file) from the manifest's own Dir, and plugin.Load
+	// sets Dir to the directory we pass — so passing the developer's real plugin
+	// dir (not the symlink the hub scanned) keeps every relative path resolving.
+	srv.AddRoute("/plugins/reload", guard(pluginReloadHandler(mgr)))
 	// Remove a plugin: stop its sidecar + delete its directory.
 	srv.AddRoute("/plugins/remove", guard(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

@@ -20,6 +20,7 @@ const usage = `workspacer — headless server launcher for workspacer
 
 Usage:
   workspacer serve        start claudemon + hub (+ brain) and supervise them
+  workspacer plugin dev   boot the stack and hot-reload one plugin on file change
   workspacer status       report what's running on the workspacer ports
   workspacer token        mint / list / revoke capability-scoped bus tokens
   workspacer install-cli  put this binary on your PATH
@@ -36,6 +37,8 @@ func main() {
 	switch os.Args[1] {
 	case "serve":
 		os.Exit(runServe(os.Args[2:]))
+	case "plugin":
+		os.Exit(runPlugin(os.Args[2:]))
 	case "status":
 		os.Exit(runStatus(os.Args[2:]))
 	case "token":
