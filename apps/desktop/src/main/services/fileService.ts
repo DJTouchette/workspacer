@@ -114,6 +114,11 @@ export function readTextFile(filePath: string): ReadFileResult {
 }
 
 export function writeTextFile(filePath: string, contents: string): { ok: true } {
+  // Create missing parents: callers (the fs.write capability) scope-check the
+  // full path BEFORE calling, so any parent created here is inside an allowed
+  // root by construction. Lets plugins keep data under conventional subdirs
+  // (e.g. <project>/.workspacer/plugins/<pluginId>/) without a mkdir primitive.
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, contents, 'utf8');
   return { ok: true };
 }

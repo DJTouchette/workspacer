@@ -43,3 +43,13 @@ describe('listDir — gitignore filtering', () => {
     expect(names).not.toContain(weird);
   });
 });
+
+describe('writeTextFile', () => {
+  it('creates missing parent directories (plugin data convention)', async () => {
+    const { writeTextFile, readTextFile } = await import('./fileService');
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wks-write-'));
+    const target = path.join(root, '.workspacer', 'plugins', 'project-notes', 'notes.json');
+    writeTextFile(target, '{"version":1}');
+    expect(readTextFile(target).contents).toBe('{"version":1}');
+  });
+});
