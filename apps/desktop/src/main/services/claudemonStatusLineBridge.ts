@@ -21,6 +21,9 @@ let abort: AbortController | null = null;
 // episode re-alerts.
 let lastWarnedWindow: string | null = null;
 
+/** The daemon raises/clears the window warning at this utilization %. */
+const RATE_LIMIT_WARN_THRESHOLD = 80;
+
 /** Coarse window key ('5h' | '7d' | 'monthly') from a warning message. */
 function windowKeyOf(msg: string): string {
   if (msg.includes('7-day')) return '7d';
@@ -29,10 +32,29 @@ function windowKeyOf(msg: string): string {
 }
 
 /** Fire a rate-limit warning once per window-warning episode: an OS
- *  notification (respecting the master switch + sound) plus an in-app banner. */
-function raiseRateLimitWarning(message: string | undefined): void {
+ *  notification (respecting the master switch + sound) plus an in-app banner.
+ *  `pcts` carries the window gauges so a warning-less frame can be judged. */
+function raiseRateLimitWarning(
+  message: string | undefined,
+  pcts?: { fiveHour?: number; sevenDay?: number; monthly?: number },
+): void {
   if (!message) {
-    lastWarnedWindow = null; // comfortable again → allow the next episode to alert
+    // A warning-less frame does NOT prove the account is comfortable:
+    // interactive (PTY) sessions never carry a warning even at high
+    // utilization, and the periodic account-usage re-push is warning-less too.
+    // Only re-arm the alert once the *warned* window's own gauge is back under
+    // the daemon's threshold — mirroring how the daemon clears the warning.
+    if (lastWarnedWindow) {
+      const pct =
+        lastWarnedWindow === '7d'
+          ? pcts?.sevenDay
+          : lastWarnedWindow === 'monthly'
+            ? pcts?.monthly
+            : pcts?.fiveHour;
+      if (typeof pct === 'number' && pct < RATE_LIMIT_WARN_THRESHOLD) {
+        lastWarnedWindow = null; // comfortable again → allow the next episode to alert
+      }
+    }
     return;
   }
   const key = windowKeyOf(message);
@@ -131,7 +153,11 @@ export async function startClaudemonStatusLineBridge(): Promise<void> {
             : undefined,
           receivedAt: sl.received_at,
         });
-        raiseRateLimitWarning(sl.rate_limit_warning);
+        raiseRateLimitWarning(sl.rate_limit_warning, {
+          fiveHour: sl.five_hour_pct,
+          sevenDay: sl.seven_day_pct,
+          monthly: sl.monthly_pct,
+        });
       } catch (err) {
         console.error('[claudemon-statusline] bad frame', err);
       }

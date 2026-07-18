@@ -247,6 +247,22 @@ describe('deepMerge semantics – via configService.saveConfig', () => {
     expect(cfg.ui.theme).toBe('dark');
   });
 
+  it('replaces claude.budgets wholesale — clearing a per-session budget persists', () => {
+    // Arm a per-session budget, exactly like the inspector's "set budget" flow.
+    configService.saveConfig({ claude: { budgets: { A: 5 } } as any });
+    expect((configService.getConfig() as any).claude.budgets).toEqual({ A: 5 });
+
+    // Clear it: the inspector sends claude.budgets with session A's key removed
+    // (InspectorCard `delete budgets[sessionId]`). The saved map is the whole
+    // truth — deep-merge must NOT resurrect the removed entry, or the budget can
+    // never be cleared and budgetWatcher keeps enforcing the stale threshold.
+    configService.saveConfig({ claude: { budgets: {} } as any });
+    const cfg = configService.getConfig() as any;
+    expect(cfg.claude.budgets).toEqual({});
+    // Sibling claude defaults survive the wholesale budget replace.
+    expect(cfg.claude.transport).toBe('stream');
+  });
+
   it('source null/undefined values do not overwrite target (deepMerge guard)', () => {
     // A null leaf must NOT clobber the default — null means "unset", so the
     // default value survives.

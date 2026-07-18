@@ -81,7 +81,9 @@ export interface ToolCall {
 export interface ConversationTurn {
   role: 'user' | 'assistant';
   content: string;
-  timestamp: number;
+  /** Optional: the stream driver's optimistic user echo carries no wire
+   *  timestamp; it is adopted from the transcript tailer's copy on convergence. */
+  timestamp?: number;
   toolCalls?: ToolCall[];
 }
 

@@ -10,6 +10,7 @@ vi.mock('../configService', () => ({
 }));
 
 import { SessionUsageAccumulator } from './usageAccumulator';
+import { configService } from '../configService';
 import type { ClaudeSessionState } from '../claudeSessionStore';
 
 function mkSession(): ClaudeSessionState {
@@ -143,5 +144,42 @@ describe('SessionUsageAccumulator.applyUsage — subagent (sidechain) turns', ()
     acc.applyUsage(s, 'claude-haiku-4-5', { input_tokens: 100, output_tokens: 10 }, 'sub1', true);
     expect(s.usage!.totalInputTokens).toBe(100);
     expect(s.usage!.models['claude-haiku-4-5'].inputTokens).toBe(100);
+  });
+});
+
+describe('SessionUsageAccumulator.rememberModel — external seenModels not clobbered', () => {
+  beforeEach(() => {
+    vi.mocked(configService.saveConfig).mockClear();
+  });
+
+  it('preserves models another writer added to seenModels after launch', () => {
+    const acc = new SessionUsageAccumulator();
+
+    // Desktop launches; on-disk seenModels = ['sonnet']. rememberModel seeds its
+    // cache from this on first use. 'sonnet' is already known → no save.
+    vi.mocked(configService.getConfig).mockReturnValue({
+      claude: { seenModels: ['sonnet'] },
+    } as any);
+    acc.applyUsage(mkSession(), 'sonnet', { input_tokens: 100 }, 'm1');
+    expect(vi.mocked(configService.saveConfig)).not.toHaveBeenCalled();
+
+    // A web/brain/mobile client records 'opus' → config.yaml now holds BOTH.
+    // (The mtime gate in configService never invalidates the desktop's cache.)
+    vi.mocked(configService.getConfig).mockReturnValue({
+      claude: { seenModels: ['opus', 'sonnet'] },
+    } as any);
+
+    // Desktop then observes a first-ever 'haiku' turn and persists.
+    acc.applyUsage(mkSession(), 'haiku', { input_tokens: 100 }, 'm2');
+
+    const calls = vi.mocked(configService.saveConfig).mock.calls;
+    expect(calls.length).toBeGreaterThan(0);
+    const saved = (calls[calls.length - 1][0] as any).claude.seenModels as string[];
+
+    // deepMerge replaces the seenModels array wholesale, so the persisted array
+    // must already contain every model — including the externally-added 'opus'.
+    expect(saved).toContain('haiku');
+    expect(saved).toContain('sonnet');
+    expect(saved).toContain('opus'); // FAILS on current code ('opus' dropped)
   });
 });

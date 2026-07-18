@@ -203,12 +203,34 @@ export function applyConversationItems(
     switch (kind) {
       case 'user_message': {
         const text = item.text ?? '';
+        if (!text) break;
         // Only discriminate on timestamp when the wire item actually carried
         // one — otherwise tsOf() falls back to Date.now(), which differs per
         // call and would defeat content dedup for timestamp-less replays.
         const ts = item.timestamp ? tsOf(item) : undefined;
-        if (text && !isDuplicateMessage(session, 'user', text, ts)) {
-          session.conversation.push({ role: 'user', content: text, timestamp: tsOf(item) });
+        // Stream-transport dual-feed convergence: the claude_stream driver
+        // optimistically echoes the send as a UserMessage with timestamp:None,
+        // then ~400ms later the transcript tailer re-emits the same row with a
+        // real timestamp. They are one turn, not two — converge them by content
+        // (as the slash_command path does). A timestamped row matching a recent
+        // timestamp-less echo turn adopts that timestamp in place instead of
+        // pushing a second identical bubble; otherwise the usual content+exact-
+        // timestamp dedup still separates a genuine repeat from a JSONL replay.
+        const echo = [...session.conversation.slice(-5)]
+          .reverse()
+          .find(
+            (t) =>
+              t.role === 'user' &&
+              !t.command &&
+              t.content === text &&
+              t.timestamp === undefined,
+          );
+        if (echo) {
+          if (ts !== undefined) echo.timestamp = ts;
+          break;
+        }
+        if (!isDuplicateMessage(session, 'user', text, ts)) {
+          session.conversation.push({ role: 'user', content: text, timestamp: ts });
         }
         break;
       }
@@ -247,11 +269,16 @@ export function applyConversationItems(
         if (!name) break;
         const args = item.args ?? '';
         // On the stream transport the same run arrives twice: the driver
-        // echoes it at send time, then the transcript tailer parses the CLI's
-        // echo row. Same name+args among the recent turns → it's that pair,
-        // not a re-run (mirrors isDuplicateMessage for plain text).
+        // echoes it at send time (timestamp:None), then the transcript tailer
+        // parses the CLI's echo row (carrying a real timestamp). Only the
+        // timestamped tailer/replay item is a duplicate to fold away against a
+        // recent matching run; a fresh, still timestamp-less driver echo is a
+        // genuine re-run and must always render (mirrors isDuplicateMessage's
+        // refusal to drop a real repeat — inverted because here the timestamp-
+        // less item is the live send, not the replay).
         const recent = session.conversation.slice(-5);
         if (
+          item.timestamp &&
           recent.some(
             (t) => t.command && t.command.name === name && (t.command.args ?? '') === args,
           )

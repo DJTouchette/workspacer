@@ -147,6 +147,20 @@ describe('applyConversationItems — repeated user message', () => {
     expect(s.conversation.filter((t) => t.role === 'user')).toHaveLength(2);
   });
 
+  it('the stream driver echo (no timestamp) + transcript tailer copy (real timestamp) collapse to one user turn', () => {
+    const s = mkSession();
+    (s as { transport?: string }).transport = 'stream';
+    // 1) claude_stream driver optimistically echoes the send with timestamp:None.
+    applyConversationItems(s, [{ kind: 'user_message', text: 'continue please' }], noUsage);
+    // 2) ~400ms later the transcript tailer re-emits the same row with a real ts.
+    applyConversationItems(
+      s,
+      [{ kind: 'user_message', text: 'continue please', timestamp: '2026-07-18T10:00:00Z' }],
+      noUsage,
+    );
+    expect(s.conversation.filter((t) => t.role === 'user')).toHaveLength(1);
+  });
+
   it('a true JSONL replay-duplicate (same timestamp) is still deduped', () => {
     const s = mkSession();
     const item: ConversationItemWire = {
@@ -550,6 +564,19 @@ describe('applyConversationItems — slash commands', () => {
       noUsage,
     );
     expect(s.conversation).toHaveLength(2);
+  });
+
+  it('a genuine re-run of the same command (fresh driver echo) is not swallowed', () => {
+    const s = mkSession();
+    applyConversationItems(s, [{ kind: 'slash_command', name: 'cost' }], noUsage);
+    expect(s.conversation).toHaveLength(1);
+    // User deliberately runs /cost again. `/cost` only emits command_output
+    // (which folds into the existing turn and adds no new turns), so the first
+    // card is still within slice(-5). The second run's send-time driver echo
+    // carries NO timestamp, exactly like the first — it must still render.
+    applyConversationItems(s, [{ kind: 'slash_command', name: 'cost' }], noUsage);
+    expect(s.conversation).toHaveLength(2);
+    expect(s.conversation[1].command).toEqual({ name: 'cost' });
   });
 
   it('command_output folds into the nearest preceding command turn', () => {

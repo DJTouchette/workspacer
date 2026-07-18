@@ -514,6 +514,14 @@ class ConfigService {
         Config['ui']['customThemes']
       >;
     }
+    // claude.budgets is a user-owned map (Record<sessionId, number>): when the
+    // caller sends it, it is the whole truth. Deep-merge would resurrect a
+    // cleared budget (a deleted key), so replace it wholesale instead — exactly
+    // like ui.customThemes above.
+    const claudePartial = (partial as { claude?: { budgets?: unknown } }).claude;
+    if (claudePartial && 'budgets' in claudePartial) {
+      this.config.claude.budgets = (claudePartial.budgets ?? {}) as Record<string, number>;
+    }
     if (this.persistBlocked) {
       // The on-disk config failed to load (unreadable or unparseable): keep the
       // change in memory only. Writing here would replace the user's file with

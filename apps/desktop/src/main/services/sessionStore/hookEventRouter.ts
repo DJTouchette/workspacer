@@ -184,14 +184,25 @@ export function applyHookEvent(session: ClaudeSessionState, event: any): void {
       setAmbient('waiting_approval');
       break;
 
-    case 'SubagentStart':
+    case 'SubagentStart': {
+      const saId = event.agent_id ?? `sa-${Date.now()}`;
+      // Idempotent on agent_id: a re-delivered SubagentStart (a double-fired /
+      // retried hook POST) must not spawn a second subagent row — the duplicate
+      // inflates the watch pane and analytics subagentCount, and only one copy
+      // gets marked complete by the single matching SubagentStop, leaving a
+      // phantom 'running' subagent that pins the parent on 'background' forever
+      // (mirrors the PreToolUse idempotency guard on tool_use_id above).
+      if (event.agent_id && session.subagents.some((s) => s.id === saId)) {
+        break;
+      }
       session.subagents.push({
-        id: event.agent_id ?? `sa-${Date.now()}`,
+        id: saId,
         type: event.agent_type ?? 'unknown',
         status: 'running',
         startedAt: Date.now(),
       });
       break;
+    }
 
     case 'SubagentStop': {
       const sub = session.subagents.find((s) => s.id === event.agent_id);

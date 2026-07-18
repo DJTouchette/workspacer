@@ -247,6 +247,36 @@ describe('background subagents keep the pane busy past the parent Stop (PTY)', (
   });
 });
 
+describe('SubagentStart idempotency (re-delivered hook)', () => {
+  const startSub = (s: ClaudeSessionState, id = 'agent-abc') =>
+    applyHookEvent(s, {
+      hook_event_name: 'SubagentStart',
+      agent_id: id,
+      agent_type: 'general-purpose',
+    });
+
+  it('does not create a duplicate subagent when SubagentStart is re-delivered', () => {
+    const s = mkSession('pty');
+    startSub(s);
+    startSub(s); // re-delivered (double-fired / retried hook POST)
+    expect(s.subagents).toHaveLength(1);
+  });
+
+  it('a re-delivered SubagentStart leaves no phantom running subagent after Stop', () => {
+    const s = mkSession('pty');
+    startSub(s);
+    startSub(s); // duplicate
+    applyStopEvent(s); // parent turn ends while the subagent runs
+    expect(s.ambientState).toBe('background');
+    // The single SubagentStop must drain the subagent for that id, not leave a
+    // second stuck 'running' entry pinning the parent on 'background' forever.
+    applyHookEvent(s, { hook_event_name: 'SubagentStop', agent_id: 'agent-abc' });
+    expect(s.subagents.some((sub) => sub.status === 'running')).toBe(false);
+    expect(sessionHasBackgroundWork(s)).toBe(false);
+    expect(s.ambientState).toBe('idle');
+  });
+});
+
 describe('applyHookEvent — PostToolUse completion + failure', () => {
   it('marks a tool complete on a clean PostToolUse', () => {
     const s = mkSession('pty');
