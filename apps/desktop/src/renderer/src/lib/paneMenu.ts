@@ -61,11 +61,16 @@ export function buildPaneMenu(
     const pluginByType = new Map(pluginPanes.map((p) => [p.type, p]));
     const out: PaneMenuEntry[] = [];
     for (const id of paneMenu) {
+      // Built-in first, then a plugin pane by type — matching the documented
+      // precedence. Otherwise a plugin whose pane type collides with a built-in
+      // id (e.g. 'review') would shadow the built-in the user configured.
+      if (id in MENU_BUILTIN_LABELS) {
+        out.push(builtinEntry(id as PaneType));
+        continue;
+      }
       const plugin = pluginByType.get(id);
       if (plugin) {
         out.push(pluginEntry(plugin));
-      } else if (id in MENU_BUILTIN_LABELS) {
-        out.push(builtinEntry(id as PaneType));
       }
       // else: unknown/stale id (removed pane type, uninstalled plugin) → drop.
     }

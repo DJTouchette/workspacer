@@ -25,6 +25,17 @@ export function wasSessionTerminated(sessionId: string): boolean {
   return terminated.has(sessionId);
 }
 
+/**
+ * Lift the tombstone for a single id. A restart-with-settings resume REUSES the
+ * old session id (claudeSpawn/managedSpawn: `opts.resumeSessionId || randomUUID()`),
+ * so once the resumed session is live again it must be cleared, or every snapshot
+ * tick for it gets dropped by App's `wasSessionTerminated` guard and the running
+ * agent renders as Stopped forever.
+ */
+export function clearSessionTerminated(sessionId: string | undefined): void {
+  if (sessionId) terminated.delete(sessionId);
+}
+
 /** Test hook — module state would otherwise leak between cases. */
 export function resetTerminatedSessions(): void {
   terminated.clear();

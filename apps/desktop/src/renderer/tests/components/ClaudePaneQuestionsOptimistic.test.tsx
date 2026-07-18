@@ -221,6 +221,34 @@ describe('ClaudePane optimistic-message re-baseline', () => {
     expect(screen.getAllByText('hello again')).toHaveLength(1);
   });
 
+  it('keeps a pending optimistic bubble when a nameless command-output card arrives', async () => {
+    const { rerender } = render(pane());
+
+    // User sends a real message → optimistic bubble, still pending (real user
+    // turn has not landed in session.conversation yet).
+    fireEvent.change(composer(), { target: { value: 'my pending message' } });
+    fireEvent.keyDown(composer(), { key: 'Enter' });
+    expect(await screen.findByText('my pending message')).toBeInTheDocument();
+
+    // Before the real user turn lands, a slash command's orphaned output arrives
+    // → conversationApplier pushes a nameless command card (role:'user',
+    // command.name===''). This is NOT a user send, so it must not dequeue the
+    // still-pending optimistic bubble.
+    mockSession = makeSnapshot({
+      conversation: [
+        {
+          role: 'user',
+          content: 'orphaned slash output',
+          timestamp: Date.now(),
+          command: { name: '', output: 'orphaned slash output' },
+        } as ConversationTurn,
+      ],
+    });
+    rerender(pane());
+
+    expect(screen.getByText('my pending message')).toBeInTheDocument();
+  });
+
   it('drops optimistic turns and re-baselines when the conversation resets under the same session id', async () => {
     // Established thread: two user turns already consumed.
     mockSession = makeSnapshot({

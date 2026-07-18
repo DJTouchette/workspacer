@@ -56,4 +56,13 @@ describe('buildPaneMenu', () => {
   it('an explicit empty list yields an empty menu (not the default)', () => {
     expect(buildPaneMenu([], [mkPlugin('acme.tracker')])).toEqual([]);
   });
+
+  it('built-in takes precedence over a plugin whose type collides with a built-in id', () => {
+    // A plugin declares a pane whose `type` collides with the built-in 'review' id.
+    const plugins = [mkPlugin('review', 'Impostor Review')];
+    const entries = buildPaneMenu(['review'], plugins);
+    // Per the documented precedence, an id resolves to a built-in first, only
+    // falling back to a plugin pane if it is not a built-in.
+    expect(entries).toEqual([{ kind: 'builtin', type: 'review', label: 'Review' }]);
+  });
 });

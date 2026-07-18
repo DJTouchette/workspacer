@@ -257,3 +257,134 @@ describe('Mission Control surfaces', () => {
     expect(screen.queryByRole('button', { name: /Usage/ })).not.toBeInTheDocument();
   });
 });
+
+// ── idx 13: Needs-you / Review tab badges must match their contents ──
+import { useAttention } from '../../src/contexts/AttentionContext';
+
+describe('Inbox tab badges match tab contents', () => {
+  const now = Date.now();
+  const errAgents: AgentWorkspace[] = [
+    { id: 'e1', name: 'Erroring agent', cwd: '/repo/err', sessionId: 'sess-err', tabs: [], activeTabId: '' },
+    { id: 'global', name: 'Overview', global: true, cwd: '', tabs: [], activeTabId: '' },
+  ];
+  const errSnapshots: Record<string, any> = {
+    'sess-err': {
+      sessionId: 'sess-err',
+      ambientState: 'idle',
+      conversation: [],
+      activeToolCalls: [],
+      completedToolCalls: [{ id: 'c1', name: 'Bash', status: 'failed', completedAt: now, response: 'boom' }],
+      fileChanges: [],
+      subagents: [],
+      workflows: [],
+      pendingApproval: null,
+      pendingQuestions: null,
+      usage: null,
+      lastActivity: now,
+    },
+  };
+
+  function InboxOnly() {
+    const attention = useAttentionFeed(errSnapshots, errAgents);
+    return (
+      <ConfigProvider>
+        <AttentionProvider
+          agents={errAgents}
+          activeAgentId=""
+          snapshotBySession={errSnapshots}
+          inboxOpen
+          openInbox={vi.fn()}
+          closeInbox={vi.fn()}
+          viewLevel="fleet"
+          setViewLevel={vi.fn()}
+          onOpenAgent={vi.fn()}
+          attention={attention}
+        >
+          <InboxDrawer />
+        </AttentionProvider>
+      </ConfigProvider>
+    );
+  }
+
+  it('lists an error item under the tab whose badge counts it (Needs you)', () => {
+    render(<InboxOnly />);
+    const needsTab = screen.getByRole('button', { name: /Needs you/ });
+    expect(needsTab).toHaveTextContent('1');
+    expect(screen.getByText('boom')).toBeInTheDocument();
+
+    // Switching to the "Needs you" tab must list the very item its badge counted.
+    fireEvent.click(needsTab);
+    expect(screen.getByText('boom')).toBeInTheDocument();
+  });
+});
+
+// ── idx 14: piloting auto-dismiss must cover ALL active-agent items ──
+describe('Piloting auto-dismiss ignores the inbox filter', () => {
+  const bugAgents: AgentWorkspace[] = [
+    { id: 'a1', name: 'Refactor agent', cwd: '/repo/refactor', sessionId: 'sess-1', tabs: [], activeTabId: '' },
+    { id: 'global', name: 'Overview', global: true, cwd: '', tabs: [], activeTabId: '' },
+  ];
+  const workingSnap = {
+    sessionId: 'sess-1',
+    ambientState: 'streaming',
+    conversation: [],
+    activeToolCalls: [],
+    completedToolCalls: [],
+    fileChanges: [],
+    subagents: [],
+    workflows: [],
+    pendingApproval: null,
+    pendingQuestions: null,
+    usage: null,
+  };
+  // Idle agent that left a large (>80 line) unreviewed change → review-class item.
+  const bigdiffSnap = {
+    ...workingSnap,
+    ambientState: 'idle',
+    fileChanges: [
+      { path: 'src/App.tsx', input: { old_string: 'old\n'.repeat(90), new_string: 'new\n'.repeat(90) } },
+    ],
+    lastActivity: 1000,
+  };
+
+  function Inside() {
+    const { topByAgent, setInboxFilter } = useAttention();
+    React.useEffect(() => {
+      setInboxFilter('needs');
+    }, [setInboxFilter]);
+    const top = topByAgent.get('a1');
+    return <span data-testid="top-a1">{top ? top.kind : 'none'}</span>;
+  }
+
+  function PilotBugHarness({ snaps }: { snaps: Record<string, any> }) {
+    const attention = useAttentionFeed(snaps, bugAgents);
+    return (
+      <ConfigProvider>
+        <AttentionProvider
+          agents={bugAgents}
+          activeAgentId="a1"
+          snapshotBySession={snaps}
+          inboxOpen
+          openInbox={vi.fn()}
+          closeInbox={vi.fn()}
+          viewLevel="piloting"
+          setViewLevel={vi.fn()}
+          onOpenAgent={vi.fn()}
+          attention={attention}
+        >
+          <Inside />
+        </AttentionProvider>
+      </ConfigProvider>
+    );
+  }
+
+  it('auto-dismisses ALL active-agent items while piloting, even ones the inbox filter hides', () => {
+    const { rerender } = render(<PilotBugHarness snaps={{ 'sess-1': workingSnap }} />);
+    expect(screen.getByTestId('top-a1').textContent).toBe('none');
+    // While piloting a1 with the 'needs' filter set, a1 finishes and leaves a
+    // review-class item. Because you're actively looking at a1, the piloting
+    // effect must auto-dismiss it even though 'needs' filters it out of `feed`.
+    rerender(<PilotBugHarness snaps={{ 'sess-1': bigdiffSnap }} />);
+    expect(screen.getByTestId('top-a1').textContent).toBe('none');
+  });
+});

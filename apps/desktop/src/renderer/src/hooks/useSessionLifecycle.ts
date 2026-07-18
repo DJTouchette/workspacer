@@ -201,26 +201,12 @@ export function useSessionLifecycle({
         })),
         ptyMapping: { ...ptyMapping },
       };
-      const hash = JSON.stringify({
-        n: payload.name,
-        a: payload.activeAgentId,
-        g: payload.agents.map(
-          (ag) =>
-            ag.id +
-            ag.name +
-            (ag.sessionId || '') +
-            ag.activeTabId +
-            ag.tabs
-              .map(
-                (t) =>
-                  t.id +
-                  t.title +
-                  (t.activePaneId || '') +
-                  t.panes.map((p) => p.id + p.type + (p.url || '')).join(),
-              )
-              .join(),
-        ),
-      });
+      // Hash the full persisted payload so ANY field we actually write
+      // (model, effort, permissionMode, cwd, skipPermissions, pane.cwd/shell,
+      // ptyMapping, …) re-arms the autosave. A partial hash silently dropped
+      // saves for edits confined to those fields until a forced quit-save, so a
+      // crash/kill in the debounce window lost them.
+      const hash = JSON.stringify(payload);
       if (!force && hash === lastSaveHashRef.current) return Promise.resolve();
       lastSaveHashRef.current = hash;
       return window.electronAPI.saveSession(payload).then(

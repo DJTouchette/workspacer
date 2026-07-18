@@ -36,11 +36,12 @@ export const QuestionPicker: React.FC<{
   const multi = !!q.multi_select;
 
   /** Record this question's raw answer, then advance or submit the set. */
-  const commit = (raw: string, displayLabel: string) => {
+  const commit = (raw: string, displayLabel: string, isOption = false) => {
     if (total === 1) {
-      // Single question: preserve the original fast-path payloads.
-      const n = Number(raw);
-      if (Number.isInteger(n) && String(n) === raw) onAnswer({ option: n });
+      // Single question: only an actual option pick may become {option:n}. A
+      // numeric free-text answer (e.g. "5") must stay {text}, or it gets
+      // misrouted to option #5 instead of answering with the literal number.
+      if (isOption) onAnswer({ option: Number(raw) });
       else onAnswer({ text: raw });
       setDone(true);
       return;
@@ -194,7 +195,7 @@ export const QuestionPicker: React.FC<{
                   else next.add(oi);
                   setMultiPicks(next);
                 } else {
-                  commit(String(oi + 1), opt.label);
+                  commit(String(oi + 1), opt.label, true);
                 }
               }}
               style={{

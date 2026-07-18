@@ -91,6 +91,37 @@ describe('useSessionLifecycle — autosave dedup hash', () => {
     });
     expect(saveSession).toHaveBeenCalledTimes(1);
   });
+
+  it('persists a save when only an agent model changed (a persisted field)', () => {
+    // model/effort/permissionMode/cwd/skipPermissions are all written to disk
+    // but were absent from the old dedup hash, so an edit confined to them
+    // deduped away and only reached disk on a forced quit-save.
+    function mkWithModel(model: string) {
+      return [
+        {
+          id: 'a1',
+          name: 'A',
+          cwd: '/x',
+          model,
+          sessionId: 's1',
+          activeTabId: 't1',
+          tabs: [{ id: 't1', title: 'Tab', activePaneId: 'p1', panes: [{ id: 'p1', type: 'terminal' }] }],
+        },
+      ] as any;
+    }
+    const { result, rerender } = render(mkWithModel('sonnet'));
+    act(() => result.current.handleNewSession());
+    act(() => {
+      void result.current.saveCurrentSession();
+    });
+    expect(saveSession).toHaveBeenCalledTimes(1);
+
+    rerender({ agents: mkWithModel('opus') });
+    act(() => {
+      void result.current.saveCurrentSession();
+    });
+    expect(saveSession).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('useSessionLifecycle — hardening', () => {

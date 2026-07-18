@@ -22,7 +22,7 @@ export function providerLabel(provider: AgentProvider | undefined): string {
   }
 }
 import { agentIdForSession, dedupeBySessionId } from '../lib/agentIdentity';
-import { markSessionTerminated } from '../lib/terminatedSessions';
+import { markSessionTerminated, clearSessionTerminated } from '../lib/terminatedSessions';
 
 let nextId = 1;
 
@@ -439,6 +439,10 @@ export function useAgentManager() {
         console.error('[Agent] restart-with-settings failed:', err);
       }
       if (!newSessionId) return;
+      // The resume reuses the tombstoned id (newSessionId === the id we just
+      // marked terminated). Lift the tombstone so the restarted, running
+      // session's live ticks aren't dropped by App's wasSessionTerminated() guard.
+      clearSessionTerminated(newSessionId);
       mutateAgent(agent.id, (a) => ({
         ...a,
         model,
@@ -684,7 +688,11 @@ export function useAgentManager() {
     ): string => {
       const ws = agentsRef.current.find((a) => a.id === workspaceId);
       const existing = ws?.tabs.find(
-        (t) => t.panes.length === 1 && t.panes[0].type === type && t.panes[0].title === title,
+        (t) =>
+          t.panes.length === 1 &&
+          t.panes[0].type === type &&
+          t.panes[0].title === title &&
+          t.panes[0].url === url,
       );
       const paneId = generateId('pane');
       const tabId = existing?.id ?? generateId('tab');
@@ -1051,11 +1059,13 @@ export function useAgentManager() {
 
   const removePane = useCallback(
     (tabId: string, paneId: string) => {
+      // Locate the agent that owns this tab — bus/MCP commands can target a
+      // background agent's pane, not just the active one.
+      const agent = agentsRef.current.find((a) => a.tabs.some((t) => t.id === tabId));
+      if (!agent) return;
       // Closing the last pane of the last tab terminates the (non-global) agent.
-      const agent = agentsRef.current.find((a) => a.id === activeAgentIdRef.current);
-      const closingTab = agent?.tabs.find((t) => t.id === tabId);
+      const closingTab = agent.tabs.find((t) => t.id === tabId);
       if (
-        agent &&
         !agent.global &&
         closingTab &&
         closingTab.panes.length <= 1 &&
@@ -1064,7 +1074,7 @@ export function useAgentManager() {
         terminateAgent(agent.id);
         return;
       }
-      mutateActiveAgent((a) => {
+      mutateAgent(agent.id, (a) => {
         const tab = a.tabs.find((t) => t.id === tabId);
         if (!tab) return a;
 
@@ -1092,7 +1102,7 @@ export function useAgentManager() {
         };
       });
     },
-    [mutateActiveAgent, terminateAgent],
+    [mutateAgent, terminateAgent],
   );
 
   const renameTab = useCallback(

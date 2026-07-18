@@ -72,6 +72,17 @@ describe('QuestionPicker', () => {
     expect(onAnswer).toHaveBeenCalledWith({ text: 'yarn' });
   });
 
+  it('a numeric free-text answer is sent as text, not a numbered option', () => {
+    const onAnswer = vi.fn();
+    render(<QuestionPicker questions={[question]} onAnswer={onAnswer} />);
+    const input = screen.getByPlaceholderText('Or type your own answer…');
+    // The question has 2 options; the user ignores them and types a number.
+    fireEvent.change(input, { target: { value: '5' } });
+    fireEvent.click(screen.getByText('Send'));
+    expect(onAnswer).toHaveBeenCalledWith({ text: '5' });
+    expect(onAnswer).not.toHaveBeenCalledWith({ option: 5 });
+  });
+
   it('the custom-answer Send is disabled until text is entered', () => {
     render(<QuestionPicker questions={[question]} onAnswer={vi.fn()} />);
     expect(screen.getByText('Send')).toBeDisabled();

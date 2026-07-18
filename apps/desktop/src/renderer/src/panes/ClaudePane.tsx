@@ -886,7 +886,13 @@ const ClaudePane: React.FC<ClaudePaneProps> = ({
   // Drop optimistic entries FIFO as session.conversation grows past the
   // count we last consumed. This avoids content-matching pitfalls.
   useEffect(() => {
-    const userCount = (session?.conversation ?? []).filter((t) => t.role === 'user').length;
+    // Count only genuine user sends. conversationApplier also pushes a synthetic
+    // "nameless command card" (role:'user', command.name === '') for orphaned
+    // command_output whose invocation scrolled out — that is NOT a user send and
+    // must not dequeue a pending optimistic bubble.
+    const userCount = (session?.conversation ?? []).filter(
+      (t) => t.role === 'user' && t.command?.name !== '',
+    ).length;
     if (userCount < consumedUserCountRef.current) {
       // The conversation reset under the same session id (managed-provider
       // restart starts a fresh provider-side thread). Re-baseline the consumed

@@ -62,8 +62,15 @@ interface AttentionContextValue {
 
 /** Inbox tab: everything, only agents blocked ON you, or informational/review. */
 export type InboxFilter = 'all' | 'needs' | 'review';
-/** Kinds that mean "an agent is waiting on you" (vs. review/informational). */
-const NEEDS_KINDS: ReadonlySet<AttentionKind> = new Set<AttentionKind>(['approval', 'question']);
+/** Kinds that mean "an agent is waiting on you" (vs. review/informational).
+ *  MUST stay in sync with the needsYou tally in useAttentionFeed (counts.needsYou),
+ *  or the 'Needs you' / 'Review' tab badges disagree with their contents. */
+const NEEDS_KINDS: ReadonlySet<AttentionKind> = new Set<AttentionKind>([
+  'approval',
+  'question',
+  'stuck',
+  'error',
+]);
 
 const AttentionContext = createContext<AttentionContextValue | null>(null);
 
@@ -168,10 +175,15 @@ export const AttentionProvider: React.FC<ProviderProps> = ({
   // this fires only on genuinely new items and settles immediately.
   useEffect(() => {
     if (viewLevel !== 'piloting' || !activeAgentId) return;
-    for (const it of feed) {
+    // Iterate the FULL item set, not the inboxFilter-filtered `feed`: while
+    // piloting we must dismiss every item for the active agent regardless of
+    // which inbox tab is selected, or review-class items linger on the Fleet
+    // Deck card of the very agent you're looking at. `allItems` also already
+    // excludes dismissed items, so this still settles immediately.
+    for (const it of allItems) {
       if (it.agentId === activeAgentId) dismiss(it.signature);
     }
-  }, [feed, viewLevel, activeAgentId, dismiss]);
+  }, [allItems, viewLevel, activeAgentId, dismiss]);
 
   const moveSelection = useCallback(
     (delta: number) => {
