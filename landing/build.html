@@ -99,6 +99,7 @@
   <div class="links">
     <a href="index.html">home</a>
     <a href="docs.html">docs</a>
+    <a href="build-plugin.html">build a plugin</a>
     <a href="https://github.com/DJTouchette/workspacer">github</a>
   </div>
 </div></nav>
@@ -262,7 +263,7 @@ hub → caller:   {"op":"result","id":"req-1","result":{...}}</code></pre>
 
     <section id="plugins" class="doc">
 <h2>writing a plugin</h2>
-<p>A plugin is a polyglot sidecar (any language) plus a <code>plugin.json</code> manifest that declares what it contributes. The hub reads <code>&lt;plugins-dir&gt;/&lt;name&gt;/plugin.json</code>, validates it, starts the sidecar, and announces the contribution on the bus (<code>plugin.loaded</code> / <code>plugin.unloaded</code>). The desktop renderer picks that up and registers the pane types, command-palette entries, and hotkeys.</p>
+<p>A plugin is a polyglot sidecar (any language) plus a <code>plugin.json</code> manifest that declares what it contributes. The hub reads <code>&lt;plugins-dir&gt;/&lt;name&gt;/plugin.json</code>, validates it, starts the sidecar, and announces the contribution on the bus (<code>plugin.loaded</code> / <code>plugin.unloaded</code>). The desktop renderer picks that up and registers the pane types, command-palette entries, and hotkeys. This section is the overview; for the full hands-on how-to (first plugin, manifest reference, bus protocol, hot-reload, publishing) see <a href="build-plugin.html">build a plugin</a>.</p>
 <p>Point the hub at a plugins dir:</p>
 <pre><code>go run ./cmd/hub --plugins-dir /path/to/plugins</code></pre>
 <p>In the running app the plugins dir is <code>&lt;configDir&gt;/plugins</code>, and the Plugins Manager installs into it for you. For development, drop your plugin's folder in there (or point a dev hub at your own dir) and it loads on the next scan.</p>

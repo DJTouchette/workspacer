@@ -1,0 +1,34 @@
+# work{spacer}
+
+> A local-first control plane and IDE for running many coding agents (Claude Code, Codex, OpenCode, Pi) side by side, watching them, reviewing their code, and extending it all with plugins over a WebSocket hub bus.
+
+## Docs
+
+- [Operational docs](docs.html): overview, getting started, running agents, the agent pane, pane types, layout and navigation, attention and notifications, remote and multi-client, extending, and configuration.
+- [Overview](docs.html#overview): the problem, the mental model (one agent = one session = one workspace), and what runs on your machine.
+- [Running agents](docs.html#agents-and-providers): the four providers, the spawn dialog, terminal-style vs managed agents.
+- [Pane types](docs.html#panes): terminal, browser, editor, review/diff, notes, library, analytics, overview, plugin panes, and more.
+- [Extending (plugins, mcp, tui)](docs.html#extending): installing plugins, driving the fleet over MCP, the terminal client.
+
+## Build & internals
+
+- [Build & internals](build.html): building from source, the three-process architecture, how agents are driven, writing a plugin, the MCP facade and brain.
+- [Architecture internals](build.html#architecture): the desktop / claudemon / hub split and the hub bus.
+- [How agents are driven](build.html#providers): the two integration tiers and each provider's managed adapter.
+- [Writing a plugin (overview)](build.html#plugins): the short tour of the plugin system.
+- [The MCP facade & brain](build.html#mcp): exposing the hub's capabilities as MCP tools.
+
+## Build a plugin
+
+Full-text plugin reference for LLMs: [build-plugin.md](build-plugin.md) is the complete, plain-Markdown how-to — point here for copy-paste manifests and bus code.
+
+- [Build a plugin (HTML)](build-plugin.html): the rendered how-to page.
+- [The two kinds](build-plugin.html#intro): webview (`ui`) vs sidecar (`server`).
+- [Your first plugin](build-plugin.html#first): folder, minimal manifest, the webview page, and a sidecar sketch.
+- [The manifest](build-plugin.html#manifest): `plugin.json` fields — `id`, `apiVersion` (must be `"1"`), `server`, `ui`, `panes`, `hotkeys`, `settings`, `capabilities`, `provides`, `emits`/`consumes`, `install`.
+- [The bus protocol](build-plugin.html#bus): `ws://127.0.0.1:7895/bus?token=`, the `subscribe` / `call` / `publish` / `register` ops.
+- [Capabilities & permissions](build-plugin.html#capabilities): fail-closed grants, path-scoped `fs.*` / `search.project`, common host capabilities.
+- [Events you can consume](build-plugin.html#events): `agent.state_changed`, `agent.snapshot`, `workflow.completed`/`failed`, `ui.*`, `fs.changed`, and what you can emit.
+- [Settings](build-plugin.html#settings): typed manifest settings; live for webviews, restart for sidecars.
+- [Developing with hot-reload](build-plugin.html#dev): dev hub, `workspacer plugin dev <dir>`.
+- [Publishing](build-plugin.html#publishing): own git repo, install via `owner/repo`, the [workspacer-plugins](https://github.com/DJTouchette/workspacer-plugins) catalog.

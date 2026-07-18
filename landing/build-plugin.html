@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>work{spacer} :: build a plugin</title>
+<meta name="description" content="How to build a work{spacer} plugin: webview vs sidecar, the plugin.json manifest, the hub bus protocol, capabilities and permissions, settings, hot-reload dev, and publishing." />
+<style>
+  :root {
+    --bg: #1e2326; --bg-2: #232a2e; --panel: #272e33;
+    --line: #3d484d; --line-soft: #343f44;
+    --green: #a7c080; --green-dim: #7f9460;
+    --amber: #dbbc7f; --cyan: #7fbbb3; --aqua: #83c092; --orange: #e69875;
+    --ink: #d3c6aa; --ink-dim: #9da9a0; --ink-faint: #5c6a6b;
+    --sidew: 232px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    line-height: 1.65; font-size: 14.5px; -webkit-font-smoothing: antialiased;
+  }
+  body::before {
+    content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 100; opacity: 0.3;
+    background: repeating-linear-gradient(0deg, rgba(0,0,0,0), rgba(0,0,0,0) 2px, rgba(0,0,0,0.16) 3px, rgba(0,0,0,0) 4px);
+  }
+  a { color: var(--green); }
+  ::selection { background: var(--green); color: #1e2326; }
+
+  /* brand */
+  .wordmark { font-weight: 700; letter-spacing: -0.045em; color: var(--ink); white-space: nowrap; }
+  .wordmark .sp { color: var(--green); }
+  .mark { display: inline-flex; align-items: center; justify-content: center; font-weight: 700; color: var(--green); line-height: 1; user-select: none; }
+  .mark .bar { display: inline-block; width: 0.22em; height: 0.72em; margin: 0 0.06em; border-radius: 1px; background: var(--green); }
+
+  /* top nav */
+  nav { border-bottom: 1px solid var(--line); position: sticky; top: 0; background: rgba(30,35,38,0.92); backdrop-filter: blur(8px); z-index: 50; }
+  nav .inner { display: flex; align-items: center; justify-content: space-between; height: 56px; padding: 0 22px; }
+  nav .brand { display: flex; align-items: center; gap: 9px; font-size: 16px; }
+  nav .links { display: flex; gap: 20px; font-size: 13px; }
+  nav .links a { color: var(--ink-dim); text-decoration: none; }
+  nav .links a:hover { color: var(--green); }
+
+  /* layout */
+  .shell { display: grid; grid-template-columns: var(--sidew) 1fr; max-width: 1180px; margin: 0 auto; }
+
+  /* sidebar */
+  aside { position: sticky; top: 56px; align-self: start; height: calc(100vh - 56px); overflow-y: auto; border-right: 1px solid var(--line); padding: 26px 18px 60px; }
+  aside .label { color: var(--ink-faint); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 12px; }
+  aside nav { position: static; border: none; background: none; }
+  aside a { display: block; color: var(--ink-dim); text-decoration: none; font-size: 13px; padding: 5px 10px; border-radius: 4px; border-left: 2px solid transparent; }
+  aside a::before { content: "/"; color: var(--ink-faint); margin-right: 5px; }
+  aside a:hover { color: var(--green); background: var(--bg-2); }
+  aside a.active { color: var(--green); border-left-color: var(--green); background: var(--bg-2); }
+
+  /* content */
+  main { padding: 38px 46px 120px; min-width: 0; }
+  .doc { padding: 30px 0 38px; border-bottom: 1px solid var(--line-soft); scroll-margin-top: 70px; }
+  .doc:last-child { border-bottom: none; }
+  .doc h2 { color: var(--ink); font-size: 27px; letter-spacing: -0.02em; font-weight: 700; margin-bottom: 6px; }
+  .doc h2::before { content: "# "; color: var(--green); }
+  .doc h3 { color: var(--cyan); font-size: 16.5px; letter-spacing: -0.01em; margin: 28px 0 4px; }
+  .doc h4 { color: var(--ink); font-size: 14.5px; margin: 20px 0 2px; }
+  .doc p { color: var(--ink-dim); margin: 12px 0; max-width: 78ch; }
+  .doc p strong, .doc li strong { color: var(--ink); font-weight: 700; }
+  .doc em { color: var(--ink); font-style: italic; }
+  .doc ul { list-style: none; margin: 12px 0; display: grid; gap: 8px; max-width: 80ch; }
+  .doc li { color: var(--ink-dim); padding-left: 20px; position: relative; }
+  .doc li::before { content: "\2192"; color: var(--green); position: absolute; left: 0; }
+  .doc a { text-decoration: none; border-bottom: 1px dotted var(--green-dim); }
+  .doc a:hover { border-bottom-style: solid; }
+  code { background: var(--panel); color: var(--amber); border: 1px solid var(--line-soft); border-radius: 3px; padding: 1px 5px; font-size: 0.9em; }
+  pre { background: var(--bg-2); border: 1px solid var(--line); border-radius: 6px; padding: 16px 18px; overflow-x: auto; margin: 14px 0; max-width: 100%; }
+  pre code { background: none; border: none; padding: 0; color: var(--ink); font-size: 13px; line-height: 1.7; }
+  blockquote { border-left: 2px solid var(--green-dim); background: var(--bg-2); padding: 10px 16px; margin: 14px 0; color: var(--ink-dim); border-radius: 0 4px 4px 0; max-width: 80ch; }
+
+  .callout { border: 1px solid var(--line); border-left: 2px solid var(--cyan); background: var(--bg-2); padding: 12px 16px; margin: 16px 0; border-radius: 0 4px 4px 0; max-width: 80ch; color: var(--ink-dim); }
+  .callout strong { color: var(--cyan); }
+
+  .foot { color: var(--ink-faint); font-size: 12.5px; margin-top: 50px; padding-top: 22px; border-top: 1px solid var(--line); }
+
+  @media (max-width: 820px) {
+    .shell { grid-template-columns: 1fr; }
+    aside { display: none; }
+    main { padding: 26px 22px 90px; }
+    nav .links a:not(:last-child) { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<nav><div class="inner">
+  <a class="brand" href="index.html" style="text-decoration:none;">
+    <span class="mark" style="font-size:17px;">{<span class="bar"></span>}</span>
+    <span class="wordmark" style="font-size:16px;">work<span class="sp">{spacer}</span></span>
+    <span style="font-size:10px;letter-spacing:0.09em;text-transform:uppercase;color:var(--amber);border:1px solid var(--amber);border-radius:3px;padding:1px 6px;">alpha</span>
+  </a>
+  <div class="links">
+    <a href="index.html">home</a>
+    <a href="docs.html">docs</a>
+    <a href="build.html">build</a>
+    <a href="build-plugin.html">build a plugin</a>
+    <a href="https://github.com/DJTouchette/workspacer">github</a>
+  </div>
+</div></nav>
+
+<div class="shell">
+  <aside>
+    <div class="label">build a plugin</div>
+    <nav id="toc">
+      <a href="#intro">the two kinds</a>
+      <a href="#first">your first plugin</a>
+      <a href="#manifest">the manifest</a>
+      <a href="#bus">the bus protocol</a>
+      <a href="#capabilities">capabilities &amp; permissions</a>
+      <a href="#events">events you can consume</a>
+      <a href="#settings">settings</a>
+      <a href="#dev">developing with hot-reload</a>
+      <a href="#publishing">publishing</a>
+    </nav>
+  </aside>
+  <main>
+
+    <section id="intro" class="doc">
+<h2>the two kinds</h2>
+<p>A plugin extends work{spacer} with new panes, automations, and capabilities. It's a folder with a <code>plugin.json</code> manifest at its root that declares what it contributes. The hub reads <code>&lt;plugins-dir&gt;/&lt;name&gt;/plugin.json</code>, validates it, starts whatever it needs, and announces the contribution on the bus (<code>plugin.loaded</code>). The desktop renderer picks that up and registers your pane types, command-palette entries, and hotkeys. This page is the hands-on how-to; the shorter tour lives on the <a href="build.html#plugins">build &amp; internals</a> page.</p>
+<p>Every plugin is one of two shapes, and it's the first decision you make. The split is exactly the <code>server</code> vs <code>ui</code> field in the manifest.</p>
+<h3>webview plugin (<code>ui</code>)</h3>
+<p>Set <code>ui</code> to a subdirectory of static assets and <strong>omit <code>server</code></strong>. There is no process to run: the hub (trusted) serves your files at <code>/plugins/ui/&lt;id&gt;/</code>, and your page opens as a pane in a webview. The webview talks to the bus over a WebSocket using a <strong>per-plugin token the host injects into the pane URL</strong> (<code>?busToken=…</code>), scoped to exactly the capabilities your manifest declares. Because there's no arbitrary process, there's nothing to escape the bus through, so capability scoping fully confines it.</p>
+<ul>
+<li>Reach for it when your plugin <em>is</em> a UI: a dashboard, a panel, an editor, a rule editor.</li>
+<li>Any language that compiles to static HTML/JS/CSS. No build step needed if you ship plain files.</li>
+<li>Bundled examples (in <code>services/hub/examples/</code>): the sandboxed <code>editor</code> and the <code>transcript-timeline</code> replay pane.</li>
+</ul>
+<h3>sidecar plugin (<code>server</code>)</h3>
+<p>Set <code>server.command</code> to a long-lived process the hub spawns and supervises (spawn → health-poll → restart-on-crash, SIGTERM then SIGKILL on stop). It's a polyglot sidecar: <strong>any language</strong>. It connects to the bus itself, so it can run <em>always-on with no pane at all</em> (an automation), <code>provide</code> capabilities other clients call, and/or serve its own webview panes from its port (the hub proxies <code>http://127.0.0.1:&lt;port&gt;&lt;path&gt;</code>).</p>
+<ul>
+<li>Reach for it when your plugin <em>does</em> something in the background: reacts to events, calls out to another service, answers capabilities for the rest of the fleet.</li>
+<li>Give it a <code>port</code> + <code>health</code> path so the supervisor can health-check it and surface <code>sidecar.*</code> status colors.</li>
+<li>Examples: the bundled <code>clock-plugin</code> (the minimal sidecar demo) and the catalog's automations — <code>policy-approver</code>, <code>fleet-guardian</code>, <code>test-on-save</code>, <code>slack-bridge</code>.</li>
+</ul>
+<p>The two aren't mutually exclusive in spirit — a sidecar can also serve panes — but a single manifest sets <em>either</em> <code>server</code> <em>or</em> <code>ui</code> as the way its panes are served. If it declares panes with neither, the loader rejects it (the webview would have no URL to load).</p>
+    </section>
+
+    <section id="first" class="doc">
+<h2>your first plugin</h2>
+<p>The fastest path is a <strong>webview</strong> plugin that lists the running agents. Three files, no build step.</p>
+<h3>1. the folder</h3>
+<p>A plugin is a folder with a <code>plugin.json</code> at its root and, for a webview, a subdir of static assets:</p>
+<pre><code>my-hello/
+  plugin.json
+  ui/
+    index.html</code></pre>
+<h3>2. the manifest</h3>
+<p>A minimal webview manifest. <code>apiVersion</code> MUST be <code>"1"</code> (the loader rejects anything else), <code>ui: "ui"</code> makes it webview-only, and you ask for only the caps you use:</p>
+<pre><code>{
+  "id": "example.hello",
+  "name": "Hello",
+  "apiVersion": "1",
+  "ui": "ui",
+  "panes": [
+    { "type": "example.hello", "title": "Hello", "icon": "👋", "scope": "both" }
+  ],
+  "hotkeys": [
+    { "id": "open-hello", "default": "ctrl+shift+h", "command": "open-pane:example.hello" }
+  ],
+  "capabilities": ["agents.list"]
+}</code></pre>
+<p><code>panes</code> contributes one pane type; <code>hotkeys</code> binds a key to open it; <code>capabilities</code> asks for the single verb <code>agents.list</code> and nothing else. Ask for only what you use — the bus rejects any call you didn't declare.</p>
+<h3>3. the page</h3>
+<p>The host injects your scoped token as <code>?busToken=…</code> on the pane URL. Open one WebSocket to the bus with it, then <code>call</code> a capability or <code>subscribe</code> to events. The whole client is a few lines:</p>
+<pre><code>const token = new URLSearchParams(location.search).get('busToken') || '';
+const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+const ws = new WebSocket(`${proto}//${location.host}/bus?token=${encodeURIComponent(token)}`);
+
+let nextId = 1;
+const pending = new Map();
+function call(method, params = {}) {
+  return new Promise((resolve, reject) =&gt; {
+    const id = 'c' + nextId++;
+    pending.set(id, { resolve, reject });
+    ws.send(JSON.stringify({ op: 'call', id, method, params }));
+  });
+}
+
+ws.onopen = async () =&gt; {
+  const agents = await call('agents.list');       // one of your declared caps
+  document.body.textContent = `${agents.length} agent(s) running`;
+};
+ws.onmessage = (ev) =&gt; {
+  const f = JSON.parse(ev.data);
+  if (f.op === 'result' &amp;&amp; pending.has(f.id)) { pending.get(f.id).resolve(f.result); pending.delete(f.id); }
+  if (f.op === 'error'  &amp;&amp; pending.has(f.id)) { pending.get(f.id).reject(new Error(f.error)); pending.delete(f.id); }
+};</code></pre>
+<p>Style it with the injected <code>--wks-*</code> theme tokens (with fallbacks, e.g. <code>background: var(--wks-bg-base, #1a1a1a)</code>) so it matches the app. The host re-injects them on every live theme switch, and also exposes <code>window.__WKS_THEME__</code> + a <code>wks-theme</code> event for canvas UIs.</p>
+<h3>4. load it</h3>
+<p>Drop <code>my-hello/</code> into your plugins dir (in the app: <code>&lt;configDir&gt;/plugins</code>; in dev: whatever you passed to <code>--plugins-dir</code>). The hub scans it, validates the manifest, and emits <code>plugin.loaded</code>; the renderer registers your pane and hotkey. Open it with <code>Ctrl+Shift+H</code> or from the command palette.</p>
+<h3>make it a sidecar instead</h3>
+<p>To make this a <strong>sidecar</strong>, drop <code>ui</code>, add a <code>server</code> block pointing at your process (and an <code>install</code> build step if it needs compiling), and connect to the bus from that process the same way — same frames, same token model. A sidecar gets its token in the <code>HUB_TOKEN</code> environment variable instead of the URL, and the bus address in <code>HUB_ADDR</code>. A tiny Node sidecar that watches for agents that need you and posts a notification:</p>
+<pre><code>// server.js — a headless sidecar (no pane at all)
+const WebSocket = require('ws');
+const token = process.env.HUB_TOKEN || '';
+const addr  = process.env.HUB_ADDR  || '127.0.0.1:7895';
+const ws = new WebSocket(`ws://${addr}/bus?token=${encodeURIComponent(token)}`);
+
+ws.on('open', () =&gt; {
+  // declared in "consumes"
+  ws.send(JSON.stringify({ op: 'subscribe', topics: ['agent.state_changed'] }));
+});
+ws.on('message', (buf) =&gt; {
+  const f = JSON.parse(buf.toString());
+  if (f.op !== 'event') return;
+  const a = f.event.data || {};
+  if (a.needsApproval) {
+    // declared in "capabilities"
+    ws.send(JSON.stringify({ op: 'call', id: 'n' + Date.now(), method: 'notifications.post',
+      params: { title: 'Agent needs you', body: a.name || a.sessionId } }));
+  }
+});</code></pre>
+<p>And the matching sidecar manifest:</p>
+<pre><code>{
+  "id": "example.watcher",
+  "name": "Needs-You Watcher",
+  "apiVersion": "1",
+  "server": { "command": "node", "args": ["server.js"], "port": 8140, "health": "/health" },
+  "consumes": ["agent.state_changed"],
+  "capabilities": ["notifications.post"],
+  "install": ["npm", "install"]
+}</code></pre>
+<p>A sidecar with no <code>panes</code> and no <code>ui</code> is a pure automation: it never shows a window, it just reacts on the bus. If you give it a <code>port</code> + <code>health</code>, the supervisor health-checks it and colors it in the Plugins Manager.</p>
+    </section>
+
+    <section id="manifest" class="doc">
+<h2>the manifest</h2>
+<p>Schema version is <code>"apiVersion": "1"</code> (the loader rejects anything else). The authoritative field list is <code>internal/plugin/manifest.go</code>; the real fields:</p>
+<ul>
+<li><code>id</code> (required), <code>name</code>. <code>id</code> is the install dir name and the token key; namespace it (<code>owner.thing</code>).</li>
+<li><code>apiVersion</code> — MUST be the string <code>"1"</code>.</li>
+<li><code>server</code>, the sidecar process: <code>command</code> (required when <code>server</code> is set), <code>args</code>, <code>port</code>, <code>health</code> (a path, e.g. <code>/health</code>). The hub serves the plugin's panes from <code>http://127.0.0.1:&lt;port&gt;&lt;path&gt;</code>.</li>
+<li><code>ui</code>, instead of <code>server</code>, a subdir of static assets the hub serves itself at <code>/plugins/ui/&lt;id&gt;/</code>. This is a webview plugin with no sidecar process. Only the named subdir is exposed (not <code>plugin.json</code> or <code>.bus-token</code>).</li>
+<li><code>panes</code>, pane types injected into the UI. Each: <code>type</code> (unique id), <code>title</code>, <code>icon</code>, <code>path</code> (the URL path served for the pane), and <code>scope</code> (<code>global</code> = Overview only, <code>agent</code> = inside an agent workspace and gets its sessionId/cwd, <code>both</code> = wherever you are, the default).</li>
+<li><code>hotkeys</code>, each with <code>id</code>, <code>default</code> (e.g. <code>ctrl+shift+a</code>), and <code>command</code>, which is either <code>open-pane:&lt;paneType&gt;</code> or <code>emit:&lt;eventType&gt;</code>.</li>
+<li><code>settings</code>, typed settings the host renders in Settings. Each: <code>key</code>, <code>label</code>, <code>type</code> (<code>boolean</code>/<code>number</code>/<code>string</code>/<code>select</code>), <code>default</code>, <code>options</code> (for <code>select</code>), and <code>help</code>. Delivered into the webview as <code>window.__WKS_SETTINGS__</code> + a <code>wks-settings</code> event.</li>
+<li><code>capabilities</code>, bus methods the plugin may <strong>call</strong>. A bare string (<code>"agents.list"</code>) for an unscoped verb, or the object form <code>{ "method": "fs.read", "paths": ["${pluginDir}"] }</code> for a filesystem-scoped one.</li>
+<li><code>provides</code>, capabilities the plugin <strong>answers</strong> on the bus (it becomes a provider other clients can call).</li>
+<li><code>emits</code> / <code>consumes</code>, event types it publishes / subscribes to.</li>
+<li><code>install</code>, a one-time setup argv run in the plugin dir after a GitHub install (e.g. <code>["go","build","-o","server","."]</code>).</li>
+</ul>
+    </section>
+
+    <section id="bus" class="doc">
+<h2>the bus protocol</h2>
+<p>Whether webview or sidecar, a plugin is just another client on the hub bus. It opens one bidirectional WebSocket to <code>ws://127.0.0.1:7895/bus?token=&lt;busToken&gt;</code> (webviews get the token in the pane URL as <code>?busToken=</code>; sidecars get theirs in the <code>HUB_TOKEN</code> environment variable) and exchanges JSON frames. Publish and subscribe share the same pipe. Four ops matter:</p>
+<pre><code>// subscribe to events (topics you declared in "consumes")
+ws.send(JSON.stringify({ op: 'subscribe', topics: ['agent.*', 'ui.*'] }));
+
+// publish an event (a type you declared in "emits")
+ws.send(JSON.stringify({ op: 'publish',
+  event: { type: 'command.focus_agent', source: 'example.hello', data: { sessionId } } }));
+
+// call a capability (a method you declared in "capabilities"); reply comes back as op:'result'
+ws.send(JSON.stringify({ op: 'call', id: 'c1', method: 'agents.list', params: {} }));
+
+// register methods you answer (declared in "provides"); calls arrive as op:'call'
+ws.send(JSON.stringify({ op: 'register', methods: ['myplugin.status'] }));</code></pre>
+<p>An incoming event is <code>{"op":"event","event":{ id, type, source, time, data }}</code> — the hub stamps <code>id</code>/<code>time</code> if you leave them blank. A reply to your <code>call</code> comes back as <code>{"op":"result","id":"c1","result":{…}}</code>, or <code>{"op":"error","id":"c1","error":"…"}</code>. When you <code>provide</code>, a caller's request arrives as an <code>op:'call'</code> frame you answer with an <code>op:'result'</code> carrying the same id.</p>
+<p>Two rules the bus enforces against your declared grants: you can only <code>call</code> a method you listed in <code>capabilities</code>, and you can only <code>publish</code> a type you listed in <code>emits</code> — an undeclared call or publish is refused. Topic patterns (in <code>subscribe</code>, <code>consumes</code>, <code>emits</code>) are exact (<code>agent.spawned</code>), namespace wildcard (<code>agent.*</code>), or all (<code>*</code>). The router is <strong>single-owner per method</strong>, so when you <code>provide</code>, pick a namespace nobody else claims.</p>
+    </section>
+
+    <section id="capabilities" class="doc">
+<h2>capabilities &amp; permissions</h2>
+<p>Capabilities are request/reply methods. List the ones you <strong>call</strong> in <code>capabilities</code>; register the ones you <strong>answer</strong> in <code>provides</code>. The whole model is <strong>fail-closed</strong>: a plugin gets exactly the grants its manifest declares and nothing more, and an undeclared call is refused at the bus.</p>
+<h3>the path-scoped rule</h3>
+<p>Filesystem and project-search methods (<code>fs.*</code>, <code>search.project</code>) are the only ones that <strong>must</strong> use the object form and declare <code>paths</code>, or the loader rejects them — a plugin can never get unrestricted host filesystem access:</p>
+<pre><code>"capabilities": [
+  "agents.list",
+  { "method": "fs.read",  "paths": ["${pluginDir}"] },
+  { "method": "fs.write", "paths": ["${pluginDir}"] }
+]</code></pre>
+<p>Path tokens: <code>${pluginDir}</code> (your own folder), <code>${agentCwd}</code>, or an absolute path. <code>${agentCwd}</code> only resolves on a <strong>per-pane webview token</strong> for an agent-scoped pane (the pane mints an ephemeral token confined to that agent's directory on mount and revokes it on unmount) — it grants nothing on a static per-plugin or sidecar token. Anything unresolved grants nothing.</p>
+<h3>common host capabilities</h3>
+<p>The methods the host registers today (provided by the desktop app, or headlessly by <code>cmd/brain</code>) — the same surface the MCP facade re-exposes as tools. The ones you'll reach for first:</p>
+<ul>
+<li><code>agents.list</code>, running agents with state / usage / pending asks.</li>
+<li><code>agents.sendMessage</code>, send a prompt to an agent (<code>{ sessionId, text }</code>).</li>
+<li><code>agents.spawn</code> / <code>agents.kill</code>, start a new agent (returns its sessionId) / terminate one.</li>
+<li><code>notifications.post</code>, show a desktop notification (<code>{ title, body }</code>).</li>
+<li><code>claude.approve</code> / <code>claude.answer</code> / <code>claude.signal</code>, resolve an approval, answer an AskUserQuestion, send a signal.</li>
+<li><code>sessions.snapshot</code> / <code>sessions.transcript</code> / <code>sessions.conversation</code>, live session state and history.</li>
+<li><code>fs.read</code> / <code>fs.write</code> / <code>fs.watch</code> / <code>search.project</code>, path-scoped file I/O and ripgrep search (object form, <code>paths</code> required).</li>
+</ul>
+<p>List method names in <code>provides</code> and answer them on the bus, and you become a first-class capability provider the rest of the fleet (dashboards, rules, supervisors, the MCP facade) can call — e.g. a bridge sidecar can consume an external MCP server and re-expose its tools as hub capabilities.</p>
+<div class="callout"><strong>Source of truth.</strong> The exact params/return shape of each host capability isn't a frozen public API yet. Treat <code>apps/desktop/src/main/services/hubCapabilities.ts</code> and <code>services/hub/examples/</code> as authoritative for field names, and the MCP tool list (<code>cmd/mcp/main.go</code>) for the stable subset.</div>
+    </section>
+
+    <section id="events" class="doc">
+<h2>events you can consume</h2>
+<p>Events are fire-and-forget pub/sub (state changes, lifecycle, UI activity). Declare the ones you subscribe to in <code>consumes</code> and the ones you publish in <code>emits</code>. Use capabilities (previous section) when you need an answer or want to <em>make</em> something happen; use events to react.</p>
+<h3>consume — events the fleet publishes to you</h3>
+<ul>
+<li><code>agent.state_changed</code>, an agent's live state changed — the workhorse event: the state dot (idle / working / needs-approval / done), context %, token/cost, and pending approvals/questions. Published by claudemon.</li>
+<li><code>agent.spawned</code> / <code>agent.done</code> / <code>agent.terminated</code>, session started / finished a turn / ended.</li>
+<li><code>agent.snapshot</code>, a full per-agent snapshot (state + usage), from the catalog/headless provider.</li>
+<li><code>agent.statusline</code>, the context % / cost / rate-limit status line for an agent.</li>
+<li><code>workflow.completed</code> / <code>workflow.failed</code>, a workflow run finished or failed.</li>
+<li><code>ui.pane.opened</code> / <code>ui.pane.focused</code> / <code>ui.tab.focused</code>, renderer activity — which pane/tab the user is looking at (subscribe to <code>ui.*</code> to follow focus).</li>
+<li><code>fs.changed</code>, a file you're watching changed (paired with the <code>fs.watch</code> capability).</li>
+<li><code>sidecar.*</code> / <code>plugin.*</code>, plugin supervisor and lifecycle state (these back the health colors in the Plugins Manager).</li>
+</ul>
+<p>Subscribing to a namespace (<code>agent.*</code>, <code>ui.*</code>, <code>sidecar.*</code>) is the easy way to catch a whole family without listing each type.</p>
+<h3>emit — events you publish</h3>
+<ul>
+<li><strong>Your own namespaced events</strong>, anything under your plugin's namespace, e.g. <code>example.hello.tick</code>. Declare each type (or a <code>myplugin.*</code> wildcard) in <code>emits</code>. Other plugins can <code>consume</code> them.</li>
+<li><code>command.focus_agent</code> (<code>data: { sessionId }</code>) / <code>command.spawn_agent</code>, ask the desktop to focus or spawn an agent. The <code>command.*</code> namespace is the "ask the host to do something" channel: you publish, the renderer acts. A hotkey can fire one directly with <code>"command": "emit:&lt;eventType&gt;"</code>.</li>
+</ul>
+    </section>
+
+    <section id="settings" class="doc">
+<h2>settings</h2>
+<p>Declare typed <code>settings</code> in the manifest and the host renders them in Settings for you. Each entry is a <code>key</code>, a <code>label</code>, a <code>type</code> (<code>boolean</code> / <code>number</code> / <code>string</code> / <code>select</code>), a <code>default</code>, an <code>options</code> list (for <code>select</code>), and optional <code>help</code> text:</p>
+<pre><code>"settings": [
+  { "key": "interval", "label": "Poll interval (s)", "type": "number", "default": 30,
+    "help": "How often to re-check the fleet." },
+  { "key": "loud", "label": "Notify on done too", "type": "boolean", "default": false },
+  { "key": "channel", "label": "Alert channel", "type": "select",
+    "default": "desktop", "options": ["desktop", "slack", "none"] }
+]</code></pre>
+<p>Values are delivered to a <strong>webview</strong> as <code>window.__WKS_SETTINGS__</code> and re-delivered live on every change via a <code>wks-settings</code> event, so a webview updates without reloading:</p>
+<pre><code>let settings = window.__WKS_SETTINGS__ || {};
+window.addEventListener('wks-settings', (e) =&gt; { settings = e.detail; render(); });</code></pre>
+<p>For a <strong>sidecar</strong>, a settings edit publishes <code>plugin.settings.changed</code> on the bus and the sidecar is <strong>restarted</strong> so it re-reads them at boot. So: webviews get settings live, sidecars pick them up on restart.</p>
+    </section>
+
+    <section id="dev" class="doc">
+<h2>developing with hot-reload</h2>
+<p>For iterating on a plugin, point a dev hub at your own dir and drop the folder in:</p>
+<pre><code>go run ./cmd/hub --plugins-dir /path/to/plugins</code></pre>
+<p>The hub scans on load and emits <code>plugin.loaded</code>. For a tighter loop, <code>workspacer plugin dev &lt;dir&gt;</code> watches a single plugin folder and hot-reloads it on change: it poll-watches your source, runs the manifest's <code>install</code> build step when files change, tells the hub to reload the plugin, and streams the sidecar's logs to your terminal.</p>
+<pre><code>workspacer plugin dev ./my-hello     # watch → rebuild → hot-reload → tail logs</code></pre>
+<div class="callout"><strong>Landing note.</strong> <code>workspacer plugin dev</code> is a sibling task in flight — the poll-based watch → rebuild → hot-reload → logs loop. Until it lands, iterate with a dev hub pointed at your plugins dir and re-drop the folder (or toggle Enable/Disable in the Plugins Manager) to reload.</div>
+<p>A webview plugin needs no build step — edit the files and reopen the pane. A sidecar with an <code>install</code> step is rebuilt before reload. The Plugins Manager's Enable/Disable toggles a <code>.disabled</code> marker and reloads, so you can flip a plugin off without uninstalling it.</p>
+    </section>
+
+    <section id="publishing" class="doc">
+<h2>publishing</h2>
+<p>A plugin is just a folder in a git repo. To share one, push it to <strong>its own GitHub repo</strong> with <code>plugin.json</code> at the root, then install it by reference.</p>
+<ul>
+<li><strong>Install</strong> from the Plugins Manager by pasting an <code>owner/repo</code> reference (or a full URL, a <code>/tree/&lt;ref&gt;</code> URL, or a direct <code>.tar.gz</code> URL). work{spacer} downloads it, runs the manifest's <code>install</code> build step, and loads it.</li>
+<li>Installation is the <strong>trusted-install</strong> model, like a VS Code extension: it downloads and runs code from the internet, so it asks for consent and shows the manifest and permissions first. Extraction is zip-slip-guarded and atomic.</li>
+<li>Give your repo a clear README with the manifest's declared <code>capabilities</code> so installers know what it can reach.</li>
+</ul>
+<p>There's a public catalog of install-ready plugins at <a href="https://github.com/DJTouchette/workspacer-plugins">github.com/DJTouchette/workspacer-plugins</a>: dashboards (Fleet Radar, Cost HUD, Focus Tracker), fleet automations (Policy Approver, Fleet Guardian, Test on Save, CI Watcher), and remote reach (Slack Bridge, Phone Push, Standup Digest). Each is a zero-dependency repo you can install straight from the Plugins Manager (paste <code>DJTouchette/workspacer-plugin-&lt;name&gt;</code>), and together they double as reference implementations for every plugin shape on this page. To list yours there, open a PR against the catalog repo's index.</p>
+    </section>
+
+    <div class="foot">work{spacer} :: build a plugin :: <a href="build.html#plugins">build &amp; internals →</a></div>
+  </main>
+</div>
+
+<script>
+  // highlight the section in view
+  const links = Array.from(document.querySelectorAll('#toc a'));
+  const map = new Map(links.map(a => [a.getAttribute('href').slice(1), a]));
+  const obs = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        links.forEach(l => l.classList.remove('active'));
+        const a = map.get(e.target.id);
+        if (a) a.classList.add('active');
+      }
+    });
+  }, { rootMargin: '-60px 0px -70% 0px', threshold: 0 });
+  document.querySelectorAll('section.doc').forEach(s => obs.observe(s));
+</script>
+
+</body>
+</html>
