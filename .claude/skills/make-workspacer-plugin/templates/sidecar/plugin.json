@@ -1,0 +1,38 @@
+{
+  "id": "owner.my-sidecar",
+  "name": "My Sidecar",
+  "apiVersion": "1",
+  "server": {
+    "command": "node",
+    "args": ["server.js"],
+    "port": 9200,
+    "health": "/health"
+  },
+  "panes": [
+    {
+      "type": "owner.my-sidecar",
+      "title": "My Sidecar",
+      "icon": "🔌",
+      "scope": "both",
+      "path": "/"
+    }
+  ],
+  "settings": [
+    {
+      "key": "example",
+      "label": "Example setting",
+      "type": "string",
+      "default": "hello",
+      "help": "Delivered as WKS_SETTINGS JSON at spawn. Changing it restarts the sidecar."
+    }
+  ],
+  "capabilities": [
+    "notifications.post"
+  ],
+  "emits": [],
+  "consumes": [
+    "agent.state_changed",
+    "agent.snapshot"
+  ],
+  "install": ["npm", "install"]
+}
